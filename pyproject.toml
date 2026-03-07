@@ -31,6 +31,13 @@ python_version = "3.10"
 strict = true
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# pyelftools has no type stubs or py.typed marker — all its APIs are untyped.
+# Disabling no-untyped-call for elf_metadata.py avoids false CI failures
+# while keeping strict checking on all other modules.
+module = "abicheck.elf_metadata"
+disallow_untyped_calls = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["integration: requires castxml, gcc/g++ installed"]
