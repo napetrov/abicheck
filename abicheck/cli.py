@@ -58,7 +58,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 @main.command("compare")
 @click.argument("old_snapshot", type=click.Path(exists=True, path_type=Path))
 @click.argument("new_snapshot", type=click.Path(exists=True, path_type=Path))
-@click.option("--format", "fmt", type=click.Choice(["json", "markdown"]),
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "sarif"]),
               default="markdown", show_default=True)
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
@@ -70,6 +70,7 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
     \b
     Example:
       abicheck compare libfoo-1.0.json libfoo-2.0.json --format markdown
+      abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o results.sarif
       abicheck compare libfoo-1.0.json libfoo-2.0.json --suppress suppressions.yaml
     """
     from .suppression import SuppressionList
@@ -97,6 +98,9 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
 
     if fmt == "json":
         text = to_json(result)
+    elif fmt == "sarif":
+        from .sarif import to_sarif_str
+        text = to_sarif_str(result)
     else:
         text = to_markdown(result)
 
