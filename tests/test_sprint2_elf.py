@@ -170,6 +170,25 @@ def test_common_symbol_risk() -> None:
 # No-change negative tests
 # ---------------------------------------------------------------------------
 
+_ELF_CHANGE_KINDS: frozenset[ChangeKind] = frozenset({
+    ChangeKind.SONAME_CHANGED,
+    ChangeKind.NEEDED_ADDED,
+    ChangeKind.NEEDED_REMOVED,
+    ChangeKind.RPATH_CHANGED,
+    ChangeKind.RUNPATH_CHANGED,
+    ChangeKind.SYMBOL_BINDING_CHANGED,
+    ChangeKind.SYMBOL_TYPE_CHANGED,
+    ChangeKind.SYMBOL_SIZE_CHANGED,
+    ChangeKind.IFUNC_INTRODUCED,
+    ChangeKind.IFUNC_REMOVED,
+    ChangeKind.COMMON_SYMBOL_RISK,
+    ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
+    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+    ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
+    ChangeKind.SYMBOL_BINDING_STRENGTHENED,
+})
+
+
 def test_no_elf_changes() -> None:
     """Identical ELF metadata → no ELF-related changes."""
     elf = _elf(
@@ -181,18 +200,55 @@ def test_no_elf_changes() -> None:
     old = _snap(elf)
     new = _snap(elf)
     result = compare(old, new)
-    elf_kinds = {c.kind for c in result.changes if "elf" not in c.kind.value
-                 and c.kind.value in {k.value for k in [
-                     ChangeKind.SONAME_CHANGED, ChangeKind.NEEDED_ADDED,
-                     ChangeKind.NEEDED_REMOVED, ChangeKind.RPATH_CHANGED,
-                     ChangeKind.RUNPATH_CHANGED, ChangeKind.SYMBOL_BINDING_CHANGED,
-                     ChangeKind.SYMBOL_TYPE_CHANGED, ChangeKind.SYMBOL_SIZE_CHANGED,
-                     ChangeKind.IFUNC_INTRODUCED, ChangeKind.IFUNC_REMOVED,
-                     ChangeKind.COMMON_SYMBOL_RISK,
-                     ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
-                     ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
-                 ]}}
+    elf_kinds = {c.kind for c in result.changes if c.kind in _ELF_CHANGE_KINDS}
+    assert elf_kinds == set(), f"Unexpected ELF changes on identical metadata: {elf_kinds}"
+
+
+def test_both_elf_none_produces_no_changes() -> None:
+    """Both snapshots without ELF metadata → no ELF changes, no crash."""
+    old = _snap(None)
+    new = _snap(None)
+    result = compare(old, new)
+    elf_kinds = {c.kind for c in result.changes if c.kind in _ELF_CHANGE_KINDS}
     assert elf_kinds == set()
+
+
+def test_symbol_size_changed_func_not_flagged() -> None:
+    """STT_FUNC symbol size change must NOT produce SYMBOL_SIZE_CHANGED.
+
+    Function size = machine-code bytes; changes with every compile/opt level.
+    Flagging it would produce massive false positives. Only STT_OBJECT/TLS matter.
+    """
+    old = _snap(_elf(symbols=[_sym("foo", sym_type=SymbolType.FUNC, size=100)]))
+    new = _snap(_elf(symbols=[_sym("foo", sym_type=SymbolType.FUNC, size=200)]))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_SIZE_CHANGED not in kinds
+
+
+def test_weak_to_global_binding_compatible() -> None:
+    """WEAK→GLOBAL strengthens a symbol — backward-compatible for most consumers.
+
+    Exception: consumers that override via weak interposition lose the override.
+    Classified as COMPATIBLE; document the edge case.
+    """
+    old = _snap(_elf(symbols=[_sym("foo", binding=SymbolBinding.WEAK)]))
+    new = _snap(_elf(symbols=[_sym("foo", binding=SymbolBinding.GLOBAL)]))
+    result = compare(old, new)
+    # SYMBOL_BINDING_CHANGED should still be reported (informational),
+    # but the overall verdict must NOT be BREAKING.
+    assert result.verdict != Verdict.BREAKING
+
+
+def test_versions_required_entire_lib_removed() -> None:
+    """When a lib disappears entirely from versions_required, all its versions are flagged removed."""
+    old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.17"]}))
+    new = _snap(_elf(versions_required={}))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED in kinds
+    removed = [c.symbol for c in result.changes if c.kind == ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED]
+    assert set(removed) == {"GLIBC_2.5", "GLIBC_2.17"}
 
 
 # ---------------------------------------------------------------------------

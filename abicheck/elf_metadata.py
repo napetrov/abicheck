@@ -3,15 +3,18 @@
 Uses ``pyelftools`` (pure Python, actively maintained) for robust ELF/DWARF
 parsing instead of text-scraping ``readelf`` output.
 
-See ADR-001 for technology stack rationale.
+See docs/adr/001-technology-stack.md for rationale.
 """
 from __future__ import annotations
 
 import logging
+import os
+import stat
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
+from typing import IO
 
 from elftools.common.exceptions import ELFError
 from elftools.elf.dynamic import DynamicSection
@@ -48,14 +51,18 @@ class ElfSymbol:
     binding:  SymbolBinding = SymbolBinding.GLOBAL
     sym_type: SymbolType    = SymbolType.FUNC
     size:     int           = 0
-    version:  str           = ""    # e.g. "GLIBC_2.5" or "" if unversioned
-    is_default: bool        = True  # @@ (default) vs @ (non-default)
+    version:  str           = ""       # version tag from .gnu.version_d/.gnu.version_r
+    is_default: bool        = True
     visibility: str         = "default"  # default / hidden / protected / internal
 
 
 @dataclass
 class ElfMetadata:
-    """ELF dynamic-section + symbol metadata for one .so."""
+    """ELF dynamic-section + symbol metadata for one .so.
+
+    NOTE: Do NOT add ``frozen=True`` to this dataclass — ``@cached_property``
+    (used by ``symbol_map``) requires a writable instance ``__dict__``.
+    """
     soname:  str = ""
     needed:  list[str] = field(default_factory=list)
     rpath:   str = ""
@@ -67,17 +74,21 @@ class ElfMetadata:
     # dict: library_soname → list of version strings
     versions_required: dict[str, list[str]] = field(default_factory=dict)
 
-    # Exported symbols (.dynsym, GLOBAL/WEAK, not UND, not hidden)
+    # Exported symbols (.dynsym, GLOBAL/WEAK, not UND, not hidden/internal)
     symbols: list[ElfSymbol] = field(default_factory=list)
 
     @cached_property
     def symbol_map(self) -> dict[str, ElfSymbol]:
-        """Name → ElfSymbol mapping (cached, built once)."""
+        """Name → ElfSymbol mapping (built once, cached on first access).
+
+        Thread safety: benign race — both threads compute the same dict;
+        the last write wins. Functionally correct for read-only use.
+        """
         return {s.name: s for s in self.symbols}
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Internal constants
 # ---------------------------------------------------------------------------
 
 _BINDING_MAP: dict[str, SymbolBinding] = {
@@ -95,38 +106,54 @@ _TYPE_MAP: dict[str, SymbolType] = {
     "STT_NOTYPE":    SymbolType.NOTYPE,
 }
 
-_HIDDEN_VISIBILITIES = {"STV_HIDDEN", "STV_INTERNAL"}
+_HIDDEN_VISIBILITIES = frozenset({"STV_HIDDEN", "STV_INTERNAL"})
 
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def parse_elf_metadata(so_path: Path) -> ElfMetadata:
-    """Extract ELF dynamic + symbol metadata from *so_path* using pyelftools."""
-    # Validate input: must be a regular file (not symlink, pipe, etc.)
-    resolved = so_path.resolve()
-    if not resolved.is_file():
-        log.warning("parse_elf_metadata: not a regular file: %s", so_path)
-        return ElfMetadata()
+    """Extract ELF dynamic + symbol metadata from *so_path* using pyelftools.
 
+    Returns an empty ``ElfMetadata`` on any parse error (logged as WARNING).
+    Uses fstat() after open() to prevent TOCTOU symlink/FIFO attacks.
+    """
     try:
-        with open(resolved, "rb") as f:
-            return _parse(f)
-    except (ELFError, OSError) as exc:
-        log.warning("parse_elf_metadata: failed to parse %s: %s", so_path, exc)
+        with open(so_path, "rb") as f:
+            # Verify it's a regular file *after* open to avoid TOCTOU race.
+            st = os.fstat(f.fileno())
+            if not stat.S_ISREG(st.st_mode):
+                log.warning("parse_elf_metadata: not a regular file: %s", so_path)
+                return ElfMetadata()
+            return _parse(f, so_path)
+    except (ELFError, OSError, ValueError) as exc:
+        log.warning("parse_elf_metadata: failed to open/parse %s: %s", so_path, exc)
         return ElfMetadata()
 
 
-def _parse(f: object) -> ElfMetadata:  # type: ignore[name-defined]
+# ---------------------------------------------------------------------------
+# Internal parsing
+# ---------------------------------------------------------------------------
+
+def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
     meta = ElfMetadata()
     elf = ELFFile(f)
 
     for section in elf.iter_sections():
-        if isinstance(section, DynamicSection):
-            _parse_dynamic(section, meta)
-        elif isinstance(section, GNUVerDefSection):
-            _parse_version_def(section, meta)
-        elif isinstance(section, GNUVerNeedSection):
-            _parse_version_need(section, meta)
-        elif isinstance(section, SymbolTableSection) and section.name == ".dynsym":
-            _parse_dynsym(section, meta)
+        try:
+            if isinstance(section, DynamicSection):
+                _parse_dynamic(section, meta)
+            elif isinstance(section, GNUVerDefSection):
+                _parse_version_def(section, meta)
+            elif isinstance(section, GNUVerNeedSection):
+                _parse_version_need(section, meta)
+            elif isinstance(section, SymbolTableSection) and section.name == ".dynsym":
+                _parse_dynsym(section, meta)
+        except Exception as exc:  # noqa: BLE001
+            # Partial-success: log malformed section, keep results from other sections.
+            log.warning("parse_elf_metadata: skipping malformed section %r in %s: %s",
+                        section.name, so_path, exc)
 
     return meta
 
@@ -144,7 +171,7 @@ def _parse_dynamic(section: DynamicSection, meta: ElfMetadata) -> None:
 
 
 def _parse_version_def(section: GNUVerDefSection, meta: ElfMetadata) -> None:
-    for verdef, verdaux_iter in section.iter_versions():
+    for _verdef, verdaux_iter in section.iter_versions():
         for verdaux in verdaux_iter:
             name = verdaux.name
             if name and name not in meta.versions_defined:
@@ -164,13 +191,13 @@ def _parse_version_need(section: GNUVerNeedSection, meta: ElfMetadata) -> None:
 
 def _parse_dynsym(section: SymbolTableSection, meta: ElfMetadata) -> None:
     for sym in section.iter_symbols():
-        # Skip undefined symbols
+        # Skip undefined symbols (imported, not exported)
         if sym.entry.st_shndx == "SHN_UNDEF":
             continue
 
-        binding_str  = sym.entry.st_info.bind
-        type_str     = sym.entry.st_info.type
-        vis_str      = sym.entry.st_other.visibility
+        binding_str = sym.entry.st_info.bind
+        type_str    = sym.entry.st_info.type
+        vis_str     = sym.entry.st_other.visibility
 
         binding = _BINDING_MAP.get(binding_str, SymbolBinding.OTHER)
 
@@ -178,29 +205,25 @@ def _parse_dynsym(section: SymbolTableSection, meta: ElfMetadata) -> None:
         if binding == SymbolBinding.LOCAL:
             continue
 
-        # Skip hidden/internal symbols — not exported from DSO
+        # Skip hidden/internal — not exported from DSO
         if vis_str in _HIDDEN_VISIBILITIES:
             continue
 
         sym_type = _TYPE_MAP.get(type_str, SymbolType.OTHER)
         name     = sym.name
 
-        # Strip version suffix if present (e.g. "foo@@GLIBC_2.5" → name="foo", version="GLIBC_2.5")
-        version    = ""
-        is_default = True
-        if "@@" in name:
-            name, version = name.split("@@", 1)
-            is_default = True
-        elif "@" in name:
-            name, version = name.split("@", 1)
-            is_default = False
+        # NOTE: pyelftools does NOT embed version suffixes (@@/@ notation) in
+        # sym.name — that's a readelf text-output artifact. Symbol version info
+        # comes from the .gnu.version section correlated with .gnu.version_d/r,
+        # which is parsed separately in _parse_version_def/_parse_version_need.
+        # We leave version="" here; callers correlate via versions_defined/required.
 
         meta.symbols.append(ElfSymbol(
             name=name,
             binding=binding,
             sym_type=sym_type,
             size=sym.entry.st_size,
-            version=version,
-            is_default=is_default,
+            version="",
+            is_default=True,
             visibility=vis_str.replace("STV_", "").lower(),
         ))

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from .elf_metadata import SymbolBinding, SymbolType
 from .model import AbiSnapshot, EnumType, Function, Visibility
 
 if TYPE_CHECKING:
@@ -76,7 +77,8 @@ class ChangeKind(str, Enum):
     RUNPATH_CHANGED          = "runpath_changed"
 
     # Symbol metadata drift (ELF .dynsym)
-    SYMBOL_BINDING_CHANGED   = "symbol_binding_changed"  # GLOBAL ↔ WEAK
+    SYMBOL_BINDING_CHANGED      = "symbol_binding_changed"      # GLOBAL→WEAK (breaking)
+    SYMBOL_BINDING_STRENGTHENED = "symbol_binding_strengthened"  # WEAK→GLOBAL (compatible)
     SYMBOL_TYPE_CHANGED      = "symbol_type_changed"     # FUNC→OBJECT, etc.
     SYMBOL_SIZE_CHANGED      = "symbol_size_changed"     # st_size changed
     IFUNC_INTRODUCED         = "ifunc_introduced"        # → STT_GNU_IFUNC
@@ -142,12 +144,13 @@ _BREAKING_KINDS = {
 }
 
 _COMPATIBLE_KINDS: set[ChangeKind] = {
-    ChangeKind.NEEDED_ADDED,         # new dep: may not exist on older systems — warn, not hard-break
-    ChangeKind.NEEDED_REMOVED,       # removing a dep is compatible (but deployment risk)
-    ChangeKind.RUNPATH_CHANGED,      # search path drift — warn only
+    ChangeKind.NEEDED_ADDED,              # new dep: may not exist on older systems — warn, not hard-break
+    ChangeKind.NEEDED_REMOVED,            # removing a dep is compatible (but deployment risk)
+    ChangeKind.RUNPATH_CHANGED,           # search path drift — warn only
     ChangeKind.RPATH_CHANGED,
-    ChangeKind.COMMON_SYMBOL_RISK,   # STT_COMMON — risk, not proven break
+    ChangeKind.COMMON_SYMBOL_RISK,        # STT_COMMON — risk, not proven break
     ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
+    ChangeKind.SYMBOL_BINDING_STRENGTHENED,  # WEAK→GLOBAL: backward-compatible for most consumers
 }
 
 _SOURCE_BREAK_KINDS: set[ChangeKind] = set()  # reserved for future source-only breaks
@@ -714,17 +717,20 @@ def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             old_value=ver,
         ))
 
-    # Required version drift (e.g. new GLIBC_2.34 requirement)
-    for lib, new_vers in n.versions_required.items():
+    # Required version drift (e.g. new GLIBC_2.34 requirement).
+    # Iterate union of old+new libs to catch libs that disappeared entirely.
+    all_req_libs = set(o.versions_required) | set(n.versions_required)
+    for lib in sorted(all_req_libs):
         old_vers = set(o.versions_required.get(lib, []))
-        for ver in sorted(set(new_vers) - old_vers):
+        new_vers = set(n.versions_required.get(lib, []))
+        for ver in sorted(new_vers - old_vers):
             changes.append(Change(
                 kind=ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
                 symbol=ver,
                 description=f"New symbol version requirement: {ver} (from {lib})",
                 new_value=f"{lib}:{ver}",
             ))
-        for ver in sorted(old_vers - set(new_vers)):
+        for ver in sorted(old_vers - new_vers):
             changes.append(Change(
                 kind=ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
                 symbol=ver,
@@ -764,17 +770,33 @@ def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 old_value=s_old.sym_type.value, new_value=s_new.sym_type.value,
             ))
 
-        # Binding drift
+        # Binding drift.
+        # GLOBAL→WEAK: breaking — consumers expecting reliable strong resolution may get
+        # the weak version overridden or missing at link time.
+        # WEAK→GLOBAL: compatible for most consumers (symbol is strengthened). Edge case:
+        # interposing libraries that relied on weak-override semantics will stop working,
+        # but that's an unusual deployment pattern; classified COMPATIBLE per ADR-001.
         if s_old.binding != s_new.binding:
+            is_weakening = (
+                s_old.binding == SymbolBinding.GLOBAL
+                and s_new.binding == SymbolBinding.WEAK
+            )
+            kind = ChangeKind.SYMBOL_BINDING_CHANGED if is_weakening else ChangeKind.SYMBOL_BINDING_STRENGTHENED
             changes.append(Change(
-                kind=ChangeKind.SYMBOL_BINDING_CHANGED,
+                kind=kind,
                 symbol=sym_name,
                 description=f"Symbol binding changed: {sym_name} ({s_old.binding.value} → {s_new.binding.value})",
                 old_value=s_old.binding.value, new_value=s_new.binding.value,
             ))
 
-        # Size drift (non-zero old size to detect false positives on notype/0)
-        if s_old.size > 0 and s_new.size > 0 and s_old.size != s_new.size:
+        # Size drift — only meaningful for data objects (STT_OBJECT, STT_TLS).
+        # STT_FUNC size = machine-code bytes: changes with every compile/optimization,
+        # is not an ABI contract, and produces massive false positives. Ignored.
+        if (
+            s_old.size > 0 and s_new.size > 0
+            and s_old.size != s_new.size
+            and s_new.sym_type in (SymbolType.OBJECT, SymbolType.COMMON, SymbolType.TLS)
+        ):
             changes.append(Change(
                 kind=ChangeKind.SYMBOL_SIZE_CHANGED,
                 symbol=sym_name,
