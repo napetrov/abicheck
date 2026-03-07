@@ -4,8 +4,8 @@ All test fixtures are original C++ snippets authored for this project.
 No code or test data is derived from abi-compliance-checker (LGPL-2.1).
 """
 
-from abi_check.checker import ChangeKind, Verdict, compare
-from abi_check.model import (
+from abicheck.checker import ChangeKind, Verdict, compare
+from abicheck.model import (
     AbiSnapshot,
     Function,
     Param,

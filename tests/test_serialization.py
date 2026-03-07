@@ -2,8 +2,8 @@
 import tempfile
 from pathlib import Path
 
-from abi_check.model import AbiSnapshot, Function, Visibility
-from abi_check.serialization import (
+from abicheck.model import AbiSnapshot, Function, Visibility
+from abicheck.serialization import (
     load_snapshot,
     save_snapshot,
     snapshot_from_dict,

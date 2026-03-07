@@ -1,6 +1,6 @@
-# abi-check
+# abicheck
 
-**abi-check** is a Python-native ABI compatibility checker for C/C++ shared libraries.
+**abicheck** is a Python-native ABI compatibility checker for C/C++ shared libraries.
 
 It is designed as a modular, LLVM/GCC-agnostic replacement for existing ABI checking tools, with first-class support for Intel oneAPI packages.
 
@@ -33,7 +33,7 @@ Existing ABI checking tools have significant limitations in CI/CD pipelines for 
   - `COMPATIBLE`: added symbols, internal changes
   - `NO_CHANGE`: identical ABI
 - [ ] Structured output: JSON + Markdown report
-- [ ] CLI: `abi-check dump`, `abi-check compare`, `abi-check scan` (version history)
+- [ ] CLI: `abicheck dump`, `abicheck compare`, `abicheck scan` (version history)
 
 ### Should Have
 - [ ] LLVM/Clang support as first-class frontend (via castxml)
@@ -53,7 +53,7 @@ Existing ABI checking tools have significant limitations in CI/CD pipelines for 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                        CLI                              │
-│          abi-check dump | compare | scan                │
+│          abicheck dump | compare | scan                │
 └──────────────┬────────────────────┬─────────────────────┘
                │                    │
       ┌────────▼────────┐  ┌────────▼────────┐
@@ -79,10 +79,10 @@ Existing ABI checking tools have significant limitations in CI/CD pipelines for 
 
 | Component | Description | Key dependency |
 |-----------|-------------|----------------|
-| `abi_check.dumper` | Headers + `.so` → ABI snapshot JSON | `castxml` |
-| `abi_check.checker` | Diff two snapshots → classified changes | pure Python |
-| `abi_check.reporter` | Changes → structured report | pure Python |
-| `abi_check.cli` | Command-line interface | `click` |
+| `abicheck.dumper` | Headers + `.so` → ABI snapshot JSON | `castxml` |
+| `abicheck.checker` | Diff two snapshots → classified changes | pure Python |
+| `abicheck.reporter` | Changes → structured report | pure Python |
+| `abicheck.cli` | Command-line interface | `click` |
 
 ### ABI Snapshot Format (JSON)
 

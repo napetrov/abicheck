@@ -25,7 +25,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Lint (ruff)
-        run: ruff check abi_check/ tests/
+        run: ruff check abicheck/ tests/
 
       - name: Run tests
         run: pytest tests/ -v --tb=short

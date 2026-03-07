@@ -1,8 +1,8 @@
 """Tests for abi_check.reporter — JSON and Markdown output."""
 import json
 
-from abi_check.checker import Change, ChangeKind, DiffResult, Verdict
-from abi_check.reporter import to_json, to_markdown
+from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
+from abicheck.reporter import to_json, to_markdown
 
 
 def _result(verdict: Verdict, changes=None) -> DiffResult:
