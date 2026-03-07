@@ -1,17 +1,15 @@
 """CLI — abi-check dump | compare | scan."""
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
-from typing import List, Optional
 
 import click
 
 from .checker import compare
 from .dumper import dump
 from .reporter import to_json, to_markdown
-from .serialization import load_snapshot, save_snapshot
+from .serialization import load_snapshot
 
 
 @click.group()
@@ -32,7 +30,7 @@ def main():
 @click.option("-o", "--output", "output", type=click.Path(path_type=Path), default=None,
               help="Output JSON file. Defaults to stdout.")
 def dump_cmd(so_path: Path, headers: tuple, includes: tuple,
-             version: str, compiler: str, output: Optional[Path]):
+             version: str, compiler: str, output: Path | None):
     """Dump ABI snapshot of a shared library to JSON.
 
     \b
@@ -61,7 +59,7 @@ def dump_cmd(so_path: Path, headers: tuple, includes: tuple,
 @click.option("--format", "fmt", type=click.Choice(["json", "markdown"]),
               default="markdown", show_default=True)
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
-def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Optional[Path]):
+def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path | None):
     """Compare two ABI snapshots and report changes.
 
     \b
