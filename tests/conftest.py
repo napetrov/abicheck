@@ -1,5 +1,6 @@
 """conftest.py — pytest configuration for abicheck tests."""
 import shutil
+
 import pytest
 
 

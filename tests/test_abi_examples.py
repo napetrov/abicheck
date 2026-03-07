@@ -75,23 +75,23 @@ def test_abi_example(case_name, expected_verdict, hdr_v1, hdr_v2, tmp_path):
 
     # Dump v1
     r1 = subprocess.run(
-        ["abi-check", "dump", str(libv1), "-H", str(header1), "-o", str(snap1)],
+        ["abicheck", "dump", str(libv1), "-H", str(header1), "-o", str(snap1)],
         capture_output=True, text=True, check=False, timeout=60,
     )
     if r1.returncode != 0:
-        pytest.fail(f"abi-check dump v1 failed in {case_name}:\n{r1.stderr[:500]}")
+        pytest.fail(f"abicheck dump v1 failed in {case_name}:\n{r1.stderr[:500]}")
 
     # Dump v2
     r2 = subprocess.run(
-        ["abi-check", "dump", str(libv2), "-H", str(header2), "-o", str(snap2)],
+        ["abicheck", "dump", str(libv2), "-H", str(header2), "-o", str(snap2)],
         capture_output=True, text=True, check=False, timeout=60,
     )
     if r2.returncode != 0:
-        pytest.fail(f"abi-check dump v2 failed in {case_name}:\n{r2.stderr[:500]}")
+        pytest.fail(f"abicheck dump v2 failed in {case_name}:\n{r2.stderr[:500]}")
 
     # Compare
     rc = subprocess.run(
-        ["abi-check", "compare", str(snap1), str(snap2), "--format", "json"],
+        ["abicheck", "compare", str(snap1), str(snap2), "--format", "json"],
         capture_output=True, text=True, check=False, timeout=60,
     )
 
@@ -100,7 +100,7 @@ def test_abi_example(case_name, expected_verdict, hdr_v1, hdr_v2, tmp_path):
         verdict = result.get("verdict", "")
     except json.JSONDecodeError:
         pytest.fail(
-            f"abi-check compare produced invalid JSON for {case_name} "
+            f"abicheck compare produced invalid JSON for {case_name} "
             f"(returncode={rc.returncode}):\n{rc.stdout[:500]}"
         )
 
