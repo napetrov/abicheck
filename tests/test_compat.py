@@ -202,3 +202,18 @@ def test_write_html_report_creates_dirs(tmp_path: Path) -> None:
     write_html_report(result, out)
     assert out.exists()
     assert out.stat().st_size > 100
+
+
+def test_parse_descriptor_first_lib_used_warning(tmp_path: Path) -> None:
+    """When descriptor has multiple <libs>, parse still succeeds with both libs captured."""
+    xml = """
+    <descriptor>
+      <version>2.0</version>
+      <libs>/lib/liba.so</libs>
+      <libs>/lib/libb.so</libs>
+    </descriptor>
+    """
+    desc = parse_descriptor(_write_xml(tmp_path, xml))
+    # Both are captured — CLI is responsible for emitting the warning
+    assert len(desc.libs) == 2
+    assert desc.libs[0] == Path("/lib/liba.so")

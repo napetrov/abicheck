@@ -159,11 +159,32 @@ def compat_cmd(
         click.echo(f"Error parsing descriptor: {exc}", err=True)
         sys.exit(2)
 
-    # Resolve .so paths — use first lib in each descriptor
+    # Resolve .so paths — use first lib in each descriptor.
+    # If descriptor contains multiple <libs>, warn and use the first.
     old_so = old.libs[0]
     new_so = new.libs[0]
+    if len(old.libs) > 1:
+        click.echo(
+            f"Warning: descriptor {old_desc.name} has {len(old.libs)} <libs> entries; "
+            f"using only the first: {old_so}",
+            err=True,
+        )
+    if len(new.libs) > 1:
+        click.echo(
+            f"Warning: descriptor {new_desc.name} has {len(new.libs)} <libs> entries; "
+            f"using only the first: {new_so}",
+            err=True,
+        )
+
     old_headers = old.headers[0] if old.headers else None
     new_headers = new.headers[0] if new.headers else None
+
+    if old_headers is None or new_headers is None:
+        click.echo(
+            "Warning: one or both descriptors have no <headers> entry. "
+            "Type-level ABI checks (struct layout, enum values, etc.) will be skipped.",
+            err=True,
+        )
 
     if not old_so.exists():
         click.echo(f"Error: library not found: {old_so}", err=True)

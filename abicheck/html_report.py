@@ -162,13 +162,8 @@ def generate_html_report(
 """
 
 
-def _is_breaking(change: object) -> bool:
-    kind = getattr(change, "kind", None)
-    kind_str = kind.value if kind is not None and hasattr(kind, "value") else str(kind)
-    return kind_str in _BREAKING_KINDS
-
-
-# Set of kind strings that are considered breaking (for row colouring)
+# Set of kind strings that are considered breaking (for row colouring).
+# Defined before _is_breaking() which references it.
 _BREAKING_KINDS: frozenset[str] = frozenset({
     "func_removed", "func_params_changed", "func_return_changed",
     "func_noexcept_removed", "type_size_changed", "struct_size_changed",
@@ -178,6 +173,12 @@ _BREAKING_KINDS: frozenset[str] = frozenset({
     "struct_packing_changed", "type_visibility_changed", "qualifier_removed",
     "union_field_removed", "bitfield_size_changed",
 })
+
+
+def _is_breaking(change: object) -> bool:
+    kind = getattr(change, "kind", None)
+    kind_str = kind.value if kind is not None and hasattr(kind, "value") else str(kind)
+    return kind_str in _BREAKING_KINDS
 
 
 def write_html_report(
