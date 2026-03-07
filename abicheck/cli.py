@@ -13,7 +13,7 @@ from .serialization import load_snapshot
 
 
 @click.group()
-def main():
+def main() -> None:
     """abicheck — ABI compatibility checker for C/C++ shared libraries."""
 
 
@@ -29,8 +29,8 @@ def main():
               help="Compiler frontend for castxml (c++ or cc).")
 @click.option("-o", "--output", "output", type=click.Path(path_type=Path), default=None,
               help="Output JSON file. Defaults to stdout.")
-def dump_cmd(so_path: Path, headers: tuple, includes: tuple,
-             version: str, compiler: str, output: Path | None):
+def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...],
+             version: str, compiler: str, output: Path | None) -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
     \b
@@ -62,7 +62,7 @@ def dump_cmd(so_path: Path, headers: tuple, includes: tuple,
 @click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
               help="Suppression file (YAML) to filter known/intentional changes.")
 def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path | None,
-                suppress: Path | None):
+                suppress: Path | None) -> None:
     """Compare two ABI snapshots and report changes.
 
     \b

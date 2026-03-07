@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from typing import Any
 from pathlib import Path
 
 from .model import (
@@ -16,7 +17,7 @@ from .model import (
 )
 
 
-def snapshot_to_dict(snap: AbiSnapshot) -> dict:
+def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     # Reset cache fields to None before asdict() to prevent double-serialization.
     # asdict() would otherwise recursively serialize the index dicts (containing
     # Function/Variable objects), bloating the output and corrupting roundtrip.
@@ -34,7 +35,7 @@ def snapshot_to_json(snap: AbiSnapshot, indent: int = 2) -> str:
     return json.dumps(snapshot_to_dict(snap), indent=indent)
 
 
-def snapshot_from_dict(d: dict) -> AbiSnapshot:
+def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
     funcs = [
         Function(
             name=f["name"], mangled=f["mangled"], return_type=f["return_type"],

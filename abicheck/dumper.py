@@ -157,7 +157,7 @@ def _parse_vtable_index(vi_str: str | None) -> int | None:
     return int(vi_str) if stripped.isdigit() else None
 
 
-def _vt_sort_key(item: tuple) -> tuple:
+def _vt_sort_key(item: tuple[int | None, str]) -> tuple[int, int | str]:
     vi, _ = item
     return (0, vi) if vi is not None else (1, 0)
 
@@ -347,7 +347,7 @@ class _CastxmlParser:
 
             # Collect virtual methods: look up in the top-level map by class id
             # Also include inherited virtual methods from base classes (prepend them)
-            def _collect_virtual_methods(cid: str, seen: set | None = None) -> list[tuple]:
+            def _collect_virtual_methods(cid: str, seen: set[str] | None = None) -> list[tuple[int | None, str]]:
                 if seen is None:
                     seen = set()
                 if cid in seen:
