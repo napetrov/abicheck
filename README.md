@@ -1,50 +1,56 @@
-# abicheck
+# abi-check
 
-**abicheck** is a Python-native ABI compatibility checker for C/C++ shared libraries.
+**abi-check** is a modern ABI compatibility checker for C/C++ shared libraries.
 
-It is designed as a modular, LLVM/GCC-agnostic replacement for existing ABI checking tools, with first-class support for Intel oneAPI packages.
+It is designed as a modular, compiler-agnostic alternative to
+[abi-compliance-checker](https://github.com/lvc/abi-compliance-checker),
+using Clang as the parsing backend (GCC can optionally configure target settings).
 
 ---
 
 ## Problem Statement
 
-Existing ABI checking tools have significant limitations in CI/CD pipelines for modern C++ libraries:
+Existing ABI checking tools have significant limitations in CI/CD pipelines for
+modern C++ libraries:
 
-- **abi-compliance-checker** (ABICC): written in Perl, hard GCC dependency via `-fdump-lang-spec`, limited Clang/LLVM support, difficult to extend or embed.
-- **abidiff** (libabigail): excellent binary-level ELF diff, but requires DWARF debug symbols; many release builds strip them.
-- **Symbol-only diffing** (`nm`, `objdump`): no type-level information, many false positives/negatives.
+- **abi-compliance-checker**: written in Perl, hard GCC dependency via
+  `-fdump-lang-spec`, no Clang/LLVM support, difficult to extend or embed.
+- **abidiff** (libabigail): excellent binary-level ELF diff, but requires DWARF
+  debug symbols; many release builds strip them.
+- **Symbol-only diffing** (`nm`, `objdump`): no type-level information, many
+  false positives/negatives.
 
-**The gap:** There is no lightweight, Python-native tool that:
+**The gap:** There is no lightweight, embeddable tool that:
 1. Works from headers + release `.so` (no debug symbols required)
-2. Supports both GCC and Clang/LLVM as the parsing frontend
+2. Uses Clang (via castxml) as the parsing backend; GCC may be specified to match build macros/target
 3. Produces structured, machine-readable ABI reports
-4. Can be embedded in CI pipelines without Perl/heavy dependencies
+4. Can be embedded in CI pipelines without Perl or heavy toolchain dependencies
 
 ---
 
 ## Goals
 
 ### Must Have
-- [ ] Parse C/C++ public API from headers using **castxml** (Clang-based, compiler-agnostic)
-- [ ] Extract exported symbol list from `.so` (ELF, no debug info required)
-- [ ] Diff two ABI snapshots and classify changes:
-  - `BREAKING`: removed/renamed public symbols, incompatible type changes, vtable changes
-  - `SOURCE_BREAK`: API-level changes (signature, default args) not visible in binary
+- Parse C/C++ public API from headers using **castxml** (Clang-based,
+  compiler-agnostic)
+- Extract exported symbol list from `.so` (ELF, no debug info required)
+- Diff two ABI snapshots and classify changes:
+  - `BREAKING`: removed/renamed public symbols, incompatible type changes,
+    vtable changes, alignment changes
   - `COMPATIBLE`: added symbols, internal changes
   - `NO_CHANGE`: identical ABI
-- [ ] Structured output: JSON + Markdown report
-- [ ] CLI: `abicheck dump`, `abicheck compare`, `abicheck scan` (version history)
+- Structured output: JSON + Markdown report
+- CLI: `abi-check dump`, `abi-check compare`
 
 ### Should Have
-- [ ] LLVM/Clang support as first-class frontend (via castxml)
-- [ ] GCC support (via castxml)
-- [ ] Suppression file support (filter known/intentional ABI changes)
-- [ ] Per-symbol classification: public / internal (hidden visibility) / ELF-only
+- Clang-based parsing via castxml (GCC can be specified for macro/target compatibility)
+- Suppression file support (filter known/intentional ABI changes)
+- Per-symbol classification: public / ELF-only / hidden visibility
 
 ### Nice to Have
-- [ ] HTML report
-- [ ] Integration with package managers (APT, conda) for automated version scanning
-- [ ] GitHub Actions workflow
+- HTML report
+- Version history scanning (compare all releases of a library)
+- GitHub Actions integration
 
 ---
 
@@ -53,7 +59,7 @@ Existing ABI checking tools have significant limitations in CI/CD pipelines for 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                        CLI                              │
-│          abicheck dump | compare | scan                │
+│          abi-check dump | compare                       │
 └──────────────┬────────────────────┬─────────────────────┘
                │                    │
       ┌────────▼────────┐  ┌────────▼────────┐
@@ -71,7 +77,6 @@ Existing ABI checking tools have significant limitations in CI/CD pipelines for 
                ┌────────▼────────┐
                │    REPORTER     │
                │ JSON / Markdown │
-               │ / HTML          │
                └─────────────────┘
 ```
 
@@ -79,10 +84,10 @@ Existing ABI checking tools have significant limitations in CI/CD pipelines for 
 
 | Component | Description | Key dependency |
 |-----------|-------------|----------------|
-| `abicheck.dumper` | Headers + `.so` → ABI snapshot JSON | `castxml` |
-| `abicheck.checker` | Diff two snapshots → classified changes | pure Python |
-| `abicheck.reporter` | Changes → structured report | pure Python |
-| `abicheck.cli` | Command-line interface | `click` |
+| `abi_check.dumper` | Headers + `.so` → ABI snapshot JSON | `castxml` |
+| `abi_check.checker` | Diff two snapshots → classified changes | pure Python |
+| `abi_check.reporter` | Changes → structured report | pure Python |
+| `abi_check.cli` | Command-line interface | `click` |
 
 ### ABI Snapshot Format (JSON)
 
@@ -101,8 +106,15 @@ Existing ABI checking tools have significant limitations in CI/CD pipelines for 
     }
   ],
   "types": [...],
-  "variables": [...],
-  "vtables": [...]
+  "variables": [
+    {
+      "name": "global_flag",
+      "mangled": "_Z11global_flag",
+      "type": "int",
+      "visibility": "public",
+      "source_location": "globals.h:5"
+    }
+  ]
 }
 ```
 
@@ -110,15 +122,39 @@ Existing ABI checking tools have significant limitations in CI/CD pipelines for 
 
 ## Why castxml?
 
-[castxml](https://github.com/CastXML/CastXML) converts C/C++ source to an XML description of the AST, using Clang as the parsing backend. It:
+[castxml](https://github.com/CastXML/CastXML) converts C/C++ source to an XML
+description of the AST using Clang as the parsing backend. It:
 
-- Supports **GCC and Clang** (LLVM) as frontends
-- Is widely used (SWIG, pygccxml, ROOT/Cling)
+- Clang-based parsing; GCC may be specified via  to match build macros/target settings
+- Is widely used in the C++ ecosystem (SWIG, pygccxml, ROOT/Cling)
 - Handles most C++ features including templates, namespaces, inheritance
-- Produces a stable, well-documented XML format (GCC-XML)
-- Is actively maintained (CastXML project)
+- Produces a stable, well-documented XML format
+- Is actively maintained (Apache-2.0 license)
 
-Unlike ABICC's Perl-based header parser, castxml is a proper C++ frontend and handles edge cases (SFINAE, concepts, attribute visibility) correctly.
+---
+
+## Prerequisites
+
+- **castxml** — `apt install castxml` or `conda install -c conda-forge castxml`
+- **Python 3.10+**
+- **g++** or **clang++** (compiler for castxml to use when parsing headers)
+
+## Installation
+
+```bash
+# Install from source (not yet on PyPI):
+pip install -e .
+```
+
+## Quick Start
+
+```bash
+# Dump ABI snapshot
+abi-check dump libfoo.so.1 -H include/foo.h --version 1.2.3 -o snap-1.2.3.json
+
+# Compare two versions
+abi-check compare snap-1.2.3.json snap-1.3.0.json
+```
 
 ---
 
@@ -126,18 +162,8 @@ Unlike ABICC's Perl-based header parser, castxml is a proper C++ frontend and ha
 
 **Apache License 2.0** — see [LICENSE](LICENSE).
 
-> **Note on third-party tools:**  
-> This project does **not** contain any code derived from `abi-compliance-checker` (LGPL-2.1) or `libabigail` (LGPL-2.1+).  
-> castxml itself is Apache-2.0 licensed.  
+> **Note on third-party tools:**
+> This project does **not** contain any code derived from
+> `abi-compliance-checker` (LGPL-2.1) or `libabigail` (LGPL-3.0+).
+> castxml itself is Apache-2.0 licensed.
 > See [NOTICE.md](NOTICE.md) for full third-party notices.
-
----
-
-## Status
-
-🚧 **Early development / POC**
-
-- [ ] Dumper POC (castxml integration)
-- [ ] Checker POC (diff + verdict)
-- [ ] Test suite (independent fixtures)
-- [ ] CLI skeleton
