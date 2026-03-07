@@ -53,9 +53,9 @@ CASES = [
     ("case16_inline_to_non_inline", "COMPATIBLE", "v1.hpp",   "v2.hpp"),
     # ✅ Explicit-instantiated template size grows → TYPE_SIZE_CHANGED → BREAKING
     ("case17_template_abi",         "BREAKING",   "v1.hpp",   "v2.hpp"),
-    # ⚠️ Third-party struct is anonymous typedef; parse_types skips anonymous types
-    #    → transitive ABI leak not detected → NO_CHANGE (known gap, needs typedef resolution)
-    ("case18_dependency_leak",      "NO_CHANGE",  "foo_v1.h", "foo_v2.h"),
+    # ✅ castxml processes headers transitively: ThirdPartyHandle (4→8 bytes) detected
+    #    via TYPE_SIZE_CHANGED → BREAKING. This is correct behaviour — the struct grew.
+    ("case18_dependency_leak",      "BREAKING",   "foo_v1.h", "foo_v2.h"),
 ]
 
 
