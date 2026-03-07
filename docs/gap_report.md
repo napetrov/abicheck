@@ -8,12 +8,14 @@
 
 ## Summary
 
-- **abicheck covers:** ~23/49 de-duplicated ABI break scenarios (~47%)
-- **Key differentiator:** abicheck uses castxml (Clang AST from headers) → works on **release builds** with headers + `.so`, no debug symbols required. ABICC needs GCC `-fdump-lang-spec`, abidiff needs DWARF debug info.
-- **Critical gaps:** 10 P0 cases where we silently miss real ABI breaks (8 original + 2 promoted from P1 after review)
-- **Coverage ceiling:** ~87% with the headers-only architecture (calling convention changes require DWARF; 4/49 fundamentally undetectable)
+- **abicheck covers:** ~43/49 de-duplicated ABI break scenarios (~88%) after Sprint 1-6
+- **Key differentiator:** abicheck uses multi-tier analysis (castxml headers + ELF symbols + DWARF layout) -- works on **release builds** with headers + `.so`, no debug symbols required for core checks. ABICC needs GCC `-fdump-lang-spec`, abidiff needs DWARF debug info.
+- **Closed gaps (Sprint 1-6):** All 10 original P0 cases are now detected; ELF-only layer, DWARF layout, advanced DWARF (calling convention, packing, toolchain flags), ABICC compat CLI, and libabigail parity tests added.
+- **Coverage ceiling:** ~88% with the multi-tier architecture (remaining gaps are mostly P2 items)
 
 > Note: ABICC has 90+ rules total, but many are sub-rules of the same scenario. The 49-row coverage table below is the de-duplicated scenario count used for all % calculations.
+>
+> **Sprint status:** Sprint 1 (core detectors), Sprint 2 (ELF-only), Sprint 3 (DWARF layout), Sprint 4 (advanced DWARF), Sprint 5 (ABICC compat), Sprint 6 (libabigail parity) -- all implemented.
 
 ---
 
@@ -217,16 +219,17 @@ abicheck workflow:         abidiff workflow:
 
 ## Coverage Summary Table
 
-| Category | abicheck now | After S1 | After S2 | After S3 | ABICC | abidiff |
-|----------|-------------|----------|----------|----------|-------|---------|
-| Function symbol ABI | 8/12 | 11/12 | 12/12 | 12/12 | 12/12 | 10/12 |
-| Type/struct layout | 8/10 | 8/10 | 10/10 | 10/10 | 10/10 | 10/10 |
-| C++ vtable | 2/5 | 4/5 | 5/5 | 5/5 | 5/5 | 5/5 |
-| Enums | 0/4 | 4/4 | 4/4 | 4/4 | 4/4 | 3/4 |
-| Qualifiers (const/volatile) | 0/6 | 3/6 | 5/6 | 6/6 | 6/6 | 4/6 |
-| ELF/policy | 4/4 | 4/4 | 4/4 | 4/4 | 3/4 | 4/4 |
-| Union | 1/4 | 3/4 | 4/4 | 4/4 | 4/4 | 4/4 |
-| Calling convention | 0/4 | 0/4 | 0/4 | 0/4 | 4/4 | 4/4 |
-| **Total (est.)** | **23/49 (47%)** | **~32/49 (65%)** | **~40/49 (82%)** | **~43/49 (88%)** | **~48/49** | **~44/49** |
+| Category | abicheck (current, S1-6) | ABICC | abidiff |
+|----------|-------------------------|-------|---------|
+| Function symbol ABI | 12/12 | 12/12 | 10/12 |
+| Type/struct layout | 10/10 | 10/10 | 10/10 |
+| C++ vtable | 5/5 | 5/5 | 5/5 |
+| Enums | 4/4 | 4/4 | 3/4 |
+| Qualifiers (const/volatile) | 5/6 | 6/6 | 4/6 |
+| ELF/policy | 4/4 | 3/4 | 4/4 |
+| Union | 4/4 | 4/4 | 4/4 |
+| Calling convention (DWARF) | 3/4 | 4/4 | 4/4 |
+| **Total** | **~43/49 (88%)** | **~48/49** | **~44/49** |
 
-> **Coverage ceiling ~87–88%** due to calling convention changes (4/49) requiring DWARF. These are fundamentally undetectable from headers alone regardless of sprint scope.
+> Calling convention detection is now partially covered via DWARF `DW_AT_calling_convention` (Sprint 4).
+> Remaining gaps are P2 items (field qualifiers, renamed parameters, cross-arch support).

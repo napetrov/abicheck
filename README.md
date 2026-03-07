@@ -1,6 +1,6 @@
-# abi-check
+# abicheck
 
-**abi-check** is a modern ABI compatibility checker for C/C++ shared libraries.
+**abicheck** is a modern ABI compatibility checker for C/C++ shared libraries.
 
 It is designed as a modular, compiler-agnostic alternative to
 [abi-compliance-checker](https://github.com/lvc/abi-compliance-checker),
@@ -40,7 +40,7 @@ modern C++ libraries:
   - `COMPATIBLE`: added symbols, internal changes
   - `NO_CHANGE`: identical ABI
 - Structured output: JSON + Markdown report
-- CLI: `abi-check dump`, `abi-check compare`
+- CLI: `abicheck dump`, `abicheck compare`
 
 ### Should Have
 - Clang-based parsing via castxml (GCC can be specified for macro/target compatibility)
@@ -57,37 +57,42 @@ modern C++ libraries:
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                        CLI                              │
-│          abi-check dump | compare                       │
-└──────────────┬────────────────────┬─────────────────────┘
-               │                    │
-      ┌────────▼────────┐  ┌────────▼────────┐
-      │    DUMPER       │  │    CHECKER      │
-      │                 │  │                 │
-      │ castxml         │  │ diff(a, b)      │
-      │   ↓             │  │   ↓             │
-      │ ABI snapshot    │  │ classify change │
-      │ (JSON)          │  │   ↓             │
-      │                 │  │ verdict         │
-      └────────┬────────┘  └────────┬────────┘
-               │                    │
-               └────────┬───────────┘
-                        │
-               ┌────────▼────────┐
-               │    REPORTER     │
-               │ JSON / Markdown │
-               └─────────────────┘
++-------------------------------------------------------------+
+|                        CLI                                    |
+|          abicheck dump | compare | compat                    |
++----------------+------------------------+--------------------+
+                 |                        |
+        +--------v--------+     +--------v--------+
+        |    DUMPER        |     |    CHECKER      |
+        |                  |     |                 |
+        | castxml + ELF    |     | diff(a, b)      |
+        |   |              |     |   |             |
+        | ABI snapshot     |     | classify change |
+        | (JSON)           |     |   |             |
+        |                  |     | verdict         |
+        +--------+---------+    +--------+---------+
+                 |                        |
+                 +------------+-----------+
+                              |
+                     +--------v--------+
+                     |    REPORTER     |
+                     | JSON / MD / HTML|
+                     +-----------------+
 ```
 
 ### Components
 
 | Component | Description | Key dependency |
 |-----------|-------------|----------------|
-| `abi_check.dumper` | Headers + `.so` → ABI snapshot JSON | `castxml` |
-| `abi_check.checker` | Diff two snapshots → classified changes | pure Python |
-| `abi_check.reporter` | Changes → structured report | pure Python |
-| `abi_check.cli` | Command-line interface | `click` |
+| `abicheck.dumper` | Headers + `.so` -> ABI snapshot JSON | `castxml`, `pyelftools` |
+| `abicheck.checker` | Diff two snapshots -> classified changes | pure Python |
+| `abicheck.reporter` | Changes -> structured report | pure Python |
+| `abicheck.html_report` | HTML report generator | pure Python |
+| `abicheck.elf_metadata` | ELF dynamic section + symbol metadata | `pyelftools` |
+| `abicheck.dwarf_metadata` | DWARF type layout extraction | `pyelftools` |
+| `abicheck.dwarf_advanced` | Calling convention, packing, flags | `pyelftools` |
+| `abicheck.compat` | ABICC XML descriptor compatibility layer | `defusedxml` |
+| `abicheck.cli` | Command-line interface | `click` |
 
 ### ABI Snapshot Format (JSON)
 
@@ -140,7 +145,7 @@ suppressions:
     reason: "private implementation detail"
 
   - symbol_pattern: ".*detail.*"
-    reason: "internal namespace — not public API"
+    reason: "internal namespace -- not public API"
 ```
 
 Fields:
@@ -148,7 +153,7 @@ Fields:
 | Field | Required | Description |
 |---|---|---|
 | `symbol` | one of | Exact mangled symbol name |
-| `symbol_pattern` | one of | Python `re.search` pattern |
+| `symbol_pattern` | one of | Python `re.fullmatch` pattern (must match entire symbol name; use `.*` for substring matching) |
 | `change_kind` | optional | `ChangeKind` value (e.g. `func_removed`); omit to suppress all kinds |
 | `reason` | optional | Human-readable note |
 
@@ -161,7 +166,7 @@ abicheck compare libfoo-1.0.json libfoo-2.0.json --suppress suppressions.yaml
 When suppressions are active the Markdown report includes a footer:
 
 ```text
-> ℹ️ 3 change(s) suppressed via suppression file
+> i 3 change(s) suppressed via suppression file
 ```
 
 See `examples/suppression_example.yaml` for realistic examples.
@@ -171,7 +176,7 @@ See `examples/suppression_example.yaml` for realistic examples.
 [castxml](https://github.com/CastXML/CastXML) converts C/C++ source to an XML
 description of the AST using Clang as the parsing backend. It:
 
-- Clang-based parsing; GCC may be specified via  to match build macros/target settings
+- Clang-based parsing; GCC may be specified via `--compiler` to match build macros/target settings
 - Is widely used in the C++ ecosystem (SWIG, pygccxml, ROOT/Cling)
 - Handles most C++ features including templates, namespaces, inheritance
 - Produces a stable, well-documented XML format
@@ -181,7 +186,8 @@ description of the AST using Clang as the parsing backend. It:
 
 ## Prerequisites
 
-- **castxml** — `apt install castxml` or `conda install -c conda-forge castxml`
+- **castxml** -- `apt install castxml` or `conda install -c conda-forge castxml`
+  (optional: only needed for header-based type analysis; ELF/DWARF analysis works without it)
 - **Python 3.10+**
 - **g++** or **clang++** (compiler for castxml to use when parsing headers)
 
@@ -196,17 +202,20 @@ pip install -e .
 
 ```bash
 # Dump ABI snapshot
-abi-check dump libfoo.so.1 -H include/foo.h --version 1.2.3 -o snap-1.2.3.json
+abicheck dump libfoo.so.1 -H include/foo.h --version 1.2.3 -o snap-1.2.3.json
 
 # Compare two versions
-abi-check compare snap-1.2.3.json snap-1.3.0.json
+abicheck compare snap-1.2.3.json snap-1.3.0.json
+
+# ABICC-compatible mode (reads XML descriptors)
+abicheck compat -lib libfoo -old old.xml -new new.xml
 ```
 
 ---
 
 ## License
 
-**Apache License 2.0** — see [LICENSE](LICENSE).
+**Apache License 2.0** -- see [LICENSE](LICENSE).
 
 > **Note on third-party tools:**
 > This project does **not** contain any code derived from

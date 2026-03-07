@@ -1,1 +1,1 @@
-"""abi_check — ABI compatibility checker."""
+"""abicheck — ABI compatibility checker."""

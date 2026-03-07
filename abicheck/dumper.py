@@ -9,8 +9,7 @@ import subprocess
 import tempfile
 import warnings
 from pathlib import Path
-from typing import cast
-from xml.etree import ElementTree as ET
+from typing import Any, cast
 from xml.etree.ElementTree import Element
 
 from defusedxml import ElementTree as DefusedET
@@ -32,43 +31,47 @@ def _castxml_available() -> bool:
     return shutil.which("castxml") is not None
 
 
-def _readelf_exported_symbols(so_path: Path) -> tuple[set[str], set[str]]:
+_HIDDEN_VIS = frozenset({"STV_HIDDEN", "STV_INTERNAL"})
+
+
+def _pyelftools_exported_symbols(so_path: Path) -> tuple[set[str], set[str]]:
     """Return (exported_dynamic, exported_static) sets of mangled symbol names.
 
-    - exported_dynamic: symbols from --dyn-syms (.dynsym), truly exported via ELF
-    - exported_static: symbols from --syms (all symbols including static)
-
-    Raises RuntimeError on readelf failure.
+    Uses pyelftools (pure Python) instead of shelling out to readelf.
+    - exported_dynamic: symbols from .dynsym, truly exported via ELF
+    - exported_static: symbols from .symtab (all symbols including static)
     """
-    def _parse_readelf(args: list[str]) -> set[str]:
-        result = subprocess.run(
-            ["readelf", "--wide"] + args + [str(so_path)],
-            capture_output=True, text=True, check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"readelf failed (exit {result.returncode}) on {so_path}:\n"
-                f"{result.stderr[:1000]}"
-            )
+    from elftools.common.exceptions import ELFError
+    from elftools.elf.elffile import ELFFile
+    from elftools.elf.sections import SymbolTableSection
+
+    def _extract_symbols(elf: Any, section_name: str) -> set[str]:
         syms: set[str] = set()
-        for line in result.stdout.splitlines():
-            parts = line.split()
-            if len(parts) < 8:
+        section = elf.get_section_by_name(section_name)
+        if section is None or not isinstance(section, SymbolTableSection):
+            return syms
+        for sym in section.iter_symbols():
+            if sym.entry.st_shndx == "SHN_UNDEF":
                 continue
-            bind = parts[4]
-            vis = parts[5]
-            ndx = parts[6]
-            name = parts[7].split("@")[0]
-            if bind in ("GLOBAL", "WEAK") and vis in ("DEFAULT", "PROTECTED") and ndx != "UND":
-                syms.add(name)
+            bind = sym.entry.st_info.bind
+            vis = sym.entry.st_other.visibility
+            if bind in ("STB_GLOBAL", "STB_WEAK") and vis not in _HIDDEN_VIS:
+                name = sym.name
+                if name:
+                    syms.add(name)
         return syms
 
-    exported_dynamic = _parse_readelf(["--dyn-syms"])
     try:
-        exported_static = _parse_readelf(["--syms"])
-    except RuntimeError:
-        exported_static = set(exported_dynamic)
-    return exported_dynamic, exported_static
+        with open(so_path, "rb") as f:
+            elf: Any = ELFFile(f)  # type: ignore[no-untyped-call]
+            exported_dynamic = _extract_symbols(elf, ".dynsym")
+            try:
+                exported_static = _extract_symbols(elf, ".symtab")
+            except (ELFError, OSError):
+                exported_static = set(exported_dynamic)
+            return exported_dynamic, exported_static
+    except (ELFError, OSError) as exc:
+        raise RuntimeError(f"Failed to parse ELF file {so_path}: {exc}") from exc
 
 
 def _cache_key(headers: list[Path], extra_includes: list[Path], compiler: str) -> str:
@@ -101,7 +104,7 @@ def _cache_path(key: str) -> Path:
 
 
 def _castxml_dump(headers: list[Path], extra_includes: list[Path],
-                  compiler: str = "c++") -> ET.Element:
+                  compiler: str = "c++") -> Element:
     """Run castxml on headers and return parsed XML root.
 
     Args:
@@ -163,7 +166,7 @@ def _parse_vtable_index(vi_str: str | None) -> int | None:
     return int(vi_str) if stripped.isdigit() else None
 
 
-def _vt_sort_key(item: tuple[int | None, str]) -> tuple[int, int | str]:
+def _vt_sort_key(item: tuple[int | None, str]) -> tuple[int, int]:
     vi, _ = item
     return (0, vi) if vi is not None else (1, 0)
 
@@ -171,13 +174,13 @@ def _vt_sort_key(item: tuple[int | None, str]) -> tuple[int, int | str]:
 class _CastxmlParser:
     """Parse castxml XML into ABI model objects."""
 
-    def __init__(self, root: ET.Element, exported_dynamic: set[str],
+    def __init__(self, root: Element, exported_dynamic: set[str],
                  exported_static: set[str]):
         self._root = root
         self._exported_dynamic = exported_dynamic
         self._exported_static = exported_static
-        self._id_map: dict[str, ET.Element] = {}
-        self._virtual_methods_by_class: dict[str, list[ET.Element]] = {}
+        self._id_map: dict[str, Element] = {}
+        self._virtual_methods_by_class: dict[str, list[Element]] = {}
         self._build_id_map()
 
     def _build_id_map(self) -> None:
@@ -193,7 +196,7 @@ class _CastxmlParser:
                 if ctx:
                     self._virtual_methods_by_class.setdefault(ctx, []).append(el)
 
-    def _resolve(self, id_: str) -> ET.Element | None:
+    def _resolve(self, id_: str) -> Element | None:
         return self._id_map.get(id_)
 
     def _type_name(self, id_: str, depth: int = 0) -> str:
@@ -484,7 +487,7 @@ def dump(
         AbiSnapshot with functions, variables, and types populated.
     """
     extra_includes = extra_includes or []
-    exported_dynamic, exported_static = _readelf_exported_symbols(so_path)
+    exported_dynamic, exported_static = _pyelftools_exported_symbols(so_path)
 
     from .dwarf_advanced import parse_advanced_dwarf
     from .dwarf_metadata import parse_dwarf_metadata
