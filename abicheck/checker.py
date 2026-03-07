@@ -71,7 +71,7 @@ _BREAKING_KINDS = {
     ChangeKind.TYPE_FIELD_ADDED,  # for polymorphic / non-standard-layout types
 }
 
-_SOURCE_BREAK_KINDS: set = set()  # reserved for future source-only breaks
+_SOURCE_BREAK_KINDS: set[ChangeKind] = set()  # reserved for future source-only breaks
 
 
 _COMPATIBLE_KINDS = {
@@ -117,7 +117,7 @@ class DiffResult:
         return [c for c in self.changes if c.kind in _COMPATIBLE_KINDS]
 
 
-def _public(funcs) -> list[Function]:
+def _public(funcs: list[Function]) -> list[Function]:
     return [f for f in funcs if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)]
 
 

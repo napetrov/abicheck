@@ -80,9 +80,9 @@ class AbiSnapshot:
     types: list[RecordType] = field(default_factory=list)
 
     # Indexes (built lazily)
-    _func_by_mangled: dict | None = field(default=None, repr=False, compare=False)
-    _var_by_mangled: dict | None = field(default=None, repr=False, compare=False)
-    _type_by_name: dict | None = field(default=None, repr=False, compare=False)
+    _func_by_mangled: dict[str, Function] | None = field(default=None, repr=False, compare=False)
+    _var_by_mangled: dict[str, Variable] | None = field(default=None, repr=False, compare=False)
+    _type_by_name: dict[str, RecordType] | None = field(default=None, repr=False, compare=False)
 
     def index(self) -> None:
         self._func_by_mangled = {f.mangled: f for f in self.functions}
@@ -90,15 +90,17 @@ class AbiSnapshot:
         self._type_by_name = {t.name: t for t in self.types}
 
     @property
-    def function_map(self) -> dict:
+    def function_map(self) -> dict[str, Function]:
         if self._func_by_mangled is None:
             self.index()
+        assert self._func_by_mangled is not None
         return self._func_by_mangled
 
     @property
-    def variable_map(self) -> dict:
+    def variable_map(self) -> dict[str, Variable]:
         if self._var_by_mangled is None:
             self.index()
+        assert self._var_by_mangled is not None
         return self._var_by_mangled
 
     def func_by_mangled(self, mangled: str) -> Function | None:
@@ -110,4 +112,5 @@ class AbiSnapshot:
     def type_by_name(self, name: str) -> RecordType | None:
         if self._type_by_name is None:
             self.index()
+        assert self._type_by_name is not None
         return self._type_by_name.get(name)

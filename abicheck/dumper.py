@@ -9,7 +9,11 @@ import subprocess
 import tempfile
 import warnings
 from pathlib import Path
+from typing import cast
 from xml.etree import ElementTree as ET
+from xml.etree.ElementTree import Element
+
+from defusedxml import ElementTree as DefusedET
 
 from .model import (
     AbiSnapshot,
@@ -111,7 +115,7 @@ def _castxml_dump(headers: list[Path], extra_includes: list[Path],
     key = _cache_key(headers, extra_includes, compiler)
     cached = _cache_path(key)
     if cached.exists():
-        return ET.parse(str(cached)).getroot()
+        return cast(Element, DefusedET.parse(str(cached)).getroot())
 
     # Map logical compiler name → castxml cc flag
     _cc_map = {"c++": "g++", "cc": "gcc", "g++": "g++", "gcc": "gcc",
@@ -143,7 +147,7 @@ def _castxml_dump(headers: list[Path], extra_includes: list[Path],
             )
         # Save to cache
         shutil.copy2(str(out_xml), str(cached))
-        return ET.parse(str(out_xml)).getroot()
+        return cast(Element, DefusedET.parse(str(out_xml)).getroot())
     finally:
         agg_path.unlink(missing_ok=True)
         out_xml.unlink(missing_ok=True)
@@ -157,7 +161,7 @@ def _parse_vtable_index(vi_str: str | None) -> int | None:
     return int(vi_str) if stripped.isdigit() else None
 
 
-def _vt_sort_key(item: tuple) -> tuple:
+def _vt_sort_key(item: tuple[int | None, str]) -> tuple[int, int | str]:
     vi, _ = item
     return (0, vi) if vi is not None else (1, 0)
 
@@ -347,7 +351,7 @@ class _CastxmlParser:
 
             # Collect virtual methods: look up in the top-level map by class id
             # Also include inherited virtual methods from base classes (prepend them)
-            def _collect_virtual_methods(cid: str, seen: set | None = None) -> list[tuple]:
+            def _collect_virtual_methods(cid: str, seen: set[str] | None = None) -> list[tuple[int | None, str]]:
                 if seen is None:
                     seen = set()
                 if cid in seen:
