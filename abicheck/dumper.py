@@ -1,6 +1,8 @@
 """Dumper — headers + .so → AbiSnapshot via castxml."""
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 import shutil
 import subprocess
@@ -24,36 +26,72 @@ def _castxml_available() -> bool:
     return shutil.which("castxml") is not None
 
 
-def _readelf_exported_symbols(so_path: Path) -> set[str]:
-    """Return set of exported (globally visible) mangled symbol names from .so.
+def _readelf_exported_symbols(so_path: Path) -> tuple[set[str], set[str]]:
+    """Return (exported_dynamic, exported_static) sets of mangled symbol names.
 
-    Includes STV_DEFAULT and STV_PROTECTED symbols (both are exported and
-    ABI-relevant). Raises RuntimeError on readelf failure to prevent silent
-    empty-set bugs that would cause every symbol to appear removed.
+    - exported_dynamic: symbols from --dyn-syms (.dynsym), truly exported via ELF
+    - exported_static: symbols from --syms (all symbols including static)
+
+    Raises RuntimeError on readelf failure.
     """
-    result = subprocess.run(
-        ["readelf", "--wide", "--dyn-syms", str(so_path)],
-        capture_output=True, text=True, check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"readelf failed (exit {result.returncode}) on {so_path}:\n"
-            f"{result.stderr[:1000]}"
+    def _parse_readelf(args: list[str]) -> set[str]:
+        result = subprocess.run(
+            ["readelf", "--wide"] + args + [str(so_path)],
+            capture_output=True, text=True, check=False,
         )
-    exported: set[str] = set()
-    for line in result.stdout.splitlines():
-        parts = line.split()
-        # readelf --dyn-syms output: Num Value Size Type Bind Vis Ndx Name
-        if len(parts) < 8:
-            continue
-        bind = parts[4]
-        vis = parts[5]
-        ndx = parts[6]
-        name = parts[7].split("@")[0]  # strip version suffix (e.g. GLIBC_2.17)
-        # Include DEFAULT and PROTECTED — both are exported and ABI-relevant
-        if bind in ("GLOBAL", "WEAK") and vis in ("DEFAULT", "PROTECTED") and ndx != "UND":
-            exported.add(name)
-    return exported
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"readelf failed (exit {result.returncode}) on {so_path}:\n"
+                f"{result.stderr[:1000]}"
+            )
+        syms: set[str] = set()
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) < 8:
+                continue
+            bind = parts[4]
+            vis = parts[5]
+            ndx = parts[6]
+            name = parts[7].split("@")[0]
+            if bind in ("GLOBAL", "WEAK") and vis in ("DEFAULT", "PROTECTED") and ndx != "UND":
+                syms.add(name)
+        return syms
+
+    exported_dynamic = _parse_readelf(["--dyn-syms"])
+    try:
+        exported_static = _parse_readelf(["--syms"])
+    except RuntimeError:
+        exported_static = set(exported_dynamic)
+    return exported_dynamic, exported_static
+
+
+def _cache_key(headers: list[Path], extra_includes: list[Path], compiler: str) -> str:
+    h = hashlib.sha256()
+    for p in sorted(str(x.resolve()) for x in headers):
+        h.update(p.encode())
+        try:
+            h.update(str(os.path.getmtime(p)).encode())
+        except OSError:
+            pass
+    # Also hash mtimes of files in extra_include dirs (catches most transitive changes)
+    for inc_dir in sorted(str(x) for x in extra_includes):
+        inc_path = Path(inc_dir)
+        h.update(inc_dir.encode())
+        if inc_path.is_dir():
+            for f in sorted(inc_path.rglob("*.h")) + sorted(inc_path.rglob("*.hpp")):
+                try:
+                    h.update(str(f).encode())
+                    h.update(str(f.stat().st_mtime).encode())
+                except OSError:
+                    pass
+    h.update(compiler.encode())
+    return h.hexdigest()
+
+
+def _cache_path(key: str) -> Path:
+    cache_dir = Path.home() / ".cache" / "abi_check" / "castxml"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f"{key}.xml"
 
 
 def _castxml_dump(headers: list[Path], extra_includes: list[Path],
@@ -68,6 +106,12 @@ def _castxml_dump(headers: list[Path], extra_includes: list[Path],
             "castxml not found in PATH. Install with: apt install castxml  "
             "or  conda install -c conda-forge castxml"
         )
+
+    # Check disk cache
+    key = _cache_key(headers, extra_includes, compiler)
+    cached = _cache_path(key)
+    if cached.exists():
+        return ET.parse(str(cached)).getroot()
 
     # Map logical compiler name → castxml cc flag
     _cc_map = {"c++": "g++", "cc": "gcc", "g++": "g++", "gcc": "gcc",
@@ -97,6 +141,8 @@ def _castxml_dump(headers: list[Path], extra_includes: list[Path],
             raise RuntimeError(
                 f"castxml failed (exit {result.returncode}):\n{result.stderr[:2000]}"
             )
+        # Save to cache
+        shutil.copy2(str(out_xml), str(cached))
         return ET.parse(str(out_xml)).getroot()
     finally:
         agg_path.unlink(missing_ok=True)
@@ -106,9 +152,11 @@ def _castxml_dump(headers: list[Path], extra_includes: list[Path],
 class _CastxmlParser:
     """Parse castxml XML into ABI model objects."""
 
-    def __init__(self, root: ET.Element, exported_symbols: set[str]):
+    def __init__(self, root: ET.Element, exported_dynamic: set[str],
+                 exported_static: set[str]):
         self._root = root
-        self._exported = exported_symbols
+        self._exported_dynamic = exported_dynamic
+        self._exported_static = exported_static
         self._id_map: dict[str, ET.Element] = {}
         self._build_id_map()
 
@@ -151,11 +199,17 @@ class _CastxmlParser:
         return el.get("name", tag)
 
     def _visibility(self, mangled: str, name: str = "") -> Visibility:
-        """Check if symbol is exported: try mangled first, then plain name."""
-        if mangled and mangled in self._exported:
+        """Determine visibility based on ELF symbol tables."""
+        # Check dynamic symbols (.dynsym) — truly exported
+        if mangled and mangled in self._exported_dynamic:
             return Visibility.PUBLIC
-        if name and name in self._exported:
+        if name and name in self._exported_dynamic:
             return Visibility.PUBLIC
+        # Check all symbols (.symtab) — present in ELF but not exported
+        if mangled and mangled in self._exported_static:
+            return Visibility.ELF_ONLY
+        if name and name in self._exported_static:
+            return Visibility.ELF_ONLY
         return Visibility.HIDDEN
 
     def parse_functions(self) -> list[Function]:
@@ -181,6 +235,13 @@ class _CastxmlParser:
             is_virtual = el.get("virtual") == "1"
             noexcept_re = re.search(r"noexcept", el.get("attributes", ""))
 
+            # Detect extern "C": explicit extern attribute OR no mangled name (C linkage)
+            raw_mangled = el.get("mangled", "")
+            is_extern_c = (
+                el.get("extern") == "1"
+                or not raw_mangled  # C functions have no mangled name
+            )
+
             loc_id = el.get("location", "")
             loc_el = self._id_map.get(loc_id)
             source_loc = None
@@ -199,6 +260,7 @@ class _CastxmlParser:
                 visibility=vis,
                 is_virtual=is_virtual,
                 is_noexcept=bool(noexcept_re),
+                is_extern_c=is_extern_c,
                 source_location=source_loc,
             ))
         return funcs
@@ -225,10 +287,17 @@ class _CastxmlParser:
             if el.tag not in ("Struct", "Class", "Union"):
                 continue
             name = el.get("name", "")
-            if not name or name.startswith("_"):
+            # Skip compiler-internal / incomplete / anonymous types
+            if not name or el.get("incomplete") == "1" or el.get("artificial") == "1":
                 continue
+            if name.startswith("__"):  # double-underscore = internal
+                continue
+
             size_str = el.get("size")
             size_bits = int(size_str) if size_str and size_str.isdigit() else None
+
+            align_str = el.get("align")
+            alignment_bits = int(align_str) if align_str and align_str.isdigit() else None
 
             fields = []
             for child in el:
@@ -252,6 +321,7 @@ class _CastxmlParser:
                 name=name,
                 kind=el.tag.lower(),
                 size_bits=size_bits,
+                alignment_bits=alignment_bits,
                 fields=fields,
                 bases=bases,
                 virtual_bases=virtual_bases,
@@ -279,7 +349,7 @@ def dump(
         AbiSnapshot with functions, variables, and types populated.
     """
     extra_includes = extra_includes or []
-    exported = _readelf_exported_symbols(so_path)
+    exported_dynamic, exported_static = _readelf_exported_symbols(so_path)
 
     if not headers:
         warnings.warn(
@@ -294,13 +364,13 @@ def dump(
             functions=[
                 Function(name=sym, mangled=sym, return_type="?",
                          visibility=Visibility.ELF_ONLY)
-                for sym in sorted(exported)
+                for sym in sorted(exported_dynamic)
             ],
         )
         return snapshot
 
     xml_root = _castxml_dump(headers, extra_includes, compiler=compiler)
-    parser = _CastxmlParser(xml_root, exported)
+    parser = _CastxmlParser(xml_root, exported_dynamic, exported_static)
 
     snapshot = AbiSnapshot(
         library=so_path.name,
