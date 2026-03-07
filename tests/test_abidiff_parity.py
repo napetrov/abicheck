@@ -229,10 +229,10 @@ def test_known_divergence(
     ac = _run_abicheck(v1, v2)
     ab = _run_abidiff(v1, v2)
 
-    if ac == ab:
-        # Gap closed! This is good — update PARITY_CASES to move case to _CONFIRMED.
+    if ac == ab == abidiff_exp:
+        # Gap closed correctly: abicheck caught up to the authoritative abidiff verdict.
         pytest.fail(
-            f"Gap closed on '{name}': both tools now agree ({ac}). "
+            f"Gap closed on '{name}': abicheck now agrees with abidiff ({ac}). "
             "Move this case to _CONFIRMED and remove the is_divergence flag."
         )
 
