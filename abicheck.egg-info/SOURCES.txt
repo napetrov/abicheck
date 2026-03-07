@@ -5,8 +5,12 @@ pyproject.toml
 abicheck/__init__.py
 abicheck/checker.py
 abicheck/cli.py
+abicheck/compat.py
 abicheck/dumper.py
+abicheck/dwarf_advanced.py
+abicheck/dwarf_metadata.py
 abicheck/elf_metadata.py
+abicheck/html_report.py
 abicheck/model.py
 abicheck/reporter.py
 abicheck/serialization.py
@@ -19,8 +23,12 @@ abicheck.egg-info/requires.txt
 abicheck.egg-info/top_level.txt
 tests/test_abi_examples.py
 tests/test_checker.py
+tests/test_compat.py
+tests/test_elf_parse_integration.py
 tests/test_reporter.py
 tests/test_serialization.py
 tests/test_sprint1.py
 tests/test_sprint2_elf.py
+tests/test_sprint3_dwarf.py
+tests/test_sprint4_dwarf_advanced.py
 tests/test_suppression.py
