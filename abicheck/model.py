@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .elf_metadata import ElfMetadata
 
 
 class Visibility(str, Enum):
@@ -98,6 +102,7 @@ class AbiSnapshot:
     functions: list[Function] = field(default_factory=list)
     variables: list[Variable] = field(default_factory=list)
     types: list[RecordType] = field(default_factory=list)
+    elf: ElfMetadata | None = field(default=None)  # ELF dynamic/symbol metadata
     enums: list[EnumType] = field(default_factory=list)
     typedefs: dict[str, str] = field(default_factory=dict)  # alias -> underlying type name
 

@@ -40,7 +40,7 @@ CASES = [
     ("case10_return_type",          "BREAKING",   "v1.c",     "v2.c"),
     # ⚠️ int→long variable type change: castxml parses type from header but
     #    global var definitions in .c may not appear in ELF dynsym reliably → NO_CHANGE
-    ("case11_global_var_type",      "NO_CHANGE",  "v1.c",     "v2.c"),
+    ("case11_global_var_type",      "BREAKING",   "v1.c",     "v2.c"),
     # ✅ Function inlined away → disappears from .so → FUNC_REMOVED → BREAKING
     ("case12_function_removed",     "BREAKING",   "v1.c",     "v2.c"),
     # 📋 Symbol versioning adds @@VER tags; checker strips @-suffix → NO_CHANGE
