@@ -34,6 +34,16 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
         for sym in elf.get("symbols", []):
             sym["binding"]  = sym["binding"] if isinstance(sym["binding"], str) else sym["binding"].value
             sym["sym_type"] = sym["sym_type"] if isinstance(sym["sym_type"], str) else sym["sym_type"].value
+
+    # Advanced DWARF contains sets → convert to sorted lists for JSON
+    if d.get("dwarf_advanced"):
+        da = d["dwarf_advanced"]
+        if isinstance(da.get("packed_structs"), set):
+            da["packed_structs"] = sorted(da["packed_structs"])
+        toolchain = da.get("toolchain")
+        if isinstance(toolchain, dict) and isinstance(toolchain.get("abi_flags"), set):
+            toolchain["abi_flags"] = sorted(toolchain["abi_flags"])
+
     return d
 
 
@@ -59,6 +69,7 @@ def _elf_from_dict(e: dict[str, Any]) -> Any:
             size=s.get("size", 0),
             version=s.get("version", ""),
             is_default=s.get("is_default", True),
+            visibility=s.get("visibility", "default"),
         )
         for s in e.get("symbols", [])
     ]
@@ -70,6 +81,64 @@ def _elf_from_dict(e: dict[str, Any]) -> Any:
         versions_defined=e.get("versions_defined", []),
         versions_required=e.get("versions_required", {}),
         symbols=syms,
+    )
+
+
+def _dwarf_from_dict(d: dict[str, Any]) -> Any:
+    from .dwarf_metadata import DwarfMetadata, EnumInfo, FieldInfo, StructLayout
+
+    structs = {
+        name: StructLayout(
+            name=s.get("name", name),
+            byte_size=s.get("byte_size", 0),
+            alignment=s.get("alignment", 0),
+            fields=[
+                FieldInfo(
+                    name=f.get("name", ""),
+                    type_name=f.get("type_name", "unknown"),
+                    byte_offset=f.get("byte_offset", 0),
+                    byte_size=f.get("byte_size", 0),
+                    bit_offset=f.get("bit_offset", 0),
+                    bit_size=f.get("bit_size", 0),
+                )
+                for f in s.get("fields", [])
+            ],
+            is_union=s.get("is_union", False),
+        )
+        for name, s in d.get("structs", {}).items()
+    }
+
+    enums = {
+        name: EnumInfo(
+            name=e.get("name", name),
+            underlying_byte_size=e.get("underlying_byte_size", 0),
+            members=e.get("members", {}),
+        )
+        for name, e in d.get("enums", {}).items()
+    }
+
+    return DwarfMetadata(
+        structs=structs,
+        enums=enums,
+        has_dwarf=d.get("has_dwarf", False),
+    )
+
+
+def _dwarf_advanced_from_dict(d: dict[str, Any]) -> Any:
+    from .dwarf_advanced import AdvancedDwarfMetadata, ToolchainInfo
+
+    tc = d.get("toolchain", {})
+    toolchain = ToolchainInfo(
+        producer_string=tc.get("producer_string", ""),
+        compiler=tc.get("compiler", ""),
+        version=tc.get("version", ""),
+        abi_flags=set(tc.get("abi_flags", [])),
+    )
+    return AdvancedDwarfMetadata(
+        has_dwarf=d.get("has_dwarf", False),
+        toolchain=toolchain,
+        calling_conventions=d.get("calling_conventions", {}),
+        packed_structs=set(d.get("packed_structs", [])),
     )
 
 
@@ -122,11 +191,22 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
     enums = [_enum_type_from_dict(e) for e in d.get("enums", [])]
     typedefs: dict[str, str] = d.get("typedefs", {})
     elf_data = d.get("elf")
+    dwarf_data = d.get("dwarf")
+    dwarf_adv_data = d.get("dwarf_advanced")
+
     elf = _elf_from_dict(elf_data) if isinstance(elf_data, dict) else None
+    dwarf = _dwarf_from_dict(dwarf_data) if isinstance(dwarf_data, dict) else None
+    dwarf_advanced = (
+        _dwarf_advanced_from_dict(dwarf_adv_data)
+        if isinstance(dwarf_adv_data, dict)
+        else None
+    )
+
     return AbiSnapshot(
         library=d["library"], version=d["version"],
         functions=funcs, variables=variables, types=types,
-        enums=enums, typedefs=typedefs, elf=elf,
+        enums=enums, typedefs=typedefs,
+        elf=elf, dwarf=dwarf, dwarf_advanced=dwarf_advanced,
     )
 
 

@@ -6,6 +6,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .dwarf_advanced import AdvancedDwarfMetadata
     from .dwarf_metadata import DwarfMetadata
     from .elf_metadata import ElfMetadata
 
@@ -104,7 +105,8 @@ class AbiSnapshot:
     variables: list[Variable] = field(default_factory=list)
     types: list[RecordType] = field(default_factory=list)
     elf: ElfMetadata | None = field(default=None)    # ELF dynamic/symbol metadata (Sprint 2)
-    dwarf: DwarfMetadata | None = field(default=None)  # DWARF layout metadata (Sprint 3)
+    dwarf: DwarfMetadata | None = field(default=None)           # DWARF layout metadata (Sprint 3)
+    dwarf_advanced: AdvancedDwarfMetadata | None = field(default=None)  # Sprint 4
     enums: list[EnumType] = field(default_factory=list)
     typedefs: dict[str, str] = field(default_factory=dict)  # alias -> underlying type name
 
