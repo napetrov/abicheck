@@ -21,8 +21,6 @@ from .model import (
 
 def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     # Reset cache fields to None before asdict() to prevent double-serialization.
-    # asdict() would otherwise recursively serialize the index dicts (containing
-    # Function/Variable objects), bloating the output and corrupting roundtrip.
     snap._func_by_mangled = None
     snap._var_by_mangled = None
     snap._type_by_name = None
@@ -30,6 +28,12 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     d.pop("_func_by_mangled", None)
     d.pop("_var_by_mangled", None)
     d.pop("_type_by_name", None)
+    # Serialize ElfMetadata enums to strings for JSON compatibility
+    if d.get("elf"):
+        elf = d["elf"]
+        for sym in elf.get("symbols", []):
+            sym["binding"]  = sym["binding"] if isinstance(sym["binding"], str) else sym["binding"].value
+            sym["sym_type"] = sym["sym_type"] if isinstance(sym["sym_type"], str) else sym["sym_type"].value
     return d
 
 
@@ -43,6 +47,30 @@ def _enum_type_from_dict(e: dict[str, Any]) -> EnumType:
 
 def snapshot_to_json(snap: AbiSnapshot, indent: int = 2) -> str:
     return json.dumps(snapshot_to_dict(snap), indent=indent)
+
+
+def _elf_from_dict(e: dict[str, Any]) -> Any:
+    from .elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
+    syms = [
+        ElfSymbol(
+            name=s["name"],
+            binding=SymbolBinding(s.get("binding", "global")),
+            sym_type=SymbolType(s.get("sym_type", "func")),
+            size=s.get("size", 0),
+            version=s.get("version", ""),
+            is_default=s.get("is_default", True),
+        )
+        for s in e.get("symbols", [])
+    ]
+    return ElfMetadata(
+        soname=e.get("soname", ""),
+        needed=e.get("needed", []),
+        rpath=e.get("rpath", ""),
+        runpath=e.get("runpath", ""),
+        versions_defined=e.get("versions_defined", []),
+        versions_required=e.get("versions_required", {}),
+        symbols=syms,
+    )
 
 
 def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
@@ -93,10 +121,12 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
     ]
     enums = [_enum_type_from_dict(e) for e in d.get("enums", [])]
     typedefs: dict[str, str] = d.get("typedefs", {})
+    elf_data = d.get("elf")
+    elf = _elf_from_dict(elf_data) if isinstance(elf_data, dict) else None
     return AbiSnapshot(
         library=d["library"], version=d["version"],
         functions=funcs, variables=variables, types=types,
-        enums=enums, typedefs=typedefs,
+        enums=enums, typedefs=typedefs, elf=elf,
     )
 
 
