@@ -37,7 +37,11 @@ def _adv(
     calling: dict[str, str] | None = None,
     packed: set[str] | None = None,
     flags: set[str] | None = None,
+    all_structs: set[str] | None = None,
 ) -> AdvancedDwarfMetadata:
+    packed_set = packed or set()
+    # all_struct_names must include packed structs so diff guards work correctly
+    struct_names = (all_structs or set()) | packed_set
     return AdvancedDwarfMetadata(
         has_dwarf=has_dwarf,
         toolchain=ToolchainInfo(
@@ -47,7 +51,8 @@ def _adv(
             abi_flags=flags or set(),
         ),
         calling_conventions=calling or {},
-        packed_structs=packed or set(),
+        packed_structs=packed_set,
+        all_struct_names=struct_names,
     )
 
 
@@ -77,7 +82,9 @@ def test_calling_convention_changed() -> None:
 
 
 def test_calling_convention_added_non_default() -> None:
-    old = _snap(_adv(calling={}))
+    # Both binaries have "foo" (present in both dicts); old is normal, new is vectorcall.
+    # With full-dict storage, "normal" must be explicit so diff knows foo existed in old.
+    old = _snap(_adv(calling={"foo": "normal"}))
     new = _snap(_adv(calling={"foo": "LLVM_vectorcall"}))
     r = compare(old, new)
     kinds = {c.kind for c in r.changes}
@@ -98,10 +105,12 @@ def test_calling_convention_between_non_defaults() -> None:
 
 
 def test_calling_convention_removed() -> None:
-    """Non-default CC dropped back to normal."""
+    """Non-default CC dropped back to normal (function still exists in both binaries)."""
+    # Both dicts contain "foo": old has non-standard CC, new has "normal" explicitly.
+    # This represents a function that changed CC, not a removed function.
     results = diff_advanced_dwarf(
         _adv(calling={"foo": "BORLAND_stdcall"}),
-        _adv(calling={}),
+        _adv(calling={"foo": "normal"}),
     )
     assert len(results) == 1
     assert results[0][0] == "calling_convention_changed"
@@ -129,9 +138,14 @@ def test_struct_packing_added() -> None:
 
 
 def test_struct_packing_removed() -> None:
-    """packed→unpacked is also a breaking layout change."""
+    """packed→unpacked is a breaking layout change when the struct still exists.
+
+    all_structs must be set on the new side to prove the struct still exists
+    (not removed). Without it the diff guard would skip the report to avoid
+    false positives from struct deletion.
+    """
     old = _snap(_adv(packed={"Hdr"}))
-    new = _snap(_adv(packed=set()))
+    new = _snap(_adv(packed=set(), all_structs={"Hdr"}))
     r = compare(old, new)
     kinds = {c.kind for c in r.changes}
     assert ChangeKind.STRUCT_PACKING_CHANGED in kinds

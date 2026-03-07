@@ -103,11 +103,17 @@ class AdvancedDwarfMetadata:
     """Sprint 4 metadata extracted from a single .so."""
     has_dwarf: bool = False
     toolchain: ToolchainInfo = field(default_factory=ToolchainInfo)
-    # function_name → CC string (only non-"normal" entries stored)
-    # NOTE: on Linux x86-64, this dict is typically empty (DW_CC_normal implicit)
+    # linkage_name (mangled) → CC string for ALL externally-visible functions visited.
+    # Storing "normal" explicitly lets the diff distinguish "became normal" from
+    # "function was removed/added" (sparse dict would conflate the two cases).
+    # NOTE: on Linux x86-64 this dict mostly contains "normal" entries since
+    # DW_AT_calling_convention is rarely emitted by GCC/Clang for System V AMD64.
     calling_conventions: dict[str, str] = field(default_factory=dict)
     # struct names where any field has a misaligned byte offset → __attribute__((packed))
     packed_structs: set[str] = field(default_factory=set)
+    # All struct/class names seen (for cross-referencing in diff to avoid
+    # false "packing removed" when a struct was simply deleted)
+    all_struct_names: set[str] = field(default_factory=set)
 
 
 # ---------------------------------------------------------------------------
@@ -122,11 +128,11 @@ def parse_advanced_dwarf(so_path: Path) -> AdvancedDwarfMetadata:
     """
     try:
         with open(so_path, "rb") as f:
-            elf = ELFFile(f)
-            if not elf.has_dwarf_info():
+            elf = ELFFile(f)  # type: ignore[no-untyped-call]
+            if not elf.has_dwarf_info():  # type: ignore[no-untyped-call]
                 return AdvancedDwarfMetadata()
             meta = AdvancedDwarfMetadata(has_dwarf=True)
-            dwarf = elf.get_dwarf_info()
+            dwarf = elf.get_dwarf_info()  # type: ignore[no-untyped-call]
             for CU in dwarf.iter_CUs():
                 try:
                     _process_cu(CU, meta)
@@ -154,6 +160,69 @@ def _process_cu(CU: Any, meta: AdvancedDwarfMetadata) -> None:
     _walk_cu(top, meta, CU)
 
 
+def _get_type_align(member_die: Any, CU: Any) -> int:
+    """Return the natural alignment of a member's type in bytes.
+
+    Strategy (in order):
+    1. DW_AT_alignment on the type DIE (DWARF 5 — authoritative)
+    2. DW_TAG_base_type / DW_TAG_pointer_type / DW_TAG_reference_type:
+       alignment == byte_size (primitive / pointer).
+    3. Everything else (struct, array, typedef chain, etc.): return 0 to skip.
+       We must not use byte_size as a proxy for alignment of composite types —
+       a struct { int a; char b; } is size=8 but alignment=4.
+
+    Returns 0 when alignment cannot be determined reliably (caller should skip).
+    """
+    if "DW_AT_type" not in member_die.attributes:
+        return 0
+    try:
+        attr = member_die.attributes["DW_AT_type"]
+        form = attr.form
+        raw: int = attr.value
+        abs_offset = raw if form == "DW_FORM_ref_addr" else raw + CU.cu_offset
+        type_die = CU.get_DIE_from_refaddr(abs_offset)
+
+        # Follow transparent wrapper tags (typedef / const / volatile / restrict)
+        for _ in range(4):
+            tag = type_die.tag
+            if tag in (
+                "DW_TAG_typedef",
+                "DW_TAG_const_type",
+                "DW_TAG_volatile_type",
+                "DW_TAG_restrict_type",
+            ):
+                if "DW_AT_type" not in type_die.attributes:
+                    return 0
+                a = type_die.attributes["DW_AT_type"]
+                r: int = a.value
+                abs_off = r if a.form == "DW_FORM_ref_addr" else r + CU.cu_offset
+                type_die = CU.get_DIE_from_refaddr(abs_off)
+            else:
+                break
+
+        # 1. DW_AT_alignment present on the resolved type (DWARF 5)
+        if "DW_AT_alignment" in type_die.attributes:
+            return int(type_die.attributes["DW_AT_alignment"].value)
+
+        # 2. Primitive types: alignment == byte_size
+        prim_tags = (
+            "DW_TAG_base_type",
+            "DW_TAG_pointer_type",
+            "DW_TAG_reference_type",
+            "DW_TAG_rvalue_reference_type",
+        )
+        if type_die.tag in prim_tags:
+            sz_attr = type_die.attributes.get("DW_AT_byte_size")
+            if sz_attr:
+                sz = int(sz_attr.value)
+                return _NATURAL_ALIGN.get(min(sz, 16), 1)
+
+        # 3. Composite / array / enum etc.: cannot infer alignment from size
+        return 0
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def _walk_cu(root: Any, meta: AdvancedDwarfMetadata, CU: Any) -> None:
     """Iterative depth-first DIE walk.
 
@@ -178,6 +247,10 @@ def _walk_cu(root: Any, meta: AdvancedDwarfMetadata, CU: Any) -> None:
             continue
 
         if tag in ("DW_TAG_structure_type", "DW_TAG_class_type"):
+            # Register name in all_struct_names even when not packed
+            sname = _attr_str(die, "DW_AT_name")
+            if sname:
+                meta.all_struct_names.add(sname)
             _check_packed(die, meta, CU, override_name=None)
 
         elif tag == "DW_TAG_typedef":
@@ -194,24 +267,38 @@ def _walk_cu(root: Any, meta: AdvancedDwarfMetadata, CU: Any) -> None:
 # ---------------------------------------------------------------------------
 
 def _extract_calling_convention(die: Any, meta: AdvancedDwarfMetadata) -> None:
-    """Record non-default calling conventions for ABI-exported functions.
+    """Record calling conventions for ABI-exported functions.
+
+    Key: DW_AT_linkage_name (mangled), falling back to DW_AT_MIPS_linkage_name,
+    then DW_AT_name. Using the mangled name avoids collisions on overloaded C++
+    functions that share a DW_AT_name but differ in signature.
+
+    ALL externally-visible functions are recorded (including those with "normal"
+    calling convention). This lets diff_advanced_dwarf distinguish between
+    "CC became normal" and "function was added/removed" without a secondary
+    ELF symbol lookup.
 
     On Linux x86-64 (System V AMD64), GCC/Clang rarely emit DW_AT_calling_convention
-    (it defaults to DW_CC_normal which is omitted). This detector is most relevant
-    for Windows __stdcall/__fastcall or embedded targets.
+    (it defaults to DW_CC_normal which is omitted). This detector is most useful
+    for Windows (__stdcall/__cdecl mixed) and embedded targets.
     """
-    name = _attr_str(die, "DW_AT_name")
-    if not name:
-        return
     # Only externally-visible functions matter for ABI surface
     if not _attr_bool(die, "DW_AT_external"):
         return
-    if "DW_AT_calling_convention" not in die.attributes:
+    # Prefer mangled linkage name for C++ overload uniqueness
+    key = (
+        _attr_str(die, "DW_AT_linkage_name")
+        or _attr_str(die, "DW_AT_MIPS_linkage_name")
+        or _attr_str(die, "DW_AT_name")
+    )
+    if not key:
         return
-    raw = die.attributes["DW_AT_calling_convention"].value
-    cc_name = _CC_NAMES.get(int(raw), f"unknown(0x{int(raw):02x})")
-    if cc_name != "normal":
-        meta.calling_conventions[name] = cc_name
+    if "DW_AT_calling_convention" in die.attributes:
+        raw = die.attributes["DW_AT_calling_convention"].value
+        cc_name = _CC_NAMES.get(int(raw), f"unknown(0x{int(raw):02x})")
+    else:
+        cc_name = "normal"
+    meta.calling_conventions[key] = cc_name
 
 
 # ---------------------------------------------------------------------------
@@ -254,9 +341,10 @@ def _check_packed(
 ) -> None:
     """Detect if struct has misaligned fields → __attribute__((packed)).
 
-    Resolves DW_AT_type on each member to get the type's byte size,
-    then checks if the field offset is aligned to that size.
-    A single misaligned field is sufficient to classify the struct as packed.
+    Uses _get_type_align() to resolve the natural alignment of each member's type.
+    This correctly handles primitive types (alignment == size) while skipping
+    composite types where size != alignment (e.g. struct{int,char} is size=8, align=4).
+    A single misaligned primitive field is sufficient to classify the struct as packed.
     """
     name = override_name or _attr_str(die, "DW_AT_name")
     if not name:
@@ -264,6 +352,8 @@ def _check_packed(
     byte_size = _attr_int(die, "DW_AT_byte_size")
     if byte_size == 0:
         return  # forward declaration only
+
+    meta.all_struct_names.add(name)
 
     for child in die.iter_children():
         if child.tag != "DW_TAG_member":
@@ -277,15 +367,14 @@ def _check_packed(
             v = child.attributes["DW_AT_data_member_location"].value
             offset = v if isinstance(v, int) else (int(v[-1]) if v else 0)
 
-        # Get field SIZE by following DW_AT_type to the type DIE
-        field_size = _get_type_byte_size(child, CU)
-        if field_size <= 1:
-            continue  # char/bool: always naturally aligned
+        # Get natural alignment via type tag (NOT byte_size of composite types)
+        natural = _get_type_align(child, CU)
+        if natural <= 1:
+            continue  # char/bool/unknown composite: cannot determine — skip
 
-        natural = _NATURAL_ALIGN.get(min(field_size, 16), 1)
-        if natural > 1 and offset % natural != 0:
-            log.debug("packed struct detected: %s field at offset %d (size %d, align %d)",
-                      name, offset, field_size, natural)
+        if offset % natural != 0:
+            log.debug("packed struct detected: %s field at offset %d (natural align %d)",
+                      name, offset, natural)
             meta.packed_structs.add(name)
             return  # one misaligned field is sufficient
 
@@ -376,30 +465,37 @@ def diff_advanced_dwarf(
 
     results: list[tuple[str, str, str, str | None, str | None]] = []
 
-    # 1. Calling convention drift
-    for fname, old_cc in old_meta.calling_conventions.items():
-        new_cc = new_meta.calling_conventions.get(fname, "normal")
+    # 1. Calling convention drift.
+    # calling_conventions now stores ALL external functions (including "normal"),
+    # so we can distinguish "CC changed" from "function added/removed".
+    # Functions present only in old → removed (handled by ELF checker, skip here).
+    # Functions present only in new → added (skip; new additions are COMPATIBLE by default).
+    # Functions present in both → compare CC values.
+    old_cc_keys = set(old_meta.calling_conventions)
+    new_cc_keys = set(new_meta.calling_conventions)
+    for fname in sorted(old_cc_keys & new_cc_keys):
+        old_cc = old_meta.calling_conventions[fname]
+        new_cc = new_meta.calling_conventions[fname]
         if old_cc != new_cc:
             results.append((
                 "calling_convention_changed", fname,
                 f"Calling convention changed: {fname} ({old_cc} → {new_cc})",
                 old_cc, new_cc,
             ))
-    for fname, new_cc in new_meta.calling_conventions.items():
-        if fname not in old_meta.calling_conventions:
-            results.append((
-                "calling_convention_changed", fname,
-                f"Calling convention changed: {fname} (normal → {new_cc})",
-                "normal", new_cc,
-            ))
 
-    # 2. Struct packing drift
-    for name in sorted(old_meta.packed_structs - new_meta.packed_structs):
+    # 2. Struct packing drift.
+    # Use all_struct_names to guard against false "packing removed" reports when
+    # the struct itself was deleted (deletion is detected by the AST/ELF checker).
+    # Guard: only report "packing removed" when struct exists in BOTH binaries.
+    both_struct_names = old_meta.all_struct_names & new_meta.all_struct_names
+    for name in sorted((old_meta.packed_structs - new_meta.packed_structs) & both_struct_names):
         results.append((
             "struct_packing_changed", name,
             f"Struct packing removed: {name} was packed, now standard layout",
             "packed", "standard",
         ))
+    # "Packing added" is reported unconditionally: a newly packed struct in new binary
+    # is a layout break regardless of whether the struct is new or existing.
     for name in sorted(new_meta.packed_structs - old_meta.packed_structs):
         results.append((
             "struct_packing_changed", name,
