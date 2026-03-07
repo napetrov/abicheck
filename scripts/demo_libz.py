@@ -17,11 +17,11 @@ from pathlib import Path
 # Make sure we can run from repo root
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from abi_check.checker import Verdict, compare
-from abi_check.dumper import dump
-from abi_check.model import Function, Visibility
-from abi_check.reporter import to_markdown
-from abi_check.serialization import load_snapshot, save_snapshot
+from abicheck.checker import Verdict, compare
+from abicheck.dumper import dump
+from abicheck.model import Function, Visibility
+from abicheck.reporter import to_markdown
+from abicheck.serialization import load_snapshot, save_snapshot
 
 ZLIB_SO = Path("/usr/lib/x86_64-linux-gnu/libz.so.1.3")
 ZLIB_SO_ALT = Path("/usr/lib/x86_64-linux-gnu/libz.so.1")
