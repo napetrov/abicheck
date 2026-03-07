@@ -1,19 +1,22 @@
 """Dumper — headers + .so → AbiSnapshot via castxml."""
 from __future__ import annotations
 
-import json
 import re
 import shutil
 import subprocess
 import tempfile
 import warnings
 from pathlib import Path
-from typing import List, Optional
 from xml.etree import ElementTree as ET
 
 from .model import (
-    AbiSnapshot, Function, Param, ParamKind, RecordType,
-    TypeField, Variable, Visibility,
+    AbiSnapshot,
+    Function,
+    Param,
+    RecordType,
+    TypeField,
+    Variable,
+    Visibility,
 )
 
 
@@ -53,7 +56,7 @@ def _readelf_exported_symbols(so_path: Path) -> set[str]:
     return exported
 
 
-def _castxml_dump(headers: List[Path], extra_includes: List[Path],
+def _castxml_dump(headers: list[Path], extra_includes: list[Path],
                   compiler: str = "c++") -> ET.Element:
     """Run castxml on headers and return parsed XML root.
 
@@ -115,7 +118,7 @@ class _CastxmlParser:
             if eid:
                 self._id_map[eid] = el
 
-    def _resolve(self, id_: str) -> Optional[ET.Element]:
+    def _resolve(self, id_: str) -> ET.Element | None:
         return self._id_map.get(id_)
 
     def _type_name(self, id_: str, depth: int = 0) -> str:
@@ -142,7 +145,6 @@ class _CastxmlParser:
         if tag == "Typedef":
             return el.get("name", "?")
         if tag == "ArrayType":
-            min_ = el.get("min", "0")
             max_ = el.get("max", "")
             base = self._type_name(el.get("type", ""), depth + 1)
             return f"{base}[{max_}]" if max_ else f"{base}[]"
@@ -156,7 +158,7 @@ class _CastxmlParser:
             return Visibility.PUBLIC
         return Visibility.HIDDEN
 
-    def parse_functions(self) -> List[Function]:
+    def parse_functions(self) -> list[Function]:
         funcs = []
         for el in self._root:
             if el.tag not in ("Function", "Method", "Constructor", "Destructor"):
@@ -201,7 +203,7 @@ class _CastxmlParser:
             ))
         return funcs
 
-    def parse_variables(self) -> List[Variable]:
+    def parse_variables(self) -> list[Variable]:
         variables = []
         for el in self._root:
             if el.tag != "Variable":
@@ -217,7 +219,7 @@ class _CastxmlParser:
             ))
         return variables
 
-    def parse_types(self) -> List[RecordType]:
+    def parse_types(self) -> list[RecordType]:
         types = []
         for el in self._root:
             if el.tag not in ("Struct", "Class", "Union"):
@@ -259,8 +261,8 @@ class _CastxmlParser:
 
 def dump(
     so_path: Path,
-    headers: List[Path],
-    extra_includes: Optional[List[Path]] = None,
+    headers: list[Path],
+    extra_includes: list[Path] | None = None,
     version: str = "unknown",
     compiler: str = "c++",
 ) -> AbiSnapshot:

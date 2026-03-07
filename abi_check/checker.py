@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Tuple
 
-from .model import AbiSnapshot, Function, RecordType, Variable, Visibility
+from .model import AbiSnapshot, Function, Visibility
 
 
 class ChangeKind(str, Enum):
@@ -83,8 +82,8 @@ class Change:
     kind: ChangeKind
     symbol: str               # mangled name or type name
     description: str          # human-readable
-    old_value: Optional[str] = None
-    new_value: Optional[str] = None
+    old_value: str | None = None
+    new_value: str | None = None
 
 
 @dataclass
@@ -92,28 +91,28 @@ class DiffResult:
     old_version: str
     new_version: str
     library: str
-    changes: List[Change] = field(default_factory=list)
+    changes: list[Change] = field(default_factory=list)
     verdict: Verdict = Verdict.NO_CHANGE
 
     @property
-    def breaking(self) -> List[Change]:
+    def breaking(self) -> list[Change]:
         return [c for c in self.changes if c.kind in _BREAKING_KINDS]
 
     @property
-    def source_breaks(self) -> List[Change]:
+    def source_breaks(self) -> list[Change]:
         return [c for c in self.changes if c.kind in _SOURCE_BREAK_KINDS]
 
     @property
-    def compatible(self) -> List[Change]:
+    def compatible(self) -> list[Change]:
         return [c for c in self.changes if c.kind in _COMPATIBLE_KINDS]
 
 
-def _public(funcs) -> List[Function]:
+def _public(funcs) -> list[Function]:
     return [f for f in funcs if f.visibility == Visibility.PUBLIC]
 
 
-def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> List[Change]:
-    changes: List[Change] = []
+def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    changes: list[Change] = []
     old_map = {f.mangled: f for f in _public(old.functions)}
     new_map = {f.mangled: f for f in _public(new.functions)}
 
@@ -186,8 +185,8 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> List[Change]:
     return changes
 
 
-def _diff_variables(old: AbiSnapshot, new: AbiSnapshot) -> List[Change]:
-    changes: List[Change] = []
+def _diff_variables(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    changes: list[Change] = []
     old_map = {v.mangled: v for v in old.variables if v.visibility == Visibility.PUBLIC}
     new_map = {v.mangled: v for v in new.variables if v.visibility == Visibility.PUBLIC}
 
@@ -216,8 +215,8 @@ def _diff_variables(old: AbiSnapshot, new: AbiSnapshot) -> List[Change]:
     return changes
 
 
-def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> List[Change]:
-    changes: List[Change] = []
+def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    changes: list[Change] = []
     old_map = {t.name: t for t in old.types}
     new_map = {t.name: t for t in new.types}
 
@@ -311,7 +310,7 @@ def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> List[Change]:
     return changes
 
 
-def _compute_verdict(changes: List[Change]) -> Verdict:
+def _compute_verdict(changes: list[Change]) -> Verdict:
     if not changes:
         return Verdict.NO_CHANGE
     kinds = {c.kind for c in changes}
@@ -324,7 +323,7 @@ def _compute_verdict(changes: List[Change]) -> Verdict:
 
 def compare(old: AbiSnapshot, new: AbiSnapshot) -> DiffResult:
     """Diff two AbiSnapshots and return a DiffResult with verdict."""
-    changes: List[Change] = []
+    changes: list[Change] = []
     changes.extend(_diff_functions(old, new))
     changes.extend(_diff_variables(old, new))
     changes.extend(_diff_types(old, new))
