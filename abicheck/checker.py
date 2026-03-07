@@ -19,7 +19,7 @@ class ChangeKind(str, Enum):
     FUNC_ADDED = "func_added"            # new public symbol → COMPATIBLE
     FUNC_RETURN_CHANGED = "func_return_changed"   # return type changed → BREAKING
     FUNC_PARAMS_CHANGED = "func_params_changed"   # parameter types changed → BREAKING
-    FUNC_NOEXCEPT_ADDED = "func_noexcept_added"   # noexcept added → SOURCE_BREAK (ABI-safe in most ABIs, but source-level narrowing)
+    FUNC_NOEXCEPT_ADDED = "func_noexcept_added"   # noexcept added → BREAKING (C++17 P0012R1: noexcept is part of function type)
     FUNC_NOEXCEPT_REMOVED = "func_noexcept_removed"  # noexcept removed → BREAKING (can widen exception spec)
     FUNC_VIRTUAL_ADDED = "func_virtual_added"    # became virtual → vtable change → BREAKING
     FUNC_VIRTUAL_REMOVED = "func_virtual_removed"  # → BREAKING
@@ -227,10 +227,6 @@ class DiffResult:
     @property
     def compatible(self) -> list[Change]:
         return [c for c in self.changes if c.kind in _COMPATIBLE_KINDS]
-
-
-def _public(funcs: list[Function]) -> list[Function]:
-    return [f for f in funcs if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)]
 
 
 def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
@@ -859,7 +855,8 @@ def _compute_verdict(changes: list[Change]) -> Verdict:
     # Only COMPATIBLE_KINDS changes (ELF warnings, deployment risks)
     if kinds - _COMPATIBLE_KINDS == set():
         return Verdict.COMPATIBLE
-    return Verdict.COMPATIBLE
+    # Unclassified change kinds default to BREAKING (fail-safe)
+    return Verdict.BREAKING
 
 
 def compare(
