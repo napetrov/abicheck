@@ -166,6 +166,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             is_const=f.get("is_const", False),
             is_volatile=f.get("is_volatile", False),
             is_pure_virtual=f.get("is_pure_virtual", False),
+            is_extern_c=f.get("is_extern_c", False),
         )
         for f in d.get("functions", [])
     ]
@@ -181,6 +182,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         RecordType(
             name=t["name"], kind=t["kind"],
             size_bits=t.get("size_bits"),
+            alignment_bits=t.get("alignment_bits"),
             fields=[
                 TypeField(
                     name=f["name"], type=f["type"],
@@ -194,7 +196,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             virtual_bases=t.get("virtual_bases", []),
             vtable=t.get("vtable", []),
             source_location=t.get("source_location"),
-            is_union=t.get("is_union", False),
+            is_union=t.get("is_union", t.get("kind") == "union"),
         )
         for t in d.get("types", [])
     ]
