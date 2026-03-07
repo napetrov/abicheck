@@ -22,6 +22,7 @@ dev = [
     "pytest>=7.0",
     "pytest-cov",
     "ruff>=0.3",
+    "types-PyYAML",
 ]
 
 [tool.mypy]
