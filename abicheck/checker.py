@@ -96,6 +96,7 @@ class DiffResult:
     library: str
     changes: list[Change] = field(default_factory=list)
     verdict: Verdict = Verdict.NO_CHANGE
+    suppressed_count: int = 0
 
     @property
     def breaking(self) -> list[Change]:
@@ -355,12 +356,29 @@ def _compute_verdict(changes: list[Change]) -> Verdict:
     return Verdict.COMPATIBLE
 
 
-def compare(old: AbiSnapshot, new: AbiSnapshot) -> DiffResult:
+def compare(
+    old: AbiSnapshot,
+    new: AbiSnapshot,
+    suppression: "SuppressionList | None" = None,
+) -> DiffResult:
     """Diff two AbiSnapshots and return a DiffResult with verdict."""
+    from .suppression import SuppressionList  # avoid circular import at module level
+
     changes: list[Change] = []
     changes.extend(_diff_functions(old, new))
     changes.extend(_diff_variables(old, new))
     changes.extend(_diff_types(old, new))
+
+    suppressed_count = 0
+    if suppression is not None:
+        filtered: list[Change] = []
+        for c in changes:
+            if suppression.is_suppressed(c):
+                suppressed_count += 1
+            else:
+                filtered.append(c)
+        changes = filtered
+
     verdict = _compute_verdict(changes)
     return DiffResult(
         old_version=old.version,
@@ -368,4 +386,5 @@ def compare(old: AbiSnapshot, new: AbiSnapshot) -> DiffResult:
         library=old.library,
         changes=changes,
         verdict=verdict,
+        suppressed_count=suppressed_count,
     )

@@ -59,16 +59,24 @@ def dump_cmd(so_path: Path, headers: tuple, includes: tuple,
 @click.option("--format", "fmt", type=click.Choice(["json", "markdown"]),
               default="markdown", show_default=True)
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
-def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path | None):
+@click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
+              help="Suppression file (YAML) to filter known/intentional changes.")
+def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path | None,
+                suppress: Path | None):
     """Compare two ABI snapshots and report changes.
 
     \b
     Example:
       abicheck compare libfoo-1.0.json libfoo-2.0.json --format markdown
+      abicheck compare libfoo-1.0.json libfoo-2.0.json --suppress suppressions.yaml
     """
+    from .suppression import SuppressionList
+
     old = load_snapshot(old_snapshot)
     new = load_snapshot(new_snapshot)
-    result = compare(old, new)
+
+    suppression = SuppressionList.load(suppress) if suppress else None
+    result = compare(old, new, suppression=suppression)
 
     if fmt == "json":
         text = to_json(result)
