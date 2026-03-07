@@ -8,6 +8,8 @@ from typing import Any
 
 from .model import (
     AbiSnapshot,
+    EnumMember,
+    EnumType,
     Function,
     Param,
     RecordType,
@@ -31,6 +33,14 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     return d
 
 
+def _enum_type_from_dict(e: dict[str, Any]) -> EnumType:
+    return EnumType(
+        name=e["name"],
+        members=[EnumMember(name=m["name"], value=m["value"]) for m in e.get("members", [])],
+        underlying_type=e.get("underlying_type", "int"),
+    )
+
+
 def snapshot_to_json(snap: AbiSnapshot, indent: int = 2) -> str:
     return json.dumps(snapshot_to_dict(snap), indent=indent)
 
@@ -45,6 +55,10 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             is_noexcept=f.get("is_noexcept", False),
             vtable_index=f.get("vtable_index"),
             source_location=f.get("source_location"),
+            is_static=f.get("is_static", False),
+            is_const=f.get("is_const", False),
+            is_volatile=f.get("is_volatile", False),
+            is_pure_virtual=f.get("is_pure_virtual", False),
         )
         for f in d.get("functions", [])
     ]
@@ -60,17 +74,29 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         RecordType(
             name=t["name"], kind=t["kind"],
             size_bits=t.get("size_bits"),
-            fields=[TypeField(**f) for f in t.get("fields", [])],
+            fields=[
+                TypeField(
+                    name=f["name"], type=f["type"],
+                    offset_bits=f.get("offset_bits"),
+                    is_bitfield=f.get("is_bitfield", False),
+                    bitfield_bits=f.get("bitfield_bits"),
+                )
+                for f in t.get("fields", [])
+            ],
             bases=t.get("bases", []),
             virtual_bases=t.get("virtual_bases", []),
             vtable=t.get("vtable", []),
             source_location=t.get("source_location"),
+            is_union=t.get("is_union", False),
         )
         for t in d.get("types", [])
     ]
+    enums = [_enum_type_from_dict(e) for e in d.get("enums", [])]
+    typedefs: dict[str, str] = d.get("typedefs", {})
     return AbiSnapshot(
         library=d["library"], version=d["version"],
         functions=funcs, variables=variables, types=types,
+        enums=enums, typedefs=typedefs,
     )
 
 

@@ -7,8 +7,11 @@ Requires-Python: >=3.10
 License-File: LICENSE
 License-File: NOTICE.md
 Requires-Dist: click>=8.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: defusedxml>=0.7.1
 Provides-Extra: dev
 Requires-Dist: pytest>=7.0; extra == "dev"
 Requires-Dist: pytest-cov; extra == "dev"
 Requires-Dist: ruff>=0.3; extra == "dev"
+Requires-Dist: types-PyYAML; extra == "dev"
 Dynamic: license-file
