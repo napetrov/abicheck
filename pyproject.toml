@@ -24,3 +24,4 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["integration: requires castxml, gcc/g++ installed"]

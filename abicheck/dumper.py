@@ -234,6 +234,8 @@ class _CastxmlParser:
             vis = self._visibility(el.get("mangled", ""), name)
             is_virtual = el.get("virtual") == "1"
             noexcept_re = re.search(r"noexcept", el.get("attributes", ""))
+            vi_str = el.get("vtable_index")
+            vtable_index = int(vi_str) if is_virtual and vi_str is not None and vi_str.lstrip("-").isdigit() else None
 
             # Detect extern "C": explicit extern attribute OR no mangled name (C linkage)
             raw_mangled = el.get("mangled", "")
@@ -261,6 +263,7 @@ class _CastxmlParser:
                 is_virtual=is_virtual,
                 is_noexcept=bool(noexcept_re),
                 is_extern_c=is_extern_c,
+                vtable_index=vtable_index,
                 source_location=source_loc,
             ))
         return funcs
@@ -317,6 +320,22 @@ class _CastxmlParser:
                 for b in el if b.tag == "Base" and b.get("virtual") == "1"
             ]
 
+            # Collect vtable: virtual methods in vtable_index order
+            virtual_methods = []
+            for child in el:
+                if child.tag == "Method" and child.get("virtual") == "1":
+                    mangled_m = child.get("mangled", "")
+                    if mangled_m:
+                        vi_str = child.get("vtable_index")
+                        vi = int(vi_str) if vi_str is not None and vi_str.lstrip("-").isdigit() else None
+                        virtual_methods.append((vi, mangled_m))
+            # Sort: methods with vtable_index first (by index), then remainder in XML order
+            def _vt_sort_key(item):
+                vi, _ = item
+                return (0, vi) if vi is not None else (1, 0)
+            virtual_methods.sort(key=_vt_sort_key)
+            vtable = [m for _, m in virtual_methods]
+
             types.append(RecordType(
                 name=name,
                 kind=el.tag.lower(),
@@ -325,6 +344,7 @@ class _CastxmlParser:
                 fields=fields,
                 bases=bases,
                 virtual_bases=virtual_bases,
+                vtable=vtable,
             ))
         return types
 
