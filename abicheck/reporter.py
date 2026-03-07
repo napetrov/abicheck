@@ -45,6 +45,18 @@ def to_json(result: DiffResult, indent: int = 2) -> str:
             }
             for c in result.changes
         ],
+        "suppression": {
+            "file_provided": result.suppression_file_provided,
+            "suppressed_count": result.suppressed_count,
+            "suppressed_changes": [
+                {
+                    "kind": c.kind.value,
+                    "symbol": c.symbol,
+                    "description": c.description,
+                }
+                for c in result.suppressed_changes
+            ],
+        },
     }
     return json.dumps(d, indent=indent)
 
@@ -94,9 +106,14 @@ def to_markdown(result: DiffResult) -> str:
     if not result.changes:
         lines.append("_No ABI changes detected._")
 
-    if result.suppression_active:
+    if result.suppression_file_provided:
         lines.append("")
-        lines.append(f"> ℹ️ {result.suppressed_count} change(s) suppressed via suppression file")
+        if result.suppressed_count == 0:
+            lines.append("> ℹ️ Suppression file active — 0 changes matched (nothing suppressed)")
+        else:
+            lines.append(f"> ℹ️ {result.suppressed_count} change(s) suppressed via suppression file")
+            for sc in result.suppressed_changes:
+                lines.append(f">   - `{sc.symbol}` — {sc.description}")
 
     lines += [
         "---",

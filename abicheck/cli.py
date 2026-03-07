@@ -75,8 +75,23 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
     old = load_snapshot(old_snapshot)
     new = load_snapshot(new_snapshot)
 
-    suppression = SuppressionList.load(suppress) if suppress else None
+    suppression: SuppressionList | None = None
+    if suppress is not None:
+        try:
+            suppression = SuppressionList.load(suppress)
+        except (ValueError, OSError) as e:
+            raise click.BadParameter(str(e), param_hint="--suppress") from e
+
     result = compare(old, new, suppression=suppression)
+
+    # Warn if suppression file swallowed all changes (potential misconfiguration)
+    total_changes = len(result.changes) + result.suppressed_count
+    if result.suppression_file_provided and total_changes > 0 and len(result.changes) == 0:
+        click.echo(
+            "⚠️  Warning: all ABI changes were suppressed by the suppression file. "
+            "Verify your suppression rules are not too broad.",
+            err=True,
+        )
 
     if fmt == "json":
         text = to_json(result)

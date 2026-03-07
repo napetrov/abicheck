@@ -12,6 +12,9 @@ from .checker import Change, ChangeKind
 # Pre-build valid change_kind values for fast validation
 _VALID_CHANGE_KINDS: frozenset[str] = frozenset(ck.value for ck in ChangeKind)
 
+# Keys allowed in a suppression entry — unknown keys are rejected
+_KNOWN_ENTRY_KEYS: frozenset[str] = frozenset({"symbol", "symbol_pattern", "change_kind", "reason"})
+
 
 @dataclass
 class Suppression:
@@ -30,7 +33,9 @@ class Suppression:
             raise ValueError(
                 "Suppression must have either 'symbol' or 'symbol_pattern'"
             )
-        # Compile regex eagerly so malformed patterns fail at load time
+        # Compile regex eagerly — malformed patterns fail at load time, not match time.
+        # Uses fullmatch semantics: the pattern must match the entire symbol name.
+        # Use explicit '.*' anchors in the pattern if partial matching is intended.
         if self.symbol_pattern is not None:
             try:
                 self._compiled_pattern = re.compile(self.symbol_pattern)
@@ -38,7 +43,7 @@ class Suppression:
                 raise ValueError(
                     f"Invalid symbol_pattern {self.symbol_pattern!r}: {e}"
                 ) from e
-        # Validate change_kind against known values
+        # Validate change_kind against known enum values
         if self.change_kind is not None:
             if self.change_kind not in _VALID_CHANGE_KINDS:
                 valid = ", ".join(sorted(_VALID_CHANGE_KINDS))
@@ -48,13 +53,19 @@ class Suppression:
                 )
 
     def matches(self, change: Change) -> bool:
-        """Return True if this suppression rule matches the given change."""
+        """Return True if this suppression rule matches the given change.
+
+        Pattern matching uses fullmatch — the pattern must cover the entire
+        mangled symbol name. Use '.*foo.*' for substring matching.
+        """
         # Check symbol match
         if self.symbol is not None:
             if change.symbol != self.symbol:
                 return False
         elif self._compiled_pattern is not None:
-            if not self._compiled_pattern.search(change.symbol):
+            # fullmatch: pattern must cover the complete symbol, preventing
+            # accidental over-suppression from short patterns.
+            if not self._compiled_pattern.fullmatch(change.symbol):
                 return False
 
         # Check change_kind match (if specified)
@@ -71,9 +82,19 @@ class SuppressionList:
 
     @classmethod
     def load(cls, path: Path) -> SuppressionList:
-        """Load suppression rules from a YAML file."""
+        """Load suppression rules from a YAML file.
+
+        Raises ValueError on schema violations, unknown keys, bad regex,
+        or invalid change_kind values.
+        Raises OSError if the file cannot be read.
+        """
         try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            text = path.read_text(encoding="utf-8")
+        except OSError as e:
+            raise OSError(f"Cannot read suppression file {path}: {e}") from e
+
+        try:
+            data = yaml.safe_load(text)
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML in suppression file: {e}") from e
 
@@ -94,6 +115,13 @@ class SuppressionList:
         for i, item in enumerate(raw_suppressions):
             if not isinstance(item, dict):
                 raise ValueError(f"Suppression entry {i} must be a mapping")
+            # Reject unknown keys — catches typos like 'symbl' or 'cahnge_kind'
+            unknown = set(item.keys()) - _KNOWN_ENTRY_KEYS
+            if unknown:
+                raise ValueError(
+                    f"Suppression entry {i} has unknown key(s): {sorted(unknown)}. "
+                    f"Allowed keys: {sorted(_KNOWN_ENTRY_KEYS)}"
+                )
             try:
                 sup = Suppression(
                     symbol=item.get("symbol"),
@@ -113,3 +141,6 @@ class SuppressionList:
 
     def __len__(self) -> int:
         return len(self._suppressions)
+
+    def __repr__(self) -> str:
+        return f"SuppressionList({len(self._suppressions)} rules)"
