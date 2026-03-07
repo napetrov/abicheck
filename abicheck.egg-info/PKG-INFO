@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: abicheck
+Version: 0.1.0
+Summary: ABI compatibility checker: castxml-based header dumper + Python checker
+License: Apache-2.0
+Requires-Python: >=3.10
+License-File: LICENSE
+License-File: NOTICE.md
+Requires-Dist: click>=8.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Requires-Dist: ruff>=0.3; extra == "dev"
+Dynamic: license-file

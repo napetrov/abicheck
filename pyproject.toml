@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "abi-check"
+name = "abicheck"
 version = "0.1.0"
 description = "ABI compatibility checker: castxml-based header dumper + Python checker"
 license = {text = "Apache-2.0"}
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-abi-check = "abi_check.cli:main"
+abicheck = "abicheck.cli:main"
 
 [project.optional-dependencies]
 dev = [

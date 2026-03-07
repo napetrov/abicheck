@@ -1,4 +1,4 @@
-"""CLI — abi-check dump | compare | scan."""
+"""CLI — abicheck dump | compare | scan."""
 from __future__ import annotations
 
 import sys
@@ -14,7 +14,7 @@ from .serialization import load_snapshot
 
 @click.group()
 def main():
-    """abi-check — ABI compatibility checker for C/C++ shared libraries."""
+    """abicheck — ABI compatibility checker for C/C++ shared libraries."""
 
 
 @main.command("dump")
@@ -35,7 +35,7 @@ def dump_cmd(so_path: Path, headers: tuple, includes: tuple,
 
     \b
     Example:
-      abi-check dump libfoo.so.1 -H include/foo.h --version 1.2.3 -o snap.json
+      abicheck dump libfoo.so.1 -H include/foo.h --version 1.2.3 -o snap.json
     """
     snap = dump(
         so_path=so_path,
@@ -64,7 +64,7 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
 
     \b
     Example:
-      abi-check compare libfoo-1.0.json libfoo-2.0.json --format markdown
+      abicheck compare libfoo-1.0.json libfoo-2.0.json --format markdown
     """
     old = load_snapshot(old_snapshot)
     new = load_snapshot(new_snapshot)

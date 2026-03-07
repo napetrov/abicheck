@@ -1,0 +1,6 @@
+click>=8.0
+
+[dev]
+pytest>=7.0
+pytest-cov
+ruff>=0.3

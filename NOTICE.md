@@ -1,6 +1,6 @@
 # NOTICE — Third-Party Software
 
-This project (`abi-check`) is licensed under the **Apache License 2.0**.
+This project (`abicheck`) is licensed under the **Apache License 2.0**.
 
 ---
 
