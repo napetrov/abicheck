@@ -11,8 +11,10 @@ def pytest_configure(config):
 
 
 def pytest_collection_modifyitems(config, items):
-    if shutil.which("castxml") is None:
-        skip = pytest.mark.skip(reason="castxml not found in PATH; skipping integration tests")
+    missing = [t for t in ("castxml", "gcc", "g++") if shutil.which(t) is None]
+    if missing:
+        reason = f"Required tools not found: {', '.join(missing)}"
+        skip = pytest.mark.skip(reason=reason)
         for item in items:
             if "integration" in item.keywords:
                 item.add_marker(skip)
