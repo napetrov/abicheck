@@ -63,7 +63,7 @@ def _pyelftools_exported_symbols(so_path: Path) -> tuple[set[str], set[str]]:
 
     try:
         with open(so_path, "rb") as f:
-            elf = ELFFile(f)
+            elf: Any = ELFFile(f)  # type: ignore[no-untyped-call]
             exported_dynamic = _extract_symbols(elf, ".dynsym")
             try:
                 exported_static = _extract_symbols(elf, ".symtab")

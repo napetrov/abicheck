@@ -171,17 +171,9 @@ Function(
 
 This means `is_extern_c` is always `False` when loading from JSON, losing information from the dump phase.
 
-### 3.8 Inconsistent `_public()` Helper
+### 3.8 ~~Inconsistent `_public()` Helper~~ (FIXED)
 
-**File:** `checker.py:232-233`
-```python
-def _public(funcs: list[Function]) -> list[Function]:
-    return [f for f in funcs if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)]
-```
-
-This helper is defined but never called. The filtering logic is duplicated inline in `_diff_functions` (line 238-239) and `_diff_variables` (line 312-313).
-
-**Recommendation:** Either use the helper or remove it.
+The unused `_public()` helper has been removed from `checker.py`. Filtering is handled inline in `_diff_functions` and `_diff_variables`.
 
 ### 3.9 `_vt_sort_key` Returns Inconsistent Types
 

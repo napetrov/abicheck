@@ -7,30 +7,25 @@ Tests cover:
 - Checker edge cases with unusual data
 """
 import json
-import tempfile
-from pathlib import Path
 
 import pytest
 
 from abicheck.checker import ChangeKind, Verdict, compare
-from abicheck.elf_metadata import ElfMetadata, parse_elf_metadata
-from abicheck.dwarf_metadata import DwarfMetadata, parse_dwarf_metadata
 from abicheck.dwarf_advanced import AdvancedDwarfMetadata, parse_advanced_dwarf
+from abicheck.dwarf_metadata import DwarfMetadata, parse_dwarf_metadata
+from abicheck.elf_metadata import ElfMetadata, parse_elf_metadata
 from abicheck.model import (
     AbiSnapshot,
     EnumMember,
     EnumType,
     Function,
     RecordType,
-    TypeField,
-    Variable,
     Visibility,
 )
 from abicheck.serialization import (
     load_snapshot,
     snapshot_from_dict,
     snapshot_to_dict,
-    snapshot_to_json,
 )
 from abicheck.suppression import Suppression, SuppressionList
 
