@@ -1,0 +1,16 @@
+# abicheck suppression file — realistic examples
+version: 1
+
+suppressions:
+  # 1. Exact symbol: a function removed intentionally in v2 API cleanup
+  - symbol: "_ZN3foo6Client10disconnectEv"
+    change_kind: "func_removed"
+    reason: "Client::disconnect() was deprecated in v1.8 and removed in v2.0"
+
+  # 2. Pattern: suppress all changes in internal detail namespaces
+  - symbol_pattern: ".*N6detail.*"
+    reason: "detail:: namespace is internal implementation — not part of public ABI"
+
+  # 3. Exact symbol, all change kinds: renamed type with binary-compatible shim
+  - symbol: "_ZN3foo12LegacyHandleEv"
+    reason: "LegacyHandle typedef replaced by Handle alias — shim keeps compatibility"

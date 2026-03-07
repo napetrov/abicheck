@@ -120,6 +120,52 @@ modern C++ libraries:
 
 ---
 
+## Suppression Files
+
+Suppression files let you silence known or intentional ABI changes so they don't
+block your CI pipeline. Each rule matches on symbol name (exact or regex) and,
+optionally, on change kind.
+
+### Format
+
+```yaml
+# abicheck suppression file
+version: 1
+suppressions:
+  - symbol: "_ZN3foo3barEv"          # exact mangled name
+    change_kind: "func_removed"       # optional: only suppress this change kind
+    reason: "intentional removal in v2"
+
+  - symbol_pattern: "^_ZN.*privateEv$"  # regex (mutually exclusive with symbol)
+    reason: "private implementation detail"
+
+  - symbol_pattern: ".*detail.*"
+    reason: "internal namespace — not public API"
+```
+
+Fields:
+
+| Field | Required | Description |
+|---|---|---|
+| `symbol` | one of | Exact mangled symbol name |
+| `symbol_pattern` | one of | Python `re.search` pattern |
+| `change_kind` | optional | `ChangeKind` value (e.g. `func_removed`); omit to suppress all kinds |
+| `reason` | optional | Human-readable note |
+
+### CLI Usage
+
+```bash
+abicheck compare libfoo-1.0.json libfoo-2.0.json --suppress suppressions.yaml
+```
+
+When suppressions are active the Markdown report includes a footer:
+
+```text
+> ℹ️ 3 change(s) suppressed via suppression file
+```
+
+See `examples/suppression_example.yaml` for realistic examples.
+
 ## Why castxml?
 
 [castxml](https://github.com/CastXML/CastXML) converts C/C++ source to an XML
