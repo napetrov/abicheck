@@ -55,6 +55,7 @@
 | **Method became static / non-static** | ✅ `Method_Became_Static` | ✅ | Changes mangled name → old binaries get `undefined symbol` | Crash at runtime |
 | **Method became const / non-const** | ✅ `Method_Became_Const` | ✅ | C++ mangling includes const qualifier | `undefined symbol` |
 | **Method became volatile / non-volatile** | ✅ `Method_Became_Volatile` | ✅ | Part of mangled name | `undefined symbol` |
+| **Enum member value changed** | ✅ `Enum_Member_Value` | ✅ | Old binaries pass stale integer value to library → switch corruption | Silent corruption |
 | **Virtual method position changed** | ✅ `Virtual_Method_Position` | ✅ | vtable slot reorder — calls wrong method, no symbol error | Silent corruption |
 | **Added pure virtual method** | ✅ `Added_Pure_Virtual_Method` | ✅ | Distinct from added virtual: forces subclass re-implementation | App won't link/crashes |
 | **Enum member removed** | ✅ `Enum_Member_Removed` | ✅ | Old binaries pass removed enum value to library → UB | Silent corruption |
@@ -66,7 +67,6 @@
 |------|-------|---------|-------|
 | **Enum member renamed** (same value) | ✅ `Enum_Member_Name` | ❌ | Source break, semantic confusion |
 | **Enum last member value changed** | ✅ `Enum_Last_Member_Value` | ✅ | Boundary/sentinel value changes break switches |
-| **Enum member value changed** | ✅ `Enum_Member_Value` | ✅ | abicheck detects type changes but not enum value semantics |
 | **Parameter default value changed/removed** | ✅ `Parameter_Default_Value_Changed` | ❌ | Source-level break; old callers pass stale defaults |
 | **Global data value changed** (initial value) | ✅ `Global_Data_Value_Changed` | ✅ | Old binaries use compile-time-inlined old value |
 | **Global data became const / non-const** | ✅ `Global_Data_Became_Const` | ✅ | Write to now-const data → SIGSEGV |
@@ -126,7 +126,7 @@ Key themes from recent libabigail work (PRs in test suite):
 
 ## Architecture Advantage of abicheck
 
-```
+```text
 abicheck workflow:         abidiff workflow:
   headers + .so             debug .so (with DWARF)
        ↓                         ↓
@@ -165,7 +165,7 @@ abicheck workflow:         abidiff workflow:
 
 5. **Virtual method position tracking**  
    - Track vtable slot index per virtual method; detect reordering → `VTABLE_SLOT_REORDER`  
-   - castxml gives declaration order; sufficient for vtable slot estimation
+   - castxml gives declaration order per class; proper vtable slot estimation requires hierarchy-aware analysis: primary-base identification, override slot reuse, and ABI-specific rules (Itanium: slot order follows declaration order within a subobject, with overrides reusing base slots; MSVC: per-vfptr subobject model, declaration order alone insufficient). `VTABLE_SLOT_REORDER` detection needs full class lattice traversal.
 
 6. **Union field-level changes**  
    - Extend field diff to handle `kind="union"` separately  
