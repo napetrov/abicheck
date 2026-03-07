@@ -132,7 +132,6 @@ _BREAKING_KINDS = {
     ChangeKind.FIELD_BITFIELD_CHANGED,
     # ELF Sprint 2
     ChangeKind.SONAME_CHANGED,
-    ChangeKind.NEEDED_ADDED,
     ChangeKind.SYMBOL_BINDING_CHANGED,
     ChangeKind.SYMBOL_TYPE_CHANGED,
     ChangeKind.SYMBOL_SIZE_CHANGED,
@@ -143,6 +142,7 @@ _BREAKING_KINDS = {
 }
 
 _COMPATIBLE_KINDS: set[ChangeKind] = {
+    ChangeKind.NEEDED_ADDED,         # new dep: may not exist on older systems — warn, not hard-break
     ChangeKind.NEEDED_REMOVED,       # removing a dep is compatible (but deployment risk)
     ChangeKind.RUNPATH_CHANGED,      # search path drift — warn only
     ChangeKind.RPATH_CHANGED,

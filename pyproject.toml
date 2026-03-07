@@ -12,6 +12,7 @@ dependencies = [
     "click>=8.0",
     "pyyaml>=6.0",
     "defusedxml>=0.7.1",
+    "pyelftools>=0.29",   # ELF/DWARF parsing — Sprint 2+ (ADR-001)
 ]
 
 [project.scripts]

@@ -45,12 +45,14 @@ def test_soname_changed() -> None:
 
 
 def test_needed_added() -> None:
+    # NEEDED_ADDED is COMPATIBLE (warn only): the new dep may not exist on
+    # older systems but existing consumers keep working if symbols are still present.
     old = _snap(_elf(needed=["libc.so.6"]))
     new = _snap(_elf(needed=["libc.so.6", "libssl.so.3"]))
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.NEEDED_ADDED in kinds
-    assert result.verdict == Verdict.BREAKING
+    assert result.verdict == Verdict.COMPATIBLE
 
 
 def test_needed_removed() -> None:
@@ -201,7 +203,7 @@ def test_elf_breaking_kinds_verdict() -> None:
     """All BREAKING ELF kinds produce BREAKING verdict."""
     breaking_cases = [
         _snap(_elf(soname="libfoo.so.1")),     # SONAME_CHANGED
-        _snap(_elf(needed=["libc.so.6"])),      # NEEDED_ADDED
+        # NEEDED_ADDED is now COMPATIBLE, removed from breaking_cases
         _snap(_elf(versions_defined=["V1"])),   # SYMBOL_VERSION_DEFINED_REMOVED
         _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5"]})),  # VER_REQ_ADDED
         _snap(_elf(symbols=[_sym("f", binding=SymbolBinding.GLOBAL)])),  # BINDING_CHANGED
@@ -210,7 +212,6 @@ def test_elf_breaking_kinds_verdict() -> None:
     ]
     new_cases = [
         _snap(_elf(soname="libfoo.so.2")),
-        _snap(_elf(needed=["libc.so.6", "libssl.so.3"])),
         _snap(_elf(versions_defined=[])),
         _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]})),
         _snap(_elf(symbols=[_sym("f", binding=SymbolBinding.WEAK)])),

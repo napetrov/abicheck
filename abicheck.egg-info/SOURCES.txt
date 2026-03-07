@@ -6,6 +6,7 @@ abicheck/__init__.py
 abicheck/checker.py
 abicheck/cli.py
 abicheck/dumper.py
+abicheck/elf_metadata.py
 abicheck/model.py
 abicheck/reporter.py
 abicheck/serialization.py
@@ -21,4 +22,5 @@ tests/test_checker.py
 tests/test_reporter.py
 tests/test_serialization.py
 tests/test_sprint1.py
+tests/test_sprint2_elf.py
 tests/test_suppression.py
