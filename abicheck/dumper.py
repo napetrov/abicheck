@@ -438,6 +438,17 @@ class _CastxmlParser:
             enums.append(EnumType(name=name, members=members))
         return enums
 
+    def _underlying_type_name(self, id_: str, depth: int = 0) -> str:
+        """Follow typedef chains to the concrete base type name."""
+        if depth > 20:
+            return "?"
+        el = self._resolve(id_)
+        if el is None:
+            return "?"
+        if el.tag == "Typedef":
+            return self._underlying_type_name(el.get("type", ""), depth + 1)
+        return self._type_name(id_)
+
     def parse_typedefs(self) -> dict[str, str]:
         typedefs: dict[str, str] = {}
         for el in self._root:
@@ -447,7 +458,8 @@ class _CastxmlParser:
             if not name:
                 continue
             type_id = el.get("type", "")
-            underlying = self._type_name(type_id) if type_id else "?"
+            # Flatten typedef chains: alias → alias2 → int  stored as  alias → int
+            underlying = self._underlying_type_name(type_id) if type_id else "?"
             typedefs[name] = underlying
         return typedefs
 

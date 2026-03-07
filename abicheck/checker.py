@@ -267,10 +267,10 @@ def _diff_variables(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
-    # Unions are diffed separately in _diff_unions() to avoid duplicate reports
-    # (TYPE_FIELD_* + UNION_FIELD_* for the same change).
-    old_map = {t.name: t for t in old.types if not t.is_union}
-    new_map = {t.name: t for t in new.types if not t.is_union}
+    # Include ALL types (including unions) for size/alignment/base/vtable checks.
+    # TYPE_FIELD_* for unions is skipped below — handled by _diff_unions() instead.
+    old_map = {t.name: t for t in old.types}
+    new_map = {t.name: t for t in new.types}
 
     for name, t_old in old_map.items():
         if name not in new_map:
@@ -302,59 +302,62 @@ def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                     new_value=str(t_new.alignment_bits),
                 ))
 
-        old_fields = {f.name: f for f in t_old.fields}
-        new_fields = {f.name: f for f in t_new.fields}
+        # TYPE_FIELD_* for unions is handled by _diff_unions() to avoid duplicate reports.
+        # Size/alignment/base/vtable checks above apply to unions too.
+        if not t_old.is_union:
+            old_fields = {f.name: f for f in t_old.fields}
+            new_fields = {f.name: f for f in t_new.fields}
 
-        for fname, f_old in old_fields.items():
-            if fname not in new_fields:
-                changes.append(Change(
-                    kind=ChangeKind.TYPE_FIELD_REMOVED,
-                    symbol=name,
-                    description=f"Field removed: {name}::{fname}",
-                ))
-            else:
-                f_new = new_fields[fname]
-                if f_old.type != f_new.type:
+            for fname, f_old in old_fields.items():
+                if fname not in new_fields:
                     changes.append(Change(
-                        kind=ChangeKind.TYPE_FIELD_TYPE_CHANGED,
+                        kind=ChangeKind.TYPE_FIELD_REMOVED,
                         symbol=name,
-                        description=f"Field type changed: {name}::{fname}",
-                        old_value=f_old.type, new_value=f_new.type,
+                        description=f"Field removed: {name}::{fname}",
                     ))
-                if (f_old.offset_bits is not None and f_new.offset_bits is not None
-                        and f_old.offset_bits != f_new.offset_bits):
-                    changes.append(Change(
-                        kind=ChangeKind.TYPE_FIELD_OFFSET_CHANGED,
-                        symbol=name,
-                        description=f"Field offset changed: {name}::{fname} ({f_old.offset_bits} → {f_new.offset_bits} bits)",
-                        old_value=str(f_old.offset_bits), new_value=str(f_new.offset_bits),
-                    ))
-                # Bitfield layout check (merged here to avoid redundant type iteration)
-                if (f_old.is_bitfield != f_new.is_bitfield
-                        or f_old.bitfield_bits != f_new.bitfield_bits):
-                    changes.append(Change(
-                        kind=ChangeKind.FIELD_BITFIELD_CHANGED,
-                        symbol=name,
-                        description=f"Bitfield layout changed: {name}::{fname}",
-                        old_value=f"bits={f_old.bitfield_bits}",
-                        new_value=f"bits={f_new.bitfield_bits}",
-                    ))
+                else:
+                    f_new = new_fields[fname]
+                    if f_old.type != f_new.type:
+                        changes.append(Change(
+                            kind=ChangeKind.TYPE_FIELD_TYPE_CHANGED,
+                            symbol=name,
+                            description=f"Field type changed: {name}::{fname}",
+                            old_value=f_old.type, new_value=f_new.type,
+                        ))
+                    if (f_old.offset_bits is not None and f_new.offset_bits is not None
+                            and f_old.offset_bits != f_new.offset_bits):
+                        changes.append(Change(
+                            kind=ChangeKind.TYPE_FIELD_OFFSET_CHANGED,
+                            symbol=name,
+                            description=f"Field offset changed: {name}::{fname} ({f_old.offset_bits} → {f_new.offset_bits} bits)",
+                            old_value=str(f_old.offset_bits), new_value=str(f_new.offset_bits),
+                        ))
+                    # Bitfield layout check (merged here to avoid redundant type iteration)
+                    if (f_old.is_bitfield != f_new.is_bitfield
+                            or f_old.bitfield_bits != f_new.bitfield_bits):
+                        changes.append(Change(
+                            kind=ChangeKind.FIELD_BITFIELD_CHANGED,
+                            symbol=name,
+                            description=f"Bitfield layout changed: {name}::{fname}",
+                            old_value=f"bits={f_old.bitfield_bits}",
+                            new_value=f"bits={f_new.bitfield_bits}",
+                        ))
 
-        for fname in new_fields:
-            if fname not in old_fields:
-                # Field addition is BREAKING for polymorphic types or types with vtables;
-                # COMPATIBLE only for standard-layout types without virtual functions
-                is_polymorphic = bool(t_new.vtable or t_new.virtual_bases)
-                field_kind = (
-                    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE
-                    if not is_polymorphic and t_new.kind in ("struct", "union")
-                    else ChangeKind.TYPE_FIELD_ADDED  # BREAKING
-                )
-                changes.append(Change(
-                    kind=field_kind,
-                    symbol=name,
-                    description=f"Field added: {name}::{fname}",
-                ))
+            for fname in new_fields:
+                if fname not in old_fields:
+                    # Field addition is BREAKING for polymorphic types or types with vtables;
+                    # COMPATIBLE only for standard-layout types without virtual functions
+                    is_polymorphic = bool(t_new.vtable or t_new.virtual_bases)
+                    field_kind = (
+                        ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE
+                        if not is_polymorphic and t_new.kind in ("struct",)
+                        else ChangeKind.TYPE_FIELD_ADDED  # BREAKING
+                    )
+                    changes.append(Change(
+                        kind=field_kind,
+                        symbol=name,
+                        description=f"Field added: {name}::{fname}",
+                    ))
 
         if t_old.bases != t_new.bases or t_old.virtual_bases != t_new.virtual_bases:
             changes.append(Change(
@@ -480,16 +483,25 @@ def _diff_method_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     old_by_mangled = {k: v for k, v in old.function_map.items() if v.visibility in vis}
     new_by_mangled = {k: v for k, v in new.function_map.items() if v.visibility in vis}
 
-    # --- pure_virtual detection: mangled name is UNCHANGED when pure_virtual changes ---
+    # --- Same-mangled checks: pure_virtual and is_static don't change mangling ---
+    # is_static: Itanium ABI does NOT encode static-ness in the mangled name
+    # (void Widget::bar() and static void Widget::bar() share the same mangled symbol).
+    # is_pure_virtual: pure_virtual is not part of the mangled name either.
     for mangled, f_old in old_by_mangled.items():
         if mangled not in new_by_mangled:
             continue
         f_new = new_by_mangled[mangled]
+
+        if f_old.is_static != f_new.is_static:
+            changes.append(Change(
+                kind=ChangeKind.FUNC_STATIC_CHANGED,
+                symbol=mangled,
+                description=f"Static qualifier changed: {f_old.name}",
+                old_value=str(f_old.is_static),
+                new_value=str(f_new.is_static),
+            ))
+
         if not f_old.is_pure_virtual and f_new.is_pure_virtual:
-            if not f_old.is_virtual and f_new.is_pure_virtual:
-                # Sanity check: pure_virtual=True on non-virtual is a dumper anomaly
-                # (not valid C++). Emit FUNC_PURE_VIRTUAL_ADDED as best effort.
-                pass
             kind = (
                 ChangeKind.FUNC_VIRTUAL_BECAME_PURE
                 if f_old.is_virtual

@@ -33,7 +33,6 @@ CASES = [
     # ✅ Struct size change detected via castxml → TYPE_SIZE_CHANGED → BREAKING
     ("case07_struct_layout",        "BREAKING",   "v1.c",     "v2.c"),
     # ⚠️ Enum value changes not tracked (only Struct/Class/Union in parse_types) → NO_CHANGE
-    # ✅ Enum member/value changes now detected via _diff_enums() → BREAKING
     ("case08_enum_value_change",    "BREAKING",   "v1.c",     "v2.c"),
     # ✅ vtable reorder/change detected → TYPE_VTABLE_CHANGED → BREAKING
     ("case09_cpp_vtable",           "BREAKING",   "v1.cpp",   "v2.cpp"),
