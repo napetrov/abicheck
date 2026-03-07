@@ -94,7 +94,7 @@ def to_markdown(result: DiffResult) -> str:
     if not result.changes:
         lines.append("_No ABI changes detected._")
 
-    if result.suppressed_count > 0:
+    if result.suppression_active:
         lines.append("")
         lines.append(f"> ℹ️ {result.suppressed_count} change(s) suppressed via suppression file")
 

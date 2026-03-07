@@ -4,8 +4,12 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from .model import AbiSnapshot, Function, Visibility
+
+if TYPE_CHECKING:
+    from .suppression import SuppressionList
 
 
 class ChangeKind(str, Enum):
@@ -97,6 +101,7 @@ class DiffResult:
     changes: list[Change] = field(default_factory=list)
     verdict: Verdict = Verdict.NO_CHANGE
     suppressed_count: int = 0
+    suppression_active: bool = False  # True when a suppression file was provided
 
     @property
     def breaking(self) -> list[Change]:
@@ -359,10 +364,9 @@ def _compute_verdict(changes: list[Change]) -> Verdict:
 def compare(
     old: AbiSnapshot,
     new: AbiSnapshot,
-    suppression: "SuppressionList | None" = None,
+    suppression: SuppressionList | None = None,
 ) -> DiffResult:
     """Diff two AbiSnapshots and return a DiffResult with verdict."""
-    from .suppression import SuppressionList  # avoid circular import at module level
 
     changes: list[Change] = []
     changes.extend(_diff_functions(old, new))
@@ -387,4 +391,5 @@ def compare(
         changes=changes,
         verdict=verdict,
         suppressed_count=suppressed_count,
+        suppression_active=suppression is not None,
     )

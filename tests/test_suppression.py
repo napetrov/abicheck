@@ -6,9 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from abicheck.checker import Change, ChangeKind, DiffResult, Verdict, compare
+from abicheck.checker import Change, ChangeKind, compare
 from abicheck.suppression import Suppression, SuppressionList
-
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
 

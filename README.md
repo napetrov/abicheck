@@ -144,6 +144,7 @@ suppressions:
 ```
 
 Fields:
+
 | Field | Required | Description |
 |---|---|---|
 | `symbol` | one of | Exact mangled symbol name |
@@ -158,7 +159,8 @@ abicheck compare libfoo-1.0.json libfoo-2.0.json --suppress suppressions.yaml
 ```
 
 When suppressions are active the Markdown report includes a footer:
-```
+
+```text
 > ℹ️ 3 change(s) suppressed via suppression file
 ```
 
