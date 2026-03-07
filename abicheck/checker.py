@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from .model import AbiSnapshot, Function, Visibility
+from .model import AbiSnapshot, EnumType, Function, Visibility
 
 if TYPE_CHECKING:
     from .suppression import SuppressionList
@@ -41,6 +41,31 @@ class ChangeKind(str, Enum):
     TYPE_REMOVED = "type_removed"                # type removed → BREAKING if used in API
     TYPE_FIELD_ADDED_COMPATIBLE = "type_field_added_compatible"  # appended to standard-layout non-polymorphic type
 
+    # Enum changes
+    ENUM_MEMBER_REMOVED = "enum_member_removed"
+    ENUM_MEMBER_ADDED = "enum_member_added"
+    ENUM_MEMBER_VALUE_CHANGED = "enum_member_value_changed"
+    ENUM_LAST_MEMBER_VALUE_CHANGED = "enum_last_member_value_changed"
+
+    # Method qualifier changes
+    FUNC_STATIC_CHANGED = "func_static_changed"
+    FUNC_CV_CHANGED = "func_cv_changed"  # const/volatile on this
+
+    # Virtual changes
+    FUNC_PURE_VIRTUAL_ADDED = "func_pure_virtual_added"
+    FUNC_VIRTUAL_BECAME_PURE = "func_virtual_became_pure"
+
+    # Union field changes
+    UNION_FIELD_ADDED = "union_field_added"
+    UNION_FIELD_REMOVED = "union_field_removed"
+    UNION_FIELD_TYPE_CHANGED = "union_field_type_changed"
+
+    # Typedef changes
+    TYPEDEF_BASE_CHANGED = "typedef_base_changed"
+
+    # Bitfield changes
+    FIELD_BITFIELD_CHANGED = "field_bitfield_changed"
+
 
 class Verdict(str, Enum):
     NO_CHANGE = "NO_CHANGE"         # identical ABI
@@ -69,6 +94,19 @@ _BREAKING_KINDS = {
     ChangeKind.TYPE_REMOVED,
     ChangeKind.FUNC_NOEXCEPT_ADDED,  # C++17: noexcept is part of the function type (P0012R1)
     ChangeKind.TYPE_FIELD_ADDED,  # for polymorphic / non-standard-layout types
+    ChangeKind.ENUM_MEMBER_REMOVED,
+    ChangeKind.ENUM_MEMBER_ADDED,
+    ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
+    ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
+    ChangeKind.FUNC_STATIC_CHANGED,
+    ChangeKind.FUNC_CV_CHANGED,
+    ChangeKind.FUNC_PURE_VIRTUAL_ADDED,
+    ChangeKind.FUNC_VIRTUAL_BECAME_PURE,
+    ChangeKind.UNION_FIELD_ADDED,
+    ChangeKind.UNION_FIELD_REMOVED,
+    ChangeKind.UNION_FIELD_TYPE_CHANGED,
+    ChangeKind.TYPEDEF_BASE_CHANGED,
+    ChangeKind.FIELD_BITFIELD_CHANGED,
 }
 
 _SOURCE_BREAK_KINDS: set[ChangeKind] = set()  # reserved for future source-only breaks
@@ -351,6 +389,180 @@ def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    changes: list[Change] = []
+    old_map: dict[str, EnumType] = {e.name: e for e in old.enums}
+    new_map: dict[str, EnumType] = {e.name: e for e in new.enums}
+
+    for name, e_old in old_map.items():
+        if name not in new_map:
+            continue  # TYPE_REMOVED covers this
+        e_new = new_map[name]
+        old_members = {m.name: m.value for m in e_old.members}
+        new_members = {m.name: m.value for m in e_new.members}
+        last_old = e_old.members[-1].name if e_old.members else None
+
+        for mname, mval in old_members.items():
+            if mname not in new_members:
+                changes.append(Change(
+                    kind=ChangeKind.ENUM_MEMBER_REMOVED,
+                    symbol=name,
+                    description=f"Enum member removed: {name}::{mname}",
+                    old_value=str(mval),
+                ))
+            elif new_members[mname] != mval:
+                kind = (
+                    ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED
+                    if mname == last_old
+                    else ChangeKind.ENUM_MEMBER_VALUE_CHANGED
+                )
+                changes.append(Change(
+                    kind=kind,
+                    symbol=name,
+                    description=f"Enum member value changed: {name}::{mname}",
+                    old_value=str(mval),
+                    new_value=str(new_members[mname]),
+                ))
+
+        for mname, mval in new_members.items():
+            if mname not in old_members:
+                changes.append(Change(
+                    kind=ChangeKind.ENUM_MEMBER_ADDED,
+                    symbol=name,
+                    description=f"Enum member added: {name}::{mname}",
+                    new_value=str(mval),
+                ))
+
+    return changes
+
+
+def _diff_method_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    changes: list[Change] = []
+    old_map = {k: v for k, v in old.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
+    new_map = {k: v for k, v in new.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
+
+    for mangled, f_old in old_map.items():
+        if mangled not in new_map:
+            continue
+        f_new = new_map[mangled]
+
+        if f_old.is_static != f_new.is_static:
+            changes.append(Change(
+                kind=ChangeKind.FUNC_STATIC_CHANGED,
+                symbol=mangled,
+                description=f"Static qualifier changed: {f_old.name}",
+                old_value=str(f_old.is_static),
+                new_value=str(f_new.is_static),
+            ))
+
+        if f_old.is_const != f_new.is_const or f_old.is_volatile != f_new.is_volatile:
+            changes.append(Change(
+                kind=ChangeKind.FUNC_CV_CHANGED,
+                symbol=mangled,
+                description=f"CV qualifier changed: {f_old.name}",
+                old_value=f"const={f_old.is_const} volatile={f_old.is_volatile}",
+                new_value=f"const={f_new.is_const} volatile={f_new.is_volatile}",
+            ))
+
+        if not f_old.is_pure_virtual and f_new.is_pure_virtual:
+            kind = (
+                ChangeKind.FUNC_VIRTUAL_BECAME_PURE
+                if f_old.is_virtual
+                else ChangeKind.FUNC_PURE_VIRTUAL_ADDED
+            )
+            changes.append(Change(
+                kind=kind,
+                symbol=mangled,
+                description=f"Function became pure virtual: {f_old.name}",
+            ))
+
+    return changes
+
+
+def _diff_unions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    changes: list[Change] = []
+    old_unions = {t.name: t for t in old.types if t.is_union}
+    new_unions = {t.name: t for t in new.types if t.is_union}
+
+    for name, t_old in old_unions.items():
+        if name not in new_unions:
+            continue  # covered by TYPE_REMOVED
+        t_new = new_unions[name]
+        old_fields = {f.name: f for f in t_old.fields}
+        new_fields = {f.name: f for f in t_new.fields}
+
+        for fname, f_old in old_fields.items():
+            if fname not in new_fields:
+                changes.append(Change(
+                    kind=ChangeKind.UNION_FIELD_REMOVED,
+                    symbol=name,
+                    description=f"Union field removed: {name}::{fname}",
+                    old_value=f_old.type,
+                ))
+            elif f_old.type != new_fields[fname].type:
+                changes.append(Change(
+                    kind=ChangeKind.UNION_FIELD_TYPE_CHANGED,
+                    symbol=name,
+                    description=f"Union field type changed: {name}::{fname}",
+                    old_value=f_old.type,
+                    new_value=new_fields[fname].type,
+                ))
+
+        for fname, f_new in new_fields.items():
+            if fname not in old_fields:
+                changes.append(Change(
+                    kind=ChangeKind.UNION_FIELD_ADDED,
+                    symbol=name,
+                    description=f"Union field added: {name}::{fname}",
+                    new_value=f_new.type,
+                ))
+
+    return changes
+
+
+def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    changes: list[Change] = []
+    for alias, old_type in old.typedefs.items():
+        new_type = new.typedefs.get(alias)
+        if new_type is not None and new_type != old_type:
+            changes.append(Change(
+                kind=ChangeKind.TYPEDEF_BASE_CHANGED,
+                symbol=alias,
+                description=f"Typedef base type changed: {alias}",
+                old_value=old_type,
+                new_value=new_type,
+            ))
+    return changes
+
+
+def _diff_bitfields(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    changes: list[Change] = []
+    old_map = {t.name: t for t in old.types}
+    new_map = {t.name: t for t in new.types}
+
+    for name, t_old in old_map.items():
+        if name not in new_map:
+            continue
+        t_new = new_map[name]
+        old_fields = {f.name: f for f in t_old.fields}
+        new_fields = {f.name: f for f in t_new.fields}
+
+        for fname, f_old in old_fields.items():
+            if fname not in new_fields:
+                continue
+            f_new = new_fields[fname]
+            if f_old.is_bitfield != f_new.is_bitfield or f_old.bitfield_bits != f_new.bitfield_bits:
+                changes.append(Change(
+                    kind=ChangeKind.FIELD_BITFIELD_CHANGED,
+                    symbol=name,
+                    description=f"Bitfield layout changed: {name}::{fname}",
+                    old_value=f"bits={f_old.bitfield_bits}",
+                    new_value=f"bits={f_new.bitfield_bits}",
+                ))
+
+    return changes
+
+
 def _compute_verdict(changes: list[Change]) -> Verdict:
     if not changes:
         return Verdict.NO_CHANGE
@@ -373,6 +585,11 @@ def compare(
     changes.extend(_diff_functions(old, new))
     changes.extend(_diff_variables(old, new))
     changes.extend(_diff_types(old, new))
+    changes.extend(_diff_enums(old, new))
+    changes.extend(_diff_method_qualifiers(old, new))
+    changes.extend(_diff_unions(old, new))
+    changes.extend(_diff_typedefs(old, new))
+    changes.extend(_diff_bitfields(old, new))
 
     suppressed: list[Change] = []
     if suppression is not None:
