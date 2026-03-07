@@ -17,6 +17,8 @@ from defusedxml import ElementTree as DefusedET
 
 from .model import (
     AbiSnapshot,
+    EnumMember,
+    EnumType,
     Function,
     Param,
     RecordType,
@@ -278,6 +280,11 @@ class _CastxmlParser:
                 line = loc_el.get("line", "")
                 source_loc = f"{fname}:{line}" if fname else None
 
+            is_static = el.get("static") == "1"
+            is_const = el.get("const") == "1"
+            is_volatile = el.get("volatile") == "1"
+            is_pure_virtual = el.get("pure_virtual") == "1"
+
             funcs.append(Function(
                 name=name,
                 mangled=mangled,
@@ -289,6 +296,10 @@ class _CastxmlParser:
                 is_extern_c=is_extern_c,
                 vtable_index=vtable_index,
                 source_location=source_loc,
+                is_static=is_static,
+                is_const=is_const,
+                is_volatile=is_volatile,
+                is_pure_virtual=is_pure_virtual,
             ))
         return funcs
 
@@ -333,7 +344,17 @@ class _CastxmlParser:
                     f_type = self._type_name(child.get("type", ""))
                     off_str = child.get("offset")
                     offset = int(off_str) if off_str and off_str.isdigit() else None
-                    fields.append(TypeField(name=f_name, type=f_type, offset_bits=offset))
+                    bits_str = child.get("bits")
+                    try:
+                        bitfield_bits = int(bits_str) if bits_str is not None else None
+                        is_bitfield = bitfield_bits is not None
+                    except ValueError:
+                        is_bitfield = False
+                        bitfield_bits = None
+                    fields.append(TypeField(
+                        name=f_name, type=f_type, offset_bits=offset,
+                        is_bitfield=is_bitfield, bitfield_bits=bitfield_bits,
+                    ))
 
             bases = [
                 self._type_name(b.get("type", ""))
@@ -381,6 +402,7 @@ class _CastxmlParser:
             virtual_methods.sort(key=_vt_sort_key)
             vtable = [m for _, m in virtual_methods]
 
+            is_union = el.tag == "Union"
             types.append(RecordType(
                 name=name,
                 kind=el.tag.lower(),
@@ -390,8 +412,56 @@ class _CastxmlParser:
                 bases=bases,
                 virtual_bases=virtual_bases,
                 vtable=vtable,
+                is_union=is_union,
             ))
         return types
+
+
+    def parse_enums(self) -> list[EnumType]:
+        enums = []
+        for el in self._root:
+            if el.tag != "Enumeration":
+                continue
+            name = el.get("name", "")
+            if not name or name.startswith("__"):
+                continue
+            members = []
+            for child in el:
+                if child.tag == "EnumValue":
+                    m_name = child.get("name", "")
+                    m_val_str = child.get("init", "0")
+                    try:
+                        m_val = int(m_val_str)
+                    except ValueError:
+                        m_val = 0
+                    members.append(EnumMember(name=m_name, value=m_val))
+            enums.append(EnumType(name=name, members=members))
+        return enums
+
+    def _underlying_type_name(self, id_: str, depth: int = 0) -> str:
+        """Follow typedef chains to the concrete base type name."""
+        if depth > 20:
+            return "?"
+        el = self._resolve(id_)
+        if el is None:
+            return "?"
+        if el.tag == "Typedef":
+            return self._underlying_type_name(el.get("type", ""), depth + 1)
+        return self._type_name(id_)
+
+    def parse_typedefs(self) -> dict[str, str]:
+        typedefs: dict[str, str] = {}
+        for el in self._root:
+            if el.tag != "Typedef":
+                continue
+            name = el.get("name", "")
+            if not name:
+                continue
+            type_id = el.get("type", "")
+            # Flatten typedef chains: alias → alias2 → int  stored as  alias → int
+            underlying = self._underlying_type_name(type_id) if type_id else "?"
+            typedefs[name] = underlying
+        return typedefs
 
 
 def dump(
@@ -443,5 +513,7 @@ def dump(
         functions=parser.parse_functions(),
         variables=parser.parse_variables(),
         types=parser.parse_types(),
+        enums=parser.parse_enums(),
+        typedefs=parser.parse_typedefs(),
     )
     return snapshot

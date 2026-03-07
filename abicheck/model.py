@@ -38,6 +38,10 @@ class Function:
     is_extern_c: bool = False
     vtable_index: int | None = None
     source_location: str | None = None  # "header.h:42"
+    is_static: bool = False
+    is_const: bool = False        # const qualifier on this
+    is_volatile: bool = False     # volatile qualifier on this
+    is_pure_virtual: bool = False
 
 
 @dataclass
@@ -54,6 +58,8 @@ class TypeField:
     name: str
     type: str
     offset_bits: int | None = None
+    is_bitfield: bool = False
+    bitfield_bits: int | None = None
 
 
 @dataclass
@@ -68,6 +74,20 @@ class RecordType:
     virtual_bases: list[str] = field(default_factory=list)
     vtable: list[str] = field(default_factory=list)      # ordered vtable entries (mangled)
     source_location: str | None = None
+    is_union: bool = False
+
+
+@dataclass
+class EnumMember:
+    name: str
+    value: int
+
+
+@dataclass
+class EnumType:
+    name: str
+    members: list[EnumMember] = field(default_factory=list)
+    underlying_type: str = "int"
 
 
 @dataclass
@@ -78,6 +98,8 @@ class AbiSnapshot:
     functions: list[Function] = field(default_factory=list)
     variables: list[Variable] = field(default_factory=list)
     types: list[RecordType] = field(default_factory=list)
+    enums: list[EnumType] = field(default_factory=list)
+    typedefs: dict[str, str] = field(default_factory=dict)  # alias -> underlying type name
 
     # Indexes (built lazily)
     _func_by_mangled: dict[str, Function] | None = field(default=None, repr=False, compare=False)
