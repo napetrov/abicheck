@@ -73,3 +73,26 @@ jobs:
 
       - name: End-to-end demo (libz)
         run: python scripts/demo_libz.py
+
+  libabigail-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc g++ castxml
+          sudo apt-get install -y abigail-tools || sudo apt-get install -y libabigail-tools
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: 'pip'
+
+      - name: Install package
+        run: pip install -e ".[dev]"
+
+      - name: Run libabigail parity tests
+        run: pytest tests/test_abidiff_parity.py -v -m libabigail --tb=short
