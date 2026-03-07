@@ -4,8 +4,12 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from .model import AbiSnapshot, Function, Visibility
+
+if TYPE_CHECKING:
+    from .suppression import SuppressionList
 
 
 class ChangeKind(str, Enum):
@@ -96,6 +100,9 @@ class DiffResult:
     library: str
     changes: list[Change] = field(default_factory=list)
     verdict: Verdict = Verdict.NO_CHANGE
+    suppressed_count: int = 0
+    suppressed_changes: list[Change] = field(default_factory=list)  # full audit trail
+    suppression_file_provided: bool = False  # True when --suppress was passed, even if 0 matched
 
     @property
     def breaking(self) -> list[Change]:
@@ -355,12 +362,28 @@ def _compute_verdict(changes: list[Change]) -> Verdict:
     return Verdict.COMPATIBLE
 
 
-def compare(old: AbiSnapshot, new: AbiSnapshot) -> DiffResult:
+def compare(
+    old: AbiSnapshot,
+    new: AbiSnapshot,
+    suppression: SuppressionList | None = None,
+) -> DiffResult:
     """Diff two AbiSnapshots and return a DiffResult with verdict."""
+
     changes: list[Change] = []
     changes.extend(_diff_functions(old, new))
     changes.extend(_diff_variables(old, new))
     changes.extend(_diff_types(old, new))
+
+    suppressed: list[Change] = []
+    if suppression is not None:
+        filtered: list[Change] = []
+        for c in changes:
+            if suppression.is_suppressed(c):
+                suppressed.append(c)
+            else:
+                filtered.append(c)
+        changes = filtered
+
     verdict = _compute_verdict(changes)
     return DiffResult(
         old_version=old.version,
@@ -368,4 +391,7 @@ def compare(old: AbiSnapshot, new: AbiSnapshot) -> DiffResult:
         library=old.library,
         changes=changes,
         verdict=verdict,
+        suppressed_count=len(suppressed),
+        suppressed_changes=suppressed,
+        suppression_file_provided=suppression is not None,
     )

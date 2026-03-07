@@ -59,16 +59,39 @@ def dump_cmd(so_path: Path, headers: tuple, includes: tuple,
 @click.option("--format", "fmt", type=click.Choice(["json", "markdown"]),
               default="markdown", show_default=True)
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
-def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path | None):
+@click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
+              help="Suppression file (YAML) to filter known/intentional changes.")
+def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path | None,
+                suppress: Path | None):
     """Compare two ABI snapshots and report changes.
 
     \b
     Example:
       abicheck compare libfoo-1.0.json libfoo-2.0.json --format markdown
+      abicheck compare libfoo-1.0.json libfoo-2.0.json --suppress suppressions.yaml
     """
+    from .suppression import SuppressionList
+
     old = load_snapshot(old_snapshot)
     new = load_snapshot(new_snapshot)
-    result = compare(old, new)
+
+    suppression: SuppressionList | None = None
+    if suppress is not None:
+        try:
+            suppression = SuppressionList.load(suppress)
+        except (ValueError, OSError) as e:
+            raise click.BadParameter(str(e), param_hint="--suppress") from e
+
+    result = compare(old, new, suppression=suppression)
+
+    # Warn if suppression file swallowed all changes (potential misconfiguration)
+    total_changes = len(result.changes) + result.suppressed_count
+    if result.suppression_file_provided and total_changes > 0 and len(result.changes) == 0:
+        click.echo(
+            "⚠️  Warning: all ABI changes were suppressed by the suppression file. "
+            "Verify your suppression rules are not too broad.",
+            err=True,
+        )
 
     if fmt == "json":
         text = to_json(result)
