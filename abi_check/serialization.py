@@ -13,8 +13,13 @@ from .model import (
 
 
 def snapshot_to_dict(snap: AbiSnapshot) -> dict:
+    # Reset cache fields to None before asdict() to prevent double-serialization.
+    # asdict() would otherwise recursively serialize the index dicts (containing
+    # Function/Variable objects), bloating the output and corrupting roundtrip.
+    snap._func_by_mangled = None
+    snap._var_by_mangled = None
+    snap._type_by_name = None
     d = asdict(snap)
-    # Remove private index fields
     d.pop("_func_by_mangled", None)
     d.pop("_var_by_mangled", None)
     d.pop("_type_by_name", None)

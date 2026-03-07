@@ -22,22 +22,33 @@ def _castxml_available() -> bool:
 
 
 def _readelf_exported_symbols(so_path: Path) -> set[str]:
-    """Return set of exported (globally visible) mangled symbol names from .so."""
+    """Return set of exported (globally visible) mangled symbol names from .so.
+
+    Includes STV_DEFAULT and STV_PROTECTED symbols (both are exported and
+    ABI-relevant). Raises RuntimeError on readelf failure to prevent silent
+    empty-set bugs that would cause every symbol to appear removed.
+    """
     result = subprocess.run(
-        ["readelf", "--wide", "--syms", "--dyn-syms", str(so_path)],
+        ["readelf", "--wide", "--dyn-syms", str(so_path)],
         capture_output=True, text=True, check=False,
     )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"readelf failed (exit {result.returncode}) on {so_path}:\n"
+            f"{result.stderr[:1000]}"
+        )
     exported: set[str] = set()
     for line in result.stdout.splitlines():
         parts = line.split()
-        # readelf -s output: Num Value Size Type Bind Vis Ndx Name
+        # readelf --dyn-syms output: Num Value Size Type Bind Vis Ndx Name
         if len(parts) < 8:
             continue
         bind = parts[4]
         vis = parts[5]
         ndx = parts[6]
-        name = parts[7].split("@")[0]  # strip version suffix
-        if bind in ("GLOBAL", "WEAK") and vis == "DEFAULT" and ndx != "UND":
+        name = parts[7].split("@")[0]  # strip version suffix (e.g. GLIBC_2.17)
+        # Include DEFAULT and PROTECTED — both are exported and ABI-relevant
+        if bind in ("GLOBAL", "WEAK") and vis in ("DEFAULT", "PROTECTED") and ndx != "UND":
             exported.add(name)
     return exported
 

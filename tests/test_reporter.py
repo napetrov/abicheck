@@ -50,12 +50,12 @@ class TestMarkdownReporter:
         assert "COMPATIBLE" in md
         assert "Compatible Additions" in md
 
-    def test_source_break_section(self):
+    def test_noexcept_added_in_breaking_section(self):
         c = Change(ChangeKind.FUNC_NOEXCEPT_ADDED, "_Z4swapv",
                    "noexcept specifier added: swap")
-        md = to_markdown(_result(Verdict.SOURCE_BREAK, [c]))
-        assert "SOURCE_BREAK" in md
-        assert "Source-Level Breaks" in md
+        md = to_markdown(_result(Verdict.BREAKING, [c]))
+        assert "BREAKING" in md
+        assert "Breaking Changes" in md
 
     def test_legend_always_present(self):
         md = to_markdown(_result(Verdict.NO_CHANGE))
