@@ -270,6 +270,5 @@ jobs:
 
 ## See Also
 
-- [QUICKSTART.md](../QUICKSTART.md) — Getting started with all commands
-- [docs/INSTALLATION.md](INSTALLATION.md) — Installation guide
-- [examples/README.md](../examples/README.md) — ABI scenario catalog
+- [Getting Started](getting_started.md) — Getting started with all commands
+- [Gap Report](gap_report.md) — Coverage analysis vs ABICC/libabigail
