@@ -265,8 +265,10 @@ def _diff_variables(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
-    old_map = {t.name: t for t in old.types}
-    new_map = {t.name: t for t in new.types}
+    # Unions are diffed separately in _diff_unions() to avoid duplicate reports
+    # (TYPE_FIELD_* + UNION_FIELD_* for the same change).
+    old_map = {t.name: t for t in old.types if not t.is_union}
+    new_map = {t.name: t for t in new.types if not t.is_union}
 
     for name, t_old in old_map.items():
         if name not in new_map:

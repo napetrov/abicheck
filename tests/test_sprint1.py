@@ -127,6 +127,14 @@ def test_union_field_removed() -> None:
     assert ChangeKind.UNION_FIELD_REMOVED in kinds
 
 
+def test_union_field_added() -> None:
+    old = _snap(types=[_union("Data", [TypeField("i", "int")])])
+    new = _snap(types=[_union("Data", [TypeField("i", "int"), TypeField("f", "float")])])
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.UNION_FIELD_ADDED in kinds
+
+
 def test_union_field_type_changed() -> None:
     old = _snap(types=[_union("Data", [TypeField("x", "int")])])
     new = _snap(types=[_union("Data", [TypeField("x", "double")])])

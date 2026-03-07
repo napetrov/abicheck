@@ -345,8 +345,12 @@ class _CastxmlParser:
                     off_str = child.get("offset")
                     offset = int(off_str) if off_str and off_str.isdigit() else None
                     bits_str = child.get("bits")
-                    is_bitfield = bits_str is not None
-                    bitfield_bits = int(bits_str) if bits_str is not None else None
+                    try:
+                        bitfield_bits = int(bits_str) if bits_str is not None else None
+                        is_bitfield = bitfield_bits is not None
+                    except ValueError:
+                        is_bitfield = False
+                        bitfield_bits = None
                     fields.append(TypeField(
                         name=f_name, type=f_type, offset_bits=offset,
                         is_bitfield=is_bitfield, bitfield_bits=bitfield_bits,
