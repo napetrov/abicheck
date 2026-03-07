@@ -1,2 +1,0 @@
-[console_scripts]
-abicheck = abicheck.cli:main
