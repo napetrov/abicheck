@@ -77,4 +77,7 @@ jobs:
 
       - name: mypy
         # strict mode is configured in pyproject.toml [tool.mypy]
-        run: mypy abicheck/ --ignore-missing-imports
+        run: mypy abicheck/ --ignore-missing-imports --show-error-codes --show-traceback || true
+
+      - name: mypy strict (fail)
+        run: mypy abicheck/ --ignore-missing-imports --show-error-codes
