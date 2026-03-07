@@ -90,6 +90,14 @@ class ChangeKind(str, Enum):
     SYMBOL_VERSION_REQUIRED_ADDED    = "symbol_version_required_added"   # new GLIBC_X
     SYMBOL_VERSION_REQUIRED_REMOVED  = "symbol_version_required_removed"
 
+    # DWARF layout (Sprint 3)
+    STRUCT_SIZE_CHANGED        = "struct_size_changed"        # sizeof(T) changed
+    STRUCT_FIELD_OFFSET_CHANGED = "struct_field_offset_changed" # field moved
+    STRUCT_FIELD_REMOVED       = "struct_field_removed"       # field deleted
+    STRUCT_FIELD_TYPE_CHANGED  = "struct_field_type_changed"  # field type/size changed
+    STRUCT_ALIGNMENT_CHANGED   = "struct_alignment_changed"   # alignof(T) changed
+    ENUM_UNDERLYING_SIZE_CHANGED = "enum_underlying_size_changed"  # int→long
+
 
 class Verdict(str, Enum):
     NO_CHANGE = "NO_CHANGE"         # identical ABI
@@ -141,6 +149,15 @@ _BREAKING_KINDS = {
     ChangeKind.IFUNC_REMOVED,
     ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
     ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+    # DWARF Sprint 3
+    ChangeKind.STRUCT_SIZE_CHANGED,
+    ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
+    ChangeKind.STRUCT_FIELD_REMOVED,
+    ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+    ChangeKind.STRUCT_ALIGNMENT_CHANGED,
+    ChangeKind.ENUM_UNDERLYING_SIZE_CHANGED,
+    ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
+    ChangeKind.ENUM_MEMBER_REMOVED,
 }
 
 _COMPATIBLE_KINDS: set[ChangeKind] = {
@@ -848,6 +865,7 @@ def compare(
     changes.extend(_diff_unions(old, new))
     changes.extend(_diff_typedefs(old, new))
     changes.extend(_diff_elf(old, new))
+    changes.extend(_diff_dwarf(old, new))
 
     suppressed: list[Change] = []
     if suppression is not None:
@@ -870,3 +888,166 @@ def compare(
         suppressed_changes=suppressed,
         suppression_file_provided=suppression is not None,
     )
+
+
+# ── Sprint 3: DWARF-aware layout diff ────────────────────────────────────────
+
+def _diff_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """DWARF-aware struct/enum layout detectors (Sprint 3).
+
+    Requires binaries compiled with -g. If either snapshot has no DWARF info,
+    returns an empty list (graceful degradation, no false positives).
+    """
+    from .dwarf_metadata import DwarfMetadata
+
+    o: DwarfMetadata = getattr(old, "dwarf", None) or DwarfMetadata()
+    n: DwarfMetadata = getattr(new, "dwarf", None) or DwarfMetadata()
+
+    # Skip if neither side has real DWARF info
+    if not o.has_dwarf and not n.has_dwarf:
+        return []
+
+    changes: list[Change] = []
+    changes.extend(_diff_struct_layouts(o, n))
+    changes.extend(_diff_enum_layouts(o, n))
+    return changes
+
+
+def _diff_struct_layouts(o: object, n: object) -> list[Change]:
+    from .dwarf_metadata import StructLayout
+
+    old_structs: dict[str, StructLayout] = getattr(o, "structs", {})
+    new_structs: dict[str, StructLayout] = getattr(n, "structs", {})
+    changes: list[Change] = []
+
+    for name, old_s in old_structs.items():
+        if name not in new_structs:
+            continue  # struct removed — caught by header-layer (castxml)
+
+        new_s = new_structs[name]
+
+        # 1. Total size
+        if old_s.byte_size != new_s.byte_size:
+            changes.append(Change(
+                kind=ChangeKind.STRUCT_SIZE_CHANGED,
+                symbol=name,
+                description=(
+                    f"Struct size changed: {name} "
+                    f"({old_s.byte_size} → {new_s.byte_size} bytes)"
+                ),
+                old_value=str(old_s.byte_size),
+                new_value=str(new_s.byte_size),
+            ))
+
+        # 2. Alignment (only when explicitly present in DWARF 5)
+        if old_s.alignment and new_s.alignment and old_s.alignment != new_s.alignment:
+            changes.append(Change(
+                kind=ChangeKind.STRUCT_ALIGNMENT_CHANGED,
+                symbol=name,
+                description=(
+                    f"Struct alignment changed: {name} "
+                    f"({old_s.alignment} → {new_s.alignment})"
+                ),
+                old_value=str(old_s.alignment),
+                new_value=str(new_s.alignment),
+            ))
+
+        # Build field maps
+        old_fields = {f.name: f for f in old_s.fields}
+        new_fields = {f.name: f for f in new_s.fields}
+
+        # 3. Removed fields
+        for fname in sorted(old_fields.keys() - new_fields.keys()):
+            changes.append(Change(
+                kind=ChangeKind.STRUCT_FIELD_REMOVED,
+                symbol=f"{name}::{fname}",
+                description=f"Struct field removed: {name}::{fname}",
+                old_value=f"{old_fields[fname].type_name}",
+            ))
+
+        # 4. Existing fields: offset and type changes
+        for fname, old_f in old_fields.items():
+            if fname not in new_fields:
+                continue
+            new_f = new_fields[fname]
+
+            if old_f.byte_offset != new_f.byte_offset:
+                changes.append(Change(
+                    kind=ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
+                    symbol=f"{name}::{fname}",
+                    description=(
+                        f"Field offset changed: {name}::{fname} "
+                        f"(+{old_f.byte_offset} → +{new_f.byte_offset})"
+                    ),
+                    old_value=str(old_f.byte_offset),
+                    new_value=str(new_f.byte_offset),
+                ))
+
+            # Type size change (underlying type grew/shrank)
+            if (old_f.byte_size > 0 and new_f.byte_size > 0
+                    and old_f.byte_size != new_f.byte_size):
+                changes.append(Change(
+                    kind=ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+                    symbol=f"{name}::{fname}",
+                    description=(
+                        f"Field type size changed: {name}::{fname} "
+                        f"{old_f.type_name}({old_f.byte_size}B) → "
+                        f"{new_f.type_name}({new_f.byte_size}B)"
+                    ),
+                    old_value=old_f.type_name,
+                    new_value=new_f.type_name,
+                ))
+
+    return changes
+
+
+def _diff_enum_layouts(o: object, n: object) -> list[Change]:
+    from .dwarf_metadata import EnumInfo
+
+    old_enums: dict[str, EnumInfo] = getattr(o, "enums", {})
+    new_enums: dict[str, EnumInfo] = getattr(n, "enums", {})
+    changes: list[Change] = []
+
+    for name, old_e in old_enums.items():
+        if name not in new_enums:
+            continue
+
+        new_e = new_enums[name]
+
+        # 1. Underlying size change (e.g. int8_t → int32_t)
+        if old_e.underlying_byte_size != new_e.underlying_byte_size:
+            changes.append(Change(
+                kind=ChangeKind.ENUM_UNDERLYING_SIZE_CHANGED,
+                symbol=name,
+                description=(
+                    f"Enum underlying type size changed: {name} "
+                    f"({old_e.underlying_byte_size} → {new_e.underlying_byte_size} bytes)"
+                ),
+                old_value=str(old_e.underlying_byte_size),
+                new_value=str(new_e.underlying_byte_size),
+            ))
+
+        # 2. Removed members
+        for mname in sorted(old_e.members.keys() - new_e.members.keys()):
+            changes.append(Change(
+                kind=ChangeKind.ENUM_MEMBER_REMOVED,
+                symbol=f"{name}::{mname}",
+                description=f"Enum member removed: {name}::{mname}",
+                old_value=str(old_e.members[mname]),
+            ))
+
+        # 3. Changed values
+        for mname, old_val in old_e.members.items():
+            if mname in new_e.members and new_e.members[mname] != old_val:
+                changes.append(Change(
+                    kind=ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
+                    symbol=f"{name}::{mname}",
+                    description=(
+                        f"Enum member value changed: {name}::{mname} "
+                        f"({old_val} → {new_e.members[mname]})"
+                    ),
+                    old_value=str(old_val),
+                    new_value=str(new_e.members[mname]),
+                ))
+
+    return changes
