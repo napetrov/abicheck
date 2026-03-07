@@ -1,6 +1,7 @@
 """Checker — diff two AbiSnapshots, classify changes, produce a verdict."""
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -24,6 +25,7 @@ class ChangeKind(str, Enum):
 
     # Type changes
     TYPE_SIZE_CHANGED = "type_size_changed"      # struct/class layout change → BREAKING
+    TYPE_ALIGNMENT_CHANGED = "type_alignment_changed"  # alignment change → BREAKING
     TYPE_FIELD_REMOVED = "type_field_removed"    # → BREAKING
     TYPE_FIELD_ADDED = "type_field_added"        # if in non-final class, may be BREAKING
     TYPE_FIELD_OFFSET_CHANGED = "type_field_offset_changed"  # → BREAKING
@@ -54,6 +56,7 @@ _BREAKING_KINDS = {
     ChangeKind.VAR_REMOVED,
     ChangeKind.VAR_TYPE_CHANGED,
     ChangeKind.TYPE_SIZE_CHANGED,
+    ChangeKind.TYPE_ALIGNMENT_CHANGED,
     ChangeKind.TYPE_FIELD_REMOVED,
     ChangeKind.TYPE_FIELD_OFFSET_CHANGED,
     ChangeKind.TYPE_FIELD_TYPE_CHANGED,
@@ -108,13 +111,13 @@ class DiffResult:
 
 
 def _public(funcs) -> list[Function]:
-    return [f for f in funcs if f.visibility == Visibility.PUBLIC]
+    return [f for f in funcs if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)]
 
 
 def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
-    old_map = {f.mangled: f for f in _public(old.functions)}
-    new_map = {f.mangled: f for f in _public(new.functions)}
+    old_map = {k: v for k, v in old.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
+    new_map = {k: v for k, v in new.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
 
     for mangled, f_old in old_map.items():
         if mangled not in new_map:
@@ -187,8 +190,8 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 def _diff_variables(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
-    old_map = {v.mangled: v for v in old.variables if v.visibility == Visibility.PUBLIC}
-    new_map = {v.mangled: v for v in new.variables if v.visibility == Visibility.PUBLIC}
+    old_map = {k: v for k, v in old.variable_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
+    new_map = {k: v for k, v in new.variable_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
 
     for mangled, v_old in old_map.items():
         if mangled not in new_map:
@@ -238,6 +241,16 @@ def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                     description=f"Size changed: {name} ({t_old.size_bits} → {t_new.size_bits} bits)",
                     old_value=str(t_old.size_bits),
                     new_value=str(t_new.size_bits),
+                ))
+
+        if t_old.alignment_bits is not None and t_new.alignment_bits is not None:
+            if t_old.alignment_bits != t_new.alignment_bits:
+                changes.append(Change(
+                    kind=ChangeKind.TYPE_ALIGNMENT_CHANGED,
+                    symbol=name,
+                    description=f"Alignment changed: {name} ({t_old.alignment_bits} → {t_new.alignment_bits} bits)",
+                    old_value=str(t_old.alignment_bits),
+                    new_value=str(t_new.alignment_bits),
                 ))
 
         old_fields = {f.name: f for f in t_old.fields}
@@ -291,12 +304,33 @@ def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 description=f"Base classes changed: {name}",
                 old_value=str(t_old.bases), new_value=str(t_new.bases),
             ))
+        else:
+            # Detect non-virtual base promoted to virtual (changes VTT layout).
+            # Only runs when bases/virtual_bases are unchanged as sets but virtualness differs.
+            old_all_bases = set(t_old.bases) | set(t_old.virtual_bases)
+            new_all_bases = set(t_new.bases) | set(t_new.virtual_bases)
+            if old_all_bases == new_all_bases:
+                old_virt = set(t_old.virtual_bases)
+                new_virt = set(t_new.virtual_bases)
+                if old_virt != new_virt:
+                    changes.append(Change(
+                        kind=ChangeKind.TYPE_BASE_CHANGED,
+                        symbol=name,
+                        description=f"Virtual inheritance changed: {name} (affects VTT layout)",
+                        old_value=f"virtual={sorted(old_virt)}",
+                        new_value=f"virtual={sorted(new_virt)}",
+                    ))
 
         if t_old.vtable != t_new.vtable:
+            if Counter(t_old.vtable) == Counter(t_new.vtable) and t_old.vtable != t_new.vtable:
+                # Same entries, different order — reorder is still BREAKING
+                description = f"vtable reordered: {name}"
+            else:
+                description = f"vtable changed: {name}"
             changes.append(Change(
                 kind=ChangeKind.TYPE_VTABLE_CHANGED,
                 symbol=name,
-                description=f"vtable changed: {name}",
+                description=description,
             ))
 
     for name in new_map:

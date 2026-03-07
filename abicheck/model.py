@@ -35,6 +35,7 @@ class Function:
     visibility: Visibility = Visibility.PUBLIC
     is_virtual: bool = False
     is_noexcept: bool = False
+    is_extern_c: bool = False
     vtable_index: int | None = None
     source_location: str | None = None  # "header.h:42"
 
@@ -61,6 +62,7 @@ class RecordType:
     name: str
     kind: str  # "struct" | "class" | "union"
     size_bits: int | None = None
+    alignment_bits: int | None = None
     fields: list[TypeField] = field(default_factory=list)
     bases: list[str] = field(default_factory=list)       # base class names
     virtual_bases: list[str] = field(default_factory=list)
@@ -87,15 +89,23 @@ class AbiSnapshot:
         self._var_by_mangled = {v.mangled: v for v in self.variables}
         self._type_by_name = {t.name: t for t in self.types}
 
-    def func_by_mangled(self, mangled: str) -> Function | None:
+    @property
+    def function_map(self) -> dict:
         if self._func_by_mangled is None:
             self.index()
-        return self._func_by_mangled.get(mangled)
+        return self._func_by_mangled
 
-    def var_by_mangled(self, mangled: str) -> Variable | None:
+    @property
+    def variable_map(self) -> dict:
         if self._var_by_mangled is None:
             self.index()
-        return self._var_by_mangled.get(mangled)
+        return self._var_by_mangled
+
+    def func_by_mangled(self, mangled: str) -> Function | None:
+        return self.function_map.get(mangled)
+
+    def var_by_mangled(self, mangled: str) -> Variable | None:
+        return self.variable_map.get(mangled)
 
     def type_by_name(self, name: str) -> RecordType | None:
         if self._type_by_name is None:
