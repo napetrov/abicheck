@@ -4,11 +4,15 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Union
 
 from .model import (
-    AbiSnapshot, Function, Param, ParamKind, RecordType,
-    TypeField, Variable, Visibility,
+    AbiSnapshot,
+    Function,
+    Param,
+    RecordType,
+    TypeField,
+    Variable,
+    Visibility,
 )
 
 
@@ -69,11 +73,11 @@ def snapshot_from_dict(d: dict) -> AbiSnapshot:
     )
 
 
-def load_snapshot(path: Union[str, Path]) -> AbiSnapshot:
+def load_snapshot(path: str | Path) -> AbiSnapshot:
     with open(path, encoding="utf-8") as f:
         return snapshot_from_dict(json.load(f))
 
 
-def save_snapshot(snap: AbiSnapshot, path: Union[str, Path]) -> None:
+def save_snapshot(snap: AbiSnapshot, path: str | Path) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write(snapshot_to_json(snap))

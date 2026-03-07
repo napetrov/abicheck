@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
-from typing import List
 
-from .checker import ChangeKind, DiffResult, Verdict, _BREAKING_KINDS, _SOURCE_BREAK_KINDS
+from .checker import (
+    DiffResult,
+    Verdict,
+)
 
 _VERDICT_EMOJI = {
     Verdict.NO_CHANGE: "✅",
@@ -53,11 +54,11 @@ def to_markdown(result: DiffResult) -> str:
     emoji = _VERDICT_EMOJI[v]
     label = _VERDICT_LABEL[v]
 
-    lines: List[str] = [
+    lines: list[str] = [
         f"# ABI Report: {result.library}",
         "",
-        f"| | |",
-        f"|---|---|",
+        "| | |",
+        "|---|---|",
         f"| **Old version** | `{result.old_version}` |",
         f"| **New version** | `{result.new_version}` |",
         f"| **Verdict** | {emoji} `{label}` |",
