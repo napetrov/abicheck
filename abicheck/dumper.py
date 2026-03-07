@@ -149,6 +149,19 @@ def _castxml_dump(headers: list[Path], extra_includes: list[Path],
         out_xml.unlink(missing_ok=True)
 
 
+def _parse_vtable_index(vi_str: str | None) -> int | None:
+    """Parse vtable_index attribute, returning None for missing/invalid values."""
+    if vi_str is None:
+        return None
+    stripped = vi_str.lstrip("-")
+    return int(vi_str) if stripped.isdigit() else None
+
+
+def _vt_sort_key(item: tuple) -> tuple:
+    vi, _ = item
+    return (0, vi) if vi is not None else (1, 0)
+
+
 class _CastxmlParser:
     """Parse castxml XML into ABI model objects."""
 
@@ -158,6 +171,7 @@ class _CastxmlParser:
         self._exported_dynamic = exported_dynamic
         self._exported_static = exported_static
         self._id_map: dict[str, ET.Element] = {}
+        self._virtual_methods_by_class: dict[str, list[ET.Element]] = {}
         self._build_id_map()
 
     def _build_id_map(self) -> None:
@@ -165,6 +179,13 @@ class _CastxmlParser:
             eid = el.get("id")
             if eid:
                 self._id_map[eid] = el
+        # Build class_id → list of virtual Method/Destructor elements
+        # In castxml output, methods are top-level elements with a "context" attribute
+        for el in self._root:
+            if el.tag in ("Method", "Destructor") and el.get("virtual") == "1":
+                ctx = el.get("context")
+                if ctx:
+                    self._virtual_methods_by_class.setdefault(ctx, []).append(el)
 
     def _resolve(self, id_: str) -> ET.Element | None:
         return self._id_map.get(id_)
@@ -234,6 +255,7 @@ class _CastxmlParser:
             vis = self._visibility(el.get("mangled", ""), name)
             is_virtual = el.get("virtual") == "1"
             noexcept_re = re.search(r"noexcept", el.get("attributes", ""))
+            vtable_index = _parse_vtable_index(el.get("vtable_index")) if is_virtual else None
 
             # Detect extern "C": explicit extern attribute OR no mangled name (C linkage)
             raw_mangled = el.get("mangled", "")
@@ -261,6 +283,7 @@ class _CastxmlParser:
                 is_virtual=is_virtual,
                 is_noexcept=bool(noexcept_re),
                 is_extern_c=is_extern_c,
+                vtable_index=vtable_index,
                 source_location=source_loc,
             ))
         return funcs
@@ -317,6 +340,43 @@ class _CastxmlParser:
                 for b in el if b.tag == "Base" and b.get("virtual") == "1"
             ]
 
+            # Collect vtable: virtual methods from this class and its base classes
+            # In castxml, Method elements are top-level with "context" pointing to class id
+            class_id = el.get("id", "")
+            virtual_methods = []
+
+            # Collect virtual methods: look up in the top-level map by class id
+            # Also include inherited virtual methods from base classes (prepend them)
+            def _collect_virtual_methods(cid: str, seen: set | None = None) -> list[tuple]:
+                if seen is None:
+                    seen = set()
+                if cid in seen:
+                    return []
+                seen.add(cid)
+                class_el = self._id_map.get(cid)
+                if class_el is None:
+                    return []
+                result = []
+                # First collect from base classes (inherited methods come first in vtable)
+                for base in class_el:
+                    if base.tag == "Base":
+                        base_type_el = self._resolve(base.get("type", ""))
+                        if base_type_el is not None:
+                            result.extend(_collect_virtual_methods(base_type_el.get("id", ""), seen))
+                # Then add this class's own virtual methods
+                for m in self._virtual_methods_by_class.get(cid, []):
+                    mangled_m = m.get("mangled", "")
+                    if mangled_m:
+                        vi = _parse_vtable_index(m.get("vtable_index"))
+                        result.append((vi, mangled_m))
+                return result
+
+            virtual_methods = _collect_virtual_methods(class_id)
+
+            # Sort: methods with vtable_index first (by index), then remainder in XML order
+            virtual_methods.sort(key=_vt_sort_key)
+            vtable = [m for _, m in virtual_methods]
+
             types.append(RecordType(
                 name=name,
                 kind=el.tag.lower(),
@@ -325,6 +385,7 @@ class _CastxmlParser:
                 fields=fields,
                 bases=bases,
                 virtual_bases=virtual_bases,
+                vtable=vtable,
             ))
         return types
 
