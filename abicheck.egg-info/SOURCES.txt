@@ -20,4 +20,5 @@ tests/test_abi_examples.py
 tests/test_checker.py
 tests/test_reporter.py
 tests/test_serialization.py
+tests/test_sprint1.py
 tests/test_suppression.py

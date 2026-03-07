@@ -70,24 +70,29 @@ def _func(name: str, mangled: str, **kwargs: object) -> Function:
 
 
 def test_method_became_static() -> None:
+    # In real C++, static changes mangling (different symbol names).
+    # Checker matches via (name, params) across removed/added sets.
     old = _snap(functions=[_func("bar", "_ZN6Widget3barEv", is_static=False)])
-    new = _snap(functions=[_func("bar", "_ZN6Widget3barEv", is_static=True)])
+    new = _snap(functions=[_func("bar", "_ZN6Widget3barEv_static", is_static=True)])
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.FUNC_STATIC_CHANGED in kinds
 
 
 def test_method_const_changed() -> None:
-    old = _snap(functions=[_func("get", "_ZNK6Widget3getEv", is_const=True)])
-    new = _snap(functions=[_func("get", "_ZNK6Widget3getEv", is_const=False)])
+    # const adds K prefix in Itanium mangling: Foo::get() → _ZN3Foo3getEv
+    #                                            Foo::get() const → _ZNK3Foo3getEv
+    old = _snap(functions=[_func("get", "_ZN6Widget3getEv", is_const=False)])
+    new = _snap(functions=[_func("get", "_ZNK6Widget3getEv", is_const=True)])
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.FUNC_CV_CHANGED in kinds
 
 
 def test_method_volatile_changed() -> None:
-    old = _snap(functions=[_func("run", "_ZNV6Widget3runEv", is_volatile=True)])
-    new = _snap(functions=[_func("run", "_ZNV6Widget3runEv", is_volatile=False)])
+    # volatile adds V prefix in mangling
+    old = _snap(functions=[_func("run", "_ZN6Widget3runEv", is_volatile=False)])
+    new = _snap(functions=[_func("run", "_ZNV6Widget3runEv", is_volatile=True)])
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.FUNC_CV_CHANGED in kinds

@@ -43,9 +43,10 @@ class ChangeKind(str, Enum):
 
     # Enum changes
     ENUM_MEMBER_REMOVED = "enum_member_removed"
-    ENUM_MEMBER_ADDED = "enum_member_added"
+    ENUM_MEMBER_ADDED = "enum_member_added"  # BREAKING (closed enums / value shift risk)
     ENUM_MEMBER_VALUE_CHANGED = "enum_member_value_changed"
-    ENUM_LAST_MEMBER_VALUE_CHANGED = "enum_last_member_value_changed"
+    ENUM_LAST_MEMBER_VALUE_CHANGED = "enum_last_member_value_changed"  # sentinel changed
+    TYPEDEF_REMOVED = "typedef_removed"  # placed here for logical grouping
 
     # Method qualifier changes
     FUNC_STATIC_CHANGED = "func_static_changed"
@@ -106,6 +107,7 @@ _BREAKING_KINDS = {
     ChangeKind.UNION_FIELD_REMOVED,
     ChangeKind.UNION_FIELD_TYPE_CHANGED,
     ChangeKind.TYPEDEF_BASE_CHANGED,
+    ChangeKind.TYPEDEF_REMOVED,
     ChangeKind.FIELD_BITFIELD_CHANGED,
 }
 
@@ -327,6 +329,16 @@ def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                         description=f"Field offset changed: {name}::{fname} ({f_old.offset_bits} → {f_new.offset_bits} bits)",
                         old_value=str(f_old.offset_bits), new_value=str(f_new.offset_bits),
                     ))
+                # Bitfield layout check (merged here to avoid redundant type iteration)
+                if (f_old.is_bitfield != f_new.is_bitfield
+                        or f_old.bitfield_bits != f_new.bitfield_bits):
+                    changes.append(Change(
+                        kind=ChangeKind.FIELD_BITFIELD_CHANGED,
+                        symbol=name,
+                        description=f"Bitfield layout changed: {name}::{fname}",
+                        old_value=f"bits={f_old.bitfield_bits}",
+                        new_value=f"bits={f_new.bitfield_bits}",
+                    ))
 
         for fname in new_fields:
             if fname not in old_fields:
@@ -402,7 +414,14 @@ def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         e_new = new_map[name]
         old_members = {m.name: m.value for m in e_old.members}
         new_members = {m.name: m.value for m in e_new.members}
-        last_old = e_old.members[-1].name if e_old.members else None
+        # "Sentinel" member = member with the highest integer value in old enum.
+        # Detecting its value change is important (e.g. FOO_MAX / FOO_COUNT patterns).
+        # Use max-value comparison, NOT list-position order (castxml order is unreliable).
+        old_max_val = max(old_members.values()) if old_members else None
+        old_sentinel = (
+            next(n for n, v in old_members.items() if v == old_max_val)
+            if old_max_val is not None else None
+        )
 
         for mname, mval in old_members.items():
             if mname not in new_members:
@@ -415,7 +434,7 @@ def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             elif new_members[mname] != mval:
                 kind = (
                     ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED
-                    if mname == last_old
+                    if mname == old_sentinel
                     else ChangeKind.ENUM_MEMBER_VALUE_CHANGED
                 )
                 changes.append(Change(
@@ -438,35 +457,39 @@ def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+def _sig_key(f: Function) -> tuple[str, tuple[str, ...]]:
+    """Normalized match key: (function_name, param_types).
+
+    cv-qualifiers (const/volatile on `this`) and static-ness are NOT encoded in
+    the mangled name lookup table, so we use the unqualified name + params tuple
+    to find matching pairs across qualifier changes.
+    """
+    return (f.name, tuple(p.type for p in f.params))
+
+
 def _diff_method_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect cv-qualifier, static, and pure-virtual changes.
+
+    NOTE: Changing const/volatile/static causes the mangled symbol name to
+    change (e.g. Foo::bar() const → _ZNK3Foo3barEv vs _ZN3Foo3barEv).  We
+    therefore match functions by (name, param_types) rather than mangled name
+    to find cross-qualifier pairs in the removed/added sets.
+    """
     changes: list[Change] = []
-    old_map = {k: v for k, v in old.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
-    new_map = {k: v for k, v in new.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
+    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
+    old_by_mangled = {k: v for k, v in old.function_map.items() if v.visibility in vis}
+    new_by_mangled = {k: v for k, v in new.function_map.items() if v.visibility in vis}
 
-    for mangled, f_old in old_map.items():
-        if mangled not in new_map:
+    # --- pure_virtual detection: mangled name is UNCHANGED when pure_virtual changes ---
+    for mangled, f_old in old_by_mangled.items():
+        if mangled not in new_by_mangled:
             continue
-        f_new = new_map[mangled]
-
-        if f_old.is_static != f_new.is_static:
-            changes.append(Change(
-                kind=ChangeKind.FUNC_STATIC_CHANGED,
-                symbol=mangled,
-                description=f"Static qualifier changed: {f_old.name}",
-                old_value=str(f_old.is_static),
-                new_value=str(f_new.is_static),
-            ))
-
-        if f_old.is_const != f_new.is_const or f_old.is_volatile != f_new.is_volatile:
-            changes.append(Change(
-                kind=ChangeKind.FUNC_CV_CHANGED,
-                symbol=mangled,
-                description=f"CV qualifier changed: {f_old.name}",
-                old_value=f"const={f_old.is_const} volatile={f_old.is_volatile}",
-                new_value=f"const={f_new.is_const} volatile={f_new.is_volatile}",
-            ))
-
+        f_new = new_by_mangled[mangled]
         if not f_old.is_pure_virtual and f_new.is_pure_virtual:
+            if not f_old.is_virtual and f_new.is_pure_virtual:
+                # Sanity check: pure_virtual=True on non-virtual is a dumper anomaly
+                # (not valid C++). Emit FUNC_PURE_VIRTUAL_ADDED as best effort.
+                pass
             kind = (
                 ChangeKind.FUNC_VIRTUAL_BECAME_PURE
                 if f_old.is_virtual
@@ -476,6 +499,40 @@ def _diff_method_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 kind=kind,
                 symbol=mangled,
                 description=f"Function became pure virtual: {f_old.name}",
+            ))
+
+    # --- cv/static detection: match removed functions against added functions by sig ---
+    old_mangles = set(old_by_mangled)
+    new_mangles = set(new_by_mangled)
+    removed_funcs = [old_by_mangled[m] for m in (old_mangles - new_mangles)]
+    added_funcs   = [new_by_mangled[m] for m in (new_mangles - old_mangles)]
+
+    # Build sig-keyed lookup over newly-added functions
+    added_by_sig: dict[tuple[str, tuple[str, ...]], Function] = {}
+    for f in added_funcs:
+        added_by_sig[_sig_key(f)] = f
+
+    for f_old in removed_funcs:
+        key = _sig_key(f_old)
+        if key not in added_by_sig:
+            continue
+        f_new = added_by_sig[key]
+        # Same (name, params) — only qualifiers changed; report instead of REMOVED+ADDED
+        if f_old.is_static != f_new.is_static:
+            changes.append(Change(
+                kind=ChangeKind.FUNC_STATIC_CHANGED,
+                symbol=f_old.mangled,
+                description=f"Static qualifier changed: {f_old.name}",
+                old_value=str(f_old.is_static),
+                new_value=str(f_new.is_static),
+            ))
+        if f_old.is_const != f_new.is_const or f_old.is_volatile != f_new.is_volatile:
+            changes.append(Change(
+                kind=ChangeKind.FUNC_CV_CHANGED,
+                symbol=f_old.mangled,
+                description=f"CV qualifier changed: {f_old.name}",
+                old_value=f"const={f_old.is_const} volatile={f_old.is_volatile}",
+                new_value=f"const={f_new.is_const} volatile={f_new.is_volatile}",
             ))
 
     return changes
@@ -526,7 +583,15 @@ def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
     for alias, old_type in old.typedefs.items():
         new_type = new.typedefs.get(alias)
-        if new_type is not None and new_type != old_type:
+        if new_type is None:
+            # Typedef removed — breaking for consumers that used the alias
+            changes.append(Change(
+                kind=ChangeKind.TYPEDEF_REMOVED,
+                symbol=alias,
+                description=f"Typedef removed: {alias}",
+                old_value=old_type,
+            ))
+        elif new_type != old_type:
             changes.append(Change(
                 kind=ChangeKind.TYPEDEF_BASE_CHANGED,
                 symbol=alias,
@@ -536,33 +601,6 @@ def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             ))
     return changes
 
-
-def _diff_bitfields(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
-    changes: list[Change] = []
-    old_map = {t.name: t for t in old.types}
-    new_map = {t.name: t for t in new.types}
-
-    for name, t_old in old_map.items():
-        if name not in new_map:
-            continue
-        t_new = new_map[name]
-        old_fields = {f.name: f for f in t_old.fields}
-        new_fields = {f.name: f for f in t_new.fields}
-
-        for fname, f_old in old_fields.items():
-            if fname not in new_fields:
-                continue
-            f_new = new_fields[fname]
-            if f_old.is_bitfield != f_new.is_bitfield or f_old.bitfield_bits != f_new.bitfield_bits:
-                changes.append(Change(
-                    kind=ChangeKind.FIELD_BITFIELD_CHANGED,
-                    symbol=name,
-                    description=f"Bitfield layout changed: {name}::{fname}",
-                    old_value=f"bits={f_old.bitfield_bits}",
-                    new_value=f"bits={f_new.bitfield_bits}",
-                ))
-
-    return changes
 
 
 def _compute_verdict(changes: list[Change]) -> Verdict:
@@ -591,7 +629,6 @@ def compare(
     changes.extend(_diff_method_qualifiers(old, new))
     changes.extend(_diff_unions(old, new))
     changes.extend(_diff_typedefs(old, new))
-    changes.extend(_diff_bitfields(old, new))
 
     suppressed: list[Change] = []
     if suppression is not None:
