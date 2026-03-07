@@ -20,6 +20,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
@@ -27,13 +28,10 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Lint (ruff)
-        run: |
-          pip install ruff
-          ruff check abi_check/ tests/
+        run: ruff check abi_check/ tests/
 
       - name: Run tests
-        run: |
-          pytest tests/ -v --tb=short
+        run: pytest tests/ -v --tb=short
 
   e2e:
     runs-on: ubuntu-latest
@@ -49,6 +47,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: 'pip'
 
       - name: Install package
         run: pip install -e ".[dev]"

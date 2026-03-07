@@ -79,9 +79,9 @@ class AbiSnapshot:
     types: List[RecordType] = field(default_factory=list)
 
     # Indexes (built lazily)
-    _func_by_mangled: Optional[dict] = field(default=None, repr=False)
-    _var_by_mangled: Optional[dict] = field(default=None, repr=False)
-    _type_by_name: Optional[dict] = field(default=None, repr=False)
+    _func_by_mangled: Optional[dict] = field(default=None, repr=False, compare=False)
+    _var_by_mangled: Optional[dict] = field(default=None, repr=False, compare=False)
+    _type_by_name: Optional[dict] = field(default=None, repr=False, compare=False)
 
     def index(self) -> None:
         self._func_by_mangled = {f.mangled: f for f in self.functions}

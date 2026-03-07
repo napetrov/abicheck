@@ -127,11 +127,11 @@ class TestNoexcept:
         assert r.verdict == Verdict.BREAKING
         assert any(c.kind == ChangeKind.FUNC_NOEXCEPT_REMOVED for c in r.changes)
 
-    def test_noexcept_added_is_source_break(self):
+    def test_noexcept_added_is_breaking(self):  # C++17 P0012R1
         old_f = _pub_func("swap", "_Z4swapv", noexcept=False)
         new_f = _pub_func("swap", "_Z4swapv", noexcept=True)
         r = compare(_snap("1.0", [old_f]), _snap("2.0", [new_f]))
-        assert r.verdict == Verdict.SOURCE_BREAK
+        assert r.verdict == Verdict.BREAKING
         assert any(c.kind == ChangeKind.FUNC_NOEXCEPT_ADDED for c in r.changes)
 
 
@@ -268,7 +268,7 @@ class TestVerdictPriority:
         r = compare(old, new)
         assert r.verdict == Verdict.BREAKING
 
-    def test_source_break_overrides_compatible(self):
+    def test_noexcept_added_overrides_compatible(self):
         """noexcept added (source_break) + new func (compatible) = SOURCE_BREAK."""
         f_noexcept = _pub_func("swap", "_Z4swapv", noexcept=False)
         f_new = _pub_func("swap", "_Z4swapv", noexcept=True)
@@ -276,4 +276,4 @@ class TestVerdictPriority:
         old = _snap("1.0", functions=[f_noexcept])
         new = _snap("1.1", functions=[f_new, f_added])
         r = compare(old, new)
-        assert r.verdict == Verdict.SOURCE_BREAK
+        assert r.verdict == Verdict.BREAKING

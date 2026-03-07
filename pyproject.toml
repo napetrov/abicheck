@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "abi-check"
@@ -10,7 +10,6 @@ license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 dependencies = [
     "click>=8.0",
-    "lxml>=4.9",
 ]
 
 [project.scripts]
@@ -20,6 +19,7 @@ abi-check = "abi_check.cli:main"
 dev = [
     "pytest>=7.0",
     "pytest-cov",
+    "ruff>=0.3",
 ]
 
 [tool.pytest.ini_options]

@@ -34,6 +34,7 @@ class ChangeKind(str, Enum):
 
     TYPE_ADDED = "type_added"                    # new type → COMPATIBLE
     TYPE_REMOVED = "type_removed"                # type removed → BREAKING if used in API
+    TYPE_FIELD_ADDED_COMPATIBLE = "type_field_added_compatible"  # appended to standard-layout non-polymorphic type
 
 
 class Verdict(str, Enum):
@@ -60,17 +61,20 @@ _BREAKING_KINDS = {
     ChangeKind.TYPE_BASE_CHANGED,
     ChangeKind.TYPE_VTABLE_CHANGED,
     ChangeKind.TYPE_REMOVED,
+    ChangeKind.FUNC_NOEXCEPT_ADDED,  # C++17: noexcept is part of the function type (P0012R1)
+    ChangeKind.TYPE_FIELD_ADDED,  # for polymorphic / non-standard-layout types
 }
 
-_SOURCE_BREAK_KINDS = {
-    ChangeKind.FUNC_NOEXCEPT_ADDED,
-}
+_SOURCE_BREAK_KINDS: set = set()  # reserved for future source-only breaks
+
 
 _COMPATIBLE_KINDS = {
     ChangeKind.FUNC_ADDED,
     ChangeKind.VAR_ADDED,
     ChangeKind.TYPE_ADDED,
-    ChangeKind.TYPE_FIELD_ADDED,
+    # TYPE_FIELD_ADDED intentionally omitted: compatible only for standard-layout
+    # non-polymorphic types; context-aware verdict set in _diff_types()
+    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
 }
 
 
@@ -267,8 +271,16 @@ def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> List[Change]:
 
         for fname in new_fields:
             if fname not in old_fields:
+                # Field addition is BREAKING for polymorphic types or types with vtables;
+                # COMPATIBLE only for standard-layout types without virtual functions
+                is_polymorphic = bool(t_new.vtable or t_new.virtual_bases)
+                field_kind = (
+                    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE
+                    if not is_polymorphic and t_new.kind in ("struct", "union")
+                    else ChangeKind.TYPE_FIELD_ADDED  # BREAKING
+                )
                 changes.append(Change(
-                    kind=ChangeKind.TYPE_FIELD_ADDED,
+                    kind=field_kind,
                     symbol=name,
                     description=f"Field added: {name}::{fname}",
                 ))
