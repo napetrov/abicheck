@@ -19,7 +19,7 @@ def main():
     """abi-check — ABI compatibility checker for C/C++ shared libraries."""
 
 
-@main.command()
+@main.command("dump")
 @click.argument("so_path", type=click.Path(exists=True, path_type=Path))
 @click.option("-H", "--header", "headers", multiple=True, type=click.Path(exists=True, path_type=Path),
               help="Public header file (repeat for multiple).")
@@ -55,7 +55,7 @@ def dump_cmd(so_path: Path, headers: tuple, includes: tuple,
         click.echo(result)
 
 
-@main.command()
+@main.command("compare")
 @click.argument("old_snapshot", type=click.Path(exists=True, path_type=Path))
 @click.argument("new_snapshot", type=click.Path(exists=True, path_type=Path))
 @click.option("--format", "fmt", type=click.Choice(["json", "markdown"]),

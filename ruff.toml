@@ -1,0 +1,6 @@
+[lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E501"]  # line length
+
+[lint.per-file-ignores]
+"tests/*" = ["S101"]  # allow assert in tests

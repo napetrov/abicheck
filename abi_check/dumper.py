@@ -44,23 +44,35 @@ def _readelf_exported_symbols(so_path: Path) -> set[str]:
 
 def _castxml_dump(headers: List[Path], extra_includes: List[Path],
                   compiler: str = "c++") -> ET.Element:
-    """Run castxml on headers and return parsed XML root."""
+    """Run castxml on headers and return parsed XML root.
+
+    Args:
+        compiler: "c++" (maps to g++) or "cc" (maps to gcc).
+    """
     if not _castxml_available():
         raise RuntimeError(
             "castxml not found in PATH. Install with: apt install castxml  "
             "or  conda install -c conda-forge castxml"
         )
 
+    # Map logical compiler name → castxml cc flag
+    _cc_map = {"c++": "g++", "cc": "gcc", "g++": "g++", "gcc": "gcc",
+               "clang++": "clang++", "clang": "clang"}
+    cc_bin = _cc_map.get(compiler, compiler)
+    # Determine GNU vs MSVC dialect
+    cc_id = "gnu" if "cl" not in cc_bin else "msvc"
+
     with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
         out_xml = Path(tmp.name)
 
-    # Aggregate header: include all target headers
-    with tempfile.NamedTemporaryFile(suffix=".h", mode="w", delete=False) as agg:
+    # Aggregate header: use .hpp to force C++ mode in castxml
+    with tempfile.NamedTemporaryFile(suffix=".hpp", mode="w", delete=False) as agg:
         for h in headers:
             agg.write(f'#include "{h.resolve()}"\n')
         agg_path = Path(agg.name)
 
-    cmd = ["castxml", "--castxml-output=1", f"--castxml-cc-{compiler}"]
+    cmd = ["castxml", "--castxml-output=1",
+           f"--castxml-cc-{cc_id}", cc_bin]
     for inc in extra_includes:
         cmd += ["-I", str(inc)]
     cmd += ["-o", str(out_xml), str(agg_path)]
@@ -125,8 +137,11 @@ class _CastxmlParser:
             return f"{base}[{max_}]" if max_ else f"{base}[]"
         return el.get("name", tag)
 
-    def _visibility(self, mangled: str) -> Visibility:
-        if mangled in self._exported:
+    def _visibility(self, mangled: str, name: str = "") -> Visibility:
+        """Check if symbol is exported: try mangled first, then plain name."""
+        if mangled and mangled in self._exported:
+            return Visibility.PUBLIC
+        if name and name in self._exported:
             return Visibility.PUBLIC
         return Visibility.HIDDEN
 
@@ -135,10 +150,10 @@ class _CastxmlParser:
         for el in self._root:
             if el.tag not in ("Function", "Method", "Constructor", "Destructor"):
                 continue
-            mangled = el.get("mangled", "")
-            if not mangled:
+            name = el.get("name", "")
+            if not name:
                 continue
-            name = el.get("name", mangled)
+            mangled = el.get("mangled", "") or name  # C functions: use plain name
             ret_id = el.get("returns", "")
             ret_type = self._type_name(ret_id) if ret_id else "void"
 
@@ -149,7 +164,7 @@ class _CastxmlParser:
                     p_type = self._type_name(arg.get("type", ""))
                     params.append(Param(name=p_name, type=p_type))
 
-            vis = self._visibility(mangled)
+            vis = self._visibility(el.get("mangled", ""), name)
             is_virtual = el.get("virtual") == "1"
             noexcept_re = re.search(r"noexcept", el.get("attributes", ""))
 
