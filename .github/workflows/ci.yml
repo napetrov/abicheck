@@ -28,7 +28,7 @@ jobs:
         run: ruff check abicheck/ tests/
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short
+        run: pytest tests/ -v --tb=short -m "not integration"
 
   integration-tests:
     runs-on: ubuntu-latest

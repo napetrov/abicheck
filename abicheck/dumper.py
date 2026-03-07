@@ -507,6 +507,7 @@ def dump(
     xml_root = _castxml_dump(headers, extra_includes, compiler=compiler)
     parser = _CastxmlParser(xml_root, exported_dynamic, exported_static)
 
+    from .elf_metadata import parse_elf_metadata
     snapshot = AbiSnapshot(
         library=so_path.name,
         version=version,
@@ -515,5 +516,6 @@ def dump(
         types=parser.parse_types(),
         enums=parser.parse_enums(),
         typedefs=parser.parse_typedefs(),
+        elf=parse_elf_metadata(so_path),
     )
     return snapshot

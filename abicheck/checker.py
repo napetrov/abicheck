@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from .elf_metadata import SymbolBinding
 from .model import AbiSnapshot, EnumType, Function, Visibility
 
 if TYPE_CHECKING:
@@ -67,6 +68,28 @@ class ChangeKind(str, Enum):
     # Bitfield changes
     FIELD_BITFIELD_CHANGED = "field_bitfield_changed"
 
+    # ── ELF-only (Sprint 2) ──────────────────────────────────────────────
+    # Dynamic section contract
+    SONAME_CHANGED           = "soname_changed"
+    NEEDED_ADDED             = "needed_added"            # new DT_NEEDED dep
+    NEEDED_REMOVED           = "needed_removed"          # dep dropped
+    RPATH_CHANGED            = "rpath_changed"
+    RUNPATH_CHANGED          = "runpath_changed"
+
+    # Symbol metadata drift (ELF .dynsym)
+    SYMBOL_BINDING_CHANGED      = "symbol_binding_changed"      # GLOBAL→WEAK (breaking)
+    SYMBOL_BINDING_STRENGTHENED = "symbol_binding_strengthened"  # WEAK→GLOBAL (compatible)
+    SYMBOL_TYPE_CHANGED      = "symbol_type_changed"     # FUNC→OBJECT, etc.
+    SYMBOL_SIZE_CHANGED      = "symbol_size_changed"     # st_size changed
+    IFUNC_INTRODUCED         = "ifunc_introduced"        # → STT_GNU_IFUNC
+    IFUNC_REMOVED            = "ifunc_removed"           # STT_GNU_IFUNC →
+    COMMON_SYMBOL_RISK       = "common_symbol_risk"      # STT_COMMON exported
+
+    # Symbol versioning contract
+    SYMBOL_VERSION_DEFINED_REMOVED   = "symbol_version_defined_removed"
+    SYMBOL_VERSION_REQUIRED_ADDED    = "symbol_version_required_added"   # new GLIBC_X
+    SYMBOL_VERSION_REQUIRED_REMOVED  = "symbol_version_required_removed"
+
 
 class Verdict(str, Enum):
     NO_CHANGE = "NO_CHANGE"         # identical ABI
@@ -109,6 +132,25 @@ _BREAKING_KINDS = {
     ChangeKind.TYPEDEF_BASE_CHANGED,
     ChangeKind.TYPEDEF_REMOVED,
     ChangeKind.FIELD_BITFIELD_CHANGED,
+    # ELF Sprint 2
+    ChangeKind.SONAME_CHANGED,
+    ChangeKind.SYMBOL_BINDING_CHANGED,
+    ChangeKind.SYMBOL_TYPE_CHANGED,
+    ChangeKind.SYMBOL_SIZE_CHANGED,
+    ChangeKind.IFUNC_INTRODUCED,
+    ChangeKind.IFUNC_REMOVED,
+    ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
+    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+}
+
+_COMPATIBLE_KINDS: set[ChangeKind] = {
+    ChangeKind.NEEDED_ADDED,              # new dep: may not exist on older systems — warn, not hard-break
+    ChangeKind.NEEDED_REMOVED,            # removing a dep is compatible (but deployment risk)
+    ChangeKind.RUNPATH_CHANGED,           # search path drift — warn only
+    ChangeKind.RPATH_CHANGED,
+    ChangeKind.COMMON_SYMBOL_RISK,        # STT_COMMON — risk, not proven break
+    ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
+    ChangeKind.SYMBOL_BINDING_STRENGTHENED,  # WEAK→GLOBAL: backward-compatible for most consumers
 }
 
 _SOURCE_BREAK_KINDS: set[ChangeKind] = set()  # reserved for future source-only breaks
@@ -615,6 +657,167 @@ def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 
 
+def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """ELF-only detectors (Sprint 2): no debug info required."""
+    from .elf_metadata import ElfMetadata, SymbolType
+
+    o: ElfMetadata = getattr(old, "elf", None) or ElfMetadata()
+    n: ElfMetadata = getattr(new, "elf", None) or ElfMetadata()
+    changes: list[Change] = []
+
+    # ── Dynamic section ─────────────────────────────────────────────────
+    if o.soname and n.soname and o.soname != n.soname:
+        changes.append(Change(
+            kind=ChangeKind.SONAME_CHANGED,
+            symbol="DT_SONAME",
+            description=f"SONAME changed: {o.soname!r} → {n.soname!r}",
+            old_value=o.soname, new_value=n.soname,
+        ))
+
+    old_needed = set(o.needed)
+    new_needed = set(n.needed)
+    for lib in sorted(new_needed - old_needed):
+        changes.append(Change(
+            kind=ChangeKind.NEEDED_ADDED,
+            symbol="DT_NEEDED",
+            description=f"New dependency added: {lib}",
+            new_value=lib,
+        ))
+    for lib in sorted(old_needed - new_needed):
+        changes.append(Change(
+            kind=ChangeKind.NEEDED_REMOVED,
+            symbol="DT_NEEDED",
+            description=f"Dependency removed: {lib}",
+            old_value=lib,
+        ))
+
+    if o.rpath != n.rpath:
+        changes.append(Change(
+            kind=ChangeKind.RPATH_CHANGED,
+            symbol="DT_RPATH",
+            description=f"RPATH changed: {o.rpath!r} → {n.rpath!r}",
+            old_value=o.rpath, new_value=n.rpath,
+        ))
+    if o.runpath != n.runpath:
+        changes.append(Change(
+            kind=ChangeKind.RUNPATH_CHANGED,
+            symbol="DT_RUNPATH",
+            description=f"RUNPATH changed: {o.runpath!r} → {n.runpath!r}",
+            old_value=o.runpath, new_value=n.runpath,
+        ))
+
+    # ── Symbol versioning ────────────────────────────────────────────────
+    old_def = set(o.versions_defined)
+    new_def = set(n.versions_defined)
+    for ver in sorted(old_def - new_def):
+        changes.append(Change(
+            kind=ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
+            symbol=ver,
+            description=f"Symbol version removed: {ver}",
+            old_value=ver,
+        ))
+
+    # Required version drift (e.g. new GLIBC_2.34 requirement).
+    # Iterate union of old+new libs to catch libs that disappeared entirely.
+    all_req_libs = set(o.versions_required) | set(n.versions_required)
+    for lib in sorted(all_req_libs):
+        old_vers = set(o.versions_required.get(lib, []))
+        new_vers = set(n.versions_required.get(lib, []))
+        for ver in sorted(new_vers - old_vers):
+            changes.append(Change(
+                kind=ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+                symbol=ver,
+                description=f"New symbol version requirement: {ver} (from {lib})",
+                new_value=f"{lib}:{ver}",
+            ))
+        for ver in sorted(old_vers - new_vers):
+            changes.append(Change(
+                kind=ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
+                symbol=ver,
+                description=f"Symbol version requirement removed: {ver} (from {lib})",
+                old_value=f"{lib}:{ver}",
+            ))
+
+    # ── Per-symbol metadata ──────────────────────────────────────────────
+    old_syms = o.symbol_map
+    new_syms = n.symbol_map
+
+    for sym_name, s_old in old_syms.items():
+        if sym_name not in new_syms:
+            continue
+        s_new = new_syms[sym_name]
+
+        # IFUNC introduced/removed
+        if s_old.sym_type != SymbolType.IFUNC and s_new.sym_type == SymbolType.IFUNC:
+            changes.append(Change(
+                kind=ChangeKind.IFUNC_INTRODUCED,
+                symbol=sym_name,
+                description=f"Symbol became GNU_IFUNC: {sym_name}",
+                old_value=s_old.sym_type.value, new_value="ifunc",
+            ))
+        elif s_old.sym_type == SymbolType.IFUNC and s_new.sym_type != SymbolType.IFUNC:
+            changes.append(Change(
+                kind=ChangeKind.IFUNC_REMOVED,
+                symbol=sym_name,
+                description=f"Symbol no longer GNU_IFUNC: {sym_name}",
+                old_value="ifunc", new_value=s_new.sym_type.value,
+            ))
+        elif s_old.sym_type != s_new.sym_type:
+            changes.append(Change(
+                kind=ChangeKind.SYMBOL_TYPE_CHANGED,
+                symbol=sym_name,
+                description=f"Symbol type changed: {sym_name} ({s_old.sym_type.value} → {s_new.sym_type.value})",
+                old_value=s_old.sym_type.value, new_value=s_new.sym_type.value,
+            ))
+
+        # Binding drift.
+        # GLOBAL→WEAK: breaking — consumers expecting reliable strong resolution may get
+        # the weak version overridden or missing at link time.
+        # WEAK→GLOBAL: compatible for most consumers (symbol is strengthened). Edge case:
+        # interposing libraries that relied on weak-override semantics will stop working,
+        # but that's an unusual deployment pattern; classified COMPATIBLE per ADR-001.
+        if s_old.binding != s_new.binding:
+            is_weakening = (
+                s_old.binding == SymbolBinding.GLOBAL
+                and s_new.binding == SymbolBinding.WEAK
+            )
+            kind = ChangeKind.SYMBOL_BINDING_CHANGED if is_weakening else ChangeKind.SYMBOL_BINDING_STRENGTHENED
+            changes.append(Change(
+                kind=kind,
+                symbol=sym_name,
+                description=f"Symbol binding changed: {sym_name} ({s_old.binding.value} → {s_new.binding.value})",
+                old_value=s_old.binding.value, new_value=s_new.binding.value,
+            ))
+
+        # Size drift — only meaningful for data objects (STT_OBJECT, STT_TLS).
+        # STT_FUNC size = machine-code bytes: changes with every compile/optimization,
+        # is not an ABI contract, and produces massive false positives. Ignored.
+        if (
+            s_old.size > 0 and s_new.size > 0
+            and s_old.size != s_new.size
+            and s_new.sym_type in (SymbolType.OBJECT, SymbolType.COMMON, SymbolType.TLS)
+        ):
+            changes.append(Change(
+                kind=ChangeKind.SYMBOL_SIZE_CHANGED,
+                symbol=sym_name,
+                description=f"Symbol size changed: {sym_name} ({s_old.size} → {s_new.size} bytes)",
+                old_value=str(s_old.size), new_value=str(s_new.size),
+            ))
+
+    # STT_COMMON risk: any new COMMON symbols in exported API
+    for sym_name, s_new in new_syms.items():
+        if s_new.sym_type == SymbolType.COMMON:
+            old_common = old_syms.get(sym_name)
+            if old_common is None or old_common.sym_type != SymbolType.COMMON:
+                changes.append(Change(
+                    kind=ChangeKind.COMMON_SYMBOL_RISK,
+                    symbol=sym_name,
+                    description=f"Exported STT_COMMON symbol: {sym_name} (resolution depends on linker/loader)",
+                ))
+
+    return changes
+
+
 def _compute_verdict(changes: list[Change]) -> Verdict:
     if not changes:
         return Verdict.NO_CHANGE
@@ -623,6 +826,9 @@ def _compute_verdict(changes: list[Change]) -> Verdict:
         return Verdict.BREAKING
     if kinds & _SOURCE_BREAK_KINDS:
         return Verdict.SOURCE_BREAK
+    # Only COMPATIBLE_KINDS changes (ELF warnings, deployment risks)
+    if kinds - _COMPATIBLE_KINDS == set():
+        return Verdict.COMPATIBLE
     return Verdict.COMPATIBLE
 
 
@@ -641,6 +847,7 @@ def compare(
     changes.extend(_diff_method_qualifiers(old, new))
     changes.extend(_diff_unions(old, new))
     changes.extend(_diff_typedefs(old, new))
+    changes.extend(_diff_elf(old, new))
 
     suppressed: list[Change] = []
     if suppression is not None:

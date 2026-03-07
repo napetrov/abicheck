@@ -32,7 +32,7 @@ CASES = [
     ("case06_visibility",           "BREAKING",   "bad.c",    "good.c"),
     # ✅ Struct size change detected via castxml → TYPE_SIZE_CHANGED → BREAKING
     ("case07_struct_layout",        "BREAKING",   "v1.c",     "v2.c"),
-    # ⚠️ Enum value changes not tracked (only Struct/Class/Union in parse_types) → NO_CHANGE
+    # ✅ Enum member value changes detected via _diff_enums() → BREAKING
     ("case08_enum_value_change",    "BREAKING",   "v1.c",     "v2.c"),
     # ✅ vtable reorder/change detected → TYPE_VTABLE_CHANGED → BREAKING
     ("case09_cpp_vtable",           "BREAKING",   "v1.cpp",   "v2.cpp"),
@@ -40,7 +40,7 @@ CASES = [
     ("case10_return_type",          "BREAKING",   "v1.c",     "v2.c"),
     # ⚠️ int→long variable type change: castxml parses type from header but
     #    global var definitions in .c may not appear in ELF dynsym reliably → NO_CHANGE
-    ("case11_global_var_type",      "NO_CHANGE",  "v1.c",     "v2.c"),
+    ("case11_global_var_type",      "BREAKING",   "v1.c",     "v2.c"),
     # ✅ Function inlined away → disappears from .so → FUNC_REMOVED → BREAKING
     ("case12_function_removed",     "BREAKING",   "v1.c",     "v2.c"),
     # 📋 Symbol versioning adds @@VER tags; checker strips @-suffix → NO_CHANGE
