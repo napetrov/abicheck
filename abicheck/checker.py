@@ -99,6 +99,12 @@ class ChangeKind(str, Enum):
     STRUCT_ALIGNMENT_CHANGED   = "struct_alignment_changed"   # alignof(T) changed
     ENUM_UNDERLYING_SIZE_CHANGED = "enum_underlying_size_changed"  # int→long
 
+    # DWARF advanced (Sprint 4)
+    CALLING_CONVENTION_CHANGED = "calling_convention_changed"   # DW_AT_calling_convention drift
+    STRUCT_PACKING_CHANGED     = "struct_packing_changed"       # __attribute__((packed)) added/removed
+    TYPE_VISIBILITY_CHANGED    = "type_visibility_changed"      # typeinfo/vtable visibility changed
+    TOOLCHAIN_FLAG_DRIFT       = "toolchain_flag_drift"         # -fshort-enums/-fpack-struct drift
+
 
 class Verdict(str, Enum):
     NO_CHANGE = "NO_CHANGE"         # identical ABI
@@ -150,7 +156,7 @@ _BREAKING_KINDS = {
     ChangeKind.IFUNC_REMOVED,
     ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
     ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
-    # DWARF Sprint 3
+    # DWARF Sprint 3 + 4
     ChangeKind.STRUCT_SIZE_CHANGED,
     ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
     ChangeKind.STRUCT_FIELD_REMOVED,
@@ -159,6 +165,9 @@ _BREAKING_KINDS = {
     ChangeKind.ENUM_UNDERLYING_SIZE_CHANGED,
     ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
     ChangeKind.ENUM_MEMBER_REMOVED,
+    ChangeKind.CALLING_CONVENTION_CHANGED,
+    ChangeKind.STRUCT_PACKING_CHANGED,
+    ChangeKind.TYPE_VISIBILITY_CHANGED,
 }
 
 _COMPATIBLE_KINDS: set[ChangeKind] = {
@@ -181,6 +190,7 @@ _COMPATIBLE_KINDS: set[ChangeKind] = {
 
     # DWARF diagnostics (comparison coverage gap warning)
     ChangeKind.DWARF_INFO_MISSING,
+    ChangeKind.TOOLCHAIN_FLAG_DRIFT,  # informational — not a proven binary break
 }
 
 _SOURCE_BREAK_KINDS: set[ChangeKind] = set()  # reserved for future source-only breaks
@@ -869,6 +879,7 @@ def compare(
     changes.extend(_diff_typedefs(old, new))
     changes.extend(_diff_elf(old, new))
     changes.extend(_diff_dwarf(old, new))
+    changes.extend(_diff_advanced_dwarf(old, new))
 
     suppressed: list[Change] = []
     if suppression is not None:
@@ -1121,3 +1132,34 @@ def _diff_enum_layouts(o: object, n: object) -> list[Change]:
                 ))
 
     return changes
+
+
+# ── Sprint 4: Advanced DWARF (calling convention, toolchain flags, visibility) ─
+
+
+
+def _diff_advanced_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Sprint 4: calling convention, packing, toolchain flag drift."""
+    from .dwarf_advanced import AdvancedDwarfMetadata, diff_advanced_dwarf
+
+    o: AdvancedDwarfMetadata = getattr(old, "dwarf_advanced", None) or AdvancedDwarfMetadata()
+    n: AdvancedDwarfMetadata = getattr(new, "dwarf_advanced", None) or AdvancedDwarfMetadata()
+
+    _kind_map = {
+        "calling_convention_changed": ChangeKind.CALLING_CONVENTION_CHANGED,
+        "struct_packing_changed":     ChangeKind.STRUCT_PACKING_CHANGED,
+        "toolchain_flag_drift":       ChangeKind.TOOLCHAIN_FLAG_DRIFT,
+        "type_visibility_changed":    ChangeKind.TYPE_VISIBILITY_CHANGED,
+    }
+
+    return [
+        Change(
+            kind=_kind_map[kind_str],
+            symbol=sym,
+            description=desc,
+            old_value=old_val,
+            new_value=new_val,
+        )
+        for kind_str, sym, desc, old_val, new_val in diff_advanced_dwarf(o, n)
+        if kind_str in _kind_map
+    ]

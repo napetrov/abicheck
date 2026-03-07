@@ -486,6 +486,14 @@ def dump(
     extra_includes = extra_includes or []
     exported_dynamic, exported_static = _readelf_exported_symbols(so_path)
 
+    from .dwarf_advanced import parse_advanced_dwarf
+    from .dwarf_metadata import parse_dwarf_metadata
+    from .elf_metadata import parse_elf_metadata
+
+    elf_meta = parse_elf_metadata(so_path)
+    dwarf_meta = parse_dwarf_metadata(so_path)
+    dwarf_adv = parse_advanced_dwarf(so_path)
+
     if not headers:
         warnings.warn(
             "No headers provided — only ELF-exported symbols will be captured; "
@@ -501,13 +509,15 @@ def dump(
                          visibility=Visibility.ELF_ONLY)
                 for sym in sorted(exported_dynamic)
             ],
+            elf=elf_meta,
+            dwarf=dwarf_meta,
+            dwarf_advanced=dwarf_adv,
         )
         return snapshot
 
     xml_root = _castxml_dump(headers, extra_includes, compiler=compiler)
     parser = _CastxmlParser(xml_root, exported_dynamic, exported_static)
 
-    from .elf_metadata import parse_elf_metadata
     snapshot = AbiSnapshot(
         library=so_path.name,
         version=version,
@@ -516,6 +526,8 @@ def dump(
         types=parser.parse_types(),
         enums=parser.parse_enums(),
         typedefs=parser.parse_typedefs(),
-        elf=parse_elf_metadata(so_path),
+        elf=elf_meta,
+        dwarf=dwarf_meta,
+        dwarf_advanced=dwarf_adv,
     )
     return snapshot
