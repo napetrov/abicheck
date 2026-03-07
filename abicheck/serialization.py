@@ -19,6 +19,21 @@ from .model import (
 )
 
 
+def _sets_to_lists(obj: Any) -> Any:
+    """Recursively convert any set to a sorted list for JSON serialization.
+
+    dataclasses.asdict() does NOT convert set → list, so json.dumps() would
+    raise TypeError. This post-processes the entire dict tree.
+    """
+    if isinstance(obj, set):
+        return sorted(obj)
+    if isinstance(obj, dict):
+        return {k: _sets_to_lists(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sets_to_lists(v) for v in obj]
+    return obj
+
+
 def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     # Reset cache fields to None before asdict() to prevent double-serialization.
     snap._func_by_mangled = None
@@ -28,6 +43,7 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     d.pop("_func_by_mangled", None)
     d.pop("_var_by_mangled", None)
     d.pop("_type_by_name", None)
+
     # Serialize ElfMetadata enums to strings for JSON compatibility
     if d.get("elf"):
         elf = d["elf"]
@@ -35,16 +51,10 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
             sym["binding"]  = sym["binding"] if isinstance(sym["binding"], str) else sym["binding"].value
             sym["sym_type"] = sym["sym_type"] if isinstance(sym["sym_type"], str) else sym["sym_type"].value
 
-    # Advanced DWARF contains sets → convert to sorted lists for JSON
-    if d.get("dwarf_advanced"):
-        da = d["dwarf_advanced"]
-        if isinstance(da.get("packed_structs"), set):
-            da["packed_structs"] = sorted(da["packed_structs"])
-        toolchain = da.get("toolchain")
-        if isinstance(toolchain, dict) and isinstance(toolchain.get("abi_flags"), set):
-            toolchain["abi_flags"] = sorted(toolchain["abi_flags"])
-
-    return d
+    # Convert all sets → sorted lists (needed for AdvancedDwarfMetadata.packed_structs
+    # and ToolchainInfo.abi_flags; json.dumps raises TypeError on set objects)
+    converted: dict[str, Any] = _sets_to_lists(d)
+    return converted
 
 
 def _enum_type_from_dict(e: dict[str, Any]) -> EnumType:
