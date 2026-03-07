@@ -91,6 +91,7 @@ class ChangeKind(str, Enum):
     SYMBOL_VERSION_REQUIRED_REMOVED  = "symbol_version_required_removed"
 
     # DWARF layout (Sprint 3)
+    DWARF_INFO_MISSING         = "dwarf_info_missing"         # new binary stripped of -g
     STRUCT_SIZE_CHANGED        = "struct_size_changed"        # sizeof(T) changed
     STRUCT_FIELD_OFFSET_CHANGED = "struct_field_offset_changed" # field moved
     STRUCT_FIELD_REMOVED       = "struct_field_removed"       # field deleted
@@ -161,6 +162,15 @@ _BREAKING_KINDS = {
 }
 
 _COMPATIBLE_KINDS: set[ChangeKind] = {
+    # Header/API additions
+    ChangeKind.FUNC_ADDED,
+    ChangeKind.VAR_ADDED,
+    ChangeKind.TYPE_ADDED,
+    # TYPE_FIELD_ADDED intentionally omitted: compatible only for standard-layout
+    # non-polymorphic types; context-aware verdict set in _diff_types()
+    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
+
+    # ELF-only warning/compatible drift
     ChangeKind.NEEDED_ADDED,              # new dep: may not exist on older systems — warn, not hard-break
     ChangeKind.NEEDED_REMOVED,            # removing a dep is compatible (but deployment risk)
     ChangeKind.RUNPATH_CHANGED,           # search path drift — warn only
@@ -168,19 +178,12 @@ _COMPATIBLE_KINDS: set[ChangeKind] = {
     ChangeKind.COMMON_SYMBOL_RISK,        # STT_COMMON — risk, not proven break
     ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
     ChangeKind.SYMBOL_BINDING_STRENGTHENED,  # WEAK→GLOBAL: backward-compatible for most consumers
+
+    # DWARF diagnostics (comparison coverage gap warning)
+    ChangeKind.DWARF_INFO_MISSING,
 }
 
 _SOURCE_BREAK_KINDS: set[ChangeKind] = set()  # reserved for future source-only breaks
-
-
-_COMPATIBLE_KINDS = {
-    ChangeKind.FUNC_ADDED,
-    ChangeKind.VAR_ADDED,
-    ChangeKind.TYPE_ADDED,
-    # TYPE_FIELD_ADDED intentionally omitted: compatible only for standard-layout
-    # non-polymorphic types; context-aware verdict set in _diff_types()
-    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
-}
 
 
 @dataclass
@@ -895,21 +898,81 @@ def compare(
 def _diff_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """DWARF-aware struct/enum layout detectors (Sprint 3).
 
-    Requires binaries compiled with -g. If either snapshot has no DWARF info,
-    returns an empty list (graceful degradation, no false positives).
+    Requires binaries compiled with -g.
+
+    Graceful degradation rules:
+    - Neither side has DWARF → skip silently (no false positives)
+    - Old has DWARF, new is stripped → emit DWARF_INFO_MISSING warning change
+      so callers know the comparison is incomplete (not silently COMPATIBLE)
+    - Only new has DWARF → can't compare without old baseline → skip
+
+    Important: we diff only ABI-reachable types/enums discovered from the
+    header model (castxml layer). This avoids flagging private implementation
+    types present in DWARF but not in the public API surface.
     """
+    import logging as _logging
+
     from .dwarf_metadata import DwarfMetadata
+
+    _log = _logging.getLogger(__name__)
 
     o: DwarfMetadata = getattr(old, "dwarf", None) or DwarfMetadata()
     n: DwarfMetadata = getattr(new, "dwarf", None) or DwarfMetadata()
 
-    # Skip if neither side has real DWARF info
     if not o.has_dwarf and not n.has_dwarf:
-        return []
+        return []  # neither side has DWARF — nothing to compare
+
+    if o.has_dwarf and not n.has_dwarf:
+        _log.warning(
+            "DWARF layout comparison skipped: new binary has no debug info. "
+            "Recompile with -g to enable struct/enum ABI checks."
+        )
+        return [Change(
+            kind=ChangeKind.DWARF_INFO_MISSING,
+            symbol="<dwarf>",
+            description=(
+                "New binary has no DWARF debug info — struct/enum layout "
+                "comparison was skipped. Recompile with -g to enable."
+            ),
+        )]
+
+    def _allow_name(name: str, allowed: set[str]) -> bool:
+        # Match by full name or by unqualified name (last component after ::)
+        return name in allowed or name.split("::")[-1] in allowed
+
+    allowed_structs: set[str] = {
+        t.name for t in old.types
+    } | {
+        t.name for t in new.types
+    }
+    allowed_enums: set[str] = {
+        e.name for e in old.enums
+    } | {
+        e.name for e in new.enums
+    }
+
+    # If the header model is absent (no castxml data), fall back to comparing
+    # all DWARF types — this preserves compatibility when running DWARF-only.
+    if allowed_structs:
+        o_structs = {k: v for k, v in o.structs.items() if _allow_name(k, allowed_structs)}
+        n_structs = {k: v for k, v in n.structs.items() if _allow_name(k, allowed_structs)}
+    else:
+        o_structs = o.structs
+        n_structs = n.structs
+
+    if allowed_enums:
+        o_enums = {k: v for k, v in o.enums.items() if _allow_name(k, allowed_enums)}
+        n_enums = {k: v for k, v in n.enums.items() if _allow_name(k, allowed_enums)}
+    else:
+        o_enums = o.enums
+        n_enums = n.enums
+
+    filtered_old = DwarfMetadata(structs=o_structs, enums=o_enums, has_dwarf=o.has_dwarf)
+    filtered_new = DwarfMetadata(structs=n_structs, enums=n_enums, has_dwarf=n.has_dwarf)
 
     changes: list[Change] = []
-    changes.extend(_diff_struct_layouts(o, n))
-    changes.extend(_diff_enum_layouts(o, n))
+    changes.extend(_diff_struct_layouts(filtered_old, filtered_new))
+    changes.extend(_diff_enum_layouts(filtered_old, filtered_new))
     return changes
 
 
@@ -983,14 +1046,21 @@ def _diff_struct_layouts(o: object, n: object) -> list[Change]:
                     new_value=str(new_f.byte_offset),
                 ))
 
-            # Type size change (underlying type grew/shrank)
-            if (old_f.byte_size > 0 and new_f.byte_size > 0
-                    and old_f.byte_size != new_f.byte_size):
+            # Field type drift:
+            # - catches same-size type substitutions (int→float, Foo*→Bar*)
+            # - still includes explicit size drift when known on both sides
+            type_name_changed = old_f.type_name != new_f.type_name
+            type_size_changed = (
+                old_f.byte_size > 0
+                and new_f.byte_size > 0
+                and old_f.byte_size != new_f.byte_size
+            )
+            if type_name_changed or type_size_changed:
                 changes.append(Change(
                     kind=ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
                     symbol=f"{name}::{fname}",
                     description=(
-                        f"Field type size changed: {name}::{fname} "
+                        f"Field type changed: {name}::{fname} "
                         f"{old_f.type_name}({old_f.byte_size}B) → "
                         f"{new_f.type_name}({new_f.byte_size}B)"
                     ),

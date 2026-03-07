@@ -9,14 +9,38 @@ Requires binaries compiled with -g (DWARF debug info).
 If DWARF is absent, returns empty DwarfMetadata gracefully.
 
 See docs/adr/001-technology-stack.md — Sprint 3 layer.
+
+## Design notes
+
+### Iterative traversal
+_walk_die_iter uses an explicit collections.deque to avoid Python's
+recursion limit (default 1000). Real C++ DWARF trees with deep namespaces
+and template specializations can exceed 200 DIE levels of nesting.
+
+### CU-relative vs absolute DWARF references
+In DWARF 4, DW_AT_type uses CU-relative offsets (DW_FORM_ref1/2/4/8/udata).
+pyelftools' CompileUnit.cu_offset is the absolute position of the CU header
+in .debug_info. _resolve_ref() handles both forms transparently.
+
+### Type-resolution caching
+_die_to_type_info results are memoized per parse call using a dict keyed by
+(cu_offset, die_offset). This avoids the O(n×m) re-resolution overhead when
+the same base type DIE (e.g. `int`) appears in hundreds of struct members.
+
+### Bitfield offset handling (DWARF 4 vs DWARF 5)
+- DWARF 2/3: DW_AT_bit_offset = bit offset from MSB of the storage unit
+- DWARF 4+: DW_AT_data_bit_offset = bit offset from LSB of the container
+  Both attributes are read; DW_AT_data_bit_offset takes priority when present.
 """
 from __future__ import annotations
 
+import collections
 import logging
 import os
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
@@ -35,7 +59,7 @@ class FieldInfo:
     type_name: str      # human-readable type (e.g. "int", "MyStruct *")
     byte_offset: int    # DW_AT_data_member_location
     byte_size: int      # size of the field's type (0 if unknown)
-    bit_offset: int = 0 # for bitfields: bit offset within the byte
+    bit_offset: int = 0 # for bitfields: normalised bit offset from LSB
     bit_size: int   = 0 # for bitfields: width in bits (0 = not a bitfield)
 
 
@@ -43,8 +67,8 @@ class FieldInfo:
 class StructLayout:
     """Size and field layout of a struct/class/union."""
     name: str
-    byte_size: int                         # DW_AT_byte_size
-    alignment: int = 0                     # DW_AT_alignment (DWARF 5; 0 = unknown)
+    byte_size: int                          # DW_AT_byte_size
+    alignment: int = 0                      # DW_AT_alignment (DWARF 5; 0 = unknown)
     fields: list[FieldInfo] = field(default_factory=list)
     is_union: bool = False
 
@@ -53,18 +77,29 @@ class StructLayout:
 class EnumInfo:
     """Enum type: underlying integer type + all named members."""
     name: str
-    underlying_byte_size: int              # size of the underlying type
+    underlying_byte_size: int               # sizeof underlying integer type
     members: dict[str, int] = field(default_factory=dict)  # name → value
 
 
 @dataclass
 class DwarfMetadata:
     """All DWARF-derived ABI-relevant type information from one .so."""
-    # name → StructLayout  (structs, classes, unions with external linkage)
+    # name → StructLayout  (structs, classes, unions)
     structs: dict[str, StructLayout] = field(default_factory=dict)
     # name → EnumInfo
     enums: dict[str, EnumInfo] = field(default_factory=dict)
     has_dwarf: bool = False   # False = binary had no DWARF info
+
+
+# Tags whose subtrees we never descend into (function-local types, inline
+# frames, lexical blocks). Registering function-local structs as ABI
+# surfaces would produce noise and false positives.
+_SKIP_TAGS: frozenset[str] = frozenset({
+    "DW_TAG_subprogram",
+    "DW_TAG_inlined_subroutine",
+    "DW_TAG_lexical_block",
+    "DW_TAG_GNU_call_site",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +128,7 @@ def parse_dwarf_metadata(so_path: Path) -> DwarfMetadata:
 # Internal implementation
 # ---------------------------------------------------------------------------
 
-def _parse(f: object, so_path: Path) -> DwarfMetadata:  # noqa: ANN001
+def _parse(f: Any, so_path: Path) -> DwarfMetadata:
     meta = DwarfMetadata()
     elf = ELFFile(f)  # type: ignore[no-untyped-call]
 
@@ -104,57 +139,99 @@ def _parse(f: object, so_path: Path) -> DwarfMetadata:  # noqa: ANN001
     meta.has_dwarf = True
     dwarf = elf.get_dwarf_info()  # type: ignore[no-untyped-call]
 
+    # Per-parse type-resolution cache: (cu_offset, die_offset) → (name, byte_size)
+    type_cache: dict[tuple[int, int], tuple[str, int]] = {}
+
     for CU in dwarf.iter_CUs():  # type: ignore[no-untyped-call]
         try:
-            _process_cu(CU, meta)
+            _process_cu(CU, meta, type_cache)
         except Exception as exc:  # noqa: BLE001
             log.warning("parse_dwarf_metadata: skipping CU in %s: %s", so_path, exc)
 
     return meta
 
 
-def _process_cu(CU: object, meta: DwarfMetadata) -> None:  # noqa: ANN001
-    """Walk all DIEs in one Compilation Unit and collect type info."""
-    top_die = CU.get_top_DIE()  # type: ignore[union-attr]
-    _walk_die(top_die, meta, CU)
+def _process_cu(
+    CU: Any,
+    meta: DwarfMetadata,
+    type_cache: dict[tuple[int, int], tuple[str, int]],
+) -> None:
+    """Walk all DIEs in one Compilation Unit (iterative, no recursion)."""
+    top_die = CU.get_top_DIE()
+    _walk_die_iter(top_die, meta, CU, type_cache)
 
 
-def _walk_die(die: object, meta: DwarfMetadata, CU: object) -> None:  # noqa: ANN001
-    tag = die.tag  # type: ignore[union-attr]
+def _walk_die_iter(
+    root_die: Any,
+    meta: DwarfMetadata,
+    CU: Any,
+    type_cache: dict[tuple[int, int], tuple[str, int]],
+) -> None:
+    """Iterative depth-first DIE traversal with scope-qualified names.
 
-    if tag in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
-        _process_struct(die, meta, CU)
-    elif tag == "DW_TAG_enumeration_type":
-        _process_enum(die, meta, CU)
-    elif tag == "DW_TAG_typedef":
-        # C typedef: the underlying type may be anonymous.
-        # Resolve the typedef's target and process it with the typedef name.
-        _process_typedef(die, meta, CU)
+    Carries a scope prefix (e.g. "MyNS::MyClass") through the stack so that
+    identically-named types in different namespaces/classes do not collide in
+    meta.structs / meta.enums.
 
-    for child in die.iter_children():  # type: ignore[union-attr]
-        _walk_die(child, meta, CU)
+    Uses an explicit stack to avoid Python's default recursion limit (1000),
+    which can be exceeded by deeply-nested C++ template/namespace DIE trees.
+    Skips subtrees rooted at function-local tags (_SKIP_TAGS).
+    """
+    # Stack items: (die, scope_prefix)
+    stack: collections.deque[tuple[Any, str]] = collections.deque([(root_die, "")])
+
+    while stack:
+        die, scope = stack.pop()
+        tag = die.tag
+
+        if tag in _SKIP_TAGS:
+            continue  # don't descend into function bodies or inlined frames
+
+        # Determine whether this DIE contributes a scope component
+        # (namespaces and named classes extend the scope prefix)
+        die_name = _attr_str(die, "DW_AT_name")
+        next_scope = scope
+
+        if tag == "DW_TAG_namespace" and die_name:
+            next_scope = f"{scope}::{die_name}" if scope else die_name
+        elif tag in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
+            qualified = f"{scope}::{die_name}" if (scope and die_name) else die_name
+            _process_struct(die, meta, CU, type_cache, scope_prefix=scope)
+            if die_name:
+                next_scope = qualified  # nested types use this as their scope
+        elif tag == "DW_TAG_enumeration_type":
+            _process_enum(die, meta, CU, scope_prefix=scope)
+        elif tag == "DW_TAG_typedef":
+            _process_typedef(die, meta, CU, type_cache)
+
+        # Push children in reverse order so left-to-right DFS order is preserved
+        for child in reversed(list(die.iter_children())):
+            stack.append((child, next_scope))
 
 
-def _process_typedef(die: object, meta: DwarfMetadata, CU: object) -> None:  # noqa: ANN001
+def _process_typedef(
+    die: Any,
+    meta: DwarfMetadata,
+    CU: Any,
+    type_cache: dict[tuple[int, int], tuple[str, int]],
+) -> None:
     """If a typedef points to an anonymous struct/enum, register it under the typedef name."""
     typedef_name = _attr_str(die, "DW_AT_name")
     if not typedef_name:
         return
-    if "DW_AT_type" not in die.attributes:  # type: ignore[union-attr]
+    if "DW_AT_type" not in die.attributes:
         return
     try:
-        ref = die.attributes["DW_AT_type"].value  # type: ignore[union-attr]
-        target = CU.get_DIE_from_refaddr(ref)  # type: ignore[union-attr]
+        target = _resolve_ref(die, "DW_AT_type", CU)
     except Exception:  # noqa: BLE001
         return
 
-    tag = target.tag  # type: ignore[union-attr]
+    tag = target.tag
     target_name = _attr_str(target, "DW_AT_name")
 
     if tag in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
         if not target_name and typedef_name not in meta.structs:
-            # Anonymous struct typedef — use typedef name
-            _process_struct_named(target, meta, CU, override_name=typedef_name)
+            _process_struct_named(target, meta, CU, type_cache, override_name=typedef_name)
     elif tag == "DW_TAG_enumeration_type":
         if not target_name and typedef_name not in meta.enums:
             _process_enum_named(target, meta, CU, override_name=typedef_name)
@@ -164,17 +241,25 @@ def _process_typedef(die: object, meta: DwarfMetadata, CU: object) -> None:  # n
 # Struct / class / union
 # ---------------------------------------------------------------------------
 
-def _process_struct(die: object, meta: DwarfMetadata, CU: object) -> None:  # noqa: ANN001
+def _process_struct(
+    die: Any,
+    meta: DwarfMetadata,
+    CU: Any,
+    type_cache: dict[tuple[int, int], tuple[str, int]],
+    scope_prefix: str = "",
+) -> None:
     name = _attr_str(die, "DW_AT_name")
     if not name:
         return  # anonymous — handled via typedef in _process_typedef
-    _process_struct_named(die, meta, CU, override_name=None)
+    qualified = f"{scope_prefix}::{name}" if scope_prefix else name
+    _process_struct_named(die, meta, CU, type_cache, override_name=qualified)
 
 
 def _process_struct_named(
-    die: object,
+    die: Any,
     meta: DwarfMetadata,
-    CU: object,
+    CU: Any,
+    type_cache: dict[tuple[int, int], tuple[str, int]],
     override_name: str | None,
 ) -> None:
     name = override_name or _attr_str(die, "DW_AT_name")
@@ -183,9 +268,9 @@ def _process_struct_named(
 
     byte_size = _attr_int(die, "DW_AT_byte_size")
     if byte_size == 0:
-        return  # declaration-only (DW_AT_declaration) — no layout
+        return  # declaration-only (DW_AT_declaration) — no layout info
 
-    is_union = die.tag == "DW_TAG_union_type"  # type: ignore[union-attr]
+    is_union = die.tag == "DW_TAG_union_type"
     alignment = _attr_int(die, "DW_AT_alignment")  # DWARF 5; 0 if absent
 
     layout = StructLayout(
@@ -195,39 +280,111 @@ def _process_struct_named(
         is_union=is_union,
     )
 
-    for child in die.iter_children():  # type: ignore[union-attr]
-        if child.tag == "DW_TAG_member":  # type: ignore[union-attr]
-            fi = _process_member(child, CU)
+    for child in die.iter_children():
+        if child.tag != "DW_TAG_member":
+            continue
+        child_name = _attr_str(child, "DW_AT_name")
+        if not child_name:
+            # Anonymous member — may be an anonymous struct/union; inline its fields
+            anon_offset = 0
+            if "DW_AT_data_member_location" in child.attributes:
+                v = child.attributes["DW_AT_data_member_location"].value
+                anon_offset = v if isinstance(v, int) else (int(v[-1]) if v else 0)
+            layout.fields.extend(
+                _expand_anonymous_member(child, CU, type_cache, anon_offset)
+            )
+        else:
+            fi = _process_member(child, CU, type_cache)
             if fi is not None:
                 layout.fields.append(fi)
 
-    # Keep only the first definition (ODR: one definition rule).
-    if name not in meta.structs:
+    # ODR: keep the first complete definition.
+    if name in meta.structs:
+        existing = meta.structs[name]
+        if existing.byte_size != layout.byte_size:
+            log.debug(
+                "ODR size mismatch for %s: %d vs %d bytes (keeping first)",
+                name, existing.byte_size, layout.byte_size,
+            )
+    else:
         meta.structs[name] = layout
 
 
-def _process_member(die: object, CU: object) -> FieldInfo | None:  # noqa: ANN001
+def _expand_anonymous_member(
+    die: Any,
+    CU: Any,
+    type_cache: dict[tuple[int, int], tuple[str, int]],
+    byte_offset: int,
+) -> list[FieldInfo]:
+    """Inline the fields of an anonymous struct/union member.
+
+    DWARF uses unnamed DW_TAG_member to embed anonymous aggregates.
+    Rather than discarding them, we inline their nested members so that
+    layout changes inside anonymous structs/unions are still detected.
+    """
+    if "DW_AT_type" not in die.attributes:
+        return []
+    try:
+        target = _resolve_ref(die, "DW_AT_type", CU)
+    except Exception:  # noqa: BLE001
+        return []
+    if target.tag not in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
+        return []
+
+    fields: list[FieldInfo] = []
+    for child in target.iter_children():
+        if child.tag != "DW_TAG_member":
+            continue
+        fi = _process_member(child, CU, type_cache)
+        if fi is None:
+            continue
+        # Adjust offset: anonymous member byte_offset + inner field offset
+        fields.append(FieldInfo(
+            name=fi.name,
+            type_name=fi.type_name,
+            byte_offset=byte_offset + fi.byte_offset,
+            byte_size=fi.byte_size,
+            bit_offset=fi.bit_offset,
+            bit_size=fi.bit_size,
+        ))
+    return fields
+
+
+def _process_member(
+    die: Any,
+    CU: Any,
+    type_cache: dict[tuple[int, int], tuple[str, int]],
+) -> FieldInfo | None:
     name = _attr_str(die, "DW_AT_name")
     if not name:
-        return None  # padding / anonymous member
+        return None  # padding — anonymous aggregates handled by caller
 
-    # Byte offset — DW_AT_data_member_location can be a simple int or a block expr
+    # Byte offset — DW_AT_data_member_location can be a simple int or a DW_OP block
     byte_offset = 0
-    if "DW_AT_data_member_location" in die.attributes:  # type: ignore[union-attr]
-        attr = die.attributes["DW_AT_data_member_location"]  # type: ignore[union-attr]
+    if "DW_AT_data_member_location" in die.attributes:
+        attr = die.attributes["DW_AT_data_member_location"]
         val = attr.value
         if isinstance(val, int):
             byte_offset = val
         elif isinstance(val, list):
-            # DW_OP_plus_uconst expression: [DW_OP_plus_uconst, offset]
+            # DW_OP_plus_uconst expression: last element is the offset value
             byte_offset = int(val[-1]) if val else 0
 
-    # Bit fields
-    bit_offset = _attr_int(die, "DW_AT_bit_offset")
-    bit_size   = _attr_int(die, "DW_AT_bit_size")
+    # Bitfield offsets:
+    # DWARF 4+: DW_AT_data_bit_offset = offset from LSB of the container (preferred)
+    # DWARF 2/3: DW_AT_bit_offset = offset from MSB of the storage unit
+    # DW_AT_data_bit_offset takes priority when present.
+    bit_size = _attr_int(die, "DW_AT_bit_size")
+    if bit_size:
+        if "DW_AT_data_bit_offset" in die.attributes:
+            bit_offset = _attr_int(die, "DW_AT_data_bit_offset")  # DWARF 4+
+        else:
+            bit_offset = _attr_int(die, "DW_AT_bit_offset")       # DWARF 2/3
+    else:
+        bit_offset = 0
 
-    # Resolve type name and size
-    type_name, field_byte_size = _resolve_type(die, CU)
+    # Resolve field type
+    type_name, field_byte_size = _resolve_type(die, CU, type_cache)
 
     return FieldInfo(
         name=name,
@@ -243,17 +400,23 @@ def _process_member(die: object, CU: object) -> FieldInfo | None:  # noqa: ANN00
 # Enum
 # ---------------------------------------------------------------------------
 
-def _process_enum(die: object, meta: DwarfMetadata, CU: object) -> None:  # noqa: ANN001
+def _process_enum(
+    die: Any,
+    meta: DwarfMetadata,
+    CU: Any,
+    scope_prefix: str = "",
+) -> None:
     name = _attr_str(die, "DW_AT_name")
     if not name:
         return  # anonymous — handled via typedef in _process_typedef
-    _process_enum_named(die, meta, CU, override_name=None)
+    qualified = f"{scope_prefix}::{name}" if scope_prefix else name
+    _process_enum_named(die, meta, CU, override_name=qualified)
 
 
 def _process_enum_named(
-    die: object,
+    die: Any,
     meta: DwarfMetadata,
-    CU: object,
+    CU: Any,
     override_name: str | None,
 ) -> None:
     name = override_name or _attr_str(die, "DW_AT_name")
@@ -266,9 +429,10 @@ def _process_enum_named(
 
     enum = EnumInfo(name=name, underlying_byte_size=byte_size)
 
-    for child in die.iter_children():  # type: ignore[union-attr]
-        if child.tag == "DW_TAG_enumerator":  # type: ignore[union-attr]
+    for child in die.iter_children():
+        if child.tag == "DW_TAG_enumerator":
             member_name = _attr_str(child, "DW_AT_name")
+            # DW_AT_const_value may be signed (DW_FORM_sdata → negative values)
             member_val  = _attr_int(child, "DW_AT_const_value")
             if member_name:
                 enum.members[member_name] = member_val
@@ -278,31 +442,81 @@ def _process_enum_named(
 
 
 # ---------------------------------------------------------------------------
-# Type resolution helpers
+# DWARF reference resolution
 # ---------------------------------------------------------------------------
 
-def _resolve_type(die: object, CU: object) -> tuple[str, int]:  # noqa: ANN001
+def _resolve_ref(die: Any, attr_name: str, CU: Any) -> Any:
+    """Resolve a DW_AT_type (or similar) reference to the target DIE.
+
+    Handles both CU-relative refs (DW_FORM_ref1/2/4/8/udata) and
+    section-absolute refs (DW_FORM_ref_addr).  pyelftools stores the raw
+    offset in .value; for CU-relative forms we add CU.cu_offset to get
+    the absolute .debug_info position expected by get_DIE_from_refaddr().
+    """
+    attr = die.attributes[attr_name]
+    form = attr.form
+    raw_val: int = attr.value  # type: ignore[assignment]
+
+    if form == "DW_FORM_ref_addr":
+        # Section-relative: already an absolute offset
+        abs_offset = raw_val
+    else:
+        # CU-relative (DW_FORM_ref1/2/4/8/ref_udata): add CU header offset
+        abs_offset = raw_val + CU.cu_offset
+
+    return CU.get_DIE_from_refaddr(abs_offset)
+
+
+# ---------------------------------------------------------------------------
+# Type resolution helpers (with memoisation)
+# ---------------------------------------------------------------------------
+
+def _resolve_type(
+    die: Any,
+    CU: Any,
+    cache: dict[tuple[int, int], tuple[str, int]],
+) -> tuple[str, int]:
     """Return (type_name, byte_size) for the type referenced by *die*."""
-    if "DW_AT_type" not in die.attributes:  # type: ignore[union-attr]
+    if "DW_AT_type" not in die.attributes:
         return ("unknown", 0)
     try:
-        ref_addr = die.attributes["DW_AT_type"].value  # type: ignore[union-attr]
-        type_die = CU.get_DIE_from_refaddr(ref_addr)  # type: ignore[union-attr]
-        return _die_to_type_info(type_die, CU, depth=0)
+        type_die = _resolve_ref(die, "DW_AT_type", CU)
+        return _die_to_type_info(type_die, CU, depth=0, cache=cache)
     except Exception:  # noqa: BLE001
         return ("unknown", 0)
 
 
 def _die_to_type_info(  # noqa: PLR0911
-    die: object,
-    CU: object,
+    die: Any,
+    CU: Any,
     depth: int,
+    cache: dict[tuple[int, int], tuple[str, int]],
 ) -> tuple[str, int]:
-    """Recursively resolve a type DIE to (name, byte_size). depth limit = 8."""
+    """Recursively resolve a type DIE to (name, byte_size).
+
+    Memoised by (CU.cu_offset, die.offset) so each unique type is resolved
+    at most once per parse call, avoiding O(n*m) redundant traversals.
+    Depth limit = 8 guards against pathological typedef chains.
+    """
     if depth > 8:
         return ("...", 0)
 
-    tag = die.tag  # type: ignore[union-attr]
+    cache_key = (CU.cu_offset, die.offset)
+    if cache_key in cache:
+        return cache[cache_key]
+
+    result = _compute_type_info(die, CU, depth, cache)
+    cache[cache_key] = result
+    return result
+
+
+def _compute_type_info(  # noqa: PLR0911
+    die: Any,
+    CU: Any,
+    depth: int,
+    cache: dict[tuple[int, int], tuple[str, int]],
+) -> tuple[str, int]:
+    tag = die.tag
 
     if tag == "DW_TAG_base_type":
         name = _attr_str(die, "DW_AT_name") or "base"
@@ -312,7 +526,8 @@ def _die_to_type_info(  # noqa: PLR0911
     if tag in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
         name = _attr_str(die, "DW_AT_name") or "<anon>"
         size = _attr_int(die, "DW_AT_byte_size")
-        return (f"struct {name}" if tag == "DW_TAG_structure_type" else name, size)
+        prefix = "struct " if tag == "DW_TAG_structure_type" else ""
+        return (f"{prefix}{name}", size)
 
     if tag == "DW_TAG_enumeration_type":
         name = _attr_str(die, "DW_AT_name") or "<enum>"
@@ -320,35 +535,44 @@ def _die_to_type_info(  # noqa: PLR0911
         return (f"enum {name}", size)
 
     if tag == "DW_TAG_pointer_type":
-        if "DW_AT_type" in die.attributes:  # type: ignore[union-attr]
+        ptr_size = _attr_int(die, "DW_AT_byte_size") or 8
+        if "DW_AT_type" in die.attributes:
             try:
-                ref = die.attributes["DW_AT_type"].value  # type: ignore[union-attr]
-                inner_die = CU.get_DIE_from_refaddr(ref)  # type: ignore[union-attr]
-                inner_name, _ = _die_to_type_info(inner_die, CU, depth + 1)
-                ptr_size = _attr_int(die, "DW_AT_byte_size") or 8
+                inner_die = _resolve_ref(die, "DW_AT_type", CU)
+                inner_name, _ = _die_to_type_info(inner_die, CU, depth + 1, cache)
                 return (f"{inner_name} *", ptr_size)
             except Exception:  # noqa: BLE001
                 pass
-        return ("void *", _attr_int(die, "DW_AT_byte_size") or 8)
+        return ("void *", ptr_size)
+
+    if tag in ("DW_TAG_reference_type", "DW_TAG_rvalue_reference_type"):
+        ref_size = _attr_int(die, "DW_AT_byte_size") or 8
+        suffix = "&&" if tag == "DW_TAG_rvalue_reference_type" else "&"
+        if "DW_AT_type" in die.attributes:
+            try:
+                inner_die = _resolve_ref(die, "DW_AT_type", CU)
+                inner_name, _ = _die_to_type_info(inner_die, CU, depth + 1, cache)
+                return (f"{inner_name} {suffix}", ref_size)
+            except Exception:  # noqa: BLE001
+                pass
+        return (f"? {suffix}", ref_size)
 
     if tag in ("DW_TAG_const_type", "DW_TAG_volatile_type", "DW_TAG_restrict_type"):
-        if "DW_AT_type" in die.attributes:  # type: ignore[union-attr]
+        if "DW_AT_type" in die.attributes:
             try:
-                ref = die.attributes["DW_AT_type"].value  # type: ignore[union-attr]
-                inner_die = CU.get_DIE_from_refaddr(ref)  # type: ignore[union-attr]
-                inner_name, size = _die_to_type_info(inner_die, CU, depth + 1)
-                qualifier = tag.split("_")[2].lower()  # const/volatile/restrict
+                inner_die = _resolve_ref(die, "DW_AT_type", CU)
+                inner_name, size = _die_to_type_info(inner_die, CU, depth + 1, cache)
+                qualifier = tag.split("_")[2].lower()  # const / volatile / restrict
                 return (f"{qualifier} {inner_name}", size)
             except Exception:  # noqa: BLE001
                 pass
 
     if tag == "DW_TAG_typedef":
         name = _attr_str(die, "DW_AT_name")
-        if "DW_AT_type" in die.attributes:  # type: ignore[union-attr]
+        if "DW_AT_type" in die.attributes:
             try:
-                ref = die.attributes["DW_AT_type"].value  # type: ignore[union-attr]
-                inner_die = CU.get_DIE_from_refaddr(ref)  # type: ignore[union-attr]
-                inner_name, size = _die_to_type_info(inner_die, CU, depth + 1)
+                inner_die = _resolve_ref(die, "DW_AT_type", CU)
+                inner_name, size = _die_to_type_info(inner_die, CU, depth + 1, cache)
                 return (name or inner_name, size)
             except Exception:  # noqa: BLE001
                 pass
@@ -356,17 +580,19 @@ def _die_to_type_info(  # noqa: PLR0911
 
     if tag == "DW_TAG_array_type":
         size = _attr_int(die, "DW_AT_byte_size")
-        if "DW_AT_type" in die.attributes:  # type: ignore[union-attr]
+        if "DW_AT_type" in die.attributes:
             try:
-                ref = die.attributes["DW_AT_type"].value  # type: ignore[union-attr]
-                inner_die = CU.get_DIE_from_refaddr(ref)  # type: ignore[union-attr]
-                inner_name, _ = _die_to_type_info(inner_die, CU, depth + 1)
+                inner_die = _resolve_ref(die, "DW_AT_type", CU)
+                inner_name, _ = _die_to_type_info(inner_die, CU, depth + 1, cache)
                 return (f"{inner_name}[]", size)
             except Exception:  # noqa: BLE001
                 pass
         return ("array", size)
 
-    # Fallback
+    if tag == "DW_TAG_subroutine_type":
+        return ("fn(...)", _attr_int(die, "DW_AT_byte_size"))
+
+    # Fallback: use whatever name/size we can get from this DIE
     name = _attr_str(die, "DW_AT_name")
     size = _attr_int(die, "DW_AT_byte_size")
     return (name or tag or "unknown", size)
@@ -376,23 +602,24 @@ def _die_to_type_info(  # noqa: PLR0911
 # Attribute helpers
 # ---------------------------------------------------------------------------
 
-def _attr_str(die: object, attr: str) -> str:
+def _attr_str(die: Any, attr: str) -> str:
     """Return string value of a DIE attribute, or ''."""
-    attrs = die.attributes  # type: ignore[union-attr]
-    if attr not in attrs:
+    if attr not in die.attributes:
         return ""
-    val = attrs[attr].value
+    val = die.attributes[attr].value
     if isinstance(val, bytes):
         return val.decode("utf-8", errors="replace")
     return str(val) if val is not None else ""
 
 
-def _attr_int(die: object, attr: str) -> int:
-    """Return integer value of a DIE attribute, or 0."""
-    attrs = die.attributes  # type: ignore[union-attr]
-    if attr not in attrs:
+def _attr_int(die: Any, attr: str) -> int:
+    """Return integer value of a DIE attribute, or 0.
+
+    Handles signed DW_FORM_sdata values correctly (e.g. negative enum consts).
+    """
+    if attr not in die.attributes:
         return 0
-    val = attrs[attr].value
+    val = die.attributes[attr].value
     try:
         return int(val)
     except (TypeError, ValueError):
