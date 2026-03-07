@@ -129,12 +129,23 @@ def test_calling_convention_unchanged_no_change() -> None:
 # ── struct packing ────────────────────────────────────────────────────────────
 
 def test_struct_packing_added() -> None:
-    old = _snap(_adv(packed=set()))
+    # "Ctx" must exist in old all_struct_names so diff knows it's a pre-existing
+    # struct that became packed (not a brand-new packed struct, which has no ABI contract).
+    old = _snap(_adv(packed=set(), all_structs={"Ctx"}))
     new = _snap(_adv(packed={"Ctx"}))
     r = compare(old, new)
     kinds = {c.kind for c in r.changes}
     assert ChangeKind.STRUCT_PACKING_CHANGED in kinds
     assert r.verdict == Verdict.BREAKING
+
+
+def test_struct_packing_added_new_struct_no_report() -> None:
+    """Brand-new packed struct (not in old binary) should NOT report packing change."""
+    old = _snap(_adv(packed=set()))           # "Ctx" never existed in old
+    new = _snap(_adv(packed={"Ctx"}))
+    r = compare(old, new)
+    kinds = {c.kind for c in r.changes}
+    assert ChangeKind.STRUCT_PACKING_CHANGED not in kinds
 
 
 def test_struct_packing_removed() -> None:

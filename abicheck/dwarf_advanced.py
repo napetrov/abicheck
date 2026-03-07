@@ -247,9 +247,12 @@ def _walk_cu(root: Any, meta: AdvancedDwarfMetadata, CU: Any) -> None:
             continue
 
         if tag in ("DW_TAG_structure_type", "DW_TAG_class_type"):
-            # Register name in all_struct_names even when not packed
+            # Register name in all_struct_names only for complete types (byte_size > 0).
+            # Forward declarations (byte_size == 0) must NOT be registered: a forward
+            # decl of a deleted struct in the new binary would cause a false
+            # "packing removed" report via the both_struct_names guard.
             sname = _attr_str(die, "DW_AT_name")
-            if sname:
+            if sname and _attr_int(die, "DW_AT_byte_size") > 0:
                 meta.all_struct_names.add(sname)
             _check_packed(die, meta, CU, override_name=None)
 
@@ -361,11 +364,12 @@ def _check_packed(
         if _attr_int(child, "DW_AT_bit_size"):
             continue  # bitfields: skip (always "misaligned" by nature)
 
-        # Get byte offset of this field
-        offset = 0
-        if "DW_AT_data_member_location" in child.attributes:
-            v = child.attributes["DW_AT_data_member_location"].value
-            offset = v if isinstance(v, int) else (int(v[-1]) if v else 0)
+        # Get byte offset of this field.
+        # DW_AT_data_member_location can be:
+        #   - int  (DWARF 3+ constant form — most common case)
+        #   - list of DWARFExprOp (DWARF 2/3 location expression)
+        #     The typical expression is [DW_OP_plus_uconst N] where N is the offset.
+        offset = _decode_member_location(child)
 
         # Get natural alignment via type tag (NOT byte_size of composite types)
         natural = _get_type_align(child, CU)
@@ -379,43 +383,35 @@ def _check_packed(
             return  # one misaligned field is sufficient
 
 
-def _get_type_byte_size(member_die: Any, CU: Any) -> int:
-    """Resolve DW_AT_type from a member DIE and return DW_AT_byte_size.
+def _decode_member_location(member_die: Any) -> int:
+    """Decode DW_AT_data_member_location to a byte offset.
 
-    Follows typedef chains up to depth 4. Returns 0 if resolution fails.
+    Handles both forms produced by different DWARF versions:
+    - Constant integer (DWARF 3+, most common): value is the offset directly.
+    - Location expression (DWARF 2/3): a list of DWARFExprOp objects.
+      The canonical expression for a struct member is a single
+      DW_OP_plus_uconst (op=0x23) with the offset in args[0].
+      We decode this case explicitly; anything else returns 0 (skip).
+
+    Returns 0 for unknown/unsupported forms (conservative — avoids false
+    'packed' detection rather than producing wrong offsets).
     """
-    if "DW_AT_type" not in member_die.attributes:
+    if "DW_AT_data_member_location" not in member_die.attributes:
         return 0
-    try:
-        attr = member_die.attributes["DW_AT_type"]
-        form = attr.form
-        raw: int = attr.value
-        abs_offset = raw if form == "DW_FORM_ref_addr" else raw + CU.cu_offset
-        type_die = CU.get_DIE_from_refaddr(abs_offset)
-
-        # Follow typedef / const / volatile / restrict chains
-        for _ in range(4):
-            tag = type_die.tag
-            if tag in (
-                "DW_TAG_typedef",
-                "DW_TAG_const_type",
-                "DW_TAG_volatile_type",
-                "DW_TAG_restrict_type",
-            ):
-                if "DW_AT_type" not in type_die.attributes:
-                    return 0
-                a = type_die.attributes["DW_AT_type"]
-                f = a.form
-                r: int = a.value
-                abs_off = r if f == "DW_FORM_ref_addr" else r + CU.cu_offset
-                type_die = CU.get_DIE_from_refaddr(abs_off)
-            else:
-                break
-
-        size_attr = type_die.attributes.get("DW_AT_byte_size")
-        return int(size_attr.value) if size_attr else 0
-    except Exception:  # noqa: BLE001
-        return 0
+    v = member_die.attributes["DW_AT_data_member_location"].value
+    if isinstance(v, int):
+        return v
+    # Location expression: list of DWARFExprOp
+    if isinstance(v, list) and len(v) == 1:
+        op = v[0]
+        # DW_OP_plus_uconst (0x23) or DW_OP_constu (0x10) carry offset in args[0]
+        if hasattr(op, "op") and op.op in (0x23, 0x10) and op.args:
+            try:
+                return int(op.args[0])
+            except (TypeError, ValueError):
+                pass
+    # Multi-op expressions or unknown forms: cannot determine offset reliably
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -494,9 +490,11 @@ def diff_advanced_dwarf(
             f"Struct packing removed: {name} was packed, now standard layout",
             "packed", "standard",
         ))
-    # "Packing added" is reported unconditionally: a newly packed struct in new binary
-    # is a layout break regardless of whether the struct is new or existing.
-    for name in sorted(new_meta.packed_structs - old_meta.packed_structs):
+    # "Packing added": only report when struct existed in old binary too.
+    # A brand-new packed struct has no prior ABI contract to break — consistent
+    # with how calling-convention additions are handled (new-only functions skipped).
+    # Symmetric with packing-removed guard above.
+    for name in sorted((new_meta.packed_structs - old_meta.packed_structs) & old_meta.all_struct_names):
         results.append((
             "struct_packing_changed", name,
             f"Struct packing added: {name} is now __attribute__((packed))",
