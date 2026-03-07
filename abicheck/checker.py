@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from .elf_metadata import SymbolBinding, SymbolType
+from .elf_metadata import SymbolBinding
 from .model import AbiSnapshot, EnumType, Function, Visibility
 
 if TYPE_CHECKING:

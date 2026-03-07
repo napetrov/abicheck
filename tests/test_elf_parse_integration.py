@@ -13,7 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from abicheck.elf_metadata import ElfMetadata, SymbolBinding, SymbolType, parse_elf_metadata
+from abicheck.elf_metadata import (
+    ElfMetadata,
+    SymbolBinding,
+    SymbolType,
+    parse_elf_metadata,
+)
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
