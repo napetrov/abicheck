@@ -176,10 +176,10 @@ def compat_cmd(
             err=True,
         )
 
-    old_headers = old.headers[0] if old.headers else None
-    new_headers = new.headers[0] if new.headers else None
+    old_headers = old.headers
+    new_headers = new.headers
 
-    if old_headers is None or new_headers is None:
+    if not old_headers or not new_headers:
         click.echo(
             "Warning: one or both descriptors have no <headers> entry. "
             "Type-level ABI checks (struct layout, enum values, etc.) will be skipped.",
@@ -194,12 +194,8 @@ def compat_cmd(
         sys.exit(2)
 
     try:
-        old_snap = dump(old_so,
-                        headers=[old_headers] if old_headers else [],
-                        version=old.version)
-        new_snap = dump(new_so,
-                        headers=[new_headers] if new_headers else [],
-                        version=new.version)
+        old_snap = dump(old_so, headers=old_headers, version=old.version)
+        new_snap = dump(new_so, headers=new_headers, version=new.version)
     except Exception as exc:  # noqa: BLE001
         click.echo(f"Error during dump: {exc}", err=True)
         sys.exit(2)
@@ -217,11 +213,16 @@ def compat_cmd(
 
     # Determine report output path
     if report_path is None:
+        import re
         ext = fmt.lower()
+
+        def _safe_path(v: str) -> str:
+            return re.sub(r"[^\w.\-]", "_", v)
+
         report_path = (
             Path("compat_reports")
-            / lib_name
-            / f"{old.version}_to_{new.version}"
+            / _safe_path(lib_name)
+            / f"{_safe_path(old.version)}_to_{_safe_path(new.version)}"
             / f"report.{ext}"
         )
 

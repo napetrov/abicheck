@@ -52,6 +52,8 @@ def parse_descriptor(path: Path) -> CompatDescriptor:
     """
     if not path.exists():
         raise FileNotFoundError(f"Descriptor not found: {path}")
+    if not path.is_file():
+        raise ValueError(f"Descriptor path is not a regular file: {path}")
 
     try:
         tree = ET.parse(str(path))  # defusedxml.ElementTree.parse
@@ -62,7 +64,10 @@ def parse_descriptor(path: Path) -> CompatDescriptor:
     base = path.parent
 
     def _get_all(tag: str) -> list[str]:
-        return [el.text.strip() for el in root.iter(tag) if el.text and el.text.strip()]
+        # findall() — direct children only; avoids capturing nested tags
+        # (root.iter() would recurse into sub-elements, silently picking up
+        # nested <version> or <libs> inside other tags)
+        return [el.text.strip() for el in root.findall(tag) if el.text and el.text.strip()]
 
     version_vals = _get_all("version")
     if not version_vals:
@@ -84,8 +89,21 @@ def parse_descriptor(path: Path) -> CompatDescriptor:
 
 
 def _resolve(p: str, base: Path) -> Path:
-    """Return absolute path; resolve relative paths against the descriptor's directory."""
+    """Return absolute path; resolve relative paths against the descriptor's directory.
+
+    Path containment check: relative paths must not escape the base directory
+    (guards against crafted descriptors with '../../' traversal sequences).
+    Absolute paths are accepted as-is (matching ABICC behaviour for system paths).
+    """
     resolved = Path(p)
     if not resolved.is_absolute():
         resolved = (base / resolved).resolve()
+        # Containment check: resolved path must stay within base directory
+        try:
+            resolved.relative_to(base.resolve())
+        except ValueError:
+            raise ValueError(
+                f"Path '{p}' in descriptor escapes the base directory '{base}'. "
+                "Use absolute paths for libraries outside the descriptor directory."
+            ) from None
     return resolved

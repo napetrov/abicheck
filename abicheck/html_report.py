@@ -144,7 +144,9 @@ def generate_html_report(
   <div class="verdict-box" style="background:{bg}; color:{fg}; border-left: 6px solid {fg};">
     <h2>Verdict: {h(verdict)}</h2>
     <div class="bc-metric">
-      Binary Compatibility: <strong>{bc_pct:.1f}%</strong> &nbsp;|&nbsp;
+      Binary Compatibility: <strong>{bc_pct:.1f}%</strong>
+      <span style="font-size:0.8em; opacity:0.8">(approx. from changed symbols, not total exported surface)</span>
+      &nbsp;|&nbsp;
       Breaking: {breaking} &nbsp;|&nbsp;
       Compatible additions: {compatible_add} &nbsp;|&nbsp;
       Total changes: {total}
