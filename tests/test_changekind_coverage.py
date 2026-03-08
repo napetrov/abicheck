@@ -22,7 +22,6 @@ from abicheck.model import (
     Visibility,
 )
 
-
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _snap(
