@@ -344,8 +344,8 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     for mangled, f_new in new_all_map.items():
         if not f_new.is_deleted:
             continue
-        f_old = old_all.get(mangled)
-        if f_old is not None and not f_old.is_deleted:
+        f_old_any = old_all.get(mangled)
+        if f_old_any is not None and not f_old_any.is_deleted:
             changes.append(Change(
                 kind=ChangeKind.FUNC_DELETED,
                 symbol=mangled,
