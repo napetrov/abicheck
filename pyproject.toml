@@ -44,3 +44,11 @@ markers = [
     "integration: requires castxml, gcc/g++ installed",
     "libabigail: requires abidiff + gcc/g++ — libabigail parity tests",
 ]
+
+[tool.coverage.run]
+branch = true
+source = ["abicheck"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

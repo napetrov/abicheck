@@ -2,24 +2,24 @@
 """
 Benchmark: abicheck vs ABICC vs abidiff on abicheck examples.
 
+Runs all three tools on each example pair (v1/v2) and prints a comparison table.
+abidiff is run twice: without headers (ELF-only) and with --headers-dir.
+
 Usage: python3 scripts/benchmark_comparison.py
 """
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
-import sys
-import textwrap
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
-REPO_DIR = Path(__file__).parent.parent
+REPO_DIR     = Path(__file__).parent.parent
 EXAMPLES_DIR = REPO_DIR / "examples"
-REPORT_DIR = REPO_DIR / "benchmark_reports"
-BUILD_DIR = REPORT_DIR / "_build"
+REPORT_DIR   = REPO_DIR / "benchmark_reports"
+BUILD_DIR    = REPORT_DIR / "_build"
 
 
 @dataclass
@@ -43,16 +43,19 @@ def compile_so(src: Path, out_so: Path) -> bool:
 
 
 def make_header(src: Path, out_h: Path) -> None:
-    """Copy explicit .h/.hpp if present. For .cpp sources without .h, skip — do not
-    generate broken fallback headers from naive regex scraping of C++ source."""
-    # Prefer explicit .h next to source
+    """Copy explicit .h/.hpp if present.
+
+    For C sources without a .h, generates a minimal header by stripping function
+    bodies. Not suitable for C++ sources — callers must provide explicit .h/.hpp.
+    Warns when falling back to C-scraper to catch cases where a .h should be added.
+    """
     for ext in (".h", ".hpp"):
         h = src.with_suffix(ext)
         if h.exists():
             shutil.copy(h, out_h)
             return
-    # For C sources without .h, generate minimal header by stripping bodies
     if src.suffix == ".c":
+        print(f"    [warn] no explicit .h for {src.name} — generating from source (add a .h file)")
         lines = []
         for line in src.read_text().splitlines():
             stripped = line.strip()
@@ -66,7 +69,28 @@ def make_header(src: Path, out_h: Path) -> None:
             elif "}" not in stripped:
                 lines.append(line)
         out_h.write_text("\n".join(lines))
-    # For .cpp without explicit .h: leave out_h absent — abicheck/ABICC will use ELF-only
+    # For .cpp without explicit .h: leave out_h absent — ELF-only mode
+
+
+def _best_h(ver: str, bdir_h: Path, src_dir: Path) -> Path:
+    """Return the best available header: explicit in src_dir, then generated copy."""
+    for ext in (".h", ".hpp"):
+        p = src_dir / f"{ver}{ext}"
+        if p.exists():
+            return p
+    return bdir_h  # may not exist — callers must check .exists()
+
+
+def _resolve_headers_dir(case_dir: Path, eff_v1_h: Path, eff_v2_h: Path) -> Path | None:
+    """Return the best headers directory for abidiff --headers-dir."""
+    has_case_headers = any(case_dir.glob("*.h")) or any(case_dir.glob("*.hpp"))
+    if has_case_headers:
+        return case_dir
+    if eff_v1_h.exists():
+        return eff_v1_h.parent
+    if eff_v2_h.exists():
+        return eff_v2_h.parent
+    return None
 
 
 # ── abicheck ──────────────────────────────────────────────────────────────────
@@ -96,27 +120,58 @@ def run_abicheck(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
         return ToolResult(verdict=result.verdict.value, changes=changes,
                           raw_output=to_markdown(result),
                           report_path=f"{case}_abicheck.md")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return ToolResult(verdict="ERROR", raw_output=str(exc))
 
 
-# ── abidiff ───────────────────────────────────────────────────────────────────
-def run_abidiff(v1_so: Path, v2_so: Path, case: str, rdir: Path) -> ToolResult:
+# ── abidiff (two modes) ───────────────────────────────────────────────────────
+def _abidiff_verdict(returncode: int) -> str:
+    if returncode & 1:
+        return "ERROR"
+    if returncode & 8:
+        return "BREAKING"
+    if returncode & 4:
+        return "COMPATIBLE"
+    return "NO_CHANGE"
+
+
+def run_abidiff(
+    v1_so: Path,
+    v2_so: Path,
+    case: str,
+    rdir: Path,
+    headers_dir: Path | None = None,
+    suffix: str = "",
+) -> ToolResult:
+    """Run abidiff, optionally with --headers-dir for public-API filtering."""
     if not shutil.which("abidiff"):
         return ToolResult(verdict="SKIP")
 
-    r = subprocess.run(["abidiff", "--no-show-locs", str(v1_so), str(v2_so)],
-                       capture_output=True, text=True, timeout=30)
-    code = r.returncode
-    verdict = ("ERROR" if code & 1 else
-               "BREAKING" if code & 8 else
-               "COMPATIBLE" if code & 4 else "NO_CHANGE")
+    cmd = ["abidiff", "--no-show-locs"]
+    if headers_dir is not None and headers_dir.is_dir():
+        cmd += ["--headers-dir1", str(headers_dir), "--headers-dir2", str(headers_dir)]
+    cmd += [str(v1_so), str(v2_so)]
 
+    report_name = f"{case}_abidiff{suffix}.txt"
+    report_path = rdir / report_name
+
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired as exc:
+        timeout_msg = f"abidiff timed out after 30s for case '{case}'{suffix or ''}: {exc}"
+        report_path.write_text(timeout_msg)
+        return ToolResult(
+            verdict="TIMEOUT",
+            raw_output=timeout_msg,
+            report_path=report_name,
+        )
+
+    verdict = _abidiff_verdict(r.returncode)
     out = r.stdout or r.stderr
-    (rdir / f"{case}_abidiff.txt").write_text(out)
+    report_path.write_text(out)
     changes = [line.strip() for line in out.splitlines() if line.strip().startswith("[")]
     return ToolResult(verdict=verdict, changes=changes, raw_output=out,
-                      report_path=f"{case}_abidiff.txt")
+                      report_path=report_name)
 
 
 # ── ABICC ─────────────────────────────────────────────────────────────────────
@@ -151,7 +206,6 @@ def run_abicc(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
     out = r.stdout + r.stderr
     (rdir / f"{case}_abicc.txt").write_text(out)
 
-    # exit 0 = compatible, 1 = incompatible
     if r.returncode == 1:
         verdict = "BREAKING"
     elif "Binary compatibility: 100%" in out:
@@ -161,19 +215,21 @@ def run_abicc(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
     else:
         verdict = "ERROR"
 
-    changes = [line.strip() for line in out.splitlines()
-               if any(keyword in line for keyword in ("removed", "added", "changed")) and line.strip()]
+    changes = [ln.strip() for ln in out.splitlines()
+               if any(k in ln for k in ("removed", "added", "changed")) and ln.strip()]
     return ToolResult(verdict=verdict, changes=changes[:8], raw_output=out,
                       report_path=f"{case}_abicc_report.html")
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 def _col(v: str) -> str:
     colors = {"BREAKING": "\033[91m", "COMPATIBLE": "\033[93m",
-              "NO_CHANGE": "\033[92m", "ERROR": "\033[95m", "SKIP": "\033[90m"}
-    return f"{colors.get(v,'')}{v:<12}\033[0m"
+              "NO_CHANGE": "\033[92m", "ERROR": "\033[95m", "SKIP": "\033[90m",
+              "TIMEOUT": "\033[95m"}
+    return f"{colors.get(v, '')}{v:<12}\033[0m"
 
 
+# ── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
     REPORT_DIR.mkdir(exist_ok=True)
     BUILD_DIR.mkdir(exist_ok=True)
@@ -183,30 +239,28 @@ def main() -> None:
         if d.is_dir() and ((d / "v1.c").exists() or (d / "v1.cpp").exists())
     )
 
-    results: list[dict] = []
+    results: list[dict[str, object]] = []
 
-    print(f"\n{'Case':<35} {'abicheck':<14} {'abidiff':<14} {'ABICC':<14} agree?")
-    print("─" * 84)
+    print(f"\n{'Case':<35} {'abicheck':<14} {'abidiff':<14} {'abidiff+hdr':<14} {'ABICC':<14} agree?")
+    print("─" * 104)
 
     for case_dir in cases:
-        name = case_dir.name
-        ext = ".cpp" if (case_dir / "v1.cpp").exists() else ".c"
-        v1_src = case_dir / f"v1{ext}"
-        v2_src = case_dir / f"v2{ext}"
+        name    = case_dir.name
+        ext     = ".cpp" if (case_dir / "v1.cpp").exists() else ".c"
+        v1_src  = case_dir / f"v1{ext}"
+        v2_src  = case_dir / f"v2{ext}"
+        if not v2_src.exists():
+            v2_src = v1_src   # case04: no change
 
         rdir = REPORT_DIR / name
         rdir.mkdir(exist_ok=True)
         bdir = BUILD_DIR / name
         bdir.mkdir(exist_ok=True)
 
-        # case04: no v2 → copy v1 (no change)
-        if not v2_src.exists():
-            v2_src = v1_src
-
         v1_so = bdir / "lib_v1.so"
         v2_so = bdir / "lib_v2.so"
-        v1_h = bdir / "v1.h"
-        v2_h = bdir / "v2.h"
+        v1_h  = bdir / "v1.h"
+        v2_h  = bdir / "v2.h"
 
         if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
             print(f"  {name:<33} COMPILE_ERR")
@@ -216,56 +270,74 @@ def main() -> None:
         make_header(v2_src, v2_h)
 
         # For ABICC/abicheck: prefer explicit headers in case dir over generated ones
-        # (make_header copies them to bdir; if not present, pass case_dir .h/.hpp directly)
-        def _best_h(ver: str, bdir_h: Path, case_dir: Path) -> Path:
-            if bdir_h.exists():
-                return bdir_h
-            for ext in (".h", ".hpp"):
-                p = case_dir / f"{ver}{ext}"
-                if p.exists():
-                    return p
-            return bdir_h  # may not exist — callers handle missing gracefully
-
         eff_v1_h = _best_h("v1", v1_h, case_dir)
         eff_v2_h = _best_h("v2", v2_h, case_dir)
 
-        ac = run_abicheck(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir)
-        ab = run_abidiff(v1_so, v2_so, name, rdir)
-        acc = run_abicc(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir)
+        ac     = run_abicheck(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir)
+        ab     = run_abidiff(v1_so, v2_so, name, rdir)
 
-        verdicts = {ac.verdict, ab.verdict, acc.verdict} - {"SKIP", "ERROR"}
+        headers_dir = _resolve_headers_dir(case_dir, eff_v1_h, eff_v2_h)
+        ab_hdr = run_abidiff(v1_so, v2_so, name, rdir,
+                             headers_dir=headers_dir, suffix="_headers")
+
+        acc    = run_abicc(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir)
+
+        verdicts = {ac.verdict, ab.verdict, ab_hdr.verdict, acc.verdict} - {"SKIP", "ERROR", "TIMEOUT"}
         agree = "✅" if len(verdicts) <= 1 else (
-            "~" if ac.verdict in (ab.verdict, acc.verdict) else "❌")
+            "~" if ac.verdict in (ab.verdict, ab_hdr.verdict, acc.verdict) else "❌")
 
-        print(f"  {name:<33} {_col(ac.verdict)} {_col(ab.verdict)} {_col(acc.verdict)} {agree}")
+        print(
+            f"  {name:<33} {_col(ac.verdict)} {_col(ab.verdict)} {_col(ab_hdr.verdict)} {_col(acc.verdict)} {agree}"
+        )
 
-        results.append({"case": name,
-                        "abicheck": ac.verdict, "abidiff": ab.verdict, "abicc": acc.verdict,
-                        "abicheck_changes": ac.changes,
-                        "abidiff_changes": ab.changes,
-                        "abicc_changes": acc.changes})
+        results.append({
+            "case":                    name,
+            "abicheck":                ac.verdict,
+            "abidiff":                 ab.verdict,
+            "abidiff_headers":         ab_hdr.verdict,
+            "abicc":                   acc.verdict,
+            "abicheck_changes":        ac.changes,
+            "abidiff_changes":         ab.changes,
+            "abidiff_headers_changes": ab_hdr.changes,
+            "abicc_changes":           acc.changes,
+        })
 
-    # ── Summary ──
+    # ── Summary ──────────────────────────────────────────────────────────────
     total = len(results)
-    skip = lambda r: "SKIP" in (r["abicheck"], r["abidiff"], r["abicc"])
-    valid = [r for r in results if not skip(r)]
-    all3 = sum(1 for r in valid if r["abicheck"] == r["abidiff"] == r["abicc"])
-    ac_ab = sum(1 for r in valid if r["abicheck"] == r["abidiff"])
+
+    def skip(r: dict[str, object]) -> bool:
+        blocked = {"SKIP", "TIMEOUT", "ERROR"}
+        return any(r[k] in blocked for k in ("abicheck", "abidiff", "abidiff_headers", "abicc"))
+
+    valid  = [r for r in results if not skip(r)]
+    n      = len(valid)
+    all4   = sum(1 for r in valid if r["abicheck"] == r["abidiff"] == r["abidiff_headers"] == r["abicc"])
+    all3   = sum(1 for r in valid if r["abicheck"] == r["abidiff"] == r["abicc"])
+    ac_ab  = sum(1 for r in valid if r["abicheck"] == r["abidiff"])
+    ac_abh = sum(1 for r in valid if r["abicheck"] == r["abidiff_headers"])
     ac_acc = sum(1 for r in valid if r["abicheck"] == r["abicc"])
-    n = len(valid)
+    ab_abh = sum(1 for r in valid if r["abidiff"] == r["abidiff_headers"])
+    abh_acc = sum(1 for r in valid if r["abidiff_headers"] == r["abicc"])
 
-    print("\n" + "─" * 84)
+    print("\n" + "─" * 104)
     print(f"  Total cases: {total}   (valid for comparison: {n})")
-    print(f"  All three agree:     {all3}/{n} ({100*all3//n if n else 0}%)")
-    print(f"  abicheck == abidiff: {ac_ab}/{n}")
-    print(f"  abicheck == ABICC:   {ac_acc}/{n}")
+    print(f"  All four agree:               {all4}/{n} ({100 * all4 // n if n else 0}%)")
+    print(f"  All three (excl abidiff+hdr): {all3}/{n}")
+    print(f"  abicheck == abidiff:          {ac_ab}/{n}")
+    print(f"  abicheck == abidiff+hdr:      {ac_abh}/{n}")
+    print(f"  abicheck == ABICC:            {ac_acc}/{n}")
+    print(f"  abidiff == abidiff+hdr:       {ab_abh}/{n}")
+    print(f"  abidiff+hdr == ABICC:         {abh_acc}/{n}")
 
-    # Divergences
-    divs = [r for r in valid if not (r["abicheck"] == r["abidiff"] == r["abicc"])]
+    divs = [r for r in valid
+            if not (r["abicheck"] == r["abidiff"] == r["abidiff_headers"] == r["abicc"])]
     if divs:
         print("\n  Divergences:")
         for r in divs:
-            print(f"    {r['case']:<33} ac={r['abicheck']} ab={r['abidiff']} abicc={r['abicc']}")
+            print(
+                f"    {r['case']:<33} "
+                f"ac={r['abicheck']} ab={r['abidiff']} ab+h={r['abidiff_headers']} abicc={r['abicc']}"
+            )
 
     summary = REPORT_DIR / "comparison_summary.json"
     summary.write_text(json.dumps(results, indent=2))

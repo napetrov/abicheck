@@ -715,7 +715,7 @@ def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 def _diff_elf_dynamic_section(old_elf: Any, new_elf: Any) -> list[Change]:
     changes: list[Change] = []
-    if old_elf.soname and new_elf.soname and old_elf.soname != new_elf.soname:
+    if old_elf.soname != new_elf.soname:
         changes.append(Change(
             kind=ChangeKind.SONAME_CHANGED,
             symbol="DT_SONAME",

@@ -18,6 +18,8 @@ import html
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .checker import _BREAKING_KINDS as _CHECKER_BREAKING_KINDS
+
 if TYPE_CHECKING:
     from .checker import DiffResult
 
@@ -66,27 +68,23 @@ _CHANGED_BREAKING_KINDS: frozenset[str] = frozenset({
     "struct_field_type_changed", "struct_alignment_changed",
     "field_bitfield_changed",
     "calling_convention_changed", "struct_packing_changed",
-    "type_visibility_changed", "qualifier_removed",
+    "type_visibility_changed",
+    # qualifier_removed: not in canonical _BREAKING_KINDS
     "typedef_base_changed",
     "union_field_type_changed",
     # ELF-layer
     "soname_changed", "symbol_binding_changed", "symbol_type_changed",
     "symbol_size_changed", "symbol_version_defined_removed",
-    "needed_removed", "rpath_changed", "runpath_changed",
+    # needed_removed, rpath_changed, runpath_changed: compatible/warn in checker.py
     "ifunc_introduced", "ifunc_removed",
-    # DWARF
-    "dwarf_info_missing",
+    # dwarf_info_missing: warning only (not breaking) per checker.py
 })
 
-#: All breaking kinds (union of removals + changed-breaking).
-#: _CHANGED_BREAKING_KINDS already contains all breaking "changed" entries
-#: (func_noexcept_added, func_virtual_removed, etc.) — no need to repeat them.
-_BREAKING_KINDS: frozenset[str] = _REMOVED_KINDS | _CHANGED_BREAKING_KINDS
-
-# Drift guard: assert at import time that _CHANGED_BREAKING_KINDS ⊆ _BREAKING_KINDS
-assert _CHANGED_BREAKING_KINDS <= _BREAKING_KINDS, (
-    "_CHANGED_BREAKING_KINDS has entries outside _BREAKING_KINDS — update _BREAKING_KINDS"
-)
+#: Canonical breaking kinds imported from checker — single source of truth.
+#: _REMOVED_KINDS and _CHANGED_BREAKING_KINDS are kept for bucket classification
+#: (routing changes to Removed/Changed/Added sections), but breaking detection
+#: uses the authoritative set from checker.py.
+_BREAKING_KINDS: frozenset[str] = _CHECKER_BREAKING_KINDS
 
 #: Category buckets for the summary table — mirrors ABICC section headers.
 _CATEGORY_PREFIXES: list[tuple[str, tuple[str, ...]]] = [

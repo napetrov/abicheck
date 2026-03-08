@@ -104,7 +104,14 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
         text = to_sarif_str(result)
     elif fmt == "html":
         from .html_report import generate_html_report
-        old_symbol_count = len(old.functions) + len(old.variables)
+        from .model import Visibility
+        old_symbol_count = sum(
+            1 for f in old.functions
+            if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
+        ) + sum(
+            1 for v in old.variables
+            if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
+        )
         text = generate_html_report(
             result,
             lib_name=old.library,
@@ -244,7 +251,14 @@ def compat_cmd(
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
     if fmt == "html":
-        old_symbol_count = len(old_snap.functions) + len(old_snap.variables)
+        from .model import Visibility
+        old_symbol_count = sum(
+            1 for f in old_snap.functions
+            if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
+        ) + sum(
+            1 for v in old_snap.variables
+            if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
+        )
         write_html_report(result, output_path=report_path,
                           lib_name=lib_name,
                           old_version=old.version, new_version=new.version,
