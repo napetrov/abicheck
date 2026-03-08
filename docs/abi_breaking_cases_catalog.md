@@ -173,15 +173,15 @@ because they do not cause binary linkage or layout failures when comparing two r
     - Size increase (if any) is caught separately by `TYPE_SIZE_CHANGED`.
     - Verdict: COMPATIBLE.
 
-28. **GLOBAL→WEAK symbol binding** — symbol weakened from `STT_GLOBAL` to `STT_WEAK`.
+28. **GLOBAL→WEAK symbol binding** — symbol weakened from `STB_GLOBAL` to `STB_WEAK`.
     - Symbol is still exported and resolvable by the dynamic linker.
     - Interposition semantics change but existing binaries continue to work.
     - Verdict: COMPATIBLE.
 
 29. **ELF st_size changed** — symbol size metadata changed in `.dynsym`.
     - `st_size` is informational metadata; the dynamic linker does not use it for resolution.
-    - Actual layout breaks are caught by `TYPE_SIZE_CHANGED` / `STRUCT_SIZE_CHANGED`.
-    - Verdict: COMPATIBLE.
+    - In ELF-only mode (no headers/DWARF), may be the sole signal for vtable
+      or variable layout changes — classified as **BREAKING** to avoid false negatives.
 
 30. **GNU IFUNC introduced/removed** — symbol changed to/from `STT_GNU_IFUNC`.
     - Transparent to callers; PLT/GOT mechanism handles indirect resolution.
@@ -189,21 +189,17 @@ because they do not cause binary linkage or layout failures when comparing two r
     - Verdict: COMPATIBLE.
 
 31. **New dependency version requirement** — library now requires e.g. `GLIBC_2.34`.
-    - Affects deployment portability on older systems, not the library's own ABI.
-    - Consumers linking against *this* library's symbols are unaffected.
-    - Verdict: COMPATIBLE.
+    - Library fails to load on runtimes lacking the required version.
+    - Verdict: **BREAKING** (hard runtime failure on affected systems).
 
 32. **Typeinfo/vtable visibility changed** — visibility attribute changed on type metadata.
-    - Affects RTTI (`dynamic_cast`) across DSO boundaries in specific scenarios.
-    - Not a general binary ABI break for symbol resolution or calling convention.
-    - Verdict: COMPATIBLE.
+    - Cross-DSO `dynamic_cast` and C++ exception matching can fail at runtime.
+    - Verdict: **BREAKING**.
 
 33. **Variable const qualifier added/removed** — global variable gained or lost `const`.
-    - Symbol still resolves at the same address and size.
-    - Adding `const` moves variable to `.rodata` (writes cause SIGSEGV).
-    - Removing `const` is an ODR concern for inlined values.
-    - Both are behavioral concerns, not linkage breaks.
-    - Verdict: COMPATIBLE.
+    - Adding `const` moves variable to `.rodata`; existing writes cause SIGSEGV.
+    - Removing `const` is an ODR / inlining break (callers may have cached the value).
+    - Verdict: **BREAKING**.
 
 34. **New/removed DT_NEEDED dependency** — library gained or dropped a shared library dependency.
     - Deployment/packaging concern; does not affect the library's exported symbol contract.

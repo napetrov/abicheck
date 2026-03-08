@@ -157,7 +157,10 @@ _BREAKING_KINDS = {
     # ELF Sprint 2
     ChangeKind.SONAME_CHANGED,
     ChangeKind.SYMBOL_TYPE_CHANGED,
+    ChangeKind.SYMBOL_SIZE_CHANGED,           # in ELF-only mode (no headers/DWARF) this may be
+                                              # the sole signal for vtable/variable layout changes
     ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
+    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED, # library fails to load on runtimes lacking the version
     # DWARF Sprint 3 + 4
     ChangeKind.STRUCT_SIZE_CHANGED,
     ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
@@ -169,9 +172,13 @@ _BREAKING_KINDS = {
     ChangeKind.STRUCT_PACKING_CHANGED,
     # Sprint 2 — gap detectors
     ChangeKind.FUNC_DELETED,
+    ChangeKind.VAR_BECAME_CONST,              # writes → SIGSEGV when variable moves to .rodata
+    ChangeKind.VAR_LOST_CONST,                # ODR / inlining break; callers may have cached const value
     ChangeKind.TYPE_BECAME_OPAQUE,
     ChangeKind.BASE_CLASS_POSITION_CHANGED,
     ChangeKind.BASE_CLASS_VIRTUAL_CHANGED,
+    # DWARF Sprint 4
+    ChangeKind.TYPE_VISIBILITY_CHANGED,       # cross-DSO dynamic_cast / exception matching can fail
 }
 
 _COMPATIBLE_KINDS: set[ChangeKind] = {
@@ -212,29 +219,10 @@ _COMPATIBLE_KINDS: set[ChangeKind] = {
     # linker; interposition semantics change but existing binaries work.
     ChangeKind.SYMBOL_BINDING_CHANGED,
 
-    # ELF st_size is metadata not used by the dynamic linker for symbol
-    # resolution.  Actual layout breaks are caught by TYPE_SIZE_CHANGED /
-    # STRUCT_SIZE_CHANGED.
-    ChangeKind.SYMBOL_SIZE_CHANGED,
-
     # GNU IFUNC ↔ regular function: transparent to callers; the PLT/GOT
     # mechanism handles resolution.  This is an implementation optimization.
     ChangeKind.IFUNC_INTRODUCED,
     ChangeKind.IFUNC_REMOVED,
-
-    # New version requirement on a *dependency* (e.g. GLIBC_2.34): affects
-    # deployment portability, not the library's own exported ABI surface.
-    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
-
-    # Typeinfo/vtable visibility: niche RTTI cross-DSO concern, not a
-    # general binary ABI break for symbol resolution or calling convention.
-    ChangeKind.TYPE_VISIBILITY_CHANGED,
-
-    # const qualifier on global variables: symbol still resolves at the same
-    # address/size; adding const moves to .rodata (writes SIGSEGV) and
-    # removing const is an ODR concern — both are behavioral, not linkage.
-    ChangeKind.VAR_BECAME_CONST,
-    ChangeKind.VAR_LOST_CONST,
 
     # DWARF diagnostics (comparison coverage gap warning)
     ChangeKind.DWARF_INFO_MISSING,

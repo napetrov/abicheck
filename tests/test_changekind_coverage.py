@@ -444,7 +444,7 @@ class TestTypeVisibilityChanged:
 
         adv = _minimal_adv()
         r = compare(_snap(dwarf_advanced=adv), _snap("2.0", dwarf_advanced=adv))
-        assert r.verdict == Verdict.COMPATIBLE
+        assert r.verdict == Verdict.BREAKING
         assert any(c.kind == ChangeKind.TYPE_VISIBILITY_CHANGED for c in r.changes), (
             "Expected TYPE_VISIBILITY_CHANGED in changes"
         )

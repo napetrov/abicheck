@@ -11,16 +11,19 @@
 
 ## What breaks at binary level
 
-Making a virtual method pure (`= 0`) has two ABI consequences:
+Making `Processor::process()` pure virtual (`= 0`) has two ABI consequences:
 
-1. **The class becomes abstract** — existing code that directly instantiates
-   `Processor` objects (e.g., `new Processor()`) will fail. While this is primarily
-   a compile-time issue, it breaks binary compatibility for plugins or modules that
-   were compiled to instantiate the class directly.
+1. **The vtable entry for `process()` is replaced** — the slot that previously
+   pointed to `Processor`'s concrete implementation of `process()` now points to
+   the pure-call handler (`__cxa_pure_virtual`). Already-compiled consumers that
+   invoke `process()` through a `Processor*` vtable dispatch will hit the pure-call
+   handler at runtime, causing `std::terminate` instead of calling the old base
+   implementation.
 
-2. **vtable layout changes** — the vtable entry for `process()` becomes a pure-call
-   stub (typically `__cxa_pure_virtual`). If existing compiled code calls through the
-   vtable, it hits the pure-call handler instead of the concrete implementation.
+2. **`Processor` becomes abstract** — source-level rebuilds will fail to compile
+   `new Processor()` (abstract class cannot be instantiated). For already-compiled
+   binaries this is not the direct failure mode; the runtime break comes from point 1
+   above (dispatch to the pure-call handler via the vtable slot).
 
 ## Consumer impact
 

@@ -113,15 +113,21 @@ because they do not cause binary linkage or layout failures on their own:
 | Enum member added | Existing compiled enum values unchanged. Source-level switch coverage concern. Value shifts caught separately. |
 | Union field added | All union fields start at offset 0; existing fields unaffected. Size increase caught by TYPE_SIZE_CHANGED. |
 | GLOBAL→WEAK binding | Symbol still exported and resolvable by the dynamic linker. |
-| ELF `st_size` changed | Metadata not used by dynamic linker for resolution. Layout breaks caught by TYPE_SIZE_CHANGED. |
 | GNU IFUNC introduced/removed | Transparent to callers via PLT/GOT mechanism. |
-| New version requirement (e.g. GLIBC_2.34) | Deployment portability concern, not the library's own ABI surface. |
-| Typeinfo/vtable visibility change | Niche RTTI cross-DSO concern, not general binary ABI break. |
-| Variable const qualifier added/removed | Symbol still resolves; behavioral concern (SIGSEGV on write / ODR), not linkage. |
 | New/removed DT_NEEDED dependency | Deployment concern, not binary interface break. |
 | RPATH/RUNPATH changed | Search path metadata, not symbol contract. |
 | Toolchain flag drift | Informational — not a proven binary break on its own. |
 | DWARF info missing | Coverage gap warning — comparison was incomplete. |
+
+Some changes are classified as **BREAKING** despite being borderline, because they
+can cause runtime failures in realistic deployments:
+
+| Change | Why it's BREAKING |
+|---|---|
+| ELF `st_size` changed | In ELF-only mode (no headers/DWARF), may be the sole signal for vtable/variable layout changes. |
+| New version requirement (e.g. GLIBC_2.34) | Library fails to load on runtimes lacking that version — hard runtime failure. |
+| Typeinfo/vtable visibility change | Cross-DSO `dynamic_cast` and exception matching can fail at runtime. |
+| Variable const qualifier added/removed | Adding const moves variable to `.rodata` — existing writes cause SIGSEGV. |
 
 ---
 

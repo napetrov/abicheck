@@ -94,13 +94,13 @@ def test_symbol_version_defined_removed() -> None:
 
 
 def test_symbol_version_required_added() -> None:
-    """New GLIBC_2.34 requirement = deployment concern, not ABI break."""
+    """New GLIBC_2.34 requirement = breaks on older runtimes."""
     old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5"]}))
     new = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]}))
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kinds
-    assert result.verdict == Verdict.COMPATIBLE
+    assert result.verdict == Verdict.BREAKING
 
 
 def test_symbol_version_required_removed() -> None:
@@ -256,15 +256,17 @@ def test_versions_required_entire_lib_removed() -> None:
 # ---------------------------------------------------------------------------
 
 def test_elf_breaking_kinds_verdict() -> None:
-    """ELF kinds that are truly BREAKING produce BREAKING verdict."""
+    """All BREAKING ELF kinds produce BREAKING verdict."""
     breaking_cases = [
         _snap(_elf(soname="libfoo.so.1")),     # SONAME_CHANGED
         _snap(_elf(versions_defined=["V1"])),   # SYMBOL_VERSION_DEFINED_REMOVED
+        _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5"]})),  # VER_REQ_ADDED
         _snap(_elf(symbols=[_sym("f", sym_type=SymbolType.FUNC)])),  # TYPE_CHANGED
     ]
     new_cases = [
         _snap(_elf(soname="libfoo.so.2")),
         _snap(_elf(versions_defined=[])),
+        _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]})),
         _snap(_elf(symbols=[_sym("f", sym_type=SymbolType.OBJECT)])),
     ]
     for old, new in zip(breaking_cases, new_cases):

@@ -79,11 +79,10 @@ A change is BREAKING only when it causes binary-level failures: symbol resolutio
 type layout corruption, vtable mismatch, or calling convention incompatibility.
 
 Changes like `noexcept` addition/removal, enum member addition, union field addition,
-GLOBAL→WEAK binding, ELF `st_size` changes, IFUNC transitions, new dependency version
-requirements, typeinfo visibility changes, and variable const qualifier changes are all
-classified as **COMPATIBLE** — they are detected and reported for awareness but do not
-trigger a BREAKING verdict. See the [README](../README.md#change-classification-breaking-vs-compatible)
-for the full rationale table.
+GLOBAL→WEAK binding, and IFUNC transitions are classified as **COMPATIBLE** — they are
+detected and reported for awareness but do not trigger a BREAKING verdict. See the
+[README](../README.md#change-classification-breaking-vs-compatible) for the full
+rationale table.
 
 ## ABI/API breakages and what each tool mode can detect
 

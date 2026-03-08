@@ -70,9 +70,10 @@ _CHANGED_BREAKING_KINDS: frozenset[str] = frozenset({
     "func_visibility_changed",  # public→hidden: symbol removed from ABI
     "typedef_base_changed",
     "union_field_type_changed",
+    "type_visibility_changed",
     # ELF-layer
     "soname_changed", "symbol_type_changed",
-    "symbol_version_defined_removed",
+    "symbol_size_changed", "symbol_version_defined_removed",
 })
 
 #: Canonical breaking kinds imported from checker — single source of truth.

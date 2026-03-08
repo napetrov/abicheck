@@ -584,13 +584,6 @@ against the GLOBAL version will find and use the (now WEAK) symbol without any c
 The only difference is that the symbol can now be overridden by another definition — an interposition
 concern, not a compatibility break.
 
-### ELF st_size changed
-
-The `st_size` field in the ELF symbol table is metadata. The dynamic linker does not use it for
-symbol resolution or binding. A change in `st_size` is a strong *indicator* that the underlying
-type's layout changed, but the actual binary break (if any) is caught by `TYPE_SIZE_CHANGED` or
-`STRUCT_SIZE_CHANGED`. Reporting `st_size` drift avoids duplicate false-positive BREAKING verdicts.
-
 ### GNU IFUNC introduced or removed
 
 Converting a regular function to GNU IFUNC (indirect function) or back is transparent to callers.
@@ -598,31 +591,18 @@ The PLT/GOT resolution mechanism handles indirect dispatch automatically. This i
 optimization (e.g., CPU-specific dispatch) that does not change the calling convention or symbol
 contract visible to consumers.
 
-### New dependency version requirement
+### Note: borderline checks classified as BREAKING
 
-```text
-v1: NEEDED: libc.so.6 (GLIBC_2.17)
-v2: NEEDED: libc.so.6 (GLIBC_2.17, GLIBC_2.34)
-```
+Some changes are borderline but classified as **BREAKING** because they can cause runtime failures:
 
-A new version requirement (e.g., `GLIBC_2.34`) means the library itself was linked against newer
-system facilities. This affects deployment portability — the library won't load on older systems
-lacking `GLIBC_2.34` — but it does not change the library's own exported symbol contract.
-Consumers linking against this library's symbols are unaffected.
-
-### Variable const qualifier added or removed
-
-```c
-/* v1 */
-extern int g_config;
-
-/* v2 */
-extern const int g_config;
-```
-
-The symbol still resolves at the same address and size. Adding `const` moves the variable to
-`.rodata`, so writes to it will cause SIGSEGV. Removing `const` is an ODR concern for inlined
-values. Both are behavioral/safety concerns rather than linkage breaks.
+- **ELF `st_size` changed** — in ELF-only mode (no headers/DWARF), may be the sole signal for
+  vtable growth or variable type changes. Classified BREAKING to avoid false negatives.
+- **New dependency version requirement** (e.g., `GLIBC_2.34`) — the library fails to load on
+  runtimes lacking the version. Hard runtime failure.
+- **Typeinfo/vtable visibility changed** — cross-DSO `dynamic_cast` and C++ exception matching
+  can fail at runtime.
+- **Variable const qualifier added/removed** — adding `const` moves to `.rodata`; existing writes
+  cause SIGSEGV. Removing `const` breaks ODR/inlining assumptions.
 
 ---
 

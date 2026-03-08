@@ -100,12 +100,12 @@ class TestFuncDeleted:
 # ── VAR_BECAME_CONST ─────────────────────────────────────────────────────────
 
 class TestVarBecameConst:
-    def test_var_became_const_is_compatible(self):
+    def test_var_became_const_is_breaking(self):
         old = _snap(variables=[_var("g_buf", "_g_buf", is_const=False)])
         new = _snap(variables=[_var("g_buf", "_g_buf", is_const=True)])
         result = compare(old, new)
         assert ChangeKind.VAR_BECAME_CONST in _kinds(result)
-        assert result.verdict == Verdict.COMPATIBLE
+        assert result.verdict == Verdict.BREAKING
 
     def test_var_already_const_no_change(self):
         old = _snap(variables=[_var("g_buf", "_g_buf", is_const=True)])
@@ -123,12 +123,12 @@ class TestVarBecameConst:
 # ── VAR_LOST_CONST ───────────────────────────────────────────────────────────
 
 class TestVarLostConst:
-    def test_var_lost_const_is_compatible(self):
+    def test_var_lost_const_is_breaking(self):
         old = _snap(variables=[_var("g_limit", "_g_limit", is_const=True)])
         new = _snap(variables=[_var("g_limit", "_g_limit", is_const=False)])
         result = compare(old, new)
         assert ChangeKind.VAR_LOST_CONST in _kinds(result)
-        assert result.verdict == Verdict.COMPATIBLE
+        assert result.verdict == Verdict.BREAKING
 
     def test_var_already_non_const_no_change(self):
         old = _snap(variables=[_var("g_limit", "_g_limit", is_const=False)])
