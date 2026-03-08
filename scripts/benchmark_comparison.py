@@ -5,10 +5,19 @@ Benchmark: abicheck vs ABICC vs abidiff on abicheck examples.
 Runs all three tools on each example pair (v1/v2) and prints a comparison table.
 abidiff is run twice: without headers (ELF-only) and with --headers-dir.
 
-Usage: python3 scripts/benchmark_comparison.py
+Two ABICC modes are supported:
+  - abicc_xml:    legacy XML descriptor (no abi-dumper, fast but inaccurate)
+  - abicc_dumper: proper abi-dumper workflow (compile with -g, dump ABI, compare)
+
+Usage:
+    python3 scripts/benchmark_comparison.py
+    python3 scripts/benchmark_comparison.py --abicc-timeout 60
+    python3 scripts/benchmark_comparison.py --abicc-mode dumper
+    python3 scripts/benchmark_comparison.py --skip-abicc
 """
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 import subprocess
@@ -20,6 +29,8 @@ REPO_DIR     = Path(__file__).parent.parent
 EXAMPLES_DIR = REPO_DIR / "examples"
 REPORT_DIR   = REPO_DIR / "benchmark_reports"
 BUILD_DIR    = REPORT_DIR / "_build"
+
+DEFAULT_ABICC_TIMEOUT = 30  # seconds; was 120 in legacy code
 
 
 @dataclass
@@ -34,7 +45,8 @@ class ToolResult:
 def compile_so(src: Path, out_so: Path) -> bool:
     compiler = "g++" if src.suffix == ".cpp" else "gcc"
     r = subprocess.run(
-        [compiler, "-shared", "-fPIC", "-g", "-fvisibility=default", "-o", str(out_so), str(src)],
+        [compiler, "-shared", "-fPIC", "-g", "-Og", "-fvisibility=default",
+         "-o", str(out_so), str(src)],
         capture_output=True, text=True,
     )
     if r.returncode != 0:
@@ -78,105 +90,97 @@ def _best_h(ver: str, bdir_h: Path, src_dir: Path) -> Path:
         p = src_dir / f"{ver}{ext}"
         if p.exists():
             return p
-    return bdir_h  # may not exist — callers must check .exists()
+    return bdir_h
 
 
-def _resolve_headers_dir(case_dir: Path, eff_v1_h: Path, eff_v2_h: Path) -> Path | None:
-    """Return the best headers directory for abidiff --headers-dir."""
-    has_case_headers = any(case_dir.glob("*.h")) or any(case_dir.glob("*.hpp"))
-    if has_case_headers:
-        return case_dir
-    if eff_v1_h.exists():
-        return eff_v1_h.parent
-    if eff_v2_h.exists():
-        return eff_v2_h.parent
+def _resolve_headers_dir(case_dir: Path, v1_h: Path, v2_h: Path) -> str | None:
+    """Return the most useful --headers-dir for abidiff, or None."""
+    if v1_h.exists():
+        return str(v1_h.parent)
+    if v2_h.exists():
+        return str(v2_h.parent)
     return None
 
 
 # ── abicheck ──────────────────────────────────────────────────────────────────
 def run_abicheck(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
                  case: str, rdir: Path) -> ToolResult:
-    try:
-        from abicheck.checker import compare
-        from abicheck.dumper import dump
-        from abicheck.reporter import to_json, to_markdown
-        from abicheck.sarif import to_sarif_str
+    if not shutil.which("abicheck"):
+        return ToolResult(verdict="SKIP")
 
-        hdrs_v1 = [v1_h] if v1_h.exists() else []
-        hdrs_v2 = [v2_h] if v2_h.exists() else []
+    cmd = ["abicheck", "compare", str(v1_so), str(v2_so)]
+    if v1_h.exists():
+        cmd += ["--headers", str(v1_h)]
+    if v2_h.exists():
+        cmd += ["--new-headers", str(v2_h)]
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            old = dump(v1_so, headers=hdrs_v1, version="v1")
-            new = dump(v2_so, headers=hdrs_v2, version="v2")
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    out = r.stdout + r.stderr
+    (rdir / f"{case}_abicheck.txt").write_text(out)
 
-        result = compare(old, new)
+    if r.returncode == 2:
+        verdict = "BREAKING"
+    elif r.returncode == 1:
+        verdict = "COMPATIBLE"
+    elif r.returncode == 0:
+        verdict = "NO_CHANGE"
+    else:
+        verdict = "ERROR"
 
-        (rdir / f"{case}_abicheck.md").write_text(to_markdown(result))
-        (rdir / f"{case}_abicheck.json").write_text(to_json(result))
-        (rdir / f"{case}_abicheck.sarif").write_text(to_sarif_str(result))
-
-        changes = [f"{c.kind.value}: {c.symbol}" for c in result.changes]
-        return ToolResult(verdict=result.verdict.value, changes=changes,
-                          raw_output=to_markdown(result),
-                          report_path=f"{case}_abicheck.md")
-    except Exception as exc:  # noqa: BLE001
-        return ToolResult(verdict="ERROR", raw_output=str(exc))
-
-
-# ── abidiff (two modes) ───────────────────────────────────────────────────────
-def _abidiff_verdict(returncode: int) -> str:
-    if returncode & 1:
-        return "ERROR"
-    if returncode & 8:
-        return "BREAKING"
-    if returncode & 4:
-        return "COMPATIBLE"
-    return "NO_CHANGE"
+    changes = [ln.strip() for ln in out.splitlines()
+               if any(k in ln for k in ("removed", "added", "changed")) and ln.strip()]
+    return ToolResult(verdict=verdict, changes=changes[:8], raw_output=out)
 
 
-def run_abidiff(
-    v1_so: Path,
-    v2_so: Path,
-    case: str,
-    rdir: Path,
-    headers_dir: Path | None = None,
-    suffix: str = "",
-) -> ToolResult:
-    """Run abidiff, optionally with --headers-dir for public-API filtering."""
+# ── abidiff ───────────────────────────────────────────────────────────────────
+def run_abidiff(v1_so: Path, v2_so: Path, case: str, rdir: Path,
+                headers_dir: str | None = None,
+                suffix: str = "") -> ToolResult:
     if not shutil.which("abidiff"):
         return ToolResult(verdict="SKIP")
 
-    cmd = ["abidiff", "--no-show-locs"]
-    if headers_dir is not None and headers_dir.is_dir():
-        cmd += ["--headers-dir1", str(headers_dir), "--headers-dir2", str(headers_dir)]
+    cmd = ["abidiff"]
+    if headers_dir:
+        cmd += ["--headers-dir", headers_dir]
     cmd += [str(v1_so), str(v2_so)]
 
-    report_name = f"{case}_abidiff{suffix}.txt"
-    report_path = rdir / report_name
-
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    except subprocess.TimeoutExpired as exc:
-        timeout_msg = f"abidiff timed out after 30s for case '{case}'{suffix or ''}: {exc}"
-        report_path.write_text(timeout_msg)
-        return ToolResult(
-            verdict="TIMEOUT",
-            raw_output=timeout_msg,
-            report_path=report_name,
-        )
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return ToolResult(verdict="TIMEOUT")
+    out = r.stdout + r.stderr
+    (rdir / f"{case}_abidiff{suffix}.txt").write_text(out)
 
-    verdict = _abidiff_verdict(r.returncode)
-    out = r.stdout or r.stderr
-    report_path.write_text(out)
-    changes = [line.strip() for line in out.splitlines() if line.strip().startswith("[")]
-    return ToolResult(verdict=verdict, changes=changes, raw_output=out,
-                      report_path=report_name)
+    # abidiff exit codes (bitmask):
+    #   bit 0 (1) = tool error
+    #   bit 1 (2) = application error
+    #   bit 2 (4) = ABI compatible changes
+    #   bit 3 (8) = ABI incompatible (breaking) changes
+    # Check error bits first so mixed codes (e.g. 5=error+breaking) map to ERROR.
+    if r.returncode & 1 or r.returncode & 2:
+        verdict = "ERROR"
+    elif r.returncode & 8:
+        verdict = "BREAKING"
+    elif r.returncode & 4:
+        verdict = "COMPATIBLE"
+    elif r.returncode == 0:
+        verdict = "NO_CHANGE"
+    else:
+        verdict = "ERROR"
+
+    changes = [ln.strip() for ln in out.splitlines()
+               if any(k in ln for k in ("removed", "added", "changed")) and ln.strip()]
+    return ToolResult(verdict=verdict, changes=changes[:8], raw_output=out)
 
 
-# ── ABICC ─────────────────────────────────────────────────────────────────────
-def run_abicc(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
-              case: str, rdir: Path) -> ToolResult:
+# ── ABICC (legacy XML descriptor) ─────────────────────────────────────────────
+def run_abicc_xml(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
+                  case: str, rdir: Path, timeout: int = DEFAULT_ABICC_TIMEOUT) -> ToolResult:
+    """Legacy mode: XML descriptor pointing at .so directly (no abi-dumper).
+
+    Fast but inaccurate — ABICC without GCC dump misses most type-level changes.
+    Use run_abicc_dumper() for accurate results.
+    """
     if not shutil.which("abi-compliance-checker"):
         return ToolResult(verdict="SKIP")
 
@@ -195,16 +199,19 @@ def run_abicc(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
     xml(v1_so, v1_h, "v1", v1_xml)
     xml(v2_so, v2_h, "v2", v2_xml)
 
-    html_out = rdir / f"{case}_abicc_report.html"
-    r = subprocess.run(
-        ["abi-compliance-checker", "-l", case,
-         "-old", str(v1_xml), "-new", str(v2_xml),
-         "-report-path", str(html_out)],
-        capture_output=True, text=True, timeout=120,
-    )
+    html_out = rdir / f"{case}_abicc_xml_report.html"
+    try:
+        r = subprocess.run(
+            ["abi-compliance-checker", "-l", case,
+             "-old", str(v1_xml), "-new", str(v2_xml),
+             "-report-path", str(html_out)],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return ToolResult(verdict="TIMEOUT")
 
     out = r.stdout + r.stderr
-    (rdir / f"{case}_abicc.txt").write_text(out)
+    (rdir / f"{case}_abicc_xml.txt").write_text(out)
 
     if r.returncode == 1:
         verdict = "BREAKING"
@@ -218,7 +225,77 @@ def run_abicc(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
     changes = [ln.strip() for ln in out.splitlines()
                if any(k in ln for k in ("removed", "added", "changed")) and ln.strip()]
     return ToolResult(verdict=verdict, changes=changes[:8], raw_output=out,
-                      report_path=f"{case}_abicc_report.html")
+                      report_path=f"{case}_abicc_xml_report.html")
+
+
+# ── ABICC (abi-dumper workflow) ────────────────────────────────────────────────
+def run_abicc_dumper(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
+                     case: str, rdir: Path,
+                     timeout: int = DEFAULT_ABICC_TIMEOUT) -> ToolResult:
+    """Proper ABICC mode: compile with -g -Og, dump ABI via abi-dumper, then compare.
+
+    This is the recommended workflow for ABICC. abi-dumper extracts full type
+    information from DWARF debug data, producing an ABI descriptor that ABICC
+    can accurately diff — no GCC fdump-lang-spec needed.
+
+    Steps:
+      1. abi-dumper <lib.so> -o dump.abi -lver
+      2. abi-compliance-checker -l <lib> -old dump1.abi -new dump2.abi
+    """
+    if not shutil.which("abi-compliance-checker"):
+        return ToolResult(verdict="SKIP")
+    if not shutil.which("abi-dumper"):
+        return ToolResult(verdict="SKIP")
+
+    dump_v1 = rdir / f"{case}_v1.abi"
+    dump_v2 = rdir / f"{case}_v2.abi"
+
+    # Step 1: generate ABI dumps
+    for so, dump, ver, hdr in [
+        (v1_so, dump_v1, "v1", v1_h),
+        (v2_so, dump_v2, "v2", v2_h),
+    ]:
+        dump_cmd = ["abi-dumper", str(so), "-o", str(dump), "-lver", ver]
+        if hdr.exists():
+            dump_cmd += ["-public-headers", str(hdr.parent)]
+        try:
+            dr = subprocess.run(
+                dump_cmd, capture_output=True, text=True, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return ToolResult(verdict="TIMEOUT", raw_output=f"abi-dumper timeout on {ver}")
+        if dr.returncode != 0 or not dump.exists():
+            err = dr.stderr[:200] if dr.stderr else "no dump produced"
+            return ToolResult(verdict="ERROR", raw_output=f"abi-dumper failed ({ver}): {err}")
+
+    # Step 2: compare dumps
+    html_out = rdir / f"{case}_abicc_dumper_report.html"
+    try:
+        r = subprocess.run(
+            ["abi-compliance-checker", "-l", case,
+             "-old", str(dump_v1), "-new", str(dump_v2),
+             "-report-path", str(html_out)],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return ToolResult(verdict="TIMEOUT")
+
+    out = r.stdout + r.stderr
+    (rdir / f"{case}_abicc_dumper.txt").write_text(out)
+
+    if r.returncode == 1:
+        verdict = "BREAKING"
+    elif "Binary compatibility: 100%" in out:
+        verdict = "NO_CHANGE"
+    elif r.returncode == 0:
+        verdict = "COMPATIBLE"
+    else:
+        verdict = "ERROR"
+
+    changes = [ln.strip() for ln in out.splitlines()
+               if any(k in ln for k in ("removed", "added", "changed")) and ln.strip()]
+    return ToolResult(verdict=verdict, changes=changes[:8], raw_output=out,
+                      report_path=f"{case}_abicc_dumper_report.html")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -229,8 +306,27 @@ def _col(v: str) -> str:
     return f"{colors.get(v, '')}{v:<12}\033[0m"
 
 
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Benchmark abicheck vs abidiff vs ABICC")
+    p.add_argument(
+        "--abicc-timeout", type=int, default=DEFAULT_ABICC_TIMEOUT, metavar="N",
+        help=f"Timeout in seconds for each ABICC invocation (default: {DEFAULT_ABICC_TIMEOUT})",
+    )
+    p.add_argument(
+        "--abicc-mode", choices=["xml", "dumper", "both"], default="dumper",
+        help="ABICC analysis mode: xml (legacy), dumper (proper), or both (default: dumper)",
+    )
+    p.add_argument(
+        "--skip-abicc", action="store_true",
+        help="Skip ABICC entirely (useful in CI environments where it's not installed)",
+    )
+    return p.parse_args()
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
+    args = parse_args()
+
     REPORT_DIR.mkdir(exist_ok=True)
     BUILD_DIR.mkdir(exist_ok=True)
 
@@ -241,8 +337,19 @@ def main() -> None:
 
     results: list[dict[str, object]] = []
 
-    print(f"\n{'Case':<35} {'abicheck':<14} {'abidiff':<14} {'abidiff+hdr':<14} {'ABICC':<14} agree?")
-    print("─" * 104)
+    use_dumper = not args.skip_abicc and args.abicc_mode in ("dumper", "both")
+    use_xml    = not args.skip_abicc and args.abicc_mode in ("xml", "both")
+
+    # Build header
+    col_headers = f"{'Case':<35} {'abicheck':<14} {'abidiff':<14} {'abidiff+hdr':<14}"
+    if use_dumper:
+        col_headers += f" {'ABICC(dumper)':<16}"
+    if use_xml:
+        col_headers += f" {'ABICC(xml)':<14}"
+    col_headers += " agree?"
+    width = len(col_headers)
+    print(f"\n{col_headers}")
+    print("─" * max(width, 80))
 
     for case_dir in cases:
         name    = case_dir.name
@@ -280,64 +387,114 @@ def main() -> None:
         ab_hdr = run_abidiff(v1_so, v2_so, name, rdir,
                              headers_dir=headers_dir, suffix="_headers")
 
-        acc    = run_abicc(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir)
+        acc_dumper = (run_abicc_dumper(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir,
+                                       timeout=args.abicc_timeout)
+                      if use_dumper else ToolResult(verdict="SKIP"))
+        acc_xml    = (run_abicc_xml(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir,
+                                    timeout=args.abicc_timeout)
+                      if use_xml else ToolResult(verdict="SKIP"))
 
-        verdicts = {ac.verdict, ab.verdict, ab_hdr.verdict, acc.verdict} - {"SKIP", "ERROR", "TIMEOUT"}
-        agree = "✅" if len(verdicts) <= 1 else (
-            "~" if ac.verdict in (ab.verdict, ab_hdr.verdict, acc.verdict) else "❌")
+        all_verdicts = {ac.verdict, ab.verdict, ab_hdr.verdict,
+                        acc_dumper.verdict, acc_xml.verdict} - {"SKIP", "ERROR", "TIMEOUT"}
+        agree = "✅" if len(all_verdicts) <= 1 else (
+            "~" if ac.verdict in (ab.verdict, ab_hdr.verdict,
+                                   acc_dumper.verdict, acc_xml.verdict) else "❌")
 
-        print(
-            f"  {name:<33} {_col(ac.verdict)} {_col(ab.verdict)} {_col(ab_hdr.verdict)} {_col(acc.verdict)} {agree}"
-        )
+        row = f"  {name:<33} {_col(ac.verdict)} {_col(ab.verdict)} {_col(ab_hdr.verdict)}"
+        if use_dumper:
+            row += f" {_col(acc_dumper.verdict):<16}"
+        if use_xml:
+            row += f" {_col(acc_xml.verdict)}"
+        row += f" {agree}"
+        print(row)
 
         results.append({
             "case":                    name,
             "abicheck":                ac.verdict,
             "abidiff":                 ab.verdict,
             "abidiff_headers":         ab_hdr.verdict,
-            "abicc":                   acc.verdict,
+            "abicc_dumper":            acc_dumper.verdict,
+            "abicc_xml":               acc_xml.verdict,
             "abicheck_changes":        ac.changes,
             "abidiff_changes":         ab.changes,
             "abidiff_headers_changes": ab_hdr.changes,
-            "abicc_changes":           acc.changes,
+            "abicc_dumper_changes":    acc_dumper.changes,
+            "abicc_xml_changes":       acc_xml.changes,
         })
 
     # ── Summary ──────────────────────────────────────────────────────────────
     total = len(results)
 
-    def skip(r: dict[str, object]) -> bool:
-        blocked = {"SKIP", "TIMEOUT", "ERROR"}
-        return any(r[k] in blocked for k in ("abicheck", "abidiff", "abidiff_headers", "abicc"))
+    def _skip(r: dict[str, object], key: str) -> bool:
+        return r[key] in {"SKIP", "TIMEOUT", "ERROR"}
 
-    valid  = [r for r in results if not skip(r)]
-    n      = len(valid)
-    all4   = sum(1 for r in valid if r["abicheck"] == r["abidiff"] == r["abidiff_headers"] == r["abicc"])
-    all3   = sum(1 for r in valid if r["abicheck"] == r["abidiff"] == r["abicc"])
-    ac_ab  = sum(1 for r in valid if r["abicheck"] == r["abidiff"])
-    ac_abh = sum(1 for r in valid if r["abicheck"] == r["abidiff_headers"])
-    ac_acc = sum(1 for r in valid if r["abicheck"] == r["abicc"])
-    ab_abh = sum(1 for r in valid if r["abidiff"] == r["abidiff_headers"])
-    abh_acc = sum(1 for r in valid if r["abidiff_headers"] == r["abicc"])
+    def _valid_pair(r: dict[str, object], k1: str, k2: str) -> bool:
+        return not (_skip(r, k1) or _skip(r, k2))
 
-    print("\n" + "─" * 104)
-    print(f"  Total cases: {total}   (valid for comparison: {n})")
-    print(f"  All four agree:               {all4}/{n} ({100 * all4 // n if n else 0}%)")
-    print(f"  All three (excl abidiff+hdr): {all3}/{n}")
-    print(f"  abicheck == abidiff:          {ac_ab}/{n}")
-    print(f"  abicheck == abidiff+hdr:      {ac_abh}/{n}")
-    print(f"  abicheck == ABICC:            {ac_acc}/{n}")
-    print(f"  abidiff == abidiff+hdr:       {ab_abh}/{n}")
-    print(f"  abidiff+hdr == ABICC:         {abh_acc}/{n}")
+    valid_ac_ab   = [r for r in results if _valid_pair(r, "abicheck", "abidiff")]
+    valid_ac_abh  = [r for r in results if _valid_pair(r, "abicheck", "abidiff_headers")]
+    valid_ac_dump = [r for r in results if _valid_pair(r, "abicheck", "abicc_dumper")]
+    valid_ac_xml  = [r for r in results if _valid_pair(r, "abicheck", "abicc_xml")]
+    valid_all     = [r for r in results
+                     if not any(_skip(r, k) for k in
+                                ("abicheck", "abidiff", "abidiff_headers",
+                                 "abicc_dumper", "abicc_xml"))]
 
-    divs = [r for r in valid
-            if not (r["abicheck"] == r["abidiff"] == r["abidiff_headers"] == r["abicc"])]
+    n = len(valid_all)
+
+    print("\n" + "─" * max(width, 80))
+    print(f"  Total cases: {total}")
+
+    if valid_ac_ab:
+        n_ab = len(valid_ac_ab)
+        s = sum(1 for r in valid_ac_ab if r["abicheck"] == r["abidiff"])
+        print(f"  abicheck == abidiff:          {s}/{n_ab}")
+
+    if valid_ac_abh:
+        n_abh = len(valid_ac_abh)
+        s = sum(1 for r in valid_ac_abh if r["abicheck"] == r["abidiff_headers"])
+        print(f"  abicheck == abidiff+hdr:      {s}/{n_abh}")
+
+    if valid_ac_dump:
+        n_d = len(valid_ac_dump)
+        s = sum(1 for r in valid_ac_dump if r["abicheck"] == r["abicc_dumper"])
+        print(f"  abicheck == ABICC(dumper):    {s}/{n_d}")
+
+    if valid_ac_xml:
+        n_x = len(valid_ac_xml)
+        s = sum(1 for r in valid_ac_xml if r["abicheck"] == r["abicc_xml"])
+        print(f"  abicheck == ABICC(xml):       {s}/{n_x}")
+
+    if n:
+        all5 = sum(
+            1 for r in valid_all
+            if r["abicheck"] == r["abidiff"] == r["abidiff_headers"]
+            == r["abicc_dumper"] == r["abicc_xml"]
+        )
+        print(f"  All five agree:               {all5}/{n}")
+
+    # Divergences
+    divs = [
+        r for r in results
+        if not _skip(r, "abicheck")
+        and not all(
+            _skip(r, k) or r[k] == r["abicheck"]
+            for k in ("abidiff", "abidiff_headers", "abicc_dumper", "abicc_xml")
+        )
+    ]
     if divs:
         print("\n  Divergences:")
         for r in divs:
-            print(
-                f"    {r['case']:<33} "
-                f"ac={r['abicheck']} ab={r['abidiff']} ab+h={r['abidiff_headers']} abicc={r['abicc']}"
-            )
+            parts = [f"ac={r['abicheck']}"]
+            if not _skip(r, "abidiff"):
+                parts.append(f"ab={r['abidiff']}")
+            if not _skip(r, "abidiff_headers"):
+                parts.append(f"ab+h={r['abidiff_headers']}")
+            if not _skip(r, "abicc_dumper"):
+                parts.append(f"abicc_d={r['abicc_dumper']}")
+            if not _skip(r, "abicc_xml"):
+                parts.append(f"abicc_x={r['abicc_xml']}")
+            print(f"    {r['case']:<33} {' '.join(parts)}")
 
     summary = REPORT_DIR / "comparison_summary.json"
     summary.write_text(json.dumps(results, indent=2))
