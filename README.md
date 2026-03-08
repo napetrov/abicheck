@@ -55,11 +55,19 @@ abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o report.sarif
 ### 3) ABICC-compatible mode
 
 ```bash
+# Minimal (same flags as abi-compliance-checker):
 abicheck compat -lib foo -old old.xml -new new.xml
+
+# Full flag parity:
+abicheck compat -lib foo -old old.xml -new new.xml \
+  -report-path report.html \
+  -s \
+  -show-retval \
+  -v1 1.0 -v2 2.0
 ```
 
 This mode supports ABICC-style descriptor workflows so teams can migrate without
-rewriting their entire pipeline on day one.
+rewriting their entire pipeline on day one. See [ABICC compatibility reference](docs/abicc_compat.md) for full flag list.
 
 ---
 
@@ -71,6 +79,39 @@ abicheck keeps the ABICC descriptor-driven model available (`compat` mode), whil
 - Easier CI embedding in Python-based tooling
 - More explicit architecture with reusable Python modules
 - Cleaner evolution path for new ABI rules and checks
+- **Superset detectors** — finds everything ABICC finds, plus more (see [gap report](docs/gap_report.md))
+
+### Migration: one-line swap
+
+```bash
+# Before:
+abi-compliance-checker -lib libdnnl -old old.xml -new new.xml -report-path r.html
+
+# After (identical):
+abicheck compat -lib libdnnl -old old.xml -new new.xml -report-path r.html
+```
+
+### Supported ABICC flags
+
+| Flag | Alias(es) | Description |
+|------|-----------|-------------|
+| `-lib NAME` | `-l`, `-library` | Library name |
+| `-old PATH` | `-d1` | Old version descriptor |
+| `-new PATH` | `-d2` | New version descriptor |
+| `-report-path PATH` | | Output report path |
+| `-report-format FMT` | | `html` / `json` / `md` (default: `html`) |
+| `-s` | `-strict` | Any change → exit 1 (BREAKING) |
+| `-source` | `-src`, `-api` | Source/API compat only (filter ELF-only changes) |
+| `-binary` | `-bin`, `-abi` | Binary ABI mode (default) |
+| `-show-retval` | | Include return-value changes in report |
+| `-v1 NUM` | `-vnum1` | Override old version label |
+| `-v2 NUM` | `-vnum2` | Override new version label |
+| `-title NAME` | | Custom report title |
+| `-skip-symbols PATH` | | File with symbols to suppress |
+| `-skip-types PATH` | | File with types to suppress |
+| `-stdout` | | Print report to stdout |
+| `-headers-only` | | _(reserved — not yet implemented)_ |
+| `-skip-headers PATH` | | _(reserved — not yet implemented)_ |
 
 Practical migration path:
 

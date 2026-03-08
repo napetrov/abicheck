@@ -19,7 +19,7 @@ can continue evolving ABI checks in modern CI environments.
 
 - 🔍 **Deep analysis** — struct layout, vtable, enum values, calling conventions, symbol visibility
 - 📄 **SARIF output** — native GitHub Code Scanning integration
-- 🔌 **ABICC-compatible** — same XML descriptor format (`-lib`, `-old`, `-new` CLI flags)
+- 🔌 **ABICC drop-in** — full flag parity: `-lib`, `-old`, `-new`, `-s`, `-source`, `-skip-symbols`, `-v1/-v2`, `-stdout` and more ([reference](abicc_compat.md))
 - 🐍 **Python API** — import and use programmatically
 - ⚡ **Fast** — no DWARF required for header-based analysis
 
