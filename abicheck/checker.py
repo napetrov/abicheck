@@ -593,8 +593,10 @@ def _diff_type_bases(name: str, t_old: RecordType, t_new: RecordType) -> list[Ch
             new_value=str(sorted(t_new.virtual_bases)),
         ))
     elif old_virt_set != new_virt_set:
-        # virtual bases set changed entirely (add/remove virtual base) → TYPE_BASE_CHANGED
-        if not changes:  # don't duplicate if already reported above
+        # Pure add/remove of a virtual base (not a migration from non-virtual):
+        # e.g. class D : virtual A  →  class D : virtual A, virtual B
+        # → TYPE_BASE_CHANGED (hierarchy changed, not just virtuality toggled)
+        if not changes:  # don't duplicate if TYPE_BASE_CHANGED already emitted above
             changes.append(Change(
                 kind=ChangeKind.TYPE_BASE_CHANGED,
                 symbol=name,

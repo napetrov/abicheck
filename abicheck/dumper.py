@@ -318,7 +318,13 @@ class _CastxmlParser:
                 continue
             name = el.get("name", mangled)
             type_name = self._type_name(el.get("type", ""))
-            is_const = "const" in type_name or el.get("const") == "1"
+            # Use castxml structured attribute first; fall back to word-boundary
+            # regex on type_name to avoid false positives on names like
+            # "constructor_t", "const_iterator", "myconstant".
+            is_const = (
+                el.get("const") == "1"
+                or bool(re.search(r"\bconst\b", type_name))
+            )
             vis = self._visibility(mangled)
             variables.append(Variable(
                 name=name, mangled=mangled, type=type_name, visibility=vis,

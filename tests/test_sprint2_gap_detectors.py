@@ -51,11 +51,11 @@ def _func(name: str, mangled: str | None = None, **kwargs) -> Function:
     )
 
 
-def _var(name: str, mangled: str | None = None, **kwargs) -> Variable:
+def _var(name: str, mangled: str | None = None, type: str = "int", **kwargs) -> Variable:
     return Variable(
         name=name,
         mangled=mangled or f"_{name}",
-        type="int",
+        type=type,
         visibility=Visibility.PUBLIC,
         **kwargs,
     )
@@ -253,3 +253,46 @@ class TestBaseClassVirtualChanged:
         new = _snap(types=[_type("D", bases=["A", "B"])])
         result = compare(old, new)
         assert ChangeKind.BASE_CLASS_VIRTUAL_CHANGED not in _kinds(result)
+
+    def test_combined_reorder_and_virtual_change(self):
+        """Reorder + virtualize simultaneously: both changes reported."""
+        old = _snap(types=[_type("D", bases=["A", "B"], virtual_bases=[])])
+        new = _snap(types=[_type("D", bases=["B"], virtual_bases=["A"])])
+        result = compare(old, new)
+        # A moved from non-virtual to virtual → BASE_CLASS_VIRTUAL_CHANGED
+        assert ChangeKind.BASE_CLASS_VIRTUAL_CHANGED in _kinds(result)
+
+
+class TestFuncDeletedEdgeCases:
+    def test_func_deleted_no_func_removed_emitted(self):
+        """FUNC_REMOVED must NOT be emitted alongside FUNC_DELETED for same symbol."""
+        old = _snap(functions=[_func("bar", "_Z3barv", is_deleted=False)])
+        new = _snap(functions=[_func("bar", "_Z3barv", is_deleted=True)])
+        result = compare(old, new)
+        assert ChangeKind.FUNC_DELETED in _kinds(result)
+        assert ChangeKind.FUNC_REMOVED not in _kinds(result)
+
+
+class TestOpaqueSizeBitsNone:
+    def test_opaque_type_no_size_bits(self):
+        """Real castxml forward-decls have size_bits=None — must not crash."""
+        old = _snap(types=[RecordType(name="Ctx", kind="struct", size_bits=64)])
+        new = _snap(types=[RecordType(name="Ctx", kind="struct", size_bits=None, is_opaque=True)])
+        result = compare(old, new)
+        assert ChangeKind.TYPE_BECAME_OPAQUE in _kinds(result)
+        assert result.verdict == Verdict.BREAKING
+
+
+class TestVarConstFalsePositive:
+    def test_type_name_with_const_substring_no_false_positive(self):
+        """Type names like 'constructor_t' must not trigger VAR_BECAME_CONST."""
+        old = _snap(variables=[_var("x", "_x", type="constructor_t", is_const=False)])
+        new = _snap(variables=[_var("x", "_x", type="constructor_t", is_const=False)])
+        result = compare(old, new)
+        assert ChangeKind.VAR_BECAME_CONST not in _kinds(result)
+
+    def test_type_name_const_iterator_no_false_positive(self):
+        old = _snap(variables=[_var("it", "_it", type="const_iterator", is_const=False)])
+        new = _snap(variables=[_var("it", "_it", type="const_iterator", is_const=False)])
+        result = compare(old, new)
+        assert ChangeKind.VAR_BECAME_CONST not in _kinds(result)
