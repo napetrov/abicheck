@@ -402,20 +402,25 @@ class _CastxmlParser:
         if class_el is None:
             return []
 
-        result: list[tuple[int | None, str]] = []
+        # Use a dict keyed by vtable_index so derived methods overwrite base entries,
+        # preventing duplicate slots when a derived class overrides a virtual method.
+        slots: dict[int | None, str] = {}
         for base in class_el:
             if base.tag != "Base":
                 continue
             base_type_el = self._resolve(base.get("type", ""))
             if base_type_el is not None:
-                result.extend(self._collect_virtual_methods(base_type_el.get("id", ""), seen))
+                for idx, name in self._collect_virtual_methods(base_type_el.get("id", ""), seen):
+                    slots[idx] = name
 
         for method_el in self._virtual_methods_by_class.get(cid, []):
             mangled_name = method_el.get("mangled", "")
             if not mangled_name:
                 continue
-            result.append((_parse_vtable_index(method_el.get("vtable_index")), mangled_name))
-        return result
+            idx = _parse_vtable_index(method_el.get("vtable_index"))
+            slots[idx] = mangled_name
+
+        return list(slots.items())
 
 
     def parse_enums(self) -> list[EnumType]:

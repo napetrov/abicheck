@@ -1,0 +1,373 @@
+"""Sprint 9: Tests for ABICC-compatible HTML report generator."""
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+from abicheck.html_report import generate_html_report, write_html_report
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _ch(kind: str, symbol: str = "foo", desc: str = "", old: str = "", new: str = "",
+        demangled: str = "") -> object:
+    """Minimal Change-like object."""
+    from enum import Enum
+
+    class K(str, Enum):
+        V = kind
+
+    return SimpleNamespace(
+        kind=K.V,
+        symbol=symbol,
+        demangled_symbol=demangled or symbol,
+        description=desc,
+        old_value=old,
+        new_value=new,
+    )
+
+
+def _result(
+    verdict: str = "COMPATIBLE",
+    changes: list | None = None,
+    suppressed: list | None = None,
+    suppressed_count: int = 0,
+    old_version: str = "1.0",
+    new_version: str = "2.0",
+    library: str = "libtest.so",
+) -> object:
+    v = SimpleNamespace(value=verdict)
+    return SimpleNamespace(
+        verdict=v,
+        changes=changes or [],
+        suppressed_changes=suppressed or [],
+        suppressed_count=suppressed_count,
+        old_version=old_version,
+        new_version=new_version,
+        library=library,
+        suppression_file_provided=bool(suppressed_count),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Basic structure tests
+# ---------------------------------------------------------------------------
+
+def test_html_is_valid_document() -> None:
+    r = _result()
+    out = generate_html_report(r)
+    assert out.startswith("<!DOCTYPE html>")
+    assert "</html>" in out
+    assert "<head>" in out
+    assert "<body>" in out
+
+
+def test_html_contains_verdict() -> None:
+    r = _result(verdict="BREAKING")
+    out = generate_html_report(r)
+    assert "BREAKING" in out
+
+
+def test_html_contains_library_and_versions() -> None:
+    r = _result()
+    out = generate_html_report(r, lib_name="libdnnl", old_version="2025.0", new_version="2025.3")
+    assert "libdnnl" in out
+    assert "2025.0" in out
+    assert "2025.3" in out
+
+
+def test_html_title_contains_versions() -> None:
+    r = _result()
+    out = generate_html_report(r, lib_name="libfoo", old_version="1.0", new_version="2.0")
+    assert "<title>" in out
+    assert "1.0" in out
+    assert "2.0" in out
+
+
+# ---------------------------------------------------------------------------
+# BC% calculation
+# ---------------------------------------------------------------------------
+
+def test_bc_100_when_no_breaking() -> None:
+    r = _result(verdict="COMPATIBLE", changes=[_ch("func_added")])
+    out = generate_html_report(r)
+    assert "100.0%" in out
+
+
+def test_bc_0_when_all_breaking_no_symbol_count() -> None:
+    r = _result(verdict="BREAKING", changes=[_ch("func_removed"), _ch("func_removed", "bar")])
+    out = generate_html_report(r)
+    assert "0.0%" in out
+
+
+def test_bc_uses_old_symbol_count_when_provided() -> None:
+    """BC% = (100 - 1) / 100 * 100 = 99.0%."""
+    r = _result(verdict="BREAKING", changes=[_ch("func_removed")])
+    out = generate_html_report(r, old_symbol_count=100)
+    assert "99.0%" in out
+
+
+def test_bc_no_change_is_100() -> None:
+    r = _result(verdict="NO_CHANGE")
+    out = generate_html_report(r)
+    assert "100.0%" in out
+
+
+# ---------------------------------------------------------------------------
+# Sectioned layout
+# ---------------------------------------------------------------------------
+
+def test_removed_section_present_when_removals_exist() -> None:
+    r = _result(verdict="BREAKING", changes=[_ch("func_removed", "myfunc")])
+    out = generate_html_report(r)
+    assert "id='removed'" in out
+    assert "Removed Symbols" in out
+
+
+def test_added_section_present_when_additions_exist() -> None:
+    r = _result(verdict="COMPATIBLE", changes=[_ch("func_added", "newfunc")])
+    out = generate_html_report(r)
+    assert "id='added'" in out
+    assert "Added Symbols" in out
+
+
+def test_changed_section_present_for_changed_kinds() -> None:
+    r = _result(verdict="BREAKING", changes=[_ch("func_return_changed", "myfunc")])
+    out = generate_html_report(r)
+    assert "id='changed'" in out
+    assert "Changed Symbols" in out
+
+
+def test_no_empty_sections_when_no_changes() -> None:
+    r = _result(verdict="NO_CHANGE")
+    out = generate_html_report(r)
+    # None of the section anchors should appear when there are no changes
+    assert "id='removed'" not in out
+    assert "id='added'" not in out
+    assert "id='changed'" not in out
+
+
+def test_no_change_fallback_message() -> None:
+    r = _result(verdict="NO_CHANGE")
+    out = generate_html_report(r)
+    assert "No ABI changes detected" in out
+
+
+# ---------------------------------------------------------------------------
+# Summary table
+# ---------------------------------------------------------------------------
+
+def test_summary_table_present() -> None:
+    r = _result(changes=[_ch("func_removed"), _ch("func_added")])
+    out = generate_html_report(r)
+    assert "Change Summary" in out
+
+
+def test_summary_table_categories() -> None:
+    r = _result(changes=[
+        _ch("func_removed"),
+        _ch("type_size_changed"),
+        _ch("enum_member_removed"),
+        _ch("soname_changed"),
+    ])
+    out = generate_html_report(r)
+    assert "Functions" in out
+    assert "Types" in out
+    assert "Enums" in out
+    assert "ELF" in out
+
+
+# ---------------------------------------------------------------------------
+# Navigation bar
+# ---------------------------------------------------------------------------
+
+def test_nav_links_to_sections() -> None:
+    r = _result(changes=[_ch("func_removed"), _ch("func_added")])
+    out = generate_html_report(r)
+    assert "href='#removed'" in out
+    assert "href='#added'" in out
+
+
+def test_nav_absent_when_no_changes() -> None:
+    r = _result(verdict="NO_CHANGE")
+    out = generate_html_report(r)
+    assert "href='#removed'" not in out
+    assert "href='#added'" not in out
+
+
+# ---------------------------------------------------------------------------
+# Suppressed changes
+# ---------------------------------------------------------------------------
+
+def test_suppressed_section_shown() -> None:
+    sup = [_ch("func_removed", "hidden_func")]
+    r = _result(suppressed=sup, suppressed_count=1)
+    out = generate_html_report(r)
+    assert "id='suppressed'" in out
+    assert "Suppressed" in out
+
+
+def test_suppressed_count_only_shown_when_no_details() -> None:
+    r = _result(suppressed_count=3)
+    out = generate_html_report(r)
+    assert "Suppressed" in out
+
+
+# ---------------------------------------------------------------------------
+# Demangled symbol display
+# ---------------------------------------------------------------------------
+
+def test_demangled_symbol_shown_as_text() -> None:
+    ch = _ch("func_removed", symbol="_ZN3FooC1Ev",
+             demangled="Foo::Foo()")
+    r = _result(verdict="BREAKING", changes=[ch])
+    out = generate_html_report(r)
+    assert "Foo::Foo()" in out
+
+
+def test_mangled_symbol_in_tooltip() -> None:
+    ch = _ch("func_removed", symbol="_ZN3FooC1Ev",
+             demangled="Foo::Foo()")
+    r = _result(verdict="BREAKING", changes=[ch])
+    out = generate_html_report(r)
+    assert "_ZN3FooC1Ev" in out  # mangled in abbr title
+
+
+# ---------------------------------------------------------------------------
+# XSS safety
+# ---------------------------------------------------------------------------
+
+def test_xss_escape_lib_name() -> None:
+    r = _result()
+    out = generate_html_report(r, lib_name="<script>alert(1)</script>")
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
+
+
+def test_xss_escape_symbol_name() -> None:
+    ch = _ch("func_removed", symbol="<evil>")
+    r = _result(verdict="BREAKING", changes=[ch])
+    out = generate_html_report(r)
+    assert "<evil>" not in out
+
+
+def test_xss_escape_description() -> None:
+    ch = _ch("func_removed", desc='<img src=x onerror="alert(1)">')
+    r = _result(verdict="BREAKING", changes=[ch])
+    out = generate_html_report(r)
+    assert "<img" not in out
+
+
+def test_xss_escape_old_value() -> None:
+    ch = _ch("func_params_changed", old='<script>x()</script>', new="int")
+    r = _result(verdict="BREAKING", changes=[ch])
+    out = generate_html_report(r)
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
+
+
+def test_xss_escape_new_value() -> None:
+    ch = _ch("func_params_changed", old="int", new='<img src=x onerror="alert(1)">')
+    r = _result(verdict="BREAKING", changes=[ch])
+    out = generate_html_report(r)
+    assert "<img" not in out
+
+
+# ---------------------------------------------------------------------------
+# write_html_report
+# ---------------------------------------------------------------------------
+
+def test_write_creates_dirs_and_file(tmp_path: Path) -> None:
+    r = _result()
+    out = tmp_path / "deep" / "nested" / "report.html"
+    write_html_report(r, out)
+    assert out.exists()
+    assert out.stat().st_size > 500
+
+
+def test_write_passes_old_symbol_count(tmp_path: Path) -> None:
+    r = _result(verdict="BREAKING", changes=[_ch("func_removed")])
+    out = tmp_path / "report.html"
+    write_html_report(r, out, lib_name="libfoo", old_version="1.0", new_version="2.0",
+                      old_symbol_count=50)
+    content = out.read_text()
+    assert "98.0%" in content  # (50-1)/50 * 100
+
+
+# ---------------------------------------------------------------------------
+# Verdict colours
+# ---------------------------------------------------------------------------
+
+def test_breaking_verdict_red_color() -> None:
+    r = _result(verdict="BREAKING")
+    out = generate_html_report(r)
+    assert "#b71c1c" in out  # BREAKING foreground
+
+
+def test_compatible_verdict_green_color() -> None:
+    r = _result(verdict="COMPATIBLE")
+    out = generate_html_report(r)
+    assert "#1b5e20" in out  # COMPATIBLE foreground
+
+
+def test_no_change_verdict_blue_color() -> None:
+    r = _result(verdict="NO_CHANGE")
+    out = generate_html_report(r)
+    assert "#0d47a1" in out  # NO_CHANGE foreground
+
+
+# ---------------------------------------------------------------------------
+# BC% edge cases (review feedback)
+# ---------------------------------------------------------------------------
+
+def test_bc_old_symbol_count_zero_uses_legacy_fallback() -> None:
+    """old_symbol_count=0 → falls back to change-ratio: 1 breaking / 1 total = 0%."""
+    r = _result(verdict="BREAKING", changes=[_ch("func_removed")])
+    out = generate_html_report(r, old_symbol_count=0)
+    assert "0.0%" in out
+
+
+def test_bc_clamped_to_zero_when_breaking_exceeds_symbol_count() -> None:
+    """breaking > old_symbol_count → clamped to 0% (stale snapshot edge case)."""
+    r = _result(verdict="BREAKING", changes=[_ch("func_removed")] * 5)
+    out = generate_html_report(r, old_symbol_count=3)
+    assert "0.0%" in out
+
+
+# ---------------------------------------------------------------------------
+# enum_member_removed is breaking (review feedback)
+# ---------------------------------------------------------------------------
+
+def test_enum_member_removed_is_breaking() -> None:
+    """enum_member_removed must count as breaking and appear in Removed section."""
+    r = _result(verdict="BREAKING", changes=[_ch("enum_member_removed", "MY_VAL")])
+    out = generate_html_report(r, old_symbol_count=10)
+    # Must NOT be 100% — it's a breaking removal
+    assert "100.0%" not in out
+    # Must appear in removed section
+    assert "id='removed'" in out
+
+
+def test_enum_member_removed_bucket_is_removed() -> None:
+    from abicheck.html_report import _change_bucket
+    ch = _ch("enum_member_removed", "SOME_VAL")
+    assert _change_bucket(ch) == "removed"
+
+
+# ---------------------------------------------------------------------------
+# _BREAKING_KINDS drift guard (review feedback)
+# ---------------------------------------------------------------------------
+
+def test_changed_breaking_kinds_subset_of_breaking_kinds() -> None:
+    """_CHANGED_BREAKING_KINDS must be a strict subset of _BREAKING_KINDS."""
+    from abicheck.html_report import _BREAKING_KINDS, _CHANGED_BREAKING_KINDS
+    assert _CHANGED_BREAKING_KINDS <= _BREAKING_KINDS, (
+        "_CHANGED_BREAKING_KINDS has entries not in _BREAKING_KINDS: "
+        f"{_CHANGED_BREAKING_KINDS - _BREAKING_KINDS}"
+    )
+
+
+def test_removed_kinds_subset_of_breaking_kinds() -> None:
+    from abicheck.html_report import _BREAKING_KINDS, _REMOVED_KINDS
+    assert _REMOVED_KINDS <= _BREAKING_KINDS

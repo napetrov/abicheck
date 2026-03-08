@@ -566,7 +566,7 @@ def _compute_pointer_like_info(
     fallback: str,
 ) -> tuple[str, int]:
     pointee = _resolve_inner_type_name(die, CU, depth, cache)
-    size = _attr_int(die, "DW_AT_byte_size") or 8
+    size = _attr_int(die, "DW_AT_byte_size") or 0
     if pointee is None:
         return (fallback, size)
     return (f"{pointee}{suffix}", size)
