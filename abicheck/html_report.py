@@ -69,6 +69,7 @@ _CHANGED_BREAKING_KINDS: frozenset[str] = frozenset({
     "field_bitfield_changed",
     "calling_convention_changed", "struct_packing_changed",
     "type_visibility_changed",
+    "func_visibility_changed",  # public→hidden: symbol removed from ABI
     # qualifier_removed: not in canonical _BREAKING_KINDS
     "typedef_base_changed",
     "union_field_type_changed",
