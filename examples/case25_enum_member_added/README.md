@@ -1,0 +1,48 @@
+# Case 25 — Enum Member Added
+
+**abicheck verdict: COMPATIBLE (informational/warning)**
+
+## What changes
+
+| Version | Definition |
+|---------|-----------|
+| v1 | `enum Color { RED = 0, GREEN = 1, BLUE = 2 };` |
+| v2 | `enum Color { RED = 0, GREEN = 1, BLUE = 2, YELLOW = 3 };` |
+
+## Why this is NOT a binary ABI break
+
+Adding a new enum member at the end does **not** change the numeric values of existing
+members. Already-compiled binaries continue to pass and receive `RED = 0`, `GREEN = 1`,
+`BLUE = 2` — all unchanged.
+
+abicheck classifies this as **COMPATIBLE** because:
+- No existing enum values are shifted or reassigned.
+- No symbol resolution, type layout, or calling convention change occurs.
+- The binary representation of existing values is identical.
+
+**Important:** If adding a member *shifts* existing values (e.g., inserting in the
+middle without explicit values), that causes `ENUM_MEMBER_VALUE_CHANGED` which IS
+classified as BREAKING.
+
+## What it does affect (source-level concerns)
+
+- **Switch statements**: code compiled against v1 may not handle `YELLOW`. The
+  default branch (if any) will execute. This is a source-level correctness concern,
+  not a binary compatibility issue.
+- **Sentinel patterns**: if `BLUE` was used as `COLOR_COUNT` or `COLOR_MAX`, adding
+  `YELLOW` changes the count semantics. This is also a source-level design concern.
+
+## Contrast with BREAKING enum changes
+
+| Change | Verdict | Why |
+|---|---|---|
+| Member **added** (values unchanged) | COMPATIBLE | Existing values stable |
+| Member **removed** | BREAKING | Existing code references invalid value |
+| Member **value changed** | BREAKING | Same name maps to different integer |
+
+## Code diff
+
+```diff
+-enum Color { RED = 0, GREEN = 1, BLUE = 2 };
++enum Color { RED = 0, GREEN = 1, BLUE = 2, YELLOW = 3 };
+```

@@ -121,38 +121,89 @@ Practical migration path:
 
 ---
 
+## Change classification: BREAKING vs COMPATIBLE
+
+abicheck classifies every detected change into one of three verdicts:
+
+| Verdict | Meaning | CI gate recommendation |
+|---|---|---|
+| **BREAKING** | Binary ABI incompatibility — existing binaries will malfunction | Fail the build |
+| **COMPATIBLE** | Informational/warning change that does not break binary compatibility on its own | Warn, do not fail |
+| **NO_CHANGE** | Identical ABI | Pass |
+
+### What counts as BREAKING
+
+A change is classified as BREAKING only if it causes **binary-level incompatibility**
+when swapping a shared library between two releases without recompiling consumers:
+
+- Symbol removal/disappearance (loader fails with unresolved symbol)
+- Type layout changes (size, alignment, field offsets — causes memory corruption)
+- Vtable changes (virtual dispatch goes to wrong function)
+- Calling convention changes (args in wrong registers)
+- Function signature changes (return type, parameters, static qualifier, cv-qualifiers)
+- SONAME change (dynamic linker can't find the library)
+
+### What counts as COMPATIBLE (informational/warning)
+
+These changes are detected and reported but do **not** trigger a BREAKING verdict
+because they do not cause binary linkage or layout failures on their own:
+
+| Change | Why it's not a binary ABI break |
+|---|---|
+| `noexcept` added/removed | Itanium ABI mangling unchanged; same symbol resolves. Source-level type concern only. |
+| Enum member added | Existing compiled enum values unchanged. Source-level switch coverage concern. Value shifts caught separately. |
+| Union field added | All union fields start at offset 0; existing fields unaffected. Size increase caught by TYPE_SIZE_CHANGED. |
+| GLOBAL→WEAK binding | Symbol still exported and resolvable by the dynamic linker. |
+| GNU IFUNC introduced/removed | Transparent to callers via PLT/GOT mechanism. |
+| New/removed DT_NEEDED dependency | Deployment concern, not binary interface break. |
+| RPATH/RUNPATH changed | Search path metadata, not symbol contract. |
+| Toolchain flag drift | Informational — not a proven binary break on its own. |
+| DWARF info missing | Coverage gap warning — comparison was incomplete. |
+
+Some changes are classified as **BREAKING** despite being borderline, because they
+can cause runtime failures in realistic deployments:
+
+| Change | Why it's BREAKING |
+|---|---|
+| ELF `st_size` changed | In ELF-only mode (no headers/DWARF), may be the sole signal for vtable/variable layout changes. |
+| New version requirement (e.g. GLIBC_2.34) | Library fails to load on runtimes lacking that version — hard runtime failure. |
+| Typeinfo/vtable visibility change | Cross-DSO `dynamic_cast` and exception matching can fail at runtime. |
+| Variable const qualifier added/removed | Adding const moves variable to `.rodata` — existing writes cause SIGSEGV. |
+
+---
+
 ## ABI/API breakages and tool coverage
 
 Below is a high-level matrix aligned with `examples/case01..case24`.
 
 Legend: ✅ supported, ⚠️ partial/context-dependent, ❌ typically unsupported.
 
-| Case | Breakage type | abicheck | abidiff + headers | ABICC #2 (headers) | ABICC #1 (abi-dumper) |
-|---|---|:---:|:---:|:---:|:---:|
-| case01 | Symbol removed | ✅ | ✅ | ✅ | ✅ |
-| case02 | Param type changed | ✅ | ✅ | ✅ | ✅ |
-| case03 | Compatible symbol addition | ✅ | ✅ | ✅ | ✅ |
-| case04 | No change baseline | ✅ | ✅ | ✅ | ✅ |
-| case05 | SONAME policy break | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| case06 | Visibility policy break | ✅ | ✅ | ⚠️ | ⚠️ |
-| case07 | Struct layout break | ✅ | ✅ | ✅ | ✅ |
-| case08 | Enum value changed | ✅ | ⚠️ | ✅ | ✅ |
-| case09 | C++ vtable drift | ✅ | ✅ | ✅ | ✅ |
-| case10 | Return type changed | ✅ | ✅ | ✅ | ✅ |
-| case11 | Global variable type changed | ✅ | ✅ | ✅ | ✅ |
-| case12 | Function removed | ✅ | ✅ | ✅ | ✅ |
-| case13 | Symbol version policy break | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| case14 | Class size/layout change | ✅ | ✅ | ✅ | ✅ |
-| case15 | `noexcept` changed | ✅ | ⚠️ | ✅ | ❌ |
-| case16 | inline↔non-inline ABI/ODR risk | ✅ | ⚠️ | ✅ | ❌ |
-| case17 | Template ABI drift | ✅ | ⚠️ | ✅ | ✅ |
-| case18 | Dependency leak via headers | ✅ | ⚠️ | ✅ | ✅ |
-| case19 | Enum member removed | ✅ | ✅ | ✅ | ✅ |
-| case20 | Enum member value changed | ✅ | ⚠️ | ✅ | ✅ |
-| case21 | Method became static | ✅ | ✅ | ✅ | ✅ |
-| case22 | Method const qualifier changed | ✅ | ✅ | ✅ | ✅ |
-| case23 | Pure virtual method added | ✅ | ✅ | ✅ | ✅ |
-| case24 | Union field removed | ✅ | ✅ | ✅ | ✅ |
+| Case | Breakage type | Verdict | abicheck | abidiff + headers | ABICC #2 (headers) | ABICC #1 (abi-dumper) |
+|---|---|---|:---:|:---:|:---:|:---:|
+| case01 | Symbol removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case02 | Param type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case03 | Compatible symbol addition | COMPATIBLE | ✅ | ✅ | ✅ | ✅ |
+| case04 | No change baseline | NO_CHANGE | ✅ | ✅ | ✅ | ✅ |
+| case05 | SONAME policy break | BREAKING | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case06 | Visibility policy break | BREAKING | ✅ | ✅ | ⚠️ | ⚠️ |
+| case07 | Struct layout break | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case08 | Enum value changed | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case09 | C++ vtable drift | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case10 | Return type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case11 | Global variable type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case12 | Function removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case13 | Symbol version policy break | COMPATIBLE | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case14 | Class size/layout change | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case15 | `noexcept` changed | COMPATIBLE | ✅ | ⚠️ | ✅ | ❌ |
+| case16 | inline↔non-inline ABI/ODR risk | BREAKING | ✅ | ⚠️ | ✅ | ❌ |
+| case17 | Template ABI drift | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case18 | Dependency leak via headers | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case19 | Enum member removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case20 | Enum member value changed | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case21 | Method became static | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case22 | Method const qualifier changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case23 | Pure virtual method added | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case24 | Union field removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
 
 ### Tooling summary
 

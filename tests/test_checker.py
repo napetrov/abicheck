@@ -124,18 +124,18 @@ class TestParameterChanges:
 # ── noexcept specifier ────────────────────────────────────────────────────────
 
 class TestNoexcept:
-    def test_noexcept_removed_is_breaking(self):
+    def test_noexcept_removed_is_compatible(self):
         old_f = _pub_func("move", "_Z4movev", noexcept=True)
         new_f = _pub_func("move", "_Z4movev", noexcept=False)
         r = compare(_snap("1.0", [old_f]), _snap("2.0", [new_f]))
-        assert r.verdict == Verdict.BREAKING
+        assert r.verdict == Verdict.COMPATIBLE
         assert any(c.kind == ChangeKind.FUNC_NOEXCEPT_REMOVED for c in r.changes)
 
-    def test_noexcept_added_is_breaking(self):  # C++17 P0012R1
+    def test_noexcept_added_is_compatible(self):
         old_f = _pub_func("swap", "_Z4swapv", noexcept=False)
         new_f = _pub_func("swap", "_Z4swapv", noexcept=True)
         r = compare(_snap("1.0", [old_f]), _snap("2.0", [new_f]))
-        assert r.verdict == Verdict.BREAKING
+        assert r.verdict == Verdict.COMPATIBLE
         assert any(c.kind == ChangeKind.FUNC_NOEXCEPT_ADDED for c in r.changes)
 
 
@@ -272,12 +272,12 @@ class TestVerdictPriority:
         r = compare(old, new)
         assert r.verdict == Verdict.BREAKING
 
-    def test_noexcept_added_overrides_compatible(self):
-        """noexcept added (source_break) + new func (compatible) = SOURCE_BREAK."""
+    def test_noexcept_added_stays_compatible(self):
+        """noexcept added (compatible) + new func (compatible) = COMPATIBLE."""
         f_noexcept = _pub_func("swap", "_Z4swapv", noexcept=False)
         f_new = _pub_func("swap", "_Z4swapv", noexcept=True)
         f_added = _pub_func("reset", "_Z5resetv")
         old = _snap("1.0", functions=[f_noexcept])
         new = _snap("1.1", functions=[f_new, f_added])
         r = compare(old, new)
-        assert r.verdict == Verdict.BREAKING
+        assert r.verdict == Verdict.COMPATIBLE

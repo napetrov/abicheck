@@ -317,7 +317,7 @@ old allocations can be too small, causing writes beyond boundaries. Crashes may 
 
 Use Pimpl to keep public object footprint stable.
 
-## case15_noexcept_change — behavioral ABI contract change
+## case15_noexcept_change — source-level contract change (COMPATIBLE)
 
 ```cpp
 // v1
@@ -332,11 +332,17 @@ int process();
 static_assert(noexcept(process()));
 ```
 
-`noexcept` participates in function type semantics and influences optimization/error handling behavior.
-Mixed object sets built with different assumptions can diverge in exception paths (including terminate).
-This may evade symbol-only checks but still break real-world behavior contracts.
+**abicheck verdict: COMPATIBLE.** The Itanium ABI mangled name does not change when `noexcept` is
+added or removed — the same symbol resolves at load time and existing binaries continue to call the
+function correctly. This is a **source-level concern**, not a binary ABI break.
 
-Treat `noexcept` as stable API commitment; evolve via new API version.
+However, `noexcept` does participate in C++17 function type semantics (P0012R1), so function pointer
+types may mismatch in template code. Additionally, code compiled with v1 headers may omit exception
+landing pads, so if v2's function throws, `std::terminate` is called. These are behavioral/contract
+concerns that should be reviewed, but they do not prevent already-compiled binaries from loading or
+calling the function.
+
+Treat `noexcept` as stable API commitment for source compatibility; evolve via new API version.
 
 ## case16_inline_to_non_inline — ODR/export behavior drift
 
@@ -515,6 +521,88 @@ representation and can invalidate persisted/exchanged data and branch logic rely
 Even if size stays constant, semantic compatibility is broken.
 
 Prefer versioned replacement unions/structs plus explicit conversion rules.
+
+---
+
+## Compatible/warning changes (not binary ABI breaks)
+
+The following changes are detected and reported by abicheck but classified as
+**COMPATIBLE** — they are important for awareness but do not cause binary linkage
+or layout failures when swapping a shared library between two releases.
+
+### Enum member added
+
+```c
+/* v1 */
+enum Color { RED = 0, GREEN = 1, BLUE = 2 };
+
+/* v2 */
+enum Color { RED = 0, GREEN = 1, BLUE = 2, YELLOW = 3 };
+```
+
+```c
+/* consumer compiled against v1 */
+switch (get_color()) {
+    case RED: ...; case GREEN: ...; case BLUE: ...;
+    /* YELLOW not handled — but binary still works correctly */
+}
+```
+
+Adding a new enum member does not change the numeric values of existing members. Already-compiled
+binaries continue to pass and receive the same integer values. The concern is source-level: switch
+statements may not handle the new value, and sentinel patterns like `COLOR_COUNT` may need updating.
+If adding the member shifts existing values, that is a separate change caught by
+`ENUM_MEMBER_VALUE_CHANGED` (which IS breaking).
+
+### Union field added
+
+```c
+/* v1 */
+union Value { int i; float f; };
+
+/* v2 */
+union Value { int i; float f; double d; };
+```
+
+All union fields share offset 0, so adding a new field does not change how existing fields are
+accessed. If the new field is larger than existing ones, the union's size increases — but that
+size change is caught separately by `TYPE_SIZE_CHANGED`. The field addition itself is compatible.
+
+### noexcept added or removed
+
+See [case15_noexcept_change](#case15_noexcept_change--source-level-contract-change-compatible) above.
+
+### GLOBAL→WEAK symbol binding
+
+```text
+v1: foo  GLOBAL  DEFAULT  → strong binding
+v2: foo  WEAK    DEFAULT  → overridable binding
+```
+
+A WEAK symbol is still exported and resolvable by the dynamic linker. Existing binaries that linked
+against the GLOBAL version will find and use the (now WEAK) symbol without any change in behavior.
+The only difference is that the symbol can now be overridden by another definition — an interposition
+concern, not a compatibility break.
+
+### GNU IFUNC introduced or removed
+
+Converting a regular function to GNU IFUNC (indirect function) or back is transparent to callers.
+The PLT/GOT resolution mechanism handles indirect dispatch automatically. This is an implementation
+optimization (e.g., CPU-specific dispatch) that does not change the calling convention or symbol
+contract visible to consumers.
+
+### Note: borderline checks classified as BREAKING
+
+Some changes are borderline but classified as **BREAKING** because they can cause runtime failures:
+
+- **ELF `st_size` changed** — in ELF-only mode (no headers/DWARF), may be the sole signal for
+  vtable growth or variable type changes. Classified BREAKING to avoid false negatives.
+- **New dependency version requirement** (e.g., `GLIBC_2.34`) — the library fails to load on
+  runtimes lacking the version. Hard runtime failure.
+- **Typeinfo/vtable visibility changed** — cross-DSO `dynamic_cast` and C++ exception matching
+  can fail at runtime.
+- **Variable const qualifier added/removed** — adding `const` moves to `.rodata`; existing writes
+  cause SIGSEGV. Removing `const` breaks ODR/inlining assumptions.
 
 ---
 

@@ -94,7 +94,7 @@ def test_symbol_version_defined_removed() -> None:
 
 
 def test_symbol_version_required_added() -> None:
-    """New GLIBC_2.34 requirement = breaks on older distros."""
+    """New GLIBC_2.34 requirement = breaks on older runtimes."""
     old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5"]}))
     new = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]}))
     result = compare(old, new)
@@ -121,7 +121,7 @@ def test_symbol_binding_global_to_weak() -> None:
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.SYMBOL_BINDING_CHANGED in kinds
-    assert result.verdict == Verdict.BREAKING
+    assert result.verdict == Verdict.COMPATIBLE
 
 
 def test_symbol_type_func_to_object() -> None:
@@ -138,7 +138,7 @@ def test_ifunc_introduced() -> None:
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.IFUNC_INTRODUCED in kinds
-    assert result.verdict == Verdict.BREAKING
+    assert result.verdict == Verdict.COMPATIBLE
 
 
 def test_ifunc_removed() -> None:
@@ -147,7 +147,7 @@ def test_ifunc_removed() -> None:
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.IFUNC_REMOVED in kinds
-    assert result.verdict == Verdict.BREAKING
+    assert result.verdict == Verdict.COMPATIBLE
 
 
 def test_symbol_size_changed() -> None:
@@ -259,20 +259,15 @@ def test_elf_breaking_kinds_verdict() -> None:
     """All BREAKING ELF kinds produce BREAKING verdict."""
     breaking_cases = [
         _snap(_elf(soname="libfoo.so.1")),     # SONAME_CHANGED
-        # NEEDED_ADDED is now COMPATIBLE, removed from breaking_cases
         _snap(_elf(versions_defined=["V1"])),   # SYMBOL_VERSION_DEFINED_REMOVED
         _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5"]})),  # VER_REQ_ADDED
-        _snap(_elf(symbols=[_sym("f", binding=SymbolBinding.GLOBAL)])),  # BINDING_CHANGED
         _snap(_elf(symbols=[_sym("f", sym_type=SymbolType.FUNC)])),  # TYPE_CHANGED
-        _snap(_elf(symbols=[_sym("f", sym_type=SymbolType.IFUNC)])),  # IFUNC_INTRODUCED
     ]
     new_cases = [
         _snap(_elf(soname="libfoo.so.2")),
         _snap(_elf(versions_defined=[])),
         _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]})),
-        _snap(_elf(symbols=[_sym("f", binding=SymbolBinding.WEAK)])),
         _snap(_elf(symbols=[_sym("f", sym_type=SymbolType.OBJECT)])),
-        _snap(_elf(symbols=[_sym("f", sym_type=SymbolType.FUNC)])),
     ]
     for old, new in zip(breaking_cases, new_cases):
         result = compare(old, new)

@@ -1,4 +1,6 @@
-# Case 15 — `noexcept` Removed
+# Case 15 — `noexcept` Changed
+
+**abicheck verdict: COMPATIBLE (informational/warning)**
 
 ## What changes
 
@@ -7,16 +9,26 @@
 | v1 | `void reset() noexcept;` |
 | v2 | `void reset();` |
 
-## What breaks at binary level
+## Why this is NOT a binary ABI break
 
-In the Itanium C++ ABI (GCC/Clang on Linux/macOS) `noexcept` **does** affect the
-mangled name for some function-pointer typedefs (C++17+), and more importantly it
-changes the **exception-handling personality** of call sites:
+In the Itanium C++ ABI (GCC/Clang on Linux/macOS), `noexcept` does **not** change
+the mangled name for function symbols. The **symbol name is identical** in the `.so`,
+so existing binaries resolve the same symbol and calls proceed normally.
 
-- Code compiled against v1 wraps calls to `reset()` with an assumption that no
-  unwinding is needed. The compiler may omit landing pads in callers.
-- With v2, `reset()` *can* throw. A caller compiled with v1 headers will not have
-  the landing pad → exception propagates through a `noexcept` frame → `std::terminate`.
+abicheck classifies this as **COMPATIBLE** because:
+- No symbol resolution failure occurs at load time or call time.
+- No type layout, vtable, or calling convention change is involved.
+- The change is a **source-level contract concern**, not a binary linkage break.
+
+## What it does affect (source-level concerns)
+
+- **C++17 function-pointer types**: `noexcept` is part of the function type in C++17
+  (P0012R1), so `void(*)() noexcept` and `void(*)()` are distinct types. This can
+  cause template instantiation mismatches in source code — but not in already-compiled
+  binaries.
+- **Exception-handling behavior**: code compiled against v1 may omit landing pads,
+  assuming no unwinding is needed. If v2's `reset()` throws, `std::terminate` is
+  called. This is a behavioral contract concern, not a linkage failure.
 
 The **symbol name itself is identical** in the `.so` (no mangling difference for
 member functions in GCC), so `abidiff` sees no change.
