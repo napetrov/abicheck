@@ -715,14 +715,19 @@ def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 def _diff_elf_dynamic_section(old_elf: Any, new_elf: Any) -> list[Change]:
     changes: list[Change] = []
-    if old_elf.soname != new_elf.soname:
-        changes.append(Change(
-            kind=ChangeKind.SONAME_CHANGED,
-            symbol="DT_SONAME",
-            description=f"SONAME changed: {old_elf.soname!r} → {new_elf.soname!r}",
-            old_value=old_elf.soname,
-            new_value=new_elf.soname,
-        ))
+    # Emit SONAME_CHANGED when:
+    #   - both have a SONAME and they differ (change: breaking)
+    #   - old has a SONAME and new does not (removal: breaking — consumers break)
+    # Addition (None → value) is NOT breaking — it improves ABI versioning.
+    if old_elf.soname != new_elf.soname and (old_elf.soname or new_elf.soname):
+        if old_elf.soname is not None:  # change or removal — breaking
+            changes.append(Change(
+                kind=ChangeKind.SONAME_CHANGED,
+                symbol="DT_SONAME",
+                description=f"SONAME changed: {old_elf.soname!r} → {new_elf.soname!r}",
+                old_value=old_elf.soname,
+                new_value=new_elf.soname,
+            ))
     changes.extend(_diff_needed_libraries(old_elf.needed, new_elf.needed))
     if old_elf.rpath != new_elf.rpath:
         changes.append(Change(
