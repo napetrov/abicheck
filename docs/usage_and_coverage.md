@@ -42,10 +42,21 @@ abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o abi-report.sa
 
 ### ABICC-compatible invocation
 
-abicheck supports ABICC-style descriptor input as a drop-in workflow:
+abicheck supports ABICC-style descriptor input as a drop-in workflow.
+See [ABICC compatibility reference](abicc_compat.md) for the full flag list.
 
 ```bash
+# Minimal (identical to abi-compliance-checker):
 abicheck compat -lib foo -old old.xml -new new.xml
+
+# With strict mode and version labels:
+abicheck compat -lib foo -old old.xml -new new.xml -s -v1 1.0 -v2 2.0
+
+# Source/API compat only (ignore ELF metadata):
+abicheck compat -lib foo -old old.xml -new new.xml -source
+
+# Skip known symbols:
+abicheck compat -lib foo -old old.xml -new new.xml -skip-symbols skip.txt
 ```
 
 ## abicheck as a drop-in replacement for ABICC
@@ -59,11 +70,13 @@ while modernizing internals and outputs.
 - Structured outputs (`json`, `markdown`, `sarif`) for machine + human consumption.
 - Works well in stripped-binary workflows when combined with headers.
 - Better integration path for modern C++ workflows and policy checks.
+- **Full ABICC flag parity** — `-s/-strict`, `-source`, `-skip-symbols/-skip-types`, `-v1/-v2`, `-stdout` and more.
+- **Superset detectors** — catches everything ABICC catches plus: `FUNC_DELETED`, `VAR_BECAME_CONST`, `TYPE_BECAME_OPAQUE`, `BASE_CLASS_POSITION_CHANGED`, `BASE_CLASS_VIRTUAL_CHANGED`.
 
 ### Practical migration path
 
 1. Keep your existing ABICC XML descriptor generation.
-2. Replace ABICC compare call with `abicheck compat ...`.
+2. Replace ABICC compare call with `abicheck compat ...` (flags are identical).
 3. Optionally move to native `dump/compare` commands for explicit snapshot control.
 4. Switch CI gates to JSON/SARIF-based policy checks.
 
