@@ -1,5 +1,7 @@
 # Testing strategy and coverage
 
+> Maintainer note: this strategy doc is intentionally long-lived and should be updated when CI gates, test layers, or extension priorities change.
+
 This document explains how `abicheck` is tested, why the current test layout exists,
 and where coverage expansion should go next.
 
