@@ -220,6 +220,7 @@ class TestTypeFieldAddedBreaking:
             ],
         )
         r = compare(_snap(types=[old_t]), _snap("1.1", types=[new_t]))
+        assert r.verdict == Verdict.COMPATIBLE
         assert any(c.kind == ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE for c in r.changes)
         assert not any(c.kind == ChangeKind.TYPE_FIELD_ADDED for c in r.changes)
 
