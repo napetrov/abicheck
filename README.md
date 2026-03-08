@@ -211,6 +211,23 @@ abicheck compare snap-1.2.3.json snap-1.3.0.json
 abicheck compat -lib libfoo -old old.xml -new new.xml
 ```
 
+
+---
+
+## Testing and coverage
+
+```bash
+# fast tests (default CI gate — matches workflow)
+pytest tests/ -v --tb=short -m "not integration and not libabigail" \
+  --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=52
+
+# full local suite (includes integration/parity when deps are present)
+pytest --cov=abicheck --cov-report=term-missing
+```
+
+Coverage settings are centralized in `pyproject.toml` and CI publishes `coverage.xml` as an artifact.
+See `docs/testing_coverage.md` for the current baseline and a gap analysis.
+
 ---
 
 ## License
