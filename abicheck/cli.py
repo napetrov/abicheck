@@ -216,11 +216,16 @@ def _filter_source_only(result: DiffResult) -> DiffResult:
         DiffResult,
         Verdict,
     )
+    from .checker import (
+        _SOURCE_BREAK_KINDS as _SBK,
+    )
 
     filtered = [c for c in result.changes if c.kind not in _BINARY_ONLY_KINDS]
 
     if any(c.kind in _BREAKING_KINDS for c in filtered):
         verdict = Verdict.BREAKING
+    elif any(c.kind in _SBK for c in filtered):
+        verdict = Verdict.SOURCE_BREAK
     elif any(c.kind in _COMPATIBLE_KINDS for c in filtered):
         verdict = Verdict.COMPATIBLE
     else:
@@ -257,7 +262,7 @@ def _filter_source_only(result: DiffResult) -> DiffResult:
 @click.option("-show-retval", "show_retval", is_flag=True, default=False,
               help="Show return-value changes in report. Mirrors ABICC -show-retval.")
 @click.option("-headers-only", "headers_only", is_flag=True, default=False,
-              help="Check header-level API only (no ELF/DWARF). Mirrors ABICC -headers-only.")
+              help="[Not yet implemented] Reserved for future header-only analysis mode. ELF/DWARF checks still run. Mirrors ABICC -headers-only.")
 @click.option("-source", "-src", "-api", "source_only", is_flag=True, default=False,
               help="Check source (API) compatibility only, not binary ABI. Mirrors ABICC -source.")
 @click.option("-binary", "-bin", "-abi", "binary_only", is_flag=True, default=False,
@@ -269,7 +274,7 @@ def _filter_source_only(result: DiffResult) -> DiffResult:
 @click.option("-title", "title", default=None,
               help="Report title. Mirrors ABICC -title.")
 @click.option("-skip-headers", "skip_headers", default=None, type=click.Path(path_type=Path),
-              help="File with headers to skip. Mirrors ABICC -skip-headers.")
+              help="[Not yet implemented] Reserved for future header-skip support. Mirrors ABICC -skip-headers.")
 @click.option("-skip-symbols", "skip_symbols_path", default=None, type=click.Path(path_type=Path),
               help="File with symbols to skip. Mirrors ABICC -skip-symbols.")
 @click.option("-skip-types", "skip_types_path", default=None, type=click.Path(path_type=Path),
@@ -401,9 +406,7 @@ def compat_cmd(
         # Merge: file suppression + auto-generated skip suppression
         if suppression is not None:
             from .suppression import SuppressionList as SL  # noqa: PLC0415
-            suppression = SL(
-                suppressions=suppression._suppressions + file_suppression._suppressions
-            )
+            suppression = SL.merge(suppression, file_suppression)
         else:
             suppression = file_suppression
 
@@ -413,8 +416,8 @@ def compat_cmd(
     if source_only:
         result = _filter_source_only(result)
 
-    # -strict: treat COMPATIBLE changes as BREAKING too
-    if strict and result.verdict.value == "COMPATIBLE":
+    # -strict: treat COMPATIBLE and SOURCE_BREAK as BREAKING (any deviation = error)
+    if strict and result.verdict.value in ("COMPATIBLE", "SOURCE_BREAK"):
         from .checker import Verdict as V
         result = result.__class__(
             old_version=result.old_version,
@@ -454,6 +457,7 @@ def compat_cmd(
             1 for v in old_snap.variables
             if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
         )
+        # TODO(abicc-compat): wire -title to write_html_report once html_report supports custom titles
         write_html_report(
             result, output_path=report_path,
             lib_name=lib_name,

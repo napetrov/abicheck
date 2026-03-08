@@ -109,6 +109,14 @@ class TestBuildSkipSuppression:
         sup = _build_skip_suppression(tmp_path / "nonexistent.txt", None)
         assert sup._suppressions == []
 
+    def test_merge_combines_suppressions(self, tmp_path):
+        """SuppressionList.merge() combines rules from both lists."""
+        from abicheck.suppression import Suppression, SuppressionList
+        a = SuppressionList(suppressions=[Suppression(symbol="_sym1")])
+        b = SuppressionList(suppressions=[Suppression(symbol="_sym2")])
+        merged = SuppressionList.merge(a, b)
+        assert len(merged._suppressions) == 2
+
 
 # ── CLI flag parsing ──────────────────────────────────────────────────────────
 
@@ -166,3 +174,12 @@ class TestKindSets:
 
     def test_func_params_in_source_break(self):
         assert ChangeKind.FUNC_PARAMS_CHANGED in _SOURCE_BREAK_KINDS
+
+    def test_filter_source_only_source_break_verdict(self):
+        """_filter_source_only: SOURCE_BREAK_KINDS changes → SOURCE_BREAK verdict."""
+        from abicheck.cli import _filter_source_only
+        r = _result(Verdict.BREAKING, [ChangeKind.SONAME_CHANGED, ChangeKind.FUNC_PARAMS_CHANGED])
+        filtered = _filter_source_only(r)
+        # SONAME removed, FUNC_PARAMS_CHANGED stays
+        assert ChangeKind.SONAME_CHANGED not in {c.kind for c in filtered.changes}
+        assert ChangeKind.FUNC_PARAMS_CHANGED in {c.kind for c in filtered.changes}
