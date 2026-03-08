@@ -185,9 +185,19 @@ because they do not cause binary linkage or layout failures on their own.
     - Verdict: COMPATIBLE.
 
 29. **GNU IFUNC introduced/removed** — symbol changed to/from `STT_GNU_IFUNC`.
-    - Transparent to callers; PLT/GOT mechanism handles indirect resolution.
-    - This is an implementation optimization, not an ABI contract change.
-    - Verdict: COMPATIBLE.
+    - At the call-ABI level, IFUNC resolution is transparent to callers: the
+      PLT/GOT mechanism dispatches through the resolver without changing the
+      calling convention or symbol signature.
+    - However, this is only compatible when:
+      (a) the symbol's signature and versioning are preserved, and
+      (b) the deployment environment supports IFUNC and `R_*_IRELATIVE`
+      relocations (requires a recent dynamic loader, e.g., glibc ≥ 2.11;
+      musl added partial support in 1.1.0; some embedded/non-glibc runtimes
+      do not support IFUNC at all).
+    - On older loaders or non-glibc runtimes, an IFUNC symbol may fail to
+      resolve at load time.
+    - Verdict: COMPATIBLE (assuming modern glibc/musl toolchain; may break on
+      older or non-standard loaders).
 
 30. **New/removed DT_NEEDED dependency** — library gained or dropped a shared library dependency.
     - Deployment/packaging concern; does not affect the library's exported symbol contract.
@@ -212,10 +222,15 @@ These changes are less obvious than a removed symbol or shifted struct layout,
 but they can cause hard runtime failures in realistic deployments.
 
 34. **ELF st_size changed** — symbol size metadata changed in `.dynsym`.
-    - `st_size` is informational metadata; the dynamic linker does not use it for resolution.
-    - However, in ELF-only mode (no headers/DWARF) it may be the **sole** signal for
+    - While `st_size` is not used for normal symbol resolution, it **is** used by
+      the dynamic linker for COPY relocations (`R_*_COPY`) to determine the number
+      of bytes to copy into the executable's BSS and to validate size consistency.
+      A size mismatch can cause truncated or over-copied data for COPY-relocated
+      globals.
+    - In ELF-only mode (no headers/DWARF) it may also be the **sole** signal for
       vtable growth or variable type changes.
-    - Verdict: **BREAKING** (to avoid false negatives in stripped-binary workflows).
+    - Verdict: **BREAKING** (COPY relocation correctness and stripped-binary
+      false-negative avoidance).
 
 35. **New dependency version requirement** — library now requires e.g. `GLIBC_2.34`.
     - Library fails to load on runtimes lacking the required version.
