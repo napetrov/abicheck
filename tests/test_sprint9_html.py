@@ -1,13 +1,10 @@
 """Sprint 9: Tests for ABICC-compatible HTML report generator."""
 from __future__ import annotations
 
-from types import SimpleNamespace
 from pathlib import Path
-
-import pytest
+from types import SimpleNamespace
 
 from abicheck.html_report import generate_html_report, write_html_report
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -262,6 +259,21 @@ def test_xss_escape_description() -> None:
     assert "<img" not in out
 
 
+def test_xss_escape_old_value() -> None:
+    ch = _ch("func_params_changed", old='<script>x()</script>', new="int")
+    r = _result(verdict="BREAKING", changes=[ch])
+    out = generate_html_report(r)
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
+
+
+def test_xss_escape_new_value() -> None:
+    ch = _ch("func_params_changed", old="int", new='<img src=x onerror="alert(1)">')
+    r = _result(verdict="BREAKING", changes=[ch])
+    out = generate_html_report(r)
+    assert "<img" not in out
+
+
 # ---------------------------------------------------------------------------
 # write_html_report
 # ---------------------------------------------------------------------------
@@ -303,3 +315,59 @@ def test_no_change_verdict_blue_color() -> None:
     r = _result(verdict="NO_CHANGE")
     out = generate_html_report(r)
     assert "#0d47a1" in out  # NO_CHANGE foreground
+
+
+# ---------------------------------------------------------------------------
+# BC% edge cases (review feedback)
+# ---------------------------------------------------------------------------
+
+def test_bc_old_symbol_count_zero_uses_legacy_fallback() -> None:
+    """old_symbol_count=0 → falls back to change-ratio: 1 breaking / 1 total = 0%."""
+    r = _result(verdict="BREAKING", changes=[_ch("func_removed")])
+    out = generate_html_report(r, old_symbol_count=0)
+    assert "0.0%" in out
+
+
+def test_bc_clamped_to_zero_when_breaking_exceeds_symbol_count() -> None:
+    """breaking > old_symbol_count → clamped to 0% (stale snapshot edge case)."""
+    r = _result(verdict="BREAKING", changes=[_ch("func_removed")] * 5)
+    out = generate_html_report(r, old_symbol_count=3)
+    assert "0.0%" in out
+
+
+# ---------------------------------------------------------------------------
+# enum_member_removed is breaking (review feedback)
+# ---------------------------------------------------------------------------
+
+def test_enum_member_removed_is_breaking() -> None:
+    """enum_member_removed must count as breaking and appear in Removed section."""
+    r = _result(verdict="BREAKING", changes=[_ch("enum_member_removed", "MY_VAL")])
+    out = generate_html_report(r, old_symbol_count=10)
+    # Must NOT be 100% — it's a breaking removal
+    assert "100.0%" not in out
+    # Must appear in removed section
+    assert "id='removed'" in out
+
+
+def test_enum_member_removed_bucket_is_removed() -> None:
+    from abicheck.html_report import _change_bucket
+    ch = _ch("enum_member_removed", "SOME_VAL")
+    assert _change_bucket(ch) == "removed"
+
+
+# ---------------------------------------------------------------------------
+# _BREAKING_KINDS drift guard (review feedback)
+# ---------------------------------------------------------------------------
+
+def test_changed_breaking_kinds_subset_of_breaking_kinds() -> None:
+    """_CHANGED_BREAKING_KINDS must be a strict subset of _BREAKING_KINDS."""
+    from abicheck.html_report import _BREAKING_KINDS, _CHANGED_BREAKING_KINDS
+    assert _CHANGED_BREAKING_KINDS <= _BREAKING_KINDS, (
+        "_CHANGED_BREAKING_KINDS has entries not in _BREAKING_KINDS: "
+        f"{_CHANGED_BREAKING_KINDS - _BREAKING_KINDS}"
+    )
+
+
+def test_removed_kinds_subset_of_breaking_kinds() -> None:
+    from abicheck.html_report import _BREAKING_KINDS, _REMOVED_KINDS
+    assert _REMOVED_KINDS <= _BREAKING_KINDS

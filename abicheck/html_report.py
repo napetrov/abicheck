@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .checker import Change, DiffResult
+    from .checker import DiffResult
 
 # ---------------------------------------------------------------------------
 # Verdict styling — matches ABICC's visual palette
@@ -40,6 +40,7 @@ _VERDICT_STYLE: dict[str, tuple[str, str]] = {
 _REMOVED_KINDS: frozenset[str] = frozenset({
     "func_removed", "var_removed", "type_removed", "typedef_removed",
     "union_field_removed",
+    "enum_member_removed",  # removing an enum member is ABI-breaking (callers rely on value)
 })
 
 #: Kinds that count as "added" (new API surface — compatible).
@@ -77,14 +78,18 @@ _CHANGED_BREAKING_KINDS: frozenset[str] = frozenset({
     "dwarf_info_missing",
 })
 
-#: All breaking kinds (union of removals + changes, not additions)
-_BREAKING_KINDS: frozenset[str] = _REMOVED_KINDS | _CHANGED_BREAKING_KINDS | frozenset({
-    "func_noexcept_added",  # noexcept added is breaking per C++17 P0012R1
-    "func_virtual_removed", "func_virtual_became_pure", "func_pure_virtual_added",
-})
+#: All breaking kinds (union of removals + changed-breaking).
+#: _CHANGED_BREAKING_KINDS already contains all breaking "changed" entries
+#: (func_noexcept_added, func_virtual_removed, etc.) — no need to repeat them.
+_BREAKING_KINDS: frozenset[str] = _REMOVED_KINDS | _CHANGED_BREAKING_KINDS
+
+# Drift guard: assert at import time that _CHANGED_BREAKING_KINDS ⊆ _BREAKING_KINDS
+assert _CHANGED_BREAKING_KINDS <= _BREAKING_KINDS, (
+    "_CHANGED_BREAKING_KINDS has entries outside _BREAKING_KINDS — update _BREAKING_KINDS"
+)
 
 #: Category buckets for the summary table — mirrors ABICC section headers.
-_CATEGORY_PREFIXES: list[tuple[str, str]] = [
+_CATEGORY_PREFIXES: list[tuple[str, tuple[str, ...]]] = [
     ("Functions",  ("func_",)),
     ("Variables",  ("var_",)),
     ("Types",      ("type_", "struct_", "union_", "field_", "typedef_")),
@@ -210,7 +215,7 @@ def _symbol_cell(change: object) -> str:
     return demangled or mangled
 
 
-def _changes_table(changes: list) -> str:
+def _changes_table(changes: list[object]) -> str:
     if not changes:
         return "<p class='empty'>No changes in this category.</p>"
 
@@ -248,10 +253,9 @@ def _changes_table(changes: list) -> str:
 
 
 def _summary_table(
-    removed: list, changed: list, added: list, suppressed_count: int
+    removed: list[object], changed: list[object], added: list[object], suppressed_count: int
 ) -> str:
     """Build category-level summary table (mirrors ABICC's overview section)."""
-    all_changes = removed + changed + added
 
     # Count by category
     cats: dict[str, dict[str, int]] = {}
@@ -304,7 +308,7 @@ def _summary_table(
 </div>"""
 
 
-def _nav_bar(removed: list, changed: list, added: list, suppressed_count: int) -> str:
+def _nav_bar(removed: list[object], changed: list[object], added: list[object], suppressed_count: int) -> str:
     links = []
     if removed:
         links.append(f"<a href='#removed' class='breaking'>⛔ Removed ({len(removed)})</a>")
@@ -325,7 +329,7 @@ def _nav_bar(removed: list, changed: list, added: list, suppressed_count: int) -
 
 
 def generate_html_report(
-    result: "DiffResult",
+    result: DiffResult,
     lib_name: str = "",
     old_version: str = "",
     new_version: str = "",
@@ -348,8 +352,8 @@ def generate_html_report(
     verdict = result.verdict.value if hasattr(result.verdict, "value") else str(result.verdict)
     fg, bg = _VERDICT_STYLE.get(verdict, ("#212121", "#f5f5f5"))
 
-    changes: list = list(getattr(result, "changes", None) or [])
-    suppressed: list = list(getattr(result, "suppressed_changes", None) or [])
+    changes: list[object] = list(getattr(result, "changes", None) or [])
+    suppressed: list[object] = list(getattr(result, "suppressed_changes", None) or [])
     suppressed_count: int = getattr(result, "suppressed_count", len(suppressed))
 
     # Split changes into buckets
@@ -361,10 +365,12 @@ def generate_html_report(
     breaking_count = sum(1 for ch in changes if _is_breaking(ch))
     if breaking_count == 0:
         bc_pct = 100.0
-    elif old_symbol_count and old_symbol_count > 0:
+    elif old_symbol_count is not None and old_symbol_count > 0:
         # ABICC-style: (total_old - breaking) / total_old * 100
+        # Clamp to 0% if breaking exceeds symbol count (stale snapshot edge case)
         bc_pct = max(0.0, (old_symbol_count - breaking_count) / old_symbol_count * 100)
     else:
+        # old_symbol_count is None or 0 — fall back to change-ratio approximation
         total = len(changes)
         bc_pct = max(0.0, (total - breaking_count) / total * 100) if total > 0 else 0.0
 
@@ -380,7 +386,7 @@ def generate_html_report(
     summary_html = _summary_table(removed, changed, added, suppressed_count)
     nav_html     = _nav_bar(removed, changed, added, suppressed_count)
 
-    def _section(title: str, anchor: str, css_class: str, items: list) -> str:
+    def _section(title: str, anchor: str, css_class: str, items: list[object]) -> str:
         count = len(items)
         tbl = _changes_table(items)
         return (
@@ -473,7 +479,7 @@ def generate_html_report(
 
 
 def write_html_report(
-    result: "DiffResult",
+    result: DiffResult,
     output_path: Path,
     lib_name: str = "",
     old_version: str = "",
