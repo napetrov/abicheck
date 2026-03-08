@@ -58,7 +58,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 @main.command("compare")
 @click.argument("old_snapshot", type=click.Path(exists=True, path_type=Path))
 @click.argument("new_snapshot", type=click.Path(exists=True, path_type=Path))
-@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "sarif"]),
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "sarif", "html"]),
               default="markdown", show_default=True)
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
@@ -71,6 +71,7 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
     Example:
       abicheck compare libfoo-1.0.json libfoo-2.0.json --format markdown
       abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o results.sarif
+      abicheck compare libfoo-1.0.json libfoo-2.0.json --format html -o report.html
       abicheck compare libfoo-1.0.json libfoo-2.0.json --suppress suppressions.yaml
     """
     from .suppression import SuppressionList
@@ -101,6 +102,23 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
     elif fmt == "sarif":
         from .sarif import to_sarif_str
         text = to_sarif_str(result)
+    elif fmt == "html":
+        from .html_report import generate_html_report
+        from .model import Visibility
+        old_symbol_count = sum(
+            1 for f in old.functions
+            if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
+        ) + sum(
+            1 for v in old.variables
+            if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
+        )
+        text = generate_html_report(
+            result,
+            lib_name=old.library,
+            old_version=old.version,
+            new_version=new.version,
+            old_symbol_count=old_symbol_count or None,
+        )
     else:
         text = to_markdown(result)
 
@@ -233,9 +251,18 @@ def compat_cmd(
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
     if fmt == "html":
+        from .model import Visibility
+        old_symbol_count = sum(
+            1 for f in old_snap.functions
+            if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
+        ) + sum(
+            1 for v in old_snap.variables
+            if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
+        )
         write_html_report(result, output_path=report_path,
                           lib_name=lib_name,
-                          old_version=old.version, new_version=new.version)
+                          old_version=old.version, new_version=new.version,
+                          old_symbol_count=old_symbol_count or None)
     elif fmt == "json":
         report_path.write_text(to_json(result), encoding="utf-8")
     else:

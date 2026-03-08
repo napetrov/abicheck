@@ -459,7 +459,7 @@ def _new_field_change_kind(t_new: RecordType) -> ChangeKind:
     is_polymorphic = bool(t_new.vtable or t_new.virtual_bases)
     return (
         ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE
-        if not is_polymorphic and t_new.kind in ("struct",)
+        if not is_polymorphic and t_new.kind == "struct"
         else ChangeKind.TYPE_FIELD_ADDED
     )
 
@@ -473,23 +473,7 @@ def _diff_type_bases(name: str, t_old: RecordType, t_new: RecordType) -> list[Ch
             old_value=str(t_old.bases),
             new_value=str(t_new.bases),
         )]
-
-    # Bases and virtual_bases lists are equal at this point; check if any non-virtual
-    # base was promoted to virtual (changes VTT layout) without altering the set membership.
-    # Note: if both lists are equal as lists, the sets are also equal, so this only fires
-    # when the same base appears in different virtual/non-virtual slots.
-    old_virt = set(t_old.virtual_bases)
-    new_virt = set(t_new.virtual_bases)
-    if old_virt == new_virt:
-        return []
-
-    return [Change(
-        kind=ChangeKind.TYPE_BASE_CHANGED,
-        symbol=name,
-        description=f"Virtual inheritance changed: {name} (affects VTT layout)",
-        old_value=f"virtual={sorted(old_virt)}",
-        new_value=f"virtual={sorted(new_virt)}",
-    )]
+    return []
 
 
 def _diff_type_vtable(name: str, t_old: RecordType, t_new: RecordType) -> list[Change]:
@@ -731,7 +715,10 @@ def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 def _diff_elf_dynamic_section(old_elf: Any, new_elf: Any) -> list[Change]:
     changes: list[Change] = []
-    if old_elf.soname and new_elf.soname and old_elf.soname != new_elf.soname:
+    # Emit SONAME_CHANGED only when old library HAD a SONAME (non-empty) and it
+    # changed or was removed. Adding a SONAME (empty/None → value) is a compatible
+    # improvement and must not be flagged as breaking.
+    if old_elf.soname and old_elf.soname != new_elf.soname:
         changes.append(Change(
             kind=ChangeKind.SONAME_CHANGED,
             symbol="DT_SONAME",
