@@ -88,7 +88,9 @@ Coverage reporting is configured and enforced:
 ### Phase 3 (deeper DWARF confidence)
 
 6. Add focused tests for DWARF metadata extraction edge cases and advanced attributes.
+   - Implemented in `tests/test_phase3_dwarf_helpers.py` (reference resolution, type-info recursion/cache, member-location decode, alignment resolution, calling-convention extraction, packed-struct detection).
 7. Add fixture-based regression tests for known tricky compiler outputs.
+   - Added helper-level fixture-style cases with synthetic DIE/attribute objects to lock behavior for tricky DWARF forms.
 
 ## How to address coverage gaps practically
 
