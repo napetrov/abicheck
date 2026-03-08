@@ -147,13 +147,16 @@ def _build_skip_suppression(
 ) -> SuppressionList:
     """Build a SuppressionList from ABICC-style -skip-symbols / -skip-types files.
 
+    Both symbol and type names are stored as symbol-match suppressions — abicheck
+    uses the type name as the symbol field for type-level changes (e.g. TYPE_REMOVED).
+
     Raises ValueError if a file contains an invalid regex pattern.
     Raises OSError if a file cannot be read.
     """
     from .suppression import Suppression, SuppressionList  # noqa: PLC0415
 
     rules: list[Suppression] = []
-    for fpath in [skip_symbols_path, skip_types_path]:
+    for label, fpath in [("symbols", skip_symbols_path), ("types", skip_types_path)]:
         if fpath is None:
             continue
         names = [
@@ -418,7 +421,8 @@ def compat_cmd(
     result = compare(old_snap, new_snap, suppression=suppression)
 
     # -source: filter to source/API breaks only (exclude ELF-only symbol metadata changes)
-    if source_only:
+    # -binary (explicit): no-op — default behavior. If both -source and -binary given, -binary wins.
+    if source_only and not binary_only:
         result = _filter_source_only(result)
 
     # -strict: treat COMPATIBLE and SOURCE_BREAK as BREAKING (any deviation = error)

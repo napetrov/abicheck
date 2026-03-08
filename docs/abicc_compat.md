@@ -69,7 +69,7 @@ These override what is in the `<version>` element of the XML descriptor.
 | `--suppress PATH` | abicheck-native suppression YAML file (merged with `-skip-symbols`/`-skip-types`) |
 
 `-skip-symbols` / `-skip-types` file format:
-```
+```text
 # Lines starting with # are comments
 _Z3foov
 _ZN3Foo3barEv
