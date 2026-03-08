@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import warnings
-from pathlib import Path
 from xml.etree.ElementTree import Element
 
 import pytest
