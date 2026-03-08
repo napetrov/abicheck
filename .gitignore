@@ -3,3 +3,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 abicheck.egg-info/
+.coverage
+coverage.xml
+coverage-integration.xml
+htmlcov/
