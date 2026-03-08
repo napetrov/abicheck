@@ -30,30 +30,30 @@ log = logging.getLogger(__name__)
 
 class SymbolBinding(str, Enum):
     GLOBAL = "global"
-    WEAK   = "weak"
-    LOCAL  = "local"
-    OTHER  = "other"
+    WEAK = "weak"
+    LOCAL = "local"
+    OTHER = "other"
 
 
 class SymbolType(str, Enum):
-    FUNC   = "func"
+    FUNC = "func"
     OBJECT = "object"
-    TLS    = "tls"
-    IFUNC  = "ifunc"   # STT_GNU_IFUNC
+    TLS = "tls"
+    IFUNC = "ifunc"   # STT_GNU_IFUNC
     COMMON = "common"  # STT_COMMON
     NOTYPE = "notype"
-    OTHER  = "other"
+    OTHER = "other"
 
 
 @dataclass
 class ElfSymbol:
     name: str
-    binding:  SymbolBinding = SymbolBinding.GLOBAL
-    sym_type: SymbolType    = SymbolType.FUNC
-    size:     int           = 0
-    version:  str           = ""       # version tag from .gnu.version_d/.gnu.version_r
-    is_default: bool        = True
-    visibility: str         = "default"  # default / hidden / protected / internal
+    binding: SymbolBinding = SymbolBinding.GLOBAL
+    sym_type: SymbolType = SymbolType.FUNC
+    size: int = 0
+    version: str = ""       # version tag from .gnu.version_d/.gnu.version_r
+    is_default: bool = True
+    visibility: str = "default"  # default / hidden / protected / internal
 
 
 @dataclass
@@ -63,9 +63,9 @@ class ElfMetadata:
     NOTE: Do NOT add ``frozen=True`` to this dataclass — ``@cached_property``
     (used by ``symbol_map``) requires a writable instance ``__dict__``.
     """
-    soname:  str = ""
-    needed:  list[str] = field(default_factory=list)
-    rpath:   str = ""
+    soname: str = ""
+    needed: list[str] = field(default_factory=list)
+    rpath: str = ""
     runpath: str = ""
 
     # Symbol versions defined by this library (.gnu.version_d)
@@ -93,17 +93,17 @@ class ElfMetadata:
 
 _BINDING_MAP: dict[str, SymbolBinding] = {
     "STB_GLOBAL": SymbolBinding.GLOBAL,
-    "STB_WEAK":   SymbolBinding.WEAK,
-    "STB_LOCAL":  SymbolBinding.LOCAL,
+    "STB_WEAK": SymbolBinding.WEAK,
+    "STB_LOCAL": SymbolBinding.LOCAL,
 }
 
 _TYPE_MAP: dict[str, SymbolType] = {
-    "STT_FUNC":      SymbolType.FUNC,
-    "STT_OBJECT":    SymbolType.OBJECT,
-    "STT_TLS":       SymbolType.TLS,
+    "STT_FUNC": SymbolType.FUNC,
+    "STT_OBJECT": SymbolType.OBJECT,
+    "STT_TLS": SymbolType.TLS,
     "STT_GNU_IFUNC": SymbolType.IFUNC,
-    "STT_COMMON":    SymbolType.COMMON,
-    "STT_NOTYPE":    SymbolType.NOTYPE,
+    "STT_COMMON": SymbolType.COMMON,
+    "STT_NOTYPE": SymbolType.NOTYPE,
 }
 
 _HIDDEN_VISIBILITIES = frozenset({"STV_HIDDEN", "STV_INTERNAL"})
@@ -196,8 +196,8 @@ def _parse_dynsym(section: SymbolTableSection, meta: ElfMetadata) -> None:
             continue
 
         binding_str = sym.entry.st_info.bind
-        type_str    = sym.entry.st_info.type
-        vis_str     = sym.entry.st_other.visibility
+        type_str = sym.entry.st_info.type
+        vis_str = sym.entry.st_other.visibility
 
         binding = _BINDING_MAP.get(binding_str, SymbolBinding.OTHER)
 
@@ -210,7 +210,7 @@ def _parse_dynsym(section: SymbolTableSection, meta: ElfMetadata) -> None:
             continue
 
         sym_type = _TYPE_MAP.get(type_str, SymbolType.OTHER)
-        name     = sym.name
+        name = sym.name
 
         # NOTE: pyelftools does NOT embed version suffixes (@@/@ notation) in
         # sym.name — that's a readelf text-output artifact. Symbol version info

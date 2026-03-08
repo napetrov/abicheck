@@ -60,7 +60,7 @@ class FieldInfo:
     byte_offset: int    # DW_AT_data_member_location
     byte_size: int      # size of the field's type (0 if unknown)
     bit_offset: int = 0 # for bitfields: normalised bit offset from LSB
-    bit_size: int   = 0 # for bitfields: width in bits (0 = not a bitfield)
+    bit_size: int = 0 # for bitfields: width in bits (0 = not a bitfield)
 
 
 @dataclass
@@ -433,7 +433,7 @@ def _process_enum_named(
         if child.tag == "DW_TAG_enumerator":
             member_name = _attr_str(child, "DW_AT_name")
             # DW_AT_const_value may be signed (DW_FORM_sdata → negative values)
-            member_val  = _attr_int(child, "DW_AT_const_value")
+            member_val = _attr_int(child, "DW_AT_const_value")
             if member_name:
                 enum.members[member_name] = member_val
 
@@ -542,7 +542,7 @@ def _compute_type_info(  # noqa: PLR0911
                 inner_name, _ = _die_to_type_info(inner_die, CU, depth + 1, cache)
                 return (f"{inner_name} *", ptr_size)
             except Exception:  # noqa: BLE001
-                pass
+                return ("void *", ptr_size)
         return ("void *", ptr_size)
 
     if tag in ("DW_TAG_reference_type", "DW_TAG_rvalue_reference_type"):
@@ -554,7 +554,7 @@ def _compute_type_info(  # noqa: PLR0911
                 inner_name, _ = _die_to_type_info(inner_die, CU, depth + 1, cache)
                 return (f"{inner_name} {suffix}", ref_size)
             except Exception:  # noqa: BLE001
-                pass
+                return (f"? {suffix}", ref_size)
         return (f"? {suffix}", ref_size)
 
     if tag in ("DW_TAG_const_type", "DW_TAG_volatile_type", "DW_TAG_restrict_type"):
@@ -565,7 +565,7 @@ def _compute_type_info(  # noqa: PLR0911
                 qualifier = tag.split("_")[2].lower()  # const / volatile / restrict
                 return (f"{qualifier} {inner_name}", size)
             except Exception:  # noqa: BLE001
-                pass
+                return (tag.split("_")[2].lower(), 0)
 
     if tag == "DW_TAG_typedef":
         name = _attr_str(die, "DW_AT_name")
@@ -575,7 +575,7 @@ def _compute_type_info(  # noqa: PLR0911
                 inner_name, size = _die_to_type_info(inner_die, CU, depth + 1, cache)
                 return (name or inner_name, size)
             except Exception:  # noqa: BLE001
-                pass
+                return (name or "typedef", 0)
         return (name or "typedef", 0)
 
     if tag == "DW_TAG_array_type":
@@ -586,7 +586,7 @@ def _compute_type_info(  # noqa: PLR0911
                 inner_name, _ = _die_to_type_info(inner_die, CU, depth + 1, cache)
                 return (f"{inner_name}[]", size)
             except Exception:  # noqa: BLE001
-                pass
+                return ("array", size)
         return ("array", size)
 
     if tag == "DW_TAG_subroutine_type":
