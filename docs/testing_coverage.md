@@ -1,10 +1,31 @@
 # Testing coverage and usefulness
 
-This project already has a broad test suite with three tiers of confidence:
+## Overall summary (current state)
 
-1. **Fast unit and component tests** (`pytest -m "not integration and not libabigail"`) for core logic and report generation.
-2. **Integration tests** (`-m integration`) that build example C/C++ cases and verify ABI outcomes end-to-end.
-3. **Parity tests** (`-m libabigail`) that compare selected results against `abidiff` behavior.
+`abicheck` has a **useful and mature core test suite** for ABI-diff behavior, with strongest confidence in pure-Python comparison logic and report generation.
+
+At the same time, coverage highlights a clear improvement area: code paths that orchestrate external tools (`cli.py`, `dumper.py`, deeper DWARF parsing paths) are less exercised than the core comparator.
+
+In short:
+
+- **Regression safety for diff/classification logic is strong**.
+- **End-to-end tool orchestration confidence is moderate** and should be improved next.
+
+## Test status and test types
+
+The repository uses three complementary test tiers:
+
+1. **Fast unit/component tests** (`pytest -m "not integration and not libabigail"`)
+   - Validate internal logic and data/report transformations.
+   - Intended as the primary CI gate for quick feedback.
+
+2. **Integration tests** (`-m integration`)
+   - Build/compare example C/C++ cases and validate end-to-end ABI outcomes.
+   - Depend on system tools such as castxml and compilers.
+
+3. **Parity tests** (`-m libabigail`)
+   - Compare selected behavior against `abidiff` expectations.
+   - Helps prevent semantic drift from industry-standard ABI checks.
 
 ## Current baseline
 
@@ -14,35 +35,72 @@ Measured locally with:
 pytest --cov=abicheck --cov-report=term-missing
 ```
 
-Result summary:
+Baseline snapshot:
 
 - **221 passed**, **38 skipped**.
 - **Total branch-aware coverage: 49%**.
-- Strongly covered modules: `checker.py` (96%), `model.py` (94%), `suppression.py` (93%), `sarif.py` (93%).
-- Low-coverage/high-opportunity modules: `cli.py` (0%), `dumper.py` (0%), `dwarf_metadata.py` (21%), `dwarf_advanced.py` (40%).
+- Strongly covered modules: `checker.py` (94%), `model.py` (91%), `suppression.py` (92%), `sarif.py` (94%).
+- Major coverage gaps: `cli.py` (0%), `dumper.py` (0%), `dwarf_metadata.py` (15%), `dwarf_advanced.py` (35%).
 
-## Usefulness assessment
+## How good is the coverage?
 
-The suite is **useful and meaningful** for regression safety in the ABI-diff core:
+Coverage quality is **good for core correctness**, but **not yet good enough for full-system confidence**:
 
-- The most risk-sensitive comparison/classification paths are heavily covered.
-- Realistic example-based tests validate behavior across many ABI change scenarios.
-- External-tool parity checks reduce semantic drift from industry tooling.
+- Good: high-signal modules that decide ABI verdicts are thoroughly tested.
+- Weak: user-entry flows and tool-integration paths are under-tested and can hide runtime integration bugs.
 
-Main gap:
+So the current 49% should be interpreted as:
 
-- Entrypoint/UX (`cli.py`) and snapshot extraction orchestration (`dumper.py`) have little direct coverage and could hide integration bugs.
+- acceptable as a **tracked baseline**,
+- insufficient as a **long-term target**.
 
-## Code coverage setup
+## Coverage setup in CI
 
-Coverage reporting is now configured in project tooling and CI:
+Coverage reporting is configured and enforced:
 
-- `pyproject.toml` defines coverage source scope (`abicheck`) and branch coverage.
-- CI test job now runs pytest with coverage output (`term-missing` + `coverage.xml`).
-- CI enforces a floor with `--cov-fail-under=48` and uploads `coverage.xml` as a workflow artifact.
+- `pyproject.toml` defines coverage scope (`source = ["abicheck"]`) and enables branch coverage.
+- Main CI test job runs pytest with coverage output (`term-missing` + `coverage.xml`).
+- CI enforces a floor (`--cov-fail-under=48`) and uploads `coverage.xml` as an artifact.
 
-## Recommended next targets
+## Plan to extend coverage
 
-1. Add CLI tests using `click.testing.CliRunner` for `dump`, `compare`, and error/exit-code paths.
-2. Add dumper tests by mocking castxml/ELF adapters to cover orchestration and failure handling.
-3. Raise CI threshold gradually (e.g., 50 -> 55 -> 60) as these tests land.
+### Phase 1 (immediate, highest ROI)
+
+1. **CLI tests via `click.testing.CliRunner`**
+   - Cover `dump`, `compare`, `compat` happy paths and error paths.
+   - Validate exit codes, key user-facing messages, and option validation.
+
+2. **Dumper orchestration tests**
+   - Mock castxml/ELF adapters and subprocess boundaries.
+   - Cover success path, malformed tool output, missing binaries, and partial data handling.
+
+3. **Raise floor incrementally after each merge**
+   - Suggested ratchet: **48 -> 52 -> 56 -> 60**.
+
+### Phase 2 (integration hardening)
+
+4. Expand integration matrices across representative example cases (already present under `examples/`).
+5. Add negative integration scenarios (bad ELF, missing symbols, broken headers).
+
+### Phase 3 (deeper DWARF confidence)
+
+6. Add focused tests for DWARF metadata extraction edge cases and advanced attributes.
+7. Add fixture-based regression tests for known tricky compiler outputs.
+
+## How to address coverage gaps practically
+
+Recommended workflow for contributors:
+
+1. **Pick one low-coverage module** (`cli.py` or `dumper.py`) per PR.
+2. Add tests first for at least one happy path and one failure path.
+3. Run local fast gate with coverage:
+
+   ```bash
+   pytest tests/ -v --tb=short -m "not integration and not libabigail" \
+     --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=48
+   ```
+
+4. If branch coverage improves, bump CI floor by a small step in the same PR.
+5. Keep integration/parity tests stable as semantic guardrails.
+
+This approach avoids disruptive jumps while continuously increasing real confidence.
