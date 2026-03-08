@@ -668,3 +668,6 @@ def _attr_int(die: Any, attr: str) -> int:
         return int(val)
     except (TypeError, ValueError):
         return 0
+
+# Public alias for dwarf_unified — keeps the contract visible to mypy.
+_process_cu_impl = _process_cu

@@ -549,3 +549,6 @@ def _attr_bool(die: Any, attr: str) -> bool:
     if attr not in die.attributes:
         return False
     return bool(die.attributes[attr].value)
+
+# Public alias for dwarf_unified — keeps the contract visible to mypy.
+_process_cu_impl = _process_cu
