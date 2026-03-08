@@ -1,215 +1,162 @@
 # abicheck
 
-**abicheck** is a modern ABI compatibility checker for C/C++ shared libraries.
+**abicheck checks C/C++ library compatibility at both API and ABI levels.**
 
-It is designed as a modular, compiler-agnostic alternative to
-[abi-compliance-checker](https://github.com/lvc/abi-compliance-checker),
-using Clang as the parsing backend (GCC can optionally configure target settings).
+abicheck is inspired by two foundational projects:
 
----
+- [libabigail / abidiff](https://sourceware.org/libabigail/)
+- [ABI Compliance Checker (ABICC)](https://lvc.github.io/abi-compliance-checker/)
 
-## Problem Statement
-
-Existing ABI checking tools have significant limitations in CI/CD pipelines for
-modern C++ libraries:
-
-- **abi-compliance-checker**: written in Perl, hard GCC dependency via
-  `-fdump-lang-spec`, no Clang/LLVM support, difficult to extend or embed.
-- **abidiff** (libabigail): excellent binary-level ELF diff, but requires DWARF
-  debug symbols; many release builds strip them.
-- **Symbol-only diffing** (`nm`, `objdump`): no type-level information, many
-  false positives/negatives.
-
-**The gap:** There is no lightweight, embeddable tool that:
-1. Works from headers + release `.so` (no debug symbols required)
-2. Uses Clang (via castxml) as the parsing backend; GCC may be specified to match build macros/target
-3. Produces structured, machine-readable ABI reports
-4. Can be embedded in CI pipelines without Perl or heavy toolchain dependencies
+Many thanks and kudos to both communities for defining the practical ABI-checking ecosystem.
+Sadly, both projects are effectively no longer maintained for many modern contributor workflows,
+and it is often not practical to land new fixes there. abicheck is designed to be a
+**drop-in replacement for ABICC** while providing a modern, maintainable Python codebase.
 
 ---
 
-## Goals
+## Requirements
 
-### Must Have
-- Parse C/C++ public API from headers using **castxml** (Clang-based,
-  compiler-agnostic)
-- Extract exported symbol list from `.so` (ELF, no debug info required)
-- Diff two ABI snapshots and classify changes:
-  - `BREAKING`: removed/renamed public symbols, incompatible type changes,
-    vtable changes, alignment changes
-  - `COMPATIBLE`: added symbols, internal changes
-  - `NO_CHANGE`: identical ABI
-- Structured output: JSON + Markdown report
-- CLI: `abicheck dump`, `abicheck compare`
+### Mandatory
 
-### Should Have
-- Clang-based parsing via castxml (GCC can be specified for macro/target compatibility)
-- Suppression file support (filter known/intentional ABI changes)
-- Per-symbol classification: public / ELF-only / hidden visibility
+- Python 3.10+
+- `castxml` (for header-based C/C++ API parsing)
+- A C/C++ compiler available to castxml (`g++` or `clang++`)
 
-### Nice to Have
-- HTML report
-- Version history scanning (compare all releases of a library)
-- GitHub Actions integration
+### Runtime Python dependencies
+
+- `click` (CLI)
+- `pyelftools` (ELF/DWARF metadata extraction)
+- `defusedxml` (safe ABICC XML parsing)
 
 ---
 
-## Architecture
+## How to use abicheck
 
-```
-+-------------------------------------------------------------+
-|                        CLI                                    |
-|          abicheck dump | compare | compat                    |
-+----------------+------------------------+--------------------+
-                 |                        |
-        +--------v--------+     +--------v--------+
-        |    DUMPER        |     |    CHECKER      |
-        |                  |     |                 |
-        | castxml + ELF    |     | diff(a, b)      |
-        |   |              |     |   |             |
-        | ABI snapshot     |     | classify change |
-        | (JSON)           |     |   |             |
-        |                  |     | verdict         |
-        +--------+---------+    +--------+---------+
-                 |                        |
-                 +------------+-----------+
-                              |
-                     +--------v--------+
-                     |    REPORTER     |
-                     | JSON / MD / HTML|
-                     +-----------------+
-```
-
-### Components
-
-| Component | Description | Key dependency |
-|-----------|-------------|----------------|
-| `abicheck.dumper` | Headers + `.so` -> ABI snapshot JSON | `castxml`, `pyelftools` |
-| `abicheck.checker` | Diff two snapshots -> classified changes | pure Python |
-| `abicheck.reporter` | Changes -> structured report | pure Python |
-| `abicheck.html_report` | HTML report generator | pure Python |
-| `abicheck.elf_metadata` | ELF dynamic section + symbol metadata | `pyelftools` |
-| `abicheck.dwarf_metadata` | DWARF type layout extraction | `pyelftools` |
-| `abicheck.dwarf_advanced` | Calling convention, packing, flags | `pyelftools` |
-| `abicheck.compat` | ABICC XML descriptor compatibility layer | `defusedxml` |
-| `abicheck.cli` | Command-line interface | `click` |
-
-### ABI Snapshot Format (JSON)
-
-```json
-{
-  "library": "libfoo.so.1",
-  "version": "1.2.3",
-  "functions": [
-    {
-      "name": "foo_init",
-      "mangled": "_Z8foo_initv",
-      "return_type": "int",
-      "params": [],
-      "visibility": "public",
-      "source_location": "foo.h:12"
-    }
-  ],
-  "types": [...],
-  "variables": [
-    {
-      "name": "global_flag",
-      "mangled": "_Z11global_flag",
-      "type": "int",
-      "visibility": "public",
-      "source_location": "globals.h:5"
-    }
-  ]
-}
-```
-
----
-
-## Suppression Files
-
-Suppression files let you silence known or intentional ABI changes so they don't
-block your CI pipeline. Each rule matches on symbol name (exact or regex) and,
-optionally, on change kind.
-
-### Format
-
-```yaml
-# abicheck suppression file
-version: 1
-suppressions:
-  - symbol: "_ZN3foo3barEv"          # exact mangled name
-    change_kind: "func_removed"       # optional: only suppress this change kind
-    reason: "intentional removal in v2"
-
-  - symbol_pattern: "^_ZN.*privateEv$"  # regex (mutually exclusive with symbol)
-    reason: "private implementation detail"
-
-  - symbol_pattern: ".*detail.*"
-    reason: "internal namespace -- not public API"
-```
-
-Fields:
-
-| Field | Required | Description |
-|---|---|---|
-| `symbol` | one of | Exact mangled symbol name |
-| `symbol_pattern` | one of | Python `re.fullmatch` pattern (must match entire symbol name; use `.*` for substring matching) |
-| `change_kind` | optional | `ChangeKind` value (e.g. `func_removed`); omit to suppress all kinds |
-| `reason` | optional | Human-readable note |
-
-### CLI Usage
+### 1) Create ABI snapshots
 
 ```bash
-abicheck compare libfoo-1.0.json libfoo-2.0.json --suppress suppressions.yaml
+abicheck dump libfoo.so.1 -H include/foo.h --version 1.0 -o libfoo-1.0.json
+abicheck dump libfoo.so.2 -H include/foo.h --version 2.0 -o libfoo-2.0.json
 ```
 
-When suppressions are active the Markdown report includes a footer:
+### 2) Compare snapshots
 
-```text
-> i 3 change(s) suppressed via suppression file
+```bash
+# Markdown report (default)
+abicheck compare libfoo-1.0.json libfoo-2.0.json
+
+# JSON
+abicheck compare libfoo-1.0.json libfoo-2.0.json --format json -o report.json
+
+# SARIF
+abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o report.sarif
 ```
 
-See `examples/suppression_example.yaml` for realistic examples.
+### 3) ABICC-compatible mode
 
-## Why castxml?
+```bash
+abicheck compat -lib foo -old old.xml -new new.xml
+```
 
-[castxml](https://github.com/CastXML/CastXML) converts C/C++ source to an XML
-description of the AST using Clang as the parsing backend. It:
-
-- Clang-based parsing; GCC may be specified via `--compiler` to match build macros/target settings
-- Is widely used in the C++ ecosystem (SWIG, pygccxml, ROOT/Cling)
-- Handles most C++ features including templates, namespaces, inheritance
-- Produces a stable, well-documented XML format
-- Is actively maintained (Apache-2.0 license)
+This mode supports ABICC-style descriptor workflows so teams can migrate without
+rewriting their entire pipeline on day one.
 
 ---
 
-## Prerequisites
+## abicheck as a drop-in replacement for ABICC
 
-- **castxml** -- `apt install castxml` or `conda install -c conda-forge castxml`
-  (optional: only needed for header-based type analysis; ELF/DWARF analysis works without it)
-- **Python 3.10+**
-- **g++** or **clang++** (compiler for castxml to use when parsing headers)
+abicheck keeps the ABICC descriptor-driven model available (`compat` mode), while adding:
+
+- Native JSON/SARIF/Markdown outputs for automation
+- Easier CI embedding in Python-based tooling
+- More explicit architecture with reusable Python modules
+- Cleaner evolution path for new ABI rules and checks
+
+Practical migration path:
+
+1. Keep your existing XML descriptor generation.
+2. Replace ABICC CLI call with `abicheck compat`.
+3. Move to `dump` + `compare` when you want explicit snapshot control and richer outputs.
+
+---
+
+## ABI/API breakages and tool coverage
+
+Below is a high-level matrix aligned with `examples/case01..case24`.
+
+Legend: ✅ supported, ⚠️ partial/context-dependent, ❌ typically unsupported.
+
+| Case | Breakage type | abicheck | abidiff + headers | ABICC #2 (headers) | ABICC #1 (abi-dumper) |
+|---|---|:---:|:---:|:---:|:---:|
+| case01 | Symbol removed | ✅ | ✅ | ✅ | ✅ |
+| case02 | Param type changed | ✅ | ✅ | ✅ | ✅ |
+| case03 | Compatible symbol addition | ✅ | ✅ | ✅ | ✅ |
+| case04 | No change baseline | ✅ | ✅ | ✅ | ✅ |
+| case05 | SONAME policy break | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case06 | Visibility policy break | ✅ | ✅ | ⚠️ | ⚠️ |
+| case07 | Struct layout break | ✅ | ✅ | ✅ | ✅ |
+| case08 | Enum value changed | ✅ | ⚠️ | ✅ | ✅ |
+| case09 | C++ vtable drift | ✅ | ✅ | ✅ | ✅ |
+| case10 | Return type changed | ✅ | ✅ | ✅ | ✅ |
+| case11 | Global variable type changed | ✅ | ✅ | ✅ | ✅ |
+| case12 | Function removed | ✅ | ✅ | ✅ | ✅ |
+| case13 | Symbol version policy break | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case14 | Class size/layout change | ✅ | ✅ | ✅ | ✅ |
+| case15 | `noexcept` changed | ✅ | ⚠️ | ✅ | ❌ |
+| case16 | inline↔non-inline ABI/ODR risk | ✅ | ⚠️ | ✅ | ❌ |
+| case17 | Template ABI drift | ✅ | ⚠️ | ✅ | ✅ |
+| case18 | Dependency leak via headers | ✅ | ⚠️ | ✅ | ✅ |
+| case19 | Enum member removed | ✅ | ✅ | ✅ | ✅ |
+| case20 | Enum member value changed | ✅ | ⚠️ | ✅ | ✅ |
+| case21 | Method became static | ✅ | ✅ | ✅ | ✅ |
+| case22 | Method const qualifier changed | ✅ | ✅ | ✅ | ✅ |
+| case23 | Pure virtual method added | ✅ | ✅ | ✅ | ✅ |
+| case24 | Union field removed | ✅ | ✅ | ✅ | ✅ |
+
+### Tooling summary
+
+- `abidiff + headers`: strong at ABI diffs when debug/header context is good.
+- `ABICC #2` (headers): useful semantic/header-driven mode, with GCC-oriented legacy behavior.
+- `ABICC #1` (abi-dumper): strong DWARF pipeline, but depends on debug builds.
+- **abicheck**: combines practical header + ELF checks, ABICC compatibility mode,
+  and CI-native outputs for production pipelines.
+
+---
+
+## Architecture and dependencies
+
+```text
+CLI (abicheck dump | compare | compat)
+  -> Dumper (castxml + ELF metadata)
+  -> Checker (ABI diff + classification)
+  -> Reporters (markdown/json/sarif/html)
+```
+
+Key modules:
+
+- `abicheck.cli` — command entry points
+- `abicheck.dumper` — builds ABI snapshots
+- `abicheck.checker` — computes change sets and verdicts
+- `abicheck.compat` — ABICC XML compatibility layer
+- `abicheck.reporter`, `abicheck.sarif`, `abicheck.html_report` — output generators
+- `abicheck.elf_metadata`, `abicheck.dwarf_metadata`, `abicheck.dwarf_advanced` — metadata extraction
+
+---
 
 ## Installation
 
 ```bash
-# Install from source (not yet on PyPI):
 pip install -e .
 ```
 
-## Quick Start
+---
 
-```bash
-# Dump ABI snapshot
-abicheck dump libfoo.so.1 -H include/foo.h --version 1.2.3 -o snap-1.2.3.json
+## Documentation
 
-# Compare two versions
-abicheck compare snap-1.2.3.json snap-1.3.0.json
-
-# ABICC-compatible mode (reads XML descriptors)
-abicheck compat -lib libfoo -old old.xml -new new.xml
-```
+- [Docs home](docs/index.md)
+- [Getting started](docs/getting_started.md)
+- [Using abicheck, compatibility modes, and coverage](docs/usage_and_coverage.md)
+- [Examples breakage guide](docs/examples_breakage_guide.md)
 
 
 ---
@@ -232,10 +179,4 @@ See `docs/testing_coverage.md` for the current baseline and a gap analysis.
 
 ## License
 
-**Apache License 2.0** -- see [LICENSE](LICENSE).
-
-> **Note on third-party tools:**
-> This project does **not** contain any code derived from
-> `abi-compliance-checker` (LGPL-2.1) or `libabigail` (LGPL-3.0+).
-> castxml itself is Apache-2.0 licensed.
-> See [NOTICE.md](NOTICE.md) for full third-party notices.
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).

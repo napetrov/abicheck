@@ -33,13 +33,15 @@ nav:
   - Home: index.md
   - Getting Started: getting_started.md
   - User Guide:
-    - Local Compare: tool_modes.md
-    - Tool Modes: local_compare.md
+    - Using abicheck: usage_and_coverage.md
+    - Examples Breakage Guide: examples_breakage_guide.md
+    - Local Compare: local_compare.md
+    - Tool Modes: tool_modes.md
     - SARIF Output: sarif_output.md
   - Reference:
     - Gap Report: gap_report.md
     - libabigail Parity: libabigail_parity.md
-    - ABI Break Catalog: abi_breaking_cases_catalog_ru.md
+    - ABI Break Catalog: abi_breaking_cases_catalog.md
     - V2 Coverage Plan: v2_coverage_plan.md
   - Architecture:
     - ADR Index: adr/index.md
