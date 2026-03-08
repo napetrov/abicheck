@@ -47,8 +47,10 @@ abidiff without `--headers-dir` reads DWARF debug info compiled into the `.so` w
 It detects *that* something changed but classifies it as `COMPATIBLE` (exit=4) because
 it cannot determine binary impact without full header type info.
 
-With `--headers-dir` pointing to correct headers, abidiff would likely agree on BREAKING
-for most of these cases. **abicheck uses castxml → always gets full type info → correct verdict.**
+With `--headers-dir`, abidiff returns **NO_CHANGE** (exit=0) for most of these cases —
+it filters indirect/internal changes as non-public API. Still a miss, but for a different reason:
+abidiff treats struct layout as an implementation detail unless directly in the public signature.
+**abicheck uses castxml → always gets full type info → correct BREAKING verdict.**
 
 ## Why ABICC fails (9/14 cases)
 
