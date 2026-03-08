@@ -1,111 +1,112 @@
-# Testing coverage and usefulness
+# Testing strategy and coverage
 
-## Overall summary (current state)
+This document explains how `abicheck` is tested, why the current test layout exists,
+and where coverage expansion should go next.
 
-`abicheck` has a **useful and mature core test suite** for ABI-diff behavior, with strongest confidence in pure-Python comparison logic and report generation.
+## Testing strategy
 
-At the same time, coverage highlights a clear improvement area: code paths that orchestrate external tools (`cli.py`, `dumper.py`, deeper DWARF parsing paths) are less exercised than the core comparator.
+`abicheck` uses a **layered testing strategy**:
 
-In short:
+1. **Fast deterministic gate (unit/component)**
+   - Marker selection: `not integration and not libabigail`
+   - Purpose: protect core logic and user-facing behavior on every PR with low runtime cost.
+   - Includes checker logic, report serialization, suppression rules, CLI command behavior,
+     dumper orchestration via mocks, and DWARF helper edge cases.
 
-- **Regression safety for diff/classification logic is strong**.
-- **End-to-end tool orchestration confidence is moderate** and should be improved next.
+2. **Integration confidence layer**
+   - Marker selection: `integration`
+   - Purpose: validate real toolchain interactions (castxml, gcc/g++, ELF/DWARF parsing)
+     against realistic examples and negative scenarios.
+   - Includes end-to-end cases under `examples/`, ELF integration parsing, and failure-path
+     tests (bad ELF, broken headers, missing symbols).
 
-## Test status and test types
+3. **External parity layer**
+   - Marker selection: `libabigail`
+   - Purpose: compare selected behavior against `abidiff` to reduce semantic drift and
+     catch interpretation mismatches in ABI diagnostics.
 
-The repository uses three complementary test tiers:
+This split keeps PR feedback fast while retaining deeper compatibility checks in dedicated jobs.
 
-1. **Fast unit/component tests** (`pytest -m "not integration and not libabigail"`)
-   - Validate internal logic and data/report transformations.
-   - Intended as the primary CI gate for quick feedback.
+## Coverage model and CI gate
 
-2. **Integration tests** (`-m integration`)
-   - Build/compare example C/C++ cases and validate end-to-end ABI outcomes.
-   - Depend on system tools such as castxml and compilers.
+Coverage is measured for the `abicheck` package with branch coverage enabled.
+The fast CI gate enforces a threshold and publishes `coverage.xml` for inspection.
 
-3. **Parity tests** (`-m libabigail`)
-   - Compare selected behavior against `abidiff` expectations.
-   - Helps prevent semantic drift from industry-standard ABI checks.
-
-## Current baseline
-
-Measured locally with:
+Current CI command:
 
 ```bash
-pytest --cov=abicheck --cov-report=term-missing
+pytest tests/ -v --tb=short -m "not integration and not libabigail" \
+  --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=52
 ```
 
-Baseline snapshot:
+### Why this gate shape
 
-- **229 passed** (fast gate), **38 deselected** (integration/parity filtered).
-- **Total branch-aware coverage (fast CI gate): 55%**.
-- Strongly covered modules: `checker.py` (94%), `model.py` (91%), `suppression.py` (92%), `sarif.py` (94%).
-- Major coverage gaps: `dwarf_metadata.py` (15%) and deeper `dumper.py` internals (11%) / `dwarf_advanced.py` (35%).
-- **Phase 1 completed:** `cli.py` is now at **71%** with dedicated command tests.
+- Keeps gating stable and deterministic (no dependency on optional system tools).
+- Provides a practical signal for regressions in high-change code paths.
+- Leaves integration/parity variance to dedicated jobs where failures are easier to diagnose.
 
-## How good is the coverage?
+## Test components by responsibility
 
-Coverage quality is **good for core correctness**, but **not yet good enough for full-system confidence**:
+### 1) Core ABI diff semantics
+- Files like `tests/test_checker.py`, `tests/test_negative.py`.
+- Validates change classification and verdict priority (`BREAKING`, `COMPATIBLE`, etc.).
 
-- Good: high-signal modules that decide ABI verdicts are thoroughly tested.
-- Weak: user-entry flows and tool-integration paths are under-tested and can hide runtime integration bugs.
+### 2) Data model/reporting/serialization
+- Files like `tests/test_reporter.py`, `tests/test_sarif.py`, `tests/test_serialization.py`.
+- Ensures machine and human outputs remain stable and parseable.
 
-So the current ~55% should be interpreted as:
+### 3) CLI behavior and UX contracts
+- `tests/test_cli_phase1.py`.
+- Covers command success/failure flows, warning messages, output writing, and exit codes.
 
-- acceptable as a **tracked baseline**,
-- insufficient as a **long-term target**.
+### 4) Dumper orchestration contracts
+- `tests/test_dumper_phase1.py`.
+- Covers no-header fallback behavior, castxml/parser wiring, and error propagation.
 
-## Coverage setup in CI
+### 5) DWARF helper and parser edge cases
+- `tests/test_sprint3_dwarf.py`, `tests/test_sprint4_dwarf_advanced.py`,
+  `tests/test_phase3_dwarf_helpers.py`.
+- Covers nuanced DWARF forms (reference resolution, location decoding, packing/alignment,
+  calling conventions, helper fallback behavior).
 
-Coverage reporting is configured and enforced:
+### 6) Real-world integration and parity
+- `tests/test_abi_examples.py`, `tests/test_elf_parse_integration.py`,
+  `tests/test_integration_phase2_negative.py`, `tests/test_abidiff_parity.py`.
+- Exercises realistic binaries, toolchain outputs, and compatibility expectations.
 
-- `pyproject.toml` defines coverage scope (`source = ["abicheck"]`) and enables branch coverage.
-- Main CI test job runs pytest with coverage output (`term-missing` + `coverage.xml`).
-- CI enforces a floor (`--cov-fail-under=52`) and uploads `coverage.xml` as an artifact.
+## Extension roadmap (next improvements)
 
-## Plan to extend coverage
+The main strategy now is **depth over breadth**: extend tests where defects are most
+likely and costly.
 
-### Phase 1 (completed)
+1. **DWARF fixture corpus (high value)**
+   - Add curated binary fixtures (or generated test inputs) for tricky DWARF producer/output
+     variants (compiler versions, attribute forms, typedef nesting patterns).
+   - Goal: reduce parser regressions when toolchains differ.
 
-1. **CLI tests via `click.testing.CliRunner`**
-   - Cover `dump`, `compare`, `compat` happy paths and error paths.
-   - Validate exit codes, key user-facing messages, and option validation.
+2. **Dumper internals: cache/process paths**
+   - Expand tests around castxml cache key/path behavior and subprocess failure modes
+     (timeouts, malformed XML, partial outputs).
+   - Goal: increase resilience of snapshot generation in CI and local automation.
 
-2. **Dumper orchestration tests**
-   - Mock castxml/ELF adapters and subprocess boundaries.
-   - Cover success path, malformed tool output, missing binaries, and partial data handling.
+3. **CLI integration contracts**
+   - Add more command-level tests for multi-output formats and failure diagnostics in
+     `compare`/`compat` scenarios.
+   - Goal: keep user-facing behavior stable for CI consumers.
 
-3. **Raise floor incrementally after each merge**
-   - Ratchet started: **48 -> 52** (done), next targets **56 -> 60**.
+4. **Integration matrix enrichment**
+   - Add targeted C/C++ examples for edge ABI patterns not yet represented.
+   - Goal: improve confidence that algorithmic changes match real binary behavior.
 
-### Phase 2 (integration hardening)
+5. **Threshold ratchet policy**
+   - Raise `--cov-fail-under` only when sustained improvements are merged and stable.
+   - Keep ratchets incremental to avoid churn from unrelated PRs.
 
-4. Expand integration matrices across representative example cases (already present under `examples/`).
-   - CI now runs all `-m integration` tests (not only a single file), widening matrix coverage.
-5. Add negative integration scenarios (bad ELF, missing symbols, broken headers).
-   - Added explicit integration tests for these scenarios in `tests/test_integration_phase2_negative.py`.
+## Practical contributor workflow
 
-### Phase 3 (deeper DWARF confidence)
+1. Pick one under-tested surface (DWARF helper, dumper path, CLI branch).
+2. Add at least one happy-path and one failure-path test.
+3. Run lint + fast gate locally.
+4. If coverage meaningfully improves and remains stable, propose a small threshold bump.
 
-6. Add focused tests for DWARF metadata extraction edge cases and advanced attributes.
-   - Implemented in `tests/test_phase3_dwarf_helpers.py` (reference resolution, type-info recursion/cache, member-location decode, alignment resolution, calling-convention extraction, packed-struct detection).
-7. Add fixture-based regression tests for known tricky compiler outputs.
-   - Added helper-level fixture-style cases with synthetic DIE/attribute objects to lock behavior for tricky DWARF forms.
-
-## How to address coverage gaps practically
-
-Recommended workflow for contributors:
-
-1. **Pick one low-coverage module** (`cli.py` or `dumper.py`) per PR.
-2. Add tests first for at least one happy path and one failure path.
-3. Run local fast gate with coverage:
-
-   ```bash
-   pytest tests/ -v --tb=short -m "not integration and not libabigail" \
-     --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=52
-   ```
-
-4. If branch coverage improves, bump CI floor by a small step in the same PR.
-5. Keep integration/parity tests stable as semantic guardrails.
-
-This approach avoids disruptive jumps while continuously increasing real confidence.
+This keeps quality improvements continuous without making routine development fragile.
