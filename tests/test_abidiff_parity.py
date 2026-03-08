@@ -4,20 +4,19 @@ Verifies that abicheck and abidiff agree on ABI verdict for canonical
 C/C++ library change scenarios. Tests are compiled locally (requires gcc/g++)
 and compared with both tools.
 
-Two test classes:
-- test_confirmed_parity: both tools must agree (passing cases)
-- test_known_divergence: documents current gaps, passes while gap is stable
+Three test classes:
+- test_confirmed_parity: both tools agree on verdict (full parity).
+- test_abicheck_correct: abicheck detects the break; abidiff is conservative
+  without --headers-dir (G3 closed cases — abicheck is authoritative here).
+- test_known_divergence: intentional stable divergences (struct_size,
+  enum_value — abicheck stricter by design).
 
-Known divergences (documented, not failures):
-- Type-change cases (struct_size, return_type, param_type, vtable_reorder):
-  abicheck ELF-only mode cannot detect type changes without headers/DWARF;
-  abidiff reads DWARF debug info compiled into the .so with -g.
-- enum_value: abicheck is MORE conservative (BREAKING), abidiff says COMPATIBLE.
-  Our behavior is intentional — enum value changes break switch/serialization.
+G3 status: CLOSED (2026-03-08).
+  return_type, param_type → abicheck BREAKING (correct); abidiff COMPATIBLE
+  (conservative without --headers-dir). vtable_reorder → both BREAKING.
+  Parity score: 5/7 full (+ 2 abicheck-correct, 2 intentional divergences).
 
-G3 roadmap: close DWARF gaps in Sprint 7 by passing headers to dump().
-
-Requires: abidiff (libabigail-tools), gcc/g++.
+Requires: abidiff (libabigail-tools), gcc/g++, castxml.
 """
 from __future__ import annotations
 
@@ -30,26 +29,44 @@ from pathlib import Path
 import pytest
 
 # ---------------------------------------------------------------------------
-# Cases: (name, src_v1, src_v2, lang, abicheck_expected, abidiff_expected, is_divergence)
+# Cases:
+#   (name, src_v1, src_v2, hdr_v1, hdr_v2, lang,
+#    abicheck_expected, abidiff_expected, category)
+#
+# category values:
+#   "parity"    → both tools must agree (full parity)
+#   "correct"   → abicheck is authoritative; abidiff conservative (G3 closed)
+#   "divergence"→ intentional stable divergence
+#
+# hdr_v1 / hdr_v2:
+#   None → ELF-only mode (no castxml).
+#   str  → written to a temp .h file and passed to dump(headers=[...]).
 # ---------------------------------------------------------------------------
-PARITY_CASES: list[tuple[str, str, str, str, str, str, bool]] = [
+PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, str]] = [
     (
         "fn_removed",
         "int add(int a, int b) { return a + b; }\nint sub(int a, int b) { return a - b; }",
         "int add(int a, int b) { return a + b; }",
-        "c", "BREAKING", "BREAKING", False,
+        "int add(int a, int b);\nint sub(int a, int b);",
+        "int add(int a, int b);",
+        "c", "BREAKING", "BREAKING", "parity",
     ),
     (
         "fn_added",
         "int add(int a, int b) { return a + b; }",
         "int add(int a, int b) { return a + b; }\nint mul(int a, int b) { return a*b; }",
-        "c", "COMPATIBLE", "COMPATIBLE", False,
+        "int add(int a, int b);",
+        "int add(int a, int b);\nint mul(int a, int b);",
+        "c", "COMPATIBLE", "COMPATIBLE", "parity",
     ),
+    # ELF-only fallback: hdr=None explicitly guards the headers=[] code path.
     (
         "no_change",
         "int add(int a, int b) { return a + b; }",
         "int add(int a, int b) { return a + b; }",
-        "c", "NO_CHANGE", "NO_CHANGE", False,
+        None,
+        None,
+        "c", "NO_CHANGE", "NO_CHANGE", "parity",
     ),
     (
         "visibility_hidden",
@@ -57,34 +74,13 @@ PARITY_CASES: list[tuple[str, str, str, str, str, str, bool]] = [
         '__attribute__((visibility("default"))) int api()    { return helper(); }',
         '__attribute__((visibility("hidden")))  int helper() { return 1; }\n'
         '__attribute__((visibility("default"))) int api()    { return helper(); }',
-        "c", "BREAKING", "BREAKING", False,
+        '__attribute__((visibility("default"))) int helper();\n'
+        '__attribute__((visibility("default"))) int api();',
+        '__attribute__((visibility("hidden")))  int helper();\n'
+        '__attribute__((visibility("default"))) int api();',
+        "c", "BREAKING", "BREAKING", "parity",
     ),
-    # ── Known gaps: ELF-only cannot detect type-level changes ─────────────
-    # abicheck with castxml detects struct size → BREAKING.
-    # abidiff without --headers-dir: sub-type change → COMPATIBLE (exit=4).
-    # abicheck is stricter — intentional divergence.
-    (
-        "struct_size",
-        "typedef struct { int x; } Point;\n"
-        "Point make_point(int x) { Point p = {x}; return p; }",
-        "typedef struct { int x; int y; } Point;\n"
-        "Point make_point(int x) { Point p = {x, 0}; return p; }",
-        "c", "BREAKING", "COMPATIBLE", True,
-    ),
-    # abicheck ELF-only: same symbol name, no type info → NO_CHANGE.
-    # abidiff DWARF: sees sub-type drift → COMPATIBLE (exit=4, not BREAKING).
-    (
-        "return_type",
-        "int  get_val(void) { return 42; }",
-        "long get_val(void) { return 42; }",
-        "c", "NO_CHANGE", "COMPATIBLE", True,
-    ),
-    (
-        "param_type",
-        "void set_val(int x); void set_val(int x) {}",
-        "void set_val(long x); void set_val(long x) {}",
-        "c", "NO_CHANGE", "COMPATIBLE", True,
-    ),
+    # ── G3 CLOSED: vtable_reorder — both tools agree ──────────────────────
     (
         "vtable_reorder",
         "struct Base {\n"
@@ -97,18 +93,60 @@ PARITY_CASES: list[tuple[str, str, str, str, str, str, bool]] = [
         "  virtual int foo() { return 1; }\n"
         "  virtual ~Base() {}\n"
         "};\nBase* make() { return new Base(); }",
-        "cpp", "NO_CHANGE", "BREAKING", True,
+        "struct Base { virtual int foo(); virtual int bar(); virtual ~Base(); };\n"
+        "Base* make();",
+        "struct Base { virtual int bar(); virtual int foo(); virtual ~Base(); };\n"
+        "Base* make();",
+        "cpp", "BREAKING", "BREAKING", "parity",
     ),
-    # ── Intentional divergence: abicheck is more conservative ────────────
+    # ── G3 CLOSED: return_type — abicheck correct, abidiff conservative ───
+    # abidiff without --headers-dir sees only sub-type drift → COMPATIBLE.
+    # abicheck+castxml sees the actual return type change → BREAKING (correct).
+    (
+        "return_type",
+        "int  get_val(void) { return 42; }",
+        "long get_val(void) { return 42; }",
+        "int  get_val(void);",
+        "long get_val(void);",
+        "c", "BREAKING", "COMPATIBLE", "correct",
+    ),
+    # ── G3 CLOSED: param_type — same reasoning as return_type ────────────
+    (
+        "param_type",
+        "void set_val(int  x) {}",
+        "void set_val(long x) {}",
+        "void set_val(int  x);",
+        "void set_val(long x);",
+        "c", "BREAKING", "COMPATIBLE", "correct",
+    ),
+    # ── Intentional divergence: struct_size ──────────────────────────────
+    # abicheck BREAKING (correct). abidiff COMPATIBLE without --headers-dir.
+    (
+        "struct_size",
+        "typedef struct { int x; } Point;\n"
+        "Point make_point(int x) { Point p = {x}; return p; }",
+        "typedef struct { int x; int y; } Point;\n"
+        "Point make_point(int x) { Point p = {x, 0}; return p; }",
+        "typedef struct { int x; } Point;\nPoint make_point(int x);",
+        "typedef struct { int x; int y; } Point;\nPoint make_point(int x);",
+        "c", "BREAKING", "COMPATIBLE", "divergence",
+    ),
+    # ── Intentional divergence: enum_value (abicheck more conservative) ──
     (
         "enum_value",
         "typedef enum { RED=0, GREEN=1, BLUE=2 } Color;\n"
         "Color get_color(void) { return RED; }",
         "typedef enum { RED=0, GREEN=10, BLUE=2 } Color;\n"
         "Color get_color(void) { return RED; }",
-        "c", "BREAKING", "COMPATIBLE", True,
+        "typedef enum { RED=0, GREEN=1, BLUE=2 } Color;\nColor get_color(void);",
+        "typedef enum { RED=0, GREEN=10, BLUE=2 } Color;\nColor get_color(void);",
+        "c", "BREAKING", "COMPATIBLE", "divergence",
     ),
 ]
+
+_CONFIRMED  = [c for c in PARITY_CASES if c[8] == "parity"]
+_CORRECT    = [c for c in PARITY_CASES if c[8] == "correct"]
+_DIVERGE    = [c for c in PARITY_CASES if c[8] == "divergence"]
 
 
 # ---------------------------------------------------------------------------
@@ -132,14 +170,40 @@ def _compile_so(src: str, out: Path, lang: str) -> None:
         pytest.skip(f"Compilation failed: {r.stderr[:200]}")
 
 
-def _run_abicheck(old: Path, new: Path) -> str:
+def _run_abicheck(
+    old: Path,
+    new: Path,
+    hdr_v1: str | None,
+    hdr_v2: str | None,
+    lang: str,
+    tmp_path: Path,
+) -> str:
+    """Run abicheck with headers when available, ELF-only otherwise."""
     try:
         from abicheck.checker import compare
         from abicheck.dumper import dump
+
+        compiler = "cc" if lang == "c" else "c++"
+
+        if hdr_v1 is not None:
+            h1 = tmp_path / f"{old.stem}_hdr.h"
+            h1.write_text(textwrap.dedent(hdr_v1).strip(), encoding="utf-8")
+            headers_v1: list[Path] = [h1]
+        else:
+            headers_v1 = []
+
+        if hdr_v2 is not None:
+            h2 = tmp_path / f"{new.stem}_hdr.h"
+            h2.write_text(textwrap.dedent(hdr_v2).strip(), encoding="utf-8")
+            headers_v2: list[Path] = [h2]
+        else:
+            headers_v2 = []
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            old_snap = dump(old, headers=[], version="v1")
-            new_snap = dump(new, headers=[], version="v2")
+            old_snap = dump(old, headers=headers_v1, version="v1", compiler=compiler)
+            new_snap = dump(new, headers=headers_v2, version="v2", compiler=compiler)
+
         result = compare(old_snap, new_snap)
         return result.verdict.value
     except Exception as exc:  # noqa: BLE001
@@ -153,7 +217,6 @@ def _run_abidiff(old: Path, new: Path) -> str:
       bit 0 (1)  = error
       bit 2 (4)  = compatible changes present
       bit 3 (8)  = incompatible (breaking) changes present
-    Bit 3 takes priority when both bits 2 and 3 are set.
     """
     r = subprocess.run(
         ["abidiff", "--no-show-locs", str(old), str(new)],
@@ -171,69 +234,93 @@ def _run_abidiff(old: Path, new: Path) -> str:
     return "NO_CHANGE"
 
 
-# ---------------------------------------------------------------------------
-# Split into confirmed-parity and known-divergence sets
-# ---------------------------------------------------------------------------
-_CONFIRMED = [c for c in PARITY_CASES if not c[6]]
-_DIVERGE = [c for c in PARITY_CASES if c[6]]
-
-
-@pytest.mark.libabigail
-@pytest.mark.parametrize(
-    "name,src_v1,src_v2,lang,abicheck_exp,abidiff_exp,_",
-    _CONFIRMED, ids=[c[0] for c in _CONFIRMED],
-)
-def test_confirmed_parity(
-    name: str, src_v1: str, src_v2: str, lang: str,
-    abicheck_exp: str, abidiff_exp: str, _: bool, tmp_path: Path,
-) -> None:
-    """Both tools must agree on verdict — no acceptable divergence."""
+def _setup(
+    name: str, src_v1: str, src_v2: str,
+    hdr_v1: str | None, hdr_v2: str | None,
+    lang: str, tmp_path: Path,
+) -> tuple[str, str]:
+    """Compile .so files, run both tools, return (ac, ab)."""
     _require_tool("abidiff")
     _require_tool("gcc" if lang == "c" else "g++")
+    if hdr_v1 is not None or hdr_v2 is not None:
+        _require_tool("castxml")
 
     v1 = tmp_path / f"lib{name}_v1.so"
     v2 = tmp_path / f"lib{name}_v2.so"
     _compile_so(src_v1, v1, lang)
     _compile_so(src_v2, v2, lang)
 
-    ac = _run_abicheck(v1, v2)
+    ac = _run_abicheck(v1, v2, hdr_v1, hdr_v2, lang, tmp_path)
     ab = _run_abidiff(v1, v2)
+    return ac, ab
 
+
+# ---------------------------------------------------------------------------
+# Test classes
+# ---------------------------------------------------------------------------
+
+@pytest.mark.libabigail
+@pytest.mark.parametrize(
+    "name,src_v1,src_v2,hdr_v1,hdr_v2,lang,abicheck_exp,abidiff_exp,_",
+    _CONFIRMED, ids=[c[0] for c in _CONFIRMED],
+)
+def test_confirmed_parity(
+    name: str, src_v1: str, src_v2: str,
+    hdr_v1: str | None, hdr_v2: str | None, lang: str,
+    abicheck_exp: str, abidiff_exp: str, _: str, tmp_path: Path,
+) -> None:
+    """Both tools must agree on verdict — full parity enforced."""
+    ac, ab = _setup(name, src_v1, src_v2, hdr_v1, hdr_v2, lang, tmp_path)
     assert ac == abicheck_exp, f"abicheck: expected {abicheck_exp}, got {ac}"
-    assert ab == abidiff_exp, f"abidiff: expected {abidiff_exp}, got {ab}"
+    assert ab == abidiff_exp,  f"abidiff:  expected {abidiff_exp}, got {ab}"
     assert ac == ab, f"PARITY BROKEN: abicheck={ac}, abidiff={ab}"
 
 
 @pytest.mark.libabigail
 @pytest.mark.parametrize(
-    "name,src_v1,src_v2,lang,abicheck_exp,abidiff_exp,_",
+    "name,src_v1,src_v2,hdr_v1,hdr_v2,lang,abicheck_exp,abidiff_exp,_",
+    _CORRECT, ids=[c[0] for c in _CORRECT],
+)
+def test_abicheck_correct(
+    name: str, src_v1: str, src_v2: str,
+    hdr_v1: str | None, hdr_v2: str | None, lang: str,
+    abicheck_exp: str, abidiff_exp: str, _: str, tmp_path: Path,
+) -> None:
+    """G3 closed cases: abicheck detects the ABI break; abidiff is conservative.
+
+    abidiff without --headers-dir cannot see type-level changes and returns
+    COMPATIBLE. abicheck+castxml produces the correct BREAKING verdict.
+    These are NOT divergences — abicheck is authoritative here.
+    """
+    ac, ab = _setup(name, src_v1, src_v2, hdr_v1, hdr_v2, lang, tmp_path)
+    assert ac == abicheck_exp, f"abicheck: expected {abicheck_exp}, got {ac}"
+    assert ab == abidiff_exp,  f"abidiff:  expected {abidiff_exp}, got {ab}"
+    # Tools intentionally differ: abicheck BREAKING, abidiff COMPATIBLE.
+    # If abidiff also becomes BREAKING, this gap is fully closed.
+    if ac == ab:
+        pytest.fail(
+            f"Full parity achieved on '{name}' (both={ac}). "
+            "Move this case to _CONFIRMED."
+        )
+
+
+@pytest.mark.libabigail
+@pytest.mark.parametrize(
+    "name,src_v1,src_v2,hdr_v1,hdr_v2,lang,abicheck_exp,abidiff_exp,_",
     _DIVERGE, ids=[c[0] for c in _DIVERGE],
 )
 def test_known_divergence(
-    name: str, src_v1: str, src_v2: str, lang: str,
-    abicheck_exp: str, abidiff_exp: str, _: bool, tmp_path: Path,
+    name: str, src_v1: str, src_v2: str,
+    hdr_v1: str | None, hdr_v2: str | None, lang: str,
+    abicheck_exp: str, abidiff_exp: str, _: str, tmp_path: Path,
 ) -> None:
-    """Document current gaps. Fails when divergence pattern unexpectedly changes.
-
-    When a gap is closed (abicheck catches up to abidiff), update the
-    expected values in PARITY_CASES and move the case to _CONFIRMED.
-    """
-    _require_tool("abidiff")
-    _require_tool("gcc" if lang == "c" else "g++")
-
-    v1 = tmp_path / f"lib{name}_v1.so"
-    v2 = tmp_path / f"lib{name}_v2.so"
-    _compile_so(src_v1, v1, lang)
-    _compile_so(src_v2, v2, lang)
-
-    ac = _run_abicheck(v1, v2)
-    ab = _run_abidiff(v1, v2)
+    """Intentional stable divergences. Fails if pattern changes unexpectedly."""
+    ac, ab = _setup(name, src_v1, src_v2, hdr_v1, hdr_v2, lang, tmp_path)
 
     if ac == ab == abidiff_exp:
-        # Gap closed correctly: abicheck caught up to the authoritative abidiff verdict.
         pytest.fail(
             f"Gap closed on '{name}': abicheck now agrees with abidiff ({ac}). "
-            "Move this case to _CONFIRMED and remove the is_divergence flag."
+            "Move this case to _CONFIRMED and remove the divergence flag."
         )
 
     assert ac == abicheck_exp, (
