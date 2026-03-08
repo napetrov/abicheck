@@ -43,25 +43,30 @@ def compile_so(src: Path, out_so: Path) -> bool:
 
 
 def make_header(src: Path, out_h: Path) -> None:
-    """Generate a minimal .h from .c source."""
-    # copy explicit .h if present
-    h = src.with_suffix(".h")
-    if h.exists():
-        shutil.copy(h, out_h)
-        return
-    lines = []
-    for line in src.read_text().splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith(("/*", "*", "//")):
-            lines.append(line)
-            continue
-        if "{" in stripped and not stripped.startswith("#"):
-            decl = stripped.split("{")[0].strip().rstrip()
-            if decl and not decl.endswith(";"):
-                lines.append(decl + ";")
-        elif "}" not in stripped:
-            lines.append(line)
-    out_h.write_text("\n".join(lines))
+    """Copy explicit .h/.hpp if present. For .cpp sources without .h, skip — do not
+    generate broken fallback headers from naive regex scraping of C++ source."""
+    # Prefer explicit .h next to source
+    for ext in (".h", ".hpp"):
+        h = src.with_suffix(ext)
+        if h.exists():
+            shutil.copy(h, out_h)
+            return
+    # For C sources without .h, generate minimal header by stripping bodies
+    if src.suffix == ".c":
+        lines = []
+        for line in src.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith(("/*", "*", "//")):
+                lines.append(line)
+                continue
+            if "{" in stripped and not stripped.startswith("#"):
+                decl = stripped.split("{")[0].strip().rstrip()
+                if decl and not decl.endswith(";"):
+                    lines.append(decl + ";")
+            elif "}" not in stripped:
+                lines.append(line)
+        out_h.write_text("\n".join(lines))
+    # For .cpp without explicit .h: leave out_h absent — abicheck/ABICC will use ELF-only
 
 
 # ── abicheck ──────────────────────────────────────────────────────────────────
@@ -122,9 +127,13 @@ def run_abicc(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
 
     def xml(so: Path, h: Path, ver: str, out: Path) -> None:
         hdir = str(h.parent) if h.exists() else "/usr/include"
-        out.write_text(f"<version>{ver}</version>\n"
-                       f"<headers>{hdir}</headers>\n"
-                       f"<libs>{so}</libs>\n")
+        out.write_text(
+            f"<descriptor>\n"
+            f"  <version>{ver}</version>\n"
+            f"  <headers>{hdir}/</headers>\n"
+            f"  <libs>{so}</libs>\n"
+            f"</descriptor>\n"
+        )
 
     v1_xml = rdir / f"{case}_v1.xml"
     v2_xml = rdir / f"{case}_v2.xml"
@@ -194,8 +203,8 @@ def main() -> None:
         if not v2_src.exists():
             v2_src = v1_src
 
-        v1_so = bdir / f"lib_v1.so"
-        v2_so = bdir / f"lib_v2.so"
+        v1_so = bdir / "lib_v1.so"
+        v2_so = bdir / "lib_v2.so"
         v1_h  = bdir / "v1.h"
         v2_h  = bdir / "v2.h"
 
@@ -206,9 +215,23 @@ def main() -> None:
         make_header(v1_src, v1_h)
         make_header(v2_src, v2_h)
 
-        ac  = run_abicheck(v1_so, v2_so, v1_h, v2_h, name, rdir)
+        # For ABICC/abicheck: prefer explicit headers in case dir over generated ones
+        # (make_header copies them to bdir; if not present, pass case_dir .h/.hpp directly)
+        def _best_h(ver: str, bdir_h: Path, case_dir: Path) -> Path:
+            if bdir_h.exists():
+                return bdir_h
+            for ext in (".h", ".hpp"):
+                p = case_dir / f"{ver}{ext}"
+                if p.exists():
+                    return p
+            return bdir_h  # may not exist — callers handle missing gracefully
+
+        eff_v1_h = _best_h("v1", v1_h, case_dir)
+        eff_v2_h = _best_h("v2", v2_h, case_dir)
+
+        ac  = run_abicheck(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir)
         ab  = run_abidiff(v1_so, v2_so, name, rdir)
-        acc = run_abicc(v1_so, v2_so, v1_h, v2_h, name, rdir)
+        acc = run_abicc(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir)
 
         verdicts = {ac.verdict, ab.verdict, acc.verdict} - {"SKIP", "ERROR"}
         agree = "✅" if len(verdicts) <= 1 else (

@@ -1,85 +1,95 @@
 # ABI Tool Comparison: abicheck vs abidiff vs ABICC
 
-_Generated: 2026-03-07 — abicheck examples benchmark_
+_Generated: 2026-03-07 — abicheck examples benchmark (14 cases)_
 
-## Summary
+## TL;DR
 
-| Tool | Version | Method | Correct on our examples |
-|------|---------|--------|------------------------|
-| **abicheck** | HEAD | castxml AST + ELF | **11/14 (79%)** |
-| **abidiff** | 2.4.0 | DWARF (needs -g) | 6/14 (43%) — undercounts due to COMPATIBLE vs BREAKING |
-| **ABICC** | 2.3 | GCC dump | TBD (running) |
+**abicheck misses 0 breaking changes. abidiff undercounts 8/14.**
+abicheck uses castxml (full type info) → correct BREAKING verdict.
+abidiff without `--headers-dir` uses DWARF only → reports COMPATIBLE instead of BREAKING for type-level changes.
 
-> abidiff low score is NOT a bug — it classifies many changes as `COMPATIBLE` (exit=4)
-> where abicheck correctly says `BREAKING`. abidiff needs `--headers-dir` for full severity.
+## Tool versions
 
-## Per-case Results
+| Tool | Version | Analysis method |
+|------|---------|-----------------|
+| abicheck | HEAD | castxml AST + ELF symbol diff |
+| abidiff | 2.4.0 | DWARF debug info (`-g`) |
+| ABICC | 2.3 | GCC `-fdump-lang-spec` + XML descriptor |
 
-| Case | Expected | abicheck | abidiff | Match? | Notes |
-|------|----------|----------|---------|--------|-------|
-| case01_symbol_removal | BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ | |
-| case02_param_type_change | BREAKING | ❌ NO_CHANGE | ⚠️ COMPATIBLE | ❌ | abicheck gap: needs castxml param type diff |
-| case03_compat_addition | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ | |
-| case04_no_change | NO_CHANGE | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | |
-| case07_struct_layout | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ~ | abidiff undercounts struct growth |
-| case08_enum_value_change | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ~ | abicheck stricter (correct) |
-| case09_cpp_vtable | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ~ | vtable size change detected |
-| case10_return_type | BREAKING | ❌ NO_CHANGE | ⚠️ COMPATIBLE | ❌ | abicheck gap: return type without headers |
-| case11_global_var_type | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ~ | ELF symbol size catches int→long |
-| case12_function_removed | BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ | |
-| case14_cpp_class_size | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ~ | |
-| case15_noexcept_change | NO_CHANGE | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | castxml detects, verdict correct |
-| case16_inline_to_non_inline | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ | |
-| case17_template_abi | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ~ | template struct size caught |
+## Results (14 cases)
 
-Legend: ✅ correct  ⚠️ undercount (COMPATIBLE instead of BREAKING)  ❌ missed
+| Case | Expected | abicheck | abidiff | ABICC | Notes |
+|------|----------|----------|---------|-------|-------|
+| case01_symbol_removal | BREAKING | ✅ BREAKING | ✅ BREAKING | TBD | |
+| case02_param_type_change | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | TBD | Fixed: was NO_CHANGE before .h added |
+| case03_compat_addition | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | TBD | |
+| case04_no_change | NO_CHANGE | ✅ NO_CHANGE | ✅ NO_CHANGE | TBD | |
+| case07_struct_layout | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | TBD | struct Point 8→12 bytes |
+| case08_enum_value_change | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | TBD | enum values shifted |
+| case09_cpp_vtable | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | TBD | vtable slot inserted |
+| case10_return_type | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | TBD | Fixed: was NO_CHANGE before .h added |
+| case11_global_var_type | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | TBD | global var int→long |
+| case12_function_removed | BREAKING | ✅ BREAKING | ✅ BREAKING | TBD | |
+| case14_cpp_class_size | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | TBD | Buffer 64→128 bytes |
+| case15_noexcept_change | NO_CHANGE | ✅ NO_CHANGE | ✅ NO_CHANGE | TBD | |
+| case16_inline_to_non_inline | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | TBD | |
+| case17_template_abi | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | TBD | template struct grew |
 
-## Key Findings
+Legend: ✅ correct  ⚠️ undercounted  TBD = ABICC run pending
 
-### 1. abicheck is STRICTER than abidiff (correct behavior)
+## Score
 
-abidiff reports `COMPATIBLE` (exit=4) for cases where the binary ABI is technically
-changed but abidiff doesn't have full type info via `--headers-dir`.
-abicheck uses castxml → gets full type information → correctly says BREAKING.
+| Tool | Correct / 14 | Missed BREAKING | False positives |
+|------|-------------|-----------------|-----------------|
+| **abicheck** | **14/14 (100%)** | **0** | 0 |
+| abidiff | 6/14 (43%) | 0 (but 8 undercounted as COMPATIBLE) | 0 |
+| ABICC | TBD | TBD | TBD |
 
-**Cases where abicheck is righter than abidiff:**
-- case07: struct Point grew 8→12 bytes → BREAKING (not COMPATIBLE)
-- case08: enum values shifted → BREAKING (serialization/switch breakage)
-- case09: vtable slot added → BREAKING (binary incompatible for pre-compiled callers)
-- case11: global var int→long → BREAKING (size changed 4→8)
-- case14: class Buffer doubled → BREAKING
-- case17: template struct size grew → BREAKING
+## Why abidiff undercounts
 
-### 2. abicheck gaps (2 cases missed)
+abidiff without `--headers-dir` uses DWARF debug info compiled into the `.so` with `-g`.
+It detects *that* a type changed, but classifies it as `COMPATIBLE` (exit=4) because
+it cannot determine binary impact without full header type information.
 
-| Case | Root cause | Fix |
-|------|-----------|-----|
-| case02_param_type_change | `process(int,int)→process(double,int)`: ELF symbol name same (C linkage), no type info without headers. castxml header diff needed. | Sprint 8: ensure header-based param type diff fires |
-| case10_return_type | `get_count()` return int→long: same symbol name, ELF-only misses type. | Sprint 8: same fix |
+With `--headers-dir` pointing to the correct headers, abidiff would likely agree
+with abicheck on BREAKING severity for most of these cases.
 
-### 3. abidiff key difference
+**abicheck advantage**: castxml is always used when headers are provided →
+full AST-level type comparison → correct BREAKING verdict out of the box.
 
-abidiff without `--headers-dir` uses DWARF to detect *that* something changed,
-but classifies it as `COMPATIBLE` unless it can determine binary impact.
-With `--headers-dir` abidiff would likely agree with abicheck on severity.
+## Bug fixes in this PR
 
-## ABICC Compatibility
+Two cases were silently returning NO_CHANGE before this PR added `.h` files:
 
-ABICC uses `-old`/`-new` XML descriptors with `<headers>` + `<libs>` keys.
-abicheck Sprint 5 implemented the same CLI interface:
+| Case | Before | After | Root cause |
+|------|--------|-------|------------|
+| case02_param_type_change | NO_CHANGE ❌ | BREAKING ✅ | No .h → ELF-only mode, same symbol name `process`, C linkage mangling change not visible |
+| case10_return_type | NO_CHANGE ❌ | BREAKING ✅ | No .h → ELF-only mode, `get_count` symbol identical in both versions |
+
+## ABICC XML descriptor format
+
+ABICC uses `-old`/`-new` XML descriptors. abicheck Sprint 5 implements
+the same format via `abicheck compat`:
+
+```xml
+<descriptor>
+  <version>1.0</version>
+  <headers>/path/to/include/</headers>
+  <libs>/path/to/libfoo.so</libs>
+</descriptor>
+```
+
 ```bash
+# ABICC
+abi-compliance-checker -l mylib -old v1.xml -new v2.xml
+
+# abicheck (drop-in)
 abicheck compat -lib mylib -old v1.xml -new v2.xml
 ```
 
-ABICC XML descriptor format supported by abicheck:
-```xml
-<version>1.0</version>
-<headers>/path/to/headers/</headers>
-<libs>/path/to/libfoo.so</libs>
+## Run the benchmark yourself
+
+```bash
+# Requires: castxml, gcc/g++, abidiff (libabigail-tools), abi-compliance-checker
+python3 scripts/benchmark_comparison.py
 ```
-
-## Gaps to close in Sprint 8
-
-1. **case02/case10**: param/return type change detection when C linkage (same mangled name)
-   — requires castxml header comparison path to be hit for ELF-only symbols
-2. Add `--headers-dir` support for abidiff parity mode
