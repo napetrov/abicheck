@@ -4,7 +4,7 @@ All tests build AbiSnapshot objects directly (no castxml required).
 """
 from __future__ import annotations
 
-from abicheck.checker import ChangeKind, compare
+from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.model import (
     AbiSnapshot,
     EnumMember,
@@ -57,6 +57,7 @@ def test_enum_member_added() -> None:
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.ENUM_MEMBER_ADDED in kinds
+    assert result.verdict == Verdict.COMPATIBLE
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +140,7 @@ def test_union_field_added() -> None:
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.UNION_FIELD_ADDED in kinds
+    assert result.verdict == Verdict.COMPATIBLE
 
 
 def test_union_field_type_changed() -> None:
@@ -191,14 +193,12 @@ def test_sprint1_all_breaking() -> None:
     from abicheck.checker import _BREAKING_KINDS
     sprint1_kinds = {
         ChangeKind.ENUM_MEMBER_REMOVED,
-        ChangeKind.ENUM_MEMBER_ADDED,
         ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
         ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
         ChangeKind.FUNC_STATIC_CHANGED,
         ChangeKind.FUNC_CV_CHANGED,
         ChangeKind.FUNC_PURE_VIRTUAL_ADDED,
         ChangeKind.FUNC_VIRTUAL_BECAME_PURE,
-        ChangeKind.UNION_FIELD_ADDED,
         ChangeKind.UNION_FIELD_REMOVED,
         ChangeKind.UNION_FIELD_TYPE_CHANGED,
         ChangeKind.TYPEDEF_BASE_CHANGED,

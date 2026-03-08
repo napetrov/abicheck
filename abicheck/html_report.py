@@ -55,7 +55,6 @@ _ADDED_KINDS: frozenset[str] = frozenset({
 #: Kinds that are breaking but neither a simple removal nor addition.
 _CHANGED_BREAKING_KINDS: frozenset[str] = frozenset({
     "func_params_changed", "func_return_changed",
-    "func_noexcept_added", "func_noexcept_removed",
     "func_virtual_removed", "func_virtual_became_pure",
     "func_pure_virtual_added", "func_static_changed", "func_cv_changed",
     "var_type_changed",
@@ -68,17 +67,13 @@ _CHANGED_BREAKING_KINDS: frozenset[str] = frozenset({
     "struct_field_type_changed", "struct_alignment_changed",
     "field_bitfield_changed",
     "calling_convention_changed", "struct_packing_changed",
-    "type_visibility_changed",
     "func_visibility_changed",  # public→hidden: symbol removed from ABI
-    # qualifier_removed: not in canonical _BREAKING_KINDS
     "typedef_base_changed",
     "union_field_type_changed",
+    "type_visibility_changed",
     # ELF-layer
-    "soname_changed", "symbol_binding_changed", "symbol_type_changed",
+    "soname_changed", "symbol_type_changed",
     "symbol_size_changed", "symbol_version_defined_removed",
-    # needed_removed, rpath_changed, runpath_changed: compatible/warn in checker.py
-    "ifunc_introduced", "ifunc_removed",
-    # dwarf_info_missing: warning only (not breaking) per checker.py
 })
 
 #: Canonical breaking kinds imported from checker — single source of truth.

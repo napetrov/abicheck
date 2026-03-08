@@ -83,10 +83,11 @@ For full code walkthroughs and deep per-case narrative, see
     - Mitigation: use Pimpl to stabilize externally visible object layout.
 
 13. **case15_noexcept_change** — `noexcept` removed/changed.
-    - Risk: exception contract change, ABI/behavior mismatch.
-    - Type: semantic break (often poorly detected by ELF-only tools).
+    - Risk: source-level contract change; does NOT change Itanium ABI mangled name.
+    - Type: **compatible/warning** (not a binary ABI break — same symbol resolves).
+    - Verdict: COMPATIBLE.
     - Example: `examples/case15_noexcept_change/`
-    - Mitigation: treat `noexcept` as stable public contract.
+    - Mitigation: treat `noexcept` as stable public contract for source compatibility.
 
 14. **case16_inline_to_non_inline** — inline→non-inline (or reverse) with ODR effects.
     - Risk: multiple definitions, mixed TU behavior.
@@ -150,6 +151,99 @@ For full code walkthroughs and deep per-case narrative, see
     - Type: semantic compatibility break.
     - Example: `examples/case20_enum_member_value_changed/`
     - Mitigation: never renumber released enum constants.
+
+## 7) Additional detected changes and verdicts
+
+Beyond the core symbol/type/C++ checks above, abicheck detects a number of
+ELF-metadata, DWARF-diagnostic, and qualifier changes. Each is classified
+according to whether it causes a proven binary-level failure.
+
+### Compatible/warning changes
+
+These are detected and reported but do **not** trigger a BREAKING verdict
+because they do not cause binary linkage or layout failures on their own.
+
+25. **noexcept added/removed** — `noexcept` specifier changed on a function.
+    - Itanium ABI mangling does not change in practice — the same symbol resolves.
+    - Source-level concern only (C++17 function-pointer type mismatch).
+    - Verdict: COMPATIBLE.
+
+26. **Enum member added** — new enumerator appended to an existing enum.
+    - Existing compiled enum values are unchanged.
+    - Source-level concern (switch statement coverage).
+    - Value shifts (if any) are caught separately by `ENUM_MEMBER_VALUE_CHANGED`.
+    - Verdict: COMPATIBLE.
+
+27. **Union field added** — new field added to an existing union.
+    - All union fields share offset 0; existing fields are unaffected.
+    - Size increase (if any) is caught separately by `TYPE_SIZE_CHANGED`.
+    - Verdict: COMPATIBLE.
+
+28. **GLOBAL→WEAK symbol binding** — symbol weakened from `STB_GLOBAL` to `STB_WEAK`.
+    - Symbol is still exported and resolvable by the dynamic linker.
+    - Interposition semantics change but existing binaries continue to work.
+    - Verdict: COMPATIBLE.
+
+29. **GNU IFUNC introduced/removed** — symbol changed to/from `STT_GNU_IFUNC`.
+    - At the call-ABI level, IFUNC resolution is transparent to callers: the
+      PLT/GOT mechanism dispatches through the resolver without changing the
+      calling convention or symbol signature.
+    - However, this is only compatible when:
+      (a) the symbol's signature and versioning are preserved, and
+      (b) the deployment environment supports IFUNC and `R_*_IRELATIVE`
+      relocations (requires a recent dynamic loader, e.g., glibc ≥ 2.11;
+      musl added partial support in 1.1.0; some embedded/non-glibc runtimes
+      do not support IFUNC at all).
+    - On older loaders or non-glibc runtimes, an IFUNC symbol may fail to
+      resolve at load time.
+    - Verdict: COMPATIBLE (assuming modern glibc/musl toolchain; may break on
+      older or non-standard loaders).
+
+30. **New/removed DT_NEEDED dependency** — library gained or dropped a shared library dependency.
+    - Deployment/packaging concern; does not affect the library's exported symbol contract.
+    - Verdict: COMPATIBLE.
+
+31. **RPATH/RUNPATH changed** — library search path metadata changed.
+    - Operational concern; no effect on symbol contract or type layout.
+    - Verdict: COMPATIBLE.
+
+32. **Toolchain flag drift** — different compiler flags detected via `DW_AT_producer`.
+    - Informational diagnostic; not a proven binary break on its own.
+    - Verdict: COMPATIBLE.
+
+33. **DWARF info missing** — new binary lacks debug info.
+    - Coverage gap warning: struct/enum layout comparison was skipped.
+    - Not a break; indicates the comparison is incomplete.
+    - Verdict: COMPATIBLE.
+
+### Borderline changes classified as BREAKING
+
+These changes are less obvious than a removed symbol or shifted struct layout,
+but they can cause hard runtime failures in realistic deployments.
+
+34. **ELF st_size changed** — symbol size metadata changed in `.dynsym`.
+    - While `st_size` is not used for normal symbol resolution, it **is** used by
+      the dynamic linker for COPY relocations (`R_*_COPY`) to determine the number
+      of bytes to copy into the executable's BSS and to validate size consistency.
+      A size mismatch can cause truncated or over-copied data for COPY-relocated
+      globals.
+    - In ELF-only mode (no headers/DWARF) it may also be the **sole** signal for
+      vtable growth or variable type changes.
+    - Verdict: **BREAKING** (COPY relocation correctness and stripped-binary
+      false-negative avoidance).
+
+35. **New dependency version requirement** — library now requires e.g. `GLIBC_2.34`.
+    - Library fails to load on runtimes lacking the required version.
+    - Verdict: **BREAKING** (hard runtime failure on affected systems).
+
+36. **Typeinfo/vtable visibility changed** — visibility attribute changed on type metadata.
+    - Cross-DSO `dynamic_cast` and C++ exception matching can fail at runtime.
+    - Verdict: **BREAKING**.
+
+37. **Variable const qualifier added/removed** — global variable gained or lost `const`.
+    - Adding `const` moves variable to `.rodata`; existing writes cause SIGSEGV.
+    - Removing `const` is an ODR / inlining break (callers may have cached the value).
+    - Verdict: **BREAKING**.
 
 ---
 
