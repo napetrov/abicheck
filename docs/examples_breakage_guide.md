@@ -1,364 +1,527 @@
 # Full ABI/API breakage guide for `examples/case01..case24`
 
-This document explains every example case with practical detail:
+This guide is intentionally verbose. Every case includes:
 
-1. a **code-style example** of the change,
-2. a paragraph describing **why compatibility is broken**,
-3. a note on **how to avoid the break**.
-
-The examples are intentionally minimal and illustrative. They are not byte-for-byte copies
-of the repository files, but they mirror the exact compatibility pattern each case demonstrates.
+- a minimal **v1 vs v2** change snippet,
+- a **consumer-side example** showing how downstream code is affected,
+- a detailed explanation of **why** compatibility is broken,
+- practical mitigation strategies.
 
 ---
 
 ## case01_symbol_removal — exported symbol removed
 
 ```c
-/* v1 */
+/* lib v1 */
 int foo_init(void);
-/* v2 */
-/* removed */
+
+/* lib v2 */
+/* int foo_init(void); removed */
 ```
 
-When a previously exported symbol disappears, older binaries that were linked against that symbol
-still try to resolve it at runtime. The dynamic loader fails with `undefined symbol`, and the
-application may fail to start before `main()` executes. This is one of the clearest hard ABI
-breaks because the consumer binary itself was valid at build time but becomes unloadable against
-new library bits. Avoid this by keeping the old entry point as a wrapper (even if deprecated)
-or removing it only in a major release with SONAME bump and migration path.
+```c
+/* consumer (built against v1) */
+extern int foo_init(void);
+int main(void) { return foo_init(); }
+```
 
-## case02_param_type_change — function parameter type changed
+If `foo_init` is removed from the dynamic symbol table, the consumer binary still contains an import
+for that symbol and expects the loader to resolve it from the shared object. With v2 installed, symbol
+resolution fails before application logic starts, typically with `undefined symbol: foo_init`. This is
+a hard ABI break because the already-built consumer artifact becomes non-runnable without recompilation.
+
+To avoid this, keep the old symbol as a compatibility wrapper (possibly deprecated) and forward it to
+new implementation. Remove only in a major ABI line and bump SONAME so package managers and users can
+co-install or consciously migrate.
+
+## case02_param_type_change — parameter ABI changed
 
 ```c
-/* v1 */
+/* lib v1 */
 int parse_value(int x);
-/* v2 */
+
+/* lib v2 */
 int parse_value(long x);
 ```
 
-Changing parameter types changes the calling contract at ABI level: register width, stack layout,
-and argument classification can differ between `int` and `long` (especially cross-arch). Old callers
-pass one ABI shape while new callee expects another, which can yield corrupted inputs or undefined
-behavior. Even if source code recompiles cleanly, already-built downstream artifacts can misbehave.
-Safer evolution is to keep the old function and add `parse_value_v2(long x)`.
+```c
+/* consumer */
+extern int parse_value(int);
+int run(void) { return parse_value(42); }
+```
 
-## case03_compat_addition — compatible symbol addition
+Parameter type changes alter the call contract. Even when both types are integral, ABI rules may differ
+in width/sign extension/register class on different targets. An old caller compiled for `int` can pass
+bits that the new callee interprets as `long`, leading to value corruption or undefined behavior. The
+symbol name might stay “the same” in C, but call semantics are not.
+
+Safe evolution pattern: keep `parse_value(int)` and introduce `parse_value_v2(long)`. Route old API to
+new internals where possible, but preserve old symbol and signature for binary stability.
+
+## case03_compat_addition — additive symbol
 
 ```c
-/* v1 */
+/* lib v1 */
 int api_do_work(void);
-/* v2 */
+
+/* lib v2 */
 int api_do_work(void);
 int api_get_version(void); /* new */
 ```
 
-Adding a new symbol is usually backward-compatible because old consumers do not require it.
-Previously built binaries continue to find every symbol they used, and new functionality is opt-in.
-The compatibility risk here is policy-level, not immediate ABI failure: if additions expose unstable
-internals, future lock-in can happen. Keep additions namespaced/versioned and document stability
-status to avoid accidental contract expansion.
+```c
+/* old consumer */
+extern int api_do_work(void);
+```
 
-## case04_no_change — unchanged baseline
+Adding a new symbol usually does not break old consumers because they do not import it. Their original
+imports are still present and resolvable, so load-time and call-time behavior remains compatible.
+However, additions can still create long-term API surface commitments if they expose internals.
+
+Best practice is to mark stability level, document lifecycle, and ensure added APIs do not leak private
+layout types or unstable dependencies.
+
+## case04_no_change — baseline control
 
 ```c
-/* v1 and v2 */
+/* lib v1 */
+int stable_add(int a, int b);
+/* lib v2 */
 int stable_add(int a, int b);
 ```
 
-This case validates the tooling baseline and guards against false positives. No signature, layout,
-or export changes means both API and ABI should compare as unchanged. If this case ever reports
-breakage, your detection setup, headers, or build flags are inconsistent. Keep a no-change test
-in CI to continuously verify the checker itself and prevent noisy regressions in compatibility gates.
+```c
+/* consumer */
+extern int stable_add(int, int);
+```
 
-## case05_soname — SONAME policy regression
+No signature/layout/export changes means ABI should be identical. This case is important because it
+validates the checker pipeline itself: if “no change” reports breakage, either comparison inputs are
+mismatched (headers/flags/tool mode) or detection logic regressed.
+
+Keep this case in CI as a guardrail against false positives and noisy policy failures.
+
+## case05_soname — SONAME policy violation
 
 ```bash
-# good
+# good release line
 gcc -shared -Wl,-soname,libfoo.so.2 -o libfoo.so.2 foo.c
-# bad: SONAME missing or unchanged after ABI break
+
+# bad release line
+# ABI changed, but SONAME left as libfoo.so.1 (or omitted)
 ```
 
-SONAME is the loader-level contract for binary compatibility lines. If ABI breaks but SONAME is not
-updated, package managers and runtime linkers may silently substitute incompatible builds under the
-same logical dependency. This causes hard-to-debug production failures because deployment appears
-successful while runtime behavior is broken. Keep SONAME discipline strict: incompatible ABI change
-must produce a new SONAME, and package metadata should track it.
+```bash
+# consumer links to libfoo.so.1 in package metadata
+ldd app
+```
 
-## case06_visibility — internal symbol leakage
+SONAME communicates ABI lineage to loaders and package tools. If ABI changes but SONAME does not, the
+system can silently replace a previously compatible dependency with an incompatible one under the same
+name. Failures then appear at runtime and are often misdiagnosed as environment issues.
+
+Treat SONAME as mandatory release policy: incompatible ABI => SONAME bump + explicit migration notes.
+
+## case06_visibility — accidental export leak
 
 ```c
-/* intended internal */
-int helper_internal(int x);  /* accidentally exported */
+/* intended internal helper */
+int helper_internal(int x); /* accidentally exported in v1 */
 ```
 
-When internal functions leak into the export table, downstream users may start linking against them.
-At that moment they become de facto public ABI, even if never documented. Later refactors then break
-those accidental consumers and create compatibility pressure on implementation details. Use
-`-fvisibility=hidden` globally and explicit export annotations for true public API only.
+```c
+/* third-party consumer (undesired) */
+extern int helper_internal(int);
+```
 
-## case07_struct_layout — struct field/layout changed
+When internal functions leak into exports, external users may start linking against them. That turns
+implementation detail into de facto public ABI, even if undocumented. Removing or changing it later
+breaks those consumers and locks your internals.
+
+Use hidden visibility by default (`-fvisibility=hidden`) and explicitly export only supported public
+entry points with an API macro.
+
+## case07_struct_layout — public struct layout drift
 
 ```c
 /* v1 */
 struct Config { int a; int b; };
+
 /* v2 */
-struct Config { int a; long b; }; /* size/alignment changed */
+struct Config { int a; long b; };
 ```
 
-Public struct layout is part of ABI because callers allocate and access fields using compile-time
-offset assumptions. If size/alignment/offset changes, old code writes to wrong memory locations,
-triggering data corruption or crashes. This is especially dangerous for stack-passed structs and FFI.
-To avoid this, keep public structs stable or hide representation behind opaque pointers and versioned
-constructor/accessor APIs.
+```c
+/* consumer compiled with v1 header */
+struct Config c = {1, 2};
+lib_use_config(&c);
+```
 
-## case08_enum_value_change — enum numeric values changed
+Public struct layout is ABI: field offsets, total size, and alignment are baked into consumer codegen.
+If the library now reads `b` at a different offset/width, old callers pass memory in an outdated shape.
+That can corrupt adjacent memory or produce nonsense values, especially across FFI boundaries.
+
+Avoid by freezing public structs or hiding representation behind opaque handles and accessor functions.
+
+## case08_enum_value_change — semantic wire break
 
 ```c
 /* v1 */
 enum Mode { MODE_OFF = 0, MODE_ON = 1 };
+
 /* v2 */
 enum Mode { MODE_OFF = 1, MODE_ON = 2 };
 ```
 
-Even when type names are unchanged, numeric enum values are wire-level semantics. Persisted data,
-RPC payloads, switch statements, and external integrations may rely on exact numbers. Reassigning
-values turns valid old state into new meaning and causes silent logic corruption rather than obvious
-linker failures. Treat enum numbers as immutable once released; only append new members.
+```c
+/* consumer persisted old value 1 meaning MODE_ON */
+write_mode_to_disk(MODE_ON);
+```
 
-## case09_cpp_vtable — virtual interface changed
+Enum values are often protocol constants. Reassigning numbers changes semantics for persisted state,
+network payloads, and cross-service interoperability. The program may still compile and run, but logic
+silently diverges because “same name” maps to different integer meaning.
+
+Never renumber released enum constants; append new values only.
+
+## case09_cpp_vtable — virtual dispatch ABI break
 
 ```cpp
 // v1
-struct I { virtual void a(); virtual void b(); };
+struct I {
+  virtual void a();
+  virtual void b();
+};
+
 // v2
-struct I { virtual void b(); virtual void a(); }; // reordered
+struct I {
+  virtual void b();
+  virtual void a();
+};
 ```
 
-C++ virtual dispatch depends on stable vtable slot ordering/signatures. Reordering or changing
-virtual methods changes slot mapping, so an old binary call to `a()` can dispatch into `b()` or a
-different thunk in new library builds. This is a classic catastrophic C++ ABI break: code runs but
-calls wrong behavior. Preserve virtual ABI by freezing interface layout or introducing new interface
-versions (`I2`) instead of mutating old ones.
+```cpp
+// consumer compiled with v1 expectations
+I* p = get_iface();
+p->a();
+```
 
-## case10_return_type — return type changed
+Vtable slot ordering and signature thunks are part of C++ ABI. Reordering methods changes slot-to-
+method mapping; old binaries may call the wrong function through the same call site. This yields
+catastrophic semantic corruption without obvious linker errors.
+
+Freeze virtual interface ABI or introduce a new interface version (`I2`) instead of mutating v1.
+
+## case10_return_type — return ABI mismatch
 
 ```c
 /* v1 */
 int get_count(void);
+
 /* v2 */
 long get_count(void);
 ```
 
-Return type affects ABI-level return registers, sign extension, and caller expectations. An old
-caller compiled for `int` may interpret only part of a larger return, while a new callee writes a
-different shape. These mismatches can produce truncation or undefined behavior with no compile-time
-warning for already built clients. Keep old symbol and add a versioned alternative with explicit
-name change.
+```c
+/* consumer */
+extern int get_count(void);
+int x = get_count();
+```
 
-## case11_global_var_type — global variable type changed
+Return type impacts register usage and value interpretation at call boundary. Old caller expects `int`,
+new callee returns `long`; truncation/sign mismatch can occur and behavior becomes target-dependent.
+Source-level compatibility after rebuild does not protect already deployed binaries.
+
+Preserve old symbol and add `get_count_v2` with new type.
+
+## case11_global_var_type — exported global contract changed
 
 ```c
 /* v1 */
 extern int g_state;
+
 /* v2 */
 extern long g_state;
 ```
 
-Public globals are ABI surface too: size, alignment, and access codegen are fixed in consumers.
-Changing type of an exported variable means old code reads/writes with the wrong width and memory
-assumptions. The result can be silent memory clobbering near adjacent globals. Prefer accessor
-functions over mutable exported globals, and treat existing globals as frozen contracts.
+```c
+/* consumer */
+extern int g_state;
+int snapshot = g_state;
+```
 
-## case12_function_removed — public function removed
+Global variables are ABI surface. Consumer load/store width and relocation assumptions are compiled in.
+Changing variable type can cause partial writes/reads or neighboring memory corruption.
+
+Prefer getter/setter API and keep existing exported globals immutable in type and semantics.
+
+## case12_function_removed — hard symbol break
 
 ```c
 /* v1 */
 int run_task(int id);
+
 /* v2 */
 /* removed */
 ```
 
-Removing a function symbol is equivalent to removing any required import from consumer binaries.
-Existing applications fail symbol resolution immediately when loaded with new library version.
-Unlike source-level changes, downstream teams may not recompile right away, so this causes direct
-runtime outages. Deprecate first, keep a forwarding stub, and remove only in a planned ABI-major cut.
-
-## case13_symbol_versioning — symbol version map regression
-
-```map
-# v1 map
-LIBFOO_1.0 { global: api_*; local: *; };
-# v2 bad: map removed or changed incompatibly
+```c
+/* consumer */
+extern int run_task(int);
 ```
 
-Symbol versioning distinguishes ABI generations for identical names and enables controlled upgrades.
-If version scripts are removed or regressed, loaders can no longer resolve intended versions cleanly,
-especially across distro backports or mixed dependency trees. This causes subtle runtime resolution
-issues that are painful to debug. Keep version scripts in source control and validate exported
-versions in CI.
+This is equivalent to case01 at policy level: import remains in old consumer binary, export is gone in
+new library, loader fails. Runtime outage risk is high because users can hit breakage simply by package
+upgrade, without changing their code.
 
-## case14_cpp_class_size — C++ class object size changed
+Use deprecation windows and SONAME-major removal policy.
+
+## case13_symbol_versioning — version-script regression
+
+```map
+# v1
+LIBFOO_1.0 { global: api_*; local: *; };
+
+# v2 (bad)
+# script removed / version tags changed incompatibly
+```
+
+```bash
+readelf --version-info libfoo.so
+```
+
+Symbol version tags disambiguate ABI generations and improve compatibility in mixed environments.
+Regressing the map can cause incorrect symbol binding across distro backports or plugin ecosystems.
+Failures may be subtle and environment-specific, making them expensive to debug.
+
+Keep version scripts under strict CI checks and treat changes as ABI governance events.
+
+## case14_cpp_class_size — object layout size break
 
 ```cpp
 // v1
 class Obj { int x; };
+
 // v2
-class Obj { int x; int y; }; // sizeof changed
+class Obj { int x; int y; };
 ```
 
-For by-value usage, embedded members, allocators, and placement new patterns, object size is ABI
-critical. Old code allocates `sizeof(v1::Obj)` while new library may expect larger object layout,
-leading to overwrites and corruption. This often appears as random crashes far from call sites.
-Use Pimpl for public classes to keep externally visible object size constant across releases.
+```cpp
+// consumer stack/heap allocation assumes v1 sizeof(Obj)
+Obj o;
+lib_accept_obj(&o);
+```
 
-## case15_noexcept_change — exception contract changed
+For public classes, object size and field offsets are ABI. If a newer library expects larger layout,
+old allocations can be too small, causing writes beyond boundaries. Crashes may appear far from origin.
+
+Use Pimpl to keep public object footprint stable.
+
+## case15_noexcept_change — behavioral ABI contract change
 
 ```cpp
 // v1
 int process() noexcept;
+
 // v2
 int process();
 ```
 
-In C++, `noexcept` is part of the function type/signature model and affects optimization and
-behavioral guarantees. Mixed old/new object sets can disagree on exception behavior, potentially
-triggering termination paths or violating caller assumptions in generic code. Some binary tools miss
-this because it is semantic rather than simple symbol presence. Treat `noexcept` as stable API/ABI
-contract and evolve through new symbols when needed.
+```cpp
+// consumer generic code assumes noexcept contract
+static_assert(noexcept(process()));
+```
 
-## case16_inline_to_non_inline — inline/ODR behavior changed
+`noexcept` participates in function type semantics and influences optimization/error handling behavior.
+Mixed object sets built with different assumptions can diverge in exception paths (including terminate).
+This may evade symbol-only checks but still break real-world behavior contracts.
+
+Treat `noexcept` as stable API commitment; evolve via new API version.
+
+## case16_inline_to_non_inline — ODR/export behavior drift
 
 ```cpp
 // v1 header
 inline int mul2(int x) { return x * 2; }
-// v2
-int mul2(int x); // moved out-of-line
+
+// v2 header
+int mul2(int x); // now out-of-line
 ```
 
-Switching inline strategy changes where code is emitted and how ODR/linking behaves across
-translation units compiled at different times. Old consumers may have inlined old behavior while new
-ones call exported symbol, creating mixed semantics in one process. In some transitions, you also
-introduce/remove required dynamic symbols unexpectedly. Keep inline policy stable for public headers
-or version such changes explicitly.
+```cpp
+// old TU inlined old body; new TU links to symbol
+```
 
-## case17_template_abi — template instantiation ABI drift
+Inline policy changes can create mixed semantics across translation units built at different times.
+Some code paths embed old logic, others call new shared implementation. Depending on transition,
+dynamic symbol set can also appear/disappear unexpectedly.
+
+Keep public inline behavior stable, or version the API explicitly.
+
+## case17_template_abi — instantiated layout mismatch
 
 ```cpp
 // v1
 template<class T> struct Box { T v; int tag; };
+
 // v2
 template<class T> struct Box { T v; long tag; };
 ```
 
-Template types instantiate into concrete layouts in consumer translation units. Changing template
-layout means independently compiled modules disagree about object representation for the same source
-name, causing cross-module corruption and ODR-like failures. This is common in header-only APIs.
-Avoid exposing unstable templates in ABI boundaries; hide them behind non-template façade types.
-
-## case18_dependency_leak — third-party type leaks into public API
-
 ```cpp
-// public header
-#include <thirdparty/task_arena.hpp>
-struct ApiCfg { thirdparty::Arena arena; }; // leaked dependency type
+// module A and B compiled against different headers exchange Box<int>
 ```
 
-If public API embeds a third-party type, your ABI now depends on that external library's private
-layout/version policy. Upgrading the dependency can break your consumers even when your own `.so`
-binary is unchanged, because callers compile different structure definitions. This is a transitive
-ABI break and a common enterprise packaging trap. Use opaque boundaries and internal adapters to keep
-third-party ABI out of your public headers.
+Templates instantiate in user code, so layout changes propagate into every downstream build. Different
+modules can disagree on representation for the same nominal type, causing corruption during boundary
+crossing and serialization.
 
-## case19_enum_member_removed — enum member removed
+Avoid exposing unstable templates in ABI boundaries; provide non-template stable façade.
+
+## case18_dependency_leak — transitive ABI dependency exposure
+
+```cpp
+// public API header
+#include <thirdparty/task_arena.hpp>
+struct ApiCfg { thirdparty::Arena arena; };
+```
+
+```cpp
+// consumer and library built against different third-party versions
+```
+
+If public API embeds third-party types, your ABI is now coupled to another project's layout/versioning.
+A third-party upgrade can break your consumers even when your own symbols are unchanged. This is a
+common enterprise break pattern during distro refreshes.
+
+Hide third-party types behind opaque wrappers and stable project-owned DTOs.
+
+## case19_enum_member_removed — removed semantic state
 
 ```c
 /* v1 */
 enum Level { LOW=0, MED=1, HIGH=2 };
+
 /* v2 */
-enum Level { LOW=0, HIGH=2 }; // MED removed
+enum Level { LOW=0, HIGH=2 };
 ```
 
-Removing enum members breaks compatibility with persisted values, logs, protocol fields, and old
-switch statements that still produce/use removed constants. Even if binaries load, semantic mapping
-becomes incomplete and behavior may diverge silently. Keep historical enum members, mark them
-deprecated, and document replacement behavior rather than deleting values.
+```c
+// old data contains MED=1
+```
 
-## case20_enum_member_value_changed — enum member numeric reassigned
+Removing enum members invalidates historical persisted/protocol values and old branch logic.
+Runtime may still proceed, but state decoding becomes incomplete and behavior undefined by policy.
+
+Keep historical values, deprecate in docs, and map legacy meaning deliberately.
+
+## case20_enum_member_value_changed — value remap incompatibility
 
 ```c
 /* v1 */
 enum Status { OK=0, FAIL=1 };
+
 /* v2 */
 enum Status { OK=1, FAIL=2 };
 ```
 
-Reassigning existing enum numbers is equivalent to changing protocol constants in place.
-Downstream components serialized with old values decode into wrong states under new headers/binaries,
-causing cross-version interoperability failure. This is especially severe for network/storage formats.
-Keep numeric assignments stable forever and introduce new names for new semantics.
+```c
+// remote peer sends 1 expecting FAIL, receiver treats as OK in changed mapping
+```
 
-## case21_method_became_static — instance method changed to static
+Numeric remapping is effectively protocol rewrite without version negotiation. Old/new components can
+exchange the same integer and interpret opposite semantics.
+
+Never reassign released numbers; add new constants and introduce explicit protocol versioning.
+
+## case21_method_became_static — member ABI identity changed
 
 ```cpp
 // v1
 struct S { int calc(int x) const; };
+
 // v2
 struct S { static int calc(int x); };
 ```
 
-Instance vs static methods are ABI-distinct in C++: implicit `this` parameter presence and mangled
-name differ. Old callers emit calls expecting member-function ABI, but new library provides a
-different symbol/call shape. This breaks linking and/or invocation expectations. Keep old method and
-add static helper under a new name.
+```cpp
+// old consumer emits member call ABI with implicit this
+S s; s.calc(7);
+```
 
-## case22_method_const_changed — member const qualifier changed
+Static and instance methods have different mangling and call conventions (presence of implicit `this`).
+Changing in place replaces one ABI endpoint with another. Old binaries fail to bind or invoke correctly.
+
+Add static helper under new name; preserve old member API.
+
+## case22_method_const_changed — mangled symbol changed
 
 ```cpp
 // v1
 struct S { int size() const; };
+
 // v2
 struct S { int size(); };
 ```
 
-`const` qualification on member methods is encoded in C++ symbol identity and overload sets.
-Changing it in place replaces one symbol with another, so old binaries can no longer resolve the
-original mangled entry point. It can also alter overload resolution in source consumers. Preserve old
-qualified method and add a new overload or differently named API.
+```cpp
+// consumer compiled against const-qualified member symbol
+```
 
-## case23_pure_virtual_added — new pure virtual method added
+Const qualification is part of C++ member function type and symbol identity. Changing it replaces the
+old mangled symbol; existing binaries expecting const-qualified entry point cannot resolve new one.
+It may also alter overload behavior for rebuilt source consumers.
+
+Keep old method and add overload/new API variant.
+
+## case23_pure_virtual_added — interface contract expansion break
 
 ```cpp
 // v1
 struct IFace { virtual void run() = 0; };
+
 // v2
 struct IFace { virtual void run() = 0; virtual void stop() = 0; };
 ```
 
-Adding a pure virtual method changes vtable shape and instantly breaks all existing derived classes
-compiled against old interface: they do not implement new slot and may become abstract or dispatch
-incorrectly. This is one of the highest-impact C++ ABI changes in plugin ecosystems. Introduce a new
-interface version (`IFace2`) and keep original interface frozen.
+```cpp
+// old plugin class implements only run()
+struct Plugin : IFace { void run() override; };
+```
 
-## case24_union_field_removed — union field removed
+Adding pure virtual methods changes required interface and vtable shape. Existing implementations are
+no longer complete for new base contract and can fail to instantiate or dispatch safely.
+
+Create `IFace2` and keep original interface stable for existing plugins.
+
+## case24_union_field_removed — representation set reduced
 
 ```c
 /* v1 */
 union Value { int i; float f; };
+
 /* v2 */
-union Value { int i; }; // f removed
+union Value { int i; };
 ```
 
-Union members define valid interpretations of shared storage. Removing a field changes what old code
-can legally read/write and may invalidate serialized or exchanged data assumptions. Even when union
-size stays equal, semantic ABI is broken because one representation disappears. Keep union contracts
-stable or replace with a new versioned type and explicit conversion path.
+```c
+// consumer stores float path
+union Value v; v.f = 1.5f;
+lib_consume(v);
+```
+
+Union fields define valid interpretations of shared storage. Removing one field removes a supported
+representation and can invalidate persisted/exchanged data and branch logic relying on that variant.
+Even if size stays constant, semantic compatibility is broken.
+
+Prefer versioned replacement unions/structs plus explicit conversion rules.
 
 ---
 
-## Global compatibility practices
+## Global compatibility rules
 
-- Treat public headers as ABI contracts, not implementation convenience.
-- Use SONAME + symbol versioning + visibility controls as mandatory release gates.
-- Prefer opaque handles/Pimpl over exposing mutable layouts.
-- Evolve via additive, versioned APIs; avoid in-place mutations of released contracts.
-- Run these example patterns in CI as a required ABI regression suite.
+1. Treat public headers as ABI contracts.
+2. Use SONAME + symbol versioning + visibility policy on every release.
+3. Prefer opaque handles/Pimpl to avoid exposing mutable layouts.
+4. Evolve with additive/versioned APIs, not in-place mutation.
+5. Keep these cases in CI as mandatory ABI regression checks.
