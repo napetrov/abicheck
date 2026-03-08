@@ -81,6 +81,11 @@ class SuppressionList:
         self._suppressions = suppressions
 
     @classmethod
+    def merge(cls, a: SuppressionList, b: SuppressionList) -> SuppressionList:
+        """Return a new SuppressionList combining rules from both lists."""
+        return cls(suppressions=[*a._suppressions, *b._suppressions])
+
+    @classmethod
     def load(cls, path: Path) -> SuppressionList:
         """Load suppression rules from a YAML file.
 
