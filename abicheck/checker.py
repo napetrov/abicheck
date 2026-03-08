@@ -70,40 +70,40 @@ class ChangeKind(str, Enum):
 
     # ── ELF-only (Sprint 2) ──────────────────────────────────────────────
     # Dynamic section contract
-    SONAME_CHANGED           = "soname_changed"
-    NEEDED_ADDED             = "needed_added"            # new DT_NEEDED dep
-    NEEDED_REMOVED           = "needed_removed"          # dep dropped
-    RPATH_CHANGED            = "rpath_changed"
-    RUNPATH_CHANGED          = "runpath_changed"
+    SONAME_CHANGED = "soname_changed"
+    NEEDED_ADDED = "needed_added"            # new DT_NEEDED dep
+    NEEDED_REMOVED = "needed_removed"          # dep dropped
+    RPATH_CHANGED = "rpath_changed"
+    RUNPATH_CHANGED = "runpath_changed"
 
     # Symbol metadata drift (ELF .dynsym)
-    SYMBOL_BINDING_CHANGED      = "symbol_binding_changed"      # GLOBAL→WEAK (breaking)
+    SYMBOL_BINDING_CHANGED = "symbol_binding_changed"      # GLOBAL→WEAK (breaking)
     SYMBOL_BINDING_STRENGTHENED = "symbol_binding_strengthened"  # WEAK→GLOBAL (compatible)
-    SYMBOL_TYPE_CHANGED      = "symbol_type_changed"     # FUNC→OBJECT, etc.
-    SYMBOL_SIZE_CHANGED      = "symbol_size_changed"     # st_size changed
-    IFUNC_INTRODUCED         = "ifunc_introduced"        # → STT_GNU_IFUNC
-    IFUNC_REMOVED            = "ifunc_removed"           # STT_GNU_IFUNC →
-    COMMON_SYMBOL_RISK       = "common_symbol_risk"      # STT_COMMON exported
+    SYMBOL_TYPE_CHANGED = "symbol_type_changed"     # FUNC→OBJECT, etc.
+    SYMBOL_SIZE_CHANGED = "symbol_size_changed"     # st_size changed
+    IFUNC_INTRODUCED = "ifunc_introduced"        # → STT_GNU_IFUNC
+    IFUNC_REMOVED = "ifunc_removed"           # STT_GNU_IFUNC →
+    COMMON_SYMBOL_RISK = "common_symbol_risk"      # STT_COMMON exported
 
     # Symbol versioning contract
-    SYMBOL_VERSION_DEFINED_REMOVED   = "symbol_version_defined_removed"
-    SYMBOL_VERSION_REQUIRED_ADDED    = "symbol_version_required_added"   # new GLIBC_X
-    SYMBOL_VERSION_REQUIRED_REMOVED  = "symbol_version_required_removed"
+    SYMBOL_VERSION_DEFINED_REMOVED = "symbol_version_defined_removed"
+    SYMBOL_VERSION_REQUIRED_ADDED = "symbol_version_required_added"   # new GLIBC_X
+    SYMBOL_VERSION_REQUIRED_REMOVED = "symbol_version_required_removed"
 
     # DWARF layout (Sprint 3)
-    DWARF_INFO_MISSING         = "dwarf_info_missing"         # new binary stripped of -g
-    STRUCT_SIZE_CHANGED        = "struct_size_changed"        # sizeof(T) changed
+    DWARF_INFO_MISSING = "dwarf_info_missing"         # new binary stripped of -g
+    STRUCT_SIZE_CHANGED = "struct_size_changed"        # sizeof(T) changed
     STRUCT_FIELD_OFFSET_CHANGED = "struct_field_offset_changed" # field moved
-    STRUCT_FIELD_REMOVED       = "struct_field_removed"       # field deleted
-    STRUCT_FIELD_TYPE_CHANGED  = "struct_field_type_changed"  # field type/size changed
-    STRUCT_ALIGNMENT_CHANGED   = "struct_alignment_changed"   # alignof(T) changed
+    STRUCT_FIELD_REMOVED = "struct_field_removed"       # field deleted
+    STRUCT_FIELD_TYPE_CHANGED = "struct_field_type_changed"  # field type/size changed
+    STRUCT_ALIGNMENT_CHANGED = "struct_alignment_changed"   # alignof(T) changed
     ENUM_UNDERLYING_SIZE_CHANGED = "enum_underlying_size_changed"  # int→long
 
     # DWARF advanced (Sprint 4)
     CALLING_CONVENTION_CHANGED = "calling_convention_changed"   # DW_AT_calling_convention drift
-    STRUCT_PACKING_CHANGED     = "struct_packing_changed"       # __attribute__((packed)) added/removed
-    TYPE_VISIBILITY_CHANGED    = "type_visibility_changed"      # typeinfo/vtable visibility changed
-    TOOLCHAIN_FLAG_DRIFT       = "toolchain_flag_drift"         # -fshort-enums/-fpack-struct drift
+    STRUCT_PACKING_CHANGED = "struct_packing_changed"       # __attribute__((packed)) added/removed
+    TYPE_VISIBILITY_CHANGED = "type_visibility_changed"      # typeinfo/vtable visibility changed
+    TOOLCHAIN_FLAG_DRIFT = "toolchain_flag_drift"         # -fshort-enums/-fpack-struct drift
 
 
 class Verdict(str, Enum):
@@ -585,7 +585,7 @@ def _diff_method_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     old_mangles = set(old_by_mangled)
     new_mangles = set(new_by_mangled)
     removed_funcs = [old_by_mangled[m] for m in (old_mangles - new_mangles)]
-    added_funcs   = [new_by_mangled[m] for m in (new_mangles - old_mangles)]
+    added_funcs = [new_by_mangled[m] for m in (new_mangles - old_mangles)]
 
     # Build sig-keyed lookup over newly-added functions
     added_by_sig: dict[tuple[str, tuple[str, ...]], Function] = {}
@@ -1144,9 +1144,9 @@ def _diff_advanced_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
     _kind_map = {
         "calling_convention_changed": ChangeKind.CALLING_CONVENTION_CHANGED,
-        "struct_packing_changed":     ChangeKind.STRUCT_PACKING_CHANGED,
-        "toolchain_flag_drift":       ChangeKind.TOOLCHAIN_FLAG_DRIFT,
-        "type_visibility_changed":    ChangeKind.TYPE_VISIBILITY_CHANGED,
+        "struct_packing_changed": ChangeKind.STRUCT_PACKING_CHANGED,
+        "toolchain_flag_drift": ChangeKind.TOOLCHAIN_FLAG_DRIFT,
+        "type_visibility_changed": ChangeKind.TYPE_VISIBILITY_CHANGED,
     }
 
     return [

@@ -175,7 +175,7 @@ def _run_abidiff(old: Path, new: Path) -> str:
 # Split into confirmed-parity and known-divergence sets
 # ---------------------------------------------------------------------------
 _CONFIRMED = [c for c in PARITY_CASES if not c[6]]
-_DIVERGE   = [c for c in PARITY_CASES if c[6]]
+_DIVERGE = [c for c in PARITY_CASES if c[6]]
 
 
 @pytest.mark.libabigail
@@ -200,7 +200,7 @@ def test_confirmed_parity(
     ab = _run_abidiff(v1, v2)
 
     assert ac == abicheck_exp, f"abicheck: expected {abicheck_exp}, got {ac}"
-    assert ab == abidiff_exp,  f"abidiff: expected {abidiff_exp}, got {ab}"
+    assert ab == abidiff_exp, f"abidiff: expected {abidiff_exp}, got {ab}"
     assert ac == ab, f"PARITY BROKEN: abicheck={ac}, abidiff={ab}"
 
 
