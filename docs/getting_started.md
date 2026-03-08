@@ -1,12 +1,18 @@
 # Getting Started
 
+## Requirements
+
+- Python 3.10+
+- `castxml` (required for header-based API/ABI parsing)
+- C/C++ toolchain (`g++` or `clang++`) for realistic header parsing context
+
 ## Installation
 
 ```bash
 pip install abicheck
 ```
 
-System dependencies (for header analysis):
+System dependencies:
 
 ```bash
 # Ubuntu/Debian
@@ -16,7 +22,7 @@ sudo apt-get install castxml
 brew install castxml
 ```
 
-## Basic workflow
+## Quick workflow
 
 ### 1. Dump ABI snapshots
 
@@ -25,24 +31,27 @@ abicheck dump libfoo.so.1 -H include/foo.h --version 1.0 -o libfoo-1.0.json
 abicheck dump libfoo.so.2 -H include/foo.h --version 2.0 -o libfoo-2.0.json
 ```
 
-### 2. Compare
+### 2. Compare snapshots
 
 ```bash
 # Markdown report (default)
 abicheck compare libfoo-1.0.json libfoo-2.0.json
 
-# JSON
-abicheck compare libfoo-1.0.json libfoo-2.0.json --format json
+# JSON report
+abicheck compare libfoo-1.0.json libfoo-2.0.json --format json -o results.json
 
-# SARIF (GitHub Code Scanning)
+# SARIF report (GitHub Code Scanning)
 abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o results.sarif
 ```
 
-### 3. ABICC-compatible mode
+### 3. ABICC-compatible mode (drop-in migration)
 
 ```bash
 abicheck compat -lib foo -old foo-1.0.xml -new foo-2.0.xml
 ```
+
+For a deeper walkthrough (drop-in ABICC usage, breakage matrix, and architecture),
+see [Using abicheck, Compatibility Modes, and Coverage](usage_and_coverage.md).
 
 ## Python API
 

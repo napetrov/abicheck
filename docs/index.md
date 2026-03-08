@@ -1,8 +1,19 @@
 # abicheck
 
-**ABI compatibility checker for shared libraries.**
+**abicheck checks C/C++ library compatibility at both API and ABI levels.**
 
-Drop-in replacement for [ABICC](https://lvc.github.io/abi-compliance-checker/) with modern Python API, JSON/SARIF output, and GitHub Actions integration.
+It is designed as a drop-in replacement for
+[ABI Compliance Checker (ABICC)](https://lvc.github.io/abi-compliance-checker/),
+with modern CLI ergonomics, Python integration, and machine-readable reports.
+
+This project is inspired by:
+
+- [libabigail / abidiff](https://sourceware.org/libabigail/)
+- [ABI Compliance Checker (ABICC)](https://lvc.github.io/abi-compliance-checker/)
+
+Both projects made ABI tooling possible for many teams; thank you to their authors
+and maintainers. abicheck exists to provide an actively extensible path where teams
+can continue evolving ABI checks in modern CI environments.
 
 ## Features
 
@@ -24,6 +35,13 @@ abicheck dump libfoo.so.2 -H include/foo.h --version 2.0 -o libfoo-2.0.json
 # Compare
 abicheck compare libfoo-1.0.json libfoo-2.0.json
 ```
+
+## Next steps
+
+- [Getting Started](getting_started.md)
+- [Using abicheck, Compatibility Modes, and Coverage](usage_and_coverage.md)
+- [Examples Breakage Guide](examples_breakage_guide.md)
+- [Tool Modes](tool_modes.md)
 
 ## GitHub Actions
 
