@@ -565,7 +565,7 @@ def _compute_type_info(  # noqa: PLR0911
                 qualifier = tag.split("_")[2].lower()  # const / volatile / restrict
                 return (f"{qualifier} {inner_name}", size)
             except Exception:  # noqa: BLE001
-                return (tag.split("_")[2].lower(), None)
+                return (tag.split("_")[2].lower(), 0)
 
     if tag == "DW_TAG_typedef":
         name = _attr_str(die, "DW_AT_name")
