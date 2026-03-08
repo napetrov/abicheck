@@ -174,9 +174,11 @@ _SOURCE_BREAK_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.FUNC_RETURN_CHANGED,
     ChangeKind.FUNC_NOEXCEPT_ADDED,
     ChangeKind.FUNC_NOEXCEPT_REMOVED,
+    ChangeKind.FUNC_DELETED,           # Sprint 2
     ChangeKind.TYPE_FIELD_REMOVED,
     ChangeKind.TYPE_FIELD_TYPE_CHANGED,
     ChangeKind.TYPE_REMOVED,
+    ChangeKind.TYPE_BECAME_OPAQUE,     # Sprint 2
     ChangeKind.TYPEDEF_REMOVED,
     ChangeKind.TYPEDEF_BASE_CHANGED,
     ChangeKind.ENUM_MEMBER_REMOVED,
