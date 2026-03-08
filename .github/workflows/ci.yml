@@ -33,13 +33,21 @@ jobs:
             --cov=abicheck \
             --cov-report=term-missing \
             --cov-report=xml \
-            --cov-fail-under=52
+            --cov-fail-under=70
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-xml
           path: coverage.xml
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          flags: unit
+          fail_ci_if_error: false
 
   integration-tests:
     runs-on: ubuntu-latest
@@ -60,8 +68,19 @@ jobs:
       - name: Install package
         run: pip install -e ".[dev]"
 
-      - name: Run integration tests
-        run: pytest tests/ -v -m integration --tb=short
+      - name: Run integration tests with coverage
+        run: |
+          pytest tests/ -v -m integration --tb=short \
+            --cov=abicheck \
+            --cov-report=xml:coverage-integration.xml
+
+      - name: Upload integration coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage-integration.xml
+          flags: integration
+          fail_ci_if_error: false
 
   e2e:
     runs-on: ubuntu-latest
