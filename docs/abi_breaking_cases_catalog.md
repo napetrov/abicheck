@@ -83,10 +83,11 @@ For full code walkthroughs and deep per-case narrative, see
     - Mitigation: use Pimpl to stabilize externally visible object layout.
 
 13. **case15_noexcept_change** — `noexcept` removed/changed.
-    - Risk: exception contract change, ABI/behavior mismatch.
-    - Type: semantic break (often poorly detected by ELF-only tools).
+    - Risk: source-level contract change; does NOT change Itanium ABI mangled name.
+    - Type: **compatible/warning** (not a binary ABI break — same symbol resolves).
+    - Verdict: COMPATIBLE.
     - Example: `examples/case15_noexcept_change/`
-    - Mitigation: treat `noexcept` as stable public contract.
+    - Mitigation: treat `noexcept` as stable public contract for source compatibility.
 
 14. **case16_inline_to_non_inline** — inline→non-inline (or reverse) with ODR effects.
     - Risk: multiple definitions, mixed TU behavior.
@@ -150,6 +151,76 @@ For full code walkthroughs and deep per-case narrative, see
     - Type: semantic compatibility break.
     - Example: `examples/case20_enum_member_value_changed/`
     - Mitigation: never renumber released enum constants.
+
+## 7) Compatible/warning changes (not binary ABI breaks)
+
+These changes are detected and reported by abicheck but classified as **COMPATIBLE**
+because they do not cause binary linkage or layout failures when comparing two releases.
+
+25. **noexcept added/removed** — `noexcept` specifier changed on a function.
+    - Itanium ABI mangling does not change in practice — the same symbol resolves.
+    - Source-level concern only (C++17 function-pointer type mismatch).
+    - Verdict: COMPATIBLE.
+
+26. **Enum member added** — new enumerator appended to an existing enum.
+    - Existing compiled enum values are unchanged.
+    - Source-level concern (switch statement coverage).
+    - Value shifts (if any) are caught separately by `ENUM_MEMBER_VALUE_CHANGED`.
+    - Verdict: COMPATIBLE.
+
+27. **Union field added** — new field added to an existing union.
+    - All union fields share offset 0; existing fields are unaffected.
+    - Size increase (if any) is caught separately by `TYPE_SIZE_CHANGED`.
+    - Verdict: COMPATIBLE.
+
+28. **GLOBAL→WEAK symbol binding** — symbol weakened from `STT_GLOBAL` to `STT_WEAK`.
+    - Symbol is still exported and resolvable by the dynamic linker.
+    - Interposition semantics change but existing binaries continue to work.
+    - Verdict: COMPATIBLE.
+
+29. **ELF st_size changed** — symbol size metadata changed in `.dynsym`.
+    - `st_size` is informational metadata; the dynamic linker does not use it for resolution.
+    - Actual layout breaks are caught by `TYPE_SIZE_CHANGED` / `STRUCT_SIZE_CHANGED`.
+    - Verdict: COMPATIBLE.
+
+30. **GNU IFUNC introduced/removed** — symbol changed to/from `STT_GNU_IFUNC`.
+    - Transparent to callers; PLT/GOT mechanism handles indirect resolution.
+    - This is an implementation optimization, not an ABI contract change.
+    - Verdict: COMPATIBLE.
+
+31. **New dependency version requirement** — library now requires e.g. `GLIBC_2.34`.
+    - Affects deployment portability on older systems, not the library's own ABI.
+    - Consumers linking against *this* library's symbols are unaffected.
+    - Verdict: COMPATIBLE.
+
+32. **Typeinfo/vtable visibility changed** — visibility attribute changed on type metadata.
+    - Affects RTTI (`dynamic_cast`) across DSO boundaries in specific scenarios.
+    - Not a general binary ABI break for symbol resolution or calling convention.
+    - Verdict: COMPATIBLE.
+
+33. **Variable const qualifier added/removed** — global variable gained or lost `const`.
+    - Symbol still resolves at the same address and size.
+    - Adding `const` moves variable to `.rodata` (writes cause SIGSEGV).
+    - Removing `const` is an ODR concern for inlined values.
+    - Both are behavioral concerns, not linkage breaks.
+    - Verdict: COMPATIBLE.
+
+34. **New/removed DT_NEEDED dependency** — library gained or dropped a shared library dependency.
+    - Deployment/packaging concern; does not affect the library's exported symbol contract.
+    - Verdict: COMPATIBLE.
+
+35. **RPATH/RUNPATH changed** — library search path metadata changed.
+    - Operational concern; no effect on symbol contract or type layout.
+    - Verdict: COMPATIBLE.
+
+36. **Toolchain flag drift** — different compiler flags detected via `DW_AT_producer`.
+    - Informational diagnostic; not a proven binary break on its own.
+    - Verdict: COMPATIBLE.
+
+37. **DWARF info missing** — new binary lacks debug info.
+    - Coverage gap warning: struct/enum layout comparison was skipped.
+    - Not a break; indicates the comparison is incomplete.
+    - Verdict: COMPATIBLE.
 
 ---
 

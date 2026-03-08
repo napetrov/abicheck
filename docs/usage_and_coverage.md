@@ -67,6 +67,24 @@ while modernizing internals and outputs.
 3. Optionally move to native `dump/compare` commands for explicit snapshot control.
 4. Switch CI gates to JSON/SARIF-based policy checks.
 
+## Change classification: BREAKING vs COMPATIBLE
+
+abicheck classifies every detected change into a verdict:
+
+- **BREAKING** — binary ABI incompatibility; existing binaries will malfunction.
+- **COMPATIBLE** — informational/warning; does not break binary compatibility on its own.
+- **NO_CHANGE** — identical ABI.
+
+A change is BREAKING only when it causes binary-level failures: symbol resolution errors,
+type layout corruption, vtable mismatch, or calling convention incompatibility.
+
+Changes like `noexcept` addition/removal, enum member addition, union field addition,
+GLOBAL→WEAK binding, ELF `st_size` changes, IFUNC transitions, new dependency version
+requirements, typeinfo visibility changes, and variable const qualifier changes are all
+classified as **COMPATIBLE** — they are detected and reported for awareness but do not
+trigger a BREAKING verdict. See the [README](../README.md#change-classification-breaking-vs-compatible)
+for the full rationale table.
+
 ## ABI/API breakages and what each tool mode can detect
 
 This section maps breakage types to example cases under `examples/` and compares:
@@ -78,32 +96,32 @@ This section maps breakage types to example cases under `examples/` and compares
 
 Legend: ✅ strong support, ⚠️ partial/conditional, ❌ generally not covered.
 
-| Case | Breakage type | abicheck | abidiff + headers | ABICC #2 (headers) | ABICC #1 (dumps) |
-|---|---|:---:|:---:|:---:|:---:|
-| case01_symbol_removal | Public symbol removed | ✅ | ✅ | ✅ | ✅ |
-| case02_param_type_change | Function parameter type changed | ✅ | ✅ | ✅ | ✅ |
-| case03_compat_addition | Compatible API addition | ✅ | ✅ | ✅ | ✅ |
-| case04_no_change | No ABI change baseline | ✅ | ✅ | ✅ | ✅ |
-| case05_soname | SONAME / packaging policy issue | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| case06_visibility | Visibility/export policy drift | ✅ | ✅ | ⚠️ | ⚠️ |
-| case07_struct_layout | Struct layout changed | ✅ | ✅ | ✅ | ✅ |
-| case08_enum_value_change | Enum value changed | ✅ | ⚠️ | ✅ | ✅ |
-| case09_cpp_vtable | VTable/method order/signature drift | ✅ | ✅ | ✅ | ✅ |
-| case10_return_type | Function return type changed | ✅ | ✅ | ✅ | ✅ |
-| case11_global_var_type | Global variable type changed | ✅ | ✅ | ✅ | ✅ |
-| case12_function_removed | API function removed | ✅ | ✅ | ✅ | ✅ |
-| case13_symbol_versioning | Symbol version policy regression | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| case14_cpp_class_size | C++ class size/layout changed | ✅ | ✅ | ✅ | ✅ |
-| case15_noexcept_change | `noexcept` contract changed | ✅ | ⚠️ | ✅ | ❌ |
-| case16_inline_to_non_inline | Inline/ODR surface change | ✅ | ⚠️ | ✅ | ❌ |
-| case17_template_abi | Template-instantiation ABI drift | ✅ | ⚠️ | ✅ | ✅ |
-| case18_dependency_leak | Transitive dependency leaked into API | ✅ | ⚠️ | ✅ | ✅ |
-| case19_enum_member_removed | Enum member removed | ✅ | ✅ | ✅ | ✅ |
-| case20_enum_member_value_changed | Enum member value changed | ✅ | ⚠️ | ✅ | ✅ |
-| case21_method_became_static | Method became static | ✅ | ✅ | ✅ | ✅ |
-| case22_method_const_changed | Method const-qualifier changed | ✅ | ✅ | ✅ | ✅ |
-| case23_pure_virtual_added | Added pure virtual method | ✅ | ✅ | ✅ | ✅ |
-| case24_union_field_removed | Union field removed | ✅ | ✅ | ✅ | ✅ |
+| Case | Breakage type | Verdict | abicheck | abidiff + headers | ABICC #2 (headers) | ABICC #1 (dumps) |
+|---|---|---|:---:|:---:|:---:|:---:|
+| case01_symbol_removal | Public symbol removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case02_param_type_change | Function parameter type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case03_compat_addition | Compatible API addition | COMPATIBLE | ✅ | ✅ | ✅ | ✅ |
+| case04_no_change | No ABI change baseline | NO_CHANGE | ✅ | ✅ | ✅ | ✅ |
+| case05_soname | SONAME / packaging policy issue | BREAKING | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case06_visibility | Visibility/export policy drift | BREAKING | ✅ | ✅ | ⚠️ | ⚠️ |
+| case07_struct_layout | Struct layout changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case08_enum_value_change | Enum value changed | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case09_cpp_vtable | VTable/method order/signature drift | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case10_return_type | Function return type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case11_global_var_type | Global variable type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case12_function_removed | API function removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case13_symbol_versioning | Symbol version policy regression | COMPATIBLE | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case14_cpp_class_size | C++ class size/layout changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case15_noexcept_change | `noexcept` contract changed | COMPATIBLE | ✅ | ⚠️ | ✅ | ❌ |
+| case16_inline_to_non_inline | Inline/ODR surface change | BREAKING | ✅ | ⚠️ | ✅ | ❌ |
+| case17_template_abi | Template-instantiation ABI drift | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case18_dependency_leak | Transitive dependency leaked into API | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case19_enum_member_removed | Enum member removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case20_enum_member_value_changed | Enum member value changed | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case21_method_became_static | Method became static | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case22_method_const_changed | Method const-qualifier changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case23_pure_virtual_added | Added pure virtual method | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case24_union_field_removed | Union field removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
 
 ### Summary by breakage category
 
