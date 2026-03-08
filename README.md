@@ -1,6 +1,6 @@
 # abicheck
 
-**abicheck is an ABI compatibility checker for C/C++ API and ABI compatibility.**
+**abicheck checks C/C++ library compatibility at both API and ABI levels.**
 
 abicheck is inspired by two foundational projects:
 
@@ -27,11 +27,6 @@ and it is often not practical to land new fixes there. abicheck is designed to b
 - `click` (CLI)
 - `pyelftools` (ELF/DWARF metadata extraction)
 - `defusedxml` (safe ABICC XML parsing)
-
-### Optional (for cross-tool comparisons)
-
-- `abidiff` (libabigail tools)
-- `abi-compliance-checker` + `abi-dumper`
 
 ---
 
@@ -161,6 +156,7 @@ pip install -e .
 - [Docs home](docs/index.md)
 - [Getting started](docs/getting_started.md)
 - [Using abicheck, compatibility modes, and coverage](docs/usage_and_coverage.md)
+- [Examples breakage guide](docs/examples_breakage_guide.md)
 
 ---
 

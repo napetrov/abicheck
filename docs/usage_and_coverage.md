@@ -2,7 +2,7 @@
 
 ## What abicheck is
 
-**abicheck** is an ABI compatibility checker for **C/C++ API and ABI compatibility**.
+**abicheck** checks C/C++ library compatibility on both API and ABI layers.
 It is designed to be a practical, modern replacement for legacy ABI tooling in CI,
 especially when you need structured output and automation.
 

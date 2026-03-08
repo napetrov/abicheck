@@ -6,11 +6,6 @@
 - `castxml` (required for header-based API/ABI parsing)
 - C/C++ toolchain (`g++` or `clang++`) for realistic header parsing context
 
-Optional but useful:
-
-- `abidiff` (libabigail) for side-by-side comparisons
-- ABICC/abi-dumper tools for legacy pipeline migration and parity checks
-
 ## Installation
 
 ```bash

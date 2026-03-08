@@ -34,6 +34,7 @@ nav:
   - Getting Started: getting_started.md
   - User Guide:
     - Using abicheck: usage_and_coverage.md
+    - Examples Breakage Guide: examples_breakage_guide.md
     - Local Compare: local_compare.md
     - Tool Modes: tool_modes.md
     - SARIF Output: sarif_output.md

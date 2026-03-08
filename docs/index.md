@@ -1,6 +1,6 @@
 # abicheck
 
-**abicheck is an ABI compatibility checker for C/C++ API and ABI compatibility.**
+**abicheck checks C/C++ library compatibility at both API and ABI levels.**
 
 It is designed as a drop-in replacement for
 [ABI Compliance Checker (ABICC)](https://lvc.github.io/abi-compliance-checker/),
@@ -40,6 +40,7 @@ abicheck compare libfoo-1.0.json libfoo-2.0.json
 
 - [Getting Started](getting_started.md)
 - [Using abicheck, Compatibility Modes, and Coverage](usage_and_coverage.md)
+- [Examples Breakage Guide](examples_breakage_guide.md)
 - [Tool Modes](tool_modes.md)
 
 ## GitHub Actions
