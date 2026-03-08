@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from .elf_metadata import SymbolBinding
+from .elf_metadata import SymbolBinding, SymbolType
 from .model import AbiSnapshot, EnumType, Function, RecordType, TypeField, Visibility
 
 if TYPE_CHECKING:
@@ -474,11 +474,10 @@ def _diff_type_bases(name: str, t_old: RecordType, t_new: RecordType) -> list[Ch
             new_value=str(t_new.bases),
         )]
 
-    old_all_bases = set(t_old.bases) | set(t_old.virtual_bases)
-    new_all_bases = set(t_new.bases) | set(t_new.virtual_bases)
-    if old_all_bases != new_all_bases:
-        return []
-
+    # Bases and virtual_bases lists are equal at this point; check if any non-virtual
+    # base was promoted to virtual (changes VTT layout) without altering the set membership.
+    # Note: if both lists are equal as lists, the sets are also equal, so this only fires
+    # when the same base appears in different virtual/non-virtual slots.
     old_virt = set(t_old.virtual_bases)
     new_virt = set(t_new.virtual_bases)
     if old_virt == new_virt:
@@ -719,14 +718,14 @@ def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """ELF-only detectors (Sprint 2): no debug info required."""
-    from .elf_metadata import ElfMetadata, SymbolType
+    from .elf_metadata import ElfMetadata
 
     o: ElfMetadata = getattr(old, "elf", None) or ElfMetadata()
     n: ElfMetadata = getattr(new, "elf", None) or ElfMetadata()
     changes: list[Change] = []
     changes.extend(_diff_elf_dynamic_section(o, n))
     changes.extend(_diff_elf_symbol_versioning(o, n))
-    changes.extend(_diff_elf_symbol_metadata(o, n, SymbolType))
+    changes.extend(_diff_elf_symbol_metadata(o, n))
     return changes
 
 
@@ -814,7 +813,7 @@ def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
     return changes
 
 
-def _diff_elf_symbol_metadata(old_elf: Any, new_elf: Any, symbol_type_enum: Any) -> list[Change]:
+def _diff_elf_symbol_metadata(old_elf: Any, new_elf: Any) -> list[Change]:
     changes: list[Change] = []
     old_syms = old_elf.symbol_map
     new_syms = new_elf.symbol_map
@@ -823,13 +822,13 @@ def _diff_elf_symbol_metadata(old_elf: Any, new_elf: Any, symbol_type_enum: Any)
         s_new = new_syms.get(sym_name)
         if s_new is None:
             continue
-        changes.extend(_diff_elf_symbol_pair(sym_name, s_old, s_new, symbol_type_enum))
+        changes.extend(_diff_elf_symbol_pair(sym_name, s_old, s_new))
 
     for sym_name, s_new in new_syms.items():
-        if s_new.sym_type != symbol_type_enum.COMMON:
+        if s_new.sym_type != SymbolType.COMMON:
             continue
         old_common = old_syms.get(sym_name)
-        if old_common is None or old_common.sym_type != symbol_type_enum.COMMON:
+        if old_common is None or old_common.sym_type != SymbolType.COMMON:
             changes.append(Change(
                 kind=ChangeKind.COMMON_SYMBOL_RISK,
                 symbol=sym_name,
@@ -838,9 +837,9 @@ def _diff_elf_symbol_metadata(old_elf: Any, new_elf: Any, symbol_type_enum: Any)
     return changes
 
 
-def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any, symbol_type_enum: Any) -> list[Change]:
+def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]:
     changes: list[Change] = []
-    if s_old.sym_type != symbol_type_enum.IFUNC and s_new.sym_type == symbol_type_enum.IFUNC:
+    if s_old.sym_type != SymbolType.IFUNC and s_new.sym_type == SymbolType.IFUNC:
         changes.append(Change(
             kind=ChangeKind.IFUNC_INTRODUCED,
             symbol=sym_name,
@@ -848,7 +847,7 @@ def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any, symbol_type_enu
             old_value=s_old.sym_type.value,
             new_value="ifunc",
         ))
-    elif s_old.sym_type == symbol_type_enum.IFUNC and s_new.sym_type != symbol_type_enum.IFUNC:
+    elif s_old.sym_type == SymbolType.IFUNC and s_new.sym_type != SymbolType.IFUNC:
         changes.append(Change(
             kind=ChangeKind.IFUNC_REMOVED,
             symbol=sym_name,
@@ -880,7 +879,7 @@ def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any, symbol_type_enu
         s_old.size > 0
         and s_new.size > 0
         and s_old.size != s_new.size
-        and s_new.sym_type in (symbol_type_enum.OBJECT, symbol_type_enum.COMMON, symbol_type_enum.TLS)
+        and s_new.sym_type in (SymbolType.OBJECT, SymbolType.COMMON, SymbolType.TLS)
     ):
         changes.append(Change(
             kind=ChangeKind.SYMBOL_SIZE_CHANGED,
