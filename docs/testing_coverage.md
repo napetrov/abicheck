@@ -81,7 +81,9 @@ Coverage reporting is configured and enforced:
 ### Phase 2 (integration hardening)
 
 4. Expand integration matrices across representative example cases (already present under `examples/`).
+   - CI now runs all `-m integration` tests (not only a single file), widening matrix coverage.
 5. Add negative integration scenarios (bad ELF, missing symbols, broken headers).
+   - Added explicit integration tests for these scenarios in `tests/test_integration_phase2_negative.py`.
 
 ### Phase 3 (deeper DWARF confidence)
 
