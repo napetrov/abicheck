@@ -492,13 +492,11 @@ def dump(
     extra_includes = extra_includes or []
     exported_dynamic, exported_static = _pyelftools_exported_symbols(so_path)
 
-    from .dwarf_advanced import parse_advanced_dwarf
-    from .dwarf_metadata import parse_dwarf_metadata
+    from .dwarf_unified import parse_dwarf
     from .elf_metadata import parse_elf_metadata
 
     elf_meta = parse_elf_metadata(so_path)
-    dwarf_meta = parse_dwarf_metadata(so_path)
-    dwarf_adv = parse_advanced_dwarf(so_path)
+    dwarf_meta, dwarf_adv = parse_dwarf(so_path)
 
     if not headers:
         warnings.warn(
