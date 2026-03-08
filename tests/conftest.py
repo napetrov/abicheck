@@ -9,6 +9,10 @@ def pytest_configure(config):
         "markers",
         "integration: requires castxml, gcc/g++ installed",
     )
+    config.addinivalue_line(
+        "markers",
+        "abicc: requires abi-compliance-checker + gcc/g++ — ABICC parity tests",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -19,3 +23,9 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "integration" in item.keywords:
                 item.add_marker(skip)
+
+    if shutil.which("abi-compliance-checker") is None:
+        skip_abicc = pytest.mark.skip(reason="abi-compliance-checker not found in PATH")
+        for item in items:
+            if "abicc" in item.keywords:
+                item.add_marker(skip_abicc)
