@@ -19,43 +19,43 @@ EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
 #
 CASES = [
     # ✅ Symbol removed from ELF dynsym → FUNC_REMOVED → BREAKING
-    ("case01_symbol_removal",       "BREAKING",   "v1.c",     "v2.c"),
+    ("case01_symbol_removal", "BREAKING", "v1.c", "v2.c"),
     # ✅ Parameter type change visible via castxml → FUNC_PARAMS_CHANGED → BREAKING
-    ("case02_param_type_change",    "BREAKING",   "v1.c",     "v2.c"),
+    ("case02_param_type_change", "BREAKING", "v1.c", "v2.c"),
     # ✅ New symbol added → FUNC_ADDED → COMPATIBLE
-    ("case03_compat_addition",      "COMPATIBLE", "v1.c",     "v2.c"),
+    ("case03_compat_addition", "COMPATIBLE", "v1.c", "v2.c"),
     # ✅ Identical libs → NO_CHANGE
-    ("case04_no_change",            "NO_CHANGE",  "v1.c",     "v1.c"),
+    ("case04_no_change", "NO_CHANGE", "v1.c", "v1.c"),
     # 📋 SONAME is a policy attribute, not tracked by checker → NO_CHANGE
-    ("case05_soname",               "NO_CHANGE",  "bad.c",    "good.c"),
+    ("case05_soname", "NO_CHANGE", "bad.c", "good.c"),
     # ✅ internal_helper/another_impl hidden in good.c → removed from dynsym → BREAKING
-    ("case06_visibility",           "BREAKING",   "bad.c",    "good.c"),
+    ("case06_visibility", "BREAKING", "bad.c", "good.c"),
     # ✅ Struct size change detected via castxml → TYPE_SIZE_CHANGED → BREAKING
-    ("case07_struct_layout",        "BREAKING",   "v1.c",     "v2.c"),
+    ("case07_struct_layout", "BREAKING", "v1.c", "v2.c"),
     # ✅ Enum member value changes detected via _diff_enums() → BREAKING
-    ("case08_enum_value_change",    "BREAKING",   "v1.c",     "v2.c"),
+    ("case08_enum_value_change", "BREAKING", "v1.c", "v2.c"),
     # ✅ vtable reorder/change detected → TYPE_VTABLE_CHANGED → BREAKING
-    ("case09_cpp_vtable",           "BREAKING",   "v1.cpp",   "v2.cpp"),
+    ("case09_cpp_vtable", "BREAKING", "v1.cpp", "v2.cpp"),
     # ✅ Return type change detected via castxml → FUNC_RETURN_CHANGED → BREAKING
-    ("case10_return_type",          "BREAKING",   "v1.c",     "v2.c"),
+    ("case10_return_type", "BREAKING", "v1.c", "v2.c"),
     # ⚠️ int→long variable type change: castxml parses type from header but
     #    global var definitions in .c may not appear in ELF dynsym reliably → NO_CHANGE
-    ("case11_global_var_type",      "BREAKING",   "v1.c",     "v2.c"),
+    ("case11_global_var_type", "BREAKING", "v1.c", "v2.c"),
     # ✅ Function inlined away → disappears from .so → FUNC_REMOVED → BREAKING
-    ("case12_function_removed",     "BREAKING",   "v1.c",     "v2.c"),
+    ("case12_function_removed", "BREAKING", "v1.c", "v2.c"),
     # 📋 Symbol versioning adds @@VER tags; checker strips @-suffix → NO_CHANGE
-    ("case13_symbol_versioning",    "NO_CHANGE",  "bad.c",    "good.c"),
+    ("case13_symbol_versioning", "NO_CHANGE", "bad.c", "good.c"),
     # ✅ Class size change (private member added) → TYPE_SIZE_CHANGED → BREAKING
-    ("case14_cpp_class_size",       "BREAKING",   "v1.cpp",   "v2.cpp"),
+    ("case14_cpp_class_size", "BREAKING", "v1.cpp", "v2.cpp"),
     # ✅ noexcept removed → FUNC_NOEXCEPT_REMOVED → BREAKING (castxml sees noexcept attr)
-    ("case15_noexcept_change",      "BREAKING",   "v1.cpp",   "v2.cpp"),
+    ("case15_noexcept_change", "BREAKING", "v1.cpp", "v2.cpp"),
     # ✅ Symbol appears in v2 that was inline in v1 → FUNC_ADDED → COMPATIBLE
-    ("case16_inline_to_non_inline", "COMPATIBLE", "v1.hpp",   "v2.hpp"),
+    ("case16_inline_to_non_inline", "COMPATIBLE", "v1.hpp", "v2.hpp"),
     # ✅ Explicit-instantiated template size grows → TYPE_SIZE_CHANGED → BREAKING
-    ("case17_template_abi",         "BREAKING",   "v1.hpp",   "v2.hpp"),
+    ("case17_template_abi", "BREAKING", "v1.hpp", "v2.hpp"),
     # ✅ castxml processes headers transitively: ThirdPartyHandle (4→8 bytes) detected
     #    via TYPE_SIZE_CHANGED → BREAKING. This is correct behaviour — the struct grew.
-    ("case18_dependency_leak",      "BREAKING",   "foo_v1.h", "foo_v2.h"),
+    ("case18_dependency_leak", "BREAKING", "foo_v1.h", "foo_v2.h"),
 ]
 
 

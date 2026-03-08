@@ -16,10 +16,10 @@ import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
-REPO_DIR     = Path(__file__).parent.parent
+REPO_DIR = Path(__file__).parent.parent
 EXAMPLES_DIR = REPO_DIR / "examples"
-REPORT_DIR   = REPO_DIR / "benchmark_reports"
-BUILD_DIR    = REPORT_DIR / "_build"
+REPORT_DIR = REPO_DIR / "benchmark_reports"
+BUILD_DIR = REPORT_DIR / "_build"
 
 
 @dataclass
@@ -114,7 +114,7 @@ def run_abidiff(v1_so: Path, v2_so: Path, case: str, rdir: Path) -> ToolResult:
 
     out = r.stdout or r.stderr
     (rdir / f"{case}_abidiff.txt").write_text(out)
-    changes = [l.strip() for l in out.splitlines() if l.strip().startswith("[")]
+    changes = [line.strip() for line in out.splitlines() if line.strip().startswith("[")]
     return ToolResult(verdict=verdict, changes=changes, raw_output=out,
                       report_path=f"{case}_abidiff.txt")
 
@@ -161,8 +161,8 @@ def run_abicc(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
     else:
         verdict = "ERROR"
 
-    changes = [l.strip() for l in out.splitlines()
-               if any(k in l for k in ("removed", "added", "changed")) and l.strip()]
+    changes = [line.strip() for line in out.splitlines()
+               if any(keyword in line for keyword in ("removed", "added", "changed")) and line.strip()]
     return ToolResult(verdict=verdict, changes=changes[:8], raw_output=out,
                       report_path=f"{case}_abicc_report.html")
 
@@ -190,7 +190,7 @@ def main() -> None:
 
     for case_dir in cases:
         name = case_dir.name
-        ext  = ".cpp" if (case_dir / "v1.cpp").exists() else ".c"
+        ext = ".cpp" if (case_dir / "v1.cpp").exists() else ".c"
         v1_src = case_dir / f"v1{ext}"
         v2_src = case_dir / f"v2{ext}"
 
@@ -205,8 +205,8 @@ def main() -> None:
 
         v1_so = bdir / "lib_v1.so"
         v2_so = bdir / "lib_v2.so"
-        v1_h  = bdir / "v1.h"
-        v2_h  = bdir / "v2.h"
+        v1_h = bdir / "v1.h"
+        v2_h = bdir / "v2.h"
 
         if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
             print(f"  {name:<33} COMPILE_ERR")
@@ -229,8 +229,8 @@ def main() -> None:
         eff_v1_h = _best_h("v1", v1_h, case_dir)
         eff_v2_h = _best_h("v2", v2_h, case_dir)
 
-        ac  = run_abicheck(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir)
-        ab  = run_abidiff(v1_so, v2_so, name, rdir)
+        ac = run_abicheck(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir)
+        ab = run_abidiff(v1_so, v2_so, name, rdir)
         acc = run_abicc(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir)
 
         verdicts = {ac.verdict, ab.verdict, acc.verdict} - {"SKIP", "ERROR"}
@@ -242,17 +242,17 @@ def main() -> None:
         results.append({"case": name,
                         "abicheck": ac.verdict, "abidiff": ab.verdict, "abicc": acc.verdict,
                         "abicheck_changes": ac.changes,
-                        "abidiff_changes":  ab.changes,
-                        "abicc_changes":    acc.changes})
+                        "abidiff_changes": ab.changes,
+                        "abicc_changes": acc.changes})
 
     # ── Summary ──
-    total    = len(results)
-    skip     = lambda r: "SKIP" in (r["abicheck"], r["abidiff"], r["abicc"])
-    valid    = [r for r in results if not skip(r)]
-    all3     = sum(1 for r in valid if r["abicheck"] == r["abidiff"] == r["abicc"])
-    ac_ab    = sum(1 for r in valid if r["abicheck"] == r["abidiff"])
-    ac_acc   = sum(1 for r in valid if r["abicheck"] == r["abicc"])
-    n        = len(valid)
+    total = len(results)
+    skip = lambda r: "SKIP" in (r["abicheck"], r["abidiff"], r["abicc"])
+    valid = [r for r in results if not skip(r)]
+    all3 = sum(1 for r in valid if r["abicheck"] == r["abidiff"] == r["abicc"])
+    ac_ab = sum(1 for r in valid if r["abicheck"] == r["abidiff"])
+    ac_acc = sum(1 for r in valid if r["abicheck"] == r["abicc"])
+    n = len(valid)
 
     print("\n" + "─" * 84)
     print(f"  Total cases: {total}   (valid for comparison: {n})")

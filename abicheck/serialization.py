@@ -48,7 +48,7 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     if d.get("elf"):
         elf = d["elf"]
         for sym in elf.get("symbols", []):
-            sym["binding"]  = sym["binding"] if isinstance(sym["binding"], str) else sym["binding"].value
+            sym["binding"] = sym["binding"] if isinstance(sym["binding"], str) else sym["binding"].value
             sym["sym_type"] = sym["sym_type"] if isinstance(sym["sym_type"], str) else sym["sym_type"].value
 
     # Convert all sets → sorted lists (needed for AdvancedDwarfMetadata.packed_structs
