@@ -264,7 +264,7 @@ def _filter_source_only(result: DiffResult) -> DiffResult:
 @click.option("-s", "-strict", "strict", is_flag=True, default=False,
               help="Strict mode: any incompatible change is an error (exit 1). Mirrors ABICC -strict.")
 @click.option("-show-retval", "show_retval", is_flag=True, default=False,
-              help="Show return-value changes in report. Mirrors ABICC -show-retval.")
+              help="[Not yet implemented] Show return-value changes in report. Accepted for CLI parity with ABICC -show-retval.")
 @click.option("-headers-only", "headers_only", is_flag=True, default=False,
               help="[Not yet implemented] Reserved for future header-only analysis mode. ELF/DWARF checks still run. Mirrors ABICC -headers-only.")
 @click.option("-source", "-src", "-api", "source_only", is_flag=True, default=False,
@@ -311,9 +311,11 @@ def compat_cmd(
     Supports all major ABICC flags for drop-in CI replacement.
 
     Exit codes mirror ABICC:
-      0 — compatible or no change
-      1 — breaking ABI change detected
-      2 — error (descriptor parse failure, missing files, etc.)
+      0 — compatible or no change (NO_CHANGE, COMPATIBLE)
+      1 — breaking ABI change detected (BREAKING)
+      2 — source-level break (SOURCE_BREAK) or error (descriptor parse failure, etc.)
+
+    Note: with -strict, SOURCE_BREAK is promoted to exit 1.
 
     Examples::
 
