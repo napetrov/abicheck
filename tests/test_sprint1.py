@@ -191,14 +191,12 @@ def test_sprint1_all_breaking() -> None:
     from abicheck.checker import _BREAKING_KINDS
     sprint1_kinds = {
         ChangeKind.ENUM_MEMBER_REMOVED,
-        ChangeKind.ENUM_MEMBER_ADDED,
         ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
         ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
         ChangeKind.FUNC_STATIC_CHANGED,
         ChangeKind.FUNC_CV_CHANGED,
         ChangeKind.FUNC_PURE_VIRTUAL_ADDED,
         ChangeKind.FUNC_VIRTUAL_BECAME_PURE,
-        ChangeKind.UNION_FIELD_ADDED,
         ChangeKind.UNION_FIELD_REMOVED,
         ChangeKind.UNION_FIELD_TYPE_CHANGED,
         ChangeKind.TYPEDEF_BASE_CHANGED,

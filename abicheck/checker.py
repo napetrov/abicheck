@@ -123,12 +123,11 @@ class Verdict(str, Enum):
     BREAKING = "BREAKING"           # binary ABI break
 
 
-# Which ChangeKinds are immediately BREAKING
+# Which ChangeKinds are immediately BREAKING (binary ABI incompatibility)
 _BREAKING_KINDS = {
     ChangeKind.FUNC_REMOVED,
     ChangeKind.FUNC_RETURN_CHANGED,
     ChangeKind.FUNC_PARAMS_CHANGED,
-    ChangeKind.FUNC_NOEXCEPT_REMOVED,
     ChangeKind.FUNC_VIRTUAL_ADDED,
     ChangeKind.FUNC_VIRTUAL_REMOVED,
     ChangeKind.VAR_REMOVED,
@@ -141,10 +140,8 @@ _BREAKING_KINDS = {
     ChangeKind.TYPE_BASE_CHANGED,
     ChangeKind.TYPE_VTABLE_CHANGED,
     ChangeKind.TYPE_REMOVED,
-    ChangeKind.FUNC_NOEXCEPT_ADDED,  # C++17: noexcept is part of the function type (P0012R1)
     ChangeKind.TYPE_FIELD_ADDED,  # for polymorphic / non-standard-layout types
     ChangeKind.ENUM_MEMBER_REMOVED,
-    ChangeKind.ENUM_MEMBER_ADDED,
     ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
     ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
     ChangeKind.FUNC_STATIC_CHANGED,
@@ -152,7 +149,6 @@ _BREAKING_KINDS = {
     ChangeKind.FUNC_VISIBILITY_CHANGED,
     ChangeKind.FUNC_PURE_VIRTUAL_ADDED,
     ChangeKind.FUNC_VIRTUAL_BECAME_PURE,
-    ChangeKind.UNION_FIELD_ADDED,
     ChangeKind.UNION_FIELD_REMOVED,
     ChangeKind.UNION_FIELD_TYPE_CHANGED,
     ChangeKind.TYPEDEF_BASE_CHANGED,
@@ -160,13 +156,8 @@ _BREAKING_KINDS = {
     ChangeKind.FIELD_BITFIELD_CHANGED,
     # ELF Sprint 2
     ChangeKind.SONAME_CHANGED,
-    ChangeKind.SYMBOL_BINDING_CHANGED,
     ChangeKind.SYMBOL_TYPE_CHANGED,
-    ChangeKind.SYMBOL_SIZE_CHANGED,
-    ChangeKind.IFUNC_INTRODUCED,
-    ChangeKind.IFUNC_REMOVED,
     ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
-    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
     # DWARF Sprint 3 + 4
     ChangeKind.STRUCT_SIZE_CHANGED,
     ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
@@ -174,15 +165,10 @@ _BREAKING_KINDS = {
     ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
     ChangeKind.STRUCT_ALIGNMENT_CHANGED,
     ChangeKind.ENUM_UNDERLYING_SIZE_CHANGED,
-    ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
-    ChangeKind.ENUM_MEMBER_REMOVED,
     ChangeKind.CALLING_CONVENTION_CHANGED,
     ChangeKind.STRUCT_PACKING_CHANGED,
-    ChangeKind.TYPE_VISIBILITY_CHANGED,
-    # Sprint 2
+    # Sprint 2 — gap detectors
     ChangeKind.FUNC_DELETED,
-    ChangeKind.VAR_BECAME_CONST,
-    ChangeKind.VAR_LOST_CONST,
     ChangeKind.TYPE_BECAME_OPAQUE,
     ChangeKind.BASE_CLASS_POSITION_CHANGED,
     ChangeKind.BASE_CLASS_VIRTUAL_CHANGED,
@@ -197,6 +183,22 @@ _COMPATIBLE_KINDS: set[ChangeKind] = {
     # non-polymorphic types; context-aware verdict set in _diff_types()
     ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
 
+    # noexcept changes: Itanium ABI mangling does not change in practice;
+    # existing binaries resolve the same symbol.  Source-level concern only
+    # (C++17 function-pointer type system), not a binary ABI break.
+    ChangeKind.FUNC_NOEXCEPT_ADDED,
+    ChangeKind.FUNC_NOEXCEPT_REMOVED,
+
+    # Enum member addition: existing compiled enum values are unchanged;
+    # new enumerator does not shift others.  Source-level switch coverage
+    # concern, not binary ABI.  Value shifts are caught separately by
+    # ENUM_MEMBER_VALUE_CHANGED.
+    ChangeKind.ENUM_MEMBER_ADDED,
+
+    # Union field addition: all fields start at offset 0; existing fields
+    # are unaffected.  Size increase (if any) is caught by TYPE_SIZE_CHANGED.
+    ChangeKind.UNION_FIELD_ADDED,
+
     # ELF-only warning/compatible drift
     ChangeKind.NEEDED_ADDED,              # new dep: may not exist on older systems — warn, not hard-break
     ChangeKind.NEEDED_REMOVED,            # removing a dep is compatible (but deployment risk)
@@ -205,6 +207,34 @@ _COMPATIBLE_KINDS: set[ChangeKind] = {
     ChangeKind.COMMON_SYMBOL_RISK,        # STT_COMMON — risk, not proven break
     ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
     ChangeKind.SYMBOL_BINDING_STRENGTHENED,  # WEAK→GLOBAL: backward-compatible for most consumers
+
+    # GLOBAL→WEAK: symbol still exported and resolvable by the dynamic
+    # linker; interposition semantics change but existing binaries work.
+    ChangeKind.SYMBOL_BINDING_CHANGED,
+
+    # ELF st_size is metadata not used by the dynamic linker for symbol
+    # resolution.  Actual layout breaks are caught by TYPE_SIZE_CHANGED /
+    # STRUCT_SIZE_CHANGED.
+    ChangeKind.SYMBOL_SIZE_CHANGED,
+
+    # GNU IFUNC ↔ regular function: transparent to callers; the PLT/GOT
+    # mechanism handles resolution.  This is an implementation optimization.
+    ChangeKind.IFUNC_INTRODUCED,
+    ChangeKind.IFUNC_REMOVED,
+
+    # New version requirement on a *dependency* (e.g. GLIBC_2.34): affects
+    # deployment portability, not the library's own exported ABI surface.
+    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+
+    # Typeinfo/vtable visibility: niche RTTI cross-DSO concern, not a
+    # general binary ABI break for symbol resolution or calling convention.
+    ChangeKind.TYPE_VISIBILITY_CHANGED,
+
+    # const qualifier on global variables: symbol still resolves at the same
+    # address/size; adding const moves to .rodata (writes SIGSEGV) and
+    # removing const is an ODR concern — both are behavioral, not linkage.
+    ChangeKind.VAR_BECAME_CONST,
+    ChangeKind.VAR_LOST_CONST,
 
     # DWARF diagnostics (comparison coverage gap warning)
     ChangeKind.DWARF_INFO_MISSING,
