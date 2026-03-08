@@ -78,7 +78,6 @@ def test_compare_detects_missing_exported_symbol_end_to_end(tmp_path: Path) -> N
 
     assert cmp_res.returncode == 4
     # api_fn present in header but absent from new .dynsym → FUNC_VISIBILITY_CHANGED
-    assert cmp_res.returncode == 4
     assert "BREAKING" in cmp_res.stdout
     assert "api_fn" in cmp_res.stdout
 

@@ -261,7 +261,7 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 changes.append(Change(
                     kind=ChangeKind.FUNC_REMOVED,
                     symbol=mangled,
-                    description=f"Public function removed: {f_old.name}",
+                    description=f"{f_old.visibility.value.capitalize()} function removed: {f_old.name}",
                     old_value=f_old.name,
                 ))
             continue
