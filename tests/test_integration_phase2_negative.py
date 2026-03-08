@@ -77,7 +77,9 @@ def test_compare_detects_missing_exported_symbol_end_to_end(tmp_path: Path) -> N
     cmp_res = _run_abicheck(["compare", str(old_snap), str(new_snap), "--format", "markdown"])
 
     assert cmp_res.returncode == 4
-    assert "func_removed" in cmp_res.stdout
+    # api_fn present in header but absent from new .dynsym → FUNC_VISIBILITY_CHANGED
+    assert "BREAKING" in cmp_res.stdout
+    assert "api_fn" in cmp_res.stdout
 
 
 def test_dump_fails_on_broken_header(tmp_path: Path) -> None:

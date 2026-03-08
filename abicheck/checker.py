@@ -53,6 +53,7 @@ class ChangeKind(str, Enum):
     # Method qualifier changes
     FUNC_STATIC_CHANGED = "func_static_changed"
     FUNC_CV_CHANGED = "func_cv_changed"  # const/volatile on this
+    FUNC_VISIBILITY_CHANGED = "func_visibility_changed"  # default→hidden: symbol gone from ABI
 
     # Virtual changes
     FUNC_PURE_VIRTUAL_ADDED = "func_pure_virtual_added"
@@ -140,6 +141,7 @@ _BREAKING_KINDS = {
     ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
     ChangeKind.FUNC_STATIC_CHANGED,
     ChangeKind.FUNC_CV_CHANGED,
+    ChangeKind.FUNC_VISIBILITY_CHANGED,
     ChangeKind.FUNC_PURE_VIRTUAL_ADDED,
     ChangeKind.FUNC_VIRTUAL_BECAME_PURE,
     ChangeKind.UNION_FIELD_ADDED,
@@ -235,14 +237,33 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     old_map = {k: v for k, v in old.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
     new_map = {k: v for k, v in new.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
 
+    # Build a lookup of ALL functions in new snapshot (including hidden).
+    # When dump() uses castxml headers, _CastxmlParser._visibility() assigns
+    # Visibility.HIDDEN to functions present in XML but absent from .dynsym —
+    # so new_all correctly contains hidden functions in the castxml path.
+    # ELF_ONLY→HIDDEN is also treated as FUNC_VISIBILITY_CHANGED: callers
+    # that resolved the symbol dynamically will still break.
+    new_all = new.function_map
+
     for mangled, f_old in old_map.items():
         if mangled not in new_map:
-            changes.append(Change(
-                kind=ChangeKind.FUNC_REMOVED,
-                symbol=mangled,
-                description=f"Public function removed: {f_old.name}",
-                old_value=f_old.name,
-            ))
+            # Check if it moved to hidden visibility (not truly removed)
+            f_hidden = new_all.get(mangled)
+            if f_hidden is not None and f_hidden.visibility == Visibility.HIDDEN:
+                changes.append(Change(
+                    kind=ChangeKind.FUNC_VISIBILITY_CHANGED,
+                    symbol=mangled,
+                    description=f"Function visibility changed to hidden: {f_old.name}",
+                    old_value=f_old.visibility.value,
+                    new_value=f_hidden.visibility.value,
+                ))
+            else:
+                changes.append(Change(
+                    kind=ChangeKind.FUNC_REMOVED,
+                    symbol=mangled,
+                    description=f"{f_old.visibility.value.capitalize()} function removed: {f_old.name}",
+                    old_value=f_old.name,
+                ))
             continue
         f_new = new_map[mangled]
 
