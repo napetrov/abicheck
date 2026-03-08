@@ -97,6 +97,8 @@ def _resolve_headers_dir(case_dir: Path, v1_h: Path, v2_h: Path) -> str | None:
     """Return the most useful --headers-dir for abidiff, or None."""
     if v1_h.exists():
         return str(v1_h.parent)
+    if v2_h.exists():
+        return str(v2_h.parent)
     return None
 
 
@@ -142,12 +144,22 @@ def run_abidiff(v1_so: Path, v2_so: Path, case: str, rdir: Path,
         cmd += ["--headers-dir", headers_dir]
     cmd += [str(v1_so), str(v2_so)]
 
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return ToolResult(verdict="TIMEOUT")
     out = r.stdout + r.stderr
     (rdir / f"{case}_abidiff{suffix}.txt").write_text(out)
 
-    # abidiff exit codes: 0=no change, 4=compatible change, 8=incompatible (ABI breaking)
-    if r.returncode & 8:
+    # abidiff exit codes (bitmask):
+    #   bit 0 (1) = tool error
+    #   bit 1 (2) = application error
+    #   bit 2 (4) = ABI compatible changes
+    #   bit 3 (8) = ABI incompatible (breaking) changes
+    # Check error bits first so mixed codes (e.g. 5=error+breaking) map to ERROR.
+    if r.returncode & 1 or r.returncode & 2:
+        verdict = "ERROR"
+    elif r.returncode & 8:
         verdict = "BREAKING"
     elif r.returncode & 4:
         verdict = "COMPATIBLE"
@@ -239,10 +251,13 @@ def run_abicc_dumper(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
     dump_v2 = rdir / f"{case}_v2.abi"
 
     # Step 1: generate ABI dumps
-    for so, dump, ver in [(v1_so, dump_v1, "v1"), (v2_so, dump_v2, "v2")]:
+    for so, dump, ver, hdr in [
+        (v1_so, dump_v1, "v1", v1_h),
+        (v2_so, dump_v2, "v2", v2_h),
+    ]:
         dump_cmd = ["abi-dumper", str(so), "-o", str(dump), "-lver", ver]
-        if v1_h.exists():
-            dump_cmd += ["-public-headers", str(v1_h.parent)]
+        if hdr.exists():
+            dump_cmd += ["-public-headers", str(hdr.parent)]
         try:
             dr = subprocess.run(
                 dump_cmd, capture_output=True, text=True, timeout=timeout,
