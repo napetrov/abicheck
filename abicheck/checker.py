@@ -107,6 +107,14 @@ class ChangeKind(str, Enum):
     TYPE_VISIBILITY_CHANGED = "type_visibility_changed"      # typeinfo/vtable visibility changed
     TOOLCHAIN_FLAG_DRIFT = "toolchain_flag_drift"         # -fshort-enums/-fpack-struct drift
 
+    # Sprint 2 — gap detectors
+    FUNC_DELETED = "func_deleted"                        # = delete added → BREAKING (was callable)
+    VAR_BECAME_CONST = "var_became_const"                # non-const → const: writes → SIGSEGV
+    VAR_LOST_CONST = "var_lost_const"                    # const → non-const: BREAKING (ODR / inlining)
+    TYPE_BECAME_OPAQUE = "type_became_opaque"            # complete → forward-decl only → BREAKING
+    BASE_CLASS_POSITION_CHANGED = "base_class_position_changed"  # base reorder → this-ptr offset change
+    BASE_CLASS_VIRTUAL_CHANGED = "base_class_virtual_changed"    # base became virtual or non-virtual
+
 
 class Verdict(str, Enum):
     NO_CHANGE = "NO_CHANGE"         # identical ABI
@@ -171,6 +179,13 @@ _BREAKING_KINDS = {
     ChangeKind.CALLING_CONVENTION_CHANGED,
     ChangeKind.STRUCT_PACKING_CHANGED,
     ChangeKind.TYPE_VISIBILITY_CHANGED,
+    # Sprint 2
+    ChangeKind.FUNC_DELETED,
+    ChangeKind.VAR_BECAME_CONST,
+    ChangeKind.VAR_LOST_CONST,
+    ChangeKind.TYPE_BECAME_OPAQUE,
+    ChangeKind.BASE_CLASS_POSITION_CHANGED,
+    ChangeKind.BASE_CLASS_VIRTUAL_CHANGED,
 }
 
 _COMPATIBLE_KINDS: set[ChangeKind] = {
@@ -322,6 +337,23 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 new_value=f_new.name,
             ))
 
+    # FUNC_DELETED: function was not deleted before, now marked = delete
+    # Use all-functions maps (not just public) to catch deleted declarations
+    old_all = old.function_map
+    new_all_map = new.function_map
+    for mangled, f_new in new_all_map.items():
+        if not f_new.is_deleted:
+            continue
+        f_old_any = old_all.get(mangled)
+        if f_old_any is not None and not f_old_any.is_deleted:
+            changes.append(Change(
+                kind=ChangeKind.FUNC_DELETED,
+                symbol=mangled,
+                description=f"Function explicitly deleted (= delete): {f_new.name}",
+                old_value="callable",
+                new_value="deleted",
+            ))
+
     return changes
 
 
@@ -344,6 +376,24 @@ def _diff_variables(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 description=f"Variable type changed: {v_old.name}",
                 old_value=v_old.type, new_value=new_map[mangled].type,
             ))
+        else:
+            v_new = new_map[mangled]
+            if not v_old.is_const and v_new.is_const:
+                changes.append(Change(
+                    kind=ChangeKind.VAR_BECAME_CONST,
+                    symbol=mangled,
+                    description=f"Variable became const-qualified: {v_old.name} (writes now → SIGSEGV)",
+                    old_value="non-const",
+                    new_value="const",
+                ))
+            elif v_old.is_const and not v_new.is_const:
+                changes.append(Change(
+                    kind=ChangeKind.VAR_LOST_CONST,
+                    symbol=mangled,
+                    description=f"Variable lost const qualifier: {v_old.name} (ODR / inlining break)",
+                    old_value="const",
+                    new_value="non-const",
+                ))
 
     for mangled, v_new in new_map.items():
         if mangled not in old_map:
@@ -386,6 +436,18 @@ def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 def _diff_type_pair(name: str, t_old: RecordType, t_new: RecordType) -> list[Change]:
     changes: list[Change] = []
+
+    # TYPE_BECAME_OPAQUE: was complete, now forward-decl only
+    if not t_old.is_opaque and t_new.is_opaque:
+        changes.append(Change(
+            kind=ChangeKind.TYPE_BECAME_OPAQUE,
+            symbol=name,
+            description=f"Type became opaque (forward-declaration only): {name} — stack allocation no longer possible",
+            old_value="complete",
+            new_value="opaque",
+        ))
+        return changes  # no further checks meaningful for opaque type
+
     _append_type_size_and_alignment_changes(changes, name, t_old, t_new)
     if not t_old.is_union:
         changes.extend(_diff_type_fields(name, t_old, t_new))
@@ -487,15 +549,63 @@ def _new_field_change_kind(t_new: RecordType) -> ChangeKind:
 
 
 def _diff_type_bases(name: str, t_old: RecordType, t_new: RecordType) -> list[Change]:
-    if t_old.bases != t_new.bases or t_old.virtual_bases != t_new.virtual_bases:
-        return [Change(
+    changes: list[Change] = []
+
+    # BASE_CLASS_POSITION_CHANGED: same set of non-virtual bases, different order
+    # This shifts this-pointer adjustments for all bases → old binaries call wrong method.
+    old_bases_set = set(t_old.bases)
+    new_bases_set = set(t_new.bases)
+    if old_bases_set == new_bases_set and t_old.bases != t_new.bases:
+        changes.append(Change(
+            kind=ChangeKind.BASE_CLASS_POSITION_CHANGED,
+            symbol=name,
+            description=f"Base class order reordered: {name} — this-pointer adjustments changed",
+            old_value=str(t_old.bases),
+            new_value=str(t_new.bases),
+        ))
+    elif old_bases_set != new_bases_set:
+        # General base class set change (add/remove base) → TYPE_BASE_CHANGED
+        changes.append(Change(
             kind=ChangeKind.TYPE_BASE_CHANGED,
             symbol=name,
             description=f"Base classes changed: {name}",
             old_value=str(t_old.bases),
             new_value=str(t_new.bases),
-        )]
-    return []
+        ))
+
+    # BASE_CLASS_VIRTUAL_CHANGED: a base moved between virtual and non-virtual
+    old_virt_set = set(t_old.virtual_bases)
+    new_virt_set = set(t_new.virtual_bases)
+    # Bases that moved from non-virtual to virtual or vice versa
+    became_virtual = (new_virt_set - old_virt_set) & old_bases_set
+    lost_virtual   = (old_virt_set - new_virt_set) & new_bases_set
+    if became_virtual or lost_virtual:
+        desc_parts = []
+        if became_virtual:
+            desc_parts.append(f"became virtual: {sorted(became_virtual)}")
+        if lost_virtual:
+            desc_parts.append(f"lost virtual: {sorted(lost_virtual)}")
+        changes.append(Change(
+            kind=ChangeKind.BASE_CLASS_VIRTUAL_CHANGED,
+            symbol=name,
+            description=f"Base class virtual inheritance changed: {name} — {'; '.join(desc_parts)}",
+            old_value=str(sorted(t_old.virtual_bases)),
+            new_value=str(sorted(t_new.virtual_bases)),
+        ))
+    elif old_virt_set != new_virt_set:
+        # Pure add/remove of a virtual base (not a migration from non-virtual):
+        # e.g. class D : virtual A  →  class D : virtual A, virtual B
+        # → TYPE_BASE_CHANGED (hierarchy changed, not just virtuality toggled)
+        if not changes:  # don't duplicate if TYPE_BASE_CHANGED already emitted above
+            changes.append(Change(
+                kind=ChangeKind.TYPE_BASE_CHANGED,
+                symbol=name,
+                description=f"Virtual base classes changed: {name}",
+                old_value=str(t_old.virtual_bases),
+                new_value=str(t_new.virtual_bases),
+            ))
+
+    return changes
 
 
 def _diff_type_vtable(name: str, t_old: RecordType, t_new: RecordType) -> list[Change]:

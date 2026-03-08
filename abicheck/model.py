@@ -48,6 +48,7 @@ class Function:
     is_const: bool = False        # const qualifier on this
     is_volatile: bool = False     # volatile qualifier on this
     is_pure_virtual: bool = False
+    is_deleted: bool = False      # = delete; previously callable → BREAKING
 
 
 @dataclass
@@ -57,6 +58,7 @@ class Variable:
     type: str
     visibility: Visibility = Visibility.PUBLIC
     source_location: str | None = None
+    is_const: bool = False         # const-qualified type (write → SIGSEGV)
 
 
 @dataclass
@@ -81,6 +83,7 @@ class RecordType:
     vtable: list[str] = field(default_factory=list)      # ordered vtable entries (mangled)
     source_location: str | None = None
     is_union: bool = False
+    is_opaque: bool = False       # incomplete type (forward-decl only; was complete → BREAKING)
 
 
 @dataclass
