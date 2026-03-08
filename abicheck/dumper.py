@@ -287,6 +287,7 @@ class _CastxmlParser:
             is_const = el.get("const") == "1"
             is_volatile = el.get("volatile") == "1"
             is_pure_virtual = el.get("pure_virtual") == "1"
+            is_deleted = el.get("deleted") == "1"
 
             funcs.append(Function(
                 name=name,
@@ -303,6 +304,7 @@ class _CastxmlParser:
                 is_const=is_const,
                 is_volatile=is_volatile,
                 is_pure_virtual=is_pure_virtual,
+                is_deleted=is_deleted,
             ))
         return funcs
 
@@ -316,9 +318,17 @@ class _CastxmlParser:
                 continue
             name = el.get("name", mangled)
             type_name = self._type_name(el.get("type", ""))
+            # Use castxml structured attribute first; fall back to word-boundary
+            # regex on type_name to avoid false positives on names like
+            # "constructor_t", "const_iterator", "myconstant".
+            is_const = (
+                el.get("const") == "1"
+                or bool(re.search(r"\bconst\b", type_name))
+            )
             vis = self._visibility(mangled)
             variables.append(Variable(
                 name=name, mangled=mangled, type=type_name, visibility=vis,
+                is_const=is_const,
             ))
         return variables
 
@@ -334,28 +344,30 @@ class _CastxmlParser:
         if el.tag not in ("Struct", "Class", "Union"):
             return False
         name = el.get("name", "")
-        if not name or el.get("incomplete") == "1" or el.get("artificial") == "1":
+        if not name or el.get("artificial") == "1":
             return False
         return not name.startswith("__")
 
     def _build_record_type(self, el: Any) -> RecordType:
         name = el.get("name", "")
+        is_opaque = el.get("incomplete") == "1"
         return RecordType(
             name=name,
             kind=el.tag.lower(),
             size_bits=self._optional_int_attr(el, "size"),
             alignment_bits=self._optional_int_attr(el, "align"),
-            fields=self._parse_record_fields(el),
-            bases=[
+            fields=[] if is_opaque else self._parse_record_fields(el),
+            bases=[] if is_opaque else [
                 self._type_name(b.get("type", ""))
                 for b in el if b.tag == "Base" and b.get("virtual") != "1"
             ],
-            virtual_bases=[
+            virtual_bases=[] if is_opaque else [
                 self._type_name(b.get("type", ""))
                 for b in el if b.tag == "Base" and b.get("virtual") == "1"
             ],
-            vtable=self._build_vtable(el.get("id", "")),
+            vtable=[] if is_opaque else self._build_vtable(el.get("id", "")),
             is_union=el.tag == "Union",
+            is_opaque=is_opaque,
         )
 
     def _optional_int_attr(self, el: Any, attr: str) -> int | None:
