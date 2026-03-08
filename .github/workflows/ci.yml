@@ -45,6 +45,7 @@ jobs:
         if: always()
         uses: codecov/codecov-action@v5
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.xml
           flags: unit
           fail_ci_if_error: false
@@ -78,6 +79,7 @@ jobs:
         if: always()
         uses: codecov/codecov-action@v5
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage-integration.xml
           flags: integration
           fail_ci_if_error: false
