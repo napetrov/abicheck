@@ -152,10 +152,16 @@ For full code walkthroughs and deep per-case narrative, see
     - Example: `examples/case20_enum_member_value_changed/`
     - Mitigation: never renumber released enum constants.
 
-## 7) Compatible/warning changes (not binary ABI breaks)
+## 7) Additional detected changes and verdicts
 
-These changes are detected and reported by abicheck but classified as **COMPATIBLE**
-because they do not cause binary linkage or layout failures when comparing two releases.
+Beyond the core symbol/type/C++ checks above, abicheck detects a number of
+ELF-metadata, DWARF-diagnostic, and qualifier changes. Each is classified
+according to whether it causes a proven binary-level failure.
+
+### Compatible/warning changes
+
+These are detected and reported but do **not** trigger a BREAKING verdict
+because they do not cause binary linkage or layout failures on their own.
 
 25. **noexcept added/removed** — `noexcept` specifier changed on a function.
     - Itanium ABI mangling does not change in practice — the same symbol resolves.
@@ -178,45 +184,51 @@ because they do not cause binary linkage or layout failures when comparing two r
     - Interposition semantics change but existing binaries continue to work.
     - Verdict: COMPATIBLE.
 
-29. **ELF st_size changed** — symbol size metadata changed in `.dynsym`.
-    - `st_size` is informational metadata; the dynamic linker does not use it for resolution.
-    - In ELF-only mode (no headers/DWARF), may be the sole signal for vtable
-      or variable layout changes — classified as **BREAKING** to avoid false negatives.
-
-30. **GNU IFUNC introduced/removed** — symbol changed to/from `STT_GNU_IFUNC`.
+29. **GNU IFUNC introduced/removed** — symbol changed to/from `STT_GNU_IFUNC`.
     - Transparent to callers; PLT/GOT mechanism handles indirect resolution.
     - This is an implementation optimization, not an ABI contract change.
     - Verdict: COMPATIBLE.
 
-31. **New dependency version requirement** — library now requires e.g. `GLIBC_2.34`.
-    - Library fails to load on runtimes lacking the required version.
-    - Verdict: **BREAKING** (hard runtime failure on affected systems).
-
-32. **Typeinfo/vtable visibility changed** — visibility attribute changed on type metadata.
-    - Cross-DSO `dynamic_cast` and C++ exception matching can fail at runtime.
-    - Verdict: **BREAKING**.
-
-33. **Variable const qualifier added/removed** — global variable gained or lost `const`.
-    - Adding `const` moves variable to `.rodata`; existing writes cause SIGSEGV.
-    - Removing `const` is an ODR / inlining break (callers may have cached the value).
-    - Verdict: **BREAKING**.
-
-34. **New/removed DT_NEEDED dependency** — library gained or dropped a shared library dependency.
+30. **New/removed DT_NEEDED dependency** — library gained or dropped a shared library dependency.
     - Deployment/packaging concern; does not affect the library's exported symbol contract.
     - Verdict: COMPATIBLE.
 
-35. **RPATH/RUNPATH changed** — library search path metadata changed.
+31. **RPATH/RUNPATH changed** — library search path metadata changed.
     - Operational concern; no effect on symbol contract or type layout.
     - Verdict: COMPATIBLE.
 
-36. **Toolchain flag drift** — different compiler flags detected via `DW_AT_producer`.
+32. **Toolchain flag drift** — different compiler flags detected via `DW_AT_producer`.
     - Informational diagnostic; not a proven binary break on its own.
     - Verdict: COMPATIBLE.
 
-37. **DWARF info missing** — new binary lacks debug info.
+33. **DWARF info missing** — new binary lacks debug info.
     - Coverage gap warning: struct/enum layout comparison was skipped.
     - Not a break; indicates the comparison is incomplete.
     - Verdict: COMPATIBLE.
+
+### Borderline changes classified as BREAKING
+
+These changes are less obvious than a removed symbol or shifted struct layout,
+but they can cause hard runtime failures in realistic deployments.
+
+34. **ELF st_size changed** — symbol size metadata changed in `.dynsym`.
+    - `st_size` is informational metadata; the dynamic linker does not use it for resolution.
+    - However, in ELF-only mode (no headers/DWARF) it may be the **sole** signal for
+      vtable growth or variable type changes.
+    - Verdict: **BREAKING** (to avoid false negatives in stripped-binary workflows).
+
+35. **New dependency version requirement** — library now requires e.g. `GLIBC_2.34`.
+    - Library fails to load on runtimes lacking the required version.
+    - Verdict: **BREAKING** (hard runtime failure on affected systems).
+
+36. **Typeinfo/vtable visibility changed** — visibility attribute changed on type metadata.
+    - Cross-DSO `dynamic_cast` and C++ exception matching can fail at runtime.
+    - Verdict: **BREAKING**.
+
+37. **Variable const qualifier added/removed** — global variable gained or lost `const`.
+    - Adding `const` moves variable to `.rodata`; existing writes cause SIGSEGV.
+    - Removing `const` is an ODR / inlining break (callers may have cached the value).
+    - Verdict: **BREAKING**.
 
 ---
 
