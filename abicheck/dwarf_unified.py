@@ -75,7 +75,7 @@ def parse_dwarf(so_path: Path) -> tuple[DwarfMetadata, AdvancedDwarfMetadata]:
             # DIE offsets are only unique within one ELF file — do not share across binaries.
             type_cache: dict[tuple[int, int], tuple[str, int]] = {}
 
-            for CU in dwarf.iter_CUs():  # type: ignore[no-untyped-call]
+            for CU in dwarf.iter_CUs():
                 try:
                     _meta_process_cu(CU, meta, type_cache)
                 except Exception as exc:  # noqa: BLE001
