@@ -37,10 +37,11 @@ pytest --cov=abicheck --cov-report=term-missing
 
 Baseline snapshot:
 
-- **221 passed**, **38 skipped**.
-- **Total branch-aware coverage: 49%**.
+- **229 passed** (fast gate), **38 deselected** (integration/parity filtered).
+- **Total branch-aware coverage (fast CI gate): 55%**.
 - Strongly covered modules: `checker.py` (94%), `model.py` (91%), `suppression.py` (92%), `sarif.py` (94%).
-- Major coverage gaps: `cli.py` (0%), `dumper.py` (0%), `dwarf_metadata.py` (15%), `dwarf_advanced.py` (35%).
+- Major coverage gaps: `dwarf_metadata.py` (15%) and deeper `dumper.py` internals (11%) / `dwarf_advanced.py` (35%).
+- **Phase 1 completed:** `cli.py` is now at **71%** with dedicated command tests.
 
 ## How good is the coverage?
 
@@ -49,7 +50,7 @@ Coverage quality is **good for core correctness**, but **not yet good enough for
 - Good: high-signal modules that decide ABI verdicts are thoroughly tested.
 - Weak: user-entry flows and tool-integration paths are under-tested and can hide runtime integration bugs.
 
-So the current 49% should be interpreted as:
+So the current ~55% should be interpreted as:
 
 - acceptable as a **tracked baseline**,
 - insufficient as a **long-term target**.
@@ -60,11 +61,11 @@ Coverage reporting is configured and enforced:
 
 - `pyproject.toml` defines coverage scope (`source = ["abicheck"]`) and enables branch coverage.
 - Main CI test job runs pytest with coverage output (`term-missing` + `coverage.xml`).
-- CI enforces a floor (`--cov-fail-under=48`) and uploads `coverage.xml` as an artifact.
+- CI enforces a floor (`--cov-fail-under=52`) and uploads `coverage.xml` as an artifact.
 
 ## Plan to extend coverage
 
-### Phase 1 (immediate, highest ROI)
+### Phase 1 (completed)
 
 1. **CLI tests via `click.testing.CliRunner`**
    - Cover `dump`, `compare`, `compat` happy paths and error paths.
@@ -75,7 +76,7 @@ Coverage reporting is configured and enforced:
    - Cover success path, malformed tool output, missing binaries, and partial data handling.
 
 3. **Raise floor incrementally after each merge**
-   - Suggested ratchet: **48 -> 52 -> 56 -> 60**.
+   - Ratchet started: **48 -> 52** (done), next targets **56 -> 60**.
 
 ### Phase 2 (integration hardening)
 
@@ -97,7 +98,7 @@ Recommended workflow for contributors:
 
    ```bash
    pytest tests/ -v --tb=short -m "not integration and not libabigail" \
-     --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=48
+     --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=52
    ```
 
 4. If branch coverage improves, bump CI floor by a small step in the same PR.
