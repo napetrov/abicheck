@@ -197,7 +197,8 @@ def run_abicc(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _col(v: str) -> str:
     colors = {"BREAKING": "\033[91m", "COMPATIBLE": "\033[93m",
-              "NO_CHANGE": "\033[92m", "ERROR": "\033[95m", "SKIP": "\033[90m"}
+              "NO_CHANGE": "\033[92m", "ERROR": "\033[95m",
+              "TIMEOUT": "\033[95m", "SKIP": "\033[90m"}
     return f"{colors.get(v, '')}{v:<14}\033[0m"
 
 
