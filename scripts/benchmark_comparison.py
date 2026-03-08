@@ -134,7 +134,10 @@ def run_abidiff(v1_so: Path, v2_so: Path, case: str, rdir: Path,
         cmd += ["--headers-dir1", str(headers_dir), "--headers-dir2", str(headers_dir)]
     cmd += [str(v1_so), str(v2_so)]
 
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return ToolResult(verdict="TIMEOUT", raw_output="abidiff timed out")
     verdict = _abidiff_verdict(r.returncode)
     out = r.stdout or r.stderr
     suffix = "_hdr" if headers_dir else ""
@@ -243,37 +246,47 @@ def main() -> None:
 
         ac      = run_abicheck(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir)
         ab      = run_abidiff(v1_so, v2_so, name, rdir)
-        ab_hdr  = run_abidiff(v1_so, v2_so, name, rdir, headers_dir=case_dir)
+        # Pass resolved headers (eff_v1_h parent) so cases without explicit .h
+        # use the generated header dir rather than the raw case_dir
+        hdr_dir = eff_v1_h.parent if eff_v1_h.exists() else case_dir
+        ab_hdr  = run_abidiff(v1_so, v2_so, name, rdir, headers_dir=hdr_dir)
         acc     = run_abicc(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir)
 
         print(f"  {name:<33} {_col(ac.verdict)} {_col(ab.verdict)} {_col(ab_hdr.verdict)} {_col(acc.verdict)}")
 
         results.append({
-            "case":             name,
-            "abicheck":         ac.verdict,
-            "abidiff":          ab.verdict,
-            "abidiff_headers":  ab_hdr.verdict,
-            "abicc":            acc.verdict,
-            "abicheck_changes": ac.changes,
-            "abidiff_changes":  ab.changes,
-            "abicc_changes":    acc.changes,
+            "case":                    name,
+            "abicheck":                ac.verdict,
+            "abidiff":                 ab.verdict,
+            "abidiff_headers":         ab_hdr.verdict,
+            "abicc":                   acc.verdict,
+            "abicheck_changes":        ac.changes,
+            "abidiff_changes":         ab.changes,
+            "abidiff_headers_changes": ab_hdr.changes,
+            "abicc_changes":           acc.changes,
         })
 
     # ── Summary ──────────────────────────────────────────────────────────────
     valid = [r for r in results
-             if "SKIP" not in (r["abicheck"], r["abidiff"], r["abicc"])]
-    n     = len(valid)
-    all3  = sum(1 for r in valid if r["abicheck"] == r["abidiff"] == r["abicc"])
-    ac_ab = sum(1 for r in valid if r["abicheck"] == r["abidiff"])
+             if "SKIP" not in (r["abicheck"], r["abidiff"], r["abidiff_headers"], r["abicc"])]
+    n      = len(valid)
+    all4   = sum(1 for r in valid
+                 if r["abicheck"] == r["abidiff"] == r["abidiff_headers"] == r["abicc"])
+    all3   = sum(1 for r in valid if r["abicheck"] == r["abidiff"] == r["abicc"])
+    ac_ab  = sum(1 for r in valid if r["abicheck"] == r["abidiff"])
+    ac_abh = sum(1 for r in valid if r["abicheck"] == r["abidiff_headers"])
     ac_acc = sum(1 for r in valid if r["abicheck"] == r["abicc"])
 
     print("\n" + "─" * 100)
     print(f"  Total cases: {len(results)}   (valid for comparison: {n})")
-    print(f"  All three agree:          {all3}/{n} ({100 * all3 // n if n else 0}%)")
-    print(f"  abicheck == abidiff:      {ac_ab}/{n}")
-    print(f"  abicheck == ABICC:        {ac_acc}/{n}")
+    print(f"  All four agree:               {all4}/{n} ({100 * all4 // n if n else 0}%)")
+    print(f"  All three (excl abidiff+hdr): {all3}/{n}")
+    print(f"  abicheck == abidiff:          {ac_ab}/{n}")
+    print(f"  abicheck == abidiff+headers:  {ac_abh}/{n}")
+    print(f"  abicheck == ABICC:            {ac_acc}/{n}")
 
-    divs = [r for r in valid if r["abicheck"] != r["abidiff"] or r["abicheck"] != r["abicc"]]
+    divs = [r for r in valid
+            if len({r["abicheck"], r["abidiff"], r["abidiff_headers"], r["abicc"]}) > 1]
     if divs:
         print("\n  Divergences:")
         for r in divs:
