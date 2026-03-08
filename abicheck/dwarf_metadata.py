@@ -60,7 +60,7 @@ class FieldInfo:
     byte_offset: int    # DW_AT_data_member_location
     byte_size: int      # size of the field's type (0 if unknown)
     bit_offset: int = 0 # for bitfields: normalised bit offset from LSB
-    bit_size: int   = 0 # for bitfields: width in bits (0 = not a bitfield)
+    bit_size: int = 0 # for bitfields: width in bits (0 = not a bitfield)
 
 
 @dataclass
@@ -433,7 +433,7 @@ def _process_enum_named(
         if child.tag == "DW_TAG_enumerator":
             member_name = _attr_str(child, "DW_AT_name")
             # DW_AT_const_value may be signed (DW_FORM_sdata → negative values)
-            member_val  = _attr_int(child, "DW_AT_const_value")
+            member_val = _attr_int(child, "DW_AT_const_value")
             if member_name:
                 enum.members[member_name] = member_val
 
@@ -510,7 +510,7 @@ def _die_to_type_info(  # noqa: PLR0911
     return result
 
 
-def _compute_type_info(  # noqa: PLR0911
+def _compute_type_info(
     die: Any,
     CU: Any,
     depth: int,
@@ -519,80 +519,124 @@ def _compute_type_info(  # noqa: PLR0911
     tag = die.tag
 
     if tag == "DW_TAG_base_type":
-        name = _attr_str(die, "DW_AT_name") or "base"
-        size = _attr_int(die, "DW_AT_byte_size")
-        return (name, size)
+        return (_attr_str(die, "DW_AT_name") or "base", _attr_int(die, "DW_AT_byte_size"))
 
     if tag in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
-        name = _attr_str(die, "DW_AT_name") or "<anon>"
-        size = _attr_int(die, "DW_AT_byte_size")
-        prefix = "struct " if tag == "DW_TAG_structure_type" else ""
-        return (f"{prefix}{name}", size)
+        return _compute_record_type_info(die, tag)
 
     if tag == "DW_TAG_enumeration_type":
         name = _attr_str(die, "DW_AT_name") or "<enum>"
-        size = _attr_int(die, "DW_AT_byte_size")
-        return (f"enum {name}", size)
+        return (f"enum {name}", _attr_int(die, "DW_AT_byte_size"))
 
     if tag == "DW_TAG_pointer_type":
-        ptr_size = _attr_int(die, "DW_AT_byte_size") or 8
-        if "DW_AT_type" in die.attributes:
-            try:
-                inner_die = _resolve_ref(die, "DW_AT_type", CU)
-                inner_name, _ = _die_to_type_info(inner_die, CU, depth + 1, cache)
-                return (f"{inner_name} *", ptr_size)
-            except Exception:  # noqa: BLE001
-                pass
-        return ("void *", ptr_size)
+        return _compute_pointer_like_info(die, CU, depth, cache, suffix=" *", fallback="void *")
 
     if tag in ("DW_TAG_reference_type", "DW_TAG_rvalue_reference_type"):
-        ref_size = _attr_int(die, "DW_AT_byte_size") or 8
-        suffix = "&&" if tag == "DW_TAG_rvalue_reference_type" else "&"
-        if "DW_AT_type" in die.attributes:
-            try:
-                inner_die = _resolve_ref(die, "DW_AT_type", CU)
-                inner_name, _ = _die_to_type_info(inner_die, CU, depth + 1, cache)
-                return (f"{inner_name} {suffix}", ref_size)
-            except Exception:  # noqa: BLE001
-                pass
-        return (f"? {suffix}", ref_size)
+        suffix = " &&" if tag == "DW_TAG_rvalue_reference_type" else " &"
+        return _compute_pointer_like_info(die, CU, depth, cache, suffix=suffix, fallback=f"?{suffix}")
 
     if tag in ("DW_TAG_const_type", "DW_TAG_volatile_type", "DW_TAG_restrict_type"):
-        if "DW_AT_type" in die.attributes:
-            try:
-                inner_die = _resolve_ref(die, "DW_AT_type", CU)
-                inner_name, size = _die_to_type_info(inner_die, CU, depth + 1, cache)
-                qualifier = tag.split("_")[2].lower()  # const / volatile / restrict
-                return (f"{qualifier} {inner_name}", size)
-            except Exception:  # noqa: BLE001
-                pass
+        qualifier = tag.split("_")[2].lower()
+        return _compute_qualified_type_info(die, CU, depth, cache, qualifier)
 
     if tag == "DW_TAG_typedef":
-        name = _attr_str(die, "DW_AT_name")
-        if "DW_AT_type" in die.attributes:
-            try:
-                inner_die = _resolve_ref(die, "DW_AT_type", CU)
-                inner_name, size = _die_to_type_info(inner_die, CU, depth + 1, cache)
-                return (name or inner_name, size)
-            except Exception:  # noqa: BLE001
-                pass
-        return (name or "typedef", 0)
+        return _compute_typedef_info(die, CU, depth, cache)
 
     if tag == "DW_TAG_array_type":
-        size = _attr_int(die, "DW_AT_byte_size")
-        if "DW_AT_type" in die.attributes:
-            try:
-                inner_die = _resolve_ref(die, "DW_AT_type", CU)
-                inner_name, _ = _die_to_type_info(inner_die, CU, depth + 1, cache)
-                return (f"{inner_name}[]", size)
-            except Exception:  # noqa: BLE001
-                pass
-        return ("array", size)
+        return _compute_array_type_info(die, CU, depth, cache)
 
     if tag == "DW_TAG_subroutine_type":
         return ("fn(...)", _attr_int(die, "DW_AT_byte_size"))
 
-    # Fallback: use whatever name/size we can get from this DIE
+    return _compute_fallback_type_info(die, tag)
+
+
+def _compute_record_type_info(die: Any, tag: str) -> tuple[str, int]:
+    name = _attr_str(die, "DW_AT_name") or "<anon>"
+    prefix = "struct " if tag == "DW_TAG_structure_type" else ""
+    return (f"{prefix}{name}", _attr_int(die, "DW_AT_byte_size"))
+
+
+def _compute_pointer_like_info(
+    die: Any,
+    CU: Any,
+    depth: int,
+    cache: dict[tuple[int, int], tuple[str, int]],
+    suffix: str,
+    fallback: str,
+) -> tuple[str, int]:
+    pointee = _resolve_inner_type_name(die, CU, depth, cache)
+    size = _attr_int(die, "DW_AT_byte_size") or 8
+    if pointee is None:
+        return (fallback, size)
+    return (f"{pointee}{suffix}", size)
+
+
+def _compute_qualified_type_info(
+    die: Any,
+    CU: Any,
+    depth: int,
+    cache: dict[tuple[int, int], tuple[str, int]],
+    qualifier: str,
+) -> tuple[str, int]:
+    inner = _resolve_inner_type_info(die, CU, depth, cache)
+    if inner is None:
+        return (qualifier, 0)
+    inner_name, size = inner
+    return (f"{qualifier} {inner_name}", size)
+
+
+def _compute_typedef_info(
+    die: Any,
+    CU: Any,
+    depth: int,
+    cache: dict[tuple[int, int], tuple[str, int]],
+) -> tuple[str, int]:
+    name = _attr_str(die, "DW_AT_name")
+    inner = _resolve_inner_type_info(die, CU, depth, cache)
+    if inner is None:
+        return (name or "typedef", 0)
+    inner_name, size = inner
+    return (name or inner_name, size)
+
+
+def _compute_array_type_info(
+    die: Any,
+    CU: Any,
+    depth: int,
+    cache: dict[tuple[int, int], tuple[str, int]],
+) -> tuple[str, int]:
+    size = _attr_int(die, "DW_AT_byte_size")
+    inner_name = _resolve_inner_type_name(die, CU, depth, cache)
+    return (f"{inner_name}[]", size) if inner_name is not None else ("array", size)
+
+
+def _resolve_inner_type_info(
+    die: Any,
+    CU: Any,
+    depth: int,
+    cache: dict[tuple[int, int], tuple[str, int]],
+) -> tuple[str, int] | None:
+    if "DW_AT_type" not in die.attributes:
+        return None
+    try:
+        inner_die = _resolve_ref(die, "DW_AT_type", CU)
+        return _die_to_type_info(inner_die, CU, depth + 1, cache)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _resolve_inner_type_name(
+    die: Any,
+    CU: Any,
+    depth: int,
+    cache: dict[tuple[int, int], tuple[str, int]],
+) -> str | None:
+    inner = _resolve_inner_type_info(die, CU, depth, cache)
+    return inner[0] if inner is not None else None
+
+
+def _compute_fallback_type_info(die: Any, tag: str) -> tuple[str, int]:
     name = _attr_str(die, "DW_AT_name")
     size = _attr_int(die, "DW_AT_byte_size")
     return (name or tag or "unknown", size)

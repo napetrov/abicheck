@@ -1,2 +1,1 @@
-int compute(int x);
-int helper(int x);
+int stable_api(int x);

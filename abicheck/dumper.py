@@ -325,99 +325,97 @@ class _CastxmlParser:
     def parse_types(self) -> list[RecordType]:
         types = []
         for el in self._root:
-            if el.tag not in ("Struct", "Class", "Union"):
+            if not self._is_public_record_type(el):
                 continue
-            name = el.get("name", "")
-            # Skip compiler-internal / incomplete / anonymous types
-            if not name or el.get("incomplete") == "1" or el.get("artificial") == "1":
-                continue
-            if name.startswith("__"):  # double-underscore = internal
-                continue
+            types.append(self._build_record_type(el))
+        return types
 
-            size_str = el.get("size")
-            size_bits = int(size_str) if size_str and size_str.isdigit() else None
+    def _is_public_record_type(self, el: Any) -> bool:
+        if el.tag not in ("Struct", "Class", "Union"):
+            return False
+        name = el.get("name", "")
+        if not name or el.get("incomplete") == "1" or el.get("artificial") == "1":
+            return False
+        return not name.startswith("__")
 
-            align_str = el.get("align")
-            alignment_bits = int(align_str) if align_str and align_str.isdigit() else None
-
-            fields = []
-            for child in el:
-                if child.tag == "Field":
-                    f_name = child.get("name", "")
-                    f_type = self._type_name(child.get("type", ""))
-                    off_str = child.get("offset")
-                    offset = int(off_str) if off_str and off_str.isdigit() else None
-                    bits_str = child.get("bits")
-                    try:
-                        bitfield_bits = int(bits_str) if bits_str is not None else None
-                        is_bitfield = bitfield_bits is not None
-                    except ValueError:
-                        is_bitfield = False
-                        bitfield_bits = None
-                    fields.append(TypeField(
-                        name=f_name, type=f_type, offset_bits=offset,
-                        is_bitfield=is_bitfield, bitfield_bits=bitfield_bits,
-                    ))
-
-            bases = [
+    def _build_record_type(self, el: Any) -> RecordType:
+        name = el.get("name", "")
+        return RecordType(
+            name=name,
+            kind=el.tag.lower(),
+            size_bits=self._optional_int_attr(el, "size"),
+            alignment_bits=self._optional_int_attr(el, "align"),
+            fields=self._parse_record_fields(el),
+            bases=[
                 self._type_name(b.get("type", ""))
                 for b in el if b.tag == "Base" and b.get("virtual") != "1"
-            ]
-            virtual_bases = [
+            ],
+            virtual_bases=[
                 self._type_name(b.get("type", ""))
                 for b in el if b.tag == "Base" and b.get("virtual") == "1"
-            ]
+            ],
+            vtable=self._build_vtable(el.get("id", "")),
+            is_union=el.tag == "Union",
+        )
 
-            # Collect vtable: virtual methods from this class and its base classes
-            # In castxml, Method elements are top-level with "context" pointing to class id
-            class_id = el.get("id", "")
-            virtual_methods = []
+    def _optional_int_attr(self, el: Any, attr: str) -> int | None:
+        raw = el.get(attr)
+        return int(raw) if raw and raw.isdigit() else None
 
-            # Collect virtual methods: look up in the top-level map by class id
-            # Also include inherited virtual methods from base classes (prepend them)
-            def _collect_virtual_methods(cid: str, seen: set[str] | None = None) -> list[tuple[int | None, str]]:
-                if seen is None:
-                    seen = set()
-                if cid in seen:
-                    return []
-                seen.add(cid)
-                class_el = self._id_map.get(cid)
-                if class_el is None:
-                    return []
-                result = []
-                # First collect from base classes (inherited methods come first in vtable)
-                for base in class_el:
-                    if base.tag == "Base":
-                        base_type_el = self._resolve(base.get("type", ""))
-                        if base_type_el is not None:
-                            result.extend(_collect_virtual_methods(base_type_el.get("id", ""), seen))
-                # Then add this class's own virtual methods
-                for m in self._virtual_methods_by_class.get(cid, []):
-                    mangled_m = m.get("mangled", "")
-                    if mangled_m:
-                        vi = _parse_vtable_index(m.get("vtable_index"))
-                        result.append((vi, mangled_m))
-                return result
-
-            virtual_methods = _collect_virtual_methods(class_id)
-
-            # Sort: methods with vtable_index first (by index), then remainder in XML order
-            virtual_methods.sort(key=_vt_sort_key)
-            vtable = [m for _, m in virtual_methods]
-
-            is_union = el.tag == "Union"
-            types.append(RecordType(
-                name=name,
-                kind=el.tag.lower(),
-                size_bits=size_bits,
-                alignment_bits=alignment_bits,
-                fields=fields,
-                bases=bases,
-                virtual_bases=virtual_bases,
-                vtable=vtable,
-                is_union=is_union,
+    def _parse_record_fields(self, el: Any) -> list[TypeField]:
+        fields: list[TypeField] = []
+        for child in el:
+            if child.tag != "Field":
+                continue
+            bitfield_bits, is_bitfield = self._parse_bitfield_bits(child.get("bits"))
+            fields.append(TypeField(
+                name=child.get("name", ""),
+                type=self._type_name(child.get("type", "")),
+                offset_bits=self._optional_int_attr(child, "offset"),
+                is_bitfield=is_bitfield,
+                bitfield_bits=bitfield_bits,
             ))
-        return types
+        return fields
+
+    @staticmethod
+    def _parse_bitfield_bits(bits_raw: str | None) -> tuple[int | None, bool]:
+        try:
+            bitfield_bits = int(bits_raw) if bits_raw is not None else None
+        except ValueError:
+            return (None, False)
+        return (bitfield_bits, bitfield_bits is not None)
+
+    def _build_vtable(self, class_id: str) -> list[str]:
+        virtual_methods = self._collect_virtual_methods(class_id)
+        virtual_methods.sort(key=_vt_sort_key)
+        return [m for _, m in virtual_methods]
+
+    def _collect_virtual_methods(
+        self, cid: str, seen: set[str] | None = None,
+    ) -> list[tuple[int | None, str]]:
+        if seen is None:
+            seen = set()
+        if cid in seen:
+            return []
+        seen.add(cid)
+        class_el = self._id_map.get(cid)
+        if class_el is None:
+            return []
+
+        result: list[tuple[int | None, str]] = []
+        for base in class_el:
+            if base.tag != "Base":
+                continue
+            base_type_el = self._resolve(base.get("type", ""))
+            if base_type_el is not None:
+                result.extend(self._collect_virtual_methods(base_type_el.get("id", ""), seen))
+
+        for method_el in self._virtual_methods_by_class.get(cid, []):
+            mangled_name = method_el.get("mangled", "")
+            if not mangled_name:
+                continue
+            result.append((_parse_vtable_index(method_el.get("vtable_index")), mangled_name))
+        return result
 
 
     def parse_enums(self) -> list[EnumType]:

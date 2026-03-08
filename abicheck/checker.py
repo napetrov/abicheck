@@ -4,10 +4,10 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from .elf_metadata import SymbolBinding
-from .model import AbiSnapshot, EnumType, Function, Visibility
+from .elf_metadata import SymbolBinding, SymbolType
+from .model import AbiSnapshot, EnumType, Function, RecordType, TypeField, Visibility
 
 if TYPE_CHECKING:
     from .suppression import SuppressionList
@@ -70,40 +70,40 @@ class ChangeKind(str, Enum):
 
     # ── ELF-only (Sprint 2) ──────────────────────────────────────────────
     # Dynamic section contract
-    SONAME_CHANGED           = "soname_changed"
-    NEEDED_ADDED             = "needed_added"            # new DT_NEEDED dep
-    NEEDED_REMOVED           = "needed_removed"          # dep dropped
-    RPATH_CHANGED            = "rpath_changed"
-    RUNPATH_CHANGED          = "runpath_changed"
+    SONAME_CHANGED = "soname_changed"
+    NEEDED_ADDED = "needed_added"            # new DT_NEEDED dep
+    NEEDED_REMOVED = "needed_removed"          # dep dropped
+    RPATH_CHANGED = "rpath_changed"
+    RUNPATH_CHANGED = "runpath_changed"
 
     # Symbol metadata drift (ELF .dynsym)
-    SYMBOL_BINDING_CHANGED      = "symbol_binding_changed"      # GLOBAL→WEAK (breaking)
+    SYMBOL_BINDING_CHANGED = "symbol_binding_changed"      # GLOBAL→WEAK (breaking)
     SYMBOL_BINDING_STRENGTHENED = "symbol_binding_strengthened"  # WEAK→GLOBAL (compatible)
-    SYMBOL_TYPE_CHANGED      = "symbol_type_changed"     # FUNC→OBJECT, etc.
-    SYMBOL_SIZE_CHANGED      = "symbol_size_changed"     # st_size changed
-    IFUNC_INTRODUCED         = "ifunc_introduced"        # → STT_GNU_IFUNC
-    IFUNC_REMOVED            = "ifunc_removed"           # STT_GNU_IFUNC →
-    COMMON_SYMBOL_RISK       = "common_symbol_risk"      # STT_COMMON exported
+    SYMBOL_TYPE_CHANGED = "symbol_type_changed"     # FUNC→OBJECT, etc.
+    SYMBOL_SIZE_CHANGED = "symbol_size_changed"     # st_size changed
+    IFUNC_INTRODUCED = "ifunc_introduced"        # → STT_GNU_IFUNC
+    IFUNC_REMOVED = "ifunc_removed"           # STT_GNU_IFUNC →
+    COMMON_SYMBOL_RISK = "common_symbol_risk"      # STT_COMMON exported
 
     # Symbol versioning contract
-    SYMBOL_VERSION_DEFINED_REMOVED   = "symbol_version_defined_removed"
-    SYMBOL_VERSION_REQUIRED_ADDED    = "symbol_version_required_added"   # new GLIBC_X
-    SYMBOL_VERSION_REQUIRED_REMOVED  = "symbol_version_required_removed"
+    SYMBOL_VERSION_DEFINED_REMOVED = "symbol_version_defined_removed"
+    SYMBOL_VERSION_REQUIRED_ADDED = "symbol_version_required_added"   # new GLIBC_X
+    SYMBOL_VERSION_REQUIRED_REMOVED = "symbol_version_required_removed"
 
     # DWARF layout (Sprint 3)
-    DWARF_INFO_MISSING         = "dwarf_info_missing"         # new binary stripped of -g
-    STRUCT_SIZE_CHANGED        = "struct_size_changed"        # sizeof(T) changed
+    DWARF_INFO_MISSING = "dwarf_info_missing"         # new binary stripped of -g
+    STRUCT_SIZE_CHANGED = "struct_size_changed"        # sizeof(T) changed
     STRUCT_FIELD_OFFSET_CHANGED = "struct_field_offset_changed" # field moved
-    STRUCT_FIELD_REMOVED       = "struct_field_removed"       # field deleted
-    STRUCT_FIELD_TYPE_CHANGED  = "struct_field_type_changed"  # field type/size changed
-    STRUCT_ALIGNMENT_CHANGED   = "struct_alignment_changed"   # alignof(T) changed
+    STRUCT_FIELD_REMOVED = "struct_field_removed"       # field deleted
+    STRUCT_FIELD_TYPE_CHANGED = "struct_field_type_changed"  # field type/size changed
+    STRUCT_ALIGNMENT_CHANGED = "struct_alignment_changed"   # alignof(T) changed
     ENUM_UNDERLYING_SIZE_CHANGED = "enum_underlying_size_changed"  # int→long
 
     # DWARF advanced (Sprint 4)
     CALLING_CONVENTION_CHANGED = "calling_convention_changed"   # DW_AT_calling_convention drift
-    STRUCT_PACKING_CHANGED     = "struct_packing_changed"       # __attribute__((packed)) added/removed
-    TYPE_VISIBILITY_CHANGED    = "type_visibility_changed"      # typeinfo/vtable visibility changed
-    TOOLCHAIN_FLAG_DRIFT       = "toolchain_flag_drift"         # -fshort-enums/-fpack-struct drift
+    STRUCT_PACKING_CHANGED = "struct_packing_changed"       # __attribute__((packed)) added/removed
+    TYPE_VISIBILITY_CHANGED = "type_visibility_changed"      # typeinfo/vtable visibility changed
+    TOOLCHAIN_FLAG_DRIFT = "toolchain_flag_drift"         # -fshort-enums/-fpack-struct drift
 
 
 class Verdict(str, Enum):
@@ -341,127 +341,15 @@ def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     new_map = {t.name: t for t in new.types}
 
     for name, t_old in old_map.items():
-        if name not in new_map:
+        t_new = new_map.get(name)
+        if t_new is None:
             changes.append(Change(
                 kind=ChangeKind.TYPE_REMOVED,
                 symbol=name,
                 description=f"Type removed: {name}",
             ))
             continue
-        t_new = new_map[name]
-
-        if t_old.size_bits is not None and t_new.size_bits is not None:
-            if t_old.size_bits != t_new.size_bits:
-                changes.append(Change(
-                    kind=ChangeKind.TYPE_SIZE_CHANGED,
-                    symbol=name,
-                    description=f"Size changed: {name} ({t_old.size_bits} → {t_new.size_bits} bits)",
-                    old_value=str(t_old.size_bits),
-                    new_value=str(t_new.size_bits),
-                ))
-
-        if t_old.alignment_bits is not None and t_new.alignment_bits is not None:
-            if t_old.alignment_bits != t_new.alignment_bits:
-                changes.append(Change(
-                    kind=ChangeKind.TYPE_ALIGNMENT_CHANGED,
-                    symbol=name,
-                    description=f"Alignment changed: {name} ({t_old.alignment_bits} → {t_new.alignment_bits} bits)",
-                    old_value=str(t_old.alignment_bits),
-                    new_value=str(t_new.alignment_bits),
-                ))
-
-        # TYPE_FIELD_* for unions is handled by _diff_unions() to avoid duplicate reports.
-        # Size/alignment/base/vtable checks above apply to unions too.
-        if not t_old.is_union:
-            old_fields = {f.name: f for f in t_old.fields}
-            new_fields = {f.name: f for f in t_new.fields}
-
-            for fname, f_old in old_fields.items():
-                if fname not in new_fields:
-                    changes.append(Change(
-                        kind=ChangeKind.TYPE_FIELD_REMOVED,
-                        symbol=name,
-                        description=f"Field removed: {name}::{fname}",
-                    ))
-                else:
-                    f_new = new_fields[fname]
-                    if f_old.type != f_new.type:
-                        changes.append(Change(
-                            kind=ChangeKind.TYPE_FIELD_TYPE_CHANGED,
-                            symbol=name,
-                            description=f"Field type changed: {name}::{fname}",
-                            old_value=f_old.type, new_value=f_new.type,
-                        ))
-                    if (f_old.offset_bits is not None and f_new.offset_bits is not None
-                            and f_old.offset_bits != f_new.offset_bits):
-                        changes.append(Change(
-                            kind=ChangeKind.TYPE_FIELD_OFFSET_CHANGED,
-                            symbol=name,
-                            description=f"Field offset changed: {name}::{fname} ({f_old.offset_bits} → {f_new.offset_bits} bits)",
-                            old_value=str(f_old.offset_bits), new_value=str(f_new.offset_bits),
-                        ))
-                    # Bitfield layout check (merged here to avoid redundant type iteration)
-                    if (f_old.is_bitfield != f_new.is_bitfield
-                            or f_old.bitfield_bits != f_new.bitfield_bits):
-                        changes.append(Change(
-                            kind=ChangeKind.FIELD_BITFIELD_CHANGED,
-                            symbol=name,
-                            description=f"Bitfield layout changed: {name}::{fname}",
-                            old_value=f"bits={f_old.bitfield_bits}",
-                            new_value=f"bits={f_new.bitfield_bits}",
-                        ))
-
-            for fname in new_fields:
-                if fname not in old_fields:
-                    # Field addition is BREAKING for polymorphic types or types with vtables;
-                    # COMPATIBLE only for standard-layout types without virtual functions
-                    is_polymorphic = bool(t_new.vtable or t_new.virtual_bases)
-                    field_kind = (
-                        ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE
-                        if not is_polymorphic and t_new.kind in ("struct",)
-                        else ChangeKind.TYPE_FIELD_ADDED  # BREAKING
-                    )
-                    changes.append(Change(
-                        kind=field_kind,
-                        symbol=name,
-                        description=f"Field added: {name}::{fname}",
-                    ))
-
-        if t_old.bases != t_new.bases or t_old.virtual_bases != t_new.virtual_bases:
-            changes.append(Change(
-                kind=ChangeKind.TYPE_BASE_CHANGED,
-                symbol=name,
-                description=f"Base classes changed: {name}",
-                old_value=str(t_old.bases), new_value=str(t_new.bases),
-            ))
-        else:
-            # Detect non-virtual base promoted to virtual (changes VTT layout).
-            # Only runs when bases/virtual_bases are unchanged as sets but virtualness differs.
-            old_all_bases = set(t_old.bases) | set(t_old.virtual_bases)
-            new_all_bases = set(t_new.bases) | set(t_new.virtual_bases)
-            if old_all_bases == new_all_bases:
-                old_virt = set(t_old.virtual_bases)
-                new_virt = set(t_new.virtual_bases)
-                if old_virt != new_virt:
-                    changes.append(Change(
-                        kind=ChangeKind.TYPE_BASE_CHANGED,
-                        symbol=name,
-                        description=f"Virtual inheritance changed: {name} (affects VTT layout)",
-                        old_value=f"virtual={sorted(old_virt)}",
-                        new_value=f"virtual={sorted(new_virt)}",
-                    ))
-
-        if t_old.vtable != t_new.vtable:
-            if Counter(t_old.vtable) == Counter(t_new.vtable) and t_old.vtable != t_new.vtable:
-                # Same entries, different order — reorder is still BREAKING
-                description = f"vtable reordered: {name}"
-            else:
-                description = f"vtable changed: {name}"
-            changes.append(Change(
-                kind=ChangeKind.TYPE_VTABLE_CHANGED,
-                symbol=name,
-                description=description,
-            ))
+        changes.extend(_diff_type_pair(name, t_old, t_new))
 
     for name in new_map:
         if name not in old_map:
@@ -472,6 +360,151 @@ def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             ))
 
     return changes
+
+
+def _diff_type_pair(name: str, t_old: RecordType, t_new: RecordType) -> list[Change]:
+    changes: list[Change] = []
+    _append_type_size_and_alignment_changes(changes, name, t_old, t_new)
+    if not t_old.is_union:
+        changes.extend(_diff_type_fields(name, t_old, t_new))
+    changes.extend(_diff_type_bases(name, t_old, t_new))
+    changes.extend(_diff_type_vtable(name, t_old, t_new))
+    return changes
+
+
+def _append_type_size_and_alignment_changes(
+    changes: list[Change], name: str, t_old: RecordType, t_new: RecordType,
+) -> None:
+    if t_old.size_bits is not None and t_new.size_bits is not None and t_old.size_bits != t_new.size_bits:
+        changes.append(Change(
+            kind=ChangeKind.TYPE_SIZE_CHANGED,
+            symbol=name,
+            description=f"Size changed: {name} ({t_old.size_bits} → {t_new.size_bits} bits)",
+            old_value=str(t_old.size_bits),
+            new_value=str(t_new.size_bits),
+        ))
+
+    if (
+        t_old.alignment_bits is not None
+        and t_new.alignment_bits is not None
+        and t_old.alignment_bits != t_new.alignment_bits
+    ):
+        changes.append(Change(
+            kind=ChangeKind.TYPE_ALIGNMENT_CHANGED,
+            symbol=name,
+            description=f"Alignment changed: {name} ({t_old.alignment_bits} → {t_new.alignment_bits} bits)",
+            old_value=str(t_old.alignment_bits),
+            new_value=str(t_new.alignment_bits),
+        ))
+
+
+def _diff_type_fields(name: str, t_old: RecordType, t_new: RecordType) -> list[Change]:
+    changes: list[Change] = []
+    old_fields = {f.name: f for f in t_old.fields}
+    new_fields = {f.name: f for f in t_new.fields}
+
+    for fname, f_old in old_fields.items():
+        f_new = new_fields.get(fname)
+        if f_new is None:
+            changes.append(Change(
+                kind=ChangeKind.TYPE_FIELD_REMOVED,
+                symbol=name,
+                description=f"Field removed: {name}::{fname}",
+            ))
+            continue
+        changes.extend(_diff_type_field_pair(name, fname, f_old, f_new))
+
+    for fname in new_fields:
+        if fname not in old_fields:
+            changes.append(Change(
+                kind=_new_field_change_kind(t_new),
+                symbol=name,
+                description=f"Field added: {name}::{fname}",
+            ))
+    return changes
+
+
+def _diff_type_field_pair(name: str, fname: str, f_old: TypeField, f_new: TypeField) -> list[Change]:
+    changes: list[Change] = []
+    if f_old.type != f_new.type:
+        changes.append(Change(
+            kind=ChangeKind.TYPE_FIELD_TYPE_CHANGED,
+            symbol=name,
+            description=f"Field type changed: {name}::{fname}",
+            old_value=f_old.type,
+            new_value=f_new.type,
+        ))
+    if f_old.offset_bits is not None and f_new.offset_bits is not None and f_old.offset_bits != f_new.offset_bits:
+        changes.append(Change(
+            kind=ChangeKind.TYPE_FIELD_OFFSET_CHANGED,
+            symbol=name,
+            description=f"Field offset changed: {name}::{fname} ({f_old.offset_bits} → {f_new.offset_bits} bits)",
+            old_value=str(f_old.offset_bits),
+            new_value=str(f_new.offset_bits),
+        ))
+    if f_old.is_bitfield != f_new.is_bitfield or f_old.bitfield_bits != f_new.bitfield_bits:
+        changes.append(Change(
+            kind=ChangeKind.FIELD_BITFIELD_CHANGED,
+            symbol=name,
+            description=f"Bitfield layout changed: {name}::{fname}",
+            old_value=f"bits={f_old.bitfield_bits}",
+            new_value=f"bits={f_new.bitfield_bits}",
+        ))
+    return changes
+
+
+def _new_field_change_kind(t_new: RecordType) -> ChangeKind:
+    # Field addition is BREAKING for polymorphic types or types with vtables;
+    # COMPATIBLE only for standard-layout types without virtual functions.
+    is_polymorphic = bool(t_new.vtable or t_new.virtual_bases)
+    return (
+        ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE
+        if not is_polymorphic and t_new.kind in ("struct",)
+        else ChangeKind.TYPE_FIELD_ADDED
+    )
+
+
+def _diff_type_bases(name: str, t_old: RecordType, t_new: RecordType) -> list[Change]:
+    if t_old.bases != t_new.bases or t_old.virtual_bases != t_new.virtual_bases:
+        return [Change(
+            kind=ChangeKind.TYPE_BASE_CHANGED,
+            symbol=name,
+            description=f"Base classes changed: {name}",
+            old_value=str(t_old.bases),
+            new_value=str(t_new.bases),
+        )]
+
+    # Bases and virtual_bases lists are equal at this point; check if any non-virtual
+    # base was promoted to virtual (changes VTT layout) without altering the set membership.
+    # Note: if both lists are equal as lists, the sets are also equal, so this only fires
+    # when the same base appears in different virtual/non-virtual slots.
+    old_virt = set(t_old.virtual_bases)
+    new_virt = set(t_new.virtual_bases)
+    if old_virt == new_virt:
+        return []
+
+    return [Change(
+        kind=ChangeKind.TYPE_BASE_CHANGED,
+        symbol=name,
+        description=f"Virtual inheritance changed: {name} (affects VTT layout)",
+        old_value=f"virtual={sorted(old_virt)}",
+        new_value=f"virtual={sorted(new_virt)}",
+    )]
+
+
+def _diff_type_vtable(name: str, t_old: RecordType, t_new: RecordType) -> list[Change]:
+    if t_old.vtable == t_new.vtable:
+        return []
+    description = (
+        f"vtable reordered: {name}"
+        if Counter(t_old.vtable) == Counter(t_new.vtable)
+        else f"vtable changed: {name}"
+    )
+    return [Change(
+        kind=ChangeKind.TYPE_VTABLE_CHANGED,
+        symbol=name,
+        description=description,
+    )]
 
 
 def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
@@ -585,7 +618,7 @@ def _diff_method_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     old_mangles = set(old_by_mangled)
     new_mangles = set(new_by_mangled)
     removed_funcs = [old_by_mangled[m] for m in (old_mangles - new_mangles)]
-    added_funcs   = [new_by_mangled[m] for m in (new_mangles - old_mangles)]
+    added_funcs = [new_by_mangled[m] for m in (new_mangles - old_mangles)]
 
     # Build sig-keyed lookup over newly-added functions
     added_by_sig: dict[tuple[str, tuple[str, ...]], Function] = {}
@@ -685,56 +718,72 @@ def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """ELF-only detectors (Sprint 2): no debug info required."""
-    from .elf_metadata import ElfMetadata, SymbolType
+    from .elf_metadata import ElfMetadata
 
     o: ElfMetadata = getattr(old, "elf", None) or ElfMetadata()
     n: ElfMetadata = getattr(new, "elf", None) or ElfMetadata()
     changes: list[Change] = []
+    changes.extend(_diff_elf_dynamic_section(o, n))
+    changes.extend(_diff_elf_symbol_versioning(o, n))
+    changes.extend(_diff_elf_symbol_metadata(o, n))
+    return changes
 
-    # ── Dynamic section ─────────────────────────────────────────────────
-    if o.soname and n.soname and o.soname != n.soname:
+
+def _diff_elf_dynamic_section(old_elf: Any, new_elf: Any) -> list[Change]:
+    changes: list[Change] = []
+    if old_elf.soname and new_elf.soname and old_elf.soname != new_elf.soname:
         changes.append(Change(
             kind=ChangeKind.SONAME_CHANGED,
             symbol="DT_SONAME",
-            description=f"SONAME changed: {o.soname!r} → {n.soname!r}",
-            old_value=o.soname, new_value=n.soname,
+            description=f"SONAME changed: {old_elf.soname!r} → {new_elf.soname!r}",
+            old_value=old_elf.soname,
+            new_value=new_elf.soname,
         ))
+    changes.extend(_diff_needed_libraries(old_elf.needed, new_elf.needed))
+    if old_elf.rpath != new_elf.rpath:
+        changes.append(Change(
+            kind=ChangeKind.RPATH_CHANGED,
+            symbol="DT_RPATH",
+            description=f"RPATH changed: {old_elf.rpath!r} → {new_elf.rpath!r}",
+            old_value=old_elf.rpath,
+            new_value=new_elf.rpath,
+        ))
+    if old_elf.runpath != new_elf.runpath:
+        changes.append(Change(
+            kind=ChangeKind.RUNPATH_CHANGED,
+            symbol="DT_RUNPATH",
+            description=f"RUNPATH changed: {old_elf.runpath!r} → {new_elf.runpath!r}",
+            old_value=old_elf.runpath,
+            new_value=new_elf.runpath,
+        ))
+    return changes
 
-    old_needed = set(o.needed)
-    new_needed = set(n.needed)
-    for lib in sorted(new_needed - old_needed):
+
+def _diff_needed_libraries(old_needed: list[str], new_needed: list[str]) -> list[Change]:
+    changes: list[Change] = []
+    old_set = set(old_needed)
+    new_set = set(new_needed)
+    for lib in sorted(new_set - old_set):
         changes.append(Change(
             kind=ChangeKind.NEEDED_ADDED,
             symbol="DT_NEEDED",
             description=f"New dependency added: {lib}",
             new_value=lib,
         ))
-    for lib in sorted(old_needed - new_needed):
+    for lib in sorted(old_set - new_set):
         changes.append(Change(
             kind=ChangeKind.NEEDED_REMOVED,
             symbol="DT_NEEDED",
             description=f"Dependency removed: {lib}",
             old_value=lib,
         ))
+    return changes
 
-    if o.rpath != n.rpath:
-        changes.append(Change(
-            kind=ChangeKind.RPATH_CHANGED,
-            symbol="DT_RPATH",
-            description=f"RPATH changed: {o.rpath!r} → {n.rpath!r}",
-            old_value=o.rpath, new_value=n.rpath,
-        ))
-    if o.runpath != n.runpath:
-        changes.append(Change(
-            kind=ChangeKind.RUNPATH_CHANGED,
-            symbol="DT_RUNPATH",
-            description=f"RUNPATH changed: {o.runpath!r} → {n.runpath!r}",
-            old_value=o.runpath, new_value=n.runpath,
-        ))
 
-    # ── Symbol versioning ────────────────────────────────────────────────
-    old_def = set(o.versions_defined)
-    new_def = set(n.versions_defined)
+def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
+    changes: list[Change] = []
+    old_def = set(old_elf.versions_defined)
+    new_def = set(new_elf.versions_defined)
     for ver in sorted(old_def - new_def):
         changes.append(Change(
             kind=ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
@@ -743,12 +792,10 @@ def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             old_value=ver,
         ))
 
-    # Required version drift (e.g. new GLIBC_2.34 requirement).
-    # Iterate union of old+new libs to catch libs that disappeared entirely.
-    all_req_libs = set(o.versions_required) | set(n.versions_required)
+    all_req_libs = set(old_elf.versions_required) | set(new_elf.versions_required)
     for lib in sorted(all_req_libs):
-        old_vers = set(o.versions_required.get(lib, []))
-        new_vers = set(n.versions_required.get(lib, []))
+        old_vers = set(old_elf.versions_required.get(lib, []))
+        new_vers = set(new_elf.versions_required.get(lib, []))
         for ver in sorted(new_vers - old_vers):
             changes.append(Change(
                 kind=ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
@@ -763,84 +810,84 @@ def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 description=f"Symbol version requirement removed: {ver} (from {lib})",
                 old_value=f"{lib}:{ver}",
             ))
+    return changes
 
-    # ── Per-symbol metadata ──────────────────────────────────────────────
-    old_syms = o.symbol_map
-    new_syms = n.symbol_map
+
+def _diff_elf_symbol_metadata(old_elf: Any, new_elf: Any) -> list[Change]:
+    changes: list[Change] = []
+    old_syms = old_elf.symbol_map
+    new_syms = new_elf.symbol_map
 
     for sym_name, s_old in old_syms.items():
-        if sym_name not in new_syms:
+        s_new = new_syms.get(sym_name)
+        if s_new is None:
             continue
-        s_new = new_syms[sym_name]
+        changes.extend(_diff_elf_symbol_pair(sym_name, s_old, s_new))
 
-        # IFUNC introduced/removed
-        if s_old.sym_type != SymbolType.IFUNC and s_new.sym_type == SymbolType.IFUNC:
-            changes.append(Change(
-                kind=ChangeKind.IFUNC_INTRODUCED,
-                symbol=sym_name,
-                description=f"Symbol became GNU_IFUNC: {sym_name}",
-                old_value=s_old.sym_type.value, new_value="ifunc",
-            ))
-        elif s_old.sym_type == SymbolType.IFUNC and s_new.sym_type != SymbolType.IFUNC:
-            changes.append(Change(
-                kind=ChangeKind.IFUNC_REMOVED,
-                symbol=sym_name,
-                description=f"Symbol no longer GNU_IFUNC: {sym_name}",
-                old_value="ifunc", new_value=s_new.sym_type.value,
-            ))
-        elif s_old.sym_type != s_new.sym_type:
-            changes.append(Change(
-                kind=ChangeKind.SYMBOL_TYPE_CHANGED,
-                symbol=sym_name,
-                description=f"Symbol type changed: {sym_name} ({s_old.sym_type.value} → {s_new.sym_type.value})",
-                old_value=s_old.sym_type.value, new_value=s_new.sym_type.value,
-            ))
-
-        # Binding drift.
-        # GLOBAL→WEAK: breaking — consumers expecting reliable strong resolution may get
-        # the weak version overridden or missing at link time.
-        # WEAK→GLOBAL: compatible for most consumers (symbol is strengthened). Edge case:
-        # interposing libraries that relied on weak-override semantics will stop working,
-        # but that's an unusual deployment pattern; classified COMPATIBLE per ADR-001.
-        if s_old.binding != s_new.binding:
-            is_weakening = (
-                s_old.binding == SymbolBinding.GLOBAL
-                and s_new.binding == SymbolBinding.WEAK
-            )
-            kind = ChangeKind.SYMBOL_BINDING_CHANGED if is_weakening else ChangeKind.SYMBOL_BINDING_STRENGTHENED
-            changes.append(Change(
-                kind=kind,
-                symbol=sym_name,
-                description=f"Symbol binding changed: {sym_name} ({s_old.binding.value} → {s_new.binding.value})",
-                old_value=s_old.binding.value, new_value=s_new.binding.value,
-            ))
-
-        # Size drift — only meaningful for data objects (STT_OBJECT, STT_TLS).
-        # STT_FUNC size = machine-code bytes: changes with every compile/optimization,
-        # is not an ABI contract, and produces massive false positives. Ignored.
-        if (
-            s_old.size > 0 and s_new.size > 0
-            and s_old.size != s_new.size
-            and s_new.sym_type in (SymbolType.OBJECT, SymbolType.COMMON, SymbolType.TLS)
-        ):
-            changes.append(Change(
-                kind=ChangeKind.SYMBOL_SIZE_CHANGED,
-                symbol=sym_name,
-                description=f"Symbol size changed: {sym_name} ({s_old.size} → {s_new.size} bytes)",
-                old_value=str(s_old.size), new_value=str(s_new.size),
-            ))
-
-    # STT_COMMON risk: any new COMMON symbols in exported API
     for sym_name, s_new in new_syms.items():
-        if s_new.sym_type == SymbolType.COMMON:
-            old_common = old_syms.get(sym_name)
-            if old_common is None or old_common.sym_type != SymbolType.COMMON:
-                changes.append(Change(
-                    kind=ChangeKind.COMMON_SYMBOL_RISK,
-                    symbol=sym_name,
-                    description=f"Exported STT_COMMON symbol: {sym_name} (resolution depends on linker/loader)",
-                ))
+        if s_new.sym_type != SymbolType.COMMON:
+            continue
+        old_common = old_syms.get(sym_name)
+        if old_common is None or old_common.sym_type != SymbolType.COMMON:
+            changes.append(Change(
+                kind=ChangeKind.COMMON_SYMBOL_RISK,
+                symbol=sym_name,
+                description=f"Exported STT_COMMON symbol: {sym_name} (resolution depends on linker/loader)",
+            ))
+    return changes
 
+
+def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]:
+    changes: list[Change] = []
+    if s_old.sym_type != SymbolType.IFUNC and s_new.sym_type == SymbolType.IFUNC:
+        changes.append(Change(
+            kind=ChangeKind.IFUNC_INTRODUCED,
+            symbol=sym_name,
+            description=f"Symbol became GNU_IFUNC: {sym_name}",
+            old_value=s_old.sym_type.value,
+            new_value="ifunc",
+        ))
+    elif s_old.sym_type == SymbolType.IFUNC and s_new.sym_type != SymbolType.IFUNC:
+        changes.append(Change(
+            kind=ChangeKind.IFUNC_REMOVED,
+            symbol=sym_name,
+            description=f"Symbol no longer GNU_IFUNC: {sym_name}",
+            old_value="ifunc",
+            new_value=s_new.sym_type.value,
+        ))
+    elif s_old.sym_type != s_new.sym_type:
+        changes.append(Change(
+            kind=ChangeKind.SYMBOL_TYPE_CHANGED,
+            symbol=sym_name,
+            description=f"Symbol type changed: {sym_name} ({s_old.sym_type.value} → {s_new.sym_type.value})",
+            old_value=s_old.sym_type.value,
+            new_value=s_new.sym_type.value,
+        ))
+
+    if s_old.binding != s_new.binding:
+        is_weakening = s_old.binding == SymbolBinding.GLOBAL and s_new.binding == SymbolBinding.WEAK
+        kind = ChangeKind.SYMBOL_BINDING_CHANGED if is_weakening else ChangeKind.SYMBOL_BINDING_STRENGTHENED
+        changes.append(Change(
+            kind=kind,
+            symbol=sym_name,
+            description=f"Symbol binding changed: {sym_name} ({s_old.binding.value} → {s_new.binding.value})",
+            old_value=s_old.binding.value,
+            new_value=s_new.binding.value,
+        ))
+
+    if (
+        s_old.size > 0
+        and s_new.size > 0
+        and s_old.size != s_new.size
+        and s_new.sym_type in (SymbolType.OBJECT, SymbolType.COMMON, SymbolType.TLS)
+    ):
+        changes.append(Change(
+            kind=ChangeKind.SYMBOL_SIZE_CHANGED,
+            symbol=sym_name,
+            description=f"Symbol size changed: {sym_name} ({s_old.size} → {s_new.size} bytes)",
+            old_value=str(s_old.size),
+            new_value=str(s_new.size),
+        ))
     return changes
 
 
@@ -1144,9 +1191,9 @@ def _diff_advanced_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
     _kind_map = {
         "calling_convention_changed": ChangeKind.CALLING_CONVENTION_CHANGED,
-        "struct_packing_changed":     ChangeKind.STRUCT_PACKING_CHANGED,
-        "toolchain_flag_drift":       ChangeKind.TOOLCHAIN_FLAG_DRIFT,
-        "type_visibility_changed":    ChangeKind.TYPE_VISIBILITY_CHANGED,
+        "struct_packing_changed": ChangeKind.STRUCT_PACKING_CHANGED,
+        "toolchain_flag_drift": ChangeKind.TOOLCHAIN_FLAG_DRIFT,
+        "type_visibility_changed": ChangeKind.TYPE_VISIBILITY_CHANGED,
     }
 
     return [

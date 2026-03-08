@@ -17,9 +17,9 @@ if TYPE_CHECKING:
 
 # Verdict colours matching ABICC's visual style
 _VERDICT_STYLE: dict[str, tuple[str, str]] = {
-    "BREAKING":   ("#b71c1c", "#ffcdd2"),
+    "BREAKING": ("#b71c1c", "#ffcdd2"),
     "COMPATIBLE": ("#1b5e20", "#c8e6c9"),
-    "NO_CHANGE":  ("#0d47a1", "#bbdefb"),
+    "NO_CHANGE": ("#0d47a1", "#bbdefb"),
 }
 
 _CSS = """
