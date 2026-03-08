@@ -18,7 +18,7 @@ import html
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .checker import _BREAKING_KINDS as _CHECKER_BREAKING_KINDS
+from .checker import _BREAKING_KINDS as _CHECKER_BREAKING_KINDS_ENUM
 
 if TYPE_CHECKING:
     from .checker import DiffResult
@@ -81,10 +81,9 @@ _CHANGED_BREAKING_KINDS: frozenset[str] = frozenset({
 })
 
 #: Canonical breaking kinds imported from checker — single source of truth.
-#: _REMOVED_KINDS and _CHANGED_BREAKING_KINDS are kept for bucket classification
-#: (routing changes to Removed/Changed/Added sections), but breaking detection
-#: uses the authoritative set from checker.py.
-_BREAKING_KINDS: frozenset[str] = _CHECKER_BREAKING_KINDS
+#: Converted to frozenset[str] (kind.value) so kind_str lookups work without
+#: importing ChangeKind enum in this module.
+_BREAKING_KINDS: frozenset[str] = frozenset(k.value for k in _CHECKER_BREAKING_KINDS_ENUM)
 
 #: Category buckets for the summary table — mirrors ABICC section headers.
 _CATEGORY_PREFIXES: list[tuple[str, tuple[str, ...]]] = [
