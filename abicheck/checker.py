@@ -237,8 +237,12 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     old_map = {k: v for k, v in old.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
     new_map = {k: v for k, v in new.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
 
-    # Build a lookup of ALL functions in new snapshot (including hidden)
-    # to distinguish visibility change from outright removal.
+    # Build a lookup of ALL functions in new snapshot (including hidden).
+    # When dump() uses castxml headers, _CastxmlParser._visibility() assigns
+    # Visibility.HIDDEN to functions present in XML but absent from .dynsym —
+    # so new_all correctly contains hidden functions in the castxml path.
+    # ELF_ONLY→HIDDEN is also treated as FUNC_VISIBILITY_CHANGED: callers
+    # that resolved the symbol dynamically will still break.
     new_all = new.function_map
 
     for mangled, f_old in old_map.items():
@@ -250,8 +254,8 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                     kind=ChangeKind.FUNC_VISIBILITY_CHANGED,
                     symbol=mangled,
                     description=f"Function visibility changed to hidden: {f_old.name}",
-                    old_value="public",
-                    new_value="hidden",
+                    old_value=f_old.visibility.value,
+                    new_value=f_hidden.visibility.value,
                 ))
             else:
                 changes.append(Change(
