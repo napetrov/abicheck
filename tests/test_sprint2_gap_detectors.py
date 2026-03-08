@@ -10,17 +10,14 @@ Covers:
 """
 from __future__ import annotations
 
-import pytest
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.model import (
     AbiSnapshot,
     Function,
-    Param,
     RecordType,
     Variable,
     Visibility,
 )
-
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
