@@ -19,7 +19,9 @@ Exit codes match ABICC:
 |------|---------|
 | `0` | Compatible or no change |
 | `1` | Breaking ABI change detected |
-| `2` | Error (descriptor parse failure, missing files) |
+| `2` | Source-level break (`SOURCE_BREAK`) or error (descriptor parse failure, missing files) |
+
+> **Note:** In `-strict` mode, `SOURCE_BREAK` is promoted to exit `1` (BREAKING).
 
 ## Full flag reference
 

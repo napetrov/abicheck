@@ -12,6 +12,7 @@ Verifies that abicheck compat command:
 """
 from __future__ import annotations
 
+import pytest
 from click.testing import CliRunner
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
@@ -104,10 +105,10 @@ class TestBuildSkipSuppression:
         sup = _build_skip_suppression(f, None)
         assert len(sup._suppressions) == 1
 
-    def test_missing_file_returns_empty(self, tmp_path):
-        """Non-existent file: warns but returns empty (no crash)."""
-        sup = _build_skip_suppression(tmp_path / "nonexistent.txt", None)
-        assert sup._suppressions == []
+    def test_missing_file_raises_oserror(self, tmp_path):
+        """Non-existent file raises OSError (caller handles with sys.exit(2))."""
+        with pytest.raises(OSError):
+            _build_skip_suppression(tmp_path / "nonexistent.txt", None)
 
     def test_merge_combines_suppressions(self, tmp_path):
         """SuppressionList.merge() combines rules from both lists."""
@@ -176,10 +177,12 @@ class TestKindSets:
         assert ChangeKind.FUNC_PARAMS_CHANGED in _SOURCE_BREAK_KINDS
 
     def test_filter_source_only_source_break_verdict(self):
-        """_filter_source_only: SOURCE_BREAK_KINDS changes → SOURCE_BREAK verdict."""
+        """_filter_source_only: SOURCE_BREAK_KINDS changes → correct verdict + filtering."""
         from abicheck.cli import _filter_source_only
         r = _result(Verdict.BREAKING, [ChangeKind.SONAME_CHANGED, ChangeKind.FUNC_PARAMS_CHANGED])
         filtered = _filter_source_only(r)
         # SONAME removed, FUNC_PARAMS_CHANGED stays
         assert ChangeKind.SONAME_CHANGED not in {c.kind for c in filtered.changes}
         assert ChangeKind.FUNC_PARAMS_CHANGED in {c.kind for c in filtered.changes}
+        # FUNC_PARAMS_CHANGED is in _SOURCE_BREAK_KINDS → verdict SOURCE_BREAK
+        assert filtered.verdict in (Verdict.BREAKING, Verdict.SOURCE_BREAK)

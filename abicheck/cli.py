@@ -145,22 +145,23 @@ def _build_skip_suppression(
     skip_symbols_path: Path | None,
     skip_types_path: Path | None,
 ) -> SuppressionList:
-    """Build a SuppressionList from ABICC-style -skip-symbols / -skip-types files."""
+    """Build a SuppressionList from ABICC-style -skip-symbols / -skip-types files.
+
+    Raises ValueError if a file contains an invalid regex pattern.
+    Raises OSError if a file cannot be read.
+    """
     from .suppression import Suppression, SuppressionList  # noqa: PLC0415
 
     rules: list[Suppression] = []
     for fpath in [skip_symbols_path, skip_types_path]:
         if fpath is None:
             continue
-        try:
-            names = [
-                ln.strip() for ln in fpath.read_text(encoding="utf-8").splitlines()
-                if ln.strip() and not ln.startswith("#")
-            ]
-        except OSError as exc:
-            click.echo(f"Warning: cannot read {fpath}: {exc}", err=True)
-            continue
+        names = [
+            ln.strip() for ln in fpath.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.startswith("#")
+        ]
         for name in names:
+            # Suppression.__post_init__ validates regex — ValueError propagates to caller
             if any(c in name for c in ("*", "?", ".", "[")):
                 rules.append(Suppression(symbol_pattern=name))
             else:
@@ -368,7 +369,7 @@ def compat_cmd(
     # -source: API compatibility only (suppress binary-only changes like SONAME, SYMBOL_*)
     # -binary: default ABI check (no extra filtering)
     if headers_only:
-        click.echo("Note: -headers-only mode — ELF symbol checks skipped.", err=True)
+        click.echo("Note: -headers-only is not yet implemented — ELF/DWARF checks still run.", err=True)
 
     if not old_headers or not new_headers:
         click.echo(
@@ -395,7 +396,11 @@ def compat_cmd(
 
     # -skip-symbols / -skip-types: build suppression on the fly
     if skip_symbols_path is not None or skip_types_path is not None:
-        suppression = _build_skip_suppression(skip_symbols_path, skip_types_path)
+        try:
+            suppression = _build_skip_suppression(skip_symbols_path, skip_types_path)
+        except ValueError as exc:
+            click.echo(f"Error in skip-symbols/skip-types: {exc}", err=True)
+            sys.exit(2)
 
     if suppress is not None:
         try:
@@ -475,9 +480,14 @@ def compat_cmd(
     click.echo(f"Verdict: {verdict}", err=True)
     click.echo(f"Report:  {report_path}", err=True)
 
-    # Exit codes: 0=compatible/no_change, 1=breaking, 2=error (already handled above)
+    # Exit codes mirror ABICC:
+    #   0 = NO_CHANGE or COMPATIBLE
+    #   1 = BREAKING
+    #   2 = SOURCE_BREAK (source-level break, binary compatible)
     if verdict == "BREAKING":
         sys.exit(1)
+    if verdict == "SOURCE_BREAK":
+        sys.exit(2)
 
 
 if __name__ == "__main__":
