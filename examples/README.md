@@ -46,7 +46,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [12](case12_function_removed/README.md) | Function Disappears | Symbol API | 12 🔴 | Function moved to inline, vanishes from .so |
 | [13](case13_symbol_versioning/README.md) | Symbol Versioning | ELF/Linker | — 🟡 | No version script → no `@@VER` on symbols |
 | [14](case14_cpp_class_size/README.md) | C++ Class Size Change | C++ ABI | 4 🟡 | Private member grows, sizeof(class) changes |
-| [15](case15_noexcept_change/README.md) | noexcept Changed | C++ Source | COMPATIBLE 🟢 | Source-level contract; mangling unchanged |
+| [15](case15_noexcept_change/README.md) | noexcept Changed | C++ Source | 0 ❌ | Source-level contract; mangling unchanged |
 | [16](case16_inline_to_non_inline/README.md) | Inline → Non-inline | C++ ABI | — ⚠️ | ODR violation; symbol appears in v2 .so |
 | [17](case17_template_abi/README.md) | Template Layout Change | C++ ABI | 4 🟡 | Explicit-instantiated template grows in size |
 | [18](case18_dependency_leak/README.md) | Dependency ABI Leak | Type Layout | — ⚠️ | Third-party type in public header changes layout |
