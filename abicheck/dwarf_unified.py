@@ -2,7 +2,9 @@
 
 Combines the work of ``dwarf_metadata.parse_dwarf_metadata`` and
 ``dwarf_advanced.parse_advanced_dwarf`` into one ELF open + one CU
-iteration, cutting I/O and DIE-walk overhead roughly in half.
+iteration, cutting file I/O and CU-header parsing overhead roughly in half.
+Note: each module still performs its own DIE-tree walk per CU; a unified
+DIE walker (further ~30-40% CPU gain) is a planned follow-up.
 
 Public API
 ----------
@@ -23,26 +25,14 @@ import logging
 import os
 import stat
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
-from .dwarf_advanced import (
-    AdvancedDwarfMetadata,
-)
-from .dwarf_advanced import (
-    _process_cu as _adv_process_cu,  # type: ignore[attr-defined]  # private but stable
-)
-from .dwarf_metadata import (
-    DwarfMetadata,
-)
-from .dwarf_metadata import (
-    _process_cu as _meta_process_cu,  # type: ignore[attr-defined]  # private but stable
-)
-
-if TYPE_CHECKING:
-    pass
+from .dwarf_advanced import AdvancedDwarfMetadata
+from .dwarf_advanced import _process_cu_impl as _adv_process_cu
+from .dwarf_metadata import DwarfMetadata
+from .dwarf_metadata import _process_cu_impl as _meta_process_cu
 
 log = logging.getLogger(__name__)
 
@@ -81,7 +71,8 @@ def parse_dwarf(so_path: Path) -> tuple[DwarfMetadata, AdvancedDwarfMetadata]:
 
             dwarf = elf.get_dwarf_info()  # type: ignore[no-untyped-call]
 
-            # Per-file type-resolution cache required by _meta_process_cu.
+            # Per-binary type-resolution cache: (cu_offset, die_offset) → (type_name, byte_size).
+            # DIE offsets are only unique within one ELF file — do not share across binaries.
             type_cache: dict[tuple[int, int], tuple[str, int]] = {}
 
             for CU in dwarf.iter_CUs():  # type: ignore[no-untyped-call]
@@ -106,12 +97,22 @@ def parse_dwarf(so_path: Path) -> tuple[DwarfMetadata, AdvancedDwarfMetadata]:
 # ---------------------------------------------------------------------------
 
 def parse_dwarf_metadata(so_path: Path) -> DwarfMetadata:
-    """Thin shim — delegates to parse_dwarf() and returns only DwarfMetadata."""
+    """Thin shim — delegates to parse_dwarf() and returns only DwarfMetadata.
+
+    .. note::
+        If you also need ``AdvancedDwarfMetadata``, call ``parse_dwarf()``
+        directly to avoid opening the file twice.
+    """
     meta, _ = parse_dwarf(so_path)
     return meta
 
 
 def parse_advanced_dwarf(so_path: Path) -> AdvancedDwarfMetadata:
-    """Thin shim — delegates to parse_dwarf() and returns only AdvancedDwarfMetadata."""
+    """Thin shim — delegates to parse_dwarf() and returns only AdvancedDwarfMetadata.
+
+    .. note::
+        If you also need ``DwarfMetadata``, call ``parse_dwarf()``
+        directly to avoid opening the file twice.
+    """
     _, adv = parse_dwarf(so_path)
     return adv
