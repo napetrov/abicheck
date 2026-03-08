@@ -4,8 +4,9 @@ _Generated: 2026-03-08_
 
 ## ChangeKind Coverage: 62/62 (100%)
 
-All 62 `ChangeKind` values now have explicit `assert c.kind == ChangeKind.X` assertions
-in `tests/test_changekind_coverage.py` (added in this sprint).
+All 62 `ChangeKind` values now have explicit `assert c.kind == ChangeKind.X`
+assertions across the test suite. `tests/test_changekind_coverage.py` adds the
+previously uncovered cases that bring the suite to 62/62.
 
 ### Previously uncovered (now fixed)
 

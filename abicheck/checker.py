@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from .dwarf_advanced import diff_advanced_dwarf
 from .elf_metadata import SymbolBinding, SymbolType
 from .model import AbiSnapshot, EnumType, Function, RecordType, TypeField, Visibility
 
@@ -1171,7 +1172,7 @@ def _diff_enum_layouts(o: object, n: object) -> list[Change]:
 
 def _diff_advanced_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Sprint 4: calling convention, packing, toolchain flag drift."""
-    from .dwarf_advanced import AdvancedDwarfMetadata, diff_advanced_dwarf
+    from .dwarf_advanced import AdvancedDwarfMetadata
 
     o: AdvancedDwarfMetadata = getattr(old, "dwarf_advanced", None) or AdvancedDwarfMetadata()
     n: AdvancedDwarfMetadata = getattr(new, "dwarf_advanced", None) or AdvancedDwarfMetadata()

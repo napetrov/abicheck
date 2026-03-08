@@ -416,18 +416,17 @@ class TestTypedefRemoved:
 class TestTypeVisibilityChanged:
     """TYPE_VISIBILITY_CHANGED is emitted via diff_advanced_dwarf.
 
-    The detector lives in abicheck.dwarf_advanced and is called inside
-    abicheck.checker._diff_advanced_dwarf via a local import:
-        from .dwarf_advanced import AdvancedDwarfMetadata, diff_advanced_dwarf
-    Monkeypatching abicheck.dwarf_advanced.diff_advanced_dwarf is correct:
-    the local import resolves the name from the module's namespace at call time.
+    checker.py imports diff_advanced_dwarf at module level:
+        from .dwarf_advanced import diff_advanced_dwarf
+    So the correct monkeypatch target is abicheck.checker.diff_advanced_dwarf —
+    that is where the already-bound reference lives at call time.
     Tests inject pre-built tuples without needing real .so files.
     """
 
     def test_type_visibility_changed_is_breaking(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import abicheck.dwarf_advanced as dwarf_mod
+        import abicheck.checker as checker_mod
 
         def fake_diff(
             old: AdvancedDwarfMetadata,
@@ -441,7 +440,7 @@ class TestTypeVisibilityChanged:
                 "hidden",
             )]
 
-        monkeypatch.setattr(dwarf_mod, "diff_advanced_dwarf", fake_diff)
+        monkeypatch.setattr(checker_mod, "diff_advanced_dwarf", fake_diff)
 
         adv = _minimal_adv()
         r = compare(_snap(dwarf_advanced=adv), _snap("2.0", dwarf_advanced=adv))
@@ -453,10 +452,12 @@ class TestTypeVisibilityChanged:
     def test_type_visibility_changed_symbol_and_values(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import abicheck.dwarf_advanced as dwarf_mod
+        import abicheck.checker as checker_mod
 
-        def fake_diff(old: AdvancedDwarfMetadata, new: AdvancedDwarfMetadata
-                      ) -> list[tuple[str, str, str, str | None, str | None]]:
+        def fake_diff(
+            old: AdvancedDwarfMetadata,
+            new: AdvancedDwarfMetadata,
+        ) -> list[tuple[str, str, str, str | None, str | None]]:
             return [(
                 "type_visibility_changed",
                 "AbstractBase",
@@ -465,7 +466,7 @@ class TestTypeVisibilityChanged:
                 "hidden",
             )]
 
-        monkeypatch.setattr(dwarf_mod, "diff_advanced_dwarf", fake_diff)
+        monkeypatch.setattr(checker_mod, "diff_advanced_dwarf", fake_diff)
 
         adv = _minimal_adv()
         r = compare(_snap(dwarf_advanced=adv), _snap("2.0", dwarf_advanced=adv))
