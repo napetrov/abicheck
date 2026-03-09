@@ -289,22 +289,20 @@ def _run_abicc(
         return f"ERROR(rc={r.returncode})", diag
 
     # ABICC returns 0 for both no-change and compatible-additions.
-    # Strategy: extract every integer from the report that appears to be a
-    # problem/change count.  If the report shows any non-zero count in a
-    # table cell, something changed → COMPATIBLE.
-    td_counts = re.findall(r"<td[^>]*>\s*(\d+)\s*</td>", report_text)
-    if any(int(c) > 0 for c in td_counts):
-        return "COMPATIBLE", diag
-
-    # Also check stdout/stderr for any non-zero counts on lines with
-    # keywords suggesting changes.
-    output = r.stdout + r.stderr
-    for line in output.splitlines():
-        low = line.lower()
-        if any(kw in low for kw in ("added", "removed", "changed", "moved")):
-            counts = re.findall(r"(\d+)", line)
-            if any(int(c) > 0 for c in counts):
-                return "COMPATIBLE", diag
+    # Parse the structured HTML comment ABICC embeds at the top of reports:
+    #   <!-- kind:binary;verdict:compatible;affected:0;added:0;removed:0;
+    #        type_problems_high:0;...;tool_version:2.3 -->
+    # If any change-count field is non-zero, it's COMPATIBLE.
+    change_fields = (
+        "affected", "added", "removed",
+        "type_problems_high", "type_problems_medium", "type_problems_low",
+        "interface_problems_high", "interface_problems_medium",
+        "interface_problems_low", "changed_constants",
+    )
+    for field in change_fields:
+        m = re.search(rf"{field}:(\d+)", report_text)
+        if m and int(m.group(1)) > 0:
+            return "COMPATIBLE", diag
 
     return "NO_CHANGE", diag
 
