@@ -44,13 +44,15 @@ class Suppression:
         has_sym_pattern = self.symbol_pattern is not None
         has_type_pattern = self.type_pattern is not None
 
-        if has_symbol and has_sym_pattern:
-            raise ValueError(
-                "Suppression cannot have both 'symbol' and 'symbol_pattern'"
-            )
-        if not has_symbol and not has_sym_pattern and not has_type_pattern:
+        selector_count = sum([has_symbol, has_sym_pattern, has_type_pattern])
+        if selector_count == 0:
             raise ValueError(
                 "Suppression must have 'symbol', 'symbol_pattern', or 'type_pattern'"
+            )
+        if selector_count > 1:
+            raise ValueError(
+                "Suppression fields 'symbol', 'symbol_pattern', and 'type_pattern' "
+                "are mutually exclusive — specify exactly one"
             )
         # Compile regex eagerly — malformed patterns fail at load time, not match time.
         # Uses fullmatch semantics: the pattern must match the entire symbol name.
@@ -172,6 +174,7 @@ class SuppressionList:
                 sup = Suppression(
                     symbol=item.get("symbol"),
                     symbol_pattern=item.get("symbol_pattern"),
+                    type_pattern=item.get("type_pattern"),
                     change_kind=item.get("change_kind"),
                     reason=item.get("reason"),
                 )

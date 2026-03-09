@@ -189,7 +189,7 @@ class TestSuppressionErrorHandling:
     """Suppression system should reject invalid inputs clearly."""
 
     def test_both_symbol_and_pattern_rejected(self):
-        with pytest.raises(ValueError, match="both"):
+        with pytest.raises(ValueError, match="mutually exclusive"):
             Suppression(symbol="foo", symbol_pattern="bar")
 
     def test_neither_symbol_nor_pattern_rejected(self):

@@ -229,7 +229,7 @@ def _build_internal_suppression(
     if skip_internal_symbols is not None:
         rules.append(Suppression(symbol_pattern=skip_internal_symbols))
     if skip_internal_types is not None:
-        rules.append(Suppression(symbol_pattern=skip_internal_types))
+        rules.append(Suppression(type_pattern=skip_internal_types))
     return SuppressionList(suppressions=rules)
 
 
@@ -378,13 +378,13 @@ def _apply_warn_newsym(result: DiffResult) -> DiffResult:
 
 def _limit_affected_changes(result: DiffResult, limit: int) -> DiffResult:
     """Limit the number of reported changes per unique ChangeKind."""
-    from .checker import DiffResult  # noqa: PLC0415
+    from .checker import Change, DiffResult  # noqa: PLC0415
 
     if limit <= 0:
         return result
 
     counts: dict[ChangeKind, int] = {}
-    filtered: list = []
+    filtered: list[Change] = []
     for c in result.changes:
         cnt = counts.get(c.kind, 0)
         if cnt < limit:
@@ -937,15 +937,26 @@ def compat_cmd(  # noqa: PLR0913
     # Determine which inputs are dumps vs descriptors (handles mixed inputs)
     from .model import AbiSnapshot as _AbiSnapshot  # noqa: PLC0415
 
-    old_is_dump = isinstance(old_d, _AbiSnapshot)
-    new_is_dump = isinstance(new_d, _AbiSnapshot)
-
-    # Resolve each input independently: dump → use directly, descriptor → dump it
-    def _dump_from_descriptor(
-        desc: CompatDescriptor,  # type: ignore[name-defined]
+    def _snap_from_input(
+        d: CompatDescriptor | _AbiSnapshot,
         vnum_override: str | None,
         desc_path: Path,
     ) -> tuple[_AbiSnapshot, str]:
+        """Convert a descriptor or dump to (snapshot, version), honoring vnum override."""
+        if isinstance(d, _AbiSnapshot):
+            version = vnum_override or d.version
+            if vnum_override:
+                d = d.__class__(
+                    library=d.library, version=vnum_override,
+                    functions=d.functions, variables=d.variables,
+                    types=d.types, elf=d.elf, dwarf=d.dwarf,
+                    dwarf_advanced=d.dwarf_advanced,
+                    enums=d.enums, typedefs=d.typedefs,
+                )
+            return d, version
+
+        # It's a CompatDescriptor — dump it
+        desc: CompatDescriptor = d
         if vnum_override:
             desc = desc.__class__(
                 version=vnum_override, headers=desc.headers, libs=desc.libs, path=desc.path
@@ -961,24 +972,19 @@ def compat_cmd(  # noqa: PLR0913
         if not so.exists():
             click.echo(f"Error: library not found: {so}", err=True)
             sys.exit(2)
-        dump_kwargs = dict(
+        snap = dump(
+            so, headers=hdrs, version=desc.version,
             gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
             sysroot=sysroot, nostdinc=nostdinc, lang=lang,
         )
-        snap = dump(so, headers=hdrs, version=desc.version, **dump_kwargs)
         return snap, desc.version
 
-    if old_is_dump:
-        old_snap = old_d
-        old_version = old_d.version
-    else:
-        old_snap, old_version = _dump_from_descriptor(old_d, vnum1, old_desc)
-
-    if new_is_dump:
-        new_snap = new_d
-        new_version = new_d.version
-    else:
-        new_snap, new_version = _dump_from_descriptor(new_d, vnum2, new_desc)
+    try:
+        old_snap, old_version = _snap_from_input(old_d, vnum1, old_desc)
+        new_snap, new_version = _snap_from_input(new_d, vnum2, new_desc)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"Error during dump: {exc}", err=True)
+        sys.exit(2)
 
     if headers_only:
         _do_echo("Note: -headers-only is accepted — ELF/DWARF checks still run.", quiet)
@@ -1024,6 +1030,9 @@ def compat_cmd(  # noqa: PLR0913
     result = compare(old_snap, new_snap, suppression=suppression)
 
     # ── Post-compare transforms ───────────────────────────────────────────
+
+    # Save full result before source filtering for -bin-report-path
+    full_result = result
 
     # -source: filter to source/API breaks only
     if source_only and not binary_only:
@@ -1090,12 +1099,12 @@ def compat_cmd(  # noqa: PLR0913
     if bin_report_path:
         bin_report_path.parent.mkdir(parents=True, exist_ok=True)
         # Binary report = full result without source-only filtering
-        _generate_report(result, bin_report_path)
+        _generate_report(full_result, bin_report_path)
         _do_echo(f"Binary report: {bin_report_path}", quiet)
 
     if src_report_path:
         src_report_path.parent.mkdir(parents=True, exist_ok=True)
-        src_result = _filter_source_only(result)
+        src_result = _filter_source_only(full_result)
         _generate_report(src_result, src_report_path)
         _do_echo(f"Source report: {src_report_path}", quiet)
 
