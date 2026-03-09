@@ -178,7 +178,7 @@ format is defined implicitly by the ABICC Perl source code.
 
 **ABICC HTML structure** (key sections):
 
-```
+```html
 <title>Binary compatibility report for LIBNAME between V1 and V2</title>
 <div id='Title'><h1>Binary compatibility report...</h1></div>
 <div id='Summary'>
@@ -194,14 +194,14 @@ format is defined implicitly by the ABICC Perl source code.
 ```
 
 ABICC also embeds machine-readable metadata in an HTML comment:
-```
+```text
 verdict:incompatible;kind:binary;affected:2.5;added:5;removed:2;
 type_problems_high:3;...
 ```
 
 **abicheck HTML structure** (current):
 
-```
+```html
 <div class="header"><h1>ABI Compatibility Report — LIBNAME</h1></div>
 <div class="verdict-box">...</div>
 <div class="summary-section">...</div>
@@ -235,7 +235,7 @@ When enabled, abicheck generates HTML with ABICC-compatible structure:
 ### 6. Console Output Format (IMPLEMENTED)
 
 abicheck now prints ABICC-compatible console output:
-```
+```text
 Binary compatibility: 97.5%
 Total binary compatibility problems: 3, warnings: 0
 Verdict: BREAKING
