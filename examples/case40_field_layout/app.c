@@ -4,7 +4,7 @@
 
 int main(void) {
     struct Packet pkt;
-    memset(&pkt, 0, sizeof(pkt));
+    memset(&pkt, 0, sizeof(pkt));  /* zero all fields + padding for deterministic checksum */
 
     pkt.version      = 1;
     pkt.sequence     = 42;

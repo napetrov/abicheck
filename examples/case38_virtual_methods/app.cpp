@@ -11,8 +11,9 @@ public:
 };
 
 /* Scenario B: instantiate base Processor directly.
- * With v1: Processor::execute() has a real implementation — runs OK.
- * With v2: execute() is pure virtual (__cxa_pure_virtual) — SIGABRT.
+ * IMPORTANT: this file MUST be compiled against v1.hpp — in v1, Processor is concrete.
+ * With libv2.so swapped in at runtime: vtable[execute] = __cxa_pure_virtual -> SIGABRT.
+ * (If compiled against v2.hpp, the compiler rejects this: abstract class instantiation.)
  */
 int main() {
     std::printf("=== Scenario A: derived class (should always work) ===\n");
