@@ -13,6 +13,7 @@ Requires: abi-compliance-checker, gcc/g++, castxml.
 """
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import textwrap
@@ -72,9 +73,33 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "void set_val(long x);",
         "c", "BREAKING", "BREAKING", "parity",
     ),
+    # enum value change: ABICC detects with headers
+    (
+        "enum_value",
+        "typedef enum { RED=0, GREEN=1, BLUE=2 } Color;\n"
+        "Color get_color(void) { return RED; }",
+        "typedef enum { RED=0, GREEN=10, BLUE=2 } Color;\n"
+        "Color get_color(void) { return RED; }",
+        "typedef enum { RED=0, GREEN=1, BLUE=2 } Color;\nColor get_color(void);",
+        "typedef enum { RED=0, GREEN=10, BLUE=2 } Color;\nColor get_color(void);",
+        "c", "BREAKING", "BREAKING", "parity",
+    ),
+    # visibility change
+    (
+        "visibility_hidden",
+        '__attribute__((visibility("default"))) int helper() { return 1; }\n'
+        '__attribute__((visibility("default"))) int api()    { return helper(); }',
+        '__attribute__((visibility("hidden")))  int helper() { return 1; }\n'
+        '__attribute__((visibility("default"))) int api()    { return helper(); }',
+        '__attribute__((visibility("default"))) int helper();\n'
+        '__attribute__((visibility("default"))) int api();',
+        '__attribute__((visibility("hidden")))  int helper();\n'
+        '__attribute__((visibility("default"))) int api();',
+        "c", "BREAKING", "BREAKING", "parity",
+    ),
     # ── abicheck correct: vtable_reorder — ABICC misses in XML descriptor mode ──
-    # ABICC without abi-dumper doesn't analyze vtable layout from headers+libs,
-    # so it reports NO_CHANGE. abicheck+castxml detects the vtable reorder.
+    # ABICC without abi-dumper doesn't detect vtable reordering from headers+libs.
+    # abicheck+castxml detects the vtable reorder as BREAKING.
     (
         "vtable_reorder",
         "struct Base {\n"
@@ -91,11 +116,11 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "Base* make();",
         "struct Base { virtual int bar(); virtual int foo(); virtual ~Base(); };\n"
         "Base* make();",
-        "cpp", "BREAKING", "NO_CHANGE", "correct",
+        "cpp", "BREAKING", "COMPATIBLE", "correct",
     ),
     # ── abicheck correct: struct_size — ABICC misses in XML descriptor mode ──
-    # ABICC in XML descriptor mode (without abi-dumper) doesn't detect struct
-    # size changes. abicheck+castxml correctly detects the type layout change.
+    # ABICC in XML descriptor mode reports COMPATIBLE (sees field additions but
+    # doesn't flag as breaking). abicheck correctly detects the layout change.
     (
         "struct_size",
         "typedef struct { int x; } Point;\n"
@@ -104,31 +129,7 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "Point make_point(int x) { Point p = {x, 0}; return p; }",
         "typedef struct { int x; } Point;\nPoint make_point(int x);",
         "typedef struct { int x; int y; } Point;\nPoint make_point(int x);",
-        "c", "BREAKING", "NO_CHANGE", "correct",
-    ),
-    # enum value change: ABICC detects with headers
-    (
-        "enum_value",
-        "typedef enum { RED=0, GREEN=1, BLUE=2 } Color;\n"
-        "Color get_color(void) { return RED; }",
-        "typedef enum { RED=0, GREEN=10, BLUE=2 } Color;\n"
-        "Color get_color(void) { return RED; }",
-        "typedef enum { RED=0, GREEN=1, BLUE=2 } Color;\nColor get_color(void);",
-        "typedef enum { RED=0, GREEN=10, BLUE=2 } Color;\nColor get_color(void);",
-        "c", "BREAKING", "BREAKING", "parity",
-    ),
-    # visibility change: ABICC may not detect hidden attribute changes
-    (
-        "visibility_hidden",
-        '__attribute__((visibility("default"))) int helper() { return 1; }\n'
-        '__attribute__((visibility("default"))) int api()    { return helper(); }',
-        '__attribute__((visibility("hidden")))  int helper() { return 1; }\n'
-        '__attribute__((visibility("default"))) int api()    { return helper(); }',
-        '__attribute__((visibility("default"))) int helper();\n'
-        '__attribute__((visibility("default"))) int api();',
-        '__attribute__((visibility("hidden")))  int helper();\n'
-        '__attribute__((visibility("default"))) int api();',
-        "c", "BREAKING", "BREAKING", "parity",
+        "c", "BREAKING", "COMPATIBLE", "correct",
     ),
 ]
 
@@ -155,7 +156,7 @@ def _compile_so(src: str, out: Path, lang: str) -> None:
            "-o", str(out), str(src_file)]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if r.returncode != 0:
-        pytest.skip(f"Compilation failed: {r.stderr[:200]}")
+        pytest.fail(f"Compilation failed: {r.stderr[:200]}")
 
 
 def _write_abicc_descriptor(
@@ -265,23 +266,26 @@ def _run_abicc(
 
     if r.returncode == 0:
         # ABICC returns 0 for both no-change and compatible-additions.
-        # Parse the HTML report or stdout to distinguish them.
-        output = r.stdout + r.stderr
-        report_text = ""
+        # Parse the HTML report to distinguish: look for the BC percentage
+        # and whether any added/removed/changed sections exist.
         if report_path.exists():
             report_text = report_path.read_text(encoding="utf-8", errors="replace")
+            # Look for concrete change sections in the HTML report
+            # ABICC reports use headers like "Added Symbols", "Removed Symbols"
+            has_symbol_changes = bool(re.search(
+                r"Added Symbols|Removed Symbols|Changed Symbols"
+                r"|Added Types|Removed Types|Changed Types",
+                report_text,
+            ))
+            if has_symbol_changes:
+                return "COMPATIBLE"
 
-        # Check for added/removed/changed symbols in report or stdout
-        has_changes = (
-            "Added Symbols" in report_text
-            or "Removed Symbols" in report_text
-            or "Changed Symbols" in report_text
-            or "added symbol" in output.lower()
-            or "removed symbol" in output.lower()
-            or "changed" in output.lower()
-        )
-        if has_changes:
+        # Check stdout for explicit "total compatible changes: N" where N > 0
+        output = r.stdout + r.stderr
+        compat_match = re.search(r"total compatible changes:\s*(\d+)", output, re.IGNORECASE)
+        if compat_match and int(compat_match.group(1)) > 0:
             return "COMPATIBLE"
+
         return "NO_CHANGE"
     elif r.returncode == 1:
         return "BREAKING"

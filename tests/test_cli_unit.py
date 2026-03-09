@@ -7,16 +7,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
-import pytest
 from click.testing import CliRunner
 
-from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
 from abicheck.cli import main
-from abicheck.model import AbiSnapshot, Function, Variable, Visibility
+from abicheck.model import AbiSnapshot, Function, Visibility
 from abicheck.serialization import snapshot_to_json
-
 
 # ── helpers ──────────────────────────────────────────────────────────────
 

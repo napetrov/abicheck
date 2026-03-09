@@ -6,27 +6,23 @@ and _castxml_dump error paths.
 """
 from __future__ import annotations
 
-import os
 import shutil
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 from xml.etree.ElementTree import Element, SubElement
 
 import pytest
 
 from abicheck.dumper import (
-    _CastxmlParser,
     _cache_key,
     _cache_path,
     _castxml_available,
     _castxml_dump,
+    _CastxmlParser,
     _parse_vtable_index,
     _pyelftools_exported_symbols,
     _vt_sort_key,
 )
 from abicheck.model import Visibility
-
 
 # ── _castxml_available ──────────────────────────────────────────────────
 
@@ -300,8 +296,8 @@ class TestCastxmlParserFunctions:
     def test_parse_simple_function(self):
         ft = _fund_type("t1", "int")
         fn = Element("Function", id="f1", name="add", mangled="_Z3addii", returns="t1")
-        arg1 = SubElement(fn, "Argument", name="a", type="t1")
-        arg2 = SubElement(fn, "Argument", name="b", type="t1")
+        SubElement(fn, "Argument", name="a", type="t1")
+        SubElement(fn, "Argument", name="b", type="t1")
         root = _xml_root(ft, fn)
         p = _CastxmlParser(root, {"_Z3addii"}, set())
         funcs = p.parse_functions()
@@ -440,8 +436,8 @@ class TestCastxmlParserVariables:
 class TestCastxmlParserTypes:
     def test_parse_struct(self):
         s = Element("Struct", id="s1", name="Point", size="64", align="32")
-        f1 = SubElement(s, "Field", name="x", type="t1", offset="0")
-        f2 = SubElement(s, "Field", name="y", type="t1", offset="32")
+        SubElement(s, "Field", name="x", type="t1", offset="0")
+        SubElement(s, "Field", name="y", type="t1", offset="32")
         ft = _fund_type("t1", "float")
         root = _xml_root(ft, s)
         p = _CastxmlParser(root, set(), set())
@@ -492,7 +488,7 @@ class TestCastxmlParserTypes:
     def test_class_with_base(self):
         base = Element("Class", id="c1", name="Base")
         derived = Element("Class", id="c2", name="Derived")
-        b = SubElement(derived, "Base", type="c1")
+        SubElement(derived, "Base", type="c1")
         root = _xml_root(base, derived)
         p = _CastxmlParser(root, set(), set())
         types = p.parse_types()

@@ -9,16 +9,14 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from abicheck.elf_metadata import (
+    _BINDING_MAP,
+    _HIDDEN_VISIBILITIES,
+    _TYPE_MAP,
     ElfMetadata,
     ElfSymbol,
     SymbolBinding,
     SymbolType,
-    _BINDING_MAP,
-    _HIDDEN_VISIBILITIES,
-    _TYPE_MAP,
     _parse,
     _parse_dynamic,
     _parse_dynsym,
@@ -26,7 +24,6 @@ from abicheck.elf_metadata import (
     _parse_version_need,
     parse_elf_metadata,
 )
-
 
 # ── ElfMetadata.symbol_map ───────────────────────────────────────────────
 
@@ -410,7 +407,7 @@ class TestParseFull:
 
         f = MagicMock()
         with patch("abicheck.elf_metadata.ELFFile", return_value=elf):
-            meta = _parse(f, Path("test.so"))
+            _parse(f, Path("test.so"))
 
         symtab.iter_symbols.assert_not_called()
 
