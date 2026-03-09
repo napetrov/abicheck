@@ -160,9 +160,10 @@ For full code walkthroughs and deep per-case narrative, see
     - Example: `examples/case25_enum_member_added/`
     - Note: if adding shifts existing values, that is caught by `ENUM_MEMBER_VALUE_CHANGED`.
 
-26. **case26_union_field_added** — union field added.
-    - Risk: size increase if new field is largest (caught separately by `TYPE_SIZE_CHANGED`).
-    - Type: **compatible** — all union fields share offset 0; existing fields unaffected.
+26. **case26_union_field_added** — union field added with larger alignment.
+    - Risk: if the new field is the largest member, `sizeof(union)` grows → **TYPE_SIZE_CHANGED** → BREAKING.
+    - Type: **breaking** — this fixture adds `double d` (8 bytes) to a union of `int`/`float` (4 bytes each), growing it from 4→8 bytes. Callers that stack-allocate or embed `union Value` in a struct are broken.
+    - Note: adding a field that does *not* grow the union (smaller or equal size) is compatible. The field addition itself is not the break — the size change is. This fixture demonstrates the breaking variant.
     - Example: `examples/case26_union_field_added/`
 
 27. **case27_symbol_binding_weakened** — GLOBAL → WEAK symbol binding.

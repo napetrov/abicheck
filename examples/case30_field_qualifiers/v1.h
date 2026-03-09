@@ -1,12 +1,14 @@
-/* case30: Field qualifier changes (const, volatile, mutable)
+/* case30: Field qualifier changes (const, volatile)
  *
- * Demonstrates three field qualifier scenarios in one type:
- * - A field gains const (prevents modification through struct pointer)
- * - A field gains volatile (forces memory reads on every access)
- * - A mutable field loses mutable (const methods can no longer modify it)
+ * Demonstrates two field qualifier scenarios on C struct fields:
+ * - A field gains const (callers can no longer write to it directly)
+ * - A field gains volatile (compiler must re-read from memory on every access)
  *
- * Binary layout: UNCHANGED — these are semantic/source-level changes.
- * abicheck detects: FIELD_BECAME_CONST, FIELD_BECAME_VOLATILE, FIELD_LOST_MUTABLE
+ * Note: `mutable` is a C++ keyword only — it has no meaning in C structs.
+ * This is a pure C example; all three fields are plain `int` in v1.
+ *
+ * Binary layout: UNCHANGED — qualifiers are semantic/source-level only.
+ * abicheck detects: FIELD_BECAME_CONST, FIELD_BECAME_VOLATILE
  */
 #ifndef V1_H
 #define V1_H
@@ -18,7 +20,7 @@ extern "C" {
 struct SensorConfig {
     int   sample_rate;    /* will become const in v2 */
     int   raw_value;      /* will become volatile in v2 */
-    int   cache_hits;     /* mutable in v1, non-mutable in v2 */
+    int   cache_hits;     /* unchanged across versions */
 };
 
 int sensor_read(struct SensorConfig *cfg);

@@ -46,7 +46,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [12](case12_function_removed/README.md) | Function Removed | Symbol API | BREAKING 🔴 | Function removed from .so, symbol unresolvable |
 | [13](case13_symbol_versioning/README.md) | Symbol Versioning | ELF/Linker | INFORMATIONAL 🟡 | No version script → no `@@VER` on symbols |
 | [14](case14_cpp_class_size/README.md) | C++ Class Size Change | C++ ABI | BREAKING 🟡 | Private member grows, sizeof(class) changes |
-| [15](case15_noexcept_change/README.md) | noexcept Changed | C++ Source | COMPATIBLE ❌ | Source-level contract; mangling unchanged |
+| [15](case15_noexcept_change/README.md) | noexcept Changed | C++ Source | BREAKING ⚠️ | v2 adds throw → GLIBCXX_3.4.21 VERNEED (side-effect break, not mangling) |
 | [16](case16_inline_to_non_inline/README.md) | Inline → Non-inline | C++ ABI | BREAKING ⚠️ | ODR violation; symbol appears in v2 .so |
 | [17](case17_template_abi/README.md) | Template Layout Change | C++ ABI | BREAKING 🟡 | Explicit-instantiated template grows in size |
 | [18](case18_dependency_leak/README.md) | Dependency ABI Leak | Type Layout | BREAKING ⚠️ | Third-party type in public header changes layout |
@@ -57,7 +57,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [23](case23_pure_virtual_added/README.md) | Pure Virtual Added | C++ ABI | BREAKING 🔴 | Existing vtable slot hits `__cxa_pure_virtual` → abort |
 | [24](case24_union_field_removed/README.md) | Union Field Removed | C API | BREAKING 🔴 | Field write interpreted as different type — silent wrong data |
 | [25](case25_enum_member_added/README.md) | Enum Member Added | C API | COMPATIBLE 🟡 | Adding at end is compatible; older binaries handle known values |
-| [26](case26_union_field_added/README.md) | Union Field Added | C API | COMPATIBLE 🟡 | Existing fields unaffected; size increase is separate concern |
+| [26](case26_union_field_added/README.md) | Union Field Added | C API | BREAKING 🔴 | New field grows sizeof(union) 4→8 bytes; TYPE_SIZE_CHANGED breaks callers |
 | [27](case27_symbol_binding_weakened/README.md) | Symbol Binding Weakened | ELF/Linker | COMPATIBLE 🟡 | WEAK symbol can be silently overridden by interposition |
 | [29](case29_ifunc_transition/README.md) | IFUNC Transition | ELF/Linker | COMPATIBLE 🟡 | GNU IFUNC resolves transparently; old `ld.so` may not support |
 
