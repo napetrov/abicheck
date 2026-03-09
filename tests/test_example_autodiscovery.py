@@ -7,7 +7,7 @@ without touching this file.
 Layout support:
   • v1/v2     — examples/caseXX/v1.c(pp)  + v2.c(pp)  [+ v1.h/v2.h]
   • old/new   — examples/caseXX/old/lib.c + new/lib.c  [+ lib.h]
-  • good/bad  — examples/caseXX/good.c    + bad.c
+  • good/bad  — examples/caseXX/bad.c (v1) + good.c (v2)  [bad=before, good=fixed]
   • libfoo    — examples/caseXX/libfoo_v1.c + libfoo_v2.c  [+ foo_v1.h/foo_v2.h]
 
 Expected verdicts are declared here (not in the example source tree) so the
@@ -104,10 +104,10 @@ def _find_sources(
             if not v2.exists():
                 # Intentional: case04_no_change has no v2 — same source, no ABI change.
                 v2 = v1
-            hext = ".h" if ext == ".c" else ".hpp"
-            v1h = case_dir / f"v1{hext}"
-            v2h = case_dir / f"v2{hext}"
-            return v1, v2, v1h if v1h.exists() else None, v2h if v2h.exists() else None
+            # Try both .h and .hpp regardless of source extension
+            v1h = next((case_dir / f"v1{h}" for h in (".h", ".hpp") if (case_dir / f"v1{h}").exists()), None)
+            v2h = next((case_dir / f"v2{h}" for h in (".h", ".hpp") if (case_dir / f"v2{h}").exists()), None)
+            return v1, v2, v1h, v2h
 
     # old/new layout (cases 19+)
     old_dir, new_dir = case_dir / "old", case_dir / "new"
@@ -124,10 +124,13 @@ def _find_sources(
                 return v1, v2, v1h, v2h
 
     # good/bad layout (cases 05, 06, 13)
+    # Convention: bad.c is the "before" (v1) — it has the problematic state (e.g., all symbols
+    # exported). good.c is the "after" (v2) — it applies the fix (e.g., hides internal symbols).
+    # Comparing bad→good shows symbol removals = BREAKING from the caller's perspective.
     for ext in (".c", ".cpp"):
-        v1 = case_dir / f"good{ext}"
+        v1 = case_dir / f"bad{ext}"
         if v1.exists():
-            v2 = case_dir / f"bad{ext}"
+            v2 = case_dir / f"good{ext}"
             if not v2.exists():
                 return None, None, None, None
             return v1, v2, None, None
