@@ -37,11 +37,14 @@ class CompatDescriptor:
     path: Path = field(default_factory=lambda: Path("."))
 
 
-def parse_descriptor(path: Path) -> CompatDescriptor:
+def parse_descriptor(path: Path, *, relpath: str | None = None) -> CompatDescriptor:
     """Parse an ABICC XML descriptor file.
 
     Args:
         path: Path to the descriptor XML file.
+        relpath: Optional relative path prefix to prepend to all relative paths
+            in the descriptor. Replaces ``{RELPATH}`` macros in paths if present,
+            or is used as a base directory for resolving relative paths.
 
     Returns:
         Populated CompatDescriptor.
@@ -67,20 +70,29 @@ def parse_descriptor(path: Path) -> CompatDescriptor:
         # findall() — direct children only; avoids capturing nested tags
         # (root.iter() would recurse into sub-elements, silently picking up
         # nested <version> or <libs> inside other tags)
-        return [el.text.strip() for el in root.findall(tag) if el.text and el.text.strip()]
+        vals = [el.text.strip() for el in root.findall(tag) if el.text and el.text.strip()]
+        # Replace {RELPATH} macros if relpath is provided (ABICC feature)
+        if relpath:
+            vals = [v.replace("{RELPATH}", relpath) for v in vals]
+        return vals
 
     version_vals = _get_all("version")
     if not version_vals:
         raise ValueError(f"Descriptor {path}: missing <version> element")
     version = version_vals[0]
 
+    # When relpath is provided, use it as the base for resolving relative paths
+    # that don't explicitly use {RELPATH} macros (which are already substituted
+    # by _get_all above).
+    resolve_base = Path(relpath) if relpath else base
+
     lib_strs = _get_all("libs")
     if not lib_strs:
         raise ValueError(f"Descriptor {path}: missing <libs> element")
-    libs = [_resolve(s, base) for s in lib_strs]
+    libs = [_resolve(s, resolve_base) for s in lib_strs]
 
     header_strs = _get_all("headers")
-    headers = [_resolve(s, base) for s in header_strs]
+    headers = [_resolve(s, resolve_base) for s in header_strs]
 
     log.debug("Parsed descriptor %s: version=%s, %d lib(s), %d header dir(s)",
               path, version, len(libs), len(headers))

@@ -13,25 +13,46 @@ from .checker import Change, ChangeKind
 _VALID_CHANGE_KINDS: frozenset[str] = frozenset(ck.value for ck in ChangeKind)
 
 # Keys allowed in a suppression entry — unknown keys are rejected
-_KNOWN_ENTRY_KEYS: frozenset[str] = frozenset({"symbol", "symbol_pattern", "change_kind", "reason"})
+_KNOWN_ENTRY_KEYS: frozenset[str] = frozenset({"symbol", "symbol_pattern", "type_pattern", "change_kind", "reason"})
+
+# ChangeKind values that represent type-level changes (matched by type_pattern)
+_TYPE_CHANGE_KINDS: frozenset[str] = frozenset({
+    "type_size_changed", "type_alignment_changed", "type_field_removed",
+    "type_field_added", "type_field_offset_changed", "type_field_type_changed",
+    "type_base_changed", "type_vtable_changed", "type_added", "type_removed",
+    "type_field_added_compatible", "type_became_opaque", "type_visibility_changed",
+    "enum_member_removed", "enum_member_added", "enum_member_value_changed",
+    "enum_last_member_value_changed", "enum_member_renamed",
+    "enum_underlying_size_changed",
+    "typedef_removed", "typedef_base_changed",
+    "struct_field_type_changed", "union_field_type_changed",
+})
 
 
 @dataclass
 class Suppression:
     symbol: str | None = None
     symbol_pattern: str | None = None
+    type_pattern: str | None = None
     change_kind: str | None = None
     reason: str | None = None
     _compiled_pattern: re.Pattern[str] | None = field(default=None, init=False, repr=False)
+    _compiled_type_pattern: re.Pattern[str] | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.symbol is not None and self.symbol_pattern is not None:
+        has_symbol = self.symbol is not None
+        has_sym_pattern = self.symbol_pattern is not None
+        has_type_pattern = self.type_pattern is not None
+
+        selector_count = sum([has_symbol, has_sym_pattern, has_type_pattern])
+        if selector_count == 0:
             raise ValueError(
-                "Suppression cannot have both 'symbol' and 'symbol_pattern'"
+                "Suppression must have 'symbol', 'symbol_pattern', or 'type_pattern'"
             )
-        if self.symbol is None and self.symbol_pattern is None:
+        if selector_count > 1:
             raise ValueError(
-                "Suppression must have either 'symbol' or 'symbol_pattern'"
+                "Suppression fields 'symbol', 'symbol_pattern', and 'type_pattern' "
+                "are mutually exclusive — specify exactly one"
             )
         # Compile regex eagerly — malformed patterns fail at load time, not match time.
         # Uses fullmatch semantics: the pattern must match the entire symbol name.
@@ -42,6 +63,13 @@ class Suppression:
             except re.error as e:
                 raise ValueError(
                     f"Invalid symbol_pattern {self.symbol_pattern!r}: {e}"
+                ) from e
+        if self.type_pattern is not None:
+            try:
+                self._compiled_type_pattern = re.compile(self.type_pattern)
+            except re.error as e:
+                raise ValueError(
+                    f"Invalid type_pattern {self.type_pattern!r}: {e}"
                 ) from e
         # Validate change_kind against known enum values
         if self.change_kind is not None:
@@ -57,7 +85,22 @@ class Suppression:
 
         Pattern matching uses fullmatch — the pattern must cover the entire
         mangled symbol name. Use '.*foo.*' for substring matching.
+
+        type_pattern only matches changes whose kind is a type-level change
+        (TYPE_*, ENUM_*, TYPEDEF_*, etc.), preventing type whitelists from
+        suppressing symbol-level changes.
         """
+        # type_pattern: only matches type-level changes
+        if self._compiled_type_pattern is not None:
+            if change.kind.value not in _TYPE_CHANGE_KINDS:
+                return False
+            if not self._compiled_type_pattern.fullmatch(change.symbol):
+                return False
+            # Check change_kind filter if specified
+            if self.change_kind is not None and change.kind.value != self.change_kind:
+                return False
+            return True
+
         # Check symbol match
         if self.symbol is not None:
             if change.symbol != self.symbol:
@@ -131,6 +174,7 @@ class SuppressionList:
                 sup = Suppression(
                     symbol=item.get("symbol"),
                     symbol_pattern=item.get("symbol_pattern"),
+                    type_pattern=item.get("type_pattern"),
                     change_kind=item.get("change_kind"),
                     reason=item.get("reason"),
                 )

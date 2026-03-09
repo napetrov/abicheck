@@ -75,7 +75,18 @@ def _pyelftools_exported_symbols(so_path: Path) -> tuple[set[str], set[str]]:
         raise RuntimeError(f"Failed to parse ELF file {so_path}: {exc}") from exc
 
 
-def _cache_key(headers: list[Path], extra_includes: list[Path], compiler: str) -> str:
+def _cache_key(
+    headers: list[Path],
+    extra_includes: list[Path],
+    compiler: str,
+    *,
+    gcc_path: str | None = None,
+    gcc_prefix: str | None = None,
+    gcc_options: str | None = None,
+    sysroot: Path | None = None,
+    nostdinc: bool = False,
+    lang: str | None = None,
+) -> str:
     h = hashlib.sha256()
     for p in sorted(str(x.resolve()) for x in headers):
         h.update(p.encode())
@@ -95,6 +106,14 @@ def _cache_key(headers: list[Path], extra_includes: list[Path], compiler: str) -
                 except OSError:
                     pass
     h.update(compiler.encode())
+    # Include toolchain parameters so different cross-compilation configs
+    # produce distinct cache entries
+    h.update(f"gcc_path={gcc_path or ''}".encode())
+    h.update(f"gcc_prefix={gcc_prefix or ''}".encode())
+    h.update(f"gcc_options={gcc_options or ''}".encode())
+    h.update(f"sysroot={sysroot or ''}".encode())
+    h.update(f"nostdinc={nostdinc}".encode())
+    h.update(f"lang={lang or ''}".encode())
     return h.hexdigest()
 
 
@@ -104,12 +123,28 @@ def _cache_path(key: str) -> Path:
     return cache_dir / f"{key}.xml"
 
 
-def _castxml_dump(headers: list[Path], extra_includes: list[Path],
-                  compiler: str = "c++") -> Element:
+def _castxml_dump(
+    headers: list[Path],
+    extra_includes: list[Path],
+    compiler: str = "c++",
+    *,
+    gcc_path: str | None = None,
+    gcc_prefix: str | None = None,
+    gcc_options: str | None = None,
+    sysroot: Path | None = None,
+    nostdinc: bool = False,
+    lang: str | None = None,
+) -> Element:
     """Run castxml on headers and return parsed XML root.
 
     Args:
         compiler: "c++" (maps to g++) or "cc" (maps to gcc).
+        gcc_path: Explicit path to a GCC/G++ cross-compiler binary.
+        gcc_prefix: Cross-toolchain prefix (e.g. "aarch64-linux-gnu-").
+        gcc_options: Extra compiler flags passed through to castxml.
+        sysroot: Alternative system root directory.
+        nostdinc: If True, do not search standard system include paths.
+        lang: Force language ("C" or "C++").  If "C", aggregated header uses .h extension.
     """
     if not _castxml_available():
         raise RuntimeError(
@@ -118,7 +153,11 @@ def _castxml_dump(headers: list[Path], extra_includes: list[Path],
         )
 
     # Check disk cache
-    key = _cache_key(headers, extra_includes, compiler)
+    key = _cache_key(
+        headers, extra_includes, compiler,
+        gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
+        sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+    )
     cached = _cache_path(key)
     if cached.exists():
         return cast(Element, DefusedET.parse(str(cached)).getroot())
@@ -126,15 +165,30 @@ def _castxml_dump(headers: list[Path], extra_includes: list[Path],
     # Map logical compiler name → castxml cc flag
     _cc_map = {"c++": "g++", "cc": "gcc", "g++": "g++", "gcc": "gcc",
                "clang++": "clang++", "clang": "clang"}
-    cc_bin = _cc_map.get(compiler, compiler)
-    # Determine GNU vs MSVC dialect
-    cc_id = "gnu" if "cl" not in cc_bin else "msvc"
+
+    # Determine the compiler binary to use
+    if gcc_path:
+        cc_bin = gcc_path
+    elif gcc_prefix:
+        # e.g. gcc_prefix="aarch64-linux-gnu-" → "aarch64-linux-gnu-g++" or "aarch64-linux-gnu-gcc"
+        suffix = "g++" if compiler in ("c++", "g++", "clang++") else "gcc"
+        cc_bin = f"{gcc_prefix}{suffix}"
+    else:
+        cc_bin = _cc_map.get(compiler, compiler)
+
+    # Determine GNU vs MSVC dialect (inspect executable name, not substring,
+    # to avoid misclassifying paths like "/opt/local/bin/g++")
+    exe_name = Path(cc_bin).name
+    cc_id = "msvc" if exe_name in ("cl", "cl.exe") else "gnu"
 
     with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
         out_xml = Path(tmp.name)
 
-    # Aggregate header: use .hpp to force C++ mode in castxml
-    with tempfile.NamedTemporaryFile(suffix=".hpp", mode="w", delete=False) as agg:
+    # Determine aggregate header extension: .h for C-only, .hpp for C++
+    force_c = lang and lang.upper() == "C"
+    agg_ext = ".h" if force_c else ".hpp"
+
+    with tempfile.NamedTemporaryFile(suffix=agg_ext, mode="w", delete=False) as agg:
         for h in headers:
             agg.write(f'#include "{h.resolve()}"\n')
         agg_path = Path(agg.name)
@@ -143,6 +197,16 @@ def _castxml_dump(headers: list[Path], extra_includes: list[Path],
            f"--castxml-cc-{cc_id}", cc_bin]
     for inc in extra_includes:
         cmd += ["-I", str(inc)]
+
+    # Cross-compilation / toolchain flags
+    if sysroot:
+        cmd += [f"--sysroot={sysroot}"]
+    if nostdinc:
+        cmd += ["-nostdinc"]
+    if gcc_options:
+        # Split on whitespace, just like ABICC does
+        cmd += gcc_options.split()
+
     cmd += ["-o", str(out_xml), str(agg_path)]
 
     try:
@@ -518,6 +582,13 @@ def dump(
     extra_includes: list[Path] | None = None,
     version: str = "unknown",
     compiler: str = "c++",
+    *,
+    gcc_path: str | None = None,
+    gcc_prefix: str | None = None,
+    gcc_options: str | None = None,
+    sysroot: Path | None = None,
+    nostdinc: bool = False,
+    lang: str | None = None,
 ) -> AbiSnapshot:
     """Create an AbiSnapshot from a .so + headers.
 
@@ -527,6 +598,12 @@ def dump(
         extra_includes: Additional -I include directories for castxml.
         version: Version string for the snapshot (e.g. "1.2.3").
         compiler: Compiler frontend for castxml ("c++" or "cc").
+        gcc_path: Explicit path to a GCC/G++ cross-compiler binary.
+        gcc_prefix: Cross-toolchain prefix (e.g. "aarch64-linux-gnu-").
+        gcc_options: Extra compiler flags passed through to castxml.
+        sysroot: Alternative system root directory.
+        nostdinc: If True, do not search standard system include paths.
+        lang: Force language ("C" or "C++").
 
     Returns:
         AbiSnapshot with functions, variables, and types populated.
@@ -561,7 +638,11 @@ def dump(
         )
         return snapshot
 
-    xml_root = _castxml_dump(headers, extra_includes, compiler=compiler)
+    xml_root = _castxml_dump(
+        headers, extra_includes, compiler=compiler,
+        gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
+        sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+    )
     parser = _CastxmlParser(xml_root, exported_dynamic, exported_static)
 
     snapshot = AbiSnapshot(
