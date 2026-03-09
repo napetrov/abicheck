@@ -8,7 +8,8 @@
  * This is a pure C example; all three fields are plain `int` in v1.
  *
  * Binary layout: UNCHANGED — qualifiers are semantic/source-level only.
- * abicheck detects: FIELD_BECAME_CONST, FIELD_BECAME_VOLATILE
+ * abicheck detects: STRUCT_FIELD_TYPE_CHANGED (castxml reports "int" vs "const int"/"volatile int"
+ *   as distinct type names → BREAKING via struct field type diff).
  */
 #ifndef V1_H
 #define V1_H

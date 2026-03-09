@@ -9,7 +9,7 @@ _Generated: 2026-03-08 — abicheck examples benchmark (41 cases, updated verdic
 | **abicheck** | compare (dump+compare) | **38/41** | **92%** | castxml + ELF + DWARF |
 | **abicheck** | compat (ABICC drop-in) | **34/40** | **85%** | XML descriptor mode |
 | abidiff | ELF only (no headers) | 10/41 | 24% | Misses type-level changes |
-| abidiff | + headers-dir | 9/41 | 21% | Headers don't improve much without DWARF |
+| abidiff | + headers-dir | 9/41 | 22% | Headers don't improve much without DWARF |
 | ABICC | xml (legacy) | see script | — | Requires abi-compliance-checker |
 | ABICC | abi-dumper | see script | — | Requires abi-dumper |
 
@@ -43,7 +43,7 @@ _Generated: 2026-03-08 — abicheck examples benchmark (41 cases, updated verdic
 | case12_function_removed | BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING |
 | case13_symbol_versioning | BREAKING | ❌ NO_CHANGE | ⚠️ COMPATIBLE | ❌ NO_CHANGE | ❌ NO_CHANGE |
 | case14_cpp_class_size | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ❌ NO_CHANGE |
-| case15_noexcept_change | BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ NO_CHANGE | ✅ NO_CHANGE |
+| case15_noexcept_change | BREAKING | ✅ BREAKING | ✅ BREAKING | ❌ NO_CHANGE | ❌ NO_CHANGE |
 | case16_inline_to_non_inline | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE |
 | case17_template_abi | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
 | case18_dependency_leak | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
@@ -115,7 +115,7 @@ With `--headers-dir`, results are similar — abidiff still misses most type cha
 abicheck compat -lib libdnnl -old old.xml -new new.xml
 ```
 
-Exit codes mirror ABICC: `0` = compatible, `1` = breaking ABI change, `2` = error.
+Exit codes mirror ABICC: `0` = compatible/no-change, `1` = breaking ABI change, `2` = source-level break (SOURCE_BREAK; binary compatible). Any other non-zero = error.
 
 Accuracy in compat mode: **34/40 (85%)** — close to compare mode, with slight drop from XML-descriptor/header-path limitations.
 
