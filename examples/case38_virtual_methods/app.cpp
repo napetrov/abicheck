@@ -27,7 +27,9 @@ int main() {
     /* App compiled with v1.hpp (execute is non-pure virtual, Processor is concrete).
      * At runtime with libv2.so swapped in, vtable[execute] = __cxa_pure_virtual -> abort(). */
     Processor* base = new Processor();
-    base->execute();   /* SIGABRT with v2 */
+    /* With v2: vtable[execute] = __cxa_pure_virtual -> std::abort() -> SIGABRT (signal 6, exit 134).
+     * Exit 134 != 2 but counts as "detected break": any non-zero exit = runtime incompatibility. */
+    base->execute();
     delete base;
 
     return 0;

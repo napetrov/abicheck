@@ -11,6 +11,8 @@ int main() {
     Logger *lg = &rd; lg->log("hello");
     Serializer *sr = &rd; sr->serialize("data");
     printf("ReorderDemo: log_level=%d format=%d\n", rd.log_level, rd.format);
+    /* v1 postcondition: process()->log_level=10,format=20; log()->++log_level=11; serialize()->++format=21
+     * v2 (Logger/Serializer swapped): this-ptr adjustments differ; writes land on wrong fields */
     if (!(rd.log_level == 11 && rd.format == 21)) {
         printf("BASE_ORDER_MISMATCH detected\n");
         bad = 1;

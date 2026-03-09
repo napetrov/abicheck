@@ -98,4 +98,6 @@ methods, append them (do not reorder), and bump the SONAME. Pure virtual additio
 require a major version bump since they break all existing concrete subclasses.
 
 ## Runtime note
+Scenario B exits with SIGABRT (signal 6, shell exit 134) when libv2.so is swapped in. `__cxa_pure_virtual` calls `std::abort()`. This is a detected break (non-zero exit), even though exit code is 134, not 2. Any non-zero exit in the runtime validator = incompatible.
+
 This app may still run after swap because it does not exercise all affected ABI surfaces (for example deleted-copy-constructor call paths) on every toolchain. The ABI contract is still BREAKING due to class/vtable changes.
