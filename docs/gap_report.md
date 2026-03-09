@@ -1,6 +1,6 @@
 # ABI Checker Gap Analysis — abicheck vs ABICC vs libabigail
 
-> Generated: 2026-03-07  
+> Generated: 2026-03-09
 > abicheck version: HEAD of `napetrov/abicheck`  
 > Compared against: ABICC (lvc/abi-compliance-checker) + libabigail (abidiff/abidw)
 
@@ -11,7 +11,8 @@
 - **abicheck covers:** ~55/55 de-duplicated ABI break scenarios (~100%) after Sprint 1-7
 - **Key differentiator:** abicheck uses multi-tier analysis (castxml headers + ELF symbols + DWARF layout) -- works on **release builds** with headers + `.so`, no debug symbols required for core checks. ABICC needs GCC `-fdump-lang-spec`, abidiff needs DWARF debug info.
 - **Closed gaps (Sprint 1-7):** All original P0/P1/P2 scenarios now detected. Sprint 7 added: enum rename, field/param rename, field qualifiers (const/volatile/mutable), pointer level changes, access level changes, param default value tracking, anonymous struct/union fields.
-- **Coverage: exceeds ABICC** — 85 ChangeKinds, covering all 49 ABICC-equivalent scenarios plus 6 additional scenarios ABICC does not detect (anon field changes, combined qualifier+rename, access level, param defaults as source breaks).
+- **Coverage: exceeds ABICC** — 85 ChangeKinds (52 BREAKING, 27 COMPATIBLE, 6 SOURCE_BREAK), covering all 49 ABICC-equivalent scenarios plus 6 additional scenarios ABICC does not detect (anon field changes, combined qualifier+rename, access level, param defaults as source breaks).
+- **Test coverage:** 85/85 ChangeKinds referenced in unit tests, 429 tests passing, 41 example cases.
 
 > Note: ABICC has 90+ rules total, but many are sub-rules of the same scenario. The 55-row coverage table below is the expanded scenario count after Sprint 7.
 >

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from .dwarf_advanced import diff_advanced_dwarf
 from .elf_metadata import SymbolBinding, SymbolType
-from .model import AccessLevel, AbiSnapshot, EnumType, Function, Param, RecordType, TypeField, Visibility
+from .model import AbiSnapshot, EnumType, Function, RecordType, TypeField, Visibility
 
 if TYPE_CHECKING:
     from .suppression import SuppressionList
@@ -913,7 +913,6 @@ def _diff_enum_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         e_new = new_map[name]
         old_by_name = {m.name: m.value for m in e_old.members}
         new_by_name = {m.name: m.value for m in e_new.members}
-        old_by_val: dict[int, str] = {m.value: m.name for m in e_old.members}
         new_by_val: dict[int, str] = {m.value: m.name for m in e_new.members}
 
         for old_mname, old_mval in old_by_name.items():

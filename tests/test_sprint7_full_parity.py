@@ -21,16 +21,14 @@ from __future__ import annotations
 
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.model import (
-    AccessLevel,
     AbiSnapshot,
+    AccessLevel,
     EnumMember,
     EnumType,
     Function,
     Param,
-    ParamKind,
     RecordType,
     TypeField,
-    Variable,
     Visibility,
 )
 
@@ -644,7 +642,11 @@ class TestClassification:
 
     def test_every_changekind_classified(self) -> None:
         """Every ChangeKind must be in exactly one classification set."""
-        from abicheck.checker import _BREAKING_KINDS, _COMPATIBLE_KINDS, _SOURCE_BREAK_KINDS
+        from abicheck.checker import (
+            _BREAKING_KINDS,
+            _COMPATIBLE_KINDS,
+            _SOURCE_BREAK_KINDS,
+        )
         all_classified = _BREAKING_KINDS | _COMPATIBLE_KINDS | _SOURCE_BREAK_KINDS
         for kind in ChangeKind:
             assert kind in all_classified, (
