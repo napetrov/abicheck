@@ -362,7 +362,7 @@ def _apply_warn_newsym(result: DiffResult) -> DiffResult:
     from .checker import DiffResult, Verdict  # noqa: PLC0415
 
     has_new = any(c.kind in _NEW_SYMBOL_KINDS for c in result.changes)
-    if has_new and result.verdict.value in ("COMPATIBLE", "NO_CHANGE"):
+    if has_new and result.verdict.value in ("COMPATIBLE", "NO_CHANGE", "SOURCE_BREAK"):
         return DiffResult(
             old_version=result.old_version,
             new_version=result.new_version,
@@ -443,6 +443,13 @@ def _setup_logging(
     """
     logger = logging.getLogger("abicheck")
 
+    # Close and remove any existing FileHandlers to avoid leaking open files
+    # when _setup_logging is called multiple times.
+    for existing in list(logger.handlers):
+        if isinstance(existing, logging.FileHandler):
+            existing.close()
+            logger.removeHandler(existing)
+
     if quiet:
         logger.setLevel(logging.WARNING)
 
@@ -476,12 +483,16 @@ def _resolve_headers_from_list(
     result = list(base_headers)
 
     if headers_list_path is not None:
+        list_base = headers_list_path.parent
         lines = [
             ln.strip() for ln in headers_list_path.read_text(encoding="utf-8").splitlines()
             if ln.strip() and not ln.startswith("#")
         ]
         for line in lines:
             p = Path(line)
+            # Resolve relative paths against the list file's directory
+            if not p.is_absolute():
+                p = list_base / p
             if p.exists():
                 result.append(p)
 
@@ -1031,13 +1042,6 @@ def compat_cmd(  # noqa: PLR0913
 
     # ── Post-compare transforms ───────────────────────────────────────────
 
-    # Save full result before source filtering for -bin-report-path
-    full_result = result
-
-    # -source: filter to source/API breaks only
-    if source_only and not binary_only:
-        result = _filter_source_only(result)
-
     # -warn-newsym: treat new symbols as breaks
     if warn_newsym:
         result = _apply_warn_newsym(result)
@@ -1049,6 +1053,15 @@ def compat_cmd(  # noqa: PLR0913
     # -limit-affected: cap reported changes per kind
     if limit_affected > 0:
         result = _limit_affected_changes(result, limit_affected)
+
+    # Save post-processed result before source filtering for split reports.
+    # -bin-report-path needs the full (non-source-filtered) result;
+    # -src-report-path derives from this via _filter_source_only.
+    full_result = result
+
+    # -source: filter to source/API breaks only (for primary report)
+    if source_only and not binary_only:
+        result = _filter_source_only(result)
 
     verdict = result.verdict.value if hasattr(result.verdict, "value") else str(result.verdict)
 
