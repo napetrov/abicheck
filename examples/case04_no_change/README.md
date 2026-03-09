@@ -16,7 +16,7 @@ int stable_api(int x) { return x; }
 
 ## Real Failure Demo
 
-**Severity: BASELINE** (no ABI change — expected outcome)
+**Severity: INFORMATIONAL** (no ABI change — expected outcome)
 
 **Scenario:** compile app against v1, swap in v2 `.so` without recompile.
 
@@ -34,7 +34,7 @@ gcc -shared -fPIC -g v1.c -o libfoo.so   # use same source, no change
 # → stable_api(42) = 42   (identical output)
 ```
 
-**Why BASELINE:** no ABI change means no breakage — this is the ideal state for patch releases.
+**Why INFORMATIONAL:** no ABI change means no breakage — this is the ideal state for patch releases.
 Use this as a sanity check to confirm your build and test pipeline works correctly.
 
 ## Reproduce manually
