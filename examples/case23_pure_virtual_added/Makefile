@@ -1,7 +1,7 @@
 .PHONY: all clean
 
 CXX ?= g++
-CXXFLAGS = -shared -fPIC -g -std=c++17
+CXXFLAGS = -shared -fPIC -g -std=c++17  # use CXXFLAGS += to append env flags
 
 all: libv1.so libv2.so
 

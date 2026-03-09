@@ -1,7 +1,7 @@
 .PHONY: all clean
 
 CC ?= gcc
-CFLAGS = -shared -fPIC -g
+CFLAGS = -shared -fPIC -g  # use CFLAGS += to append env flags (e.g. -fsanitize=address)
 
 all: libv1.so libv2.so
 
