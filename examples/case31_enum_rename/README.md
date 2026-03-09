@@ -1,0 +1,102 @@
+# Case 31 — Enum Member Rename
+
+**Category:** Enum API | **Verdict:** 🟡 BREAKING (source-level; binary compatible)
+
+## What changes
+
+| Member | v1 | v2 | Integer Value |
+|---|---|---|---|
+| Error level | `LOG_ERR` | `LOG_ERROR` | 1 (unchanged) |
+| Warning level | `LOG_WARN` | `LOG_WARNING` | 2 (unchanged) |
+| Debug level | `LOG_DBG` | `LOG_DEBUG` | 3 (unchanged) |
+| `LOG_NONE` | present | present | 0 (unchanged) |
+| `LOG_MAX` | present | present | 4 (unchanged) |
+
+## Why this IS a break (source-level)
+
+Enum constants in C are compiled into immediate integer values in the binary.
+Renaming `LOG_ERR` to `LOG_ERROR` does not change the compiled output at all —
+the integer `1` is the same regardless of the source name.
+
+**Binary compatibility:** Fully preserved. Existing binaries call `set_log_level(1)`,
+and the v2 library accepts this identically.
+
+**Source compatibility:** Broken. Any code using `LOG_ERR`, `LOG_WARN`, or `LOG_DBG`
+will fail to compile against v2 headers because those identifiers no longer exist.
+This forces all downstream consumers to update their source code.
+
+abicheck detects this as `ENUM_MEMBER_RENAMED` (and `ENUM_MEMBER_REMOVED` for the
+old names).
+
+## Code diff
+
+```diff
+ typedef enum {
+     LOG_NONE    = 0,
+-    LOG_ERR     = 1,
+-    LOG_WARN    = 2,
+-    LOG_DBG     = 3,
++    LOG_ERROR   = 1,
++    LOG_WARNING = 2,
++    LOG_DEBUG   = 3,
+     LOG_MAX     = 4
+ } log_level_t;
+```
+
+## Real Failure Demo
+
+**Severity: MODERATE (source break only)**
+
+**Scenario:** Compile app against v1 headers, swap in v2 `.so`.
+
+```bash
+# Build v1 library + app
+gcc -shared -fPIC -g v1.c -o libfoo.so
+gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → Enum rename demo (compiled against v1.h):
+# →
+# → Enum values compiled into binary:
+# →   LOG_NONE = 0
+# →   LOG_ERR  = 1
+# →   LOG_WARN = 2
+# →   LOG_DBG  = 3
+# →   LOG_MAX  = 4
+# →
+# → Calling set_log_level(LOG_ERR)  [value=1] ... OK
+# → Calling set_log_level(LOG_WARN) [value=2] ... OK
+# → Calling set_log_level(LOG_DBG)  [value=3] ... OK
+
+# Swap in v2 (no recompile)
+gcc -shared -fPIC -g v2.c -o libfoo.so
+./app
+# → Output is identical — binary is fully compatible.
+# → The integer values 1, 2, 3 are hardcoded in the binary.
+```
+
+**Source break verification:**
+
+```bash
+gcc -g app.c -I. -include v2.h -L. -lfoo -Wl,-rpath,. -o app_v2 2>&1
+# → error: 'LOG_ERR' undeclared
+# → error: 'LOG_WARN' undeclared
+# → error: 'LOG_DBG' undeclared
+```
+
+## Reproduce with abicheck
+
+```bash
+gcc -shared -fPIC -g v1.c -o libfoo_v1.so
+gcc -shared -fPIC -g v2.c -o libfoo_v2.so
+abidw --out-file v1.xml libfoo_v1.so
+abidw --out-file v2.xml libfoo_v2.so
+abidiff v1.xml v2.xml
+echo "exit: $?"
+```
+
+## How to fix
+
+- Keep the old names as aliases: `#define LOG_ERR LOG_ERROR`
+- Or add both old and new names in the enum with matching values:
+  `LOG_ERR = 1, LOG_ERROR = LOG_ERR`
+- Only remove old names on a major SONAME bump with a deprecation period.

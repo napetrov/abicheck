@@ -160,10 +160,11 @@ For full code walkthroughs and deep per-case narrative, see
     - Example: `examples/case25_enum_member_added/`
     - Note: if adding shifts existing values, that is caught by `ENUM_MEMBER_VALUE_CHANGED`.
 
-26. **case26_union_field_added** — union field added.
-    - Risk: size increase if new field is largest (caught separately by `TYPE_SIZE_CHANGED`).
-    - Type: **compatible** — all union fields share offset 0; existing fields unaffected.
+26. **case26_union_field_added** — union field added (size grows).
+    - Risk: adding `double` makes union grow from 4→8 bytes; callers under-allocate.
+    - Type: **breaking** — TYPE_SIZE_CHANGED triggers when new field is larger than existing members.
     - Example: `examples/case26_union_field_added/`
+    - Note: adding a field that does NOT change the union size would be compatible.
 
 27. **case27_symbol_binding_weakened** — GLOBAL → WEAK symbol binding.
     - Risk: interposition — WEAK symbol can be overridden by another GLOBAL definition.
@@ -198,9 +199,10 @@ because they do not cause binary linkage or layout failures on their own.
     - Verdict: COMPATIBLE.
 
 27. **Union field added** — new field added to an existing union.
-    - All union fields share offset 0; existing fields are unaffected.
-    - Size increase (if any) is caught separately by `TYPE_SIZE_CHANGED`.
-    - Verdict: COMPATIBLE.
+    - All union fields share offset 0; existing fields are unaffected at offset level.
+    - However, if the new field is larger than existing members, `sizeof(union)` grows
+      → `TYPE_SIZE_CHANGED` → **BREAKING** (callers under-allocate).
+    - Verdict: **BREAKING** when size grows; COMPATIBLE when size unchanged.
 
 28. **GLOBAL→WEAK symbol binding** — symbol weakened from `STB_GLOBAL` to `STB_WEAK`.
     - Symbol is still exported and resolvable by the dynamic linker.

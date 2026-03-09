@@ -1,0 +1,103 @@
+# Case 30 — Field Qualifier Changes (const, volatile)
+
+**Category:** Type Qualifiers | **Verdict:** 🟡 BREAKING (semantic, not binary layout)
+
+## What changes
+
+| Field | v1 | v2 | Effect |
+|---|---|---|---|
+| `sample_rate` | `int sample_rate` | `const int sample_rate` | Writing becomes UB |
+| `raw_value` | `int raw_value` | `volatile int raw_value` | Compiler must not cache reads |
+| `cache_hits` | `int cache_hits` | `int cache_hits` | Unchanged |
+
+## Why this IS a (semantic) ABI break
+
+The binary layout of `struct SensorConfig` is **unchanged** — `const` and `volatile`
+do not affect size, alignment, or field offsets. An existing binary will link and
+run against the v2 library without error.
+
+However, the **API contract** has changed:
+
+1. **`const int sample_rate`:** Code compiled against v1 freely writes to `sample_rate`.
+   The v2 header declares this field `const`, meaning the library now considers it
+   immutable after initialization. Writing to a `const`-qualified field through a
+   non-`const` pointer is undefined behavior in C. Compilers recompiling against v2
+   will reject the write at compile time.
+
+2. **`volatile int raw_value`:** Code compiled against v1 may have the compiler optimize
+   away redundant reads of `raw_value`. The v2 header marks it `volatile`, indicating
+   it may change asynchronously (e.g., hardware-mapped). Binaries compiled without
+   `volatile` may return stale cached values.
+
+## Code diff
+
+```diff
+ struct SensorConfig {
+-    int   sample_rate;
+-    int   raw_value;
++    const int    sample_rate;
++    volatile int raw_value;
+     int   cache_hits;
+ };
+```
+
+## Real Failure Demo
+
+**Severity: MODERATE (semantic break, not crash)**
+
+**Scenario:** Compile app against v1 headers, swap in v2 `.so`.
+
+```bash
+# Build v1 library + app
+gcc -shared -fPIC -g v1.c -o libfoo.so
+gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → Field qualifier change demo (compiled against v1.h):
+# →
+# → Initial state:
+# →   sample_rate = 1000
+# →   raw_value   = 42
+# →   cache_hits  = 0
+# →
+# → sensor_read(&cfg) = 42
+# →
+# → After setting sample_rate = 2000:
+# →   sample_rate = 2000
+# →
+# → raw_value read twice: r1=99 r2=99 (should be equal)
+# → ...
+# → sensor_read(&cfg) after modifications = 99
+
+# Swap in v2 (no recompile)
+gcc -shared -fPIC -g v2.c -o libfoo.so
+./app
+# → Output is identical — binary layout unchanged.
+# → But the semantic contract is now violated: the app writes
+# → to sample_rate which v2 declares const.
+```
+
+**Source break verification** (recompilation against v2 will warn/error):
+
+```bash
+gcc -g app.c -I. -include v2.h -L. -lfoo -Wl,-rpath,. -o app_v2 2>&1
+# With -Werror: error due to assignment to const-qualified field
+```
+
+## Reproduce with abicheck
+
+```bash
+gcc -shared -fPIC -g v1.c -o libfoo_v1.so
+gcc -shared -fPIC -g v2.c -o libfoo_v2.so
+abidw --out-file v1.xml libfoo_v1.so
+abidw --out-file v2.xml libfoo_v2.so
+abidiff v1.xml v2.xml
+echo "exit: $?"
+```
+
+## How to fix
+
+- Do not add `const` to fields of public structs unless the field was always
+  documented as read-only.
+- If a field must become immutable, provide setter/getter functions instead of
+  direct field access, and hide the struct behind an opaque pointer.
+- Adding `volatile` should be done only in a new struct or with a major version bump.

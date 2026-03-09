@@ -568,8 +568,10 @@ union Value { int i; float f; double d; };
 ```
 
 All union fields share offset 0, so adding a new field does not change how existing fields are
-accessed. If the new field is larger than existing ones, the union's size increases — but that
-size change is caught separately by `TYPE_SIZE_CHANGED`. The field addition itself is compatible.
+accessed at offset level. However, if the new field is larger than existing members (as in this
+case: `double` is 8 bytes vs `int`/`float` at 4 bytes), the union's `sizeof` grows — triggering
+`TYPE_SIZE_CHANGED` and a **BREAKING** verdict. Old callers that stack-allocate the union
+under-allocate memory when running against the v2 library.
 
 ### noexcept added or removed
 
