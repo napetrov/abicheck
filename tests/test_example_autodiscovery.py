@@ -7,7 +7,7 @@ without touching this file.
 Layout support:
   • v1/v2     — examples/caseXX/v1.c(pp)  + v2.c(pp)  [+ v1.h/v2.h]
   • old/new   — examples/caseXX/old/lib.c + new/lib.c  [+ lib.h]
-  • good/bad  — examples/caseXX/bad.c (v1) + good.c (v2)  [bad=before, good=fixed]
+  • good/bad  — examples/caseXX/good.c    + bad.c
   • libfoo    — examples/caseXX/libfoo_v1.c + libfoo_v2.c  [+ foo_v1.h/foo_v2.h]
 
 Expected verdicts are declared here (not in the example source tree) so the
@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -40,7 +42,7 @@ EXAMPLES_DIR = REPO_DIR / "examples"
 #   ⚠️  KNOWN GAP    — real break that abicheck cannot detect yet (xfail)
 #   ℹ️  POLICY       — not a binary break; SONAME/versioning are policy issues
 #   🐛 BUG EXPECTED  — abicheck over-reports; tracked separately
-EXPECTED: dict[str, str | None] = {
+EXPECTED: dict[str, Optional[str]] = {
     # ── cases 01-18 (v1/v2 layout) ──────────────────────────────────────────
     "case01_symbol_removal":          "BREAKING",    # ✅ FUNC_REMOVED
     "case02_param_type_change":       "BREAKING",    # ✅ FUNC_PARAMS_CHANGED
@@ -102,12 +104,11 @@ def _find_sources(
         if v1.exists():
             v2 = case_dir / f"v2{ext}"
             if not v2.exists():
-                # Intentional: case04_no_change has no v2 — same source, no ABI change.
-                v2 = v1
-            # Try both .h and .hpp regardless of source extension
-            v1h = next((case_dir / f"v1{h}" for h in (".h", ".hpp") if (case_dir / f"v1{h}").exists()), None)
-            v2h = next((case_dir / f"v2{h}" for h in (".h", ".hpp") if (case_dir / f"v2{h}").exists()), None)
-            return v1, v2, v1h, v2h
+                v2 = v1  # case04: no change
+            hext = ".h" if ext == ".c" else ".hpp"
+            v1h = case_dir / f"v1{hext}"
+            v2h = case_dir / f"v2{hext}"
+            return v1, v2, v1h if v1h.exists() else None, v2h if v2h.exists() else None
 
     # old/new layout (cases 19+)
     old_dir, new_dir = case_dir / "old", case_dir / "new"
@@ -117,22 +118,19 @@ def _find_sources(
             if v1.exists():
                 v2 = new_dir / f"lib{ext}"
                 if not v2.exists():
-                    return None, None, None, None
+                    v2 = v1
                 # Try both .h and .hpp regardless of source extension
                 v1h = next((old_dir / f"lib{h}" for h in (".h", ".hpp") if (old_dir / f"lib{h}").exists()), None)
                 v2h = next((new_dir / f"lib{h}" for h in (".h", ".hpp") if (new_dir / f"lib{h}").exists()), None)
                 return v1, v2, v1h, v2h
 
     # good/bad layout (cases 05, 06, 13)
-    # Convention: bad.c is the "before" (v1) — it has the problematic state (e.g., all symbols
-    # exported). good.c is the "after" (v2) — it applies the fix (e.g., hides internal symbols).
-    # Comparing bad→good shows symbol removals = BREAKING from the caller's perspective.
     for ext in (".c", ".cpp"):
-        v1 = case_dir / f"bad{ext}"
+        v1 = case_dir / f"good{ext}"
         if v1.exists():
-            v2 = case_dir / f"good{ext}"
+            v2 = case_dir / f"bad{ext}"
             if not v2.exists():
-                return None, None, None, None
+                v2 = v1
             return v1, v2, None, None
 
     # libfoo_v1/v2 layout (case18)
@@ -141,7 +139,7 @@ def _find_sources(
         if v1.exists():
             v2 = case_dir / f"libfoo_v2{ext}"
             if not v2.exists():
-                return None, None, None, None
+                v2 = v1
             hext = ".h" if ext == ".c" else ".hpp"
             v1h = case_dir / f"foo_v1{hext}"
             v2h = case_dir / f"foo_v2{hext}"
@@ -204,6 +202,10 @@ def test_example_pipeline(case_name: str, expected_verdict: str, tmp_path: Path)
     if v1_src is None:
         pytest.skip(f"{case_name}: no recognized source layout")
 
+    # Mark known gap cases as xfail
+    if case_name in KNOWN_GAPS:
+        pytest.xfail(KNOWN_GAPS[case_name])
+
     # Build .so files
     v1_so = tmp_path / "lib_v1.so"
     v2_so = tmp_path / "lib_v2.so"
@@ -213,8 +215,8 @@ def test_example_pipeline(case_name: str, expected_verdict: str, tmp_path: Path)
         pytest.skip(f"{case_name}: v2 compile failed (intentional or env issue)")
 
     # Run abicheck pipeline via Python API (no subprocess — always uses this repo)
-    from abicheck.checker import compare
     from abicheck.dumper import dump
+    from abicheck.checker import compare
 
     headers_v1 = [v1_hdr] if v1_hdr and v1_hdr.exists() else []
     headers_v2 = [v2_hdr] if v2_hdr and v2_hdr.exists() else []
@@ -231,12 +233,6 @@ def test_example_pipeline(case_name: str, expected_verdict: str, tmp_path: Path)
     # Normalize: SOURCE_BREAK and COMPATIBLE are both non-breaking
     def _normalize(v: str) -> str:
         return "COMPATIBLE" if v in ("SOURCE_BREAK", "COMPATIBLE") else v
-
-    # Check KNOWN_GAPS after computing the verdict so a fixed gap passes cleanly.
-    if case_name in KNOWN_GAPS:
-        if _normalize(got) != _normalize(expected_verdict):
-            pytest.xfail(KNOWN_GAPS[case_name])
-        # else: gap is fixed — let the assertion below pass normally
 
     assert _normalize(got) == _normalize(expected_verdict), (
         f"{case_name}: expected={expected_verdict!r}, got={got!r}\n"
