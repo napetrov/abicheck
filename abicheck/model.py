@@ -17,6 +17,12 @@ class Visibility(str, Enum):
     ELF_ONLY = "elf_only"   # present in ELF symbol table, not in headers
 
 
+class AccessLevel(str, Enum):
+    PUBLIC = "public"
+    PROTECTED = "protected"
+    PRIVATE = "private"
+
+
 class ParamKind(str, Enum):
     VALUE = "value"
     POINTER = "pointer"
@@ -30,6 +36,7 @@ class Param:
     type: str
     kind: ParamKind = ParamKind.VALUE
     default: str | None = None  # has default value (value not preserved)
+    pointer_depth: int = 0      # nesting: T=0, T*=1, T**=2
 
 
 @dataclass
@@ -49,6 +56,8 @@ class Function:
     is_volatile: bool = False     # volatile qualifier on this
     is_pure_virtual: bool = False
     is_deleted: bool = False      # = delete; previously callable → BREAKING
+    access: AccessLevel = AccessLevel.PUBLIC  # public/protected/private
+    return_pointer_depth: int = 0  # T=0, T*=1, T**=2
 
 
 @dataclass
@@ -68,6 +77,10 @@ class TypeField:
     offset_bits: int | None = None
     is_bitfield: bool = False
     bitfield_bits: int | None = None
+    is_const: bool = False
+    is_volatile: bool = False
+    is_mutable: bool = False
+    access: AccessLevel = AccessLevel.PUBLIC
 
 
 @dataclass

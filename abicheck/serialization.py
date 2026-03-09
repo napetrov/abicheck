@@ -8,6 +8,7 @@ from typing import Any
 
 from .model import (
     AbiSnapshot,
+    AccessLevel,
     EnumMember,
     EnumType,
     Function,
@@ -156,7 +157,13 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
     funcs = [
         Function(
             name=f["name"], mangled=f["mangled"], return_type=f["return_type"],
-            params=[Param(**p) for p in f.get("params", [])],
+            params=[
+                Param(
+                    name=p.get("name", ""), type=p.get("type", ""),
+                    pointer_depth=p.get("pointer_depth", 0),
+                )
+                for p in f.get("params", [])
+            ],
             visibility=Visibility(f.get("visibility", "public")),
             is_virtual=f.get("is_virtual", False),
             is_noexcept=f.get("is_noexcept", False),
@@ -167,6 +174,8 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             is_volatile=f.get("is_volatile", False),
             is_pure_virtual=f.get("is_pure_virtual", False),
             is_extern_c=f.get("is_extern_c", False),
+            access=AccessLevel(f.get("access", "public")),
+            return_pointer_depth=f.get("return_pointer_depth", 0),
         )
         for f in d.get("functions", [])
     ]
@@ -189,6 +198,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
                     offset_bits=f.get("offset_bits"),
                     is_bitfield=f.get("is_bitfield", False),
                     bitfield_bits=f.get("bitfield_bits"),
+                    access=AccessLevel(f.get("access", "public")),
                 )
                 for f in t.get("fields", [])
             ],
