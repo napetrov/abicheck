@@ -1,3 +1,5 @@
+/* DEMO: intentional ABI mismatch — v2 vtable slot calls abort() to simulate
+   __cxa_pure_virtual. This is educational code that deliberately aborts. */
 #include "old/lib.h"
 #include <cstdio>
 

@@ -121,17 +121,20 @@ abi-compliance-checker -lib libfoo -v1 1.0 -v2 2.0 \
 gcc -shared -fPIC -g libfoo_v1.c -I. -o libfoo.so
 gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
 ./app
-# → h.x = 42, sizeof(h) = 4
+# → sizeof(ThirdPartyHandle) = 4
+# → before process: h.x=42  canary=0x5AFE5AFE
 # → process: x=42
-# → after process: h.x = 42
+# → after  process: h.x=42  canary=0x5AFE5AFE
 
-# Swap in libfoo v2 (compiled with ThirdPartyHandle = {int x, int y})
+# Swap in libfoo v2 (writes to h->y = offset 4, which is canary's location)
 gcc -shared -fPIC -g libfoo_v2.c -I. -o libfoo.so
 ./app
-# → h.x = 42, sizeof(h) = 4
+# → sizeof(ThirdPartyHandle) = 4
+# → before process: h.x=42  canary=0x5AFE5AFE
 # → process: x=42
-# → process: y=32764  ← GARBAGE (reads 4 bytes past caller's allocation)
-# → after process: h.x = 42
+# → process: wrote y=0xBADC0DE at offset 4
+# → after  process: h.x=42  canary=0x0BADC0DE  ← CORRUPTED by v2!
+# → CORRUPTION: v2 read/wrote past ThirdPartyHandle boundary!
 ```
 
 **Why CRITICAL:** The library's exported symbol table looks identical in both scenarios —

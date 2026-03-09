@@ -1,3 +1,5 @@
+/* DEMO: intentional ABI mismatch — v2 Buffer constructor writes 128 bytes into
+   a 64-byte stack slot, corrupting adjacent memory. Educational only. */
 #include "v1.h"
 #include <cstdio>
 

@@ -83,21 +83,21 @@ abi-compliance-checker -lib Buffer -v1 1.0 -v2 2.0 \
 **Scenario:** app compiled with v1 layout (Buffer<int> = 16 bytes) runs against v2 constructor that writes 24 bytes → stack overflow.
 
 ```bash
-# Build v1 + app (use -O0 to ensure predictable stack layout for sentinel demo)
+# Build v1 + app
 g++ -shared -fPIC -std=c++17 -g v1.cpp -o libbuf.so
 g++ -std=c++17 -g -O0 app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app
 ./app
-# → sentinel_before = AAA
-# → sizeof(Buffer<int>) compiled = 16
-# → sentinel_after  = BBB
+# → sizeof(Buffer<int>) at compile time = 16
+# → before ctor: sentinel = SENTINEL
+# → after  ctor: sentinel = SENTINEL   (v1: only 16 bytes written)
 
-# Swap in v2 (constructor writes 24 bytes)
+# Swap in v2 (constructor writes 24 bytes — 8 bytes past the 16-byte slot)
 g++ -shared -fPIC -std=c++17 -g v2.cpp -o libbuf.so
 ./app
-# → sentinel_before = AAA
-# → sizeof(Buffer<int>) compiled = 16
-# → sentinel_after  =     ← CORRUPTED (8 bytes overwritten)
-# → CORRUPTION: sentinel_after overwritten! v2 wrote beyond Buffer
+# → sizeof(Buffer<int>) at compile time = 16
+# → before ctor: sentinel = SENTINEL
+# → after  ctor: sentinel =           ← CORRUPTED (v2 wrote 8 bytes past slot)
+# → CORRUPTION: v2 constructor wrote past Buffer slot!
 
 # With ASAN:
 g++ -shared -fPIC -std=c++17 -g -fsanitize=address v2.cpp -o libbuf.so

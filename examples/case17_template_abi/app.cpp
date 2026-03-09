@@ -1,33 +1,36 @@
+/* DEMO: intentional ABI mismatch — v2 constructor writes 24 bytes into a
+   16-byte slot, corrupting the adjacent sentinel member in the same struct. */
 #include "v1.hpp"
 #include <cstdio>
 #include <cstring>
+#include <new>
 
-/* Compiled with v1: Buffer<int> is 16 bytes (data_+size_) */
-/* At runtime, v2 .so constructor writes 24 bytes (adds capacity_) */
+/* v1 layout: Buffer<int> = sizeof(T*) + sizeof(size_t) = 8+8 = 16 bytes on LP64 */
 extern template class Buffer<int>;
 
 int main() {
-    /* Use a struct to guarantee adjacency of sentinel fields */
-    struct {
-        Buffer<int> buf;
-        char        after[8];
+    /* Embed Buffer + sentinel in a struct — layout is guaranteed by C++ standard */
+    struct Frame {
+        unsigned char buf_storage[sizeof(Buffer<int>)]; /* 16 bytes per v1 */
+        char          sentinel[8];
     } frame;
-    char before[8] = "BEFORE!";
 
-    std::memcpy(frame.after, "AFTER!!", 8);
+    std::memcpy(frame.sentinel, "SENTINEL", 8);
 
-    std::printf("sizeof(Buffer<int>) compiled = %zu\n", sizeof(frame.buf));
-    std::printf("before init: after  = %.7s\n", frame.after);
+    std::printf("sizeof(Buffer<int>) at compile time = %zu\n",
+                sizeof(Buffer<int>));
+    std::printf("before ctor: sentinel = %.8s\n", frame.sentinel);
 
-    /* Buffer constructor runs here — v2 writes 8 bytes past frame.buf */
-    new (&frame.buf) Buffer<int>(8);
+    /* Placement-new calls the constructor from the loaded .so.
+       v1: writes 16 bytes (data_ + size_) — safe.
+       v2: writes 24 bytes (data_ + size_ + capacity_) — hits sentinel. */
+    Buffer<int>* b = new (frame.buf_storage) Buffer<int>(8);
 
-    std::printf("after  init: after  = %.7s\n", frame.after);
+    std::printf("after  ctor: sentinel = %.8s\n", frame.sentinel);
 
-    if (std::memcmp(frame.after, "AFTER!!", 7) != 0)
-        std::printf("CORRUPTION: sentinel overwritten! v2 wrote beyond Buffer\n");
+    if (std::memcmp(frame.sentinel, "SENTINEL", 8) != 0)
+        std::printf("CORRUPTION: v2 constructor wrote past Buffer slot!\n");
 
-    frame.buf.~Buffer();
-    (void)before;
+    b->~Buffer();
     return 0;
 }

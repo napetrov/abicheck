@@ -1,8 +1,6 @@
 #include "old/lib.h"
 #include <stdio.h>
 
-int get_result(void);
-
 int main(void) {
     int r = get_result();
     if (r == ERROR)

@@ -1,3 +1,5 @@
+/* DEMO: intentional ABI mismatch — v2 init_point() writes a 'z' field past
+   the v1 stack allocation. The canary detects the corruption. Educational only. */
 #include "v1.h"
 #include <stdio.h>
 

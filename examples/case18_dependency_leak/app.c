@@ -1,3 +1,5 @@
+/* DEMO: intentional ABI mismatch — v2 process() writes to ThirdPartyHandle.y
+   which is 4 bytes past the v1 allocation boundary. Educational only. */
 #include "foo_v1.h"
 #include <stdio.h>
 #include <string.h>

@@ -1,7 +1,5 @@
-#include "old/lib.h"   /* has FOO=2 */
+#include "old/lib.h"
 #include <stdio.h>
-
-enum Status get_status(void);
 
 int main(void) {
     enum Status s = get_status();

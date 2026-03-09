@@ -74,11 +74,14 @@ g++ -shared -fPIC -g new/lib.cpp -Inew -o libwidget.so
 # (this pointer passed in %rdi is ignored by static bar(); any method
 #  that uses 'this' internals would read garbage or crash)
 
-# Detect with UBSan:
+# Detect with UBSan (note: for void no-arg bar(), UBSan may be silent since
+# the function doesn't dereference 'this'; use a method that accesses members):
 g++ -shared -fPIC -g -fsanitize=undefined new/lib.cpp -Inew -o libwidget.so
 g++ -g -fsanitize=undefined app.cpp -Iold -L. -lwidget -Wl,-rpath,. -o app_ub
 ./app_ub
-# → runtime error: call to non-static member function through pointer of wrong type
+# → bar() called (static method)  ← may be silent for void no-arg methods
+# For methods that access 'this->member', UBSan reports:
+# → runtime error: member call on address ... which does not point to an object
 ```
 
 **Why CRITICAL:** The `static`-ness change does NOT change the mangled name (Itanium C++ ABI
