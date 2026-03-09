@@ -41,17 +41,28 @@ BUILD_DIR    = REPORT_DIR / "_build"
 # (abicheck CLI shebang may point to a different Python/site-packages)
 os.environ.setdefault("PYTHONPATH", str(REPO_DIR))
 
+import sys as _sys
+
 _abicheck_bin = shutil.which("abicheck")
 if _abicheck_bin:
     try:
         with open(_abicheck_bin) as _f:
             _first_line = _f.readline().strip()
-        # shlex.split handles `#!/usr/bin/env python3` → picks "python3", not "/usr/bin/env python3"
-        _PYTHON = shlex.split(_first_line.lstrip("#!"))[0] if _first_line.startswith("#!") else "python3"
+        if _first_line.startswith("#!"):
+            _tokens = shlex.split(_first_line.lstrip("#!"))
+            # Handle `#!/usr/bin/env python3` → use token after "env", not "env" itself
+            if _tokens and os.path.basename(_tokens[0]) == "env" and len(_tokens) > 1:
+                _PYTHON = _tokens[1]
+            elif _tokens:
+                _PYTHON = _tokens[0]
+            else:
+                _PYTHON = _sys.executable
+        else:
+            _PYTHON = _sys.executable
     except (OSError, IsADirectoryError, IndexError):
-        _PYTHON = "python3"
+        _PYTHON = _sys.executable
 else:
-    _PYTHON = "python3"
+    _PYTHON = _sys.executable
 _ABICHECK_ENV = {**os.environ, "PYTHONPATH": str(REPO_DIR)}
 
 DEFAULT_ABICC_TIMEOUT = 30  # seconds
@@ -85,7 +96,7 @@ EXPECTED: dict[str, str] = {
     "case25_enum_member_added":       "COMPATIBLE",
     "case26_union_field_added":       "BREAKING",    # double d makes sizeof(Value) grow 4→8 bytes: TYPE_SIZE_CHANGED
     "case27_symbol_binding_weakened": "COMPATIBLE",
-    "case29_ifunc_transition":        "COMPATIBLE",
+    "case29_ifunc_transition":        "COMPATIBLE",  # IFUNC_INTRODUCED — PLT/GOT transparent; fix merged in Sprint 7
     # ── cases 28, 30-41 (Sprint 7 — new detectors) ──────────────────────────
     "case28_typedef_opaque":          "BREAKING",    # TYPEDEF_BASE_CHANGED, TYPE_BECAME_OPAQUE
     "case30_field_qualifiers":        "BREAKING",    # STRUCT_FIELD_TYPE_CHANGED (const/volatile)
@@ -327,13 +338,14 @@ def run_abicheck_compat(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path 
     out = r.stdout + r.stderr
     (rdir / f"{case}_abicheck_compat.txt").write_text(out)
 
-    # compat exit codes mirror abicheck cli: 4=BREAKING, 2=SOURCE_BREAK, 1=COMPATIBLE, 0=NO_CHANGE
-    if r.returncode == 4:
+    # compat exit codes (from abicheck/cli.py compat command):
+    #   0 = NO_CHANGE or COMPATIBLE
+    #   1 = BREAKING
+    #   2 = SOURCE_BREAK (source-level break, binary compatible)
+    if r.returncode == 1:
         verdict = "BREAKING"
     elif r.returncode == 2:
         verdict = "SOURCE_BREAK"
-    elif r.returncode == 1:
-        verdict = "COMPATIBLE"
     elif r.returncode == 0:
         # distinguish NO_CHANGE from COMPATIBLE by output
         if "no changes" in out.lower() or "identical" in out.lower():
