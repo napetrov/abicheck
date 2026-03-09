@@ -222,18 +222,23 @@ Legend: ✅ supported, ⚠️ partial/context-dependent, ❌ typically unsupport
 
 ```text
 CLI (abicheck dump | compare | compat)
-  -> Dumper (castxml + ELF metadata)
-  -> Checker (ABI diff + classification)
-  -> Reporters (markdown/json/sarif/html)
+  -> Dumper (castxml + ELF/DWARF metadata)
+  -> Checker engine (detector orchestration)
+       -> Checker policy (ChangeKind + verdict registry)
+  -> Report summary (canonical counters)
+  -> Reporters (markdown/json/sarif/html/xml)
 ```
 
 Key modules:
 
 - `abicheck.cli` — command entry points
 - `abicheck.dumper` — builds ABI snapshots
-- `abicheck.checker` — computes change sets and verdicts
+- `abicheck.checker` — runs detectors and builds `DiffResult`
+- `abicheck.checker_policy` — central `ChangeKind`/`Verdict` policy and `compute_verdict`
+- `abicheck.detectors` — detector protocol and detector result types
+- `abicheck.report_summary` — canonical summary metrics shared by reporters
 - `abicheck.compat` — ABICC XML compatibility layer
-- `abicheck.reporter`, `abicheck.sarif`, `abicheck.html_report` — output generators
+- `abicheck.reporter`, `abicheck.sarif`, `abicheck.html_report`, `abicheck.xml_report` — output generators
 - `abicheck.elf_metadata`, `abicheck.dwarf_metadata`, `abicheck.dwarf_advanced` — metadata extraction
 
 ---

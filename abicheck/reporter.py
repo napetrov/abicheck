@@ -7,6 +7,7 @@ from .checker import (
     DiffResult,
     Verdict,
 )
+from .report_summary import build_summary
 
 _VERDICT_EMOJI = {
     Verdict.NO_CHANGE: "✅",
@@ -24,16 +25,17 @@ _VERDICT_LABEL = {
 
 
 def to_json(result: DiffResult, indent: int = 2) -> str:
+    summary = build_summary(result)
     d = {
         "library": result.library,
         "old_version": result.old_version,
         "new_version": result.new_version,
         "verdict": result.verdict.value,
         "summary": {
-            "breaking": len(result.breaking),
-            "source_breaks": len(result.source_breaks),
-            "compatible_additions": len(result.compatible),
-            "total_changes": len(result.changes),
+            "breaking": summary.breaking,
+            "source_breaks": summary.source_breaks,
+            "compatible_additions": summary.compatible_additions,
+            "total_changes": summary.total_changes,
         },
         "changes": [
             {
