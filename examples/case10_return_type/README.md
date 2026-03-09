@@ -17,7 +17,7 @@ Reports `return type changed: type name changed from 'int' to 'long int'`.
 
 | v1.c | v2.c |
 |------|------|
-| `int get_count(void) { return 42; }` | `long get_count(void) { return 42; }` |
+| `int get_count(void) { return 42; }` | `long get_count(void) { return 3000000000L; }` |
 
 ## Reproduce manually
 ```bash
@@ -55,7 +55,7 @@ gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
 # Swap in v2 (returns 3000000000L)
 gcc -shared -fPIC -g v2.c -o libfoo.so
 ./app
-# → get_count() = -1294967296   ← truncated to 32 bits (3000000000 & 0xFFFFFFFF)
+# → get_count() = -1294967296   ← low 32 bits of 3000000000 = 0xB2D05E00, signed int = -1294967296
 ```
 
 **Why CRITICAL:** On x86-64, `int` is returned in the lower 32 bits of `rax`; `long`

@@ -49,20 +49,22 @@ gcc -shared -fPIC -g good.c -o libgood.so -Wl,-soname,libfoo.so.1
 readelf -d libgood.so | grep SONAME   # → (SONAME) Library soname: [libfoo.so.1]
 readelf -d libbad.so  | grep SONAME   # → (empty — no SONAME)
 
-# Build app (requires libfoo.so to exist at link time)
+# Build bad variant (no SONAME)
 cp libbad.so libfoo.so
-gcc -g app.c -L. -Wl,-rpath,. -lfoo -o app
-./app
+gcc -g app.c -L. -Wl,-rpath,. -lfoo -o app-bad
+./app-bad
 # → foo() = 0   (works at runtime)
+readelf -d app-bad | grep NEEDED
+# → (NEEDED) Shared library: [libfoo.so]  ← bare filename, no SONAME
 
-# The difference: DT_NEEDED embeds the bare filename without SONAME
-readelf -d app | grep NEEDED
-# With libfoo.so (no SONAME) → (NEEDED) Shared library: [libfoo.so]
-# With libfoo.so.1 (SONAME)  → (NEEDED) Shared library: [libfoo.so.1]
+# Build good variant (with SONAME) for comparison
+cp libgood.so libfoo.so
+gcc -g app.c -L. -Wl,-rpath,. -lfoo -o app-good
+readelf -d app-good | grep NEEDED
+# → (NEEDED) Shared library: [libfoo.so.1]  ← SONAME baked in
 #
-# Without SONAME, ldconfig cannot create the libfoo.so.1 → libfoo.so.1.0 symlink.
-# Any binary built against libbad.so will look for "libfoo.so" forever —
-# you can never rename it to libfoo.so.1 without breaking those binaries.
+# Without SONAME, ldconfig cannot create the libfoo.so.1 symlink.
+# Any binary linked against libbad.so will look for "libfoo.so" forever.
 ```
 
 **Why BAD PRACTICE:** The runtime works, but without a SONAME the dynamic linker

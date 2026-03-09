@@ -2,10 +2,11 @@
 #include <cstdio>
 #include <cstdlib>
 
-/* Concrete subclass — needed because Processor is now abstract in v2.
-   When old app calls make_proc() and then p->process() via vtable,
-   the slot for process() points to __cxa_pure_virtual in the base
-   vtable. Our concrete impl simulates that abort. */
+/* Concrete subclass — needed because Processor is abstract in v2 (process()=0),
+   so we cannot directly instantiate it. ProcAbortImpl::process() calls abort()
+   to simulate the real failure: in a true mixed-version scenario, an old binary
+   that directly calls 'new Processor()' (v1 concrete) and then p->process() would
+   hit the __cxa_pure_virtual handler in the v2 vtable and abort. */
 struct ProcAbortImpl : Processor {
     void process() override {
         fprintf(stderr, "pure virtual method called\n");
