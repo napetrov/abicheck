@@ -15,7 +15,7 @@ Each change corrupts the vtable layout that existing binaries were compiled agai
 
 1. **`transform()` became virtual** — a new vtable slot is inserted. The class gains a vptr if it didn't already have one at that offset, and existing vtable indices shift.
 2. **`validate()` lost virtual** — the vtable slot is removed. Old binaries dispatching through the vtable at the old index now call the wrong function or dereference garbage.
-3. **`execute()` became pure virtual** — the vtable slot now points to `__cxa_pure_virtual`. Any old binary that instantiates `Processor` directly (which was legal in v1) will segfault when calling `execute()`.
+3. **`execute()` became pure virtual** — the vtable slot now points to `__cxa_pure_virtual`. Any old binary that instantiates `Processor` directly (which was legal in v1) will trigger `__cxa_pure_virtual`, which calls `std::abort()` (SIGABRT), not a segmentation fault. A segfault would only occur if the vtable slot were null or corrupted.
 4. **Copy ctor deleted** — old binaries that were linked against the copy constructor symbol will get an undefined symbol error at load time.
 
 ## Code diff
@@ -47,7 +47,7 @@ Each change corrupts the vtable layout that existing binaries were compiled agai
 **Scenario:** compile app against v1, swap in v2 `.so` without recompile.
 
 ```bash
-# Build v1 lib + app
+# Build v1 lib + app (calls dispatch through Processor& to force vtable use)
 g++ -shared -fPIC -g v1.cpp -o libprocessor.so
 g++ -g app.cpp -I. -L. -lprocessor -Wl,-rpath,. -o app
 ./app
@@ -55,22 +55,30 @@ g++ -g app.cpp -I. -L. -lprocessor -Wl,-rpath,. -o app
 # → Calling validate(10)...
 # → Calling execute()...
 # → MyProcessor::execute() called
-# → Copying processor...
-# → Copy created successfully
 
 # Swap to v2 (no recompile of app)
 g++ -shared -fPIC -g v2.cpp -o libprocessor.so
 ./app
-# → undefined symbol / segfault / vtable corruption
-# The copy ctor symbol is gone → immediate load failure.
-# If that were resolved, vtable slot indices are wrong →
-# calling validate() dispatches to the wrong function,
-# and execute() may call __cxa_pure_virtual → abort.
+# → vtable corruption: validate() dispatches to the wrong function,
+# → and execute() may call __cxa_pure_virtual → abort (SIGABRT).
+```
+
+**Copy constructor scenario** (separate test — `copy_ctor_demo.cpp`):
+
+```bash
+g++ -g copy_ctor_demo.cpp -I. -L. -lprocessor -Wl,-rpath,. -o copy_ctor_demo
+./copy_ctor_demo          # works with v1
+# Swap to v2:
+g++ -shared -fPIC -g v2.cpp -o libprocessor.so
+./copy_ctor_demo
+# → undefined symbol error for Processor copy ctor at load time.
 ```
 
 **Why CRITICAL:** Vtable layout is baked into the calling binary at compile time. Any
 change to the number or order of virtual methods silently corrupts dispatch. The deleted
-copy constructor removes a symbol entirely, causing immediate load failure.
+copy constructor removes a symbol entirely, causing immediate load failure. These two
+scenarios are exercised independently (`app.cpp` for vtable, `copy_ctor_demo.cpp` for
+the deleted copy constructor).
 
 ## Reproduce manually
 ```bash

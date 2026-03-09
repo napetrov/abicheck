@@ -21,9 +21,10 @@ the mismatch can cause:
 - Wrong field offsets if the `i` member moves due to alignment changes
 - Subtle data corruption in arrays of `Variant`
 
-In this specific case, `variant_get_int()` just reads `v->i` so the simple
-demo may still produce correct output, but the size mismatch is a real ABI
-incompatibility that breaks in more complex scenarios (arrays, memcpy, etc.).
+The demo makes this offset mismatch deterministic by embedding the `Variant` in
+a buffer filled with sentinel bytes (0xAA). When v2's `variant_get_int()` reads
+`v->i` at offset 8 instead of offset 4, it reads the sentinel bytes instead of
+the actual value 42, producing a visibly wrong result every run.
 
 ## Code diff
 
@@ -47,21 +48,24 @@ incompatibility that breaks in more complex scenarios (arrays, memcpy, etc.).
 gcc -shared -fPIC -g v1.c -o libv1.so
 gcc -g app.c -I. -L. -lv1 -Wl,-rpath,. -o app
 ./app
-# -> sizeof(Variant) = 8
+# -> sizeof(Variant) = 8 (compiled against v1)
 # -> tag = 1, i = 42
 # -> variant_get_int() = 42
 
 # Swap to v2
 gcc -shared -fPIC -g v2.c -o libv1.so
 ./app
-# -> sizeof(Variant) = 8    <-- app still uses v1's size!
+# -> sizeof(Variant) = 8 (compiled against v1)    <-- app still uses v1's size!
 # -> tag = 1, i = 42
-# -> variant_get_int() = 42 <-- may work for simple reads, but layout mismatch exists
-#
-# The real danger: v2's sizeof(Variant) is 16, but the app allocated only 8 bytes.
-# Any v2 library code that copies or iterates Variant arrays will corrupt memory.
+# -> variant_get_int() = -1431655766               <-- WRONG! (0xAAAAAAAA sentinel)
+# -> ERROR: expected 42, got -1431655766 — ABI layout mismatch!
+#      v2's variant_get_int() read 'i' at offset 8 instead of 4
+#      (sentinel bytes 0xAA were read instead of the actual value)
 ```
 
-**Why CRITICAL:** The struct size changed from 8 to 16 bytes. Even though simple
-field reads may accidentally work, the layout mismatch is a ticking time bomb:
-array indexing, `memcpy`, or any size-dependent operation will corrupt memory.
+**Why CRITICAL:** The struct size changed from 8 to 16 bytes. The `double`
+member in v2's anonymous union forces 8-byte alignment, shifting `v->i` from
+offset 4 to offset 8. Reading `v->i` via `variant_get_int()` is already
+undefined behavior due to the layout change — the demo makes this visible by
+using sentinel-filled buffers so the wrong offset read produces a deterministic
+incorrect value.

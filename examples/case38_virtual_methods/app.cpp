@@ -11,18 +11,18 @@ public:
 int main() {
     MyProcessor proc;
 
+    /* Use a base-class reference to force virtual dispatch through
+     * the vtable, preventing the compiler from devirtualizing. */
+    Processor& ref = proc;
+
     std::printf("Calling transform(42)...\n");
-    proc.transform(42);
+    ref.transform(42);
 
     std::printf("Calling validate(10)...\n");
-    proc.validate(10);
+    ref.validate(10);
 
     std::printf("Calling execute()...\n");
-    proc.execute();
-
-    std::printf("Copying processor...\n");
-    Processor copy(proc);
-    std::printf("Copy created successfully\n");
+    ref.execute();
 
     return 0;
 }

@@ -62,7 +62,7 @@ g++ -shared -fPIC -g v2.cpp -o libv1.so
 # -> cache = 123               <-- still works!
 
 # But recompiling against v2 header FAILS:
-g++ -g app.cpp -I. -L. -lv1 -Wl,-rpath,. -o app -include v2.hpp
+g++ -g app.cpp -DUSE_V2 -I. -L. -lv1 -Wl,-rpath,. -o app
 # -> error: 'void Widget::helper()' is private within this context
 ```
 

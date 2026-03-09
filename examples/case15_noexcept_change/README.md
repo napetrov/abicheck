@@ -118,8 +118,13 @@ contract violation, not a symbol resolution failure.
 ## Note on test expectations
 
 The integration tests expect **BREAKING** for this case. This is because `v2.cpp`
-includes `<stdexcept>`, which introduces a new `GLIBC_*` version requirement
-(`SYMBOL_VERSION_REQUIRED_ADDED`). The break detected by the tool is from the
-new glibc dependency, **not** from the `noexcept` removal itself. The ABI verdict
-for the `noexcept` change in isolation remains **COMPATIBLE** — the mangled symbol
-is identical.
+compiles a throwing implementation (`throw std::runtime_error(...)`) that
+introduces a new `GLIBCXX_*` or `CXXABI_*` version requirement
+(`SYMBOL_VERSION_REQUIRED_ADDED`). Both `v1.cpp` and `v2.cpp` include
+`<stdexcept>` — the header inclusion alone does not cause the break. The added
+versioned symbol comes from the compiled artifact (the `__cxa_throw` and
+`std::runtime_error` symbols emitted in v2's `.so`), as reflected in the CI
+symbol report. The break detected by the tool is from this new symbol version
+dependency, **not** from the `noexcept` removal itself. The ABI verdict for the
+`noexcept` change in isolation remains **COMPATIBLE** — the mangled symbol is
+identical.

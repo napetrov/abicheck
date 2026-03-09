@@ -50,8 +50,10 @@ gcc -shared -fPIC -g v2.c -o libv1.so
 # -> p.y = 20       <-- still correct!
 
 # But recompiling against v2 header FAILS:
-gcc -g app.c -I. -L. -lv1 -Wl,-rpath,. -o app -include v2.h
+sed 's/#include "v1.h"/#include "v2.h"/' app.c > /tmp/app_v2_test.c
+gcc -g /tmp/app_v2_test.c -I. -L. -lv1 -Wl,-rpath,. -o app
 # -> error: 'struct Point' has no member named 'x'
+rm -f /tmp/app_v2_test.c
 ```
 
 **Why SOURCE_BREAK:** The struct layout is bit-for-bit identical between v1 and v2.

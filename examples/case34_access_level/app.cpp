@@ -1,4 +1,8 @@
+#ifdef USE_V2
+#include "v2.hpp"
+#else
 #include "v1.hpp"
+#endif
 #include <stdio.h>
 
 int main() {

@@ -79,8 +79,12 @@ gcc -shared -fPIC -g v2.c -o libfoo.so
 **Source break verification** (recompilation against v2 will warn/error):
 
 ```bash
-gcc -g app.c -I. -include v2.h -L. -lfoo -Wl,-rpath,. -o app_v2 2>&1
-# With -Werror: error due to assignment to const-qualified field
+# Create a temporary source that includes v2.h instead of v1.h
+sed 's/#include "v1.h"/#include "v2.h"/' app.c > /tmp/app_v2_test.c
+gcc -g /tmp/app_v2_test.c -I. -L. -lfoo -Wl,-rpath,. -o app_v2 2>&1
+# → error: assignment of read-only member 'sample_rate'
+#   (because sample_rate is const in v2.h)
+rm -f /tmp/app_v2_test.c
 ```
 
 ## Reproduce with abicheck

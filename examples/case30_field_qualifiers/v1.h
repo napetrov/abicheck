@@ -1,9 +1,9 @@
 /* case30: Field qualifier changes (const, volatile)
  *
  * Demonstrates field qualifier scenarios in one C struct:
- * - A field gains const (prevents modification through struct pointer)
- * - A field gains volatile (forces memory reads on every access)
- * - A field's qualifier is removed (cache_hits loses its qualifier)
+ * - sample_rate gains const (FIELD_BECAME_CONST — prevents modification)
+ * - raw_value gains volatile (FIELD_BECAME_VOLATILE — forces memory reads)
+ * - cache_hits remains unchanged (plain int in both v1 and v2)
  *
  * Binary layout: UNCHANGED — these are semantic/source-level changes
  * that affect how consumers may legally interact with the fields.

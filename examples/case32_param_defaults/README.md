@@ -82,10 +82,20 @@ g++ -shared -fPIC -g v2.cpp -o libfoo.so
 **Source break verification** (partial — `configure()` with no args fails):
 
 ```bash
-g++ -g app.cpp -I. -include v2.hpp -L. -lfoo -Wl,-rpath,. -o app_v2 2>&1
+# Create a minimal source that includes only v2.hpp and calls configure()
+cat > /tmp/source_break.cpp << 'SRC'
+#include "v2.hpp"
+int main() {
+    Connection conn;
+    conn.configure();  // no args — v2 requires explicit 'verbose'
+    return 0;
+}
+SRC
+g++ -g /tmp/source_break.cpp -I. -L. -lfoo -Wl,-rpath,. -o /tmp/app_v2 2>&1
 # → error: no matching function for call to 'Connection::configure()'
 # → note: candidate expects 2 arguments, 0 provided
 #    (because 'verbose' lost its default in v2)
+rm -f /tmp/source_break.cpp /tmp/app_v2
 ```
 
 ## Reproduce with abicheck

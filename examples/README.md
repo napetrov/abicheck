@@ -79,11 +79,13 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 ## Running Consumer App Demos
 
 Every case directory includes an `app.c` or `app.cpp` that demonstrates the
-exact failure at runtime. The app is compiled against the **v1 header** and
-linked to the v1 library, then the v2 library is swapped in to show what breaks.
+observable impact of the change — which may be runtime breakage, identical
+runtime behavior, or a source-only/compile-time failure. The app is compiled
+against the **v1 header** and linked to the v1 library, then the v2 library is
+swapped in to show the effect.
 
-See the **`## Real Failure Demo`** section in each case's README for copy-paste
-build instructions.
+See the **`## Observed Behavior`** or **`## Real Failure Demo`** section in each
+case's README for copy-paste build instructions.
 
 **General pattern:**
 ```bash
