@@ -25,6 +25,7 @@ import pytest
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
 from abicheck.cli import (
+    _apply_strict,
     _filter_source_only,
     main,
 )
@@ -102,7 +103,7 @@ def _parse_abicc_report_metadata(report_path: Path) -> dict[str, str]:
     if not report_path.exists():
         return {}
     text = report_path.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r"<!--\s*([\w:;]+)\s*-->", text)
+    m = re.search(r"<!--\s*([^>]+?)\s*-->", text)
     if not m:
         return {}
     parts = m.group(1).split(";")
@@ -186,7 +187,11 @@ class TestCliCompatibility:
             ["abi-compliance-checker", "--help"],
             capture_output=True, text=True, timeout=10,
         )
-        assert "-strict" in r.stdout or "-strict" in r.stderr or r.returncode == 0
+        assert r.returncode == 0, f"abi-compliance-checker --help failed: rc={r.returncode}"
+        combined = r.stdout + r.stderr
+        assert "-strict" in combined, (
+            "abi-compliance-checker --help does not mention -strict"
+        )
 
     def test_abicheck_compat_accepts_all_abicc_flags(self):
         """abicheck compat --help lists all ABICC-equivalent flags."""
@@ -377,9 +382,12 @@ class TestOutputFormatParity:
             if "removed" in c["kind"]
         )
 
-        # Both should detect at least 1 removal (sub was removed)
-        assert abicc_removed >= 1, f"ABICC removed={abicc_removed}"
-        assert abicheck_removed >= 1, f"abicheck removed={abicheck_removed}"
+        # Both should detect exactly 1 removal (sub was removed)
+        assert abicc_removed == 1, f"ABICC removed={abicc_removed}, expected 1"
+        assert abicheck_removed == 1, f"abicheck removed={abicheck_removed}, expected 1"
+        assert abicc_removed == abicheck_removed, (
+            f"Removal count mismatch: ABICC={abicc_removed}, abicheck={abicheck_removed}"
+        )
 
     def test_report_verdict_string_matches(self, tmp_path):
         """Verdict strings should be semantically equivalent."""
@@ -406,6 +414,11 @@ class TestOutputFormatParity:
         abicc_verdict = abicc_meta.get("verdict", "").lower()
         abicheck_verdict = abicheck_data["verdict"]
 
+        assert abicc_verdict, (
+            f"ABICC report metadata missing or empty verdict "
+            f"(metadata={abicc_meta!r})"
+        )
+
         if abicc_verdict == "incompatible":
             assert abicheck_verdict == "BREAKING", (
                 f"ABICC says incompatible, abicheck says {abicheck_verdict}"
@@ -413,6 +426,11 @@ class TestOutputFormatParity:
         elif abicc_verdict == "compatible":
             assert abicheck_verdict in ("COMPATIBLE", "NO_CHANGE"), (
                 f"ABICC says compatible, abicheck says {abicheck_verdict}"
+            )
+        else:
+            pytest.fail(
+                f"Unexpected ABICC verdict '{abicc_verdict}' "
+                f"(abicheck verdict={abicheck_verdict}, metadata={abicc_meta!r})"
             )
 
     def test_report_json_structure_complete(self, tmp_path):
@@ -766,20 +784,15 @@ def test_strict_case_level_parity(
         extra_args=["-s"],
     )
 
-    # Normalize: ABICC uses rc=1 for strict violations,
-    # abicheck uses rc=1 for BREAKING
-    abicc_pass = abicc_r.returncode == 0
-    abicheck_pass = abicheck_r.returncode == 0
-    expected_pass = expected_exit == 0
-
-    assert abicc_pass == expected_pass, (
-        f"[{name}] ABICC strict: rc={abicc_r.returncode}, expected {'pass' if expected_pass else 'fail'}"
+    # Both tools should return the expected exit code
+    assert abicc_r.returncode == expected_exit, (
+        f"[{name}] ABICC strict: rc={abicc_r.returncode}, expected {expected_exit}"
     )
-    assert abicheck_pass == expected_pass, (
-        f"[{name}] abicheck strict: rc={abicheck_r.returncode}, expected {'pass' if expected_pass else 'fail'}"
+    assert abicheck_r.returncode == expected_exit, (
+        f"[{name}] abicheck strict: rc={abicheck_r.returncode}, expected {expected_exit}"
     )
-    # The key assertion: both tools agree
-    assert abicc_pass == abicheck_pass, (
+    # The key assertion: both tools agree on the exact return code
+    assert abicc_r.returncode == abicheck_r.returncode, (
         f"[{name}] STRICT PARITY BROKEN: "
         f"ABICC rc={abicc_r.returncode}, abicheck rc={abicheck_r.returncode}"
     )
@@ -1153,7 +1166,10 @@ class TestSkipFilterParity:
 # ============================================================================
 
 class TestStrictVerdictPromotion:
-    """Unit tests for strict-mode verdict promotion logic (no external tools)."""
+    """Unit tests for strict-mode verdict promotion logic (no external tools).
+
+    Uses the production _apply_strict() function to verify promotion semantics.
+    """
 
     def _result(self, verdict: Verdict, kinds: list[ChangeKind] | None = None) -> DiffResult:
         changes = [
@@ -1169,78 +1185,47 @@ class TestStrictVerdictPromotion:
 
     def test_strict_promotes_compatible_to_breaking(self):
         """COMPATIBLE → BREAKING in strict mode."""
-        from abicheck.checker import Verdict as V
-        result = self._result(V.COMPATIBLE, [ChangeKind.FUNC_ADDED])
-        # Simulate strict promotion
-        if result.verdict.value in ("COMPATIBLE", "SOURCE_BREAK"):
-            result = DiffResult(
-                old_version=result.old_version,
-                new_version=result.new_version,
-                library=result.library,
-                changes=result.changes,
-                verdict=V.BREAKING,
-            )
-        assert result.verdict == V.BREAKING
+        result = self._result(Verdict.COMPATIBLE, [ChangeKind.FUNC_ADDED])
+        promoted = _apply_strict(result)
+        assert promoted.verdict == Verdict.BREAKING
 
     def test_strict_promotes_source_break_to_breaking(self):
         """SOURCE_BREAK → BREAKING in strict mode."""
-        from abicheck.checker import Verdict as V
-        result = self._result(V.SOURCE_BREAK, [ChangeKind.FUNC_PARAMS_CHANGED])
-        if result.verdict.value in ("COMPATIBLE", "SOURCE_BREAK"):
-            result = DiffResult(
-                old_version=result.old_version,
-                new_version=result.new_version,
-                library=result.library,
-                changes=result.changes,
-                verdict=V.BREAKING,
-            )
-        assert result.verdict == V.BREAKING
+        result = self._result(Verdict.SOURCE_BREAK, [ChangeKind.FUNC_PARAMS_CHANGED])
+        promoted = _apply_strict(result)
+        assert promoted.verdict == Verdict.BREAKING
 
     def test_strict_no_change_stays_no_change(self):
         """NO_CHANGE is not promoted — even in strict mode."""
-        from abicheck.checker import Verdict as V
-        result = self._result(V.NO_CHANGE)
-        if result.verdict.value in ("COMPATIBLE", "SOURCE_BREAK"):
-            result = DiffResult(
-                old_version=result.old_version,
-                new_version=result.new_version,
-                library=result.library,
-                changes=result.changes,
-                verdict=V.BREAKING,
-            )
-        assert result.verdict == V.NO_CHANGE
+        result = self._result(Verdict.NO_CHANGE)
+        promoted = _apply_strict(result)
+        assert promoted.verdict == Verdict.NO_CHANGE
 
     def test_strict_breaking_stays_breaking(self):
         """BREAKING stays BREAKING in strict mode (no double-promotion)."""
-        from abicheck.checker import Verdict as V
-        result = self._result(V.BREAKING, [ChangeKind.FUNC_REMOVED])
-        original = result.verdict
-        if result.verdict.value in ("COMPATIBLE", "SOURCE_BREAK"):
-            result = DiffResult(
-                old_version=result.old_version,
-                new_version=result.new_version,
-                library=result.library,
-                changes=result.changes,
-                verdict=V.BREAKING,
-            )
-        assert result.verdict == V.BREAKING
-        assert result.verdict == original
+        result = self._result(Verdict.BREAKING, [ChangeKind.FUNC_REMOVED])
+        promoted = _apply_strict(result)
+        assert promoted.verdict == Verdict.BREAKING
 
     def test_source_filter_then_strict_promotion(self):
         """Source filter + strict: binary-only changes removed, then verdict promoted."""
-        from abicheck.checker import Verdict as V
-
         # Result with only binary-only change → after source filter = NO_CHANGE
-        result = self._result(V.BREAKING, [ChangeKind.SONAME_CHANGED])
+        result = self._result(Verdict.BREAKING, [ChangeKind.SONAME_CHANGED])
         filtered = _filter_source_only(result)
-        assert filtered.verdict == V.NO_CHANGE
+        assert filtered.verdict == Verdict.NO_CHANGE
+        # Strict on NO_CHANGE should stay NO_CHANGE
+        promoted = _apply_strict(filtered)
+        assert promoted.verdict == Verdict.NO_CHANGE
 
         # Source filter + FUNC_PARAMS_CHANGED → BREAKING after source filter
         result2 = self._result(
-            V.BREAKING,
+            Verdict.BREAKING,
             [ChangeKind.SONAME_CHANGED, ChangeKind.FUNC_PARAMS_CHANGED],
         )
         filtered2 = _filter_source_only(result2)
-        assert filtered2.verdict == V.BREAKING
+        assert filtered2.verdict == Verdict.BREAKING
         assert len(filtered2.changes) == 1
         assert filtered2.changes[0].kind == ChangeKind.FUNC_PARAMS_CHANGED
+        # Strict on BREAKING should stay BREAKING
+        promoted2 = _apply_strict(filtered2)
+        assert promoted2.verdict == Verdict.BREAKING
