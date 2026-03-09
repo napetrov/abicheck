@@ -64,6 +64,20 @@ EXPECTED: dict[str, str | None] = {
     "case26_union_field_added":         "BREAKING",    # union grows 4→8 bytes: TYPE_SIZE_CHANGED
     "case27_symbol_binding_weakened":   "COMPATIBLE",
     "case29_ifunc_transition":          "COMPATIBLE",  # FUNC→IFUNC → IFUNC_INTRODUCED (COMPATIBLE)
+    # ── cases 28, 30-41 (Sprint 7 — full parity examples) ─────────────────
+    "case28_typedef_opaque":            "BREAKING",    # typedef removed + type became opaque
+    "case30_field_qualifiers":          "BREAKING",    # struct_field_type_changed (int→const int via DWARF)
+    "case31_enum_rename":               "BREAKING",    # enum_member_removed fires alongside rename
+    "case32_param_defaults":            "NO_CHANGE",   # default values not in binary ABI
+    "case33_pointer_level":             "BREAKING",    # param/return pointer level changes
+    "case34_access_level":              "SOURCE_BREAK", # narrowing access (public→private) is a source break
+    "case35_field_rename":              "BREAKING",    # struct_field_removed fires (DWARF sees name change as removal)
+    "case36_anon_struct":               "BREAKING",    # type_size_changed + alignment changed
+    "case37_base_class":                "BREAKING",    # base class reorder + virtual inheritance change
+    "case38_virtual_methods":           "BREAKING",    # virtual added/removed + visibility change
+    "case39_var_const":                 "NO_CHANGE",   # var const qualifiers not detectable from headers alone
+    "case40_field_layout":              "BREAKING",    # field type changed + size changed
+    "case41_type_changes":              "BREAKING",    # type removed + alignment changed + enum sentinel
 }
 
 # Known gaps: these cases xfail when the verdict disagrees with expected.
