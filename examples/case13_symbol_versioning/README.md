@@ -1,12 +1,18 @@
 # Case 13: Symbol Versioning Script
 
-**Category:** ELF/Linker | **Verdict:** 🟡 INFORMATIONAL
+**Category:** ELF/Linker | **Verdict:** 🔴 BREAKING
 
 ## What breaks
-Without a version script, symbols have no version tag. If you later need to ship a
-`LIBFOO_2.0` variant of a symbol (for ABI fix while keeping backward compat), you
-have no mechanism to do so — all consumers already link against the unversioned symbol
-and there's no way to differentiate.
+Without a version script, symbols have no version tag (`foo` instead of `foo@@LIBFOO_1.0`).
+When a consumer is compiled against the versioned library and later runs against the
+unversioned variant, `ld.so` fails with an assertion:
+
+```
+no version information available (required by /tmp/app)
+Inconsistency detected by ld.so: dl-lookup.c: check_match: Assertion failed!
+```
+
+This is a hard runtime crash (exit 127) — not just a future-proofing concern.
 
 ## Why the check catches it
 `readelf --syms` on the "good" library shows `foo@@LIBFOO_1.0` — the `@@` denotes the
@@ -50,7 +56,7 @@ simultaneously.
 
 ## Real Failure Demo
 
-**Severity: INFORMATIONAL**
+**Severity: BREAKING**
 
 **Scenario:** app runs fine against both good.so and bad.so at runtime. The issue is future-proofing.
 
@@ -71,6 +77,6 @@ readelf --syms libgood.so | grep foo   # → foo@@LIBFOO_1.0 (versioned)
 readelf --syms libbad.so  | grep foo   # → foo           (no version)
 ```
 
-**Why INFORMATIONAL:** The library works correctly today. But without versioned symbols,
+**Why BREAKING:** An app linked against the versioned library embeds `DT_VERNEED: LIBFOO_1.0` in its ELF. When swapped to the unversioned lib at runtime, `ld.so` cannot satisfy the version requirement and aborts with an assertion error.
 you can never ship a `LIBFOO_2.0` variant alongside `LIBFOO_1.0` in the same `.so` for
 backward compatibility — the versioning mechanism simply doesn't exist.
