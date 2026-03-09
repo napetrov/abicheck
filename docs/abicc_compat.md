@@ -42,6 +42,7 @@ Exit codes match ABICC:
 | `-source` | `-src`, `-api` | Source/API compatibility only — filters out ELF-level symbol metadata changes (SONAME, symbol binding, versioning) |
 | `-binary` | `-bin`, `-abi` | Binary ABI mode (default behavior, explicit flag is a no-op) |
 | `-s` | `-strict` | Strict mode: any change (COMPATIBLE or SOURCE_BREAK) is treated as BREAKING → exit 1 |
+| `-warn-newsym` | | Treat new symbols (FUNC_ADDED, VAR_ADDED) as compatibility breaks → exit 1 |
 | `-show-retval` | | Include return-value changes in the HTML report |
 
 ### Output flags
@@ -49,7 +50,11 @@ Exit codes match ABICC:
 | Flag | Description |
 |------|-------------|
 | `-stdout` | Print the report content to stdout in addition to writing to file |
-| `-title NAME` | Custom report title _(not yet wired to HTML output — TODO)_ |
+| `-title NAME` | Custom report title (wired to HTML `<title>` and `<h1>`) |
+| `-component NAME` | Component name shown in report (sets title to "ABI Report — LIB (COMPONENT)" if no -title) |
+| `-limit-affected N` | Maximum number of affected symbols shown per change kind |
+| `-list-affected` | Generate a separate `.affected.txt` file listing all affected symbols |
+| `-q` | `-quiet` | Suppress console output (reports still written to file) |
 
 ### Version label overrides
 
@@ -64,9 +69,13 @@ These override what is in the `<version>` element of the XML descriptor.
 
 | Flag | Description |
 |------|-------------|
-| `-skip-symbols PATH` | File with newline-separated symbol names or patterns to suppress |
-| `-skip-types PATH` | File with newline-separated type names or patterns to suppress |
-| `--suppress PATH` | abicheck-native suppression YAML file (merged with `-skip-symbols`/`-skip-types`) |
+| `-skip-symbols PATH` | File with newline-separated symbol names or patterns to suppress (blacklist) |
+| `-skip-types PATH` | File with newline-separated type names or patterns to suppress (blacklist) |
+| `-symbols-list PATH` | File with symbols to check (whitelist). Only changes on these symbols are reported. |
+| `-types-list PATH` | File with types to check (whitelist). Only changes on these types are reported. |
+| `-skip-internal-symbols PATTERN` | Regex pattern for internal symbols to skip |
+| `-skip-internal-types PATTERN` | Regex pattern for internal types to skip |
+| `--suppress PATH` | abicheck-native suppression YAML file (merged with all other filters) |
 
 `-skip-symbols` / `-skip-types` file format:
 ```text
@@ -77,12 +86,68 @@ _ZN3Foo3barEv
 _ZN.*intelEv
 ```
 
+`-symbols-list` / `-types-list` file format (same syntax):
+```text
+# Only check these symbols — everything else is suppressed
+_Z10public_apiv
+_Z12another_funcv
+```
+
 ### Placeholder flags (accepted, not yet implemented)
 
 | Flag | Status |
 |------|--------|
 | `-headers-only` | Accepted; reserved for future header-only analysis mode. ELF/DWARF checks still run. |
 | `-skip-headers PATH` | Accepted; reserved for future header-skip support. |
+
+## ABI dump workflow
+
+abicheck supports a two-stage workflow: dump first, compare later. This is
+useful for CI pipelines that build versions at different times.
+
+### Creating dumps
+
+```bash
+# Create an ABI dump from an XML descriptor:
+abicheck compat-dump -lib libfoo -dump v1.xml
+
+# With explicit output path:
+abicheck compat-dump -lib libfoo -dump v1.xml -dump-path libfoo-v1.json
+
+# Override version label:
+abicheck compat-dump -lib libfoo -dump v1.xml -vnum 2025.1
+```
+
+Default output: `abi_dumps/<lib>/<version>/dump.json`
+
+### Comparing dumps
+
+JSON dumps can be passed directly to `compat` (auto-detected by `.json` extension)
+or to the native `compare` command:
+
+```bash
+# Via compat mode (ABICC-style exit codes):
+abicheck compat -lib libfoo -old libfoo-v1.json -new libfoo-v2.json
+
+# Via native compare (abicheck exit codes):
+abicheck compare libfoo-v1.json libfoo-v2.json --format html -o report.html
+```
+
+### Dump format
+
+abicheck uses its own **JSON dump format** — it does not use ABICC's Perl
+`Data::Dumper` or XML dump formats. If you have existing ABICC dumps, you need
+to re-create them from the original XML descriptors:
+
+```bash
+# ABICC dump → not supported:
+abicheck compat -old old.dump -new new.dump  # ❌ Error with migration guidance
+
+# Re-create from descriptor:
+abicheck compat-dump -lib libfoo -dump old_descriptor.xml -dump-path old.json
+abicheck compat-dump -lib libfoo -dump new_descriptor.xml -dump-path new.json
+abicheck compat -lib libfoo -old old.json -new new.json  # ✅
+```
 
 ## `-source` mode: what gets filtered
 
@@ -122,6 +187,16 @@ With `-strict`:
 
 Matches ABICC's `-strict` semantics: any deviation from the old ABI is an error.
 
+## `-warn-newsym` mode
+
+Without `-warn-newsym`:
+- New symbols (`FUNC_ADDED`, `VAR_ADDED`) are COMPATIBLE → exit 0
+
+With `-warn-newsym`:
+- New symbols promote verdict to BREAKING → exit 1
+
+Useful for strict CI pipelines that need to flag any ABI surface change.
+
 ## XML descriptor format
 
 Same format as ABICC:
@@ -152,6 +227,71 @@ blind spots. This means abicheck may report issues that ABICC would miss:
 
 Full coverage comparison: see [gap_report.md](gap_report.md).
 
+## ABICC flag coverage status
+
+### Supported flags (functional)
+
+| ABICC Flag | Status |
+|---|---|
+| `-lib` / `-l` / `-library` | ✅ Full parity |
+| `-old` / `-d1` | ✅ Full parity |
+| `-new` / `-d2` | ✅ Full parity |
+| `-v1` / `-vnum1` | ✅ Full parity |
+| `-v2` / `-vnum2` | ✅ Full parity |
+| `-report-path` | ✅ Full parity |
+| `-report-format` | ✅ `html/json/md` (ABICC: `htm/xml`) |
+| `-binary` / `-bin` / `-abi` | ✅ Full parity |
+| `-source` / `-src` / `-api` | ✅ Full parity |
+| `-s` / `-strict` | ✅ Full parity |
+| `-stdout` | ✅ Full parity |
+| `-title` | ✅ Wired to HTML output |
+| `-component` | ✅ Sets report title |
+| `-skip-symbols` | ✅ Full parity |
+| `-skip-types` | ✅ Full parity |
+| `-symbols-list` | ✅ Whitelist filtering |
+| `-types-list` | ✅ Whitelist filtering |
+| `-skip-internal-symbols` | ✅ Regex pattern |
+| `-skip-internal-types` | ✅ Regex pattern |
+| `-warn-newsym` | ✅ Full parity |
+| `-limit-affected` | ✅ Full parity |
+| `-list-affected` | ✅ Generates `.affected.txt` |
+| `-q` / `-quiet` | ✅ Suppress console output |
+| `-dump` (via `compat-dump`) | ✅ JSON format (not ABICC Perl/XML) |
+| `-dump-path` (via `compat-dump`) | ✅ Full parity |
+| `-vnum` (via `compat-dump`) | ✅ Version override for dumps |
+
+### Not yet implemented
+
+| ABICC Flag | Priority | Notes |
+|---|---|---|
+| `-headers-only` | P1 | Accepted, not wired |
+| `-skip-headers` | P1 | Accepted, not wired |
+| `-show-retval` | P1 | Accepted, not wired |
+| `-bin-report-path` / `-src-report-path` | P2 | Separate binary/source reports |
+| `-dump-format` | P2 | Only JSON supported (not ABICC Perl/XML) |
+| `-gcc-path` / `-cross-gcc` | P2 | Cross-compilation |
+| `-gcc-prefix` / `-cross-prefix` | P2 | Toolchain prefix |
+| `-sysroot` | P2 | Alternative sysroot |
+| `-lang` | P2 | Force C/C++ |
+| `-static` / `-static-libs` | P2 | Static library analysis |
+| `-ext` / `-extended` | P3 | Check all types |
+| `-keep-cxx` | P3 | Include std mangled syms |
+| `-old-style` | P3 | Legacy report layout |
+| `-tolerance` / `-tolerant` | P3 | Compilation heuristics |
+
+## CI cross-validation
+
+To validate abicheck produces correct results for your CI pipeline:
+
+```bash
+# 1. Run both tools on the same inputs
+abi-compliance-checker -lib libfoo -old old.xml -new new.xml; ABICC_EXIT=$?
+abicheck compat -lib libfoo -old old.xml -new new.xml; ABICHECK_EXIT=$?
+
+# 2. Compare exit codes
+test $ABICC_EXIT -eq $ABICHECK_EXIT && echo "PASS" || echo "FAIL: $ABICC_EXIT vs $ABICHECK_EXIT"
+```
+
 ## Examples
 
 ```bash
@@ -171,9 +311,29 @@ abicheck compat -lib mylib -old v1.xml -new v2.xml -v1 2025.0 -v2 2025.1
 echo "_Z14legacy_internalv" > skip.txt
 abicheck compat -lib mylib -old v1.xml -new v2.xml -skip-symbols skip.txt
 
+# Whitelist: only check public API symbols
+abicheck compat -lib mylib -old v1.xml -new v2.xml -symbols-list public_api.txt
+
+# Skip internal symbols by regex
+abicheck compat -lib mylib -old v1.xml -new v2.xml -skip-internal-symbols "_ZN.*detail.*"
+
+# Treat new symbols as breaks
+abicheck compat -lib mylib -old v1.xml -new v2.xml -warn-newsym
+
+# Limit output + affected list
+abicheck compat -lib mylib -old v1.xml -new v2.xml -limit-affected 5 -list-affected
+
 # Print report to stdout (for CI log capture)
 abicheck compat -lib mylib -old v1.xml -new v2.xml -stdout
 
+# Quiet mode (report written, no console output)
+abicheck compat -lib mylib -old v1.xml -new v2.xml -q
+
 # JSON output
 abicheck compat -lib mylib -old v1.xml -new v2.xml -report-format json
+
+# Two-stage workflow: dump then compare
+abicheck compat-dump -lib mylib -dump v1.xml
+abicheck compat-dump -lib mylib -dump v2.xml
+abicheck compat -lib mylib -old abi_dumps/mylib/1.0/dump.json -new abi_dumps/mylib/2.0/dump.json
 ```
