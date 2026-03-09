@@ -1,3 +1,4 @@
 #include "lib.h"
 
-void fill(union Value* v) { v->i = 42; }
+/* v2 writes the newly added double member; old callers allocate smaller union */
+void fill(union Value* v) { v->d = 3.1415926535; }

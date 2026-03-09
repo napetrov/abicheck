@@ -1,5 +1,7 @@
 # Case 36 -- Anonymous Struct/Union Change
 
+
+**Verdict:** 🔴 BREAKING
 **abicheck verdict: BREAKING**
 
 ## What changes
@@ -69,3 +71,9 @@ offset 4 to offset 8. Reading `v->i` via `variant_get_int()` is already
 undefined behavior due to the layout change — the demo makes this visible by
 using sentinel-filled buffers so the wrong offset read produces a deterministic
 incorrect value.
+
+## Why runtime result may differ from verdict
+Anon struct layout change: field offsets shift without DWARF, silent corruption
+
+## Runtime note
+App returns non-zero on detected offset mismatch.

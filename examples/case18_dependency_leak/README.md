@@ -1,5 +1,7 @@
 # Case 18 — Dependency ABI Leak
 
+
+**Verdict:** 🟡 SOURCE_BREAK
 ## What changes
 
 `libfoo`'s **exported symbol interface** is identical between v1 and v2 — same function
@@ -141,3 +143,6 @@ gcc -shared -fPIC -g libfoo_v2.c -I. -o libfoo.so
 `nm` and `readelf` show the same function names. Yet the v2 library reads 4 bytes past the
 caller's struct allocation because the third-party type it exposes in its public header
 grew silently. Heap corruption or information leakage follows.
+
+## Why runtime result may differ from verdict
+Header dependency leak: binary compat, recompile fails

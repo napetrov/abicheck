@@ -1,5 +1,7 @@
 # Case 35 -- Field Rename
 
+
+**Verdict:** 🟡 SOURCE_BREAK
 **abicheck verdict: SOURCE_BREAK**
 
 ## What changes
@@ -59,3 +61,6 @@ rm -f /tmp/app_v2_test.c
 **Why SOURCE_BREAK:** The struct layout is bit-for-bit identical between v1 and v2.
 Only the field names changed, which are a compile-time concept. Existing binaries
 are fully compatible.
+
+## Why runtime result may differ from verdict
+Field rename: binary compat (field exists), source break (name changed)

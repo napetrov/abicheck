@@ -1,6 +1,6 @@
 # Case 39: Variable Const Change
 
-**Category:** Global Variable Qualifiers | **Verdict:** NO_CHANGE (headers-only detection limitation)
+**Category:** Global Variable Qualifiers | **Verdict:** 🔴 BREAKING (runtime) / NO_CHANGE in headers-only abicheck
 
 ## What changes
 
@@ -9,7 +9,7 @@
 | v1 | `extern int g_buffer_size` (mutable); `extern const int g_max_retries` (const); `extern int g_legacy_flag` (exists) |
 | v2 | `extern const int g_buffer_size` (became const); `extern int g_max_retries` (lost const); `g_legacy_flag` removed |
 
-## Why this isn't detected by headers-only analysis
+## Why runtime is BREAKING but headers-only abicheck may say NO_CHANGE
 
 When abicheck performs headers-only analysis (without compiled `.so` files), const
 qualifiers on global variables and variable removal are not visible in the header parse

@@ -63,3 +63,6 @@ gcc -g app.c -ldl -o app
 accidentally enlarges the public ABI contract. Any future refactor of `internal_helper`
 becomes an ABI break — you can't remove or rename it without breaking binaries that
 inadvertently started calling it directly.
+
+## Runtime note
+The app now loads `libv1.so` (bad visibility) and `libv2.so` (hidden visibility) to align with Makefile outputs.

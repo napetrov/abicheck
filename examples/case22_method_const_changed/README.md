@@ -1,5 +1,7 @@
 # Case 22 — Method Const Qualifier Changed
 
+
+**Verdict:** 🔴 BREAKING
 **abicheck verdict: BREAKING**
 
 ## What changes
@@ -69,3 +71,6 @@ g++ -shared -fPIC -g new/lib.cpp -Inew -o libwidget.so
 **Why CRITICAL:** `const` is part of the C++ mangled name (`K` in `_ZNK...`).
 Removing it produces a completely different symbol. Every pre-built binary that
 calls `widget.get()` on a const reference fails to load — hard runtime crash.
+
+## Why runtime result may differ from verdict
+const qualifier on method changes mangled name — symbol lookup error

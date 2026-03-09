@@ -1,5 +1,7 @@
 # Case 16 — Inline → Non-inline (ODR / Symbol Appearance)
 
+
+**Verdict:** 🟢 COMPATIBLE
 ## What changes
 
 | Version | Where is `fast_hash`? |
@@ -107,3 +109,6 @@ they have the inline body baked in. The break hits **new consumers**: any code c
 against v2.hpp (declaration only) that links against v1.so gets a hard linker error
 because the symbol doesn't exist in v1.so. This forces a coordinated upgrade:
 v2.hpp and v2.so must ship together.
+
+## Why runtime result may differ from verdict
+Inline→non-inline: old binary uses inlined copy, runtime unaffected
