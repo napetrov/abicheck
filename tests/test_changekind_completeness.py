@@ -17,11 +17,9 @@ from abicheck.model import (
     AccessLevel,
     Function,
     RecordType,
-    TypeField,
     Variable,
     Visibility,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
