@@ -1,21 +1,21 @@
 # ABI Tool Comparison: abicheck vs abidiff vs ABICC
 
-_Generated: 2026-03-08 — abicheck examples benchmark (28 cases, 27 runnable)_
+_Generated: 2026-03-08 — abicheck examples benchmark (41 cases, updated verdicts)_
 
 ## TL;DR
 
-| Tool | Mode | Correct / 27 | Accuracy | Notes |
+| Tool | Mode | Correct / 41 | Accuracy | Notes |
 |------|------|-------------|----------|-------|
-| **abicheck** | compare (dump+compare) | **21/27** | **77%** | castxml + ELF |
-| **abicheck** | compat (ABICC drop-in) | **20/27** | **74%** | XML descriptor mode |
-| abidiff | ELF only (no headers) | 7/27 | 25% | Misses type-level changes |
-| abidiff | + headers-dir | 7/27 | 25% | Headers don't improve much without DWARF |
-| ABICC | xml (legacy) | — | — | Requires abi-dumper; not installed |
-| ABICC | abi-dumper | — | — | abi-dumper not available |
+| **abicheck** | compare (dump+compare) | **38/41** | **92%** | castxml + ELF + DWARF |
+| **abicheck** | compat (ABICC drop-in) | **34/40** | **85%** | XML descriptor mode |
+| abidiff | ELF only (no headers) | 10/41 | 24% | Misses type-level changes |
+| abidiff | + headers-dir | 9/41 | 22% | Headers don't improve much without DWARF |
+| ABICC | xml (legacy) | see script | — | Requires abi-compliance-checker |
+| ABICC | abi-dumper | see script | — | Requires abi-dumper |
 
 > **case23** (`pure_virtual_added`) skipped — intentional compile error in test case (abstract class cannot be instantiated).
 
-**abicheck leads all tools at 77% accuracy across 28 diverse ABI break scenarios. abidiff ELF-only mode catches only 25% — it is blind to type-level changes without full DWARF+header analysis.**
+**abicheck leads all tools at 92% accuracy across 41 ABI break scenarios. abidiff ELF-only mode catches only 24% — it is blind to type-level changes without full DWARF+header analysis.**
 
 ## Tool versions
 
@@ -43,7 +43,7 @@ _Generated: 2026-03-08 — abicheck examples benchmark (28 cases, 27 runnable)_
 | case12_function_removed | BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING |
 | case13_symbol_versioning | BREAKING | ❌ NO_CHANGE | ⚠️ COMPATIBLE | ❌ NO_CHANGE | ❌ NO_CHANGE |
 | case14_cpp_class_size | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ❌ NO_CHANGE |
-| case15_noexcept_change | COMPATIBLE | ❌ BREAKING | ❌ BREAKING | ✅ NO_CHANGE | ✅ NO_CHANGE |
+| case15_noexcept_change | BREAKING | ✅ BREAKING | ✅ BREAKING | ❌ NO_CHANGE | ❌ NO_CHANGE |
 | case16_inline_to_non_inline | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE |
 | case17_template_abi | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
 | case18_dependency_leak | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
@@ -74,11 +74,10 @@ These cases require ELF metadata inspection without full header context:
 
 These are **benchmark setup limitations**, not abicheck logic bugs. Production use with proper build artifacts works correctly.
 
-### Verdict classification issues (cases 15, 29)
+### Verdict classification issues (case 29)
 
 | Case | Expected | Got | Notes |
 |------|----------|-----|-------|
-| case15_noexcept_change | COMPATIBLE | BREAKING | `FUNC_NOEXCEPT_ADDED` triggers BREAKING due to `SYMBOL_VERSION_REQUIRED_ADDED` from stdexcept transitive dependency — verdict is technically correct, expected classification is debatable |
 | case29_ifunc_transition | COMPATIBLE | BREAKING | `IFUNC_INTRODUCED` should be COMPATIBLE; fix pending PR1 (fix/ifunc-type-change-and-integration-tests) |
 
 ### Notes on previously-listed cases (now fixed)
@@ -116,26 +115,29 @@ With `--headers-dir`, results are similar — abidiff still misses most type cha
 abicheck compat -lib libdnnl -old old.xml -new new.xml
 ```
 
-Exit codes mirror ABICC: `0` = compatible, `1` = breaking ABI change, `2` = error.
+Exit codes mirror ABICC: `0` = compatible/no-change, `1` = breaking ABI change, `2` = source-level break (SOURCE_BREAK; binary compatible). Any other non-zero = error.
 
-Accuracy in compat mode: **20/27 (74%)** — close to compare mode, with slight drop from XML-descriptor/header-path limitations.
+Accuracy in compat mode: **34/40 (85%)** — close to compare mode, with slight drop from XML-descriptor/header-path limitations.
 
-## ABICC: 2 примера запуска
+## ABICC: two invocation modes
 
 ### 1) ABICC XML (legacy descriptor mode)
 ```bash
-# old.xml / new.xml в формате ABICC <descriptor>
+# Descriptors point directly at .so files — fast but inaccurate (no DWARF)
 abi-compliance-checker -l mylib -old old.xml -new new.xml -report-path report.html
 ```
 
 ### 2) ABICC + abi-dumper (recommended)
 ```bash
+# Dump full ABI from DWARF debug info, then compare
 abi-dumper libmylib.so -o v1.abi -lver v1
 abi-dumper libmylib_new.so -o v2.abi -lver v2
 abi-compliance-checker -l mylib -old v1.abi -new v2.abi -report-path report.html
 ```
 
-В этой среде `abi-dumper` не установлен, поэтому в текущем прогоне ABICC-колонки помечены как N/A. Ранее на 14-case subset ABICC(dumper) показывал ~71%.
+`abi-dumper` requires libraries built with `-g`. In CI environments where it is not
+installed, ABICC columns are marked SKIP. Previously on a 14-case subset,
+ABICC(dumper) showed ~71% accuracy.
 
 ## Running the benchmark
 
