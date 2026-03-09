@@ -30,36 +30,36 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 
 ## Case Index
 
-| # | Case | Category | abidiff exit | Root cause |
-|---|------|----------|-------------|-----------|
-| [01](case01_symbol_removal/README.md) | Symbol Removal | Symbol API | 12 🔴 | Public function deleted from .so |
-| [02](case02_param_type_change/README.md) | Parameter Type Change | Symbol API | 4 🟡 | Param type widened, callers pass wrong register |
-| [03](case03_compat_addition/README.md) | Compatible Addition | Symbol API | 4 🟢 | New export added, existing callers unaffected |
-| [04](case04_no_change/README.md) | No Change | Symbol API | 0 ✅ | Identical binary — baseline |
-| [05](case05_soname/README.md) | Missing SONAME | ELF/Linker | — 🟡 | Library built without -Wl,-soname |
-| [06](case06_visibility/README.md) | Visibility Leak | Visibility | — 🟡 | Internal symbols unintentionally exported |
-| [07](case07_struct_layout/README.md) | Struct Layout Change | Type Layout | 4 🟡 | Field added, sizeof grows, callers undersize |
-| [08](case08_enum_value_change/README.md) | Enum Value Change | Type Layout | 4 🟡 | Value inserted mid-enum, existing constants shift |
-| [09](case09_cpp_vtable/README.md) | C++ Vtable Change | C++ ABI | 4 🟡 | Virtual method inserted, vtable offsets shift |
-| [10](case10_return_type/README.md) | Return Type Change | Symbol API | 4 🟡 | Return type widened, callers read truncated value |
-| [11](case11_global_var_type/README.md) | Global Variable Type | Type Layout | 4 🟡 | Global var type widened, symbol size changes |
-| [12](case12_function_removed/README.md) | Function Disappears | Symbol API | 12 🔴 | Function moved to inline, vanishes from .so |
-| [13](case13_symbol_versioning/README.md) | Symbol Versioning | ELF/Linker | — 🟡 | No version script → no `@@VER` on symbols |
-| [14](case14_cpp_class_size/README.md) | C++ Class Size Change | C++ ABI | 4 🟡 | Private member grows, sizeof(class) changes |
-| [15](case15_noexcept_change/README.md) | noexcept Changed | C++ Source | 0 ❌ | Source-level contract; mangling unchanged |
-| [16](case16_inline_to_non_inline/README.md) | Inline → Non-inline | C++ ABI | — ⚠️ | ODR violation; symbol appears in v2 .so |
-| [17](case17_template_abi/README.md) | Template Layout Change | C++ ABI | 4 🟡 | Explicit-instantiated template grows in size |
-| [18](case18_dependency_leak/README.md) | Dependency ABI Leak | Type Layout | — ⚠️ | Third-party type in public header changes layout |
-| [19](case19_enum_member_removed/README.md) | Enum Member Removed | C API | 8 🔴 | Removing an enum value breaks stored/transmitted integers |
-| [20](case20_enum_member_value_changed/README.md) | Enum Value Changed | C API | 8 🔴 | Renumbering enum breaks all consumers using stored values |
-| [21](case21_method_became_static/README.md) | Method Became Static | C++ ABI | 8 🔴 | Calling convention mismatch — implicit `this` ignored |
-| [22](case22_method_const_changed/README.md) | const Qualifier Changed | C++ ABI | 8 🔴 | `_ZNK...` vs `_ZN...` — different mangled symbol name |
-| [23](case23_pure_virtual_added/README.md) | Pure Virtual Added | C++ ABI | 8 🔴 | Existing vtable slot hits `__cxa_pure_virtual` → abort |
-| [24](case24_union_field_removed/README.md) | Union Field Removed | C API | 8 🔴 | Field write interpreted as different type — silent wrong data |
-| [25](case25_enum_member_added/README.md) | Enum Member Added | C API | 4 🟡 | Adding at end is compatible; older binaries handle known values |
-| [26](case26_union_field_added/README.md) | Union Field Added | C API | 4 🟡 | Existing fields unaffected; size increase is separate concern |
-| [27](case27_symbol_binding_weakened/README.md) | Symbol Binding Weakened | ELF/Linker | 4 🟡 | WEAK symbol can be silently overridden by interposition |
-| [29](case29_ifunc_transition/README.md) | IFUNC Transition | ELF/Linker | 4 🟡 | GNU IFUNC resolves transparently; old `ld.so` may not support |
+| # | Case | Category | abicheck verdict | Root cause |
+|---|------|----------|-----------------|-----------|
+| [01](case01_symbol_removal/README.md) | Symbol Removal | Symbol API | BREAKING 🔴 | Public function deleted from .so |
+| [02](case02_param_type_change/README.md) | Parameter Type Change | Symbol API | BREAKING 🟡 | Param type widened, callers pass wrong register |
+| [03](case03_compat_addition/README.md) | Compatible Addition | Symbol API | COMPATIBLE 🟢 | New export added, existing callers unaffected |
+| [04](case04_no_change/README.md) | No Change | Symbol API | NO_CHANGE ✅ | Identical binary — baseline |
+| [05](case05_soname/README.md) | Missing SONAME | ELF/Linker | BAD PRACTICE 🟡 | Library built without -Wl,-soname |
+| [06](case06_visibility/README.md) | Visibility Leak | Visibility | BAD PRACTICE 🟡 | Internal symbols unintentionally exported |
+| [07](case07_struct_layout/README.md) | Struct Layout Change | Type Layout | BREAKING 🟡 | Field added, sizeof grows, callers undersize |
+| [08](case08_enum_value_change/README.md) | Enum Value Change | Type Layout | BREAKING 🟡 | Value inserted mid-enum, existing constants shift |
+| [09](case09_cpp_vtable/README.md) | C++ Vtable Change | C++ ABI | BREAKING 🟡 | Virtual method inserted, vtable offsets shift |
+| [10](case10_return_type/README.md) | Return Type Change | Symbol API | BREAKING 🟡 | Return type widened, callers read truncated value |
+| [11](case11_global_var_type/README.md) | Global Variable Type | Type Layout | BREAKING 🟡 | Global var type widened, symbol size changes |
+| [12](case12_function_removed/README.md) | Function Removed | Symbol API | BREAKING 🔴 | Function removed from .so, symbol unresolvable |
+| [13](case13_symbol_versioning/README.md) | Symbol Versioning | ELF/Linker | INFORMATIONAL 🟡 | No version script → no `@@VER` on symbols |
+| [14](case14_cpp_class_size/README.md) | C++ Class Size Change | C++ ABI | BREAKING 🟡 | Private member grows, sizeof(class) changes |
+| [15](case15_noexcept_change/README.md) | noexcept Changed | C++ Source | COMPATIBLE ❌ | Source-level contract; mangling unchanged |
+| [16](case16_inline_to_non_inline/README.md) | Inline → Non-inline | C++ ABI | BREAKING ⚠️ | ODR violation; symbol appears in v2 .so |
+| [17](case17_template_abi/README.md) | Template Layout Change | C++ ABI | BREAKING 🟡 | Explicit-instantiated template grows in size |
+| [18](case18_dependency_leak/README.md) | Dependency ABI Leak | Type Layout | BREAKING ⚠️ | Third-party type in public header changes layout |
+| [19](case19_enum_member_removed/README.md) | Enum Member Removed | C API | BREAKING 🔴 | Removing an enum value breaks stored/transmitted integers |
+| [20](case20_enum_member_value_changed/README.md) | Enum Value Changed | C API | BREAKING 🔴 | Renumbering enum breaks all consumers using stored values |
+| [21](case21_method_became_static/README.md) | Method Became Static | C++ ABI | BREAKING 🔴 | Calling convention mismatch — implicit `this` ignored |
+| [22](case22_method_const_changed/README.md) | const Qualifier Changed | C++ ABI | BREAKING 🔴 | `_ZNK...` vs `_ZN...` — different mangled symbol name |
+| [23](case23_pure_virtual_added/README.md) | Pure Virtual Added | C++ ABI | BREAKING 🔴 | Existing vtable slot hits `__cxa_pure_virtual` → abort |
+| [24](case24_union_field_removed/README.md) | Union Field Removed | C API | BREAKING 🔴 | Field write interpreted as different type — silent wrong data |
+| [25](case25_enum_member_added/README.md) | Enum Member Added | C API | COMPATIBLE 🟡 | Adding at end is compatible; older binaries handle known values |
+| [26](case26_union_field_added/README.md) | Union Field Added | C API | COMPATIBLE 🟡 | Existing fields unaffected; size increase is separate concern |
+| [27](case27_symbol_binding_weakened/README.md) | Symbol Binding Weakened | ELF/Linker | COMPATIBLE 🟡 | WEAK symbol can be silently overridden by interposition |
+| [29](case29_ifunc_transition/README.md) | IFUNC Transition | ELF/Linker | COMPATIBLE 🟡 | GNU IFUNC resolves transparently; old `ld.so` may not support |
 
 ---
 

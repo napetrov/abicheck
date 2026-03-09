@@ -1,5 +1,6 @@
 class Buffer {
 public:
+    Buffer();
     int size();
 private:
     char data[64];

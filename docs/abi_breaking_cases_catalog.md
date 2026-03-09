@@ -1,6 +1,6 @@
-# ABI Breaking Cases Catalog (v1)
+# ABI Breaking Cases Catalog (v2)
 
-This catalog summarizes breakage patterns covered by `examples/case01..case24`.
+This catalog summarizes breakage patterns covered by `examples/case01..case29`.
 For full code walkthroughs and deep per-case narrative, see
 [`docs/examples_breakage_guide.md`](examples_breakage_guide.md).
 
@@ -152,7 +152,30 @@ For full code walkthroughs and deep per-case narrative, see
     - Example: `examples/case20_enum_member_value_changed/`
     - Mitigation: never renumber released enum constants.
 
-## 7) Additional detected changes and verdicts
+## 7) Additional compatible/informational cases
+
+25. **case25_enum_member_added** — enum member appended at end.
+    - Risk: source-level only (switch statements may not handle new value).
+    - Type: **compatible** — existing compiled values are unchanged.
+    - Example: `examples/case25_enum_member_added/`
+    - Note: if adding shifts existing values, that is caught by `ENUM_MEMBER_VALUE_CHANGED`.
+
+26. **case26_union_field_added** — union field added.
+    - Risk: size increase if new field is largest (caught separately by `TYPE_SIZE_CHANGED`).
+    - Type: **compatible** — all union fields share offset 0; existing fields unaffected.
+    - Example: `examples/case26_union_field_added/`
+
+27. **case27_symbol_binding_weakened** — GLOBAL → WEAK symbol binding.
+    - Risk: interposition — WEAK symbol can be overridden by another GLOBAL definition.
+    - Type: **compatible** — symbol is still exported and resolvable.
+    - Example: `examples/case27_symbol_binding_weakened/`
+
+28. **case29_ifunc_transition** — regular function → GNU IFUNC.
+    - Risk: older dynamic linkers may not support IFUNC resolution.
+    - Type: **compatible** — PLT/GOT mechanism handles indirection transparently.
+    - Example: `examples/case29_ifunc_transition/`
+
+## 8) Additional detected changes and verdicts
 
 Beyond the core symbol/type/C++ checks above, abicheck detects a number of
 ELF-metadata, DWARF-diagnostic, and qualifier changes. Each is classified
