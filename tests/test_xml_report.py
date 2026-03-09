@@ -118,6 +118,28 @@ class TestXmlReportStructure:
         xml = generate_xml_report(result, lib_name="libfoo")
         assert xml.startswith("<?xml ")
 
+    def test_arch_in_test_info(self):
+        result = _make_result()
+        xml = generate_xml_report(result, lib_name="libfoo", arch="x86_64")
+        root = ET.fromstring(xml)
+        binary = root.find("report[@kind='binary']")
+        assert binary.find("test_info/version1/arch").text == "x86_64"
+        assert binary.find("test_info/version2/arch").text == "x86_64"
+
+    def test_gcc_in_test_info(self):
+        result = _make_result()
+        xml = generate_xml_report(result, lib_name="libfoo", compiler="12.2.0")
+        root = ET.fromstring(xml)
+        binary = root.find("report[@kind='binary']")
+        assert binary.find("test_info/version1/gcc").text == "12.2.0"
+
+    def test_no_arch_when_empty(self):
+        result = _make_result()
+        xml = generate_xml_report(result, lib_name="libfoo")
+        root = ET.fromstring(xml)
+        binary = root.find("report[@kind='binary']")
+        assert binary.find("test_info/version1/arch") is None
+
 
 class TestXmlReportCounts:
     """Verify counts and verdicts in the XML report."""
@@ -267,6 +289,46 @@ class TestXmlReportDetailSections:
         assert len(sym_probs) == 1
         sym_el = sym_probs[0].find("symbol")
         assert sym_el.get("name") == "_Z3foov"
+
+    def test_effect_element_in_type_problem(self):
+        changes = [
+            Change(kind=ChangeKind.TYPE_SIZE_CHANGED, symbol="MyStruct",
+                   description="size changed", old_value="8", new_value="16"),
+        ]
+        result = _make_result(changes=changes, verdict=Verdict.BREAKING)
+        xml = generate_xml_report(result, old_symbol_count=5)
+        root = ET.fromstring(xml)
+        binary = root.find("report[@kind='binary']")
+        prob = binary.find(".//problem[@id='type_size_changed']")
+        assert prob is not None
+        effect = prob.find("effect")
+        assert effect is not None
+        assert "break binary compatibility" in effect.text
+
+    def test_overcome_element_for_removal(self):
+        changes = [
+            Change(kind=ChangeKind.FUNC_REMOVED, symbol="_Z3foov",
+                   description="foo() removed"),
+        ]
+        result = _make_result(changes=changes, verdict=Verdict.BREAKING)
+        xml = generate_xml_report(result, old_symbol_count=5)
+        root = ET.fromstring(xml)
+        binary = root.find("report[@kind='binary']")
+        # func_removed goes into removed_symbols, not problems_with_symbols
+        # But since it IS a breaking change, it's in _REMOVED_KINDS so won't be in problems
+        # That's correct — overcome is only for problems, not removals in ABICC
+
+    def test_no_overcome_for_non_removal(self):
+        changes = [
+            Change(kind=ChangeKind.FUNC_RETURN_CHANGED, symbol="_Z3foov",
+                   description="return type changed"),
+        ]
+        result = _make_result(changes=changes, verdict=Verdict.BREAKING)
+        xml = generate_xml_report(result, old_symbol_count=5)
+        root = ET.fromstring(xml)
+        prob = root.find(".//problem[@id='func_return_changed']")
+        assert prob is not None
+        assert prob.find("overcome") is None
 
     def test_no_detail_sections_when_no_changes(self):
         result = _make_result()

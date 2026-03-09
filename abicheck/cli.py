@@ -464,6 +464,20 @@ def _do_echo(msg: str, quiet: bool, *, err: bool = True) -> None:
         click.echo(msg, err=err)
 
 
+def _detect_compiler_version(gcc_path: str | None = None) -> str:
+    """Detect GCC version for ABICC XML report <gcc> element."""
+    import shutil
+    import subprocess as _sp
+    compiler = gcc_path or shutil.which("gcc") or shutil.which("cc") or ""
+    if not compiler:
+        return ""
+    try:
+        r = _sp.run([compiler, "-dumpversion"], capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, _sp.TimeoutExpired):
+        return ""
+
+
 def _setup_logging(
     log_path: Path | None,
     log1_path: Path | None,
@@ -765,8 +779,8 @@ def compat_dump_cmd(
               help="Check binary (ABI) compatibility only (default).")
 @click.option("-warn-newsym", "warn_newsym", is_flag=True, default=False,
               help="Treat new symbols as compatibility breaks.")
-@click.option("-old-style", "old_style", is_flag=True, default=False,
-              help="Generate legacy-style report layout (accepted, no effect).")
+@click.option("-old-style", "-compat-html", "compat_html", is_flag=True, default=False,
+              help="Generate ABICC-compatible HTML with matching element IDs and structure.")
 @click.option("-use-dumps", "use_dumps", is_flag=True, default=False,
               help="Interpret -old/-new as pre-built dumps (auto-detected).")
 # ── Version label flags ──────────────────────────────────────────────────────
@@ -879,7 +893,7 @@ def compat_cmd(  # noqa: PLR0913
     source_only: bool,
     binary_only: bool,
     warn_newsym: bool,
-    old_style: bool,
+    compat_html: bool,
     use_dumps: bool,
     vnum1: str | None,
     vnum2: str | None,
@@ -983,8 +997,8 @@ def compat_cmd(  # noqa: PLR0913
     )
 
     # Info-level notices for accepted but limited-effect flags
-    if old_style:
-        _do_echo("Note: -old-style is accepted for compatibility but has no visual effect.", quiet)
+    if compat_html:
+        _do_echo("Note: -compat-html / -old-style enabled: HTML will match ABICC element IDs.", quiet)
     if use_dumps:
         _do_echo("Note: -use-dumps is accepted; abicheck auto-detects JSON dumps by extension.", quiet)
     if filter_path:
@@ -1206,6 +1220,7 @@ def compat_cmd(  # noqa: PLR0913
                 old_version=old_version, new_version=new_version,
                 old_symbol_count=old_symbol_count or None,
                 title=effective_title,
+                compat_html=compat_html,
             )
         elif fmt == "xml":
             write_xml_report(
@@ -1213,6 +1228,8 @@ def compat_cmd(  # noqa: PLR0913
                 lib_name=lib_name,
                 old_version=old_version, new_version=new_version,
                 old_symbol_count=old_symbol_count or None,
+                arch=arch or "",
+                compiler=_detect_compiler_version(gcc_path),
             )
         elif fmt == "json":
             path.write_text(to_json(r), encoding="utf-8")

@@ -216,12 +216,67 @@ def _compute_section(
     }
 
 
+# ── ABICC effect text templates ──────────────────────────────────────────────
+
+_EFFECT_TEXT: dict[str, str] = {
+    "type_size_changed": "Size of this type changed, which may break binary compatibility.",
+    "type_alignment_changed": "Alignment of this type changed, which may affect struct layout.",
+    "type_vtable_changed": "Virtual table layout changed, which breaks binary compatibility.",
+    "type_base_changed": "Base class changed, which may break binary compatibility.",
+    "type_field_offset_changed": "Field offset changed, which breaks binary compatibility.",
+    "type_field_type_changed": "Field type changed, which may break binary compatibility.",
+    "type_field_removed": "Field was removed from this type.",
+    "struct_size_changed": "Size of this struct changed, which may break binary compatibility.",
+    "struct_field_offset_changed": "Field offset changed, which breaks binary compatibility.",
+    "struct_field_removed": "Field was removed from this struct.",
+    "struct_field_type_changed": "Field type changed, which may break binary compatibility.",
+    "func_return_changed": "Return type changed, which may break binary compatibility.",
+    "func_params_changed": "Parameter types changed, which may break binary compatibility.",
+    "func_removed": "Symbol was removed from the library.",
+    "var_removed": "Global variable was removed from the library.",
+    "var_type_changed": "Variable type changed, which may break binary compatibility.",
+    "soname_changed": "Library SONAME changed, which breaks binary compatibility.",
+    "calling_convention_changed": "Calling convention changed, which breaks binary compatibility.",
+    "typedef_base_changed": "Underlying type of typedef changed.",
+    "enum_member_value_changed": "Enum member value changed, which may affect compiled code.",
+}
+
+
+def _add_problem_element(parent: ET.Element, change: object) -> None:
+    """Add a <problem> element with <change>, <effect>, and optional <overcome>."""
+    ks = _kind_str(change)
+    prob = ET.SubElement(parent, "problem")
+    prob.set("id", ks)
+
+    change_el = ET.SubElement(prob, "change")
+    old_val = str(getattr(change, "old_value", "") or "")
+    new_val = str(getattr(change, "new_value", "") or "")
+    if old_val:
+        change_el.set("old_value", old_val)
+    if new_val:
+        change_el.set("new_value", new_val)
+    change_el.text = getattr(change, "description", "") or ""
+
+    # <effect> — describes the impact of this change
+    effect_text = _EFFECT_TEXT.get(ks, "")
+    if effect_text:
+        effect_el = ET.SubElement(prob, "effect")
+        effect_el.text = effect_text
+
+    # <overcome> — remediation hint for removals
+    if ks in ("func_removed", "var_removed", "type_removed"):
+        overcome_el = ET.SubElement(prob, "overcome")
+        overcome_el.text = "Recompile the client application against the new library version."
+
+
 def _build_report_element(
     kind: str,
     data: dict[str, object],
     lib_name: str,
     old_version: str,
     new_version: str,
+    arch: str = "",
+    compiler: str = "",
 ) -> ET.Element:
     """Build a single <report kind="binary|source"> element."""
     report = ET.Element("report")
@@ -235,9 +290,21 @@ def _build_report_element(
     v1_el = ET.SubElement(test_info, "version1")
     v1_num = ET.SubElement(v1_el, "number")
     v1_num.text = old_version or "old"
+    if arch:
+        v1_arch = ET.SubElement(v1_el, "arch")
+        v1_arch.text = arch
+    if compiler:
+        v1_gcc = ET.SubElement(v1_el, "gcc")
+        v1_gcc.text = compiler
     v2_el = ET.SubElement(test_info, "version2")
     v2_num = ET.SubElement(v2_el, "number")
     v2_num.text = new_version or "new"
+    if arch:
+        v2_arch = ET.SubElement(v2_el, "arch")
+        v2_arch.text = arch
+    if compiler:
+        v2_gcc = ET.SubElement(v2_el, "gcc")
+        v2_gcc.text = compiler
 
     # <test_results>
     test_results = ET.SubElement(report, "test_results")
@@ -302,16 +369,7 @@ def _build_report_element(
             for c in type_changes:
                 type_el = ET.SubElement(types_detail, "type")
                 type_el.set("name", getattr(c, "symbol", "") or "")
-                prob = ET.SubElement(type_el, "problem")
-                prob.set("id", _kind_str(c))
-                change_el = ET.SubElement(prob, "change")
-                old_val = str(getattr(c, "old_value", "") or "")
-                new_val = str(getattr(c, "new_value", "") or "")
-                if old_val:
-                    change_el.set("old_value", old_val)
-                if new_val:
-                    change_el.set("new_value", new_val)
-                change_el.text = getattr(c, "description", "") or ""
+                _add_problem_element(type_el, c)
 
         sym_changes = [c for c in sev_changes if not _is_type_problem(_kind_str(c))]
         if sym_changes:
@@ -320,16 +378,7 @@ def _build_report_element(
             for c in sym_changes:
                 sym_el = ET.SubElement(syms_detail, "symbol")
                 sym_el.set("name", getattr(c, "symbol", "") or "")
-                prob = ET.SubElement(sym_el, "problem")
-                prob.set("id", _kind_str(c))
-                change_el = ET.SubElement(prob, "change")
-                old_val = str(getattr(c, "old_value", "") or "")
-                new_val = str(getattr(c, "new_value", "") or "")
-                if old_val:
-                    change_el.set("old_value", old_val)
-                if new_val:
-                    change_el.set("new_value", new_val)
-                change_el.text = getattr(c, "description", "") or ""
+                _add_problem_element(sym_el, c)
 
     return report
 
@@ -340,6 +389,8 @@ def generate_xml_report(
     old_version: str = "",
     new_version: str = "",
     old_symbol_count: int | None = None,
+    arch: str = "",
+    compiler: str = "",
 ) -> str:
     """Generate an ABICC-compatible XML ABI report.
 
@@ -349,6 +400,8 @@ def generate_xml_report(
         old_version: Old library version string.
         new_version: New library version string.
         old_symbol_count: Total exported public symbol count in the old library.
+        arch: Target architecture (e.g. "x86_64"). Populates <arch> in test_info.
+        compiler: Compiler version string (e.g. "12.2.0"). Populates <gcc> in test_info.
 
     Returns:
         XML document as a string matching the ABICC report schema.
@@ -359,12 +412,18 @@ def generate_xml_report(
 
     # Binary compatibility section (all changes)
     binary_data = _compute_section(changes, old_symbol_count, exclude_binary_only=False)
-    binary_el = _build_report_element("binary", binary_data, lib_name, old_version, new_version)
+    binary_el = _build_report_element(
+        "binary", binary_data, lib_name, old_version, new_version,
+        arch=arch, compiler=compiler,
+    )
     root.append(binary_el)
 
     # Source compatibility section (exclude binary-only kinds)
     source_data = _compute_section(changes, old_symbol_count, exclude_binary_only=True)
-    source_el = _build_report_element("source", source_data, lib_name, old_version, new_version)
+    source_el = _build_report_element(
+        "source", source_data, lib_name, old_version, new_version,
+        arch=arch, compiler=compiler,
+    )
     root.append(source_el)
 
     ET.indent(root, space="  ")
@@ -379,6 +438,8 @@ def write_xml_report(
     old_version: str = "",
     new_version: str = "",
     old_symbol_count: int | None = None,
+    arch: str = "",
+    compiler: str = "",
 ) -> None:
     """Write ABICC-compatible XML report to *output_path*."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -388,5 +449,7 @@ def write_xml_report(
         old_version=old_version,
         new_version=new_version,
         old_symbol_count=old_symbol_count,
+        arch=arch,
+        compiler=compiler,
     )
     output_path.write_text(content, encoding="utf-8")
