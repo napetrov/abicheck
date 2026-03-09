@@ -19,6 +19,7 @@ from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
 from abicheck.cli import (
     _BINARY_ONLY_KINDS,
     _SOURCE_BREAK_KINDS,
+    _apply_strict,
     _build_skip_suppression,
     _filter_source_only,
     main,
@@ -37,6 +38,30 @@ def _result(verdict: Verdict, kinds: list[ChangeKind]) -> DiffResult:
         changes=changes,
         verdict=verdict,
     )
+
+
+# ── _apply_strict ────────────────────────────────────────────────────────────
+
+class TestApplyStrict:
+    def test_promotes_compatible_to_breaking(self):
+        r = _result(Verdict.COMPATIBLE, [ChangeKind.FUNC_ADDED])
+        promoted = _apply_strict(r)
+        assert promoted.verdict == Verdict.BREAKING
+
+    def test_promotes_source_break_to_breaking(self):
+        r = _result(Verdict.SOURCE_BREAK, [ChangeKind.FUNC_PARAMS_CHANGED])
+        promoted = _apply_strict(r)
+        assert promoted.verdict == Verdict.BREAKING
+
+    def test_no_change_stays(self):
+        r = _result(Verdict.NO_CHANGE, [])
+        promoted = _apply_strict(r)
+        assert promoted.verdict == Verdict.NO_CHANGE
+
+    def test_breaking_stays(self):
+        r = _result(Verdict.BREAKING, [ChangeKind.FUNC_REMOVED])
+        promoted = _apply_strict(r)
+        assert promoted.verdict == Verdict.BREAKING
 
 
 # ── _filter_source_only ───────────────────────────────────────────────────────

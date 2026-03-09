@@ -212,6 +212,24 @@ _BINARY_ONLY_KINDS: frozenset[ChangeKind] = frozenset({
 })
 
 
+def _apply_strict(result: DiffResult) -> DiffResult:
+    """Apply strict-mode verdict promotion: COMPATIBLE/SOURCE_BREAK → BREAKING."""
+    from .checker import DiffResult, Verdict  # noqa: PLC0415
+
+    if result.verdict.value in ("COMPATIBLE", "SOURCE_BREAK"):
+        return DiffResult(
+            old_version=result.old_version,
+            new_version=result.new_version,
+            library=result.library,
+            changes=result.changes,
+            verdict=Verdict.BREAKING,
+            suppressed_count=result.suppressed_count,
+            suppressed_changes=result.suppressed_changes,
+            suppression_file_provided=result.suppression_file_provided,
+        )
+    return result
+
+
 def _filter_source_only(result: DiffResult) -> DiffResult:
     """Remove binary-only changes from result for -source mode."""
     from .checker import (  # noqa: PLC0415
@@ -428,18 +446,8 @@ def compat_cmd(
         result = _filter_source_only(result)
 
     # -strict: treat COMPATIBLE and SOURCE_BREAK as BREAKING (any deviation = error)
-    if strict and result.verdict.value in ("COMPATIBLE", "SOURCE_BREAK"):
-        from .checker import Verdict as V
-        result = result.__class__(
-            old_version=result.old_version,
-            new_version=result.new_version,
-            library=result.library,
-            changes=result.changes,
-            verdict=V.BREAKING,
-            suppressed_count=result.suppressed_count,
-            suppressed_changes=result.suppressed_changes,
-            suppression_file_provided=result.suppression_file_provided,
-        )
+    if strict:
+        result = _apply_strict(result)
 
     verdict = result.verdict.value if hasattr(result.verdict, "value") else str(result.verdict)
     # Determine report output path
