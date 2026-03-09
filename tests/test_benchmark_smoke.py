@@ -119,7 +119,7 @@ def test_run_abicheck_skip_when_missing(tmp_path):
     dummy.touch()
     dummy_h = tmp_path / "v1.h"
 
-    with patch("shutil.which", return_value=None):
+    with patch.object(mod, "_HAS_ABICHECK", False):
         result = mod.run_abicheck(dummy, dummy, dummy_h, dummy_h,
                                   "smoke_case", tmp_path)
     assert result.verdict == "SKIP"
