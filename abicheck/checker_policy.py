@@ -1,0 +1,350 @@
+"""Central change policy registry and verdict computation."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+
+
+class ChangeKind(str, Enum):
+    # Function / variable changes
+    FUNC_REMOVED = "func_removed"        # public symbol removed → BREAKING
+    FUNC_ADDED = "func_added"            # new public symbol → COMPATIBLE
+    FUNC_RETURN_CHANGED = "func_return_changed"   # return type changed → BREAKING
+    FUNC_PARAMS_CHANGED = "func_params_changed"   # parameter types changed → BREAKING
+    FUNC_NOEXCEPT_ADDED = "func_noexcept_added"   # noexcept added → BREAKING (C++17 P0012R1: noexcept is part of function type)
+    FUNC_NOEXCEPT_REMOVED = "func_noexcept_removed"  # noexcept removed → BREAKING (can widen exception spec)
+    FUNC_VIRTUAL_ADDED = "func_virtual_added"    # became virtual → vtable change → BREAKING
+    FUNC_VIRTUAL_REMOVED = "func_virtual_removed"  # → BREAKING
+
+    VAR_REMOVED = "var_removed"
+    VAR_ADDED = "var_added"
+    VAR_TYPE_CHANGED = "var_type_changed"
+
+    # Type changes
+    TYPE_SIZE_CHANGED = "type_size_changed"      # struct/class layout change → BREAKING
+    TYPE_ALIGNMENT_CHANGED = "type_alignment_changed"  # alignment change → BREAKING
+    TYPE_FIELD_REMOVED = "type_field_removed"    # → BREAKING
+    TYPE_FIELD_ADDED = "type_field_added"        # if in non-final class, may be BREAKING
+    TYPE_FIELD_OFFSET_CHANGED = "type_field_offset_changed"  # → BREAKING
+    TYPE_FIELD_TYPE_CHANGED = "type_field_type_changed"      # → BREAKING
+    TYPE_BASE_CHANGED = "type_base_changed"      # inheritance change → BREAKING
+    TYPE_VTABLE_CHANGED = "type_vtable_changed"  # → BREAKING
+
+    TYPE_ADDED = "type_added"                    # new type → COMPATIBLE
+    TYPE_REMOVED = "type_removed"                # type removed → BREAKING if used in API
+    TYPE_FIELD_ADDED_COMPATIBLE = "type_field_added_compatible"  # appended to standard-layout non-polymorphic type
+
+    # Enum changes
+    ENUM_MEMBER_REMOVED = "enum_member_removed"
+    ENUM_MEMBER_ADDED = "enum_member_added"  # BREAKING (closed enums / value shift risk)
+    ENUM_MEMBER_VALUE_CHANGED = "enum_member_value_changed"
+    ENUM_LAST_MEMBER_VALUE_CHANGED = "enum_last_member_value_changed"  # sentinel changed
+    TYPEDEF_REMOVED = "typedef_removed"  # placed here for logical grouping
+
+    # Method qualifier changes
+    FUNC_STATIC_CHANGED = "func_static_changed"
+    FUNC_CV_CHANGED = "func_cv_changed"  # const/volatile on this
+    FUNC_VISIBILITY_CHANGED = "func_visibility_changed"  # default→hidden: symbol gone from ABI
+
+    # Virtual changes
+    FUNC_PURE_VIRTUAL_ADDED = "func_pure_virtual_added"
+    FUNC_VIRTUAL_BECAME_PURE = "func_virtual_became_pure"
+
+    # Union field changes
+    UNION_FIELD_ADDED = "union_field_added"
+    UNION_FIELD_REMOVED = "union_field_removed"
+    UNION_FIELD_TYPE_CHANGED = "union_field_type_changed"
+
+    # Typedef changes
+    TYPEDEF_BASE_CHANGED = "typedef_base_changed"
+
+    # Bitfield changes
+    FIELD_BITFIELD_CHANGED = "field_bitfield_changed"
+
+    # ── ELF-only (Sprint 2) ──────────────────────────────────────────────
+    # Dynamic section contract
+    SONAME_CHANGED = "soname_changed"
+    NEEDED_ADDED = "needed_added"            # new DT_NEEDED dep
+    NEEDED_REMOVED = "needed_removed"          # dep dropped
+    RPATH_CHANGED = "rpath_changed"
+    RUNPATH_CHANGED = "runpath_changed"
+
+    # Symbol metadata drift (ELF .dynsym)
+    SYMBOL_BINDING_CHANGED = "symbol_binding_changed"      # GLOBAL→WEAK (breaking)
+    SYMBOL_BINDING_STRENGTHENED = "symbol_binding_strengthened"  # WEAK→GLOBAL (compatible)
+    SYMBOL_TYPE_CHANGED = "symbol_type_changed"     # FUNC→OBJECT, etc.
+    SYMBOL_SIZE_CHANGED = "symbol_size_changed"     # st_size changed
+    IFUNC_INTRODUCED = "ifunc_introduced"        # → STT_GNU_IFUNC
+    IFUNC_REMOVED = "ifunc_removed"           # STT_GNU_IFUNC →
+    COMMON_SYMBOL_RISK = "common_symbol_risk"      # STT_COMMON exported
+
+    # Symbol versioning contract
+    SYMBOL_VERSION_DEFINED_REMOVED = "symbol_version_defined_removed"
+    SYMBOL_VERSION_REQUIRED_ADDED = "symbol_version_required_added"   # new GLIBC_X
+    SYMBOL_VERSION_REQUIRED_REMOVED = "symbol_version_required_removed"
+
+    # DWARF layout (Sprint 3)
+    DWARF_INFO_MISSING = "dwarf_info_missing"         # new binary stripped of -g
+    STRUCT_SIZE_CHANGED = "struct_size_changed"        # sizeof(T) changed
+    STRUCT_FIELD_OFFSET_CHANGED = "struct_field_offset_changed" # field moved
+    STRUCT_FIELD_REMOVED = "struct_field_removed"       # field deleted
+    STRUCT_FIELD_TYPE_CHANGED = "struct_field_type_changed"  # field type/size changed
+    STRUCT_ALIGNMENT_CHANGED = "struct_alignment_changed"   # alignof(T) changed
+    ENUM_UNDERLYING_SIZE_CHANGED = "enum_underlying_size_changed"  # int→long
+
+    # DWARF advanced (Sprint 4)
+    CALLING_CONVENTION_CHANGED = "calling_convention_changed"   # DW_AT_calling_convention drift
+    STRUCT_PACKING_CHANGED = "struct_packing_changed"       # __attribute__((packed)) added/removed
+    TYPE_VISIBILITY_CHANGED = "type_visibility_changed"      # typeinfo/vtable visibility changed
+    TOOLCHAIN_FLAG_DRIFT = "toolchain_flag_drift"         # -fshort-enums/-fpack-struct drift
+
+    # Sprint 2 — gap detectors
+    FUNC_DELETED = "func_deleted"                        # = delete added → BREAKING (was callable)
+    VAR_BECAME_CONST = "var_became_const"                # non-const → const: writes → SIGSEGV
+    VAR_LOST_CONST = "var_lost_const"                    # const → non-const: BREAKING (ODR / inlining)
+    TYPE_BECAME_OPAQUE = "type_became_opaque"            # complete → forward-decl only → BREAKING
+    BASE_CLASS_POSITION_CHANGED = "base_class_position_changed"  # base reorder → this-ptr offset change
+    BASE_CLASS_VIRTUAL_CHANGED = "base_class_virtual_changed"    # base became virtual or non-virtual
+
+    # ── Sprint 7 — Full ABICC parity + beyond ────────────────────────────
+    # Source-level breaks (not binary ABI, but API contract)
+    ENUM_MEMBER_RENAMED = "enum_member_renamed"              # same value, different name → SOURCE_BREAK
+    PARAM_DEFAULT_VALUE_CHANGED = "param_default_value_changed"  # default arg changed
+    PARAM_DEFAULT_VALUE_REMOVED = "param_default_value_removed"  # default arg removed → SOURCE_BREAK
+    FIELD_RENAMED = "field_renamed"                          # same offset+type, different name
+    PARAM_RENAMED = "param_renamed"                          # parameter name changed
+
+    # Field qualifier changes
+    FIELD_BECAME_CONST = "field_became_const"
+    FIELD_LOST_CONST = "field_lost_const"
+    FIELD_BECAME_VOLATILE = "field_became_volatile"
+    FIELD_LOST_VOLATILE = "field_lost_volatile"
+    FIELD_BECAME_MUTABLE = "field_became_mutable"
+    FIELD_LOST_MUTABLE = "field_lost_mutable"
+
+    # Pointer level changes
+    PARAM_POINTER_LEVEL_CHANGED = "param_pointer_level_changed"      # T* → T** or T** → T*
+    RETURN_POINTER_LEVEL_CHANGED = "return_pointer_level_changed"    # return T* → T**
+
+    # Access level changes
+    METHOD_ACCESS_CHANGED = "method_access_changed"          # public→protected/private
+    FIELD_ACCESS_CHANGED = "field_access_changed"            # public→private field
+
+    # Anonymous struct/union
+    ANON_FIELD_CHANGED = "anon_field_changed"                # anon struct/union member changed
+
+    # ── ABICC full parity — remaining gaps ─────────────────────────────────
+    # Global data value
+    VAR_VALUE_CHANGED = "var_value_changed"                  # global data initial value changed
+
+    # Aggregate kind change
+    TYPE_KIND_CHANGED = "type_kind_changed"                  # union-involving transition (struct→union, union→struct, class→union, union→class)
+    SOURCE_LEVEL_KIND_CHANGED = "source_level_kind_changed"  # struct↔class transition (non-breaking, source-only)
+
+    # Reserved field
+    USED_RESERVED_FIELD = "used_reserved_field"              # __reserved field put into use
+
+    # Const overload removal
+    REMOVED_CONST_OVERLOAD = "removed_const_overload"        # const method overload removed
+
+    # Parameter restrict qualifier
+    PARAM_RESTRICT_CHANGED = "param_restrict_changed"        # restrict qualifier added/removed
+
+    # Parameter va_list
+    PARAM_BECAME_VA_LIST = "param_became_va_list"            # fixed param → va_list
+    PARAM_LOST_VA_LIST = "param_lost_va_list"                # va_list → fixed param
+
+    # Preprocessor constants
+    CONSTANT_CHANGED = "constant_changed"                    # #define value changed
+    CONSTANT_ADDED = "constant_added"                        # new #define
+    CONSTANT_REMOVED = "constant_removed"                    # #define removed
+
+    # Global data access level
+    VAR_ACCESS_CHANGED = "var_access_changed"                # public→private/protected variable (narrowing)
+    VAR_ACCESS_WIDENED = "var_access_widened"                 # private/protected→public variable (widening)
+
+
+class Verdict(str, Enum):
+    NO_CHANGE = "NO_CHANGE"         # identical ABI
+    COMPATIBLE = "COMPATIBLE"       # only additions
+    SOURCE_BREAK = "SOURCE_BREAK"   # source-level break, binary compatible
+    BREAKING = "BREAKING"           # binary ABI break
+
+
+# Which ChangeKinds are immediately BREAKING (binary ABI incompatibility)
+BREAKING_KINDS = {
+    ChangeKind.FUNC_REMOVED,
+    ChangeKind.FUNC_RETURN_CHANGED,
+    ChangeKind.FUNC_PARAMS_CHANGED,
+    ChangeKind.FUNC_VIRTUAL_ADDED,
+    ChangeKind.FUNC_VIRTUAL_REMOVED,
+    ChangeKind.VAR_REMOVED,
+    ChangeKind.VAR_TYPE_CHANGED,
+    ChangeKind.TYPE_SIZE_CHANGED,
+    ChangeKind.TYPE_ALIGNMENT_CHANGED,
+    ChangeKind.TYPE_FIELD_REMOVED,
+    ChangeKind.TYPE_FIELD_OFFSET_CHANGED,
+    ChangeKind.TYPE_FIELD_TYPE_CHANGED,
+    ChangeKind.TYPE_BASE_CHANGED,
+    ChangeKind.TYPE_VTABLE_CHANGED,
+    ChangeKind.TYPE_REMOVED,
+    ChangeKind.TYPE_FIELD_ADDED,  # for polymorphic / non-standard-layout types
+    ChangeKind.ENUM_MEMBER_REMOVED,
+    ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
+    ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
+    ChangeKind.FUNC_STATIC_CHANGED,
+    ChangeKind.FUNC_CV_CHANGED,
+    ChangeKind.FUNC_VISIBILITY_CHANGED,
+    ChangeKind.FUNC_PURE_VIRTUAL_ADDED,
+    ChangeKind.FUNC_VIRTUAL_BECAME_PURE,
+    ChangeKind.UNION_FIELD_REMOVED,
+    ChangeKind.UNION_FIELD_TYPE_CHANGED,
+    ChangeKind.TYPEDEF_BASE_CHANGED,
+    ChangeKind.TYPEDEF_REMOVED,
+    ChangeKind.FIELD_BITFIELD_CHANGED,
+    # ELF Sprint 2
+    ChangeKind.SONAME_CHANGED,
+    ChangeKind.SYMBOL_TYPE_CHANGED,
+    ChangeKind.SYMBOL_SIZE_CHANGED,           # in ELF-only mode (no headers/DWARF) this may be
+                                              # the sole signal for vtable/variable layout changes
+    ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
+    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED, # library fails to load on runtimes lacking the version
+    # DWARF Sprint 3 + 4
+    ChangeKind.STRUCT_SIZE_CHANGED,
+    ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
+    ChangeKind.STRUCT_FIELD_REMOVED,
+    ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+    ChangeKind.STRUCT_ALIGNMENT_CHANGED,
+    ChangeKind.ENUM_UNDERLYING_SIZE_CHANGED,
+    ChangeKind.CALLING_CONVENTION_CHANGED,
+    ChangeKind.STRUCT_PACKING_CHANGED,
+    # Sprint 2 — gap detectors
+    ChangeKind.FUNC_DELETED,
+    ChangeKind.VAR_BECAME_CONST,              # writes → SIGSEGV when variable moves to .rodata
+    ChangeKind.VAR_LOST_CONST,                # ODR / inlining break; callers may have cached const value
+    ChangeKind.TYPE_BECAME_OPAQUE,
+    ChangeKind.BASE_CLASS_POSITION_CHANGED,
+    ChangeKind.BASE_CLASS_VIRTUAL_CHANGED,
+    # DWARF Sprint 4
+    ChangeKind.TYPE_VISIBILITY_CHANGED,       # cross-DSO dynamic_cast / exception matching can fail
+    # Sprint 7 — pointer level changes are binary ABI breaks
+    ChangeKind.PARAM_POINTER_LEVEL_CHANGED,
+    ChangeKind.RETURN_POINTER_LEVEL_CHANGED,
+    ChangeKind.ANON_FIELD_CHANGED,
+    # ABICC full parity
+    ChangeKind.TYPE_KIND_CHANGED,            # struct→union: layout completely changes
+}
+
+COMPATIBLE_KINDS: set[ChangeKind] = {
+    # Header/API additions
+    ChangeKind.FUNC_ADDED,
+    ChangeKind.VAR_ADDED,
+    ChangeKind.TYPE_ADDED,
+    # TYPE_FIELD_ADDED intentionally omitted: compatible only for standard-layout
+    # non-polymorphic types; context-aware verdict set in _diff_types()
+    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
+
+    # noexcept changes: Itanium ABI mangling does not change in practice;
+    # existing binaries resolve the same symbol.  Source-level concern only
+    # (C++17 function-pointer type system), not a binary ABI break.
+    ChangeKind.FUNC_NOEXCEPT_ADDED,
+    ChangeKind.FUNC_NOEXCEPT_REMOVED,
+
+    # Enum member addition: existing compiled enum values are unchanged;
+    # new enumerator does not shift others.  Source-level switch coverage
+    # concern, not binary ABI.  Value shifts are caught separately by
+    # ENUM_MEMBER_VALUE_CHANGED.
+    ChangeKind.ENUM_MEMBER_ADDED,
+
+    # Union field addition: all fields start at offset 0; existing fields
+    # are unaffected.  Size increase (if any) is caught by TYPE_SIZE_CHANGED.
+    ChangeKind.UNION_FIELD_ADDED,
+
+    # ELF-only warning/compatible drift
+    ChangeKind.NEEDED_ADDED,              # new dep: may not exist on older systems — warn, not hard-break
+    ChangeKind.NEEDED_REMOVED,            # removing a dep is compatible (but deployment risk)
+    ChangeKind.RUNPATH_CHANGED,           # search path drift — warn only
+    ChangeKind.RPATH_CHANGED,
+    ChangeKind.COMMON_SYMBOL_RISK,        # STT_COMMON — risk, not proven break
+    ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
+    ChangeKind.SYMBOL_BINDING_STRENGTHENED,  # WEAK→GLOBAL: backward-compatible for most consumers
+
+    # GLOBAL→WEAK: symbol still exported and resolvable by the dynamic
+    # linker; interposition semantics change but existing binaries work.
+    ChangeKind.SYMBOL_BINDING_CHANGED,
+
+    # GNU IFUNC ↔ regular function: transparent to callers; the PLT/GOT
+    # mechanism handles resolution.  This is an implementation optimization.
+    ChangeKind.IFUNC_INTRODUCED,
+    ChangeKind.IFUNC_REMOVED,
+
+    # DWARF diagnostics (comparison coverage gap warning)
+    ChangeKind.DWARF_INFO_MISSING,
+    ChangeKind.TOOLCHAIN_FLAG_DRIFT,  # informational — not a proven binary break
+
+    # Sprint 7 — field qualifier changes are informational (compatible)
+    ChangeKind.FIELD_BECAME_CONST,
+    ChangeKind.FIELD_LOST_CONST,
+    ChangeKind.FIELD_BECAME_VOLATILE,
+    ChangeKind.FIELD_LOST_VOLATILE,
+    ChangeKind.FIELD_BECAME_MUTABLE,
+    ChangeKind.FIELD_LOST_MUTABLE,
+    ChangeKind.PARAM_DEFAULT_VALUE_CHANGED,  # informational, not binary break
+
+    # ABICC full parity — informational/compatible changes
+    ChangeKind.PARAM_RESTRICT_CHANGED,       # restrict is an optimization hint, not ABI-breaking
+    ChangeKind.PARAM_BECAME_VA_LIST,         # va_list transition: informational
+    ChangeKind.PARAM_LOST_VA_LIST,           # va_list transition: informational
+    ChangeKind.CONSTANT_ADDED,               # new constant: compatible addition
+    ChangeKind.USED_RESERVED_FIELD,          # reserved field put into use: compatible (was unused)
+    ChangeKind.VAR_VALUE_CHANGED,            # global data value change: compatible (compile-time risk only)
+    ChangeKind.VAR_ACCESS_WIDENED,           # private/protected→public: widening is compatible
+}
+
+SOURCE_BREAK_KINDS: set[ChangeKind] = {
+    # Source-level breaks: code won't compile but existing binaries are fine
+    ChangeKind.ENUM_MEMBER_RENAMED,
+    ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,
+    ChangeKind.FIELD_RENAMED,
+    ChangeKind.PARAM_RENAMED,
+    ChangeKind.METHOD_ACCESS_CHANGED,
+    ChangeKind.FIELD_ACCESS_CHANGED,
+    # ABICC full parity — source breaks
+    ChangeKind.REMOVED_CONST_OVERLOAD,       # const overload removed: source code calling const version breaks
+    ChangeKind.CONSTANT_CHANGED,             # #define value changed: source-level semantic change
+    ChangeKind.CONSTANT_REMOVED,             # #define removed: source code referencing it breaks
+    ChangeKind.VAR_ACCESS_CHANGED,           # variable access narrowed: source-level break
+    ChangeKind.SOURCE_LEVEL_KIND_CHANGED,    # struct↔class: source-level keyword change, binary identical
+}
+
+
+
+
+@dataclass(frozen=True)
+class PolicyEntry:
+    default_verdict: Verdict
+    severity: str
+
+
+POLICY_REGISTRY: dict[ChangeKind, PolicyEntry] = {
+    k: PolicyEntry(Verdict.BREAKING, "error") for k in BREAKING_KINDS
+} | {
+    k: PolicyEntry(Verdict.SOURCE_BREAK, "warning") for k in SOURCE_BREAK_KINDS
+} | {
+    k: PolicyEntry(Verdict.COMPATIBLE, "note") for k in COMPATIBLE_KINDS
+}
+
+def compute_verdict(changes: list[object]) -> Verdict:
+    if not changes:
+        return Verdict.NO_CHANGE
+    kinds = {c.kind for c in changes}
+    if kinds & BREAKING_KINDS:
+        return Verdict.BREAKING
+    if kinds & SOURCE_BREAK_KINDS:
+        return Verdict.SOURCE_BREAK
+    # Only COMPATIBLE_KINDS changes (ELF warnings, deployment risks)
+    if kinds - COMPATIBLE_KINDS == set():
+        return Verdict.COMPATIBLE
+    # Unclassified change kinds default to BREAKING (fail-safe)
+    return Verdict.BREAKING
+
