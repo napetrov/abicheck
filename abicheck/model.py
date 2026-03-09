@@ -37,6 +37,8 @@ class Param:
     kind: ParamKind = ParamKind.VALUE
     default: str | None = None  # has default value (value not preserved)
     pointer_depth: int = 0      # nesting: T=0, T*=1, T**=2
+    is_restrict: bool = False   # restrict-qualified pointer parameter
+    is_va_list: bool = False    # parameter is va_list (variadic argument list)
 
 
 @dataclass
@@ -68,6 +70,8 @@ class Variable:
     visibility: Visibility = Visibility.PUBLIC
     source_location: str | None = None
     is_const: bool = False         # const-qualified type (write → SIGSEGV)
+    value: str | None = None       # initial value (compile-time constant, if known)
+    access: AccessLevel = AccessLevel.PUBLIC  # public/protected/private
 
 
 @dataclass
@@ -125,6 +129,7 @@ class AbiSnapshot:
     dwarf_advanced: AdvancedDwarfMetadata | None = field(default=None)  # Sprint 4
     enums: list[EnumType] = field(default_factory=list)
     typedefs: dict[str, str] = field(default_factory=dict)  # alias -> underlying type name
+    constants: dict[str, str] = field(default_factory=dict)  # #define / constexpr name -> value string
 
     # Indexes (built lazily)
     _func_by_mangled: dict[str, Function] | None = field(default=None, repr=False, compare=False)

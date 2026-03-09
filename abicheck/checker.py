@@ -142,6 +142,34 @@ class ChangeKind(str, Enum):
     # Anonymous struct/union
     ANON_FIELD_CHANGED = "anon_field_changed"                # anon struct/union member changed
 
+    # ── ABICC full parity — remaining gaps ─────────────────────────────────
+    # Global data value
+    VAR_VALUE_CHANGED = "var_value_changed"                  # global data initial value changed
+
+    # Aggregate kind change
+    TYPE_KIND_CHANGED = "type_kind_changed"                  # struct→union or union→struct
+
+    # Reserved field
+    USED_RESERVED_FIELD = "used_reserved_field"              # __reserved field put into use
+
+    # Const overload removal
+    REMOVED_CONST_OVERLOAD = "removed_const_overload"        # const method overload removed
+
+    # Parameter restrict qualifier
+    PARAM_RESTRICT_CHANGED = "param_restrict_changed"        # restrict qualifier added/removed
+
+    # Parameter va_list
+    PARAM_BECAME_VA_LIST = "param_became_va_list"            # fixed param → va_list
+    PARAM_LOST_VA_LIST = "param_lost_va_list"                # va_list → fixed param
+
+    # Preprocessor constants
+    CONSTANT_CHANGED = "constant_changed"                    # #define value changed
+    CONSTANT_ADDED = "constant_added"                        # new #define
+    CONSTANT_REMOVED = "constant_removed"                    # #define removed
+
+    # Global data access level
+    VAR_ACCESS_CHANGED = "var_access_changed"                # public→private/protected variable
+
 
 class Verdict(str, Enum):
     NO_CHANGE = "NO_CHANGE"         # identical ABI
@@ -210,6 +238,8 @@ _BREAKING_KINDS = {
     ChangeKind.PARAM_POINTER_LEVEL_CHANGED,
     ChangeKind.RETURN_POINTER_LEVEL_CHANGED,
     ChangeKind.ANON_FIELD_CHANGED,
+    # ABICC full parity
+    ChangeKind.TYPE_KIND_CHANGED,            # struct→union: layout completely changes
 }
 
 _COMPATIBLE_KINDS: set[ChangeKind] = {
@@ -267,6 +297,14 @@ _COMPATIBLE_KINDS: set[ChangeKind] = {
     ChangeKind.FIELD_BECAME_MUTABLE,
     ChangeKind.FIELD_LOST_MUTABLE,
     ChangeKind.PARAM_DEFAULT_VALUE_CHANGED,  # informational, not binary break
+
+    # ABICC full parity — informational/compatible changes
+    ChangeKind.PARAM_RESTRICT_CHANGED,       # restrict is an optimization hint, not ABI-breaking
+    ChangeKind.PARAM_BECAME_VA_LIST,         # va_list transition: informational
+    ChangeKind.PARAM_LOST_VA_LIST,           # va_list transition: informational
+    ChangeKind.CONSTANT_ADDED,               # new constant: compatible addition
+    ChangeKind.USED_RESERVED_FIELD,          # reserved field put into use: compatible (was unused)
+    ChangeKind.VAR_VALUE_CHANGED,            # global data value change: compatible (compile-time risk only)
 }
 
 _SOURCE_BREAK_KINDS: set[ChangeKind] = {
@@ -277,6 +315,11 @@ _SOURCE_BREAK_KINDS: set[ChangeKind] = {
     ChangeKind.PARAM_RENAMED,
     ChangeKind.METHOD_ACCESS_CHANGED,
     ChangeKind.FIELD_ACCESS_CHANGED,
+    # ABICC full parity — source breaks
+    ChangeKind.REMOVED_CONST_OVERLOAD,       # const overload removed: source code calling const version breaks
+    ChangeKind.CONSTANT_CHANGED,             # #define value changed: source-level semantic change
+    ChangeKind.CONSTANT_REMOVED,             # #define removed: source code referencing it breaks
+    ChangeKind.VAR_ACCESS_CHANGED,           # variable access narrowed: source-level break
 }
 
 
@@ -1463,6 +1506,15 @@ def compare(
     changes.extend(_diff_pointer_levels(old, new))
     changes.extend(_diff_access_levels(old, new))
     changes.extend(_diff_anon_fields(old, new))
+    # ABICC full parity detectors
+    changes.extend(_diff_var_values(old, new))
+    changes.extend(_diff_type_kind_changes(old, new))
+    changes.extend(_diff_reserved_fields(old, new))
+    changes.extend(_diff_const_overloads(old, new))
+    changes.extend(_diff_param_restrict(old, new))
+    changes.extend(_diff_param_va_list(old, new))
+    changes.extend(_diff_constants(old, new))
+    changes.extend(_diff_var_access(old, new))
 
     suppressed: list[Change] = []
     if suppression is not None:
@@ -1485,6 +1537,260 @@ def compare(
         suppressed_changes=suppressed,
         suppression_file_provided=suppression is not None,
     )
+
+
+# ── ABICC full parity detectors ───────────────────────────────────────────────
+
+
+def _diff_var_values(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect global data value changes (ABICC: Global_Data_Value_Changed).
+
+    When a global const variable's initial value changes, old binaries may
+    use stale compile-time-inlined values (constant propagation).
+    """
+    changes: list[Change] = []
+    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
+    old_map = {k: v for k, v in old.variable_map.items() if v.visibility in vis}
+    new_map = {k: v for k, v in new.variable_map.items() if v.visibility in vis}
+
+    for mangled, v_old in old_map.items():
+        v_new = new_map.get(mangled)
+        if v_new is None:
+            continue
+        if (
+            v_old.value is not None
+            and v_new.value is not None
+            and v_old.value != v_new.value
+        ):
+            changes.append(Change(
+                kind=ChangeKind.VAR_VALUE_CHANGED,
+                symbol=mangled,
+                description=f"Global data value changed: {v_old.name} ({v_old.value!r} → {v_new.value!r})",
+                old_value=v_old.value,
+                new_value=v_new.value,
+            ))
+    return changes
+
+
+def _diff_type_kind_changes(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect struct↔union kind changes (ABICC: StructToUnion / DataType_Type)."""
+    changes: list[Change] = []
+    old_map = {t.name: t for t in old.types}
+    new_map = {t.name: t for t in new.types}
+
+    for name, t_old in old_map.items():
+        t_new = new_map.get(name)
+        if t_new is None:
+            continue
+        if t_old.kind != t_new.kind:
+            changes.append(Change(
+                kind=ChangeKind.TYPE_KIND_CHANGED,
+                symbol=name,
+                description=f"Aggregate kind changed: {name} ({t_old.kind} → {t_new.kind})",
+                old_value=t_old.kind,
+                new_value=t_new.kind,
+            ))
+    return changes
+
+
+def _diff_reserved_fields(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect reserved fields put into use (ABICC: Used_Reserved_Field).
+
+    Heuristic: a field whose name matches common reserved patterns
+    (e.g. __reserved, _reserved, reserved, __pad, _pad) in old version
+    is renamed to a non-reserved name in new version at the same offset.
+    """
+    import re
+
+    _RESERVED_RE = re.compile(r"^_{0,2}(reserved|pad|padding|spare|unused)\d*$", re.IGNORECASE)
+    changes: list[Change] = []
+    old_map = {t.name: t for t in old.types if not t.is_union}
+    new_map = {t.name: t for t in new.types if not t.is_union}
+
+    for name, t_old in old_map.items():
+        t_new = new_map.get(name)
+        if t_new is None or t_new.is_opaque:
+            continue
+
+        old_names = {f.name for f in t_old.fields}
+        new_names = {f.name for f in t_new.fields}
+
+        removed = [f for f in t_old.fields if f.name not in new_names and _RESERVED_RE.match(f.name)]
+        added = [f for f in t_new.fields if f.name not in old_names and not _RESERVED_RE.match(f.name)]
+
+        added_by_offset = {f.offset_bits: f for f in added if f.offset_bits is not None}
+        for f_old in removed:
+            if f_old.offset_bits is None:
+                continue
+            f_new = added_by_offset.get(f_old.offset_bits)
+            if f_new is not None:
+                changes.append(Change(
+                    kind=ChangeKind.USED_RESERVED_FIELD,
+                    symbol=name,
+                    description=f"Reserved field put into use: {name}::{f_old.name} → {f_new.name}",
+                    old_value=f_old.name,
+                    new_value=f_new.name,
+                ))
+    return changes
+
+
+def _diff_const_overloads(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect removed const method overloads (ABICC: Removed_Const_Overload).
+
+    A const overload removal occurs when both const and non-const versions
+    existed in old, but only the non-const version remains in new.
+    """
+    changes: list[Change] = []
+    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
+    old_funcs = [f for f in old.functions if f.visibility in vis]
+    new_funcs = [f for f in new.functions if f.visibility in vis]
+
+    # Group by (name, param_types) to find const/non-const pairs
+    from collections import defaultdict
+
+    def _group_key(f: Function) -> tuple[str, tuple[str, ...]]:
+        return (f.name, tuple(p.type for p in f.params))
+
+    old_groups: dict[tuple, list[Function]] = defaultdict(list)
+    new_groups: dict[tuple, list[Function]] = defaultdict(list)
+    for f in old_funcs:
+        old_groups[_group_key(f)].append(f)
+    for f in new_funcs:
+        new_groups[_group_key(f)].append(f)
+
+    for key, old_fns in old_groups.items():
+        old_const = [f for f in old_fns if f.is_const]
+        old_nonconst = [f for f in old_fns if not f.is_const]
+        if not old_const or not old_nonconst:
+            continue  # no const overload pair in old
+
+        new_fns = new_groups.get(key, [])
+        new_const = [f for f in new_fns if f.is_const]
+        new_nonconst = [f for f in new_fns if not f.is_const]
+        if not new_const and new_nonconst:
+            # Const overload removed, non-const kept
+            f_removed = old_const[0]
+            changes.append(Change(
+                kind=ChangeKind.REMOVED_CONST_OVERLOAD,
+                symbol=f_removed.mangled,
+                description=f"Const method overload removed: {f_removed.name} (non-const version still exists)",
+                old_value="const overload present",
+                new_value="const overload removed",
+            ))
+    return changes
+
+
+def _diff_param_restrict(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect restrict qualifier changes on parameters (ABICC: Parameter_Became_Restrict)."""
+    changes: list[Change] = []
+    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
+    old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
+    new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+
+    for mangled, f_old in old_map.items():
+        f_new = new_map.get(mangled)
+        if f_new is None:
+            continue
+        for i, (p_old, p_new) in enumerate(zip(f_old.params, f_new.params)):
+            if p_old.is_restrict != p_new.is_restrict:
+                direction = "added" if p_new.is_restrict else "removed"
+                changes.append(Change(
+                    kind=ChangeKind.PARAM_RESTRICT_CHANGED,
+                    symbol=mangled,
+                    description=f"Parameter restrict qualifier {direction}: {f_old.name} param {p_old.name or i}",
+                    old_value=f"restrict={p_old.is_restrict}",
+                    new_value=f"restrict={p_new.is_restrict}",
+                ))
+    return changes
+
+
+def _diff_param_va_list(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect va_list parameter changes (ABICC: Parameter_Became_VaList/Non_VaList)."""
+    changes: list[Change] = []
+    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
+    old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
+    new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+
+    for mangled, f_old in old_map.items():
+        f_new = new_map.get(mangled)
+        if f_new is None:
+            continue
+        for i, (p_old, p_new) in enumerate(zip(f_old.params, f_new.params)):
+            if not p_old.is_va_list and p_new.is_va_list:
+                changes.append(Change(
+                    kind=ChangeKind.PARAM_BECAME_VA_LIST,
+                    symbol=mangled,
+                    description=f"Parameter became va_list: {f_old.name} param {p_old.name or i}",
+                    old_value=p_old.type,
+                    new_value="va_list",
+                ))
+            elif p_old.is_va_list and not p_new.is_va_list:
+                changes.append(Change(
+                    kind=ChangeKind.PARAM_LOST_VA_LIST,
+                    symbol=mangled,
+                    description=f"Parameter was va_list, now fixed: {f_old.name} param {p_old.name or i}",
+                    old_value="va_list",
+                    new_value=p_new.type,
+                ))
+    return changes
+
+
+def _diff_constants(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect preprocessor constant (#define) changes (ABICC: Changed/Added/Removed_Constant)."""
+    changes: list[Change] = []
+    old_consts = old.constants
+    new_consts = new.constants
+
+    for name, old_val in old_consts.items():
+        new_val = new_consts.get(name)
+        if new_val is None:
+            changes.append(Change(
+                kind=ChangeKind.CONSTANT_REMOVED,
+                symbol=name,
+                description=f"Preprocessor constant removed: {name}",
+                old_value=old_val,
+            ))
+        elif new_val != old_val:
+            changes.append(Change(
+                kind=ChangeKind.CONSTANT_CHANGED,
+                symbol=name,
+                description=f"Preprocessor constant value changed: {name} ({old_val!r} → {new_val!r})",
+                old_value=old_val,
+                new_value=new_val,
+            ))
+
+    for name, new_val in new_consts.items():
+        if name not in old_consts:
+            changes.append(Change(
+                kind=ChangeKind.CONSTANT_ADDED,
+                symbol=name,
+                description=f"New preprocessor constant: {name}",
+                new_value=new_val,
+            ))
+    return changes
+
+
+def _diff_var_access(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect global data access level changes (ABICC: Global_Data_Became_Private/Protected/Public)."""
+    changes: list[Change] = []
+    from .model import AccessLevel
+    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
+    old_map = {k: v for k, v in old.variable_map.items() if v.visibility in vis}
+    new_map = {k: v for k, v in new.variable_map.items() if v.visibility in vis}
+
+    for mangled, v_old in old_map.items():
+        v_new = new_map.get(mangled)
+        if v_new is None:
+            continue
+        if v_old.access != v_new.access and _is_access_narrowing(v_old.access, v_new.access):
+            changes.append(Change(
+                kind=ChangeKind.VAR_ACCESS_CHANGED,
+                symbol=mangled,
+                description=f"Variable access level narrowed: {v_old.name} ({v_old.access.value} → {v_new.access.value})",
+                old_value=v_old.access.value,
+                new_value=v_new.access.value,
+            ))
+    return changes
 
 
 # ── Sprint 3: DWARF-aware layout diff ────────────────────────────────────────
