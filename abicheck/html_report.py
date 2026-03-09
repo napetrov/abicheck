@@ -317,6 +317,269 @@ def _nav_bar(removed: list[object], changed: list[object], added: list[object], 
 
 
 # ---------------------------------------------------------------------------
+# ABICC severity classification (imported from xml_report for consistency)
+# ---------------------------------------------------------------------------
+
+_HIGH_SEVERITY_KINDS: frozenset[str] = frozenset({
+    "func_removed", "var_removed", "type_removed", "typedef_removed",
+    "type_size_changed", "type_vtable_changed", "type_base_changed",
+    "struct_size_changed", "func_virtual_removed",
+    "func_pure_virtual_added", "func_virtual_became_pure",
+    "base_class_position_changed", "base_class_virtual_changed",
+    "type_kind_changed", "func_deleted",
+})
+
+_MEDIUM_SEVERITY_KINDS: frozenset[str] = frozenset({
+    "func_return_changed", "func_params_changed",
+    "type_field_offset_changed", "type_field_type_changed",
+    "type_field_removed", "type_alignment_changed",
+    "struct_field_offset_changed", "struct_field_removed",
+    "struct_field_type_changed", "struct_alignment_changed",
+    "var_type_changed", "calling_convention_changed",
+    "soname_changed", "symbol_type_changed",
+    "symbol_version_defined_removed",
+    "return_pointer_level_changed", "param_pointer_level_changed",
+    "union_field_removed", "union_field_type_changed",
+    "typedef_base_changed", "struct_packing_changed",
+})
+
+
+def _severity(kind_str: str) -> str:
+    if kind_str in _HIGH_SEVERITY_KINDS:
+        return "High"
+    if kind_str in _MEDIUM_SEVERITY_KINDS:
+        return "Medium"
+    return "Low"
+
+
+def _is_type_problem(kind_str: str) -> bool:
+    return any(kind_str.startswith(p) for p in (
+        "type_", "struct_", "union_", "field_", "typedef_", "enum_", "base_class_",
+    ))
+
+
+def _is_symbol_problem(kind_str: str) -> bool:
+    return any(kind_str.startswith(p) for p in ("func_", "var_"))
+
+
+# ---------------------------------------------------------------------------
+# ABICC-compatible HTML (compat_html mode)
+# ---------------------------------------------------------------------------
+
+_COMPAT_CSS = """\
+body { font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }
+h1 { font-size: 1.6em; }
+h2 { font-size: 1.2em; border-bottom: 1px solid #ddd; padding-bottom: 4px; margin-top: 24px; }
+table.summary { border-collapse: collapse; margin: 8px 0; }
+table.summary td, table.summary th { padding: 4px 12px; border: 1px solid #ddd; }
+table.summary th { background: #f5f5f5; text-align: left; }
+td.compatible { color: #1b5e20; font-weight: bold; }
+td.incompatible { color: #b71c1c; font-weight: bold; }
+td.warning { color: #e65100; font-weight: bold; }
+table.problem { border-collapse: collapse; width: 100%; margin: 8px 0; }
+table.problem td, table.problem th { padding: 4px 8px; border: 1px solid #ddd; vertical-align: top; }
+table.problem th { background: #f5f5f5; text-align: left; }
+.sym { font-family: monospace; font-size: 0.9em; }
+"""
+
+
+def _compat_changes_table(items: list[object], show_severity: bool = False) -> str:
+    """Render a changes table in ABICC style."""
+    if not items:
+        return "<p>No changes.</p>"
+    h = html.escape
+    rows = []
+    for ch in items:
+        ks = _kind_str(ch)
+        sym = h(getattr(ch, "symbol", "") or "")
+        desc = h(getattr(ch, "description", "") or "")
+        old_val = h(str(getattr(ch, "old_value", "") or ""))
+        new_val = h(str(getattr(ch, "new_value", "") or ""))
+        sev_cell = f"<td>{_severity(ks)}</td>" if show_severity else ""
+        rows.append(
+            f"<tr><td class='sym'>{sym}</td><td>{h(ks)}</td>"
+            f"{sev_cell}<td>{desc}</td><td>{old_val}</td><td>{new_val}</td></tr>"
+        )
+    sev_hdr = "<th>Severity</th>" if show_severity else ""
+    return (
+        f"<table class='problem'><thead><tr>"
+        f"<th>Symbol</th><th>Kind</th>{sev_hdr}"
+        f"<th>Description</th><th>Old</th><th>New</th>"
+        f"</tr></thead><tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _generate_compat_html(
+    result: object,
+    changes: list[object],
+    removed: list[object],
+    changed: list[object],
+    added: list[object],
+    suppressed: list[object],
+    suppressed_count: int,
+    bc_pct: float,
+    breaking_count: int,
+    verdict: str,
+    lib_display: str,
+    old_display: str,
+    new_display: str,
+    old_symbol_count: int | None,
+    title: str | None,
+    report_kind: str = "binary",
+) -> str:
+    """Generate ABICC-compatible HTML with matching element IDs and structure.
+
+    Produces HTML with the same DOM IDs and section structure that ABICC
+    report parsers expect: #Title, #Summary, #Added, #Removed,
+    #TypeProblems_High, etc.
+
+    Also embeds the META_DATA comment that ABICC includes for machine parsing.
+
+    Args:
+        report_kind: "binary" or "source" — controls title, META_DATA kind, and
+            section ID prefixes to match ABICC's per-kind report structure.
+    """
+    h = html.escape
+
+    # Classify type vs symbol problems by severity
+    type_problems: dict[str, list[object]] = {"High": [], "Medium": [], "Low": []}
+    symbol_problems: dict[str, list[object]] = {"High": [], "Medium": [], "Low": []}
+    for ch in changed:
+        ks = _kind_str(ch)
+        sev = _severity(ks)
+        if _is_type_problem(ks):
+            type_problems[sev].append(ch)
+        else:
+            symbol_problems[sev].append(ch)
+
+    # Counts for META_DATA
+    tp_high = len(type_problems["High"])
+    tp_med = len(type_problems["Medium"])
+    tp_low = len(type_problems["Low"])
+    sp_high = len(symbol_problems["High"])
+    sp_med = len(symbol_problems["Medium"])
+    sp_low = len(symbol_problems["Low"])
+
+    compat_verdict = "incompatible" if verdict in ("BREAKING", "SOURCE_BREAK") else "compatible"
+    bc_css = "incompatible" if bc_pct < 90 else ("warning" if bc_pct < 100 else "compatible")
+    affected_pct = f"{100 - bc_pct:.1f}" if old_symbol_count else "0"
+
+    kind_label = report_kind.capitalize()  # "Binary" or "Source"
+
+    # META_DATA comment (semicolon-delimited, matches ABICC format)
+    meta_data = (
+        f"verdict:{compat_verdict};kind:{report_kind};"
+        f"affected:{affected_pct};"
+        f"added:{len(added)};removed:{len(removed)};"
+        f"type_problems_high:{tp_high};"
+        f"type_problems_medium:{tp_med};"
+        f"type_problems_low:{tp_low};"
+        f"interface_problems_high:{sp_high};"
+        f"interface_problems_medium:{sp_med};"
+        f"interface_problems_low:{sp_low};"
+        f"changed_constants:0;"
+        f"tool_version:abicheck"
+    )
+
+    # Build title matching ABICC convention
+    abicc_title = (
+        h(title) if title
+        else f"{kind_label} compatibility report for the <b>{lib_display}</b> "
+             f"library between <b>{old_display}</b> and <b>{new_display}</b> versions"
+    )
+
+    # Build sections
+    sections_html = []
+
+    # Problem Summary
+    sections_html.append(f"""
+<div id='Summary'>
+<h2>Test Info</h2>
+<table class='summary'>
+<tr><th>Library Name</th><td>{lib_display}</td></tr>
+<tr><th>Version #1</th><td>{old_display}</td></tr>
+<tr><th>Version #2</th><td>{new_display}</td></tr>
+</table>
+
+<h2>Test Results</h2>
+<table class='summary'>
+<tr><th>Total Symbols</th><td>{old_symbol_count or 'N/A'}</td></tr>
+<tr><th>{kind_label} Compatibility</th><td class='{bc_css}'>{bc_pct:.1f}%</td></tr>
+<tr><th>Verdict</th><td class='{bc_css}'>{compat_verdict}</td></tr>
+</table>
+
+<h2>Problem Summary</h2>
+<table class='summary'>
+<tr><th></th><th>High</th><th>Medium</th><th>Low</th></tr>
+<tr><th>Type Problems</th><td>{tp_high}</td><td>{tp_med}</td><td>{tp_low}</td></tr>
+<tr><th>Interface Problems</th><td>{sp_high}</td><td>{sp_med}</td><td>{sp_low}</td></tr>
+<tr><th>Added Symbols</th><td colspan='3'>{len(added)}</td></tr>
+<tr><th>Removed Symbols</th><td colspan='3'>{len(removed)}</td></tr>
+</table>
+</div>""")
+
+    # Added symbols section
+    if added:
+        sections_html.append(f"""
+<div id='Added'>
+<h2>Added Symbols ({len(added)})</h2>
+{_compat_changes_table(added)}
+</div>""")
+
+    # Removed symbols section
+    if removed:
+        sections_html.append(f"""
+<div id='Removed'>
+<h2>Removed Symbols ({len(removed)})</h2>
+{_compat_changes_table(removed)}
+</div>""")
+
+    # Type problems by severity
+    for sev in ("High", "Medium", "Low"):
+        items = type_problems[sev]
+        if items:
+            sections_html.append(f"""
+<div id='TypeProblems_{sev}'>
+<h2>Problems with Data Types — {sev} Severity ({len(items)})</h2>
+{_compat_changes_table(items, show_severity=True)}
+</div>""")
+
+    # Interface (symbol) problems by severity
+    for sev in ("High", "Medium", "Low"):
+        items = symbol_problems[sev]
+        if items:
+            sections_html.append(f"""
+<div id='InterfaceProblems_{sev}'>
+<h2>Problems with Symbols — {sev} Severity ({len(items)})</h2>
+{_compat_changes_table(items, show_severity=True)}
+</div>""")
+
+    body_html = "\n".join(sections_html)
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>{kind_label} compatibility report for {lib_display} between {old_display} and {new_display}</title>
+<style>{_COMPAT_CSS}</style>
+</head>
+<body>
+<!-- {meta_data} -->
+<div id='Title'>
+<h1>{abicc_title}</h1>
+</div>
+{body_html}
+<br/>
+<hr/>
+<p style="font-size:0.85em; color:#999;">
+Generated by <b>abicheck</b> (ABICC-compatible mode)
+</p>
+</body>
+</html>
+"""
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -328,6 +591,8 @@ def generate_html_report(
     new_version: str = "",
     old_symbol_count: int | None = None,
     title: str | None = None,
+    compat_html: bool = False,
+    report_kind: str = "binary",
 ) -> str:
     """Generate a standalone ABICC-compatible HTML ABI report.
 
@@ -372,6 +637,16 @@ def generate_html_report(
     lib_display  = h(lib_name)  if lib_name  else "library"
     old_display  = h(old_version) if old_version else "old"
     new_display  = h(new_version) if new_version else "new"
+
+    if compat_html:
+        return _generate_compat_html(
+            result, changes, removed, changed, added,
+            suppressed, suppressed_count,
+            bc_pct, breaking_count, verdict,
+            lib_display, old_display, new_display,
+            old_symbol_count, title,
+            report_kind=report_kind,
+        )
 
     # Verdict icon
     verdict_icon = {"BREAKING": "🔴", "COMPATIBLE": "🟢",
@@ -480,6 +755,8 @@ def write_html_report(
     new_version: str = "",
     old_symbol_count: int | None = None,
     title: str | None = None,
+    compat_html: bool = False,
+    report_kind: str = "binary",
 ) -> None:
     """Write HTML report to *output_path*, creating parent directories as needed."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -490,5 +767,7 @@ def write_html_report(
         new_version=new_version,
         old_symbol_count=old_symbol_count,
         title=title,
+        compat_html=compat_html,
+        report_kind=report_kind,
     )
     output_path.write_text(content, encoding="utf-8")
