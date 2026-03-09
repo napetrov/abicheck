@@ -64,5 +64,5 @@ gcc -shared -fPIC -g v2.c -o libfoo.so
 is called. With `LD_BIND_NOW=1` or `RTLD_NOW`, it fails at load time. Either way,
 every binary that ever called `fast_add` is broken until recompiled against v2 headers.
 
-## Why runtime result may differ from verdict
-Function removed from .so — undefined symbol at runtime
+## Runtime behavior
+The function is removed from the .so — the dynamic linker emits an undefined symbol error at load time (with RTLD_NOW) or at first call (lazy binding). Runtime result and verdict both agree: BREAKING.

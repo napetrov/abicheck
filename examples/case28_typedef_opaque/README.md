@@ -10,7 +10,7 @@
 | `handle_t` | `typedef unsigned int handle_t` | *(removed)* | Source break |
 | `struct Context` | Complete (id, flags, name[32]) | Forward declaration only | Opaque — no stack alloc |
 
-## Why this IS a binary ABI break
+## Why this IS a source/ABI break (details depend on usage)
 
 1. **TYPEDEF_BASE_CHANGED (`dim_t`):** The return type of `get_dimension()` changes from
    `int` (4 bytes, returned in lower 32 bits of `%eax`) to `long` (8 bytes, full `%rax`).

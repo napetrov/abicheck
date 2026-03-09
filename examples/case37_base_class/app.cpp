@@ -31,8 +31,10 @@ int main() {
     ad.log_level = 3;
     ad.run();
     printf("AddBaseDemo: log_level=%d\n", ad.log_level);
+    /* v2 AddBaseDemo gains Serializer base; run() also sets format=44.
+     * With v1 binary (no format field), writing format=44 overflows the object. */
     if (ad.log_level != 33) {
-        printf("ADDED_BASE_MISMATCH detected\n");
+        printf("ADDED_BASE_MISMATCH: log_level=%d (expected 33)\n", ad.log_level);
         bad = 1;
     }
 

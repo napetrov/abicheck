@@ -75,7 +75,7 @@ gcc -g app.c -Iold -L. -ldispatch -Wl,-rpath,. -o app
 # → dispatch(5) = 10 (expected 10)
 
 # Swap in new lib (GNU IFUNC — resolver picks implementation at load time)
-gcc -shared -fPIC -g new/lib.c -Iold -o libdispatch.so
+gcc -shared -fPIC -g new/lib.c -Inew -o libdispatch.so
 ./app
 # → dispatch(5) = 10 (expected 10)  ← identical result
 ```

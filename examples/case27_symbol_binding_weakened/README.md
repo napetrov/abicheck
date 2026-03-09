@@ -77,5 +77,5 @@ readelf --syms libfoo.so | grep foo
 override exists. The concern is interposition: if another `.so` or the executable
 defines `foo` as GLOBAL, the WEAK version will be silently overridden at runtime.
 
-## Why runtime result may differ from verdict
-GLOBAL→WEAK binding: loader still resolves symbol, runtime compat
+## Why runtime is COMPATIBLE (matches verdict)
+WEAK symbols are still exported and resolved normally when no override exists. The concern is interposition — another `.so` defining the symbol as GLOBAL silently overrides it. In this demo no override exists, so runtime behavior is identical to GLOBAL binding.
