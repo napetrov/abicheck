@@ -1,0 +1,77 @@
+# Case 37 -- Base Class Changes
+
+**abicheck verdict: BREAKING**
+
+## What changes
+
+| Version | Definition |
+|---------|-----------|
+| v1 | `ReorderDemo : Logger, Serializer` / `VirtualDemo : Logger` / `AddBaseDemo : Logger` |
+| v2 | `ReorderDemo : Serializer, Logger` (swapped) / `VirtualDemo : virtual Logger` / `AddBaseDemo : Logger, Serializer` (added base) |
+
+Three separate scenarios are demonstrated:
+
+1. **Base class position changed** -- `ReorderDemo` swaps base order
+2. **Base class became virtual** -- `VirtualDemo` gains `virtual` inheritance
+3. **Base class added** -- `AddBaseDemo` acquires `Serializer` as a second base
+
+## Why this is a binary ABI break
+
+All three changes alter the object layout:
+
+1. **Reorder:** In multiple inheritance, each base class occupies a sub-object at a
+   specific offset. Swapping the order changes which vtable pointer is at offset 0
+   and how `this` is adjusted when casting to a base pointer. Code compiled against v1
+   that casts `ReorderDemo*` to `Logger*` will get the wrong sub-object with v2.
+
+2. **Virtual inheritance:** Changing from non-virtual to virtual inheritance completely
+   restructures the object layout, introducing a vbase offset and moving the base
+   sub-object to the end of the most-derived object.
+
+3. **Added base:** Adding `Serializer` as a base increases the object size and shifts
+   field offsets. Code compiled with v1's layout will read/write wrong memory locations.
+
+## Code diff
+
+```diff
+-class ReorderDemo : public Logger, public Serializer {
++class ReorderDemo : public Serializer, public Logger {
+     // base order swapped -> this-pointer adjustments change
+
+-class VirtualDemo : public Logger {
++class VirtualDemo : public virtual Logger {
+     // non-virtual -> virtual inheritance -> layout restructured
+
+-class AddBaseDemo : public Logger {
++class AddBaseDemo : public Logger, public Serializer {
+     // new base added -> object size grows, offsets shift
+```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+```bash
+# Build v1 lib + app
+g++ -shared -fPIC -g v1.cpp -o libv1.so
+g++ -g app.cpp -I. -L. -lv1 -Wl,-rpath,. -o app
+./app
+# -> ReorderDemo: log_level=1, format=2
+# -> ReorderDemo::log() called via Logger* OK
+# -> ReorderDemo::serialize() called via Serializer* OK
+# -> VirtualDemo: log_level=5
+# -> AddBaseDemo: log_level=3
+
+# Swap to v2
+g++ -shared -fPIC -g v2.cpp -o libv1.so
+./app
+# -> CRASH or wrong output: Logger* now points to Serializer sub-object
+#    due to swapped base order. Virtual method calls through base pointers
+#    invoke the wrong function or pass a corrupted this pointer.
+```
+
+**Why CRITICAL:** Base class layout changes silently corrupt the object's memory layout.
+The `this`-pointer adjustments compiled into the application no longer match the
+library's actual object layout, causing virtual dispatch to call the wrong function,
+or field accesses to read/write the wrong memory -- both leading to crashes or
+silent data corruption.
