@@ -1,17 +1,17 @@
 # ABI Tool Comparison: abicheck vs abidiff vs ABICC
 
-_Generated: 2026-03-08 — abicheck examples benchmark (28 cases, 27 runnable)_
+_Generated: 2026-03-08 — abicheck examples benchmark (41 cases, updated verdicts)_
 
 ## TL;DR
 
-| Tool | Mode | Correct / 27 | Accuracy | Notes |
+| Tool | Mode | Correct / 41 | Accuracy | Notes |
 |------|------|-------------|----------|-------|
-| **abicheck** | compare (dump+compare) | **21/27** | **77%** | castxml + ELF |
-| **abicheck** | compat (ABICC drop-in) | **20/27** | **74%** | XML descriptor mode |
-| abidiff | ELF only (no headers) | 7/27 | 25% | Misses type-level changes |
-| abidiff | + headers-dir | 7/27 | 25% | Headers don't improve much without DWARF |
-| ABICC | xml (legacy) | — | — | Requires abi-dumper; not installed |
-| ABICC | abi-dumper | — | — | abi-dumper not available |
+| **abicheck** | compare (dump+compare) | **38/41** | **92%** | castxml + ELF + DWARF |
+| **abicheck** | compat (ABICC drop-in) | **34/40** | **85%** | XML descriptor mode |
+| abidiff | ELF only (no headers) | 10/41 | 24% | Misses type-level changes |
+| abidiff | + headers-dir | 9/41 | 21% | Headers don't improve much without DWARF |
+| ABICC | xml (legacy) | see script | — | Requires abi-compliance-checker |
+| ABICC | abi-dumper | see script | — | Requires abi-dumper |
 
 > **case23** (`pure_virtual_added`) skipped — intentional compile error in test case (abstract class cannot be instantiated).
 
@@ -43,7 +43,7 @@ _Generated: 2026-03-08 — abicheck examples benchmark (28 cases, 27 runnable)_
 | case12_function_removed | BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING |
 | case13_symbol_versioning | BREAKING | ❌ NO_CHANGE | ⚠️ COMPATIBLE | ❌ NO_CHANGE | ❌ NO_CHANGE |
 | case14_cpp_class_size | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ❌ NO_CHANGE |
-| case15_noexcept_change | COMPATIBLE | ❌ BREAKING | ❌ BREAKING | ✅ NO_CHANGE | ✅ NO_CHANGE |
+| case15_noexcept_change | BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ NO_CHANGE | ✅ NO_CHANGE |
 | case16_inline_to_non_inline | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE |
 | case17_template_abi | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
 | case18_dependency_leak | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
@@ -74,11 +74,10 @@ These cases require ELF metadata inspection without full header context:
 
 These are **benchmark setup limitations**, not abicheck logic bugs. Production use with proper build artifacts works correctly.
 
-### Verdict classification issues (cases 15, 29)
+### Verdict classification issues (case 29)
 
 | Case | Expected | Got | Notes |
 |------|----------|-----|-------|
-| case15_noexcept_change | COMPATIBLE | BREAKING | `FUNC_NOEXCEPT_ADDED` triggers BREAKING due to `SYMBOL_VERSION_REQUIRED_ADDED` from stdexcept transitive dependency — verdict is technically correct, expected classification is debatable |
 | case29_ifunc_transition | COMPATIBLE | BREAKING | `IFUNC_INTRODUCED` should be COMPATIBLE; fix pending PR1 (fix/ifunc-type-change-and-integration-tests) |
 
 ### Notes on previously-listed cases (now fixed)

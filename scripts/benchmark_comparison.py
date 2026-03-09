@@ -40,10 +40,16 @@ BUILD_DIR    = REPORT_DIR / "_build"
 # (abicheck CLI shebang may point to a different Python/site-packages)
 os.environ.setdefault("PYTHONPATH", str(REPO_DIR))
 
-_abicheck_bin = shutil.which("abicheck") or "abicheck"
-with open(_abicheck_bin) as _f:
-    _first_line = _f.readline().strip()
-_PYTHON = _first_line.lstrip("#!") if _first_line.startswith("#!") else "python3"
+_abicheck_bin = shutil.which("abicheck")
+if _abicheck_bin:
+    try:
+        with open(_abicheck_bin) as _f:
+            _first_line = _f.readline().strip()
+        _PYTHON = _first_line.lstrip("#!") if _first_line.startswith("#!") else "python3"
+    except (OSError, IsADirectoryError):
+        _PYTHON = "python3"
+else:
+    _PYTHON = "python3"
 _ABICHECK_ENV = {**os.environ, "PYTHONPATH": str(REPO_DIR)}
 
 DEFAULT_ABICC_TIMEOUT = 30  # seconds
@@ -92,6 +98,13 @@ EXPECTED: dict[str, str] = {
     "case39_var_const":               "NO_CHANGE",   # VAR_BECAME_CONST — currently NO_CHANGE in abicheck
     "case40_field_layout":            "BREAKING",    # TYPE_SIZE_CHANGED (struct reordering)
     "case41_type_changes":            "BREAKING",    # FUNC_REMOVED, TYPE_REMOVED
+}
+
+# Per-column expected overrides for abicheck compat mode (ELF-only XML descriptors,
+# no header parsing). Compat can't emit SOURCE_BREAK — access-level narrowing is
+# invisible without headers, so correct compat verdict is NO_CHANGE.
+EXPECTED_COMPAT: dict[str, str] = {
+    "case34_access_level": "NO_CHANGE",  # compat = ELF-only; no header → can't see access narrowing
 }
 
 
@@ -602,6 +615,7 @@ def main() -> None:
         results.append({
             "case": name,
             "expected": expected,
+            "expected_compat": EXPECTED_COMPAT.get(name, expected),  # compat-specific override
             "abicheck": ac.verdict,
             "abicheck_compat": acc.verdict,
             "abidiff": ab.verdict,
@@ -611,22 +625,22 @@ def main() -> None:
         })
 
     # ── Accuracy summary ──────────────────────────────────────────────────────
-    def accuracy(key: str) -> tuple[int, int]:
-        scored = [r for r in results if r.get("expected", "?") != "?" and r[key] not in ("SKIP", "ERROR", "TIMEOUT", "NO_SOURCE")]
-        correct = sum(1 for r in scored if r[key] == r["expected"])
+    def accuracy(key: str, expected_key: str = "expected") -> tuple[int, int]:
+        scored = [r for r in results if r.get(expected_key, "?") != "?" and r[key] not in ("SKIP", "ERROR", "TIMEOUT", "NO_SOURCE")]
+        correct = sum(1 for r in scored if r[key] == r[expected_key])
         return correct, len(scored)
 
     print("\n" + "─" * 80)
     print("  Accuracy vs expected verdicts:")
-    for key, label in [
-        ("abicheck",       "abicheck (compare)  "),
-        ("abicheck_compat","abicheck (compat)   "),
-        ("abidiff",        "abidiff (ELF)       "),
-        ("abidiff_headers","abidiff (+headers)  "),
-        ("abicc_dumper",   "ABICC (dumper)      "),
-        ("abicc_xml",      "ABICC (xml)         "),
+    for key, label, exp_key in [
+        ("abicheck",       "abicheck (compare)  ", "expected"),
+        ("abicheck_compat","abicheck (compat)   ", "expected_compat"),
+        ("abidiff",        "abidiff (ELF)       ", "expected"),
+        ("abidiff_headers","abidiff (+headers)  ", "expected"),
+        ("abicc_dumper",   "ABICC (dumper)      ", "expected"),
+        ("abicc_xml",      "ABICC (xml)         ", "expected"),
     ]:
-        c, t = accuracy(key)
+        c, t = accuracy(key, exp_key)
         if t > 0:
             pct = 100 * c // t
             bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
