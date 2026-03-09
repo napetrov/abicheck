@@ -131,6 +131,42 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "typedef struct { int x; int y; } Point;\nPoint make_point(int x);",
         "c", "BREAKING", "COMPATIBLE", "correct",
     ),
+    # ── parity: multiple functions removed ──
+    (
+        "multi_fn_removed",
+        "int a(void) { return 1; }\nint b(void) { return 2; }\nint c(void) { return 3; }",
+        "int a(void) { return 1; }",
+        "int a(void);\nint b(void);\nint c(void);",
+        "int a(void);",
+        "c", "BREAKING", "BREAKING", "parity",
+    ),
+    # ── parity: multiple functions added ──
+    (
+        "multi_fn_added",
+        "int a(void) { return 1; }",
+        "int a(void) { return 1; }\nint b(void) { return 2; }\nint c(void) { return 3; }",
+        "int a(void);",
+        "int a(void);\nint b(void);\nint c(void);",
+        "c", "COMPATIBLE", "COMPATIBLE", "parity",
+    ),
+    # ── parity: enum member removed ──
+    (
+        "enum_member_removed",
+        "typedef enum { A=0, B=1, C=2 } E;\nE get_e(void) { return A; }",
+        "typedef enum { A=0, C=2 } E;\nE get_e(void) { return A; }",
+        "typedef enum { A=0, B=1, C=2 } E;\nE get_e(void);",
+        "typedef enum { A=0, C=2 } E;\nE get_e(void);",
+        "c", "BREAKING", "BREAKING", "parity",
+    ),
+    # ── parity: global variable removed ──
+    (
+        "var_removed",
+        "int api_version = 1;\nint get_version(void) { return api_version; }",
+        "int get_version(void) { return 2; }",
+        "extern int api_version;\nint get_version(void);",
+        "int get_version(void);",
+        "c", "BREAKING", "BREAKING", "parity",
+    ),
 ]
 
 _CONFIRMED = [c for c in PARITY_CASES if c[8] == "parity"]
