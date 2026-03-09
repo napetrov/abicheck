@@ -480,25 +480,28 @@ It may also alter overload behavior for rebuilt source consumers.
 
 Keep old method and add overload/new API variant.
 
-## case23_pure_virtual_added — interface contract expansion break
+## case23_pure_virtual_added — existing method made pure virtual
 
 ```cpp
 // v1
-struct IFace { virtual void run() = 0; };
+class Processor { virtual void process(); };
 
 // v2
-struct IFace { virtual void run() = 0; virtual void stop() = 0; };
+class Processor { virtual void process() = 0; };
 ```
 
 ```cpp
-// old plugin class implements only run()
-struct Plugin : IFace { void run() override; };
+// consumer compiled against v1 (concrete class)
+Processor* p = new Processor();
+p->process();  // calls concrete implementation
 ```
 
-Adding pure virtual methods changes required interface and vtable shape. Existing implementations are
-no longer complete for new base contract and can fail to instantiate or dispatch safely.
+Making an existing concrete virtual method pure virtual replaces the vtable entry for that method
+with the pure-call handler (`__cxa_pure_virtual`). Old binaries that call `process()` via vtable
+dispatch now hit the handler and abort. Additionally, `Processor` becomes abstract — source-level
+rebuilds fail to compile `new Processor()`.
 
-Create `IFace2` and keep original interface stable for existing plugins.
+Create `Processor2` as the new abstract interface and keep the original class frozen.
 
 ## case24_union_field_removed — representation set reduced
 
