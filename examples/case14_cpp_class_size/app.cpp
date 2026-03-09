@@ -4,7 +4,7 @@
 int main() {
     /* Scenario 1: via factory — shows size() mismatch */
     Buffer* b = make_buffer();
-    printf("via factory: size() = %d (expected 64)\n", b->size());
+    std::printf("via factory: size() = %d (expected 64)\n", b->size());
     delete b;
 
     /* Scenario 2: by value on stack — v2 constructor writes 128 bytes into
@@ -14,10 +14,10 @@ int main() {
         Buffer local_buf;          /* v1 layout: 64 bytes on stack */
         char after[8]  = "AFTER!!";
         (void)local_buf;
-        printf("canary = %s\n", canary);
-        printf("after  = %s\n", after);
+        std::printf("canary = %s\n", canary);
+        std::printf("after  = %s\n", after);
         if (__builtin_strcmp(after, "AFTER!!") != 0)
-            printf("CORRUPTION: stack overwritten by v2 constructor!\n");
+            std::printf("CORRUPTION: stack overwritten by v2 constructor!\n");
     }
     return 0;
 }

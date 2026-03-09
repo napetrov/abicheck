@@ -12,12 +12,12 @@ int main() {
     Buffer<int> buf(8);
     char sentinel_after[4] = "BBB";
 
-    printf("sentinel_before = %s\n", sentinel_before);
-    printf("sizeof(Buffer<int>) compiled = %zu\n", sizeof(buf));
-    printf("sentinel_after  = %s\n", sentinel_after);
+    std::printf("sentinel_before = %s\n", sentinel_before);
+    std::printf("sizeof(Buffer<int>) compiled = %zu\n", sizeof(buf));
+    std::printf("sentinel_after  = %s\n", sentinel_after);
 
     if (strcmp(sentinel_after, "BBB") != 0)
-        printf("CORRUPTION: sentinel_after overwritten! v2 wrote beyond Buffer\n");
+        std::printf("CORRUPTION: sentinel_after overwritten! v2 wrote beyond Buffer\n");
 
     return 0;
 }

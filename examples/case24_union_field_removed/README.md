@@ -63,7 +63,7 @@ lib_consume(d); /* library no longer expects float variant */
 gcc -shared -fPIC -g old/lib.c -Iold -o libdata.so
 gcc -g app.c -Iold -L. -ldata -Wl,-rpath,. -o app
 ./app
-# → d.f = 3.140000 (expected 3.14, got wrong value with v2)
+# → d.f = 3.140000
 
 # Swap in new lib (writes int 42 instead of float 3.14)
 gcc -shared -fPIC -g new/lib.c -Inew -o libdata.so

@@ -1,6 +1,6 @@
 # Case 06: Symbol Visibility Leak
 
-**Category:** Visibility | **Verdict:** 🟡 INFORMATIONAL
+**Category:** Visibility | **Verdict:** 🟡 BAD PRACTICE
 
 ## What breaks
 Every symbol compiled without `-fvisibility=hidden` becomes part of the public ABI

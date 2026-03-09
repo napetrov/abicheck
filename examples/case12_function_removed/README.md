@@ -58,6 +58,7 @@ gcc -shared -fPIC -g v2.c -o libfoo.so
 # → ./app: symbol lookup error: ./libfoo.so: undefined symbol: fast_add
 ```
 
-**Why CRITICAL:** The dynamic linker fails to resolve `fast_add` at load time — the
-app cannot start at all. Every binary that ever called `fast_add` is broken until
-recompiled against v2 headers.
+**Why CRITICAL:** With default lazy binding (RTLD_LAZY), the error surfaces on the
+**first call** through the PLT — the app starts but immediately dies when `fast_add`
+is called. With `LD_BIND_NOW=1` or `RTLD_NOW`, it fails at load time. Either way,
+every binary that ever called `fast_add` is broken until recompiled against v2 headers.

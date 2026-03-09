@@ -2,8 +2,8 @@
 
 ## What changes
 
-`libfoo` itself is **source-identical** between v1 and v2.
-The breaking change is in `ThirdPartyHandle`, a type from a third-party library
+`libfoo`'s **exported symbol interface** is identical between v1 and v2 — same function
+names, same signatures. The breaking change is in `ThirdPartyHandle`, a type from a third-party library
 that `libfoo` **exposes in its public header**.
 
 | Version | `ThirdPartyHandle` layout |
@@ -24,7 +24,8 @@ ThirdPartyHandle arr[10];  // caller: 40 bytes total
                             // library: expects 80 bytes (10 × 8)
 ```
 
-**libfoo.so is byte-for-byte identical** in both scenarios. Only the headers changed.
+**libfoo's exported symbol table looks identical** in both scenarios. `nm`, `readelf`,
+and naive `abidiff` see the same function names and signatures. Only the headers changed.
 `nm`, `readelf`, and naive `abidiff` see no difference in the `.so`.
 
 ## Why abidiff may catch it (with DWARF)
@@ -133,7 +134,7 @@ gcc -shared -fPIC -g libfoo_v2.c -I. -o libfoo.so
 # → after process: h.x = 42
 ```
 
-**Why CRITICAL:** The library's `.so` is byte-for-byte identical in both scenarios —
-`nm` and `readelf` show nothing suspicious. Yet the v2 library reads 4 bytes past the
+**Why CRITICAL:** The library's exported symbol table looks identical in both scenarios —
+`nm` and `readelf` show the same function names. Yet the v2 library reads 4 bytes past the
 caller's struct allocation because the third-party type it exposes in its public header
 grew silently. Heap corruption or information leakage follows.

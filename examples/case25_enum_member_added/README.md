@@ -67,6 +67,6 @@ gcc -shared -fPIC -g new/lib.c -Inew -o libcolor.so
 ```
 
 **Why INFORMATIONAL:** Adding enum members at the end does not shift existing values.
-Old binaries continue to work correctly. The only concern is source-level: switch
-statements without a `YELLOW` case won't handle it — but that's a compile-time
-correctness issue, not an ABI break.
+Old binaries continue to work correctly for known values. The concern is behavioral,
+not binary: switch statements without a `YELLOW` case won't handle it at runtime —
+if a new library returns `YELLOW`, old binaries fall through to `default` silently.

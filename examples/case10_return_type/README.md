@@ -50,14 +50,12 @@ of changing the old one.
 gcc -shared -fPIC -g v1.c -o libfoo.so
 gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
 ./app
-# → Expected: 3000000000
-# → Got:      42
+# → get_count() = 42   (v1 returns 42 — correct)
 
 # Swap in v2 (returns 3000000000L)
 gcc -shared -fPIC -g v2.c -o libfoo.so
 ./app
-# → Expected: 3000000000
-# → Got:      -1294967296   ← truncated to 32 bits (3000000000 mod 2^32)
+# → get_count() = -1294967296   ← truncated to 32 bits (3000000000 & 0xFFFFFFFF)
 ```
 
 **Why CRITICAL:** On x86-64, `int` is returned in the lower 32 bits of `rax`; `long`
