@@ -49,14 +49,15 @@ abicheck classifies this as **COMPATIBLE** because:
 ```diff
 -int dispatch(int x) { return x * 2; }
 +static int dispatch_generic(int x) { return x * 2; }
-+static int dispatch_avx(int x) { /* AVX implementation */ return x * 2; }
 +
 +/* IFUNC resolver — called by dynamic linker at load time */
++static void *resolve_dispatch(void) { return (void*)dispatch_generic; }
 +int dispatch(int x) __attribute__((ifunc("resolve_dispatch")));
-+static void *resolve_dispatch(void) {
-+    return has_avx() ? (void*)dispatch_avx : (void*)dispatch_generic;
-+}
 ```
+
+> In production, the resolver would typically select between multiple implementations
+> (e.g., generic vs AVX) based on CPU feature detection. This example uses a single
+> implementation for simplicity.
 
 ## Real Failure Demo
 

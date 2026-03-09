@@ -1,4 +1,4 @@
-# Full ABI/API breakage guide for `examples/case01..case24`
+# Full ABI/API breakage guide for `examples/case01..case29`
 
 This guide is intentionally verbose. Every case includes:
 
@@ -38,25 +38,25 @@ co-install or consciously migrate.
 
 ```c
 /* lib v1 */
-int parse_value(int x);
+double process(int a, int b);
 
 /* lib v2 */
-int parse_value(long x);
+double process(double a, int b);
 ```
 
 ```c
-/* consumer */
-extern int parse_value(int);
-int run(void) { return parse_value(42); }
+/* consumer (compiled against v1) */
+extern double process(int, int);
+double run(void) { return process(3, 4); }
 ```
 
-Parameter type changes alter the call contract. Even when both types are integral, ABI rules may differ
-in width/sign extension/register class on different targets. An old caller compiled for `int` can pass
-bits that the new callee interprets as `long`, leading to value corruption or undefined behavior. The
-symbol name might stay “the same” in C, but call semantics are not.
+Parameter type changes alter the call contract. On x86-64 SysV ABI, `int` is passed in an integer
+register (`%edi`) while `double` is passed in an SSE register (`%xmm0`). An old caller compiled for
+`int` puts the value in the wrong register class — the new callee reads uninitialized `%xmm0`,
+producing garbage. The symbol name stays the same in C, but call semantics are completely different.
 
-Safe evolution pattern: keep `parse_value(int)` and introduce `parse_value_v2(long)`. Route old API to
-new internals where possible, but preserve old symbol and signature for binary stability.
+Safe evolution pattern: keep `process(int, int)` and introduce `process_v2(double, int)`. Route old API
+to new internals where possible, but preserve old symbol and signature for binary stability.
 
 ## case03_compat_addition — additive symbol
 
@@ -480,25 +480,28 @@ It may also alter overload behavior for rebuilt source consumers.
 
 Keep old method and add overload/new API variant.
 
-## case23_pure_virtual_added — interface contract expansion break
+## case23_pure_virtual_added — existing method made pure virtual
 
 ```cpp
 // v1
-struct IFace { virtual void run() = 0; };
+class Processor { virtual void process(); };
 
 // v2
-struct IFace { virtual void run() = 0; virtual void stop() = 0; };
+class Processor { virtual void process() = 0; };
 ```
 
 ```cpp
-// old plugin class implements only run()
-struct Plugin : IFace { void run() override; };
+// consumer compiled against v1 (concrete class)
+Processor* p = new Processor();
+p->process();  // calls concrete implementation
 ```
 
-Adding pure virtual methods changes required interface and vtable shape. Existing implementations are
-no longer complete for new base contract and can fail to instantiate or dispatch safely.
+Making an existing concrete virtual method pure virtual replaces the vtable entry for that method
+with the pure-call handler (`__cxa_pure_virtual`). Old binaries that call `process()` via vtable
+dispatch now hit the handler and abort. Additionally, `Processor` becomes abstract — source-level
+rebuilds fail to compile `new Processor()`.
 
-Create `IFace2` and keep original interface stable for existing plugins.
+Create `Processor2` as the new abstract interface and keep the original class frozen.
 
 ## case24_union_field_removed — representation set reduced
 

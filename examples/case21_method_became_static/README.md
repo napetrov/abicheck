@@ -24,8 +24,12 @@ However, they pass a garbage `this` value in `%rdi` to a function that doesn't e
 For a void no-arg method like `bar()`, the function simply ignores `%rdi` — resulting in
 **silent success** rather than a crash. The UB is real but may be invisible without UBSAN.
 
-This is a **source-level ABI break**: the calling convention is wrong, and any method that
-reads `this` through the implicit parameter would behave incorrectly.
+This is a **calling convention ABI break**: the calling convention is wrong, and any method
+that reads `this` through the implicit parameter would behave incorrectly.
+
+> **Note:** Because the mangled name is identical, `abidiff` **cannot detect this change**
+> — it sees the same symbol in both `.so` files. This is a known blind spot. ABICC
+> catches it via header AST comparison.
 
 ## Consumer impact
 

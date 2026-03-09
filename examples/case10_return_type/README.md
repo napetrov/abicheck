@@ -4,7 +4,7 @@
 
 > **Note on abidiff 2.4.0:** Returns exit **4**. Semantically breaking — on
 > x86-64, `int` is returned in the lower 32 bits of `rax`; `long` uses all 64 bits.
-> Old callers zero-extend only 32 bits, potentially reading garbage for large values.
+> Old callers read only the lower 32 bits of `rax` as a signed int, producing garbage for large values.
 
 ## What breaks
 Callers compiled against v1 truncate the return value to 32 bits. For counts above
@@ -59,5 +59,5 @@ gcc -shared -fPIC -g v2.c -o libfoo.so
 ```
 
 **Why CRITICAL:** On x86-64, `int` is returned in the lower 32 bits of `rax`; `long`
-uses all 64. The app zero-extends only 32 bits, reading a completely wrong value. Silent
-data corruption for any count above `INT_MAX`.
+uses all 64. The app reads only `eax` (lower 32 bits) as a signed int, interpreting a
+completely wrong value. Silent data corruption for any count above `INT_MAX`.
