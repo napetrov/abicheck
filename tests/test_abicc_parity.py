@@ -266,43 +266,43 @@ def _run_abicc(
 
     if r.returncode == 0:
         # ABICC returns 0 for both no-change and compatible-additions.
-        # Parse stdout for the verdict line ABICC prints.
+        # Check stdout and the HTML report for any sign of changes.
         output = r.stdout + r.stderr
 
-        # ABICC prints lines like:
-        #   "Binary compatibility: 100%"
-        #   "Source compatibility: 100%"
-        #   "Total binary compatibility problems: 0, warnings: 0"
-        # When there are compatible additions (not breaking), it still says 100%
-        # but also prints added/removed symbol counts.
-        # Look for non-zero added/removed symbol counts in stdout.
-        added_match = re.search(r"added\s+symbols:\s*(\d+)", output, re.IGNORECASE)
-        removed_match = re.search(r"removed\s+symbols:\s*(\d+)", output, re.IGNORECASE)
+        # Check stdout for symbol count lines (format varies by ABICC version).
+        for pattern in (
+            r"added\s+symbols?\s*[-:]\s*(\d+)",
+            r"removed\s+symbols?\s*[-:]\s*(\d+)",
+            r"added\s+interfaces?\s*[-:]\s*(\d+)",
+            r"removed\s+interfaces?\s*[-:]\s*(\d+)",
+        ):
+            m = re.search(pattern, output, re.IGNORECASE)
+            if m and int(m.group(1)) > 0:
+                return "COMPATIBLE"
 
-        added_count = int(added_match.group(1)) if added_match else 0
-        removed_count = int(removed_match.group(1)) if removed_match else 0
-
-        if added_count > 0 or removed_count > 0:
-            return "COMPATIBLE"
-
-        # Also check the report for type-level changes (field additions etc.)
+        # Check the HTML report for ANY non-zero change indicator.
         if report_path.exists():
             report_text = report_path.read_text(encoding="utf-8", errors="replace")
-            # Look for actual problem/change counts > 0 in the report
-            # ABICC uses class="stat" cells with counts; check for non-zero
-            type_problems = re.search(
-                r'(?:type_problems_high|type_problems_medium|type_problems_low'
-                r'|changed_constants)\D+(\d+)',
+            # ABICC report uses identifiers like added_symbols, removed_symbols,
+            # type_problems_high/medium/low, changed_constants, etc.
+            # Match any of these followed by a non-zero count.
+            change_indicators = re.findall(
+                r'(?:added_symbols|removed_symbols|added_interfaces'
+                r'|removed_interfaces|type_problems_high|type_problems_medium'
+                r'|type_problems_low|changed_constants|added_types'
+                r'|removed_types)\D+(\d+)',
                 report_text,
             )
-            if type_problems and int(type_problems.group(1)) > 0:
+            if any(int(c) > 0 for c in change_indicators):
                 return "COMPATIBLE"
 
         return "NO_CHANGE"
     elif r.returncode == 1:
         return "BREAKING"
     else:
-        return f"ERROR(rc={r.returncode})"
+        stderr = (r.stderr or "")[:500]
+        stdout = (r.stdout or "")[:500]
+        return f"ERROR(rc={r.returncode}): stderr={stderr!r} stdout={stdout!r}"
 
 
 def _setup(
