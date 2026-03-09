@@ -445,14 +445,14 @@ class TestMethodAccessChanged:
         result = compare(old, new)
         assert ChangeKind.METHOD_ACCESS_CHANGED in _kinds(result)
 
-    def test_method_access_widened_reported(self) -> None:
-        """Widening access (private → public) is also reported as a change."""
+    def test_method_access_widened_not_reported(self) -> None:
+        """Widening access (private → public) is backward-compatible, not reported."""
         old = _snap(functions=[_func("helper", "_ZN6Widget6helperEv",
                     access=AccessLevel.PRIVATE)])
         new = _snap(functions=[_func("helper", "_ZN6Widget6helperEv",
                     access=AccessLevel.PUBLIC)])
         result = compare(old, new)
-        assert ChangeKind.METHOD_ACCESS_CHANGED in _kinds(result)
+        assert ChangeKind.METHOD_ACCESS_CHANGED not in _kinds(result)
 
     def test_method_access_unchanged_no_report(self) -> None:
         old = _snap(functions=[_func("f", "_Z1fv", access=AccessLevel.PUBLIC)])

@@ -1137,11 +1137,26 @@ def _diff_pointer_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+def _is_access_narrowing(old_access: Any, new_access: Any) -> bool:
+    """Return True if the access level transition is narrowing (breaking).
+
+    Narrowing = less accessible: public→protected, public→private, protected→private.
+    Widening (e.g., private→public) is backward-compatible and should NOT be flagged.
+    """
+    from .model import AccessLevel
+    _RANK = {AccessLevel.PUBLIC: 0, AccessLevel.PROTECTED: 1, AccessLevel.PRIVATE: 2}
+    return _RANK.get(new_access, 0) > _RANK.get(old_access, 0)
+
+
 def _diff_access_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
-    """Detect access level changes on methods and fields."""
+    """Detect narrowing access level changes on methods and fields.
+
+    Only flags narrowing transitions (public→protected/private, protected→private).
+    Widening (e.g., private→public) is backward-compatible and not reported.
+    """
     changes: list[Change] = []
 
-    # Method access changes
+    # Method access changes (narrowing only)
     vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
     old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
     new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
@@ -1150,16 +1165,16 @@ def _diff_access_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         f_new = new_map.get(mangled)
         if f_new is None:
             continue
-        if f_old.access != f_new.access:
+        if f_old.access != f_new.access and _is_access_narrowing(f_old.access, f_new.access):
             changes.append(Change(
                 kind=ChangeKind.METHOD_ACCESS_CHANGED,
                 symbol=mangled,
-                description=f"Method access level changed: {f_old.name} ({f_old.access.value} → {f_new.access.value})",
+                description=f"Method access level narrowed: {f_old.name} ({f_old.access.value} → {f_new.access.value})",
                 old_value=f_old.access.value,
                 new_value=f_new.access.value,
             ))
 
-    # Field access changes
+    # Field access changes (narrowing only)
     old_types = {t.name: t for t in old.types if not t.is_union}
     new_types = {t.name: t for t in new.types if not t.is_union}
 
@@ -1174,11 +1189,11 @@ def _diff_access_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             f_new_f = new_fields.get(fname)
             if f_new_f is None:
                 continue
-            if f_old_f.access != f_new_f.access:
+            if f_old_f.access != f_new_f.access and _is_access_narrowing(f_old_f.access, f_new_f.access):
                 changes.append(Change(
                     kind=ChangeKind.FIELD_ACCESS_CHANGED,
                     symbol=name,
-                    description=f"Field access level changed: {name}::{fname} ({f_old_f.access.value} → {f_new_f.access.value})",
+                    description=f"Field access level narrowed: {name}::{fname} ({f_old_f.access.value} → {f_new_f.access.value})",
                     old_value=f_old_f.access.value,
                     new_value=f_new_f.access.value,
                 ))

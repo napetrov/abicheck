@@ -16,6 +16,7 @@ from defusedxml import ElementTree as DefusedET
 
 from .model import (
     AbiSnapshot,
+    AccessLevel,
     EnumMember,
     EnumType,
     Function,
@@ -228,6 +229,29 @@ class _CastxmlParser:
             return f"{base}[{max_}]" if max_ else f"{base}[]"
         return el.get("name", tag)
 
+    def _pointer_depth(self, id_: str, depth: int = 0) -> int:
+        """Count pointer nesting depth: T=0, T*=1, T**=2, etc."""
+        if depth > 10:
+            return 0
+        el = self._resolve(id_)
+        if el is None:
+            return 0
+        if el.tag == "PointerType":
+            return 1 + self._pointer_depth(el.get("type", ""), depth + 1)
+        if el.tag in ("CvQualifiedType", "Typedef"):
+            return self._pointer_depth(el.get("type", ""), depth + 1)
+        return 0
+
+    @staticmethod
+    def _access_level(el: Element) -> AccessLevel:
+        """Map castxml 'access' attribute to AccessLevel enum."""
+        raw = el.get("access", "public")
+        if raw == "protected":
+            return AccessLevel.PROTECTED
+        if raw == "private":
+            return AccessLevel.PRIVATE
+        return AccessLevel.PUBLIC
+
     def _visibility(self, mangled: str, name: str = "") -> Visibility:
         """Determine visibility based on ELF symbol tables."""
         # Check dynamic symbols (.dynsym) — truly exported
@@ -253,13 +277,16 @@ class _CastxmlParser:
             mangled = el.get("mangled", "") or name  # C functions: use plain name
             ret_id = el.get("returns", "")
             ret_type = self._type_name(ret_id) if ret_id else "void"
+            ret_ptr_depth = self._pointer_depth(ret_id) if ret_id else 0
 
             params = []
             for arg in el:
                 if arg.tag == "Argument":
                     p_name = arg.get("name", "")
-                    p_type = self._type_name(arg.get("type", ""))
-                    params.append(Param(name=p_name, type=p_type))
+                    p_type_id = arg.get("type", "")
+                    p_type = self._type_name(p_type_id)
+                    p_depth = self._pointer_depth(p_type_id)
+                    params.append(Param(name=p_name, type=p_type, pointer_depth=p_depth))
 
             vis = self._visibility(el.get("mangled", ""), name)
             is_virtual = el.get("virtual") == "1"
@@ -305,6 +332,8 @@ class _CastxmlParser:
                 is_volatile=is_volatile,
                 is_pure_virtual=is_pure_virtual,
                 is_deleted=is_deleted,
+                access=self._access_level(el),
+                return_pointer_depth=ret_ptr_depth,
             ))
         return funcs
 
@@ -386,6 +415,7 @@ class _CastxmlParser:
                 offset_bits=self._optional_int_attr(child, "offset"),
                 is_bitfield=is_bitfield,
                 bitfield_bits=bitfield_bits,
+                access=self._access_level(child),
             ))
         return fields
 
