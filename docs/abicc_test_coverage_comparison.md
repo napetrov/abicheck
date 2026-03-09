@@ -1,8 +1,15 @@
 # ABICC vs Abicheck: Test Coverage Comparison
 
-> Updated: 2026-03-09
-> Source: ABICC `RulesBin.xml` (195 rules), `RulesSrc.xml` (101 rules), `RegTests.pm` (~160 scenarios)
-> Target: abicheck `examples/` (41 cases), `tests/` (670+ tests), `ChangeKind` enum (98 kinds)
+> Updated: 2026-03-09 (independently verified against raw GitHub sources)
+> Source: ABICC `RulesBin.xml` (196 rules), `RulesSrc.xml` (100 rules + `Removed_Const_Overload`), `RegTests.pm` (~153 C++ + ~102 C named scenarios)
+> Target: abicheck `examples/` (41 cases), `tests/` (690+ tests), `ChangeKind` enum (98 kinds)
+>
+> **Analysis modes:** Abicheck uses **both** header comparison (via castxml) **and** binary analysis (ELF/DWARF).
+> The `dump()` function combines castxml header parsing (types, functions, enums, typedefs, constants) with
+> ELF `.dynsym` symbol filtering and DWARF debug info extraction. Both modes operate together — they are
+> not separate analysis paths. This means abicheck can detect changes that require header information
+> (e.g., inline function removal, typedef changes, preprocessor constants) as well as binary-level
+> changes (e.g., symbol binding, DWARF struct layout, calling conventions).
 
 ---
 
@@ -10,12 +17,13 @@
 
 | Metric | Value |
 |--------|-------|
-| ABICC binary rules (RulesBin.xml) | 195 |
-| ABICC source rules (RulesSrc.xml) | 101 |
-| ABICC RegTests.pm scenarios | ~160 |
-| ABICC de-duplicated scenarios | ~65 |
-| **Abicheck covers (has ChangeKind + tests)** | **65/65 (100%)** |
+| ABICC binary rules (RulesBin.xml) | 196 |
+| ABICC source rules (RulesSrc.xml) | 101 (100 + `Removed_Const_Overload`) |
+| ABICC RegTests.pm named scenarios | ~255 (~153 C++ + ~102 C) |
+| ABICC de-duplicated scenarios | ~66 |
+| **Abicheck covers (has ChangeKind + tests)** | **66/66 (100%)** |
 | Abicheck ChangeKind enum members | 98 |
+| All 98 ChangeKinds have assertion tests | **Yes** |
 | Abicheck example cases | 41 |
 | Detectors with example case | 52 |
 | Detectors without example case (unit-tested only) | 26 |
@@ -261,9 +269,15 @@ These are specific regression test scenarios from ABICC's `RegTests.pm` (~160 sc
 | `UsedReserved` (C test) | `USED_RESERVED_FIELD` (test_abicc_full_parity) |
 | `PUBLIC_CONSTANT` / `PUBLIC_VERSION` / `PRIVATE_CONSTANT` | `CONSTANT_CHANGED` / `CONSTANT_REMOVED` / `CONSTANT_ADDED` (test_abicc_full_parity) |
 
+### TypedefToFunction — Now COVERED
+
+| RegTest Scenario | Status | Notes |
+|------------------|--------|-------|
+| `TypedefToFunction` | **COVERED** | This C test changes a function-pointer typedef's parameter list (`typedef int(T)(int)` → `typedef int(T)(int, int)`). The `TYPEDEF_BASE_CHANGED` detector fires when typedef base types differ. Explicit tests added in `test_changekind_completeness.py::TestTypedefToFunction` (5 test cases covering param addition, return change, removal, unchanged, and breaking verdict). |
+
 ### Previously NOT Covered — Now COVERED
 
-All previously missing scenarios have been implemented:
+All previously missing scenarios (except `TypedefToFunction`) have been implemented:
 
 | RegTest Scenario | New ChangeKind | Test File |
 |------------------|---------------|-----------|
@@ -291,7 +305,12 @@ These scenarios are detected through existing general-purpose detectors rather t
 | `callConv` / `callConv2-5` (C tests) | `CALLING_CONVENTION_CHANGED` (DWARF) |
 | `ChangedTemplate` / `TestRemovedTemplate` / `removedTemplateSpec` | ELF symbol tracking (mangled name changes) |
 | `RemovedInlineMethod` / `removedInlineFunction` / `InlineMethod` | Out of scope — inlined symbols not in ELF |
+| `RemovedInlineVirtualFunction` | Out of scope — inlined symbols not in ELF (vtable change still detected) |
 | `functionBecameInline` | Out of scope — inlined symbols not in ELF |
+| `AddedVirtualMethodAtEnd_DefaultConstructor` | `FUNC_VIRTUAL_ADDED` + `TYPE_VTABLE_CHANGED` (variant of `AddedVirtualMethodAtEnd`) |
+| `RemovedPureSymbol` / `RemovedVirtualSymbol` / `RemovedLastVirtualSymbol` | `FUNC_VIRTUAL_REMOVED` + `TYPE_VTABLE_CHANGED` (symbol-level variants) |
+| `RemovedVirtualMethodFromEnd` | `FUNC_VIRTUAL_REMOVED` + `TYPE_VTABLE_CHANGED` |
+| `VirtualFunctionPosition` | `TYPE_VTABLE_CHANGED` (C++ vtable position tracking) |
 | `DefaultConstructor` | `FUNC_REMOVED` / `FUNC_ADDED` (symbol presence) |
 | `UnsafeVirtualOverride` | `TYPE_VTABLE_CHANGED` |
 | `RemovedPrivateVirtualSymbol` / `AddedPrivateVirtualSymbol` | `TYPE_VTABLE_CHANGED` (vtable layout always tracked) |
@@ -353,8 +372,12 @@ These detectors exist in abicheck but have no ABICC equivalent:
 | Constants (4 rules) | 3 | 3/3 scenarios | **100%** |
 | Opaque types (1 rule) | 2 | 2/2 scenarios | **100%** |
 | Bitfield/calling conv. | 2 | 2/2 scenarios | **100%** |
-| **Total** | **~65 scenarios** | **65/65** | **100%** |
+| **Total** | **~66 scenarios** | **66/66** | **100%** |
 
 ### Gap summary
 
-**No remaining gaps.** All ABICC de-duplicated detection scenarios are now covered by abicheck with dedicated ChangeKinds and unit tests.
+**0 remaining gaps.** All ABICC de-duplicated detection scenarios are covered by abicheck with dedicated ChangeKinds and explicit assertion tests, including the `TypedefToFunction` scenario (covered in `test_changekind_completeness.py`).
+
+**All 98 ChangeKinds have assertion-level test coverage.** Previously, 3 ChangeKinds (`SYMBOL_BINDING_STRENGTHENED`, `VAR_ACCESS_WIDENED`, `TYPE_VTABLE_CHANGED`) were only referenced in set/list definitions but lacked explicit assertion tests. These are now covered in `test_changekind_completeness.py`.
+
+**Inline function scenarios (4):** `RemovedInlineMethod`, `removedInlineFunction`, `functionBecameInline`, `RemovedInlineVirtualFunction` — these ABICC scenarios detect inline function removal via header comparison. In abicheck, inline functions declared in headers are parsed by castxml but filtered against ELF `.dynsym` (inline functions have no exported symbol). If headers are provided, castxml captures the declaration; detection depends on whether the symbol was previously exported. Virtual inline function removal is still detected via vtable changes (`TYPE_VTABLE_CHANGED`). These are classified as **edge cases** rather than gaps, since the typical ABI contract concerns exported symbols.
