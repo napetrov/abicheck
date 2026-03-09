@@ -15,7 +15,7 @@ Although removing `noexcept` from a function declaration **alone** does not chan
 mangled symbol name in the Itanium C++ ABI, the **v2 implementation also introduces
 a `throw std::runtime_error(...)`**. This causes a new GLIBCXX version requirement:
 
-```
+```text
 libv1.so: GLIBCXX_3.4   (no throw → no std::runtime_error dependency)
 libv2.so: GLIBCXX_3.4   +   GLIBCXX_3.4.21  (std::runtime_error)
 ```

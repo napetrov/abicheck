@@ -592,16 +592,16 @@ def main() -> None:
         v2_h = v2_h_hint if v2_h_hint else (v2_h_gen if v2_h_gen.exists() else None)
 
         ac  = run_abicheck(v1_so, v2_so, v1_h, v2_h, name, rdir)
-        acc = run_abicheck_compat(v1_so, v2_so, v1_h, v2_h, name, rdir) if use_compat else ToolResult("SKIP")
+        acc = run_abicheck_compat(v1_so, v2_so, v1_h, v2_h, name, rdir) if use_compat else ToolResult(verdict="SKIP")
         ab  = run_abidiff(v1_so, v2_so, name, rdir)
 
         headers_dir = _resolve_headers_dir(case_dir, v1_h or Path("/nonexistent"), v2_h or Path("/nonexistent"))
         ab_hdr = run_abidiff(v1_so, v2_so, name, rdir, headers_dir=headers_dir, suffix="_headers")
 
         abicc_d = (run_abicc_dumper(v1_so, v2_so, v1_h, v2_h, name, rdir, timeout=args.abicc_timeout)
-                   if use_dumper else ToolResult("SKIP"))
+                   if use_dumper else ToolResult(verdict="SKIP"))
         abicc_x = (run_abicc_xml(v1_so, v2_so, v1_h, v2_h, name, rdir, timeout=args.abicc_timeout)
-                   if use_xml else ToolResult("SKIP"))
+                   if use_xml else ToolResult(verdict="SKIP"))
 
         row_parts = [
             f"  {name:<33}",

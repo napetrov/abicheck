@@ -119,22 +119,25 @@ Exit codes mirror ABICC: `0` = compatible, `1` = breaking ABI change, `2` = erro
 
 Accuracy in compat mode: **20/27 (74%)** — close to compare mode, with slight drop from XML-descriptor/header-path limitations.
 
-## ABICC: 2 примера запуска
+## ABICC: two invocation modes
 
 ### 1) ABICC XML (legacy descriptor mode)
 ```bash
-# old.xml / new.xml в формате ABICC <descriptor>
+# Descriptors point directly at .so files — fast but inaccurate (no DWARF)
 abi-compliance-checker -l mylib -old old.xml -new new.xml -report-path report.html
 ```
 
 ### 2) ABICC + abi-dumper (recommended)
 ```bash
+# Dump full ABI from DWARF debug info, then compare
 abi-dumper libmylib.so -o v1.abi -lver v1
 abi-dumper libmylib_new.so -o v2.abi -lver v2
 abi-compliance-checker -l mylib -old v1.abi -new v2.abi -report-path report.html
 ```
 
-В этой среде `abi-dumper` не установлен, поэтому в текущем прогоне ABICC-колонки помечены как N/A. Ранее на 14-case subset ABICC(dumper) показывал ~71%.
+`abi-dumper` requires libraries built with `-g`. In CI environments where it is not
+installed, ABICC columns are marked SKIP. Previously on a 14-case subset,
+ABICC(dumper) showed ~71% accuracy.
 
 ## Running the benchmark
 
