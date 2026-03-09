@@ -330,10 +330,10 @@ def run_abicheck_compat(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path 
     # compat exit codes mirror abicheck cli: 4=BREAKING, 2=SOURCE_BREAK, 1=COMPATIBLE, 0=NO_CHANGE
     if r.returncode == 4:
         verdict = "BREAKING"
-    elif r.returncode == 1:
-        verdict = "BREAKING"
     elif r.returncode == 2:
         verdict = "SOURCE_BREAK"
+    elif r.returncode == 1:
+        verdict = "COMPATIBLE"
     elif r.returncode == 0:
         # distinguish NO_CHANGE from COMPATIBLE by output
         if "no changes" in out.lower() or "identical" in out.lower():

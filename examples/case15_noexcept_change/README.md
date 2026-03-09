@@ -36,6 +36,11 @@ this is a genuine binary ABI break because:
 introducing new library dependencies, use a noexcept impl in v2 that simply omits
 the specifier but never throws.
 
+> **Important:** The BREAKING verdict here is caused by v2 adding `throw std::runtime_error(...)`,
+> which pulls in `GLIBCXX_3.4.21` as a new VERNEED dependency — **not** by the `noexcept`
+> removal itself. Removing `noexcept` alone (without adding throw) would be COMPATIBLE.
+> This fixture intentionally conflates both changes to demonstrate the VERNEED break path.
+
 ## What abidiff misses
 
 `abidiff` compares DWARF type information and symbol tables. It does not track

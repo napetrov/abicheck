@@ -15,7 +15,7 @@ _Generated: 2026-03-08 — abicheck examples benchmark (41 cases, updated verdic
 
 > **case23** (`pure_virtual_added`) skipped — intentional compile error in test case (abstract class cannot be instantiated).
 
-**abicheck leads all tools at 77% accuracy across 28 diverse ABI break scenarios. abidiff ELF-only mode catches only 25% — it is blind to type-level changes without full DWARF+header analysis.**
+**abicheck leads all tools at 92% accuracy across 41 ABI break scenarios. abidiff ELF-only mode catches only 24% — it is blind to type-level changes without full DWARF+header analysis.**
 
 ## Tool versions
 
@@ -117,7 +117,7 @@ abicheck compat -lib libdnnl -old old.xml -new new.xml
 
 Exit codes mirror ABICC: `0` = compatible, `1` = breaking ABI change, `2` = error.
 
-Accuracy in compat mode: **20/27 (74%)** — close to compare mode, with slight drop from XML-descriptor/header-path limitations.
+Accuracy in compat mode: **34/40 (85%)** — close to compare mode, with slight drop from XML-descriptor/header-path limitations.
 
 ## ABICC: two invocation modes
 
