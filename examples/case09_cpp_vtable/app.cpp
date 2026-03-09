@@ -1,6 +1,5 @@
 #include "v1.h"
 #include <cstdio>
-#include <cstring>
 
 extern "C" Widget* make_widget();
 

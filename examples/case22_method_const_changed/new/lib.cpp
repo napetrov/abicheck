@@ -1,4 +1,4 @@
 #include "lib.h"
 #include <cstdio>
 
-void Widget::get() { printf("get() non-const called\n"); }
+void Widget::get() { std::printf("get() non-const called\n"); }

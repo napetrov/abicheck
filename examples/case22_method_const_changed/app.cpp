@@ -1,5 +1,4 @@
 #include "old/lib.h"
-#include <cstdio>
 
 int main() {
     const Widget w;

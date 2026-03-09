@@ -9,8 +9,8 @@
    hit the __cxa_pure_virtual handler in the v2 vtable and abort. */
 struct ProcAbortImpl : Processor {
     void process() override {
-        fprintf(stderr, "pure virtual method called\n");
-        abort();
+        std::fprintf(stderr, "pure virtual method called\n");
+        std::abort();
     }
 };
 
