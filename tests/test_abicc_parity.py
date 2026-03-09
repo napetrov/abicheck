@@ -219,8 +219,12 @@ def _run_abicc(
     hdr_v1: str | None,
     hdr_v2: str | None,
     tmp_path: Path,
-) -> str:
-    """Run abi-compliance-checker; return BREAKING/COMPATIBLE/NO_CHANGE.
+) -> tuple[str, str]:
+    """Run abi-compliance-checker; return (verdict, diagnostics).
+
+    Verdict is one of BREAKING/COMPATIBLE/NO_CHANGE/ERROR(...)/TIMEOUT.
+    Diagnostics is a string with stdout, stderr, and report excerpt for
+    debugging verdict-parsing failures.
 
     ABICC exit codes:
       0 = compatible (no breaking changes)
@@ -262,55 +266,58 @@ def _run_abicc(
             timeout=60,
         )
     except subprocess.TimeoutExpired:
-        return "TIMEOUT"
+        return "TIMEOUT", "subprocess timed out after 60s"
 
-    if r.returncode == 0:
-        # ABICC returns 0 for both no-change and compatible-additions.
-        # Check stdout and the HTML report for any sign of changes.
-        output = r.stdout + r.stderr
+    # Build diagnostics string for debugging verdict-parsing failures.
+    report_text = ""
+    if report_path.exists():
+        report_text = report_path.read_text(encoding="utf-8", errors="replace")
+    diag_parts = [
+        f"rc={r.returncode}",
+        f"stdout={r.stdout[:1000]!r}",
+        f"stderr={r.stderr[:1000]!r}",
+        f"report_exists={report_path.exists()}",
+        f"report_len={len(report_text)}",
+        f"report_first_2000={report_text[:2000]!r}",
+    ]
+    diag = "\n".join(diag_parts)
 
-        # Check stdout for symbol count lines (format varies by ABICC version).
-        for pattern in (
-            r"added\s+symbols?\s*[-:]\s*(\d+)",
-            r"removed\s+symbols?\s*[-:]\s*(\d+)",
-            r"added\s+interfaces?\s*[-:]\s*(\d+)",
-            r"removed\s+interfaces?\s*[-:]\s*(\d+)",
-        ):
-            m = re.search(pattern, output, re.IGNORECASE)
-            if m and int(m.group(1)) > 0:
-                return "COMPATIBLE"
+    if r.returncode == 1:
+        return "BREAKING", diag
 
-        # Check the HTML report for ANY non-zero change indicator.
-        if report_path.exists():
-            report_text = report_path.read_text(encoding="utf-8", errors="replace")
-            # ABICC report uses identifiers like added_symbols, removed_symbols,
-            # type_problems_high/medium/low, changed_constants, etc.
-            # Match any of these followed by a non-zero count.
-            change_indicators = re.findall(
-                r'(?:added_symbols|removed_symbols|added_interfaces'
-                r'|removed_interfaces|type_problems_high|type_problems_medium'
-                r'|type_problems_low|changed_constants|added_types'
-                r'|removed_types)\D+(\d+)',
-                report_text,
-            )
-            if any(int(c) > 0 for c in change_indicators):
-                return "COMPATIBLE"
+    if r.returncode != 0:
+        return f"ERROR(rc={r.returncode})", diag
 
-        return "NO_CHANGE"
-    elif r.returncode == 1:
-        return "BREAKING"
-    else:
-        stderr = (r.stderr or "")[:500]
-        stdout = (r.stdout or "")[:500]
-        return f"ERROR(rc={r.returncode}): stderr={stderr!r} stdout={stdout!r}"
+    # ABICC returns 0 for both no-change and compatible-additions.
+    # Strategy: extract every integer from the report that appears to be a
+    # problem/change count.  If the report shows any non-zero count in a
+    # table cell, something changed → COMPATIBLE.
+    td_counts = re.findall(r"<td[^>]*>\s*(\d+)\s*</td>", report_text)
+    if any(int(c) > 0 for c in td_counts):
+        return "COMPATIBLE", diag
+
+    # Also check stdout/stderr for any non-zero counts on lines with
+    # keywords suggesting changes.
+    output = r.stdout + r.stderr
+    for line in output.splitlines():
+        low = line.lower()
+        if any(kw in low for kw in ("added", "removed", "changed", "moved")):
+            counts = re.findall(r"(\d+)", line)
+            if any(int(c) > 0 for c in counts):
+                return "COMPATIBLE", diag
+
+    return "NO_CHANGE", diag
 
 
 def _setup(
     name: str, src_v1: str, src_v2: str,
     hdr_v1: str | None, hdr_v2: str | None,
     lang: str, tmp_path: Path,
-) -> tuple[str, str]:
-    """Compile .so files, run both tools, return (abicheck_verdict, abicc_verdict)."""
+) -> tuple[str, str, str]:
+    """Compile .so files, run both tools.
+
+    Returns (abicheck_verdict, abicc_verdict, abicc_diagnostics).
+    """
     _require_tool("abi-compliance-checker")
     _require_tool("gcc" if lang == "c" else "g++")
     if hdr_v1 is not None or hdr_v2 is not None:
@@ -322,8 +329,8 @@ def _setup(
     _compile_so(src_v2, v2, lang)
 
     ac = _run_abicheck(v1, v2, hdr_v1, hdr_v2, lang, tmp_path)
-    cc = _run_abicc(v1, v2, hdr_v1, hdr_v2, tmp_path)
-    return ac, cc
+    cc, diag = _run_abicc(v1, v2, hdr_v1, hdr_v2, tmp_path)
+    return ac, cc, diag
 
 
 # ---------------------------------------------------------------------------
@@ -341,9 +348,9 @@ def test_confirmed_parity(
     abicheck_exp: str, abicc_exp: str, _: str, tmp_path: Path,
 ) -> None:
     """Both tools must agree on verdict -- full parity enforced."""
-    ac, cc = _setup(name, src_v1, src_v2, hdr_v1, hdr_v2, lang, tmp_path)
+    ac, cc, diag = _setup(name, src_v1, src_v2, hdr_v1, hdr_v2, lang, tmp_path)
     assert ac == abicheck_exp, f"abicheck: expected {abicheck_exp}, got {ac}"
-    assert cc == abicc_exp, f"abicc: expected {abicc_exp}, got {cc}"
+    assert cc == abicc_exp, f"abicc: expected {abicc_exp}, got {cc}\nDIAG:\n{diag}"
     assert ac == cc, f"PARITY BROKEN: abicheck={ac}, abicc={cc}"
 
 
@@ -361,9 +368,9 @@ def test_abicheck_correct(
 
     If ABICC also becomes correct, move this case to _CONFIRMED.
     """
-    ac, cc = _setup(name, src_v1, src_v2, hdr_v1, hdr_v2, lang, tmp_path)
+    ac, cc, diag = _setup(name, src_v1, src_v2, hdr_v1, hdr_v2, lang, tmp_path)
     assert ac == abicheck_exp, f"abicheck: expected {abicheck_exp}, got {ac}"
-    assert cc == abicc_exp, f"abicc: expected {abicc_exp}, got {cc}"
+    assert cc == abicc_exp, f"abicc: expected {abicc_exp}, got {cc}\nDIAG:\n{diag}"
     if ac == cc:
         pytest.fail(
             f"Full parity achieved on '{name}' (both={ac}). "
@@ -382,7 +389,7 @@ def test_known_divergence(
     abicheck_exp: str, abicc_exp: str, _: str, tmp_path: Path,
 ) -> None:
     """Intentional stable divergences. Fails if pattern changes unexpectedly."""
-    ac, cc = _setup(name, src_v1, src_v2, hdr_v1, hdr_v2, lang, tmp_path)
+    ac, cc, diag = _setup(name, src_v1, src_v2, hdr_v1, hdr_v2, lang, tmp_path)
 
     if ac == cc == abicc_exp:
         pytest.fail(
@@ -396,5 +403,5 @@ def test_known_divergence(
     )
     assert cc == abicc_exp, (
         f"ABICC changed unexpectedly on '{name}': "
-        f"expected {abicc_exp}, got {cc}"
+        f"expected {abicc_exp}, got {cc}\nDIAG:\n{diag}"
     )
