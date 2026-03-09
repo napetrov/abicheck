@@ -45,7 +45,7 @@ def test_parse_args_defaults():
     with patch("sys.argv", ["benchmark_comparison.py"]):
         args = mod.parse_args()
     assert args.abicc_timeout == mod.DEFAULT_ABICC_TIMEOUT
-    assert args.abicc_mode == "dumper"
+    assert args.abicc_mode == "both"
     assert not args.skip_abicc
 
 
