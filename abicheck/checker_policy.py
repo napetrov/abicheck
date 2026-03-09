@@ -1,8 +1,10 @@
 """Central change policy registry and verdict computation."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
+from typing import Protocol
 
 
 class ChangeKind(str, Enum):
@@ -162,6 +164,10 @@ class ChangeKind(str, Enum):
     # Global data access level
     VAR_ACCESS_CHANGED = "var_access_changed"                # public→private/protected variable (narrowing)
     VAR_ACCESS_WIDENED = "var_access_widened"                 # private/protected→public variable (widening)
+
+
+class HasKind(Protocol):
+    kind: ChangeKind
 
 
 class Verdict(str, Enum):
@@ -334,7 +340,7 @@ POLICY_REGISTRY: dict[ChangeKind, PolicyEntry] = {
     k: PolicyEntry(Verdict.COMPATIBLE, "note") for k in COMPATIBLE_KINDS
 }
 
-def compute_verdict(changes: list[object]) -> Verdict:
+def compute_verdict(changes: Sequence[HasKind]) -> Verdict:
     if not changes:
         return Verdict.NO_CHANGE
     kinds = {c.kind for c in changes}

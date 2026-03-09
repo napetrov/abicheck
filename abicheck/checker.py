@@ -6,20 +6,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .checker_policy import (
-    BREAKING_KINDS as _BREAKING_KINDS,
-)
-from .checker_policy import (
-    COMPATIBLE_KINDS as _COMPATIBLE_KINDS,
-)
-from .checker_policy import (
-    SOURCE_BREAK_KINDS as _SOURCE_BREAK_KINDS,
-)
-from .checker_policy import (
-    ChangeKind,
-    Verdict,
-    compute_verdict,
-)
+from .checker_policy import BREAKING_KINDS as _BREAKING_KINDS
+from .checker_policy import COMPATIBLE_KINDS as _COMPATIBLE_KINDS
+from .checker_policy import SOURCE_BREAK_KINDS as _SOURCE_BREAK_KINDS
+from .checker_policy import ChangeKind as ChangeKind
+from .checker_policy import Verdict as Verdict
+from .checker_policy import compute_verdict as compute_verdict
 from .detectors import DetectorResult
 from .dwarf_advanced import diff_advanced_dwarf
 from .elf_metadata import SymbolBinding, SymbolType
@@ -27,6 +19,18 @@ from .model import AbiSnapshot, EnumType, Function, RecordType, TypeField, Visib
 
 if TYPE_CHECKING:
     from .suppression import SuppressionList
+
+
+__all__ = [
+    "ChangeKind",
+    "Verdict",
+    "_BREAKING_KINDS",
+    "_COMPATIBLE_KINDS",
+    "_SOURCE_BREAK_KINDS",
+    "Change",
+    "DiffResult",
+    "compare",
+]
 
 
 @dataclass
