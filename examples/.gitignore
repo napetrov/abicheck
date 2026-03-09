@@ -1,0 +1,10 @@
+*.so
+*.so.*
+app
+app_*
+test_*
+check_*
+libv*.so
+libbuf.so
+libext.so
+libfoo.so
