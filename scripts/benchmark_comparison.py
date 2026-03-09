@@ -348,7 +348,8 @@ def run_abicheck_compat(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path 
         verdict = "SOURCE_BREAK"
     elif r.returncode == 0:
         # distinguish NO_CHANGE from COMPATIBLE by output
-        if "no changes" in out.lower() or "identical" in out.lower():
+        # abicheck compat prints "Verdict: NO_CHANGE" or "Verdict: COMPATIBLE"
+        if "verdict: no_change" in out.lower() or "no changes" in out.lower() or "identical" in out.lower():
             verdict = "NO_CHANGE"
         else:
             verdict = "COMPATIBLE"
@@ -369,7 +370,10 @@ def run_abidiff(v1_so: Path, v2_so: Path, case: str, rdir: Path,
 
     cmd = ["abidiff"]
     if headers_dir:
-        cmd += ["--headers-dir1", headers_dir, "--headers-dir2", headers_dir]
+        if isinstance(headers_dir, (list, tuple)) and len(headers_dir) == 2:
+            cmd += ["--headers-dir1", str(headers_dir[0]), "--headers-dir2", str(headers_dir[1])]
+        else:
+            cmd += ["--headers-dir1", str(headers_dir), "--headers-dir2", str(headers_dir)]
     cmd += [str(v1_so), str(v2_so)]
 
     try:
@@ -593,6 +597,11 @@ def main() -> None:
 
         if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
             print(f"  {name:<35} COMPILE_ERR")
+            results.append({"case": name, "expected": expected,
+                             "expected_compat": EXPECTED_COMPAT.get(name, expected),
+                             "abicheck": "ERROR", "abicheck_compat": "ERROR",
+                             "abidiff": "ERROR", "abidiff_headers": "ERROR",
+                             "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
             continue
 
         # Generate fallback headers
@@ -607,7 +616,10 @@ def main() -> None:
         acc = run_abicheck_compat(v1_so, v2_so, v1_h, v2_h, name, rdir) if use_compat else ToolResult(verdict="SKIP")
         ab  = run_abidiff(v1_so, v2_so, name, rdir)
 
-        headers_dir = _resolve_headers_dir(case_dir, v1_h or Path("/nonexistent"), v2_h or Path("/nonexistent"))
+        if v1_h and v1_h.exists() and v2_h and v2_h.exists() and v1_h.parent != v2_h.parent:
+            headers_dir = (str(v1_h.parent), str(v2_h.parent))
+        else:
+            headers_dir = _resolve_headers_dir(case_dir, v1_h or Path("/nonexistent"), v2_h or Path("/nonexistent"))
         ab_hdr = run_abidiff(v1_so, v2_so, name, rdir, headers_dir=headers_dir, suffix="_headers")
 
         abicc_d = (run_abicc_dumper(v1_so, v2_so, v1_h, v2_h, name, rdir, timeout=args.abicc_timeout)
