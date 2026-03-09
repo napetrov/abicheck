@@ -15,17 +15,13 @@ from __future__ import annotations
 import shutil
 import subprocess
 import textwrap
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
-from defusedxml import defuse_stdlib
+from defusedxml.ElementTree import fromstring as xml_fromstring
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
 from abicheck.xml_report import generate_xml_report
-
-# Patch stdlib XML parsers to use defusedxml (addresses CodeFactor B314)
-defuse_stdlib()
 
 # ---------------------------------------------------------------------------
 # Schema validation (unit-level, always runs)
@@ -61,7 +57,7 @@ class TestXmlSchemaValidation:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, lib_name="libfoo", old_symbol_count=10)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
 
         # abi-tracker expects these paths to be navigable:
         binary = root.find("report[@kind='binary']")
@@ -102,14 +98,14 @@ class TestXmlSchemaValidation:
     def test_source_report_present(self):
         result = _make_result()
         xml = generate_xml_report(result, lib_name="libfoo")
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         source = root.find("report[@kind='source']")
         assert source is not None
 
     def test_version_attribute(self):
         result = _make_result()
         xml = generate_xml_report(result, lib_name="libfoo")
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         for report in root.findall("report"):
             assert report.get("version") == "1.2"
 
@@ -121,7 +117,7 @@ class TestXmlSchemaValidation:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, old_symbol_count=5)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         prob = root.find(".//problem[@id='type_size_changed']")
         assert prob is not None
         assert prob.find("effect") is not None
@@ -218,7 +214,7 @@ class TestXmlCrossToolParity:
         )
 
         # Parse both
-        abicheck_root = ET.fromstring(abicheck_xml_str)
+        abicheck_root = xml_fromstring(abicheck_xml_str)
 
         # Both should have binary report with verdict "incompatible"
         ac_binary = abicheck_root.find("report[@kind='binary']")
@@ -236,10 +232,10 @@ class TestXmlCrossToolParity:
         if abicc_xml.exists() and abicc_xml.stat().st_size > 0:
             abicc_content = abicc_xml.read_text(encoding="utf-8")
             try:
-                abicc_root = ET.fromstring(abicc_content)
-            except ET.ParseError:
+                abicc_root = xml_fromstring(abicc_content)
+            except Exception:  # ParseError from xml parsing
                 # ABICC may wrap in <reports> or not
-                abicc_root = ET.fromstring(f"<wrapper>{abicc_content}</wrapper>")
+                abicc_root = xml_fromstring(f"<wrapper>{abicc_content}</wrapper>")
 
             # Find ABICC's binary report
             cc_binary = (
@@ -285,7 +281,7 @@ class TestXmlCrossToolParity:
             old_symbol_count=1,
         )
 
-        root = ET.fromstring(xml_str)
+        root = xml_fromstring(xml_str)
         binary = root.find("report[@kind='binary']")
         assert binary.find("test_results/verdict").text == "compatible"
         assert binary.find("problem_summary/removed_symbols").text == "0"

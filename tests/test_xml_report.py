@@ -19,16 +19,12 @@ Real ABICC XML structure:
 """
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from defusedxml import defuse_stdlib
+from defusedxml.ElementTree import fromstring as xml_fromstring
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
 from abicheck.xml_report import generate_xml_report, write_xml_report
-
-# Patch stdlib XML parsers to use defusedxml (addresses CodeFactor B314)
-defuse_stdlib()
 
 
 def _make_result(
@@ -50,13 +46,13 @@ class TestXmlReportStructure:
     def test_root_element_is_reports(self):
         result = _make_result()
         xml = generate_xml_report(result, lib_name="libfoo")
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         assert root.tag == "reports"
 
     def test_has_binary_and_source_report_elements(self):
         result = _make_result()
         xml = generate_xml_report(result, lib_name="libfoo")
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         reports = root.findall("report")
         assert len(reports) == 2
         kinds = {r.get("kind") for r in reports}
@@ -65,7 +61,7 @@ class TestXmlReportStructure:
     def test_report_version_attribute(self):
         result = _make_result()
         xml = generate_xml_report(result, lib_name="libfoo")
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         for report in root.findall("report"):
             assert report.get("version") == "1.2"
 
@@ -73,7 +69,7 @@ class TestXmlReportStructure:
         result = _make_result()
         xml = generate_xml_report(result, lib_name="libfoo",
                                   old_version="1.0", new_version="2.0")
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         test_info = binary.find("test_info")
         assert test_info is not None
@@ -84,7 +80,7 @@ class TestXmlReportStructure:
     def test_test_results_section(self):
         result = _make_result()
         xml = generate_xml_report(result, lib_name="libfoo")
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         test_results = binary.find("test_results")
         assert test_results is not None
@@ -95,7 +91,7 @@ class TestXmlReportStructure:
     def test_problem_summary_section(self):
         result = _make_result()
         xml = generate_xml_report(result, lib_name="libfoo")
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         summary = binary.find("problem_summary")
         assert summary is not None
@@ -108,7 +104,7 @@ class TestXmlReportStructure:
         """ABICC classifies problems into High/Medium/Low/Safe tiers."""
         result = _make_result()
         xml = generate_xml_report(result, lib_name="libfoo")
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         summary = root.find("report[@kind='binary']/problem_summary")
         types = summary.find("problems_with_types")
         for sev in ("high", "medium", "low", "safe"):
@@ -124,7 +120,7 @@ class TestXmlReportStructure:
     def test_arch_in_test_info(self):
         result = _make_result()
         xml = generate_xml_report(result, lib_name="libfoo", arch="x86_64")
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         assert binary.find("test_info/version1/arch").text == "x86_64"
         assert binary.find("test_info/version2/arch").text == "x86_64"
@@ -132,14 +128,14 @@ class TestXmlReportStructure:
     def test_gcc_in_test_info(self):
         result = _make_result()
         xml = generate_xml_report(result, lib_name="libfoo", compiler="12.2.0")
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         assert binary.find("test_info/version1/gcc").text == "12.2.0"
 
     def test_no_arch_when_empty(self):
         result = _make_result()
         xml = generate_xml_report(result, lib_name="libfoo")
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         assert binary.find("test_info/version1/arch") is None
 
@@ -150,7 +146,7 @@ class TestXmlReportCounts:
     def test_no_changes_compatible_verdict(self):
         result = _make_result(verdict=Verdict.NO_CHANGE)
         xml = generate_xml_report(result, old_symbol_count=10)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         assert binary.find("test_results/verdict").text == "compatible"
         summary = binary.find("problem_summary")
@@ -164,7 +160,7 @@ class TestXmlReportCounts:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, old_symbol_count=10)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         assert binary.find("test_results/verdict").text == "incompatible"
         assert binary.find("problem_summary/removed_symbols").text == "1"
@@ -176,7 +172,7 @@ class TestXmlReportCounts:
         ]
         result = _make_result(changes=changes, verdict=Verdict.COMPATIBLE)
         xml = generate_xml_report(result)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         assert binary.find("test_results/verdict").text == "compatible"
         assert binary.find("problem_summary/added_symbols").text == "1"
@@ -188,7 +184,7 @@ class TestXmlReportCounts:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, old_symbol_count=5)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         summary = root.find("report[@kind='binary']/problem_summary")
         types = summary.find("problems_with_types")
         # TYPE_SIZE_CHANGED is High severity
@@ -202,7 +198,7 @@ class TestXmlReportCounts:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, old_symbol_count=10)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         summary = root.find("report[@kind='binary']/problem_summary")
         syms = summary.find("problems_with_symbols")
         assert syms.find("medium").text == "1"
@@ -216,7 +212,7 @@ class TestXmlReportCounts:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, old_symbol_count=10)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         # Source section excludes SONAME_CHANGED (binary-only)
         source = root.find("report[@kind='source']")
         source_summary = source.find("problem_summary")
@@ -235,7 +231,7 @@ class TestXmlReportDetailSections:
         ]
         result = _make_result(changes=changes, verdict=Verdict.COMPATIBLE)
         xml = generate_xml_report(result)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         added = binary.find("added_symbols")
         assert added is not None
@@ -249,7 +245,7 @@ class TestXmlReportDetailSections:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         removed = binary.find("removed_symbols")
         assert removed is not None
@@ -264,7 +260,7 @@ class TestXmlReportDetailSections:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, old_symbol_count=5)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         # Should have <problems_with_types severity="High"> detail section
         type_probs = binary.findall("problems_with_types[@severity='High']")
@@ -286,7 +282,7 @@ class TestXmlReportDetailSections:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, old_symbol_count=10)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         sym_probs = binary.findall("problems_with_symbols[@severity='Medium']")
         assert len(sym_probs) == 1
@@ -300,7 +296,7 @@ class TestXmlReportDetailSections:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, old_symbol_count=5)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         prob = binary.find(".//problem[@id='type_size_changed']")
         assert prob is not None
@@ -317,7 +313,7 @@ class TestXmlReportDetailSections:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, old_symbol_count=5)
-        root = ET.fromstring(xml)  # noqa: S314
+        root = xml_fromstring(xml)  # noqa: S314
         binary = root.find("report[@kind='binary']")
         # Symbol should be in <removed_symbols> detail section
         removed_detail = binary.find("removed_symbols")
@@ -334,7 +330,7 @@ class TestXmlReportDetailSections:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, old_symbol_count=5)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         prob = root.find(".//problem[@id='func_return_changed']")
         assert prob is not None
         assert prob.find("overcome") is None
@@ -342,7 +338,7 @@ class TestXmlReportDetailSections:
     def test_no_detail_sections_when_no_changes(self):
         result = _make_result()
         xml = generate_xml_report(result)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         # No detail sections should be present
         assert binary.find("added_symbols") is None
@@ -361,7 +357,7 @@ class TestXmlReportParsability:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, lib_name="libfoo", old_symbol_count=10)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         # Navigate like abi-tracker: report[@kind='binary']/test_results/verdict
         binary = root.find("report[@kind='binary']")
         verdict = binary.find("test_results/verdict").text
@@ -377,7 +373,7 @@ class TestXmlReportParsability:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, old_symbol_count=10)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         summary = root.find("report[@kind='binary']/problem_summary")
         removed = int(summary.find("removed_symbols").text)
         assert removed == 1
@@ -397,7 +393,7 @@ class TestXmlReportParsability:
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, lib_name="libfoo", old_symbol_count=20)
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         binary = root.find("report[@kind='binary']")
         summary = binary.find("problem_summary")
 
@@ -416,7 +412,7 @@ class TestWriteXmlReport:
         write_xml_report(result, out, lib_name="libfoo")
         assert out.exists()
         content = out.read_text()
-        root = ET.fromstring(content)
+        root = xml_fromstring(content)
         assert root.tag == "reports"
 
     def test_creates_parent_dirs(self, tmp_path: Path):

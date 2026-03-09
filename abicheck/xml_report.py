@@ -272,6 +272,64 @@ def _add_problem_element(parent: ET.Element, change: object) -> None:
         overcome_el.text = "Recompile the client application against the new library version."
 
 
+def _build_version_element(
+    parent: ET.Element, tag: str, version: str, arch: str, compiler: str,
+) -> None:
+    """Build a <version1> or <version2> sub-element with optional arch/gcc."""
+    vel = ET.SubElement(parent, tag)
+    num = ET.SubElement(vel, "number")
+    num.text = version or ("old" if tag == "version1" else "new")
+    if arch:
+        a = ET.SubElement(vel, "arch")
+        a.text = arch
+    if compiler:
+        g = ET.SubElement(vel, "gcc")
+        g.text = compiler
+
+
+def _build_symbol_list(
+    parent: ET.Element, tag: str, changes: list[object], kind_set: frozenset[str],
+) -> None:
+    """Build <added_symbols> or <removed_symbols> detail section."""
+    matched = [c for c in changes if _kind_str(c) in kind_set]
+    if matched:
+        detail = ET.SubElement(parent, tag)
+        for c in matched:
+            sym = ET.SubElement(detail, "name")
+            sym.text = getattr(c, "symbol", "") or ""
+
+
+def _build_problem_details(parent: ET.Element, changes: list[object]) -> None:
+    """Build severity-tiered <problems_with_types/symbols> detail sections."""
+    problem_changes = [
+        c for c in changes
+        if _is_breaking(c) and _kind_str(c) not in _REMOVED_KINDS
+    ]
+
+    for sev_label, sev_key in [("High", "high"), ("Medium", "medium"), ("Low", "low")]:
+        sev_changes = [c for c in problem_changes if _severity(_kind_str(c)) == sev_key]
+        if not sev_changes:
+            continue
+
+        type_changes = [c for c in sev_changes if _is_type_problem(_kind_str(c))]
+        if type_changes:
+            types_detail = ET.SubElement(parent, "problems_with_types")
+            types_detail.set("severity", sev_label)
+            for c in type_changes:
+                type_el = ET.SubElement(types_detail, "type")
+                type_el.set("name", getattr(c, "symbol", "") or "")
+                _add_problem_element(type_el, c)
+
+        sym_changes = [c for c in sev_changes if not _is_type_problem(_kind_str(c))]
+        if sym_changes:
+            syms_detail = ET.SubElement(parent, "problems_with_symbols")
+            syms_detail.set("severity", sev_label)
+            for c in sym_changes:
+                sym_el = ET.SubElement(syms_detail, "symbol")
+                sym_el.set("name", getattr(c, "symbol", "") or "")
+                _add_problem_element(sym_el, c)
+
+
 def _build_report_element(
     kind: str,
     data: dict[str, Any],
@@ -290,24 +348,8 @@ def _build_report_element(
     test_info = ET.SubElement(report, "test_info")
     lib_el = ET.SubElement(test_info, "library")
     lib_el.text = lib_name or "unknown"
-    v1_el = ET.SubElement(test_info, "version1")
-    v1_num = ET.SubElement(v1_el, "number")
-    v1_num.text = old_version or "old"
-    if arch:
-        v1_arch = ET.SubElement(v1_el, "arch")
-        v1_arch.text = arch
-    if compiler:
-        v1_gcc = ET.SubElement(v1_el, "gcc")
-        v1_gcc.text = compiler
-    v2_el = ET.SubElement(test_info, "version2")
-    v2_num = ET.SubElement(v2_el, "number")
-    v2_num.text = new_version or "new"
-    if arch:
-        v2_arch = ET.SubElement(v2_el, "arch")
-        v2_arch.text = arch
-    if compiler:
-        v2_gcc = ET.SubElement(v2_el, "gcc")
-        v2_gcc.text = compiler
+    _build_version_element(test_info, "version1", old_version, arch, compiler)
+    _build_version_element(test_info, "version2", new_version, arch, compiler)
 
     # <test_results>
     test_results = ET.SubElement(report, "test_results")
@@ -338,50 +380,10 @@ def _build_report_element(
         s = ET.SubElement(symbols_problems_el, sev)
         s.text = str(sp[sev])
 
-    # <added_symbols> detail section
-    added_changes = [c for c in data["changes"] if _kind_str(c) in _ADDED_KINDS]
-    if added_changes:
-        added_detail = ET.SubElement(report, "added_symbols")
-        for c in added_changes:
-            sym = ET.SubElement(added_detail, "name")
-            sym.text = getattr(c, "symbol", "") or ""
-
-    # <removed_symbols> detail section
-    removed_changes = [c for c in data["changes"] if _kind_str(c) in _REMOVED_KINDS]
-    if removed_changes:
-        removed_detail = ET.SubElement(report, "removed_symbols")
-        for c in removed_changes:
-            sym = ET.SubElement(removed_detail, "name")
-            sym.text = getattr(c, "symbol", "") or ""
-
-    # <problems_with_types severity="High|Medium|Low"> detail sections
-    problem_changes = [
-        c for c in data["changes"]
-        if _is_breaking(c) and _kind_str(c) not in _REMOVED_KINDS
-    ]
-
-    for sev_label, sev_key in [("High", "high"), ("Medium", "medium"), ("Low", "low")]:
-        sev_changes = [c for c in problem_changes if _severity(_kind_str(c)) == sev_key]
-        if not sev_changes:
-            continue
-
-        type_changes = [c for c in sev_changes if _is_type_problem(_kind_str(c))]
-        if type_changes:
-            types_detail = ET.SubElement(report, "problems_with_types")
-            types_detail.set("severity", sev_label)
-            for c in type_changes:
-                type_el = ET.SubElement(types_detail, "type")
-                type_el.set("name", getattr(c, "symbol", "") or "")
-                _add_problem_element(type_el, c)
-
-        sym_changes = [c for c in sev_changes if not _is_type_problem(_kind_str(c))]
-        if sym_changes:
-            syms_detail = ET.SubElement(report, "problems_with_symbols")
-            syms_detail.set("severity", sev_label)
-            for c in sym_changes:
-                sym_el = ET.SubElement(syms_detail, "symbol")
-                sym_el.set("name", getattr(c, "symbol", "") or "")
-                _add_problem_element(sym_el, c)
+    # Detail sections
+    _build_symbol_list(report, "added_symbols", data["changes"], _ADDED_KINDS)
+    _build_symbol_list(report, "removed_symbols", data["changes"], _REMOVED_KINDS)
+    _build_problem_details(report, data["changes"])
 
     return report
 
