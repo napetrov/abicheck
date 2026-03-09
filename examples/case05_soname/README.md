@@ -1,6 +1,6 @@
 # Case 05: Missing SONAME
 
-**Category:** ELF/Linker | **Verdict:** 🟡 INFORMATIONAL
+**Category:** ELF/Linker | **Verdict:** 🟡 BAD PRACTICE
 
 ## What breaks
 Without a SONAME, the dynamic linker records the bare filename (`libfoo.so`) in
@@ -33,3 +33,40 @@ for system installation.
 ## Real-world example
 Many in-tree/vendored libraries built with simple `Makefile`s omit SONAME. Debian
 packaging policy enforces SONAME presence and will reject packages without it.
+
+## Real Failure Demo
+
+**Severity: BAD PRACTICE**
+
+**Scenario:** build `app` against bad.so (no SONAME) vs good.so (with SONAME). Runtime works either way — the issue is packaging and future versioning.
+
+```bash
+# Build both variants
+gcc -shared -fPIC -g bad.c  -o libbad.so
+gcc -shared -fPIC -g good.c -o libgood.so -Wl,-soname,libfoo.so.1
+
+# Check SONAME presence
+readelf -d libgood.so | grep SONAME   # → (SONAME) Library soname: [libfoo.so.1]
+readelf -d libbad.so  | grep SONAME   # → (empty — no SONAME)
+
+# Build bad variant (no SONAME)
+cp libbad.so libfoo.so
+gcc -g app.c -L. -Wl,-rpath,. -lfoo -o app-bad
+./app-bad
+# → foo() = 0   (works at runtime)
+readelf -d app-bad | grep NEEDED
+# → (NEEDED) Shared library: [libfoo.so]  ← bare filename, no SONAME
+
+# Build good variant (with SONAME) for comparison
+cp libgood.so libfoo.so
+gcc -g app.c -L. -Wl,-rpath,. -lfoo -o app-good
+readelf -d app-good | grep NEEDED
+# → (NEEDED) Shared library: [libfoo.so.1]  ← SONAME baked in
+#
+# Without SONAME, ldconfig cannot create the libfoo.so.1 symlink.
+# Any binary linked against libbad.so will look for "libfoo.so" forever.
+```
+
+**Why BAD PRACTICE:** The runtime works, but without a SONAME the dynamic linker
+embeds the bare filename in DT_NEEDED. If you later ship `libfoo.so.1`, existing
+binaries won't find it and packaging tools (ldconfig, dpkg) can't manage the symlink tree.

@@ -18,3 +18,7 @@ void Buffer::reset() noexcept {
     for (int i = 0; i < size_; ++i)
         data_[i] = 0;
 }
+
+extern "C" Buffer* make_buf()        { return new Buffer(); }
+extern "C" void    reset_buf(Buffer* b) { b->reset(); }
+extern "C" void    free_buf(Buffer* b)  { delete b; }

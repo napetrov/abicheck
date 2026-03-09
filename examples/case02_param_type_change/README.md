@@ -22,6 +22,30 @@ with exit **4**.
 |------|------|
 | `double process(int a, int b)` | `double process(double a, int b)` |
 
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** compile app against v1, swap in v2 `.so` without recompile.
+
+```bash
+# Build old library + app
+gcc -shared -fPIC -g v1.c -o libfoo.so
+gcc -g app.c -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → process(3, 4) = 7.0
+# → Expected: 7.0
+
+# Swap in new library (no recompile)
+gcc -shared -fPIC -g v2.c -o libfoo.so
+./app
+# → process(3, 4) = <garbage> (3 misread as double, wrong FP register)
+```
+
+**Why CRITICAL:** v2 expects `double a` in an FP register while the app passes an `int`
+in an integer register; the argument is silently misinterpreted, producing wrong output
+with no error or crash.
+
 ## Reproduce manually
 ```bash
 gcc -shared -fPIC -g v1.c -o libfoo_v1.so

@@ -79,3 +79,31 @@ abidiff v1.xml v2.xml || true
 abi-compliance-checker -lib fast_hash -v1 1.0 -v2 2.0 \
   -header v1.hpp -header v2.hpp
 ```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario B — linker error:** compile app with v2.hpp (no inline), link against v1.so (no symbol).
+
+```bash
+# Build v1.so (fast_hash is inline — NOT in .so)
+g++ -shared -fPIC -std=c++17 -g v1.cpp -o libhash.so
+
+# Compile app with v2.hpp (declaration only, expects symbol in .so)
+g++ -std=c++17 -g app.cpp -I. -L. -lhash -Wl,-rpath,. -o app
+# → /usr/bin/ld: app.cpp:(.text+0x...): undefined reference to 'fast_hash(int)'
+# → collect2: error: ld returned 1 exit status
+
+# Only works when linking against v2.so (has the symbol)
+g++ -shared -fPIC -std=c++17 -g v2.cpp -o libhash.so
+g++ -std=c++17 -g app.cpp -I. -L. -lhash -Wl,-rpath,. -o app  # links OK
+./app
+# → fast_hash(42) = ...
+```
+
+**Why CRITICAL:** Existing binaries compiled against v1 (inline) are unaffected —
+they have the inline body baked in. The break hits **new consumers**: any code compiled
+against v2.hpp (declaration only) that links against v1.so gets a hard linker error
+because the symbol doesn't exist in v1.so. This forces a coordinated upgrade:
+v2.hpp and v2.so must ship together.

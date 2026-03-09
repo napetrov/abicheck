@@ -1,6 +1,6 @@
 # Case 06: Symbol Visibility Leak
 
-**Category:** Visibility | **Verdict:** 🟡 INFORMATIONAL
+**Category:** Visibility | **Verdict:** 🟡 BAD PRACTICE
 
 ## What breaks
 Every symbol compiled without `-fvisibility=hidden` becomes part of the public ABI
@@ -40,3 +40,26 @@ to keep it readable.
 Qt and most large C++ frameworks gate their public API with `Q_DECL_EXPORT` macros
 precisely to avoid this. GCC's `-fvisibility=hidden` is their standard practice
 since Qt 4.
+
+## Real Failure Demo
+
+**Severity: BAD PRACTICE**
+
+**Scenario:** compare dlsym access to `internal_helper` on bad.so vs good.so.
+
+```bash
+# Build both variants
+gcc -shared -fPIC -g bad.c  -o libbad.so
+gcc -shared -fPIC -fvisibility=hidden -g good.c -o libgood.so
+
+# Run the app
+gcc -g app.c -ldl -o app
+./app
+# → bad.so:  internal_helper EXPORTED (leak!)
+# → good.so: internal_helper hidden (correct)
+```
+
+**Why BAD PRACTICE:** The library functions correctly, but exposing internal symbols
+accidentally enlarges the public ABI contract. Any future refactor of `internal_helper`
+becomes an ABI break — you can't remove or rename it without breaking binaries that
+inadvertently started calling it directly.

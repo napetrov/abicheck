@@ -57,3 +57,27 @@ abicheck classifies this as **COMPATIBLE** because:
 +    return has_avx() ? (void*)dispatch_avx : (void*)dispatch_generic;
 +}
 ```
+
+## Real Failure Demo
+
+**Severity: INFORMATIONAL**
+
+**Scenario:** app calls `dispatch(5)`. Both regular function and IFUNC return 10 transparently.
+
+```bash
+# Build old lib (regular function) + app
+gcc -shared -fPIC -g old/lib.c -Iold -o libdispatch.so
+gcc -g app.c -Iold -L. -ldispatch -Wl,-rpath,. -o app
+./app
+# → dispatch(5) = 10 (expected 10)
+
+# Swap in new lib (GNU IFUNC — resolver picks implementation at load time)
+gcc -shared -fPIC -g new/lib.c -Iold -o libdispatch.so
+./app
+# → dispatch(5) = 10 (expected 10)  ← identical result
+```
+
+**Why INFORMATIONAL:** The PLT/GOT mechanism handles IFUNC resolution transparently.
+The caller uses the same call site; the dynamic linker calls the resolver once at
+load time and patches the GOT entry. Only edge cases differ: debugger breakpoints
+may hit the resolver first, and very old `ld.so` versions may not support IFUNC.

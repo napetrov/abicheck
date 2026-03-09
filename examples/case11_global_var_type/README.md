@@ -38,3 +38,26 @@ old one.
 ## Real-world example
 The `errno` global in glibc is deliberately typed as `int` and will never change;
 glibc uses `__thread int errno` internally but the public type is ABI-frozen.
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app reads `lib_version` as `int` (v1 type); v2 declares it `long 5000000000`.
+
+```bash
+# Build v1 + app
+gcc -shared -fPIC -g v1.c -o libfoo.so
+gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → lib_version = 1 (as int)
+
+# Swap in v2
+gcc -shared -fPIC -g v2.c -o libfoo.so
+./app
+# → lib_version = 705032704 (as int) ← wrong (5000000000 truncated to 32 bits)
+# ld.so may also warn: "size of symbol changed"
+```
+
+**Why CRITICAL:** The app accesses only the lower 4 bytes of a now-8-byte symbol.
+On little-endian x86 this reads the low 32 bits — garbage for values above `INT_MAX`.

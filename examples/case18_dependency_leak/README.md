@@ -2,8 +2,8 @@
 
 ## What changes
 
-`libfoo` itself is **source-identical** between v1 and v2.
-The breaking change is in `ThirdPartyHandle`, a type from a third-party library
+`libfoo`'s **exported symbol interface** is identical between v1 and v2 — same function
+names, same signatures. The breaking change is in `ThirdPartyHandle`, a type from a third-party library
 that `libfoo` **exposes in its public header**.
 
 | Version | `ThirdPartyHandle` layout |
@@ -24,7 +24,8 @@ ThirdPartyHandle arr[10];  // caller: 40 bytes total
                             // library: expects 80 bytes (10 × 8)
 ```
 
-**libfoo.so is byte-for-byte identical** in both scenarios. Only the headers changed.
+**libfoo's exported symbol table looks identical** in both scenarios. `nm`, `readelf`,
+and naive `abidiff` see the same function names and signatures. Only the headers changed.
 `nm`, `readelf`, and naive `abidiff` see no difference in the `.so`.
 
 ## Why abidiff may catch it (with DWARF)
@@ -108,3 +109,35 @@ abi-compliance-checker -lib libfoo -v1 1.0 -v2 2.0 \
   -include-path . \
   -gcc-options "-I."
 ```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app allocates `ThirdPartyHandle` with v1 layout (4 bytes), calls `process()` from v2 which reads `h->y` at offset 4 — uninitialized memory.
+
+```bash
+# Build libfoo v1 + app
+gcc -shared -fPIC -g libfoo_v1.c -I. -o libfoo.so
+gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → sizeof(ThirdPartyHandle) = 4
+# → before process: h.x=42  canary=0x5AFE5AFE
+# → process: x=42
+# → after  process: h.x=42  canary=0x5AFE5AFE
+
+# Swap in libfoo v2 (writes to h->y = offset 4, which is canary's location)
+gcc -shared -fPIC -g libfoo_v2.c -I. -o libfoo.so
+./app
+# → sizeof(ThirdPartyHandle) = 4
+# → before process: h.x=42  canary=0x5AFE5AFE
+# → process: x=42
+# → process: wrote y=0xBADC0DE at offset 4
+# → after  process: h.x=42  canary=0x0BADC0DE  ← CORRUPTED by v2!
+# → CORRUPTION: v2 read/wrote past ThirdPartyHandle boundary!
+```
+
+**Why CRITICAL:** The library's exported symbol table looks identical in both scenarios —
+`nm` and `readelf` show the same function names. Yet the v2 library reads 4 bytes past the
+caller's struct allocation because the third-party type it exposes in its public header
+grew silently. Heap corruption or information leakage follows.

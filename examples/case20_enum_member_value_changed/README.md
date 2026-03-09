@@ -43,3 +43,26 @@ if (result == ERROR) { /* ERROR = 1 */ }
 -enum ErrorCode { OK = 0, ERROR = 1 };
 +enum ErrorCode { OK = 0, ERROR = 99 };
 ```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app compiled with old header (`ERROR=1`) checks the return value. v2 library now returns `99` for ERROR — check silently fails.
+
+```bash
+# Build old lib + app
+gcc -shared -fPIC -g old/lib.c -Iold -o liberr.so
+gcc -g app.c -Iold -L. -lerr -Wl,-rpath,. -o app
+./app
+# → Error detected (correct)
+
+# Swap in new lib (ERROR=99)
+gcc -shared -fPIC -g new/lib.c -Inew -o liberr.so
+./app
+# → No error? Got 99 - WRONG! (v2 changed ERROR to 99)
+```
+
+**Why CRITICAL:** Error conditions are silently missed. Code that checks `if (r == ERROR)` 
+never triggers with v2 — the error goes undetected. Any protocol, file format, or 
+IPC using these integer values is broken across version boundaries.

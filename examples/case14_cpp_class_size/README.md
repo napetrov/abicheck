@@ -37,3 +37,37 @@ Use the PIMPL idiom: the public `Buffer` class stores only a pointer to a privat
 Qt's "binary compatibility" rule explicitly forbids changing `sizeof` of any public
 class. Every Qt class that needs to grow uses a `d_ptr` PIMPL to keep the public
 class size constant across minor releases.
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app allocates `Buffer` by value on the stack using v1 layout (64 bytes). With v2 the constructor initializes 128 bytes, corrupting adjacent stack memory.
+
+```bash
+# Build v1 + app (use -O0 so stack layout is predictable)
+g++ -shared -fPIC -g v1.cpp -o libbuf.so
+g++ -g -O0 app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app
+./app
+# → via factory: size() = 64 (expected 64)
+# → canary = CANARY!
+# → after  = AFTER!!
+
+# Swap in v2 (sizeof Buffer = 128, constructor writes 128 bytes)
+g++ -shared -fPIC -g v2.cpp -o libbuf.so
+./app
+# → via factory: size() = 128 (expected 64)
+# → canary = CANARY!
+# → after  =         ← CORRUPTED (v2 constructor overwrote 64 bytes past the stack slot)
+# → CORRUPTION: stack overwritten by v2 constructor!
+
+# With ASAN (stack-by-value scenario):
+g++ -shared -fPIC -g -fsanitize=address v2.cpp -o libbuf.so
+g++ -g -O0 -fsanitize=address app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app_asan
+./app_asan
+# → ERROR: AddressSanitizer: stack-buffer-overflow
+```
+
+**Why CRITICAL:** Old code allocates `Buffer` on the stack expecting 64 bytes. The v2
+constructor initializes 128 bytes — writing 64 bytes past the stack slot, corrupting
+adjacent variables and potentially return addresses.

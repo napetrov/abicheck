@@ -1,0 +1,13 @@
+#include "v1.h"
+#include <cstdio>
+#include <cstring>
+
+extern "C" Widget* make_widget();
+
+int main() {
+    Widget* w = make_widget();
+    std::printf("draw()   = %d (expected 10)\n", w->draw());
+    std::printf("resize() = %d (expected 20)\n", w->resize());
+    delete w;
+    return 0;
+}

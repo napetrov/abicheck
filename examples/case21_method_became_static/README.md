@@ -11,17 +11,21 @@
 
 ## What breaks at binary level
 
-In the Itanium C++ ABI, static and instance methods have different calling conventions.
-An instance method receives an implicit `this` pointer as the first argument; a static
-method does not. Changing a method from instance to static (or vice versa) changes:
+In the Itanium C++ ABI, **`static`-ness is NOT encoded in the mangled symbol name** —
+only explicit parameters are. `Widget::bar()` and `static Widget::bar()` both mangle
+to `_ZN6Widget3barEv`. The linker resolves the same symbol in both cases.
 
-1. **The mangled symbol name** — callers compiled against v1 look up one symbol; v2
-   exports a different one.
-2. **The calling convention** — even if the symbol somehow resolved, the argument
-   positions in registers/stack would be wrong.
+The break is a **calling convention mismatch**:
+- Instance method: caller passes implicit `this` pointer in `%rdi` (first register argument).
+- Static method: no `this` expected — `%rdi` holds the first explicit argument (none here) or is ignored.
 
-This is a **hard ABI break**: existing binaries fail to bind or invoke the function
-correctly.
+Existing binaries compiled against v1 still link successfully against v2 (same symbol name).
+However, they pass a garbage `this` value in `%rdi` to a function that doesn't expect it.
+For a void no-arg method like `bar()`, the function simply ignores `%rdi` — resulting in
+**silent success** rather than a crash. The UB is real but may be invisible without UBSAN.
+
+This is a **source-level ABI break**: the calling convention is wrong, and any method that
+reads `this` through the implicit parameter would behave incorrectly.
 
 ## Consumer impact
 
@@ -49,3 +53,38 @@ w.bar();  /* emits call with implicit 'this' pointer */
 +    static void bar();
  };
 ```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app compiled against old header (instance `bar()`) links against new lib where `bar()` is static. The symbol resolves (same mangled name), but `this` is passed as a garbage argument in `%rdi`.
+
+```bash
+# Build old lib + app
+g++ -shared -fPIC -g old/lib.cpp -Iold -o libwidget.so
+g++ -g app.cpp -Iold -L. -lwidget -Wl,-rpath,. -o app
+./app
+# → bar() called (instance method)
+
+# Swap in new lib (static bar() — same symbol name _ZN6Widget3barEv)
+g++ -shared -fPIC -g new/lib.cpp -Inew -o libwidget.so
+./app
+# → bar() called (static method)  ← links and runs, but with UB
+# (this pointer passed in %rdi is ignored by static bar(); any method
+#  that uses 'this' internals would read garbage or crash)
+
+# Detect with UBSan (note: for void no-arg bar(), UBSan may be silent since
+# the function doesn't dereference 'this'; use a method that accesses members):
+g++ -shared -fPIC -g -fsanitize=undefined new/lib.cpp -Inew -o libwidget.so
+g++ -g -fsanitize=undefined app.cpp -Iold -L. -lwidget -Wl,-rpath,. -o app_ub
+./app_ub
+# → bar() called (static method)  ← may be silent for void no-arg methods
+# For methods that access 'this->member', UBSan reports:
+# → runtime error: member call on address ... which does not point to an object
+```
+
+**Why CRITICAL:** The `static`-ness change does NOT change the mangled name (Itanium C++ ABI
+does not encode static-ness). The binary links and appears to run. However, the calling
+convention is wrong — old callers pass `this` in `%rdi` which the new static function ignores.
+For methods that access member state through `this`, this is silent memory corruption.
