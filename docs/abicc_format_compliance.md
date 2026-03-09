@@ -327,5 +327,5 @@ detail sections.
 
 **Safe for drop-in replacement when:**
 - CI pipelines check exit codes only → YES (since v1)
-- Infrastructure parses XML reports → YES (now implemented)
+- Infrastructure parses XML reports → PARTIALLY (basic consumers OK; lacks `<header>`/`<library>` grouping, `<problems_with_constants>`, per-type `<affected>` elements)
 - Harnesses scrape HTML DOM → NO (HTML IDs differ, needs `-old-style`)
