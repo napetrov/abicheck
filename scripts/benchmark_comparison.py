@@ -54,17 +54,17 @@ EXPECTED: dict[str, str] = {
     "case02_param_type_change":       "BREAKING",
     "case03_compat_addition":         "COMPATIBLE",
     "case04_no_change":               "NO_CHANGE",
-    "case05_soname":                  "BREAKING",
-    "case06_visibility":              "BREAKING",
+    "case05_soname":                  "BREAKING",    # KNOWN GAP: abicheck doesn't detect missing SONAME (ELF DT_SONAME absent)
+    "case06_visibility":              "BREAKING",    # KNOWN GAP: needs -fvisibility=hidden at compile time; benchmark builds with -fvisibility=default
     "case07_struct_layout":           "BREAKING",
     "case08_enum_value_change":       "BREAKING",
     "case09_cpp_vtable":              "BREAKING",
     "case10_return_type":             "BREAKING",
     "case11_global_var_type":         "BREAKING",
     "case12_function_removed":        "BREAKING",
-    "case13_symbol_versioning":       "BREAKING",
+    "case13_symbol_versioning":       "BREAKING",    # KNOWN GAP: abicheck doesn't detect missing version script (ELF symbol versioning)
     "case14_cpp_class_size":          "BREAKING",
-    "case15_noexcept_change":         "COMPATIBLE",
+    "case15_noexcept_change":         "BREAKING",   # v2.cpp adds throw → pulls GLIBCXX_3.4.21 → SYMBOL_VERSION_REQUIRED_ADDED
     "case16_inline_to_non_inline":    "COMPATIBLE",
     "case17_template_abi":            "BREAKING",
     "case18_dependency_leak":         "BREAKING",
@@ -75,7 +75,7 @@ EXPECTED: dict[str, str] = {
     "case23_pure_virtual_added":      "BREAKING",
     "case24_union_field_removed":     "BREAKING",
     "case25_enum_member_added":       "COMPATIBLE",
-    "case26_union_field_added":       "COMPATIBLE",
+    "case26_union_field_added":       "BREAKING",    # double d makes sizeof(Value) grow 4→8 bytes: TYPE_SIZE_CHANGED
     "case27_symbol_binding_weakened": "COMPATIBLE",
     "case29_ifunc_transition":        "COMPATIBLE",
     # ── cases 28, 30-41 (Sprint 7 — new detectors) ──────────────────────────
@@ -84,7 +84,7 @@ EXPECTED: dict[str, str] = {
     "case31_enum_rename":             "BREAKING",    # ENUM_MEMBER_REMOVED/RENAMED
     "case32_param_defaults":          "NO_CHANGE",   # default value change — source-only, binary NO_CHANGE
     "case33_pointer_level":           "BREAKING",    # PARAM_POINTER_LEVEL_CHANGED
-    "case34_access_level":            "NO_CHANGE",   # access level change — source-only, binary NO_CHANGE
+    "case34_access_level":            "SOURCE_BREAK",  # access level is source-only; binary layout unchanged → SOURCE_BREAK with headers
     "case35_field_rename":            "BREAKING",    # STRUCT_FIELD_REMOVED (rename = remove+add)
     "case36_anon_struct":             "BREAKING",    # ANON_FIELD_CHANGED / TYPE_SIZE_CHANGED
     "case37_base_class":              "BREAKING",    # BASE_CLASS_POSITION_CHANGED
@@ -249,19 +249,23 @@ def run_abicheck(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
     try:
         data = json.loads(r.stdout)
         raw_v = data.get("verdict", "").upper()
-        if raw_v == "BREAKING":
+        if raw_v in ("BREAKING",):
             verdict = "BREAKING"
-        elif raw_v in ("COMPATIBLE", "SOURCE_BREAK"):
+        elif raw_v == "SOURCE_BREAK":
+            verdict = "SOURCE_BREAK"
+        elif raw_v == "COMPATIBLE":
             verdict = "COMPATIBLE"
         elif raw_v == "NO_CHANGE":
             verdict = "NO_CHANGE"
         else:
             verdict = "ERROR"
     except (json.JSONDecodeError, AttributeError):
-        # Fallback: exit code mapping
+        # Fallback: exit code mapping (4=BREAKING, 2=SOURCE_BREAK, 1=COMPATIBLE, 0=NO_CHANGE)
         if r.returncode == 4:
             verdict = "BREAKING"
-        elif r.returncode in (1, 2):
+        elif r.returncode == 2:
+            verdict = "SOURCE_BREAK"
+        elif r.returncode == 1:
             verdict = "COMPATIBLE"
         elif r.returncode == 0:
             verdict = "NO_CHANGE"
@@ -468,12 +472,13 @@ def run_abicc_dumper(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | N
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 _COLORS = {
-    "BREAKING":   "\033[91m",
-    "COMPATIBLE": "\033[93m",
-    "NO_CHANGE":  "\033[92m",
-    "ERROR":      "\033[95m",
-    "SKIP":       "\033[90m",
-    "TIMEOUT":    "\033[95m",
+    "BREAKING":     "\033[91m",
+    "SOURCE_BREAK": "\033[94m",  # blue — source-only, binary-safe
+    "COMPATIBLE":   "\033[93m",
+    "NO_CHANGE":    "\033[92m",
+    "ERROR":        "\033[95m",
+    "SKIP":         "\033[90m",
+    "TIMEOUT":      "\033[95m",
 }
 _RESET = "\033[0m"
 
@@ -493,8 +498,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Benchmark abicheck vs abidiff vs ABICC")
     p.add_argument("--abicc-timeout", type=int, default=DEFAULT_ABICC_TIMEOUT,
                    help=f"Timeout per ABICC call (default: {DEFAULT_ABICC_TIMEOUT}s)")
-    p.add_argument("--abicc-mode", choices=["xml", "dumper", "both"], default="xml",
-                   help="ABICC mode: xml / dumper / both (default: xml)")
+    p.add_argument("--abicc-mode", choices=["xml", "dumper", "both"], default="both",
+                   help="ABICC mode: xml (legacy XML descriptor), dumper (abi-dumper workflow), or both (default: both)")
     p.add_argument("--skip-abicc", action="store_true",
                    help="Skip ABICC entirely")
     p.add_argument("--skip-compat", action="store_true",
