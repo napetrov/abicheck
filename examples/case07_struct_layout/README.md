@@ -46,9 +46,9 @@ kernel API headers expose only opaque handles; layout is internal.
 **Scenario:** app allocates `Point` with v1 layout (8 bytes), calls `init_point()` from v2 which writes a `z` field at offset 8 — past the allocation.
 
 ```bash
-# Build v1 + app
+# Build v1 + app (use -O0 to ensure predictable stack layout for canary demo)
 gcc -shared -fPIC -g v1.c -o libfoo.so
-gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
+gcc -g -O0 app.c -I. -L. -lfoo -Wl,-rpath,. -o app
 ./app
 # → before: p={0,0} canary=0xDEADBEEF
 # → after:  p={1,2} canary=0xDEADBEEF

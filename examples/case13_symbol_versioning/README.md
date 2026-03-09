@@ -59,10 +59,12 @@ simultaneously.
 gcc -shared -fPIC -g good.c -o libgood.so -Wl,--version-script=libfoo.map
 gcc -shared -fPIC -g bad.c  -o libbad.so
 
-# Runtime works either way
+# Runtime works either way — must copy to libfoo.so before linking
+cp libgood.so libfoo.so
 gcc -g app.c -L. -Wl,-rpath,. -lfoo -o app
-cp libgood.so libfoo.so && ./app  # → foo() = 0  bar() = 1
-cp libbad.so  libfoo.so && ./app  # → foo() = 0  bar() = 1
+./app  # → foo() = 0  bar() = 1
+
+cp libbad.so libfoo.so && ./app  # → foo() = 0  bar() = 1
 
 # The difference shows up in symbol table
 readelf --syms libgood.so | grep foo   # → foo@@LIBFOO_1.0 (versioned)

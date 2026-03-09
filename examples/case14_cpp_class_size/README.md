@@ -42,28 +42,32 @@ class size constant across minor releases.
 
 **Severity: CRITICAL**
 
-**Scenario:** app calls `make_buffer()` and `size()`. With v2, the Buffer internals doubled but the app's vtable dispatch shows the mismatch clearly.
+**Scenario:** app allocates `Buffer` by value on the stack using v1 layout (64 bytes). With v2 the constructor initializes 128 bytes, corrupting adjacent stack memory.
 
 ```bash
-# Build v1 + app
+# Build v1 + app (use -O0 so stack layout is predictable)
 g++ -shared -fPIC -g v1.cpp -o libbuf.so
-g++ -g app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app
+g++ -g -O0 app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app
 ./app
-# → size() = 64 (expected 64, v2 returns 128)
+# → via factory: size() = 64 (expected 64)
+# → canary = CANARY!
+# → after  = AFTER!!
 
-# Swap in v2 (sizeof Buffer = 128)
+# Swap in v2 (sizeof Buffer = 128, constructor writes 128 bytes)
 g++ -shared -fPIC -g v2.cpp -o libbuf.so
 ./app
-# → size() = 128 (expected 64, v2 returns 128)
-# With ASAN: heap-buffer-overflow if app allocates Buffer by value
+# → via factory: size() = 128 (expected 64)
+# → canary = CANARY!
+# → after  =         ← CORRUPTED (v2 constructor overwrote 64 bytes past the stack slot)
+# → CORRUPTION: stack overwritten by v2 constructor!
 
-# Deeper corruption: run with AddressSanitizer
-g++ -g -fsanitize=address app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app_asan
+# With ASAN (stack-by-value scenario):
 g++ -shared -fPIC -g -fsanitize=address v2.cpp -o libbuf.so
+g++ -g -O0 -fsanitize=address app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app_asan
 ./app_asan
-# → ERROR: AddressSanitizer: heap-buffer-overflow
+# → ERROR: AddressSanitizer: stack-buffer-overflow
 ```
 
-**Why CRITICAL:** Old code allocates `new Buffer()` expecting 64 bytes. The v2
-constructor initializes 128 bytes — writing 64 bytes past the allocation. Any binary
-that inherits from or embeds `Buffer` by value is silently corrupted.
+**Why CRITICAL:** Old code allocates `Buffer` on the stack expecting 64 bytes. The v2
+constructor initializes 128 bytes — writing 64 bytes past the stack slot, corrupting
+adjacent variables and potentially return addresses.

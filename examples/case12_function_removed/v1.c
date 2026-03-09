@@ -1,1 +1,2 @@
 int fast_add(int a, int b) { return a + b; }
+int other_func(int x) { return x; }

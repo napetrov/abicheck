@@ -83,9 +83,9 @@ abi-compliance-checker -lib Buffer -v1 1.0 -v2 2.0 \
 **Scenario:** app compiled with v1 layout (Buffer<int> = 16 bytes) runs against v2 constructor that writes 24 bytes → stack overflow.
 
 ```bash
-# Build v1 + app
+# Build v1 + app (use -O0 to ensure predictable stack layout for sentinel demo)
 g++ -shared -fPIC -std=c++17 -g v1.cpp -o libbuf.so
-g++ -std=c++17 -g app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app
+g++ -std=c++17 -g -O0 app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app
 ./app
 # → sentinel_before = AAA
 # → sizeof(Buffer<int>) compiled = 16
