@@ -45,7 +45,7 @@ def test_parse_args_defaults():
     with patch("sys.argv", ["benchmark_comparison.py"]):
         args = mod.parse_args()
     assert args.abicc_timeout == mod.DEFAULT_ABICC_TIMEOUT
-    assert args.abicc_mode == "dumper"
+    assert args.abicc_mode == "both"
     assert not args.skip_abicc
 
 
@@ -68,6 +68,20 @@ def test_parse_args_abicc_mode_xml():
     with patch("sys.argv", ["benchmark_comparison.py", "--abicc-mode", "xml"]):
         args = mod.parse_args()
     assert args.abicc_mode == "xml"
+
+
+def test_parse_args_skip_compat():
+    mod = _load_benchmark()
+    with patch("sys.argv", ["benchmark_comparison.py", "--skip-compat"]):
+        args = mod.parse_args()
+    assert args.skip_compat is True
+
+
+def test_parse_args_skip_compat_default_false():
+    mod = _load_benchmark()
+    with patch("sys.argv", ["benchmark_comparison.py"]):
+        args = mod.parse_args()
+    assert args.skip_compat is False
 
 
 # ── Graceful SKIP when tool not present ──────────────────────────────────────
@@ -105,7 +119,7 @@ def test_run_abicheck_skip_when_missing(tmp_path):
     dummy.touch()
     dummy_h = tmp_path / "v1.h"
 
-    with patch("shutil.which", return_value=None):
+    with patch.object(mod, "_HAS_ABICHECK", False):
         result = mod.run_abicheck(dummy, dummy, dummy_h, dummy_h,
                                   "smoke_case", tmp_path)
     assert result.verdict == "SKIP"
