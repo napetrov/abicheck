@@ -20,9 +20,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
-from typing import Optional
 
 import pytest
 
@@ -42,7 +40,7 @@ EXAMPLES_DIR = REPO_DIR / "examples"
 #   ⚠️  KNOWN GAP    — real break that abicheck cannot detect yet (xfail)
 #   ℹ️  POLICY       — not a binary break; SONAME/versioning are policy issues
 #   🐛 BUG EXPECTED  — abicheck over-reports; tracked separately
-EXPECTED: dict[str, Optional[str]] = {
+EXPECTED: dict[str, str | None] = {
     # ── cases 01-18 (v1/v2 layout) ──────────────────────────────────────────
     "case01_symbol_removal":          "BREAKING",    # ✅ FUNC_REMOVED
     "case02_param_type_change":       "BREAKING",    # ✅ FUNC_PARAMS_CHANGED
@@ -215,8 +213,8 @@ def test_example_pipeline(case_name: str, expected_verdict: str, tmp_path: Path)
         pytest.skip(f"{case_name}: v2 compile failed (intentional or env issue)")
 
     # Run abicheck pipeline via Python API (no subprocess — always uses this repo)
-    from abicheck.dumper import dump
     from abicheck.checker import compare
+    from abicheck.dumper import dump
 
     headers_v1 = [v1_hdr] if v1_hdr and v1_hdr.exists() else []
     headers_v2 = [v2_hdr] if v2_hdr and v2_hdr.exists() else []
