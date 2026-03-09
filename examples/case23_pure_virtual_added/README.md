@@ -63,3 +63,30 @@ struct MyPlugin : Processor {
 +    virtual void process() = 0;
  };
 ```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app calls `process()` via vtable. With v2 the vtable slot points to `__cxa_pure_virtual` → `abort()`.
+
+```bash
+# Build old lib + app
+g++ -shared -fPIC -g old/lib.cpp -Iold -o libproc.so
+g++ -g app.cpp -Iold -L. -lproc -Wl,-rpath,. -o app
+./app
+# → Calling process()...
+# → processing
+# → Done.
+
+# Swap in new lib (pure virtual → abort)
+g++ -shared -fPIC -g new/lib.cpp -Inew -o libproc.so
+./app
+# → Calling process()...
+# → pure virtual method called
+# → Aborted (core dumped)
+```
+
+**Why CRITICAL:** Existing binaries that instantiate `Processor` and call `process()`
+via the vtable now hit the pure-virtual handler, causing unconditional `abort()`.
+Every plugin or subclass compiled against v1 must be rebuilt with the new abstract interface.

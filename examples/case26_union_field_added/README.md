@@ -48,3 +48,26 @@ abicheck classifies this as **COMPATIBLE** because:
 +    double d;
  };
 ```
+
+## Real Failure Demo
+
+**Severity: INFORMATIONAL**
+
+**Scenario:** app reads `v.i` after `fill()`. Adding a `double d` field doesn't affect `int i` — same result.
+
+```bash
+# Build old lib + app
+gcc -shared -fPIC -g old/lib.c -Iold -o libval.so
+gcc -g app.c -Iold -L. -lval -Wl,-rpath,. -o app
+./app
+# → v.i = 42 (expected 42)
+
+# Swap in new lib (double field added — but fill() still sets i=42)
+gcc -shared -fPIC -g new/lib.c -Inew -o libval.so
+./app
+# → v.i = 42 (expected 42)  ← same result
+```
+
+**Why INFORMATIONAL:** All union fields share offset 0. Adding a new field leaves
+existing fields unchanged. If the new field is larger (`double` > `float`), `sizeof`
+grows — that size change is a separate BREAKING concern caught as `TYPE_SIZE_CHANGED`.

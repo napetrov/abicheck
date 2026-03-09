@@ -46,3 +46,26 @@ w.get();  /* calls _ZNK6Widget3getEv */
 +    void get();
  };
 ```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app compiled against old header calls `get() const` (`_ZNK6Widget3getEv`). New lib exports only `_ZN6Widget3getEv` — undefined symbol at runtime.
+
+```bash
+# Build old lib + app
+g++ -shared -fPIC -g old/lib.cpp -Iold -o libwidget.so
+g++ -g app.cpp -Iold -L. -lwidget -Wl,-rpath,. -o app
+./app
+# → get() const called
+
+# Swap in new lib (const removed)
+g++ -shared -fPIC -g new/lib.cpp -Inew -o libwidget.so
+./app
+# → ./app: symbol lookup error: undefined symbol: _ZNK6Widget3getEv
+```
+
+**Why CRITICAL:** `const` is part of the C++ mangled name (`K` in `_ZNK...`).
+Removing it produces a completely different symbol. Every pre-built binary that
+calls `widget.get()` on a const reference fails to load — hard runtime crash.

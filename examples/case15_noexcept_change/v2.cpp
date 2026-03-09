@@ -17,5 +17,10 @@ Buffer::~Buffer() { delete[] data_; }
 void Buffer::reset() {
     for (int i = 0; i < size_; ++i)
         data_[i] = 0;
-    // Now may throw in theory; callers compiled with v1 assume noexcept
+    // v2: throws to demonstrate noexcept contract violation
+    throw std::runtime_error("reset failed");
 }
+
+extern "C" Buffer* make_buf()           { return new Buffer(); }
+extern "C" void    reset_buf(Buffer* b) { b->reset(); }
+extern "C" void    free_buf(Buffer* b)  { delete b; }

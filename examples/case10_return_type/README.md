@@ -38,3 +38,28 @@ symbol is eventually removed.
 `ftell()` → `ftello()` (returns `off_t` instead of `long`) is the classic example of
 this class of change in the C standard library — a new function was introduced instead
 of changing the old one.
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app compiled with v1 (`get_count()` returns `int`) calls v2 which returns `long 3000000000` — truncated on read.
+
+```bash
+# Build v1 + app
+gcc -shared -fPIC -g v1.c -o libfoo.so
+gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → Expected: 3000000000
+# → Got:      42
+
+# Swap in v2 (returns 3000000000L)
+gcc -shared -fPIC -g v2.c -o libfoo.so
+./app
+# → Expected: 3000000000
+# → Got:      -1294967296   ← truncated to 32 bits (3000000000 mod 2^32)
+```
+
+**Why CRITICAL:** On x86-64, `int` is returned in the lower 32 bits of `rax`; `long`
+uses all 64. The app zero-extends only 32 bits, reading a completely wrong value. Silent
+data corruption for any count above `INT_MAX`.

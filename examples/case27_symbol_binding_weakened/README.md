@@ -46,3 +46,31 @@ classified as COMPATIBLE. Neither direction breaks existing symbol resolution.
 -int foo(void) { return 42; }
 +__attribute__((weak)) int foo(void) { return 42; }
 ```
+
+## Real Failure Demo
+
+**Severity: INFORMATIONAL**
+
+**Scenario:** app calls `foo()`. Both GLOBAL and WEAK versions return 42 — no runtime difference.
+
+```bash
+# Build old lib (GLOBAL foo) + app
+gcc -shared -fPIC -g old/lib.c -Iold -o libfoo.so
+gcc -g app.c -Iold -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → foo() = 42
+
+# Swap in new lib (WEAK foo)
+gcc -shared -fPIC -g new/lib.c -Inew -o libfoo.so
+./app
+# → foo() = 42  ← same result
+
+# Difference shows in ELF symbol binding:
+readelf --syms libfoo.so | grep foo
+# old: GLOBAL DEFAULT  foo
+# new: WEAK   DEFAULT  foo
+```
+
+**Why INFORMATIONAL:** WEAK symbols are still exported and resolved normally when no
+override exists. The concern is interposition: if another `.so` or the executable
+defines `foo` as GLOBAL, the WEAK version will be silently overridden at runtime.

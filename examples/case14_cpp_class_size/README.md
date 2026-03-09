@@ -37,3 +37,33 @@ Use the PIMPL idiom: the public `Buffer` class stores only a pointer to a privat
 Qt's "binary compatibility" rule explicitly forbids changing `sizeof` of any public
 class. Every Qt class that needs to grow uses a `d_ptr` PIMPL to keep the public
 class size constant across minor releases.
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app calls `make_buffer()` and `size()`. With v2, the Buffer internals doubled but the app's vtable dispatch shows the mismatch clearly.
+
+```bash
+# Build v1 + app
+g++ -shared -fPIC -g v1.cpp -o libbuf.so
+g++ -g app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app
+./app
+# → size() = 64 (expected 64, v2 returns 128)
+
+# Swap in v2 (sizeof Buffer = 128)
+g++ -shared -fPIC -g v2.cpp -o libbuf.so
+./app
+# → size() = 128 (expected 64, v2 returns 128)
+# With ASAN: heap-buffer-overflow if app allocates Buffer by value
+
+# Deeper corruption: run with AddressSanitizer
+g++ -g -fsanitize=address app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app_asan
+g++ -shared -fPIC -g -fsanitize=address v2.cpp -o libbuf.so
+./app_asan
+# → ERROR: AddressSanitizer: heap-buffer-overflow
+```
+
+**Why CRITICAL:** Old code allocates `new Buffer()` expecting 64 bytes. The v2
+constructor initializes 128 bytes — writing 64 bytes past the allocation. Any binary
+that inherits from or embeds `Buffer` by value is silently corrupted.

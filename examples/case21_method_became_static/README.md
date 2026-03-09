@@ -49,3 +49,28 @@ w.bar();  /* emits call with implicit 'this' pointer */
 +    static void bar();
  };
 ```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app compiled against old header (instance `bar()`) links against new lib where `bar()` is static — mangled name change causes linker failure.
+
+```bash
+# Build old lib + app
+g++ -shared -fPIC -g old/lib.cpp -Iold -o libwidget.so
+g++ -g app.cpp -Iold -L. -lwidget -Wl,-rpath,. -o app
+./app
+# → bar() called (instance method)
+
+# Swap in new lib (static bar())
+g++ -shared -fPIC -g new/lib.cpp -Inew -o libwidget.so
+./app
+# → ./app: symbol lookup error: undefined symbol: _ZN6Widget3barEv
+# (or wrong 'this' pointer passed if symbol happens to resolve)
+```
+
+**Why CRITICAL:** In the Itanium C++ ABI, removing `static` changes the mangled name
+and calling convention (instance method passes implicit `this`; static does not).
+The dynamic linker cannot resolve the old symbol, or if it does, the `this` pointer
+is passed as a garbage first argument.

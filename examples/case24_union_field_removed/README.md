@@ -51,3 +51,26 @@ lib_consume(d); /* library no longer expects float variant */
 -union Data { int i; float f; };
 +union Data { int i; };
 ```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app reads `d.f` as float after `init_data()`. With v2 the function writes `d.i = 42` — reading as float gives garbage.
+
+```bash
+# Build old lib + app
+gcc -shared -fPIC -g old/lib.c -Iold -o libdata.so
+gcc -g app.c -Iold -L. -ldata -Wl,-rpath,. -o app
+./app
+# → d.f = 3.140000 (expected 3.14, got wrong value with v2)
+
+# Swap in new lib (writes int 42 instead of float 3.14)
+gcc -shared -fPIC -g new/lib.c -Inew -o libdata.so
+./app
+# → d.f = 0.000000 (expected 3.14, got wrong value with v2)
+# (integer 42 reinterpreted as IEEE 754 float = ~5.88e-44)
+```
+
+**Why CRITICAL:** The library writes integer bits, the caller reads float bits from the
+same storage. Silent wrong value — no crash, no error, just completely wrong data.

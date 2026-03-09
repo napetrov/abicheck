@@ -3,3 +3,5 @@ union Value {
     float f;
     double d;
 };
+
+void fill(union Value* v);

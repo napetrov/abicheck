@@ -108,3 +108,32 @@ abi-compliance-checker -lib libfoo -v1 1.0 -v2 2.0 \
   -include-path . \
   -gcc-options "-I."
 ```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app allocates `ThirdPartyHandle` with v1 layout (4 bytes), calls `process()` from v2 which reads `h->y` at offset 4 — uninitialized memory.
+
+```bash
+# Build libfoo v1 + app
+gcc -shared -fPIC -g libfoo_v1.c -I. -o libfoo.so
+gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → h.x = 42, sizeof(h) = 4
+# → process: x=42
+# → after process: h.x = 42
+
+# Swap in libfoo v2 (compiled with ThirdPartyHandle = {int x, int y})
+gcc -shared -fPIC -g libfoo_v2.c -I. -o libfoo.so
+./app
+# → h.x = 42, sizeof(h) = 4
+# → process: x=42
+# → process: y=32764  ← GARBAGE (reads 4 bytes past caller's allocation)
+# → after process: h.x = 42
+```
+
+**Why CRITICAL:** The library's `.so` is byte-for-byte identical in both scenarios —
+`nm` and `readelf` show nothing suspicious. Yet the v2 library reads 4 bytes past the
+caller's struct allocation because the third-party type it exposes in its public header
+grew silently. Heap corruption or information leakage follows.

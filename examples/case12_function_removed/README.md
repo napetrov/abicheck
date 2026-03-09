@@ -37,3 +37,27 @@ Only remove it on a SONAME-bumping major release.
 Several C++ standard library implementors have moved functions to inlines for
 performance and then had to keep exported stubs for ABI compatibility — libstdc++'s
 `std::string` refactor in GCC 5 is the canonical cautionary tale.
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app calls `fast_add()` compiled against v1. v2 removes it from the `.so`.
+
+```bash
+# Build v1 + app
+gcc -shared -fPIC -g v1.c -o libfoo.so
+gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → fast_add(3, 4) = 7
+# → other_func(5)  = 5
+
+# Swap in v2 (fast_add gone from .so)
+gcc -shared -fPIC -g v2.c -o libfoo.so
+./app
+# → ./app: symbol lookup error: ./libfoo.so: undefined symbol: fast_add
+```
+
+**Why CRITICAL:** The dynamic linker fails to resolve `fast_add` at load time — the
+app cannot start at all. Every binary that ever called `fast_add` is broken until
+recompiled against v2 headers.

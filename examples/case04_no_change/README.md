@@ -14,6 +14,30 @@ abidiff exits **0** — no differences in the ABI XML representation.
 int stable_api(int x) { return x; }
 ```
 
+## Real Failure Demo
+
+**Severity: BAD PRACTICE** (baseline, no change)
+
+**Scenario:** compile app against v1, swap in v2 `.so` without recompile.
+
+```bash
+# Build old library + app
+gcc -shared -fPIC -g v1.c -o libfoo.so
+gcc -g app.c -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → stable_api(42) = 42
+
+# Swap in new library (no recompile)
+# v2.h is identical to v1.h — no .so yet
+gcc -shared -fPIC -g v1.c -o libfoo.so   # use same source, no change
+./app
+# → stable_api(42) = 42   (identical output)
+```
+
+**Why BAD PRACTICE:** this is the baseline — no ABI change means no breakage.
+Use this as a sanity check to confirm your build and test pipeline works before
+examining cases that do break.
+
 ## Reproduce manually
 ```bash
 gcc -shared -fPIC -g v1.c -o libfoo_v1.so

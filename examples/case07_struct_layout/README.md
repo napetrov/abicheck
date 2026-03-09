@@ -38,3 +38,29 @@ is hidden from callers.
 ## Real-world example
 The Linux kernel uses opaque `struct task_struct*` for exactly this reason. Public
 kernel API headers expose only opaque handles; layout is internal.
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app allocates `Point` with v1 layout (8 bytes), calls `init_point()` from v2 which writes a `z` field at offset 8 — past the allocation.
+
+```bash
+# Build v1 + app
+gcc -shared -fPIC -g v1.c -o libfoo.so
+gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → before: p={0,0} canary=0xDEADBEEF
+# → after:  p={1,2} canary=0xDEADBEEF
+
+# Swap in v2 (no recompile)
+gcc -shared -fPIC -g v2.c -o libfoo.so
+./app
+# → before: p={0,0} canary=0xDEADBEEF
+# → after:  p={1,2} canary=0x00000003   ← CORRUPTED
+# → CORRUPTION detected! (v2 wrote past end of struct)
+```
+
+**Why CRITICAL:** The v2 library writes a `z` field at byte offset 8, but the app only
+allocated 8 bytes for the struct. The canary variable on the stack is overwritten —
+a classic stack corruption that can corrupt control flow or cause silent data loss.

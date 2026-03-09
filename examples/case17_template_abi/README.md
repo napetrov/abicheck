@@ -75,3 +75,37 @@ abi-compliance-checker -lib Buffer -v1 1.0 -v2 2.0 \
   -header v1.hpp -header v2.hpp \
   -gcc-options "-std=c++17"
 ```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app compiled with v1 layout (Buffer<int> = 16 bytes) runs against v2 constructor that writes 24 bytes → stack overflow.
+
+```bash
+# Build v1 + app
+g++ -shared -fPIC -std=c++17 -g v1.cpp -o libbuf.so
+g++ -std=c++17 -g app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app
+./app
+# → sentinel_before = AAA
+# → sizeof(Buffer<int>) compiled = 16
+# → sentinel_after  = BBB
+
+# Swap in v2 (constructor writes 24 bytes)
+g++ -shared -fPIC -std=c++17 -g v2.cpp -o libbuf.so
+./app
+# → sentinel_before = AAA
+# → sizeof(Buffer<int>) compiled = 16
+# → sentinel_after  =     ← CORRUPTED (8 bytes overwritten)
+# → CORRUPTION: sentinel_after overwritten! v2 wrote beyond Buffer
+
+# With ASAN:
+g++ -shared -fPIC -std=c++17 -g -fsanitize=address v2.cpp -o libbuf.so
+g++ -std=c++17 -g -fsanitize=address app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app_asan
+./app_asan
+# → ERROR: AddressSanitizer: stack-buffer-overflow
+```
+
+**Why CRITICAL:** The v2 constructor writes a new `capacity_` field at offset 16,
+but the app only reserved 16 bytes on the stack. The 8 bytes past the allocation are
+overwritten — classic stack smash, potentially corrupting return addresses.
