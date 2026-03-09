@@ -3,9 +3,8 @@
 **Category:** Symbol API | **Verdict:** 🔴 BREAKING
 
 ## What breaks
-Any downstream binary that calls `helper()` will fail to link (or crash at runtime
-with `undefined symbol`) after upgrading to v2. Statically-linked consumers that
-captured the old address will call garbage. Even if *you* no longer use `helper()`,
+Any downstream binary that dynamically links against `helper()` will fail at runtime
+with `undefined symbol` after upgrading to v2. Even if *you* no longer use `helper()`,
 removing it from the public `.so` is an ABI contract violation.
 
 ## Why abidiff catches it

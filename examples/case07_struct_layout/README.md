@@ -36,8 +36,9 @@ Never add fields to public structs. Use the opaque-pointer (PIMPL) idiom: expose
 is hidden from callers.
 
 ## Real-world example
-The Linux kernel uses opaque `struct task_struct*` for exactly this reason. Public
-kernel API headers expose only opaque handles; layout is internal.
+The C standard library's `FILE*` is a classic opaque handle — callers never see
+the struct layout; all access is through `fopen`/`fread`/`fclose`. This pattern
+keeps the ABI stable across libc versions even as the internal `FILE` struct changes.
 
 ## Real Failure Demo
 

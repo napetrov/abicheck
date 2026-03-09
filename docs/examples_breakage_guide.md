@@ -1,4 +1,4 @@
-# Full ABI/API breakage guide for `examples/case01..case24`
+# Full ABI/API breakage guide for `examples/case01..case29`
 
 This guide is intentionally verbose. Every case includes:
 
@@ -38,25 +38,25 @@ co-install or consciously migrate.
 
 ```c
 /* lib v1 */
-int parse_value(int x);
+double process(int a, int b);
 
 /* lib v2 */
-int parse_value(long x);
+double process(double a, int b);
 ```
 
 ```c
-/* consumer */
-extern int parse_value(int);
-int run(void) { return parse_value(42); }
+/* consumer (compiled against v1) */
+extern double process(int, int);
+double run(void) { return process(3, 4); }
 ```
 
-Parameter type changes alter the call contract. Even when both types are integral, ABI rules may differ
-in width/sign extension/register class on different targets. An old caller compiled for `int` can pass
-bits that the new callee interprets as `long`, leading to value corruption or undefined behavior. The
-symbol name might stay “the same” in C, but call semantics are not.
+Parameter type changes alter the call contract. On x86-64 SysV ABI, `int` is passed in an integer
+register (`%edi`) while `double` is passed in an SSE register (`%xmm0`). An old caller compiled for
+`int` puts the value in the wrong register class — the new callee reads uninitialized `%xmm0`,
+producing garbage. The symbol name stays the same in C, but call semantics are completely different.
 
-Safe evolution pattern: keep `parse_value(int)` and introduce `parse_value_v2(long)`. Route old API to
-new internals where possible, but preserve old symbol and signature for binary stability.
+Safe evolution pattern: keep `process(int, int)` and introduce `process_v2(double, int)`. Route old API
+to new internals where possible, but preserve old symbol and signature for binary stability.
 
 ## case03_compat_addition — additive symbol
 

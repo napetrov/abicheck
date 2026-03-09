@@ -1,12 +1,13 @@
-# Case 12: Function Disappears (Moved to Inline)
+# Case 12: Function Removed from Shared Library
 
 **Category:** Symbol API | **Verdict:** 🔴 BREAKING (exit 12)
 
 ## What breaks
 Any binary dynamically linked against v1 will fail to load with
-`undefined symbol: fast_add` when upgraded to v2. Even if the function is still
-available as an inline in a header, the `.so` no longer exports the symbol,
-so pre-built binaries have nowhere to resolve it.
+`undefined symbol: fast_add` when upgraded to v2. The `.so` no longer exports
+the symbol, so pre-built binaries have nowhere to resolve it. Even if the function
+were moved to a header as an inline, already-compiled binaries cannot benefit from
+that — they need the dynamic symbol.
 
 ## Why abidiff catches it
 Reports `1 Removed function: fast_add` with exit **12** (breaking removal).

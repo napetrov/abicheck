@@ -81,9 +81,16 @@ abi-compliance-checker -lib Buffer -v1 1.0 -v2 2.0 \
 
 ## Real Failure Demo
 
-**Severity: CRITICAL**
+**Severity: CRITICAL (behavioral, not linkage)**
 
 **Scenario:** app compiled against v1 (`reset()` noexcept) calls v2 which throws — exception propagates through a noexcept frame → `std::terminate`.
+
+> **Important:** This demo conflates two changes: (1) removing `noexcept` from the
+> declaration, and (2) adding `throw` to the implementation. Removing `noexcept` alone
+> does **not** cause a crash — the binary links and runs identically. The crash only
+> occurs because v2 also introduces throwing code. The ABI verdict remains **COMPATIBLE**
+> (same symbol resolves), but removing `noexcept` increases the *risk* of this behavioral
+> failure if the implementation later throws.
 
 ```bash
 # Build v1 + app (app includes v1.h which declares reset() noexcept)
@@ -101,6 +108,8 @@ g++ -shared -fPIC -std=c++17 -g v2.cpp -o libbuf.so
 # → Aborted (core dumped)
 ```
 
-**Why CRITICAL:** The caller was compiled with the assumption that `reset()` is `noexcept`,
-so no try/catch or landing pad was generated. When v2 throws, the exception propagates
-through the noexcept frame and `std::terminate` is called unconditionally — no recovery possible.
+**Why CRITICAL (behavioral):** The caller was compiled with the assumption that `reset()`
+is `noexcept`, so no try/catch or landing pad was generated. When v2 throws, the exception
+propagates through the noexcept frame and `std::terminate` is called unconditionally — no
+recovery possible. Note: the binary linkage is fine (COMPATIBLE); the crash is a behavioral
+contract violation, not a symbol resolution failure.
