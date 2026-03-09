@@ -72,7 +72,9 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "void set_val(long x);",
         "c", "BREAKING", "BREAKING", "parity",
     ),
-    # vtable reorder: both tools should detect this
+    # ── abicheck correct: vtable_reorder — ABICC misses in XML descriptor mode ──
+    # ABICC without abi-dumper doesn't analyze vtable layout from headers+libs,
+    # so it reports NO_CHANGE. abicheck+castxml detects the vtable reorder.
     (
         "vtable_reorder",
         "struct Base {\n"
@@ -89,9 +91,11 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "Base* make();",
         "struct Base { virtual int bar(); virtual int foo(); virtual ~Base(); };\n"
         "Base* make();",
-        "cpp", "BREAKING", "BREAKING", "parity",
+        "cpp", "BREAKING", "NO_CHANGE", "correct",
     ),
-    # struct size change: ABICC detects this with headers
+    # ── abicheck correct: struct_size — ABICC misses in XML descriptor mode ──
+    # ABICC in XML descriptor mode (without abi-dumper) doesn't detect struct
+    # size changes. abicheck+castxml correctly detects the type layout change.
     (
         "struct_size",
         "typedef struct { int x; } Point;\n"
@@ -100,7 +104,7 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "Point make_point(int x) { Point p = {x, 0}; return p; }",
         "typedef struct { int x; } Point;\nPoint make_point(int x);",
         "typedef struct { int x; int y; } Point;\nPoint make_point(int x);",
-        "c", "BREAKING", "BREAKING", "parity",
+        "c", "BREAKING", "NO_CHANGE", "correct",
     ),
     # enum value change: ABICC detects with headers
     (
@@ -260,11 +264,25 @@ def _run_abicc(
         return "TIMEOUT"
 
     if r.returncode == 0:
-        # ABICC returns 0 for compatible — check output for "no changes"
+        # ABICC returns 0 for both no-change and compatible-additions.
+        # Parse the HTML report or stdout to distinguish them.
         output = r.stdout + r.stderr
-        if "Binary compatibility: 100%" in output:
-            return "NO_CHANGE"
-        return "COMPATIBLE"
+        report_text = ""
+        if report_path.exists():
+            report_text = report_path.read_text(encoding="utf-8", errors="replace")
+
+        # Check for added/removed/changed symbols in report or stdout
+        has_changes = (
+            "Added Symbols" in report_text
+            or "Removed Symbols" in report_text
+            or "Changed Symbols" in report_text
+            or "added symbol" in output.lower()
+            or "removed symbol" in output.lower()
+            or "changed" in output.lower()
+        )
+        if has_changes:
+            return "COMPATIBLE"
+        return "NO_CHANGE"
     elif r.returncode == 1:
         return "BREAKING"
     else:
