@@ -21,6 +21,129 @@ from abicheck.model import (
     Visibility,
 )
 
+# ── Meta-test: every ChangeKind member must appear in at least one test ──────
+
+# Manually maintained set of ChangeKind members that are asserted somewhere in
+# the test suite.  When a new member is added to the enum, this set (and a
+# corresponding scenario) must be updated – the meta-test below will fail
+# until that happens.
+ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
+    ChangeKind.ANON_FIELD_CHANGED,
+    ChangeKind.BASE_CLASS_POSITION_CHANGED,
+    ChangeKind.BASE_CLASS_VIRTUAL_CHANGED,
+    ChangeKind.CALLING_CONVENTION_CHANGED,
+    ChangeKind.COMMON_SYMBOL_RISK,
+    ChangeKind.CONSTANT_ADDED,
+    ChangeKind.CONSTANT_CHANGED,
+    ChangeKind.CONSTANT_REMOVED,
+    ChangeKind.DWARF_INFO_MISSING,
+    ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
+    ChangeKind.ENUM_MEMBER_ADDED,
+    ChangeKind.ENUM_MEMBER_REMOVED,
+    ChangeKind.ENUM_MEMBER_RENAMED,
+    ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
+    ChangeKind.ENUM_UNDERLYING_SIZE_CHANGED,
+    ChangeKind.FIELD_ACCESS_CHANGED,
+    ChangeKind.FIELD_BECAME_CONST,
+    ChangeKind.FIELD_BECAME_MUTABLE,
+    ChangeKind.FIELD_BECAME_VOLATILE,
+    ChangeKind.FIELD_BITFIELD_CHANGED,
+    ChangeKind.FIELD_LOST_CONST,
+    ChangeKind.FIELD_LOST_MUTABLE,
+    ChangeKind.FIELD_LOST_VOLATILE,
+    ChangeKind.FIELD_RENAMED,
+    ChangeKind.FUNC_ADDED,
+    ChangeKind.FUNC_CV_CHANGED,
+    ChangeKind.FUNC_DELETED,
+    ChangeKind.FUNC_NOEXCEPT_ADDED,
+    ChangeKind.FUNC_NOEXCEPT_REMOVED,
+    ChangeKind.FUNC_PARAMS_CHANGED,
+    ChangeKind.FUNC_PURE_VIRTUAL_ADDED,
+    ChangeKind.FUNC_REMOVED,
+    ChangeKind.FUNC_RETURN_CHANGED,
+    ChangeKind.FUNC_STATIC_CHANGED,
+    ChangeKind.FUNC_VIRTUAL_ADDED,
+    ChangeKind.FUNC_VIRTUAL_BECAME_PURE,
+    ChangeKind.FUNC_VIRTUAL_REMOVED,
+    ChangeKind.FUNC_VISIBILITY_CHANGED,
+    ChangeKind.IFUNC_INTRODUCED,
+    ChangeKind.IFUNC_REMOVED,
+    ChangeKind.METHOD_ACCESS_CHANGED,
+    ChangeKind.NEEDED_ADDED,
+    ChangeKind.NEEDED_REMOVED,
+    ChangeKind.PARAM_BECAME_VA_LIST,
+    ChangeKind.PARAM_DEFAULT_VALUE_CHANGED,
+    ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,
+    ChangeKind.PARAM_LOST_VA_LIST,
+    ChangeKind.PARAM_POINTER_LEVEL_CHANGED,
+    ChangeKind.PARAM_RENAMED,
+    ChangeKind.PARAM_RESTRICT_CHANGED,
+    ChangeKind.REMOVED_CONST_OVERLOAD,
+    ChangeKind.RETURN_POINTER_LEVEL_CHANGED,
+    ChangeKind.RPATH_CHANGED,
+    ChangeKind.RUNPATH_CHANGED,
+    ChangeKind.SONAME_CHANGED,
+    ChangeKind.SOURCE_LEVEL_KIND_CHANGED,
+    ChangeKind.STRUCT_ALIGNMENT_CHANGED,
+    ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
+    ChangeKind.STRUCT_FIELD_REMOVED,
+    ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+    ChangeKind.STRUCT_PACKING_CHANGED,
+    ChangeKind.STRUCT_SIZE_CHANGED,
+    ChangeKind.SYMBOL_BINDING_CHANGED,
+    ChangeKind.SYMBOL_BINDING_STRENGTHENED,
+    ChangeKind.SYMBOL_SIZE_CHANGED,
+    ChangeKind.SYMBOL_TYPE_CHANGED,
+    ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
+    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+    ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
+    ChangeKind.TOOLCHAIN_FLAG_DRIFT,
+    ChangeKind.TYPEDEF_BASE_CHANGED,
+    ChangeKind.TYPEDEF_REMOVED,
+    ChangeKind.TYPE_ADDED,
+    ChangeKind.TYPE_ALIGNMENT_CHANGED,
+    ChangeKind.TYPE_BASE_CHANGED,
+    ChangeKind.TYPE_BECAME_OPAQUE,
+    ChangeKind.TYPE_FIELD_ADDED,
+    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
+    ChangeKind.TYPE_FIELD_OFFSET_CHANGED,
+    ChangeKind.TYPE_FIELD_REMOVED,
+    ChangeKind.TYPE_FIELD_TYPE_CHANGED,
+    ChangeKind.TYPE_KIND_CHANGED,
+    ChangeKind.TYPE_REMOVED,
+    ChangeKind.TYPE_SIZE_CHANGED,
+    ChangeKind.TYPE_VISIBILITY_CHANGED,
+    ChangeKind.TYPE_VTABLE_CHANGED,
+    ChangeKind.UNION_FIELD_ADDED,
+    ChangeKind.UNION_FIELD_REMOVED,
+    ChangeKind.UNION_FIELD_TYPE_CHANGED,
+    ChangeKind.USED_RESERVED_FIELD,
+    ChangeKind.VAR_ACCESS_CHANGED,
+    ChangeKind.VAR_ACCESS_WIDENED,
+    ChangeKind.VAR_ADDED,
+    ChangeKind.VAR_BECAME_CONST,
+    ChangeKind.VAR_LOST_CONST,
+    ChangeKind.VAR_REMOVED,
+    ChangeKind.VAR_TYPE_CHANGED,
+    ChangeKind.VAR_VALUE_CHANGED,
+}
+
+
+def test_all_change_kinds_covered() -> None:
+    """Every ChangeKind enum member must appear in ASSERTED_CHANGE_KINDS.
+
+    If this test fails, a new ChangeKind was added without a corresponding
+    test scenario.  Add the member to ASSERTED_CHANGE_KINDS *and* write a
+    test that exercises it.
+    """
+    all_kinds = set(ChangeKind)
+    missing = all_kinds - ASSERTED_CHANGE_KINDS
+    assert not missing, (
+        f"ChangeKind members lack test coverage — add tests and update "
+        f"ASSERTED_CHANGE_KINDS: {sorted(m.name for m in missing)}"
+    )
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
