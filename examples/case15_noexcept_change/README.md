@@ -78,3 +78,29 @@ abi-compliance-checker -lib Buffer -v1 1.0 -v2 2.0 \
   -header v1.cpp -header v2.cpp \
   -gcc-options "-std=c++17"
 ```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app compiled against v1 (`reset()` noexcept) calls v2 which throws — exception propagates through a noexcept frame → `std::terminate`.
+
+```bash
+# Build v1 + app (app includes v1.h which declares reset() noexcept)
+g++ -shared -fPIC -std=c++17 -g v1.cpp -o libbuf.so
+g++ -std=c++17 -g app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app
+./app
+# → Calling reset()...
+# → reset() completed OK
+
+# Swap in v2 (reset() throws)
+g++ -shared -fPIC -std=c++17 -g v2.cpp -o libbuf.so
+./app
+# → terminate called after throwing an instance of 'std::runtime_error'
+#      what():  reset failed
+# → Aborted (core dumped)
+```
+
+**Why CRITICAL:** The caller was compiled with the assumption that `reset()` is `noexcept`,
+so no try/catch or landing pad was generated. When v2 throws, the exception propagates
+through the noexcept frame and `std::terminate` is called unconditionally — no recovery possible.

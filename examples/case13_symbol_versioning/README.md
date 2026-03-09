@@ -47,3 +47,30 @@ symbol set.
 glibc uses symbol versioning extensively — `GLIBC_2.5`, `GLIBC_2.17`, etc. — allowing
 the same `libc.so.6` to serve binaries built against many different historical versions
 simultaneously.
+
+## Real Failure Demo
+
+**Severity: INFORMATIONAL**
+
+**Scenario:** app runs fine against both good.so and bad.so at runtime. The issue is future-proofing.
+
+```bash
+# Build good (versioned) and bad (unversioned) .so
+gcc -shared -fPIC -g good.c -o libgood.so -Wl,--version-script=libfoo.map
+gcc -shared -fPIC -g bad.c  -o libbad.so
+
+# Runtime works either way — must copy to libfoo.so before linking
+cp libgood.so libfoo.so
+gcc -g app.c -L. -Wl,-rpath,. -lfoo -o app
+./app  # → foo() = 0  bar() = 1
+
+cp libbad.so libfoo.so && ./app  # → foo() = 0  bar() = 1
+
+# The difference shows up in symbol table
+readelf --syms libgood.so | grep foo   # → foo@@LIBFOO_1.0 (versioned)
+readelf --syms libbad.so  | grep foo   # → foo           (no version)
+```
+
+**Why INFORMATIONAL:** The library works correctly today. But without versioned symbols,
+you can never ship a `LIBFOO_2.0` variant alongside `LIBFOO_1.0` in the same `.so` for
+backward compatibility — the versioning mechanism simply doesn't exist.

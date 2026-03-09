@@ -46,3 +46,27 @@ classified as BREAKING.
 -enum Color { RED = 0, GREEN = 1, BLUE = 2 };
 +enum Color { RED = 0, GREEN = 1, BLUE = 2, YELLOW = 3 };
 ```
+
+## Real Failure Demo
+
+**Severity: INFORMATIONAL**
+
+**Scenario:** app compiled with old header calls `get_color()`. BLUE is returned by both — no breakage.
+
+```bash
+# Build old lib + app
+gcc -shared -fPIC -g old/lib.c -Iold -o libcolor.so
+gcc -g app.c -Iold -L. -lcolor -Wl,-rpath,. -o app
+./app
+# → BLUE
+
+# Swap in new lib (YELLOW added at end — existing values unchanged)
+gcc -shared -fPIC -g new/lib.c -Inew -o libcolor.so
+./app
+# → BLUE  ← same result, no breakage
+```
+
+**Why INFORMATIONAL:** Adding enum members at the end does not shift existing values.
+Old binaries continue to work correctly for known values. The concern is behavioral,
+not binary: switch statements without a `YELLOW` case won't handle it at runtime —
+if a new library returns `YELLOW`, old binaries fall through to `default` silently.

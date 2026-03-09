@@ -17,7 +17,7 @@ Reports `return type changed: type name changed from 'int' to 'long int'`.
 
 | v1.c | v2.c |
 |------|------|
-| `int get_count(void) { return 42; }` | `long get_count(void) { return 42; }` |
+| `int get_count(void) { return 42; }` | `long get_count(void) { return 3000000000L; }` |
 
 ## Reproduce manually
 ```bash
@@ -38,3 +38,26 @@ symbol is eventually removed.
 `ftell()` → `ftello()` (returns `off_t` instead of `long`) is the classic example of
 this class of change in the C standard library — a new function was introduced instead
 of changing the old one.
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app compiled with v1 (`get_count()` returns `int`) calls v2 which returns `long 3000000000` — truncated on read.
+
+```bash
+# Build v1 + app
+gcc -shared -fPIC -g v1.c -o libfoo.so
+gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → get_count() = 42   (v1 returns 42 — correct)
+
+# Swap in v2 (returns 3000000000L)
+gcc -shared -fPIC -g v2.c -o libfoo.so
+./app
+# → get_count() = -1294967296   ← low 32 bits of 3000000000 = 0xB2D05E00, signed int = -1294967296
+```
+
+**Why CRITICAL:** On x86-64, `int` is returned in the lower 32 bits of `rax`; `long`
+uses all 64. The app zero-extends only 32 bits, reading a completely wrong value. Silent
+data corruption for any count above `INT_MAX`.

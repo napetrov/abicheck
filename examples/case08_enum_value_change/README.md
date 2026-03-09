@@ -38,3 +38,26 @@ slots allowed" in documentation. Never renumber existing values.
 ## Real-world example
 Protocol Buffers (protobuf) enforces append-only enum values for exactly this reason.
 Inserting values in the middle is a common source of subtle bugs in versioned protocols.
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app compiled with v1 (GREEN=1) calls `get_signal()` which returns GREEN. With v2 GREEN shifted to 2 — app checks against wrong value.
+
+```bash
+# Build v1 + app
+gcc -shared -fPIC -g v1.c -o libfoo.so
+gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → GREEN (correct)
+
+# Swap in v2 (no recompile)
+gcc -shared -fPIC -g v2.c -o libfoo.so
+./app
+# → ERROR: expected GREEN=1, got 2
+```
+
+**Why CRITICAL:** The integer value `1` now means YELLOW in v2 but the compiled app
+still checks `if c == 1` for GREEN. Any stored values, protocol messages, or switch
+statements using the old numeric constants silently route to the wrong branch.

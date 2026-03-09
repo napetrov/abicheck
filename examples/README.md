@@ -50,6 +50,30 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [16](case16_inline_to_non_inline/README.md) | Inline → Non-inline | C++ ABI | — ⚠️ | ODR violation; symbol appears in v2 .so |
 | [17](case17_template_abi/README.md) | Template Layout Change | C++ ABI | 4 🟡 | Explicit-instantiated template grows in size |
 | [18](case18_dependency_leak/README.md) | Dependency ABI Leak | Type Layout | — ⚠️ | Third-party type in public header changes layout |
+| [19](case19_enum_member_removed/README.md) | Enum Member Removed | C API | 8 🔴 | Removing an enum value breaks stored/transmitted integers |
+| [20](case20_enum_member_value_changed/README.md) | Enum Value Changed | C API | 8 🔴 | Renumbering enum breaks all consumers using stored values |
+| [21](case21_method_became_static/README.md) | Method Became Static | C++ ABI | 8 🔴 | Calling convention mismatch — implicit `this` ignored |
+| [22](case22_method_const_changed/README.md) | const Qualifier Changed | C++ ABI | 8 🔴 | `_ZNK...` vs `_ZN...` — different mangled symbol name |
+| [23](case23_pure_virtual_added/README.md) | Pure Virtual Added | C++ ABI | 8 🔴 | Existing vtable slot hits `__cxa_pure_virtual` → abort |
+| [24](case24_union_field_removed/README.md) | Union Field Removed | C API | 8 🔴 | Field write interpreted as different type — silent wrong data |
+| [25](case25_enum_member_added/README.md) | Enum Member Added | C API | 4 🟡 | Adding at end is compatible; older binaries handle known values |
+| [26](case26_union_field_added/README.md) | Union Field Added | C API | 4 🟡 | Existing fields unaffected; size increase is separate concern |
+| [27](case27_symbol_binding_weakened/README.md) | Symbol Binding Weakened | ELF/Linker | 4 🟡 | WEAK symbol can be silently overridden by interposition |
+| [29](case29_ifunc_transition/README.md) | IFUNC Transition | ELF/Linker | 4 🟡 | GNU IFUNC resolves transparently; old `ld.so` may not support |
+
+---
+
+## Running Consumer App Demos
+
+Every case directory now includes an `app.c` or `app.cpp` that demonstrates
+the exact failure at runtime. See the **`## Real Failure Demo`** section in each
+case's README for copy-paste build instructions.
+
+**Severity classification used in Real Failure Demo sections:**
+- 🔴 **CRITICAL** — causes crash, wrong output, or silent data corruption
+- 🟡 **INFORMATIONAL** — no immediate breakage; compromises future-proofing
+- 🟡 **BAD PRACTICE** — library works today but mismanages the ABI contract
+- ✅ **BASELINE** — no change; expected passing state
 
 ---
 

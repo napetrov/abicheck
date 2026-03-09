@@ -43,3 +43,29 @@ write_to_file(s);
 -enum Status { OK = 0, ERROR = 1, FOO = 2 };
 +enum Status { OK = 0, ERROR = 1 };
 ```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app compiled with old header (has `FOO=2`) calls library that returns value 2. With v2, `FOO` is removed — the value 2 is undefined.
+
+```bash
+# Build old lib + app
+gcc -shared -fPIC -g old/lib.c -Iold -o libstatus.so
+gcc -g app.c -Iold -L. -lstatus -Wl,-rpath,. -o app
+./app
+# → FOO
+
+# Swap in new lib (FOO removed, but still returns integer 2)
+gcc -shared -fPIC -g new/lib.c -Inew -o libstatus.so
+./app
+# → FOO    ← prints "FOO" because value 2 still matches the compiled switch case
+#            but in new headers this value is UNDEFINED — semantic break
+# Any consumer recompiled against new headers would get no FOO case → "UNKNOWN: 2"
+```
+
+**Why CRITICAL:** Old binaries still "work" but carry a time bomb — any serialized,
+stored, or transmitted value of `FOO` (integer 2) is now undefined in the new API.
+Recompiled consumers get no `FOO` case and fall through to `default`, silently
+mishandling the value.

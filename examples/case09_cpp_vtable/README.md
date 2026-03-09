@@ -42,3 +42,28 @@ hooks, add non-virtual public methods that call them.
 ## Real-world example
 Qt's strict "no vtable reordering" rule is documented in their ABI compatibility
 policy. Binary-compatible Qt releases never insert virtual methods.
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** app compiled with v1 vtable layout (resize at slot 1) calls `resize()`. With v2 `recolor()` is inserted at slot 1, so the app calls the wrong method.
+
+```bash
+# Build v1 + app
+g++ -shared -fPIC -g v1.cpp -o libwidget.so
+g++ -g app.cpp -I. -L. -lwidget -Wl,-rpath,. -o app
+./app
+# → draw()   = 10 (expected 10)
+# → resize() = 20 (expected 20)
+
+# Swap in v2 (no recompile)
+g++ -shared -fPIC -g v2.cpp -o libwidget.so
+./app
+# → draw()   = 10 (expected 10)
+# → resize() = 99 (expected 20) ← WRONG: dispatched to recolor()!
+```
+
+**Why CRITICAL:** The vtable in the app's compiled code indexes `resize()` at slot 1.
+In v2 that slot now holds `recolor()` (returns 99). The wrong method is called silently —
+no crash, just completely wrong behavior.

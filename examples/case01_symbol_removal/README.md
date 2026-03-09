@@ -19,6 +19,29 @@ abidiff reports `1 Removed function` and sets exit-bit 3 (value 8), giving exit 
 | `int compute(int x) { return x * 2; }` | `int compute(int x) { return x * 2; }` |
 | `int helper(int x)  { return x + 1; }` | *(removed)* |
 
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** compile app against v1, swap in v2 `.so` without recompile.
+
+```bash
+# Build old library + app
+gcc -shared -fPIC -g v1.c -o libfoo.so
+gcc -g app.c -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → compute(5) = 10
+# → helper(5)  = 6
+
+# Swap in new library (no recompile)
+gcc -shared -fPIC -g v2.c -o libfoo.so
+./app
+# → ./app: symbol lookup error: ./libfoo.so: undefined symbol: helper
+```
+
+**Why CRITICAL:** `helper` is removed from the dynamic symbol table in v2; the runtime
+linker cannot resolve the symbol and the process is killed immediately on startup.
+
 ## Reproduce manually
 ```bash
 gcc -shared -fPIC -g v1.c -o libfoo_v1.so

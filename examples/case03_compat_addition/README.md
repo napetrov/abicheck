@@ -18,6 +18,28 @@ Reports `1 Added function: get_build()` with exit **4**. The absence of exit-bit
 | `int get_version(void) { return 1; }` | `int get_version(void) { return 1; }` |
 | *(nothing)* | `int get_build(void) { return 42; }` |
 
+## Real Failure Demo
+
+**Severity: INFORMATIONAL**
+
+**Scenario:** compile app against v1, swap in v2 `.so` without recompile.
+
+```bash
+# Build old library + app
+gcc -shared -fPIC -g v1.c -o libfoo.so
+gcc -g app.c -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → get_version() = 1
+
+# Swap in new library (no recompile)
+gcc -shared -fPIC -g v2.c -o libfoo.so
+./app
+# → get_version() = 1   (same — no breakage)
+```
+
+**Why INFORMATIONAL:** adding new exports is backward-compatible; existing binaries
+continue to work unchanged because they never referenced the new symbol.
+
 ## Reproduce manually
 ```bash
 gcc -shared -fPIC -g v1.c -o libfoo_v1.so
