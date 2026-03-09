@@ -98,8 +98,8 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "c", "BREAKING", "BREAKING", "parity",
     ),
     # ── abicheck correct: vtable_reorder — ABICC misses in XML descriptor mode ──
-    # ABICC without abi-dumper doesn't detect vtable reordering from headers+libs.
-    # abicheck+castxml detects the vtable reorder as BREAKING.
+    # ABICC without abi-dumper doesn't detect vtable reordering from headers+libs;
+    # it reports NO_CHANGE (all zeros).  abicheck+castxml detects it as BREAKING.
     (
         "vtable_reorder",
         "struct Base {\n"
@@ -116,7 +116,7 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "Base* make();",
         "struct Base { virtual int bar(); virtual int foo(); virtual ~Base(); };\n"
         "Base* make();",
-        "cpp", "BREAKING", "COMPATIBLE", "correct",
+        "cpp", "BREAKING", "NO_CHANGE", "correct",
     ),
     # ── abicheck correct: struct_size — ABICC misses in XML descriptor mode ──
     # ABICC in XML descriptor mode reports COMPATIBLE (sees field additions but
