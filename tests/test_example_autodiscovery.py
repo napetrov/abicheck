@@ -70,7 +70,7 @@ EXPECTED: dict[str, str | None] = {
     "case31_enum_rename":               "BREAKING",    # enum_member_removed fires alongside rename
     "case32_param_defaults":            "NO_CHANGE",   # default values not in binary ABI
     "case33_pointer_level":             "BREAKING",    # param/return pointer level changes
-    "case34_access_level":              "NO_CHANGE",   # access levels not in binary ABI (C++ only)
+    "case34_access_level":              "SOURCE_BREAK", # narrowing access (public→private) is a source break
     "case35_field_rename":              "BREAKING",    # struct_field_removed fires (DWARF sees name change as removal)
     "case36_anon_struct":               "BREAKING",    # type_size_changed + alignment changed
     "case37_base_class":                "BREAKING",    # base class reorder + virtual inheritance change
