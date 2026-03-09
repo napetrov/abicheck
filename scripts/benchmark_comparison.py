@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -45,8 +46,9 @@ if _abicheck_bin:
     try:
         with open(_abicheck_bin) as _f:
             _first_line = _f.readline().strip()
-        _PYTHON = _first_line.lstrip("#!") if _first_line.startswith("#!") else "python3"
-    except (OSError, IsADirectoryError):
+        # shlex.split handles `#!/usr/bin/env python3` → picks "python3", not "/usr/bin/env python3"
+        _PYTHON = shlex.split(_first_line.lstrip("#!"))[0] if _first_line.startswith("#!") else "python3"
+    except (OSError, IsADirectoryError, IndexError):
         _PYTHON = "python3"
 else:
     _PYTHON = "python3"
@@ -325,9 +327,13 @@ def run_abicheck_compat(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path 
     out = r.stdout + r.stderr
     (rdir / f"{case}_abicheck_compat.txt").write_text(out)
 
-    # compat exit codes mirror ABICC: 0=compatible/no-change, 1=breaking, 2=error
-    if r.returncode == 1:
+    # compat exit codes mirror abicheck cli: 4=BREAKING, 2=SOURCE_BREAK, 1=COMPATIBLE, 0=NO_CHANGE
+    if r.returncode == 4:
         verdict = "BREAKING"
+    elif r.returncode == 1:
+        verdict = "BREAKING"
+    elif r.returncode == 2:
+        verdict = "SOURCE_BREAK"
     elif r.returncode == 0:
         # distinguish NO_CHANGE from COMPATIBLE by output
         if "no changes" in out.lower() or "identical" in out.lower():

@@ -203,7 +203,7 @@ Legend: ✅ correct verdict, ❌ wrong verdict, — not applicable / tool skippe
 | case12 — Function removed | BREAKING | ✅ | ✅ | ✅ |
 | case13 — Symbol versioning | BREAKING | ❌² | ❌² | ❌ |
 | case14 — Class size changed | BREAKING | ✅ | ✅ | ❌ |
-| case15 — noexcept change | COMPATIBLE | ❌³ | ❌³ | ❌ |
+| case15 — noexcept change | BREAKING | ✅ | ✅ | ❌ |
 | case16 — inline↔non-inline | COMPATIBLE | ✅ | ✅ | ✅ |
 | case17 — Template ABI drift | BREAKING | ✅ | ✅ | ❌ |
 | case18 — Dependency leak | BREAKING | ✅ | ✅ | ❌ |
@@ -214,7 +214,7 @@ Legend: ✅ correct verdict, ❌ wrong verdict, — not applicable / tool skippe
 | case23 — Pure virtual added | BREAKING | ⏱ | ⏱ | ⏱ |
 | case24 — Union field removed | BREAKING | ✅ | ✅ | ❌ |
 | case25 — Enum member added | COMPATIBLE | ❌³ | ❌³ | ❌ |
-| case26 — Union field added | COMPATIBLE | ❌³ | ❌³ | ✅ |
+| case26 — Union field added | BREAKING | ✅ | ✅ | ✅ |
 | case27 — Symbol binding weakened | COMPATIBLE | ❌³ | ❌³ | ❌ |
 | case29 — IFUNC transition | COMPATIBLE | ❌³ | ❌³ | ❌ |
 
