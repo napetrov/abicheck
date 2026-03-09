@@ -169,7 +169,7 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "int get_version(void) { return 2; }",
         "extern int api_version;\nint get_version(void);",
         "int get_version(void);",
-        "c", "BREAKING", "BREAKING", "divergence",
+        "c", "NO_CHANGE", "BREAKING", "divergence",
     ),
 ]
 
