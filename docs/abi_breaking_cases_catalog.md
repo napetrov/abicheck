@@ -83,11 +83,16 @@ For full code walkthroughs and deep per-case narrative, see
     - Mitigation: use Pimpl to stabilize externally visible object layout.
 
 13. **case15_noexcept_change** — `noexcept` removed/changed.
-    - Risk: source-level contract change; does NOT change Itanium ABI mangled name.
-    - Type: **compatible/warning** (not a binary ABI break — same symbol resolves).
-    - Verdict: COMPATIBLE.
+    - Risk: removing `noexcept` allows the function to throw; v1-compiled callers
+      omit exception landing pads assuming `noexcept`, so an actual throw calls
+      `std::terminate`. Additionally, adding `throw` can pull in new GLIBCXX version
+      requirements, causing load failure on older systems.
+    - Type: **breaking** — behavior contract broken for callers compiled without
+      exception support; potential VERNEED side-effects on affected compilers.
+    - Verdict: BREAKING.
     - Example: `examples/case15_noexcept_change/`
-    - Mitigation: treat `noexcept` as stable public contract for source compatibility.
+    - Mitigation: treat `noexcept` as stable public contract; never add throws to
+      a previously `noexcept` function in a released library.
 
 14. **case16_inline_to_non_inline** — inline→non-inline (or reverse) with ODR effects.
     - Risk: multiple definitions, mixed TU behavior.

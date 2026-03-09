@@ -1,6 +1,6 @@
 # Case 15 — `noexcept` Changed
 
-**abicheck verdict: COMPATIBLE (informational/warning)**
+**abicheck verdict: BREAKING** (removing `noexcept` breaks caller exception-handling contract)
 
 ## What changes
 

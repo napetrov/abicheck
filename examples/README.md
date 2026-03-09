@@ -46,7 +46,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [12](case12_function_removed/README.md) | Function Removed | Symbol API | BREAKING 🔴 | Function removed from .so, symbol unresolvable |
 | [13](case13_symbol_versioning/README.md) | Symbol Versioning | ELF/Linker | BREAKING 🔴 | Versioned consumer fails with ld.so assertion when lib loses version script |
 | [14](case14_cpp_class_size/README.md) | C++ Class Size Change | C++ ABI | BREAKING 🟡 | Private member grows, sizeof(class) changes |
-| [15](case15_noexcept_change/README.md) | noexcept Changed | C++ Source | BREAKING ⚠️ | v2 adds throw → GLIBCXX_3.4.21 VERNEED (side-effect break, not mangling) |
+| [15](case15_noexcept_change/README.md) | noexcept Changed | C++ Source | BREAKING 🔴 | v2 adds throw → GLIBCXX_3.4.21 VERNEED (side-effect break, not mangling) |
 | [16](case16_inline_to_non_inline/README.md) | Inline → Non-inline | C++ ABI | BREAKING ⚠️ | ODR violation; symbol appears in v2 .so |
 | [17](case17_template_abi/README.md) | Template Layout Change | C++ ABI | BREAKING 🟡 | Explicit-instantiated template grows in size |
 | [18](case18_dependency_leak/README.md) | Dependency ABI Leak | Type Layout | BREAKING ⚠️ | Third-party type in public header changes layout |
@@ -95,7 +95,6 @@ Which tool catches which ABI break? Three modes are compared — see
 | 09 | vtable change | ⚠️ | ✅ | ✅ |
 | 10 | Return type | ⚠️ | ✅ | ✅ |
 | 11 | Global var type | ⚠️ | ✅ | ✅ |
-| 12 | Inline→removed | ❌ | ✅ | ❌ |
 | 13 | Symbol versioning | ❌ | ❌ | ❌ |
 | 14 | Class size | ⚠️ | ✅ | ✅ |
 | 15 | noexcept removed | ❌ | ✅ | ❌ |
