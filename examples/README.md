@@ -44,7 +44,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [10](case10_return_type/README.md) | Return Type Change | Symbol API | BREAKING 🟡 | Return type widened, callers read truncated value |
 | [11](case11_global_var_type/README.md) | Global Variable Type | Type Layout | BREAKING 🟡 | Global var type widened, symbol size changes |
 | [12](case12_function_removed/README.md) | Function Removed | Symbol API | BREAKING 🔴 | Function removed from .so, symbol unresolvable |
-| [13](case13_symbol_versioning/README.md) | Symbol Versioning | ELF/Linker | INFORMATIONAL 🟡 | No version script → no `@@VER` on symbols |
+| [13](case13_symbol_versioning/README.md) | Symbol Versioning | ELF/Linker | BREAKING 🔴 | Versioned consumer fails with ld.so assertion when lib loses version script |
 | [14](case14_cpp_class_size/README.md) | C++ Class Size Change | C++ ABI | BREAKING 🟡 | Private member grows, sizeof(class) changes |
 | [15](case15_noexcept_change/README.md) | noexcept Changed | C++ Source | BREAKING ⚠️ | v2 adds throw → GLIBCXX_3.4.21 VERNEED (side-effect break, not mangling) |
 | [16](case16_inline_to_non_inline/README.md) | Inline → Non-inline | C++ ABI | BREAKING ⚠️ | ODR violation; symbol appears in v2 .so |
