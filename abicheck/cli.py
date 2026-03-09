@@ -14,8 +14,8 @@ from .compat import CompatDescriptor, parse_descriptor
 from .dumper import dump
 from .html_report import write_html_report
 from .reporter import to_json, to_markdown
-from .xml_report import write_xml_report
 from .serialization import load_snapshot, save_snapshot, snapshot_to_json
+from .xml_report import write_xml_report
 
 if TYPE_CHECKING:
     from .checker import DiffResult

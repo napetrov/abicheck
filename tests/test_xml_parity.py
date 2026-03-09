@@ -12,7 +12,6 @@ Requires: abi-compliance-checker, gcc, castxml (for abicc-marked tests).
 """
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import textwrap
@@ -23,7 +22,6 @@ import pytest
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
 from abicheck.xml_report import generate_xml_report
-
 
 # ---------------------------------------------------------------------------
 # Schema validation (unit-level, always runs)
@@ -184,16 +182,17 @@ class TestXmlCrossToolParity:
         new_desc.write_text(f"<version>2.0</version>\n<headers>{h2}</headers>\n<libs>{v2_so}</libs>")
 
         abicc_xml = tmp_path / "abicc_report.xml"
-        r = subprocess.run([
+        subprocess.run([
             "abi-compliance-checker", "-lib", "libtest",
             "-old", str(old_desc), "-new", str(new_desc),
             "-report-format", "xml", "-report-path", str(abicc_xml),
         ], capture_output=True, text=True, timeout=60)
 
         # Generate abicheck XML report
-        import warnings
-        from abicheck.checker import compare
-        from abicheck.dumper import dump
+        import warnings  # noqa: PLC0415
+
+        from abicheck.checker import compare  # noqa: PLC0415
+        from abicheck.dumper import dump  # noqa: PLC0415
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -258,9 +257,10 @@ class TestXmlCrossToolParity:
         h = tmp_path / "test.h"
         h.write_text(hdr, encoding="utf-8")
 
-        import warnings
-        from abicheck.checker import compare
-        from abicheck.dumper import dump
+        import warnings  # noqa: PLC0415
+
+        from abicheck.checker import compare  # noqa: PLC0415
+        from abicheck.dumper import dump  # noqa: PLC0415
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")

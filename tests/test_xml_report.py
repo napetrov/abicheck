@@ -22,8 +22,6 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-import pytest
-
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
 from abicheck.xml_report import generate_xml_report, write_xml_report
 
@@ -306,6 +304,8 @@ class TestXmlReportDetailSections:
         assert "break binary compatibility" in effect.text
 
     def test_overcome_element_for_removal(self):
+        """func_removed goes into removed_symbols, not problems_with_symbols.
+        This is correct — overcome is only for problems, not removals in ABICC."""
         changes = [
             Change(kind=ChangeKind.FUNC_REMOVED, symbol="_Z3foov",
                    description="foo() removed"),
@@ -313,10 +313,8 @@ class TestXmlReportDetailSections:
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, old_symbol_count=5)
         root = ET.fromstring(xml)
-        binary = root.find("report[@kind='binary']")
-        # func_removed goes into removed_symbols, not problems_with_symbols
-        # But since it IS a breaking change, it's in _REMOVED_KINDS so won't be in problems
-        # That's correct — overcome is only for problems, not removals in ABICC
+        # func_removed is in _REMOVED_KINDS so it's in <removed_symbols>, not problems
+        assert root.find(".//removed_symbols") is not None
 
     def test_no_overcome_for_non_removal(self):
         changes = [

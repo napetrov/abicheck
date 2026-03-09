@@ -6,9 +6,7 @@ existing ABICC report parsing harnesses.
 from __future__ import annotations
 
 import re
-from unittest.mock import patch
 
-import pytest
 from click.testing import CliRunner
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
@@ -201,7 +199,7 @@ class TestCompatHtmlMetaData:
         html = generate_html_report(result, lib_name="libfoo",
                                     old_symbol_count=10, compat_html=True)
         # Extract META_DATA from comment
-        m = re.search(r"<!-- (.+?) -->", html)
+        m = re.search(r"<!-- ([\s\S]+?) -->", html)
         assert m is not None, "META_DATA comment not found"
         meta = m.group(1)
         assert "verdict:incompatible" in meta
@@ -212,7 +210,7 @@ class TestCompatHtmlMetaData:
     def test_meta_data_compatible_verdict(self):
         result = _make_result(verdict=Verdict.COMPATIBLE)
         html = generate_html_report(result, lib_name="libfoo", compat_html=True)
-        m = re.search(r"<!-- (.+?) -->", html)
+        m = re.search(r"<!-- ([\s\S]+?) -->", html)
         assert m is not None
         assert "verdict:compatible" in m.group(1)
 

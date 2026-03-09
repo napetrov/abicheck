@@ -353,7 +353,9 @@ def _severity(kind_str: str) -> str:
 
 
 def _is_type_problem(kind_str: str) -> bool:
-    return any(kind_str.startswith(p) for p in ("type_", "struct_", "union_", "field_", "typedef_", "enum_"))
+    return any(kind_str.startswith(p) for p in (
+        "type_", "struct_", "union_", "field_", "typedef_", "enum_", "base_class_",
+    ))
 
 
 def _is_symbol_problem(kind_str: str) -> bool:

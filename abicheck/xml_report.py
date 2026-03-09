@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .checker import _BREAKING_KINDS as _CHECKER_BREAKING_KINDS_ENUM
 
@@ -57,7 +57,7 @@ _REPORT_VERSION = "1.2"
 
 #: Kinds involving type changes (problems_with_types).
 _TYPE_PROBLEM_PREFIXES = (
-    "type_", "struct_", "union_", "field_", "typedef_", "enum_",
+    "type_", "struct_", "union_", "field_", "typedef_", "enum_", "base_class_",
 )
 
 #: Kinds involving symbol/interface changes (problems_with_symbols).
@@ -156,7 +156,7 @@ def _compute_section(
     old_symbol_count: int | None,
     *,
     exclude_binary_only: bool = False,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Compute counts for one section (binary or source) of the XML report."""
     filtered = changes
     if exclude_binary_only:
@@ -271,7 +271,7 @@ def _add_problem_element(parent: ET.Element, change: object) -> None:
 
 def _build_report_element(
     kind: str,
-    data: dict[str, object],
+    data: dict[str, Any],
     lib_name: str,
     old_version: str,
     new_version: str,
@@ -408,10 +408,20 @@ def generate_xml_report(
     """
     changes: list[object] = list(getattr(result, "changes", None) or [])
 
+    # Respect DiffResult.verdict for policy promotions (-strict, -warn-newsym)
+    # which set verdict=BREAKING without changing individual change kinds.
+    result_verdict: object = getattr(result, "verdict", None)
+    final_verdict_str = str(result_verdict.value if hasattr(result_verdict, "value") else result_verdict)
+    verdict_override: str | None = None
+    if final_verdict_str == "BREAKING":
+        verdict_override = "incompatible"
+
     root = ET.Element("reports")
 
     # Binary compatibility section (all changes)
     binary_data = _compute_section(changes, old_symbol_count, exclude_binary_only=False)
+    if verdict_override:
+        binary_data["verdict"] = verdict_override
     binary_el = _build_report_element(
         "binary", binary_data, lib_name, old_version, new_version,
         arch=arch, compiler=compiler,
@@ -420,6 +430,8 @@ def generate_xml_report(
 
     # Source compatibility section (exclude binary-only kinds)
     source_data = _compute_section(changes, old_symbol_count, exclude_binary_only=True)
+    if verdict_override:
+        source_data["verdict"] = verdict_override
     source_el = _build_report_element(
         "source", source_data, lib_name, old_version, new_version,
         arch=arch, compiler=compiler,
