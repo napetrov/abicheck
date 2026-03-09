@@ -784,7 +784,7 @@ def compat_dump_cmd(
               help="Print report to stdout.")
 # ── Header filtering flags ───────────────────────────────────────────────────
 @click.option("-skip-headers", "skip_headers", default=None, type=click.Path(path_type=Path),
-              help="File listing headers to exclude (accepted, not yet implemented).")
+              help="File listing headers to exclude from analysis, one per line.")
 @click.option("-headers-list", "headers_list_path", default=None, type=click.Path(path_type=Path),
               help="File listing specific headers to include.")
 @click.option("-header", "single_header", default=None,
@@ -960,7 +960,11 @@ def compat_cmd(  # noqa: PLR0913
     from .suppression import SuppressionList  # local import to avoid circular
 
     # ── Setup logging ────────────────────────────────────────────────────
-    _log1_handler, _log2_handler = _setup_logging(log_path, log1_path, log2_path, logging_mode, quiet)
+    try:
+        _log1_handler, _log2_handler = _setup_logging(log_path, log1_path, log2_path, logging_mode, quiet)
+    except OSError as exc:
+        click.echo(f"Error setting up logging: {exc}", err=True)
+        sys.exit(2)
 
     # ── Warn about P2 stub flags ─────────────────────────────────────────
     _warn_stub_flags(
@@ -1072,6 +1076,7 @@ def compat_cmd(  # noqa: PLR0913
         old_snap, old_version = _snap_from_input(old_d, vnum1, old_desc)
         if _log1_handler is not None:
             _logger.removeHandler(_log1_handler)
+            _log1_handler.close()
 
         # Activate log2 handler for new library analysis phase
         if _log2_handler is not None:
@@ -1079,6 +1084,7 @@ def compat_cmd(  # noqa: PLR0913
         new_snap, new_version = _snap_from_input(new_d, vnum2, new_desc)
         if _log2_handler is not None:
             _logger.removeHandler(_log2_handler)
+            _log2_handler.close()
     except Exception as exc:  # noqa: BLE001
         # Clean up phase handlers on error
         if _log1_handler is not None:
@@ -1150,12 +1156,12 @@ def compat_cmd(  # noqa: PLR0913
     # -src-report-path derives from this via _filter_source_only.
     full_result = result
 
-    # -source: filter to source/API breaks only (for primary report)
+    # -source: filter to source/API breaks only (for primary report).
+    # -binary is the default mode and does NOT filter source-level changes
+    # from the primary report (matching ABICC semantics). _filter_binary_only
+    # is only used for -bin-report-path split reports.
     if source_only and not binary_only:
         result = _filter_source_only(result)
-    # -binary: filter to binary/ABI breaks only (for primary report)
-    elif binary_only and not source_only:
-        result = _filter_binary_only(result)
 
     verdict = result.verdict.value if hasattr(result.verdict, "value") else str(result.verdict)
 
@@ -1205,8 +1211,8 @@ def compat_cmd(  # noqa: PLR0913
     # -bin-report-path / -src-report-path: generate split reports
     if bin_report_path:
         bin_report_path.parent.mkdir(parents=True, exist_ok=True)
-        # Binary report = full result without source-only filtering
-        _generate_report(full_result, bin_report_path)
+        bin_result = _filter_binary_only(full_result)
+        _generate_report(bin_result, bin_report_path)
         _do_echo(f"Binary report: {bin_report_path}", quiet)
 
     if src_report_path:
