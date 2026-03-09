@@ -1,7 +1,7 @@
 # ABICC vs Abicheck: Test Coverage Comparison
 
-> Updated: 2026-03-09
-> Source: ABICC `RulesBin.xml` (195 rules), `RulesSrc.xml` (101 rules), `RegTests.pm` (~160 scenarios)
+> Updated: 2026-03-09 (independently verified against raw GitHub sources)
+> Source: ABICC `RulesBin.xml` (196 rules), `RulesSrc.xml` (100 rules + `Removed_Const_Overload`), `RegTests.pm` (~147 named scenarios)
 > Target: abicheck `examples/` (41 cases), `tests/` (670+ tests), `ChangeKind` enum (98 kinds)
 
 ---
@@ -10,11 +10,11 @@
 
 | Metric | Value |
 |--------|-------|
-| ABICC binary rules (RulesBin.xml) | 195 |
-| ABICC source rules (RulesSrc.xml) | 101 |
-| ABICC RegTests.pm scenarios | ~160 |
-| ABICC de-duplicated scenarios | ~65 |
-| **Abicheck covers (has ChangeKind + tests)** | **65/65 (100%)** |
+| ABICC binary rules (RulesBin.xml) | 196 |
+| ABICC source rules (RulesSrc.xml) | 101 (100 + `Removed_Const_Overload`) |
+| ABICC RegTests.pm named scenarios | ~147 (137 C++ + 10 C) |
+| ABICC de-duplicated scenarios | ~66 |
+| **Abicheck covers (has ChangeKind + tests)** | **65/66 (98.5%)** |
 | Abicheck ChangeKind enum members | 98 |
 | Abicheck example cases | 41 |
 | Detectors with example case | 52 |
@@ -22,7 +22,7 @@
 | Detectors total (52 + 26) | 78 |
 | Abicheck-only detectors (not in ABICC) | 20 |
 | **Note:** 78 + 20 = 98 total ChangeKind members | |
-| ABICC scenarios NOT in abicheck | **0** |
+| ABICC scenarios NOT in abicheck | **1** (see gap below) |
 
 ---
 
@@ -261,9 +261,17 @@ These are specific regression test scenarios from ABICC's `RegTests.pm` (~160 sc
 | `UsedReserved` (C test) | `USED_RESERVED_FIELD` (test_abicc_full_parity) |
 | `PUBLIC_CONSTANT` / `PUBLIC_VERSION` / `PRIVATE_CONSTANT` | `CONSTANT_CHANGED` / `CONSTANT_REMOVED` / `CONSTANT_ADDED` (test_abicc_full_parity) |
 
+### Remaining Gap — `TypedefToFunction` (C test)
+
+| RegTest Scenario | Status | Notes |
+|------------------|--------|-------|
+| `TypedefToFunction` | **PARTIALLY COVERED** — no explicit test | This C test changes a function-pointer typedef's parameter list (`typedef int(T)(int)` → `typedef int(T)(int, int)`). The `TYPEDEF_BASE_CHANGED` detector would fire if such a typedef appears in the ABI snapshot, but **no dedicated test or example case** exercises this specific scenario. The underlying detector (`_diff_typedefs`) compares typedef base types as strings and would detect the change. |
+
+**Recommendation:** Add a unit test in `test_abicc_full_parity.py` that constructs two `AbiSnapshot` objects with a function-pointer typedef whose signature changes, and assert `TYPEDEF_BASE_CHANGED` is emitted.
+
 ### Previously NOT Covered — Now COVERED
 
-All previously missing scenarios have been implemented:
+All previously missing scenarios (except `TypedefToFunction`) have been implemented:
 
 | RegTest Scenario | New ChangeKind | Test File |
 |------------------|---------------|-----------|
@@ -291,7 +299,12 @@ These scenarios are detected through existing general-purpose detectors rather t
 | `callConv` / `callConv2-5` (C tests) | `CALLING_CONVENTION_CHANGED` (DWARF) |
 | `ChangedTemplate` / `TestRemovedTemplate` / `removedTemplateSpec` | ELF symbol tracking (mangled name changes) |
 | `RemovedInlineMethod` / `removedInlineFunction` / `InlineMethod` | Out of scope — inlined symbols not in ELF |
+| `RemovedInlineVirtualFunction` | Out of scope — inlined symbols not in ELF (vtable change still detected) |
 | `functionBecameInline` | Out of scope — inlined symbols not in ELF |
+| `AddedVirtualMethodAtEnd_DefaultConstructor` | `FUNC_VIRTUAL_ADDED` + `TYPE_VTABLE_CHANGED` (variant of `AddedVirtualMethodAtEnd`) |
+| `RemovedPureSymbol` / `RemovedVirtualSymbol` / `RemovedLastVirtualSymbol` | `FUNC_VIRTUAL_REMOVED` + `TYPE_VTABLE_CHANGED` (symbol-level variants) |
+| `RemovedVirtualMethodFromEnd` | `FUNC_VIRTUAL_REMOVED` + `TYPE_VTABLE_CHANGED` |
+| `VirtualFunctionPosition` | `TYPE_VTABLE_CHANGED` (C++ vtable position tracking) |
 | `DefaultConstructor` | `FUNC_REMOVED` / `FUNC_ADDED` (symbol presence) |
 | `UnsafeVirtualOverride` | `TYPE_VTABLE_CHANGED` |
 | `RemovedPrivateVirtualSymbol` / `AddedPrivateVirtualSymbol` | `TYPE_VTABLE_CHANGED` (vtable layout always tracked) |
@@ -357,4 +370,6 @@ These detectors exist in abicheck but have no ABICC equivalent:
 
 ### Gap summary
 
-**No remaining gaps.** All ABICC de-duplicated detection scenarios are now covered by abicheck with dedicated ChangeKinds and unit tests.
+**1 remaining gap:** The `TypedefToFunction` RegTest scenario (function-pointer typedef signature change) has no explicit test, though the underlying `TYPEDEF_BASE_CHANGED` detector handles it. All other ABICC de-duplicated detection scenarios are covered by abicheck with dedicated ChangeKinds and unit tests.
+
+**Out-of-scope scenarios (4):** `RemovedInlineMethod`, `removedInlineFunction`, `functionBecameInline`, `RemovedInlineVirtualFunction` — inlined symbols are not present in the ELF `.dynsym` table and cannot be detected by binary-level ABI checking. ABICC detects these via header comparison (castxml), which is not abicheck's primary mode.
