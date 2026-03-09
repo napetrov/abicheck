@@ -1,5 +1,8 @@
 # abicheck
 
+[![CI](https://github.com/napetrov/abicheck/actions/workflows/ci.yml/badge.svg)](https://github.com/napetrov/abicheck/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/napetrov/abicheck/branch/main/graph/badge.svg)](https://codecov.io/gh/napetrov/abicheck)
+
 **abicheck checks C/C++ library compatibility at both API and ABI levels.**
 
 abicheck is inspired by two foundational projects:
