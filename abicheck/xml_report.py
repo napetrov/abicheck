@@ -1,32 +1,43 @@
 """ABICC-compatible XML report generator.
 
-Produces XML reports that match the structure expected by abi-compliance-checker
+Produces XML reports matching the structure expected by abi-compliance-checker
 consumers (abi-tracker, lvc-monitor, Fedora/openSUSE ABI infrastructure).
 
-The ABICC XML report schema:
+Real ABICC XML schema (``-report-format xml``):
 
-    <report version="1.2" library="LIBNAME" version1="V1" version2="V2">
-      <binary>
-        <compatible>XX.X</compatible>
-        <problems_with_types>N</problems_with_types>
-        <problems_with_symbols>N</problems_with_symbols>
-        <problems_total>N</problems_total>
-        <removed>N</removed>
-        <added>N</added>
-        <warnings>N</warnings>
-        <affected>N</affected>
-      </binary>
-      <source>
-        <compatible>XX.X</compatible>
-        <problems_with_types>N</problems_with_types>
-        <problems_with_symbols>N</problems_with_symbols>
-        <problems_total>N</problems_total>
-        <removed>N</removed>
-        <added>N</added>
-        <warnings>N</warnings>
-        <affected>N</affected>
-      </source>
-    </report>
+    <reports>
+      <report kind="binary" version="1.2">
+        <test_info>
+          <library>LIBNAME</library>
+          <version1><number>V1</number></version1>
+          <version2><number>V2</number></version2>
+        </test_info>
+        <test_results>
+          <verdict>compatible|incompatible</verdict>
+          <affected>N.N</affected>
+          <symbols>N</symbols>
+        </test_results>
+        <problem_summary>
+          <added_symbols>N</added_symbols>
+          <removed_symbols>N</removed_symbols>
+          <problems_with_types>
+            <high>N</high><medium>N</medium><low>N</low><safe>N</safe>
+          </problems_with_types>
+          <problems_with_symbols>
+            <high>N</high><medium>N</medium><low>N</low><safe>N</safe>
+          </problems_with_symbols>
+        </problem_summary>
+        <added_symbols>...</added_symbols>
+        <removed_symbols>...</removed_symbols>
+        <problems_with_types severity="High">...</problems_with_types>
+        ...
+      </report>
+      <report kind="source" version="1.2">
+        ...
+      </report>
+    </reports>
+
+No formal DTD/XSD exists — the format is defined by the ABICC Perl source.
 """
 from __future__ import annotations
 
@@ -82,6 +93,37 @@ _BINARY_ONLY_KINDS: frozenset[str] = frozenset({
 #: Canonical breaking kinds from checker (single source of truth).
 _BREAKING_KINDS: frozenset[str] = frozenset(k.value for k in _CHECKER_BREAKING_KINDS_ENUM)
 
+# ── ABICC severity mapping ──────────────────────────────────────────────────
+# ABICC classifies problems into High/Medium/Low severity.
+# High: symbol removal, type size change, vtable change, base class change
+# Medium: field offset, return type, parameter type, calling convention
+# Low: enum value, const qualifier, visibility, access level
+
+_HIGH_SEVERITY_KINDS: frozenset[str] = frozenset({
+    "func_removed", "var_removed", "type_removed", "typedef_removed",
+    "type_size_changed", "type_vtable_changed", "type_base_changed",
+    "struct_size_changed", "func_virtual_removed",
+    "func_pure_virtual_added", "func_virtual_became_pure",
+    "base_class_position_changed", "base_class_virtual_changed",
+    "type_kind_changed", "func_deleted",
+})
+
+_MEDIUM_SEVERITY_KINDS: frozenset[str] = frozenset({
+    "func_return_changed", "func_params_changed",
+    "type_field_offset_changed", "type_field_type_changed",
+    "type_field_removed", "type_alignment_changed",
+    "struct_field_offset_changed", "struct_field_removed",
+    "struct_field_type_changed", "struct_alignment_changed",
+    "var_type_changed", "calling_convention_changed",
+    "soname_changed", "symbol_type_changed",
+    "symbol_version_defined_removed",
+    "return_pointer_level_changed", "param_pointer_level_changed",
+    "union_field_removed", "union_field_type_changed",
+    "typedef_base_changed", "struct_packing_changed",
+})
+
+# Everything else that is breaking but not high/medium → low severity
+
 
 def _kind_str(change: object) -> str:
     kind = getattr(change, "kind", None)
@@ -100,12 +142,21 @@ def _is_symbol_problem(kind_str: str) -> bool:
     return any(kind_str.startswith(p) for p in _SYMBOL_PROBLEM_PREFIXES)
 
 
+def _severity(kind_str: str) -> str:
+    """Map a change kind to ABICC severity tier."""
+    if kind_str in _HIGH_SEVERITY_KINDS:
+        return "high"
+    if kind_str in _MEDIUM_SEVERITY_KINDS:
+        return "medium"
+    return "low"
+
+
 def _compute_section(
     changes: list[object],
     old_symbol_count: int | None,
     *,
     exclude_binary_only: bool = False,
-) -> dict[str, str]:
+) -> dict[str, object]:
     """Compute counts for one section (binary or source) of the XML report."""
     filtered = changes
     if exclude_binary_only:
@@ -117,11 +168,20 @@ def _compute_section(
     # "problems" = breaking changes that are not simple removals/additions
     problems = [c for c in breaking if _kind_str(c) not in _REMOVED_KINDS]
 
-    type_problems = sum(1 for c in problems if _is_type_problem(_kind_str(c)))
-    symbol_problems = sum(1 for c in problems if _is_symbol_problem(_kind_str(c)))
-    # Count remaining problems (ELF/DWARF-level) as symbol problems
-    other_problems = len(problems) - type_problems - symbol_problems
-    symbol_problems += other_problems
+    # Classify problems by category and severity
+    type_problems = {"high": 0, "medium": 0, "low": 0, "safe": 0}
+    symbol_problems = {"high": 0, "medium": 0, "low": 0, "safe": 0}
+
+    for c in problems:
+        ks = _kind_str(c)
+        sev = _severity(ks)
+        if _is_type_problem(ks):
+            type_problems[sev] += 1
+        else:
+            symbol_problems[sev] += 1
+
+    total_type = sum(type_problems.values())
+    total_symbol = sum(symbol_problems.values())
 
     breaking_count = len(breaking)
     if breaking_count == 0:
@@ -132,16 +192,146 @@ def _compute_section(
         total = len(filtered)
         bc_pct = max(0.0, (total - breaking_count) / total * 100) if total > 0 else 0.0
 
+    # Affected percentage (of old symbols)
+    if old_symbol_count and old_symbol_count > 0:
+        affected_pct = breaking_count / old_symbol_count * 100
+    else:
+        affected_pct = 0.0
+
+    verdict = "incompatible" if breaking_count > 0 else "compatible"
+
     return {
-        "compatible": f"{bc_pct:.1f}",
-        "problems_with_types": str(type_problems),
-        "problems_with_symbols": str(symbol_problems),
-        "problems_total": str(type_problems + symbol_problems),
-        "removed": str(len(removed)),
-        "added": str(len(added)),
-        "warnings": "0",
-        "affected": str(len(filtered)),
+        "compatible_pct": f"{bc_pct:.1f}",
+        "verdict": verdict,
+        "affected_pct": f"{affected_pct:.1f}",
+        "symbols": str(old_symbol_count or 0),
+        "removed": len(removed),
+        "added": len(added),
+        "type_problems": type_problems,
+        "symbol_problems": symbol_problems,
+        "total_type_problems": total_type,
+        "total_symbol_problems": total_symbol,
+        "problems_total": total_type + total_symbol,
+        "changes": filtered,
     }
+
+
+def _build_report_element(
+    kind: str,
+    data: dict[str, object],
+    lib_name: str,
+    old_version: str,
+    new_version: str,
+) -> ET.Element:
+    """Build a single <report kind="binary|source"> element."""
+    report = ET.Element("report")
+    report.set("kind", kind)
+    report.set("version", _REPORT_VERSION)
+
+    # <test_info>
+    test_info = ET.SubElement(report, "test_info")
+    lib_el = ET.SubElement(test_info, "library")
+    lib_el.text = lib_name or "unknown"
+    v1_el = ET.SubElement(test_info, "version1")
+    v1_num = ET.SubElement(v1_el, "number")
+    v1_num.text = old_version or "old"
+    v2_el = ET.SubElement(test_info, "version2")
+    v2_num = ET.SubElement(v2_el, "number")
+    v2_num.text = new_version or "new"
+
+    # <test_results>
+    test_results = ET.SubElement(report, "test_results")
+    verdict_el = ET.SubElement(test_results, "verdict")
+    verdict_el.text = str(data["verdict"])
+    affected_el = ET.SubElement(test_results, "affected")
+    affected_el.text = str(data["affected_pct"])
+    symbols_el = ET.SubElement(test_results, "symbols")
+    symbols_el.text = str(data["symbols"])
+
+    # <problem_summary>
+    summary = ET.SubElement(report, "problem_summary")
+
+    added_count = ET.SubElement(summary, "added_symbols")
+    added_count.text = str(data["added"])
+    removed_count = ET.SubElement(summary, "removed_symbols")
+    removed_count.text = str(data["removed"])
+
+    tp = data["type_problems"]
+    types_el = ET.SubElement(summary, "problems_with_types")
+    for sev in ("high", "medium", "low", "safe"):
+        s = ET.SubElement(types_el, sev)
+        s.text = str(tp[sev])
+
+    sp = data["symbol_problems"]
+    symbols_problems_el = ET.SubElement(summary, "problems_with_symbols")
+    for sev in ("high", "medium", "low", "safe"):
+        s = ET.SubElement(symbols_problems_el, sev)
+        s.text = str(sp[sev])
+
+    # <added_symbols> detail section
+    added_changes = [c for c in data["changes"] if _kind_str(c) in _ADDED_KINDS]
+    if added_changes:
+        added_detail = ET.SubElement(report, "added_symbols")
+        for c in added_changes:
+            sym = ET.SubElement(added_detail, "name")
+            sym.text = getattr(c, "symbol", "") or ""
+
+    # <removed_symbols> detail section
+    removed_changes = [c for c in data["changes"] if _kind_str(c) in _REMOVED_KINDS]
+    if removed_changes:
+        removed_detail = ET.SubElement(report, "removed_symbols")
+        for c in removed_changes:
+            sym = ET.SubElement(removed_detail, "name")
+            sym.text = getattr(c, "symbol", "") or ""
+
+    # <problems_with_types severity="High|Medium|Low"> detail sections
+    problem_changes = [
+        c for c in data["changes"]
+        if _is_breaking(c) and _kind_str(c) not in _REMOVED_KINDS
+    ]
+
+    for sev_label, sev_key in [("High", "high"), ("Medium", "medium"), ("Low", "low")]:
+        sev_changes = [c for c in problem_changes if _severity(_kind_str(c)) == sev_key]
+        if not sev_changes:
+            continue
+
+        type_changes = [c for c in sev_changes if _is_type_problem(_kind_str(c))]
+        if type_changes:
+            types_detail = ET.SubElement(report, "problems_with_types")
+            types_detail.set("severity", sev_label)
+            for c in type_changes:
+                type_el = ET.SubElement(types_detail, "type")
+                type_el.set("name", getattr(c, "symbol", "") or "")
+                prob = ET.SubElement(type_el, "problem")
+                prob.set("id", _kind_str(c))
+                change_el = ET.SubElement(prob, "change")
+                old_val = str(getattr(c, "old_value", "") or "")
+                new_val = str(getattr(c, "new_value", "") or "")
+                if old_val:
+                    change_el.set("old_value", old_val)
+                if new_val:
+                    change_el.set("new_value", new_val)
+                change_el.text = getattr(c, "description", "") or ""
+
+        sym_changes = [c for c in sev_changes if not _is_type_problem(_kind_str(c))]
+        if sym_changes:
+            syms_detail = ET.SubElement(report, "problems_with_symbols")
+            syms_detail.set("severity", sev_label)
+            for c in sym_changes:
+                sym_el = ET.SubElement(syms_detail, "symbol")
+                sym_el.set("name", getattr(c, "symbol", "") or "")
+                prob = ET.SubElement(sym_el, "problem")
+                prob.set("id", _kind_str(c))
+                change_el = ET.SubElement(prob, "change")
+                old_val = str(getattr(c, "old_value", "") or "")
+                new_val = str(getattr(c, "new_value", "") or "")
+                if old_val:
+                    change_el.set("old_value", old_val)
+                if new_val:
+                    change_el.set("new_value", new_val)
+                change_el.text = getattr(c, "description", "") or ""
+
+    return report
 
 
 def generate_xml_report(
@@ -165,25 +355,17 @@ def generate_xml_report(
     """
     changes: list[object] = list(getattr(result, "changes", None) or [])
 
-    root = ET.Element("report")
-    root.set("version", _REPORT_VERSION)
-    root.set("library", lib_name or "unknown")
-    root.set("version1", old_version or "old")
-    root.set("version2", new_version or "new")
+    root = ET.Element("reports")
 
     # Binary compatibility section (all changes)
     binary_data = _compute_section(changes, old_symbol_count, exclude_binary_only=False)
-    binary_el = ET.SubElement(root, "binary")
-    for key, val in binary_data.items():
-        child = ET.SubElement(binary_el, key)
-        child.text = val
+    binary_el = _build_report_element("binary", binary_data, lib_name, old_version, new_version)
+    root.append(binary_el)
 
     # Source compatibility section (exclude binary-only kinds)
     source_data = _compute_section(changes, old_symbol_count, exclude_binary_only=True)
-    source_el = ET.SubElement(root, "source")
-    for key, val in source_data.items():
-        child = ET.SubElement(source_el, key)
-        child.text = val
+    source_el = _build_report_element("source", source_data, lib_name, old_version, new_version)
+    root.append(source_el)
 
     ET.indent(root, space="  ")
     xml_str = ET.tostring(root, encoding="unicode", xml_declaration=True)
