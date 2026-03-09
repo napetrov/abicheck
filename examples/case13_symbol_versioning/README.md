@@ -1,12 +1,25 @@
 # Case 13: Symbol Versioning Script
 
-**Category:** ELF/Linker | **Verdict:** 🟡 INFORMATIONAL
+**Category:** ELF/Linker | **Verdict:** 🔴 BREAKING
 
 ## What breaks
-Without a version script, symbols have no version tag. If you later need to ship a
-`LIBFOO_2.0` variant of a symbol (for ABI fix while keeping backward compat), you
-have no mechanism to do so — all consumers already link against the unversioned symbol
-and there's no way to differentiate.
+Without a version script, symbols have no version tag (`foo` instead of `foo@@LIBFOO_1.0`).
+When a consumer is compiled against the versioned library and later runs against the
+unversioned variant, `ld.so` emits a warning and typically continues — but this
+creates several hard breaking scenarios:
+
+1. **`dlvsym()` failure**: any caller using `dlvsym(handle, "foo", "LIBFOO_1.0")`
+   gets `NULL` — a hard runtime error.
+2. **Future versioning impossible**: once you ship without a version script, you can
+   never add `LIBFOO_2.0` alongside `LIBFOO_1.0` in the same `.so` — the versioning
+   infrastructure is gone.
+3. **Silent ABI drift**: `ld.so` prints `"no version information available (required
+   by /tmp/app)"` to stderr and proceeds — masking incompatibility until a subtle
+   runtime failure surfaces later.
+
+Note: the `check_match: Assertion failed!` in `dl-lookup.c` fires under a different
+condition (library *has* `DT_VERDEF` but with a mismatched version hash), not when
+the version script is simply absent.
 
 ## Why the check catches it
 `readelf --syms` on the "good" library shows `foo@@LIBFOO_1.0` — the `@@` denotes the
@@ -50,27 +63,37 @@ simultaneously.
 
 ## Real Failure Demo
 
-**Severity: INFORMATIONAL**
+**Severity: BREAKING**
 
-**Scenario:** app runs fine against both good.so and bad.so at runtime. The issue is future-proofing.
+**Scenario:** app *appears* to run fine after swapping to the unversioned lib — `ld.so`
+prints a warning but continues. The break surfaces via `dlvsym()` failure and loss of
+future versioning capability.
 
 ```bash
 # Build good (versioned) and bad (unversioned) .so
 gcc -shared -fPIC -g good.c -o libgood.so -Wl,--version-script=libfoo.map
 gcc -shared -fPIC -g bad.c  -o libbad.so
 
-# Runtime works either way — must copy to libfoo.so before linking
+# Link app against the versioned lib → DT_VERNEED: LIBFOO_1.0 embedded in binary
 cp libgood.so libfoo.so
 gcc -g app.c -L. -Wl,-rpath,. -lfoo -o app
 ./app  # → foo() = 0  bar() = 1
 
-cp libbad.so libfoo.so && ./app  # → foo() = 0  bar() = 1
+# Swap in unversioned lib → ld.so warning, but basic call still works
+cp libbad.so libfoo.so && ./app
+# stderr: "no version information available (required by ./app)"
+# stdout: foo() = 0  bar() = 1  ← call succeeds, but DT_VERNEED is unsatisfied
+
+# dlvsym() breaks hard:
+# dlvsym(handle, "foo", "LIBFOO_1.0") → NULL (version not found in unversioned lib)
 
 # The difference shows up in symbol table
 readelf --syms libgood.so | grep foo   # → foo@@LIBFOO_1.0 (versioned)
 readelf --syms libbad.so  | grep foo   # → foo           (no version)
 ```
 
-**Why INFORMATIONAL:** The library works correctly today. But without versioned symbols,
-you can never ship a `LIBFOO_2.0` variant alongside `LIBFOO_1.0` in the same `.so` for
-backward compatibility — the versioning mechanism simply doesn't exist.
+**Why BREAKING:** Dropping the version script breaks ABI in two ways: (1) any caller
+using `dlvsym(handle, "foo", "LIBFOO_1.0")` gets `NULL` — a hard failure; (2) you can
+never ship a `LIBFOO_2.0` variant alongside `LIBFOO_1.0` in the same `.so` for backward
+compatibility — the versioning mechanism simply doesn't exist. Basic symbol resolution
+continues with a warning, but the ABI contract is broken.
