@@ -7,9 +7,9 @@ extern "C" {
 #endif
 
 struct SensorConfig {
-    const int    sample_rate;    /* became const: rate is now immutable after init */
-    volatile int raw_value;      /* became volatile: hardware-mapped register */
-    int          cache_hits;     /* lost mutable: no longer modifiable in const context */
+    const int    sample_rate;    /* became const: callers can no longer write this field */
+    volatile int raw_value;      /* became volatile: hardware-mapped register, no caching */
+    int          cache_hits;     /* unchanged */
 };
 
 int sensor_read(struct SensorConfig *cfg);

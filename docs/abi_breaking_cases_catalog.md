@@ -152,19 +152,19 @@ For full code walkthroughs and deep per-case narrative, see
     - Example: `examples/case20_enum_member_value_changed/`
     - Mitigation: never renumber released enum constants.
 
-25. **case26_union_field_added** — union field added (size grows).
-    - Risk: adding `double` makes union grow from 4→8 bytes; callers under-allocate.
-    - Type: **breaking** — TYPE_SIZE_CHANGED triggers when new field is larger than existing members.
-    - Example: `examples/case26_union_field_added/`
-    - Note: adding a field that does NOT change the union size would be compatible.
-
 ## 7) Additional compatible/informational cases
 
-26. **case25_enum_member_added** — enum member appended at end.
+25. **case25_enum_member_added** — enum member appended at end.
     - Risk: source-level only (switch statements may not handle new value).
     - Type: **compatible** — existing compiled values are unchanged.
     - Example: `examples/case25_enum_member_added/`
     - Note: if adding shifts existing values, that is caught by `ENUM_MEMBER_VALUE_CHANGED`.
+
+26. **case26_union_field_added** — union field added with larger alignment.
+    - Risk: if the new field is the largest member, `sizeof(union)` grows → **TYPE_SIZE_CHANGED** → BREAKING.
+    - Type: **breaking** — this fixture adds `double d` (8 bytes) to a union of `int`/`float` (4 bytes each), growing it from 4→8 bytes. Callers that stack-allocate or embed `union Value` in a struct are broken.
+    - Note: adding a field that does *not* grow the union (smaller or equal size) is compatible. The field addition itself is not the break — the size change is. This fixture demonstrates the breaking variant.
+    - Example: `examples/case26_union_field_added/`
 
 27. **case27_symbol_binding_weakened** — GLOBAL → WEAK symbol binding.
     - Risk: interposition — WEAK symbol can be overridden by another GLOBAL definition.
@@ -198,7 +198,12 @@ because they do not cause binary linkage or layout failures on their own.
     - Value shifts (if any) are caught separately by `ENUM_MEMBER_VALUE_CHANGED`.
     - Verdict: COMPATIBLE.
 
-27. **GLOBAL→WEAK symbol binding** — symbol weakened from `STB_GLOBAL` to `STB_WEAK`.
+27. **Union field added** — new field added to an existing union.
+    - All union fields share offset 0; existing fields are unaffected.
+    - Size increase (if any) is caught separately by `TYPE_SIZE_CHANGED`.
+    - Verdict: COMPATIBLE.
+
+28. **GLOBAL→WEAK symbol binding** — symbol weakened from `STB_GLOBAL` to `STB_WEAK`.
     - Symbol is still exported and resolvable by the dynamic linker.
     - Interposition semantics change but existing binaries continue to work.
     - Verdict: COMPATIBLE.
@@ -240,13 +245,7 @@ because they do not cause binary linkage or layout failures on their own.
 These changes are less obvious than a removed symbol or shifted struct layout,
 but they can cause hard runtime failures in realistic deployments.
 
-34. **Union field added (size grows)** — new field added to an existing union.
-    - All union fields share offset 0; existing fields are unaffected at offset level.
-    - However, if the new field is larger than existing members, `sizeof(union)` grows
-      → `TYPE_SIZE_CHANGED` → **BREAKING** (callers under-allocate).
-    - Verdict: **BREAKING** when size grows; COMPATIBLE when size unchanged.
-
-35. **ELF st_size changed** — symbol size metadata changed in `.dynsym`.
+34. **ELF st_size changed** — symbol size metadata changed in `.dynsym`.
     - While `st_size` is not used for normal symbol resolution, it **is** used by
       the dynamic linker for COPY relocations (`R_*_COPY`) to determine the number
       of bytes to copy into the executable's BSS and to validate size consistency.
@@ -257,15 +256,15 @@ but they can cause hard runtime failures in realistic deployments.
     - Verdict: **BREAKING** (COPY relocation correctness and stripped-binary
       false-negative avoidance).
 
-36. **New dependency version requirement** — library now requires e.g. `GLIBC_2.34`.
+35. **New dependency version requirement** — library now requires e.g. `GLIBC_2.34`.
     - Library fails to load on runtimes lacking the required version.
     - Verdict: **BREAKING** (hard runtime failure on affected systems).
 
-37. **Typeinfo/vtable visibility changed** — visibility attribute changed on type metadata.
+36. **Typeinfo/vtable visibility changed** — visibility attribute changed on type metadata.
     - Cross-DSO `dynamic_cast` and C++ exception matching can fail at runtime.
     - Verdict: **BREAKING**.
 
-38. **Variable const qualifier added/removed** — global variable gained or lost `const`.
+37. **Variable const qualifier added/removed** — global variable gained or lost `const`.
     - Adding `const` moves variable to `.rodata`; existing writes cause SIGSEGV.
     - Removing `const` is an ODR / inlining break (callers may have cached the value).
     - Verdict: **BREAKING**.
