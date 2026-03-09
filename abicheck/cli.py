@@ -357,6 +357,41 @@ def _filter_source_only(result: DiffResult) -> DiffResult:
     )
 
 
+def _filter_binary_only(result: DiffResult) -> DiffResult:
+    """Remove source-only changes from result for -binary mode."""
+    from .checker import (  # noqa: PLC0415
+        _BREAKING_KINDS,
+        _COMPATIBLE_KINDS,
+        DiffResult,
+        Verdict,
+    )
+    from .checker import (
+        _SOURCE_BREAK_KINDS as _SBK,
+    )
+
+    filtered = [c for c in result.changes if c.kind not in _SOURCE_BREAK_KINDS]
+
+    if any(c.kind in _BREAKING_KINDS for c in filtered):
+        verdict = Verdict.BREAKING
+    elif any(c.kind in _SBK for c in filtered):
+        verdict = Verdict.SOURCE_BREAK
+    elif any(c.kind in _COMPATIBLE_KINDS for c in filtered):
+        verdict = Verdict.COMPATIBLE
+    else:
+        verdict = Verdict.NO_CHANGE
+
+    return DiffResult(
+        old_version=result.old_version,
+        new_version=result.new_version,
+        library=result.library,
+        changes=filtered,
+        verdict=verdict,
+        suppressed_count=result.suppressed_count,
+        suppressed_changes=result.suppressed_changes,
+        suppression_file_provided=result.suppression_file_provided,
+    )
+
+
 def _apply_warn_newsym(result: DiffResult) -> DiffResult:
     """Promote new-symbol additions to BREAKING when -warn-newsym is set."""
     from .checker import DiffResult, Verdict  # noqa: PLC0415
@@ -434,12 +469,15 @@ def _setup_logging(
     log2_path: Path | None,
     logging_mode: str | None,
     quiet: bool,
-) -> None:
+) -> tuple[logging.FileHandler | None, logging.FileHandler | None]:
     """Configure logging based on ABICC-style log flags.
 
-    Each of log_path, log1_path, log2_path gets its own FileHandler so
-    separate old/new log files are preserved.  ``-logging-mode n`` disables
-    file handlers entirely.
+    -log-path: shared handler attached immediately.
+    -log1-path / -log2-path: per-phase handlers returned (not yet attached)
+    so the caller can activate them around the old/new dump phases.
+
+    Returns (log1_handler, log2_handler) — either may be None.
+    ``-logging-mode n`` disables file handlers entirely.
     """
     logger = logging.getLogger("abicheck")
 
@@ -455,29 +493,50 @@ def _setup_logging(
 
     # -logging-mode n: no file handlers
     if logging_mode == "n":
-        return
+        return None, None
 
     mode = "a" if logging_mode == "a" else "w"
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     any_handler = False
 
-    for p in (log_path, log1_path, log2_path):
-        if p is None:
-            continue
+    def _make_handler(p: Path) -> logging.FileHandler:
         p.parent.mkdir(parents=True, exist_ok=True)
         handler = logging.FileHandler(str(p), mode=mode, encoding="utf-8")
         handler.setFormatter(fmt)
-        logger.addHandler(handler)
+        return handler
+
+    # Shared log: attach immediately
+    if log_path is not None:
+        logger.addHandler(_make_handler(log_path))
         any_handler = True
 
-    if any_handler and not quiet:
+    # Per-phase handlers: create but do NOT attach yet
+    log1_handler = _make_handler(log1_path) if log1_path is not None else None
+    log2_handler = _make_handler(log2_path) if log2_path is not None else None
+
+    if (any_handler or log1_handler or log2_handler) and not quiet:
         logger.setLevel(logging.DEBUG)
+
+    return log1_handler, log2_handler
+
+
+def _load_skip_headers(skip_headers_path: Path | None) -> set[str]:
+    """Load a set of header names/paths to exclude from analysis."""
+    if skip_headers_path is None:
+        return set()
+    lines = [
+        ln.strip() for ln in skip_headers_path.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.startswith("#")
+    ]
+    return set(lines)
 
 
 def _resolve_headers_from_list(
     headers_list_path: Path | None,
     single_header: str | None,
     base_headers: list[Path],
+    *,
+    skip_headers: set[str] | None = None,
 ) -> list[Path]:
     """Merge headers from -headers-list file and -header flag with descriptor headers."""
     result = list(base_headers)
@@ -500,6 +559,13 @@ def _resolve_headers_from_list(
         p = Path(single_header)
         if p.exists():
             result.append(p)
+
+    # Apply -skip-headers filtering: exclude headers whose name or path matches
+    if skip_headers:
+        result = [
+            h for h in result
+            if h.name not in skip_headers and str(h) not in skip_headers
+        ]
 
     return result
 
@@ -894,7 +960,7 @@ def compat_cmd(  # noqa: PLR0913
     from .suppression import SuppressionList  # local import to avoid circular
 
     # ── Setup logging ────────────────────────────────────────────────────
-    _setup_logging(log_path, log1_path, log2_path, logging_mode, quiet)
+    _log1_handler, _log2_handler = _setup_logging(log_path, log1_path, log2_path, logging_mode, quiet)
 
     # ── Warn about P2 stub flags ─────────────────────────────────────────
     _warn_stub_flags(
@@ -945,6 +1011,11 @@ def compat_cmd(  # noqa: PLR0913
         click.echo(f"Error parsing descriptor: {exc}", err=True)
         sys.exit(2)
 
+    # ── Load skip-headers set ────────────────────────────────────────────
+    _skip_headers_set = _load_skip_headers(skip_headers)
+    if _skip_headers_set:
+        _do_echo(f"Applying -skip-headers: excluding {len(_skip_headers_set)} header(s).", quiet)
+
     # Determine which inputs are dumps vs descriptors (handles mixed inputs)
     from .model import AbiSnapshot as _AbiSnapshot  # noqa: PLC0415
 
@@ -979,7 +1050,10 @@ def compat_cmd(  # noqa: PLR0913
                 f"using only the first: {so}",
                 quiet,
             )
-        hdrs = _resolve_headers_from_list(headers_list_path, single_header, desc.headers)
+        hdrs = _resolve_headers_from_list(
+            headers_list_path, single_header, desc.headers,
+            skip_headers=_skip_headers_set or None,
+        )
         if not so.exists():
             click.echo(f"Error: library not found: {so}", err=True)
             sys.exit(2)
@@ -990,10 +1064,27 @@ def compat_cmd(  # noqa: PLR0913
         )
         return snap, desc.version
 
+    _logger = logging.getLogger("abicheck")
     try:
+        # Activate log1 handler for old library analysis phase
+        if _log1_handler is not None:
+            _logger.addHandler(_log1_handler)
         old_snap, old_version = _snap_from_input(old_d, vnum1, old_desc)
+        if _log1_handler is not None:
+            _logger.removeHandler(_log1_handler)
+
+        # Activate log2 handler for new library analysis phase
+        if _log2_handler is not None:
+            _logger.addHandler(_log2_handler)
         new_snap, new_version = _snap_from_input(new_d, vnum2, new_desc)
+        if _log2_handler is not None:
+            _logger.removeHandler(_log2_handler)
     except Exception as exc:  # noqa: BLE001
+        # Clean up phase handlers on error
+        if _log1_handler is not None:
+            _log1_handler.close()
+        if _log2_handler is not None:
+            _log2_handler.close()
         click.echo(f"Error during dump: {exc}", err=True)
         sys.exit(2)
 
@@ -1062,6 +1153,9 @@ def compat_cmd(  # noqa: PLR0913
     # -source: filter to source/API breaks only (for primary report)
     if source_only and not binary_only:
         result = _filter_source_only(result)
+    # -binary: filter to binary/ABI breaks only (for primary report)
+    elif binary_only and not source_only:
+        result = _filter_binary_only(result)
 
     verdict = result.verdict.value if hasattr(result.verdict, "value") else str(result.verdict)
 
