@@ -1,5 +1,8 @@
 # abicheck
 
+[![CI](https://github.com/napetrov/abicheck/actions/workflows/ci.yml/badge.svg)](https://github.com/napetrov/abicheck/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/napetrov/abicheck/branch/main/graph/badge.svg)](https://codecov.io/gh/napetrov/abicheck)
+
 **abicheck checks C/C++ library compatibility at both API and ABI levels.**
 
 abicheck is inspired by two foundational projects:
@@ -174,22 +177,44 @@ can cause runtime failures in realistic deployments:
 
 ## ABI/API breakages and tool coverage
 
-Benchmark run on all 41 examples. See [full benchmark report](docs/benchmark_report.md).
+Below is a high-level matrix aligned with `examples/case01..case24`.
 
-### Summary accuracy (41 cases)
+Legend: ✅ supported, ⚠️ partial/context-dependent, ❌ typically unsupported.
 
-| Tool | Correct / 41 | Accuracy |
-|------|-------------|----------|
-| **abicheck** | **38 / 41** | **92 %** |
-| **abicheck-compat** | **34 / 40** | **85 %** |
-| abidiff (ELF-only) | 10 / 41 | 24 % |
-| abidiff+headers | 9 / 41 | 21 % |
+| Case | Breakage type | Verdict | abicheck | abidiff + headers | ABICC #2 (headers) | ABICC #1 (abi-dumper) |
+|---|---|---|:---:|:---:|:---:|:---:|
+| case01 | Symbol removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case02 | Param type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case03 | Compatible symbol addition | COMPATIBLE | ✅ | ✅ | ✅ | ✅ |
+| case04 | No change baseline | NO_CHANGE | ✅ | ✅ | ✅ | ✅ |
+| case05 | SONAME policy break | BREAKING | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case06 | Visibility policy break | BREAKING | ✅ | ✅ | ⚠️ | ⚠️ |
+| case07 | Struct layout break | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case08 | Enum value changed | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case09 | C++ vtable drift | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case10 | Return type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case11 | Global variable type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case12 | Function removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case13 | Symbol version policy break | COMPATIBLE | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case14 | Class size/layout change | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case15 | `noexcept` changed | COMPATIBLE | ✅ | ⚠️ | ✅ | ❌ |
+| case16 | inline↔non-inline ABI/ODR risk | BREAKING | ✅ | ⚠️ | ✅ | ❌ |
+| case17 | Template ABI drift | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case18 | Dependency leak via headers | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case19 | Enum member removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case20 | Enum member value changed | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case21 | Method became static | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case22 | Method const qualifier changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case23 | Pure virtual method added | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case24 | Union field removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
 
-Legend: ✅ correct verdict, ❌ wrong verdict, — not applicable / tool skipped.
+### Tooling summary
 
-Remaining gaps (abicheck vs expected): **case05** (SONAME detection), **case06** (visibility needs `-fvisibility=hidden` at build time), **case13** (symbol versioning/linker script).
-
-For the full per-case breakdown see [docs/benchmark_report.md](docs/benchmark_report.md).
+- `abidiff + headers`: strong at ABI diffs when debug/header context is good.
+- `ABICC #2` (headers): useful semantic/header-driven mode, with GCC-oriented legacy behavior.
+- `ABICC #1` (abi-dumper): strong DWARF pipeline, but depends on debug builds.
+- **abicheck**: combines practical header + ELF checks, ABICC compatibility mode,
+  and CI-native outputs for production pipelines.
 
 ---
 

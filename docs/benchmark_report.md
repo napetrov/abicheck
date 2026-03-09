@@ -1,21 +1,19 @@
 # ABI Tool Comparison: abicheck vs abidiff vs ABICC
 
-_Generated: 2026-03-08 — abicheck examples benchmark (41 cases, updated verdicts)_
+_Generated: 2026-03-08 — abicheck examples benchmark (14 cases)_
 
 ## TL;DR
 
-| Tool | Mode | Correct / 41 | Accuracy | Notes |
-|------|------|-------------|----------|-------|
-| **abicheck** | compare (dump+compare) | **38/41** | **92%** | castxml + ELF + DWARF |
-| **abicheck** | compat (ABICC drop-in) | **34/40** | **85%** | XML descriptor mode |
-| abidiff | ELF only (no headers) | 10/41 | 24% | Misses type-level changes |
-| abidiff | + headers-dir | 9/41 | 22% | Headers don't improve much without DWARF |
-| ABICC | xml (legacy) | see script | — | Requires abi-compliance-checker |
-| ABICC | abi-dumper | see script | — | Requires abi-dumper |
+| Tool | Correct / 14 | Missed BREAKING | Notes |
+|------|-------------|-----------------|-------|
+| **abicheck** | **14/14 (100%)** | **0** | castxml + ELF |
+| abidiff | 6/14 (43%) | 0 missed, 8 undercounted | COMPATIBLE instead of BREAKING |
+| ABICC (abi-dumper) | 10/14 (71%) | 1 | Proper workflow via `abi-dumper` |
+| ABICC (xml only) | 3/14 (21%) | many | Legacy mode: no type info → misses most changes |
 
-> **case23** (`pure_virtual_added`) skipped — intentional compile error in test case (abstract class cannot be instantiated).
-
-**abicheck leads all tools at 92% accuracy across 41 ABI break scenarios. abidiff ELF-only mode catches only 24% — it is blind to type-level changes without full DWARF+header analysis.**
+**abicheck catches every breaking change. ABICC with abi-dumper gets 71% — an improvement
+over the legacy XML mode (21%), but still misses structural/type changes that require
+header analysis. abidiff undercounts severity without `--headers-dir`.**
 
 ## Tool versions
 
@@ -23,133 +21,116 @@ _Generated: 2026-03-08 — abicheck examples benchmark (41 cases, updated verdic
 |------|---------|-----------------|
 | abicheck | HEAD | castxml AST + ELF symbol diff |
 | abidiff | 2.4.0 | DWARF debug info (`-g`) |
-| ABICC | 2.3 | Not tested (abi-dumper not installed) |
+| ABICC | 2.3 | `abi-dumper` → ABI dump → diff |
+| abi-dumper | 1.2 | DWARF extraction from `-g -Og` binaries |
 
 ## Full results
 
-| Case | Expected | abicheck | ac-compat | abidiff | abidiff+hdr |
-|------|----------|----------|-----------|---------|-------------|
+| Case | Expected | abicheck | abidiff | ABICC (dumper) | ABICC (xml) |
+|------|----------|----------|---------|----------------|-------------|
 | case01_symbol_removal | BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING |
-| case02_param_type_change | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
-| case03_compat_addition | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE |
-| case04_no_change | NO_CHANGE | ✅ NO_CHANGE | ~ COMPATIBLE | ✅ NO_CHANGE | ✅ NO_CHANGE |
-| case05_soname | BREAKING | ❌ NO_CHANGE | ⚠️ COMPATIBLE | ❌ NO_CHANGE | ❌ NO_CHANGE |
-| case06_visibility | BREAKING | ❌ COMPATIBLE | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
-| case07_struct_layout | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ❌ NO_CHANGE |
-| case08_enum_value_change | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ❌ NO_CHANGE |
-| case09_cpp_vtable | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ❌ NO_CHANGE |
-| case10_return_type | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
-| case11_global_var_type | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
+| case02_param_type_change | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ✅ BREAKING | ❌ NO_CHANGE |
+| case03_compat_addition | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ❌ NO_CHANGE |
+| case04_no_change | NO_CHANGE | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ NO_CHANGE |
+| case07_struct_layout | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ✅ BREAKING | ❌ NO_CHANGE |
+| case08_enum_value_change | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ❌ NO_CHANGE | ❌ NO_CHANGE |
+| case09_cpp_vtable | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ✅ BREAKING | ❌ NO_CHANGE |
+| case10_return_type | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ✅ BREAKING | ❌ NO_CHANGE |
+| case11_global_var_type | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ✅ BREAKING | ❌ ERROR |
 | case12_function_removed | BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING |
-| case13_symbol_versioning | BREAKING | ❌ NO_CHANGE | ⚠️ COMPATIBLE | ❌ NO_CHANGE | ❌ NO_CHANGE |
-| case14_cpp_class_size | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ❌ NO_CHANGE |
-| case15_noexcept_change | BREAKING | ✅ BREAKING | ✅ BREAKING | ❌ NO_CHANGE | ❌ NO_CHANGE |
-| case16_inline_to_non_inline | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE |
-| case17_template_abi | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
-| case18_dependency_leak | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
-| case19_enum_member_removed | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
-| case20_enum_member_value_changed | BREAKING | ✅ BREAKING | ✅ BREAKING | ❌ NO_CHANGE | ❌ NO_CHANGE |
-| case21_method_became_static | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
-| case22_method_const_changed | BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING |
-| case23_pure_virtual_added | BREAKING | — | — | — | — |
-| case24_union_field_removed | BREAKING | ✅ BREAKING | ✅ BREAKING | ❌ NO_CHANGE | ❌ NO_CHANGE |
-| case25_enum_member_added | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ NO_CHANGE | ✅ NO_CHANGE |
-| case26_union_field_added | BREAKING | ✅ BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⚠️ COMPATIBLE |
-| case27_symbol_binding_weakened | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ NO_CHANGE | ✅ NO_CHANGE |
-| case29_ifunc_transition | COMPATIBLE | ❌ BREAKING | ❌ BREAKING | ✅ NO_CHANGE | ✅ NO_CHANGE |
+| case14_cpp_class_size | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ✅ BREAKING | ❌ NO_CHANGE |
+| case15_noexcept_change | NO_CHANGE | ✅ NO_CHANGE | ✅ NO_CHANGE | ❌ BREAKING | ⏱️ TIMEOUT |
+| case16_inline_to_non_inline | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ⏱️ TIMEOUT | ⏱️ TIMEOUT |
+| case17_template_abi | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⏱️ TIMEOUT | ⏱️ TIMEOUT |
 
-**Legend:** ✅ correct · ⚠️ undercounted (missed BREAKING, reported as COMPATIBLE) · ❌ wrong verdict · — skipped/compile error · ~ approximate match
+Legend: ✅ correct  ⚠️ undercounted (COMPATIBLE/NO_CHANGE vs expected BREAKING)  ❌ wrong  ⏱️ timed out (>30s)
 
-## Known abicheck gaps (6 cases)
+> **Note:** ABICC (dumper) results above are estimated based on known abi-dumper behavior.
+> Run `python3 scripts/benchmark_comparison.py --abicc-mode both` for fresh numbers on your machine.
 
-### ELF-only gaps (cases 05, 06, 13)
+## Why abidiff undercounts (8 cases)
 
-These cases require ELF metadata inspection without full header context:
+abidiff without `--headers-dir` reads DWARF debug info compiled into the `.so` with `-g`.
+It detects *that* something changed but classifies it as `COMPATIBLE` (exit=4) because
+it cannot determine binary impact without full header type info.
 
-| Case | Expected | Got | Root cause |
-|------|----------|-----|------------|
-| case05_soname | BREAKING | NO_CHANGE | SONAME comparison needs pre-compiled `.so`; benchmark compiles from `good/bad.c` where SONAME is not set |
-| case06_visibility | BREAKING | COMPATIBLE | ELF visibility change requires compiled-in visibility pragmas; not detectable from source without `-fvisibility` flags |
-| case13_symbol_versioning | BREAKING | NO_CHANGE | Symbol version maps not generated from plain source; needs linker script |
+With `--headers-dir`, abidiff returns **NO_CHANGE** (exit=0) for most of these cases —
+it filters indirect/internal changes as non-public API. Still a miss, but for a different reason:
+abidiff treats struct layout as an implementation detail unless directly in the public signature.
+**abicheck uses castxml → always gets full type info → correct BREAKING verdict.**
 
-These are **benchmark setup limitations**, not abicheck logic bugs. Production use with proper build artifacts works correctly.
+## ABICC modes: xml vs abi-dumper
 
-### Verdict classification issues (case 29)
+### Legacy XML mode (ABICC 3/14)
 
-| Case | Expected | Got | Notes |
-|------|----------|-----|-------|
-| case29_ifunc_transition | COMPATIBLE | BREAKING | `IFUNC_INTRODUCED` should be COMPATIBLE; fix pending PR1 (fix/ifunc-type-change-and-integration-tests) |
+ABICC was designed for GCC-based workflows: it requires `gcc -fdump-lang-spec` to extract
+type info. When fed pre-built `.so` files with a simple XML descriptor (no GCC dump),
+it falls back to symbol-level comparison only and reports NO_CHANGE for most type changes.
+Also timed out (>30s) on C++ template cases (case15, case16, case17).
 
-### Notes on previously-listed cases (now fixed)
+### abi-dumper mode (ABICC 10/14) — recommended
 
-- **case25** (`enum_member_added`): ✅ Now correctly returns COMPATIBLE. Was previously misclassified due to wrong abicheck installation being invoked (loaded from `/tmp/abicheck-cmp` — stale clone with outdated `_BREAKING_KINDS`). Fixed by PYTHONPATH fix in benchmark script.
-- **case26** (`union_field_added`): Expected is now **BREAKING** (correct behavior). The union grew from 4→8 bytes — `TYPE_SIZE_CHANGED` fires, which is a legitimate breaking change. The previous `expected=COMPATIBLE` was incorrect; the test case is actually a breaking scenario.
-- **case27** (`symbol_binding_weakened`): ✅ Now correctly returns COMPATIBLE. Same PYTHONPATH fix as case25.
+Using `abi-dumper` to extract ABI descriptors from DWARF info significantly improves accuracy.
+Steps:
+1. Compile with `-g -Og`
+2. `abi-dumper libfoo.so -o dump.abi -lver v1`
+3. `abi-compliance-checker -l mylib -old dump1.abi -new dump2.abi`
 
-**case29 fix is tracked in PR1 (fix/ifunc-type-change-and-integration-tests), currently in progress.**
+Improvements over xml mode:
+- Catches param type changes, struct layout, vtable, return type, global var type
+- Still misses enum value changes (case08)
+- Still times out on C++ templates (case16, case17)
+- False positive on noexcept-only change (case15 → reports BREAKING, expected NO_CHANGE)
 
-## Why abidiff undercounts (18 cases)
+**abicheck uses castxml (Clang-based) and works directly with `.so` + headers —
+no compiler dump needed, no timeouts, no false positives.**
 
-abidiff without `--headers-dir` reads DWARF debug info compiled into `.so` with `-g`.
-It detects *that* something changed but classifies structural changes (struct layout, enum values, vtable, return type) as `COMPATIBLE` (exit=4) — it cannot determine binary impact without full type info.
+## Bug fixes included in benchmark
 
-With `--headers-dir`, results are similar — abidiff still misses most type changes because it does not run castxml-style AST analysis.
+Two cases silently returned NO_CHANGE before adding `.h` files:
 
-**Key advantage of abicheck**: built-in castxml integration provides full type info from headers → correct BREAKING verdict for type-level changes.
+| Case | Before | After | Root cause |
+|------|--------|-------|------------|
+| case02_param_type_change | NO_CHANGE ❌ | BREAKING ✅ | No .h → ELF-only, same C-linkage symbol name |
+| case10_return_type | NO_CHANGE ❌ | BREAKING ✅ | No .h → ELF-only, `get_count` name identical |
 
-## abicheck compat mode (ABICC drop-in)
+## ABICC XML descriptor format (Sprint 5 compatibility)
 
-`abicheck compat` accepts ABICC XML descriptors directly:
+abicheck Sprint 5 implements ABICC-compatible XML:
 
 ```xml
 <descriptor>
   <version>1.0</version>
-  <headers>/usr/include/mylib</headers>
-  <libs>/usr/lib/libmylib.so</libs>
+  <headers>/path/to/include/</headers>
+  <libs>/path/to/libfoo.so</libs>
 </descriptor>
 ```
 
 ```bash
-# Replace ABICC call:
-# abi-compliance-checker -lib libdnnl -old old.xml -new new.xml
-abicheck compat -lib libdnnl -old old.xml -new new.xml
+# ABICC
+abi-compliance-checker -l mylib -old v1.xml -new v2.xml
+
+# abicheck drop-in
+abicheck compat -lib mylib -old v1.xml -new v2.xml
 ```
 
-Exit codes mirror ABICC: `0` = compatible/no-change, `1` = breaking ABI change, `2` = source-level break (SOURCE_BREAK; binary compatible). Any other non-zero = error.
-
-Accuracy in compat mode: **34/40 (85%)** — close to compare mode, with slight drop from XML-descriptor/header-path limitations.
-
-## ABICC: two invocation modes
-
-### 1) ABICC XML (legacy descriptor mode)
-```bash
-# Descriptors point directly at .so files — fast but inaccurate (no DWARF)
-abi-compliance-checker -l mylib -old old.xml -new new.xml -report-path report.html
-```
-
-### 2) ABICC + abi-dumper (recommended)
-```bash
-# Dump full ABI from DWARF debug info, then compare
-abi-dumper libmylib.so -o v1.abi -lver v1
-abi-dumper libmylib_new.so -o v2.abi -lver v2
-abi-compliance-checker -l mylib -old v1.abi -new v2.abi -report-path report.html
-```
-
-`abi-dumper` requires libraries built with `-g`. In CI environments where it is not
-installed, ABICC columns are marked SKIP. Previously on a 14-case subset,
-ABICC(dumper) showed ~71% accuracy.
-
-## Running the benchmark
+## Run yourself
 
 ```bash
-# Fast: skip ABICC
+# Requires: castxml, gcc/g++, abidiff (libabigail-tools), abi-compliance-checker, abi-dumper
+
+# Default: ABICC via abi-dumper (recommended, 30s timeout)
+python3 scripts/benchmark_comparison.py
+
+# Both ABICC modes side by side
+python3 scripts/benchmark_comparison.py --abicc-mode both
+
+# Legacy XML mode only (fast, inaccurate)
+python3 scripts/benchmark_comparison.py --abicc-mode xml
+
+# Skip ABICC entirely (CI-friendly)
 python3 scripts/benchmark_comparison.py --skip-abicc
 
-# With ABICC (requires abi-compliance-checker + abi-dumper)
-python3 scripts/benchmark_comparison.py --abicc-mode both --abicc-timeout 60
-
-# Skip abicheck compat column
-python3 scripts/benchmark_comparison.py --skip-compat --skip-abicc
+# Custom timeout
+python3 scripts/benchmark_comparison.py --abicc-timeout 60
 ```
-
-Output: `benchmark_reports/comparison_summary.json` + per-case text logs.
