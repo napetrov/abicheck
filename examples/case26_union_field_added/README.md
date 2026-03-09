@@ -1,6 +1,6 @@
 # Case 26 — Union Field Added
 
-**abicheck verdict: COMPATIBLE (informational/warning)**
+**abicheck verdict: BREAKING** (TYPE_SIZE_CHANGED: union grows 4→8 bytes)
 
 ## What changes
 
@@ -9,35 +9,33 @@
 | v1 | `union Value { int i; float f; };` |
 | v2 | `union Value { int i; float f; double d; };` |
 
-## Why this is NOT a binary ABI break
+## Why this IS a binary ABI break
 
-All union fields share offset 0. Adding a new field (`double d`) does not change
-how existing fields (`int i`, `float f`) are accessed — their offset and
-interpretation remain identical.
+Adding `double d` makes `double` the largest member, so `sizeof(union Value)` grows
+from **4 bytes** (max of `int`=4, `float`=4) to **8 bytes** (`double`=8).
 
-abicheck classifies this as **COMPATIBLE** because:
-- Existing fields are unaffected (all at offset 0).
-- No symbol resolution or calling convention change occurs.
-- If the new field increases the union's overall size (e.g., `sizeof(double) > sizeof(float)`),
-  that size change is caught separately by `TYPE_SIZE_CHANGED` (which IS breaking).
+This is a **TYPE_SIZE_CHANGED** break because:
+- Old callers allocate 4 bytes for `union Value` on the stack or in a struct.
+- The v2 library's `fill()` may write 8 bytes, overwriting adjacent memory.
+- Array indexing breaks: `Value arr[10]` → old caller: 40 bytes, library expects 80 bytes.
+
+All union fields still share offset 0, so the field layout is unchanged — but the
+size change makes this **BREAKING**, not just informational.
 
 ## What it does affect
 
-- **Union size**: if the new field is the largest member, `sizeof(union Value)`
-  increases. This is a genuine ABI concern but is detected as a separate
-  `TYPE_SIZE_CHANGED` check.
-- **Semantic contract**: new code paths may use the `double d` variant. Old consumers
-  that interpret the raw storage differently are unaffected as long as they only
-  access their known fields.
+- **Union size**: `sizeof(union Value)` grows 4→8 bytes → TYPE_SIZE_CHANGED → BREAKING.
+- **Struct embedding**: any struct containing `union Value` also grows, shifting later fields.
+- **Array indexing**: `Value arr[N]` stride changes from 4 to 8 bytes.
 
-## Contrast with BREAKING union changes
+## Contrast with other union changes
 
 | Change | Verdict | Why |
 |---|---|---|
-| Field **added** | COMPATIBLE | Existing fields at offset 0 unchanged |
+| Field **added** (no size change) | COMPATIBLE | Existing fields at offset 0 unchanged, sizeof same |
+| Field **added** (size grows) | BREAKING | TYPE_SIZE_CHANGED — callers under-allocate |
 | Field **removed** | BREAKING | Removes a valid representation |
 | Field **type changed** | BREAKING | Reinterpretation of shared storage |
-| Size changed (from field addition) | BREAKING | Caught separately by TYPE_SIZE_CHANGED |
 
 ## Code diff
 
@@ -45,15 +43,17 @@ abicheck classifies this as **COMPATIBLE** because:
  union Value {
      int i;
      float f;
-+    double d;
++    double d;   /* sizeof grows 4 → 8 bytes: BREAKING */
  };
 ```
 
 ## Real Failure Demo
 
-**Severity: INFORMATIONAL**
+**Severity: BREAKING** (TYPE_SIZE_CHANGED)
 
-**Scenario:** app reads `v.i` after `fill()`. Adding a `double d` field doesn't affect `int i` — same result.
+**Scenario:** app reads `v.i` after `fill()`. Adding a `double d` field doesn't affect `int i`
+access — but the union is now 8 bytes. Any caller that stack-allocated 4 bytes and passes
+`&v` to a v2 function that writes 8 bytes has a stack overflow.
 
 ```bash
 # Build old lib + app
@@ -62,12 +62,14 @@ gcc -g app.c -Iold -L. -lval -Wl,-rpath,. -o app
 ./app
 # → v.i = 42 (expected 42)
 
-# Swap in new lib (double field added — but fill() still sets i=42)
+# Swap in new lib (double field added — sizeof grows 4→8 bytes)
 gcc -shared -fPIC -g new/lib.c -Inew -o libval.so
 ./app
-# → v.i = 42 (expected 42)  ← same result
+# → v.i = 42 (expected 42)  ← may still appear correct for int-only access
+# But: abicheck reports TYPE_SIZE_CHANGED (4→8) → BREAKING
 ```
 
-**Why INFORMATIONAL:** All union fields share offset 0. Adding a new field leaves
-existing fields unchanged. If the new field is larger (`double` > `float`), `sizeof`
-grows — that size change is a separate BREAKING concern caught as `TYPE_SIZE_CHANGED`.
+**Why BREAKING:** `sizeof(union Value)` grows from 4 to 8 bytes due to `double d`.
+Old callers that allocate `union Value` on the stack or embed it in a struct
+under-allocate memory when running against the v2 library. abicheck correctly
+reports TYPE_SIZE_CHANGED → BREAKING verdict.

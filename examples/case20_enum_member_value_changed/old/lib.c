@@ -1,3 +1,3 @@
 #include "lib.h"
 
-int get_result(void) { return 1; /* ERROR in v1 */ }
+int get_result(void) { return ERROR; /* v1: ERROR=1 */ }

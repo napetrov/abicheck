@@ -89,7 +89,7 @@ See also the **Dependency ABI Leaks** section in `examples/README.md`.
 ```bash
 cd examples/case18_dependency_leak
 
-# Build libfoo v1 and v2 (source identical, different thirdparty headers)
+# Build libfoo v1 and v2 (exported ABI/symbol surface is unchanged; only thirdparty headers differ)
 gcc -shared -fPIC -g libfoo_v1.c -I. -o libfoo_v1.so
 gcc -shared -fPIC -g libfoo_v2.c -I. -o libfoo_v2.so
 

@@ -1,6 +1,5 @@
 // v1.h — Buffer declaration as seen by consumers compiled against v1
 #pragma once
-#include <stdexcept>
 
 class Buffer {
 public:

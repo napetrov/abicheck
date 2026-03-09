@@ -102,6 +102,9 @@ _TYPE_MAP: dict[str, SymbolType] = {
     "STT_OBJECT": SymbolType.OBJECT,
     "STT_TLS": SymbolType.TLS,
     "STT_GNU_IFUNC": SymbolType.IFUNC,
+    # pyelftools < 0.33 reports STT_GNU_IFUNC (type=10, OS-specific range) as STT_LOOS.
+    # On Linux ELF, STT_LOOS == STT_GNU_IFUNC, so we map it to IFUNC.
+    "STT_LOOS": SymbolType.IFUNC,
     "STT_COMMON": SymbolType.COMMON,
     "STT_NOTYPE": SymbolType.NOTYPE,
 }
