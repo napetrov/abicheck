@@ -265,8 +265,9 @@ class TestLoadDescriptorOrDump:
         path = tmp_path / "dump.json"
         save_snapshot(snap, path)
         result = _load_descriptor_or_dump(path)
-        assert isinstance(result, tuple)
-        assert result[0].version == "1.0"
+        from abicheck.model import AbiSnapshot
+        assert isinstance(result, AbiSnapshot)
+        assert result.version == "1.0"
 
     def test_loads_xml_descriptor(self, tmp_path: Path) -> None:
         xml = _write_file(tmp_path, "desc.xml", """
@@ -435,11 +436,11 @@ class TestCompatDumpRoundTrip:
         save_snapshot(snap, path)
 
         loaded = _load_descriptor_or_dump(path)
-        assert isinstance(loaded, tuple)
-        reloaded = loaded[0]
-        assert reloaded.version == "3.0"
-        assert len(reloaded.functions) == 1
-        assert reloaded.functions[0].name == "foo"
+        from abicheck.model import AbiSnapshot
+        assert isinstance(loaded, AbiSnapshot)
+        assert loaded.version == "3.0"
+        assert len(loaded.functions) == 1
+        assert loaded.functions[0].name == "foo"
 
     def test_dump_json_is_valid(self, tmp_path: Path) -> None:
         snap = _make_snapshot()

@@ -81,13 +81,18 @@ def parse_descriptor(path: Path, *, relpath: str | None = None) -> CompatDescrip
         raise ValueError(f"Descriptor {path}: missing <version> element")
     version = version_vals[0]
 
+    # When relpath is provided, use it as the base for resolving relative paths
+    # that don't explicitly use {RELPATH} macros (which are already substituted
+    # by _get_all above).
+    resolve_base = Path(relpath) if relpath else base
+
     lib_strs = _get_all("libs")
     if not lib_strs:
         raise ValueError(f"Descriptor {path}: missing <libs> element")
-    libs = [_resolve(s, base) for s in lib_strs]
+    libs = [_resolve(s, resolve_base) for s in lib_strs]
 
     header_strs = _get_all("headers")
-    headers = [_resolve(s, base) for s in header_strs]
+    headers = [_resolve(s, resolve_base) for s in header_strs]
 
     log.debug("Parsed descriptor %s: version=%s, %d lib(s), %d header dir(s)",
               path, version, len(libs), len(headers))

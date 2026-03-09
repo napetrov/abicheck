@@ -193,7 +193,7 @@ class TestSuppressionErrorHandling:
             Suppression(symbol="foo", symbol_pattern="bar")
 
     def test_neither_symbol_nor_pattern_rejected(self):
-        with pytest.raises(ValueError, match="either"):
+        with pytest.raises(ValueError, match="must have"):
             Suppression()
 
     def test_invalid_regex_pattern_rejected(self):

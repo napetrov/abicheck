@@ -75,7 +75,18 @@ def _pyelftools_exported_symbols(so_path: Path) -> tuple[set[str], set[str]]:
         raise RuntimeError(f"Failed to parse ELF file {so_path}: {exc}") from exc
 
 
-def _cache_key(headers: list[Path], extra_includes: list[Path], compiler: str) -> str:
+def _cache_key(
+    headers: list[Path],
+    extra_includes: list[Path],
+    compiler: str,
+    *,
+    gcc_path: str | None = None,
+    gcc_prefix: str | None = None,
+    gcc_options: str | None = None,
+    sysroot: Path | None = None,
+    nostdinc: bool = False,
+    lang: str | None = None,
+) -> str:
     h = hashlib.sha256()
     for p in sorted(str(x.resolve()) for x in headers):
         h.update(p.encode())
@@ -95,6 +106,14 @@ def _cache_key(headers: list[Path], extra_includes: list[Path], compiler: str) -
                 except OSError:
                     pass
     h.update(compiler.encode())
+    # Include toolchain parameters so different cross-compilation configs
+    # produce distinct cache entries
+    h.update(f"gcc_path={gcc_path or ''}".encode())
+    h.update(f"gcc_prefix={gcc_prefix or ''}".encode())
+    h.update(f"gcc_options={gcc_options or ''}".encode())
+    h.update(f"sysroot={sysroot or ''}".encode())
+    h.update(f"nostdinc={nostdinc}".encode())
+    h.update(f"lang={lang or ''}".encode())
     return h.hexdigest()
 
 
@@ -134,7 +153,11 @@ def _castxml_dump(
         )
 
     # Check disk cache
-    key = _cache_key(headers, extra_includes, compiler)
+    key = _cache_key(
+        headers, extra_includes, compiler,
+        gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
+        sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+    )
     cached = _cache_path(key)
     if cached.exists():
         return cast(Element, DefusedET.parse(str(cached)).getroot())
@@ -153,8 +176,10 @@ def _castxml_dump(
     else:
         cc_bin = _cc_map.get(compiler, compiler)
 
-    # Determine GNU vs MSVC dialect
-    cc_id = "gnu" if "cl" not in cc_bin else "msvc"
+    # Determine GNU vs MSVC dialect (inspect executable name, not substring,
+    # to avoid misclassifying paths like "/opt/local/bin/g++")
+    exe_name = Path(cc_bin).name
+    cc_id = "msvc" if exe_name in ("cl", "cl.exe") else "gnu"
 
     with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
         out_xml = Path(tmp.name)

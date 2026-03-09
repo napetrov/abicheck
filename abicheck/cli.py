@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import click
 
 from .checker import ChangeKind, compare
-from .compat import parse_descriptor
+from .compat import CompatDescriptor, parse_descriptor
 from .dumper import dump
 from .html_report import write_html_report
 from .reporter import to_json, to_markdown
@@ -18,6 +18,7 @@ from .serialization import load_snapshot, save_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
     from .checker import DiffResult
+    from .model import AbiSnapshot
     from .suppression import SuppressionList
 
 
@@ -182,28 +183,38 @@ def _build_whitelist_suppression(
     Inverts the whitelist into a regex-based suppression: any symbol/type not
     matching one of the whitelist entries is suppressed.
 
+    Symbol and type whitelists are scoped independently: a symbol whitelist only
+    affects symbol-level changes, and a type whitelist only affects type-level
+    changes.  Names are preserved as-is (regex/glob syntax is not escaped).
+
     This is the inverse of -skip-symbols / -skip-types.
     """
     from .suppression import Suppression, SuppressionList  # noqa: PLC0415
 
     rules: list[Suppression] = []
-    for label, fpath in [("symbols", symbols_list_path), ("types", types_list_path)]:
-        if fpath is None:
-            continue
+
+    # -symbols-list: whitelist scoped to symbol_pattern (function/variable changes)
+    if symbols_list_path is not None:
         names = [
-            ln.strip() for ln in fpath.read_text(encoding="utf-8").splitlines()
+            ln.strip() for ln in symbols_list_path.read_text(encoding="utf-8").splitlines()
             if ln.strip() and not ln.startswith("#")
         ]
-        if not names:
-            continue
-        # Build a single regex that matches only whitelisted names.
-        # Everything NOT matching this pattern will be suppressed.
-        # We escape each name and join with |, then negate via a
-        # negative-lookahead anchored pattern.
-        escaped = [_re.escape(n) for n in names]
-        # Pattern matches anything that is NOT one of the whitelisted names
-        negate_pattern = f"(?!({'|'.join(escaped)})$).*"
-        rules.append(Suppression(symbol_pattern=negate_pattern))
+        if names:
+            # Pattern matches anything that is NOT one of the whitelisted names.
+            # Names are not escaped — regex/glob syntax is preserved.
+            negate_pattern = f"(?!({'|'.join(names)})$).*"
+            rules.append(Suppression(symbol_pattern=negate_pattern))
+
+    # -types-list: whitelist scoped to type_pattern (type/enum/typedef changes only)
+    if types_list_path is not None:
+        names = [
+            ln.strip() for ln in types_list_path.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.startswith("#")
+        ]
+        if names:
+            negate_pattern = f"(?!({'|'.join(names)})$).*"
+            rules.append(Suppression(type_pattern=negate_pattern))
+
     return SuppressionList(suppressions=rules)
 
 
@@ -424,22 +435,36 @@ def _setup_logging(
     logging_mode: str | None,
     quiet: bool,
 ) -> None:
-    """Configure logging based on ABICC-style log flags."""
+    """Configure logging based on ABICC-style log flags.
+
+    Each of log_path, log1_path, log2_path gets its own FileHandler so
+    separate old/new log files are preserved.  ``-logging-mode n`` disables
+    file handlers entirely.
+    """
     logger = logging.getLogger("abicheck")
 
     if quiet:
         logger.setLevel(logging.WARNING)
 
-    # Determine primary log file
-    effective_log = log_path or log1_path or log2_path
-    if effective_log:
-        effective_log.parent.mkdir(parents=True, exist_ok=True)
-        mode = "a" if logging_mode == "a" else "w"
-        handler = logging.FileHandler(str(effective_log), mode=mode, encoding="utf-8")
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    # -logging-mode n: no file handlers
+    if logging_mode == "n":
+        return
+
+    mode = "a" if logging_mode == "a" else "w"
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    any_handler = False
+
+    for p in (log_path, log1_path, log2_path):
+        if p is None:
+            continue
+        p.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(str(p), mode=mode, encoding="utf-8")
+        handler.setFormatter(fmt)
         logger.addHandler(handler)
-        if not quiet:
-            logger.setLevel(logging.DEBUG)
+        any_handler = True
+
+    if any_handler and not quiet:
+        logger.setLevel(logging.DEBUG)
 
 
 def _resolve_headers_from_list(
@@ -909,70 +934,54 @@ def compat_cmd(  # noqa: PLR0913
         click.echo(f"Error parsing descriptor: {exc}", err=True)
         sys.exit(2)
 
-    # If inputs were JSON dumps, skip the dump step
-    if isinstance(old_d, tuple):
-        old_snap, new_snap = old_d[0], new_d[0]  # type: ignore[index]
-        old_version = old_snap.version
-        new_version = new_snap.version
-    else:
-        if vnum1:
-            old_d = old_d.__class__(
-                version=vnum1, headers=old_d.headers, libs=old_d.libs, path=old_d.path
-            )
-        if vnum2:
-            new_d = new_d.__class__(
-                version=vnum2, headers=new_d.headers, libs=new_d.libs, path=new_d.path
-            )
+    # Determine which inputs are dumps vs descriptors (handles mixed inputs)
+    from .model import AbiSnapshot as _AbiSnapshot  # noqa: PLC0415
 
-        # Resolve .so paths — use first lib in each descriptor.
-        old_so = old_d.libs[0]
-        new_so = new_d.libs[0]
-        if len(old_d.libs) > 1:
+    old_is_dump = isinstance(old_d, _AbiSnapshot)
+    new_is_dump = isinstance(new_d, _AbiSnapshot)
+
+    # Resolve each input independently: dump → use directly, descriptor → dump it
+    def _dump_from_descriptor(
+        desc: CompatDescriptor,  # type: ignore[name-defined]
+        vnum_override: str | None,
+        desc_path: Path,
+    ) -> tuple[_AbiSnapshot, str]:
+        if vnum_override:
+            desc = desc.__class__(
+                version=vnum_override, headers=desc.headers, libs=desc.libs, path=desc.path
+            )
+        so = desc.libs[0]
+        if len(desc.libs) > 1:
             _do_echo(
-                f"Warning: descriptor {old_desc.name} has {len(old_d.libs)} <libs> entries; "
-                f"using only the first: {old_so}",
+                f"Warning: descriptor {desc_path.name} has {len(desc.libs)} <libs> entries; "
+                f"using only the first: {so}",
                 quiet,
             )
-        if len(new_d.libs) > 1:
-            _do_echo(
-                f"Warning: descriptor {new_desc.name} has {len(new_d.libs)} <libs> entries; "
-                f"using only the first: {new_so}",
-                quiet,
-            )
-
-        old_headers = _resolve_headers_from_list(headers_list_path, single_header, old_d.headers)
-        new_headers = _resolve_headers_from_list(headers_list_path, single_header, new_d.headers)
-
-        if headers_only:
-            _do_echo("Note: -headers-only is accepted — ELF/DWARF checks still run.", quiet)
-
-        if not old_headers or not new_headers:
-            _do_echo(
-                "Warning: one or both descriptors have no <headers> entry. "
-                "Type-level ABI checks (struct layout, enum values, etc.) will be skipped.",
-                quiet,
-            )
-
-        if not old_so.exists():
-            click.echo(f"Error: library not found: {old_so}", err=True)
+        hdrs = _resolve_headers_from_list(headers_list_path, single_header, desc.headers)
+        if not so.exists():
+            click.echo(f"Error: library not found: {so}", err=True)
             sys.exit(2)
-        if not new_so.exists():
-            click.echo(f"Error: library not found: {new_so}", err=True)
-            sys.exit(2)
+        dump_kwargs = dict(
+            gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
+            sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+        )
+        snap = dump(so, headers=hdrs, version=desc.version, **dump_kwargs)
+        return snap, desc.version
 
-        try:
-            dump_kwargs = dict(
-                gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
-                sysroot=sysroot, nostdinc=nostdinc, lang=lang,
-            )
-            old_snap = dump(old_so, headers=old_headers, version=old_d.version, **dump_kwargs)
-            new_snap = dump(new_so, headers=new_headers, version=new_d.version, **dump_kwargs)
-        except Exception as exc:  # noqa: BLE001
-            click.echo(f"Error during dump: {exc}", err=True)
-            sys.exit(2)
-
+    if old_is_dump:
+        old_snap = old_d
         old_version = old_d.version
+    else:
+        old_snap, old_version = _dump_from_descriptor(old_d, vnum1, old_desc)
+
+    if new_is_dump:
+        new_snap = new_d
         new_version = new_d.version
+    else:
+        new_snap, new_version = _dump_from_descriptor(new_d, vnum2, new_desc)
+
+    if headers_only:
+        _do_echo("Note: -headers-only is accepted — ELF/DWARF checks still run.", quiet)
 
     # ── Build suppression from all sources ────────────────────────────────
     suppression: SuppressionList | None = None
@@ -1112,11 +1121,11 @@ def compat_cmd(  # noqa: PLR0913
         sys.exit(2)
 
 
-def _load_descriptor_or_dump(path: Path, *, relpath: str | None = None) -> object:
+def _load_descriptor_or_dump(path: Path, *, relpath: str | None = None) -> CompatDescriptor | AbiSnapshot:
     """Load either an ABICC XML descriptor or a JSON ABI dump.
 
     Returns:
-        CompatDescriptor for XML files, or (AbiSnapshot,) tuple for JSON dumps.
+        CompatDescriptor for XML descriptor files, AbiSnapshot for JSON dumps.
 
     Raises:
         ValueError: If the file is an ABICC Perl dump (unsupported format).
@@ -1133,8 +1142,7 @@ def _load_descriptor_or_dump(path: Path, *, relpath: str | None = None) -> objec
 
     # Heuristic: if the file is JSON, load as a dump
     if path.suffix == ".json":
-        snap = load_snapshot(path)
-        return (snap,)
+        return load_snapshot(path)
 
     # For XML files, peek at content to detect ABICC Perl dump disguised as .xml
     # (ABICC -dump-format xml produces a different XML schema than descriptors)
