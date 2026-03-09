@@ -1,6 +1,6 @@
 # Case 12: Function Removed from Shared Library
 
-**Category:** Symbol API | **Verdict:** 🔴 BREAKING (exit 12)
+**Category:** Symbol API | **Abicheck verdict:** BREAKING
 
 ## What breaks
 Any binary dynamically linked against v1 will fail to load with

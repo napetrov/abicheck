@@ -8,8 +8,9 @@
 ## What breaks
 Old code allocates `Buffer` on the stack or via `new` expecting 64 bytes. v2's `Buffer`
 needs 128 bytes. The constructor (which zero-initializes the `data` array) writes 128
-bytes into a 64-byte allocation, corrupting adjacent memory. Any consumer that inherits
-from or embeds `Buffer` by value is also broken.
+bytes into a 64-byte allocation, corrupting adjacent memory. Any pre-built consumer
+compiled against the older 64-byte v1 layout that inherits from or embeds `Buffer` by
+value is also broken; consumers recompiled against the new 128-byte layout are unaffected.
 
 ## Why abidiff catches it
 Reports `type size changed from 512 to 1024 (in bits)` (64 bytes → 128 bytes).
