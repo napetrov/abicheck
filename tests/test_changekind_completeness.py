@@ -10,7 +10,7 @@ This file:
 """
 from __future__ import annotations
 
-from abicheck.checker import ChangeKind, Verdict, compare
+from abicheck.checker import ChangeKind, DiffResult, Verdict, compare
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import (
     AbiSnapshot,
@@ -177,7 +177,7 @@ def _elf_snap(elf: ElfMetadata, **kwargs: object) -> AbiSnapshot:
     return s
 
 
-def _kinds(result) -> set[ChangeKind]:  # type: ignore[type-arg]
+def _kinds(result: DiffResult) -> set[ChangeKind]:
     return {c.kind for c in result.changes}
 
 
