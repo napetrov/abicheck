@@ -64,6 +64,15 @@ if _abicheck_bin:
 else:
     _PYTHON = _sys.executable
 _ABICHECK_ENV = {**os.environ, "PYTHONPATH": str(REPO_DIR)}
+# True when abicheck CLI is importable via _PYTHON (even without installed bin)
+def _abicheck_available() -> bool:
+    import subprocess as _sp
+    r = _sp.run([_PYTHON, "-m", "abicheck.cli", "--help"],
+                capture_output=True, timeout=10, env=_ABICHECK_ENV)
+    return r.returncode == 0
+
+_HAS_ABICHECK: bool = _abicheck_available()
+
 
 DEFAULT_ABICC_TIMEOUT = 30  # seconds
 
@@ -237,7 +246,7 @@ def find_sources(case_dir: Path) -> tuple[Path | None, Path | None, Path | None,
 # ── abicheck compare (dump + compare pipeline) ────────────────────────────────
 def run_abicheck(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
                  case: str, rdir: Path) -> ToolResult:
-    if not shutil.which("abicheck"):
+    if not _HAS_ABICHECK:
         return ToolResult(verdict="SKIP")
 
     bdir = BUILD_DIR / case
@@ -307,7 +316,7 @@ def run_abicheck(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
 def run_abicheck_compat(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
                         case: str, rdir: Path) -> ToolResult:
     """Run abicheck compat with ABICC-format XML descriptors."""
-    if not shutil.which("abicheck"):
+    if not _HAS_ABICHECK:
         return ToolResult(verdict="SKIP")
 
     def xml(so: Path, h: Path | None, ver: str, out: Path) -> None:
