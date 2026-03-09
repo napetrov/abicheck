@@ -29,17 +29,26 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          pytest tests/ -v --tb=short -m "not integration and not libabigail" \
+          pytest tests/ -v --tb=short -m "not integration and not libabigail and not abicc" \
             --cov=abicheck \
             --cov-report=term-missing \
             --cov-report=xml \
-            --cov-fail-under=52
+            --cov-fail-under=80
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-xml
           path: coverage.xml
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          flags: unit
+          fail_ci_if_error: false
 
   integration-tests:
     runs-on: ubuntu-latest
@@ -60,8 +69,20 @@ jobs:
       - name: Install package
         run: pip install -e ".[dev]"
 
-      - name: Run integration tests
-        run: pytest tests/ -v -m integration --tb=short
+      - name: Run integration tests with coverage
+        run: |
+          pytest tests/ -v -m integration --tb=short \
+            --cov=abicheck \
+            --cov-report=xml:coverage-integration.xml
+
+      - name: Upload integration coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage-integration.xml
+          flags: integration
+          fail_ci_if_error: false
 
   e2e:
     runs-on: ubuntu-latest
@@ -107,3 +128,25 @@ jobs:
 
       - name: Run libabigail parity tests
         run: pytest tests/test_abidiff_parity.py -v -m libabigail --tb=short
+
+  abicc-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc g++ castxml abi-compliance-checker
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: 'pip'
+
+      - name: Install package
+        run: pip install -e ".[dev]"
+
+      - name: Run ABICC parity tests
+        run: pytest tests/test_abicc_parity.py -v -m abicc --tb=short
