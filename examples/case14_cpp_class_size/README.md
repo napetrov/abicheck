@@ -6,9 +6,10 @@
 > code that heap-allocates `Buffer` via operator new or embeds it by value.
 
 ## What breaks
-Old code allocates `new Buffer()` expecting 64 bytes. v2's `Buffer` needs 128 bytes.
-The allocator returns only 64 bytes; writing to `data[64..127]` corrupts heap memory.
-Any consumer that inherits from or embeds `Buffer` by value is also broken.
+Old code allocates `Buffer` on the stack or via `new` expecting 64 bytes. v2's `Buffer`
+needs 128 bytes. The constructor (which zero-initializes the `data` array) writes 128
+bytes into a 64-byte allocation, corrupting adjacent memory. Any consumer that inherits
+from or embeds `Buffer` by value is also broken.
 
 ## Why abidiff catches it
 Reports `type size changed from 512 to 1024 (in bits)` (64 bytes → 128 bytes).
