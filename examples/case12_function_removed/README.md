@@ -56,7 +56,7 @@ gcc -g app.c -I. -L. -lfoo -Wl,-rpath,. -o app
 # Swap in v2 (fast_add gone from .so)
 gcc -shared -fPIC -g v2.c -o libfoo.so
 ./app
-# → ./app: symbol lookup error: ./libfoo.so: undefined symbol: fast_add
+# → ./app: symbol lookup error: ./app: undefined symbol: fast_add
 ```
 
 **Why CRITICAL:** With default lazy binding (RTLD_LAZY), the error surfaces on the

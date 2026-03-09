@@ -35,7 +35,7 @@ gcc -g app.c -L. -lfoo -Wl,-rpath,. -o app
 # Swap in new library (no recompile)
 gcc -shared -fPIC -g v2.c -o libfoo.so
 ./app
-# → ./app: symbol lookup error: ./libfoo.so: undefined symbol: helper
+# → ./app: symbol lookup error: ./app: undefined symbol: helper
 ```
 
 **Why CRITICAL:** `helper` is removed from the dynamic symbol table in v2; the runtime

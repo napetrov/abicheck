@@ -7,7 +7,7 @@
 > `"note that this is an ABI incompatible change to the vtable of class Widget"`.
 
 ## What breaks
-The vtable is a hidden array of function pointers embedded in every `Widget` object.
+Every `Widget` object contains a hidden vptr (pointer to the vtable — a static array of function pointers).
 Old code calls `widget->resize()` via vtable slot 1. After v2 inserts `recolor()` at
 slot 1, that same call dispatches to `recolor()` instead — silent wrong behavior or
 a crash.
