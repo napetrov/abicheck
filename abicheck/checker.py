@@ -147,7 +147,8 @@ class ChangeKind(str, Enum):
     VAR_VALUE_CHANGED = "var_value_changed"                  # global data initial value changed
 
     # Aggregate kind change
-    TYPE_KIND_CHANGED = "type_kind_changed"                  # struct→union or union→struct
+    TYPE_KIND_CHANGED = "type_kind_changed"                  # union-involving transition (struct→union, union→struct, class→union, union→class)
+    SOURCE_LEVEL_KIND_CHANGED = "source_level_kind_changed"  # struct↔class transition (non-breaking, source-only)
 
     # Reserved field
     USED_RESERVED_FIELD = "used_reserved_field"              # __reserved field put into use
@@ -168,7 +169,8 @@ class ChangeKind(str, Enum):
     CONSTANT_REMOVED = "constant_removed"                    # #define removed
 
     # Global data access level
-    VAR_ACCESS_CHANGED = "var_access_changed"                # public→private/protected variable
+    VAR_ACCESS_CHANGED = "var_access_changed"                # public→private/protected variable (narrowing)
+    VAR_ACCESS_WIDENED = "var_access_widened"                 # private/protected→public variable (widening)
 
 
 class Verdict(str, Enum):
@@ -305,6 +307,7 @@ _COMPATIBLE_KINDS: set[ChangeKind] = {
     ChangeKind.CONSTANT_ADDED,               # new constant: compatible addition
     ChangeKind.USED_RESERVED_FIELD,          # reserved field put into use: compatible (was unused)
     ChangeKind.VAR_VALUE_CHANGED,            # global data value change: compatible (compile-time risk only)
+    ChangeKind.VAR_ACCESS_WIDENED,           # private/protected→public: widening is compatible
 }
 
 _SOURCE_BREAK_KINDS: set[ChangeKind] = {
@@ -320,6 +323,7 @@ _SOURCE_BREAK_KINDS: set[ChangeKind] = {
     ChangeKind.CONSTANT_CHANGED,             # #define value changed: source-level semantic change
     ChangeKind.CONSTANT_REMOVED,             # #define removed: source code referencing it breaks
     ChangeKind.VAR_ACCESS_CHANGED,           # variable access narrowed: source-level break
+    ChangeKind.SOURCE_LEVEL_KIND_CHANGED,    # struct↔class: source-level keyword change, binary identical
 }
 
 
@@ -1583,8 +1587,12 @@ def _diff_type_kind_changes(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         if t_new is None:
             continue
         if t_old.kind != t_new.kind:
+            # Union-involving transitions are binary-breaking (layout changes);
+            # struct↔class transitions are source-level only (identical ABI).
+            union_involved = t_old.kind == "union" or t_new.kind == "union"
+            ck = ChangeKind.TYPE_KIND_CHANGED if union_involved else ChangeKind.SOURCE_LEVEL_KIND_CHANGED
             changes.append(Change(
-                kind=ChangeKind.TYPE_KIND_CHANGED,
+                kind=ck,
                 symbol=name,
                 description=f"Aggregate kind changed: {name} ({t_old.kind} → {t_new.kind})",
                 old_value=t_old.kind,
@@ -1645,14 +1653,17 @@ def _diff_const_overloads(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     old_funcs = [f for f in old.functions if f.visibility in vis]
     new_funcs = [f for f in new.functions if f.visibility in vis]
 
-    # Group by (name, param_types) to find const/non-const pairs
+    # Group by (name, param_signature) to find const/non-const pairs
     from collections import defaultdict
 
-    def _group_key(f: Function) -> tuple[str, tuple[str, ...]]:
-        return (f.name, tuple(p.type for p in f.params))
+    _ParamSig = tuple[str, int, str]  # (type, pointer_depth, kind)
+    _GroupKey = tuple[str, tuple[_ParamSig, ...]]
 
-    old_groups: dict[tuple, list[Function]] = defaultdict(list)
-    new_groups: dict[tuple, list[Function]] = defaultdict(list)
+    def _group_key(f: Function) -> _GroupKey:
+        return (f.name, tuple((p.type, p.pointer_depth, p.kind.value) for p in f.params))
+
+    old_groups: dict[_GroupKey, list[Function]] = defaultdict(list)
+    new_groups: dict[_GroupKey, list[Function]] = defaultdict(list)
     for f in old_funcs:
         old_groups[_group_key(f)].append(f)
     for f in new_funcs:
@@ -1773,7 +1784,6 @@ def _diff_constants(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 def _diff_var_access(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect global data access level changes (ABICC: Global_Data_Became_Private/Protected/Public)."""
     changes: list[Change] = []
-    from .model import AccessLevel
     vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
     old_map = {k: v for k, v in old.variable_map.items() if v.visibility in vis}
     new_map = {k: v for k, v in new.variable_map.items() if v.visibility in vis}
@@ -1782,14 +1792,23 @@ def _diff_var_access(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         v_new = new_map.get(mangled)
         if v_new is None:
             continue
-        if v_old.access != v_new.access and _is_access_narrowing(v_old.access, v_new.access):
-            changes.append(Change(
-                kind=ChangeKind.VAR_ACCESS_CHANGED,
-                symbol=mangled,
-                description=f"Variable access level narrowed: {v_old.name} ({v_old.access.value} → {v_new.access.value})",
-                old_value=v_old.access.value,
-                new_value=v_new.access.value,
-            ))
+        if v_old.access != v_new.access:
+            if _is_access_narrowing(v_old.access, v_new.access):
+                changes.append(Change(
+                    kind=ChangeKind.VAR_ACCESS_CHANGED,
+                    symbol=mangled,
+                    description=f"Variable access level narrowed: {v_old.name} ({v_old.access.value} → {v_new.access.value})",
+                    old_value=v_old.access.value,
+                    new_value=v_new.access.value,
+                ))
+            else:
+                changes.append(Change(
+                    kind=ChangeKind.VAR_ACCESS_WIDENED,
+                    symbol=mangled,
+                    description=f"Variable access level widened: {v_old.name} ({v_old.access.value} → {v_new.access.value})",
+                    old_value=v_old.access.value,
+                    new_value=v_new.access.value,
+                ))
     return changes
 
 

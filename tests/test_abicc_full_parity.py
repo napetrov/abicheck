@@ -17,13 +17,19 @@ All tests build AbiSnapshot objects directly (no castxml required).
 """
 from __future__ import annotations
 
-from abicheck.checker import ChangeKind, Verdict, compare
+from abicheck.checker import (
+    _BREAKING_KINDS,
+    _COMPATIBLE_KINDS,
+    _SOURCE_BREAK_KINDS,
+    ChangeKind,
+    Verdict,
+    compare,
+)
 from abicheck.model import (
     AbiSnapshot,
     AccessLevel,
     Function,
     Param,
-    ParamKind,
     RecordType,
     TypeField,
     Variable,
@@ -153,17 +159,20 @@ class TestTypeKindChanged:
         assert change.new_value == "struct"
 
     def test_struct_to_class(self) -> None:
-        """struct→class is also a kind change."""
+        """struct→class is a source-level kind change, not breaking."""
         old = _snap(types=[RecordType(name="Foo", kind="struct")])
         new = _snap(types=[RecordType(name="Foo", kind="class")])
         result = compare(old, new)
-        assert ChangeKind.TYPE_KIND_CHANGED in _kinds(result)
+        assert ChangeKind.SOURCE_LEVEL_KIND_CHANGED in _kinds(result)
+        assert ChangeKind.TYPE_KIND_CHANGED not in _kinds(result)
+        assert result.verdict == Verdict.SOURCE_BREAK
 
     def test_same_kind_no_change(self) -> None:
         old = _snap(types=[RecordType(name="S", kind="struct")])
         new = _snap(types=[RecordType(name="S", kind="struct")])
         result = compare(old, new)
         assert ChangeKind.TYPE_KIND_CHANGED not in _kinds(result)
+        assert ChangeKind.SOURCE_LEVEL_KIND_CHANGED not in _kinds(result)
 
     def test_kind_change_is_breaking(self) -> None:
         """struct→union is BREAKING (layout completely changes)."""
@@ -559,7 +568,7 @@ class TestVarAccessChanged:
         old = _snap(variables=[_var("data", "_data", "int", access=AccessLevel.PUBLIC)])
         new = _snap(variables=[_var("data", "_data", "int", access=AccessLevel.PRIVATE)])
         result = compare(old, new)
-        assert result.verdict in (Verdict.BREAKING, Verdict.SOURCE_BREAK)
+        assert result.verdict == Verdict.SOURCE_BREAK
 
 
 # ===========================================================================
@@ -598,11 +607,10 @@ class TestCrossDetectorIntegration:
 
     def test_all_new_kinds_in_classification_sets(self) -> None:
         """Verify all new ChangeKinds are properly classified."""
-        from abicheck.checker import _BREAKING_KINDS, _COMPATIBLE_KINDS, _SOURCE_BREAK_KINDS
-
         new_kinds = {
             ChangeKind.VAR_VALUE_CHANGED,
             ChangeKind.TYPE_KIND_CHANGED,
+            ChangeKind.SOURCE_LEVEL_KIND_CHANGED,
             ChangeKind.USED_RESERVED_FIELD,
             ChangeKind.REMOVED_CONST_OVERLOAD,
             ChangeKind.PARAM_RESTRICT_CHANGED,
@@ -612,6 +620,7 @@ class TestCrossDetectorIntegration:
             ChangeKind.CONSTANT_ADDED,
             ChangeKind.CONSTANT_REMOVED,
             ChangeKind.VAR_ACCESS_CHANGED,
+            ChangeKind.VAR_ACCESS_WIDENED,
         }
         all_classified = _BREAKING_KINDS | _COMPATIBLE_KINDS | _SOURCE_BREAK_KINDS
         for kind in new_kinds:

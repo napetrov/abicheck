@@ -2,7 +2,7 @@
 
 > Updated: 2026-03-09
 > Source: ABICC `RulesBin.xml` (195 rules), `RulesSrc.xml` (101 rules), `RegTests.pm` (~160 scenarios)
-> Target: abicheck `examples/` (41 cases), `tests/` (670+ tests), `ChangeKind` enum (96 kinds)
+> Target: abicheck `examples/` (41 cases), `tests/` (670+ tests), `ChangeKind` enum (98 kinds)
 
 ---
 
@@ -15,12 +15,14 @@
 | ABICC RegTests.pm scenarios | ~160 |
 | ABICC de-duplicated scenarios | ~65 |
 | **Abicheck covers (has ChangeKind + tests)** | **65/65 (100%)** |
-| Abicheck ChangeKind enum members | 96 |
+| Abicheck ChangeKind enum members | 98 |
 | Abicheck example cases | 41 |
-| Detectors with example case | 52/96 |
-| Detectors without example case | 24 (unit-tested only) |
-| ABICC scenarios NOT in abicheck | **0** |
+| Detectors with example case | 52 |
+| Detectors without example case (unit-tested only) | 26 |
+| Detectors total (52 + 26) | 78 |
 | Abicheck-only detectors (not in ABICC) | 20 |
+| **Note:** 78 + 20 = 98 total ChangeKind members | |
+| ABICC scenarios NOT in abicheck | **0** |
 
 ---
 
