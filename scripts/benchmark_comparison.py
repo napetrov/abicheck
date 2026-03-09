@@ -253,20 +253,23 @@ def run_abicheck(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
     snap1 = bdir / "snap_v1.json"
     snap2 = bdir / "snap_v2.json"
 
-    def dump(so: Path, h: Path | None, snap: Path, ver: str) -> bool:
+    def dump(so: Path, h: Path | None, snap: Path, ver: str) -> tuple[bool, str]:
         cmd = [_PYTHON, "-m", "abicheck.cli", "dump", str(so), "-o", str(snap), "--version", ver]
         if h and h.exists():
             cmd += ["-H", str(h)]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=_ABICHECK_ENV)
-        return r.returncode == 0 and snap.exists()
+        ok = r.returncode == 0 and snap.exists()
+        return ok, (r.stderr or r.stdout)
 
     try:
-        if not dump(v1_so, v1_h, snap1, "v1"):
-            return ToolResult(verdict="ERROR", raw_output="dump v1 failed")
-        if not dump(v2_so, v2_h, snap2, "v2"):
-            return ToolResult(verdict="ERROR", raw_output="dump v2 failed")
-    except subprocess.TimeoutExpired:
-        return ToolResult(verdict="TIMEOUT")
+        ok, err = dump(v1_so, v1_h, snap1, "v1")
+        if not ok:
+            return ToolResult(verdict="ERROR", raw_output=f"dump v1 failed: {err}")
+        ok, err = dump(v2_so, v2_h, snap2, "v2")
+        if not ok:
+            return ToolResult(verdict="ERROR", raw_output=f"dump v2 failed: {err}")
+    except subprocess.TimeoutExpired as exc:
+        return ToolResult(verdict="TIMEOUT", raw_output=str(exc))
 
     try:
         r = subprocess.run(
