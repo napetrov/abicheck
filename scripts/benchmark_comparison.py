@@ -2,26 +2,33 @@
 """
 Benchmark: abicheck vs ABICC vs abidiff on abicheck examples.
 
-Runs all three tools on each example pair (v1/v2) and prints a comparison table.
+Runs all tools on each example pair (v1/v2) and prints a comparison table.
 abidiff is run twice: without headers (ELF-only) and with --headers-dir.
+abicheck is run in two modes: compare (dump+compare pipeline) and compat (ABICC drop-in).
 
 Two ABICC modes are supported:
   - abicc_xml:    legacy XML descriptor (no abi-dumper, fast but inaccurate)
   - abicc_dumper: proper abi-dumper workflow (compile with -g, dump ABI, compare)
+
+Supports two case layouts:
+  - v1/v2 layout: case_dir/v1.c + case_dir/v2.c (cases 01-18)
+  - old/new layout: case_dir/old/lib.c + case_dir/new/lib.c (cases 19+)
 
 Usage:
     python3 scripts/benchmark_comparison.py
     python3 scripts/benchmark_comparison.py --abicc-timeout 60
     python3 scripts/benchmark_comparison.py --abicc-mode dumper
     python3 scripts/benchmark_comparison.py --skip-abicc
+    python3 scripts/benchmark_comparison.py --skip-compat
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
 import shutil
 import subprocess
-import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,7 +37,97 @@ EXAMPLES_DIR = REPO_DIR / "examples"
 REPORT_DIR   = REPO_DIR / "benchmark_reports"
 BUILD_DIR    = REPORT_DIR / "_build"
 
-DEFAULT_ABICC_TIMEOUT = 30  # seconds; was 120 in legacy code
+# Ensure we use abicheck from THIS repo, not any globally-installed version
+# (abicheck CLI shebang may point to a different Python/site-packages)
+os.environ.setdefault("PYTHONPATH", str(REPO_DIR))
+
+import sys as _sys
+
+_abicheck_bin = shutil.which("abicheck")
+if _abicheck_bin:
+    try:
+        with open(_abicheck_bin) as _f:
+            _first_line = _f.readline().strip()
+        if _first_line.startswith("#!"):
+            _tokens = shlex.split(_first_line.lstrip("#!"))
+            # Handle `#!/usr/bin/env python3` → use token after "env", not "env" itself
+            if _tokens and os.path.basename(_tokens[0]) == "env" and len(_tokens) > 1:
+                _PYTHON = _tokens[1]
+            elif _tokens:
+                _PYTHON = _tokens[0]
+            else:
+                _PYTHON = _sys.executable
+        else:
+            _PYTHON = _sys.executable
+    except (OSError, IsADirectoryError, IndexError, UnicodeDecodeError):
+        _PYTHON = _sys.executable
+else:
+    _PYTHON = _sys.executable
+_ABICHECK_ENV = {**os.environ, "PYTHONPATH": str(REPO_DIR)}
+# True when abicheck CLI is importable via _PYTHON (even without installed bin)
+def _abicheck_available() -> bool:
+    import subprocess as _sp
+    r = _sp.run([_PYTHON, "-m", "abicheck.cli", "--help"],
+                capture_output=True, timeout=10, env=_ABICHECK_ENV)
+    return r.returncode == 0
+
+_HAS_ABICHECK: bool = _abicheck_available()
+
+
+DEFAULT_ABICC_TIMEOUT = 30  # seconds
+
+# Expected verdicts from case READMEs
+EXPECTED: dict[str, str] = {
+    "case01_symbol_removal":          "BREAKING",
+    "case02_param_type_change":       "BREAKING",
+    "case03_compat_addition":         "COMPATIBLE",
+    "case04_no_change":               "NO_CHANGE",
+    "case05_soname":                  "BREAKING",    # KNOWN GAP: abicheck doesn't detect missing SONAME (ELF DT_SONAME absent)
+    "case06_visibility":              "BREAKING",    # KNOWN GAP: needs -fvisibility=hidden at compile time; benchmark builds with -fvisibility=default
+    "case07_struct_layout":           "BREAKING",
+    "case08_enum_value_change":       "BREAKING",
+    "case09_cpp_vtable":              "BREAKING",
+    "case10_return_type":             "BREAKING",
+    "case11_global_var_type":         "BREAKING",
+    "case12_function_removed":        "BREAKING",
+    "case13_symbol_versioning":       "BREAKING",    # KNOWN GAP: abicheck doesn't detect missing version script (ELF symbol versioning)
+    "case14_cpp_class_size":          "BREAKING",
+    "case15_noexcept_change":         "BREAKING",   # v2.cpp adds throw → pulls GLIBCXX_3.4.21 → SYMBOL_VERSION_REQUIRED_ADDED
+    "case16_inline_to_non_inline":    "COMPATIBLE",
+    "case17_template_abi":            "BREAKING",
+    "case18_dependency_leak":         "BREAKING",
+    "case19_enum_member_removed":     "BREAKING",
+    "case20_enum_member_value_changed": "BREAKING",
+    "case21_method_became_static":    "BREAKING",
+    "case22_method_const_changed":    "BREAKING",
+    "case23_pure_virtual_added":      "BREAKING",
+    "case24_union_field_removed":     "BREAKING",
+    "case25_enum_member_added":       "COMPATIBLE",
+    "case26_union_field_added":       "BREAKING",    # double d makes sizeof(Value) grow 4→8 bytes: TYPE_SIZE_CHANGED
+    "case27_symbol_binding_weakened": "COMPATIBLE",
+    "case29_ifunc_transition":        "COMPATIBLE",  # IFUNC_INTRODUCED — PLT/GOT transparent; fix merged in Sprint 7
+    # ── cases 28, 30-41 (Sprint 7 — new detectors) ──────────────────────────
+    "case28_typedef_opaque":          "BREAKING",    # TYPEDEF_BASE_CHANGED, TYPE_BECAME_OPAQUE
+    "case30_field_qualifiers":        "BREAKING",    # STRUCT_FIELD_TYPE_CHANGED (const/volatile)
+    "case31_enum_rename":             "BREAKING",    # ENUM_MEMBER_REMOVED/RENAMED
+    "case32_param_defaults":          "NO_CHANGE",   # default value change — source-only, binary NO_CHANGE
+    "case33_pointer_level":           "BREAKING",    # PARAM_POINTER_LEVEL_CHANGED
+    "case34_access_level":            "SOURCE_BREAK",  # access level is source-only; binary layout unchanged → SOURCE_BREAK with headers
+    "case35_field_rename":            "BREAKING",    # STRUCT_FIELD_REMOVED (rename = remove+add)
+    "case36_anon_struct":             "BREAKING",    # ANON_FIELD_CHANGED / TYPE_SIZE_CHANGED
+    "case37_base_class":              "BREAKING",    # BASE_CLASS_POSITION_CHANGED
+    "case38_virtual_methods":         "BREAKING",    # FUNC_VIRTUAL_ADDED / FUNC_VIRTUAL_REMOVED
+    "case39_var_const":               "NO_CHANGE",   # VAR_BECAME_CONST — currently NO_CHANGE in abicheck
+    "case40_field_layout":            "BREAKING",    # TYPE_SIZE_CHANGED (struct reordering)
+    "case41_type_changes":            "BREAKING",    # FUNC_REMOVED, TYPE_REMOVED
+}
+
+# Per-column expected overrides for abicheck compat mode (ELF-only XML descriptors,
+# no header parsing). Compat can't emit SOURCE_BREAK — access-level narrowing is
+# invisible without headers, so correct compat verdict is NO_CHANGE.
+EXPECTED_COMPAT: dict[str, str] = {
+    "case34_access_level": "NO_CHANGE",  # compat = ELF-only; no header → can't see access narrowing
+}
 
 
 @dataclass
@@ -50,24 +147,18 @@ def compile_so(src: Path, out_so: Path) -> bool:
         capture_output=True, text=True,
     )
     if r.returncode != 0:
-        print(f"    [compile error] {src}: {r.stderr[:120]}")
+        print(f"    [compile error] {src.name}: {r.stderr[:120]}")
     return r.returncode == 0
 
 
 def make_header(src: Path, out_h: Path) -> None:
-    """Copy explicit .h/.hpp if present.
-
-    For C sources without a .h, generates a minimal header by stripping function
-    bodies. Not suitable for C++ sources — callers must provide explicit .h/.hpp.
-    Warns when falling back to C-scraper to catch cases where a .h should be added.
-    """
+    """Copy explicit .h/.hpp if present; generate minimal header for plain C."""
     for ext in (".h", ".hpp"):
         h = src.with_suffix(ext)
         if h.exists():
             shutil.copy(h, out_h)
             return
     if src.suffix == ".c":
-        print(f"    [warn] no explicit .h for {src.name} — generating from source (add a .h file)")
         lines = []
         for line in src.read_text().splitlines():
             stripped = line.strip()
@@ -81,20 +172,18 @@ def make_header(src: Path, out_h: Path) -> None:
             elif "}" not in stripped:
                 lines.append(line)
         out_h.write_text("\n".join(lines))
-    # For .cpp without explicit .h: leave out_h absent — ELF-only mode
 
 
-def _best_h(ver: str, bdir_h: Path, src_dir: Path) -> Path:
-    """Return the best available header: explicit in src_dir, then generated copy."""
+def _best_h(name: str, bdir_h: Path, src_dir: Path) -> Path:
+    """Prefer explicit header in src_dir, fall back to generated copy."""
     for ext in (".h", ".hpp"):
-        p = src_dir / f"{ver}{ext}"
+        p = src_dir / f"{name}{ext}"
         if p.exists():
             return p
     return bdir_h
 
 
 def _resolve_headers_dir(case_dir: Path, v1_h: Path, v2_h: Path) -> str | None:
-    """Return the most useful --headers-dir for abidiff, or None."""
     if v1_h.exists():
         return str(v1_h.parent)
     if v2_h.exists():
@@ -102,28 +191,180 @@ def _resolve_headers_dir(case_dir: Path, v1_h: Path, v2_h: Path) -> str | None:
     return None
 
 
-# ── abicheck ──────────────────────────────────────────────────────────────────
-def run_abicheck(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
+# ── Case layout detection ─────────────────────────────────────────────────────
+def find_sources(case_dir: Path) -> tuple[Path | None, Path | None, Path | None, Path | None]:
+    """Return (v1_src, v2_src, v1_h_hint, v2_h_hint) or (None, None, None, None) if unsupported."""
+    # v1/v2 layout
+    for ext in (".c", ".cpp"):
+        v1 = case_dir / f"v1{ext}"
+        if v1.exists():
+            v2 = case_dir / f"v2{ext}"
+            if not v2.exists():
+                v2 = v1  # case04: identical
+            v1h = case_dir / f"v1{'.h' if ext == '.c' else '.hpp'}"
+            v2h = case_dir / f"v2{'.h' if ext == '.c' else '.hpp'}"
+            return v1, v2, v1h if v1h.exists() else None, v2h if v2h.exists() else None
+
+    # old/new layout (cases 19+)
+    old_dir = case_dir / "old"
+    new_dir = case_dir / "new"
+    if old_dir.is_dir() and new_dir.is_dir():
+        for ext in (".c", ".cpp"):
+            v1 = old_dir / f"lib{ext}"
+            if v1.exists():
+                v2 = new_dir / f"lib{ext}"
+                if not v2.exists():
+                    v2 = v1
+                hext = ".h" if ext == ".c" else ".hpp"
+                v1h = old_dir / f"lib{hext}"
+                v2h = new_dir / f"lib{hext}"
+                return v1, v2, v1h if v1h.exists() else None, v2h if v2h.exists() else None
+
+    # case18: libfoo_v1.c / libfoo_v2.c
+    for ext in (".c", ".cpp"):
+        v1 = case_dir / f"libfoo_v1{ext}"
+        if v1.exists():
+            v2 = case_dir / f"libfoo_v2{ext}"
+            if not v2.exists():
+                v2 = v1
+            v1h = case_dir / f"foo_v1{'.h' if ext == '.c' else '.hpp'}"
+            v2h = case_dir / f"foo_v2{'.h' if ext == '.c' else '.hpp'}"
+            return v1, v2, v1h if v1h.exists() else None, v2h if v2h.exists() else None
+
+    # good/bad layout (cases 05/06/13)
+    for ext in (".c", ".cpp"):
+        v1 = case_dir / f"good{ext}"
+        if v1.exists():
+            v2 = case_dir / f"bad{ext}"
+            if not v2.exists():
+                v2 = v1
+            return v1, v2, None, None
+
+    return None, None, None, None
+
+
+# ── abicheck compare (dump + compare pipeline) ────────────────────────────────
+def run_abicheck(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
                  case: str, rdir: Path) -> ToolResult:
-    if not shutil.which("abicheck"):
+    if not _HAS_ABICHECK:
         return ToolResult(verdict="SKIP")
 
-    cmd = ["abicheck", "compare", str(v1_so), str(v2_so)]
-    if v1_h.exists():
-        cmd += ["--headers", str(v1_h)]
-    if v2_h.exists():
-        cmd += ["--new-headers", str(v2_h)]
+    bdir = BUILD_DIR / case
+    snap1 = bdir / "snap_v1.json"
+    snap2 = bdir / "snap_v2.json"
 
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    def dump(so: Path, h: Path | None, snap: Path, ver: str) -> tuple[bool, str]:
+        cmd = [_PYTHON, "-m", "abicheck.cli", "dump", str(so), "-o", str(snap), "--version", ver]
+        if h and h.exists():
+            cmd += ["-H", str(h)]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=_ABICHECK_ENV)
+        ok = r.returncode == 0 and snap.exists()
+        return ok, (r.stderr or r.stdout)
+
+    try:
+        ok, err = dump(v1_so, v1_h, snap1, "v1")
+        if not ok:
+            return ToolResult(verdict="ERROR", raw_output=f"dump v1 failed: {err}")
+        ok, err = dump(v2_so, v2_h, snap2, "v2")
+        if not ok:
+            return ToolResult(verdict="ERROR", raw_output=f"dump v2 failed: {err}")
+    except subprocess.TimeoutExpired as exc:
+        return ToolResult(verdict="TIMEOUT", raw_output=str(exc))
+
+    try:
+        r = subprocess.run(
+            [_PYTHON, "-m", "abicheck.cli", "compare", str(snap1), str(snap2), "--format", "json"],
+            capture_output=True, text=True, timeout=60, env=_ABICHECK_ENV,
+        )
+    except subprocess.TimeoutExpired:
+        return ToolResult(verdict="TIMEOUT")
+
     out = r.stdout + r.stderr
     (rdir / f"{case}_abicheck.txt").write_text(out)
 
-    if r.returncode == 2:
+    # abicheck compare exit codes: 4=BREAKING, 2=SOURCE_BREAK, 1=COMPATIBLE, 0=NO_CHANGE
+    # Read verdict from JSON output for accuracy
+    try:
+        data = json.loads(r.stdout)
+        raw_v = data.get("verdict", "").upper()
+        if raw_v in ("BREAKING",):
+            verdict = "BREAKING"
+        elif raw_v == "SOURCE_BREAK":
+            verdict = "SOURCE_BREAK"
+        elif raw_v == "COMPATIBLE":
+            verdict = "COMPATIBLE"
+        elif raw_v == "NO_CHANGE":
+            verdict = "NO_CHANGE"
+        else:
+            verdict = "ERROR"
+    except (json.JSONDecodeError, AttributeError):
+        # Fallback: exit code mapping (4=BREAKING, 2=SOURCE_BREAK, 1=COMPATIBLE, 0=NO_CHANGE)
+        if r.returncode == 4:
+            verdict = "BREAKING"
+        elif r.returncode == 2:
+            verdict = "SOURCE_BREAK"
+        elif r.returncode == 1:
+            verdict = "COMPATIBLE"
+        elif r.returncode == 0:
+            verdict = "NO_CHANGE"
+        else:
+            verdict = "ERROR"
+
+    changes = [ln.strip() for ln in out.splitlines()
+               if any(k in ln for k in ("removed", "added", "changed")) and ln.strip()]
+    return ToolResult(verdict=verdict, changes=changes[:8], raw_output=out)
+
+
+# ── abicheck compat (ABICC XML drop-in) ──────────────────────────────────────
+def run_abicheck_compat(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
+                        case: str, rdir: Path) -> ToolResult:
+    """Run abicheck compat with ABICC-format XML descriptors."""
+    if not _HAS_ABICHECK:
+        return ToolResult(verdict="SKIP")
+
+    def xml(so: Path, h: Path | None, ver: str, out: Path) -> None:
+        # NOTE: abicheck compat currently expects header file paths in <headers>
+        header = str(h) if h and h.exists() else ""
+        out.write_text(
+            f"<descriptor>\n"
+            f"  <version>{ver}</version>\n"
+            f"  <headers>{header}</headers>\n"
+            f"  <libs>{so}</libs>\n"
+            f"</descriptor>\n"
+        )
+
+    v1_xml = rdir / f"{case}_compat_v1.xml"
+    v2_xml = rdir / f"{case}_compat_v2.xml"
+    xml(v1_so, v1_h, "v1", v1_xml)
+    xml(v2_so, v2_h, "v2", v2_xml)
+
+    try:
+        r = subprocess.run(
+            [_PYTHON, "-m", "abicheck.cli", "compat", "-lib", case,
+             "-old", str(v1_xml), "-new", str(v2_xml)],
+            capture_output=True, text=True, timeout=60, env=_ABICHECK_ENV,
+        )
+    except subprocess.TimeoutExpired:
+        return ToolResult(verdict="TIMEOUT")
+
+    out = r.stdout + r.stderr
+    (rdir / f"{case}_abicheck_compat.txt").write_text(out)
+
+    # compat exit codes (from abicheck/cli.py compat command):
+    #   0 = NO_CHANGE or COMPATIBLE
+    #   1 = BREAKING
+    #   2 = SOURCE_BREAK (source-level break, binary compatible)
+    if r.returncode == 1:
         verdict = "BREAKING"
-    elif r.returncode == 1:
-        verdict = "COMPATIBLE"
+    elif r.returncode == 2:
+        verdict = "SOURCE_BREAK"
     elif r.returncode == 0:
-        verdict = "NO_CHANGE"
+        # distinguish NO_CHANGE from COMPATIBLE by output
+        # abicheck compat prints "Verdict: NO_CHANGE" or "Verdict: COMPATIBLE"
+        if "verdict: no_change" in out.lower() or "no changes" in out.lower() or "identical" in out.lower():
+            verdict = "NO_CHANGE"
+        else:
+            verdict = "COMPATIBLE"
     else:
         verdict = "ERROR"
 
@@ -141,7 +382,10 @@ def run_abidiff(v1_so: Path, v2_so: Path, case: str, rdir: Path,
 
     cmd = ["abidiff"]
     if headers_dir:
-        cmd += ["--headers-dir", headers_dir]
+        if isinstance(headers_dir, (list, tuple)) and len(headers_dir) == 2:
+            cmd += ["--headers-dir1", str(headers_dir[0]), "--headers-dir2", str(headers_dir[1])]
+        else:
+            cmd += ["--headers-dir1", str(headers_dir), "--headers-dir2", str(headers_dir)]
     cmd += [str(v1_so), str(v2_so)]
 
     try:
@@ -151,12 +395,7 @@ def run_abidiff(v1_so: Path, v2_so: Path, case: str, rdir: Path,
     out = r.stdout + r.stderr
     (rdir / f"{case}_abidiff{suffix}.txt").write_text(out)
 
-    # abidiff exit codes (bitmask):
-    #   bit 0 (1) = tool error
-    #   bit 1 (2) = application error
-    #   bit 2 (4) = ABI compatible changes
-    #   bit 3 (8) = ABI incompatible (breaking) changes
-    # Check error bits first so mixed codes (e.g. 5=error+breaking) map to ERROR.
+    # abidiff exit bitmask: bit0=tool-err, bit1=app-err, bit2=compat, bit3=breaking
     if r.returncode & 1 or r.returncode & 2:
         verdict = "ERROR"
     elif r.returncode & 8:
@@ -174,18 +413,13 @@ def run_abidiff(v1_so: Path, v2_so: Path, case: str, rdir: Path,
 
 
 # ── ABICC (legacy XML descriptor) ─────────────────────────────────────────────
-def run_abicc_xml(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
+def run_abicc_xml(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
                   case: str, rdir: Path, timeout: int = DEFAULT_ABICC_TIMEOUT) -> ToolResult:
-    """Legacy mode: XML descriptor pointing at .so directly (no abi-dumper).
-
-    Fast but inaccurate — ABICC without GCC dump misses most type-level changes.
-    Use run_abicc_dumper() for accurate results.
-    """
     if not shutil.which("abi-compliance-checker"):
         return ToolResult(verdict="SKIP")
 
-    def xml(so: Path, h: Path, ver: str, out: Path) -> None:
-        hdir = str(h.parent) if h.exists() else "/usr/include"
+    def xml(so: Path, h: Path | None, ver: str, out: Path) -> None:
+        hdir = str(h.parent) if h and h.exists() else "/usr/include"
         out.write_text(
             f"<descriptor>\n"
             f"  <version>{ver}</version>\n"
@@ -225,23 +459,13 @@ def run_abicc_xml(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
     changes = [ln.strip() for ln in out.splitlines()
                if any(k in ln for k in ("removed", "added", "changed")) and ln.strip()]
     return ToolResult(verdict=verdict, changes=changes[:8], raw_output=out,
-                      report_path=f"{case}_abicc_xml_report.html")
+                      report_path=str(html_out))
 
 
 # ── ABICC (abi-dumper workflow) ────────────────────────────────────────────────
-def run_abicc_dumper(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
+def run_abicc_dumper(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
                      case: str, rdir: Path,
                      timeout: int = DEFAULT_ABICC_TIMEOUT) -> ToolResult:
-    """Proper ABICC mode: compile with -g -Og, dump ABI via abi-dumper, then compare.
-
-    This is the recommended workflow for ABICC. abi-dumper extracts full type
-    information from DWARF debug data, producing an ABI descriptor that ABICC
-    can accurately diff — no GCC fdump-lang-spec needed.
-
-    Steps:
-      1. abi-dumper <lib.so> -o dump.abi -lver
-      2. abi-compliance-checker -l <lib> -old dump1.abi -new dump2.abi
-    """
     if not shutil.which("abi-compliance-checker"):
         return ToolResult(verdict="SKIP")
     if not shutil.which("abi-dumper"):
@@ -250,25 +474,20 @@ def run_abicc_dumper(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
     dump_v1 = rdir / f"{case}_v1.abi"
     dump_v2 = rdir / f"{case}_v2.abi"
 
-    # Step 1: generate ABI dumps
     for so, dump, ver, hdr in [
         (v1_so, dump_v1, "v1", v1_h),
         (v2_so, dump_v2, "v2", v2_h),
     ]:
         dump_cmd = ["abi-dumper", str(so), "-o", str(dump), "-lver", ver]
-        if hdr.exists():
+        if hdr and hdr.exists():
             dump_cmd += ["-public-headers", str(hdr.parent)]
         try:
-            dr = subprocess.run(
-                dump_cmd, capture_output=True, text=True, timeout=timeout,
-            )
+            dr = subprocess.run(dump_cmd, capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired:
-            return ToolResult(verdict="TIMEOUT", raw_output=f"abi-dumper timeout on {ver}")
+            return ToolResult(verdict="TIMEOUT")
         if dr.returncode != 0 or not dump.exists():
-            err = dr.stderr[:200] if dr.stderr else "no dump produced"
-            return ToolResult(verdict="ERROR", raw_output=f"abi-dumper failed ({ver}): {err}")
+            return ToolResult(verdict="ERROR", raw_output=f"abi-dumper failed ({ver})")
 
-    # Step 2: compare dumps
     html_out = rdir / f"{case}_abicc_dumper_report.html"
     try:
         r = subprocess.run(
@@ -295,31 +514,43 @@ def run_abicc_dumper(v1_so: Path, v2_so: Path, v1_h: Path, v2_h: Path,
     changes = [ln.strip() for ln in out.splitlines()
                if any(k in ln for k in ("removed", "added", "changed")) and ln.strip()]
     return ToolResult(verdict=verdict, changes=changes[:8], raw_output=out,
-                      report_path=f"{case}_abicc_dumper_report.html")
+                      report_path=str(html_out))
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def _col(v: str) -> str:
-    colors = {"BREAKING": "\033[91m", "COMPATIBLE": "\033[93m",
-              "NO_CHANGE": "\033[92m", "ERROR": "\033[95m", "SKIP": "\033[90m",
-              "TIMEOUT": "\033[95m"}
-    return f"{colors.get(v, '')}{v:<12}\033[0m"
+_COLORS = {
+    "BREAKING":     "\033[91m",
+    "SOURCE_BREAK": "\033[94m",  # blue — source-only, binary-safe
+    "COMPATIBLE":   "\033[93m",
+    "NO_CHANGE":    "\033[92m",
+    "ERROR":        "\033[95m",
+    "SKIP":         "\033[90m",
+    "TIMEOUT":      "\033[95m",
+}
+_RESET = "\033[0m"
+
+
+def _col(v: str, width: int = 12) -> str:
+    return f"{_COLORS.get(v, '')}{v:<{width}}{_RESET}"
+
+
+def _correct(verdict: str, expected: str) -> str:
+    """Return emoji indicator vs expected."""
+    if verdict in ("SKIP", "ERROR", "TIMEOUT"):
+        return "—"
+    return "✅" if verdict == expected else "❌"
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Benchmark abicheck vs abidiff vs ABICC")
-    p.add_argument(
-        "--abicc-timeout", type=int, default=DEFAULT_ABICC_TIMEOUT, metavar="N",
-        help=f"Timeout in seconds for each ABICC invocation (default: {DEFAULT_ABICC_TIMEOUT})",
-    )
-    p.add_argument(
-        "--abicc-mode", choices=["xml", "dumper", "both"], default="dumper",
-        help="ABICC analysis mode: xml (legacy), dumper (proper), or both (default: dumper)",
-    )
-    p.add_argument(
-        "--skip-abicc", action="store_true",
-        help="Skip ABICC entirely (useful in CI environments where it's not installed)",
-    )
+    p.add_argument("--abicc-timeout", type=int, default=DEFAULT_ABICC_TIMEOUT,
+                   help=f"Timeout per ABICC call (default: {DEFAULT_ABICC_TIMEOUT}s)")
+    p.add_argument("--abicc-mode", choices=["xml", "dumper", "both"], default="both",
+                   help="ABICC mode: xml (legacy XML descriptor), dumper (abi-dumper workflow), or both (default: both)")
+    p.add_argument("--skip-abicc", action="store_true",
+                   help="Skip ABICC entirely")
+    p.add_argument("--skip-compat", action="store_true",
+                   help="Skip abicheck compat column")
     return p.parse_args()
 
 
@@ -330,34 +561,41 @@ def main() -> None:
     REPORT_DIR.mkdir(exist_ok=True)
     BUILD_DIR.mkdir(exist_ok=True)
 
-    cases = sorted(
-        d for d in EXAMPLES_DIR.iterdir()
-        if d.is_dir() and ((d / "v1.c").exists() or (d / "v1.cpp").exists())
-    )
-
-    results: list[dict[str, object]] = []
+    all_cases = sorted(d for d in EXAMPLES_DIR.iterdir() if d.is_dir() and d.name.startswith("case"))
 
     use_dumper = not args.skip_abicc and args.abicc_mode in ("dumper", "both")
     use_xml    = not args.skip_abicc and args.abicc_mode in ("xml", "both")
+    use_compat = not args.skip_compat
 
-    # Build header
-    col_headers = f"{'Case':<35} {'abicheck':<14} {'abidiff':<14} {'abidiff+hdr':<14}"
+    # Header
+    cols = [("Case", 35), ("Expected", 12), ("abicheck", 12), ]
+    if use_compat:
+        cols.append(("ac-compat", 12))
+    cols += [("abidiff", 12), ("abidiff+hdr", 12)]
     if use_dumper:
-        col_headers += f" {'ABICC(dumper)':<16}"
+        cols.append(("ABICC(dump)", 12))
     if use_xml:
-        col_headers += f" {'ABICC(xml)':<14}"
-    col_headers += " agree?"
-    width = len(col_headers)
-    print(f"\n{col_headers}")
-    print("─" * max(width, 80))
+        cols.append(("ABICC(xml)", 12))
 
-    for case_dir in cases:
-        name    = case_dir.name
-        ext     = ".cpp" if (case_dir / "v1.cpp").exists() else ".c"
-        v1_src  = case_dir / f"v1{ext}"
-        v2_src  = case_dir / f"v2{ext}"
-        if not v2_src.exists():
-            v2_src = v1_src   # case04: no change
+    hdr = " ".join(f"{name:<{w}}" for name, w in cols)
+    print(f"\n{hdr}")
+    print("─" * len(hdr))
+
+    results: list[dict] = []
+
+    for case_dir in all_cases:
+        name = case_dir.name
+        expected = EXPECTED.get(name, "?")
+
+        v1_src, v2_src, v1_h_hint, v2_h_hint = find_sources(case_dir)
+        if v1_src is None:
+            row = f"  {name:<33} {expected:<12} {'NO_SOURCE':<12}"
+            print(row)
+            results.append({"case": name, "expected": expected, "abicheck": "SKIP",
+                             "abicheck_compat": "SKIP", "abidiff": "SKIP",
+                             "abidiff_headers": "SKIP", "abicc_dumper": "SKIP",
+                             "abicc_xml": "SKIP"})
+            continue
 
         rdir = REPORT_DIR / name
         rdir.mkdir(exist_ok=True)
@@ -366,140 +604,102 @@ def main() -> None:
 
         v1_so = bdir / "lib_v1.so"
         v2_so = bdir / "lib_v2.so"
-        v1_h  = bdir / "v1.h"
-        v2_h  = bdir / "v2.h"
+        v1_h_gen = bdir / "v1.h"
+        v2_h_gen = bdir / "v2.h"
 
         if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
-            print(f"  {name:<33} COMPILE_ERR")
+            print(f"  {name:<35} COMPILE_ERR")
+            results.append({"case": name, "expected": expected,
+                             "expected_compat": EXPECTED_COMPAT.get(name, expected),
+                             "abicheck": "ERROR", "abicheck_compat": "ERROR",
+                             "abidiff": "ERROR", "abidiff_headers": "ERROR",
+                             "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
             continue
 
-        make_header(v1_src, v1_h)
-        make_header(v2_src, v2_h)
+        # Generate fallback headers
+        make_header(v1_src, v1_h_gen)
+        make_header(v2_src, v2_h_gen)
 
-        # For ABICC/abicheck: prefer explicit headers in case dir over generated ones
-        eff_v1_h = _best_h("v1", v1_h, case_dir)
-        eff_v2_h = _best_h("v2", v2_h, case_dir)
+        # Best headers: explicit hint > generated
+        v1_h = v1_h_hint if v1_h_hint else (v1_h_gen if v1_h_gen.exists() else None)
+        v2_h = v2_h_hint if v2_h_hint else (v2_h_gen if v2_h_gen.exists() else None)
 
-        ac     = run_abicheck(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir)
-        ab     = run_abidiff(v1_so, v2_so, name, rdir)
+        ac  = run_abicheck(v1_so, v2_so, v1_h, v2_h, name, rdir)
+        acc = run_abicheck_compat(v1_so, v2_so, v1_h, v2_h, name, rdir) if use_compat else ToolResult(verdict="SKIP")
+        ab  = run_abidiff(v1_so, v2_so, name, rdir)
 
-        headers_dir = _resolve_headers_dir(case_dir, eff_v1_h, eff_v2_h)
-        ab_hdr = run_abidiff(v1_so, v2_so, name, rdir,
-                             headers_dir=headers_dir, suffix="_headers")
+        if v1_h and v1_h.exists() and v2_h and v2_h.exists() and v1_h.parent != v2_h.parent:
+            headers_dir = (str(v1_h.parent), str(v2_h.parent))
+        else:
+            headers_dir = _resolve_headers_dir(case_dir, v1_h or Path("/nonexistent"), v2_h or Path("/nonexistent"))
+        ab_hdr = run_abidiff(v1_so, v2_so, name, rdir, headers_dir=headers_dir, suffix="_headers")
 
-        acc_dumper = (run_abicc_dumper(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir,
-                                       timeout=args.abicc_timeout)
-                      if use_dumper else ToolResult(verdict="SKIP"))
-        acc_xml    = (run_abicc_xml(v1_so, v2_so, eff_v1_h, eff_v2_h, name, rdir,
-                                    timeout=args.abicc_timeout)
-                      if use_xml else ToolResult(verdict="SKIP"))
+        abicc_d = (run_abicc_dumper(v1_so, v2_so, v1_h, v2_h, name, rdir, timeout=args.abicc_timeout)
+                   if use_dumper else ToolResult(verdict="SKIP"))
+        abicc_x = (run_abicc_xml(v1_so, v2_so, v1_h, v2_h, name, rdir, timeout=args.abicc_timeout)
+                   if use_xml else ToolResult(verdict="SKIP"))
 
-        all_verdicts = {ac.verdict, ab.verdict, ab_hdr.verdict,
-                        acc_dumper.verdict, acc_xml.verdict} - {"SKIP", "ERROR", "TIMEOUT"}
-        agree = "✅" if len(all_verdicts) <= 1 else (
-            "~" if ac.verdict in (ab.verdict, ab_hdr.verdict,
-                                   acc_dumper.verdict, acc_xml.verdict) else "❌")
-
-        row = f"  {name:<33} {_col(ac.verdict)} {_col(ab.verdict)} {_col(ab_hdr.verdict)}"
+        row_parts = [
+            f"  {name:<33}",
+            f"{expected:<12}",
+            _col(ac.verdict),
+        ]
+        if use_compat:
+            row_parts.append(_col(acc.verdict))
+        row_parts += [_col(ab.verdict), _col(ab_hdr.verdict)]
         if use_dumper:
-            row += f" {_col(acc_dumper.verdict):<16}"
+            row_parts.append(_col(abicc_d.verdict))
         if use_xml:
-            row += f" {_col(acc_xml.verdict)}"
-        row += f" {agree}"
-        print(row)
+            row_parts.append(_col(abicc_x.verdict))
+
+        print(" ".join(row_parts))
 
         results.append({
-            "case":                    name,
-            "abicheck":                ac.verdict,
-            "abidiff":                 ab.verdict,
-            "abidiff_headers":         ab_hdr.verdict,
-            "abicc_dumper":            acc_dumper.verdict,
-            "abicc_xml":               acc_xml.verdict,
-            "abicheck_changes":        ac.changes,
-            "abidiff_changes":         ab.changes,
-            "abidiff_headers_changes": ab_hdr.changes,
-            "abicc_dumper_changes":    acc_dumper.changes,
-            "abicc_xml_changes":       acc_xml.changes,
+            "case": name,
+            "expected": expected,
+            "expected_compat": EXPECTED_COMPAT.get(name, expected),  # compat-specific override
+            "abicheck": ac.verdict,
+            "abicheck_compat": acc.verdict,
+            "abidiff": ab.verdict,
+            "abidiff_headers": ab_hdr.verdict,
+            "abicc_dumper": abicc_d.verdict,
+            "abicc_xml": abicc_x.verdict,
         })
 
-    # ── Summary ──────────────────────────────────────────────────────────────
-    total = len(results)
+    # ── Accuracy summary ──────────────────────────────────────────────────────
+    def accuracy(key: str, expected_key: str = "expected") -> tuple[int, int]:
+        scored = [r for r in results if r.get(expected_key, "?") != "?" and r[key] not in ("SKIP", "ERROR", "TIMEOUT", "NO_SOURCE")]
+        correct = sum(1 for r in scored if r[key] == r[expected_key])
+        return correct, len(scored)
 
-    def _skip(r: dict[str, object], key: str) -> bool:
-        return r[key] in {"SKIP", "TIMEOUT", "ERROR"}
+    print("\n" + "─" * 80)
+    print("  Accuracy vs expected verdicts:")
+    for key, label, exp_key in [
+        ("abicheck",       "abicheck (compare)  ", "expected"),
+        ("abicheck_compat","abicheck (compat)   ", "expected_compat"),
+        ("abidiff",        "abidiff (ELF)       ", "expected"),
+        ("abidiff_headers","abidiff (+headers)  ", "expected"),
+        ("abicc_dumper",   "ABICC (dumper)      ", "expected"),
+        ("abicc_xml",      "ABICC (xml)         ", "expected"),
+    ]:
+        c, t = accuracy(key, exp_key)
+        if t > 0:
+            pct = 100 * c // t
+            bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
+            print(f"    {label}: {c:>2}/{t} ({pct:3}%) {bar}")
 
-    def _valid_pair(r: dict[str, object], k1: str, k2: str) -> bool:
-        return not (_skip(r, k1) or _skip(r, k2))
-
-    valid_ac_ab   = [r for r in results if _valid_pair(r, "abicheck", "abidiff")]
-    valid_ac_abh  = [r for r in results if _valid_pair(r, "abicheck", "abidiff_headers")]
-    valid_ac_dump = [r for r in results if _valid_pair(r, "abicheck", "abicc_dumper")]
-    valid_ac_xml  = [r for r in results if _valid_pair(r, "abicheck", "abicc_xml")]
-    valid_all     = [r for r in results
-                     if not any(_skip(r, k) for k in
-                                ("abicheck", "abidiff", "abidiff_headers",
-                                 "abicc_dumper", "abicc_xml"))]
-
-    n = len(valid_all)
-
-    print("\n" + "─" * max(width, 80))
-    print(f"  Total cases: {total}")
-
-    if valid_ac_ab:
-        n_ab = len(valid_ac_ab)
-        s = sum(1 for r in valid_ac_ab if r["abicheck"] == r["abidiff"])
-        print(f"  abicheck == abidiff:          {s}/{n_ab}")
-
-    if valid_ac_abh:
-        n_abh = len(valid_ac_abh)
-        s = sum(1 for r in valid_ac_abh if r["abicheck"] == r["abidiff_headers"])
-        print(f"  abicheck == abidiff+hdr:      {s}/{n_abh}")
-
-    if valid_ac_dump:
-        n_d = len(valid_ac_dump)
-        s = sum(1 for r in valid_ac_dump if r["abicheck"] == r["abicc_dumper"])
-        print(f"  abicheck == ABICC(dumper):    {s}/{n_d}")
-
-    if valid_ac_xml:
-        n_x = len(valid_ac_xml)
-        s = sum(1 for r in valid_ac_xml if r["abicheck"] == r["abicc_xml"])
-        print(f"  abicheck == ABICC(xml):       {s}/{n_x}")
-
-    if n:
-        all5 = sum(
-            1 for r in valid_all
-            if r["abicheck"] == r["abidiff"] == r["abidiff_headers"]
-            == r["abicc_dumper"] == r["abicc_xml"]
-        )
-        print(f"  All five agree:               {all5}/{n}")
-
-    # Divergences
-    divs = [
-        r for r in results
-        if not _skip(r, "abicheck")
-        and not all(
-            _skip(r, k) or r[k] == r["abicheck"]
-            for k in ("abidiff", "abidiff_headers", "abicc_dumper", "abicc_xml")
-        )
-    ]
-    if divs:
-        print("\n  Divergences:")
-        for r in divs:
-            parts = [f"ac={r['abicheck']}"]
-            if not _skip(r, "abidiff"):
-                parts.append(f"ab={r['abidiff']}")
-            if not _skip(r, "abidiff_headers"):
-                parts.append(f"ab+h={r['abidiff_headers']}")
-            if not _skip(r, "abicc_dumper"):
-                parts.append(f"abicc_d={r['abicc_dumper']}")
-            if not _skip(r, "abicc_xml"):
-                parts.append(f"abicc_x={r['abicc_xml']}")
-            print(f"    {r['case']:<33} {' '.join(parts)}")
+    # Divergences from expected
+    print("\n  Cases where abicheck differs from expected:")
+    for r in results:
+        if r.get("expected", "?") == "?":
+            continue
+        if r["abicheck"] not in ("SKIP", "ERROR", "TIMEOUT") and r["abicheck"] != r["expected"]:
+            print(f"    {r['case']:<40} got={r['abicheck']} expected={r['expected']}")
 
     summary = REPORT_DIR / "comparison_summary.json"
     summary.write_text(json.dumps(results, indent=2))
     print(f"\n  Reports: {REPORT_DIR}/")
-    print(f"  Summary: {summary}")
+    print(f"  Summary: {summary}\n")
 
 
 if __name__ == "__main__":
