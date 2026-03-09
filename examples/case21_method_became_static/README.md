@@ -1,5 +1,7 @@
 # Case 21 — Method Became Static
 
+
+**Verdict:** 🟢 COMPATIBLE (symbol-level); source semantics changed
 **abicheck verdict: BREAKING**
 
 ## What changes
@@ -92,3 +94,6 @@ g++ -g -fsanitize=undefined app.cpp -Iold -L. -lwidget -Wl,-rpath,. -o app_ub
 does not encode static-ness). The binary links and appears to run. However, the calling
 convention is wrong — old callers pass `this` in `%rdi` which the new static function ignores.
 For methods that access member state through `this`, this is silent memory corruption.
+
+## Why runtime result is COMPATIBLE (not a hard break for old binaries)
+In the Itanium C++ ABI, `static` is NOT encoded in the mangled symbol name. `Widget::bar()` mangles identically whether it is static or not. Old binaries call the symbol and it resolves normally — the this-pointer is passed in `%rdi` but the new static function simply ignores it. The break is **semantic** (calling convention mismatch if bar() accesses members) and **source-level** (new code cannot call `w.bar()` — must use `Widget::bar()`).

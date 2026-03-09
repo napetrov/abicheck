@@ -1,6 +1,6 @@
 # Case 12: Function Removed from Shared Library
 
-**Category:** Symbol API | **Abicheck verdict:** BREAKING
+**Category:** Symbol API | **Abicheck verdict:** BREAKING | **Verdict:** 🔴 BREAKING
 
 ## What breaks
 Any binary dynamically linked against v1 will fail to load with
@@ -63,3 +63,6 @@ gcc -shared -fPIC -g v2.c -o libfoo.so
 **first call** through the PLT — the app starts but immediately dies when `fast_add`
 is called. With `LD_BIND_NOW=1` or `RTLD_NOW`, it fails at load time. Either way,
 every binary that ever called `fast_add` is broken until recompiled against v2 headers.
+
+## Runtime behavior
+The function is removed from the .so — the dynamic linker emits an undefined symbol error at load time (with RTLD_NOW) or at first call (lazy binding). Runtime result and verdict both agree: BREAKING.

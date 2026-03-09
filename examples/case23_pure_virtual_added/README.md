@@ -1,5 +1,7 @@
 # Case 23 — Virtual Method Became Pure Virtual
 
+
+**Verdict:** 🔴 BREAKING
 **abicheck verdict: BREAKING**
 
 ## What changes
@@ -90,3 +92,6 @@ g++ -shared -fPIC -g new/lib.cpp -Inew -o libproc.so
 **Why CRITICAL:** Existing binaries that instantiate `Processor` and call `process()`
 via the vtable now hit the pure-virtual handler, causing unconditional `abort()`.
 Every plugin or subclass compiled against v1 must be rebuilt with the new abstract interface.
+
+## Why runtime result may differ from verdict
+Became pure virtual: direct instantiation causes SIGABRT

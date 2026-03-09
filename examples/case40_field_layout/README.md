@@ -90,3 +90,6 @@ echo "exit: $?"   # → 12 (ABI change + breaking)
 Never change field types, remove fields, or reorder fields in a public struct.
 Use opaque pointers (`struct Packet *`) with accessor functions to allow internal layout
 evolution. If layout must change, bump the SONAME.
+
+## Runtime note
+This case now checks checksum mismatch to make field-layout reinterpretation observable at runtime (behavioral break, not guaranteed crash).

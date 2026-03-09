@@ -1,5 +1,7 @@
 # Case 34 — Access Level Changed
 
+
+**Verdict:** 🟡 SOURCE_BREAK
 **abicheck verdict: SOURCE_BREAK** (with headers) / **NO_CHANGE** (ELF-only)
 
 ## What changes
@@ -87,3 +89,6 @@ abicheck dump libv1.so --header v1.hpp -o v1h.json
 abicheck dump libv2.so --header v2.hpp -o v2h.json
 abicheck compare v1h.json v2h.json  # → SOURCE_BREAK: METHOD_ACCESS_CHANGED
 ```
+
+## Why runtime result may differ from verdict
+Access level narrowing: binary layout unchanged, compile fails

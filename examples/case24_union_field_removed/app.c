@@ -4,7 +4,10 @@
 int main(void) {
     union Data d;
     init_data(&d);
-    /* v1: d.f = 3.14, v2: d.i = 42 (float interpretation of 42 = garbage) */
-    printf("d.f = %e (expected 3.14, got wrong value with v2)\n", d.f);
+    printf("d.f = %e (expected ~3.14)\n", d.f);
+    if (d.f < 3.0f || d.f > 3.3f) {
+        printf("UNION_MISMATCH: removed float field changed interpretation\n");
+        return 2;
+    }
     return 0;
 }

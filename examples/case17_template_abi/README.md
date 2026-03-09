@@ -1,5 +1,7 @@
 # Case 17 — Template Instantiation ABI Change
 
+
+**Verdict:** 🟢 COMPATIBLE
 ## What changes
 
 | Version | `Buffer<int>` layout |
@@ -109,3 +111,6 @@ g++ -std=c++17 -g -fsanitize=address app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app_a
 **Why CRITICAL:** The v2 constructor writes a new `capacity_` field at offset 16,
 but the app only reserved 16 bytes on the stack. The 8 bytes past the allocation are
 overwritten — classic stack smash, potentially corrupting return addresses.
+
+## Why runtime result may differ from verdict
+Template instantiation in binary: symbol names unchanged

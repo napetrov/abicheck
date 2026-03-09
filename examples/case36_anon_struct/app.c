@@ -40,6 +40,7 @@ int main(void) {
         printf("ERROR: expected 42, got %d — ABI layout mismatch!\n", result);
         printf("  v2's variant_get_int() read 'i' at offset 8 instead of 4\n");
         printf("  (sentinel bytes 0xAA were read instead of the actual value)\n");
+        return 2;
     }
 
     return 0;

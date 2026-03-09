@@ -1,5 +1,7 @@
 # Case 24 — Union Field Removed
 
+
+**Verdict:** 🔴 BREAKING
 **abicheck verdict: BREAKING**
 
 ## What changes
@@ -74,3 +76,9 @@ gcc -shared -fPIC -g new/lib.c -Inew -o libdata.so
 
 **Why CRITICAL:** The library writes integer bits, the caller reads float bits from the
 same storage. Silent wrong value — no crash, no error, just completely wrong data.
+
+## Why runtime result may differ from verdict
+Union field removed: accessing removed field reads undefined memory
+
+## Runtime note
+Runtime check now fails explicitly when removed union member changes data interpretation.
