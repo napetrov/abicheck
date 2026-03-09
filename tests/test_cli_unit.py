@@ -179,7 +179,8 @@ class TestCompareSuppressionWarning:
         result = runner.invoke(main, [
             "compare", str(old_p), str(new_p), "--suppress", str(sup),
         ])
-        assert "suppressed" in result.output.lower() or result.exit_code == 0
+        assert result.exit_code == 0
+        assert "suppressed" in result.output.lower()
 
 
 # ── compat descriptor errors ────────────────────────────────────────────

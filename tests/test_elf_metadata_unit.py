@@ -345,15 +345,28 @@ class TestParseFull:
         dyn = MagicMock(spec=DynamicSection)
         dyn.iter_tags.return_value = [MagicMock(entry=MagicMock(d_tag="DT_SONAME"), soname="lib.so")]
 
+        verdef_aux = MagicMock()
+        verdef_aux.name = "VER_DEF_1"
         verdef = MagicMock(spec=GNUVerDefSection)
-        verdef.iter_versions.return_value = []
+        verdef.iter_versions.return_value = [(MagicMock(), [verdef_aux])]
 
+        verneed_entry = MagicMock()
+        verneed_entry.name = "libc.so.6"
+        vernaux = MagicMock()
+        vernaux.name = "GLIBC_2.17"
         verneed = MagicMock(spec=GNUVerNeedSection)
-        verneed.iter_versions.return_value = []
+        verneed.iter_versions.return_value = [(verneed_entry, [vernaux])]
 
+        sym = MagicMock()
+        sym.name = "my_func"
+        sym.entry.st_shndx = "SHN_ABS"
+        sym.entry.st_info.bind = "STB_GLOBAL"
+        sym.entry.st_info.type = "STT_FUNC"
+        sym.entry.st_other.visibility = "STV_DEFAULT"
+        sym.entry.st_size = 42
         dynsym = MagicMock(spec=SymbolTableSection)
         dynsym.name = ".dynsym"
-        dynsym.iter_symbols.return_value = []
+        dynsym.iter_symbols.return_value = [sym]
 
         elf = MagicMock()
         elf.iter_sections.return_value = [dyn, verdef, verneed, dynsym]
@@ -363,6 +376,10 @@ class TestParseFull:
             meta = _parse(f, Path("test.so"))
 
         assert meta.soname == "lib.so"
+        assert meta.versions_defined == ["VER_DEF_1"]
+        assert meta.versions_required == {"libc.so.6": ["GLIBC_2.17"]}
+        assert len(meta.symbols) == 1
+        assert meta.symbols[0].name == "my_func"
 
     def test_malformed_section_logged_and_skipped(self):
         """If a section raises, other sections still parse."""
@@ -407,9 +424,10 @@ class TestParseFull:
 
         f = MagicMock()
         with patch("abicheck.elf_metadata.ELFFile", return_value=elf):
-            _parse(f, Path("test.so"))
+            meta = _parse(f, Path("test.so"))
 
         symtab.iter_symbols.assert_not_called()
+        assert meta.symbols == []
 
 
 # ── Constant correctness ────────────────────────────────────────────────

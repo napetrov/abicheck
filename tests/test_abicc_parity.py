@@ -266,25 +266,37 @@ def _run_abicc(
 
     if r.returncode == 0:
         # ABICC returns 0 for both no-change and compatible-additions.
-        # Parse the HTML report to distinguish: look for the BC percentage
-        # and whether any added/removed/changed sections exist.
+        # Parse stdout for the verdict line ABICC prints.
+        output = r.stdout + r.stderr
+
+        # ABICC prints lines like:
+        #   "Binary compatibility: 100%"
+        #   "Source compatibility: 100%"
+        #   "Total binary compatibility problems: 0, warnings: 0"
+        # When there are compatible additions (not breaking), it still says 100%
+        # but also prints added/removed symbol counts.
+        # Look for non-zero added/removed symbol counts in stdout.
+        added_match = re.search(r"added\s+symbols:\s*(\d+)", output, re.IGNORECASE)
+        removed_match = re.search(r"removed\s+symbols:\s*(\d+)", output, re.IGNORECASE)
+
+        added_count = int(added_match.group(1)) if added_match else 0
+        removed_count = int(removed_match.group(1)) if removed_match else 0
+
+        if added_count > 0 or removed_count > 0:
+            return "COMPATIBLE"
+
+        # Also check the report for type-level changes (field additions etc.)
         if report_path.exists():
             report_text = report_path.read_text(encoding="utf-8", errors="replace")
-            # Look for concrete change sections in the HTML report
-            # ABICC reports use headers like "Added Symbols", "Removed Symbols"
-            has_symbol_changes = bool(re.search(
-                r"Added Symbols|Removed Symbols|Changed Symbols"
-                r"|Added Types|Removed Types|Changed Types",
+            # Look for actual problem/change counts > 0 in the report
+            # ABICC uses class="stat" cells with counts; check for non-zero
+            type_problems = re.search(
+                r'(?:type_problems_high|type_problems_medium|type_problems_low'
+                r'|changed_constants)\D+(\d+)',
                 report_text,
-            ))
-            if has_symbol_changes:
+            )
+            if type_problems and int(type_problems.group(1)) > 0:
                 return "COMPATIBLE"
-
-        # Check stdout for explicit "total compatible changes: N" where N > 0
-        output = r.stdout + r.stderr
-        compat_match = re.search(r"total compatible changes:\s*(\d+)", output, re.IGNORECASE)
-        if compat_match and int(compat_match.group(1)) > 0:
-            return "COMPATIBLE"
 
         return "NO_CHANGE"
     elif r.returncode == 1:
