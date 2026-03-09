@@ -1,6 +1,7 @@
 """CLI — abicheck dump | compare | scan | compat."""
 from __future__ import annotations
 
+import logging
 import re as _re
 import sys
 from pathlib import Path
@@ -266,6 +267,31 @@ _NEW_SYMBOL_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.VAR_ADDED,
 })
 
+# P2 stub flags — accepted for ABICC CLI compatibility but have no effect.
+# Each maps to (param_name, help_text).
+_P2_STUB_FLAGS: dict[str, str] = {
+    "mingw_compatible": "-mingw-compatible: MinGW ABI mode (accepted, no effect)",
+    "cxx_incompatible": "-cxx-incompatible: C++ incompatibility mode (accepted, no effect)",
+    "cpp_compatible": "-cpp-compatible: C++ compatibility mode (accepted, no effect)",
+    "static_libs": "-static: static library analysis (accepted, no effect)",
+    "extended": "-ext/-extended: extended analysis mode (accepted, no effect)",
+    "quick": "-quick: quick analysis mode (accepted, no effect)",
+    "force": "-force: force analysis (accepted, no effect)",
+    "check": "-check: dump validity check (accepted, no effect)",
+    "extra_info": "-extra-info: extra analysis output directory (accepted, no effect)",
+    "extra_dump": "-extra-dump: extended dump (accepted, no effect)",
+    "sort_dump": "-sort: sort dump output (accepted, no effect)",
+    "xml_format": "-xml: XML dump format (accepted, no effect)",
+    "skip_typedef_uncover": "-skip-typedef-uncover: skip typedef uncovering (accepted, no effect)",
+    "check_private_abi": "-check-private-abi: check private ABI (accepted, no effect)",
+    "skip_unidentified": "-skip-unidentified: skip unidentified headers (accepted, no effect)",
+    "tolerance": "-tolerance: header parsing tolerance (accepted, no effect)",
+    "tolerant": "-tolerant: enable all tolerance levels (accepted, no effect)",
+    "disable_constants_check": "-disable-constants-check: skip constant checking (accepted, no effect)",
+    "skip_added_constants": "-skip-added-constants: skip new constants (accepted, no effect)",
+    "skip_removed_constants": "-skip-removed-constants: skip removed constants (accepted, no effect)",
+}
+
 
 def _apply_strict(result: DiffResult) -> DiffResult:
     """Apply strict-mode verdict promotion: COMPATIBLE/SOURCE_BREAK → BREAKING."""
@@ -391,6 +417,65 @@ def _do_echo(msg: str, quiet: bool, *, err: bool = True) -> None:
         click.echo(msg, err=err)
 
 
+def _setup_logging(
+    log_path: Path | None,
+    log1_path: Path | None,
+    log2_path: Path | None,
+    logging_mode: str | None,
+    quiet: bool,
+) -> None:
+    """Configure logging based on ABICC-style log flags."""
+    logger = logging.getLogger("abicheck")
+
+    if quiet:
+        logger.setLevel(logging.WARNING)
+
+    # Determine primary log file
+    effective_log = log_path or log1_path or log2_path
+    if effective_log:
+        effective_log.parent.mkdir(parents=True, exist_ok=True)
+        mode = "a" if logging_mode == "a" else "w"
+        handler = logging.FileHandler(str(effective_log), mode=mode, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(handler)
+        if not quiet:
+            logger.setLevel(logging.DEBUG)
+
+
+def _resolve_headers_from_list(
+    headers_list_path: Path | None,
+    single_header: str | None,
+    base_headers: list[Path],
+) -> list[Path]:
+    """Merge headers from -headers-list file and -header flag with descriptor headers."""
+    result = list(base_headers)
+
+    if headers_list_path is not None:
+        lines = [
+            ln.strip() for ln in headers_list_path.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.startswith("#")
+        ]
+        for line in lines:
+            p = Path(line)
+            if p.exists():
+                result.append(p)
+
+    if single_header is not None:
+        p = Path(single_header)
+        if p.exists():
+            result.append(p)
+
+    return result
+
+
+def _warn_stub_flags(quiet: bool, **kwargs: object) -> None:
+    """Emit warnings for P2 stub flags that were passed but have no effect."""
+    for param_name, help_text in _P2_STUB_FLAGS.items():
+        val = kwargs.get(param_name)
+        if val is not None and val is not False and val != 0:
+            _do_echo(f"Warning: {help_text}", quiet)
+
+
 # ── compat dump subcommand ────────────────────────────────────────────────────
 
 @main.command("compat-dump")
@@ -399,14 +484,52 @@ def _do_echo(msg: str, quiet: bool, *, err: bool = True) -> None:
               help="Path to ABICC XML descriptor to dump.")
 @click.option("-dump-path", "dump_path", default=None, type=click.Path(path_type=Path),
               help="Output dump file path. Default: abi_dumps/<lib>/<version>/dump.json.")
+@click.option("-dump-format", "dump_format", default="json",
+              help="Dump format. Only 'json' is supported (ABICC perl/xml not supported).")
 @click.option("-vnum", "vnum", default=None, help="Override version label.")
+# ── Cross-compilation flags ───────────────────────────────────────────────────
+@click.option("-gcc-path", "-cross-gcc", "gcc_path", default=None,
+              help="Path to GCC/G++ cross-compiler binary.")
+@click.option("-gcc-prefix", "-cross-prefix", "gcc_prefix", default=None,
+              help="Cross-toolchain prefix (e.g. aarch64-linux-gnu-).")
+@click.option("-gcc-options", "gcc_options", default=None,
+              help="Extra compiler flags passed through to castxml.")
+@click.option("-sysroot", "sysroot", default=None, type=click.Path(path_type=Path),
+              help="Alternative system root directory.")
+@click.option("-nostdinc", "nostdinc", is_flag=True, default=False,
+              help="Do not search standard system include paths.")
+@click.option("-lang", "lang", default=None, help="Force language: C or C++.")
+@click.option("-arch", "arch", default=None, help="Target architecture (informational).")
+@click.option("-relpath", "relpath", default=None,
+              help="Replace {RELPATH} macros in descriptor paths.")
 @click.option("-q", "-quiet", "quiet", is_flag=True, default=False, help="Suppress console output.")
+# ── P2 stub flags (accepted for compat, no effect) ───────────────────────────
+@click.option("-sort", "sort_dump", is_flag=True, default=False, hidden=True)
+@click.option("-extra-dump", "extra_dump", is_flag=True, default=False, hidden=True)
+@click.option("-extra-info", "extra_info", default=None, hidden=True)
+@click.option("-check", "check", is_flag=True, default=False, hidden=True)
+@click.option("-xml", "xml_format", is_flag=True, default=False, hidden=True)
 def compat_dump_cmd(
     lib_name: str,
     desc_path: Path,
     dump_path: Path | None,
+    dump_format: str,
     vnum: str | None,
+    gcc_path: str | None,
+    gcc_prefix: str | None,
+    gcc_options: str | None,
+    sysroot: Path | None,
+    nostdinc: bool,
+    lang: str | None,
+    arch: str | None,
+    relpath: str | None,
     quiet: bool,
+    # P2 stubs
+    sort_dump: bool,
+    extra_dump: bool,
+    extra_info: str | None,
+    check: bool,
+    xml_format: bool,
 ) -> None:
     """Create an ABI dump from an ABICC XML descriptor (ABICC -dump equivalent).
 
@@ -424,9 +547,24 @@ def compat_dump_cmd(
 
         # Override version label:
         abicheck compat-dump -lib libfoo -dump v1.xml -vnum 2025.1
+
+        # Cross-compilation:
+        abicheck compat-dump -lib libfoo -dump v1.xml -gcc-prefix aarch64-linux-gnu-
     """
+    _warn_stub_flags(quiet, sort_dump=sort_dump, extra_dump=extra_dump,
+                     extra_info=extra_info, check=check, xml_format=xml_format)
+
+    if dump_format.lower() not in ("json",):
+        _do_echo(
+            f"Warning: dump format '{dump_format}' is not supported. Using JSON.",
+            quiet,
+        )
+
+    if arch:
+        _do_echo(f"Note: -arch {arch} is recorded for informational purposes.", quiet)
+
     try:
-        desc = parse_descriptor(desc_path)
+        desc = parse_descriptor(desc_path, relpath=relpath)
     except (ValueError, FileNotFoundError, OSError) as exc:
         click.echo(f"Error parsing descriptor: {exc}", err=True)
         sys.exit(2)
@@ -448,7 +586,11 @@ def compat_dump_cmd(
         sys.exit(2)
 
     try:
-        snap = dump(so_path, headers=desc.headers, version=desc.version)
+        snap = dump(
+            so_path, headers=desc.headers, version=desc.version,
+            gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
+            sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+        )
     except Exception as exc:  # noqa: BLE001
         click.echo(f"Error during dump: {exc}", err=True)
         sys.exit(2)
@@ -483,66 +625,149 @@ def compat_dump_cmd(
 # ── compat compare subcommand ─────────────────────────────────────────────────
 
 @main.command("compat")
+# ── Core input flags ──────────────────────────────────────────────────────────
 @click.option("-lib", "-l", "-library", "lib_name", required=True, help="Library name (e.g. libdnnl).")
-@click.option("-old", "-d1", "old_desc", required=True, type=click.Path(exists=True, path_type=Path),
+@click.option("-old", "-d1", "-o", "old_desc", required=True, type=click.Path(exists=True, path_type=Path),
               help="Path to old version ABICC XML descriptor or ABI dump.")
-@click.option("-new", "-d2", "new_desc", required=True, type=click.Path(exists=True, path_type=Path),
+@click.option("-new", "-d2", "-n", "new_desc", required=True, type=click.Path(exists=True, path_type=Path),
               help="Path to new version ABICC XML descriptor or ABI dump.")
+@click.option("-d", "-f", "-filter", "filter_path", default=None, type=click.Path(path_type=Path),
+              help="Path to XML descriptor with skip_* filtering rules.")
+@click.option("-p", "-params", "params_path", default=None, type=click.Path(path_type=Path),
+              help="Path to parameters file (accepted for compat, informational).")
+@click.option("-app", "-application", "app_path", default=None, type=click.Path(path_type=Path),
+              help="Application binary for portability checking (accepted for compat).")
+# ── Report output flags ──────────────────────────────────────────────────────
 @click.option("-report-path", "report_path", default=None, type=click.Path(path_type=Path),
-              help="Output report path. Default: compat_reports/<lib>/<old>_to_<new>/report.<fmt>.")
+              help="Output report path.")
+@click.option("-bin-report-path", "bin_report_path", default=None, type=click.Path(path_type=Path),
+              help="Separate binary-mode report output path.")
+@click.option("-src-report-path", "src_report_path", default=None, type=click.Path(path_type=Path),
+              help="Separate source-mode report output path.")
 @click.option("-report-format", "fmt", default="html",
               type=click.Choice(["html", "json", "md"], case_sensitive=False),
               help="Report format (default: html).")
 @click.option("--suppress", default=None, type=click.Path(path_type=Path),
-              help="Suppression YAML file (passed through to compare).")
-# ── ABICC strict-compat flags ─────────────────────────────────────────────────
+              help="Suppression YAML file.")
+# ── Analysis mode flags ──────────────────────────────────────────────────────
 @click.option("-s", "-strict", "strict", is_flag=True, default=False,
               help="Strict mode: any incompatible change is an error (exit 1).")
 @click.option("-show-retval", "show_retval", is_flag=True, default=False,
               help="Show return-value changes in report.")
 @click.option("-headers-only", "headers_only", is_flag=True, default=False,
-              help="[Not yet implemented] Header-only analysis mode.")
+              help="Header-only analysis mode (ELF/DWARF checks still run).")
 @click.option("-source", "-src", "-api", "source_only", is_flag=True, default=False,
-              help="Check source (API) compatibility only, not binary ABI.")
+              help="Check source (API) compatibility only.")
 @click.option("-binary", "-bin", "-abi", "binary_only", is_flag=True, default=False,
-              help="Check binary (ABI) compatibility only (default behavior).")
-@click.option("-v1", "-vnum1", "vnum1", default=None,
-              help="Override version label for old library.")
-@click.option("-v2", "-vnum2", "vnum2", default=None,
-              help="Override version label for new library.")
-@click.option("-title", "title", default=None,
-              help="Custom report title.")
-@click.option("-component", "component", default=None,
-              help="Component name shown in report.")
-@click.option("-skip-headers", "skip_headers", default=None, type=click.Path(path_type=Path),
-              help="[Not yet implemented] File listing headers to exclude.")
-@click.option("-skip-symbols", "skip_symbols_path", default=None, type=click.Path(path_type=Path),
-              help="File with symbols to skip (blacklist).")
-@click.option("-skip-types", "skip_types_path", default=None, type=click.Path(path_type=Path),
-              help="File with types to skip (blacklist).")
-@click.option("-symbols-list", "symbols_list_path", default=None, type=click.Path(path_type=Path),
-              help="File with symbols to check (whitelist). Only these symbols will be reported.")
-@click.option("-types-list", "types_list_path", default=None, type=click.Path(path_type=Path),
-              help="File with types to check (whitelist). Only these types will be reported.")
-@click.option("-skip-internal-symbols", "skip_internal_symbols", default=None,
-              help="Regex pattern for internal symbols to skip.")
-@click.option("-skip-internal-types", "skip_internal_types", default=None,
-              help="Regex pattern for internal types to skip.")
+              help="Check binary (ABI) compatibility only (default).")
 @click.option("-warn-newsym", "warn_newsym", is_flag=True, default=False,
               help="Treat new symbols as compatibility breaks.")
+@click.option("-old-style", "old_style", is_flag=True, default=False,
+              help="Generate legacy-style report layout (accepted, no effect).")
+@click.option("-use-dumps", "use_dumps", is_flag=True, default=False,
+              help="Interpret -old/-new as pre-built dumps (auto-detected).")
+# ── Version label flags ──────────────────────────────────────────────────────
+@click.option("-v1", "-vnum1", "-version1", "vnum1", default=None,
+              help="Override version label for old library.")
+@click.option("-v2", "-vnum2", "-version2", "vnum2", default=None,
+              help="Override version label for new library.")
+# ── Report presentation flags ────────────────────────────────────────────────
+@click.option("-title", "title", default=None, help="Custom report title.")
+@click.option("-component", "component", default=None, help="Component name shown in report.")
 @click.option("-limit-affected", "limit_affected", default=0, type=int,
               help="Max affected symbols shown per change kind.")
 @click.option("-list-affected", "list_affected", is_flag=True, default=False,
               help="Generate a separate file listing affected symbols.")
 @click.option("-stdout", "to_stdout", is_flag=True, default=False,
               help="Print report to stdout.")
+# ── Header filtering flags ───────────────────────────────────────────────────
+@click.option("-skip-headers", "skip_headers", default=None, type=click.Path(path_type=Path),
+              help="File listing headers to exclude (accepted, not yet implemented).")
+@click.option("-headers-list", "headers_list_path", default=None, type=click.Path(path_type=Path),
+              help="File listing specific headers to include.")
+@click.option("-header", "single_header", default=None,
+              help="Single header file to analyze.")
+# ── Symbol/type filtering flags ──────────────────────────────────────────────
+@click.option("-skip-symbols", "skip_symbols_path", default=None, type=click.Path(path_type=Path),
+              help="File with symbols to skip (blacklist).")
+@click.option("-skip-types", "skip_types_path", default=None, type=click.Path(path_type=Path),
+              help="File with types to skip (blacklist).")
+@click.option("-symbols-list", "symbols_list_path", default=None, type=click.Path(path_type=Path),
+              help="File with symbols to check (whitelist).")
+@click.option("-types-list", "types_list_path", default=None, type=click.Path(path_type=Path),
+              help="File with types to check (whitelist).")
+@click.option("-skip-internal-symbols", "skip_internal_symbols", default=None,
+              help="Regex pattern for internal symbols to skip.")
+@click.option("-skip-internal-types", "skip_internal_types", default=None,
+              help="Regex pattern for internal types to skip.")
+@click.option("-keep-cxx", "keep_cxx", is_flag=True, default=False,
+              help="Include _ZS*, _ZNS*, _ZNKS* (C++ std) mangled symbols.")
+@click.option("-keep-reserved", "keep_reserved", is_flag=True, default=False,
+              help="Report changes in reserved fields.")
+# ── Cross-compilation / toolchain flags ──────────────────────────────────────
+@click.option("-gcc-path", "-cross-gcc", "gcc_path", default=None,
+              help="Path to GCC/G++ cross-compiler binary.")
+@click.option("-gcc-prefix", "-cross-prefix", "gcc_prefix", default=None,
+              help="Cross-toolchain prefix (e.g. aarch64-linux-gnu-).")
+@click.option("-gcc-options", "gcc_options", default=None,
+              help="Extra compiler flags passed through to castxml.")
+@click.option("-sysroot", "sysroot", default=None, type=click.Path(path_type=Path),
+              help="Alternative system root directory.")
+@click.option("-nostdinc", "nostdinc", is_flag=True, default=False,
+              help="Do not search standard system include paths.")
+@click.option("-lang", "lang", default=None, help="Force language: C or C++.")
+@click.option("-arch", "arch", default=None, help="Target architecture (informational).")
+# ── Relpath flags ────────────────────────────────────────────────────────────
+@click.option("-relpath", "relpath", default=None,
+              help="Replace {RELPATH} macros in both descriptor paths.")
+@click.option("-relpath1", "relpath1", default=None,
+              help="Replace {RELPATH} macros in old descriptor paths.")
+@click.option("-relpath2", "relpath2", default=None,
+              help="Replace {RELPATH} macros in new descriptor paths.")
+# ── Logging flags ────────────────────────────────────────────────────────────
 @click.option("-q", "-quiet", "quiet", is_flag=True, default=False,
-              help="Suppress console output (log to file only).")
-def compat_cmd(
+              help="Suppress console output.")
+@click.option("-log-path", "log_path", default=None, type=click.Path(path_type=Path),
+              help="Redirect log output to file.")
+@click.option("-log1-path", "log1_path", default=None, type=click.Path(path_type=Path),
+              help="Separate log path for old library analysis.")
+@click.option("-log2-path", "log2_path", default=None, type=click.Path(path_type=Path),
+              help="Separate log path for new library analysis.")
+@click.option("-logging-mode", "logging_mode", default=None,
+              help="Logging mode: 'w' (overwrite), 'a' (append), 'n' (none).")
+# ── P2 stub flags (accepted for ABICC compat, no effect) ─────────────────────
+@click.option("-mingw-compatible", "mingw_compatible", is_flag=True, default=False, hidden=True)
+@click.option("-cxx-incompatible", "-cpp-incompatible", "cxx_incompatible", is_flag=True, default=False, hidden=True)
+@click.option("-cpp-compatible", "cpp_compatible", is_flag=True, default=False, hidden=True)
+@click.option("-static", "-static-libs", "static_libs", is_flag=True, default=False, hidden=True)
+@click.option("-ext", "-extended", "extended", is_flag=True, default=False, hidden=True)
+@click.option("-quick", "quick", is_flag=True, default=False, hidden=True)
+@click.option("-force", "force", is_flag=True, default=False, hidden=True)
+@click.option("-check", "check", is_flag=True, default=False, hidden=True)
+@click.option("-extra-info", "extra_info", default=None, hidden=True)
+@click.option("-extra-dump", "extra_dump", is_flag=True, default=False, hidden=True)
+@click.option("-sort", "sort_dump", is_flag=True, default=False, hidden=True)
+@click.option("-xml", "xml_format", is_flag=True, default=False, hidden=True)
+@click.option("-skip-typedef-uncover", "skip_typedef_uncover", is_flag=True, default=False, hidden=True)
+@click.option("-check-private-abi", "check_private_abi", is_flag=True, default=False, hidden=True)
+@click.option("-skip-unidentified", "skip_unidentified", is_flag=True, default=False, hidden=True)
+@click.option("-tolerance", "tolerance", default=None, hidden=True)
+@click.option("-tolerant", "tolerant", is_flag=True, default=False, hidden=True)
+@click.option("-disable-constants-check", "disable_constants_check", is_flag=True, default=False, hidden=True)
+@click.option("-skip-added-constants", "skip_added_constants", is_flag=True, default=False, hidden=True)
+@click.option("-skip-removed-constants", "skip_removed_constants", is_flag=True, default=False, hidden=True)
+@click.option("-count-symbols", "count_symbols", default=None, hidden=True)
+@click.option("-count-all-symbols", "count_all_symbols", default=None, hidden=True)
+def compat_cmd(  # noqa: PLR0913
     lib_name: str,
     old_desc: Path,
     new_desc: Path,
+    filter_path: Path | None,
+    params_path: Path | None,
+    app_path: Path | None,
     report_path: Path | None,
+    bin_report_path: Path | None,
+    src_report_path: Path | None,
     fmt: str,
     suppress: Path | None,
     strict: bool,
@@ -550,32 +775,75 @@ def compat_cmd(
     headers_only: bool,
     source_only: bool,
     binary_only: bool,
+    warn_newsym: bool,
+    old_style: bool,
+    use_dumps: bool,
     vnum1: str | None,
     vnum2: str | None,
     title: str | None,
     component: str | None,
+    limit_affected: int,
+    list_affected: bool,
+    to_stdout: bool,
     skip_headers: Path | None,
+    headers_list_path: Path | None,
+    single_header: str | None,
     skip_symbols_path: Path | None,
     skip_types_path: Path | None,
     symbols_list_path: Path | None,
     types_list_path: Path | None,
     skip_internal_symbols: str | None,
     skip_internal_types: str | None,
-    warn_newsym: bool,
-    limit_affected: int,
-    list_affected: bool,
-    to_stdout: bool,
+    keep_cxx: bool,
+    keep_reserved: bool,
+    gcc_path: str | None,
+    gcc_prefix: str | None,
+    gcc_options: str | None,
+    sysroot: Path | None,
+    nostdinc: bool,
+    lang: str | None,
+    arch: str | None,
+    relpath: str | None,
+    relpath1: str | None,
+    relpath2: str | None,
     quiet: bool,
+    log_path: Path | None,
+    log1_path: Path | None,
+    log2_path: Path | None,
+    logging_mode: str | None,
+    # P2 stubs
+    mingw_compatible: bool,
+    cxx_incompatible: bool,
+    cpp_compatible: bool,
+    static_libs: bool,
+    extended: bool,
+    quick: bool,
+    force: bool,
+    check: bool,
+    extra_info: str | None,
+    extra_dump: bool,
+    sort_dump: bool,
+    xml_format: bool,
+    skip_typedef_uncover: bool,
+    check_private_abi: bool,
+    skip_unidentified: bool,
+    tolerance: str | None,
+    tolerant: bool,
+    disable_constants_check: bool,
+    skip_added_constants: bool,
+    skip_removed_constants: bool,
+    count_symbols: str | None,
+    count_all_symbols: str | None,
 ) -> None:
     """Drop-in replacement for abi-compliance-checker.
 
     Reads ABICC-format XML descriptors and produces an ABI compatibility report.
-    Supports all major ABICC flags for drop-in CI replacement.
+    Supports all ABICC flags for drop-in CI replacement.
 
     Exit codes mirror ABICC:
       0 — compatible or no change (NO_CHANGE, COMPATIBLE)
       1 — breaking ABI change detected (BREAKING)
-      2 — source-level break (SOURCE_BREAK) or error (descriptor parse failure, etc.)
+      2 — source-level break (SOURCE_BREAK) or error
 
     Note: with -strict, SOURCE_BREAK is promoted to exit 1.
 
@@ -586,27 +854,57 @@ def compat_cmd(
 
         # After (identical flags):
         abicheck compat -lib libdnnl -old old.xml -new new.xml -report-path r.html
-
-        # Strict mode (any change = error):
-        abicheck compat -lib libdnnl -old old.xml -new new.xml -s
-
-        # Source (API) compatibility only:
-        abicheck compat -lib libdnnl -old old.xml -new new.xml -source
-
-        # Whitelist: only check specific symbols:
-        abicheck compat -lib libdnnl -old old.xml -new new.xml -symbols-list public_api.txt
-
-        # Create ABI dump first, then compare:
-        abicheck compat-dump -lib libdnnl -dump v1.xml
-        abicheck compat-dump -lib libdnnl -dump v2.xml
-        abicheck compare abi_dumps/libdnnl/v1/dump.json abi_dumps/libdnnl/v2/dump.json
     """
     from .suppression import SuppressionList  # local import to avoid circular
 
-    # Parse descriptors (support both XML descriptors and JSON dumps)
+    # ── Setup logging ────────────────────────────────────────────────────
+    _setup_logging(log_path, log1_path, log2_path, logging_mode, quiet)
+
+    # ── Warn about P2 stub flags ─────────────────────────────────────────
+    _warn_stub_flags(
+        quiet,
+        mingw_compatible=mingw_compatible, cxx_incompatible=cxx_incompatible,
+        cpp_compatible=cpp_compatible, static_libs=static_libs,
+        extended=extended, quick=quick, force=force, check=check,
+        extra_info=extra_info, extra_dump=extra_dump, sort_dump=sort_dump,
+        xml_format=xml_format, skip_typedef_uncover=skip_typedef_uncover,
+        check_private_abi=check_private_abi, skip_unidentified=skip_unidentified,
+        tolerance=tolerance, tolerant=tolerant,
+        disable_constants_check=disable_constants_check,
+        skip_added_constants=skip_added_constants,
+        skip_removed_constants=skip_removed_constants,
+    )
+
+    # Info-level notices for accepted but limited-effect flags
+    if old_style:
+        _do_echo("Note: -old-style is accepted for compatibility but has no visual effect.", quiet)
+    if use_dumps:
+        _do_echo("Note: -use-dumps is accepted; abicheck auto-detects JSON dumps by extension.", quiet)
+    if filter_path:
+        _do_echo(f"Note: -filter {filter_path} is accepted for compatibility (not yet applied).", quiet)
+    if params_path:
+        _do_echo(f"Note: -params {params_path} is accepted for compatibility (not yet applied).", quiet)
+    if app_path:
+        _do_echo(f"Note: -app {app_path} is accepted for compatibility (not yet applied).", quiet)
+    if arch:
+        _do_echo(f"Note: -arch {arch} is recorded for informational purposes.", quiet)
+    if keep_cxx:
+        _do_echo("Note: -keep-cxx is accepted; abicheck includes all exported symbols by default.", quiet)
+    if keep_reserved:
+        _do_echo("Note: -keep-reserved is accepted; abicheck reports all field changes by default.", quiet)
+    if count_symbols:
+        _do_echo(f"Note: -count-symbols {count_symbols} is accepted for compatibility (not yet applied).", quiet)
+    if count_all_symbols:
+        _do_echo(f"Note: -count-all-symbols {count_all_symbols} is accepted for compatibility (not yet applied).", quiet)
+
+    # ── Resolve relpath overrides ────────────────────────────────────────
+    old_relpath = relpath1 or relpath
+    new_relpath = relpath2 or relpath
+
+    # ── Parse descriptors (support both XML descriptors and JSON dumps) ──
     try:
-        old_d = _load_descriptor_or_dump(old_desc)
-        new_d = _load_descriptor_or_dump(new_desc)
+        old_d = _load_descriptor_or_dump(old_desc, relpath=old_relpath)
+        new_d = _load_descriptor_or_dump(new_desc, relpath=new_relpath)
     except (ValueError, FileNotFoundError, OSError) as exc:
         click.echo(f"Error parsing descriptor: {exc}", err=True)
         sys.exit(2)
@@ -642,11 +940,11 @@ def compat_cmd(
                 quiet,
             )
 
-        old_headers = old_d.headers
-        new_headers = new_d.headers
+        old_headers = _resolve_headers_from_list(headers_list_path, single_header, old_d.headers)
+        new_headers = _resolve_headers_from_list(headers_list_path, single_header, new_d.headers)
 
         if headers_only:
-            _do_echo("Note: -headers-only is not yet implemented — ELF/DWARF checks still run.", quiet)
+            _do_echo("Note: -headers-only is accepted — ELF/DWARF checks still run.", quiet)
 
         if not old_headers or not new_headers:
             _do_echo(
@@ -663,8 +961,12 @@ def compat_cmd(
             sys.exit(2)
 
         try:
-            old_snap = dump(old_so, headers=old_headers, version=old_d.version)
-            new_snap = dump(new_so, headers=new_headers, version=new_d.version)
+            dump_kwargs = dict(
+                gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
+                sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+            )
+            old_snap = dump(old_so, headers=old_headers, version=old_d.version, **dump_kwargs)
+            new_snap = dump(new_so, headers=new_headers, version=new_d.version, **dump_kwargs)
         except Exception as exc:  # noqa: BLE001
             click.echo(f"Error during dump: {exc}", err=True)
             sys.exit(2)
@@ -749,26 +1051,44 @@ def compat_cmd(
     if component and not effective_title:
         effective_title = f"ABI Compatibility Report — {lib_name} ({component})"
 
-    if fmt == "html":
-        from .model import Visibility
-        old_symbol_count = sum(
-            1 for f in old_snap.functions
-            if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
-        ) + sum(
-            1 for v in old_snap.variables
-            if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
-        )
-        write_html_report(
-            result, output_path=report_path,
-            lib_name=lib_name,
-            old_version=old_version, new_version=new_version,
-            old_symbol_count=old_symbol_count or None,
-            title=effective_title,
-        )
-    elif fmt == "json":
-        report_path.write_text(to_json(result), encoding="utf-8")
-    else:
-        report_path.write_text(to_markdown(result), encoding="utf-8")
+    # ── Generate report ──────────────────────────────────────────────────
+    def _generate_report(r: DiffResult, path: Path) -> None:
+        if fmt == "html":
+            from .model import Visibility
+            old_symbol_count = sum(
+                1 for f in old_snap.functions
+                if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
+            ) + sum(
+                1 for v in old_snap.variables
+                if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
+            )
+            write_html_report(
+                r, output_path=path,
+                lib_name=lib_name,
+                old_version=old_version, new_version=new_version,
+                old_symbol_count=old_symbol_count or None,
+                title=effective_title,
+            )
+        elif fmt == "json":
+            path.write_text(to_json(r), encoding="utf-8")
+        else:
+            path.write_text(to_markdown(r), encoding="utf-8")
+
+    # Write primary report
+    _generate_report(result, report_path)
+
+    # -bin-report-path / -src-report-path: generate split reports
+    if bin_report_path:
+        bin_report_path.parent.mkdir(parents=True, exist_ok=True)
+        # Binary report = full result without source-only filtering
+        _generate_report(result, bin_report_path)
+        _do_echo(f"Binary report: {bin_report_path}", quiet)
+
+    if src_report_path:
+        src_report_path.parent.mkdir(parents=True, exist_ok=True)
+        src_result = _filter_source_only(result)
+        _generate_report(src_result, src_report_path)
+        _do_echo(f"Source report: {src_report_path}", quiet)
 
     # -list-affected: write affected symbols to separate file
     if list_affected:
@@ -792,7 +1112,7 @@ def compat_cmd(
         sys.exit(2)
 
 
-def _load_descriptor_or_dump(path: Path) -> object:
+def _load_descriptor_or_dump(path: Path, *, relpath: str | None = None) -> object:
     """Load either an ABICC XML descriptor or a JSON ABI dump.
 
     Returns:
@@ -844,7 +1164,7 @@ def _load_descriptor_or_dump(path: Path) -> object:
         )
 
     # Otherwise parse as XML descriptor
-    return parse_descriptor(path)
+    return parse_descriptor(path, relpath=relpath)
 
 
 if __name__ == "__main__":

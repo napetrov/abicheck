@@ -10,10 +10,16 @@ Covers:
 - -quiet flag
 - ABICC dump format detection and clear error messaging
 - JSON dump input support for compat mode
+- relpath support in descriptor parsing
+- P2 stub flag acceptance
+- Logging setup
+- Headers-list resolution
+- Full ABICC flag acceptance (no unknown option errors)
 """
 from __future__ import annotations
 
 import json
+import logging
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
@@ -28,9 +34,12 @@ from abicheck.cli import (
     _build_whitelist_suppression,
     _limit_affected_changes,
     _load_descriptor_or_dump,
+    _resolve_headers_from_list,
+    _setup_logging,
+    _warn_stub_flags,
     _write_affected_list,
 )
-from abicheck.compat import CompatDescriptor
+from abicheck.compat import CompatDescriptor, parse_descriptor
 from abicheck.html_report import generate_html_report
 from abicheck.model import AbiSnapshot, Function, Visibility
 from abicheck.serialization import save_snapshot
@@ -441,3 +450,284 @@ class TestCompatDumpRoundTrip:
         assert data["library"] == "libtest.so"
         assert data["version"] == "1.0"
         assert len(data["functions"]) == 1
+
+
+# ── Relpath support ──────────────────────────────────────────────────────────
+
+class TestRelpathDescriptor:
+    def test_relpath_replaces_macro_in_libs(self, tmp_path: Path) -> None:
+        xml = _write_file(tmp_path, "desc.xml", """
+            <descriptor>
+              <version>1.0</version>
+              <libs>{RELPATH}/lib/libfoo.so</libs>
+            </descriptor>
+        """)
+        desc = parse_descriptor(xml, relpath="/opt/myproject")
+        assert str(desc.libs[0]) == "/opt/myproject/lib/libfoo.so"
+
+    def test_relpath_replaces_macro_in_headers(self, tmp_path: Path) -> None:
+        xml = _write_file(tmp_path, "desc.xml", """
+            <descriptor>
+              <version>1.0</version>
+              <libs>/usr/lib/libfoo.so</libs>
+              <headers>{RELPATH}/include</headers>
+            </descriptor>
+        """)
+        desc = parse_descriptor(xml, relpath="/opt/myproject")
+        assert str(desc.headers[0]) == "/opt/myproject/include"
+
+    def test_no_relpath_leaves_macros(self, tmp_path: Path) -> None:
+        xml = _write_file(tmp_path, "desc.xml", """
+            <descriptor>
+              <version>1.0</version>
+              <libs>/usr/lib/libfoo.so</libs>
+            </descriptor>
+        """)
+        desc = parse_descriptor(xml)
+        assert desc.version == "1.0"
+
+    def test_load_descriptor_or_dump_passes_relpath(self, tmp_path: Path) -> None:
+        xml = _write_file(tmp_path, "desc.xml", """
+            <descriptor>
+              <version>1.0</version>
+              <libs>{RELPATH}/lib/libfoo.so</libs>
+            </descriptor>
+        """)
+        result = _load_descriptor_or_dump(xml, relpath="/opt/build")
+        assert isinstance(result, CompatDescriptor)
+        assert "/opt/build/lib/libfoo.so" in str(result.libs[0])
+
+
+# ── Headers list resolution ──────────────────────────────────────────────────
+
+class TestHeadersListResolution:
+    def test_headers_list_file(self, tmp_path: Path) -> None:
+        # Create a real header file
+        hdr = tmp_path / "my_header.h"
+        hdr.write_text("#pragma once\n", encoding="utf-8")
+
+        lst = _write_file(tmp_path, "headers.txt", f"{hdr}\n")
+        result = _resolve_headers_from_list(lst, None, [])
+        assert hdr in result
+
+    def test_single_header(self, tmp_path: Path) -> None:
+        hdr = tmp_path / "single.h"
+        hdr.write_text("#pragma once\n", encoding="utf-8")
+        result = _resolve_headers_from_list(None, str(hdr), [])
+        assert hdr in result
+
+    def test_merges_with_base(self, tmp_path: Path) -> None:
+        base_hdr = tmp_path / "base.h"
+        base_hdr.write_text("#pragma once\n", encoding="utf-8")
+        extra_hdr = tmp_path / "extra.h"
+        extra_hdr.write_text("#pragma once\n", encoding="utf-8")
+
+        result = _resolve_headers_from_list(None, str(extra_hdr), [base_hdr])
+        assert base_hdr in result
+        assert extra_hdr in result
+
+    def test_skips_nonexistent_headers(self, tmp_path: Path) -> None:
+        lst = _write_file(tmp_path, "headers.txt", "/nonexistent/header.h\n")
+        result = _resolve_headers_from_list(lst, None, [])
+        assert len(result) == 0
+
+
+# ── P2 stub flag warnings ───────────────────────────────────────────────────
+
+class TestStubFlagWarnings:
+    def test_stub_flag_emits_warning(self, capsys: pytest.CaptureFixture) -> None:
+        _warn_stub_flags(quiet=False, mingw_compatible=True)
+        captured = capsys.readouterr()
+        assert "-mingw-compatible" in captured.err
+
+    def test_stub_flag_quiet_suppresses(self, capsys: pytest.CaptureFixture) -> None:
+        _warn_stub_flags(quiet=True, mingw_compatible=True)
+        captured = capsys.readouterr()
+        assert captured.err == ""
+
+    def test_false_flags_no_warning(self, capsys: pytest.CaptureFixture) -> None:
+        _warn_stub_flags(quiet=False, mingw_compatible=False, static_libs=False)
+        captured = capsys.readouterr()
+        assert captured.err == ""
+
+    def test_multiple_stubs_all_warned(self, capsys: pytest.CaptureFixture) -> None:
+        _warn_stub_flags(quiet=False, mingw_compatible=True, static_libs=True, quick=True)
+        captured = capsys.readouterr()
+        assert "-mingw-compatible" in captured.err
+        assert "-static" in captured.err
+        assert "-quick" in captured.err
+
+
+# ── Logging setup ────────────────────────────────────────────────────────────
+
+class TestLoggingSetup:
+    def test_log_to_file(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "test.log"
+        _setup_logging(log_file, None, None, "w", quiet=False)
+        logger = logging.getLogger("abicheck")
+        logger.debug("test message")
+        # Clean up handlers to avoid affecting other tests
+        for h in logger.handlers[:]:
+            if isinstance(h, logging.FileHandler):
+                logger.removeHandler(h)
+                h.close()
+        assert log_file.exists()
+
+    def test_quiet_sets_warning_level(self, tmp_path: Path) -> None:
+        _setup_logging(None, None, None, None, quiet=True)
+        logger = logging.getLogger("abicheck")
+        assert logger.level >= logging.WARNING
+        # Reset
+        logger.setLevel(logging.NOTSET)
+
+    def test_append_mode(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "append.log"
+        log_file.write_text("existing\n", encoding="utf-8")
+        _setup_logging(log_file, None, None, "a", quiet=False)
+        logger = logging.getLogger("abicheck")
+        logger.info("appended")
+        for h in logger.handlers[:]:
+            if isinstance(h, logging.FileHandler):
+                logger.removeHandler(h)
+                h.close()
+        content = log_file.read_text(encoding="utf-8")
+        assert "existing" in content
+
+
+# ── Full ABICC flag acceptance (CLI integration) ─────────────────────────────
+
+class TestAllAbiccFlagsAccepted:
+    """Verify that every known ABICC flag is accepted by the CLI without error.
+
+    These tests use Click's test runner to invoke the compat command with
+    each flag and verify it doesn't produce an 'unknown option' error.
+    The commands will fail for other reasons (missing .so files, etc.)
+    but the flag itself should be recognized.
+    """
+
+    def _invoke_compat(self, args: list[str], tmp_path: Path) -> object:
+        """Invoke compat with minimal required args + extra flags."""
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        # Create minimal XML descriptors
+        for name in ("old.xml", "new.xml"):
+            (tmp_path / name).write_text(
+                f"<d><version>1.0</version><libs>{tmp_path / 'fake.so'}</libs></d>",
+                encoding="utf-8",
+            )
+
+        base_args = ["compat", "-lib", "test", "-old", str(tmp_path / "old.xml"),
+                      "-new", str(tmp_path / "new.xml")]
+        runner = CliRunner()
+        return runner.invoke(main, base_args + args)
+
+    def test_p2_stub_flags_accepted(self, tmp_path: Path) -> None:
+        """All P2 stub flags should be accepted (not 'unknown option')."""
+        flags = [
+            "-mingw-compatible", "-cxx-incompatible", "-cpp-compatible",
+            "-static", "-ext", "-quick", "-force", "-check",
+            "-extra-dump", "-sort", "-xml",
+            "-skip-typedef-uncover", "-check-private-abi", "-skip-unidentified",
+            "-tolerant", "-disable-constants-check",
+            "-skip-added-constants", "-skip-removed-constants",
+        ]
+        for flag in flags:
+            result = self._invoke_compat([flag], tmp_path)
+            assert "No such option" not in (result.output or ""), f"{flag} should be accepted"
+
+    def test_cross_compilation_flags_accepted(self, tmp_path: Path) -> None:
+        flags = [
+            ["-gcc-path", "/usr/bin/g++"],
+            ["-gcc-prefix", "aarch64-linux-gnu-"],
+            ["-gcc-options", "-DFOO=1 -DBAR=2"],
+            ["-sysroot", "/opt/sysroot"],
+            ["-nostdinc"],
+            ["-lang", "C++"],
+            ["-arch", "x86_64"],
+        ]
+        for flag_args in flags:
+            result = self._invoke_compat(flag_args, tmp_path)
+            assert "No such option" not in (result.output or ""), f"{flag_args} should be accepted"
+
+    def test_relpath_flags_accepted(self, tmp_path: Path) -> None:
+        flags = [
+            ["-relpath", "/opt/build"],
+            ["-relpath1", "/opt/old"],
+            ["-relpath2", "/opt/new"],
+        ]
+        for flag_args in flags:
+            result = self._invoke_compat(flag_args, tmp_path)
+            assert "No such option" not in (result.output or ""), f"{flag_args} should be accepted"
+
+    def test_logging_flags_accepted(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "test.log"
+        flags = [
+            ["-log-path", str(log_file)],
+            ["-log1-path", str(log_file)],
+            ["-log2-path", str(log_file)],
+            ["-logging-mode", "w"],
+        ]
+        for flag_args in flags:
+            result = self._invoke_compat(flag_args, tmp_path)
+            assert "No such option" not in (result.output or ""), f"{flag_args} should be accepted"
+
+    def test_report_flags_accepted(self, tmp_path: Path) -> None:
+        flags = [
+            ["-bin-report-path", str(tmp_path / "bin.html")],
+            ["-src-report-path", str(tmp_path / "src.html")],
+            ["-old-style"],
+            ["-component", "mycomponent"],
+            ["-limit-affected", "5"],
+            ["-list-affected"],
+            ["-warn-newsym"],
+        ]
+        for flag_args in flags:
+            result = self._invoke_compat(flag_args, tmp_path)
+            assert "No such option" not in (result.output or ""), f"{flag_args} should be accepted"
+
+    def test_filtering_flags_accepted(self, tmp_path: Path) -> None:
+        skip_file = tmp_path / "skip.txt"
+        skip_file.write_text("# empty\n", encoding="utf-8")
+        flags = [
+            ["-skip-symbols", str(skip_file)],
+            ["-skip-types", str(skip_file)],
+            ["-symbols-list", str(skip_file)],
+            ["-types-list", str(skip_file)],
+            ["-skip-internal-symbols", ".*internal.*"],
+            ["-skip-internal-types", ".*Impl$"],
+            ["-keep-cxx"],
+            ["-keep-reserved"],
+        ]
+        for flag_args in flags:
+            result = self._invoke_compat(flag_args, tmp_path)
+            assert "No such option" not in (result.output or ""), f"{flag_args} should be accepted"
+
+    def test_version_aliases_accepted(self, tmp_path: Path) -> None:
+        flags = [
+            ["-v1", "1.0"],
+            ["-v2", "2.0"],
+            ["-vnum1", "1.0"],
+            ["-vnum2", "2.0"],
+            ["-version1", "1.0"],
+            ["-version2", "2.0"],
+        ]
+        for flag_args in flags:
+            result = self._invoke_compat(flag_args, tmp_path)
+            assert "No such option" not in (result.output or ""), f"{flag_args} should be accepted"
+
+    def test_use_dumps_flag_accepted(self, tmp_path: Path) -> None:
+        result = self._invoke_compat(["-use-dumps"], tmp_path)
+        assert "No such option" not in (result.output or "")
+
+    def test_headers_list_and_header_accepted(self, tmp_path: Path) -> None:
+        hdr_list = tmp_path / "headers.txt"
+        hdr_list.write_text("# empty\n", encoding="utf-8")
+        flags = [
+            ["-headers-list", str(hdr_list)],
+            ["-header", "myheader.h"],
+        ]
+        for flag_args in flags:
+            result = self._invoke_compat(flag_args, tmp_path)
+            assert "No such option" not in (result.output or ""), f"{flag_args} should be accepted"

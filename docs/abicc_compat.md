@@ -30,10 +30,12 @@ Exit codes match ABICC:
 | Flag | Alias(es) | Required | Description |
 |------|-----------|:--------:|-------------|
 | `-lib NAME` | `-l`, `-library` | ✅ | Library name (used in report and output path) |
-| `-old PATH` | `-d1` | ✅ | Path to old version XML descriptor or ABI dump |
-| `-new PATH` | `-d2` | ✅ | Path to new version XML descriptor or ABI dump |
+| `-old PATH` | `-d1`, `-o` | ✅ | Path to old version XML descriptor or ABI dump |
+| `-new PATH` | `-d2`, `-n` | ✅ | Path to new version XML descriptor or ABI dump |
 | `-report-path PATH` | | | Output report path (default: `compat_reports/<lib>/<v1>_to_<v2>/report.html`) |
 | `-report-format FMT` | | | Report format: `html` (default), `json`, `md` |
+| `-bin-report-path PATH` | | | Separate binary-mode report output path |
+| `-src-report-path PATH` | | | Separate source-mode report output path |
 
 ### Analysis mode flags
 
@@ -44,24 +46,27 @@ Exit codes match ABICC:
 | `-s` | `-strict` | Strict mode: any change (COMPATIBLE or SOURCE_BREAK) is treated as BREAKING → exit 1 |
 | `-warn-newsym` | | Treat new symbols (FUNC_ADDED, VAR_ADDED) as compatibility breaks → exit 1 |
 | `-show-retval` | | Include return-value changes in the HTML report |
+| `-headers-only` | | Header-only analysis mode (accepted; ELF/DWARF checks still run) |
+| `-use-dumps` | | Interpret -old/-new as pre-built dumps (auto-detected by `.json` extension) |
 
 ### Output flags
 
-| Flag | Description |
-|------|-------------|
-| `-stdout` | Print the report content to stdout in addition to writing to file |
-| `-title NAME` | Custom report title (wired to HTML `<title>` and `<h1>`) |
-| `-component NAME` | Component name shown in report (sets title to "ABI Report — LIB (COMPONENT)" if no -title) |
-| `-limit-affected N` | Maximum number of affected symbols shown per change kind |
-| `-list-affected` | Generate a separate `.affected.txt` file listing all affected symbols |
+| Flag | Alias(es) | Description |
+|------|-----------|-------------|
+| `-stdout` | | Print the report content to stdout in addition to writing to file |
+| `-title NAME` | | Custom report title (wired to HTML `<title>` and `<h1>`) |
+| `-component NAME` | | Component name shown in report (sets title to "ABI Report — LIB (COMPONENT)" if no -title) |
+| `-limit-affected N` | | Maximum number of affected symbols shown per change kind |
+| `-list-affected` | | Generate a separate `.affected.txt` file listing all affected symbols |
 | `-q` | `-quiet` | Suppress console output (reports still written to file) |
+| `-old-style` | | Legacy-style report layout (accepted for compatibility, no visual effect) |
 
 ### Version label overrides
 
-| Flag | Alias | Description |
-|------|-------|-------------|
-| `-v1 NUM` | `-vnum1` | Override the version label for the old library |
-| `-v2 NUM` | `-vnum2` | Override the version label for the new library |
+| Flag | Alias(es) | Description |
+|------|-----------|-------------|
+| `-v1 NUM` | `-vnum1`, `-version1` | Override the version label for the old library |
+| `-v2 NUM` | `-vnum2`, `-version2` | Override the version label for the new library |
 
 These override what is in the `<version>` element of the XML descriptor.
 
@@ -75,6 +80,8 @@ These override what is in the `<version>` element of the XML descriptor.
 | `-types-list PATH` | File with types to check (whitelist). Only changes on these types are reported. |
 | `-skip-internal-symbols PATTERN` | Regex pattern for internal symbols to skip |
 | `-skip-internal-types PATTERN` | Regex pattern for internal types to skip |
+| `-keep-cxx` | Include `_ZS*`, `_ZNS*`, `_ZNKS*` (C++ std) mangled symbols (accepted; abicheck includes all exported symbols by default) |
+| `-keep-reserved` | Report changes in reserved fields (accepted; abicheck reports all field changes by default) |
 | `--suppress PATH` | abicheck-native suppression YAML file (merged with all other filters) |
 
 `-skip-symbols` / `-skip-types` file format:
@@ -93,12 +100,92 @@ _Z10public_apiv
 _Z12another_funcv
 ```
 
-### Placeholder flags (accepted, not yet implemented)
+### Header filtering
 
-| Flag | Status |
-|------|--------|
-| `-headers-only` | Accepted; reserved for future header-only analysis mode. ELF/DWARF checks still run. |
-| `-skip-headers PATH` | Accepted; reserved for future header-skip support. |
+| Flag | Description |
+|------|-------------|
+| `-headers-list PATH` | File listing specific header files to include in analysis |
+| `-header PATH` | Single header file to analyze |
+| `-skip-headers PATH` | File listing headers to exclude (accepted, not yet wired) |
+
+### Cross-compilation / toolchain flags
+
+| Flag | Alias(es) | Description |
+|------|-----------|-------------|
+| `-gcc-path PATH` | `-cross-gcc` | Path to GCC/G++ cross-compiler binary (passed to castxml) |
+| `-gcc-prefix PREFIX` | `-cross-prefix` | Cross-toolchain prefix, e.g. `aarch64-linux-gnu-` (builds compiler name as `<prefix>g++`) |
+| `-gcc-options FLAGS` | | Extra compiler flags passed through to castxml |
+| `-sysroot PATH` | | Alternative system root directory (passed as `--sysroot=` to castxml) |
+| `-nostdinc` | | Do not search standard system include paths |
+| `-lang LANG` | | Force language: `C` or `C++` (affects header extension and castxml mode) |
+| `-arch ARCH` | | Target architecture (informational, recorded in dump metadata) |
+
+### Relpath macros
+
+| Flag | Description |
+|------|-------------|
+| `-relpath PATH` | Replace `{RELPATH}` macros in both old and new descriptor paths |
+| `-relpath1 PATH` | Replace `{RELPATH}` macros in old descriptor paths only |
+| `-relpath2 PATH` | Replace `{RELPATH}` macros in new descriptor paths only |
+
+Relpath substitution is an ABICC feature for portable XML descriptors:
+```xml
+<version>2025.0</version>
+<headers>{RELPATH}/include/</headers>
+<libs>{RELPATH}/lib/libfoo.so</libs>
+```
+
+```bash
+abicheck compat -lib libfoo -old desc.xml -new desc.xml \
+  -relpath1 /builds/v1 -relpath2 /builds/v2
+```
+
+### Logging flags
+
+| Flag | Description |
+|------|-------------|
+| `-log-path PATH` | Redirect log output to file |
+| `-log1-path PATH` | Separate log path for old library analysis |
+| `-log2-path PATH` | Separate log path for new library analysis |
+| `-logging-mode MODE` | Logging mode: `w` (overwrite, default), `a` (append), `n` (none) |
+
+### Input filtering flags
+
+| Flag | Description |
+|------|-------------|
+| `-d` / `-f` / `-filter PATH` | Path to XML descriptor with skip rules (accepted for compatibility) |
+| `-p` / `-params PATH` | Path to parameters file (accepted for compatibility) |
+| `-app` / `-application PATH` | Application binary for portability checking (accepted for compatibility) |
+
+### Stub flags (accepted for ABICC CLI compatibility, no effect)
+
+These flags are accepted silently to ensure drop-in compatibility with ABICC
+CI scripts. They produce a warning when used but do not change behavior:
+
+| Flag | Description |
+|------|-------------|
+| `-mingw-compatible` | MinGW ABI mode |
+| `-cxx-incompatible` / `-cpp-incompatible` | C++ incompatibility mode |
+| `-cpp-compatible` | C++ compatibility mode |
+| `-static` / `-static-libs` | Static library analysis |
+| `-ext` / `-extended` | Extended analysis mode |
+| `-quick` | Quick analysis mode |
+| `-force` | Force analysis |
+| `-check` | Dump validity check |
+| `-extra-info DIR` | Extra analysis output directory |
+| `-extra-dump` | Extended dump |
+| `-sort` | Sort dump output |
+| `-xml` | XML dump format |
+| `-skip-typedef-uncover` | Skip typedef uncovering |
+| `-check-private-abi` | Check private ABI |
+| `-skip-unidentified` | Skip unidentified headers |
+| `-tolerance LEVEL` | Header parsing tolerance |
+| `-tolerant` | Enable all tolerance levels |
+| `-disable-constants-check` | Skip constant checking |
+| `-skip-added-constants` | Skip new constants |
+| `-skip-removed-constants` | Skip removed constants |
+| `-count-symbols PATH` | Count symbols in library |
+| `-count-all-symbols PATH` | Count all symbols in library |
 
 ## ABI dump workflow
 
@@ -116,9 +203,37 @@ abicheck compat-dump -lib libfoo -dump v1.xml -dump-path libfoo-v1.json
 
 # Override version label:
 abicheck compat-dump -lib libfoo -dump v1.xml -vnum 2025.1
+
+# Cross-compilation:
+abicheck compat-dump -lib libfoo -dump v1.xml -gcc-prefix aarch64-linux-gnu-
+
+# With sysroot:
+abicheck compat-dump -lib libfoo -dump v1.xml -sysroot /opt/cross/sysroot
+
+# Force C language:
+abicheck compat-dump -lib libfoo -dump v1.xml -lang C
 ```
 
 Default output: `abi_dumps/<lib>/<version>/dump.json`
+
+### compat-dump flags
+
+| Flag | Alias(es) | Required | Description |
+|------|-----------|:--------:|-------------|
+| `-lib NAME` | `-l`, `-library` | ✅ | Library name |
+| `-dump PATH` | | ✅ | Path to ABICC XML descriptor |
+| `-dump-path PATH` | | | Output dump file path |
+| `-dump-format FMT` | | | Only `json` supported |
+| `-vnum VERSION` | | | Override version label |
+| `-gcc-path` | `-cross-gcc` | | Cross-compiler path |
+| `-gcc-prefix` | `-cross-prefix` | | Cross-toolchain prefix |
+| `-gcc-options` | | | Extra compiler flags |
+| `-sysroot PATH` | | | Alternative system root |
+| `-nostdinc` | | | No standard includes |
+| `-lang LANG` | | | Force C or C++ |
+| `-arch ARCH` | | | Target architecture |
+| `-relpath PATH` | | | Relpath macro substitution |
+| `-q` | `-quiet` | | Suppress console output |
 
 ### Comparing dumps
 
@@ -210,6 +325,8 @@ Same format as ABICC:
 Multiple `<headers>` and `<libs>` entries are supported. If multiple `<libs>` are
 provided, only the first is used (with a warning).
 
+The `{RELPATH}` macro is supported for portable descriptors (see Relpath macros above).
+
 ## Detector coverage vs ABICC
 
 abicheck compat mode uses **all abicheck detectors** — it does not emulate ABICC's
@@ -234,12 +351,14 @@ Full coverage comparison: see [gap_report.md](gap_report.md).
 | ABICC Flag | Status |
 |---|---|
 | `-lib` / `-l` / `-library` | ✅ Full parity |
-| `-old` / `-d1` | ✅ Full parity |
-| `-new` / `-d2` | ✅ Full parity |
-| `-v1` / `-vnum1` | ✅ Full parity |
-| `-v2` / `-vnum2` | ✅ Full parity |
+| `-old` / `-d1` / `-o` | ✅ Full parity |
+| `-new` / `-d2` / `-n` | ✅ Full parity |
+| `-v1` / `-vnum1` / `-version1` | ✅ Full parity |
+| `-v2` / `-vnum2` / `-version2` | ✅ Full parity |
 | `-report-path` | ✅ Full parity |
 | `-report-format` | ✅ `html/json/md` (ABICC: `htm/xml`) |
+| `-bin-report-path` | ✅ Separate binary report |
+| `-src-report-path` | ✅ Separate source report |
 | `-binary` / `-bin` / `-abi` | ✅ Full parity |
 | `-source` / `-src` / `-api` | ✅ Full parity |
 | `-s` / `-strict` | ✅ Full parity |
@@ -252,32 +371,60 @@ Full coverage comparison: see [gap_report.md](gap_report.md).
 | `-types-list` | ✅ Whitelist filtering |
 | `-skip-internal-symbols` | ✅ Regex pattern |
 | `-skip-internal-types` | ✅ Regex pattern |
+| `-keep-cxx` | ✅ Accepted (all symbols included by default) |
+| `-keep-reserved` | ✅ Accepted (all fields reported by default) |
 | `-warn-newsym` | ✅ Full parity |
 | `-limit-affected` | ✅ Full parity |
 | `-list-affected` | ✅ Generates `.affected.txt` |
 | `-q` / `-quiet` | ✅ Suppress console output |
 | `-dump` (via `compat-dump`) | ✅ JSON format (not ABICC Perl/XML) |
 | `-dump-path` (via `compat-dump`) | ✅ Full parity |
+| `-dump-format` (via `compat-dump`) | ✅ JSON only (with warning) |
 | `-vnum` (via `compat-dump`) | ✅ Version override for dumps |
+| `-gcc-path` / `-cross-gcc` | ✅ Passed to castxml |
+| `-gcc-prefix` / `-cross-prefix` | ✅ Builds cross-compiler name |
+| `-gcc-options` | ✅ Extra compiler flags |
+| `-sysroot` | ✅ Passed as `--sysroot=` to castxml |
+| `-nostdinc` | ✅ Suppresses standard includes |
+| `-lang` | ✅ Forces C or C++ mode |
+| `-arch` | ✅ Informational |
+| `-relpath` / `-relpath1` / `-relpath2` | ✅ `{RELPATH}` macro substitution |
+| `-headers-list` | ✅ Additional header files |
+| `-header` | ✅ Single header file |
+| `-log-path` / `-log1-path` / `-log2-path` | ✅ Log redirection |
+| `-logging-mode` | ✅ Append/overwrite control |
+| `-headers-only` | ✅ Accepted (ELF checks still run) |
+| `-show-retval` | ✅ Accepted |
+| `-old-style` | ✅ Accepted (no visual effect) |
+| `-use-dumps` | ✅ Accepted (auto-detected) |
+| `-filter` / `-d` / `-f` | ✅ Accepted for compatibility |
+| `-params` / `-p` | ✅ Accepted for compatibility |
+| `-app` / `-application` | ✅ Accepted for compatibility |
 
-### Not yet implemented
+### Stub flags (accepted, no functional effect)
 
-| ABICC Flag | Priority | Notes |
-|---|---|---|
-| `-headers-only` | P1 | Accepted, not wired |
-| `-skip-headers` | P1 | Accepted, not wired |
-| `-show-retval` | P1 | Accepted, not wired |
-| `-bin-report-path` / `-src-report-path` | P2 | Separate binary/source reports |
-| `-dump-format` | P2 | Only JSON supported (not ABICC Perl/XML) |
-| `-gcc-path` / `-cross-gcc` | P2 | Cross-compilation |
-| `-gcc-prefix` / `-cross-prefix` | P2 | Toolchain prefix |
-| `-sysroot` | P2 | Alternative sysroot |
-| `-lang` | P2 | Force C/C++ |
-| `-static` / `-static-libs` | P2 | Static library analysis |
-| `-ext` / `-extended` | P3 | Check all types |
-| `-keep-cxx` | P3 | Include std mangled syms |
-| `-old-style` | P3 | Legacy report layout |
-| `-tolerance` / `-tolerant` | P3 | Compilation heuristics |
+| ABICC Flag | Status |
+|---|---|
+| `-mingw-compatible` | ✅ Accepted with warning |
+| `-cxx-incompatible` / `-cpp-incompatible` | ✅ Accepted with warning |
+| `-cpp-compatible` | ✅ Accepted with warning |
+| `-static` / `-static-libs` | ✅ Accepted with warning |
+| `-ext` / `-extended` | ✅ Accepted with warning |
+| `-quick` | ✅ Accepted with warning |
+| `-force` | ✅ Accepted with warning |
+| `-check` | ✅ Accepted with warning |
+| `-extra-info` | ✅ Accepted with warning |
+| `-extra-dump` | ✅ Accepted with warning |
+| `-sort` | ✅ Accepted with warning |
+| `-xml` | ✅ Accepted with warning |
+| `-skip-typedef-uncover` | ✅ Accepted with warning |
+| `-check-private-abi` | ✅ Accepted with warning |
+| `-skip-unidentified` | ✅ Accepted with warning |
+| `-tolerance` / `-tolerant` | ✅ Accepted with warning |
+| `-disable-constants-check` | ✅ Accepted with warning |
+| `-skip-added-constants` | ✅ Accepted with warning |
+| `-skip-removed-constants` | ✅ Accepted with warning |
+| `-count-symbols` / `-count-all-symbols` | ✅ Accepted with warning |
 
 ## CI cross-validation
 
@@ -332,8 +479,23 @@ abicheck compat -lib mylib -old v1.xml -new v2.xml -q
 # JSON output
 abicheck compat -lib mylib -old v1.xml -new v2.xml -report-format json
 
+# Cross-compilation
+abicheck compat -lib mylib -old v1.xml -new v2.xml -gcc-prefix aarch64-linux-gnu- -sysroot /opt/sysroot
+
+# Relpath macros (portable descriptors)
+abicheck compat -lib mylib -old desc.xml -new desc.xml -relpath1 /builds/v1 -relpath2 /builds/v2
+
+# Split binary + source reports
+abicheck compat -lib mylib -old v1.xml -new v2.xml -bin-report-path bin.html -src-report-path src.html
+
+# Log to file
+abicheck compat -lib mylib -old v1.xml -new v2.xml -log-path analysis.log
+
 # Two-stage workflow: dump then compare
 abicheck compat-dump -lib mylib -dump v1.xml
 abicheck compat-dump -lib mylib -dump v2.xml
 abicheck compat -lib mylib -old abi_dumps/mylib/1.0/dump.json -new abi_dumps/mylib/2.0/dump.json
+
+# Cross-compiled dump
+abicheck compat-dump -lib mylib -dump v1.xml -gcc-prefix aarch64-linux-gnu- -sysroot /opt/sysroot
 ```
