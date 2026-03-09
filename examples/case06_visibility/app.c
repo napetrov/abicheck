@@ -7,6 +7,7 @@ int main(void) {
     void *sym;
 
     /* v1 = bad.c (leaky visibility) */
+    /* Must be run from the build dir — relative path is intentional for this demo. */
     h = dlopen("./libv1.so", RTLD_NOW);
     if (!h) { fprintf(stderr, "dlopen libv1.so: %s\n", dlerror()); return 1; }
     sym = dlsym(h, "internal_helper");
