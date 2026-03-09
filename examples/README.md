@@ -57,23 +57,66 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [23](case23_pure_virtual_added/README.md) | Pure Virtual Added | C++ ABI | BREAKING 🔴 | Existing vtable slot hits `__cxa_pure_virtual` → abort |
 | [24](case24_union_field_removed/README.md) | Union Field Removed | C API | BREAKING 🔴 | Field write interpreted as different type — silent wrong data |
 | [25](case25_enum_member_added/README.md) | Enum Member Added | C API | COMPATIBLE 🟡 | Adding at end is compatible; older binaries handle known values |
-| [26](case26_union_field_added/README.md) | Union Field Added | C API | COMPATIBLE 🟡 | Existing fields unaffected; size increase is separate concern |
+| [26](case26_union_field_added/README.md) | Union Field Added | C API | BREAKING 🔴 | Union grows (4→8 bytes) due to `double` member; TYPE_SIZE_CHANGED |
 | [27](case27_symbol_binding_weakened/README.md) | Symbol Binding Weakened | ELF/Linker | COMPATIBLE 🟡 | WEAK symbol can be silently overridden by interposition |
+| [28](case28_typedef_opaque/README.md) | Typedef / Opaque Type | Type Layout | BREAKING 🔴 | Typedef base changed, typedef removed, type became opaque |
 | [29](case29_ifunc_transition/README.md) | IFUNC Transition | ELF/Linker | COMPATIBLE 🟡 | GNU IFUNC resolves transparently; old `ld.so` may not support |
+| [30](case30_field_qualifiers/README.md) | Field Qualifiers | Type Layout | BREAKING 🟡 | Field gained const/volatile — semantic contract change |
+| [31](case31_enum_rename/README.md) | Enum Member Rename | C API | BREAKING 🔴 | Old enum names removed from header (source break) |
+| [32](case32_param_defaults/README.md) | Parameter Defaults | C++ Source | NO_CHANGE ✅ | Default values are compile-time only — no binary ABI effect |
+| [33](case33_pointer_level/README.md) | Pointer Level Change | Symbol API | BREAKING 🔴 | `int*` → `int**` — wrong indirection level causes crash |
+| [34](case34_access_level/README.md) | Access Level Change | C++ Source | SOURCE_BREAK 🟡 | `public` → `private` — source break, binary layout unchanged |
+| [35](case35_field_rename/README.md) | Field Rename | Type Layout | BREAKING 🟡 | Old field name gone — source break; binary layout unchanged |
+| [36](case36_anon_struct/README.md) | Anonymous Struct/Union | Type Layout | BREAKING 🔴 | Anonymous union member type changed → struct size grows |
+| [37](case37_base_class/README.md) | Base Class Changes | C++ ABI | BREAKING 🔴 | Base reorder/virtual/added — object layout changes |
+| [38](case38_virtual_methods/README.md) | Virtual Method Changes | C++ ABI | BREAKING 🔴 | Virtual added/removed/pure — vtable layout changes |
+| [39](case39_var_const/README.md) | Variable Const Change | ELF/Linker | NO_CHANGE ✅ | Const qualifier on globals — not detectable from headers alone |
+| [40](case40_field_layout/README.md) | Field Layout Changes | Type Layout | BREAKING 🔴 | Field removed/type changed/offset shifted/bitfield width changed |
+| [41](case41_type_changes/README.md) | Type-Level Changes | Type Layout | BREAKING 🔴 | Type removed, alignment changed, sentinel value changed |
 
 ---
 
 ## Running Consumer App Demos
 
-Every case directory now includes an `app.c` or `app.cpp` that demonstrates
-the exact failure at runtime. See the **`## Real Failure Demo`** section in each
+Every case directory includes an `app.c` or `app.cpp` that demonstrates the
+observable impact of the change — which may be runtime breakage, identical
+runtime behavior, or a source-only/compile-time failure. The app is compiled
+against the **v1 header** and linked to the v1 library, then the v2 library is
+swapped in to show the effect.
+
+See the **`## Observed Behavior`** or **`## Real Failure Demo`** section in each
 case's README for copy-paste build instructions.
+
+**General pattern:**
+```bash
+cd examples/caseNN_xxx
+# Build v1 library + app (app compiled against v1 header)
+gcc -shared -fPIC -g v1.c -o libv1.so
+gcc -g app.c -I. -L. -lv1 -Wl,-rpath,. -o app
+./app          # ← works correctly with v1
+
+# Swap in v2 library (app still uses v1 ABI expectations)
+gcc -shared -fPIC -g v2.c -o libv1.so
+./app          # ← demonstrates the failure (crash / wrong output / link error)
+```
 
 **Severity classification used in Real Failure Demo sections:**
 - 🔴 **CRITICAL** — causes crash, wrong output, or silent data corruption
 - 🟡 **INFORMATIONAL** — no immediate breakage; compromises future-proofing
 - 🟡 **BAD PRACTICE** — library works today but mismanages the ABI contract
 - ✅ **BASELINE** — no change; expected passing state
+
+**App demo coverage by case:**
+
+| Cases | App file | Language | Break type |
+|-------|---------|----------|------------|
+| 01-08, 10-13 | `app.c` | C | Symbol/type/enum/struct breaks |
+| 09, 14-17 | `app.cpp` | C++ | Vtable/class/template/noexcept |
+| 18 | `app.c` | C | Dependency ABI leak |
+| 19-27 | `app.c`/`app.cpp` | C/C++ | Enum/method/union/symbol changes |
+| 28, 30-31, 33, 35-36, 39-41 | `app.c` | C | Typedef/qualifier/pointer/layout |
+| 32, 34, 37-38 | `app.cpp` | C++ | Defaults/access/base class/virtual |
+| 29 | `app.c` | C | IFUNC transition (COMPATIBLE) |
 
 ---
 
@@ -95,7 +138,7 @@ Which tool catches which ABI break? Three modes are compared — see
 | 09 | vtable change | ⚠️ | ✅ | ✅ |
 | 10 | Return type | ⚠️ | ✅ | ✅ |
 | 11 | Global var type | ⚠️ | ✅ | ✅ |
-| 12 | Inline→removed | ❌ | ✅ | ❌ |
+| 12 | Function removed | ❌ | ✅ | ❌ |
 | 13 | Symbol versioning | ❌ | ❌ | ❌ |
 | 14 | Class size | ⚠️ | ✅ | ✅ |
 | 15 | noexcept removed | ❌ | ✅ | ❌ |

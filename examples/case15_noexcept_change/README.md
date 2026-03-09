@@ -114,3 +114,17 @@ is `noexcept`, so no try/catch or landing pad was generated. When v2 throws, the
 propagates through the noexcept frame and `std::terminate` is called unconditionally — no
 recovery possible. Note: the binary linkage is fine (COMPATIBLE); the crash is a behavioral
 contract violation, not a symbol resolution failure.
+
+## Note on test expectations
+
+The integration tests expect **BREAKING** for this case. This is because `v2.cpp`
+compiles a throwing implementation (`throw std::runtime_error(...)`) that
+introduces a new `GLIBCXX_*` or `CXXABI_*` version requirement
+(`SYMBOL_VERSION_REQUIRED_ADDED`). Both `v1.cpp` and `v2.cpp` include
+`<stdexcept>` — the header inclusion alone does not cause the break. The added
+versioned symbol comes from the compiled artifact (the `__cxa_throw` and
+`std::runtime_error` symbols emitted in v2's `.so`), as reflected in the CI
+symbol report. The break detected by the tool is from this new symbol version
+dependency, **not** from the `noexcept` removal itself. The ABI verdict for the
+`noexcept` change in isolation remains **COMPATIBLE** — the mangled symbol is
+identical.
