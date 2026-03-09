@@ -1,6 +1,7 @@
 #include "v1.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdalign.h>
 
 int main(void) {
     /* In v1: sizeof(Variant) = 8  (int tag + union{int,float} = 4+4)
@@ -14,8 +15,10 @@ int main(void) {
      * it will read zeros instead of stack garbage. */
 
     /* Buffer large enough for v2's 16-byte layout, filled with
-     * sentinel bytes (0xAA) to make out-of-bounds reads obvious. */
-    unsigned char buf[32];
+     * sentinel bytes (0xAA) to make out-of-bounds reads obvious.
+     * Use alignas to satisfy v2's double alignment requirement
+     * and avoid undefined behavior from misaligned pointer casts. */
+    alignas(struct Variant) unsigned char buf[32];
     memset(buf, 0xAA, sizeof(buf));
 
     /* Place a v1-sized Variant at the start of the buffer. */

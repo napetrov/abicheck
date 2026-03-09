@@ -16,7 +16,7 @@ Each change corrupts the vtable layout that existing binaries were compiled agai
 1. **`transform()` became virtual** — a new vtable slot is inserted. The class gains a vptr if it didn't already have one at that offset, and existing vtable indices shift.
 2. **`validate()` lost virtual** — the vtable slot is removed. Old binaries dispatching through the vtable at the old index now call the wrong function or dereference garbage.
 3. **`execute()` became pure virtual** — the vtable slot now points to `__cxa_pure_virtual`. Any old binary that instantiates `Processor` directly (which was legal in v1) will trigger `__cxa_pure_virtual`, which calls `std::abort()` (SIGABRT), not a segmentation fault. A segfault would only occur if the vtable slot were null or corrupted.
-4. **Copy ctor deleted** — old binaries that were linked against the copy constructor symbol will get an undefined symbol error at load time.
+4. **Copy ctor deleted** — old binaries that were linked against the copy constructor symbol will get an undefined symbol error. With the default ELF lazy binding, the error occurs when the copy constructor is first called (not at process startup). To force a deterministic startup-time failure, link with `-Wl,-z,now` or set `LD_BIND_NOW=1` at runtime.
 
 ## Code diff
 
@@ -71,7 +71,9 @@ g++ -g copy_ctor_demo.cpp -I. -L. -lprocessor -Wl,-rpath,. -o copy_ctor_demo
 # Swap to v2:
 g++ -shared -fPIC -g v2.cpp -o libprocessor.so
 ./copy_ctor_demo
-# → undefined symbol error for Processor copy ctor at load time.
+# → undefined symbol error for Processor copy ctor when the
+#   constructor is called (lazy binding resolves at call time).
+# To fail at startup instead: LD_BIND_NOW=1 ./copy_ctor_demo
 ```
 
 **Why CRITICAL:** Vtable layout is baked into the calling binary at compile time. Any
