@@ -33,7 +33,7 @@ jobs:
             --cov=abicheck \
             --cov-report=term-missing \
             --cov-report=xml \
-            --cov-fail-under=70
+            --cov-fail-under=80
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
