@@ -86,9 +86,9 @@ abi-compliance-checker -lib Buffer -v1 1.0 -v2 2.0 \
 **Scenario:** app compiled against v1 (`reset()` noexcept) calls v2 which throws — exception propagates through a noexcept frame → `std::terminate`.
 
 ```bash
-# Build v1 + app
+# Build v1 + app (app includes v1.h which declares reset() noexcept)
 g++ -shared -fPIC -std=c++17 -g v1.cpp -o libbuf.so
-g++ -std=c++17 -g app.cpp -L. -lbuf -Wl,-rpath,. -o app
+g++ -std=c++17 -g app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app
 ./app
 # → Calling reset()...
 # → reset() completed OK
@@ -96,7 +96,6 @@ g++ -std=c++17 -g app.cpp -L. -lbuf -Wl,-rpath,. -o app
 # Swap in v2 (reset() throws)
 g++ -shared -fPIC -std=c++17 -g v2.cpp -o libbuf.so
 ./app
-# → Calling reset()...
 # → terminate called after throwing an instance of 'std::runtime_error'
 #      what():  reset failed
 # → Aborted (core dumped)

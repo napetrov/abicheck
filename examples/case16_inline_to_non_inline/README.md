@@ -102,6 +102,8 @@ g++ -std=c++17 -g app.cpp -I. -L. -lhash -Wl,-rpath,. -o app  # links OK
 # → fast_hash(42) = ...
 ```
 
-**Why CRITICAL:** Any consumer compiled with the new header but running against the old
-`.so` gets a hard linker error. All existing packages must be rebuilt — a forced ABI
-migration with no backward-compatible path.
+**Why CRITICAL:** Existing binaries compiled against v1 (inline) are unaffected —
+they have the inline body baked in. The break hits **new consumers**: any code compiled
+against v2.hpp (declaration only) that links against v1.so gets a hard linker error
+because the symbol doesn't exist in v1.so. This forces a coordinated upgrade:
+v2.hpp and v2.so must ship together.

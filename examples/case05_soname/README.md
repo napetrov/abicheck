@@ -55,9 +55,14 @@ gcc -g app.c -L. -Wl,-rpath,. -lfoo -o app
 ./app
 # → foo() = 0   (works at runtime)
 
-# The problem: without SONAME, ldconfig can't create versioned symlink
-sudo ldconfig
-ldconfig -p | grep libfoo.so.1   # → missing for bad.so; present for good.so
+# The difference: DT_NEEDED embeds the bare filename without SONAME
+readelf -d app | grep NEEDED
+# With libfoo.so (no SONAME) → (NEEDED) Shared library: [libfoo.so]
+# With libfoo.so.1 (SONAME)  → (NEEDED) Shared library: [libfoo.so.1]
+#
+# Without SONAME, ldconfig cannot create the libfoo.so.1 → libfoo.so.1.0 symlink.
+# Any binary built against libbad.so will look for "libfoo.so" forever —
+# you can never rename it to libfoo.so.1 without breaking those binaries.
 ```
 
 **Why BAD PRACTICE:** The runtime works, but without a SONAME the dynamic linker

@@ -7,17 +7,27 @@
 extern template class Buffer<int>;
 
 int main() {
-    /* Place a sentinel after the buffer to detect overflow */
-    char sentinel_before[4] = "AAA";
-    Buffer<int> buf(8);
-    char sentinel_after[4] = "BBB";
+    /* Use a struct to guarantee adjacency of sentinel fields */
+    struct {
+        Buffer<int> buf;
+        char        after[8];
+    } frame;
+    char before[8] = "BEFORE!";
 
-    std::printf("sentinel_before = %s\n", sentinel_before);
-    std::printf("sizeof(Buffer<int>) compiled = %zu\n", sizeof(buf));
-    std::printf("sentinel_after  = %s\n", sentinel_after);
+    std::memcpy(frame.after, "AFTER!!", 8);
 
-    if (strcmp(sentinel_after, "BBB") != 0)
-        std::printf("CORRUPTION: sentinel_after overwritten! v2 wrote beyond Buffer\n");
+    std::printf("sizeof(Buffer<int>) compiled = %zu\n", sizeof(frame.buf));
+    std::printf("before init: after  = %.7s\n", frame.after);
 
+    /* Buffer constructor runs here — v2 writes 8 bytes past frame.buf */
+    new (&frame.buf) Buffer<int>(8);
+
+    std::printf("after  init: after  = %.7s\n", frame.after);
+
+    if (std::memcmp(frame.after, "AFTER!!", 7) != 0)
+        std::printf("CORRUPTION: sentinel overwritten! v2 wrote beyond Buffer\n");
+
+    frame.buf.~Buffer();
+    (void)before;
     return 0;
 }
