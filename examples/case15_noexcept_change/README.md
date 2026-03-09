@@ -41,9 +41,10 @@ detect the change.
 
 ## Why ABICC catches it
 
-ABICC (ABI Compliance Checker) parses the **C++ header AST** via libclang. It sees
-the `noexcept` specifier on the function declaration and records it as part of the
-function's ABI profile. When v1 and v2 headers differ in `noexcept`, ABICC flags it.
+ABICC (ABI Compliance Checker) parses **C++ headers** using GCC's compiler internals
+and its own header analysis infrastructure. It sees the `noexcept` specifier on the
+function declaration and records it as part of the function's ABI profile. When v1 and
+v2 headers differ in `noexcept`, ABICC flags it.
 
 ## Real-world example
 
