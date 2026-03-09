@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from .dwarf_advanced import diff_advanced_dwarf
 from .elf_metadata import SymbolBinding, SymbolType
-from .model import AbiSnapshot, EnumType, Function, RecordType, TypeField, Visibility
+from .model import AccessLevel, AbiSnapshot, EnumType, Function, Param, RecordType, TypeField, Visibility
 
 if TYPE_CHECKING:
     from .suppression import SuppressionList
@@ -115,6 +115,33 @@ class ChangeKind(str, Enum):
     BASE_CLASS_POSITION_CHANGED = "base_class_position_changed"  # base reorder → this-ptr offset change
     BASE_CLASS_VIRTUAL_CHANGED = "base_class_virtual_changed"    # base became virtual or non-virtual
 
+    # ── Sprint 7 — Full ABICC parity + beyond ────────────────────────────
+    # Source-level breaks (not binary ABI, but API contract)
+    ENUM_MEMBER_RENAMED = "enum_member_renamed"              # same value, different name → SOURCE_BREAK
+    PARAM_DEFAULT_VALUE_CHANGED = "param_default_value_changed"  # default arg changed
+    PARAM_DEFAULT_VALUE_REMOVED = "param_default_value_removed"  # default arg removed → SOURCE_BREAK
+    FIELD_RENAMED = "field_renamed"                          # same offset+type, different name
+    PARAM_RENAMED = "param_renamed"                          # parameter name changed
+
+    # Field qualifier changes
+    FIELD_BECAME_CONST = "field_became_const"
+    FIELD_LOST_CONST = "field_lost_const"
+    FIELD_BECAME_VOLATILE = "field_became_volatile"
+    FIELD_LOST_VOLATILE = "field_lost_volatile"
+    FIELD_BECAME_MUTABLE = "field_became_mutable"
+    FIELD_LOST_MUTABLE = "field_lost_mutable"
+
+    # Pointer level changes
+    PARAM_POINTER_LEVEL_CHANGED = "param_pointer_level_changed"      # T* → T** or T** → T*
+    RETURN_POINTER_LEVEL_CHANGED = "return_pointer_level_changed"    # return T* → T**
+
+    # Access level changes
+    METHOD_ACCESS_CHANGED = "method_access_changed"          # public→protected/private
+    FIELD_ACCESS_CHANGED = "field_access_changed"            # public→private field
+
+    # Anonymous struct/union
+    ANON_FIELD_CHANGED = "anon_field_changed"                # anon struct/union member changed
+
 
 class Verdict(str, Enum):
     NO_CHANGE = "NO_CHANGE"         # identical ABI
@@ -179,6 +206,10 @@ _BREAKING_KINDS = {
     ChangeKind.BASE_CLASS_VIRTUAL_CHANGED,
     # DWARF Sprint 4
     ChangeKind.TYPE_VISIBILITY_CHANGED,       # cross-DSO dynamic_cast / exception matching can fail
+    # Sprint 7 — pointer level changes are binary ABI breaks
+    ChangeKind.PARAM_POINTER_LEVEL_CHANGED,
+    ChangeKind.RETURN_POINTER_LEVEL_CHANGED,
+    ChangeKind.ANON_FIELD_CHANGED,
 }
 
 _COMPATIBLE_KINDS: set[ChangeKind] = {
@@ -227,9 +258,26 @@ _COMPATIBLE_KINDS: set[ChangeKind] = {
     # DWARF diagnostics (comparison coverage gap warning)
     ChangeKind.DWARF_INFO_MISSING,
     ChangeKind.TOOLCHAIN_FLAG_DRIFT,  # informational — not a proven binary break
+
+    # Sprint 7 — field qualifier changes are informational (compatible)
+    ChangeKind.FIELD_BECAME_CONST,
+    ChangeKind.FIELD_LOST_CONST,
+    ChangeKind.FIELD_BECAME_VOLATILE,
+    ChangeKind.FIELD_LOST_VOLATILE,
+    ChangeKind.FIELD_BECAME_MUTABLE,
+    ChangeKind.FIELD_LOST_MUTABLE,
+    ChangeKind.PARAM_DEFAULT_VALUE_CHANGED,  # informational, not binary break
 }
 
-_SOURCE_BREAK_KINDS: set[ChangeKind] = set()  # reserved for future source-only breaks
+_SOURCE_BREAK_KINDS: set[ChangeKind] = {
+    # Source-level breaks: code won't compile but existing binaries are fine
+    ChangeKind.ENUM_MEMBER_RENAMED,
+    ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,
+    ChangeKind.FIELD_RENAMED,
+    ChangeKind.PARAM_RENAMED,
+    ChangeKind.METHOD_ACCESS_CHANGED,
+    ChangeKind.FIELD_ACCESS_CHANGED,
+}
 
 
 @dataclass
@@ -850,6 +898,337 @@ def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 
 
+# ── Sprint 7: enum rename, field qualifier, pointer level, access, param default ─
+
+
+def _diff_enum_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect enum member renames: same value present under different name."""
+    changes: list[Change] = []
+    old_map: dict[str, EnumType] = {e.name: e for e in old.enums}
+    new_map: dict[str, EnumType] = {e.name: e for e in new.enums}
+
+    for name, e_old in old_map.items():
+        if name not in new_map:
+            continue
+        e_new = new_map[name]
+        old_by_name = {m.name: m.value for m in e_old.members}
+        new_by_name = {m.name: m.value for m in e_new.members}
+        old_by_val: dict[int, str] = {m.value: m.name for m in e_old.members}
+        new_by_val: dict[int, str] = {m.value: m.name for m in e_new.members}
+
+        for old_mname, old_mval in old_by_name.items():
+            if old_mname in new_by_name:
+                continue  # still present by name
+            # Name gone — check if the value still exists under a new name
+            if old_mval in new_by_val:
+                new_mname = new_by_val[old_mval]
+                if new_mname not in old_by_name:
+                    changes.append(Change(
+                        kind=ChangeKind.ENUM_MEMBER_RENAMED,
+                        symbol=name,
+                        description=f"Enum member renamed: {name}::{old_mname} → {new_mname} (value={old_mval})",
+                        old_value=old_mname,
+                        new_value=new_mname,
+                    ))
+
+    return changes
+
+
+def _diff_field_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect field-level const/volatile/mutable qualifier changes."""
+    changes: list[Change] = []
+    old_map = {t.name: t for t in old.types if not t.is_union}
+    new_map = {t.name: t for t in new.types if not t.is_union}
+
+    for name, t_old in old_map.items():
+        t_new = new_map.get(name)
+        if t_new is None:
+            continue
+        old_fields = {f.name: f for f in t_old.fields}
+        new_fields = {f.name: f for f in t_new.fields}
+
+        for fname, f_old in old_fields.items():
+            f_new = new_fields.get(fname)
+            if f_new is None:
+                continue
+
+            if not f_old.is_const and f_new.is_const:
+                changes.append(Change(
+                    kind=ChangeKind.FIELD_BECAME_CONST,
+                    symbol=name,
+                    description=f"Field became const: {name}::{fname}",
+                    old_value="non-const",
+                    new_value="const",
+                ))
+            elif f_old.is_const and not f_new.is_const:
+                changes.append(Change(
+                    kind=ChangeKind.FIELD_LOST_CONST,
+                    symbol=name,
+                    description=f"Field lost const: {name}::{fname}",
+                    old_value="const",
+                    new_value="non-const",
+                ))
+
+            if not f_old.is_volatile and f_new.is_volatile:
+                changes.append(Change(
+                    kind=ChangeKind.FIELD_BECAME_VOLATILE,
+                    symbol=name,
+                    description=f"Field became volatile: {name}::{fname}",
+                    old_value="non-volatile",
+                    new_value="volatile",
+                ))
+            elif f_old.is_volatile and not f_new.is_volatile:
+                changes.append(Change(
+                    kind=ChangeKind.FIELD_LOST_VOLATILE,
+                    symbol=name,
+                    description=f"Field lost volatile: {name}::{fname}",
+                    old_value="volatile",
+                    new_value="non-volatile",
+                ))
+
+            if not f_old.is_mutable and f_new.is_mutable:
+                changes.append(Change(
+                    kind=ChangeKind.FIELD_BECAME_MUTABLE,
+                    symbol=name,
+                    description=f"Field became mutable: {name}::{fname}",
+                    old_value="non-mutable",
+                    new_value="mutable",
+                ))
+            elif f_old.is_mutable and not f_new.is_mutable:
+                changes.append(Change(
+                    kind=ChangeKind.FIELD_LOST_MUTABLE,
+                    symbol=name,
+                    description=f"Field lost mutable: {name}::{fname}",
+                    old_value="mutable",
+                    new_value="non-mutable",
+                ))
+
+    return changes
+
+
+def _diff_field_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect field renames: same offset+type, different name."""
+    changes: list[Change] = []
+    old_map = {t.name: t for t in old.types if not t.is_union}
+    new_map = {t.name: t for t in new.types if not t.is_union}
+
+    for name, t_old in old_map.items():
+        t_new = new_map.get(name)
+        if t_new is None or t_new.is_opaque:
+            continue
+        old_names = {f.name for f in t_old.fields}
+        new_names = {f.name for f in t_new.fields}
+
+        removed = [f for f in t_old.fields if f.name not in new_names]
+        added = [f for f in t_new.fields if f.name not in old_names]
+
+        # Match by (offset, type) — a rename is when the same slot has a different name
+        added_by_sig = {(f.offset_bits, f.type): f for f in added if f.offset_bits is not None}
+        for f_old in removed:
+            if f_old.offset_bits is None:
+                continue
+            sig = (f_old.offset_bits, f_old.type)
+            f_new = added_by_sig.get(sig)
+            if f_new is not None:
+                changes.append(Change(
+                    kind=ChangeKind.FIELD_RENAMED,
+                    symbol=name,
+                    description=f"Field renamed: {name}::{f_old.name} → {f_new.name}",
+                    old_value=f_old.name,
+                    new_value=f_new.name,
+                ))
+
+    return changes
+
+
+def _diff_param_defaults(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect parameter default value changes/removals."""
+    changes: list[Change] = []
+    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
+    old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
+    new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+
+    for mangled, f_old in old_map.items():
+        f_new = new_map.get(mangled)
+        if f_new is None:
+            continue
+        # Compare parameter defaults pairwise
+        for i, (p_old, p_new) in enumerate(zip(f_old.params, f_new.params)):
+            if p_old.default is not None and p_new.default is None:
+                changes.append(Change(
+                    kind=ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,
+                    symbol=mangled,
+                    description=f"Parameter default removed: {f_old.name} param {p_old.name or i}",
+                    old_value=p_old.default,
+                    new_value=None,
+                ))
+            elif p_old.default is not None and p_new.default is not None and p_old.default != p_new.default:
+                changes.append(Change(
+                    kind=ChangeKind.PARAM_DEFAULT_VALUE_CHANGED,
+                    symbol=mangled,
+                    description=f"Parameter default changed: {f_old.name} param {p_old.name or i}",
+                    old_value=p_old.default,
+                    new_value=p_new.default,
+                ))
+
+    return changes
+
+
+def _diff_param_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect parameter renames (same type+position, different name)."""
+    changes: list[Change] = []
+    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
+    old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
+    new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+
+    for mangled, f_old in old_map.items():
+        f_new = new_map.get(mangled)
+        if f_new is None:
+            continue
+        for i, (p_old, p_new) in enumerate(zip(f_old.params, f_new.params)):
+            if p_old.type == p_new.type and p_old.name and p_new.name and p_old.name != p_new.name:
+                changes.append(Change(
+                    kind=ChangeKind.PARAM_RENAMED,
+                    symbol=mangled,
+                    description=f"Parameter renamed: {f_old.name} param {i}: {p_old.name} → {p_new.name}",
+                    old_value=p_old.name,
+                    new_value=p_new.name,
+                ))
+
+    return changes
+
+
+def _diff_pointer_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect pointer level changes in params and return types."""
+    changes: list[Change] = []
+    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
+    old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
+    new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+
+    for mangled, f_old in old_map.items():
+        f_new = new_map.get(mangled)
+        if f_new is None:
+            continue
+
+        # Return pointer depth
+        if f_old.return_pointer_depth != f_new.return_pointer_depth and (
+            f_old.return_pointer_depth > 0 or f_new.return_pointer_depth > 0
+        ):
+            changes.append(Change(
+                kind=ChangeKind.RETURN_POINTER_LEVEL_CHANGED,
+                symbol=mangled,
+                description=f"Return pointer level changed: {f_old.name} (depth {f_old.return_pointer_depth} → {f_new.return_pointer_depth})",
+                old_value=str(f_old.return_pointer_depth),
+                new_value=str(f_new.return_pointer_depth),
+            ))
+
+        # Param pointer depths
+        for i, (p_old, p_new) in enumerate(zip(f_old.params, f_new.params)):
+            if p_old.pointer_depth != p_new.pointer_depth and (
+                p_old.pointer_depth > 0 or p_new.pointer_depth > 0
+            ):
+                changes.append(Change(
+                    kind=ChangeKind.PARAM_POINTER_LEVEL_CHANGED,
+                    symbol=mangled,
+                    description=f"Parameter pointer level changed: {f_old.name} param {p_old.name or i} (depth {p_old.pointer_depth} → {p_new.pointer_depth})",
+                    old_value=str(p_old.pointer_depth),
+                    new_value=str(p_new.pointer_depth),
+                ))
+
+    return changes
+
+
+def _diff_access_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect access level changes on methods and fields."""
+    changes: list[Change] = []
+
+    # Method access changes
+    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
+    old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
+    new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+
+    for mangled, f_old in old_map.items():
+        f_new = new_map.get(mangled)
+        if f_new is None:
+            continue
+        if f_old.access != f_new.access:
+            changes.append(Change(
+                kind=ChangeKind.METHOD_ACCESS_CHANGED,
+                symbol=mangled,
+                description=f"Method access level changed: {f_old.name} ({f_old.access.value} → {f_new.access.value})",
+                old_value=f_old.access.value,
+                new_value=f_new.access.value,
+            ))
+
+    # Field access changes
+    old_types = {t.name: t for t in old.types if not t.is_union}
+    new_types = {t.name: t for t in new.types if not t.is_union}
+
+    for name, t_old in old_types.items():
+        t_new = new_types.get(name)
+        if t_new is None:
+            continue
+        old_fields = {f.name: f for f in t_old.fields}
+        new_fields = {f.name: f for f in t_new.fields}
+
+        for fname, f_old_f in old_fields.items():
+            f_new_f = new_fields.get(fname)
+            if f_new_f is None:
+                continue
+            if f_old_f.access != f_new_f.access:
+                changes.append(Change(
+                    kind=ChangeKind.FIELD_ACCESS_CHANGED,
+                    symbol=name,
+                    description=f"Field access level changed: {name}::{fname} ({f_old_f.access.value} → {f_new_f.access.value})",
+                    old_value=f_old_f.access.value,
+                    new_value=f_new_f.access.value,
+                ))
+
+    return changes
+
+
+def _diff_anon_fields(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect changes in anonymous struct/union members."""
+    changes: list[Change] = []
+    old_map = {t.name: t for t in old.types}
+    new_map = {t.name: t for t in new.types}
+
+    for name, t_old in old_map.items():
+        t_new = new_map.get(name)
+        if t_new is None:
+            continue
+        # Look for fields with empty/anonymous names (compiler-generated)
+        old_anon = [f for f in t_old.fields if not f.name or f.name.startswith("__anon")]
+        new_anon = [f for f in t_new.fields if not f.name or f.name.startswith("__anon")]
+
+        if not old_anon and not new_anon:
+            continue
+
+        # Compare anonymous fields by offset
+        old_by_offset = {f.offset_bits: f for f in old_anon if f.offset_bits is not None}
+        new_by_offset = {f.offset_bits: f for f in new_anon if f.offset_bits is not None}
+
+        for offset, f_old in old_by_offset.items():
+            f_new = new_by_offset.get(offset)
+            if f_new is None:
+                changes.append(Change(
+                    kind=ChangeKind.ANON_FIELD_CHANGED,
+                    symbol=name,
+                    description=f"Anonymous field removed at offset {offset} in {name}",
+                    old_value=f_old.type,
+                ))
+            elif f_old.type != f_new.type:
+                changes.append(Change(
+                    kind=ChangeKind.ANON_FIELD_CHANGED,
+                    symbol=name,
+                    description=f"Anonymous field type changed at offset {offset} in {name}",
+                    old_value=f_old.type,
+                    new_value=f_new.type,
+                ))
+
+    return changes
+
+
 def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """ELF-only detectors (Sprint 2): no debug info required."""
     from .elf_metadata import ElfMetadata
@@ -1061,6 +1440,15 @@ def compare(
     changes.extend(_diff_elf(old, new))
     changes.extend(_diff_dwarf(old, new))
     changes.extend(_diff_advanced_dwarf(old, new))
+    # Sprint 7: full ABICC parity + beyond
+    changes.extend(_diff_enum_renames(old, new))
+    changes.extend(_diff_field_qualifiers(old, new))
+    changes.extend(_diff_field_renames(old, new))
+    changes.extend(_diff_param_defaults(old, new))
+    changes.extend(_diff_param_renames(old, new))
+    changes.extend(_diff_pointer_levels(old, new))
+    changes.extend(_diff_access_levels(old, new))
+    changes.extend(_diff_anon_fields(old, new))
 
     suppressed: list[Change] = []
     if suppression is not None:
