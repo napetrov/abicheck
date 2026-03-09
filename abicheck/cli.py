@@ -14,6 +14,7 @@ from .compat import CompatDescriptor, parse_descriptor
 from .dumper import dump
 from .html_report import write_html_report
 from .reporter import to_json, to_markdown
+from .xml_report import write_xml_report
 from .serialization import load_snapshot, save_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
@@ -747,8 +748,8 @@ def compat_dump_cmd(
 @click.option("-src-report-path", "src_report_path", default=None, type=click.Path(path_type=Path),
               help="Separate source-mode report output path.")
 @click.option("-report-format", "fmt", default="html",
-              type=click.Choice(["html", "json", "md"], case_sensitive=False),
-              help="Report format (default: html).")
+              type=click.Choice(["html", "htm", "xml", "json", "md"], case_sensitive=False),
+              help="Report format (default: html). 'htm' is an alias for 'html'.")
 @click.option("--suppress", default=None, type=click.Path(path_type=Path),
               help="Suppression YAML file.")
 # ── Analysis mode flags ──────────────────────────────────────────────────────
@@ -1165,6 +1166,10 @@ def compat_cmd(  # noqa: PLR0913
 
     verdict = result.verdict.value if hasattr(result.verdict, "value") else str(result.verdict)
 
+    # Normalize format aliases: htm → html
+    if fmt.lower() == "htm":
+        fmt = "html"
+
     # ── Determine report output path ──────────────────────────────────────
     if report_path is None:
         ext = fmt.lower()
@@ -1172,7 +1177,7 @@ def compat_cmd(  # noqa: PLR0913
             Path("compat_reports")
             / _safe_path(lib_name)
             / f"{_safe_path(old_version)}_to_{_safe_path(new_version)}"
-            / f"report.{ext}"
+            / f"compat_report.{ext}"
         )
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1182,23 +1187,32 @@ def compat_cmd(  # noqa: PLR0913
     if component and not effective_title:
         effective_title = f"ABI Compatibility Report — {lib_name} ({component})"
 
+    # ── Compute old symbol count (shared by HTML and XML reports) ────────
+    from .model import Visibility
+    old_symbol_count = sum(
+        1 for f in old_snap.functions
+        if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
+    ) + sum(
+        1 for v in old_snap.variables
+        if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
+    )
+
     # ── Generate report ──────────────────────────────────────────────────
     def _generate_report(r: DiffResult, path: Path) -> None:
         if fmt == "html":
-            from .model import Visibility
-            old_symbol_count = sum(
-                1 for f in old_snap.functions
-                if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
-            ) + sum(
-                1 for v in old_snap.variables
-                if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
-            )
             write_html_report(
                 r, output_path=path,
                 lib_name=lib_name,
                 old_version=old_version, new_version=new_version,
                 old_symbol_count=old_symbol_count or None,
                 title=effective_title,
+            )
+        elif fmt == "xml":
+            write_xml_report(
+                r, output_path=path,
+                lib_name=lib_name,
+                old_version=old_version, new_version=new_version,
+                old_symbol_count=old_symbol_count or None,
             )
         elif fmt == "json":
             path.write_text(to_json(r), encoding="utf-8")
@@ -1230,6 +1244,19 @@ def compat_cmd(  # noqa: PLR0913
     if to_stdout:
         click.echo(report_path.read_text(encoding="utf-8"))
 
+    # Compute BC% for console output (matches ABICC console format)
+    from .checker import _BREAKING_KINDS as _BK  # noqa: PLC0415
+    breaking_count = sum(1 for c in result.changes if c.kind in _BK)
+    if breaking_count == 0:
+        _bc_pct = 100.0
+    elif old_symbol_count and old_symbol_count > 0:
+        _bc_pct = max(0.0, (old_symbol_count - breaking_count) / old_symbol_count * 100)
+    else:
+        _total = len(result.changes)
+        _bc_pct = max(0.0, (_total - breaking_count) / _total * 100) if _total > 0 else 0.0
+
+    _do_echo(f"Binary compatibility: {_bc_pct:.1f}%", quiet)
+    _do_echo(f"Total binary compatibility problems: {breaking_count}, warnings: 0", quiet)
     _do_echo(f"Verdict: {verdict}", quiet)
     _do_echo(f"Report:  {report_path}", quiet)
 
