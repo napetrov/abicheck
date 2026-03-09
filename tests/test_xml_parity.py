@@ -19,9 +19,13 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
+from defusedxml import defuse_stdlib
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
 from abicheck.xml_report import generate_xml_report
+
+# Patch stdlib XML parsers to use defusedxml (addresses CodeFactor B314)
+defuse_stdlib()
 
 # ---------------------------------------------------------------------------
 # Schema validation (unit-level, always runs)
@@ -182,11 +186,19 @@ class TestXmlCrossToolParity:
         new_desc.write_text(f"<version>2.0</version>\n<headers>{h2}</headers>\n<libs>{v2_so}</libs>")
 
         abicc_xml = tmp_path / "abicc_report.xml"
-        subprocess.run([
+        abicc_result = subprocess.run([
             "abi-compliance-checker", "-lib", "libtest",
             "-old", str(old_desc), "-new", str(new_desc),
             "-report-format", "xml", "-report-path", str(abicc_xml),
         ], capture_output=True, text=True, timeout=60)
+        # ABICC returns 1 for incompatible (expected for func_removed)
+        assert abicc_result.returncode in (0, 1), (
+            f"ABICC failed unexpectedly (rc={abicc_result.returncode}):\n"
+            f"{abicc_result.stderr[:500]}"
+        )
+        assert abicc_xml.exists(), (
+            f"ABICC did not produce XML report:\n{abicc_result.stderr[:500]}"
+        )
 
         # Generate abicheck XML report
         import warnings  # noqa: PLC0415

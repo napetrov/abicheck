@@ -166,7 +166,10 @@ def _compute_section(
     removed = [c for c in filtered if _kind_str(c) in _REMOVED_KINDS]
     added = [c for c in filtered if _kind_str(c) in _ADDED_KINDS]
     # "problems" = breaking changes that are not simple removals/additions
-    problems = [c for c in breaking if _kind_str(c) not in _REMOVED_KINDS]
+    problems = [
+        c for c in breaking
+        if _kind_str(c) not in _REMOVED_KINDS and _kind_str(c) not in _ADDED_KINDS
+    ]
 
     # Classify problems by category and severity
     type_problems = {"high": 0, "medium": 0, "low": 0, "safe": 0}

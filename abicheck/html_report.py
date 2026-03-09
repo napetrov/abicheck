@@ -425,6 +425,7 @@ def _generate_compat_html(
     new_display: str,
     old_symbol_count: int | None,
     title: str | None,
+    report_kind: str = "binary",
 ) -> str:
     """Generate ABICC-compatible HTML with matching element IDs and structure.
 
@@ -433,6 +434,10 @@ def _generate_compat_html(
     #TypeProblems_High, etc.
 
     Also embeds the META_DATA comment that ABICC includes for machine parsing.
+
+    Args:
+        report_kind: "binary" or "source" — controls title, META_DATA kind, and
+            section ID prefixes to match ABICC's per-kind report structure.
     """
     h = html.escape
 
@@ -455,13 +460,15 @@ def _generate_compat_html(
     sp_med = len(symbol_problems["Medium"])
     sp_low = len(symbol_problems["Low"])
 
-    compat_verdict = "incompatible" if verdict == "BREAKING" else "compatible"
+    compat_verdict = "incompatible" if verdict in ("BREAKING", "SOURCE_BREAK") else "compatible"
     bc_css = "incompatible" if bc_pct < 90 else ("warning" if bc_pct < 100 else "compatible")
     affected_pct = f"{100 - bc_pct:.1f}" if old_symbol_count else "0"
 
+    kind_label = report_kind.capitalize()  # "Binary" or "Source"
+
     # META_DATA comment (semicolon-delimited, matches ABICC format)
     meta_data = (
-        f"verdict:{compat_verdict};kind:binary;"
+        f"verdict:{compat_verdict};kind:{report_kind};"
         f"affected:{affected_pct};"
         f"added:{len(added)};removed:{len(removed)};"
         f"type_problems_high:{tp_high};"
@@ -477,7 +484,7 @@ def _generate_compat_html(
     # Build title matching ABICC convention
     abicc_title = (
         h(title) if title
-        else f"Binary compatibility report for the <b>{lib_display}</b> "
+        else f"{kind_label} compatibility report for the <b>{lib_display}</b> "
              f"library between <b>{old_display}</b> and <b>{new_display}</b> versions"
     )
 
@@ -497,7 +504,7 @@ def _generate_compat_html(
 <h2>Test Results</h2>
 <table class='summary'>
 <tr><th>Total Symbols</th><td>{old_symbol_count or 'N/A'}</td></tr>
-<tr><th>Binary Compatibility</th><td class='{bc_css}'>{bc_pct:.1f}%</td></tr>
+<tr><th>{kind_label} Compatibility</th><td class='{bc_css}'>{bc_pct:.1f}%</td></tr>
 <tr><th>Verdict</th><td class='{bc_css}'>{compat_verdict}</td></tr>
 </table>
 
@@ -553,7 +560,7 @@ def _generate_compat_html(
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Binary compatibility report for {lib_display} between {old_display} and {new_display}</title>
+<title>{kind_label} compatibility report for {lib_display} between {old_display} and {new_display}</title>
 <style>{_COMPAT_CSS}</style>
 </head>
 <body>
@@ -585,6 +592,7 @@ def generate_html_report(
     old_symbol_count: int | None = None,
     title: str | None = None,
     compat_html: bool = False,
+    report_kind: str = "binary",
 ) -> str:
     """Generate a standalone ABICC-compatible HTML ABI report.
 
@@ -637,6 +645,7 @@ def generate_html_report(
             bc_pct, breaking_count, verdict,
             lib_display, old_display, new_display,
             old_symbol_count, title,
+            report_kind=report_kind,
         )
 
     # Verdict icon
@@ -747,6 +756,7 @@ def write_html_report(
     old_symbol_count: int | None = None,
     title: str | None = None,
     compat_html: bool = False,
+    report_kind: str = "binary",
 ) -> None:
     """Write HTML report to *output_path*, creating parent directories as needed."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -758,5 +768,6 @@ def write_html_report(
         old_symbol_count=old_symbol_count,
         title=title,
         compat_html=compat_html,
+        report_kind=report_kind,
     )
     output_path.write_text(content, encoding="utf-8")

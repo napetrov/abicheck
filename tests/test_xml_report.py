@@ -22,8 +22,13 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from defusedxml import defuse_stdlib
+
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
 from abicheck.xml_report import generate_xml_report, write_xml_report
+
+# Patch stdlib XML parsers to use defusedxml (addresses CodeFactor B314)
+defuse_stdlib()
 
 
 def _make_result(
@@ -305,16 +310,22 @@ class TestXmlReportDetailSections:
 
     def test_overcome_element_for_removal(self):
         """func_removed goes into removed_symbols, not problems_with_symbols.
-        This is correct — overcome is only for problems, not removals in ABICC."""
+        This is correct — ABICC lists removals separately from problems."""
         changes = [
             Change(kind=ChangeKind.FUNC_REMOVED, symbol="_Z3foov",
                    description="foo() removed"),
         ]
         result = _make_result(changes=changes, verdict=Verdict.BREAKING)
         xml = generate_xml_report(result, old_symbol_count=5)
-        root = ET.fromstring(xml)
-        # func_removed is in _REMOVED_KINDS so it's in <removed_symbols>, not problems
-        assert root.find(".//removed_symbols") is not None
+        root = ET.fromstring(xml)  # noqa: S314
+        binary = root.find("report[@kind='binary']")
+        # Symbol should be in <removed_symbols> detail section
+        removed_detail = binary.find("removed_symbols")
+        assert removed_detail is not None
+        names = [n.text for n in removed_detail.findall("name")]
+        assert "_Z3foov" in names
+        # Should NOT appear in problems_with_symbols (removals are separate)
+        assert binary.find("problems_with_symbols") is None
 
     def test_no_overcome_for_non_removal(self):
         changes = [

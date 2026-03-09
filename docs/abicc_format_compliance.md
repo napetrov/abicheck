@@ -16,8 +16,8 @@ infrastructure) would continue to work with abicheck's output.
 | `htm` format alias | **Implemented** | None |
 | Default report filename | **Fixed** (`compat_report.*`) | None |
 | Console BC% output | **Implemented** (ABICC format) | None |
-| HTML report — visual appearance | Similar but NOT identical | Medium |
-| HTML report — machine parsability | Different DOM structure | **HIGH** |
+| HTML report — default mode | Similar but NOT identical | Medium |
+| HTML report — `-compat-html` mode | **Implemented** (ABICC IDs + META_DATA) | Low |
 | Perl dump format input | NOT supported (by design) | Medium |
 | ABICC exit codes 3-11 | NOT implemented | Low |
 
@@ -151,14 +151,15 @@ format is defined implicitly by the ABICC Perl source code.
 |-------------------|:--------:|-------|
 | `<reports>` wrapper | YES | |
 | `<report kind="binary\|source">` | YES | |
-| `<test_info>` | YES | Missing `<arch>`, `<gcc>` sub-elements |
+| `<test_info>` | YES | Includes `<arch>`, `<gcc>` when available |
 | `<test_results>` | YES | `<verdict>`, `<affected>`, `<symbols>` |
 | `<problem_summary>` | YES | Full severity tiers (high/medium/low/safe) |
 | `<added_symbols>` detail | YES | Flat `<name>` list (ABICC nests by header/library) |
 | `<removed_symbols>` detail | YES | Flat `<name>` list |
 | `<problems_with_types severity="">` | YES | `<type>/<problem>/<change>` hierarchy |
 | `<problems_with_symbols severity="">` | YES | `<symbol>/<problem>/<change>` hierarchy |
-| `<effect>`, `<overcome>` in problems | NO | ABICC includes remediation hints |
+| `<effect>` in problems | YES | 20+ effect text templates for common kinds |
+| `<overcome>` in problems | YES | Remediation hints for removals |
 | `<affected>` in type problems | NO | Per-type affected symbol list |
 | `<header>/<library>` nesting | NO | ABICC groups by header file, then library |
 | `<problems_with_constants>` | NO | Constant checking not yet implemented |
@@ -220,8 +221,16 @@ type_problems_high:3;...
 | CSS approach | Inline styles | Class-based |
 | META_DATA comment | Present | Absent |
 
-**Recommendation:** Wire the `-old-style` flag to generate ABICC-compatible
-HTML with matching element IDs and section structure.
+**ABICC-compatible HTML mode** (`-compat-html` / `-old-style`):
+
+When enabled, abicheck generates HTML with ABICC-compatible structure:
+- Element IDs: `#Title`, `#Summary`, `#Added`, `#Removed`,
+  `#TypeProblems_High`, `#InterfaceProblems_Medium`, etc.
+- Title format matching ABICC convention
+- Severity-tiered problem sections (High/Medium/Low)
+- Embedded `META_DATA` comment for machine parsing
+- `kind:binary` or `kind:source` depending on `report_kind`
+- CSS classes: `compatible`, `incompatible`, `warning`
 
 ### 6. Console Output Format (IMPLEMENTED)
 
@@ -262,28 +271,30 @@ this mapping for the XML report:
 
 ---
 
+## Completed Remediation Items
+
+- **`-compat-html` / `-old-style` flag** — ABICC-compatible HTML with
+  matching element IDs, severity sections, META_DATA comment
+- **`<arch>` and `<gcc>` in XML `<test_info>`** — populated from `-arch`
+  flag and auto-detected compiler version
+- **`<effect>` and `<overcome>` in XML problems** — 20+ effect templates,
+  remediation hints for removals
+- **XML verdict respects `-strict`/`-warn-newsym`** — policy promotions
+  correctly produce `verdict:incompatible`
+- **`base_class_*` classified as type problems** — not symbol problems
+
 ## Remaining Remediation Plan
-
-### P1 — High (improves HTML parser compatibility)
-
-1. **Wire `-old-style` flag** to generate ABICC-compatible HTML:
-   - Match element IDs (`#Title`, `#Summary`, `#Added`, `#Removed`)
-   - Match title format
-   - Separate type problems by severity (High/Medium/Low sections)
-   - Embed META_DATA comment for machine parsing
 
 ### P2 — Medium
 
-2. **Add `<arch>` and `<gcc>` to XML `<test_info>`** from snapshot metadata
-3. **Add `<header>/<library>` grouping** in XML detail sections
-4. **Add `<effect>` and `<overcome>` elements** to XML problem details
-5. **Implement `<problems_with_constants>`** section
+1. **Add `<header>/<library>` grouping** in XML detail sections
+2. **Implement `<problems_with_constants>`** section
+3. **Add `<affected>` sub-elements** in type problem details
 
 ### P3 — Low
 
-6. Map ABICC exit codes 3-11 to specific error conditions
-7. Remove emoji from HTML reports for terminal compatibility
-8. Add embedded META_DATA comment to HTML reports
+4. Map ABICC exit codes 3-11 to specific error conditions
+5. Remove emoji from default HTML reports for terminal compatibility
 
 ---
 

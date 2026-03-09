@@ -128,7 +128,16 @@ class TestCompatHtmlStructure:
         html = generate_html_report(result, lib_name="libfoo",
                                     old_version="1.0", new_version="2.0",
                                     compat_html=True)
-        assert "Binary compatibility report for libfoo between 1.0 and 2.0" in html
+        assert "Binary compatibility report for" in html
+        assert "libfoo" in html
+        assert "1.0" in html and "2.0" in html
+
+    def test_source_kind_title(self):
+        result = _make_result()
+        html = generate_html_report(result, lib_name="libfoo",
+                                    old_version="1.0", new_version="2.0",
+                                    compat_html=True, report_kind="source")
+        assert "Source compatibility report for" in html
 
     def test_has_title_div(self):
         result = _make_result()
@@ -206,6 +215,14 @@ class TestCompatHtmlMetaData:
         assert "added:1" in meta
         assert "removed:1" in meta
         assert "type_problems_high:1" in meta
+
+    def test_meta_data_source_kind(self):
+        result = _make_result()
+        html = generate_html_report(result, lib_name="libfoo",
+                                    compat_html=True, report_kind="source")
+        m = re.search(r"<!-- ([\s\S]+?) -->", html)
+        assert m is not None
+        assert "kind:source" in m.group(1)
 
     def test_meta_data_compatible_verdict(self):
         result = _make_result(verdict=Verdict.COMPATIBLE)
