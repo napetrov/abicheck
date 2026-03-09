@@ -1,6 +1,6 @@
 # Case 28 — Typedef and Opaque Type Changes
 
-**Category:** Type System | **Verdict:** 🔴 BREAKING (TYPEDEF_BASE_CHANGED, TYPEDEF_REMOVED, TYPE_BECAME_OPAQUE)
+**Category:** Type System | **Verdict:** 🟡 SOURCE_BREAK (runtime usually compatible)
 
 ## What changes
 

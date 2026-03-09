@@ -1,5 +1,7 @@
 # Case 27 — Symbol Binding Weakened (GLOBAL → WEAK)
 
+
+**Verdict:** 🟢 COMPATIBLE
 **abicheck verdict: COMPATIBLE (informational/warning)**
 
 ## What changes
@@ -74,3 +76,6 @@ readelf --syms libfoo.so | grep foo
 **Why INFORMATIONAL:** WEAK symbols are still exported and resolved normally when no
 override exists. The concern is interposition: if another `.so` or the executable
 defines `foo` as GLOBAL, the WEAK version will be silently overridden at runtime.
+
+## Why runtime result may differ from verdict
+GLOBAL→WEAK binding: loader still resolves symbol, runtime compat

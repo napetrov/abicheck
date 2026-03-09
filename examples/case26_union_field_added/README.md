@@ -1,5 +1,7 @@
 # Case 26 — Union Field Added
 
+
+**Verdict:** 🔴 BREAKING
 **abicheck verdict: BREAKING** (TYPE_SIZE_CHANGED: union grows 4→8 bytes)
 
 ## What changes
@@ -73,3 +75,9 @@ gcc -shared -fPIC -g new/lib.c -Inew -o libval.so
 Old callers that allocate `union Value` on the stack or embed it in a struct
 under-allocate memory when running against the v2 library. abicheck correctly
 reports TYPE_SIZE_CHANGED → BREAKING verdict.
+
+## Why runtime result may differ from verdict
+Union field added (double): sizeof(Value) grows 4→8 bytes, layout broken
+
+## Runtime note
+v2 now writes the newly added double field so old-layout callers observe incompatible behavior.

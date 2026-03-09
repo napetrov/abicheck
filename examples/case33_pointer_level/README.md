@@ -1,5 +1,7 @@
 # Case 33 -- Pointer Level Change
 
+
+**Verdict:** 🔴 BREAKING
 **abicheck verdict: BREAKING**
 
 ## What changes
@@ -48,3 +50,6 @@ gcc -shared -fPIC -g v2.c -o libv1.so
 **Why CRITICAL:** The library interprets a flat pointer as a double pointer.
 `**data` dereferences the integer value 42 as a memory address, which is
 almost certainly an unmapped page, causing an immediate segmentation fault.
+
+## Why runtime result may differ from verdict
+Pointer level change: wrong dereference depth — SIGSEGV

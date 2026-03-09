@@ -1,5 +1,7 @@
 # Case 37 -- Base Class Changes
 
+
+**Verdict:** 🔴 BREAKING
 **abicheck verdict: BREAKING**
 
 ## What changes
@@ -75,3 +77,9 @@ The `this`-pointer adjustments compiled into the application no longer match the
 library's actual object layout, causing virtual dispatch to call the wrong function,
 or field accesses to read/write the wrong memory -- both leading to crashes or
 silent data corruption.
+
+## Why runtime result may differ from verdict
+Base class position changed: derived class layout corrupted
+
+## Runtime note
+Methods now mutate fields and app asserts expected postconditions; layout/base-order mismatch is observable.

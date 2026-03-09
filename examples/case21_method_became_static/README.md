@@ -1,5 +1,7 @@
 # Case 21 — Method Became Static
 
+
+**Verdict:** 🟢 COMPATIBLE (symbol-level); source semantics changed
 **abicheck verdict: BREAKING**
 
 ## What changes
@@ -92,3 +94,6 @@ g++ -g -fsanitize=undefined app.cpp -Iold -L. -lwidget -Wl,-rpath,. -o app_ub
 does not encode static-ness). The binary links and appears to run. However, the calling
 convention is wrong — old callers pass `this` in `%rdi` which the new static function ignores.
 For methods that access member state through `this`, this is silent memory corruption.
+
+## Why runtime result may differ from verdict
+Method became static: symbol mangling changes, old binary link fails

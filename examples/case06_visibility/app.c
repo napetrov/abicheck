@@ -6,17 +6,19 @@ int main(void) {
     void *h;
     void *sym;
 
-    h = dlopen("./libbad.so", RTLD_NOW);
-    if (!h) { fprintf(stderr, "dlopen libbad.so: %s\n", dlerror()); return 1; }
+    /* v1 = bad.c (leaky visibility) */
+    h = dlopen("./libv1.so", RTLD_NOW);
+    if (!h) { fprintf(stderr, "dlopen libv1.so: %s\n", dlerror()); return 1; }
     sym = dlsym(h, "internal_helper");
-    printf("bad.so:  internal_helper %s\n",
-           sym ? "EXPORTED (leak!)" : "hidden (ok)");
+    printf("v1.so (bad): internal_helper %s\n",
+           sym ? "EXPORTED (leak!)" : "hidden (unexpected)");
     dlclose(h);
 
-    h = dlopen("./libgood.so", RTLD_NOW);
-    if (!h) { fprintf(stderr, "dlopen libgood.so: %s\n", dlerror()); return 1; }
+    /* v2 = good.c (hidden by default visibility) */
+    h = dlopen("./libv2.so", RTLD_NOW);
+    if (!h) { fprintf(stderr, "dlopen libv2.so: %s\n", dlerror()); return 1; }
     sym = dlsym(h, "internal_helper");
-    printf("good.so: internal_helper %s\n",
+    printf("v2.so (good): internal_helper %s\n",
            sym ? "EXPORTED (bug!)" : "hidden (correct)");
     dlclose(h);
 

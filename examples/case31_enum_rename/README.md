@@ -1,6 +1,6 @@
 # Case 31 — Enum Member Rename
 
-**Category:** Enum API | **Verdict:** 🟡 BREAKING (source-level; binary compatible)
+**Category:** Enum API | **Verdict:** 🟡 SOURCE_BREAK (binary compatible)
 
 ## What changes
 

@@ -1,5 +1,7 @@
 # Case 19 — Enum Member Removed
 
+
+**Verdict:** 🟡 SOURCE_BREAK
 **abicheck verdict: BREAKING**
 
 ## What changes
@@ -69,3 +71,6 @@ gcc -shared -fPIC -g new/lib.c -Inew -o libstatus.so
 stored, or transmitted value of `FOO` (integer 2) is now undefined in the new API.
 Recompiled consumers get no `FOO` case and fall through to `default`, silently
 mishandling the value.
+
+## Why runtime result may differ from verdict
+Enum value removal: binary compat (integers same), semantic/protocol break

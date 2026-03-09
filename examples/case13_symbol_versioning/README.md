@@ -1,8 +1,8 @@
 # Case 13: Symbol Versioning Script
 
-**Category:** ELF/Linker | **Verdict:** 🔴 BREAKING
+**Category:** ELF/Linker | **Verdict:** 🟢 COMPATIBLE (with operational risk)
 
-## What breaks
+## Why runtime stays compatible in this demo
 Without a version script, symbols have no version tag (`foo` instead of `foo@@LIBFOO_1.0`).
 When a consumer is compiled against the versioned library and later runs against the
 unversioned variant, `ld.so` emits a warning and typically continues — but this

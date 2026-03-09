@@ -1,6 +1,8 @@
 #include "v1.hpp"
 #include <cstdio>
+#include <cstdlib>
 
+/* Scenario A: derived class provides execute() — works with both v1 and v2 */
 class MyProcessor : public Processor {
 public:
     void execute() override {
@@ -8,21 +10,24 @@ public:
     }
 };
 
+/* Scenario B: instantiate base Processor directly.
+ * With v1: Processor::execute() has a real implementation — runs OK.
+ * With v2: execute() is pure virtual (__cxa_pure_virtual) — SIGABRT.
+ */
 int main() {
+    std::printf("=== Scenario A: derived class (should always work) ===\n");
     MyProcessor proc;
-
-    /* Use a base-class reference to force virtual dispatch through
-     * the vtable, preventing the compiler from devirtualizing. */
     Processor& ref = proc;
-
-    std::printf("Calling transform(42)...\n");
     ref.transform(42);
-
-    std::printf("Calling validate(10)...\n");
     ref.validate(10);
-
-    std::printf("Calling execute()...\n");
     ref.execute();
+
+    std::printf("\n=== Scenario B: base class instantiated directly (ABI break!) ===\n");
+    /* App compiled with v1.hpp (execute is non-pure virtual, Processor is concrete).
+     * At runtime with libv2.so swapped in, vtable[execute] = __cxa_pure_virtual -> abort(). */
+    Processor* base = new Processor();
+    base->execute();   /* SIGABRT with v2 */
+    delete base;
 
     return 0;
 }

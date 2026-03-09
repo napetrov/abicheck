@@ -1,5 +1,7 @@
 # Case 20 — Enum Member Value Changed
 
+
+**Verdict:** 🟡 SOURCE_BREAK
 **abicheck verdict: BREAKING**
 
 ## What changes
@@ -66,3 +68,6 @@ gcc -shared -fPIC -g new/lib.c -Inew -o liberr.so
 **Why CRITICAL:** Error conditions are silently missed. Code that checks `if (r == ERROR)` 
 never triggers with v2 — the error goes undetected. Any protocol, file format, or 
 IPC using these integer values is broken across version boundaries.
+
+## Why runtime result may differ from verdict
+Enum value changed: integer value differs, silent wrong behavior

@@ -1,5 +1,7 @@
 # Case 15 — `noexcept` Changed
 
+
+**Verdict:** 🔴 BREAKING
 **abicheck verdict: BREAKING** (removing `noexcept` breaks caller exception-handling contract)
 
 ## What changes
@@ -128,3 +130,6 @@ symbol report. The break detected by the tool is from this new symbol version
 dependency, **not** from the `noexcept` removal itself. The ABI verdict for the
 `noexcept` change in isolation remains **COMPATIBLE** — the mangled symbol is
 identical.
+
+## Why runtime result may differ from verdict
+noexcept mismatch — std::terminate() called at runtime

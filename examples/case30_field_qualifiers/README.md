@@ -1,6 +1,6 @@
 # Case 30 — Field Qualifier Changes (const, volatile)
 
-**Category:** Type Qualifiers | **Verdict:** 🟡 BREAKING (semantic, not binary layout)
+**Category:** Type Qualifiers | **Verdict:** 🟡 SOURCE_BREAK (semantic contract changed; binary layout unchanged)
 
 ## What changes
 

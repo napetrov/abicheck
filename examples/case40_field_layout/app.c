@@ -11,12 +11,17 @@ int main(void) {
     pkt.payload_size = 1024;
     pkt.flags        = 0xF;
 
+    int expected = pkt.version + pkt.sequence + pkt.payload_size + (int)pkt.flags;
+    int got = packet_send(&pkt);
+
     printf("sizeof(Packet) = %zu\n", sizeof(pkt));
-    printf("version      = %d\n", pkt.version);
-    printf("sequence     = %d\n", pkt.sequence);
-    printf("payload_size = %d\n", pkt.payload_size);
-    printf("flags        = %u\n", pkt.flags);
-    printf("packet_send  = %d\n", packet_send(&pkt));
+    printf("expected checksum (v1 layout) = %d\n", expected);
+    printf("packet_send()                = %d\n", got);
+
+    if (got != expected) {
+        printf("LAYOUT_MISMATCH: library interpreted struct with incompatible field layout\n");
+        return 2;
+    }
 
     return 0;
 }
