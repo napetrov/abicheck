@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
-from abicheck.model import AbiSnapshot
+from abicheck.model import AbiSnapshot, Function, Visibility
 
 
 def _snap(elf: ElfMetadata | None = None, **kwargs: object) -> AbiSnapshot:
@@ -42,6 +42,15 @@ def test_soname_changed() -> None:
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.SONAME_CHANGED in kinds
     assert result.verdict == Verdict.BREAKING
+
+
+def test_soname_missing_reported_as_compatible_quality_issue() -> None:
+    old = _snap(_elf(soname=""))
+    new = _snap(_elf(soname="libfoo.so.1"))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SONAME_MISSING in kinds
+    assert result.verdict == Verdict.COMPATIBLE
 
 
 def test_needed_added() -> None:
@@ -91,6 +100,15 @@ def test_symbol_version_defined_removed() -> None:
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED in kinds
     assert result.verdict == Verdict.BREAKING
+
+
+def test_symbol_version_defined_added_compatible() -> None:
+    old = _snap(_elf(versions_defined=[]))
+    new = _snap(_elf(versions_defined=["LIBFOO_1.0"]))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_DEFINED_ADDED in kinds
+    assert result.verdict == Verdict.COMPATIBLE
 
 
 def test_symbol_version_required_added() -> None:
@@ -172,6 +190,7 @@ def test_common_symbol_risk() -> None:
 
 _ELF_CHANGE_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.SONAME_CHANGED,
+    ChangeKind.SONAME_MISSING,
     ChangeKind.NEEDED_ADDED,
     ChangeKind.NEEDED_REMOVED,
     ChangeKind.RPATH_CHANGED,
@@ -183,6 +202,7 @@ _ELF_CHANGE_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.IFUNC_REMOVED,
     ChangeKind.COMMON_SYMBOL_RISK,
     ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
+    ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
     ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
     ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
     ChangeKind.SYMBOL_BINDING_STRENGTHENED,
@@ -274,3 +294,56 @@ def test_elf_breaking_kinds_verdict() -> None:
         assert result.verdict == Verdict.BREAKING, (
             f"Expected BREAKING, got {result.verdict}: {[c.kind for c in result.changes]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Visibility leak detector tests
+# ---------------------------------------------------------------------------
+
+def _elf_only_snap(symbols: list[str]) -> AbiSnapshot:
+    """Build an ELF-only snapshot (elf_only_mode=True) with given symbol names."""
+    snap = AbiSnapshot(
+        library="libfoo.so",
+        version="1.0",
+        functions=[
+            Function(name=s, mangled=s, return_type="?", visibility=Visibility.ELF_ONLY)
+            for s in symbols
+        ],
+        elf_only_mode=True,
+    )
+    return snap
+
+
+def test_visibility_leak_detected() -> None:
+    """Internal-looking ELF_ONLY symbols in old lib → VISIBILITY_LEAK."""
+    old = _elf_only_snap(["public_api", "internal_helper", "another_impl"])
+    new = _elf_only_snap(["public_api"])
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.VISIBILITY_LEAK in kinds
+    assert result.verdict == Verdict.COMPATIBLE
+
+
+def test_visibility_leak_not_fired_without_elf_only_mode() -> None:
+    """VISIBILITY_LEAK only fires when elf_only_mode=True (no-header dump)."""
+    old = AbiSnapshot(
+        library="libfoo.so", version="1.0",
+        functions=[
+            Function(name="internal_helper", mangled="internal_helper",
+                     return_type="void", visibility=Visibility.ELF_ONLY)
+        ],
+        elf_only_mode=False,  # headers were provided
+    )
+    new = AbiSnapshot(library="libfoo.so", version="2.0")
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.VISIBILITY_LEAK not in kinds
+
+
+def test_visibility_leak_not_fired_for_clean_public_symbols() -> None:
+    """No VISIBILITY_LEAK if all ELF_ONLY symbols have clean public-looking names."""
+    old = _elf_only_snap(["foo", "bar", "compute", "get_version"])
+    new = _elf_only_snap(["foo", "bar", "compute", "get_version"])
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.VISIBILITY_LEAK not in kinds

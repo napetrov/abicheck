@@ -52,7 +52,8 @@ def _pyelftools_exported_symbols(so_path: Path) -> tuple[set[str], set[str]]:
         if section is None or not isinstance(section, SymbolTableSection):
             return syms
         for sym in section.iter_symbols():
-            if sym.entry.st_shndx == "SHN_UNDEF":
+            shndx = sym.entry.st_shndx
+            if shndx in ("SHN_UNDEF", "SHN_ABS"):
                 continue
             bind = sym.entry.st_info.bind
             vis = sym.entry.st_other.visibility
@@ -612,9 +613,19 @@ def dump(
     exported_dynamic, exported_static = _pyelftools_exported_symbols(so_path)
 
     from .dwarf_unified import parse_dwarf
-    from .elf_metadata import parse_elf_metadata
+    from .elf_metadata import SymbolType, parse_elf_metadata
 
     elf_meta = parse_elf_metadata(so_path)
+    # Use filtered ELF metadata symbols as authoritative surface for no-header mode.
+    # This excludes version-definition aux symbols like LIBFOO_1.0.
+    # Guard: elf_meta may be None in tests that monkeypatch parse_elf_metadata.
+    if elf_meta is not None and elf_meta.symbols:
+        exported_dynamic = {
+            sym.name for sym in elf_meta.symbols
+            if sym.sym_type in (SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTYPE)
+        }
+        # Note: if the filtered set is empty (e.g. library exports only OBJECT/TLS
+        # symbols), exported_dynamic stays empty — correct, no functions to report.
     dwarf_meta, dwarf_adv = parse_dwarf(so_path)
 
     if not headers:
@@ -635,6 +646,7 @@ def dump(
             elf=elf_meta,
             dwarf=dwarf_meta,
             dwarf_advanced=dwarf_adv,
+            elf_only_mode=True,
         )
         return snapshot
 

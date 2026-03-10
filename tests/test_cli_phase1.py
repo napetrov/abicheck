@@ -38,7 +38,7 @@ def test_dump_cmd_writes_output_file(tmp_path, monkeypatch):
     )
 
     assert result.exit_code == 0
-    assert "Snapshot written to" in result.stderr
+    assert "Snapshot written to" in result.output
     assert out.exists()
     assert '"version": "2.0"' in out.read_text(encoding="utf-8")
 
@@ -71,7 +71,7 @@ def test_compare_cmd_warns_when_all_changes_suppressed(tmp_path, monkeypatch):
     result = runner.invoke(main, ["compare", str(old), str(new), "--suppress", str(suppress)])
 
     assert result.exit_code == 0
-    assert "all ABI changes were suppressed" in result.stderr
+    assert "all ABI changes were suppressed" in result.output
     assert "REPORT" in result.stdout
 
 
@@ -116,7 +116,7 @@ def test_compat_cmd_descriptor_parse_error_exits_2(tmp_path, monkeypatch):
     )
 
     assert result.exit_code == 2
-    assert "Error parsing descriptor" in result.stderr
+    assert "Error parsing descriptor" in result.output
 
 
 def test_compat_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypatch):
@@ -168,4 +168,4 @@ def test_compat_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypatch):
     assert result.exit_code == 1
     assert report.exists()
     assert "BREAKING" in report.read_text(encoding="utf-8")
-    assert "Verdict: BREAKING" in result.stderr
+    assert "Verdict: BREAKING" in result.output
