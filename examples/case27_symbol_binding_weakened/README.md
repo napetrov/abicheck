@@ -79,3 +79,8 @@ defines `foo` as GLOBAL, the WEAK version will be silently overridden at runtime
 
 ## Why runtime is COMPATIBLE (matches verdict)
 WEAK symbols are still exported and resolved normally when no override exists. The concern is interposition — another `.so` defining the symbol as GLOBAL silently overrides it. In this demo no override exists, so runtime behavior is identical to GLOBAL binding.
+
+## References
+
+- [ELF symbol bindings](https://refspecs.linuxfoundation.org/elf/gabi4+/ch4.symtab.html)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

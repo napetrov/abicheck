@@ -1,7 +1,15 @@
 # Case 18 — Dependency ABI Leak
 
 
-**Verdict:** 🟡 SOURCE_BREAK
+**Verdict:** 🔴 BREAKING (project policy + binary layout risk)
+
+## Compatibility classification
+
+- **Binary ABI impact:** BREAKING when consumers and library are compiled against different third-party layout versions.
+- **Source compatibility impact:** May compile, but behavior is unsafe if transitive type size changed.
+- **Runtime behavior impact:** High risk of OOB reads/writes or corrupted interpretation.
+- **Policy severity:** **BREAKING** in `ground_truth.json` because public ABI leaks third-party layout.
+
 ## What changes
 
 `libfoo`'s **exported symbol interface** is identical between v1 and v2 — same function
@@ -146,3 +154,9 @@ grew silently. Heap corruption or information leakage follows.
 
 ## Why runtime result may differ from verdict
 Header dependency leak: binary compat, recompile fails
+
+## References
+
+- [libstdc++ dual ABI notes (`std::string` ABI split)](https://gcc.gnu.org/onlinedocs/libstdc++/manual/using_dual_abi.html)
+- [Protobuf compatibility guidance (wire/source evolution pitfalls)](https://protobuf.dev/programming-guides/proto3/#updating)
+- [Pimpl / compilation firewall rationale (opaque ABI boundary)](https://herbsutter.com/gotw/_100/)

@@ -101,3 +101,8 @@ python3 -m abicheck.cli compare v1.json v2.json
 symbol table does not encode C++ class hierarchy information. Header analysis is
 required for C++ structural changes (base class composition, vtable layout, field
 offsets).
+
+## References
+
+- [Itanium C++ ABI: class layout](https://itanium-cxx-abi.github.io/cxx-abi/abi.html#class)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

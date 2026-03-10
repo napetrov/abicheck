@@ -95,3 +95,8 @@ Every plugin or subclass compiled against v1 must be rebuilt with the new abstra
 
 ## Why runtime result may differ from verdict
 Became pure virtual: direct instantiation causes SIGABRT
+
+## References
+
+- [C++ virtual functions](https://en.cppreference.com/w/cpp/language/virtual)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

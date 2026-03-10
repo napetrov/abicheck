@@ -1,8 +1,16 @@
 # Case 35 -- Field Rename
 
 
-**Verdict:** 🟡 SOURCE_BREAK
-**abicheck verdict: SOURCE_BREAK**
+**Verdict:** 🔴 BREAKING (policy escalated source break)
+**abicheck verdict: BREAKING**
+
+
+## Compatibility classification
+
+- **Binary ABI impact:** Compatible (layout and offsets unchanged).
+- **Source compatibility impact:** BREAKING (field identifiers removed/renamed).
+- **Runtime behavior impact:** Existing binaries typically keep working; recompilation fails.
+- **Policy severity:** **BREAKING** in `ground_truth.json` (`source_break` category escalated by policy).
 
 ## What changes
 
@@ -64,3 +72,9 @@ are fully compatible.
 
 ## Why runtime result may differ from verdict
 Field rename: binary compat (field exists), source break (name changed)
+
+## References
+
+- [C member access operator rules](https://en.cppreference.com/w/c/language/operator_member_access)
+- [C struct type compatibility and declarations](https://en.cppreference.com/w/c/language/struct)
+- [Semantic Versioning (policy rationale for public API source breaks)](https://semver.org/)

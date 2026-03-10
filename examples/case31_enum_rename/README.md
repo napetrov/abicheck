@@ -100,3 +100,8 @@ echo "exit: $?"
 - Or add both old and new names in the enum with matching values:
   `LOG_ERR = 1, LOG_ERROR = LOG_ERR`
 - Only remove old names on a major SONAME bump with a deprecation period.
+
+## References
+
+- [C enum rules](https://en.cppreference.com/w/c/language/enum)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

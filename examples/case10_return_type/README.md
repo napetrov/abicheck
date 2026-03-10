@@ -61,3 +61,8 @@ gcc -shared -fPIC -g v2.c -o libfoo.so
 **Why CRITICAL:** On x86-64, `int` is returned in the lower 32 bits of `rax`; `long`
 uses all 64. The app reads only `eax` (lower 32 bits) as a signed int, interpreting a
 completely wrong value. Silent data corruption for any count above `INT_MAX`.
+
+## References
+
+- [System V AMD64 ABI: returning values](https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.99.pdf)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

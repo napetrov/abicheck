@@ -73,3 +73,8 @@ g++ -g -O0 -fsanitize=address app.cpp -I. -L. -lbuf -Wl,-rpath,. -o app_asan
 **Why CRITICAL:** Old code allocates `Buffer` on the stack expecting 64 bytes. The v2
 constructor initializes 128 bytes — writing 64 bytes past the stack slot, corrupting
 adjacent variables and potentially return addresses.
+
+## References
+
+- [Itanium C++ ABI: Data layout](https://itanium-cxx-abi.github.io/cxx-abi/abi.html#data)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

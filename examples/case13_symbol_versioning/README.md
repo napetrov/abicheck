@@ -121,3 +121,8 @@ readelf --version-info libv2.so
 abicheck filters out the `LIBFOO_1.0` **symbol** from `.dynsym` (it's an `SHN_ABS`
 entry with size=0), but correctly captures `LIBFOO_1.0` as a **version definition** from
 `.gnu.version_d` (skipping the `VER_FLG_BASE` entry for `libv2.so` itself).
+
+## References
+
+- [GNU ld version scripts](https://sourceware.org/binutils/docs/ld/VERSION.html)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

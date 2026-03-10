@@ -67,3 +67,8 @@ g++ -shared -fPIC -g v2.cpp -o libwidget.so
 **Why CRITICAL:** The vtable in the app's compiled code indexes `resize()` at slot 1.
 In v2 that slot now holds `recolor()` (returns 99). The wrong method is called silently —
 no crash, just completely wrong behavior.
+
+## References
+
+- [Itanium C++ ABI: Virtual table layout](https://itanium-cxx-abi.github.io/cxx-abi/abi.html#vtable)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

@@ -93,3 +93,8 @@ evolution. If layout must change, bump the SONAME.
 
 ## Runtime note
 This case now checks checksum mismatch to make field-layout reinterpretation observable at runtime (behavioral break, not guaranteed crash).
+
+## References
+
+- [C struct layout](https://en.cppreference.com/w/c/language/struct)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

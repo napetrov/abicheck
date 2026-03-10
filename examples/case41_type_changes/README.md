@@ -100,3 +100,8 @@ echo "exit: $?"   # → 12 (ABI change + breaking)
 Never remove public types or functions without a SONAME bump. Use opaque types so that
 alignment changes are invisible to callers. Avoid using enum sentinel values as array
 bounds in public APIs — use a separate `#define` or function instead.
+
+## References
+
+- [ABI Compliance Checker](https://lvc.github.io/abi-compliance-checker/)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

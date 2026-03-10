@@ -74,3 +74,8 @@ calls `widget.get()` on a const reference fails to load — hard runtime crash.
 
 ## Why runtime result may differ from verdict
 const qualifier on method changes mangled name — symbol lookup error
+
+## References
+
+- [Itanium C++ ABI mangling grammar](https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

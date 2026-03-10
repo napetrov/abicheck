@@ -53,3 +53,8 @@ N/A — this is the ideal state for patch releases.
 ## Real-world example
 CI pipelines that run abidiff on every PR use this as the baseline to catch
 regressions: any non-zero exit from abidiff triggers a review gate.
+
+## References
+
+- [libabigail abidiff manual](https://sourceware.org/libabigail/manual/abidiff.html)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

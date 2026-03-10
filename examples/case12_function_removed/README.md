@@ -66,3 +66,8 @@ every binary that ever called `fast_add` is broken until recompiled against v2 h
 
 ## Runtime behavior
 The function is removed from the .so — the dynamic linker emits an undefined symbol error at load time (with RTLD_NOW) or at first call (lazy binding). Runtime result and verdict both agree: BREAKING.
+
+## References
+
+- [ELF dynamic linker behavior](https://refspecs.linuxfoundation.org/elf/gabi4+/contents.html)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)
