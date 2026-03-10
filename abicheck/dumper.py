@@ -620,7 +620,9 @@ def dump(
     # This excludes version-definition aux symbols like LIBFOO_1.0.
     # Split into two sets: function-like symbols (for Function builder) and
     # object symbols (globals) — merged for CastxmlParser visibility check.
-    exported_dynamic_funcs: set[str] = set()
+    # Split into func-like (for Function builder) and object (globals) sets.
+    # Fall back to pyelftools set when elf_meta is unavailable.
+    exported_dynamic_funcs: set[str] = exported_dynamic  # fallback
     exported_dynamic_objects: set[str] = set()
     if elf_meta is not None and elf_meta.symbols:
         exported_dynamic_funcs = {
