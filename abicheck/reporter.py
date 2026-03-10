@@ -36,6 +36,8 @@ def to_json(result: DiffResult, indent: int = 2) -> str:
             "source_breaks": summary.source_breaks,
             "compatible_additions": summary.compatible_additions,
             "total_changes": summary.total_changes,
+            "binary_compatibility_pct": round(summary.binary_compatibility_pct, 1),
+            "affected_pct": round(summary.affected_pct, 1),
         },
         "changes": [
             {
@@ -59,6 +61,15 @@ def to_json(result: DiffResult, indent: int = 2) -> str:
                 for c in result.suppressed_changes
             ],
         },
+        "detectors": [
+            {
+                "name": d.name,
+                "changes_count": d.changes_count,
+                "enabled": d.enabled,
+                "coverage_gap": d.coverage_gap,
+            }
+            for d in result.detector_results
+        ],
     }
     return json.dumps(d, indent=indent)
 

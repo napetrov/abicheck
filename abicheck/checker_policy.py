@@ -330,15 +330,39 @@ SOURCE_BREAK_KINDS: set[ChangeKind] = {
 class PolicyEntry:
     default_verdict: Verdict
     severity: str
+    doc_slug: str
 
 
 POLICY_REGISTRY: dict[ChangeKind, PolicyEntry] = {
-    k: PolicyEntry(Verdict.BREAKING, "error") for k in BREAKING_KINDS
+    k: PolicyEntry(Verdict.BREAKING, "error", k.value) for k in BREAKING_KINDS
 } | {
-    k: PolicyEntry(Verdict.SOURCE_BREAK, "warning") for k in SOURCE_BREAK_KINDS
+    k: PolicyEntry(Verdict.SOURCE_BREAK, "warning", k.value) for k in SOURCE_BREAK_KINDS
 } | {
-    k: PolicyEntry(Verdict.COMPATIBLE, "note") for k in COMPATIBLE_KINDS
+    k: PolicyEntry(Verdict.COMPATIBLE, "warning", k.value) for k in COMPATIBLE_KINDS
 }
+
+
+def policy_for(kind: ChangeKind) -> PolicyEntry:
+    """Get policy metadata for a ChangeKind.
+
+    Unknown kinds are treated as BREAKING by default (fail-safe).
+    """
+    return POLICY_REGISTRY.get(kind, PolicyEntry(Verdict.BREAKING, "error", kind.value))
+
+
+def policy_registry_markdown() -> str:
+    """Build a markdown snippet for docs from the policy registry."""
+    lines = [
+        "| ChangeKind | Default verdict | Severity | Doc slug |",
+        "|---|---|---|---|",
+    ]
+    for kind in sorted(ChangeKind, key=lambda k: k.value):
+        entry = policy_for(kind)
+        lines.append(
+            f"| `{kind.value}` | `{entry.default_verdict.value}` | "
+            f"`{entry.severity}` | `{entry.doc_slug}` |"
+        )
+    return "\n".join(lines)
 
 def compute_verdict(changes: Sequence[HasKind]) -> Verdict:
     if not changes:
@@ -353,4 +377,3 @@ def compute_verdict(changes: Sequence[HasKind]) -> Verdict:
         return Verdict.COMPATIBLE
     # Unclassified change kinds default to BREAKING (fail-safe)
     return Verdict.BREAKING
-
