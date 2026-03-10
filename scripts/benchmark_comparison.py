@@ -24,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import json
 import os
 import shlex
@@ -74,7 +75,7 @@ def _abicheck_available() -> bool:
 _HAS_ABICHECK: bool = _abicheck_available()
 
 
-DEFAULT_ABICC_TIMEOUT = 30  # seconds
+DEFAULT_ABICC_TIMEOUT = 120  # seconds
 
 # Expected verdicts from case READMEs
 EXPECTED: dict[str, str] = {
@@ -447,10 +448,14 @@ def run_abicc_xml(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None
     out = r.stdout + r.stderr
     (rdir / f"{case}_abicc_xml.txt").write_text(out)
 
-    if r.returncode == 1:
+    # Parse from output first: ABICC may exit non-zero due to GCC header warnings
+    # while still producing a correct compatibility report.
+    m_pct = re.search(r"Binary compatibility: (\d+(?:\.\d+)?)%", out)
+    if m_pct:
+        pct = float(m_pct.group(1))
+        verdict = "NO_CHANGE" if pct == 100.0 else "BREAKING"
+    elif r.returncode == 1:
         verdict = "BREAKING"
-    elif "Binary compatibility: 100%" in out:
-        verdict = "NO_CHANGE"
     elif r.returncode == 0:
         verdict = "COMPATIBLE"
     else:
@@ -502,10 +507,12 @@ def run_abicc_dumper(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | N
     out = r.stdout + r.stderr
     (rdir / f"{case}_abicc_dumper.txt").write_text(out)
 
-    if r.returncode == 1:
+    m_pct = re.search(r"Binary compatibility: (\d+(?:\.\d+)?)%", out)
+    if m_pct:
+        pct = float(m_pct.group(1))
+        verdict = "NO_CHANGE" if pct == 100.0 else "BREAKING"
+    elif r.returncode == 1:
         verdict = "BREAKING"
-    elif "Binary compatibility: 100%" in out:
-        verdict = "NO_CHANGE"
     elif r.returncode == 0:
         verdict = "COMPATIBLE"
     else:
