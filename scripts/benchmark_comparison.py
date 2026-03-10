@@ -24,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import json
 import os
 import shlex
@@ -74,59 +75,35 @@ def _abicheck_available() -> bool:
 _HAS_ABICHECK: bool = _abicheck_available()
 
 
-DEFAULT_ABICC_TIMEOUT = 30  # seconds
+DEFAULT_ABICC_TIMEOUT = 120  # seconds
 
-# Expected verdicts from case READMEs
+# Expected verdicts loaded from ground_truth.json — single source of truth.
+# To add/change a verdict, edit examples/ground_truth.json only.
+_GT_PATH = Path(__file__).parent.parent / "examples" / "ground_truth.json"
+try:
+    _gt_data = json.loads(_GT_PATH.read_text())
+    if "verdicts" not in _gt_data:
+        raise ValueError("missing top-level verdicts key")
+    for _k, _v in _gt_data["verdicts"].items():
+        if "expected" not in _v:
+            raise ValueError(f"case {_k!r} missing expected field")
+except (FileNotFoundError, json.JSONDecodeError, ValueError) as _e:
+    raise SystemExit(f"ERROR: cannot load {_GT_PATH}: {_e}") from _e
+
 EXPECTED: dict[str, str] = {
-    "case01_symbol_removal":          "BREAKING",
-    "case02_param_type_change":       "BREAKING",
-    "case03_compat_addition":         "COMPATIBLE",
-    "case04_no_change":               "NO_CHANGE",
-    "case05_soname":                  "BREAKING",    # KNOWN GAP: abicheck doesn't detect missing SONAME (ELF DT_SONAME absent)
-    "case06_visibility":              "BREAKING",    # KNOWN GAP: needs -fvisibility=hidden at compile time; benchmark builds with -fvisibility=default
-    "case07_struct_layout":           "BREAKING",
-    "case08_enum_value_change":       "BREAKING",
-    "case09_cpp_vtable":              "BREAKING",
-    "case10_return_type":             "BREAKING",
-    "case11_global_var_type":         "BREAKING",
-    "case12_function_removed":        "BREAKING",
-    "case13_symbol_versioning":       "BREAKING",    # KNOWN GAP: abicheck doesn't detect missing version script (ELF symbol versioning)
-    "case14_cpp_class_size":          "BREAKING",
-    "case15_noexcept_change":         "BREAKING",   # v2.cpp adds throw → pulls GLIBCXX_3.4.21 → SYMBOL_VERSION_REQUIRED_ADDED
-    "case16_inline_to_non_inline":    "COMPATIBLE",
-    "case17_template_abi":            "BREAKING",
-    "case18_dependency_leak":         "BREAKING",
-    "case19_enum_member_removed":     "BREAKING",
-    "case20_enum_member_value_changed": "BREAKING",
-    "case21_method_became_static":    "BREAKING",
-    "case22_method_const_changed":    "BREAKING",
-    "case23_pure_virtual_added":      "BREAKING",
-    "case24_union_field_removed":     "BREAKING",
-    "case25_enum_member_added":       "COMPATIBLE",
-    "case26_union_field_added":       "BREAKING",    # double d makes sizeof(Value) grow 4→8 bytes: TYPE_SIZE_CHANGED
-    "case27_symbol_binding_weakened": "COMPATIBLE",
-    "case29_ifunc_transition":        "COMPATIBLE",  # IFUNC_INTRODUCED — PLT/GOT transparent; fix merged in Sprint 7
-    # ── cases 28, 30-41 (Sprint 7 — new detectors) ──────────────────────────
-    "case28_typedef_opaque":          "BREAKING",    # TYPEDEF_BASE_CHANGED, TYPE_BECAME_OPAQUE
-    "case30_field_qualifiers":        "BREAKING",    # STRUCT_FIELD_TYPE_CHANGED (const/volatile)
-    "case31_enum_rename":             "BREAKING",    # ENUM_MEMBER_REMOVED/RENAMED
-    "case32_param_defaults":          "NO_CHANGE",   # default value change — source-only, binary NO_CHANGE
-    "case33_pointer_level":           "BREAKING",    # PARAM_POINTER_LEVEL_CHANGED
-    "case34_access_level":            "SOURCE_BREAK",  # access level is source-only; binary layout unchanged → SOURCE_BREAK with headers
-    "case35_field_rename":            "BREAKING",    # STRUCT_FIELD_REMOVED (rename = remove+add)
-    "case36_anon_struct":             "BREAKING",    # ANON_FIELD_CHANGED / TYPE_SIZE_CHANGED
-    "case37_base_class":              "BREAKING",    # BASE_CLASS_POSITION_CHANGED
-    "case38_virtual_methods":         "BREAKING",    # FUNC_VIRTUAL_ADDED / FUNC_VIRTUAL_REMOVED
-    "case39_var_const":               "NO_CHANGE",   # VAR_BECAME_CONST — currently NO_CHANGE in abicheck
-    "case40_field_layout":            "BREAKING",    # TYPE_SIZE_CHANGED (struct reordering)
-    "case41_type_changes":            "BREAKING",    # FUNC_REMOVED, TYPE_REMOVED
+    k: v["expected"] for k, v in _gt_data["verdicts"].items()
 }
-
-# Per-column expected overrides for abicheck compat mode (ELF-only XML descriptors,
-# no header parsing). Compat can't emit SOURCE_BREAK — access-level narrowing is
-# invisible without headers, so correct compat verdict is NO_CHANGE.
+# Per-tool overrides sourced from ground_truth.json:
+#   expected_compat — compat mode can't emit SOURCE_BREAK (case31, case34)
+#   expected_abicc  — ABICC can't emit NO_CHANGE; NO_CHANGE→COMPATIBLE for scoring
 EXPECTED_COMPAT: dict[str, str] = {
-    "case34_access_level": "NO_CHANGE",  # compat = ELF-only; no header → can't see access narrowing
+    k: v["expected_compat"]
+    for k, v in _gt_data["verdicts"].items()
+    if "expected_compat" in v
+}
+EXPECTED_ABICC: dict[str, str] = {
+    k: ("COMPATIBLE" if v["expected"] == "NO_CHANGE" else v["expected"])
+    for k, v in _gt_data["verdicts"].items()
 }
 
 
@@ -447,10 +424,14 @@ def run_abicc_xml(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None
     out = r.stdout + r.stderr
     (rdir / f"{case}_abicc_xml.txt").write_text(out)
 
-    if r.returncode == 1:
+    # Read verdict from output: ABICC may exit non-zero on GCC header warnings
+    # (bug #78040) while still producing a correct compatibility report.
+    m_pct = re.search(r"Binary compatibility: (\d+(?:\.\d+)?)%", out)
+    if m_pct:
+        # 100% = no breaking changes (may still have compatible additions)
+        verdict = "COMPATIBLE" if float(m_pct.group(1)) == 100.0 else "BREAKING"
+    elif r.returncode == 1:
         verdict = "BREAKING"
-    elif "Binary compatibility: 100%" in out:
-        verdict = "NO_CHANGE"
     elif r.returncode == 0:
         verdict = "COMPATIBLE"
     else:
@@ -502,10 +483,11 @@ def run_abicc_dumper(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | N
     out = r.stdout + r.stderr
     (rdir / f"{case}_abicc_dumper.txt").write_text(out)
 
-    if r.returncode == 1:
+    m_pct = re.search(r"Binary compatibility: (\d+(?:\.\d+)?)%", out)
+    if m_pct:
+        verdict = "COMPATIBLE" if float(m_pct.group(1)) == 100.0 else "BREAKING"
+    elif r.returncode == 1:
         verdict = "BREAKING"
-    elif "Binary compatibility: 100%" in out:
-        verdict = "NO_CHANGE"
     elif r.returncode == 0:
         verdict = "COMPATIBLE"
     else:
@@ -552,6 +534,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--skip-compat", action="store_true",
                    help="Skip abicheck compat column")
     return p.parse_args()
+
+
+# ── Helpers (module-level) ──────────────────────────────────────────────────
+def _remap_to_build(h: "Path | None", src: "Path", dst: "Path") -> "Path | None":
+    """Remap a header path from the original case dir to the make_build copy."""
+    if not h:
+        return None
+    try:
+        return dst / h.relative_to(src)
+    except ValueError:
+        return dst / h.name
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -607,7 +600,40 @@ def main() -> None:
         v1_h_gen = bdir / "v1.h"
         v2_h_gen = bdir / "v2.h"
 
-        if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
+        # Use Makefile when present — preserves SONAME / version-script / extra
+        # linker flags (mirrors the pytest integration suite).
+        makefile = case_dir / "Makefile"
+        if makefile.exists():
+            build_copy = bdir / "make_build"
+            if build_copy.exists():
+                shutil.rmtree(str(build_copy))
+            shutil.copytree(str(case_dir), str(build_copy))
+            try:
+                mr = subprocess.run(
+                    ["make", "-C", str(build_copy)],
+                    capture_output=True, text=True, timeout=60,
+                )
+            except subprocess.TimeoutExpired:
+                mr = type("R", (), {"returncode": -1})()
+            # On make failure/timeout or missing artifacts: fall back to compile_so()
+            built_v1 = build_copy / "libv1.so"
+            built_v2 = build_copy / "libv2.so"
+            if mr.returncode == 0 and built_v1.exists() and built_v2.exists():
+                v1_so = built_v1
+                v2_so = built_v2
+            else:
+                if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
+                    print(f"  {name:<35} COMPILE_ERR")
+                    results.append({"case": name, "expected": expected,
+                                     "expected_compat": EXPECTED_COMPAT.get(name, expected),
+                                     "abicheck": "ERROR", "abicheck_compat": "ERROR",
+                                     "abidiff": "ERROR", "abidiff_headers": "ERROR",
+                                     "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
+                    continue
+            if v1_so == built_v1:
+                v1_h_hint = _remap_to_build(v1_h_hint, case_dir, build_copy)
+                v2_h_hint = _remap_to_build(v2_h_hint, case_dir, build_copy)
+        elif not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
             print(f"  {name:<35} COMPILE_ERR")
             results.append({"case": name, "expected": expected,
                              "expected_compat": EXPECTED_COMPAT.get(name, expected),
@@ -658,6 +684,7 @@ def main() -> None:
             "case": name,
             "expected": expected,
             "expected_compat": EXPECTED_COMPAT.get(name, expected),  # compat-specific override
+            "expected_abicc": EXPECTED_ABICC.get(name, expected),  # ABICC can't emit NO_CHANGE
             "abicheck": ac.verdict,
             "abicheck_compat": acc.verdict,
             "abidiff": ab.verdict,
@@ -679,8 +706,8 @@ def main() -> None:
         ("abicheck_compat","abicheck (compat)   ", "expected_compat"),
         ("abidiff",        "abidiff (ELF)       ", "expected"),
         ("abidiff_headers","abidiff (+headers)  ", "expected"),
-        ("abicc_dumper",   "ABICC (dumper)      ", "expected"),
-        ("abicc_xml",      "ABICC (xml)         ", "expected"),
+        ("abicc_dumper",   "ABICC (dumper)      ", "expected_abicc"),
+        ("abicc_xml",      "ABICC (xml)         ", "expected_abicc"),
     ]:
         c, t = accuracy(key, exp_key)
         if t > 0:
