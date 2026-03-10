@@ -75,7 +75,7 @@ EXPECTED: dict[str, str | None] = {
     "case36_anon_struct":               "BREAKING",    # type_size_changed + alignment changed
     "case37_base_class":                "BREAKING",    # base class reorder + virtual inheritance change
     "case38_virtual_methods":           "BREAKING",    # virtual added/removed + visibility change
-    "case39_var_const":                 "NO_CHANGE",   # var const qualifiers not detectable from headers alone
+    "case39_var_const":                 "BREAKING",    # var_type_changed + var_removed now detected via ELF+DWARF
     "case40_field_layout":              "BREAKING",    # field type changed + size changed
     "case41_type_changes":              "BREAKING",    # type removed + alignment changed + enum sentinel
 }
