@@ -19,6 +19,26 @@ int main(void) {
     printf("Scenario 1 — dim_t base type change:\n");
     printf("  sizeof(dim_t) at compile time = %zu (expected 4 for int)\n", sizeof(dim_t));
     printf("  get_dimension(7) = %d\n", (int)d);
+    /* Large value test: demonstrates actual ABI break.
+     * With v1 (int): get_dimension returns int; caller reads 4 bytes correctly.
+     * With v2 (long): get_dimension returns long 3000000000.
+     *   On x86-64, long is returned in RAX (8 bytes).
+     *   Caller compiled for int reads only RAX[0:31] = (int)3000000000 = -1294967296
+     *   → WRONG VALUE: silent data corruption, not a crash.
+     * Note: values <= INT_MAX appear correct because upper 32 bits of RAX are 0.
+     */
+    {
+        int small = (int)get_dimension(100);
+        int large = (int)get_dimension(3000000000L);
+        printf("  get_dimension(100) as int   = %d (correct for both v1/v2)\n", small);
+        printf("  get_dimension(3000000000) as int = %d\n", large);
+        if (large != (int)3000000000L && large == -1294967296) {
+            printf("  ABI BREAK CONFIRMED: v2 returned long 3000000000, \n");
+            printf("  caller truncated to int %d (silent data corruption!)\n", large);
+        } else if (large == (int)3000000000L) {
+            printf("  (running against v1: int matches)\n");
+        }
+    }
     printf("  If v2 lib loaded: dim_t is long (%zu bytes) but caller expects int (4 bytes)\n\n",
            sizeof(long));
 

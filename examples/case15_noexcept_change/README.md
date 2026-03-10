@@ -17,7 +17,16 @@ In the Itanium C++ ABI (GCC/Clang on Linux/macOS), `noexcept` does **not** chang
 the mangled name for function symbols. The **symbol name is identical** in the `.so`,
 so existing binaries resolve the same symbol and calls proceed normally.
 
-abicheck classifies this as **COMPATIBLE** because:
+**abicheck detects this as BREAKING** via an indirect signal:
+
+When `noexcept` is removed and the function body introduces `throw`, the
+compiler links against a newer C++ exception runtime symbol (`GLIBCXX_3.4.21`).
+abicheck detects `symbol_version_required_added: GLIBCXX_3.4.21` = BREAKING.
+
+Note: castxml does not expose `noexcept` in its XML output, so `FUNC_NOEXCEPT_REMOVED`
+is NOT directly detected. The GLIBCXX symbol version bump is the observable signal.
+
+Old note (no longer accurate):
 - No symbol resolution failure occurs at load time or call time.
 - No type layout, vtable, or calling convention change is involved.
 - The change is a **source-level contract concern**, not a binary linkage break.
