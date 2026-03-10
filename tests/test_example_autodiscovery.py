@@ -31,23 +31,22 @@ REPO_DIR     = Path(__file__).parent.parent
 EXAMPLES_DIR = REPO_DIR / "examples"
 
 # ---------------------------------------------------------------------------
-# Expected verdicts — loaded from ground_truth.json (single source of truth).
-# To skip a case, set its value to null in ground_truth.json.
+# Expected verdicts and known gaps — loaded from ground_truth.json.
+# Single source of truth: add cases / known_gap fields there, not here.
+# To skip a case, set its "expected" value to null in ground_truth.json.
 # ---------------------------------------------------------------------------
 _GT_PATH = REPO_DIR / "examples" / "ground_truth.json"
 _gt_data = json.loads(_GT_PATH.read_text())
 EXPECTED: dict[str, str | None] = {
     k: v.get("expected") for k, v in _gt_data["verdicts"].items()
 }
-
-# Known gaps: these cases xfail when the verdict disagrees with expected.
-# Format: case_name → reason string.
+# known_gap: case_name → xfail reason (sourced from ground_truth.json)
 KNOWN_GAPS: dict[str, str] = {
-    "case06_visibility": (
-        "Current checker may report BREAKING via FUNC_VISIBILITY_CHANGED when leaked internal symbols "
-        "disappear from dynsym; semantically this case is a bad-practice cleanup and is treated as COMPATIBLE"
-    ),
+    k: v["known_gap"]
+    for k, v in _gt_data["verdicts"].items()
+    if "known_gap" in v
 }
+
 
 # ---------------------------------------------------------------------------
 # Layout detection helpers
