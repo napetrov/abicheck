@@ -18,8 +18,8 @@
       "expected": "NO_CHANGE"
     },
     "case06_visibility": {
-      "expected": "BREAKING",
-      "known_gap": "Requires -fvisibility=hidden compile flag; without it all symbols stay exported and the removal is invisible to the ELF diff"
+      "expected": "COMPATIBLE",
+      "known_gap": "Current checker may report BREAKING via FUNC_VISIBILITY_CHANGED when leaked internal symbols disappear from dynsym; semantically this case is a bad-practice cleanup and is treated as COMPATIBLE"
     },
     "case07_struct_layout": {
       "expected": "BREAKING"

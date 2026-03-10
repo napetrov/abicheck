@@ -40,7 +40,7 @@ EXPECTED: dict[str, str | None] = {
     "case03_compat_addition":           "COMPATIBLE",
     "case04_no_change":                 "NO_CHANGE",
     "case05_soname":                    "NO_CHANGE",   # SONAME is policy, not tracked
-    "case06_visibility":                "BREAKING",    # bad→good: symbols hidden → removed
+    "case06_visibility":                "COMPATIBLE",  # visibility leak cleanup: bad practice fix, not intended ABI break
     "case07_struct_layout":             "BREAKING",
     "case08_enum_value_change":         "BREAKING",
     "case09_cpp_vtable":                "BREAKING",
@@ -84,8 +84,8 @@ EXPECTED: dict[str, str | None] = {
 # Format: case_name → reason string.
 KNOWN_GAPS: dict[str, str] = {
     "case06_visibility": (
-        "Requires -fvisibility=hidden compile flag; without it all symbols stay "
-        "exported and the removal is invisible to the ELF diff"
+        "Current checker may report BREAKING via FUNC_VISIBILITY_CHANGED when leaked internal symbols "
+        "disappear from dynsym; semantically this case is a bad-practice cleanup and is treated as COMPATIBLE"
     ),
     "case13_symbol_versioning": (
         "Requires linker version-script (-Wl,--version-script=libfoo.map); "
