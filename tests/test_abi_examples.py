@@ -27,7 +27,7 @@ CASES = [
     # ✅ Identical libs → NO_CHANGE
     ("case04_no_change", "NO_CHANGE", "v1.c", "v1.c"),
     # 📋 SONAME is a policy attribute, not tracked by checker → NO_CHANGE
-    ("case05_soname", "NO_CHANGE", "bad.c", "good.c"),
+    ("case05_soname", "COMPATIBLE", "bad.c", "good.c"),
     # ✅ internal_helper/another_impl hidden in good.c → removed from dynsym → BREAKING
     ("case06_visibility", "BREAKING", "bad.c", "good.c"),
     # ✅ Struct size change detected via castxml → TYPE_SIZE_CHANGED → BREAKING
@@ -44,7 +44,7 @@ CASES = [
     # ✅ Function inlined away → disappears from .so → FUNC_REMOVED → BREAKING
     ("case12_function_removed", "BREAKING", "v1.c", "v2.c"),
     # 📋 Symbol versioning adds @@VER tags; checker strips @-suffix → NO_CHANGE
-    ("case13_symbol_versioning", "NO_CHANGE", "bad.c", "good.c"),
+    ("case13_symbol_versioning", "COMPATIBLE", "bad.c", "good.c"),
     # ✅ Class size change (private member added) → TYPE_SIZE_CHANGED → BREAKING
     ("case14_cpp_class_size", "BREAKING", "v1.cpp", "v2.cpp"),
     # ✅ noexcept removed → FUNC_NOEXCEPT_REMOVED → BREAKING (castxml sees noexcept attr)

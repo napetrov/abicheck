@@ -2,67 +2,82 @@
 
 **Category:** Visibility | **Verdict:** 🟡 BAD PRACTICE
 
-## What breaks
-Every symbol compiled without `-fvisibility=hidden` becomes part of the public ABI
-unintentionally. Any refactor of internal helpers becomes a potential ABI break.
-Bloated symbol tables also slow dynamic linking startup.
+## What this case is about
 
-## Why the check catches it
-`nm --dynamic --defined-only` on the "bad" library shows internal symbols like
-`internal_helper` and `another_impl`. The "good" library (compiled with
-`-fvisibility=hidden` + `__attribute__((visibility("default")))` on public API)
-exports only `public_api`.
+This case detects a **single-library quality issue**: a library that was compiled
+without `-fvisibility=hidden` unintentionally exports all internal symbols as part
+of its public ABI surface.
 
-## Build comparison
+**This is NOT a comparison between two libraries.**
+The bad practice lives in `libv1.so` (the "bad" library) *alone*.
+`libv2.so` (the "good" library) is provided only as the correct reference —
+it shows how the library *should* look.
 
-```
-# good: only public_api exported
-gcc -shared -fPIC -fvisibility=hidden good.c -o libgood.so
+## Why exposing internal symbols is bad practice
 
-# bad: everything exported
-gcc -shared -fPIC bad.c -o libbad.so
-```
+- Every internal symbol (`internal_helper`, `another_impl`, etc.) accidentally
+  becomes part of the public ABI contract.
+- Any future refactor of internal helpers — rename, split, remove — risks being
+  detected as an ABI break or actually breaking consumers that mistakenly linked
+  against them.
+- Bloated `.dynsym` tables slow dynamic linker startup (symbol resolution scan).
 
-## Reproduce manually
+## What abicheck detects
+
+Running `abicheck dump libv1.so` (without headers) + comparing to `libv2.so`:
+
+- **`VISIBILITY_LEAK`** (BAD PRACTICE / COMPATIBLE): `libv1.so` exports
+  internal-looking symbols (`internal_helper`, `another_impl`) without
+  `-fvisibility=hidden`. Reported on the **old library**, not the transition.
+- **`FUNC_REMOVED_ELF_ONLY`** (COMPATIBLE): ELF-only symbols disappear in `libv2.so`.
+  Classified as compatible because — without header information — we cannot tell
+  whether a disappearing ELF-only symbol was a real public function or an internal
+  symbol being correctly hidden.
+
+**Overall verdict: COMPATIBLE** (the library still works; the bad practice was in v1).
+
+## What this case does NOT cover
+
+If actual consumers were linked against `libv1.so` and called `internal_helper`
+directly, and `libv2.so` hides it → those consumers will get a runtime
+`symbol lookup error`. **But that is a different case** — it is covered by
+`case01_symbol_removal` (FUNC_REMOVED / BREAKING). The root cause there is the
+visibility leak in v1; case06 detects that root cause.
+
+## How to reproduce
+
 ```bash
-gcc -shared -fPIC -fvisibility=hidden good.c -o libgood.so
-gcc -shared -fPIC bad.c  -o libbad.so
-nm --dynamic --defined-only libgood.so  # only public_api
-nm --dynamic --defined-only libbad.so   # public_api + internal_helper + another_impl
+# Build
+make -C examples/case06_visibility
+
+# Check libv1.so (bad — leaks internal symbols)
+nm --dynamic --defined-only examples/case06_visibility/libv1.so
+# → public_api, internal_helper, another_impl  ← leak!
+
+# Check libv2.so (good — only public API)
+nm --dynamic --defined-only examples/case06_visibility/libv2.so
+# → public_api only  ← correct
+
+# Run abicheck (no headers — ELF-only mode)
+python3 -m abicheck.cli dump examples/case06_visibility/libv1.so -o /tmp/v1.json
+python3 -m abicheck.cli dump examples/case06_visibility/libv2.so -o /tmp/v2.json
+python3 -m abicheck.cli compare /tmp/v1.json /tmp/v2.json
+# → COMPATIBLE + VISIBILITY_LEAK warning on libv1.so
 ```
 
 ## How to fix
-Add `-fvisibility=hidden` to the build flags and annotate every intended public
-function with `__attribute__((visibility("default")))`. Use a `FOO_EXPORT` macro
-to keep it readable.
 
-## Real-world example
-Qt and most large C++ frameworks gate their public API with `Q_DECL_EXPORT` macros
-precisely to avoid this. GCC's `-fvisibility=hidden` is their standard practice
-since Qt 4.
+Add `-fvisibility=hidden` to build flags and annotate every intended public
+function with `__attribute__((visibility("default")))`. Use a `FOO_EXPORT` macro:
 
-## Real Failure Demo
-
-**Severity: BAD PRACTICE**
-
-**Scenario:** compare dlsym access to `internal_helper` on bad.so vs good.so.
-
-```bash
-# Build both variants
-gcc -shared -fPIC -g bad.c  -o libbad.so
-gcc -shared -fPIC -fvisibility=hidden -g good.c -o libgood.so
-
-# Run the app
-gcc -g app.c -ldl -o app
-./app
-# → bad.so:  internal_helper EXPORTED (leak!)
-# → good.so: internal_helper hidden (correct)
+```c
+#define FOO_EXPORT __attribute__((visibility("default")))
+FOO_EXPORT int public_api(void);  // exported
+static int internal_helper(void); // or just leave it static
 ```
 
-**Why BAD PRACTICE:** The library functions correctly, but exposing internal symbols
-accidentally enlarges the public ABI contract. Any future refactor of `internal_helper`
-becomes an ABI break — you can't remove or rename it without breaking binaries that
-inadvertently started calling it directly.
+## Real-world example
 
-## Runtime note
-The app now loads `libv1.so` (bad visibility) and `libv2.so` (hidden visibility) to align with Makefile outputs.
+Qt, GCC libstdc++, LLVM, and most large C++ projects gate their public API with
+visibility macros (`Q_DECL_EXPORT`, `_GLIBCXX_VISIBILITY`) precisely to avoid
+this. `-fvisibility=hidden` is standard practice since GCC 4.

@@ -79,6 +79,7 @@ class _DetectorSpec:
         return self.is_supported(old, new)
 
 def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    elf_only_mode = getattr(old, "elf_only_mode", False)
     changes: list[Change] = []
     old_map = {k: v for k, v in old.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
     new_map = {k: v for k, v in new.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
@@ -104,8 +105,18 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                     new_value=f_hidden.visibility.value,
                 ))
             else:
+                # When the snapshot was produced in ELF-only mode (no headers),
+                # all functions have ELF_ONLY visibility and any removal *may* be
+                # an internal symbol getting properly hidden. Gate on explicit
+                # elf_only_mode provenance to avoid false COMPATIBLE on real
+                # public symbol removals when snapshots are mixed.
+                removed_kind = (
+                    ChangeKind.FUNC_REMOVED_ELF_ONLY
+                    if (elf_only_mode and f_old.visibility == Visibility.ELF_ONLY)
+                    else ChangeKind.FUNC_REMOVED
+                )
                 changes.append(Change(
-                    kind=ChangeKind.FUNC_REMOVED,
+                    kind=removed_kind,
                     symbol=mangled,
                     description=f"{f_old.visibility.value.capitalize()} function removed: {f_old.name}",
                     old_value=f_old.name,
@@ -1018,8 +1029,57 @@ def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes.extend(_diff_elf_dynamic_section(o, n))
     changes.extend(_diff_elf_symbol_versioning(o, n))
     changes.extend(_diff_elf_symbol_metadata(o, n))
+    changes.extend(_diff_visibility_leak(old, new))
     return changes
 
+
+
+
+_INTERNAL_NAME_PATTERNS = (
+    "internal",
+    "helper",
+    "_impl",
+    "detail",
+    "private",
+    "__",
+    "_priv",
+    "_int_",
+    "_do_",
+    "_handle_",
+)
+
+
+def _looks_internal(name: str) -> bool:
+    """Heuristic: True if symbol name looks like internal implementation detail."""
+    lower = name.lower()
+    return any(pat in lower for pat in _INTERNAL_NAME_PATTERNS)
+
+
+def _diff_visibility_leak(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect old-library visibility leaks (ELF-only internal symbols exported)."""
+    del new  # detector is intentionally old-library-only
+    if not getattr(old, "elf_only_mode", False):
+        return []
+
+    leaked = [
+        f for f in old.functions
+        if f.visibility == Visibility.ELF_ONLY and _looks_internal(f.name)
+    ]
+    if not leaked:
+        return []
+
+    names = ", ".join(f.name for f in leaked[:5])
+    suffix = f" (+{len(leaked) - 5} more)" if len(leaked) > 5 else ""
+    return [Change(
+        kind=ChangeKind.VISIBILITY_LEAK,
+        symbol="<visibility>",
+        description=(
+            f"Old library exports {len(leaked)} internal-looking symbol(s) without "
+            f"-fvisibility=hidden (bad practice — accidental ABI surface enlargement): "
+            f"{names}{suffix}"
+        ),
+        old_value=str(len(leaked)),
+    )]
 
 def _diff_elf_dynamic_section(old_elf: Any, new_elf: Any) -> list[Change]:
     changes: list[Change] = []
@@ -1032,6 +1092,17 @@ def _diff_elf_dynamic_section(old_elf: Any, new_elf: Any) -> list[Change]:
             symbol="DT_SONAME",
             description=f"SONAME changed: {old_elf.soname!r} → {new_elf.soname!r}",
             old_value=old_elf.soname,
+            new_value=new_elf.soname,
+        ))
+    elif not old_elf.soname and new_elf.soname:
+        changes.append(Change(
+            kind=ChangeKind.SONAME_MISSING,
+            symbol="DT_SONAME",
+            description=(
+                f"Old library has no SONAME (bad practice — packaging/ldconfig will fail); "
+                f"new library correctly defines SONAME {new_elf.soname!r}"
+            ),
+            old_value="",
             new_value=new_elf.soname,
         ))
     changes.extend(_diff_needed_libraries(old_elf.needed, new_elf.needed))
@@ -1085,6 +1156,13 @@ def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
             symbol=ver,
             description=f"Symbol version removed: {ver}",
             old_value=ver,
+        ))
+    for ver in sorted(new_def - old_def):
+        changes.append(Change(
+            kind=ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
+            symbol=ver,
+            description=f"Symbol version definition added: {ver}",
+            new_value=ver,
         ))
 
     all_req_libs = set(old_elf.versions_required) | set(new_elf.versions_required)
