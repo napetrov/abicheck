@@ -62,7 +62,7 @@ EXPECTED: dict[str, str | None] = {
     "case24_union_field_removed": "BREAKING",
     "case25_enum_member_added": "COMPATIBLE",
     "case26_union_field_added": "BREAKING",    # union grows 4→8 bytes: TYPE_SIZE_CHANGED
-    case26b_union_field_added_compatible: COMPATIBLE,  # added member without sizeof change
+    "case26b_union_field_added_compatible": "COMPATIBLE",  # added member without sizeof change
     "case27_symbol_binding_weakened": "COMPATIBLE",
     "case29_ifunc_transition": "COMPATIBLE",  # FUNC→IFUNC → IFUNC_INTRODUCED (COMPATIBLE)
     # ── cases 28, 30-41 (Sprint 7 — full parity examples) ─────────────────
