@@ -85,8 +85,8 @@ class TestMainCategoryFilter:
         import tests.validate_examples as ve
 
         gt_file = _make_gt(tmp_path, {
-            "case_breaking":   {"expected": "BREAKING",   "category": "breaking"},
-            "case_compatible": {"expected": "COMPATIBLE",  "category": "compatible"},
+            "case_breaking": {"expected": "BREAKING", "category": "breaking"},
+            "case_compatible": {"expected": "COMPATIBLE", "category": "compatible"},
         })
         monkeypatch.setattr(ve, "GROUND_TRUTH", gt_file)
         monkeypatch.setattr(ve, "EXAMPLES_DIR", tmp_path)

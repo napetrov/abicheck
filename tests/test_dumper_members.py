@@ -17,7 +17,7 @@ def _make_parser(
     xml_str: str,
     exported: set[str] | None = None,
 ) -> _CastxmlParser:
-    root = fromstring(xml_str)  # noqa: S314  (trusted test data)
+    root = fromstring(xml_str)  # noqa: S314  # nosec B314 (trusted test data)
     exp = exported or set()
     return _CastxmlParser(root, exp, exp)
 

@@ -35,49 +35,49 @@ EXAMPLES_DIR = REPO_DIR / "examples"
 # ---------------------------------------------------------------------------
 EXPECTED: dict[str, str | None] = {
     # ── cases 01-18 (v1/v2 layout) ──────────────────────────────────────────
-    "case01_symbol_removal":            "BREAKING",
-    "case02_param_type_change":         "BREAKING",
-    "case03_compat_addition":           "COMPATIBLE",
-    "case04_no_change":                 "NO_CHANGE",
-    "case05_soname":                    "COMPATIBLE",  # SONAME_MISSING: bad practice flag, COMPATIBLE verdict
-    "case06_visibility":                "COMPATIBLE",  # visibility leak cleanup: bad practice fix, not intended ABI break
-    "case07_struct_layout":             "BREAKING",
-    "case08_enum_value_change":         "BREAKING",
-    "case09_cpp_vtable":                "BREAKING",
-    "case10_return_type":               "BREAKING",
-    "case11_global_var_type":           "BREAKING",
-    "case12_function_removed":          "BREAKING",
-    "case13_symbol_versioning":         "COMPATIBLE",  # unversioned→versioned: ld.so soft-matches; Makefile applies version script
-    "case14_cpp_class_size":            "BREAKING",
-    "case15_noexcept_change":           "BREAKING",    # SYMBOL_VERSION_REQUIRED_ADDED from stdexcept
-    "case16_inline_to_non_inline":      "COMPATIBLE",
-    "case17_template_abi":              "BREAKING",
-    "case18_dependency_leak":           "BREAKING",
+    "case01_symbol_removal": "BREAKING",
+    "case02_param_type_change": "BREAKING",
+    "case03_compat_addition": "COMPATIBLE",
+    "case04_no_change": "NO_CHANGE",
+    "case05_soname": "COMPATIBLE",  # SONAME_MISSING: bad practice flag, COMPATIBLE verdict
+    "case06_visibility": "COMPATIBLE",  # visibility leak cleanup: bad practice fix, not intended ABI break
+    "case07_struct_layout": "BREAKING",
+    "case08_enum_value_change": "BREAKING",
+    "case09_cpp_vtable": "BREAKING",
+    "case10_return_type": "BREAKING",
+    "case11_global_var_type": "BREAKING",
+    "case12_function_removed": "BREAKING",
+    "case13_symbol_versioning": "COMPATIBLE",  # unversioned→versioned: ld.so soft-matches; Makefile applies version script
+    "case14_cpp_class_size": "BREAKING",
+    "case15_noexcept_change": "BREAKING",    # SYMBOL_VERSION_REQUIRED_ADDED from stdexcept
+    "case16_inline_to_non_inline": "COMPATIBLE",
+    "case17_template_abi": "BREAKING",
+    "case18_dependency_leak": "BREAKING",
     # ── cases 19-29 (old/new layout) ────────────────────────────────────────
-    "case19_enum_member_removed":       "BREAKING",
+    "case19_enum_member_removed": "BREAKING",
     "case20_enum_member_value_changed": "BREAKING",
-    "case21_method_became_static":      "BREAKING",
-    "case22_method_const_changed":      "BREAKING",
-    "case23_pure_virtual_added":        "BREAKING",    # pure_virtual=1 changes vtable slot → __cxa_pure_virtual
-    "case24_union_field_removed":       "BREAKING",
-    "case25_enum_member_added":         "COMPATIBLE",
-    "case26_union_field_added":         "BREAKING",    # union grows 4→8 bytes: TYPE_SIZE_CHANGED
-    "case27_symbol_binding_weakened":   "COMPATIBLE",
-    "case29_ifunc_transition":          "COMPATIBLE",  # FUNC→IFUNC → IFUNC_INTRODUCED (COMPATIBLE)
+    "case21_method_became_static": "BREAKING",
+    "case22_method_const_changed": "BREAKING",
+    "case23_pure_virtual_added": "BREAKING",    # pure_virtual=1 changes vtable slot → __cxa_pure_virtual
+    "case24_union_field_removed": "BREAKING",
+    "case25_enum_member_added": "COMPATIBLE",
+    "case26_union_field_added": "BREAKING",    # union grows 4→8 bytes: TYPE_SIZE_CHANGED
+    "case27_symbol_binding_weakened": "COMPATIBLE",
+    "case29_ifunc_transition": "COMPATIBLE",  # FUNC→IFUNC → IFUNC_INTRODUCED (COMPATIBLE)
     # ── cases 28, 30-41 (Sprint 7 — full parity examples) ─────────────────
-    "case28_typedef_opaque":            "BREAKING",    # typedef removed + type became opaque
-    "case30_field_qualifiers":          "BREAKING",    # const/volatile qualifier change on struct fields → TYPE_FIELD_TYPE_CHANGED
-    "case31_enum_rename":               "SOURCE_BREAK", # rename with same values: source-level only
-    "case32_param_defaults":            "NO_CHANGE",   # default values not in binary ABI
-    "case33_pointer_level":             "BREAKING",    # param/return pointer level changes
-    "case34_access_level":              "SOURCE_BREAK", # narrowing access (public→private) is a source break
-    "case35_field_rename":              "BREAKING",    # field rename: castxml sees old field removed + new field added → BREAKING
-    "case36_anon_struct":               "BREAKING",    # type_size_changed + alignment changed
-    "case37_base_class":                "BREAKING",    # base class reorder + virtual inheritance change
-    "case38_virtual_methods":           "BREAKING",    # virtual added/removed + visibility change
-    "case39_var_const":                 "BREAKING",    # var_type_changed + var_removed now detected via ELF+DWARF
-    "case40_field_layout":              "BREAKING",    # field type changed + size changed
-    "case41_type_changes":              "BREAKING",    # type removed + alignment changed + enum sentinel
+    "case28_typedef_opaque": "BREAKING",    # typedef removed + type became opaque
+    "case30_field_qualifiers": "BREAKING",    # const/volatile qualifier change on struct fields → TYPE_FIELD_TYPE_CHANGED
+    "case31_enum_rename": "SOURCE_BREAK", # rename with same values: source-level only
+    "case32_param_defaults": "NO_CHANGE",   # default values not in binary ABI
+    "case33_pointer_level": "BREAKING",    # param/return pointer level changes
+    "case34_access_level": "SOURCE_BREAK", # narrowing access (public→private) is a source break
+    "case35_field_rename": "BREAKING",    # field rename: castxml sees old field removed + new field added → BREAKING
+    "case36_anon_struct": "BREAKING",    # type_size_changed + alignment changed
+    "case37_base_class": "BREAKING",    # base class reorder + virtual inheritance change
+    "case38_virtual_methods": "BREAKING",    # virtual added/removed + visibility change
+    "case39_var_const": "BREAKING",    # var_type_changed + var_removed now detected via ELF+DWARF
+    "case40_field_layout": "BREAKING",    # field type changed + size changed
+    "case41_type_changes": "BREAKING",    # type removed + alignment changed + enum sentinel
 }
 
 # Known gaps: these cases xfail when the verdict disagrees with expected.
