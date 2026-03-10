@@ -92,9 +92,7 @@
       "category": "breaking"
     },
     "case23_pure_virtual_added": {
-      "expected": null,
-      "skip": true,
-      "reason": "intentional compile error",
+      "expected": "BREAKING",
       "category": "breaking"
     },
     "case24_union_field_removed": {
@@ -122,8 +120,7 @@
       "category": "compatible"
     },
     "case30_field_qualifiers": {
-      "expected": "SOURCE_BREAK",
-      "known_gap": "const qualifier change is not detectable at binary level (layout unchanged); abicheck returns NO_CHANGE",
+      "expected": "BREAKING",
       "category": "source_break"
     },
     "case31_enum_rename": {
@@ -143,8 +140,7 @@
       "category": "source_break"
     },
     "case35_field_rename": {
-      "expected": "SOURCE_BREAK",
-      "known_gap": "field rename not detectable from binary/DWARF alone (offset/type unchanged); abicheck returns NO_CHANGE",
+      "expected": "BREAKING",
       "category": "source_break"
     },
     "case36_anon_struct": {

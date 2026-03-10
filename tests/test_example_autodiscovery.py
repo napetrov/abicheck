@@ -58,7 +58,7 @@ EXPECTED: dict[str, str | None] = {
     "case20_enum_member_value_changed": "BREAKING",
     "case21_method_became_static":      "BREAKING",
     "case22_method_const_changed":      "BREAKING",
-    "case23_pure_virtual_added":        None,          # intentional compile error — skip
+    "case23_pure_virtual_added":        "BREAKING",    # pure_virtual=1 changes vtable slot → __cxa_pure_virtual
     "case24_union_field_removed":       "BREAKING",
     "case25_enum_member_added":         "COMPATIBLE",
     "case26_union_field_added":         "BREAKING",    # union grows 4→8 bytes: TYPE_SIZE_CHANGED
@@ -66,12 +66,12 @@ EXPECTED: dict[str, str | None] = {
     "case29_ifunc_transition":          "COMPATIBLE",  # FUNC→IFUNC → IFUNC_INTRODUCED (COMPATIBLE)
     # ── cases 28, 30-41 (Sprint 7 — full parity examples) ─────────────────
     "case28_typedef_opaque":            "BREAKING",    # typedef removed + type became opaque
-    "case30_field_qualifiers":          "SOURCE_BREAK",# qualifier change invisible at binary level; source-level break
+    "case30_field_qualifiers":          "BREAKING",    # const/volatile qualifier change on struct fields → TYPE_FIELD_TYPE_CHANGED
     "case31_enum_rename":               "SOURCE_BREAK", # rename with same values: source-level only
     "case32_param_defaults":            "NO_CHANGE",   # default values not in binary ABI
     "case33_pointer_level":             "BREAKING",    # param/return pointer level changes
     "case34_access_level":              "SOURCE_BREAK", # narrowing access (public→private) is a source break
-    "case35_field_rename":              "SOURCE_BREAK",# field rename: binary-compatible, source-level break
+    "case35_field_rename":              "BREAKING",    # field rename: castxml sees old field removed + new field added → BREAKING
     "case36_anon_struct":               "BREAKING",    # type_size_changed + alignment changed
     "case37_base_class":                "BREAKING",    # base class reorder + virtual inheritance change
     "case38_virtual_methods":           "BREAKING",    # virtual added/removed + visibility change
@@ -83,13 +83,7 @@ EXPECTED: dict[str, str | None] = {
 # Known gaps: these cases xfail when the verdict disagrees with expected.
 # Format: case_name → reason string.
 KNOWN_GAPS: dict[str, str] = {
-    "case30_field_qualifiers": (
-        "const qualifier change is not detectable at binary level; abicheck returns NO_CHANGE"
-    ),
-    "case35_field_rename": (
-        "field rename not detectable from binary/DWARF alone (offset/type unchanged); abicheck returns NO_CHANGE"
-    ),
-        "case06_visibility": (
+    "case06_visibility": (
         "Current checker may report BREAKING via FUNC_VISIBILITY_CHANGED when leaked internal symbols "
         "disappear from dynsym; semantically this case is a bad-practice cleanup and is treated as COMPATIBLE"
     ),
