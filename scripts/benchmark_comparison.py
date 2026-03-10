@@ -77,57 +77,19 @@ _HAS_ABICHECK: bool = _abicheck_available()
 
 DEFAULT_ABICC_TIMEOUT = 120  # seconds
 
-# Expected verdicts from case READMEs
+# Expected verdicts loaded from ground_truth.json — single source of truth.
+# To add/change a verdict, edit examples/ground_truth.json only.
+_GT_PATH = Path(__file__).parent.parent / "examples" / "ground_truth.json"
+_gt_data = json.loads(_GT_PATH.read_text())
 EXPECTED: dict[str, str] = {
-    "case01_symbol_removal":          "BREAKING",
-    "case02_param_type_change":       "BREAKING",
-    "case03_compat_addition":         "COMPATIBLE",
-    "case04_no_change":               "NO_CHANGE",
-    "case05_soname":                  "COMPATIBLE",  # SONAME added — bad-practice fix, not an ABI break
-    "case06_visibility":              "BREAKING",    # KNOWN GAP: needs -fvisibility=hidden at compile time; benchmark builds with -fvisibility=default
-    "case07_struct_layout":           "BREAKING",
-    "case08_enum_value_change":       "BREAKING",
-    "case09_cpp_vtable":              "BREAKING",
-    "case10_return_type":             "BREAKING",
-    "case11_global_var_type":         "BREAKING",
-    "case12_function_removed":        "BREAKING",
-    "case13_symbol_versioning":       "COMPATIBLE",  # unversioned→versioned export — binary compatible
-    "case14_cpp_class_size":          "BREAKING",
-    "case15_noexcept_change":         "BREAKING",   # v2.cpp adds throw → pulls GLIBCXX_3.4.21 → SYMBOL_VERSION_REQUIRED_ADDED
-    "case16_inline_to_non_inline":    "COMPATIBLE",
-    "case17_template_abi":            "BREAKING",
-    "case18_dependency_leak":         "BREAKING",
-    "case19_enum_member_removed":     "BREAKING",
-    "case20_enum_member_value_changed": "BREAKING",
-    "case21_method_became_static":    "BREAKING",
-    "case22_method_const_changed":    "BREAKING",
-    "case23_pure_virtual_added":      "BREAKING",
-    "case24_union_field_removed":     "BREAKING",
-    "case25_enum_member_added":       "COMPATIBLE",
-    "case26_union_field_added":       "BREAKING",    # double d makes sizeof(Value) grow 4→8 bytes: TYPE_SIZE_CHANGED
-    "case27_symbol_binding_weakened": "COMPATIBLE",
-    "case29_ifunc_transition":        "COMPATIBLE",  # IFUNC_INTRODUCED — PLT/GOT transparent; fix merged in Sprint 7
-    # ── cases 28, 30-41 (Sprint 7 — new detectors) ──────────────────────────
-    "case28_typedef_opaque":          "BREAKING",    # TYPEDEF_BASE_CHANGED, TYPE_BECAME_OPAQUE
-    "case30_field_qualifiers":        "BREAKING",    # STRUCT_FIELD_TYPE_CHANGED (const/volatile)
-    "case31_enum_rename":             "BREAKING",    # ENUM_MEMBER_REMOVED/RENAMED
-    "case32_param_defaults":          "NO_CHANGE",   # default value change — source-only, binary NO_CHANGE
-    "case33_pointer_level":           "BREAKING",    # PARAM_POINTER_LEVEL_CHANGED
-    "case34_access_level":            "SOURCE_BREAK",  # access level is source-only; binary layout unchanged → SOURCE_BREAK with headers
-    "case35_field_rename":            "BREAKING",    # STRUCT_FIELD_REMOVED (rename = remove+add)
-    "case36_anon_struct":             "BREAKING",    # ANON_FIELD_CHANGED / TYPE_SIZE_CHANGED
-    "case37_base_class":              "BREAKING",    # BASE_CLASS_POSITION_CHANGED
-    "case38_virtual_methods":         "BREAKING",    # FUNC_VIRTUAL_ADDED / FUNC_VIRTUAL_REMOVED
-    "case39_var_const":               "NO_CHANGE",   # VAR_BECAME_CONST — currently NO_CHANGE in abicheck
-    "case40_field_layout":            "BREAKING",    # TYPE_SIZE_CHANGED (struct reordering)
-    "case41_type_changes":            "BREAKING",    # FUNC_REMOVED, TYPE_REMOVED
+    k: v["expected"] for k, v in _gt_data["verdicts"].items()
 }
-
-# Per-column expected overrides for abicheck compat mode (ELF-only XML descriptors,
-# no header parsing). Compat can't emit SOURCE_BREAK — access-level narrowing is
-# invisible without headers, so correct compat verdict is NO_CHANGE.
+# Per-tool overrides (e.g. compat mode can't emit SOURCE_BREAK).
+# Stored as "expected_compat" field in ground_truth.json verdicts.
 EXPECTED_COMPAT: dict[str, str] = {
-    "case34_access_level": "NO_CHANGE",  # compat = ELF-only; no header → can't see access narrowing
+    k: v["expected_compat"]
+    for k, v in _gt_data["verdicts"].items()
+    if "expected_compat" in v
 }
 
 
