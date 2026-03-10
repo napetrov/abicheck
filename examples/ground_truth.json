@@ -1,0 +1,133 @@
+{
+  "version": "1",
+  "description": "Ground-truth expected verdicts for all abicheck example cases. Single source of truth \u2014 kept in sync with tests/test_example_autodiscovery.py::EXPECTED.",
+  "verdicts": {
+    "case01_symbol_removal": {
+      "expected": "BREAKING"
+    },
+    "case02_param_type_change": {
+      "expected": "BREAKING"
+    },
+    "case03_compat_addition": {
+      "expected": "COMPATIBLE"
+    },
+    "case04_no_change": {
+      "expected": "NO_CHANGE"
+    },
+    "case05_soname": {
+      "expected": "NO_CHANGE"
+    },
+    "case06_visibility": {
+      "expected": "BREAKING",
+      "known_gap": "Requires -fvisibility=hidden compile flag; without it all symbols stay exported and the removal is invisible to the ELF diff"
+    },
+    "case07_struct_layout": {
+      "expected": "BREAKING"
+    },
+    "case08_enum_value_change": {
+      "expected": "BREAKING"
+    },
+    "case09_cpp_vtable": {
+      "expected": "BREAKING"
+    },
+    "case10_return_type": {
+      "expected": "BREAKING"
+    },
+    "case11_global_var_type": {
+      "expected": "BREAKING"
+    },
+    "case12_function_removed": {
+      "expected": "BREAKING"
+    },
+    "case13_symbol_versioning": {
+      "expected": "NO_CHANGE",
+      "known_gap": "Requires linker version-script (-Wl,--version-script=libfoo.map); plain gcc compile produces no @@VER tags in .dynsym"
+    },
+    "case14_cpp_class_size": {
+      "expected": "BREAKING"
+    },
+    "case15_noexcept_change": {
+      "expected": "BREAKING"
+    },
+    "case16_inline_to_non_inline": {
+      "expected": "COMPATIBLE"
+    },
+    "case17_template_abi": {
+      "expected": "BREAKING"
+    },
+    "case18_dependency_leak": {
+      "expected": "BREAKING"
+    },
+    "case19_enum_member_removed": {
+      "expected": "BREAKING"
+    },
+    "case20_enum_member_value_changed": {
+      "expected": "BREAKING"
+    },
+    "case21_method_became_static": {
+      "expected": "BREAKING"
+    },
+    "case22_method_const_changed": {
+      "expected": "BREAKING"
+    },
+    "case23_pure_virtual_added": {
+      "expected": null,
+      "skip": true,
+      "reason": "intentional compile error"
+    },
+    "case24_union_field_removed": {
+      "expected": "BREAKING"
+    },
+    "case25_enum_member_added": {
+      "expected": "COMPATIBLE"
+    },
+    "case26_union_field_added": {
+      "expected": "BREAKING"
+    },
+    "case27_symbol_binding_weakened": {
+      "expected": "COMPATIBLE"
+    },
+    "case28_typedef_opaque": {
+      "expected": "BREAKING"
+    },
+    "case29_ifunc_transition": {
+      "expected": "COMPATIBLE"
+    },
+    "case30_field_qualifiers": {
+      "expected": "BREAKING"
+    },
+    "case31_enum_rename": {
+      "expected": "SOURCE_BREAK"
+    },
+    "case32_param_defaults": {
+      "expected": "NO_CHANGE"
+    },
+    "case33_pointer_level": {
+      "expected": "BREAKING"
+    },
+    "case34_access_level": {
+      "expected": "SOURCE_BREAK"
+    },
+    "case35_field_rename": {
+      "expected": "BREAKING"
+    },
+    "case36_anon_struct": {
+      "expected": "BREAKING"
+    },
+    "case37_base_class": {
+      "expected": "BREAKING"
+    },
+    "case38_virtual_methods": {
+      "expected": "BREAKING"
+    },
+    "case39_var_const": {
+      "expected": "BREAKING"
+    },
+    "case40_field_layout": {
+      "expected": "BREAKING"
+    },
+    "case41_type_changes": {
+      "expected": "BREAKING"
+    }
+  }
+}
