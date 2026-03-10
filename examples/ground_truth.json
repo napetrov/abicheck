@@ -125,7 +125,8 @@
     },
     "case31_enum_rename": {
       "expected": "SOURCE_BREAK",
-      "category": "source_break"
+      "category": "source_break",
+      "expected_compat": "NO_CHANGE"
     },
     "case32_param_defaults": {
       "expected": "NO_CHANGE",

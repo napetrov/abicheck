@@ -80,16 +80,25 @@ DEFAULT_ABICC_TIMEOUT = 120  # seconds
 # Expected verdicts loaded from ground_truth.json — single source of truth.
 # To add/change a verdict, edit examples/ground_truth.json only.
 _GT_PATH = Path(__file__).parent.parent / "examples" / "ground_truth.json"
-_gt_data = json.loads(_GT_PATH.read_text())
+try:
+    _gt_data = json.loads(_GT_PATH.read_text())
+except (FileNotFoundError, json.JSONDecodeError) as _e:
+    raise SystemExit(f"ERROR: cannot load {_GT_PATH}: {_e}") from _e
+
 EXPECTED: dict[str, str] = {
     k: v["expected"] for k, v in _gt_data["verdicts"].items()
 }
-# Per-tool overrides (e.g. compat mode can't emit SOURCE_BREAK).
-# Stored as "expected_compat" field in ground_truth.json verdicts.
+# Per-tool overrides sourced from ground_truth.json:
+#   expected_compat — compat mode can't emit SOURCE_BREAK (case31, case34)
+#   expected_abicc  — ABICC can't emit NO_CHANGE; NO_CHANGE→COMPATIBLE for scoring
 EXPECTED_COMPAT: dict[str, str] = {
     k: v["expected_compat"]
     for k, v in _gt_data["verdicts"].items()
     if "expected_compat" in v
+}
+EXPECTED_ABICC: dict[str, str] = {
+    k: ("COMPATIBLE" if v["expected"] == "NO_CHANGE" else v["expected"])
+    for k, v in _gt_data["verdicts"].items()
 }
 
 
@@ -522,6 +531,17 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+# ── Helpers (module-level) ──────────────────────────────────────────────────
+def _remap_to_build(h: "Path | None", src: "Path", dst: "Path") -> "Path | None":
+    """Remap a header path from the original case dir to the make_build copy."""
+    if not h:
+        return None
+    try:
+        return dst / h.relative_to(src)
+    except ValueError:
+        return dst / h.name
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
     args = parse_args()
@@ -579,11 +599,10 @@ def main() -> None:
         # linker flags (mirrors the pytest integration suite).
         makefile = case_dir / "Makefile"
         if makefile.exists():
-            import shutil as _shutil
             build_copy = bdir / "make_build"
             if build_copy.exists():
-                _shutil.rmtree(str(build_copy))
-            _shutil.copytree(str(case_dir), str(build_copy))
+                shutil.rmtree(str(build_copy))
+            shutil.copytree(str(case_dir), str(build_copy))
             try:
                 mr = subprocess.run(
                     ["make", "-C", str(build_copy)],
@@ -607,15 +626,8 @@ def main() -> None:
                                      "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
                     continue
             if v1_so == built_v1:
-                def _remap(h, src, dst):
-                    if not h:
-                        return None
-                    try:
-                        return dst / h.relative_to(src)
-                    except ValueError:
-                        return dst / h.name
-                v1_h_hint = _remap(v1_h_hint, case_dir, build_copy)
-                v2_h_hint = _remap(v2_h_hint, case_dir, build_copy)
+                v1_h_hint = _remap_to_build(v1_h_hint, case_dir, build_copy)
+                v2_h_hint = _remap_to_build(v2_h_hint, case_dir, build_copy)
         elif not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
             print(f"  {name:<35} COMPILE_ERR")
             results.append({"case": name, "expected": expected,
@@ -667,6 +679,7 @@ def main() -> None:
             "case": name,
             "expected": expected,
             "expected_compat": EXPECTED_COMPAT.get(name, expected),  # compat-specific override
+            "expected_abicc": EXPECTED_ABICC.get(name, expected),  # ABICC can't emit NO_CHANGE
             "abicheck": ac.verdict,
             "abicheck_compat": acc.verdict,
             "abidiff": ab.verdict,
@@ -688,8 +701,8 @@ def main() -> None:
         ("abicheck_compat","abicheck (compat)   ", "expected_compat"),
         ("abidiff",        "abidiff (ELF)       ", "expected"),
         ("abidiff_headers","abidiff (+headers)  ", "expected"),
-        ("abicc_dumper",   "ABICC (dumper)      ", "expected"),
-        ("abicc_xml",      "ABICC (xml)         ", "expected"),
+        ("abicc_dumper",   "ABICC (dumper)      ", "expected_abicc"),
+        ("abicc_xml",      "ABICC (xml)         ", "expected_abicc"),
     ]:
         c, t = accuracy(key, exp_key)
         if t > 0:
