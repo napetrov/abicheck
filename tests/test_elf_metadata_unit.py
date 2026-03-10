@@ -364,7 +364,9 @@ class TestParseFull:
         verdef_aux = MagicMock()
         verdef_aux.name = "VER_DEF_1"
         verdef = MagicMock(spec=GNUVerDefSection)
-        verdef_vd = MagicMock(); verdef_vd.entry.vd_flags = 0; verdef.iter_versions.return_value = [(verdef_vd, [verdef_aux])]
+        verdef_vd = MagicMock()
+        verdef_vd.entry.vd_flags = 0  # not VER_FLG_BASE — real version node
+        verdef.iter_versions.return_value = [(verdef_vd, [verdef_aux])]
 
         verneed_entry = MagicMock()
         verneed_entry.name = "libc.so.6"
