@@ -3,10 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from abicheck.checker_policy import (
+    API_BREAK_KINDS,
     BREAKING_KINDS,
     COMPATIBLE_KINDS,
     POLICY_REGISTRY,
-    API_BREAK_KINDS,
     ChangeKind,
 )
 

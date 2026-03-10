@@ -18,9 +18,9 @@ All tests build AbiSnapshot objects directly (no castxml required).
 from __future__ import annotations
 
 from abicheck.checker import (
+    _API_BREAK_KINDS,
     _BREAKING_KINDS,
     _COMPATIBLE_KINDS,
-    _API_BREAK_KINDS,
     ChangeKind,
     Verdict,
     compare,

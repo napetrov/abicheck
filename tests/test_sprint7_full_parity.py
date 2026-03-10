@@ -643,9 +643,9 @@ class TestClassification:
     def test_every_changekind_classified(self) -> None:
         """Every ChangeKind must be in exactly one classification set."""
         from abicheck.checker import (
+            _API_BREAK_KINDS,
             _BREAKING_KINDS,
             _COMPATIBLE_KINDS,
-            _API_BREAK_KINDS,
         )
         all_classified = _BREAKING_KINDS | _COMPATIBLE_KINDS | _API_BREAK_KINDS
         for kind in ChangeKind:
