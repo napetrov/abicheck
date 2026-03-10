@@ -584,11 +584,14 @@ def main() -> None:
             if build_copy.exists():
                 _shutil.rmtree(str(build_copy))
             _shutil.copytree(str(case_dir), str(build_copy))
-            mr = subprocess.run(
-                ["make", "-C", str(build_copy)],
-                capture_output=True, text=True, timeout=60,
-            )
-            # On make failure or missing artifacts: fall back to compile_so()
+            try:
+                mr = subprocess.run(
+                    ["make", "-C", str(build_copy)],
+                    capture_output=True, text=True, timeout=60,
+                )
+            except subprocess.TimeoutExpired:
+                mr = type("R", (), {"returncode": -1})()
+            # On make failure/timeout or missing artifacts: fall back to compile_so()
             built_v1 = build_copy / "libv1.so"
             built_v2 = build_copy / "libv2.so"
             if mr.returncode == 0 and built_v1.exists() and built_v2.exists():
