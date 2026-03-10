@@ -114,9 +114,9 @@ class ChangeKind(str, Enum):
 
     # ── Sprint 7 — Full ABICC parity + beyond ────────────────────────────
     # Source-level breaks (not binary ABI, but API contract)
-    ENUM_MEMBER_RENAMED = "enum_member_renamed"              # same value, different name → SOURCE_BREAK
+    ENUM_MEMBER_RENAMED = "enum_member_renamed"              # same value, different name → API_BREAK
     PARAM_DEFAULT_VALUE_CHANGED = "param_default_value_changed"  # default arg changed
-    PARAM_DEFAULT_VALUE_REMOVED = "param_default_value_removed"  # default arg removed → SOURCE_BREAK
+    PARAM_DEFAULT_VALUE_REMOVED = "param_default_value_removed"  # default arg removed → API_BREAK
     FIELD_RENAMED = "field_renamed"                          # same offset+type, different name
     PARAM_RENAMED = "param_renamed"                          # parameter name changed
 
@@ -177,7 +177,7 @@ class HasKind(Protocol):
 class Verdict(str, Enum):
     NO_CHANGE = "NO_CHANGE"         # identical ABI
     COMPATIBLE = "COMPATIBLE"       # only additions
-    SOURCE_BREAK = "SOURCE_BREAK"   # source-level break, binary compatible
+    API_BREAK = "API_BREAK"   # source-level break, binary compatible
     BREAKING = "BREAKING"           # binary ABI break
 
 
@@ -320,7 +320,7 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
     ChangeKind.VAR_ACCESS_WIDENED,           # private/protected→public: widening is compatible
 }
 
-SOURCE_BREAK_KINDS: set[ChangeKind] = {
+API_BREAK_KINDS: set[ChangeKind] = {
     # Source-level breaks: code won't compile but existing binaries are fine
     ChangeKind.ENUM_MEMBER_RENAMED,
     ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,
@@ -349,7 +349,7 @@ class PolicyEntry:
 POLICY_REGISTRY: dict[ChangeKind, PolicyEntry] = {
     k: PolicyEntry(Verdict.BREAKING, "error", k.value) for k in BREAKING_KINDS
 } | {
-    k: PolicyEntry(Verdict.SOURCE_BREAK, "warning", k.value) for k in SOURCE_BREAK_KINDS
+    k: PolicyEntry(Verdict.API_BREAK, "warning", k.value) for k in API_BREAK_KINDS
 } | {
     k: PolicyEntry(Verdict.COMPATIBLE, "warning", k.value) for k in COMPATIBLE_KINDS
 }
@@ -383,8 +383,8 @@ def compute_verdict(changes: Sequence[HasKind]) -> Verdict:
     kinds = {c.kind for c in changes}
     if kinds & BREAKING_KINDS:
         return Verdict.BREAKING
-    if kinds & SOURCE_BREAK_KINDS:
-        return Verdict.SOURCE_BREAK
+    if kinds & API_BREAK_KINDS:
+        return Verdict.API_BREAK
     # Only COMPATIBLE_KINDS changes (ELF warnings, deployment risks)
     if kinds - COMPATIBLE_KINDS == set():
         return Verdict.COMPATIBLE

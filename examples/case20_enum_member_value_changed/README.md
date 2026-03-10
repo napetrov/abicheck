@@ -1,7 +1,7 @@
 # Case 20 — Enum Member Value Changed
 
 
-**Verdict:** 🟡 SOURCE_BREAK
+**Verdict:** 🟡 API_BREAK
 **abicheck verdict: BREAKING**
 
 ## What changes

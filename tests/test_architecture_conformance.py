@@ -6,17 +6,17 @@ from abicheck.checker_policy import (
     BREAKING_KINDS,
     COMPATIBLE_KINDS,
     POLICY_REGISTRY,
-    SOURCE_BREAK_KINDS,
+    API_BREAK_KINDS,
     ChangeKind,
 )
 
 
 def test_policy_sets_are_disjoint_and_complete() -> None:
     assert not (BREAKING_KINDS & COMPATIBLE_KINDS)
-    assert not (BREAKING_KINDS & SOURCE_BREAK_KINDS)
-    assert not (COMPATIBLE_KINDS & SOURCE_BREAK_KINDS)
+    assert not (BREAKING_KINDS & API_BREAK_KINDS)
+    assert not (COMPATIBLE_KINDS & API_BREAK_KINDS)
 
-    classified = BREAKING_KINDS | COMPATIBLE_KINDS | SOURCE_BREAK_KINDS
+    classified = BREAKING_KINDS | COMPATIBLE_KINDS | API_BREAK_KINDS
     assert classified == set(ChangeKind)
 
 

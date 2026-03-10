@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from .checker_policy import BREAKING_KINDS as _BREAKING_KINDS
 from .checker_policy import COMPATIBLE_KINDS as _COMPATIBLE_KINDS
-from .checker_policy import SOURCE_BREAK_KINDS as _SOURCE_BREAK_KINDS
+from .checker_policy import API_BREAK_KINDS as _API_BREAK_KINDS
 from .checker_policy import ChangeKind as ChangeKind
 from .checker_policy import Verdict as Verdict
 from .checker_policy import compute_verdict as compute_verdict
@@ -26,7 +26,7 @@ __all__ = [
     "Verdict",
     "_BREAKING_KINDS",
     "_COMPATIBLE_KINDS",
-    "_SOURCE_BREAK_KINDS",
+    "_API_BREAK_KINDS",
     "Change",
     "DiffResult",
     "compare",
@@ -60,7 +60,7 @@ class DiffResult:
 
     @property
     def source_breaks(self) -> list[Change]:
-        return [c for c in self.changes if c.kind in _SOURCE_BREAK_KINDS]
+        return [c for c in self.changes if c.kind in _API_BREAK_KINDS]
 
     @property
     def compatible(self) -> list[Change]:

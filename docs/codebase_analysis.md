@@ -99,27 +99,27 @@ def _compute_verdict(changes: list[Change]) -> Verdict:
     kinds = {c.kind for c in changes}
     if kinds & _BREAKING_KINDS:
         return Verdict.BREAKING
-    if kinds & _SOURCE_BREAK_KINDS:
-        return Verdict.SOURCE_BREAK
+    if kinds & _API_BREAK_KINDS:
+        return Verdict.API_BREAK
     if kinds - _COMPATIBLE_KINDS == set():
         return Verdict.COMPATIBLE
     return Verdict.COMPATIBLE  # <-- duplicate of the line above
 ```
 
-The last two lines are identical -- if the set difference check fails (i.e., there are unknown kinds), the function still returns `COMPATIBLE`. This means any new `ChangeKind` added without being classified into `_BREAKING_KINDS`, `_SOURCE_BREAK_KINDS`, or `_COMPATIBLE_KINDS` would silently be treated as COMPATIBLE. This is a potential logic bug.
+The last two lines are identical -- if the set difference check fails (i.e., there are unknown kinds), the function still returns `COMPATIBLE`. This means any new `ChangeKind` added without being classified into `_BREAKING_KINDS`, `_API_BREAK_KINDS`, or `_COMPATIBLE_KINDS` would silently be treated as COMPATIBLE. This is a potential logic bug.
 
 **Recommendation:** The fallback should either raise a warning or default to `BREAKING` for unclassified kinds (fail-safe).
 
-### 3.4 `_SOURCE_BREAK_KINDS` Is Empty and Unused
+### 3.4 `_API_BREAK_KINDS` Is Empty and Unused
 
 **File:** `checker.py:196`
 ```python
-_SOURCE_BREAK_KINDS: set[ChangeKind] = set()  # reserved for future source-only breaks
+_API_BREAK_KINDS: set[ChangeKind] = set()  # reserved for future source-only breaks
 ```
 
 `FUNC_NOEXCEPT_ADDED` is classified as BREAKING (in `_BREAKING_KINDS`, line 134), but the comment on `ChangeKind.FUNC_NOEXCEPT_ADDED` says:
 ```python
-FUNC_NOEXCEPT_ADDED = "func_noexcept_added"  # noexcept added -> SOURCE_BREAK
+FUNC_NOEXCEPT_ADDED = "func_noexcept_added"  # noexcept added -> API_BREAK
 ```
 
 This is contradictory. Adding `noexcept` is ABI-safe in the Itanium ABI (no mangling change pre-C++17), but is a source-level break. However, in C++17 noexcept IS part of the function type (P0012R1), making it a genuine ABI break. The code treats it as BREAKING, which is correct for C++17+, but the enum comment is misleading.
@@ -238,7 +238,7 @@ Quick Start section shows `abi-check dump` and `abi-check compare` which would f
 ```
 
 **Actual exit codes in `cli.py`:**
-- `compare` command: 0=compatible/no_change, 4=BREAKING, 2=SOURCE_BREAK
+- `compare` command: 0=compatible/no_change, 4=BREAKING, 2=API_BREAK
 - `compat` command: 0=compatible/no_change, 1=breaking, 2=error
 
 Two different exit code schemes exist, and neither matches the documented one.

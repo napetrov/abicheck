@@ -1,8 +1,8 @@
 # Case 34 — Access Level Changed
 
 
-**Verdict:** 🟡 SOURCE_BREAK
-**abicheck verdict: SOURCE_BREAK** (with headers) / **NO_CHANGE** (ELF-only)
+**Verdict:** 🟡 API_BREAK
+**abicheck verdict: API_BREAK** (with headers) / **NO_CHANGE** (ELF-only)
 
 ## What changes
 
@@ -54,22 +54,22 @@ outside the class — the compiler will reject the access. This breaks source co
 but not binary compatibility.
 
 abicheck reports:
-- `METHOD_ACCESS_CHANGED: helper (public → private)` — **SOURCE_BREAK**
-- `FIELD_ACCESS_CHANGED: cache (public → private)` — **SOURCE_BREAK**
+- `METHOD_ACCESS_CHANGED: helper (public → private)` — **API_BREAK**
+- `FIELD_ACCESS_CHANGED: cache (public → private)` — **API_BREAK**
 
 ## Tool comparison
 
 | Tool | Verdict | Reason |
 |------|---------|--------|
 | abicheck (ELF only) | NO_CHANGE | No ELF difference |
-| abicheck (with headers) | SOURCE_BREAK | Parses C++ headers, detects access narrowing |
+| abicheck (with headers) | API_BREAK | Parses C++ headers, detects access narrowing |
 | abidiff | NO_CHANGE | No DWARF/ELF difference |
-| ABICC | SOURCE_BREAK | Header parser detects `Method_Became_Private` |
+| ABICC | API_BREAK | Header parser detects `Method_Became_Private` |
 
 ## Benchmark note
 
 The benchmark runs abicheck **with headers** for this case, so the expected verdict is
-`SOURCE_BREAK`. Without headers, abicheck correctly returns `NO_CHANGE` (the binary is
+`API_BREAK`. Without headers, abicheck correctly returns `NO_CHANGE` (the binary is
 unchanged).
 
 ## Reproduce steps
@@ -84,10 +84,10 @@ abicheck dump libv1.so -o v1.json
 abicheck dump libv2.so -o v2.json
 abicheck compare v1.json v2.json   # → NO_CHANGE
 
-# With headers: SOURCE_BREAK detected
+# With headers: API_BREAK detected
 abicheck dump libv1.so --header v1.hpp -o v1h.json
 abicheck dump libv2.so --header v2.hpp -o v2h.json
-abicheck compare v1h.json v2h.json  # → SOURCE_BREAK: METHOD_ACCESS_CHANGED
+abicheck compare v1h.json v2h.json  # → API_BREAK: METHOD_ACCESS_CHANGED
 ```
 
 ## Why runtime result may differ from verdict

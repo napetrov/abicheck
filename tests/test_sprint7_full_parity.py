@@ -82,7 +82,7 @@ class TestEnumMemberRenamed:
         result = compare(old, new)
         assert ChangeKind.ENUM_MEMBER_RENAMED in _kinds(result)
         # Also triggers ENUM_MEMBER_REMOVED for old name → BREAKING verdict
-        assert result.verdict in (Verdict.BREAKING, Verdict.SOURCE_BREAK)
+        assert result.verdict in (Verdict.BREAKING, Verdict.API_BREAK)
 
     def test_no_rename_when_value_also_changes(self) -> None:
         """If the value also changes, it's ENUM_MEMBER_REMOVED + ADDED, not a rename."""
@@ -140,7 +140,7 @@ class TestParamDefaultValueChanged:
                     params=[Param("verbose", "bool", default=None)])])
         result = compare(old, new)
         assert ChangeKind.PARAM_DEFAULT_VALUE_REMOVED in _kinds(result)
-        assert result.verdict == Verdict.SOURCE_BREAK
+        assert result.verdict == Verdict.API_BREAK
 
     def test_default_value_added_not_reported(self) -> None:
         """Adding a default is backward-compatible and not reported."""
@@ -292,7 +292,7 @@ class TestFieldRenamed:
         renames = [c for c in result.changes if c.kind == ChangeKind.FIELD_RENAMED]
         assert len(renames) == 2
         # Also triggers TYPE_FIELD_REMOVED for old names → BREAKING verdict
-        assert result.verdict in (Verdict.BREAKING, Verdict.SOURCE_BREAK)
+        assert result.verdict in (Verdict.BREAKING, Verdict.API_BREAK)
 
     def test_field_renamed_not_triggered_for_type_change(self) -> None:
         """Different type at same offset is TYPE_FIELD_TYPE_CHANGED, not rename."""
@@ -333,7 +333,7 @@ class TestParamRenamed:
         new = _snap(functions=[_func("f", "_Z1fi",
                     params=[Param("n", "int")])])
         result = compare(old, new)
-        assert result.verdict == Verdict.SOURCE_BREAK
+        assert result.verdict == Verdict.API_BREAK
 
     def test_no_rename_when_unchanged(self) -> None:
         old = _snap(functions=[_func("f", "_Z1fi",
@@ -435,7 +435,7 @@ class TestMethodAccessChanged:
                     access=AccessLevel.PRIVATE)])
         result = compare(old, new)
         assert ChangeKind.METHOD_ACCESS_CHANGED in _kinds(result)
-        assert result.verdict == Verdict.SOURCE_BREAK
+        assert result.verdict == Verdict.API_BREAK
 
     def test_method_became_protected(self) -> None:
         old = _snap(functions=[_func("init", "_ZN6Widget4initEv",
@@ -475,7 +475,7 @@ class TestFieldAccessChanged:
             TypeField("data", "int", access=AccessLevel.PRIVATE)])])
         result = compare(old, new)
         assert ChangeKind.FIELD_ACCESS_CHANGED in _kinds(result)
-        assert result.verdict == Verdict.SOURCE_BREAK
+        assert result.verdict == Verdict.API_BREAK
 
     def test_field_access_unchanged(self) -> None:
         old = _snap(types=[RecordType("S", "struct", fields=[
@@ -622,13 +622,13 @@ class TestClassification:
         assert ChangeKind.ANON_FIELD_CHANGED in _BREAKING_KINDS
 
     def test_source_break_kinds(self) -> None:
-        from abicheck.checker import _SOURCE_BREAK_KINDS
-        assert ChangeKind.ENUM_MEMBER_RENAMED in _SOURCE_BREAK_KINDS
-        assert ChangeKind.PARAM_DEFAULT_VALUE_REMOVED in _SOURCE_BREAK_KINDS
-        assert ChangeKind.FIELD_RENAMED in _SOURCE_BREAK_KINDS
-        assert ChangeKind.PARAM_RENAMED in _SOURCE_BREAK_KINDS
-        assert ChangeKind.METHOD_ACCESS_CHANGED in _SOURCE_BREAK_KINDS
-        assert ChangeKind.FIELD_ACCESS_CHANGED in _SOURCE_BREAK_KINDS
+        from abicheck.checker import _API_BREAK_KINDS
+        assert ChangeKind.ENUM_MEMBER_RENAMED in _API_BREAK_KINDS
+        assert ChangeKind.PARAM_DEFAULT_VALUE_REMOVED in _API_BREAK_KINDS
+        assert ChangeKind.FIELD_RENAMED in _API_BREAK_KINDS
+        assert ChangeKind.PARAM_RENAMED in _API_BREAK_KINDS
+        assert ChangeKind.METHOD_ACCESS_CHANGED in _API_BREAK_KINDS
+        assert ChangeKind.FIELD_ACCESS_CHANGED in _API_BREAK_KINDS
 
     def test_compatible_kinds_contains_qualifier_changes(self) -> None:
         from abicheck.checker import _COMPATIBLE_KINDS
@@ -645,11 +645,11 @@ class TestClassification:
         from abicheck.checker import (
             _BREAKING_KINDS,
             _COMPATIBLE_KINDS,
-            _SOURCE_BREAK_KINDS,
+            _API_BREAK_KINDS,
         )
-        all_classified = _BREAKING_KINDS | _COMPATIBLE_KINDS | _SOURCE_BREAK_KINDS
+        all_classified = _BREAKING_KINDS | _COMPATIBLE_KINDS | _API_BREAK_KINDS
         for kind in ChangeKind:
             assert kind in all_classified, (
                 f"{kind} is not classified in any set — add it to "
-                f"_BREAKING_KINDS, _COMPATIBLE_KINDS, or _SOURCE_BREAK_KINDS"
+                f"_BREAKING_KINDS, _COMPATIBLE_KINDS, or _API_BREAK_KINDS"
             )

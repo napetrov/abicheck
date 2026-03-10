@@ -24,7 +24,7 @@ from tests.validate_examples import (  # noqa: E402
 
 _GROUND_TRUTH = Path(__file__).parent.parent / "examples" / "ground_truth.json"
 _VALID_CATEGORIES = frozenset({"breaking", "compatible", "bad_practice", "source_break"})
-_VALID_VERDICTS = frozenset({"BREAKING", "COMPATIBLE", "NO_CHANGE", "SOURCE_BREAK"})
+_VALID_VERDICTS = frozenset({"BREAKING", "COMPATIBLE", "NO_CHANGE", "API_BREAK"})
 _EXPECTED_CASE_COUNT = 42
 
 

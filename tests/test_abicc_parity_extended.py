@@ -587,7 +587,7 @@ class TestStrictModeParity:
     """Verify -strict semantics match between abicheck and ABICC.
 
     ABICC -strict: any change at all (even additions) = exit 1.
-    abicheck -strict: COMPATIBLE and SOURCE_BREAK promoted to BREAKING (exit 1).
+    abicheck -strict: COMPATIBLE and API_BREAK promoted to BREAKING (exit 1).
     """
 
     def test_strict_no_change_exit_0(self, tmp_path):
@@ -1190,8 +1190,8 @@ class TestStrictVerdictPromotion:
         assert promoted.verdict == Verdict.BREAKING
 
     def test_strict_promotes_source_break_to_breaking(self):
-        """SOURCE_BREAK → BREAKING in strict mode."""
-        result = self._result(Verdict.SOURCE_BREAK, [ChangeKind.FUNC_PARAMS_CHANGED])
+        """API_BREAK → BREAKING in strict mode."""
+        result = self._result(Verdict.API_BREAK, [ChangeKind.FUNC_PARAMS_CHANGED])
         promoted = _apply_strict(result)
         assert promoted.verdict == Verdict.BREAKING
 

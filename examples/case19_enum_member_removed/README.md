@@ -1,7 +1,7 @@
 # Case 19 — Enum Member Removed
 
 
-**Verdict:** 🟡 SOURCE_BREAK
+**Verdict:** 🟡 API_BREAK
 **abicheck verdict: BREAKING**
 
 ## What changes

@@ -109,8 +109,8 @@ def _compile(src: Path, out: Path) -> str | None:
 def _normalize_verdict(v: str) -> str:
     """Normalize verdict for comparison.
 
-    SOURCE_BREAK and COMPATIBLE are intentionally kept distinct so that a
-    regression from SOURCE_BREAK to COMPATIBLE is caught as a test failure.
+    API_BREAK and COMPATIBLE are intentionally kept distinct so that a
+    regression from API_BREAK to COMPATIBLE is caught as a test failure.
     """
     return v
 
