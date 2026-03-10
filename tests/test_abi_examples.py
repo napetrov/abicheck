@@ -43,8 +43,8 @@ CASES = [
     ("case11_global_var_type", "BREAKING", "v1.c", "v2.c"),
     # ✅ Function inlined away → disappears from .so → FUNC_REMOVED → BREAKING
     ("case12_function_removed", "BREAKING", "v1.c", "v2.c"),
-    # 📋 Symbol versioning adds @@VER tags; checker strips @-suffix → NO_CHANGE
-    ("case13_symbol_versioning", "COMPATIBLE", "bad.c", "good.c"),
+    # 🔴 Versioned→unversioned: symbol_version_defined_removed → BREAKING
+    ("case13_symbol_versioning", "BREAKING", "good.c", "bad.c"),
     # ✅ Class size change (private member added) → TYPE_SIZE_CHANGED → BREAKING
     ("case14_cpp_class_size", "BREAKING", "v1.cpp", "v2.cpp"),
     # ✅ noexcept removed → FUNC_NOEXCEPT_REMOVED → BREAKING (castxml sees noexcept attr)

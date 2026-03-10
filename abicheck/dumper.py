@@ -618,14 +618,21 @@ def dump(
     elf_meta = parse_elf_metadata(so_path)
     # Use filtered ELF metadata symbols as authoritative surface for no-header mode.
     # This excludes version-definition aux symbols like LIBFOO_1.0.
+    # Split into two sets: function-like symbols (for Function builder) and
+    # object symbols (globals) — merged for CastxmlParser visibility check.
+    exported_dynamic_funcs: set[str] = set()
+    exported_dynamic_objects: set[str] = set()
     if elf_meta is not None and elf_meta.symbols:
-        exported_dynamic = {
+        exported_dynamic_funcs = {
             sym.name for sym in elf_meta.symbols
-            if sym.sym_type in (
-                SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTYPE,
-                SymbolType.OBJECT,  # include exported globals (STT_OBJECT)
-            )
+            if sym.sym_type in (SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTYPE)
         }
+        exported_dynamic_objects = {
+            sym.name for sym in elf_meta.symbols
+            if sym.sym_type == SymbolType.OBJECT
+        }
+        # Full set for CastxmlParser: determines PUBLIC vs ELF_ONLY visibility
+        exported_dynamic = exported_dynamic_funcs | exported_dynamic_objects
     dwarf_meta, dwarf_adv = parse_dwarf(so_path)
 
     if not headers:
@@ -641,7 +648,7 @@ def dump(
             functions=[
                 Function(name=sym, mangled=sym, return_type="?",
                          visibility=Visibility.ELF_ONLY)
-                for sym in sorted(exported_dynamic)
+                for sym in sorted(exported_dynamic_funcs)
             ],
             elf=elf_meta,
             dwarf=dwarf_meta,
