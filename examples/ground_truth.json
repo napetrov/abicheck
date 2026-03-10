@@ -166,6 +166,10 @@
     "case41_type_changes": {
       "expected": "BREAKING",
       "category": "breaking"
+    },
+    "case26b_union_field_added_compatible": {
+      "expected": "COMPATIBLE",
+      "category": "compatible"
     }
   }
 }
