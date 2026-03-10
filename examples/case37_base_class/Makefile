@@ -12,12 +12,12 @@ libv1.so: v1.cpp v1.hpp
 libv2.so: v2.cpp v2.hpp
 	$(CXX) $(CXXFLAGS_LIB) -o $@ $<
 
-app_v1: app.cpp v1.cpp v1.hpp
+app_v1: app.cpp v1.hpp libv1.so
 	$(CXX) $(CXXFLAGS_APP) app.cpp -L. -Wl,-rpath,. -o $@ -lv1
 
 # Demonstrate runtime break: compile against v1 headers, run with v2 .so
 test-break: all app_v1
-	LD_PRELOAD=./libv2.so ./app_v1; echo "EXIT:$$?"
+	LD_PRELOAD=./libv2.so ./app_v1; ret=$$?; echo "EXIT:$$ret"; exit $$ret
 
 clean:
 	rm -f libv1.so libv2.so app_v1

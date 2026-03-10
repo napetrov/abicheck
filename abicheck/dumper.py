@@ -621,7 +621,10 @@ def dump(
     if elf_meta is not None and elf_meta.symbols:
         exported_dynamic = {
             sym.name for sym in elf_meta.symbols
-            if sym.sym_type in (SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTYPE)
+            if sym.sym_type in (
+                SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTYPE,
+                SymbolType.OBJECT,  # include exported globals (STT_OBJECT)
+            )
         }
     dwarf_meta, dwarf_adv = parse_dwarf(so_path)
 
