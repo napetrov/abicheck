@@ -485,8 +485,21 @@ def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             if old_max_val is not None else None
         )
 
+        # Build inverse map: new_value → new_name for values that are "new" (not in old names)
+        # If a missing old member value still exists under a different new name,
+        # it is a rename, not a true removal. The separate rename detector emits
+        # ENUM_MEMBER_RENAMED; we should not emit ENUM_MEMBER_REMOVED here.
+        new_val_to_newname = {
+            nval: nname for nname, nval in new_members.items()
+            if nname not in old_members
+        }
+
         for mname, mval in old_members.items():
             if mname not in new_members:
+                # rename-only -> skip removed emission
+                if mval in new_val_to_newname:
+                    continue
+                # Value truly removed
                 changes.append(Change(
                     kind=ChangeKind.ENUM_MEMBER_REMOVED,
                     symbol=name,
@@ -507,8 +520,20 @@ def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                     new_value=str(new_members[mname]),
                 ))
 
+        # Skip additions whose values exist in the old enum:
+        # those will be handled as ENUM_MEMBER_RENAMED by _diff_enum_renames,
+        # Skip additions whose value matches a removed old member (likely a rename).
+        # Use only *removed* old member values — if the old member still exists under
+        # the same name, the new member is a genuine addition (alias/duplicate), not
+        # a rename, and must be reported. (CodeRabbit P1: one-to-one guard)
+        removed_old_values = {
+            str(v) for mname, v in old_members.items()
+            if mname not in new_members
+        }
         for mname, mval in new_members.items():
             if mname not in old_members:
+                if str(mval) in removed_old_values:
+                    continue  # same value as a removed old member — rename candidate
                 changes.append(Change(
                     kind=ChangeKind.ENUM_MEMBER_ADDED,
                     symbol=name,
@@ -1815,13 +1840,31 @@ def _diff_enum_layouts(o: object, n: object) -> list[Change]:
                 new_value=str(new_e.underlying_byte_size),
             ))
 
-        # 2. Removed members
-        for mname in sorted(old_e.members.keys() - new_e.members.keys()):
+        # 2. Removed members — skip rename-only removals here.
+        # A dedicated rename detector emits ENUM_MEMBER_RENAMED. Here we only
+        # report truly removed values. Use one-to-one proof: a removal is a
+        # rename candidate only when its value appears in exactly one new-only
+        # member (CodeRabbit P1: avoid false suppression with alias-heavy enums).
+        _removed_names = {m for m in old_e.members if m not in new_e.members}
+        _added_names   = {m for m in new_e.members if m not in old_e.members}
+        # Build set of removed old-member names whose value uniquely maps to one new name
+        _renamed_old: set[str] = set()
+        _claimed_new: set[str] = set()
+        for _rname in sorted(_removed_names):
+            _rval = old_e.members[_rname]
+            _candidates = [_n for _n in _added_names if new_e.members[_n] == _rval and _n not in _claimed_new]
+            if len(_candidates) == 1:
+                _renamed_old.add(_rname)
+                _claimed_new.add(_candidates[0])
+        for mname in sorted(_removed_names):
+            if mname in _renamed_old:
+                continue
+            old_val = old_e.members[mname]
             changes.append(Change(
                 kind=ChangeKind.ENUM_MEMBER_REMOVED,
                 symbol=f"{name}::{mname}",
                 description=f"Enum member removed: {name}::{mname}",
-                old_value=str(old_e.members[mname]),
+                old_value=str(old_val),
             ))
 
         # 3. Changed values
