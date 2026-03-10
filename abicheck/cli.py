@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import click
 
 from .checker import ChangeKind, compare
+from .checker_policy import API_BREAK_KINDS as _POLICY_API_BREAK_KINDS
 from .compat import CompatDescriptor, parse_descriptor
 from .dumper import dump
 from .html_report import write_html_report
@@ -236,7 +237,6 @@ def _build_internal_suppression(
 
 # API_BREAK-only ChangeKinds (source API breaks, not binary ABI breaks).
 # Keep this aligned with checker policy as single source of truth.
-from .checker_policy import API_BREAK_KINDS as _POLICY_API_BREAK_KINDS  # noqa: E402
 _API_BREAK_KINDS: frozenset[ChangeKind] = frozenset(_POLICY_API_BREAK_KINDS)
 
 # ELF/binary-only ChangeKinds (excluded in -source mode)
@@ -313,13 +313,13 @@ def _apply_strict(result: DiffResult) -> DiffResult:
 def _filter_source_only(result: DiffResult) -> DiffResult:
     """Remove binary-only changes from result for -source mode."""
     from .checker import (  # noqa: PLC0415
+        _API_BREAK_KINDS as _SBK,
+    )
+    from .checker import (
         _BREAKING_KINDS,
         _COMPATIBLE_KINDS,
         DiffResult,
         Verdict,
-    )
-    from .checker import (
-        _API_BREAK_KINDS as _SBK,
     )
 
     filtered = [c for c in result.changes if c.kind not in _BINARY_ONLY_KINDS]
@@ -348,13 +348,13 @@ def _filter_source_only(result: DiffResult) -> DiffResult:
 def _filter_binary_only(result: DiffResult) -> DiffResult:
     """Remove source-only changes from result for -binary mode."""
     from .checker import (  # noqa: PLC0415
+        _API_BREAK_KINDS as _SBK,
+    )
+    from .checker import (
         _BREAKING_KINDS,
         _COMPATIBLE_KINDS,
         DiffResult,
         Verdict,
-    )
-    from .checker import (
-        _API_BREAK_KINDS as _SBK,
     )
 
     filtered = [c for c in result.changes if c.kind not in _API_BREAK_KINDS]

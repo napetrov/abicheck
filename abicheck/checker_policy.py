@@ -396,7 +396,7 @@ def compute_verdict(changes: Sequence[HasKind]) -> Verdict:
 # Deprecated aliases — kept for external consumers; will be removed in v2.0
 # ---------------------------------------------------------------------------
 #: Deprecated: use :data:`Verdict.API_BREAK`
-SOURCE_BREAK = Verdict.API_BREAK  # type: ignore[assignment]
+SOURCE_BREAK: Verdict = Verdict.API_BREAK  # deprecated alias
 
 #: Deprecated: use :data:`API_BREAK_KINDS`
 SOURCE_BREAK_KINDS = API_BREAK_KINDS  # noqa: E305
