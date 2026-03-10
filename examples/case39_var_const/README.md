@@ -93,3 +93,15 @@ echo "exit: $?"   # → 12 (detected at binary level)
 Never change const qualification on exported global variables. If a variable needs to
 become read-only, provide an accessor function instead (`int get_buffer_size(void)`).
 Never remove exported variables without a SONAME bump.
+
+## abicheck usage note
+
+For global variable qualifier/type changes, run dump with headers:
+
+```bash
+python3 -m abicheck.cli dump libv1.so -H v1.h -o v1.json
+python3 -m abicheck.cli dump libv2.so -H v2.h -o v2.json
+python3 -m abicheck.cli compare v1.json v2.json
+```
+
+Without `-H`, ELF-only mode may miss source-level type qualifiers on globals.

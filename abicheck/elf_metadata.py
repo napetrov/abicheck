@@ -159,21 +159,16 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
                         section.name, so_path, exc)
 
     # Post-loop: filter out version-definition auxiliary symbols.
-    # GNU ld emits these as OBJECT/SHN_ABS/size=0 entries in .dynsym (e.g. LIBFOO_1.0).
-    # Confirmed empirically with GNU ld (binutils) on Linux/x86-64.
-    # Some linkers (gold, lld) may emit STT_NOTYPE instead; we match both.
-    # SHN_ABS exclusion in _extract_symbols already handles most cases in the
-    # dumper path, but elf_metadata parses .dynsym independently, so guard here too.
-    # We must do this after the loop because .gnu.version_d may come after .dynsym.
+    # GNU ld emits these as OBJECT/size=0 in .dynsym; lld/gold may use NOTYPE.
+    # Both are ELF artefacts of --version-script, not real exported functions.
     _ver_def_names: set[str] = set(meta.versions_defined)
     if _ver_def_names:
-        _ver_def_types = frozenset({SymbolType.OBJECT, SymbolType.NOTYPE})
         meta.symbols = [
             sym for sym in meta.symbols
             if not (
                 sym.name in _ver_def_names
                 and sym.size == 0
-                and sym.sym_type in _ver_def_types
+                and sym.sym_type in (SymbolType.OBJECT, SymbolType.NOTYPE)
             )
         ]
 
@@ -193,10 +188,15 @@ def _parse_dynamic(section: DynamicSection, meta: ElfMetadata) -> None:
 
 
 def _parse_version_def(section: GNUVerDefSection, meta: ElfMetadata) -> None:
-    for _verdef, verdaux_iter in section.iter_versions():
+    # ELF version definition section (.gnu.version_d).
+    # The first entry has VER_FLG_BASE (flags==1) and names the SONAME -- skip it.
+    # Only real named version nodes (e.g. LIBFOO_1.0) should appear in versions_defined.
+    VER_FLG_BASE = 0x1
+    for verdef, verdaux_iter in section.iter_versions():
+        is_base = bool(verdef.entry.vd_flags & VER_FLG_BASE)
         for verdaux in verdaux_iter:
             name = verdaux.name
-            if name and name not in meta.versions_defined:
+            if name and not is_base and name not in meta.versions_defined:
                 meta.versions_defined.append(name)
 
 
@@ -213,8 +213,10 @@ def _parse_version_need(section: GNUVerNeedSection, meta: ElfMetadata) -> None:
 
 def _parse_dynsym(section: SymbolTableSection, meta: ElfMetadata) -> None:
     for sym in section.iter_symbols():
-        # Skip undefined symbols (imported, not exported)
-        if sym.entry.st_shndx == "SHN_UNDEF":
+        # Skip undefined (imported) and absolute (version-def markers) symbols.
+        # GNU ld emits version-def aux symbols (e.g. LIBFOO_1.0) as SHN_ABS;
+        # skipping them here is consistent with _pyelftools_exported_symbols.
+        if sym.entry.st_shndx in ("SHN_UNDEF", "SHN_ABS"):
             continue
 
         binding_str = sym.entry.st_info.bind

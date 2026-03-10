@@ -419,7 +419,7 @@ class _CastxmlParser:
                 el.get("const") == "1"
                 or bool(re.search(r"\bconst\b", type_name))
             )
-            vis = self._visibility(mangled)
+            vis = self._visibility(mangled, name)
             variables.append(Variable(
                 name=name, mangled=mangled, type=type_name, visibility=vis,
                 is_const=is_const,
@@ -618,14 +618,23 @@ def dump(
     elf_meta = parse_elf_metadata(so_path)
     # Use filtered ELF metadata symbols as authoritative surface for no-header mode.
     # This excludes version-definition aux symbols like LIBFOO_1.0.
-    # Guard: elf_meta may be None in tests that monkeypatch parse_elf_metadata.
+    # Split into two sets: function-like symbols (for Function builder) and
+    # object symbols (globals) — merged for CastxmlParser visibility check.
+    # Split into func-like (for Function builder) and object (globals) sets.
+    # Fall back to pyelftools set when elf_meta is unavailable.
+    exported_dynamic_funcs: set[str] = exported_dynamic  # fallback
+    exported_dynamic_objects: set[str] = set()
     if elf_meta is not None and elf_meta.symbols:
-        exported_dynamic = {
+        exported_dynamic_funcs = {
             sym.name for sym in elf_meta.symbols
             if sym.sym_type in (SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTYPE)
         }
-        # Note: if the filtered set is empty (e.g. library exports only OBJECT/TLS
-        # symbols), exported_dynamic stays empty — correct, no functions to report.
+        exported_dynamic_objects = {
+            sym.name for sym in elf_meta.symbols
+            if sym.sym_type == SymbolType.OBJECT
+        }
+        # Full set for CastxmlParser: determines PUBLIC vs ELF_ONLY visibility
+        exported_dynamic = exported_dynamic_funcs | exported_dynamic_objects
     dwarf_meta, dwarf_adv = parse_dwarf(so_path)
 
     if not headers:
@@ -641,7 +650,7 @@ def dump(
             functions=[
                 Function(name=sym, mangled=sym, return_type="?",
                          visibility=Visibility.ELF_ONLY)
-                for sym in sorted(exported_dynamic)
+                for sym in sorted(exported_dynamic_funcs)
             ],
             elf=elf_meta,
             dwarf=dwarf_meta,
