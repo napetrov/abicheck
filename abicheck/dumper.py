@@ -419,7 +419,7 @@ class _CastxmlParser:
                 el.get("const") == "1"
                 or bool(re.search(r"\bconst\b", type_name))
             )
-            vis = self._visibility(mangled)
+            vis = self._visibility(mangled, name)
             variables.append(Variable(
                 name=name, mangled=mangled, type=type_name, visibility=vis,
                 is_const=is_const,
@@ -618,14 +618,11 @@ def dump(
     elf_meta = parse_elf_metadata(so_path)
     # Use filtered ELF metadata symbols as authoritative surface for no-header mode.
     # This excludes version-definition aux symbols like LIBFOO_1.0.
-    # Guard: elf_meta may be None in tests that monkeypatch parse_elf_metadata.
     if elf_meta is not None and elf_meta.symbols:
         exported_dynamic = {
             sym.name for sym in elf_meta.symbols
             if sym.sym_type in (SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTYPE)
         }
-        # Note: if the filtered set is empty (e.g. library exports only OBJECT/TLS
-        # symbols), exported_dynamic stays empty — correct, no functions to report.
     dwarf_meta, dwarf_adv = parse_dwarf(so_path)
 
     if not headers:
@@ -646,7 +643,6 @@ def dump(
             elf=elf_meta,
             dwarf=dwarf_meta,
             dwarf_advanced=dwarf_adv,
-            elf_only_mode=True,
         )
         return snapshot
 

@@ -83,3 +83,21 @@ Base class position changed: derived class layout corrupted
 
 ## Runtime note
 Methods now mutate fields and app asserts expected postconditions; layout/base-order mismatch is observable.
+
+## abicheck Detection
+
+abicheck detects base class changes when run with header files (`-H`):
+
+```bash
+make  # builds libv1.so and libv2.so with -g debug info
+
+python3 -m abicheck.cli dump libv1.so -H v1.hpp -o v1.json
+python3 -m abicheck.cli dump libv2.so -H v2.hpp -o v2.json
+python3 -m abicheck.cli compare v1.json v2.json
+# → BREAKING: type_base_changed, type_size_changed, type_vtable_changed
+```
+
+**Note:** Without `-H` header files, abicheck reports NO_CHANGE because the ELF
+symbol table does not encode C++ class hierarchy information. Header analysis is
+required for C++ structural changes (base class composition, vtable layout, field
+offsets).

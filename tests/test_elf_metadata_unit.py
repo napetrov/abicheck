@@ -110,6 +110,12 @@ class TestParseDynamic:
 # ── _parse_version_def ──────────────────────────────────────────────────
 
 class TestParseVersionDef:
+    def _verdef(self, flags: int = 0):
+        """Return a verdef mock (flags=0 = real version node, flags=1 = base)."""
+        vd = MagicMock()
+        vd.entry.vd_flags = flags
+        return vd
+
     def test_version_defs_collected(self):
         meta = ElfMetadata()
         aux1 = MagicMock()
@@ -118,11 +124,21 @@ class TestParseVersionDef:
         aux2.name = "LIBFOO_2.0"
         section = MagicMock()
         section.iter_versions.return_value = [
-            (MagicMock(), [aux1]),
-            (MagicMock(), [aux2]),
+            (self._verdef(0), [aux1]),
+            (self._verdef(0), [aux2]),
         ]
         _parse_version_def(section, meta)
         assert meta.versions_defined == ["LIBFOO_1.0", "LIBFOO_2.0"]
+
+    def test_base_entry_skipped(self):
+        """VER_FLG_BASE (flags=1) entries are the SONAME marker — skip them."""
+        meta = ElfMetadata()
+        aux = MagicMock()
+        aux.name = "libfoo.so.1"
+        section = MagicMock()
+        section.iter_versions.return_value = [(self._verdef(flags=1), [aux])]
+        _parse_version_def(section, meta)
+        assert meta.versions_defined == []
 
     def test_duplicates_not_added(self):
         meta = ElfMetadata()
@@ -130,8 +146,8 @@ class TestParseVersionDef:
         aux.name = "VER_1"
         section = MagicMock()
         section.iter_versions.return_value = [
-            (MagicMock(), [aux]),
-            (MagicMock(), [aux]),
+            (self._verdef(0), [aux]),
+            (self._verdef(0), [aux]),
         ]
         _parse_version_def(section, meta)
         assert meta.versions_defined == ["VER_1"]
@@ -141,7 +157,7 @@ class TestParseVersionDef:
         aux = MagicMock()
         aux.name = ""
         section = MagicMock()
-        section.iter_versions.return_value = [(MagicMock(), [aux])]
+        section.iter_versions.return_value = [(self._verdef(0), [aux])]
         _parse_version_def(section, meta)
         assert meta.versions_defined == []
 
@@ -348,7 +364,7 @@ class TestParseFull:
         verdef_aux = MagicMock()
         verdef_aux.name = "VER_DEF_1"
         verdef = MagicMock(spec=GNUVerDefSection)
-        verdef.iter_versions.return_value = [(MagicMock(), [verdef_aux])]
+        verdef_vd = MagicMock(); verdef_vd.entry.vd_flags = 0; verdef.iter_versions.return_value = [(verdef_vd, [verdef_aux])]
 
         verneed_entry = MagicMock()
         verneed_entry.name = "libc.so.6"
