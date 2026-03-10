@@ -159,8 +159,8 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
                         section.name, so_path, exc)
 
     # Post-loop: filter out version-definition auxiliary symbols.
-    # These appear in .dynsym as OBJECT/size=0 entries (e.g. LIBFOO_1.0) but
-    # are ELF artefacts of --version-script, not real exported functions.
+    # GNU ld emits these as OBJECT/size=0 in .dynsym; lld/gold may use NOTYPE.
+    # Both are ELF artefacts of --version-script, not real exported functions.
     _ver_def_names: set[str] = set(meta.versions_defined)
     if _ver_def_names:
         meta.symbols = [
@@ -168,7 +168,7 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
             if not (
                 sym.name in _ver_def_names
                 and sym.size == 0
-                and sym.sym_type == SymbolType.OBJECT
+                and sym.sym_type in (SymbolType.OBJECT, SymbolType.NOTYPE)
             )
         ]
 

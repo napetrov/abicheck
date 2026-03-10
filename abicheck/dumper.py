@@ -643,6 +643,7 @@ def dump(
             elf=elf_meta,
             dwarf=dwarf_meta,
             dwarf_advanced=dwarf_adv,
+            elf_only_mode=True,
         )
         return snapshot
 
