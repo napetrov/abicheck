@@ -22,7 +22,7 @@ def test_dump_cmd_writes_output_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr("abicheck.cli.dump", lambda **_: _snap("2.0"))
 
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(
         main,
         [
@@ -67,7 +67,7 @@ def test_compare_cmd_warns_when_all_changes_suppressed(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("abicheck.cli.to_markdown", lambda _r: "REPORT")
 
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(main, ["compare", str(old), str(new), "--suppress", str(suppress)])
 
     assert result.exit_code == 0
@@ -94,7 +94,7 @@ def test_compare_cmd_breaking_exits_with_code_4(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("abicheck.cli.to_markdown", lambda _r: "BREAKING REPORT")
 
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(main, ["compare", str(old), str(new)])
 
     assert result.exit_code == 4
@@ -109,7 +109,7 @@ def test_compat_cmd_descriptor_parse_error_exits_2(tmp_path, monkeypatch):
 
     monkeypatch.setattr("abicheck.cli.parse_descriptor", lambda *_, **__: (_ for _ in ()).throw(ValueError("bad")))
 
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(
         main,
         ["compat", "-lib", "foo", "-old", str(old_desc), "-new", str(new_desc)],
@@ -147,7 +147,7 @@ def test_compat_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypatch):
     )
 
     report = tmp_path / "compat" / "report.json"
-    runner = CliRunner()
+    runner = CliRunner(mix_stderr=False)
     result = runner.invoke(
         main,
         [
