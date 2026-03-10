@@ -19,9 +19,9 @@ Exit codes match ABICC:
 |------|---------|
 | `0` | Compatible or no change |
 | `1` | Breaking ABI change detected |
-| `2` | Source-level break (`SOURCE_BREAK`) or error (descriptor parse failure, missing files) |
+| `2` | Source-level break (`API_BREAK`) or error (descriptor parse failure, missing files) |
 
-> **Note:** In `-strict` mode, `SOURCE_BREAK` is promoted to exit `1` (BREAKING).
+> **Note:** In `-strict` mode, `API_BREAK` is promoted to exit `1` (BREAKING).
 
 ## Full flag reference
 
@@ -43,7 +43,7 @@ Exit codes match ABICC:
 |------|-----------|-------------|
 | `-source` | `-src`, `-api` | Source/API compatibility only — filters out ELF-level symbol metadata changes (SONAME, symbol binding, versioning) |
 | `-binary` | `-bin`, `-abi` | Binary ABI mode (default behavior, explicit flag is a no-op) |
-| `-s` | `-strict` | Strict mode: any change (COMPATIBLE or SOURCE_BREAK) is treated as BREAKING → exit 1 |
+| `-s` | `-strict` | Strict mode: any change (COMPATIBLE or API_BREAK) is treated as BREAKING → exit 1 |
 | `-warn-newsym` | | Treat new symbols (FUNC_ADDED, VAR_ADDED) as compatibility breaks → exit 1 |
 | `-show-retval` | | Include return-value changes in the HTML report |
 | `-headers-only` | | Header-only analysis mode (accepted; ELF/DWARF checks still run) |
@@ -293,12 +293,12 @@ In `-source` mode, ELF/binary-only changes are removed from the report and verdi
 
 Without `-strict`:
 - `COMPATIBLE` changes → exit 0
-- `SOURCE_BREAK` → exit 2
+- `API_BREAK` → exit 2
 - `BREAKING` → exit 1
 
 With `-strict`:
 - `NO_CHANGE` → exit 0
-- Anything else (`COMPATIBLE`, `SOURCE_BREAK`, `BREAKING`) → exit 1
+- Anything else (`COMPATIBLE`, `API_BREAK`, `BREAKING`) → exit 1
 
 Matches ABICC's `-strict` semantics: any deviation from the old ABI is an error.
 

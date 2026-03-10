@@ -1,7 +1,8 @@
 # Case 20 — Enum Member Value Changed
 
 
-**Verdict:** 🟡 SOURCE_BREAK
+**Verdict:** 🔴 BREAKING
+**Verdict detail:** ABI break (runtime value mismatch) + API break (enum value changed in header)
 **abicheck verdict: BREAKING**
 
 ## What changes

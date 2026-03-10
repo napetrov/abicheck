@@ -1,6 +1,6 @@
 # Case 28 — Typedef and Opaque Type Changes
 
-**Category:** Type System | **Verdict:** 🔴 BREAKING (Scenario 1: typedef_base_changed) / 🟡 SOURCE_BREAK (Scenarios 2-3)
+**Category:** Type System | **Verdict:** 🔴 BREAKING (Scenario 1: typedef_base_changed) / 🟡 API_BREAK (Scenarios 2-3)
 
 ## What changes
 

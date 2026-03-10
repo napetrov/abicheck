@@ -109,8 +109,8 @@ def _compile(src: Path, out: Path) -> str | None:
 def _normalize_verdict(v: str) -> str:
     """Normalize verdict for comparison.
 
-    SOURCE_BREAK and COMPATIBLE are intentionally kept distinct so that a
-    regression from SOURCE_BREAK to COMPATIBLE is caught as a test failure.
+    API_BREAK and COMPATIBLE are intentionally kept distinct so that a
+    regression from API_BREAK to COMPATIBLE is caught as a test failure.
     """
     return v
 
@@ -245,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true", dest="json_out",
                     help="Machine-readable JSON output")
     ap.add_argument("--category", metavar="CAT",
-                    help="Filter by category: breaking, compatible, bad_practice, source_break")
+                    help="Filter by category: breaking, compatible, bad_practice, api_break")
     args = ap.parse_args(argv)
 
     # Check required tools

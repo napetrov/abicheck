@@ -33,7 +33,7 @@ _VERDICT_STYLE: dict[str, tuple[str, str]] = {
     "BREAKING": ("#b71c1c", "#ffcdd2"),
     "COMPATIBLE": ("#1b5e20", "#c8e6c9"),
     "NO_CHANGE": ("#0d47a1", "#bbdefb"),
-    "SOURCE_BREAK": ("#e65100", "#ffe0b2"),
+    "API_BREAK": ("#e65100", "#ffe0b2"),
 }
 
 # ---------------------------------------------------------------------------
@@ -463,7 +463,7 @@ def _generate_compat_html(
     sp_med = len(symbol_problems["Medium"])
     sp_low = len(symbol_problems["Low"])
 
-    compat_verdict = "incompatible" if verdict in ("BREAKING", "SOURCE_BREAK") else "compatible"
+    compat_verdict = "incompatible" if verdict in ("BREAKING", "API_BREAK") else "compatible"
     bc_css = "incompatible" if bc_pct < 90 else ("warning" if bc_pct < 100 else "compatible")
     affected_pct_label = f"{affected_pct:.1f}" if old_symbol_count else "0"
 
@@ -645,7 +645,7 @@ def generate_html_report(
 
     # Verdict icon
     verdict_icon = {"BREAKING": "🔴", "COMPATIBLE": "🟢",
-                    "NO_CHANGE": "🔵", "SOURCE_BREAK": "🟠"}.get(verdict, "⚪")
+                    "NO_CHANGE": "🔵", "API_BREAK": "🟠"}.get(verdict, "⚪")
 
     summary_html = _summary_table(removed, changed, added, suppressed_count)
     nav_html     = _nav_bar(removed, changed, added, suppressed_count)

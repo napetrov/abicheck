@@ -43,7 +43,7 @@ v2's header, making this a source-level break.
 
 ## Real Failure Demo
 
-**Severity: SOURCE_BREAK (binary compatible)**
+**Severity: API_BREAK (binary compatible)**
 
 ```bash
 # Build v1 lib + app
@@ -66,7 +66,7 @@ gcc -g /tmp/app_v2_test.c -I. -L. -lv1 -Wl,-rpath,. -o app
 rm -f /tmp/app_v2_test.c
 ```
 
-**Why SOURCE_BREAK:** The struct layout is bit-for-bit identical between v1 and v2.
+**Why API_BREAK:** The struct layout is bit-for-bit identical between v1 and v2.
 Only the field names changed, which are a compile-time concept. Existing binaries
 are fully compatible.
 
