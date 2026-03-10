@@ -5,9 +5,14 @@ Unit tests for AbiSnapshot JSON round-trip covering fields added in PR #63:
   - constants
 """
 import json
-import pytest
-from abicheck.serialization import snapshot_to_json, snapshot_from_dict, load_snapshot, save_snapshot
+
 from abicheck.model import AbiSnapshot
+from abicheck.serialization import (
+    load_snapshot,
+    save_snapshot,
+    snapshot_from_dict,
+    snapshot_to_json,
+)
 
 
 def _minimal_dict(**overrides) -> dict:

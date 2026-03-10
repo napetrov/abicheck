@@ -4,21 +4,17 @@ Unit tests for the validate_examples.py CLI harness (PR #63).
 Does NOT require a full compile/run of examples — tests harness logic only.
 """
 import json
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 import sys
-import importlib
+from pathlib import Path
+from unittest.mock import patch
 
 # Load module under test
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from tests.validate_examples import (
-    main,
-    _find_sources,
-    _normalize_verdict,
     CaseResult,
+    _normalize_verdict,
+    main,
 )
-
 
 # ---------------------------------------------------------------------------
 # _normalize_verdict — SOURCE_BREAK must NOT collapse to COMPATIBLE
@@ -91,8 +87,9 @@ def test_main_category_filter_json(tmp_path, monkeypatch):
     gt_file = tmp_path / "ground_truth.json"
     gt_file.write_text(json.dumps(gt))
 
-    import tests.validate_examples as ve
     import shutil as real_shutil
+
+    import tests.validate_examples as ve
     monkeypatch.setattr(ve, "GROUND_TRUTH", gt_file)
     monkeypatch.setattr(ve, "EXAMPLES_DIR", tmp_path)
     monkeypatch.setattr(real_shutil, "which", lambda t: "/usr/bin/" + t)

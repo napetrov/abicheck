@@ -5,8 +5,8 @@ Covers the fallback path added in PR #63 where castxml serialises Field
 elements as space-separated IDs in the ``members`` attribute of a Struct
 instead of as inline child elements.
 """
-import pytest
 from xml.etree.ElementTree import fromstring
+
 from abicheck.dumper import _CastxmlParser
 
 
