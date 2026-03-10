@@ -39,8 +39,10 @@ jobs:
           python-version: "3.13"
           cache: "pip"
 
-      - name: Install package
-        run: pip install -e ".[dev]"
+      - name: Install test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
 
       - name: Validate ground_truth.json
         run: |
@@ -57,13 +59,13 @@ jobs:
 
       - name: Run example cases (pytest autodiscovery)
         run: |
-          pytest tests/test_example_autodiscovery.py -v --tb=short -m integration \
+          PYTHONPATH=. pytest tests/test_example_autodiscovery.py -v --tb=short -m integration \
             --junit-xml=results/examples-autodiscovery.xml
 
       - name: Cross-check via validate_examples.py
         if: always()
         run: |
-          python tests/validate_examples.py --json > results/validate_examples.json
+          PYTHONPATH=. python tests/validate_examples.py --json > results/validate_examples.json
           python -c "
           import json, sys
           data = json.load(open('results/validate_examples.json'))
