@@ -15,8 +15,12 @@ class ChangeLike(Protocol):
 
 class Detector(Protocol):
     name: str
+    description: str
 
     def run(self, old: AbiSnapshot, new: AbiSnapshot) -> list[ChangeLike]:
+        ...
+
+    def is_supported(self, old: AbiSnapshot, new: AbiSnapshot) -> tuple[bool, str | None]:
         ...
 
 
@@ -24,3 +28,5 @@ class Detector(Protocol):
 class DetectorResult:
     name: str
     changes_count: int
+    enabled: bool = True
+    coverage_gap: str | None = None

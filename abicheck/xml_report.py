@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .checker import _BREAKING_KINDS as _CHECKER_BREAKING_KINDS_ENUM
+from .report_summary import compatibility_metrics
 
 if TYPE_CHECKING:
     from .checker import DiffResult
@@ -186,20 +187,10 @@ def _compute_section(
     total_type = sum(type_problems.values())
     total_symbol = sum(symbol_problems.values())
 
-    breaking_count = len(breaking)
-    if breaking_count == 0:
-        bc_pct = 100.0
-    elif old_symbol_count is not None and old_symbol_count > 0:
-        bc_pct = max(0.0, (old_symbol_count - breaking_count) / old_symbol_count * 100)
-    else:
-        total = len(filtered)
-        bc_pct = max(0.0, (total - breaking_count) / total * 100) if total > 0 else 0.0
-
-    # Affected percentage (of old symbols)
-    if old_symbol_count and old_symbol_count > 0:
-        affected_pct = breaking_count / old_symbol_count * 100
-    else:
-        affected_pct = 0.0
+    metrics = compatibility_metrics(filtered, old_symbol_count)
+    breaking_count = metrics.breaking_count
+    bc_pct = metrics.binary_compatibility_pct
+    affected_pct = metrics.affected_pct
 
     verdict = "incompatible" if breaking_count > 0 else "compatible"
 

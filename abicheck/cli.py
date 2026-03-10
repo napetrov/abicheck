@@ -1262,15 +1262,10 @@ def compat_cmd(  # noqa: PLR0913
         click.echo(report_path.read_text(encoding="utf-8"))
 
     # Compute BC% for console output (matches ABICC console format)
-    from .checker import _BREAKING_KINDS as _BK  # noqa: PLC0415
-    breaking_count = sum(1 for c in result.changes if c.kind in _BK)
-    if breaking_count == 0:
-        _bc_pct = 100.0
-    elif old_symbol_count and old_symbol_count > 0:
-        _bc_pct = max(0.0, (old_symbol_count - breaking_count) / old_symbol_count * 100)
-    else:
-        _total = len(result.changes)
-        _bc_pct = max(0.0, (_total - breaking_count) / _total * 100) if _total > 0 else 0.0
+    from .report_summary import compatibility_metrics  # noqa: PLC0415
+    metrics = compatibility_metrics(result.changes, old_symbol_count)
+    breaking_count = metrics.breaking_count
+    _bc_pct = metrics.binary_compatibility_pct
 
     _do_echo(f"Binary compatibility: {_bc_pct:.1f}%", quiet)
     _do_echo(f"Total binary compatibility problems: {breaking_count}, warnings: 0", quiet)
