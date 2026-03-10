@@ -16,9 +16,9 @@ import pytest
 from click.testing import CliRunner
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
+from abicheck.checker_policy import API_BREAK_KINDS as _API_BREAK_KINDS
 from abicheck.cli import (
     _BINARY_ONLY_KINDS,
-    _API_BREAK_KINDS,
     _apply_strict,
     _build_skip_suppression,
     _filter_source_only,
@@ -198,8 +198,8 @@ class TestKindSets:
     def test_soname_in_binary_only(self):
         assert ChangeKind.SONAME_CHANGED in _BINARY_ONLY_KINDS
 
-    def test_func_params_in_source_break(self):
-        assert ChangeKind.FUNC_PARAMS_CHANGED in _API_BREAK_KINDS
+    def test_param_renamed_in_api_break(self):
+        assert ChangeKind.PARAM_RENAMED in _API_BREAK_KINDS
 
     def test_filter_source_only_source_break_verdict(self):
         """_filter_source_only: API_BREAK_KINDS changes → correct verdict + filtering."""

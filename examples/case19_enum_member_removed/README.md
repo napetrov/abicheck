@@ -1,7 +1,8 @@
 # Case 19 — Enum Member Removed
 
 
-**Verdict:** 🟡 API_BREAK
+**Verdict:** 🔴 BREAKING
+**Verdict detail:** ABI break (symbol removed) + API break (enum value missing from header)
 **abicheck verdict: BREAKING**
 
 ## What changes

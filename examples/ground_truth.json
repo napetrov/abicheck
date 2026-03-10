@@ -208,14 +208,14 @@
     },
     "case30_field_qualifiers": {
       "expected": "BREAKING",
-      "category": "source_break",
+      "category": "api_break",
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
     },
     "case31_enum_rename": {
       "expected": "API_BREAK",
-      "category": "source_break",
+      "category": "api_break",
       "expected_compat": "NO_CHANGE",
       "abi_break": false,
       "api_break": true,
@@ -237,7 +237,7 @@
     },
     "case34_access_level": {
       "expected": "API_BREAK",
-      "category": "source_break",
+      "category": "api_break",
       "expected_compat": "NO_CHANGE",
       "abi_break": false,
       "api_break": true,
@@ -245,7 +245,7 @@
     },
     "case35_field_rename": {
       "expected": "BREAKING",
-      "category": "source_break",
+      "category": "api_break",
       "abi_break": false,
       "api_break": true,
       "bad_practice": false

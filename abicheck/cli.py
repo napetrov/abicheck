@@ -234,23 +234,10 @@ def _build_internal_suppression(
     return SuppressionList(suppressions=rules)
 
 
-# API_BREAK-only ChangeKinds (source API breaks, not binary ABI breaks)
-_API_BREAK_KINDS: frozenset[ChangeKind] = frozenset({
-    ChangeKind.FUNC_PARAMS_CHANGED,
-    ChangeKind.FUNC_RETURN_CHANGED,
-    ChangeKind.FUNC_NOEXCEPT_ADDED,
-    ChangeKind.FUNC_NOEXCEPT_REMOVED,
-    ChangeKind.FUNC_DELETED,           # Sprint 2
-    ChangeKind.TYPE_FIELD_REMOVED,
-    ChangeKind.TYPE_FIELD_TYPE_CHANGED,
-    ChangeKind.TYPE_REMOVED,
-    ChangeKind.TYPE_BECAME_OPAQUE,     # Sprint 2
-    ChangeKind.TYPEDEF_REMOVED,
-    ChangeKind.TYPEDEF_BASE_CHANGED,
-    ChangeKind.ENUM_MEMBER_REMOVED,
-    ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
-    ChangeKind.ENUM_MEMBER_ADDED,
-})
+# API_BREAK-only ChangeKinds (source API breaks, not binary ABI breaks).
+# Keep this aligned with checker policy as single source of truth.
+from .checker_policy import API_BREAK_KINDS as _POLICY_API_BREAK_KINDS  # noqa: E402
+_API_BREAK_KINDS: frozenset[ChangeKind] = frozenset(_POLICY_API_BREAK_KINDS)
 
 # ELF/binary-only ChangeKinds (excluded in -source mode)
 _BINARY_ONLY_KINDS: frozenset[ChangeKind] = frozenset({
