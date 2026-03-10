@@ -24,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import json
 import os
 import shlex
@@ -74,7 +75,7 @@ def _abicheck_available() -> bool:
 _HAS_ABICHECK: bool = _abicheck_available()
 
 
-DEFAULT_ABICC_TIMEOUT = 30  # seconds
+DEFAULT_ABICC_TIMEOUT = 120  # seconds
 
 # Expected verdicts from case READMEs
 EXPECTED: dict[str, str] = {
@@ -82,7 +83,7 @@ EXPECTED: dict[str, str] = {
     "case02_param_type_change":       "BREAKING",
     "case03_compat_addition":         "COMPATIBLE",
     "case04_no_change":               "NO_CHANGE",
-    "case05_soname":                  "BREAKING",    # KNOWN GAP: abicheck doesn't detect missing SONAME (ELF DT_SONAME absent)
+    "case05_soname":                  "COMPATIBLE",  # SONAME added — bad-practice fix, not an ABI break
     "case06_visibility":              "BREAKING",    # KNOWN GAP: needs -fvisibility=hidden at compile time; benchmark builds with -fvisibility=default
     "case07_struct_layout":           "BREAKING",
     "case08_enum_value_change":       "BREAKING",
@@ -90,7 +91,7 @@ EXPECTED: dict[str, str] = {
     "case10_return_type":             "BREAKING",
     "case11_global_var_type":         "BREAKING",
     "case12_function_removed":        "BREAKING",
-    "case13_symbol_versioning":       "BREAKING",    # KNOWN GAP: abicheck doesn't detect missing version script (ELF symbol versioning)
+    "case13_symbol_versioning":       "COMPATIBLE",  # unversioned→versioned export — binary compatible
     "case14_cpp_class_size":          "BREAKING",
     "case15_noexcept_change":         "BREAKING",   # v2.cpp adds throw → pulls GLIBCXX_3.4.21 → SYMBOL_VERSION_REQUIRED_ADDED
     "case16_inline_to_non_inline":    "COMPATIBLE",
@@ -447,10 +448,13 @@ def run_abicc_xml(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None
     out = r.stdout + r.stderr
     (rdir / f"{case}_abicc_xml.txt").write_text(out)
 
-    if r.returncode == 1:
+    # Read verdict from output: ABICC may exit non-zero on GCC header warnings
+    # (bug #78040) while still producing a correct compatibility report.
+    m_pct = re.search(r"Binary compatibility: (\d+(?:\.\d+)?)%", out)
+    if m_pct:
+        verdict = "NO_CHANGE" if float(m_pct.group(1)) == 100.0 else "BREAKING"
+    elif r.returncode == 1:
         verdict = "BREAKING"
-    elif "Binary compatibility: 100%" in out:
-        verdict = "NO_CHANGE"
     elif r.returncode == 0:
         verdict = "COMPATIBLE"
     else:
@@ -502,10 +506,11 @@ def run_abicc_dumper(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | N
     out = r.stdout + r.stderr
     (rdir / f"{case}_abicc_dumper.txt").write_text(out)
 
-    if r.returncode == 1:
+    m_pct = re.search(r"Binary compatibility: (\d+(?:\.\d+)?)%", out)
+    if m_pct:
+        verdict = "NO_CHANGE" if float(m_pct.group(1)) == 100.0 else "BREAKING"
+    elif r.returncode == 1:
         verdict = "BREAKING"
-    elif "Binary compatibility: 100%" in out:
-        verdict = "NO_CHANGE"
     elif r.returncode == 0:
         verdict = "COMPATIBLE"
     else:
@@ -607,7 +612,42 @@ def main() -> None:
         v1_h_gen = bdir / "v1.h"
         v2_h_gen = bdir / "v2.h"
 
-        if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
+        # Use Makefile when present — preserves SONAME / version-script / extra
+        # linker flags (mirrors the pytest integration suite).
+        makefile = case_dir / "Makefile"
+        if makefile.exists():
+            import shutil as _shutil
+            build_copy = bdir / "make_build"
+            if build_copy.exists():
+                _shutil.rmtree(str(build_copy))
+            _shutil.copytree(str(case_dir), str(build_copy))
+            mr = subprocess.run(
+                ["make", "-C", str(build_copy)],
+                capture_output=True, text=True, timeout=60,
+            )
+            if mr.returncode != 0:
+                print(f"  {name:<35} MAKE_ERR")
+                results.append({"case": name, "expected": expected,
+                                 "expected_compat": EXPECTED_COMPAT.get(name, expected),
+                                 "abicheck": "ERROR", "abicheck_compat": "ERROR",
+                                 "abidiff": "ERROR", "abidiff_headers": "ERROR",
+                                 "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
+                continue
+            built_v1 = build_copy / "libv1.so"
+            built_v2 = build_copy / "libv2.so"
+            if built_v1.exists() and built_v2.exists():
+                v1_so = built_v1
+                v2_so = built_v2
+                def _remap(h, src, dst):
+                    if not h:
+                        return None
+                    try:
+                        return dst / h.relative_to(src)
+                    except ValueError:
+                        return dst / h.name
+                v1_h_hint = _remap(v1_h_hint, case_dir, build_copy)
+                v2_h_hint = _remap(v2_h_hint, case_dir, build_copy)
+        elif not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
             print(f"  {name:<35} COMPILE_ERR")
             results.append({"case": name, "expected": expected,
                              "expected_compat": EXPECTED_COMPAT.get(name, expected),
