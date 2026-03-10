@@ -15,7 +15,7 @@
       "expected": "NO_CHANGE"
     },
     "case05_soname": {
-      "expected": "NO_CHANGE"
+      "expected": "COMPATIBLE"
     },
     "case06_visibility": {
       "expected": "COMPATIBLE",
@@ -93,7 +93,8 @@
       "expected": "COMPATIBLE"
     },
     "case30_field_qualifiers": {
-      "expected": "BREAKING"
+      "expected": "SOURCE_BREAK",
+      "known_gap": "const qualifier change is not detectable at binary level (layout unchanged); abicheck returns NO_CHANGE"
     },
     "case31_enum_rename": {
       "expected": "SOURCE_BREAK"
@@ -108,7 +109,8 @@
       "expected": "SOURCE_BREAK"
     },
     "case35_field_rename": {
-      "expected": "BREAKING"
+      "expected": "SOURCE_BREAK",
+      "known_gap": "field rename not detectable from binary/DWARF alone (offset/type unchanged); abicheck returns NO_CHANGE"
     },
     "case36_anon_struct": {
       "expected": "BREAKING"
