@@ -1,7 +1,11 @@
 # Case 17 — Template Instantiation ABI Change
 
+**Verdict:** 🔴 BREAKING
 
-**Verdict:** 🟢 COMPATIBLE
+> **Note:** The verdict was previously marked COMPATIBLE in error.
+> When app_v1 is loaded against libv2.so using LD_PRELOAD, the v2 constructor
+> writes 24 bytes into a 16-byte stack slot → sentinel corruption confirmed at runtime.
+> abicheck correctly detects `struct_size_changed: Buffer<int> 16→24` = BREAKING.
 ## What changes
 
 | Version | `Buffer<int>` layout |

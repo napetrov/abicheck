@@ -67,7 +67,7 @@ EXPECTED: dict[str, str | None] = {
     # ── cases 28, 30-41 (Sprint 7 — full parity examples) ─────────────────
     "case28_typedef_opaque":            "BREAKING",    # typedef removed + type became opaque
     "case30_field_qualifiers":          "BREAKING",    # struct_field_type_changed (int→const int via DWARF)
-    "case31_enum_rename":               "BREAKING",    # enum_member_removed fires alongside rename
+    "case31_enum_rename":               "SOURCE_BREAK", # rename with same values: source-level only
     "case32_param_defaults":            "NO_CHANGE",   # default values not in binary ABI
     "case33_pointer_level":             "BREAKING",    # param/return pointer level changes
     "case34_access_level":              "SOURCE_BREAK", # narrowing access (public→private) is a source break
