@@ -75,3 +75,8 @@ if a new library returns `YELLOW`, old binaries fall through to `default` silent
 
 ## Why runtime is COMPATIBLE (matches verdict)
 Existing values are unchanged — old binaries never see the new `YELLOW` value unless the library starts returning it. Binary layout is identical. COMPATIBLE is the correct verdict.
+
+## References
+
+- [C enum rules](https://en.cppreference.com/w/c/language/enum)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

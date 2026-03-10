@@ -61,3 +61,8 @@ gcc -shared -fPIC -g v2.c -o libfoo.so
 **Why CRITICAL:** The integer value `1` now means YELLOW in v2 but the compiled app
 still checks `if c == 1` for GREEN. Any stored values, protocol messages, or switch
 statements using the old numeric constants silently route to the wrong branch.
+
+## References
+
+- [C enum rules](https://en.cppreference.com/w/c/language/enum)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

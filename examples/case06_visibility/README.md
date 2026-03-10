@@ -81,3 +81,8 @@ static int internal_helper(void); // or just leave it static
 Qt, GCC libstdc++, LLVM, and most large C++ projects gate their public API with
 visibility macros (`Q_DECL_EXPORT`, `_GLIBCXX_VISIBILITY`) precisely to avoid
 this. `-fvisibility=hidden` is standard practice since GCC 4.
+
+## References
+
+- [GCC visibility](https://gcc.gnu.org/wiki/Visibility)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

@@ -1,8 +1,16 @@
 # Case 21 — Method Became Static
 
 
-**Verdict:** 🟢 COMPATIBLE (symbol-level); source semantics changed
+**Verdict:** 🔴 BREAKING (calling convention contract)
 **abicheck verdict: BREAKING**
+
+
+## Compatibility classification
+
+- **Binary ABI impact:** BREAKING for methods that rely on `this` semantics (call ABI mismatch).
+- **Source compatibility impact:** BREAKING (`obj.bar()` vs `Class::bar()` usage contract changes).
+- **Runtime behavior impact:** Can look fine for trivial bodies, but is UB and may corrupt state/crash for non-trivial methods.
+- **Policy severity:** **BREAKING** in `ground_truth.json`.
 
 ## What changes
 
@@ -95,5 +103,11 @@ does not encode static-ness). The binary links and appears to run. However, the 
 convention is wrong — old callers pass `this` in `%rdi` which the new static function ignores.
 For methods that access member state through `this`, this is silent memory corruption.
 
-## Why runtime result is COMPATIBLE (not a hard break for old binaries)
+## Why binary linkage can look compatible even though verdict is BREAKING
 In the Itanium C++ ABI, `static` is NOT encoded in the mangled symbol name. `Widget::bar()` mangles identically whether it is static or not. Old binaries call the symbol and it resolves normally — the this-pointer is passed in `%rdi` but the new static function simply ignores it. The break is **semantic** (calling convention mismatch if bar() accesses members) and **source-level** (new code cannot call `w.bar()` — must use `Widget::bar()`).
+
+## References
+
+- [Itanium C++ ABI: mangling (why symbol can remain identical)](https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling)
+- [System V AMD64 ABI calling convention (argument/register contract)](https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.99.pdf)
+- [C++ `static` member functions](https://en.cppreference.com/w/cpp/language/static)

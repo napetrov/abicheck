@@ -70,3 +70,8 @@ readelf -d app-good | grep NEEDED
 **Why BAD PRACTICE:** The runtime works, but without a SONAME the dynamic linker
 embeds the bare filename in DT_NEEDED. If you later ship `libfoo.so.1`, existing
 binaries won't find it and packaging tools (ldconfig, dpkg) can't manage the symlink tree.
+
+## References
+
+- [How To Write Shared Libraries — SONAME](https://www.akkadia.org/drepper/dsohowto.pdf)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

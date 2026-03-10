@@ -74,3 +74,8 @@ mishandling the value.
 
 ## Why runtime result may differ from verdict
 Enum value removal: binary compat (integers same), semantic/protocol break
+
+## References
+
+- [C enum rules](https://en.cppreference.com/w/c/language/enum)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

@@ -57,3 +57,8 @@ unchanged for compatible additions and bump it on breaking changes.
 ## Real-world example
 glibc regularly adds new symbols (e.g., `reallocarray`, `explicit_bzero`) to minor
 releases without bumping the SONAME, relying on this compatible-addition guarantee.
+
+## References
+
+- [How To Write Shared Libraries — compatibility strategy](https://www.akkadia.org/drepper/dsohowto.pdf)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

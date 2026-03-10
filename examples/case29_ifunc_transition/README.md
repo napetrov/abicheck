@@ -87,3 +87,8 @@ may hit the resolver first, and very old `ld.so` versions may not support IFUNC.
 
 ## Why runtime result may differ from verdict
 IFUNC: PLT/GOT transparent to caller, runtime compat
+
+## References
+
+- [GNU as symbol types (`gnu_indirect_function`)](https://sourceware.org/binutils/docs/as/Type.html)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

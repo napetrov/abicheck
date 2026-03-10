@@ -82,3 +82,8 @@ Union field removed: accessing removed field reads undefined memory
 
 ## Runtime note
 Runtime check now fails explicitly when removed union member changes data interpretation.
+
+## References
+
+- [C union rules](https://en.cppreference.com/w/c/language/union)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

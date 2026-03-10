@@ -53,3 +53,8 @@ almost certainly an unmapped page, causing an immediate segmentation fault.
 
 ## Why runtime result may differ from verdict
 Pointer level change: wrong dereference depth — SIGSEGV
+
+## References
+
+- [C pointer types](https://en.cppreference.com/w/c/language/pointer)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

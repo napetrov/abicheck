@@ -92,3 +92,8 @@ abicheck compare v1h.json v2h.json  # → SOURCE_BREAK: METHOD_ACCESS_CHANGED
 
 ## Why runtime result may differ from verdict
 Access level narrowing: binary layout unchanged, compile fails
+
+## References
+
+- [C++ access specifiers](https://en.cppreference.com/w/cpp/language/access)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

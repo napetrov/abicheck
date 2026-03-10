@@ -145,3 +145,8 @@ identical.
 
 ## Why runtime result may differ from verdict
 noexcept mismatch — std::terminate() called at runtime
+
+## References
+
+- [C++ noexcept specifier](https://en.cppreference.com/w/cpp/language/noexcept_spec)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

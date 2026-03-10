@@ -58,3 +58,8 @@ make test-compat
 abicheck detects **no TYPE_SIZE_CHANGED** (sizeof stays 8 bytes).
 The added `int i` field appears as a new union member — informational only.
 Verdict: **COMPATIBLE**.
+
+## References
+
+- [ABI compatibility policy discussion](https://semver.org/)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

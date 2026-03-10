@@ -61,3 +61,8 @@ gcc -shared -fPIC -g v2.c -o libfoo.so
 
 **Why CRITICAL:** The app accesses only the lower 4 bytes of a now-8-byte symbol.
 On little-endian x86 this reads the low 32 bits — garbage for values above `INT_MAX`.
+
+## References
+
+- [ELF symbols](https://refspecs.linuxfoundation.org/elf/gabi4+/ch4.symtab.html)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

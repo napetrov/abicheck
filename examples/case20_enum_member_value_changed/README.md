@@ -71,3 +71,8 @@ IPC using these integer values is broken across version boundaries.
 
 ## Why runtime result may differ from verdict
 Enum value changed: integer value differs, silent wrong behavior
+
+## References
+
+- [Protocol buffers compatibility guidance](https://protobuf.dev/programming-guides/proto3/#updating)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)
