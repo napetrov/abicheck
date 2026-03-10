@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import html
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from .checker import _BREAKING_KINDS as _CHECKER_BREAKING_KINDS_ENUM
+from .checker_policy import HasKind
+from .report_summary import compatibility_metrics
 
 if TYPE_CHECKING:
     from .checker import DiffResult
@@ -418,6 +420,7 @@ def _generate_compat_html(
     suppressed: list[object],
     suppressed_count: int,
     bc_pct: float,
+    affected_pct: float,
     breaking_count: int,
     verdict: str,
     lib_display: str,
@@ -462,14 +465,14 @@ def _generate_compat_html(
 
     compat_verdict = "incompatible" if verdict in ("BREAKING", "SOURCE_BREAK") else "compatible"
     bc_css = "incompatible" if bc_pct < 90 else ("warning" if bc_pct < 100 else "compatible")
-    affected_pct = f"{100 - bc_pct:.1f}" if old_symbol_count else "0"
+    affected_pct_label = f"{affected_pct:.1f}" if old_symbol_count else "0"
 
     kind_label = report_kind.capitalize()  # "Binary" or "Source"
 
     # META_DATA comment (semicolon-delimited, matches ABICC format)
     meta_data = (
         f"verdict:{compat_verdict};kind:{report_kind};"
-        f"affected:{affected_pct};"
+        f"affected:{affected_pct_label};"
         f"added:{len(added)};removed:{len(removed)};"
         f"type_problems_high:{tp_high};"
         f"type_problems_medium:{tp_med};"
@@ -620,18 +623,10 @@ def generate_html_report(
     added   = [ch for ch in changes if _change_bucket(ch) == "added"]
     changed = [ch for ch in changes if _change_bucket(ch) == "changed"]
 
-    # Binary Compatibility %
-    breaking_count = sum(1 for ch in changes if _is_breaking(ch))
-    if breaking_count == 0:
-        bc_pct = 100.0
-    elif old_symbol_count is not None and old_symbol_count > 0:
-        # ABICC-style: (total_old - breaking) / total_old * 100
-        # Clamp to 0% if breaking exceeds symbol count (stale snapshot edge case)
-        bc_pct = max(0.0, (old_symbol_count - breaking_count) / old_symbol_count * 100)
-    else:
-        # old_symbol_count is None or 0 — fall back to change-ratio approximation
-        total = len(changes)
-        bc_pct = max(0.0, (total - breaking_count) / total * 100) if total > 0 else 0.0
+    metrics = compatibility_metrics(cast(list[HasKind], changes), old_symbol_count)
+    breaking_count = metrics.breaking_count
+    bc_pct = metrics.binary_compatibility_pct
+    affected_pct = metrics.affected_pct
 
     h = html.escape
     lib_display  = h(lib_name)  if lib_name  else "library"
@@ -642,7 +637,7 @@ def generate_html_report(
         return _generate_compat_html(
             result, changes, removed, changed, added,
             suppressed, suppressed_count,
-            bc_pct, breaking_count, verdict,
+            bc_pct, affected_pct, breaking_count, verdict,
             lib_display, old_display, new_display,
             old_symbol_count, title,
             report_kind=report_kind,

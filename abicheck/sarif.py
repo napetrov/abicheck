@@ -18,23 +18,12 @@ from pathlib import Path
 from typing import Any
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
+from abicheck.checker_policy import policy_for
 
 # ---------------------------------------------------------------------------
 # Severity mapping
 # ---------------------------------------------------------------------------
 _BREAKING_SEVERITY = "error"
-_COMPATIBLE_SEVERITY = "warning"
-_NOTE_SEVERITY = "note"
-
-# ChangeKinds that are purely informational (compatible additions)
-_COMPATIBLE_KINDS: frozenset[ChangeKind] = frozenset(
-    {
-        ChangeKind.FUNC_ADDED,
-        ChangeKind.VAR_ADDED,
-        ChangeKind.SYMBOL_BINDING_STRENGTHENED,
-        ChangeKind.ENUM_MEMBER_ADDED,
-    }
-)
 
 # Rule ID = change_kind value (snake_case, already stable)
 
@@ -47,17 +36,16 @@ def _tool_version() -> str:
 
 
 def _severity(change: Change) -> str:
-    if change.kind in _COMPATIBLE_KINDS:
-        return _COMPATIBLE_SEVERITY
-    return _BREAKING_SEVERITY
+    return policy_for(change.kind).severity
 
 
 def _rule_for(kind: ChangeKind) -> dict[str, Any]:
     """Produce a SARIF reportingDescriptor for a ChangeKind."""
     rule_id = kind.value
-    severity = _BREAKING_SEVERITY if kind not in _COMPATIBLE_KINDS else _COMPATIBLE_SEVERITY
+    severity = policy_for(kind).severity
+    doc_slug = policy_for(kind).doc_slug
     help_uri = (
-        "https://github.com/napetrov/abicheck/blob/main/docs/libabigail_parity.md"
+        f"https://github.com/napetrov/abicheck/blob/main/docs/abi_breaking_cases_catalog.md#{doc_slug}"
     )
     return {
         "id": rule_id,

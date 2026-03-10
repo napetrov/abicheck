@@ -67,6 +67,17 @@ class DiffResult:
         return [c for c in self.changes if c.kind in _COMPATIBLE_KINDS]
 
 
+@dataclass(frozen=True)
+class _DetectorSpec:
+    name: str
+    run: Callable[[AbiSnapshot, AbiSnapshot], list[Change]]
+    is_supported: Callable[[AbiSnapshot, AbiSnapshot], tuple[bool, str | None]] | None = None
+
+    def support(self, old: AbiSnapshot, new: AbiSnapshot) -> tuple[bool, str | None]:
+        if self.is_supported is None:
+            return True, None
+        return self.is_supported(old, new)
+
 def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
     old_map = {k: v for k, v in old.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
@@ -1182,41 +1193,52 @@ def compare(
 ) -> DiffResult:
     """Diff two AbiSnapshots and return a DiffResult with verdict."""
 
-    detector_fns: list[tuple[str, Callable[[AbiSnapshot, AbiSnapshot], list[Change]]]] = [
-        ("functions", _diff_functions),
-        ("variables", _diff_variables),
-        ("types", _diff_types),
-        ("enums", _diff_enums),
-        ("method_qualifiers", _diff_method_qualifiers),
-        ("unions", _diff_unions),
-        ("typedefs", _diff_typedefs),
-        ("elf", _diff_elf),
-        ("dwarf", _diff_dwarf),
-        ("advanced_dwarf", _diff_advanced_dwarf),
-        ("enum_renames", _diff_enum_renames),
-        ("field_qualifiers", _diff_field_qualifiers),
-        ("field_renames", _diff_field_renames),
-        ("param_defaults", _diff_param_defaults),
-        ("param_renames", _diff_param_renames),
-        ("pointer_levels", _diff_pointer_levels),
-        ("access_levels", _diff_access_levels),
-        ("anon_fields", _diff_anon_fields),
-        ("var_values", _diff_var_values),
-        ("type_kind_changes", _diff_type_kind_changes),
-        ("reserved_fields", _diff_reserved_fields),
-        ("const_overloads", _diff_const_overloads),
-        ("param_restrict", _diff_param_restrict),
-        ("param_va_list", _diff_param_va_list),
-        ("constants", _diff_constants),
-        ("var_access", _diff_var_access),
+    detector_fns: list[_DetectorSpec] = [
+        _DetectorSpec("functions", _diff_functions),
+        _DetectorSpec("variables", _diff_variables),
+        _DetectorSpec("types", _diff_types),
+        _DetectorSpec("enums", _diff_enums),
+        _DetectorSpec("method_qualifiers", _diff_method_qualifiers),
+        _DetectorSpec("unions", _diff_unions),
+        _DetectorSpec("typedefs", _diff_typedefs),
+        _DetectorSpec("elf", _diff_elf),
+        _DetectorSpec("dwarf", _diff_dwarf),
+        _DetectorSpec(
+            "advanced_dwarf",
+            _diff_advanced_dwarf,
+            lambda o, n: ((o.dwarf_advanced is not None and n.dwarf_advanced is not None), "missing DWARF advanced metadata"),
+        ),
+        _DetectorSpec("enum_renames", _diff_enum_renames),
+        _DetectorSpec("field_qualifiers", _diff_field_qualifiers),
+        _DetectorSpec("field_renames", _diff_field_renames),
+        _DetectorSpec("param_defaults", _diff_param_defaults),
+        _DetectorSpec("param_renames", _diff_param_renames),
+        _DetectorSpec("pointer_levels", _diff_pointer_levels),
+        _DetectorSpec("access_levels", _diff_access_levels),
+        _DetectorSpec("anon_fields", _diff_anon_fields),
+        _DetectorSpec("var_values", _diff_var_values),
+        _DetectorSpec("type_kind_changes", _diff_type_kind_changes),
+        _DetectorSpec("reserved_fields", _diff_reserved_fields),
+        _DetectorSpec("const_overloads", _diff_const_overloads),
+        _DetectorSpec("param_restrict", _diff_param_restrict),
+        _DetectorSpec("param_va_list", _diff_param_va_list),
+        _DetectorSpec("constants", _diff_constants),
+        _DetectorSpec("var_access", _diff_var_access),
     ]
 
     changes: list[Change] = []
     detector_results: list[DetectorResult] = []
-    for name, detector in detector_fns:
-        detected = detector(old, new)
+    for spec in detector_fns:
+        enabled, reason = spec.support(old, new)
+        if not enabled:
+            detector_results.append(
+                DetectorResult(name=spec.name, changes_count=0, enabled=False, coverage_gap=reason)
+            )
+            continue
+
+        detected = spec.run(old, new)
         changes.extend(detected)
-        detector_results.append(DetectorResult(name=name, changes_count=len(detected)))
+        detector_results.append(DetectorResult(name=spec.name, changes_count=len(detected), enabled=True))
 
     suppressed: list[Change] = []
     if suppression is not None:
