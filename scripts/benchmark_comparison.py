@@ -452,7 +452,8 @@ def run_abicc_xml(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None
     # (bug #78040) while still producing a correct compatibility report.
     m_pct = re.search(r"Binary compatibility: (\d+(?:\.\d+)?)%", out)
     if m_pct:
-        verdict = "NO_CHANGE" if float(m_pct.group(1)) == 100.0 else "BREAKING"
+        # 100% = no breaking changes (may still have compatible additions)
+        verdict = "COMPATIBLE" if float(m_pct.group(1)) == 100.0 else "BREAKING"
     elif r.returncode == 1:
         verdict = "BREAKING"
     elif r.returncode == 0:
@@ -508,7 +509,7 @@ def run_abicc_dumper(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | N
 
     m_pct = re.search(r"Binary compatibility: (\d+(?:\.\d+)?)%", out)
     if m_pct:
-        verdict = "NO_CHANGE" if float(m_pct.group(1)) == 100.0 else "BREAKING"
+        verdict = "COMPATIBLE" if float(m_pct.group(1)) == 100.0 else "BREAKING"
     elif r.returncode == 1:
         verdict = "BREAKING"
     elif r.returncode == 0:
@@ -625,19 +626,22 @@ def main() -> None:
                 ["make", "-C", str(build_copy)],
                 capture_output=True, text=True, timeout=60,
             )
-            if mr.returncode != 0:
-                print(f"  {name:<35} MAKE_ERR")
-                results.append({"case": name, "expected": expected,
-                                 "expected_compat": EXPECTED_COMPAT.get(name, expected),
-                                 "abicheck": "ERROR", "abicheck_compat": "ERROR",
-                                 "abidiff": "ERROR", "abidiff_headers": "ERROR",
-                                 "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
-                continue
+            # On make failure or missing artifacts: fall back to compile_so()
             built_v1 = build_copy / "libv1.so"
             built_v2 = build_copy / "libv2.so"
-            if built_v1.exists() and built_v2.exists():
+            if mr.returncode == 0 and built_v1.exists() and built_v2.exists():
                 v1_so = built_v1
                 v2_so = built_v2
+            else:
+                if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
+                    print(f"  {name:<35} COMPILE_ERR")
+                    results.append({"case": name, "expected": expected,
+                                     "expected_compat": EXPECTED_COMPAT.get(name, expected),
+                                     "abicheck": "ERROR", "abicheck_compat": "ERROR",
+                                     "abidiff": "ERROR", "abidiff_headers": "ERROR",
+                                     "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
+                    continue
+            if v1_so == built_v1:
                 def _remap(h, src, dst):
                     if not h:
                         return None
