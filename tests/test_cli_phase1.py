@@ -22,7 +22,7 @@ def test_dump_cmd_writes_output_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr("abicheck.cli.dump", lambda **_: _snap("2.0"))
 
-    runner = CliRunner(mix_stderr=False)
+    runner = CliRunner()
     result = runner.invoke(
         main,
         [
@@ -38,7 +38,7 @@ def test_dump_cmd_writes_output_file(tmp_path, monkeypatch):
     )
 
     assert result.exit_code == 0
-    assert "Snapshot written to" in result.stderr
+    assert "Snapshot written to" in result.output
     assert out.exists()
     assert '"version": "2.0"' in out.read_text(encoding="utf-8")
 
@@ -67,11 +67,11 @@ def test_compare_cmd_warns_when_all_changes_suppressed(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("abicheck.cli.to_markdown", lambda _r: "REPORT")
 
-    runner = CliRunner(mix_stderr=False)
+    runner = CliRunner()
     result = runner.invoke(main, ["compare", str(old), str(new), "--suppress", str(suppress)])
 
     assert result.exit_code == 0
-    assert "all ABI changes were suppressed" in result.stderr
+    assert "all ABI changes were suppressed" in result.output
     assert "REPORT" in result.stdout
 
 
@@ -94,7 +94,7 @@ def test_compare_cmd_breaking_exits_with_code_4(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("abicheck.cli.to_markdown", lambda _r: "BREAKING REPORT")
 
-    runner = CliRunner(mix_stderr=False)
+    runner = CliRunner()
     result = runner.invoke(main, ["compare", str(old), str(new)])
 
     assert result.exit_code == 4
@@ -109,14 +109,14 @@ def test_compat_cmd_descriptor_parse_error_exits_2(tmp_path, monkeypatch):
 
     monkeypatch.setattr("abicheck.cli.parse_descriptor", lambda *_, **__: (_ for _ in ()).throw(ValueError("bad")))
 
-    runner = CliRunner(mix_stderr=False)
+    runner = CliRunner()
     result = runner.invoke(
         main,
         ["compat", "-lib", "foo", "-old", str(old_desc), "-new", str(new_desc)],
     )
 
     assert result.exit_code == 2
-    assert "Error parsing descriptor" in result.stderr
+    assert "Error parsing descriptor" in result.output
 
 
 def test_compat_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypatch):
@@ -147,7 +147,7 @@ def test_compat_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypatch):
     )
 
     report = tmp_path / "compat" / "report.json"
-    runner = CliRunner(mix_stderr=False)
+    runner = CliRunner()
     result = runner.invoke(
         main,
         [
@@ -168,4 +168,4 @@ def test_compat_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypatch):
     assert result.exit_code == 1
     assert report.exists()
     assert "BREAKING" in report.read_text(encoding="utf-8")
-    assert "Verdict: BREAKING" in result.stderr
+    assert "Verdict: BREAKING" in result.output
