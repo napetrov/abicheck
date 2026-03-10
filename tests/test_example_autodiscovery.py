@@ -10,14 +10,14 @@ Layout support:
   • good/bad  — examples/caseXX/bad.c (v1) + good.c (v2)  [bad=before, good=fixed]
   • libfoo    — examples/caseXX/libfoo_v1.c + libfoo_v2.c
 
-Expected verdicts are declared here (not in the example source tree) so the
-tests remain authoritative even if README files get out of sync.
-Set to `None` to skip a case entirely (e.g. intentional compile errors).
+Expected verdicts are loaded from examples/ground_truth.json (single source
+of truth). Set a case to null in ground_truth.json to skip it entirely.
 
 Marked `@pytest.mark.integration` — requires gcc/g++ + castxml in PATH.
 """
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -31,63 +31,22 @@ REPO_DIR     = Path(__file__).parent.parent
 EXAMPLES_DIR = REPO_DIR / "examples"
 
 # ---------------------------------------------------------------------------
-# Expected verdicts (single source of truth for the test suite)
+# Expected verdicts and known gaps — loaded from ground_truth.json.
+# Single source of truth: add cases / known_gap fields there, not here.
+# To skip a case, set its "expected" value to null in ground_truth.json.
 # ---------------------------------------------------------------------------
+_GT_PATH = REPO_DIR / "examples" / "ground_truth.json"
+_gt_data = json.loads(_GT_PATH.read_text())
 EXPECTED: dict[str, str | None] = {
-    # ── cases 01-18 (v1/v2 layout) ──────────────────────────────────────────
-    "case01_symbol_removal": "BREAKING",
-    "case02_param_type_change": "BREAKING",
-    "case03_compat_addition": "COMPATIBLE",
-    "case04_no_change": "NO_CHANGE",
-    "case05_soname": "COMPATIBLE",  # SONAME_MISSING: bad practice flag, COMPATIBLE verdict
-    "case06_visibility": "COMPATIBLE",  # visibility leak cleanup: bad practice fix, not intended ABI break
-    "case07_struct_layout": "BREAKING",
-    "case08_enum_value_change": "BREAKING",
-    "case09_cpp_vtable": "BREAKING",
-    "case10_return_type": "BREAKING",
-    "case11_global_var_type": "BREAKING",
-    "case12_function_removed": "BREAKING",
-    "case13_symbol_versioning": "COMPATIBLE",  # unversioned→versioned: ld.so soft-matches; Makefile applies version script
-    "case14_cpp_class_size": "BREAKING",
-    "case15_noexcept_change": "BREAKING",    # SYMBOL_VERSION_REQUIRED_ADDED from stdexcept
-    "case16_inline_to_non_inline": "COMPATIBLE",
-    "case17_template_abi": "BREAKING",
-    "case18_dependency_leak": "BREAKING",
-    # ── cases 19-29 (old/new layout) ────────────────────────────────────────
-    "case19_enum_member_removed": "BREAKING",
-    "case20_enum_member_value_changed": "BREAKING",
-    "case21_method_became_static": "BREAKING",
-    "case22_method_const_changed": "BREAKING",
-    "case23_pure_virtual_added": "BREAKING",    # pure_virtual=1 changes vtable slot → __cxa_pure_virtual
-    "case24_union_field_removed": "BREAKING",
-    "case25_enum_member_added": "COMPATIBLE",
-    "case26_union_field_added": "BREAKING",    # union grows 4→8 bytes: TYPE_SIZE_CHANGED
-    "case27_symbol_binding_weakened": "COMPATIBLE",
-    "case29_ifunc_transition": "COMPATIBLE",  # FUNC→IFUNC → IFUNC_INTRODUCED (COMPATIBLE)
-    # ── cases 28, 30-41 (Sprint 7 — full parity examples) ─────────────────
-    "case28_typedef_opaque": "BREAKING",    # typedef removed + type became opaque
-    "case30_field_qualifiers": "BREAKING",    # const/volatile qualifier change on struct fields → TYPE_FIELD_TYPE_CHANGED
-    "case31_enum_rename": "SOURCE_BREAK", # rename with same values: source-level only
-    "case32_param_defaults": "NO_CHANGE",   # default values not in binary ABI
-    "case33_pointer_level": "BREAKING",    # param/return pointer level changes
-    "case34_access_level": "SOURCE_BREAK", # narrowing access (public→private) is a source break
-    "case35_field_rename": "BREAKING",    # field rename: castxml sees old field removed + new field added → BREAKING
-    "case36_anon_struct": "BREAKING",    # type_size_changed + alignment changed
-    "case37_base_class": "BREAKING",    # base class reorder + virtual inheritance change
-    "case38_virtual_methods": "BREAKING",    # virtual added/removed + visibility change
-    "case39_var_const": "BREAKING",    # var_type_changed + var_removed now detected via ELF+DWARF
-    "case40_field_layout": "BREAKING",    # field type changed + size changed
-    "case41_type_changes": "BREAKING",    # type removed + alignment changed + enum sentinel
+    k: v.get("expected") for k, v in _gt_data["verdicts"].items()
+}
+# known_gap: case_name → xfail reason (sourced from ground_truth.json)
+KNOWN_GAPS: dict[str, str] = {
+    k: v["known_gap"]
+    for k, v in _gt_data["verdicts"].items()
+    if "known_gap" in v
 }
 
-# Known gaps: these cases xfail when the verdict disagrees with expected.
-# Format: case_name → reason string.
-KNOWN_GAPS: dict[str, str] = {
-    "case06_visibility": (
-        "Current checker may report BREAKING via FUNC_VISIBILITY_CHANGED when leaked internal symbols "
-        "disappear from dynsym; semantically this case is a bad-practice cleanup and is treated as COMPATIBLE"
-    ),
-}
 
 # ---------------------------------------------------------------------------
 # Layout detection helpers
