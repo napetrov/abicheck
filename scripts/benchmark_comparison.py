@@ -82,7 +82,12 @@ DEFAULT_ABICC_TIMEOUT = 120  # seconds
 _GT_PATH = Path(__file__).parent.parent / "examples" / "ground_truth.json"
 try:
     _gt_data = json.loads(_GT_PATH.read_text())
-except (FileNotFoundError, json.JSONDecodeError) as _e:
+    if "verdicts" not in _gt_data:
+        raise ValueError("missing top-level verdicts key")
+    for _k, _v in _gt_data["verdicts"].items():
+        if "expected" not in _v:
+            raise ValueError(f"case {_k!r} missing expected field")
+except (FileNotFoundError, json.JSONDecodeError, ValueError) as _e:
     raise SystemExit(f"ERROR: cannot load {_GT_PATH}: {_e}") from _e
 
 EXPECTED: dict[str, str] = {
