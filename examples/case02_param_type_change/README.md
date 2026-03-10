@@ -63,3 +63,8 @@ old symbol with its original signature for at least one deprecation cycle.
 ## Real-world example
 Common in numerical libraries (BLAS, LAPACK) when precision is upgraded — `float` →
 `double` parameter changes require wrapper shims for backward compatibility.
+
+## References
+
+- [System V AMD64 ABI: calling sequence](https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.99.pdf)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

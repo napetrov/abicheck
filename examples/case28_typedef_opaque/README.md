@@ -104,3 +104,8 @@ echo "exit: $?"
   until the next major SONAME bump.
 - **opaque transition:** Provide the full struct definition in a separate "internal" header
   and only expose the opaque pointer in the public API from the start.
+
+## References
+
+- [Opaque pointer pattern in C](https://interrupt.memfault.com/blog/opaque-pointers)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

@@ -63,6 +63,8 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 
 ---
 
+
+
 ## Running Consumer App Demos
 
 Every case directory now includes an `app.c` or `app.cpp` that demonstrates

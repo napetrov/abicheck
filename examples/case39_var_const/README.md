@@ -105,3 +105,8 @@ python3 -m abicheck.cli compare v1.json v2.json
 ```
 
 Without `-H`, ELF-only mode may miss source-level type qualifiers on globals.
+
+## References
+
+- [C type qualifiers](https://en.cppreference.com/w/c/language/const)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

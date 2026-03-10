@@ -65,3 +65,8 @@ gcc -shared -fPIC -g v2.c -o libfoo.so
 **Why CRITICAL:** The v2 library writes a `z` field at byte offset 8, but the app only
 allocated 8 bytes for the struct. The canary variable on the stack is overwritten —
 a classic stack corruption that can corrupt control flow or cause silent data loss.
+
+## References
+
+- [C struct type rules](https://en.cppreference.com/w/c/language/struct)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

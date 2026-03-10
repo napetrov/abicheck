@@ -1,6 +1,14 @@
 # Case 30 — Field Qualifier Changes (const, volatile)
 
-**Category:** Type Qualifiers | **Verdict:** 🟡 SOURCE_BREAK (semantic contract changed; binary layout unchanged)
+**Category:** Type Qualifiers | **Verdict:** 🔴 BREAKING (policy escalated source break)
+
+
+## Compatibility classification
+
+- **Binary ABI impact:** Usually layout-compatible (no size/offset change), but stale optimization assumptions can still break behavior.
+- **Source compatibility impact:** BREAKING (`const` write errors, `volatile` contract changes).
+- **Runtime behavior impact:** Semantic divergence (stale reads / UB writes) without linker errors.
+- **Policy severity:** **BREAKING** in `ground_truth.json` (`source_break` category escalated by policy).
 
 ## What changes
 
@@ -105,3 +113,9 @@ echo "exit: $?"
 - If a field must become immutable, provide setter/getter functions instead of
   direct field access, and hide the struct behind an opaque pointer.
 - Adding `volatile` should be done only in a new struct or with a major version bump.
+
+## References
+
+- [C type qualifiers (`const`)](https://en.cppreference.com/w/c/language/const)
+- [C type qualifiers (`volatile`)](https://en.cppreference.com/w/c/language/volatile)
+- [C volatile semantics in systems code (WG14 N2148 discussion)](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n2148.htm)

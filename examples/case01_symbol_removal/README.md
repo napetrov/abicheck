@@ -60,3 +60,8 @@ Never remove a public symbol in a minor/patch release. Deprecate with
 Common in C libraries during "API cleanup" refactors — OpenSSL 1.1.0 removed several
 low-level functions that were technically public, forcing all downstream packages to
 patch at once.
+
+## References
+
+- [ELF symbol table + dynamic linking behavior](https://refspecs.linuxfoundation.org/elf/gabi4+/ch4.symtab.html)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

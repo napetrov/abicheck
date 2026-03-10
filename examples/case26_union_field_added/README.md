@@ -81,3 +81,8 @@ Union field added (double): sizeof(Value) grows 4→8 bytes, layout broken
 
 ## Runtime note
 v2 now writes the newly added double field so old-layout callers observe incompatible behavior.
+
+## References
+
+- [C union rules](https://en.cppreference.com/w/c/language/union)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

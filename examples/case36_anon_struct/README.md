@@ -77,3 +77,8 @@ Anon struct layout change: field offsets shift without DWARF, silent corruption
 
 ## Runtime note
 App returns non-zero on detected offset mismatch.
+
+## References
+
+- [C anonymous structs/unions](https://en.cppreference.com/w/c/language/struct)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

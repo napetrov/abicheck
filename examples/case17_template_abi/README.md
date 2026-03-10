@@ -118,3 +118,8 @@ overwritten — classic stack smash, potentially corrupting return addresses.
 
 ## Why runtime result may differ from verdict
 Template instantiation in binary: symbol names unchanged
+
+## References
+
+- [C++ class templates](https://en.cppreference.com/w/cpp/language/class_template)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

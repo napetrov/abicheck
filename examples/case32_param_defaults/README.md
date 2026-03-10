@@ -118,3 +118,8 @@ No fix needed for binary compatibility. For source compatibility:
   will silently continue using the old default until recompiled.
 - Consider using overloaded functions instead of defaults for critical parameters
   where behavioral differences matter.
+
+## References
+
+- [C++ default arguments](https://en.cppreference.com/w/cpp/language/default_arguments)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)

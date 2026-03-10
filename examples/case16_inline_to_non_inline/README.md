@@ -112,3 +112,8 @@ v2.hpp and v2.so must ship together.
 
 ## Why runtime result may differ from verdict
 Inline→non-inline: old binary uses inlined copy, runtime unaffected
+
+## References
+
+- [C++ One Definition Rule](https://en.cppreference.com/w/cpp/language/definition)
+- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)
