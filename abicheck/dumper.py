@@ -613,7 +613,7 @@ def dump(
     exported_dynamic, exported_static = _pyelftools_exported_symbols(so_path)
 
     from .dwarf_unified import parse_dwarf
-    from .elf_metadata import parse_elf_metadata, SymbolType
+    from .elf_metadata import SymbolType, parse_elf_metadata
 
     elf_meta = parse_elf_metadata(so_path)
     # Use filtered ELF metadata symbols as authoritative surface for no-header mode.
