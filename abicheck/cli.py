@@ -348,20 +348,18 @@ def _filter_source_only(result: DiffResult) -> DiffResult:
 def _filter_binary_only(result: DiffResult) -> DiffResult:
     """Remove source-only changes from result for -binary mode."""
     from .checker import (  # noqa: PLC0415
-        _API_BREAK_KINDS as _SBK,
-    )
-    from .checker import (
         _BREAKING_KINDS,
         _COMPATIBLE_KINDS,
         DiffResult,
         Verdict,
     )
 
+    # _API_BREAK_KINDS is module-level (from checker_policy); use it directly.
     filtered = [c for c in result.changes if c.kind not in _API_BREAK_KINDS]
 
     if any(c.kind in _BREAKING_KINDS for c in filtered):
         verdict = Verdict.BREAKING
-    elif any(c.kind in _SBK for c in filtered):
+    elif any(c.kind in _API_BREAK_KINDS for c in filtered):
         verdict = Verdict.API_BREAK
     elif any(c.kind in _COMPATIBLE_KINDS for c in filtered):
         verdict = Verdict.COMPATIBLE
