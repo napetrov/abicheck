@@ -36,3 +36,35 @@ def test_compatibility_metrics_use_old_symbol_count() -> None:
     assert metrics.breaking_count == 1
     assert round(metrics.binary_compatibility_pct, 1) == 90.0
     assert round(metrics.affected_pct, 1) == 10.0
+
+
+def test_compatibility_metrics_no_breaking_is_full_compatibility() -> None:
+    metrics = compatibility_metrics(
+        [Change(ChangeKind.FUNC_ADDED, "_Z3barv", "added")],
+        old_symbol_count=10,
+    )
+    assert metrics.breaking_count == 0
+    assert metrics.binary_compatibility_pct == 100.0
+    assert metrics.affected_pct == 0.0
+
+
+def test_compatibility_metrics_without_old_symbol_count_uses_change_ratio() -> None:
+    metrics = compatibility_metrics(
+        [
+            Change(ChangeKind.FUNC_REMOVED, "_Z3foov", "removed"),
+            Change(ChangeKind.FUNC_ADDED, "_Z3barv", "added"),
+        ],
+    )
+    assert metrics.breaking_count == 1
+    assert round(metrics.binary_compatibility_pct, 1) == 50.0
+    assert metrics.affected_pct == 0.0
+
+
+def test_policy_for_unknown_kind_falls_back_to_breaking() -> None:
+    class _UnknownKind:
+        value = "unknown_kind"
+
+    entry = policy_for(_UnknownKind())  # type: ignore[arg-type]
+    assert entry.default_verdict == Verdict.BREAKING
+    assert entry.severity == "error"
+    assert entry.doc_slug == "unknown_kind"

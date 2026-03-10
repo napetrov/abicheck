@@ -1,10 +1,11 @@
 """Canonical summary metric computation for all report formats."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .checker import _BREAKING_KINDS
-from .checker import DiffResult
+from .checker import _BREAKING_KINDS, DiffResult
+from .checker_policy import HasKind
 
 
 @dataclass(frozen=True)
@@ -24,9 +25,9 @@ class CompatibilityMetrics:
     affected_pct: float
 
 
-def compatibility_metrics(changes: list[object], old_symbol_count: int | None = None) -> CompatibilityMetrics:
+def compatibility_metrics(changes: Sequence[HasKind], old_symbol_count: int | None = None) -> CompatibilityMetrics:
     """Compute canonical ABICC-style binary compatibility counters/percentages."""
-    breaking_count = sum(1 for c in changes if getattr(c, "kind", None) in _BREAKING_KINDS)
+    breaking_count = sum(1 for c in changes if c.kind in _BREAKING_KINDS)
 
     if breaking_count == 0:
         bc_pct = 100.0

@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import html
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from .checker import _BREAKING_KINDS as _CHECKER_BREAKING_KINDS_ENUM
+from .checker_policy import HasKind
 from .report_summary import compatibility_metrics
 
 if TYPE_CHECKING:
@@ -622,7 +623,7 @@ def generate_html_report(
     added   = [ch for ch in changes if _change_bucket(ch) == "added"]
     changed = [ch for ch in changes if _change_bucket(ch) == "changed"]
 
-    metrics = compatibility_metrics(changes, old_symbol_count)
+    metrics = compatibility_metrics(cast(list[HasKind], changes), old_symbol_count)
     breaking_count = metrics.breaking_count
     bc_pct = metrics.binary_compatibility_pct
     affected_pct = metrics.affected_pct

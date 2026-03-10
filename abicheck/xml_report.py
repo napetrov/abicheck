@@ -43,9 +43,10 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .checker import _BREAKING_KINDS as _CHECKER_BREAKING_KINDS_ENUM
+from .checker_policy import HasKind
 from .report_summary import compatibility_metrics
 
 if TYPE_CHECKING:
@@ -187,7 +188,7 @@ def _compute_section(
     total_type = sum(type_problems.values())
     total_symbol = sum(symbol_problems.values())
 
-    metrics = compatibility_metrics(filtered, old_symbol_count)
+    metrics = compatibility_metrics(cast(list[HasKind], filtered), old_symbol_count)
     breaking_count = metrics.breaking_count
     bc_pct = metrics.binary_compatibility_pct
     affected_pct = metrics.affected_pct

@@ -119,6 +119,11 @@ class TestSeverityMapping:
         rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
         assert rule["defaultConfiguration"]["level"] == "warning"
 
+    def test_rule_help_uri_uses_policy_doc_slug(self) -> None:
+        doc = to_sarif(_make_result([_compatible_change()], verdict=Verdict.COMPATIBLE))
+        rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
+        assert rule["helpUri"].endswith("#func_added")
+
 
 # ---------------------------------------------------------------------------
 # Result content

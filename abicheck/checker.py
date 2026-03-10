@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -69,8 +70,8 @@ class DiffResult:
 @dataclass(frozen=True)
 class _DetectorSpec:
     name: str
-    run: Any
-    is_supported: Any = None
+    run: Callable[[AbiSnapshot, AbiSnapshot], list[Change]]
+    is_supported: Callable[[AbiSnapshot, AbiSnapshot], tuple[bool, str | None]] | None = None
 
     def support(self, old: AbiSnapshot, new: AbiSnapshot) -> tuple[bool, str | None]:
         if self.is_supported is None:
@@ -1205,7 +1206,7 @@ def compare(
         _DetectorSpec(
             "advanced_dwarf",
             _diff_advanced_dwarf,
-            lambda o, n: ((o.dwarf_advanced is not None or n.dwarf_advanced is not None), "missing DWARF advanced metadata"),
+            lambda o, n: ((o.dwarf_advanced is not None and n.dwarf_advanced is not None), "missing DWARF advanced metadata"),
         ),
         _DetectorSpec("enum_renames", _diff_enum_renames),
         _DetectorSpec("field_qualifiers", _diff_field_qualifiers),
