@@ -16,9 +16,9 @@ import pytest
 from click.testing import CliRunner
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
+from abicheck.checker_policy import API_BREAK_KINDS as _API_BREAK_KINDS
 from abicheck.cli import (
     _BINARY_ONLY_KINDS,
-    _SOURCE_BREAK_KINDS,
     _apply_strict,
     _build_skip_suppression,
     _filter_source_only,
@@ -49,7 +49,7 @@ class TestApplyStrict:
         assert promoted.verdict == Verdict.BREAKING
 
     def test_promotes_source_break_to_breaking(self):
-        r = _result(Verdict.SOURCE_BREAK, [ChangeKind.FUNC_PARAMS_CHANGED])
+        r = _result(Verdict.API_BREAK, [ChangeKind.FUNC_PARAMS_CHANGED])
         promoted = _apply_strict(r)
         assert promoted.verdict == Verdict.BREAKING
 
@@ -188,26 +188,26 @@ class TestCompatCliFlags:
         assert "-d1" in result.output or "d1" in result.output
 
 
-# ── SOURCE_BREAK_KINDS / BINARY_ONLY_KINDS completeness ──────────────────────
+# ── API_BREAK_KINDS / BINARY_ONLY_KINDS completeness ──────────────────────
 
 class TestKindSets:
     def test_no_overlap_between_source_and_binary(self):
-        overlap = _SOURCE_BREAK_KINDS & _BINARY_ONLY_KINDS
+        overlap = _API_BREAK_KINDS & _BINARY_ONLY_KINDS
         assert overlap == frozenset(), f"Overlap: {overlap}"
 
     def test_soname_in_binary_only(self):
         assert ChangeKind.SONAME_CHANGED in _BINARY_ONLY_KINDS
 
-    def test_func_params_in_source_break(self):
-        assert ChangeKind.FUNC_PARAMS_CHANGED in _SOURCE_BREAK_KINDS
+    def test_param_renamed_in_api_break(self):
+        assert ChangeKind.PARAM_RENAMED in _API_BREAK_KINDS
 
     def test_filter_source_only_source_break_verdict(self):
-        """_filter_source_only: SOURCE_BREAK_KINDS changes → correct verdict + filtering."""
+        """_filter_source_only: API_BREAK_KINDS changes → correct verdict + filtering."""
         from abicheck.cli import _filter_source_only
         r = _result(Verdict.BREAKING, [ChangeKind.SONAME_CHANGED, ChangeKind.FUNC_PARAMS_CHANGED])
         filtered = _filter_source_only(r)
         # SONAME removed, FUNC_PARAMS_CHANGED stays
         assert ChangeKind.SONAME_CHANGED not in {c.kind for c in filtered.changes}
         assert ChangeKind.FUNC_PARAMS_CHANGED in {c.kind for c in filtered.changes}
-        # FUNC_PARAMS_CHANGED is in _SOURCE_BREAK_KINDS → verdict SOURCE_BREAK
-        assert filtered.verdict in (Verdict.BREAKING, Verdict.SOURCE_BREAK)
+        # FUNC_PARAMS_CHANGED is in _API_BREAK_KINDS → verdict API_BREAK
+        assert filtered.verdict in (Verdict.BREAKING, Verdict.API_BREAK)

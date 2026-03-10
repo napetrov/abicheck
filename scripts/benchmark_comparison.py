@@ -94,7 +94,7 @@ EXPECTED: dict[str, str] = {
     k: v["expected"] for k, v in _gt_data["verdicts"].items()
 }
 # Per-tool overrides sourced from ground_truth.json:
-#   expected_compat — compat mode can't emit SOURCE_BREAK (case31, case34)
+#   expected_compat — compat mode can't emit API_BREAK (case31, case34)
 #   expected_abicc  — ABICC can't emit NO_CHANGE; NO_CHANGE→COMPATIBLE for scoring
 EXPECTED_COMPAT: dict[str, str] = {
     k: v["expected_compat"]
@@ -259,15 +259,15 @@ def run_abicheck(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
     out = r.stdout + r.stderr
     (rdir / f"{case}_abicheck.txt").write_text(out)
 
-    # abicheck compare exit codes: 4=BREAKING, 2=SOURCE_BREAK, 1=COMPATIBLE, 0=NO_CHANGE
+    # abicheck compare exit codes: 4=BREAKING, 2=API_BREAK, 1=COMPATIBLE, 0=NO_CHANGE
     # Read verdict from JSON output for accuracy
     try:
         data = json.loads(r.stdout)
         raw_v = data.get("verdict", "").upper()
         if raw_v in ("BREAKING",):
             verdict = "BREAKING"
-        elif raw_v == "SOURCE_BREAK":
-            verdict = "SOURCE_BREAK"
+        elif raw_v == "API_BREAK":
+            verdict = "API_BREAK"
         elif raw_v == "COMPATIBLE":
             verdict = "COMPATIBLE"
         elif raw_v == "NO_CHANGE":
@@ -275,11 +275,11 @@ def run_abicheck(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
         else:
             verdict = "ERROR"
     except (json.JSONDecodeError, AttributeError):
-        # Fallback: exit code mapping (4=BREAKING, 2=SOURCE_BREAK, 1=COMPATIBLE, 0=NO_CHANGE)
+        # Fallback: exit code mapping (4=BREAKING, 2=API_BREAK, 1=COMPATIBLE, 0=NO_CHANGE)
         if r.returncode == 4:
             verdict = "BREAKING"
         elif r.returncode == 2:
-            verdict = "SOURCE_BREAK"
+            verdict = "API_BREAK"
         elif r.returncode == 1:
             verdict = "COMPATIBLE"
         elif r.returncode == 0:
@@ -330,11 +330,11 @@ def run_abicheck_compat(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path 
     # compat exit codes (from abicheck/cli.py compat command):
     #   0 = NO_CHANGE or COMPATIBLE
     #   1 = BREAKING
-    #   2 = SOURCE_BREAK (source-level break, binary compatible)
+    #   2 = API_BREAK (source-level break, binary compatible)
     if r.returncode == 1:
         verdict = "BREAKING"
     elif r.returncode == 2:
-        verdict = "SOURCE_BREAK"
+        verdict = "API_BREAK"
     elif r.returncode == 0:
         # distinguish NO_CHANGE from COMPATIBLE by output
         # abicheck compat prints "Verdict: NO_CHANGE" or "Verdict: COMPATIBLE"
@@ -502,7 +502,7 @@ def run_abicc_dumper(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | N
 # ── Helpers ───────────────────────────────────────────────────────────────────
 _COLORS = {
     "BREAKING":     "\033[91m",
-    "SOURCE_BREAK": "\033[94m",  # blue — source-only, binary-safe
+    "API_BREAK": "\033[94m",  # blue — source-only, binary-safe
     "COMPATIBLE":   "\033[93m",
     "NO_CHANGE":    "\033[92m",
     "ERROR":        "\033[95m",

@@ -222,7 +222,7 @@ def test_example_pipeline(case_name: str, expected_verdict: str, tmp_path: Path)
     got = result.verdict.value.upper()
 
     def _normalize(v: str) -> str:
-        return "COMPATIBLE" if v in ("SOURCE_BREAK", "COMPATIBLE") else v
+        return "COMPATIBLE" if v in ("API_BREAK", "COMPATIBLE") else v
 
     # Known gaps: xfail when verdict disagrees, pass through when fixed
     if case_name in KNOWN_GAPS:

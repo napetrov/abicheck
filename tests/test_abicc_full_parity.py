@@ -18,9 +18,9 @@ All tests build AbiSnapshot objects directly (no castxml required).
 from __future__ import annotations
 
 from abicheck.checker import (
+    _API_BREAK_KINDS,
     _BREAKING_KINDS,
     _COMPATIBLE_KINDS,
-    _SOURCE_BREAK_KINDS,
     ChangeKind,
     Verdict,
     compare,
@@ -165,7 +165,7 @@ class TestTypeKindChanged:
         result = compare(old, new)
         assert ChangeKind.SOURCE_LEVEL_KIND_CHANGED in _kinds(result)
         assert ChangeKind.TYPE_KIND_CHANGED not in _kinds(result)
-        assert result.verdict == Verdict.SOURCE_BREAK
+        assert result.verdict == Verdict.API_BREAK
 
     def test_same_kind_no_change(self) -> None:
         old = _snap(types=[RecordType(name="S", kind="struct")])
@@ -334,7 +334,7 @@ class TestRemovedConstOverload:
             _func("Foo::get", "_ZN3Foo3getEv", is_const=False),
         ])
         result = compare(old, new)
-        assert result.verdict in (Verdict.BREAKING, Verdict.SOURCE_BREAK)
+        assert result.verdict in (Verdict.BREAKING, Verdict.API_BREAK)
 
 
 # ===========================================================================
@@ -501,13 +501,13 @@ class TestPreprocessorConstants:
         old = _snap(constants={"MAX": "1024"})
         new = _snap(constants={"MAX": "2048"})
         result = compare(old, new)
-        assert result.verdict == Verdict.SOURCE_BREAK
+        assert result.verdict == Verdict.API_BREAK
 
     def test_constant_removed_is_source_break(self) -> None:
         old = _snap(constants={"X": "1"})
         new = _snap(constants={})
         result = compare(old, new)
-        assert result.verdict == Verdict.SOURCE_BREAK
+        assert result.verdict == Verdict.API_BREAK
 
     def test_constant_added_is_compatible(self) -> None:
         """Adding a new constant is always compatible."""
@@ -568,7 +568,7 @@ class TestVarAccessChanged:
         old = _snap(variables=[_var("data", "_data", "int", access=AccessLevel.PUBLIC)])
         new = _snap(variables=[_var("data", "_data", "int", access=AccessLevel.PRIVATE)])
         result = compare(old, new)
-        assert result.verdict == Verdict.SOURCE_BREAK
+        assert result.verdict == Verdict.API_BREAK
 
 
 # ===========================================================================
@@ -622,6 +622,6 @@ class TestCrossDetectorIntegration:
             ChangeKind.VAR_ACCESS_CHANGED,
             ChangeKind.VAR_ACCESS_WIDENED,
         }
-        all_classified = _BREAKING_KINDS | _COMPATIBLE_KINDS | _SOURCE_BREAK_KINDS
+        all_classified = _BREAKING_KINDS | _COMPATIBLE_KINDS | _API_BREAK_KINDS
         for kind in new_kinds:
             assert kind in all_classified, f"{kind} not in any classification set"

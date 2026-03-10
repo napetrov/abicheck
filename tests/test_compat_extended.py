@@ -406,19 +406,19 @@ class TestCrossValidationHelpers:
 
     def test_exit_code_mapping(self) -> None:
         """Verify exit code mapping matches ABICC spec."""
-        # NO_CHANGE → 0, COMPATIBLE → 0, BREAKING → 1, SOURCE_BREAK → 2
+        # NO_CHANGE → 0, COMPATIBLE → 0, BREAKING → 1, API_BREAK → 2
         verdicts = {
             Verdict.NO_CHANGE: 0,
             Verdict.COMPATIBLE: 0,
             Verdict.BREAKING: 1,
-            Verdict.SOURCE_BREAK: 2,
+            Verdict.API_BREAK: 2,
         }
         for v, expected_exit in verdicts.items():
             result = _make_result(verdict=v)
             verdict_str = result.verdict.value
             if verdict_str == "BREAKING":
                 code = 1
-            elif verdict_str == "SOURCE_BREAK":
+            elif verdict_str == "API_BREAK":
                 code = 2
             else:
                 code = 0

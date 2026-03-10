@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import click
 
 from .checker import ChangeKind, compare
+from .checker_policy import API_BREAK_KINDS as _POLICY_API_BREAK_KINDS
 from .compat import CompatDescriptor, parse_descriptor
 from .dumper import dump
 from .html_report import write_html_report
@@ -138,7 +139,7 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
 
     if result.verdict.value == "BREAKING":
         sys.exit(4)
-    elif result.verdict.value == "SOURCE_BREAK":
+    elif result.verdict.value == "API_BREAK":
         sys.exit(2)
 
 
@@ -234,23 +235,9 @@ def _build_internal_suppression(
     return SuppressionList(suppressions=rules)
 
 
-# SOURCE_BREAK-only ChangeKinds (source API breaks, not binary ABI breaks)
-_SOURCE_BREAK_KINDS: frozenset[ChangeKind] = frozenset({
-    ChangeKind.FUNC_PARAMS_CHANGED,
-    ChangeKind.FUNC_RETURN_CHANGED,
-    ChangeKind.FUNC_NOEXCEPT_ADDED,
-    ChangeKind.FUNC_NOEXCEPT_REMOVED,
-    ChangeKind.FUNC_DELETED,           # Sprint 2
-    ChangeKind.TYPE_FIELD_REMOVED,
-    ChangeKind.TYPE_FIELD_TYPE_CHANGED,
-    ChangeKind.TYPE_REMOVED,
-    ChangeKind.TYPE_BECAME_OPAQUE,     # Sprint 2
-    ChangeKind.TYPEDEF_REMOVED,
-    ChangeKind.TYPEDEF_BASE_CHANGED,
-    ChangeKind.ENUM_MEMBER_REMOVED,
-    ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
-    ChangeKind.ENUM_MEMBER_ADDED,
-})
+# API_BREAK-only ChangeKinds (source API breaks, not binary ABI breaks).
+# Keep this aligned with checker policy as single source of truth.
+_API_BREAK_KINDS: frozenset[ChangeKind] = frozenset(_POLICY_API_BREAK_KINDS)
 
 # ELF/binary-only ChangeKinds (excluded in -source mode)
 _BINARY_ONLY_KINDS: frozenset[ChangeKind] = frozenset({
@@ -306,10 +293,10 @@ _P2_STUB_FLAGS: dict[str, str] = {
 
 
 def _apply_strict(result: DiffResult) -> DiffResult:
-    """Apply strict-mode verdict promotion: COMPATIBLE/SOURCE_BREAK → BREAKING."""
+    """Apply strict-mode verdict promotion: COMPATIBLE/API_BREAK → BREAKING."""
     from .checker import DiffResult, Verdict  # noqa: PLC0415
 
-    if result.verdict.value in ("COMPATIBLE", "SOURCE_BREAK"):
+    if result.verdict.value in ("COMPATIBLE", "API_BREAK"):
         return DiffResult(
             old_version=result.old_version,
             new_version=result.new_version,
@@ -326,13 +313,13 @@ def _apply_strict(result: DiffResult) -> DiffResult:
 def _filter_source_only(result: DiffResult) -> DiffResult:
     """Remove binary-only changes from result for -source mode."""
     from .checker import (  # noqa: PLC0415
+        _API_BREAK_KINDS as _SBK,
+    )
+    from .checker import (
         _BREAKING_KINDS,
         _COMPATIBLE_KINDS,
         DiffResult,
         Verdict,
-    )
-    from .checker import (
-        _SOURCE_BREAK_KINDS as _SBK,
     )
 
     filtered = [c for c in result.changes if c.kind not in _BINARY_ONLY_KINDS]
@@ -340,7 +327,7 @@ def _filter_source_only(result: DiffResult) -> DiffResult:
     if any(c.kind in _BREAKING_KINDS for c in filtered):
         verdict = Verdict.BREAKING
     elif any(c.kind in _SBK for c in filtered):
-        verdict = Verdict.SOURCE_BREAK
+        verdict = Verdict.API_BREAK
     elif any(c.kind in _COMPATIBLE_KINDS for c in filtered):
         verdict = Verdict.COMPATIBLE
     else:
@@ -366,16 +353,14 @@ def _filter_binary_only(result: DiffResult) -> DiffResult:
         DiffResult,
         Verdict,
     )
-    from .checker import (
-        _SOURCE_BREAK_KINDS as _SBK,
-    )
 
-    filtered = [c for c in result.changes if c.kind not in _SOURCE_BREAK_KINDS]
+    # _API_BREAK_KINDS is module-level (from checker_policy); use it directly.
+    filtered = [c for c in result.changes if c.kind not in _API_BREAK_KINDS]
 
     if any(c.kind in _BREAKING_KINDS for c in filtered):
         verdict = Verdict.BREAKING
-    elif any(c.kind in _SBK for c in filtered):
-        verdict = Verdict.SOURCE_BREAK
+    elif any(c.kind in _API_BREAK_KINDS for c in filtered):
+        verdict = Verdict.API_BREAK
     elif any(c.kind in _COMPATIBLE_KINDS for c in filtered):
         verdict = Verdict.COMPATIBLE
     else:
@@ -398,7 +383,7 @@ def _apply_warn_newsym(result: DiffResult) -> DiffResult:
     from .checker import DiffResult, Verdict  # noqa: PLC0415
 
     has_new = any(c.kind in _NEW_SYMBOL_KINDS for c in result.changes)
-    if has_new and result.verdict.value in ("COMPATIBLE", "NO_CHANGE", "SOURCE_BREAK"):
+    if has_new and result.verdict.value in ("COMPATIBLE", "NO_CHANGE", "API_BREAK"):
         return DiffResult(
             old_version=result.old_version,
             new_version=result.new_version,
@@ -960,9 +945,9 @@ def compat_cmd(  # noqa: PLR0913
     Exit codes mirror ABICC:
       0 — compatible or no change (NO_CHANGE, COMPATIBLE)
       1 — breaking ABI change detected (BREAKING)
-      2 — source-level break (SOURCE_BREAK) or error
+      2 — source-level break (API_BREAK) or error
 
-    Note: with -strict, SOURCE_BREAK is promoted to exit 1.
+    Note: with -strict, API_BREAK is promoted to exit 1.
 
     Examples::
 
@@ -1158,7 +1143,7 @@ def compat_cmd(  # noqa: PLR0913
     if warn_newsym:
         result = _apply_warn_newsym(result)
 
-    # -strict: treat COMPATIBLE and SOURCE_BREAK as BREAKING
+    # -strict: treat COMPATIBLE and API_BREAK as BREAKING
     if strict:
         result = _apply_strict(result)
 
@@ -1275,10 +1260,10 @@ def compat_cmd(  # noqa: PLR0913
     # Exit codes mirror ABICC:
     #   0 = NO_CHANGE or COMPATIBLE
     #   1 = BREAKING
-    #   2 = SOURCE_BREAK (source-level break, binary compatible)
+    #   2 = API_BREAK (source-level break, binary compatible)
     if verdict == "BREAKING":
         sys.exit(1)
-    if verdict == "SOURCE_BREAK":
+    if verdict == "API_BREAK":
         sys.exit(2)
 
 

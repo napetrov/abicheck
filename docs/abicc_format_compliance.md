@@ -68,7 +68,7 @@ The primary verdict codes (0/1/2) match. ABICC's extended codes (3-11) are
 all mapped to exit 2 in abicheck, which is acceptable for most CI pipelines
 that only check for 0 vs non-zero.
 
-The `-strict` promotion (SOURCE_BREAK → exit 1) also matches.
+The `-strict` promotion (API_BREAK → exit 1) also matches.
 
 ### 2. XML Descriptor Input Format (FULL PARITY)
 
