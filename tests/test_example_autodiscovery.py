@@ -47,7 +47,7 @@ EXPECTED: dict[str, str | None] = {
     "case10_return_type":               "BREAKING",
     "case11_global_var_type":           "BREAKING",
     "case12_function_removed":          "BREAKING",
-    "case13_symbol_versioning":         "NO_CHANGE",   # linker .map not applied in test compile
+    "case13_symbol_versioning":         "COMPATIBLE",  # unversioned→versioned: ld.so soft-matches; Makefile applies version script
     "case14_cpp_class_size":            "BREAKING",
     "case15_noexcept_change":           "BREAKING",    # SYMBOL_VERSION_REQUIRED_ADDED from stdexcept
     "case16_inline_to_non_inline":      "COMPATIBLE",
@@ -86,10 +86,6 @@ KNOWN_GAPS: dict[str, str] = {
     "case06_visibility": (
         "Current checker may report BREAKING via FUNC_VISIBILITY_CHANGED when leaked internal symbols "
         "disappear from dynsym; semantically this case is a bad-practice cleanup and is treated as COMPATIBLE"
-    ),
-    "case13_symbol_versioning": (
-        "Requires linker version-script (-Wl,--version-script=libfoo.map); "
-        "plain gcc compile produces no @@VER tags in .dynsym"
     ),
 }
 
@@ -217,18 +213,38 @@ def test_example_pipeline(case_name: str, expected_verdict: str, tmp_path: Path)
 
     v1_src, v2_src, v1_hdr, v2_hdr = _find_sources(case_dir)
 
-    # Compile
-    v1_so = tmp_path / "lib_v1.so"
-    v2_so = tmp_path / "lib_v2.so"
-    _compile_so(v1_src, v1_so)
-    _compile_so(v2_src, v2_so)
+    # If the case ships a Makefile use it so special build flags (version scripts,
+    # extra link options, etc.) are applied exactly as intended by the example.
+    # Fall back to direct _compile_so() only when no Makefile is present.
+    if (case_dir / "Makefile").exists():
+        build_dir = tmp_path / case_name
+        shutil.copytree(str(case_dir), str(build_dir))
+        r = subprocess.run(
+            ["make", "-C", str(build_dir)],
+            capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode != 0:
+            pytest.skip(f"make failed in {case_name}:\n{r.stderr[:400]}")
+        v1_so = build_dir / "libv1.so"
+        v2_so = build_dir / "libv2.so"
+        if not v1_so.exists() or not v2_so.exists():
+            pytest.fail(f"{case_name}: Makefile did not produce libv1.so / libv2.so")
+        # Resolve header paths relative to build_dir
+        headers_v1 = [build_dir / v1_hdr.name] if v1_hdr else []
+        headers_v2 = [build_dir / v2_hdr.name] if v2_hdr else []
+        headers_v1 = [h for h in headers_v1 if h.exists()]
+        headers_v2 = [h for h in headers_v2 if h.exists()]
+    else:
+        v1_so = tmp_path / "lib_v1.so"
+        v2_so = tmp_path / "lib_v2.so"
+        _compile_so(v1_src, v1_so)
+        _compile_so(v2_src, v2_so)
+        headers_v1 = [v1_hdr] if v1_hdr and v1_hdr.exists() else []
+        headers_v2 = [v2_hdr] if v2_hdr and v2_hdr.exists() else []
 
     # Run abicheck pipeline via Python API (always uses THIS repo's code)
     from abicheck.checker import compare
     from abicheck.dumper import dump
-
-    headers_v1 = [v1_hdr] if v1_hdr and v1_hdr.exists() else []
-    headers_v2 = [v2_hdr] if v2_hdr and v2_hdr.exists() else []
 
     try:
         snap1 = dump(v1_so, headers=headers_v1, version="v1")

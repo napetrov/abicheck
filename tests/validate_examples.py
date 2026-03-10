@@ -138,21 +138,41 @@ def run_case(
     tmp = tmp_base / name
     tmp.mkdir(parents=True)
 
-    v1_so = tmp / "libv1.so"
-    v2_so = tmp / "libv2.so"
-
-    err = _compile(v1_src, v1_so)
-    if err:
-        return CaseResult(name, "ERROR", expected_raw, None, f"compile v1 failed: {err[:200]}")
-    err = _compile(v2_src, v2_so)
-    if err:
-        return CaseResult(name, "ERROR", expected_raw, None, f"compile v2 failed: {err[:200]}")
+    # Use the Makefile if the case ships one — ensures special build flags
+    # (version scripts, extra link options) are applied as the example intends.
+    if (case_dir / "Makefile").exists():
+        import shutil as _shutil
+        build_dir = tmp / "build"
+        _shutil.copytree(str(case_dir), str(build_dir))
+        r = subprocess.run(["make", "-C", str(build_dir)],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            return CaseResult(name, "ERROR", expected_raw, None,
+                              f"make failed: {r.stderr[:300]}")
+        v1_so = build_dir / "libv1.so"
+        v2_so = build_dir / "libv2.so"
+        if not v1_so.exists() or not v2_so.exists():
+            return CaseResult(name, "ERROR", expected_raw, None,
+                              "Makefile did not produce libv1.so / libv2.so")
+        v1_hdr_path = (build_dir / v1_hdr.name) if v1_hdr else None
+        v2_hdr_path = (build_dir / v2_hdr.name) if v2_hdr else None
+    else:
+        v1_so = tmp / "libv1.so"
+        v2_so = tmp / "libv2.so"
+        err = _compile(v1_src, v1_so)
+        if err:
+            return CaseResult(name, "ERROR", expected_raw, None, f"compile v1 failed: {err[:200]}")
+        err = _compile(v2_src, v2_so)
+        if err:
+            return CaseResult(name, "ERROR", expected_raw, None, f"compile v2 failed: {err[:200]}")
+        v1_hdr_path = v1_hdr
+        v2_hdr_path = v2_hdr
 
     # dump v1
     snap1 = tmp / "snap1.json"
     cmd_dump1 = [sys.executable, "-m", "abicheck.cli", "dump", str(v1_so), "-o", str(snap1)]
-    if v1_hdr:
-        cmd_dump1 += ["-H", str(v1_hdr)]
+    if v1_hdr_path and Path(v1_hdr_path).exists():
+        cmd_dump1 += ["-H", str(v1_hdr_path)]
     r1 = subprocess.run(cmd_dump1, capture_output=True, text=True, timeout=60)
     if r1.returncode != 0:
         return CaseResult(name, "ERROR", expected_raw, None, f"dump v1 failed: {r1.stderr[:200]}")
@@ -160,8 +180,8 @@ def run_case(
     # dump v2
     snap2 = tmp / "snap2.json"
     cmd_dump2 = [sys.executable, "-m", "abicheck.cli", "dump", str(v2_so), "-o", str(snap2)]
-    if v2_hdr:
-        cmd_dump2 += ["-H", str(v2_hdr)]
+    if v2_hdr_path and Path(v2_hdr_path).exists():
+        cmd_dump2 += ["-H", str(v2_hdr_path)]
     r2 = subprocess.run(cmd_dump2, capture_output=True, text=True, timeout=60)
     if r2.returncode != 0:
         return CaseResult(name, "ERROR", expected_raw, None, f"dump v2 failed: {r2.stderr[:200]}")

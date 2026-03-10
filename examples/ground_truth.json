@@ -40,8 +40,7 @@
       "expected": "BREAKING"
     },
     "case13_symbol_versioning": {
-      "expected": "NO_CHANGE",
-      "known_gap": "Requires linker version-script (-Wl,--version-script=libfoo.map); plain gcc compile produces no @@VER tags in .dynsym"
+      "expected": "COMPATIBLE"
     },
     "case14_cpp_class_size": {
       "expected": "BREAKING"
