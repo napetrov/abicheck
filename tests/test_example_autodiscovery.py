@@ -35,61 +35,57 @@ EXAMPLES_DIR = REPO_DIR / "examples"
 # ---------------------------------------------------------------------------
 EXPECTED: dict[str, str | None] = {
     # ── cases 01-18 (v1/v2 layout) ──────────────────────────────────────────
-    "case01_symbol_removal":            "BREAKING",
-    "case02_param_type_change":         "BREAKING",
-    "case03_compat_addition":           "COMPATIBLE",
-    "case04_no_change":                 "NO_CHANGE",
-    "case05_soname":                    "NO_CHANGE",   # SONAME is policy, not tracked
-    "case06_visibility":                "BREAKING",    # bad→good: symbols hidden → removed
-    "case07_struct_layout":             "BREAKING",
-    "case08_enum_value_change":         "BREAKING",
-    "case09_cpp_vtable":                "BREAKING",
-    "case10_return_type":               "BREAKING",
-    "case11_global_var_type":           "BREAKING",
-    "case12_function_removed":          "BREAKING",
-    "case13_symbol_versioning":         "NO_CHANGE",   # linker .map not applied in test compile
-    "case14_cpp_class_size":            "BREAKING",
-    "case15_noexcept_change":           "BREAKING",    # SYMBOL_VERSION_REQUIRED_ADDED from stdexcept
-    "case16_inline_to_non_inline":      "COMPATIBLE",
-    "case17_template_abi":              "BREAKING",
-    "case18_dependency_leak":           "BREAKING",
+    "case01_symbol_removal": "BREAKING",
+    "case02_param_type_change": "BREAKING",
+    "case03_compat_addition": "COMPATIBLE",
+    "case04_no_change": "NO_CHANGE",
+    "case05_soname": "COMPATIBLE",  # SONAME_MISSING: bad practice flag, COMPATIBLE verdict
+    "case06_visibility": "COMPATIBLE",  # visibility leak cleanup: bad practice fix, not intended ABI break
+    "case07_struct_layout": "BREAKING",
+    "case08_enum_value_change": "BREAKING",
+    "case09_cpp_vtable": "BREAKING",
+    "case10_return_type": "BREAKING",
+    "case11_global_var_type": "BREAKING",
+    "case12_function_removed": "BREAKING",
+    "case13_symbol_versioning": "COMPATIBLE",  # unversioned→versioned: ld.so soft-matches; Makefile applies version script
+    "case14_cpp_class_size": "BREAKING",
+    "case15_noexcept_change": "BREAKING",    # SYMBOL_VERSION_REQUIRED_ADDED from stdexcept
+    "case16_inline_to_non_inline": "COMPATIBLE",
+    "case17_template_abi": "BREAKING",
+    "case18_dependency_leak": "BREAKING",
     # ── cases 19-29 (old/new layout) ────────────────────────────────────────
-    "case19_enum_member_removed":       "BREAKING",
+    "case19_enum_member_removed": "BREAKING",
     "case20_enum_member_value_changed": "BREAKING",
-    "case21_method_became_static":      "BREAKING",
-    "case22_method_const_changed":      "BREAKING",
-    "case23_pure_virtual_added":        None,          # intentional compile error — skip
-    "case24_union_field_removed":       "BREAKING",
-    "case25_enum_member_added":         "COMPATIBLE",
-    "case26_union_field_added":         "BREAKING",    # union grows 4→8 bytes: TYPE_SIZE_CHANGED
-    "case27_symbol_binding_weakened":   "COMPATIBLE",
-    "case29_ifunc_transition":          "COMPATIBLE",  # FUNC→IFUNC → IFUNC_INTRODUCED (COMPATIBLE)
+    "case21_method_became_static": "BREAKING",
+    "case22_method_const_changed": "BREAKING",
+    "case23_pure_virtual_added": "BREAKING",    # pure_virtual=1 changes vtable slot → __cxa_pure_virtual
+    "case24_union_field_removed": "BREAKING",
+    "case25_enum_member_added": "COMPATIBLE",
+    "case26_union_field_added": "BREAKING",    # union grows 4→8 bytes: TYPE_SIZE_CHANGED
+    "case27_symbol_binding_weakened": "COMPATIBLE",
+    "case29_ifunc_transition": "COMPATIBLE",  # FUNC→IFUNC → IFUNC_INTRODUCED (COMPATIBLE)
     # ── cases 28, 30-41 (Sprint 7 — full parity examples) ─────────────────
-    "case28_typedef_opaque":            "BREAKING",    # typedef removed + type became opaque
-    "case30_field_qualifiers":          "BREAKING",    # struct_field_type_changed (int→const int via DWARF)
-    "case31_enum_rename":               "SOURCE_BREAK", # rename with same values: source-level only
-    "case32_param_defaults":            "NO_CHANGE",   # default values not in binary ABI
-    "case33_pointer_level":             "BREAKING",    # param/return pointer level changes
-    "case34_access_level":              "SOURCE_BREAK", # narrowing access (public→private) is a source break
-    "case35_field_rename":              "BREAKING",    # struct_field_removed fires (DWARF sees name change as removal)
-    "case36_anon_struct":               "BREAKING",    # type_size_changed + alignment changed
-    "case37_base_class":                "BREAKING",    # base class reorder + virtual inheritance change
-    "case38_virtual_methods":           "BREAKING",    # virtual added/removed + visibility change
-    "case39_var_const":                 "BREAKING",    # var_type_changed + var_removed now detected via ELF+DWARF
-    "case40_field_layout":              "BREAKING",    # field type changed + size changed
-    "case41_type_changes":              "BREAKING",    # type removed + alignment changed + enum sentinel
+    "case28_typedef_opaque": "BREAKING",    # typedef removed + type became opaque
+    "case30_field_qualifiers": "BREAKING",    # const/volatile qualifier change on struct fields → TYPE_FIELD_TYPE_CHANGED
+    "case31_enum_rename": "SOURCE_BREAK", # rename with same values: source-level only
+    "case32_param_defaults": "NO_CHANGE",   # default values not in binary ABI
+    "case33_pointer_level": "BREAKING",    # param/return pointer level changes
+    "case34_access_level": "SOURCE_BREAK", # narrowing access (public→private) is a source break
+    "case35_field_rename": "BREAKING",    # field rename: castxml sees old field removed + new field added → BREAKING
+    "case36_anon_struct": "BREAKING",    # type_size_changed + alignment changed
+    "case37_base_class": "BREAKING",    # base class reorder + virtual inheritance change
+    "case38_virtual_methods": "BREAKING",    # virtual added/removed + visibility change
+    "case39_var_const": "BREAKING",    # var_type_changed + var_removed now detected via ELF+DWARF
+    "case40_field_layout": "BREAKING",    # field type changed + size changed
+    "case41_type_changes": "BREAKING",    # type removed + alignment changed + enum sentinel
 }
 
 # Known gaps: these cases xfail when the verdict disagrees with expected.
 # Format: case_name → reason string.
 KNOWN_GAPS: dict[str, str] = {
     "case06_visibility": (
-        "Requires -fvisibility=hidden compile flag; without it all symbols stay "
-        "exported and the removal is invisible to the ELF diff"
-    ),
-    "case13_symbol_versioning": (
-        "Requires linker version-script (-Wl,--version-script=libfoo.map); "
-        "plain gcc compile produces no @@VER tags in .dynsym"
+        "Current checker may report BREAKING via FUNC_VISIBILITY_CHANGED when leaked internal symbols "
+        "disappear from dynsym; semantically this case is a bad-practice cleanup and is treated as COMPATIBLE"
     ),
 }
 
@@ -217,18 +213,45 @@ def test_example_pipeline(case_name: str, expected_verdict: str, tmp_path: Path)
 
     v1_src, v2_src, v1_hdr, v2_hdr = _find_sources(case_dir)
 
-    # Compile
-    v1_so = tmp_path / "lib_v1.so"
-    v2_so = tmp_path / "lib_v2.so"
-    _compile_so(v1_src, v1_so)
-    _compile_so(v2_src, v2_so)
+    # If the case ships a Makefile use it so special build flags (version scripts,
+    # extra link options, etc.) are applied exactly as intended by the example.
+    # Fall back to direct _compile_so() only when no Makefile is present.
+    if (case_dir / "Makefile").exists():
+        build_dir = tmp_path / case_name
+        shutil.copytree(str(case_dir), str(build_dir))
+        r = subprocess.run(
+            ["make", "-C", str(build_dir)],
+            capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode != 0:
+            pytest.fail(f"make failed in {case_name} (broken fixture):\n{r.stderr[:400]}")
+        v1_so = build_dir / "libv1.so"
+        v2_so = build_dir / "libv2.so"
+        if not v1_so.exists() or not v2_so.exists():
+            pytest.fail(f"{case_name}: Makefile did not produce libv1.so / libv2.so")
+        # Resolve header paths relative to build_dir (preserve subdir structure)
+        def _remap(hdr: Path | None, src: Path, dst: Path) -> Path | None:
+            if not hdr:
+                return None
+            try:
+                return dst / hdr.relative_to(src)
+            except ValueError:
+                return dst / hdr.name
+        headers_v1 = [_remap(v1_hdr, case_dir, build_dir)] if v1_hdr else []
+        headers_v2 = [_remap(v2_hdr, case_dir, build_dir)] if v2_hdr else []
+        headers_v1 = [h for h in headers_v1 if h.exists()]
+        headers_v2 = [h for h in headers_v2 if h.exists()]
+    else:
+        v1_so = tmp_path / "lib_v1.so"
+        v2_so = tmp_path / "lib_v2.so"
+        _compile_so(v1_src, v1_so)
+        _compile_so(v2_src, v2_so)
+        headers_v1 = [v1_hdr] if v1_hdr and v1_hdr.exists() else []
+        headers_v2 = [v2_hdr] if v2_hdr and v2_hdr.exists() else []
 
     # Run abicheck pipeline via Python API (always uses THIS repo's code)
     from abicheck.checker import compare
     from abicheck.dumper import dump
-
-    headers_v1 = [v1_hdr] if v1_hdr and v1_hdr.exists() else []
-    headers_v2 = [v2_hdr] if v2_hdr and v2_hdr.exists() else []
 
     try:
         snap1 = dump(v1_so, headers=headers_v1, version="v1")
