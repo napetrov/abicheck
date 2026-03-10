@@ -158,6 +158,25 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
             log.warning("parse_elf_metadata: skipping malformed section %r in %s: %s",
                         section.name, so_path, exc)
 
+    # Post-loop: filter out version-definition auxiliary symbols.
+    # GNU ld emits these as OBJECT/SHN_ABS/size=0 entries in .dynsym (e.g. LIBFOO_1.0).
+    # Confirmed empirically with GNU ld (binutils) on Linux/x86-64.
+    # Some linkers (gold, lld) may emit STT_NOTYPE instead; we match both.
+    # SHN_ABS exclusion in _extract_symbols already handles most cases in the
+    # dumper path, but elf_metadata parses .dynsym independently, so guard here too.
+    # We must do this after the loop because .gnu.version_d may come after .dynsym.
+    _ver_def_names: set[str] = set(meta.versions_defined)
+    if _ver_def_names:
+        _ver_def_types = frozenset({SymbolType.OBJECT, SymbolType.NOTYPE})
+        meta.symbols = [
+            sym for sym in meta.symbols
+            if not (
+                sym.name in _ver_def_names
+                and sym.size == 0
+                and sym.sym_type in _ver_def_types
+            )
+        ]
+
     return meta
 
 

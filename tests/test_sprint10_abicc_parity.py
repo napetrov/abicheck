@@ -31,6 +31,7 @@ def _snap(
     functions: list[Function] | None = None,
     variables: list[Variable] | None = None,
     types: list[RecordType] | None = None,
+    elf_only_mode: bool = False,
 ) -> AbiSnapshot:
     return AbiSnapshot(
         library="libtest.so.1",
@@ -38,6 +39,7 @@ def _snap(
         functions=functions or [],
         variables=variables or [],
         types=types or [],
+        elf_only_mode=elf_only_mode,
     )
 
 
@@ -129,12 +131,21 @@ class TestFuncVisibilityChanged:
         assert len(vis_changes) == 1
         assert "_Z3apiv" in vis_changes[0].symbol
 
-    def test_elf_only_symbol_absent_is_func_removed(self) -> None:
-        """ELF_ONLY symbol absent from new snapshot entirely → FUNC_REMOVED."""
+    def test_elf_only_symbol_absent_is_func_removed_elf_only(self) -> None:
+        """ELF_ONLY symbol absent from new snapshot → FUNC_REMOVED_ELF_ONLY (compatible).
+
+        ELF-only symbols (no header/DWARF data) that disappear could be internal
+        symbols getting properly hidden via -fvisibility=hidden.  Emitting
+        FUNC_REMOVED would produce a false BREAKING verdict in that case.
+        Requires elf_only_mode=True on the old snapshot (set by dumper when
+        no headers are provided) to avoid false COMPATIBLE on real removals.
+        """
         old_f = _func("sym", "_Z3symv", visibility=Visibility.ELF_ONLY)
-        r = compare(_snap(functions=[old_f]), _snap("2.0", functions=[]))
-        assert any(c.kind == ChangeKind.FUNC_REMOVED for c in r.changes)
+        r = compare(_snap(functions=[old_f], elf_only_mode=True), _snap("2.0", functions=[]))
+        assert any(c.kind == ChangeKind.FUNC_REMOVED_ELF_ONLY for c in r.changes)
+        assert not any(c.kind == ChangeKind.FUNC_REMOVED for c in r.changes)
         assert not any(c.kind == ChangeKind.FUNC_VISIBILITY_CHANGED for c in r.changes)
+        assert r.verdict == Verdict.COMPATIBLE
 
     def test_elf_only_to_hidden_is_visibility_change(self) -> None:
         """ELF_ONLY → HIDDEN: callers that resolved the symbol dynamically break.

@@ -281,3 +281,17 @@ class TestVerdictPriority:
         new = _snap("1.1", functions=[f_new, f_added])
         r = compare(old, new)
         assert r.verdict == Verdict.COMPATIBLE
+
+
+
+def test_func_removed_elf_only_is_compatible_not_breaking() -> None:
+    old = AbiSnapshot(
+        library="libfoo.so", version="1.0",
+        functions=[Function(name="internal", mangled="internal", return_type="void", visibility=Visibility.ELF_ONLY)],
+        elf_only_mode=True,
+    )
+    new = AbiSnapshot(library="libfoo.so", version="2.0", functions=[])
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.FUNC_REMOVED_ELF_ONLY in kinds
+    assert result.verdict == Verdict.COMPATIBLE

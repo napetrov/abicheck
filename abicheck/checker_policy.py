@@ -10,6 +10,7 @@ from typing import Protocol
 class ChangeKind(str, Enum):
     # Function / variable changes
     FUNC_REMOVED = "func_removed"        # public symbol removed → BREAKING
+    FUNC_REMOVED_ELF_ONLY = "func_removed_elf_only"  # ELF-only symbol removed (visibility cleanup, not hard break)
     FUNC_ADDED = "func_added"            # new public symbol → COMPATIBLE
     FUNC_RETURN_CHANGED = "func_return_changed"   # return type changed → BREAKING
     FUNC_PARAMS_CHANGED = "func_params_changed"   # parameter types changed → BREAKING
@@ -66,6 +67,8 @@ class ChangeKind(str, Enum):
     # ── ELF-only (Sprint 2) ──────────────────────────────────────────────
     # Dynamic section contract
     SONAME_CHANGED = "soname_changed"
+    SONAME_MISSING = "soname_missing"             # old library had no SONAME — bad practice
+    VISIBILITY_LEAK = "visibility_leak"            # library exports internal symbols without -fvisibility=hidden
     NEEDED_ADDED = "needed_added"            # new DT_NEEDED dep
     NEEDED_REMOVED = "needed_removed"          # dep dropped
     RPATH_CHANGED = "rpath_changed"
@@ -82,6 +85,7 @@ class ChangeKind(str, Enum):
 
     # Symbol versioning contract
     SYMBOL_VERSION_DEFINED_REMOVED = "symbol_version_defined_removed"
+    SYMBOL_VERSION_DEFINED_ADDED = "symbol_version_defined_added"   # versioning introduced
     SYMBOL_VERSION_REQUIRED_ADDED = "symbol_version_required_added"   # new GLIBC_X
     SYMBOL_VERSION_REQUIRED_REMOVED = "symbol_version_required_removed"
 
@@ -180,6 +184,9 @@ class Verdict(str, Enum):
 # Which ChangeKinds are immediately BREAKING (binary ABI incompatibility)
 BREAKING_KINDS = {
     ChangeKind.FUNC_REMOVED,
+    # ELF-only function removed in no-header mode is treated as
+    # potential visibility cleanup, not hard ABI break.
+    # (see checker._diff_functions + AbiSnapshot.elf_only_mode provenance)
     ChangeKind.FUNC_RETURN_CHANGED,
     ChangeKind.FUNC_PARAMS_CHANGED,
     ChangeKind.FUNC_VIRTUAL_ADDED,
@@ -249,6 +256,12 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
     # TYPE_FIELD_ADDED intentionally omitted: compatible only for standard-layout
     # non-polymorphic types; context-aware verdict set in _diff_types()
     ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
+    # ELF-only removed: symbol was never declared in headers, may be visibility cleanup
+    ChangeKind.FUNC_REMOVED_ELF_ONLY,
+    # ELF quality improvements
+    ChangeKind.SONAME_MISSING,
+    ChangeKind.VISIBILITY_LEAK,
+    ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
 
     # noexcept changes: Itanium ABI mangling does not change in practice;
     # existing binaries resolve the same symbol.  Source-level concern only
