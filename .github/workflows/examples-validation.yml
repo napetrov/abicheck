@@ -46,16 +46,8 @@ jobs:
 
       - name: Validate ground_truth.json
         run: |
-          if [ ! -f examples/ground_truth.json ]; then
-            echo "::error file=examples/ground_truth.json::ground_truth.json is missing"
-            exit 1
-          fi
-          python -c "
-          import json
-          d = json.load(open('examples/ground_truth.json'))
-          n = len(d['verdicts'])
-          print(f'ground_truth.json OK — {n} cases registered')
-          "
+          test -f examples/ground_truth.json || { echo "::error::ground_truth.json missing"; exit 1; }
+          python -c "import json; d=json.load(open('examples/ground_truth.json')); print(f'ground_truth.json OK — {len(d[\"verdicts\"])} cases')"
 
       - name: Run example cases (pytest autodiscovery)
         run: |
@@ -67,14 +59,14 @@ jobs:
         run: |
           PYTHONPATH=. python tests/validate_examples.py --json > results/validate_examples.json
           python -c "
-          import json, sys
-          data = json.load(open('results/validate_examples.json'))
-          s = data['summary']
-          print('Results:', json.dumps(s))
-          fails = s.get('FAIL', 0) + s.get('ERROR', 0)
-          if fails:
-              sys.exit(1)
-          "
+import json, sys
+data = json.load(open('results/validate_examples.json'))
+s = data['summary']
+print('Results:', json.dumps(s))
+fails = s.get('FAIL', 0) + s.get('ERROR', 0)
+if fails:
+    sys.exit(1)
+"
 
       - name: Upload results
         if: always()
@@ -89,15 +81,13 @@ jobs:
         run: |
           echo "## Examples Validation Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f results/validate_examples.json ]; then
-            python -c "
-          import json
-          data = json.load(open('results/validate_examples.json'))
-          s = data['summary']
-          print('| Status | Count |')
-          print('|--------|-------|')
-          icons = {'PASS': '✅', 'FAIL': '❌', 'XFAIL': '⚠️', 'SKIP': '⏭️', 'ERROR': '💥'}
-          for k, v in sorted(s.items()):
-              print(f'| {icons.get(k, \"?\")} {k} | {v} |')
-          " >> $GITHUB_STEP_SUMMARY
-          fi
+          test -f results/validate_examples.json && python -c "
+import json
+data = json.load(open('results/validate_examples.json'))
+s = data['summary']
+print('| Status | Count |')
+print('|--------|-------|')
+icons = {'PASS': '✅', 'FAIL': '❌', 'XFAIL': '⚠️', 'SKIP': '⏭️', 'ERROR': '💥'}
+for k, v in sorted(s.items()):
+    print(f'| {icons.get(k,\"?\")} {k} | {v} |')
+" >> $GITHUB_STEP_SUMMARY || true

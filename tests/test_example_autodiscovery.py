@@ -224,7 +224,7 @@ def test_example_pipeline(case_name: str, expected_verdict: str, tmp_path: Path)
             capture_output=True, text=True, timeout=60,
         )
         if r.returncode != 0:
-            pytest.skip(f"make failed in {case_name}:\n{r.stderr[:400]}")
+            pytest.fail(f"make failed in {case_name} (broken fixture):\n{r.stderr[:400]}")
         v1_so = build_dir / "libv1.so"
         v2_so = build_dir / "libv2.so"
         if not v1_so.exists() or not v2_so.exists():

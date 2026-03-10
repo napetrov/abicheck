@@ -107,7 +107,12 @@ def _compile(src: Path, out: Path) -> str | None:
 
 
 def _normalize_verdict(v: str) -> str:
-    return "COMPATIBLE" if v in ("SOURCE_BREAK", "COMPATIBLE") else v
+    """Normalize verdict for comparison.
+
+    SOURCE_BREAK and COMPATIBLE are intentionally kept distinct so that a
+    regression from SOURCE_BREAK to COMPATIBLE is caught as a test failure.
+    """
+    return v
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +137,8 @@ def run_case(
 
     sources = _find_sources(case_dir)
     if sources is None:
-        return CaseResult(name, "SKIP", expected_raw, None, "no recognised source layout")
+        return CaseResult(name, "ERROR", expected_raw, None,
+                          "no recognised source layout (harness error — fix example or mark skip in ground_truth.json)")
 
     v1_src, v2_src, v1_hdr, v2_hdr = sources
     tmp = tmp_base / name
@@ -243,9 +249,10 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     # Check required tools
-    if not shutil.which("gcc"):
-        print("ERROR: required tool 'gcc' not found in PATH", file=sys.stderr)
-        return 2
+    for tool in ("gcc", "g++", "castxml"):
+        if not shutil.which(tool):
+            print(f"ERROR: required tool '{tool}' not found in PATH", file=sys.stderr)
+            return 2
 
     try:
         __import__("abicheck")
