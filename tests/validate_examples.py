@@ -154,8 +154,23 @@ def run_case(
         if not v1_so.exists() or not v2_so.exists():
             return CaseResult(name, "ERROR", expected_raw, None,
                               "Makefile did not produce libv1.so / libv2.so")
-        v1_hdr_path = (build_dir / v1_hdr.name) if v1_hdr else None
-        v2_hdr_path = (build_dir / v2_hdr.name) if v2_hdr else None
+        # Remap header path: relative to original case_dir → same relative path under build_dir
+        if v1_hdr:
+            try:
+                rel = v1_hdr.relative_to(case_dir)
+                v1_hdr_path = build_dir / rel
+            except ValueError:
+                v1_hdr_path = build_dir / v1_hdr.name
+        else:
+            v1_hdr_path = None
+        if v2_hdr:
+            try:
+                rel = v2_hdr.relative_to(case_dir)
+                v2_hdr_path = build_dir / rel
+            except ValueError:
+                v2_hdr_path = build_dir / v2_hdr.name
+        else:
+            v2_hdr_path = None
     else:
         v1_so = tmp / "libv1.so"
         v2_so = tmp / "libv2.so"
@@ -223,6 +238,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="Stop after first FAIL")
     ap.add_argument("--json", action="store_true", dest="json_out",
                     help="Machine-readable JSON output")
+    ap.add_argument("--category", metavar="CAT",
+                    help="Filter by category: breaking, compatible, bad_practice, source_break")
     args = ap.parse_args(argv)
 
     # Check required tools
@@ -250,6 +267,8 @@ def main(argv: list[str] | None = None) -> int:
     names = sorted(verdicts.keys())
     if args.filters:
         names = [n for n in names if any(f in n for f in args.filters)]
+    if args.category:
+        names = [n for n in names if verdicts[n].get("category") == args.category]
 
     results: list[CaseResult] = []
     with tempfile.TemporaryDirectory(prefix="validate_examples_") as tmp_root:

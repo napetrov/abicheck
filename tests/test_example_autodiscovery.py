@@ -235,9 +235,16 @@ def test_example_pipeline(case_name: str, expected_verdict: str, tmp_path: Path)
         v2_so = build_dir / "libv2.so"
         if not v1_so.exists() or not v2_so.exists():
             pytest.fail(f"{case_name}: Makefile did not produce libv1.so / libv2.so")
-        # Resolve header paths relative to build_dir
-        headers_v1 = [build_dir / v1_hdr.name] if v1_hdr else []
-        headers_v2 = [build_dir / v2_hdr.name] if v2_hdr else []
+        # Resolve header paths relative to build_dir (preserve subdir structure)
+        def _remap(hdr: Path | None, src: Path, dst: Path) -> Path | None:
+            if not hdr:
+                return None
+            try:
+                return dst / hdr.relative_to(src)
+            except ValueError:
+                return dst / hdr.name
+        headers_v1 = [_remap(v1_hdr, case_dir, build_dir)] if v1_hdr else []
+        headers_v2 = [_remap(v2_hdr, case_dir, build_dir)] if v2_hdr else []
         headers_v1 = [h for h in headers_v1 if h.exists()]
         headers_v2 = [h for h in headers_v2 if h.exists()]
     else:
