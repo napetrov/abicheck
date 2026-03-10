@@ -87,7 +87,7 @@ abidiff v1.xml v2.xml || true   # exits 0 — misses it!
 
 # ABICC: catches it via header diff
 abi-compliance-checker -lib Buffer -v1 1.0 -v2 2.0 \
-  -header v1.cpp -header v2.cpp \
+  -header v1.h -header v2.h \
   -gcc-options "-std=c++17"
 ```
 
@@ -97,12 +97,15 @@ abi-compliance-checker -lib Buffer -v1 1.0 -v2 2.0 \
 
 **Scenario:** app compiled against v1 (`reset()` noexcept) calls v2 which throws — exception propagates through a noexcept frame → `std::terminate`.
 
-> **Important:** This demo conflates two changes: (1) removing `noexcept` from the
-> declaration, and (2) adding `throw` to the implementation. Removing `noexcept` alone
-> does **not** cause a crash — the binary links and runs identically. The crash only
-> occurs because v2 also introduces throwing code. The ABI verdict remains **COMPATIBLE**
-> (same symbol resolves), but removing `noexcept` increases the *risk* of this behavioral
-> failure if the implementation later throws.
+> **Important:** This demo combines two changes: (1) removing `noexcept` from the
+> declaration, and (2) adding `throw` to the implementation.
+>
+> Per C++17/Itanium ABI, `noexcept` is part of the function type — removing it is a
+> **source-level ABI break** (`FUNC_NOEXCEPT_REMOVED`). However, castxml does not expose
+> `noexcept` in its XML output, so abicheck detects the break indirectly via the
+> GLIBCXX runtime version bump (`SYMBOL_VERSION_REQUIRED_ADDED`). The binary verdict is
+> therefore **BREAKING** when the implementation also throws; without the throw,
+> binary linkage is unaffected but the source contract is violated.
 
 ```bash
 # Build v1 + app (app includes v1.h which declares reset() noexcept)

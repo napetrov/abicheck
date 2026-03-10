@@ -1,4 +1,6 @@
 CC ?= gcc
+
+.PHONY: all clean
 CFLAGS = -shared -fPIC -o
 
 all: libv1.so libv2.so app_v1
