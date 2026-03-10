@@ -213,8 +213,10 @@ def _parse_version_need(section: GNUVerNeedSection, meta: ElfMetadata) -> None:
 
 def _parse_dynsym(section: SymbolTableSection, meta: ElfMetadata) -> None:
     for sym in section.iter_symbols():
-        # Skip undefined symbols (imported, not exported)
-        if sym.entry.st_shndx == "SHN_UNDEF":
+        # Skip undefined (imported) and absolute (version-def markers) symbols.
+        # GNU ld emits version-def aux symbols (e.g. LIBFOO_1.0) as SHN_ABS;
+        # skipping them here is consistent with _pyelftools_exported_symbols.
+        if sym.entry.st_shndx in ("SHN_UNDEF", "SHN_ABS"):
             continue
 
         binding_str = sym.entry.st_info.bind

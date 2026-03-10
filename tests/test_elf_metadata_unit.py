@@ -218,7 +218,7 @@ class TestParseVersionNeed:
 # ── _parse_dynsym ──────────────────────────────────────────────────────
 
 class TestParseDynsym:
-    def _make_sym(self, name: str, shndx="SHN_ABS",
+    def _make_sym(self, name: str, shndx=1,  # 1 = normal .text section, not SHN_ABS
                   bind="STB_GLOBAL", typ="STT_FUNC",
                   vis="STV_DEFAULT", size=16):
         sym = MagicMock()
@@ -377,7 +377,7 @@ class TestParseFull:
 
         sym = MagicMock()
         sym.name = "my_func"
-        sym.entry.st_shndx = "SHN_ABS"
+        sym.entry.st_shndx = 1  # normal .text section
         sym.entry.st_info.bind = "STB_GLOBAL"
         sym.entry.st_info.type = "STT_FUNC"
         sym.entry.st_other.visibility = "STV_DEFAULT"
@@ -412,7 +412,7 @@ class TestParseFull:
         good_sym.name = ".dynsym"
         sym = MagicMock()
         sym.name = "good_fn"
-        sym.entry.st_shndx = "SHN_ABS"
+        sym.entry.st_shndx = 1  # normal .text section
         sym.entry.st_info.bind = "STB_GLOBAL"
         sym.entry.st_info.type = "STT_FUNC"
         sym.entry.st_other.visibility = "STV_DEFAULT"
