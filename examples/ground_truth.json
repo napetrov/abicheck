@@ -1,0 +1,171 @@
+{
+  "version": "1",
+  "description": "Ground-truth expected verdicts for all abicheck example cases. Single source of truth \u2014 kept in sync with tests/test_example_autodiscovery.py::EXPECTED.",
+  "verdicts": {
+    "case01_symbol_removal": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case02_param_type_change": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case03_compat_addition": {
+      "expected": "COMPATIBLE",
+      "category": "compatible"
+    },
+    "case04_no_change": {
+      "expected": "NO_CHANGE",
+      "category": "compatible"
+    },
+    "case05_soname": {
+      "expected": "COMPATIBLE",
+      "category": "bad_practice"
+    },
+    "case06_visibility": {
+      "expected": "COMPATIBLE",
+      "known_gap": "Current checker may report BREAKING via FUNC_VISIBILITY_CHANGED when leaked internal symbols disappear from dynsym; semantically this case is a bad-practice cleanup and is treated as COMPATIBLE",
+      "category": "bad_practice"
+    },
+    "case07_struct_layout": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case08_enum_value_change": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case09_cpp_vtable": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case10_return_type": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case11_global_var_type": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case12_function_removed": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case13_symbol_versioning": {
+      "expected": "COMPATIBLE",
+      "category": "compatible"
+    },
+    "case14_cpp_class_size": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case15_noexcept_change": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case16_inline_to_non_inline": {
+      "expected": "COMPATIBLE",
+      "category": "compatible"
+    },
+    "case17_template_abi": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case18_dependency_leak": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case19_enum_member_removed": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case20_enum_member_value_changed": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case21_method_became_static": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case22_method_const_changed": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case23_pure_virtual_added": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case24_union_field_removed": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case25_enum_member_added": {
+      "expected": "COMPATIBLE",
+      "category": "compatible"
+    },
+    "case26_union_field_added": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case27_symbol_binding_weakened": {
+      "expected": "COMPATIBLE",
+      "category": "compatible"
+    },
+    "case28_typedef_opaque": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case29_ifunc_transition": {
+      "expected": "COMPATIBLE",
+      "category": "compatible"
+    },
+    "case30_field_qualifiers": {
+      "expected": "BREAKING",
+      "category": "source_break"
+    },
+    "case31_enum_rename": {
+      "expected": "SOURCE_BREAK",
+      "category": "source_break"
+    },
+    "case32_param_defaults": {
+      "expected": "NO_CHANGE",
+      "category": "compatible"
+    },
+    "case33_pointer_level": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case34_access_level": {
+      "expected": "SOURCE_BREAK",
+      "category": "source_break"
+    },
+    "case35_field_rename": {
+      "expected": "BREAKING",
+      "category": "source_break"
+    },
+    "case36_anon_struct": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case37_base_class": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case38_virtual_methods": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case39_var_const": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case40_field_layout": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    },
+    "case41_type_changes": {
+      "expected": "BREAKING",
+      "category": "breaking"
+    }
+  }
+}

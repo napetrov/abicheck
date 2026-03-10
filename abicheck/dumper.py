@@ -469,10 +469,28 @@ class _CastxmlParser:
         return int(raw) if raw and raw.isdigit() else None
 
     def _parse_record_fields(self, el: Any) -> list[TypeField]:
+        """Parse struct/class/union fields.
+
+        castxml uses two layouts depending on version / output mode:
+        - Inline children: ``<Struct><Field .../></Struct>``
+        - Members attribute: ``<Struct members="_14 _15 _16 ..."/>`` (IDs resolved via id_map)
+
+        We support both: first scan inline children, then fall back to the
+        ``members`` attribute so we never miss fields in either format.
+        """
         fields: list[TypeField] = []
-        for child in el:
-            if child.tag != "Field":
-                continue
+
+        # Collect Field elements: inline children first
+        field_elements: list[Any] = [c for c in el if c.tag == "Field"]
+
+        # Fallback: resolve via space-separated "members" attribute
+        if not field_elements:
+            for mid in el.get("members", "").split():
+                member_el = self._id_map.get(mid)
+                if member_el is not None and member_el.tag == "Field":
+                    field_elements.append(member_el)
+
+        for child in field_elements:
             bitfield_bits, is_bitfield = self._parse_bitfield_bits(child.get("bits"))
             fields.append(TypeField(
                 name=child.get("name", ""),

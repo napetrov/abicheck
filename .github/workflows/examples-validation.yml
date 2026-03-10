@@ -1,0 +1,93 @@
+name: Examples Validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "examples/**"
+      - "abicheck/**"
+      - "tests/validate_examples.py"
+      - "tests/test_example_autodiscovery.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - "examples/**"
+      - "abicheck/**"
+      - "tests/validate_examples.py"
+      - "tests/test_example_autodiscovery.py"
+  workflow_dispatch:
+
+jobs:
+  validate-examples:
+    name: Validate all 41 example cases
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create results dir
+        run: mkdir -p results
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y castxml gcc g++
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest click pyyaml defusedxml pyelftools
+
+      - name: Validate ground_truth.json
+        run: |
+          test -f examples/ground_truth.json || { echo "::error::ground_truth.json missing"; exit 1; }
+          python -c "import json; d=json.load(open('examples/ground_truth.json')); print(f'ground_truth.json OK — {len(d[\"verdicts\"])} cases')"
+
+      - name: Run example cases (pytest autodiscovery)
+        run: |
+          PYTHONPATH=. pytest tests/test_example_autodiscovery.py -v --tb=short -m integration \
+            --junit-xml=results/examples-autodiscovery.xml
+
+      - name: Cross-check via validate_examples.py
+        if: always()
+        run: |
+          PYTHONPATH=. python tests/validate_examples.py --json > results/validate_examples.json
+          python -c "
+import json, sys
+data = json.load(open('results/validate_examples.json'))
+s = data['summary']
+print('Results:', json.dumps(s))
+fails = s.get('FAIL', 0) + s.get('ERROR', 0)
+if fails:
+    sys.exit(1)
+"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: examples-validation-results
+          path: results/
+          retention-days: 14
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "## Examples Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          test -f results/validate_examples.json && python -c "
+import json
+data = json.load(open('results/validate_examples.json'))
+s = data['summary']
+print('| Status | Count |')
+print('|--------|-------|')
+icons = {'PASS': '✅', 'FAIL': '❌', 'XFAIL': '⚠️', 'SKIP': '⏭️', 'ERROR': '💥'}
+for k, v in sorted(s.items()):
+    print(f'| {icons.get(k,\"?\")} {k} | {v} |')
+" >> $GITHUB_STEP_SUMMARY || true
