@@ -7,3 +7,4 @@ abicheck.egg-info/
 coverage.xml
 coverage-integration.xml
 htmlcov/
+examples/**/*.so
