@@ -44,7 +44,9 @@ without false-positives on additive COMPATIBLE changes.**
 
 ABICC dumper uses `abi-dumper` (Perl + DWARF), which fails on many C++ patterns:
 - 12 cases return `ERROR` or `TIMEOUT` (so only 30/42 are scored)
-- `case09_cpp_vtable` — 122s TIMEOUT in dumper mode
+- `case09_cpp_vtable` — 122s TIMEOUT in dumper mode. `abi-compliance-checker`'s vtable
+  analysis uses `gcc -fdump-lang-class`; its Perl parser becomes slow on even moderately
+  complex virtual class hierarchies.
 - `case28/30/31/32/33/34/35/36/40` — ERROR (complex C++ types)
 
 abicheck uses castxml (Clang-based) — correct results on all 42 cases, no timeouts.
@@ -118,13 +120,17 @@ Legend: ✅ correct · ⚠️ wrong/undercounted · ❌ wrong · ⏱️ timed ou
 
 | Tool | Total (42 cases) | Notes |
 |------|-----------------|-------|
-| abicheck | ~212s | castxml per case; parallelisable |
+| abicheck | ~212s | castxml per case; sequential, parallelisable |
 | abicheck compat | ~79s | XML descriptor mode |
 | abicheck strict | ~78s | same as compat + verdict promotion |
-| abidiff | ~2.5s | ELF only, very fast |
+| abidiff | ~2.5s | ELF+DWARF, very fast |
 | abidiff+headers | ~3.9s | same |
 | ABICC (dumper) | ~294s | abi-dumper + abi-compliance-checker per case |
 | ABICC (xml) | ~445s | GCC compilation per case; case09+case16 TIMEOUT |
+
+> Measured on: Ubuntu 22.04, 8 vCPU, 32GB RAM (onedal-build, AWS t3.2xlarge equivalent).
+> All runs are sequential (one case at a time). Parallelising abicheck across CPUs
+> would reduce its wall time proportionally.
 
 ## ABICC XML mode: why so slow and inaccurate
 
