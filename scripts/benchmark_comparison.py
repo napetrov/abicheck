@@ -33,6 +33,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Callable
 
 REPO_DIR     = Path(__file__).parent.parent
 EXAMPLES_DIR = REPO_DIR / "examples"
@@ -117,6 +118,24 @@ class ToolResult:
     elapsed_ms: float = 0.0
 
 
+@dataclass
+class Tool:
+    name: str
+    run_fn: Callable[..., ToolResult]
+    col_name: str
+    col_width: int = 12
+    expected_key: str = "expected"
+    ms_key: str = ""
+    label: str = ""
+    show_slowest: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.ms_key:
+            self.ms_key = f"{self.name}_ms"
+        if not self.label:
+            self.label = f"{self.col_name:<20}"
+
+
 # ── Compile ───────────────────────────────────────────────────────────────────
 def compile_so(src: Path, out_so: Path) -> bool:
     compiler = "g++" if src.suffix == ".cpp" else "gcc"
@@ -162,10 +181,11 @@ def _best_h(name: str, bdir_h: Path, src_dir: Path) -> Path:
     return bdir_h
 
 
-def _resolve_headers_dir(case_dir: Path, v1_h: Path, v2_h: Path) -> str | None:
-    if v1_h.exists():
+def _resolve_headers_dir(case_dir: Path, v1_h: Path | None, v2_h: Path | None) -> str | None:
+    """Return a headers directory for abidiff, or None if no header is available."""
+    if v1_h and v1_h.exists():
         return str(v1_h.parent)
-    if v2_h.exists():
+    if v2_h and v2_h.exists():
         return str(v2_h.parent)
     return None
 
@@ -194,10 +214,17 @@ def find_sources(case_dir: Path) -> tuple[Path | None, Path | None, Path | None,
                 v2 = new_dir / f"lib{ext}"
                 if not v2.exists():
                     v2 = v1
-                hext = ".h" if ext == ".c" else ".hpp"
-                v1h = old_dir / f"lib{hext}"
-                v2h = new_dir / f"lib{hext}"
-                return v1, v2, v1h if v1h.exists() else None, v2h if v2h.exists() else None
+                # Resolve headers independently for each side so that a
+                # missing .hpp on one side doesn't block finding .h on the other.
+                def _find_h(d: Path, stem: str) -> Path | None:
+                    for hext in (".hpp", ".h"):
+                        p = d / f"{stem}{hext}"
+                        if p.exists():
+                            return p
+                    return None
+                v1h = _find_h(old_dir, "lib")
+                v2h = _find_h(new_dir, "lib")
+                return v1, v2, v1h, v2h
 
     # case18: libfoo_v1.c / libfoo_v2.c
     for ext in (".c", ".cpp"):
@@ -419,9 +446,10 @@ def run_abicheck_strict(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path 
 
 
 # ── abidiff ───────────────────────────────────────────────────────────────────
-def run_abidiff(v1_so: Path, v2_so: Path, case: str, rdir: Path,
+def run_abidiff(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
+                case: str, rdir: Path,
                 headers_dir: str | None = None,
-                suffix: str = "") -> ToolResult:
+                suffix: str = "", **_kw: Any) -> ToolResult:
     if not shutil.which("abidiff"):
         return ToolResult(verdict="SKIP")
 
@@ -466,15 +494,25 @@ def run_abicc_xml(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None
     if not shutil.which("abi-compliance-checker"):
         return ToolResult(verdict="SKIP")
 
-    def xml(so: Path, h: Path | None, ver: str, out: Path) -> None:
-        hdir = str(h.parent) if h and h.exists() else "/usr/include"
+    def xml(so: Path, h: Path | None, ver: str, out: Path) -> bool:
+        # Pass the specific header file path, not the whole directory.
+        # Passing a directory causes abicc to include ALL .h files it finds
+        # there (including duplicates from make_build subdirs), which leads to
+        # redefinition errors and TIMEOUT/wrong verdicts.
+        # If no public header is available, skip <headers> entirely so abicc
+        # analyses exported symbols only (ELF-only mode).
+        if h and h.exists():
+            headers_line = f"  <headers>{h}</headers>\n"
+        else:
+            headers_line = ""
         out.write_text(
             f"<descriptor>\n"
             f"  <version>{ver}</version>\n"
-            f"  <headers>{hdir}/</headers>\n"
+            f"{headers_line}"
             f"  <libs>{so}</libs>\n"
             f"</descriptor>\n"
         )
+        return True
 
     v1_xml = rdir / f"{case}_v1.xml"
     v2_xml = rdir / f"{case}_v2.xml"
@@ -577,6 +615,31 @@ def run_abicc_dumper(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | N
                       report_path=str(html_out), elapsed_ms=elapsed_ms)
 
 
+def run_abidiff_headers(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
+                        case: str, rdir: Path, **kw: Any) -> ToolResult:
+    """Wrapper: run abidiff with headers_dir resolved from v1_h/v2_h."""
+    if v1_h and v1_h.exists() and v2_h and v2_h.exists() and v1_h.parent != v2_h.parent:
+        headers_dir: str | tuple | None = (str(v1_h.parent), str(v2_h.parent))
+    elif v1_h and v1_h.exists():
+        headers_dir = str(v1_h.parent)
+    elif v2_h and v2_h.exists():
+        headers_dir = str(v2_h.parent)
+    else:
+        headers_dir = None
+    return run_abidiff(v1_so, v2_so, v1_h, v2_h, case, rdir, headers_dir=headers_dir, suffix="_headers")
+
+
+TOOL_REGISTRY: list[Tool] = [
+    Tool("abicheck",        run_abicheck,        "abicheck",    12, "expected"),         # noqa: E241
+    Tool("abicheck_compat", run_abicheck_compat, "ac-compat",   12, "expected_compat"),  # noqa: E241
+    Tool("abicheck_strict", run_abicheck_strict, "ac-strict",   14, "expected"),         # noqa: E241
+    Tool("abidiff",         run_abidiff,         "abidiff",     12, "expected"),         # noqa: E241
+    Tool("abidiff_headers", run_abidiff_headers, "abidiff+hdr", 12, "expected"),         # noqa: E241
+    Tool("abicc_dumper",    run_abicc_dumper,    "ABICC(dump)", 12, "expected_abicc", show_slowest=True),  # noqa: E241
+    Tool("abicc_xml",       run_abicc_xml,       "ABICC(xml)",  12, "expected_abicc", show_slowest=True),  # noqa: E241
+]
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 _COLORS = {
     "BREAKING":     "\033[91m",
@@ -658,22 +721,10 @@ def main() -> None:
     if not use_xml:
         selected_tools.discard("abicc_xml")
 
-    # Header — build columns based on selected_tools (not capability flags)
-    cols = [("Case", 35), ("Expected", 12)]
-    if "abicheck" in selected_tools:
-        cols.append(("abicheck", 12))
-    if "abicheck_compat" in selected_tools:
-        cols.append(("ac-compat", 12))
-    if "abicheck_strict" in selected_tools:
-        cols.append(("ac-strict", 14))
-    if "abidiff" in selected_tools:
-        cols.append(("abidiff", 12))
-    if "abidiff_headers" in selected_tools:
-        cols.append(("abidiff+hdr", 12))
-    if "abicc_dumper" in selected_tools:
-        cols.append(("ABICC(dump)", 12))
-    if "abicc_xml" in selected_tools:
-        cols.append(("ABICC(xml)", 12))
+    active_tools = [t for t in TOOL_REGISTRY if t.name in selected_tools]
+
+    # Header — build columns directly from active tool registry
+    cols = [("Case", 35), ("Expected", 12)] + [(t.col_name, t.col_width) for t in active_tools]
 
     hdr = " ".join(f"{name:<{w}}" for name, w in cols)
     print(f"\n{hdr}")
@@ -778,68 +829,32 @@ def main() -> None:
             v1_h_abicheck = v1_h
             v2_h_abicheck = v2_h
 
-        ac  = (run_abicheck(v1_so, v2_so, v1_h_abicheck, v2_h_abicheck, name, rdir)
-               if "abicheck" in selected_tools else ToolResult(verdict="SKIP"))
-        acc = (run_abicheck_compat(v1_so, v2_so, v1_h_abicheck, v2_h_abicheck, name, rdir)
-               if "abicheck_compat" in selected_tools else ToolResult(verdict="SKIP"))
-        ac_strict = (run_abicheck_strict(v1_so, v2_so, v1_h_abicheck, v2_h_abicheck, name, rdir)
-                     if "abicheck_strict" in selected_tools else ToolResult(verdict="SKIP"))
-        ab  = (run_abidiff(v1_so, v2_so, name, rdir)
-               if "abidiff" in selected_tools else ToolResult(verdict="SKIP"))
+        tool_results: dict[str, ToolResult] = {}
+        for t in active_tools:
+            if t.name in ("abicheck", "abicheck_compat", "abicheck_strict"):
+                tool_results[t.name] = t.run_fn(v1_so, v2_so, v1_h_abicheck, v2_h_abicheck, name, rdir)
+            elif t.name in ("abicc_dumper", "abicc_xml"):
+                tool_results[t.name] = t.run_fn(v1_so, v2_so, v1_h, v2_h, name, rdir, timeout=args.abicc_timeout)
+            else:
+                # abidiff and abidiff_headers share the common signature
+                tool_results[t.name] = t.run_fn(v1_so, v2_so, v1_h, v2_h, name, rdir)
 
-        if v1_h and v1_h.exists() and v2_h and v2_h.exists() and v1_h.parent != v2_h.parent:
-            headers_dir = (str(v1_h.parent), str(v2_h.parent))
-        else:
-            headers_dir = _resolve_headers_dir(case_dir, v1_h or Path("/nonexistent"), v2_h or Path("/nonexistent"))
-        ab_hdr = (run_abidiff(v1_so, v2_so, name, rdir, headers_dir=headers_dir, suffix="_headers")
-                  if "abidiff_headers" in selected_tools else ToolResult(verdict="SKIP"))
-
-        abicc_d = (run_abicc_dumper(v1_so, v2_so, v1_h, v2_h, name, rdir, timeout=args.abicc_timeout)
-                   if "abicc_dumper" in selected_tools else ToolResult(verdict="SKIP"))
-        abicc_x = (run_abicc_xml(v1_so, v2_so, v1_h, v2_h, name, rdir, timeout=args.abicc_timeout)
-                   if "abicc_xml" in selected_tools else ToolResult(verdict="SKIP"))
-
-        row_parts = [
-            f"  {name:<33}",
-            f"{expected:<12}",
-        ]
-        if "abicheck" in selected_tools:
-            row_parts.append(_col(ac.verdict))
-        if "abicheck_compat" in selected_tools:
-            row_parts.append(_col(acc.verdict))
-        if "abicheck_strict" in selected_tools:
-            row_parts.append(_col(ac_strict.verdict, 14))
-        if "abidiff" in selected_tools:
-            row_parts.append(_col(ab.verdict))
-        if "abidiff_headers" in selected_tools:
-            row_parts.append(_col(ab_hdr.verdict))
-        if "abicc_dumper" in selected_tools:
-            row_parts.append(_col(abicc_d.verdict))
-        if "abicc_xml" in selected_tools:
-            row_parts.append(_col(abicc_x.verdict))
+        row_parts = [f"  {name:<33}", f"{expected:<12}"]
+        row_parts += [_col(tool_results[t.name].verdict, t.col_width) for t in active_tools]
 
         print(" ".join(row_parts))
 
-        results.append({
+        entry: dict[str, Any] = {
             "case": name,
             "expected": expected,
-            "expected_compat": EXPECTED_COMPAT.get(name, expected),  # compat-specific override
-            "expected_abicc": EXPECTED_ABICC.get(name, expected),  # ABICC can't emit NO_CHANGE
-            "abicheck": ac.verdict,
-            "abicheck_compat": acc.verdict,
-            "abicheck_strict": ac_strict.verdict,
-            "abidiff": ab.verdict,
-            "abidiff_headers": ab_hdr.verdict,
-            "abicc_dumper": abicc_d.verdict,
-            "abicc_xml": abicc_x.verdict,
-            "abicheck_ms": round(ac.elapsed_ms),
-            "abicheck_compat_ms": round(acc.elapsed_ms),
-            "abicheck_strict_ms": round(ac_strict.elapsed_ms),
-            "abidiff_ms": round(ab.elapsed_ms),
-            "abidiff_headers_ms": round(ab_hdr.elapsed_ms),
-            "abicc_dumper_ms": round(abicc_d.elapsed_ms),
-            "abicc_xml_ms": round(abicc_x.elapsed_ms),
-        })
+            "expected_compat": EXPECTED_COMPAT.get(name, expected),
+            "expected_abicc": EXPECTED_ABICC.get(name, expected),
+        }
+        for t in TOOL_REGISTRY:
+            tr = tool_results.get(t.name, ToolResult(verdict="SKIP"))
+            entry[t.name] = tr.verdict
+            entry[t.ms_key] = round(tr.elapsed_ms)
+        results.append(entry)
 
     # ── Accuracy summary ──────────────────────────────────────────────────────
     def accuracy(key: str, expected_key: str = "expected") -> tuple[int, int]:
@@ -852,58 +867,46 @@ def main() -> None:
 
     print("\n" + "─" * 80)
     print("  Accuracy vs expected verdicts:")
-    timing_rows = [
-        ("abicheck",        "abicheck (compare)  ", "expected",       "abicheck_ms"),
-        ("abicheck_compat", "abicheck (compat)   ", "expected_compat","abicheck_compat_ms"),
-        ("abicheck_strict", "abicheck (strict)   ", "expected",       "abicheck_strict_ms"),
-        ("abidiff",         "abidiff (ELF)       ", "expected",       "abidiff_ms"),
-        ("abidiff_headers", "abidiff (+headers)  ", "expected",       "abidiff_headers_ms"),
-        ("abicc_dumper",    "ABICC (dumper)      ", "expected_abicc", "abicc_dumper_ms"),
-        ("abicc_xml",       "ABICC (xml)         ", "expected_abicc", "abicc_xml_ms"),
-    ]
-    for key, label, exp_key, ms_key in timing_rows:
-        c, t = accuracy(key, exp_key)
-        if t > 0:
-            pct = 100 * c // t
+    for t in active_tools:
+        c, total = accuracy(t.name, t.expected_key)
+        if total > 0:
+            pct = 100 * c // total
             bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
-            tot_s = total_ms(ms_key) / 1000
-            print(f"    {label}: {c:>2}/{t} ({pct:3}%) {bar}  [{tot_s:6.1f}s total]")
+            tot_s = total_ms(t.ms_key) / 1000
+            print(f"    {t.label}: {c:>2}/{total} ({pct:3}%) {bar}  [{tot_s:6.1f}s total]")
 
     # Divergences from expected
-    print("\n  Cases where abicheck differs from expected:")
-    for r in results:
-        if r.get("expected", "?") == "?":
-            continue
-        if r["abicheck"] not in ("SKIP", "ERROR", "TIMEOUT") and r["abicheck"] != r["expected"]:
-            print(f"    {r['case']:<40} got={r['abicheck']} expected={r['expected']}")
+    if "abicheck" in selected_tools:
+        print("\n  Cases where abicheck differs from expected:")
+        for r in results:
+            if r.get("expected", "?") == "?":
+                continue
+            if r["abicheck"] not in ("SKIP", "ERROR", "TIMEOUT") and r["abicheck"] != r["expected"]:
+                print(f"    {r['case']:<40} got={r['abicheck']} expected={r['expected']}")
 
     # Strict vs compat divergences
-    print("\n  Cases where abicheck_strict differs from abicheck_compat:")
-    for r in results:
-        ac_s = r.get("abicheck_strict", "SKIP")
-        ac_c = r.get("abicheck_compat", "SKIP")
-        if ac_s in ("SKIP", "ERROR", "TIMEOUT") or ac_c in ("SKIP", "ERROR", "TIMEOUT"):
+    if "abicheck_strict" in selected_tools and "abicheck_compat" in selected_tools:
+        print("\n  Cases where abicheck_strict differs from abicheck_compat:")
+        for r in results:
+            ac_s = r.get("abicheck_strict", "SKIP")
+            ac_c = r.get("abicheck_compat", "SKIP")
+            if ac_s in ("SKIP", "ERROR", "TIMEOUT") or ac_c in ("SKIP", "ERROR", "TIMEOUT"):
+                continue
+            if ac_s != ac_c:
+                exp = r.get("expected", "?")
+                print(f"    {r['case']:<40} compat={ac_c} strict={ac_s} expected={exp}")
+
+    # Per-case timing for slow tools (registry-driven via show_slowest flag)
+    for tool_obj in active_tools:
+        if not tool_obj.show_slowest:
             continue
-        if ac_s != ac_c:
-            exp = r.get("expected", "?")
-            print(f"    {r['case']:<40} compat={ac_c} strict={ac_s} expected={exp}")
-
-    # Per-case timing for ABICC (top 10 slowest cases)
-    print("\n  Top ABICC (dumper) slowest cases:")
-    slow = sorted(results, key=lambda r: r.get("abicc_dumper_ms", 0), reverse=True)
-    for r in slow[:10]:
-        ms = r.get("abicc_dumper_ms", 0)
-        if ms > 0:
-            verdict = r.get("abicc_dumper", "SKIP")
-            print(f"    {r['case']:<40} {ms:>7}ms  [{verdict}]")
-
-    print("\n  Top ABICC (xml) slowest cases:")
-    slow_xml = sorted(results, key=lambda r: r.get("abicc_xml_ms", 0), reverse=True)
-    for r in slow_xml[:10]:
-        ms = r.get("abicc_xml_ms", 0)
-        if ms > 0:
-            verdict = r.get("abicc_xml", "SKIP")
-            print(f"    {r['case']:<40} {ms:>7}ms  [{verdict}]")
+        print(f"\n  Top {tool_obj.col_name} slowest cases:")
+        slow = sorted(results, key=lambda r, k=tool_obj.ms_key: r.get(k, 0), reverse=True)
+        for r in slow[:10]:
+            ms = r.get(tool_obj.ms_key, 0)
+            if ms > 0:
+                verdict = r.get(tool_obj.name, "SKIP")
+                print(f"    {r['case']:<40} {ms:>7}ms  [{verdict}]")
 
     summary = REPORT_DIR / "comparison_summary.json"
     summary.write_text(json.dumps(results, indent=2))
