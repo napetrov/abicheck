@@ -470,11 +470,15 @@ def run_abicc_xml(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None
         return ToolResult(verdict="SKIP")
 
     def xml(so: Path, h: Path | None, ver: str, out: Path) -> None:
-        hdir = str(h.parent) if h and h.exists() else "/usr/include"
+        # Pass the specific header file path, not the whole directory.
+        # Passing a directory causes abicc to include ALL .h files it finds
+        # there (including duplicates from make_build subdirs), which leads to
+        # redefinition errors and TIMEOUT/wrong verdicts.
+        header_path = str(h) if h and h.exists() else "/usr/include/stdlib.h"
         out.write_text(
             f"<descriptor>\n"
             f"  <version>{ver}</version>\n"
-            f"  <headers>{hdir}/</headers>\n"
+            f"  <headers>{header_path}</headers>\n"
             f"  <libs>{so}</libs>\n"
             f"</descriptor>\n"
         )
