@@ -44,10 +44,17 @@ use `abicheck compare --format json`.
 Check if the binary has DWARF debug info:
 
 ```bash
-readelf --sections libfoo.so | grep -E "\.debug_info|\.zdebug_info" || echo "No DWARF sections"
+# Check for embedded DWARF sections
+readelf -S libfoo.so | grep -E "\.debug_info|\.zdebug_info" || echo "No DWARF sections"
+
+# Check for externally linked split-debug files
+readelf --debug-dump=links libfoo.so   # shows .gnu_debuglink / .gnu_debugaltlink references
+readelf --debug-dump=follow-links libfoo.so  # follows the link and inspects linked debug-info
 ```
 
 Without DWARF, Tier 3/4 checks are limited. Use debug builds (`-g`) for deeper analysis.
+If the binary uses split debug (separate `.debug` file), the linked debug info is still
+analysed automatically when `--debug-dump=follow-links` can resolve the path.
 
 ---
 
