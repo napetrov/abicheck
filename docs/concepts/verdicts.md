@@ -91,11 +91,13 @@ echo "OK (NO_CHANGE or COMPATIBLE)"
 
 ### Warning-only gate
 ```bash
-abicheck compare old.json new.json
+abicheck compare old.json new.json --format json -o result.json
 ret=$?
 [ $ret -eq 1 ] && echo "::error::tool error" && exit 1
 [ $ret -eq 4 ] && echo "::error::BREAKING ABI change" && exit 1
 [ $ret -eq 2 ] && echo "::warning::API_BREAK (source-level)"
+verdict=$(python3 -c "import json; print(json.load(open('result.json'))['verdict'])" 2>/dev/null || echo "")
+[ "$verdict" = "COMPATIBLE" ] && echo "::warning::COMPATIBLE ABI change (new symbols or compatible modifications)"
 echo "ABI check passed"
 ```
 

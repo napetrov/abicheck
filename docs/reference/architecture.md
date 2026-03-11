@@ -278,5 +278,5 @@ Do you have ABICC XML descriptors already?
 | Output formats | md, json, sarif, html | html, json, xml, md |
 | Verdicts in report | NO_CHANGE / COMPATIBLE / API_BREAK / BREAKING | ABICC-style compatibility report |
 | Exit codes | 0 / 1(err) / 2 / 4 | 0 / 1 / 2(API_BREAK) |
-| ABICC flag parity | — | full (`-lib`, `-old`, `-new`, `-s`, ...) |
+| ABICC flag parity | — | partial (core flags supported; see [from_abicc.md](../migration/from_abicc.md) for mapping) |
 | Recommended for | new integrations | migrating from ABICC |
