@@ -1,10 +1,21 @@
 """conftest.py — pytest configuration for abicheck tests."""
 import shutil
+from pathlib import Path
 
 import pytest
 
 
-def pytest_configure(config):
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register --update-goldens CLI option for golden-output tests."""
+    parser.addoption(
+        "--update-goldens",
+        action="store_true",
+        default=False,
+        help="Re-generate golden output files in tests/golden/ instead of comparing.",
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
         "integration: requires castxml, gcc/g++ installed",
@@ -13,9 +24,13 @@ def pytest_configure(config):
         "markers",
         "abicc: requires abi-compliance-checker + gcc/g++ — ABICC parity tests",
     )
+    config.addinivalue_line(
+        "markers",
+        "golden: golden-output regression test (use --update-goldens to refresh)",
+    )
 
 
-def pytest_collection_modifyitems(config, items):
+def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
     missing = [t for t in ("castxml", "gcc", "g++") if shutil.which(t) is None]
     if missing:
         reason = f"Required tools not found: {', '.join(missing)}"
@@ -29,3 +44,9 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "abicc" in item.keywords:
                 item.add_marker(skip_abicc)
+
+
+@pytest.fixture
+def update_goldens(request: pytest.FixtureRequest) -> bool:
+    """True when --update-goldens flag is passed."""
+    return bool(request.config.getoption("--update-goldens"))

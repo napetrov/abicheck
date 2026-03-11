@@ -297,6 +297,54 @@
       "abi_break": false,
       "api_break": false,
       "bad_practice": false
+    },
+    "case43_base_class_member_added": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Data member added to base class shifts derived class layout (libabigail: Added_Base_Class_Data_Member)"
+    },
+    "case44_cyclic_type_member_added": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Member added to a self-referential (cyclic) struct \u2014 sizeof changes (libabigail: Added_Non_Virtual_Member_Variable in cyclic type)"
+    },
+    "case45_multi_dim_array_change": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Multi-dimensional array element type changed float->double \u2014 size doubles (libabigail: Subrange_Change)"
+    },
+    "case46_pointer_chain_type_change": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Pointer chain ultimate type changes int->long through two indirection levels (libabigail: Function_Return_Type_Change indirect)"
+    },
+    "case47_inline_to_outlined": {
+      "expected": "COMPATIBLE",
+      "category": "compatible",
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "Inline method moved out-of-line: new exported symbol appears (FUNC_ADDED, libabigail: inline->outlined)"
+    },
+    "case48_leaf_struct_through_pointer": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Leaf struct gains field; propagates through embedding in Container \u2014 layout breaks (libabigail: Leaf_Type_Change)"
     }
   }
 }
