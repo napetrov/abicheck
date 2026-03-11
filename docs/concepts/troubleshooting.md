@@ -29,22 +29,25 @@ python3 -c "import json; r=json.load(open('result.json')); print(r['verdict']); 
 
 ---
 
-## 3) "Why is compat mode missing API_BREAK?"
+## 3) "How does `compat` mode report API_BREAK?"
 
-`abicheck compat` follows ABICC verdict vocabulary and does not emit `API_BREAK`.
-Use `abicheck compare` if you need explicit source-level verdicts.
+`abicheck compat` uses ABICC-style report text, but still returns **exit code `2`**
+for source-level `API_BREAK` conditions.
+
+If you need an explicit `API_BREAK` verdict string in machine-readable output,
+use `abicheck compare --format json`.
 
 ---
 
 ## 4) "Why are deep type changes not detected?"
 
-Check if binary is stripped (no DWARF):
+Check if the binary has DWARF debug info:
 
 ```bash
-readelf --debug-dump=info libfoo.so >/dev/null 2>&1 || echo "No DWARF"
+readelf --sections libfoo.so | grep -E "\.debug_info|\.zdebug_info" || echo "No DWARF sections"
 ```
 
-Without DWARF, Tier 3/4 checks are limited. Use debug builds for deeper analysis.
+Without DWARF, Tier 3/4 checks are limited. Use debug builds (`-g`) for deeper analysis.
 
 ---
 
@@ -62,4 +65,3 @@ Open an issue with:
 - tool version (`abicheck --version`)
 - minimal header + `.so` pair
 - JSON output (`--format json`)
-

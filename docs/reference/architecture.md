@@ -8,7 +8,7 @@ and how the four analysis tiers combine to produce a verdict.
 ## Overview
 
 `abicheck` uses **four independent analysis tiers** to build a complete picture of
-a library's ABI and API surface. Each tier captures things the others cannot:
+a library's ABI and API surface. Each tier captures things the others cannot.
 
 | Tier | Source | What it catches |
 |------|--------|-----------------|
@@ -25,7 +25,7 @@ The final verdict is the **worst** of all ChangeKinds found across all tiers.
 
 This is the recommended workflow for new integrations.
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────┐
 │  abicheck dump                                                   │
 │                                                                  │
@@ -104,15 +104,15 @@ This is the recommended workflow for new integrations.
 
 ## Workflow: `compat` mode (ABICC drop-in)
 
-Use this when you have an existing ABICC XML descriptor pipeline.
+Use this when you already have ABICC XML descriptor pipelines.
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────┐
 │  abicheck compat                                                 │
 │                                                                  │
 │  OLD.xml ──► ┌─────────────────────────────────────────────┐    │
 │  NEW.xml ──► │  compat layer                               │    │
-│              │  • parses ABICC XML descriptor format       │    │
+│              │  • parses ABICC XML descriptors             │    │
 │              │  • extracts headers path + .so path         │    │
 │              │  • calls same dump engine as compare mode   │    │
 │              └──────────────┬──────────────────────────────┘    │
@@ -123,9 +123,10 @@ Use this when you have an existing ABICC XML descriptor pipeline.
 │                   └──────────────┬─────────────────────────┘    │
 │                                  │                               │
 │                   ┌──────────────▼─────────────────────────┐    │
-│                   │  ABICC verdict mapping                 │    │
-│                   │  API_BREAK → COMPATIBLE (compat vocab) │    │
-│                   │  exit: 0=ok 1=BREAKING 2=API_BREAK/err │    │
+│                   │  compat exit-code mapping              │    │
+│                   │  exit 0 = NO_CHANGE / COMPATIBLE       │    │
+│                   │  exit 1 = BREAKING or tool error       │    │
+│                   │  exit 2 = API_BREAK                    │    │
 │                   └──────────────┬─────────────────────────┘    │
 │                                  │                               │
 │               ┌──────────────────┼──────────────────────┐       │
@@ -139,7 +140,7 @@ Use this when you have an existing ABICC XML descriptor pipeline.
 
 ## When tiers activate
 
-```
+```text
 Configuration              Tier 1     Tier 2     Tier 3     Tier 4
 ───────────────────────    ──────     ──────     ──────     ──────
 headers + .so (no -g)       ✅          ✅          ❌          ❌
@@ -155,7 +156,7 @@ headers + .so (with -g)     ✅          ✅          ✅          ✅
 
 ## Module map
 
-```
+```text
 abicheck/
   cli.py            ← CLI entry points (dump / compare / compat / compat-dump)
   dumper.py         ← builds ABI snapshot from .so + headers (calls all 4 tiers)
@@ -163,7 +164,7 @@ abicheck/
   checker_policy.py ← ChangeKind enum, BREAKING/COMPATIBLE/API_BREAK sets, verdict logic
   detectors.py      ← detector protocol + detector result types
   model.py          ← core data model: AbiSnapshot, Function, RecordType, Change
-  compat.py         ← ABICC XML descriptor parsing + compat verdict mapping
+  compat.py         ← ABICC XML descriptor parsing + compat mapping
   report_summary.py ← canonical counters shared by all reporters
   reporter.py       ← Markdown reporter
   sarif.py          ← SARIF reporter (GitHub Code Scanning)
@@ -181,7 +182,7 @@ abicheck/
 
 ## Data flow (internal)
 
-```
+```text
 Input: libfoo.so + include/foo.h
            │
            ▼
@@ -222,8 +223,7 @@ Input: libfoo.so + include/foo.h
 
 ## Snapshot format
 
-ABI snapshots are portable JSON files created by `abicheck dump`. They contain
-everything needed for offline comparison — no `.so` or headers required at compare time.
+ABI snapshots are portable JSON files created by `abicheck dump`.
 
 ```json
 {
@@ -249,14 +249,13 @@ everything needed for offline comparison — no `.so` or headers required at com
 }
 ```
 
-Snapshots can be stored in CI artifacts for offline comparison, baselining, or
-auditing historical ABI evolution.
+Snapshots can be stored in CI artifacts for offline comparison and ABI history tracking.
 
 ---
 
 ## Choosing a workflow
 
-```
+```text
 Do you have ABICC XML descriptors already?
 ├── YES → use `abicheck compat` (drop-in, same flags)
 │          then migrate to `abicheck compare` when ready
@@ -266,18 +265,18 @@ Do you have ABICC XML descriptors already?
           Is your .so compiled with -g (debug info)?
           ├── YES → full 4-tier analysis (most accurate)
           └── NO  → Tier 1+2 only (headers + ELF)
-                    covers the vast majority of ABI breaks
+                    covers the majority of ABI breaks
 ```
 
 ---
 
-## Comparison: `compare` vs `compat` mode
+## Comparison: `compare` vs `compat`
 
 | Feature | `compare` | `compat` |
 |---------|-----------|---------|
 | Input | JSON snapshots | ABICC XML descriptors |
 | Output formats | md, json, sarif, html | html, json, xml, md |
-| Verdicts | NO_CHANGE / COMPATIBLE / API_BREAK / BREAKING | NO_CHANGE / COMPATIBLE / BREAKING |
-| Exit codes | 0 / 1(err) / 2 / 4 | 0 / 1 / 2(api+err) |
+| Verdicts in report | NO_CHANGE / COMPATIBLE / API_BREAK / BREAKING | ABICC-style compatibility report |
+| Exit codes | 0 / 1(err) / 2 / 4 | 0 / 1 / 2(API_BREAK) |
 | ABICC flag parity | — | full (`-lib`, `-old`, `-new`, `-s`, ...) |
 | Recommended for | new integrations | migrating from ABICC |

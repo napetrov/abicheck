@@ -18,7 +18,7 @@ Changes found, but **backwards-compatible** — existing compiled consumers can 
 
 Examples:
 - New exported symbol added
-- `noexcept` specifier added/removed _(Itanium ABI mangling unchanged for non-template, non-function-pointer contexts; in C++17+, `noexcept` is part of function type and may affect mangling in template/function-pointer contexts — see [case15 edge case](#edge-case-noexcept-case15))_
+- `noexcept` specifier added/removed *(Itanium ABI mangling unchanged for plain functions; in C++17+, `noexcept` is part of function type and can affect mangling in function-pointer and template contexts — see [edge case below](#edge-case-noexcept-case15))*
 - `GLOBAL` → `WEAK` symbol binding
 - Enum member added at end of enum
 
@@ -38,8 +38,10 @@ Examples:
 
 **CI action:** fail in API-strict pipelines or pipelines that test building from source; warn in ABI-only gates.
 
-> **Note:** `abicheck compat` mode does not emit `API_BREAK` — it follows ABICC's
-> binary vocabulary (`COMPATIBLE` / `BREAKING` / `NO_CHANGE`).
+> **Note:** `abicheck compat` mode **can** emit `API_BREAK` — exit code `2`.
+> This mirrors ABICC's exit code `2` for source-level breaks.
+> The only difference: `compat` does not produce the `API_BREAK` verdict string
+> in the report text (it uses ABICC-style "binary compatible" phrasing).
 
 ---
 
@@ -60,7 +62,7 @@ Examples:
 ## Edge case: `noexcept` (case15)
 
 `FUNC_NOEXCEPT_REMOVED` (removing a `noexcept` specifier) normally maps to `COMPATIBLE`
-for non-template, non-function-pointer contexts.
+for plain non-template, non-function-pointer contexts.
 
 However, **case15** is classified `BREAKING` because the function previously had `throw()` —
 the legacy C++03/C++11 exception specification — which caused the symbol to carry a versioned
@@ -94,9 +96,8 @@ ret=$?
 echo "ABI check passed"
 ```
 
-### Permissive gate (migration from ABICC)
+### Permissive gate (allow API_BREAK, block only binary breaks)
 ```bash
-# Only fail on binary breaks; allow API_BREAK during migration period
 abicheck compare old.json new.json
 ret=$?
 [ $ret -eq 1 ] && exit 1   # tool error
@@ -114,10 +115,10 @@ exit 0
 | `COMPATIBLE` | `0` | `0` |
 | `API_BREAK` | `2` | `2` |
 | `BREAKING` | `4` | `1` |
-| Error | `1` | `2` |
+| Tool error | `1` | `1` |
 
 > ⚠️ `compare` exits `0` for both `NO_CHANGE` and `COMPATIBLE`. If your pipeline
-> should warn on `COMPATIBLE` changes (e.g. new symbol exports), you cannot
-> distinguish them via exit code alone — use `--format json` and check the `verdict` field.
+> should warn on `COMPATIBLE` changes (e.g. new symbol exports), use `--format json`
+> and check the `verdict` field — exit code alone is not sufficient.
 
 Full ChangeKind reference: [reference/change_kinds.md](../reference/change_kinds.md)

@@ -15,28 +15,28 @@
 
 > **⚠️ Important:** Exit code `0` means **either** `NO_CHANGE` or `COMPATIBLE`.
 > If your pipeline should **warn** on `COMPATIBLE` changes (e.g. new symbol exports),
-> you cannot distinguish them via exit code alone — use `--format json` and check the
-> `verdict` field.
+> you cannot distinguish them via exit code alone — use `--format json` and parse
+> the `verdict` field.
 
-### CI gate recommendations
+### CI gate examples
 
 ```bash
-# Strict: fail on any break (production gate)
+# Fail on any break (production gate)
 abicheck compare old.json new.json
 ret=$?
-[ $ret -eq 1 ] && echo "ERROR — check tool inputs" && exit 1
+[ $ret -eq 1 ] && echo "ERROR — check inputs" && exit 1
 [ $ret -eq 4 ] && echo "BREAKING — release blocked" && exit 1
 [ $ret -eq 2 ] && echo "API_BREAK — source-level break" && exit 1
-echo "OK"
+echo "OK (NO_CHANGE or COMPATIBLE)"
 
-# Permissive: fail only on binary ABI breaks
+# Fail only on binary ABI breaks (allow API_BREAK and COMPATIBLE)
 abicheck compare old.json new.json
 ret=$?
 [ $ret -eq 1 ] && exit 1   # tool error
 [ $ret -eq 4 ] && exit 1   # binary break only
 exit 0
 
-# Parse exact verdict
+# Parse exact verdict via JSON
 abicheck compare old.json new.json --format json -o result.json
 verdict=$(python3 -c "import json; print(json.load(open('result.json'))['verdict'])")
 [ "$verdict" = "BREAKING" ] && exit 1
@@ -46,33 +46,35 @@ verdict=$(python3 -c "import json; print(json.load(open('result.json'))['verdict
 
 ## `abicheck compat`
 
-ABICC-compatible mode uses a **different exit code scheme** (matches `abi-compliance-checker`):
+ABICC-compatible mode (matches `abi-compliance-checker` exit codes):
 
 | Exit code | Meaning |
 |-----------|---------|
-| `0` | No breaking changes (COMPATIBLE or NO_CHANGE) |
+| `0` | No breaking changes (`COMPATIBLE` or `NO_CHANGE`) |
 | `1` | `BREAKING` — binary ABI break detected |
-| `2` | `API_BREAK` (source-level break) **or** error (descriptor parse failure, missing files) |
+| `2` | `API_BREAK` — source-level break (binary compatible) |
+| `1` | Error — also exits `1` for tool failures (same as BREAKING) |
 
-> **⚠️ Migration note:** Exit code `2` conflates `API_BREAK` with tool errors in `compat` mode.
-> Validate that your input XML files exist before relying on exit `2` as an API_BREAK signal.
-> See [Migrating from ABICC](../migration/from_abicc.md) for the full mapping.
+> **⚠️ Note:** In `compat` mode, exit `2` means `API_BREAK` (not an error — unlike
+> `compare` mode where `1` is the error code). Validate your XML descriptor files
+> exist before treating exit `2` as a definitive signal.
 
 ---
 
 ## Quick comparison
 
-| Verdict | `compare` exit | `compat` exit |
-|---------|---------------|---------------|
+| Verdict / State | `compare` exit | `compat` exit |
+|-----------------|---------------|---------------|
 | `NO_CHANGE` | `0` | `0` |
 | `COMPATIBLE` | `0` | `0` |
 | `API_BREAK` | `2` | `2` |
 | `BREAKING` | `4` | `1` |
-| Error | `1` | `2` |
+| Tool error | `1` | `1` |
 
 ---
 
 ## `--strict` / `-s` flag (compat mode)
 
-In `compat -s` mode, `COMPATIBLE` and `API_BREAK` are promoted to `BREAKING`,
-so exit code `1` is also returned for those cases.
+In `compat -s` mode:
+- `--strict-mode full` (default): `COMPATIBLE` and `API_BREAK` → exit `1` (BREAKING)
+- `--strict-mode api`: only `API_BREAK` → exit `1`; `COMPATIBLE` unchanged
