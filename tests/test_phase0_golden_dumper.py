@@ -10,6 +10,8 @@ from abicheck.serialization import snapshot_to_dict
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+# Anchor all paths to repo root (robust against CWD differences in CI)
+REPO_ROOT = Path(__file__).parent.parent
 
 
 def _actual_digest(so_path: Path, header: Path, compiler: str) -> dict:
@@ -42,15 +44,31 @@ def _actual_digest(so_path: Path, header: Path, compiler: str) -> dict:
     }
 
 
-@pytest.mark.parametrize("fixture_path", sorted(FIXTURES_DIR.glob("*.json")), ids=lambda p: p.stem)
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "fixture_path", sorted(FIXTURES_DIR.glob("*.json")), ids=lambda p: p.stem
+)
 def test_dumper_golden_fixture(fixture_path: Path) -> None:
+    """Golden-file regression gate for the dumper pipeline.
+
+    Requires pre-built .so files (run ``make`` in each examples/case*/ dir)
+    and castxml in PATH. Skipped automatically when artifacts are missing
+    so unit-test CI jobs are not broken.
+
+    This is the Phase 0 gate: if any of these tests fail after a refactor,
+    the dumper output has changed in a way that must be explicitly acknowledged
+    by regenerating the fixture (python scripts/regen_fixtures.py).
+    """
     fixture = json.loads(fixture_path.read_text())
-    so_path = Path(fixture["source"])
-    header = Path(fixture["header"])
+    # Resolve paths relative to repo root, not pytest CWD
+    so_path = (REPO_ROOT / fixture["source"]).resolve()
+    header = (REPO_ROOT / fixture["header"]).resolve()
     compiler = fixture.get("compiler", "c++")
 
-    assert so_path.exists(), f"missing shared object: {so_path}"
-    assert header.exists(), f"missing header/source: {header}"
+    if not so_path.exists():
+        pytest.skip(f"pre-built artifact missing: {so_path}  (run: make -C {so_path.parent})")
+    if not header.exists():
+        pytest.skip(f"header/source missing: {header}")
 
     expected = {
         "function_count": fixture["function_count"],

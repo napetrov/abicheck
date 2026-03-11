@@ -74,8 +74,22 @@ def test_parser_core_paths() -> None:
     )
 
     funcs = parser.parse_functions()
-    assert any(f.name == "draw" and f.is_virtual and f.vtable_index == 0 for f in funcs)
-    assert any(f.name == "compute" and f.is_extern_c and f.return_type == "int" for f in funcs)
+    draw = next(f for f in funcs if f.name == "draw")
+    compute = next(f for f in funcs if f.name == "compute")
+
+    # virtual method
+    assert draw.is_virtual
+    assert draw.vtable_index == 0
+    assert draw.is_noexcept
+    assert draw.visibility == Visibility.PUBLIC
+    assert draw.return_type == "int"
+
+    # extern C function
+    assert compute.is_extern_c
+    assert compute.return_type == "int"
+    assert compute.visibility == Visibility.PUBLIC
+    assert len(compute.params) == 1
+    assert compute.params[0].type == "const int"
 
     vars_ = parser.parse_variables()
     assert len(vars_) == 1
@@ -84,13 +98,21 @@ def test_parser_core_paths() -> None:
 
     types = parser.parse_types()
     assert len(types) == 1
-    assert types[0].name == "Widget"
-    assert len(types[0].fields) == 2
-    assert types[0].fields[1].is_bitfield
+    widget = types[0]
+    assert widget.name == "Widget"
+    assert len(widget.fields) == 2
+    assert widget.fields[0].name == "x"
+    assert not widget.fields[0].is_bitfield
+    assert widget.fields[1].name == "flags"
+    assert widget.fields[1].is_bitfield
+    assert widget.fields[1].bitfield_bits == 3
+    # vtable should contain the mangled name of the virtual draw method
+    assert "_ZN6Widget4drawEv" in widget.vtable
 
     enums = parser.parse_enums()
     assert len(enums) == 1
     assert [m.name for m in enums[0].members] == ["FAST", "SLOW"]
+    assert [m.value for m in enums[0].members] == [1, 2]
 
     typedefs = parser.parse_typedefs()
     assert typedefs["I32"] == "int"
@@ -127,3 +149,6 @@ def test_cache_key_changes_with_inputs(tmp_path: Path) -> None:
 
     assert k1 != k2
     assert k1 != k3
+
+    # Determinism: same inputs → same key
+    assert k1 == _cache_key([h1], [inc], compiler="c++")

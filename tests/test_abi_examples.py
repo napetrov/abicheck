@@ -26,7 +26,10 @@ CASES = [
     ("case03_compat_addition", "COMPATIBLE", "v1.c", "v2.c"),
     # ✅ Identical libs → NO_CHANGE
     ("case04_no_change", "NO_CHANGE", "v1.c", "v1.c"),
-    # 📋 SONAME is a policy attribute, not tracked by checker → NO_CHANGE
+    # 📋 SONAME is a policy attribute, not tracked as a binary ABI break.
+    #    bad.c → good.c: soname changes (libfoo.so.1 → libfoo.so.2), symbol set is unchanged.
+    #    Checker correctly returns COMPATIBLE (symbol set intact, no binary break).
+    #    Previously expected NO_CHANGE was an incorrect test expectation.
     ("case05_soname", "COMPATIBLE", "bad.c", "good.c"),
     # ✅ internal_helper/another_impl hidden in good.c → removed from dynsym → BREAKING
     ("case06_visibility", "BREAKING", "bad.c", "good.c"),
@@ -43,7 +46,9 @@ CASES = [
     ("case11_global_var_type", "BREAKING", "v1.c", "v2.c"),
     # ✅ Function inlined away → disappears from .so → FUNC_REMOVED → BREAKING
     ("case12_function_removed", "BREAKING", "v1.c", "v2.c"),
-    # ✅ Unversioned→versioned: ld.so soft-matches → COMPATIBLE (adding versioning is safe)
+    # 📋 Symbol versioning adds @@VER tags to exported symbols (e.g. foo@@LIBFOO_1.0).
+    #    Checker strips @-suffix for comparison → symbols match → COMPATIBLE.
+    #    Previously expected NO_CHANGE was an incorrect test expectation.
     ("case13_symbol_versioning", "COMPATIBLE", "bad.c", "good.c"),
     # ✅ Class size change (private member added) → TYPE_SIZE_CHANGED → BREAKING
     ("case14_cpp_class_size", "BREAKING", "v1.cpp", "v2.cpp"),
