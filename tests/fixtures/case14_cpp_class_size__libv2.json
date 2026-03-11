@@ -2,7 +2,7 @@
   "source": "examples/case14_cpp_class_size/libv2.so",
   "header": "examples/case14_cpp_class_size/v2.h",
   "compiler": "c++",
-  "function_count": 7,
+  "function_count": 6,
   "variable_count": 0,
   "type_count": 1,
   "enum_count": 0,

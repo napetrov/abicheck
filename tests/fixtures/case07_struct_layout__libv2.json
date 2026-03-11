@@ -2,9 +2,9 @@
   "source": "examples/case07_struct_layout/libv2.so",
   "header": "examples/case07_struct_layout/v2.h",
   "compiler": "c++",
-  "function_count": 4,
+  "function_count": 7,
   "variable_count": 0,
-  "type_count": 0,
+  "type_count": 1,
   "enum_count": 0,
   "public_functions": [
     {
@@ -12,5 +12,11 @@
       "return_type": "int"
     }
   ],
-  "public_types": []
+  "public_types": [
+    {
+      "name": "Point",
+      "kind": "struct",
+      "size_bits": 96
+    }
+  ]
 }

@@ -2,7 +2,7 @@
   "source": "examples/case01_symbol_removal/libv1.so",
   "header": "examples/case01_symbol_removal/v1.h",
   "compiler": "c++",
-  "function_count": 3,
+  "function_count": 2,
   "variable_count": 0,
   "type_count": 0,
   "enum_count": 0,

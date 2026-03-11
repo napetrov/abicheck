@@ -1,8 +1,8 @@
 {
   "source": "examples/case09_cpp_vtable/libv2.so",
-  "header": "examples/case09_cpp_vtable/v2.cpp",
+  "header": "examples/case09_cpp_vtable/v2.h",
   "compiler": "c++",
-  "function_count": 8,
+  "function_count": 6,
   "variable_count": 0,
   "type_count": 1,
   "enum_count": 0,

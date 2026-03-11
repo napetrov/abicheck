@@ -2,7 +2,7 @@
   "source": "examples/case03_compat_addition/libv1.so",
   "header": "examples/case03_compat_addition/v1.h",
   "compiler": "c++",
-  "function_count": 2,
+  "function_count": 1,
   "variable_count": 0,
   "type_count": 0,
   "enum_count": 0,
