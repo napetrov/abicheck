@@ -2,6 +2,9 @@
 
 _Last updated: 2026-03-11 — 42 example cases, onedal-build (Ubuntu, 8 vCPU)_
 
+> **For a detailed explanation of how each tool works, why the numbers are what they are,
+> and how to choose the right tool — see [tool_comparison.md](tool_comparison.md).**
+
 ## TL;DR
 
 | Tool | Correct / Scored | Accuracy | Notes |

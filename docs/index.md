@@ -42,6 +42,8 @@ abicheck compare libfoo-1.0.json libfoo-2.0.json
 - [Using abicheck, Compatibility Modes, and Coverage](usage_and_coverage.md)
 - [Examples Breakage Guide](examples_breakage_guide.md)
 - [Tool Modes](tool_modes.md)
+- [Tool Comparison: abicheck vs abidiff vs ABICC](tool_comparison.md)
+- [Benchmark Report](benchmark_report.md)
 
 ## GitHub Actions
 
