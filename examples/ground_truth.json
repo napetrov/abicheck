@@ -39,7 +39,6 @@
     },
     "case06_visibility": {
       "expected": "COMPATIBLE",
-      "known_gap": "Current checker may report BREAKING via FUNC_VISIBILITY_CHANGED when leaked internal symbols disappear from dynsym; semantically this case is a bad-practice cleanup and is treated as COMPATIBLE",
       "category": "bad_practice",
       "abi_break": false,
       "api_break": false,
