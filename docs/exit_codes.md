@@ -1,0 +1,96 @@
+# Exit Codes
+
+`abicheck` uses different exit codes depending on the command.
+
+---
+
+## `abicheck compare`
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | `NO_CHANGE` or `COMPATIBLE` — no binary ABI break |
+| `1` | Tool error (missing input, invalid snapshot) — Click/Python uncaught exception |
+| `2` | `API_BREAK` — source-level break; existing binaries are safe |
+| `4` | `BREAKING` — binary ABI break |
+
+> **⚠️ Exit `0` covers both `NO_CHANGE` and `COMPATIBLE`.** If your pipeline needs
+> to distinguish them (e.g. warn on new symbol exports), use `--format json` and
+> read the `verdict` field — exit code alone is not sufficient.
+
+### CI gate patterns
+
+```bash
+# Production gate: fail on any break
+abicheck compare old.json new.json
+ret=$?
+[ $ret -eq 1 ] && echo "ERROR — check tool inputs" && exit 1    # tool error
+[ $ret -eq 4 ] && echo "BREAKING — release blocked" && exit 1
+[ $ret -eq 2 ] && echo "API_BREAK — source-level break" && exit 1
+echo "OK (NO_CHANGE or COMPATIBLE)"
+
+# Permissive gate: fail only on binary breaks (allow API_BREAK + COMPATIBLE)
+abicheck compare old.json new.json
+ret=$?
+[ $ret -eq 1 ] && exit 1   # tool error
+[ $ret -eq 4 ] && exit 1   # BREAKING only; API_BREAK (exit 2) allowed
+exit 0
+# note: exit 0 includes both NO_CHANGE and COMPATIBLE
+
+# Parse exact verdict from JSON
+abicheck compare old.json new.json --format json -o result.json
+verdict=$(python3 -c "import json,sys; d=json.load(open('result.json')); print(d['verdict'])" \
+  || { echo "ERROR parsing result.json"; exit 1; })
+[ "$verdict" = "BREAKING" ] && exit 1
+```
+
+---
+
+## `abicheck compat`
+
+Matches `abi-compliance-checker` exit codes (ABICC drop-in):
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | No breaking changes (`NO_CHANGE` or `COMPATIBLE`) |
+| `1` | `BREAKING` (mirrors ABICC) |
+| `2` | `API_BREAK` **or** tool error (descriptor parse failure, missing `.so`, etc.) |
+
+> **⚠️ In `compat` mode, exit `2` covers both `API_BREAK` and tool errors.**
+> Always pre-validate that your XML descriptor files exist before running.
+> To disambiguate: use `--format json` — a tool error produces no `changes`
+> in the JSON output, while a real `API_BREAK` will have change entries.
+
+---
+
+## Summary table
+
+| Verdict / State | `compare` exit | `compat` exit |
+|-----------------|---------------|---------------|
+| `NO_CHANGE` | `0` | `0` |
+| `COMPATIBLE` | `0` | `0` |
+| `API_BREAK` | `2` | `2` |
+| `BREAKING` | `4` | `1` |
+| Tool error | `1` | `2` |
+
+---
+
+## Strict mode (`-s` / `-strict`)
+
+`compat` (and only `compat`) supports strict mode to promote lesser verdicts:
+
+```bash
+# Strict mode: COMPATIBLE + API_BREAK → exit 1 (BREAKING)
+abicheck compat -lib foo -old OLD.xml -new NEW.xml -s
+
+# Strict API-only: only API_BREAK → exit 1; COMPATIBLE stays exit 0
+abicheck compat -lib foo -old OLD.xml -new NEW.xml -s --strict-mode api
+```
+
+`--strict-mode` values:
+- `full` (default when `-s` is set): `COMPATIBLE` + `API_BREAK` → BREAKING
+- `api`: only `API_BREAK` → BREAKING; `COMPATIBLE` unchanged
+
+`--strict-mode` has no effect unless `-s` is also passed.
+
+> Note: `abicheck compare` does not have `-s` / `--strict` flags.
+> For compare-mode strict pipelines, use CI exit code logic (check exit `2` as a failure).

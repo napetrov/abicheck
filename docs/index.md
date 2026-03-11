@@ -39,6 +39,9 @@ abicheck compare libfoo-1.0.json libfoo-2.0.json
 ## Next steps
 
 - [Getting Started](getting_started.md)
+- [Verdicts](concepts/verdicts.md)
+- [Exit Codes](exit_codes.md)
+- [Migrating from ABICC](migration/from_abicc.md)
 - [Using abicheck, Compatibility Modes, and Coverage](usage_and_coverage.md)
 - [Examples Breakage Guide](examples_breakage_guide.md)
 - [Tool Modes](tool_modes.md)
@@ -57,13 +60,15 @@ abicheck compare libfoo-1.0.json libfoo-2.0.json
     sarif_file: abi.sarif
 ```
 
-## Exit codes
+## Exit codes (abicheck compare)
 
 | Code | Meaning |
 |------|---------|
-| 0 | No ABI changes |
-| 1 | Compatible changes only |
-| 4 | Breaking ABI changes detected |
+| 0 | NO_CHANGE or COMPATIBLE |
+| 2 | API_BREAK |
+| 4 | BREAKING |
+
+For `compat` mode (ABICC drop-in), see [Exit Codes](exit_codes.md).
 
 ## Status
 
