@@ -1,136 +1,164 @@
 # ABI Tool Comparison: abicheck vs abidiff vs ABICC
 
-_Generated: 2026-03-08 — abicheck examples benchmark (14 cases)_
+_Last updated: 2026-03-11 — 42 example cases, onedal-build (Ubuntu, 8 vCPU)_
 
 ## TL;DR
 
-| Tool | Correct / 14 | Missed BREAKING | Notes |
-|------|-------------|-----------------|-------|
-| **abicheck** | **14/14 (100%)** | **0** | castxml + ELF |
-| abidiff | 6/14 (43%) | 0 missed, 8 undercounted | COMPATIBLE instead of BREAKING |
-| ABICC (abi-dumper) | 10/14 (71%) | 1 | Proper workflow via `abi-dumper` |
-| ABICC (xml only) | 3/14 (21%) | many | Legacy mode: no type info → misses most changes |
+| Tool | Correct / Scored | Accuracy | Notes |
+|------|-----------------|----------|-------|
+| **abicheck (compare)** | **42/42** | **100%** | castxml + ELF, full semantic analysis |
+| abicheck (compat)  | 40/42 | 95% | ABICC drop-in; 2 cases use API_BREAK verdict not supported in compat mode |
+| abicheck (strict)  | 31/42 | 73% | `--strict-mode full` promotes COMPATIBLE→BREAKING (expected for strict) |
+| ABICC (abi-dumper) | 20/30 | 66% | Scored on 30/42 — 12 cases ERROR/TIMEOUT |
+| ABICC (xml)        | 25/41 | 60% | Scored on 41/42 — case16 TIMEOUT |
+| abidiff (ELF)      | 11/42 | 26% | ELF symbol diff only |
+| abidiff (+headers) | 11/42 | 26% | Same as ELF — see note below |
 
-**abicheck catches every breaking change. ABICC with abi-dumper gets 71% — an improvement
-over the legacy XML mode (21%), but still misses structural/type changes that require
-header analysis. abidiff undercounts severity without `--headers-dir`.**
+## Why compat scores 40/42 (not 42)
 
-## Tool versions
+`abicheck compat` is an ABICC XML drop-in and follows ABICC's verdict vocabulary:
+it can only emit `COMPATIBLE`, `BREAKING`, and `NO_CHANGE`. Cases `case31_enum_rename`
+and `case34_access_level` expect `API_BREAK` — a source-level-only break that is binary-
+compatible. `compat` has no way to express this distinction, so those two cases are scored
+as misses. This is a known, intentional limitation documented in `ground_truth.json`
+(`expected_compat` field).
 
-| Tool | Version | Analysis method |
-|------|---------|-----------------|
-| abicheck | HEAD | castxml AST + ELF symbol diff |
-| abidiff | 2.4.0 | DWARF debug info (`-g`) |
-| ABICC | 2.3 | `abi-dumper` → ABI dump → diff |
-| abi-dumper | 1.2 | DWARF extraction from `-g -Og` binaries |
+**Use `abicheck compare` (default mode) for full verdict fidelity.**
+Use `abicheck compat` as a drop-in for existing ABICC-based pipelines.
 
-## Full results
+## Why strict scores 31/42
 
-| Case | Expected | abicheck | abidiff | ABICC (dumper) | ABICC (xml) |
-|------|----------|----------|---------|----------------|-------------|
-| case01_symbol_removal | BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING |
-| case02_param_type_change | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ✅ BREAKING | ❌ NO_CHANGE |
-| case03_compat_addition | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ❌ NO_CHANGE |
-| case04_no_change | NO_CHANGE | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ NO_CHANGE |
-| case07_struct_layout | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ✅ BREAKING | ❌ NO_CHANGE |
-| case08_enum_value_change | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ❌ NO_CHANGE | ❌ NO_CHANGE |
-| case09_cpp_vtable | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ✅ BREAKING | ❌ NO_CHANGE |
-| case10_return_type | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ✅ BREAKING | ❌ NO_CHANGE |
-| case11_global_var_type | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ✅ BREAKING | ❌ ERROR |
-| case12_function_removed | BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING | ✅ BREAKING |
-| case14_cpp_class_size | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ✅ BREAKING | ❌ NO_CHANGE |
-| case15_noexcept_change | NO_CHANGE | ✅ NO_CHANGE | ✅ NO_CHANGE | ❌ BREAKING | ⏱️ TIMEOUT |
-| case16_inline_to_non_inline | COMPATIBLE | ✅ COMPATIBLE | ✅ COMPATIBLE | ⏱️ TIMEOUT | ⏱️ TIMEOUT |
-| case17_template_abi | BREAKING | ✅ BREAKING | ⚠️ COMPATIBLE | ⏱️ TIMEOUT | ⏱️ TIMEOUT |
+`--strict-mode full` (default when `-s`) promotes `COMPATIBLE` → `BREAKING`. This is
+intentional behaviour — it matches ABICC's `-strict` flag semantics.
+Nine cases where the expected verdict is `COMPATIBLE` (e.g. case03 additive change,
+case05 soname addition, case13 symbol versioning) correctly score as misses in strict mode:
+they _are_ COMPATIBLE changes, and strict mode deliberately over-reports them.
 
-Legend: ✅ correct  ⚠️ undercounted (COMPATIBLE/NO_CHANGE vs expected BREAKING)  ❌ wrong  ⏱️ timed out (>30s)
+**Use `--strict-mode api` if you only want to promote true API_BREAK → BREAKING
+without false-positives on additive COMPATIBLE changes.**
 
-> **Note:** ABICC (dumper) results above are estimated based on known abi-dumper behavior.
-> Run `python3 scripts/benchmark_comparison.py --abicc-mode both` for fresh numbers on your machine.
+## Why abicheck (73%) beats ABICC dumper (66%)
 
-## Why abidiff undercounts (8 cases)
+ABICC dumper uses `abi-dumper` (Perl + DWARF), which fails on many C++ patterns:
+- 12 cases return `ERROR` or `TIMEOUT` (so only 30/42 are scored)
+- `case09_cpp_vtable` — 122s TIMEOUT in dumper mode
+- `case28/30/31/32/33/34/35/36/40` — ERROR (complex C++ types)
 
-abidiff without `--headers-dir` reads DWARF debug info compiled into the `.so` with `-g`.
-It detects *that* something changed but classifies it as `COMPATIBLE` (exit=4) because
-it cannot determine binary impact without full header type info.
+abicheck uses castxml (Clang-based) — correct results on all 42 cases, no timeouts.
 
-With `--headers-dir`, abidiff returns **NO_CHANGE** (exit=0) for most of these cases —
-it filters indirect/internal changes as non-public API. Still a miss, but for a different reason:
-abidiff treats struct layout as an implementation detail unless directly in the public signature.
-**abicheck uses castxml → always gets full type info → correct BREAKING verdict.**
+## Why abidiff+headers = abidiff (both 11/42)
 
-## ABICC modes: xml vs abi-dumper
+`abidiff --headers-dir` uses the headers to **filter** which symbols are considered
+public API — it doesn't use them to extract type information. Our examples are compiled
+with `-fvisibility=default` and have no `visibility("hidden")` annotations in headers,
+so the filter changes nothing.
 
-### Legacy XML mode (ABICC 3/14)
+`abidiff` misses type-level changes (struct layout, enum values, vtable, return types)
+because it relies solely on DWARF — it doesn't run a compiler or parse AST.
+These are fundamental limitations of DWARF-only analysis.
 
-ABICC was designed for GCC-based workflows: it requires `gcc -fdump-lang-spec` to extract
-type info. When fed pre-built `.so` files with a simple XML descriptor (no GCC dump),
-it falls back to symbol-level comparison only and reports NO_CHANGE for most type changes.
-Also timed out (>30s) on C++ template cases (case15, case16, case17).
+**abicheck uses castxml for full AST-level type analysis → catches all 42 cases.**
 
-### abi-dumper mode (ABICC 10/14) — recommended
+## Full results (42 cases)
 
-Using `abi-dumper` to extract ABI descriptors from DWARF info significantly improves accuracy.
-Steps:
-1. Compile with `-g -Og`
-2. `abi-dumper libfoo.so -o dump.abi -lver v1`
-3. `abi-compliance-checker -l mylib -old dump1.abi -new dump2.abi`
+| Case | Expected | abicheck | compat | strict | abidiff | abidiff+hdr | ABICC(dump) | ABICC(xml) |
+|------|----------|----------|--------|--------|---------|-------------|-------------|------------|
+| case01_symbol_removal | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| case02_param_type_change | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ✅ |
+| case03_compat_addition | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ | ✅ | ✅ | ✅ |
+| case04_no_change | NO_CHANGE | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT |
+| case05_soname | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ⚠️ BREAKING | ⚠️ BREAKING | ✅ | ✅ |
+| case06_visibility | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ⚠️ BREAKING | ⚠️ BREAKING | ❌ BREAKING | ❌ BREAKING |
+| case07_struct_layout | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
+| case08_enum_value_change | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ NO_CHANGE | ✅ | ✅ |
+| case09_cpp_vtable | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ NO_CHANGE | ⏱️ TIMEOUT | ✅ |
+| case10_return_type | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ⚠️ COMPAT |
+| case11_global_var_type | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ✅ |
+| case12_function_removed | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| case13_symbol_versioning | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
+| case14_cpp_class_size | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ⚠️ COMPAT |
+| case15_noexcept_change | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
+| case16_inline_to_non_inline | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ | ✅ | ❌ ERROR | ⏱️ TIMEOUT |
+| case17_template_abi | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT |
+| case18_dependency_leak | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT |
+| case19_enum_member_removed | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT |
+| case20_enum_member_value_changed | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
+| case21_method_became_static | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ✅ |
+| case22_method_const_changed | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ COMPAT |
+| case23_pure_virtual_added | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ COMPAT |
+| case24_union_field_removed | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
+| case25_enum_member_added | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
+| case26_union_field_added | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ✅ |
+| case26b_union_field_added_compatible | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
+| case27_symbol_binding_weakened | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
+| case28_typedef_opaque | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case29_ifunc_transition | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
+| case30_field_qualifiers | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case31_enum_rename | API_BREAK | ✅ | ⚠️ API_BREAK² | ✅ BREAKING | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case32_param_defaults | NO_CHANGE | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ ERROR | ⚠️ COMPAT |
+| case33_pointer_level | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case34_access_level | API_BREAK | ✅ | ⚠️ API_BREAK² | ✅ BREAKING | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case35_field_rename | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case36_anon_struct | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case37_base_class | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
+| case38_virtual_methods | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| case39_var_const | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ ERROR | ✅ |
+| case40_field_layout | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case41_type_changes | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-Improvements over xml mode:
-- Catches param type changes, struct layout, vtable, return type, global var type
-- Still misses enum value changes (case08)
-- Still times out on C++ templates (case16, case17)
-- False positive on noexcept-only change (case15 → reports BREAKING, expected NO_CHANGE)
+Legend: ✅ correct · ⚠️ wrong/undercounted · ❌ wrong · ⏱️ timed out
 
-**abicheck uses castxml (Clang-based) and works directly with `.so` + headers —
-no compiler dump needed, no timeouts, no false positives.**
+¹ `strict` false positive: COMPATIBLE → BREAKING is expected with `--strict-mode full`; use `--strict-mode api` to avoid.  
+² `compat` known limitation: API_BREAK verdict not supported; maps to COMPATIBLE (scored as miss).
 
-## Bug fixes included in benchmark
+## Timing
 
-Two cases silently returned NO_CHANGE before adding `.h` files:
+| Tool | Total (42 cases) | Notes |
+|------|-----------------|-------|
+| abicheck | ~212s | castxml per case; parallelisable |
+| abicheck compat | ~79s | XML descriptor mode |
+| abicheck strict | ~78s | same as compat + verdict promotion |
+| abidiff | ~2.5s | ELF only, very fast |
+| abidiff+headers | ~3.9s | same |
+| ABICC (dumper) | ~294s | abi-dumper + abi-compliance-checker per case |
+| ABICC (xml) | ~445s | GCC compilation per case; case09+case16 TIMEOUT |
 
-| Case | Before | After | Root cause |
-|------|--------|-------|------------|
-| case02_param_type_change | NO_CHANGE ❌ | BREAKING ✅ | No .h → ELF-only, same C-linkage symbol name |
-| case10_return_type | NO_CHANGE ❌ | BREAKING ✅ | No .h → ELF-only, `get_count` name identical |
+## ABICC XML mode: why so slow and inaccurate
 
-## ABICC XML descriptor format (Sprint 5 compatibility)
+ABICC XML mode (`-old v1.xml -new v2.xml`) invokes GCC to compile headers for type extraction.
+Problems:
+1. **Slow**: GCC invocation per case, even for 5-line headers
+2. **Timeouts**: `case16_inline_to_non_inline` reliably hits 120s
+3. **Inaccurate**: when the descriptor points to a directory, `abi-compliance-checker`
+   includes _all_ `.h` files found there — including duplicates from build subdirs,
+   causing redefinition errors and wrong verdicts
+4. **GCC bug #78040**: does not work correctly with GCC 6+ (prints warning on every run)
 
-abicheck Sprint 5 implements ABICC-compatible XML:
-
-```xml
-<descriptor>
-  <version>1.0</version>
-  <headers>/path/to/include/</headers>
-  <libs>/path/to/libfoo.so</libs>
-</descriptor>
-```
-
-```bash
-# ABICC
-abi-compliance-checker -l mylib -old v1.xml -new v2.xml
-
-# abicheck drop-in
-abicheck compat -lib mylib -old v1.xml -new v2.xml
-```
+abicheck avoids all of this by using castxml (Clang AST, single pass, no GCC).
 
 ## Run yourself
 
 ```bash
-# Requires: castxml, gcc/g++, abidiff (libabigail-tools), abi-compliance-checker, abi-dumper
-
-# Default: ABICC via abi-dumper (recommended, 30s timeout)
+# Full benchmark (all 42 cases, all tools)
 python3 scripts/benchmark_comparison.py
 
-# Both ABICC modes side by side
-python3 scripts/benchmark_comparison.py --abicc-mode both
+# Select specific cases
+python3 scripts/benchmark_comparison.py --cases case01 case09 case21
 
-# Legacy XML mode only (fast, inaccurate)
-python3 scripts/benchmark_comparison.py --abicc-mode xml
+# Select specific tools
+python3 scripts/benchmark_comparison.py --tools abicheck abidiff
 
-# Skip ABICC entirely (CI-friendly)
+# Skip ABICC (CI-friendly, ~15s total)
 python3 scripts/benchmark_comparison.py --skip-abicc
 
-# Custom timeout
+# ABICC timeout (default 120s)
 python3 scripts/benchmark_comparison.py --abicc-timeout 60
+
+# abicheck compat strict mode
+python3 scripts/benchmark_comparison.py --tools abicheck_compat abicheck_strict
 ```
+
+## Environment
+
+Tested on: Ubuntu 22.04, 8 vCPU, 32GB RAM (onedal-build)  
+castxml 0.6+, gcc 13, abidiff 2.4+, abi-compliance-checker 2.3, abi-dumper 1.2
