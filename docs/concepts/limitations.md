@@ -1,6 +1,6 @@
 # Limitations & Known Boundaries
 
-`abicheck` is designed to catch real ABI breaks with high accuracy, but has specific
+`abicheck` is designed to catch real ABI and API breaks with high accuracy, but has specific
 limitations you should understand before relying on it in production.
 
 ---
