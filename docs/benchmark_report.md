@@ -35,7 +35,7 @@ These changes are reflected in `examples/ground_truth.json` and do not affect ab
 | abicheck (compat)  | 40/42 | 95% | ABICC drop-in; 2 cases use API_BREAK verdict not supported in compat mode |
 | abicheck (strict)  | 31/42 | 73% | `--strict-mode full` promotes COMPATIBLE→BREAKING (expected for strict) |
 | ABICC (abi-dumper) | 20/30 | 66% | Scored on 30/42 — 12 cases ERROR/TIMEOUT ⁴ |
-| ABICC (xml)        | 25/41 | 60% | Scored on 41/42 — case16 TIMEOUT |
+| ABICC (xml)        | 25/41 | 61% | Scored on 41/42 — case16 TIMEOUT |
 | abidiff (ELF)      | 11/42 | 26% | ELF symbol diff only |
 | abidiff (+headers) | 11/42 | 26% | Same as ELF — see note below |
 
