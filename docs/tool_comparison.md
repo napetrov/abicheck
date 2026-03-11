@@ -90,13 +90,15 @@ fail the build. Use `--strict-mode api` to avoid false positives on purely addit
 .so (v2) ──► abidw ──► ABI XML ──┘
 ```
 
-**Analysis basis:** DWARF debug info only (requires `-g` at compile time).  
+**Analysis basis:** DWARF (primary), CTF/BTF fallback; pure ELF symbol table if no debug info present.  
 **Header requirement:** None (in ELF mode).  
 **Compiler requirement:** None.
 
-abidiff reads type information from DWARF sections of the `.so`. It can detect layout
-changes if the types are fully described in DWARF, but misses semantic changes that
-are not encoded in DWARF (noexcept, inline, access level, etc.).
+abidiff reads type information from DWARF sections of the `.so` when available. If DWARF
+is absent it falls back to CTF (Oracle/Solaris-style binaries) or BTF (Linux kernel/eBPF
+modules), and finally to ELF symbol names only when no debug info is present.
+
+For our benchmark, all `.so` files are built with `-g` so DWARF is used throughout.
 
 **Benchmark result: 11/42 (26%)**  
 abidiff misses anything that is not directly a symbol removal or a change that DWARF
@@ -106,9 +108,13 @@ fully describes. Specifically:
 - Enum value semantics, typedef chains → COMPATIBLE
 - noexcept, static qualifier, const qualifier, access level → not in DWARF at all
 
+> **Stripped binaries (no debug info):** abidiff degrades to ELF-only (symbol names).
+> abicheck continues to work via castxml — header-based type analysis does not need
+> debug symbols. This makes abicheck significantly more useful for production binaries.
+
 ---
 
-### abidiff (+headers)
+### abidw + headers → abidiff
 
 ```
 .so (v1) ──► abidw --headers-dir /path/to/headers/ ──► ABI XML ──┐
@@ -116,8 +122,11 @@ fully describes. Specifically:
 .so (v2) ──► abidw --headers-dir /path/to/headers/ ──► ABI XML ──┘
 ```
 
+> Note: `--headers-dir` is a flag for **`abidw`** (the dumper), not `abidiff` itself.
+> The filtering happens at dump time; `abidiff` only compares the resulting XML.
+
 **`--headers-dir` role:** Filters which symbols are considered public API.
-It does **not** provide additional type information — abidiff still reads types from DWARF.
+It does **not** provide additional type information — `abidw` still reads types from DWARF.
 
 **Why abidiff+headers = abidiff in our suite (both 11/42):**  
 Our benchmark examples are compiled with `-fvisibility=default`, meaning all symbols
@@ -172,7 +181,9 @@ v2.xml (headers dir + .so path) ──┘
 2. **Directory input causes redefinition errors** — if the descriptor's `<headers>` tag
    points to a directory, `abi-compliance-checker` includes ALL `.h` files found there,
    including duplicates from build subdirs → redefinition errors → wrong verdicts
-3. **GCC bug #78040** — does not work correctly with GCC 6+ (warns on every run)
+3. **GCC compatibility** — `abi-compliance-checker` uses `gcc -fdump-lang-class` internally,
+   whose output format changed between GCC major versions. ABICC 2.3 prints a compatibility
+   warning on every run when used with GCC 11+. Results may differ across GCC versions.
 4. **`case16_inline_to_non_inline`**: reliably hits 120s timeout
 
 **Our fix in PR #72:** Pass a specific header file path instead of a directory in
@@ -201,13 +212,14 @@ Only `abicheck compare` can emit this verdict.
 
 abicheck uses three independent analysis passes per comparison:
 
-1. **ELF pass** — symbol table diff: detections visibility changes, SONAME, symbol binding,
+1. **ELF pass** — symbol table diff: detects visibility changes, SONAME, symbol binding,
    symbol version policy, added/removed/renamed exported symbols
 2. **castxml pass** — Clang AST diff: detects noexcept, static qualifier, const qualifier,
    method-became-static, pure virtual additions, access level, parameter/return type changes
    that are invisible in ELF/DWARF
-3. **DWARF cross-check** — type size/layout validation to catch pack/align changes that
-   headers alone may not expose
+3. **DWARF cross-check** — validates actual compiled type sizes, struct/class member offsets,
+   vtable slot offsets, base class offsets, and `#pragma pack` / `-march`-sensitive alignment
+   that header analysis alone may compute incorrectly
 
 Neither abidiff nor ABICC runs all three passes. abidiff has no AST (misses noexcept, static,
 const). ABICC has no ELF pass (misses SONAME, visibility). ABICC(dump) has no AST
