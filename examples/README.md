@@ -30,6 +30,10 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 
 ## Case Index
 
+> Authoritative expected verdicts for benchmarking are in `examples/ground_truth.json`
+> (`expected`, `expected_compat`, `expected_abicc`). If a per-case README text and
+> benchmark expectation differ, treat `ground_truth.json` as source of truth.
+
 | # | Case | Category | abicheck verdict | Root cause |
 |---|------|----------|-----------------|-----------|
 | [01](case01_symbol_removal/README.md) | Symbol Removal | Symbol API | BREAKING 🔴 | Public function deleted from .so |
@@ -79,61 +83,31 @@ case's README for copy-paste build instructions.
 
 ---
 
-## Tool Comparison Matrix
+## Benchmark Snapshot (42 cases, 2026-03-11)
 
-Which tool catches which ABI break? Three modes are compared — see
-[`docs/tool_modes.md`](../docs/tool_modes.md) for a full explanation of each mode.
+To avoid drift, this README keeps only a compact summary. Full per-case matrix and
+methodology live in docs:
+- [`../docs/benchmark_report.md`](../docs/benchmark_report.md)
+- [`../docs/tool_comparison.md`](../docs/tool_comparison.md)
 
-| Case | Description | abidiff+headers | ABICC+headers | ABICC+dump (GCC-only) |
-|------|-------------|:---------------:|:-------------:|:----------------------:|
-| 01 | Symbol removal | ✅ | ✅ | ✅ |
-| 02 | Param type change | ✅ | ✅ | ✅ |
-| 03 | Compatible addition | ✅ | ✅ | ✅ |
-| 04 | No change | ✅ | ✅ | ✅ |
-| 05 | SONAME missing | ❌ | ❌ | ❌ |
-| 06 | Visibility leak | ✅ | ❌ | ❌ |
-| 07 | Struct layout | ⚠️ | ✅ | ✅ |
-| 08 | Enum value | ⚠️ | ✅ | ✅ |
-| 09 | vtable change | ⚠️ | ✅ | ✅ |
-| 10 | Return type | ⚠️ | ✅ | ✅ |
-| 11 | Global var type | ⚠️ | ✅ | ✅ |
-| 13 | Symbol versioning | ❌ | ❌ | ❌ |
-| 14 | Class size | ⚠️ | ✅ | ✅ |
-| 15 | noexcept removed | ❌ | ✅ | ❌ |
-| 16 | inline→non-inline | ❌ | ✅ | ❌ |
-| 17 | Template ABI | ⚠️ | ✅ | ✅ |
-| 18 | Dependency leak | ⚠️ | ✅ | ✅ |
+| Tool | Correct / Scored | Accuracy |
+|------|------------------|----------|
+| **abicheck (compare)** | **42/42** | **100%** |
+| abicheck (compat) | 40/42 | 95% |
+| abicheck (strict, full) | 31/42 | 73% |
+| abidiff | 11/42 | 26% |
+| abidiff + headers | 11/42 | 26% |
+| ABICC (abi-dumper) | 20/30 | 66% (48% effective over 42) |
+| ABICC (xml) | 25/41 | 61% |
 
-**Legend:**
-- ✅ = catches the break reliably
-- ❌ = misses the break
-- ⚠️ = catches only when `.so` compiled with `-g` (DWARF debug info present)
-- N/A = not applicable (no meaningful check possible)
+### Why these numbers differ
 
-> **Cases 05 and 13** are informational/policy issues, not binary breaks — no tool
-> treats them as failures by default.
-
-### Column definitions
-
-| Column | Tool | Input | Needs DWARF? | Needs headers? |
-|--------|------|-------|:------------:|:--------------:|
-| **abidiff+headers** | `abidw --headers-dir` + `abidiff` | two `.so` + include dir | optional | ✅ (required in our pipeline) |
-| **ABICC+headers** (= ABICC Usage #2) | `abi-compliance-checker` (headers-only mode) | `.so` + headers | ❌ | ✅ |
-| **ABICC+dump** (= ABICC Usage #1) | `abi-compliance-checker` + `abi-dumper` | `.so -g` + headers | ✅ required | ✅ (recommended) |
-
-See [`docs/tool_modes.md`](../docs/tool_modes.md) for detailed explanations,
-requirements, limitations, and the combined pipeline decision flowchart.
-
-### Key takeaways
-
-1. **abidiff on stripped `.so`** (no `-g`) degrades to symbol-table-only — misses
-   all type layout changes (cases 07–11, 14, 17, 18 become ❌).
-2. **ABICC+headers** is the most universally applicable — works on production `.so`,
-   catches semantic C++ changes abidiff is blind to (cases 15, 16).
-3. **ABICC+dump** is the most accurate when debug `.so` is available — DWARF is the
-   ground truth for compiled types; headers can have misleading macros.
-4. **Neither tool alone is sufficient** — the `abi-scanner` pipeline runs both
-   abidiff and ABICC+headers and uses a worst-of combined verdict.
+- **`compat` < `compare`**: `compat` follows ABICC vocabulary and cannot emit `API_BREAK`
+  (`case31`, `case34`), so max is 40/42 in this suite.
+- **`strict` can beat ABICC(dump)**: strict intentionally promotes some compatible changes,
+  while ABICC(dump) has many ERROR/TIMEOUT cases and only scores on 30/42.
+- **`abidiff` == `abidiff+headers` here**: `--headers-dir` only filters public symbols;
+  with `-fvisibility=default` in these examples, filtering does not change the set.
 
 ---
 

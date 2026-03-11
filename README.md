@@ -177,44 +177,65 @@ can cause runtime failures in realistic deployments:
 
 ## ABI/API breakages and tool coverage
 
-Below is a high-level matrix aligned with `examples/case01..case24`.
+Below is a high-level matrix for all 42 example cases based on benchmark results (2026-03-11).
 
-Legend: ✅ supported, ⚠️ partial/context-dependent, ❌ typically unsupported.
+Legend: ✅ correct · ⚠️ wrong/undercounted · ❌ wrong · ⏱️ timeout
 
-| Case | Breakage type | Verdict | abicheck | abidiff + headers | ABICC #2 (headers) | ABICC #1 (abi-dumper) |
+| Case | Breakage type | Expected | abicheck | abidiff | ABICC(dump) | ABICC(xml) |
 |---|---|---|:---:|:---:|:---:|:---:|
 | case01 | Symbol removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case02 | Param type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case03 | Compatible symbol addition | COMPATIBLE | ✅ | ✅ | ✅ | ✅ |
-| case04 | No change baseline | NO_CHANGE | ✅ | ✅ | ✅ | ✅ |
-| case05 | SONAME policy break | BREAKING | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| case06 | Visibility policy break | BREAKING | ✅ | ✅ | ⚠️ | ⚠️ |
-| case07 | Struct layout break | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case02 | Param type changed | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case03 | Compatible addition | COMPATIBLE | ✅ | ✅ | ✅ | ✅ |
+| case04 | No change baseline | NO_CHANGE | ✅ | ✅ | ⚠️ | ⚠️ |
+| case05 | SONAME missing | COMPATIBLE | ✅ | ⚠️ | ✅ | ✅ |
+| case06 | Visibility leak | COMPATIBLE | ✅ | ⚠️ | ❌ | ❌ |
+| case07 | Struct layout break | BREAKING | ✅ | ⚠️ | ⚠️ | ⚠️ |
 | case08 | Enum value changed | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
-| case09 | C++ vtable drift | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case10 | Return type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case11 | Global variable type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case09 | C++ vtable drift | BREAKING | ✅ | ⚠️ | ⏱️ | ✅ |
+| case10 | Return type changed | BREAKING | ✅ | ⚠️ | ✅ | ⚠️ |
+| case11 | Global var type changed | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
 | case12 | Function removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case13 | Symbol version policy break | COMPATIBLE | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| case14 | Class size/layout change | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case15 | `noexcept` changed | COMPATIBLE | ✅ | ⚠️ | ✅ | ❌ |
-| case16 | inline↔non-inline ABI/ODR risk | BREAKING | ✅ | ⚠️ | ✅ | ❌ |
-| case17 | Template ABI drift | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
-| case18 | Dependency leak via headers | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
-| case19 | Enum member removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case20 | Enum member value changed | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
-| case21 | Method became static | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case22 | Method const qualifier changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case23 | Pure virtual method added | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case24 | Union field removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case13 | Symbol version policy | COMPATIBLE | ✅ | ✅ | ✅ | ✅ |
+| case14 | Class size/layout | BREAKING | ✅ | ⚠️ | ✅ | ⚠️ |
+| case15 | noexcept changed | BREAKING | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case16 | inline↔non-inline | COMPATIBLE | ✅ | ✅ | ❌ | ⏱️ |
+| case17 | Template ABI drift | BREAKING | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case18 | Dependency leak | BREAKING | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case19 | Enum member removed | BREAKING | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case20 | Enum value changed | BREAKING | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case21 | Method became static | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case22 | Method const changed | BREAKING | ✅ | ✅ | ✅ | ⚠️ |
+| case23 | Pure virtual added | BREAKING | ✅ | ✅ | ✅ | ⚠️ |
+| case24 | Union field removed | BREAKING | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case25 | Enum member added | COMPATIBLE | ✅ | ✅ | ✅ | ✅ |
+| case26 | Union field added (break) | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
+| case26b | Union field added (compat) | COMPATIBLE | ✅ | ✅ | ✅ | ✅ |
+| case27 | Symbol binding weakened | COMPATIBLE | ✅ | ✅ | ✅ | ✅ |
+| case28 | Typedef opaque | BREAKING | ✅ | ⚠️ | ❌ | ⚠️ |
+| case29 | ifunc transition | COMPATIBLE | ✅ | ✅ | ✅ | ✅ |
+| case30 | Field qualifiers | BREAKING | ✅ | ⚠️ | ❌ | ⚠️ |
+| case31 | Enum rename | API_BREAK | ✅ | ⚠️ | ❌ | ⚠️ |
+| case32 | Param defaults | NO_CHANGE | ✅ | ✅ | ❌ | ⚠️ |
+| case33 | Pointer level | BREAKING | ✅ | ⚠️ | ❌ | ⚠️ |
+| case34 | Access level | API_BREAK | ✅ | ⚠️ | ❌ | ⚠️ |
+| case35 | Field rename | BREAKING | ✅ | ⚠️ | ❌ | ⚠️ |
+| case36 | Anon struct | BREAKING | ✅ | ⚠️ | ❌ | ⚠️ |
+| case37 | Base class change | BREAKING | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| case38 | Virtual methods | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| case39 | Var const | BREAKING | ✅ | ✅ | ❌ | ✅ |
+| case40 | Field layout | BREAKING | ✅ | ⚠️ | ❌ | ⚠️ |
+| case41 | Type changes | BREAKING | ✅ | ✅ | ✅ | ✅ |
+| **Total** | | | **42/42 (100%)** | **11/42 (26%)** | **20/30 (66%)** | **25/41 (61%)** |
+
+> See [docs/benchmark_report.md](docs/benchmark_report.md) for full analysis, timing data, and explanations.
 
 ### Tooling summary
 
-- `abidiff + headers`: strong at ABI diffs when debug/header context is good.
-- `ABICC #2` (headers): useful semantic/header-driven mode, with GCC-oriented legacy behavior.
-- `ABICC #1` (abi-dumper): strong DWARF pipeline, but depends on debug builds.
-- **abicheck**: combines practical header + ELF checks, ABICC compatibility mode,
-  and CI-native outputs for production pipelines.
+- **abicheck**: 100% accuracy across all 42 cases. Uses castxml (Clang AST) + ELF — no GCC required.
+- `abidiff`: 26% — ELF/DWARF only, misses semantic changes (struct layout, enum values, vtable, return type).
+  `--headers-dir` does not improve results when `-fvisibility=default` is used.
+- `ABICC (abi-dumper)`: 66% scored on 30/42 — 12 cases ERROR/TIMEOUT on complex C++ patterns.
+- `ABICC (xml)`: 61% — slow (GCC per case), unstable (timeouts), misses most type-level changes.
 
 ---
 
