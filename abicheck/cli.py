@@ -300,22 +300,15 @@ def _apply_strict(result: DiffResult, *, mode: str = "full") -> DiffResult:
                  Use when you want strict enforcement of API contract changes
                  but still allow purely additive changes.
     """
-    from .checker import DiffResult, Verdict  # noqa: PLC0415
+    from dataclasses import replace  # noqa: PLC0415
+
+    from .checker import Verdict  # noqa: PLC0415
 
     verdicts_to_promote = (
         {"COMPATIBLE", "API_BREAK"} if mode == "full" else {"API_BREAK"}
     )
     if result.verdict.value in verdicts_to_promote:
-        return DiffResult(
-            old_version=result.old_version,
-            new_version=result.new_version,
-            library=result.library,
-            changes=result.changes,
-            verdict=Verdict.BREAKING,
-            suppressed_count=result.suppressed_count,
-            suppressed_changes=result.suppressed_changes,
-            suppression_file_provided=result.suppression_file_provided,
-        )
+        return replace(result, verdict=Verdict.BREAKING)
     return result
 
 
@@ -1159,10 +1152,6 @@ def compat_cmd(  # noqa: PLR0913
     if warn_newsym:
         result = _apply_warn_newsym(result)
 
-    # -strict: treat COMPATIBLE and API_BREAK as BREAKING
-    if strict:
-        result = _apply_strict(result, mode=strict_mode)
-
     # -limit-affected: cap reported changes per kind
     if limit_affected > 0:
         result = _limit_affected_changes(result, limit_affected)
@@ -1178,6 +1167,12 @@ def compat_cmd(  # noqa: PLR0913
     # is only used for -bin-report-path split reports.
     if source_only and not binary_only:
         result = _filter_source_only(result)
+
+    # -strict: treat COMPATIBLE and API_BREAK as BREAKING.
+    # Applied AFTER source filtering so that -source -strict --strict-mode api
+    # promotes the already-filtered verdict, not the pre-filter one.
+    if strict:
+        result = _apply_strict(result, mode=strict_mode)
 
     verdict = result.verdict.value if hasattr(result.verdict, "value") else str(result.verdict)
 

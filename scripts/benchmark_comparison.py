@@ -301,6 +301,19 @@ def run_abicheck(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
                       elapsed_ms=elapsed_ms)
 
 
+def _write_compat_descriptor(so: Path, h: Path | None, ver: str, out: Path) -> None:
+    """Write an ABICC-format XML descriptor for abicheck compat."""
+    # NOTE: abicheck compat currently expects header file paths in <headers>
+    header = str(h) if h and h.exists() else ""
+    out.write_text(
+        f"<descriptor>\n"
+        f"  <version>{ver}</version>\n"
+        f"  <headers>{header}</headers>\n"
+        f"  <libs>{so}</libs>\n"
+        f"</descriptor>\n"
+    )
+
+
 # ── abicheck compat (ABICC XML drop-in) ──────────────────────────────────────
 def run_abicheck_compat(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
                         case: str, rdir: Path) -> ToolResult:
@@ -308,21 +321,10 @@ def run_abicheck_compat(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path 
     if not _HAS_ABICHECK:
         return ToolResult(verdict="SKIP")
 
-    def xml(so: Path, h: Path | None, ver: str, out: Path) -> None:
-        # NOTE: abicheck compat currently expects header file paths in <headers>
-        header = str(h) if h and h.exists() else ""
-        out.write_text(
-            f"<descriptor>\n"
-            f"  <version>{ver}</version>\n"
-            f"  <headers>{header}</headers>\n"
-            f"  <libs>{so}</libs>\n"
-            f"</descriptor>\n"
-        )
-
     v1_xml = rdir / f"{case}_compat_v1.xml"
     v2_xml = rdir / f"{case}_compat_v2.xml"
-    xml(v1_so, v1_h, "v1", v1_xml)
-    xml(v2_so, v2_h, "v2", v2_xml)
+    _write_compat_descriptor(v1_so, v1_h, "v1", v1_xml)
+    _write_compat_descriptor(v2_so, v2_h, "v2", v2_xml)
 
     _t0 = time.monotonic()
     try:
@@ -375,17 +377,8 @@ def run_abicheck_strict(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path 
 
     # If XMLs don't exist yet, create them (fallback)
     if not v1_xml.exists() or not v2_xml.exists():
-        def xml(so: Path, h: Path | None, ver: str, out: Path) -> None:
-            header = str(h) if h and h.exists() else ""
-            out.write_text(
-                f"<descriptor>\n"
-                f"  <version>{ver}</version>\n"
-                f"  <headers>{header}</headers>\n"
-                f"  <libs>{so}</libs>\n"
-                f"</descriptor>\n"
-            )
-        xml(v1_so, v1_h, "v1", v1_xml)
-        xml(v2_so, v2_h, "v2", v2_xml)
+        _write_compat_descriptor(v1_so, v1_h, "v1", v1_xml)
+        _write_compat_descriptor(v2_so, v2_h, "v2", v2_xml)
 
     _t0 = time.monotonic()
     try:
@@ -665,15 +658,21 @@ def main() -> None:
     if not use_xml:
         selected_tools.discard("abicc_xml")
 
-    # Header
-    cols = [("Case", 35), ("Expected", 12), ("abicheck", 12), ]
-    if use_compat:
+    # Header — build columns based on selected_tools (not capability flags)
+    cols = [("Case", 35), ("Expected", 12)]
+    if "abicheck" in selected_tools:
+        cols.append(("abicheck", 12))
+    if "abicheck_compat" in selected_tools:
         cols.append(("ac-compat", 12))
+    if "abicheck_strict" in selected_tools:
         cols.append(("ac-strict", 14))
-    cols += [("abidiff", 12), ("abidiff+hdr", 12)]
-    if use_dumper:
+    if "abidiff" in selected_tools:
+        cols.append(("abidiff", 12))
+    if "abidiff_headers" in selected_tools:
+        cols.append(("abidiff+hdr", 12))
+    if "abicc_dumper" in selected_tools:
         cols.append(("ABICC(dump)", 12))
-    if use_xml:
+    if "abicc_xml" in selected_tools:
         cols.append(("ABICC(xml)", 12))
 
     hdr = " ".join(f"{name:<{w}}" for name, w in cols)
@@ -758,25 +757,32 @@ def main() -> None:
             continue
 
         # Header selection policy:
-        # - If Makefile artifacts are used and case has no explicit headers,
-        #   run in ELF-only mode (no synthesized headers). This avoids false
-        #   BREAKING in case06_visibility where generated headers from impl
-        #   sources mark internal symbols as public API.
-        # - Otherwise, keep fallback header synthesis for source-level checks.
-        if used_make_artifacts and not (v1_h_hint or v2_h_hint):
-            v1_h = None
-            v2_h = None
-        else:
-            make_header(v1_src, v1_h_gen)
-            make_header(v2_src, v2_h_gen)
-            v1_h = v1_h_hint if v1_h_hint else (v1_h_gen if v1_h_gen.exists() else None)
-            v2_h = v2_h_hint if v2_h_hint else (v2_h_gen if v2_h_gen.exists() else None)
+        # abicheck family (abicheck / abicheck_compat / abicheck_strict):
+        #   When Makefile artifacts are used and the case has no explicit
+        #   headers, run in ELF-only mode (no synthesized headers). This
+        #   avoids false BREAKING in case06_visibility where generated
+        #   headers from impl sources mark internal symbols as public API.
+        # Header-aware tools (abidiff_headers, abicc_dumper, abicc_xml):
+        #   Always synthesize/resolve headers so these tools have full
+        #   source-level context regardless of the ELF-only policy above.
+        make_header(v1_src, v1_h_gen)
+        make_header(v2_src, v2_h_gen)
+        v1_h = v1_h_hint if v1_h_hint else (v1_h_gen if v1_h_gen.exists() else None)
+        v2_h = v2_h_hint if v2_h_hint else (v2_h_gen if v2_h_gen.exists() else None)
 
-        ac  = (run_abicheck(v1_so, v2_so, v1_h, v2_h, name, rdir)
+        # abicheck-family headers: ELF-only for Makefile cases without hints
+        if used_make_artifacts and not (v1_h_hint or v2_h_hint):
+            v1_h_abicheck = None
+            v2_h_abicheck = None
+        else:
+            v1_h_abicheck = v1_h
+            v2_h_abicheck = v2_h
+
+        ac  = (run_abicheck(v1_so, v2_so, v1_h_abicheck, v2_h_abicheck, name, rdir)
                if "abicheck" in selected_tools else ToolResult(verdict="SKIP"))
-        acc = (run_abicheck_compat(v1_so, v2_so, v1_h, v2_h, name, rdir)
+        acc = (run_abicheck_compat(v1_so, v2_so, v1_h_abicheck, v2_h_abicheck, name, rdir)
                if "abicheck_compat" in selected_tools else ToolResult(verdict="SKIP"))
-        ac_strict = (run_abicheck_strict(v1_so, v2_so, v1_h, v2_h, name, rdir)
+        ac_strict = (run_abicheck_strict(v1_so, v2_so, v1_h_abicheck, v2_h_abicheck, name, rdir)
                      if "abicheck_strict" in selected_tools else ToolResult(verdict="SKIP"))
         ab  = (run_abidiff(v1_so, v2_so, name, rdir)
                if "abidiff" in selected_tools else ToolResult(verdict="SKIP"))
@@ -796,15 +802,20 @@ def main() -> None:
         row_parts = [
             f"  {name:<33}",
             f"{expected:<12}",
-            _col(ac.verdict),
         ]
-        if use_compat:
+        if "abicheck" in selected_tools:
+            row_parts.append(_col(ac.verdict))
+        if "abicheck_compat" in selected_tools:
             row_parts.append(_col(acc.verdict))
+        if "abicheck_strict" in selected_tools:
             row_parts.append(_col(ac_strict.verdict, 14))
-        row_parts += [_col(ab.verdict), _col(ab_hdr.verdict)]
-        if use_dumper:
+        if "abidiff" in selected_tools:
+            row_parts.append(_col(ab.verdict))
+        if "abidiff_headers" in selected_tools:
+            row_parts.append(_col(ab_hdr.verdict))
+        if "abicc_dumper" in selected_tools:
             row_parts.append(_col(abicc_d.verdict))
-        if use_xml:
+        if "abicc_xml" in selected_tools:
             row_parts.append(_col(abicc_x.verdict))
 
         print(" ".join(row_parts))
