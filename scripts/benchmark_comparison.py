@@ -127,6 +127,7 @@ class Tool:
     expected_key: str = "expected"
     ms_key: str = ""
     label: str = ""
+    show_slowest: bool = False
 
     def __post_init__(self) -> None:
         if not self.ms_key:
@@ -212,13 +213,17 @@ def find_sources(case_dir: Path) -> tuple[Path | None, Path | None, Path | None,
                 v2 = new_dir / f"lib{ext}"
                 if not v2.exists():
                     v2 = v1
-                # Try .hpp first, then .h (some C++ cases use .h headers)
-                for hext in (".hpp", ".h"):
-                    v1h = old_dir / f"lib{hext}"
-                    v2h = new_dir / f"lib{hext}"
-                    if v1h.exists() and v2h.exists():
-                        return v1, v2, v1h, v2h
-                return v1, v2, None, None
+                # Resolve headers independently for each side so that a
+                # missing .hpp on one side doesn't block finding .h on the other.
+                def _find_h(d: Path, stem: str) -> Path | None:
+                    for hext in (".hpp", ".h"):
+                        p = d / f"{stem}{hext}"
+                        if p.exists():
+                            return p
+                    return None
+                v1h = _find_h(old_dir, "lib")
+                v2h = _find_h(new_dir, "lib")
+                return v1, v2, v1h, v2h
 
     # case18: libfoo_v1.c / libfoo_v2.c
     for ext in (".c", ".cpp"):
@@ -487,19 +492,25 @@ def run_abicc_xml(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None
     if not shutil.which("abi-compliance-checker"):
         return ToolResult(verdict="SKIP")
 
-    def xml(so: Path, h: Path | None, ver: str, out: Path) -> None:
+    def xml(so: Path, h: Path | None, ver: str, out: Path) -> bool:
         # Pass the specific header file path, not the whole directory.
         # Passing a directory causes abicc to include ALL .h files it finds
         # there (including duplicates from make_build subdirs), which leads to
         # redefinition errors and TIMEOUT/wrong verdicts.
-        header_path = str(h) if h and h.exists() else "/usr/include/stdlib.h"
+        # If no public header is available, skip <headers> entirely so abicc
+        # analyses exported symbols only (ELF-only mode).
+        if h and h.exists():
+            headers_line = f"  <headers>{h}</headers>\n"
+        else:
+            headers_line = ""
         out.write_text(
             f"<descriptor>\n"
             f"  <version>{ver}</version>\n"
-            f"  <headers>{header_path}</headers>\n"
+            f"{headers_line}"
             f"  <libs>{so}</libs>\n"
             f"</descriptor>\n"
         )
+        return True
 
     v1_xml = rdir / f"{case}_v1.xml"
     v2_xml = rdir / f"{case}_v2.xml"
@@ -602,14 +613,28 @@ def run_abicc_dumper(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | N
                       report_path=str(html_out), elapsed_ms=elapsed_ms)
 
 
+def run_abidiff_headers(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
+                        case: str, rdir: Path, **kw: Any) -> ToolResult:
+    """Wrapper: run abidiff with headers_dir resolved from v1_h/v2_h."""
+    if v1_h and v1_h.exists() and v2_h and v2_h.exists() and v1_h.parent != v2_h.parent:
+        headers_dir: str | tuple | None = (str(v1_h.parent), str(v2_h.parent))
+    else:
+        headers_dir = _resolve_headers_dir(
+            rdir.parent.parent / "examples" / case,
+            v1_h or Path("/nonexistent"),
+            v2_h or Path("/nonexistent"),
+        )
+    return run_abidiff(v1_so, v2_so, case, rdir, headers_dir=headers_dir, suffix="_headers")
+
+
 TOOL_REGISTRY: list[Tool] = [
-    Tool("abicheck",        run_abicheck,        "abicheck",     12, "expected"),
-    Tool("abicheck_compat", run_abicheck_compat, "ac-compat",    12, "expected_compat"),
-    Tool("abicheck_strict", run_abicheck_strict, "ac-strict",    14, "expected"),
-    Tool("abidiff",         run_abidiff,         "abidiff",      12, "expected"),
-    Tool("abidiff_headers", None,                "abidiff+hdr",  12, "expected"),
-    Tool("abicc_dumper",    run_abicc_dumper,    "ABICC(dump)",  12, "expected_abicc"),
-    Tool("abicc_xml",       run_abicc_xml,       "ABICC(xml)",   12, "expected_abicc"),
+    Tool("abicheck",        run_abicheck,        "abicheck",    12, "expected"),         # noqa: E241
+    Tool("abicheck_compat", run_abicheck_compat, "ac-compat",   12, "expected_compat"),  # noqa: E241
+    Tool("abicheck_strict", run_abicheck_strict, "ac-strict",   14, "expected"),         # noqa: E241
+    Tool("abidiff",         run_abidiff,         "abidiff",     12, "expected"),         # noqa: E241
+    Tool("abidiff_headers", run_abidiff_headers, "abidiff+hdr", 12, "expected"),         # noqa: E241
+    Tool("abicc_dumper",    run_abicc_dumper,    "ABICC(dump)", 12, "expected_abicc", show_slowest=True),  # noqa: E241
+    Tool("abicc_xml",       run_abicc_xml,       "ABICC(xml)",  12, "expected_abicc", show_slowest=True),  # noqa: E241
 ]
 
 
@@ -802,23 +827,17 @@ def main() -> None:
             v1_h_abicheck = v1_h
             v2_h_abicheck = v2_h
 
-        if v1_h and v1_h.exists() and v2_h and v2_h.exists() and v1_h.parent != v2_h.parent:
-            headers_dir = (str(v1_h.parent), str(v2_h.parent))
-        else:
-            headers_dir = _resolve_headers_dir(case_dir, v1_h or Path("/nonexistent"), v2_h or Path("/nonexistent"))
-
         tool_results: dict[str, ToolResult] = {}
         for t in active_tools:
             if t.name in ("abicheck", "abicheck_compat", "abicheck_strict"):
                 tool_results[t.name] = t.run_fn(v1_so, v2_so, v1_h_abicheck, v2_h_abicheck, name, rdir)
+            elif t.name in ("abicc_dumper", "abicc_xml"):
+                tool_results[t.name] = t.run_fn(v1_so, v2_so, v1_h, v2_h, name, rdir, timeout=args.abicc_timeout)
             elif t.name == "abidiff":
                 tool_results[t.name] = run_abidiff(v1_so, v2_so, name, rdir)
             elif t.name == "abidiff_headers":
-                tool_results[t.name] = run_abidiff(
-                    v1_so, v2_so, name, rdir, headers_dir=headers_dir, suffix="_headers"
-                )
-            elif t.name in ("abicc_dumper", "abicc_xml"):
-                tool_results[t.name] = t.run_fn(v1_so, v2_so, v1_h, v2_h, name, rdir, timeout=args.abicc_timeout)
+                # wrapper resolves headers_dir internally from v1_h/v2_h
+                tool_results[t.name] = t.run_fn(v1_so, v2_so, v1_h, v2_h, name, rdir)
             else:
                 tool_results[t.name] = ToolResult(verdict="SKIP")
 
@@ -879,17 +898,16 @@ def main() -> None:
                 exp = r.get("expected", "?")
                 print(f"    {r['case']:<40} compat={ac_c} strict={ac_s} expected={exp}")
 
-    # Per-case timing for ABICC (top 10 slowest cases)
-    for tool_name in ("abicc_dumper", "abicc_xml"):
-        if tool_name not in selected_tools:
+    # Per-case timing for slow tools (registry-driven via show_slowest flag)
+    for tool_obj in active_tools:
+        if not tool_obj.show_slowest:
             continue
-        tool_obj = next(t for t in TOOL_REGISTRY if t.name == tool_name)
         print(f"\n  Top {tool_obj.col_name} slowest cases:")
-        slow = sorted(results, key=lambda r: r.get(tool_obj.ms_key, 0), reverse=True)
+        slow = sorted(results, key=lambda r, k=tool_obj.ms_key: r.get(k, 0), reverse=True)
         for r in slow[:10]:
             ms = r.get(tool_obj.ms_key, 0)
             if ms > 0:
-                verdict = r.get(tool_name, "SKIP")
+                verdict = r.get(tool_obj.name, "SKIP")
                 print(f"    {r['case']:<40} {ms:>7}ms  [{verdict}]")
 
     summary = REPORT_DIR / "comparison_summary.json"
