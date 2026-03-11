@@ -13,6 +13,7 @@ from .model import (
     EnumType,
     Function,
     Param,
+    ParamKind,
     RecordType,
     TypeField,
     Variable,
@@ -160,7 +161,10 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             params=[
                 Param(
                     name=p.get("name", ""), type=p.get("type", ""),
+                    kind=ParamKind(p.get("kind", "value")),
                     pointer_depth=p.get("pointer_depth", 0),
+                    is_restrict=p.get("is_restrict", False),
+                    is_va_list=p.get("is_va_list", False),
                 )
                 for p in f.get("params", [])
             ],
@@ -184,6 +188,9 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             name=v["name"], mangled=v["mangled"], type=v["type"],
             visibility=Visibility(v.get("visibility", "public")),
             source_location=v.get("source_location"),
+            is_const=v.get("is_const", False),
+            value=v.get("value"),
+            access=AccessLevel(v.get("access", "public")),
         )
         for v in d.get("variables", [])
     ]
