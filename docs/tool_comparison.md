@@ -237,7 +237,7 @@ const). ABICC has no ELF pass (misses SONAME, visibility). ABICC(dump) has no AS
 | abidiff            | 42 | 11 | 26% | 0 | 2.5s |
 | abidiff+headers    | 42 | 11 | 26% | 0 | 3.9s |
 | ABICC(dump)        | 30 | 20 | 66% (48% of 42) | 12 ERROR/TIMEOUT | 294s |
-| ABICC(xml)         | 41 | 25 | 61% (60% of 42) | 1 TIMEOUT | 445s |
+| ABICC(xml)         | 41 | 25 | 61% (60% of 42 effective) | 1 TIMEOUT | 445s |
 
 See [benchmark_report.md](benchmark_report.md) for the full per-case table.
 
