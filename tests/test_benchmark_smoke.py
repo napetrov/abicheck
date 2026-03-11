@@ -132,7 +132,7 @@ def test_run_abidiff_skip_when_missing(tmp_path):
     dummy.touch()
 
     with patch("shutil.which", return_value=None):
-        result = mod.run_abidiff(dummy, dummy, "smoke_case", tmp_path)
+        result = mod.run_abidiff(dummy, dummy, None, None, "smoke_case", tmp_path)
     assert result.verdict == "SKIP"
 
 
