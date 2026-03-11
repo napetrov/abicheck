@@ -5,11 +5,33 @@ _Last updated: 2026-03-11 — 42 example cases, onedal-build (Ubuntu, 8 vCPU)_
 > **For a detailed explanation of how each tool works, why the numbers are what they are,
 > and how to choose the right tool — see [tool_comparison.md](tool_comparison.md).**
 
+## Benchmark scope and methodology
+
+- **42 cases**, all compiled with `-g -O2`, `gcc 13`, `x86_64 Linux` (Ubuntu 22.04)
+- All benchmark runs are **sequential** (one case at a time)
+- Scoring: a result is correct only if it **exactly matches** the expected verdict in `ground_truth.json`
+- `⚠️` in the table means "wrong or undercounted" (e.g. `COMPATIBLE` where `BREAKING` expected)
+- `❌` means wrong in the opposite direction (e.g. `BREAKING` where `COMPATIBLE` expected)
+- Tools that ERROR or TIMEOUT on a case are **excluded from the denominator** (so ABICC(dump) scores 20/30, not 20/42)
+
+### Classification changes vs old benchmark
+
+The following cases had incorrect expected verdicts in the pre-PR #71 README and are now fixed:
+
+| Case | Old (wrong) | New (correct) | Reason |
+|------|------------|---------------|--------|
+| case05_soname | BREAKING | COMPATIBLE | Missing SONAME is a bad practice but binary-compatible; consumers still link |
+| case06_visibility | BREAKING | COMPATIBLE | Visibility leak is a policy issue, not a binary break for existing consumers |
+| case15_noexcept_change | COMPATIBLE | BREAKING | Removing `noexcept` changes exception spec ABI (GLIBCXX_3.4.21 dependency) |
+| case16_inline_to_non_inline | BREAKING | COMPATIBLE | ODR risk is real but no existing binary consumer is broken by the new symbol |
+
+These changes are reflected in `examples/ground_truth.json` and do not affect abicheck scores (it was always correct on all 42).
+
 ## TL;DR
 
 | Tool | Correct / Scored | Accuracy | Notes |
 |------|-----------------|----------|-------|
-| **abicheck (compare)** | **42/42** | **100%** | castxml + ELF, full semantic analysis |
+| **abicheck (compare)** | **42/42** | **100%** | castxml + ELF, full semantic analysis ³ |
 | abicheck (compat)  | 40/42 | 95% | ABICC drop-in; 2 cases use API_BREAK verdict not supported in compat mode |
 | abicheck (strict)  | 31/42 | 73% | `--strict-mode full` promotes COMPATIBLE→BREAKING (expected for strict) |
 | ABICC (abi-dumper) | 20/30 | 66% | Scored on 30/42 — 12 cases ERROR/TIMEOUT |
@@ -111,10 +133,11 @@ These are fundamental limitations of DWARF-only analysis.
 | case40_field_layout | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
 | case41_type_changes | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-Legend: ✅ correct · ⚠️ wrong/undercounted · ❌ wrong · ⏱️ timed out
+Legend: ✅ correct · ⚠️ wrong/undercounted (e.g. COMPATIBLE when BREAKING expected) · ❌ wrong in opposite direction · ⏱️ timed out
 
 ¹ `strict` false positive: COMPATIBLE → BREAKING is expected with `--strict-mode full`; use `--strict-mode api` to avoid.  
-² `compat` known limitation: API_BREAK verdict not supported; maps to COMPATIBLE (scored as miss).
+² `compat` known limitation: API_BREAK verdict not supported; maps to COMPATIBLE (scored as miss).  
+³ Test cases authored for this benchmark; gcc 13, x86_64 Linux. Independent reproduction: `python3 scripts/benchmark_comparison.py`.
 
 ## Timing
 
