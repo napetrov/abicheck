@@ -292,21 +292,23 @@ _P2_STUB_FLAGS: dict[str, str] = {
 }
 
 
-def _apply_strict(result: DiffResult) -> DiffResult:
-    """Apply strict-mode verdict promotion: COMPATIBLE/API_BREAK → BREAKING."""
-    from .checker import DiffResult, Verdict  # noqa: PLC0415
+def _apply_strict(result: DiffResult, *, mode: str = "full") -> DiffResult:
+    """Apply strict-mode verdict promotion.
 
-    if result.verdict.value in ("COMPATIBLE", "API_BREAK"):
-        return DiffResult(
-            old_version=result.old_version,
-            new_version=result.new_version,
-            library=result.library,
-            changes=result.changes,
-            verdict=Verdict.BREAKING,
-            suppressed_count=result.suppressed_count,
-            suppressed_changes=result.suppressed_changes,
-            suppression_file_provided=result.suppression_file_provided,
-        )
+    mode='full': COMPATIBLE and API_BREAK → BREAKING (matches ABICC -strict behaviour).
+    mode='api':  only API_BREAK → BREAKING; COMPATIBLE stays COMPATIBLE.
+                 Use when you want strict enforcement of API contract changes
+                 but still allow purely additive changes.
+    """
+    from dataclasses import replace  # noqa: PLC0415
+
+    from .checker import Verdict  # noqa: PLC0415
+
+    verdicts_to_promote = (
+        {"COMPATIBLE", "API_BREAK"} if mode == "full" else {"API_BREAK"}
+    )
+    if result.verdict.value in verdicts_to_promote:
+        return replace(result, verdict=Verdict.BREAKING)
     return result
 
 
@@ -754,6 +756,12 @@ def compat_dump_cmd(
 # ── Analysis mode flags ──────────────────────────────────────────────────────
 @click.option("-s", "-strict", "strict", is_flag=True, default=False,
               help="Strict mode: any incompatible change is an error (exit 1).")
+@click.option("--strict-mode", "strict_mode",
+              type=click.Choice(["full", "api"], case_sensitive=False),
+              default="full",
+              help="Strict promotion mode: 'full' (COMPATIBLE+API_BREAK→BREAKING, ABICC parity) "
+                   "or 'api' (only API_BREAK→BREAKING, COMPATIBLE stays COMPATIBLE). "
+                   "Only applies when -strict is also set.")
 @click.option("-show-retval", "show_retval", is_flag=True, default=False,
               help="Show return-value changes in report.")
 @click.option("-headers-only", "headers_only", is_flag=True, default=False,
@@ -873,6 +881,7 @@ def compat_cmd(  # noqa: PLR0913
     fmt: str,
     suppress: Path | None,
     strict: bool,
+    strict_mode: str,
     show_retval: bool,
     headers_only: bool,
     source_only: bool,
@@ -1143,10 +1152,6 @@ def compat_cmd(  # noqa: PLR0913
     if warn_newsym:
         result = _apply_warn_newsym(result)
 
-    # -strict: treat COMPATIBLE and API_BREAK as BREAKING
-    if strict:
-        result = _apply_strict(result)
-
     # -limit-affected: cap reported changes per kind
     if limit_affected > 0:
         result = _limit_affected_changes(result, limit_affected)
@@ -1162,6 +1167,12 @@ def compat_cmd(  # noqa: PLR0913
     # is only used for -bin-report-path split reports.
     if source_only and not binary_only:
         result = _filter_source_only(result)
+
+    # -strict: treat COMPATIBLE and API_BREAK as BREAKING.
+    # Applied AFTER source filtering so that -source -strict --strict-mode api
+    # promotes the already-filtered verdict, not the pre-filter one.
+    if strict:
+        result = _apply_strict(result, mode=strict_mode)
 
     verdict = result.verdict.value if hasattr(result.verdict, "value") else str(result.verdict)
 
