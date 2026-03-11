@@ -121,7 +121,7 @@ class ToolResult:
 @dataclass
 class Tool:
     name: str
-    run_fn: Any
+    run_fn: Callable[..., ToolResult]
     col_name: str
     col_width: int = 12
     expected_key: str = "expected"
@@ -181,10 +181,11 @@ def _best_h(name: str, bdir_h: Path, src_dir: Path) -> Path:
     return bdir_h
 
 
-def _resolve_headers_dir(case_dir: Path, v1_h: Path, v2_h: Path) -> str | None:
-    if v1_h.exists():
+def _resolve_headers_dir(case_dir: Path, v1_h: Path | None, v2_h: Path | None) -> str | None:
+    """Return a headers directory for abidiff, or None if no header is available."""
+    if v1_h and v1_h.exists():
         return str(v1_h.parent)
-    if v2_h.exists():
+    if v2_h and v2_h.exists():
         return str(v2_h.parent)
     return None
 
@@ -445,9 +446,10 @@ def run_abicheck_strict(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path 
 
 
 # ── abidiff ───────────────────────────────────────────────────────────────────
-def run_abidiff(v1_so: Path, v2_so: Path, case: str, rdir: Path,
+def run_abidiff(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
+                case: str, rdir: Path,
                 headers_dir: str | None = None,
-                suffix: str = "") -> ToolResult:
+                suffix: str = "", **_kw: Any) -> ToolResult:
     if not shutil.which("abidiff"):
         return ToolResult(verdict="SKIP")
 
@@ -618,13 +620,13 @@ def run_abidiff_headers(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path 
     """Wrapper: run abidiff with headers_dir resolved from v1_h/v2_h."""
     if v1_h and v1_h.exists() and v2_h and v2_h.exists() and v1_h.parent != v2_h.parent:
         headers_dir: str | tuple | None = (str(v1_h.parent), str(v2_h.parent))
+    elif v1_h and v1_h.exists():
+        headers_dir = str(v1_h.parent)
+    elif v2_h and v2_h.exists():
+        headers_dir = str(v2_h.parent)
     else:
-        headers_dir = _resolve_headers_dir(
-            rdir.parent.parent / "examples" / case,
-            v1_h or Path("/nonexistent"),
-            v2_h or Path("/nonexistent"),
-        )
-    return run_abidiff(v1_so, v2_so, case, rdir, headers_dir=headers_dir, suffix="_headers")
+        headers_dir = None
+    return run_abidiff(v1_so, v2_so, v1_h, v2_h, case, rdir, headers_dir=headers_dir, suffix="_headers")
 
 
 TOOL_REGISTRY: list[Tool] = [
@@ -833,13 +835,9 @@ def main() -> None:
                 tool_results[t.name] = t.run_fn(v1_so, v2_so, v1_h_abicheck, v2_h_abicheck, name, rdir)
             elif t.name in ("abicc_dumper", "abicc_xml"):
                 tool_results[t.name] = t.run_fn(v1_so, v2_so, v1_h, v2_h, name, rdir, timeout=args.abicc_timeout)
-            elif t.name == "abidiff":
-                tool_results[t.name] = run_abidiff(v1_so, v2_so, name, rdir)
-            elif t.name == "abidiff_headers":
-                # wrapper resolves headers_dir internally from v1_h/v2_h
-                tool_results[t.name] = t.run_fn(v1_so, v2_so, v1_h, v2_h, name, rdir)
             else:
-                tool_results[t.name] = ToolResult(verdict="SKIP")
+                # abidiff and abidiff_headers share the common signature
+                tool_results[t.name] = t.run_fn(v1_so, v2_so, v1_h, v2_h, name, rdir)
 
         row_parts = [f"  {name:<33}", f"{expected:<12}"]
         row_parts += [_col(tool_results[t.name].verdict, t.col_width) for t in active_tools]
