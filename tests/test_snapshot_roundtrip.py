@@ -11,8 +11,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from abicheck.checker import compare
 from abicheck.checker_policy import Verdict
 from abicheck.model import (
@@ -29,13 +27,12 @@ from abicheck.model import (
     Visibility,
 )
 from abicheck.serialization import (
+    load_snapshot,
+    save_snapshot,
     snapshot_from_dict,
     snapshot_to_dict,
     snapshot_to_json,
-    load_snapshot,
-    save_snapshot,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

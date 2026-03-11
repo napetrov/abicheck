@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from abicheck.checker import Change, ChangeKind, compare
+from abicheck.checker import ChangeKind, compare
 from abicheck.model import (
     AbiSnapshot,
     EnumMember,
@@ -23,11 +23,9 @@ from abicheck.model import (
     Function,
     RecordType,
     TypeField,
-    Variable,
     Visibility,
 )
-from abicheck.suppression import Suppression, SuppressionList
-
+from abicheck.suppression import SuppressionList
 
 # ---------------------------------------------------------------------------
 # Test fixtures / helpers
@@ -357,7 +355,6 @@ class TestRemovedChangeScenarios:
                 change_kind: "var_removed"
                 reason: "global var intentionally removed"
         """)
-        from abicheck.model import Variable
         old = _snap("1.0")
         old.variables.append(Variable(
             name="foo::g_var", mangled="_ZN3foo6g_varE", type="int",

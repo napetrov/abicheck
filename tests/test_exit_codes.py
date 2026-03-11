@@ -14,8 +14,6 @@ These tests use the CLI runner (not subprocess) for speed and isolation.
 """
 from __future__ import annotations
 
-import json
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -32,7 +30,6 @@ from abicheck.model import (
     Visibility,
 )
 from abicheck.serialization import snapshot_to_json
-
 
 # ---------------------------------------------------------------------------
 # Helpers

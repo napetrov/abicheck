@@ -1,12 +1,10 @@
 /* case48: Leaf struct change propagated through pointer in function param
  *
- * A deeply-nested "leaf" struct changes its layout. The public API passes
- * a pointer to a containing struct that embeds the leaf. Callers compiled
- * against v1 pass a struct with the old leaf size; v2 reads beyond the
- * allocation.
+ * A nested "leaf" struct changes layout. Public API takes Container* and
+ * exposes leaf values via out-params (no by-value Leaf in signatures).
+ * Callers compiled against v1 may pass a Container with old layout.
  *
- * BREAKING: TYPE_SIZE_CHANGED on Leaf propagates → Container layout breaks
- * libabigail equivalent: Leaf_Type_Change (indirect path through pointer)
+ * BREAKING: TYPE_SIZE_CHANGED on Leaf propagates into Container layout.
  */
 #ifndef CASE48_V1_H
 #define CASE48_V1_H
@@ -23,7 +21,7 @@ typedef struct Container {
 } Container;
 
 void  container_init(Container *c, int id, short x, short y);
-Leaf  container_get_pos(const Container *c);
+void  container_get_pos(const Container *c, short *out_x, short *out_y);
 int   container_flags(const Container *c);
 
 #endif

@@ -12,6 +12,7 @@ Usage:
 """
 from __future__ import annotations
 
+import difflib
 from pathlib import Path
 
 import pytest
@@ -77,19 +78,16 @@ def _run_golden(
 
     expected = golden_path.read_text(encoding="utf-8")
     if actual != expected:
-        diff_lines: list[str] = []
-        exp_lines = expected.splitlines()
-        act_lines = actual.splitlines()
-        for i, (e, a) in enumerate(zip(exp_lines, act_lines)):
-            if e != a:
-                diff_lines.append(f"  Line {i+1}:\n    expected: {e!r}\n    actual:   {a!r}")
-        if len(exp_lines) != len(act_lines):
-            diff_lines.append(
-                f"  Length: expected {len(exp_lines)} lines, got {len(act_lines)}"
+        diff = "".join(
+            difflib.unified_diff(
+                expected.splitlines(keepends=True),
+                actual.splitlines(keepends=True),
+                fromfile=f"{case_id}.expected",
+                tofile=f"{case_id}.actual",
+                n=3,
             )
-        pytest.fail(
-            f"Golden mismatch for {case_id}:\n" + "\n".join(diff_lines[:10])
         )
+        pytest.fail(f"Golden mismatch for {case_id}:\n{diff}")
 
 
 # ---------------------------------------------------------------------------

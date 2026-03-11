@@ -1,6 +1,5 @@
 """conftest.py — pytest configuration for abicheck tests."""
 import shutil
-from pathlib import Path
 
 import pytest
 

@@ -15,7 +15,7 @@ typedef struct Container {
 } Container;
 
 void  container_init(Container *c, int id, short x, short y);
-Leaf  container_get_pos(const Container *c);
+void  container_get_pos(const Container *c, short *out_x, short *out_y);
 int   container_flags(const Container *c);
 
 #endif
