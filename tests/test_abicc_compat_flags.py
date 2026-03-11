@@ -63,6 +63,26 @@ class TestApplyStrict:
         promoted = _apply_strict(r)
         assert promoted.verdict == Verdict.BREAKING
 
+    def test_api_mode_compatible_stays_compatible(self):
+        # mode='api': COMPATIBLE result should NOT be promoted to BREAKING
+        r = _result(Verdict.COMPATIBLE, [ChangeKind.FUNC_ADDED])
+        result = _apply_strict(r, mode="api")
+        assert result.verdict == Verdict.COMPATIBLE
+
+    def test_api_mode_promotes_api_break(self):
+        # mode='api': API_BREAK should still be promoted to BREAKING.
+        # Use PARAM_RENAMED which is in _API_BREAK_KINDS (not BREAKING),
+        # so the fixture accurately represents an API_BREAK scenario.
+        r = _result(Verdict.API_BREAK, [ChangeKind.PARAM_RENAMED])
+        result = _apply_strict(r, mode="api")
+        assert result.verdict == Verdict.BREAKING
+
+    def test_full_mode_promotes_compatible(self):
+        # mode='full' (explicit): COMPATIBLE is promoted to BREAKING
+        r = _result(Verdict.COMPATIBLE, [ChangeKind.FUNC_ADDED])
+        result = _apply_strict(r, mode="full")
+        assert result.verdict == Verdict.BREAKING
+
 
 # ── _filter_source_only ───────────────────────────────────────────────────────
 
