@@ -1,0 +1,26 @@
+{
+  "source": "examples/case09_cpp_vtable/libv1.so",
+  "header": "examples/case09_cpp_vtable/v1.h",
+  "compiler": "c++",
+  "function_count": 7,
+  "variable_count": 0,
+  "type_count": 1,
+  "enum_count": 0,
+  "public_functions": [
+    {
+      "name": "draw",
+      "return_type": "int"
+    },
+    {
+      "name": "resize",
+      "return_type": "int"
+    }
+  ],
+  "public_types": [
+    {
+      "name": "Widget",
+      "kind": "class",
+      "size_bits": 64
+    }
+  ]
+}

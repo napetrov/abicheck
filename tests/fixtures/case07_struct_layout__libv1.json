@@ -1,0 +1,16 @@
+{
+  "source": "examples/case07_struct_layout/libv1.so",
+  "header": "examples/case07_struct_layout/v1.h",
+  "compiler": "c++",
+  "function_count": 3,
+  "variable_count": 0,
+  "type_count": 0,
+  "enum_count": 0,
+  "public_functions": [
+    {
+      "name": "get_x",
+      "return_type": "int"
+    }
+  ],
+  "public_types": []
+}

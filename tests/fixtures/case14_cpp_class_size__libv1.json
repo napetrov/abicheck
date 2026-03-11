@@ -1,0 +1,22 @@
+{
+  "source": "examples/case14_cpp_class_size/libv1.so",
+  "header": "examples/case14_cpp_class_size/v1.h",
+  "compiler": "c++",
+  "function_count": 7,
+  "variable_count": 0,
+  "type_count": 1,
+  "enum_count": 0,
+  "public_functions": [
+    {
+      "name": "make_buffer",
+      "return_type": "Buffer*"
+    }
+  ],
+  "public_types": [
+    {
+      "name": "Buffer",
+      "kind": "class",
+      "size_bits": 512
+    }
+  ]
+}

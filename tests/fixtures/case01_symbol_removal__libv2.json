@@ -1,0 +1,16 @@
+{
+  "source": "examples/case01_symbol_removal/libv2.so",
+  "header": "examples/case01_symbol_removal/v2.h",
+  "compiler": "c++",
+  "function_count": 2,
+  "variable_count": 0,
+  "type_count": 0,
+  "enum_count": 0,
+  "public_functions": [
+    {
+      "name": "compute",
+      "return_type": "int"
+    }
+  ],
+  "public_types": []
+}
