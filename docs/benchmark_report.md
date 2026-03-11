@@ -34,7 +34,7 @@ These changes are reflected in `examples/ground_truth.json` and do not affect ab
 | **abicheck (compare)** | **42/42** | **100%** | castxml + ELF, full semantic analysis ³ |
 | abicheck (compat)  | 40/42 | 95% | ABICC drop-in; 2 cases use API_BREAK verdict not supported in compat mode |
 | abicheck (strict)  | 31/42 | 73% | `--strict-mode full` promotes COMPATIBLE→BREAKING (expected for strict) |
-| ABICC (abi-dumper) | 20/30 | 66% | Scored on 30/42 — 12 cases ERROR/TIMEOUT |
+| ABICC (abi-dumper) | 20/30 | 66% | Scored on 30/42 — 12 cases ERROR/TIMEOUT ⁴ |
 | ABICC (xml)        | 25/41 | 60% | Scored on 41/42 — case16 TIMEOUT |
 | abidiff (ELF)      | 11/42 | 26% | ELF symbol diff only |
 | abidiff (+headers) | 11/42 | 26% | Same as ELF — see note below |
@@ -133,11 +133,13 @@ These are fundamental limitations of DWARF-only analysis.
 | case40_field_layout | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
 | case41_type_changes | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-Legend: ✅ correct · ⚠️ wrong/undercounted (e.g. COMPATIBLE when BREAKING expected) · ❌ wrong in opposite direction · ⏱️ timed out
+Legend: ✅ correct · ⚠️ wrong/undercounted (e.g. COMPATIBLE when BREAKING expected) · ❌ wrong in opposite direction · ⏱️ timed out (cutoff: 120s)
+`API_BREAK` = source-level-only break, binary-compatible (e.g. access level change, enum rename). Only `abicheck compare` emits this verdict.
 
 ¹ `strict` false positive: COMPATIBLE → BREAKING is expected with `--strict-mode full`; use `--strict-mode api` to avoid.  
 ² `compat` known limitation: API_BREAK verdict not supported; maps to COMPATIBLE (scored as miss).  
-³ Test cases authored for this benchmark; gcc 13, x86_64 Linux. Independent reproduction: `python3 scripts/benchmark_comparison.py`.
+³ Test cases authored for this benchmark; gcc 13, x86_64 Linux. Run `python3 scripts/benchmark_comparison.py` to reproduce.  
+⁴ ABICC(dump) denominator is 30 (not 42) because 12 cases produced ERROR or TIMEOUT and are excluded. See methodology above.
 
 ## Timing
 
