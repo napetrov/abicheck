@@ -618,6 +618,12 @@ def parse_args() -> argparse.Namespace:
                    help="Skip ABICC entirely")
     p.add_argument("--skip-compat", action="store_true",
                    help="Skip abicheck compat column")
+    p.add_argument("--cases", nargs="+", metavar="CASE",
+                   help="Run only these case prefixes (e.g. case09 case16)")
+    p.add_argument("--tools", nargs="+", metavar="TOOL",
+                   choices=["abicheck", "abicheck_compat", "abicheck_strict",
+                            "abidiff", "abidiff_headers", "abicc_dumper", "abicc_xml"],
+                   help="Run only selected tools")
     return p.parse_args()
 
 
@@ -645,6 +651,20 @@ def main() -> None:
     use_xml    = not args.skip_abicc and args.abicc_mode in ("xml", "both")
     use_compat = not args.skip_compat
 
+    selected_tools = set(args.tools or [
+        "abicheck", "abicheck_compat", "abicheck_strict",
+        "abidiff", "abidiff_headers", "abicc_dumper", "abicc_xml",
+    ])
+
+    # honor high-level switches even if tool is listed explicitly
+    if not use_compat:
+        selected_tools.discard("abicheck_compat")
+        selected_tools.discard("abicheck_strict")
+    if not use_dumper:
+        selected_tools.discard("abicc_dumper")
+    if not use_xml:
+        selected_tools.discard("abicc_xml")
+
     # Header
     cols = [("Case", 35), ("Expected", 12), ("abicheck", 12), ]
     if use_compat:
@@ -662,8 +682,12 @@ def main() -> None:
 
     results: list[dict] = []
 
+    case_prefixes = args.cases or []
+
     for case_dir in all_cases:
         name = case_dir.name
+        if case_prefixes and not any(name.startswith(pref) for pref in case_prefixes):
+            continue
         expected = EXPECTED.get(name, "?")
 
         v1_src, v2_src, v1_h_hint, v2_h_hint = find_sources(case_dir)
@@ -690,6 +714,7 @@ def main() -> None:
         # Use Makefile when present — preserves SONAME / version-script / extra
         # linker flags (mirrors the pytest integration suite).
         makefile = case_dir / "Makefile"
+        used_make_artifacts = False
         if makefile.exists():
             build_copy = bdir / "make_build"
             if build_copy.exists():
@@ -708,6 +733,7 @@ def main() -> None:
             if mr.returncode == 0 and built_v1.exists() and built_v2.exists():
                 v1_so = built_v1
                 v2_so = built_v2
+                used_make_artifacts = True
             else:
                 if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
                     print(f"  {name:<35} COMPILE_ERR")
@@ -731,29 +757,41 @@ def main() -> None:
                              "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
             continue
 
-        # Generate fallback headers
-        make_header(v1_src, v1_h_gen)
-        make_header(v2_src, v2_h_gen)
+        # Header selection policy:
+        # - If Makefile artifacts are used and case has no explicit headers,
+        #   run in ELF-only mode (no synthesized headers). This avoids false
+        #   BREAKING in case06_visibility where generated headers from impl
+        #   sources mark internal symbols as public API.
+        # - Otherwise, keep fallback header synthesis for source-level checks.
+        if used_make_artifacts and not (v1_h_hint or v2_h_hint):
+            v1_h = None
+            v2_h = None
+        else:
+            make_header(v1_src, v1_h_gen)
+            make_header(v2_src, v2_h_gen)
+            v1_h = v1_h_hint if v1_h_hint else (v1_h_gen if v1_h_gen.exists() else None)
+            v2_h = v2_h_hint if v2_h_hint else (v2_h_gen if v2_h_gen.exists() else None)
 
-        # Best headers: explicit hint > generated
-        v1_h = v1_h_hint if v1_h_hint else (v1_h_gen if v1_h_gen.exists() else None)
-        v2_h = v2_h_hint if v2_h_hint else (v2_h_gen if v2_h_gen.exists() else None)
-
-        ac  = run_abicheck(v1_so, v2_so, v1_h, v2_h, name, rdir)
-        acc = run_abicheck_compat(v1_so, v2_so, v1_h, v2_h, name, rdir) if use_compat else ToolResult(verdict="SKIP")
-        ac_strict = run_abicheck_strict(v1_so, v2_so, v1_h, v2_h, name, rdir) if use_compat else ToolResult(verdict="SKIP")
-        ab  = run_abidiff(v1_so, v2_so, name, rdir)
+        ac  = (run_abicheck(v1_so, v2_so, v1_h, v2_h, name, rdir)
+               if "abicheck" in selected_tools else ToolResult(verdict="SKIP"))
+        acc = (run_abicheck_compat(v1_so, v2_so, v1_h, v2_h, name, rdir)
+               if "abicheck_compat" in selected_tools else ToolResult(verdict="SKIP"))
+        ac_strict = (run_abicheck_strict(v1_so, v2_so, v1_h, v2_h, name, rdir)
+                     if "abicheck_strict" in selected_tools else ToolResult(verdict="SKIP"))
+        ab  = (run_abidiff(v1_so, v2_so, name, rdir)
+               if "abidiff" in selected_tools else ToolResult(verdict="SKIP"))
 
         if v1_h and v1_h.exists() and v2_h and v2_h.exists() and v1_h.parent != v2_h.parent:
             headers_dir = (str(v1_h.parent), str(v2_h.parent))
         else:
             headers_dir = _resolve_headers_dir(case_dir, v1_h or Path("/nonexistent"), v2_h or Path("/nonexistent"))
-        ab_hdr = run_abidiff(v1_so, v2_so, name, rdir, headers_dir=headers_dir, suffix="_headers")
+        ab_hdr = (run_abidiff(v1_so, v2_so, name, rdir, headers_dir=headers_dir, suffix="_headers")
+                  if "abidiff_headers" in selected_tools else ToolResult(verdict="SKIP"))
 
         abicc_d = (run_abicc_dumper(v1_so, v2_so, v1_h, v2_h, name, rdir, timeout=args.abicc_timeout)
-                   if use_dumper else ToolResult(verdict="SKIP"))
+                   if "abicc_dumper" in selected_tools else ToolResult(verdict="SKIP"))
         abicc_x = (run_abicc_xml(v1_so, v2_so, v1_h, v2_h, name, rdir, timeout=args.abicc_timeout)
-                   if use_xml else ToolResult(verdict="SKIP"))
+                   if "abicc_xml" in selected_tools else ToolResult(verdict="SKIP"))
 
         row_parts = [
             f"  {name:<33}",
