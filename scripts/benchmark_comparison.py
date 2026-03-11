@@ -194,10 +194,13 @@ def find_sources(case_dir: Path) -> tuple[Path | None, Path | None, Path | None,
                 v2 = new_dir / f"lib{ext}"
                 if not v2.exists():
                     v2 = v1
-                hext = ".h" if ext == ".c" else ".hpp"
-                v1h = old_dir / f"lib{hext}"
-                v2h = new_dir / f"lib{hext}"
-                return v1, v2, v1h if v1h.exists() else None, v2h if v2h.exists() else None
+                # Try .hpp first, then .h (some C++ cases use .h headers)
+                for hext in (".hpp", ".h"):
+                    v1h = old_dir / f"lib{hext}"
+                    v2h = new_dir / f"lib{hext}"
+                    if v1h.exists() and v2h.exists():
+                        return v1, v2, v1h, v2h
+                return v1, v2, None, None
 
     # case18: libfoo_v1.c / libfoo_v2.c
     for ext in (".c", ".cpp"):
