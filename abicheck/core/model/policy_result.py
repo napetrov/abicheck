@@ -43,6 +43,7 @@ class PolicySummary:
     review_needed_count: int = 0
     incompatible_count: int = 0
     suppressed_count: int = 0
+    compatible_extension_count: int = 0
     error_count: int = 0  # reserved: pipeline failures (insufficient evidence etc.)
 
 
@@ -82,6 +83,10 @@ class PolicyResult:
             1 for ac in changes
             if ac.change.severity == ChangeSeverity.SUPPRESSED
         )
+        compatible_extension = sum(
+            1 for ac in changes
+            if ac.change.severity == ChangeSeverity.COMPATIBLE_EXTENSION
+        )
 
         if error_count > 0:
             verdict = PolicyVerdict.ERROR
@@ -99,6 +104,7 @@ class PolicyResult:
                 incompatible_count=incompatible,
                 review_needed_count=review_needed,
                 suppressed_count=suppressed,
+                compatible_extension_count=compatible_extension,
                 error_count=error_count,
             ),
         )

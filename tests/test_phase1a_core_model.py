@@ -142,6 +142,11 @@ class TestChange:
         with pytest.raises(ValueError, match="must not appear in corroborating"):
             _make_change(origin=Origin.ELF, corroborating=(Origin.ELF, Origin.DWARF))
 
+    def test_corroborating_duplicates_rejected(self) -> None:
+        """Corroborating sources must be unique."""
+        with pytest.raises(ValueError, match="must be unique"):
+            _make_change(origin=Origin.ELF, corroborating=(Origin.DWARF, Origin.DWARF))
+
     def test_confidence_boundary_valid(self) -> None:
         _make_change(confidence=0.0)   # should not raise
         _make_change(confidence=1.0)   # should not raise

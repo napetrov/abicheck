@@ -31,6 +31,8 @@ from abicheck.core.diff.type_layout_diff import diff_type_layouts
 from abicheck.core.model import Change
 from abicheck.model import AbiSnapshot
 
+# Module-level singleton — stateless, safe for repeated calls.
+# TODO Phase 2: replace with analyse(old, new, *, suppressor=None, policy=None) -> PolicyResult
 _normalizer = Normalizer()
 
 

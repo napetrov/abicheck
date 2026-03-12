@@ -6,6 +6,7 @@ At millions-of-facts scale, string origins cost ~500MB+ in __dict__ overhead.
 from __future__ import annotations
 
 from enum import IntEnum
+from types import MappingProxyType
 from typing import Final
 
 
@@ -48,8 +49,8 @@ class Origin(IntEnum):
 
 
 # Module-level constant — avoids rebuilding the dict on every property call.
-# Keyed by int value to satisfy mypy (IntEnum is indexable as int).
-_CONFIDENCE: Final[dict[int, float]] = {
+# MappingProxyType makes it truly immutable (Final only prevents rebinding).
+_CONFIDENCE: Final = MappingProxyType({
     int(Origin.CASTXML): 1.0,
     int(Origin.DWARF): 0.9,
     int(Origin.PDB): 0.8,  # PDB has type info → higher than ELF
@@ -58,4 +59,4 @@ _CONFIDENCE: Final[dict[int, float]] = {
     int(Origin.COFF): 0.7,
     int(Origin.BTF): 0.6,
     int(Origin.CTF): 0.6,
-}
+})

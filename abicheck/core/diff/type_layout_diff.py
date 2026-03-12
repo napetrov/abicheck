@@ -95,8 +95,23 @@ def _diff_type_pair(t_old: RecordType, t_new: RecordType) -> list[Change]:
     # Field layout changes
     changes.extend(_diff_fields(t_old, t_new))
 
-    # Base class changes — compare as tuples to catch reordering
-    if tuple(t_old.bases) != tuple(t_new.bases):
+    # Alignment change — ABI-breaking on ARM/RISC-V even without size change
+    if (t_old.alignment_bits or 0) != (t_new.alignment_bits or 0):
+        changes.append(Change(
+            change_kind=ChangeKind.TYPE_LAYOUT,
+            entity_type="type",
+            entity_name=t_old.name,
+            before=EntitySnapshot(entity_repr=f"alignment={t_old.alignment_bits}"),
+            after=EntitySnapshot(entity_repr=f"alignment={t_new.alignment_bits}"),
+            severity=ChangeSeverity.BREAK,
+            origin=Origin.CASTXML,
+            confidence=0.9,
+        ))
+
+    # Base class changes — use sorted() to catch content changes; tuple() to catch reordering.
+    # sorted bases: detects added/removed base (order-independent content diff)
+    # original tuples: detects reordering of existing bases
+    if sorted(t_old.bases) != sorted(t_new.bases) or tuple(t_old.bases) != tuple(t_new.bases):
         changes.append(Change(
             change_kind=ChangeKind.TYPE_LAYOUT,
             entity_type="type",
@@ -237,17 +252,11 @@ def diff_type_layouts(
         ))
 
     # Changed types: phase 1 hash filter, then phase 2 deep diff
-    before_hashes = {
-        name: _type_structural_hash(t)
-        for name, t in before_types.items()
-        if name in after_types
-    }
-    for name in set(before_types) & set(after_types):
-        t_old = before_types[name]
-        t_new = after_types[name]
-        h_old = before_hashes[name]
-        h_new = _type_structural_hash(t_new)
-        if h_old != h_new:
-            changes.extend(_diff_type_pair(t_old, t_new))
+    common = set(before_types) & set(after_types)
+    before_hashes = {name: _type_structural_hash(before_types[name]) for name in common}
+    after_hashes = {name: _type_structural_hash(after_types[name]) for name in common}
+    for name in common:
+        if before_hashes[name] != after_hashes[name]:
+            changes.extend(_diff_type_pair(before_types[name], after_types[name]))
 
     return changes

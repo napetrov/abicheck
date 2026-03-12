@@ -153,6 +153,21 @@ class TestTypeLayoutDiff:
         assert ChangeKind.TYPE_LAYOUT in kinds
         assert any(c.entity_name == "Point::x" for c in changes)
 
+    def test_alignment_change_detected(self) -> None:
+        """alignment_bits change without size change must be detected (ABI-breaking on ARM)."""
+        normalizer = Normalizer()
+
+        t_old = RecordType(name="Foo", kind="struct", size_bits=64, alignment_bits=64,
+                           fields=[TypeField(name="x", type="int", offset_bits=0)])
+        t_new = RecordType(name="Foo", kind="struct", size_bits=64, alignment_bits=128,
+                           fields=[TypeField(name="x", type="int", offset_bits=0)])
+
+        b = normalizer.normalize(_snap(types=[t_old]))
+        a = normalizer.normalize(_snap(types=[t_new], version="v2"))
+
+        changes = diff_type_layouts(b, a)
+        assert any("alignment" in c.before.entity_repr for c in changes)
+
     def test_added_type_is_compatible_extension(self) -> None:
         normalizer = Normalizer()
         b = normalizer.normalize(_snap(types=[]))

@@ -98,6 +98,8 @@ class Change:
             raise ValueError(
                 f"primary origin {self.origin!r} must not appear in corroborating"
             )
+        if len(self.corroborating) != len(set(self.corroborating)):
+            raise ValueError("corroborating origins must be unique")
         if self.change_kind == ChangeKind.CALLING_CONVENTION:
             evidence = (self.origin, *self.corroborating)
             if Origin.DWARF not in evidence and Origin.CASTXML not in evidence:
