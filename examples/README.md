@@ -113,22 +113,21 @@ methodology live in docs:
 
 | Tool | Correct / Scored | Accuracy |
 |------|------------------|----------|
-| **abicheck (compare)** | **42/42** | **100%** |
-| abicheck (compat) | 40/42 | 95% |
-| abicheck (strict, full) | 31/42 | 73% |
-| abidiff | 11/42 | 26% |
-| abidiff + headers | 11/42 | 26% |
-| ABICC (abi-dumper) | 20/30 | 66% (48% effective over 42) |
+| **abicheck (compare)** | **48/48** | **100%** |
+| abicheck (compat) | 46/48 | 96% |
+| abidiff | 12/48 | 25% |
+| abidiff + headers | 12/48 | 25% |
+| ABICC (abi-dumper) | 20/30 | 66% (42% effective over 48) |
 | ABICC (xml) | 25/41 | 61% |
 
 ### Why these numbers differ
 
 - **`compat` < `compare`**: `compat` follows ABICC vocabulary and cannot emit `API_BREAK`
-  (`case31`, `case34`), so max is 40/42 in this suite.
-- **`strict` can beat ABICC(dump)**: strict intentionally promotes some compatible changes,
-  while ABICC(dump) has many ERROR/TIMEOUT cases and only scores on 30/42.
+  (`case31`, `case34`), so max is 46/48 in this suite.
 - **`abidiff` == `abidiff+headers` here**: `--headers-dir` only filters public symbols;
   with `-fvisibility=default` in these examples, filtering does not change the set.
+- **cases 43–48** (new): abicheck detects all 6 correctly; abidiff misses 5/6 (catches
+  only case47 which is a compatible FUNC_ADDED — trivially correct).
 
 ---
 
