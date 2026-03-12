@@ -380,6 +380,8 @@ class _CastxmlParser:
             is_volatile = el.get("volatile") == "1"
             is_pure_virtual = el.get("pure_virtual") == "1"
             is_deleted = el.get("deleted") == "1"
+            # castxml emits inline="1" for inline functions/methods
+            is_inline = el.get("inline") == "1"
 
             funcs.append(Function(
                 name=name,
@@ -397,6 +399,7 @@ class _CastxmlParser:
                 is_volatile=is_volatile,
                 is_pure_virtual=is_pure_virtual,
                 is_deleted=is_deleted,
+                is_inline=is_inline,
                 access=self._access_level(el),
                 return_pointer_depth=ret_ptr_depth,
             ))

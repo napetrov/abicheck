@@ -420,3 +420,45 @@ class TestWriteXmlReport:
         out = tmp_path / "a" / "b" / "c" / "report.xml"
         write_xml_report(result, out, lib_name="libfoo")
         assert out.exists()
+
+
+class TestXmlEscaping:
+    """Regression tests for PR#106 — && characters in type names must be XML-safe.
+
+    Python's ET automatically escapes & as &amp; in text content.
+    We verify the serialized output is well-formed and parseable when
+    type names contain C++ rvalue reference (&&) characters.
+    """
+
+    def test_rvalue_ref_in_description_is_escaped(self):
+        """Type names with && must produce valid XML (PR#106 regression)."""
+        changes = [
+            Change(
+                kind=ChangeKind.FUNC_RETURN_CHANGED,
+                symbol="_Z7get_refv",
+                description="Return type changed: int& → int&&",
+                old_value="int&",
+                new_value="int&&",
+            ),
+        ]
+        result = _make_result(changes=changes, verdict=Verdict.BREAKING)
+        xml_str = generate_xml_report(result, lib_name="libfoo")
+        # Must not contain raw & outside of &amp; entities
+        # Python ET ensures this; we just verify the output is parseable
+        root = xml_fromstring(xml_str)
+        assert root is not None, "XML with && in type names must be parseable"
+        # Also confirm &amp; appears in the serialized form (not raw &)
+        assert "&amp;" in xml_str or "&&" not in xml_str, (
+            "Raw && in XML output would produce invalid XML"
+        )
+
+    def test_ampersand_in_library_name_is_escaped(self):
+        """& in library names must be escaped in XML output."""
+        result = _make_result()
+        xml_str = generate_xml_report(result, lib_name="lib&special")
+        root = xml_fromstring(xml_str)
+        assert root is not None
+        binary = root.find("report[@kind='binary']")
+        lib_el = binary.find("test_info/library")
+        assert lib_el is not None
+        assert lib_el.text == "lib&special"

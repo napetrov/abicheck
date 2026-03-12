@@ -200,6 +200,32 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 new_value="deleted",
             ))
 
+    # FUNC_BECAME_INLINE / FUNC_LOST_INLINE: detect inline↔non-inline transitions
+    # (ABICC issue #125). Only check functions present in both snapshots.
+    for mangled in set(old_map) & set(new_map):
+        f_old = old_map[mangled]
+        f_new = new_map[mangled]
+        if not f_old.is_inline and f_new.is_inline:
+            # Function became inline: symbol may disappear from DSO export table
+            # (depends on compiler / visibility). Potentially breaking — needs review.
+            changes.append(Change(
+                kind=ChangeKind.FUNC_BECAME_INLINE,
+                symbol=mangled,
+                description=f"Function became inline (symbol may be removed from DSO): {f_old.name}",
+                old_value="non-inline",
+                new_value="inline",
+            ))
+        elif f_old.is_inline and not f_new.is_inline:
+            # Function lost inline: now has external linkage.
+            # Existing binaries have the inline copy baked in; new binaries link the symbol.
+            changes.append(Change(
+                kind=ChangeKind.FUNC_LOST_INLINE,
+                symbol=mangled,
+                description=f"Function lost inline attribute (now has external linkage): {f_old.name}",
+                old_value="inline",
+                new_value="non-inline",
+            ))
+
     return changes
 
 
@@ -1901,6 +1927,7 @@ def _diff_advanced_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
     _kind_map = {
         "calling_convention_changed": ChangeKind.CALLING_CONVENTION_CHANGED,
+        "value_abi_trait_changed": ChangeKind.VALUE_ABI_TRAIT_CHANGED,
         "struct_packing_changed": ChangeKind.STRUCT_PACKING_CHANGED,
         "toolchain_flag_drift": ChangeKind.TOOLCHAIN_FLAG_DRIFT,
         "type_visibility_changed": ChangeKind.TYPE_VISIBILITY_CHANGED,
