@@ -52,8 +52,9 @@ pip install -e .
 
 ## 3) First check (using repo examples)
 
-The repo includes 42 example ABI break cases, each with pre-built `v1.c`/`v2.c` and headers.
-This makes it easy to verify your install is working correctly.
+The repo includes a broad set of ABI break examples (C and C++) with paired
+`v1`/`v2` sources and headers. This makes it easy to verify your install is
+working correctly and to understand typical break patterns.
 
 ```bash
 # Clone the repo (skip if already done in step 2)

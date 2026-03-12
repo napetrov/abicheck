@@ -32,19 +32,31 @@ theme:
 nav:
   - Home: index.md
   - Getting Started: getting_started.md
+  - Concepts:
+    - Verdicts: concepts/verdicts.md
+    - Limitations: concepts/limitations.md
+    - Troubleshooting: concepts/troubleshooting.md
   - User Guide:
     - Using abicheck: usage_and_coverage.md
+    - Tool Modes: tool_modes.md
+    - Exit Codes: exit_codes.md
+    - SARIF Output: sarif_output.md
+    - Migrating from ABICC: migration/from_abicc.md
     - Examples Breakage Guide: examples_breakage_guide.md
     - Local Compare: local_compare.md
-    - Tool Modes: tool_modes.md
-    - SARIF Output: sarif_output.md
   - Reference:
-    - Gap Report: gap_report.md
+    - Architecture: reference/architecture.md
     - Change Kind Reference: reference/change_kinds.md
-    - libabigail Parity: libabigail_parity.md
     - ABI Break Catalog: abi_breaking_cases_catalog.md
+    - ABICC Compatibility: abicc_compat.md
+    - Format Compliance: abicc_format_compliance.md
+    - libabigail Parity: libabigail_parity.md
+    - Tool Comparison: tool_comparison.md
+    - Gap Report: gap_report.md
+    - Coverage Report: coverage_report.md
+    - Benchmark Report: benchmark_report.md
     - V2 Coverage Plan: v2_coverage_plan.md
-  - Architecture:
+  - Architecture Decisions:
     - ADR Index: adr/index.md
     - ADR-001 Technology Stack: adr/001-technology-stack.md
 
