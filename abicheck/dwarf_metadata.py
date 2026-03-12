@@ -557,8 +557,10 @@ def _compute_type_info(
 
 def _compute_record_type_info(die: Any, tag: str) -> tuple[str, int]:
     name = _attr_str(die, "DW_AT_name") or "<anon>"
-    prefix = "struct " if tag == "DW_TAG_structure_type" else ""
-    return (f"{prefix}{name}", _attr_int(die, "DW_AT_byte_size"))
+    # Use bare names for struct/class/union to match castxml naming.
+    # Prefixes like "struct Foo" vs "Foo" can cause false type-drift reports
+    # when comparing DWARF-derived layouts to castxml/header-derived models.
+    return (name, _attr_int(die, "DW_AT_byte_size"))
 
 
 def _compute_pointer_like_info(
