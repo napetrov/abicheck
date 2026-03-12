@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from abicheck.core.corpus.normalizer import Normalizer
 from abicheck.core.diff.symbol_diff import diff_symbols
 from abicheck.core.diff.type_layout_diff import diff_type_layouts
+from abicheck.core.errors import ValidationError
 from abicheck.core.model import Change, PolicyResult
 from abicheck.model import AbiSnapshot
 
@@ -38,6 +39,10 @@ def analyse(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     Returns raw Changes (no suppression, no policy verdict), sorted
     deterministically by (entity_type, entity_name, change_kind).
     """
+    if old is None:
+        raise ValidationError("old AbiSnapshot is None")
+    if new is None:
+        raise ValidationError("new AbiSnapshot is None")
     norm_old = _normalizer.normalize(old)
     norm_new = _normalizer.normalize(new)
 

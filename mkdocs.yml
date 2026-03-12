@@ -40,6 +40,7 @@ nav:
     - SARIF Output: sarif_output.md
   - Reference:
     - Gap Report: gap_report.md
+    - Change Kind Reference: reference/change_kinds.md
     - libabigail Parity: libabigail_parity.md
     - ABI Break Catalog: abi_breaking_cases_catalog.md
     - V2 Coverage Plan: v2_coverage_plan.md

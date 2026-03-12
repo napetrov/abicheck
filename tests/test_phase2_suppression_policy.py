@@ -7,6 +7,7 @@ from abicheck.core.model import (
     ChangeKind,
     ChangeSeverity,
     EntitySnapshot,
+    EntityType,
     Origin,
     PolicyVerdict,
 )
@@ -25,7 +26,7 @@ def _make_change(
 ) -> Change:
     return Change(
         change_kind=kind,
-        entity_type="function",
+        entity_type=EntityType.FUNCTION,
         entity_name=name,
         before=EntitySnapshot("int foo()"),
         after=EntitySnapshot("void foo()"),
@@ -139,7 +140,7 @@ class TestSuppressionEngine:
         result = engine.apply([_make_change(name="foobar")])
         assert len(result.suppressed) == 1
         key = (
-            result.suppressed[0].entity_type,
+            result.suppressed[0].entity_type.value,
             result.suppressed[0].entity_name,
             result.suppressed[0].change_kind.value,
         )
@@ -165,7 +166,7 @@ class TestSuppressionEngine:
         result = engine.apply([_make_change(name="foobar")])
         assert len(result.match_map) == 1
         key = (
-            result.suppressed[0].entity_type,
+            result.suppressed[0].entity_type.value,
             result.suppressed[0].entity_name,
             result.suppressed[0].change_kind.value,
         )
@@ -329,16 +330,16 @@ class TestSuppressionEngineCoverage:
                 ),
             ])
 
-    def test_scope_with_version_range_raises(self) -> None:
-        """scope.version_range set → ValueError at load time."""
+    def test_scope_with_version_range_loads_ok(self) -> None:
+        """scope.version_range set → Phase 2b: now valid, loads without error."""
         from abicheck.core.suppressions.rule import VersionRange
-        with pytest.raises(ValueError, match="not yet implemented"):
-            SuppressionEngine([
-                SuppressionRule(
-                    entity_glob="*",
-                    scope=SuppressionScope(version_range=VersionRange(from_version="1.0")),
-                ),
-            ])
+        engine = SuppressionEngine([
+            SuppressionRule(
+                entity_glob="*",
+                scope=SuppressionScope(version_range=VersionRange(from_version="1.0")),
+            ),
+        ])
+        assert engine is not None
 
 
 class TestPipelineFull:
