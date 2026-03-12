@@ -674,6 +674,7 @@ def dump(
             dwarf=dwarf_meta,
             dwarf_advanced=dwarf_adv,
             elf_only_mode=True,
+            platform="elf",
         )
         return snapshot
 
@@ -695,5 +696,6 @@ def dump(
         elf=elf_meta,
         dwarf=dwarf_meta,
         dwarf_advanced=dwarf_adv,
+        platform="elf",
     )
     return snapshot
