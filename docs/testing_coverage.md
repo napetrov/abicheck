@@ -66,7 +66,7 @@ pytest tests/ -v --tb=short -m "not integration and not libabigail" \
 - Covers no-header fallback behavior, castxml/parser wiring, and error propagation.
 
 ### 5) DWARF helper and parser edge cases
-- `tests/test_sprint3_dwarf.py`, `tests/test_sprint4_dwarf_advanced.py`,
+- dedicated DWARF regression tests,
   `tests/test_phase3_dwarf_helpers.py`.
 - Covers nuanced DWARF forms (reference resolution, location decoding, packing/alignment,
   calling conventions, helper fallback behavior).

@@ -336,9 +336,9 @@ blind spots. This means abicheck may report issues that ABICC would miss:
 |----------|:-----:|:---------------:|
 | Enum value changed | ✅ | ✅ |
 | Base class position reordered | ✅ | ✅ |
-| Function `= delete` added | ✅ | ✅ (Sprint 2) |
-| Global var became const | ❌ | ✅ (Sprint 2) |
-| Type became opaque | ✅ | ✅ (Sprint 2) |
+| Function `= delete` added | ✅ | ✅ |
+| Global var became const | ❌ | ✅ |
+| Type became opaque | ✅ | ✅ |
 | C++ templates (timeout) | ⏱️ | ✅ |
 | ELF symbol metadata | ❌ | ✅ |
 

@@ -81,19 +81,19 @@ Ghidra is Java-based and uses its own ELF parser. The correct reference projects
 ## Scope Limitations (explicit)
 
 The following ABI properties require compiler-level knowledge and are **out of scope
-for Sprints 1–4**:
+for Phases 1–4**:
 
 | Feature | Why hard | Mitigation |
 |---------|----------|-----------|
-| vtable layout | No DWARF standard; reconstructed from `_ZTV*` symbols + `.rodata` | Sprint 4+ |
+| vtable layout | No DWARF standard; reconstructed from `_ZTV*` symbols + `.rodata` | supported in advanced implementation |
 | Calling convention changes | Requires ABI spec knowledge per arch/platform | Out of scope |
 | Inline function ABI | Inlined functions leave no `DW_AT_external` in DWARF | Document as gap |
 | EBO (empty base class elimination) | Layout change invisible in headers alone | Document as gap |
-| C++ template specialization graphs | Requires demangling + type-graph resolution | Sprint 3 partial |
+| C++ template specialization graphs | Requires demangling + type-graph resolution | partially supported |
 
 ## C++ Name Demangling
 
-Sprint 3 (DWARF-aware diff) will require demangling `_ZTV*`, `_ZTI*`, `_ZTS*` and
+DWARF-aware diff requires demangling `_ZTV*`, `_ZTI*`, `_ZTS*` and
 template instantiation names. Decision: use **`cxxfilt`** Python wrapper (wraps
 `c++filt` from binutils) for now; evaluate `itanium_abi` pure-Python demangler
 if subprocess overhead becomes a bottleneck.
@@ -144,9 +144,9 @@ produce massive false positives.
 
 ## Implementation Plan
 
-| Sprint | Layer | Technology |
+| Milestone | Layer | Technology |
 |--------|-------|-----------|
-| Sprint 1 (done) | castxml-based type/function diff | castxml + our XML parser |
-| Sprint 2 (done) | ELF dynamic-section + symbol metadata | **pyelftools** |
-| Sprint 3 | DWARF-aware struct layout / type diff | **pyelftools** DWARF + cxxfilt |
-| Sprint 4 | Header API surface diff + vtable (partial) | castxml + clang Python bindings |
+| Core (done) | castxml-based type/function diff | castxml + our XML parser |
+| ELF metadata (done) | ELF dynamic-section + symbol metadata | **pyelftools** |
+| DWARF layout | DWARF-aware struct layout / type diff | **pyelftools** DWARF + cxxfilt |
+| Advanced API/vtable | Header API surface diff + vtable (partial) | castxml + clang Python bindings |

@@ -1,4 +1,4 @@
-# v2 Coverage Plan — Beyond Sprint 1
+# v2 Coverage Plan — Next Milestones
 
 Source: "Beyond v1: Practical C/C++ API & ABI Break Mechanisms"
 
@@ -91,7 +91,7 @@ Source: "Beyond v1: Practical C/C++ API & ABI Break Mechanisms"
    - If added value exceeds `max(old_values)` AND no overflow → `POTENTIALLY_BREAKING`
    - If added value would change existing switch behavior → `BREAKING`
 
-## Sprint 2 Scope (Proposed)
+## Milestone A Scope (Proposed)
 Priority: Tier 1 ELF-only signals (no new dependencies, pure readelf parsing)
 
 1. `_diff_elf_dynamic`: `DT_NEEDED` set, `DT_SONAME`, `DT_RPATH`/`DT_RUNPATH`
@@ -99,7 +99,7 @@ Priority: Tier 1 ELF-only signals (no new dependencies, pure readelf parsing)
 3. `_diff_symbol_metadata`: binding (GLOBAL/WEAK), type (FUNC/OBJECT/TLS/IFUNC), size
 4. `_diff_toolchain_flags`: `DW_AT_producer` extraction + ABI-affecting flag detection
 
-## Sprint 3 Scope (Proposed)
+## Milestone B Scope (Proposed)
 DWARF-aware:
 1. `ENUM_UNDERLYING_SIZE_CHANGED` (DW_AT_byte_size)
 2. `STRUCT_PACKING_CHANGED` (DWARF offsets cross-check with castxml)
