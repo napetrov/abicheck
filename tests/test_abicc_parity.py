@@ -162,7 +162,8 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
     # ── global variable removed — abicheck may not detect via castxml headers ──
     # ABICC detects global variable removal. abicheck detects it if the variable
     # appears in the castxml AST (extern declaration in header). Behaviour depends
-    # on the castxml version and compiler path — keeping as divergence.
+    # on the castxml version and compiler path — keeping as divergence until
+    # VAR_REMOVED detection is confirmed reliable end-to-end.
     (
         "var_removed",
         "int api_version = 1;\nint get_version(void) { return api_version; }",
