@@ -166,6 +166,10 @@ def _diff_function_pair(f_old: Function, f_new: Function) -> list[Change]:
             confidence=0.85,
         ))
 
+    # noexcept added (false→true) changes C++17 mangled name — ABI-breaking for callers
+    # compiled against the old signature. TODO: emit BREAK here in Phase 2 when
+    # mangled name comparison is available; for now silent (conservative: no false positives).
+
     return changes
 
 

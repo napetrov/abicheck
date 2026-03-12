@@ -152,6 +152,16 @@ class TestChange:
         with pytest.raises(ValueError, match="highest-confidence"):
             _make_change(origin=Origin.ELF, corroborating=(Origin.CASTXML,))
 
+    def test_primary_highest_with_three_origins_rejected(self) -> None:
+        """DWARF primary but CASTXML corroborating — CASTXML is highest, so DWARF is rejected."""
+        with pytest.raises(ValueError, match="highest-confidence"):
+            _make_change(origin=Origin.DWARF, corroborating=(Origin.CASTXML,))
+
+    def test_equal_confidence_primary_is_accepted(self) -> None:
+        """Equal-confidence origins: ELF+MACHO both 0.7 — first-provided wins, no error."""
+        c = _make_change(origin=Origin.ELF, corroborating=(Origin.MACHO,))
+        assert c.origin == Origin.ELF  # tie: first provided stays primary
+
     def test_confidence_boundary_valid(self) -> None:
         _make_change(confidence=0.0)   # should not raise
         _make_change(confidence=1.0)   # should not raise
