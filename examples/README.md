@@ -118,7 +118,7 @@ methodology live in docs:
 | abicheck (compat) | 46/48 | 96% |
 | abidiff | 12/48 | 25% |
 | abidiff + headers | 12/48 | 25% |
-| ABICC (abi-dumper) | 20/30 | 66% (42% effective over 48) |
+| ABICC (abi-dumper) | 25/36 | 69% (52% effective over 48) |
 | ABICC (xml) | 25/41 | 61% |
 
 ### Why these numbers differ
@@ -127,8 +127,8 @@ methodology live in docs:
   (`case31`, `case34`), so max is 46/48 in this suite.
 - **`abidiff` == `abidiff+headers` here**: `--headers-dir` only filters public symbols;
   with `-fvisibility=default` in these examples, filtering does not change the set.
-- **cases 43–48** (new): abicheck detects all 6 correctly; abidiff misses 5/6 (catches
-  only case47 which is a compatible FUNC_ADDED — trivially correct).
+- **ABICC(dumper)** missed case43 (base class member added) — classified as COMPATIBLE.
+  Reason: ABICC focuses on exported symbols, not derived class layout shifts.
 
 ---
 
