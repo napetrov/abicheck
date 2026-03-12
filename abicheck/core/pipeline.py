@@ -65,8 +65,10 @@ def detect_profile(snapshot: AbiSnapshot) -> Literal["c", "cpp", "sycl"] | None:
     Detection priority:
     1. snapshot.language_profile if already set (explicit override by caller/dumper)
     2. Heuristic from function symbols:
-       - All public functions are extern "C" (is_extern_c=True) → "c"
        - Any function has C++ mangling (_Z prefix) → "cpp"
+       - All public functions are extern "C" (is_extern_c=True) → "c"
+       - ELF-only mode with no _Z prefix among any public function → "c"
+         (absence of Itanium ABI mangling strongly implies C linkage)
     3. None (unknown — mixed or no functions)
 
     Note: "sycl" cannot be auto-detected from the model; set snapshot.language_profile
@@ -89,8 +91,13 @@ def detect_profile(snapshot: AbiSnapshot) -> Literal["c", "cpp", "sycl"] | None:
     if any(f.mangled.startswith("_Z") for f in public_funcs):
         return "cpp"
 
-    # If all public functions are extern "C" → c
+    # If all public functions are explicitly extern "C" → c
     if all(f.is_extern_c for f in public_funcs):
+        return "c"
+
+    # ELF-only mode: no _Z prefix among any symbol → strong signal of C linkage
+    # (Itanium ABI _Z prefix is unambiguous; absence implies C linkage)
+    if getattr(snapshot, "elf_only_mode", False):
         return "c"
 
     return None

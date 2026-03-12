@@ -772,8 +772,14 @@ def dump(
             library=so_path.name,
             version=version,
             functions=[
-                Function(name=sym, mangled=sym, return_type="?",
-                         visibility=Visibility.ELF_ONLY)
+                Function(
+                    name=sym,
+                    mangled=sym,
+                    return_type="?",
+                    visibility=Visibility.ELF_ONLY,
+                    # Absence of Itanium _Z prefix is strong evidence of C linkage
+                    is_extern_c=not sym.startswith("_Z"),
+                )
                 for sym in sorted(exported_dynamic_funcs)
             ],
             elf=elf_meta,
