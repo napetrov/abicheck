@@ -186,3 +186,97 @@ class TestBuiltinsFiltered:
         result = compare(old, new)
         # No changes should be emitted for identical snapshots
         assert not result.changes
+
+
+class TestBuiltinLocationFilter:
+    """Verify _is_builtin_element filters by <built-in>/<command-line> location,
+    independent of the __ name prefix filter.
+    """
+
+    def _make_xml_builtin_no_underscore(self) -> Element:
+        """Build XML where a non-__ named type comes from <built-in> location."""
+        root = Element("CastXML")
+
+        user_file = SubElement(root, "File")
+        user_file.set("id", "f1")
+        user_file.set("name", "mylib.h")
+
+        builtin_file = SubElement(root, "File")
+        builtin_file.set("id", "f2")
+        builtin_file.set("name", "<built-in>")
+
+        cmdline_file = SubElement(root, "File")
+        cmdline_file.set("id", "f3")
+        cmdline_file.set("name", "<command-line>")
+
+        user_loc = SubElement(root, "Location")
+        user_loc.set("id", "l1")
+        user_loc.set("file", "f1")
+        user_loc.set("line", "1")
+
+        builtin_loc = SubElement(root, "Location")
+        builtin_loc.set("id", "l2")
+        builtin_loc.set("file", "f2")
+        builtin_loc.set("line", "0")
+
+        cmdline_loc = SubElement(root, "Location")
+        cmdline_loc.set("id", "l3")
+        cmdline_loc.set("file", "f3")
+        cmdline_loc.set("line", "0")
+
+        # Normal user struct — should appear
+        user_struct = SubElement(root, "Struct")
+        user_struct.set("id", "_1")
+        user_struct.set("name", "UserType")
+        user_struct.set("size", "32")
+        user_struct.set("location", "l1")
+
+        # Built-in struct WITHOUT __ prefix — must be filtered by location
+        builtin_struct = SubElement(root, "Struct")
+        builtin_struct.set("id", "_2")
+        builtin_struct.set("name", "va_list")
+        builtin_struct.set("size", "64")
+        builtin_struct.set("location", "l2")
+
+        # Command-line struct WITHOUT __ prefix — must be filtered by location
+        cmdline_struct = SubElement(root, "Struct")
+        cmdline_struct.set("id", "_3")
+        cmdline_struct.set("name", "SomeDefine")
+        cmdline_struct.set("size", "32")
+        cmdline_struct.set("location", "l3")
+
+        # Function in <built-in> without __ prefix
+        builtin_func = SubElement(root, "Function")
+        builtin_func.set("id", "_4")
+        builtin_func.set("name", "compiler_hint")
+        builtin_func.set("mangled", "compiler_hint")
+        builtin_func.set("returns", "")
+        builtin_func.set("location", "l2")
+
+        return root
+
+    def test_builtin_struct_no_underscore_filtered_by_location(self) -> None:
+        """Struct named 'va_list' (no __ prefix) from <built-in> must be filtered."""
+        from abicheck.dumper import _CastxmlParser
+        root = self._make_xml_builtin_no_underscore()
+        parser = _CastxmlParser(root, exported_dynamic=set(), exported_static=set())
+        types = parser.parse_types()
+        names = {t.name for t in types}
+        assert "UserType" in names
+        assert "va_list" not in names, "va_list from <built-in> must be filtered"
+        assert "SomeDefine" not in names, "SomeDefine from <command-line> must be filtered"
+
+    def test_builtin_func_no_underscore_filtered_by_location(self) -> None:
+        """Function from <built-in> without __ prefix must not appear in functions."""
+        from abicheck.dumper import _CastxmlParser
+        root = self._make_xml_builtin_no_underscore()
+        parser = _CastxmlParser(
+            root,
+            exported_dynamic={"compiler_hint"},
+            exported_static={"compiler_hint"},
+        )
+        funcs = parser.parse_functions()
+        names = {f.name for f in funcs}
+        assert "compiler_hint" not in names, (
+            "compiler_hint from <built-in> must be filtered even if in exported symbols"
+        )

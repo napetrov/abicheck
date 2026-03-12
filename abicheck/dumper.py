@@ -331,6 +331,23 @@ class _CastxmlParser:
             return Visibility.ELF_ONLY
         return Visibility.HIDDEN
 
+    def _is_builtin_element(self, el: Element) -> bool:
+        """Return True if element's source file is <built-in> or <command-line>."""
+        loc_id = el.get("location", "")
+        if not loc_id:
+            return False
+        loc_el = self._id_map.get(loc_id)
+        if loc_el is None:
+            return False
+        file_id = loc_el.get("file", "")
+        if not file_id:
+            return False
+        file_el = self._id_map.get(file_id)
+        if file_el is None:
+            return False
+        fname = file_el.get("name", "")
+        return fname in ("<built-in>", "<command-line>")
+
     def parse_functions(self) -> list[Function]:
         funcs = []
         for el in self._root:
@@ -338,6 +355,9 @@ class _CastxmlParser:
                 continue
             name = el.get("name", "")
             if not name:
+                continue
+            # Skip compiler built-ins and command-line synthetic declarations
+            if self._is_builtin_element(el):
                 continue
             mangled = el.get("mangled", "") or name  # C functions: use plain name
             ret_id = el.get("returns", "")
@@ -413,6 +433,9 @@ class _CastxmlParser:
             mangled = el.get("mangled", "")
             if not mangled:
                 continue
+            # Skip compiler built-ins and command-line synthetic declarations
+            if self._is_builtin_element(el):
+                continue
             name = el.get("name", mangled)
             type_name = self._type_name(el.get("type", ""))
             # Use castxml structured attribute first; fall back to word-boundary
@@ -443,7 +466,12 @@ class _CastxmlParser:
         name = el.get("name", "")
         if not name or el.get("artificial") == "1":
             return False
-        return not name.startswith("__")
+        if name.startswith("__"):
+            return False
+        # Skip compiler built-ins and command-line synthetic types
+        if self._is_builtin_element(el):
+            return False
+        return True
 
     def _build_record_type(self, el: Any) -> RecordType:
         name = el.get("name", "")
