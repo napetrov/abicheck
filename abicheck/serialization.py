@@ -238,6 +238,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         elf=elf, dwarf=dwarf, dwarf_advanced=dwarf_advanced,
         elf_only_mode=bool(d.get("elf_only_mode", False)),
         constants=d.get("constants", {}),
+        platform=d.get("platform"),
     )
 
 

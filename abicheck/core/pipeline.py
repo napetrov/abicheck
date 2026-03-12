@@ -18,7 +18,7 @@ Note: importing abicheck.core.pipeline does NOT import re2 / suppressions.
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from abicheck.core.corpus.normalizer import Normalizer
 from abicheck.core.diff.symbol_diff import diff_symbols
@@ -31,6 +31,29 @@ if TYPE_CHECKING:
     from abicheck.core.suppressions import SuppressionEngine, SuppressionRule
 
 _normalizer = Normalizer()
+
+# Valid platform values for scope.platform filtering (Phase 3).
+KNOWN_PLATFORMS: frozenset[str] = frozenset({"elf", "pe", "macho"})
+
+
+def detect_platform(snapshot: AbiSnapshot) -> Literal["elf", "pe", "macho"] | None:
+    """Detect the binary format platform from an AbiSnapshot.
+
+    Detection priority:
+    1. snapshot.platform if already set (explicit override by caller/dumper)
+    2. snapshot.elf is not None → "elf"
+    3. None (unknown — PE/MachO not yet implemented)
+
+    Returns the detected platform string or None if unknown.
+    """
+    if snapshot.platform is not None:
+        p = snapshot.platform
+        if p in KNOWN_PLATFORMS:
+            return p  # type: ignore[return-value]
+        return None
+    if snapshot.elf is not None:
+        return "elf"
+    return None
 
 
 def analyse(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
@@ -61,11 +84,18 @@ def analyse_full(
     policy: str = "strict_abi",
     engine: SuppressionEngine | None = None,
 ) -> PolicyResult:
-    """Run the full v0.2 pipeline: diff → suppress → policy → PolicyResult."""
+    """Run the full v0.2 pipeline: diff → suppress → policy → PolicyResult.
+
+    Platform context is auto-detected from the 'new' snapshot and passed to
+    the suppression engine for scope.platform filtering (Phase 3).
+    """
     from abicheck.core.policy import get_profile  # noqa: PLC0415
     from abicheck.core.suppressions import SuppressionEngine as _Engine  # noqa: PLC0415
 
     changes = analyse(old, new)
+
+    # Phase 3: auto-detect platform from snapshot for suppression scope filtering.
+    platform = detect_platform(new) or detect_platform(old)
 
     if engine is None:
         engine = _Engine(rules or [])
@@ -76,7 +106,7 @@ def analyse_full(
             stacklevel=2,
         )
 
-    sup_result = engine.apply(changes)
+    sup_result = engine.apply(changes, platform_context=platform)
 
     all_changes = sorted(
         sup_result.active + sup_result.suppressed,
