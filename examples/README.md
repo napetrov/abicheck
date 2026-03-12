@@ -33,7 +33,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 > Authoritative expected verdicts for benchmarking are in .
 > If a per-case README and benchmark expectation differ, treat  as source of truth.
 
-**42 cases total** — 29 BREAKING 🔴 | 9 COMPATIBLE 🟢 | 2 NO_CHANGE ✅ | 2 API_BREAK 🟠
+**48 cases total** — 34 BREAKING 🔴 | 10 COMPATIBLE 🟢 | 2 NO_CHANGE ✅ | 2 API_BREAK 🟠
 
 | # | Case | Category | abicheck verdict |
 |---|------|----------|-----------------|
@@ -79,6 +79,12 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [39](case39_var_const/README.md) | Var Const | Breaking | BREAKING 🔴 |
 | [40](case40_field_layout/README.md) | Field Layout | Breaking | BREAKING 🔴 |
 | [41](case41_type_changes/README.md) | Type Changes | Breaking | BREAKING 🔴 |
+| [43](case43_base_class_member_added/README.md) | Base Class Member Added | C++ Layout | BREAKING 🔴 |
+| [44](case44_cyclic_type_member_added/README.md) | Cyclic Type Member Added | Struct Layout | BREAKING 🔴 |
+| [45](case45_multi_dim_array_change/README.md) | Multi-Dim Array Element Type Change | Struct Layout | BREAKING 🔴 |
+| [46](case46_pointer_chain_type_change/README.md) | Pointer Chain Type Change | Function Signature | BREAKING 🔴 |
+| [47](case47_inline_to_outlined/README.md) | Inline to Outlined | C++ Symbol | COMPATIBLE 🟢 |
+| [48](case48_leaf_struct_through_pointer/README.md) | Leaf Struct Change Through Pointer | Struct Layout | BREAKING 🔴 |
 
 ---
 
@@ -98,7 +104,7 @@ case's README for copy-paste build instructions.
 
 ---
 
-## Benchmark Snapshot (42 cases, 2026-03-11)
+## Benchmark Snapshot (48 cases, 2026-03-11)
 
 To avoid drift, this README keeps only a compact summary. Full per-case matrix and
 methodology live in docs:

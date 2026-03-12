@@ -270,6 +270,102 @@ Do you have ABICC XML descriptors already?
 
 ---
 
+## Suppression Engine (Phase 2)
+
+The suppression engine (introduced in Phase 2) allows intentional ABI changes to be
+acknowledged and filtered out of reports without masking unrelated breakage. It is
+implemented in `abicheck/suppression.py` and integrated into the `analyse_full()`
+pipeline.
+
+### SuppressionRule model
+
+Each rule in a YAML suppression file corresponds to one `SuppressionRule` object:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entity_glob` | str (optional) | Glob pattern matched against the mangled or demangled symbol/type name |
+| `entity_regex` | str (optional) | RE2-compatible regex matched against the mangled or demangled symbol/type name (takes precedence over `entity_glob`) |
+| `change_kind` | str (optional) | Specific `ChangeKind` to suppress (e.g. `func_removed`); omit to suppress all change kinds for the matched entity |
+| `scope` | str (optional) | Limit suppression to a sub-component or module path |
+| `reason` | str (required) | Human-readable justification recorded in the report |
+
+Example (from `examples/suppression_example.yaml`):
+```yaml
+version: 1
+suppressions:
+  - symbol: "_ZN3foo6Client10disconnectEv"
+    change_kind: "func_removed"
+    reason: "Client::disconnect() was deprecated in v1.8 and removed in v2.0"
+
+  - symbol_pattern: ".*N6detail.*"
+    reason: "detail:: namespace is internal implementation — not part of public ABI"
+```
+
+### SuppressionEngine
+
+`SuppressionEngine` compiles all regex patterns at load time using RE2-compatible
+semantics, giving **O(N)** matching cost per change (N = number of rules):
+
+- Patterns are compiled once during `SuppressionEngine.__init__()`.
+- Matching is **first-match wins**: the first rule whose `entity_regex`/`entity_glob`
+  and optional `change_kind` match a `Change` object suppresses it.
+- Suppressed changes are removed from the `DiffResult.changes` list before policy
+  evaluation; they are preserved in `DiffResult.suppressed` for auditability.
+- A suppression reason string is attached to each suppressed entry in the report.
+
+### Policy profiles
+
+Phase 2 ships three built-in policy profiles that adjust which `ChangeKind` values
+are treated as BREAKING:
+
+| Profile | Description | Promoted to BREAKING |
+|---------|-------------|---------------------|
+| `strict_abi` | Strictest — treats all changes as breaking. Suitable for system libraries and OS distributions. | All COMPATIBLE changes promoted |
+| `sdk_vendor` | Default — standard BREAKING + API_BREAK set. Suitable for SDK/vendor libraries. | Standard set (53 kinds) |
+| `plugin_abi` | Relaxed — only hard binary breaks. Suitable for plugin ABIs where some layout growth is tolerated. | Subset (symbol removal, vtable reorder, incompatible type changes) |
+
+Select a profile via `--policy <profile>` in `abicheck compare` or `abicheck compat`.
+
+### `analyse_full()` pipeline
+
+The complete analysis pipeline, including suppression and policy, follows this order:
+
+```text
+  libfoo_v1.so + headers
+  libfoo_v2.so + headers
+          │
+          ▼
+   abicheck dump × 2   →   v1.json, v2.json
+          │
+          ▼
+   checker.py           →   raw DiffResult { verdict, changes: [Change] }
+          │
+          ▼
+   SuppressionEngine     →   partitions changes into kept + suppressed
+   .apply(rules, diff)       suppressed entries carry .reason from the rule
+          │
+          ▼
+   checker_policy        →   re-evaluates verdict on kept changes only
+   .compute_verdict()        using the selected policy profile
+          │
+          ▼
+   PolicyResult {
+     verdict,            ← worst ChangeKind of kept changes under profile
+     changes,            ← kept (non-suppressed) Change list
+     suppressed,         ← suppressed Change list (audit trail)
+     policy_profile,     ← name of the profile used
+   }
+          │
+          ▼
+   reporter / sarif / html / xml
+   (suppressed section included in reports with "suppressed by: <reason>")
+```
+
+See `examples/suppression_example.yaml` for a runnable suppression file and
+`abicheck/core/suppressions/` for the implementation.
+
+---
+
 ## Comparison: `compare` vs `compat`
 
 | Feature | `compare` | `compat` |
