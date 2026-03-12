@@ -98,7 +98,7 @@ def test_dwarf_advanced_get_type_align_follows_typedef_chain_and_alignment_attr(
 def test_dwarf_advanced_extract_calling_convention_external_and_unknown():
     meta = da.AdvancedDwarfMetadata(has_dwarf=True)
     hidden = _Die("DW_TAG_subprogram", {"DW_AT_external": _Attr(0), "DW_AT_name": _Attr("f")})
-    da._extract_calling_convention(hidden, meta)
+    da._extract_calling_convention(hidden, meta, CU=SimpleNamespace(cu_offset=0))
     assert meta.calling_conventions == {}
 
     exported = _Die(
@@ -109,7 +109,7 @@ def test_dwarf_advanced_extract_calling_convention_external_and_unknown():
             "DW_AT_calling_convention": _Attr(0xFE),
         },
     )
-    da._extract_calling_convention(exported, meta)
+    da._extract_calling_convention(exported, meta, CU=SimpleNamespace(cu_offset=0))
     assert meta.calling_conventions["_Z3foov"] == "unknown(0xfe)"
 
 
