@@ -360,3 +360,61 @@ class TestCastxmlAnonUnionExpansion:
         assert ChangeKind.TYPE_FIELD_REMOVED not in kinds, (
             "x must not be reported as removed when it's still present in anon union"
         )
+
+    def test_anon_union_members_attribute_path(self) -> None:
+        """Anon union via 'members' attribute (castxml v2 format) is also expanded."""
+        from xml.etree.ElementTree import Element, SubElement
+
+        from abicheck.dumper import _CastxmlParser
+
+        root = Element("CastXML")
+
+        f1 = SubElement(root, "File")
+        f1.set("id", "f1")
+        f1.set("name", "mylib.h")
+
+        fund_int = SubElement(root, "FundamentalType")
+        fund_int.set("id", "_int")
+        fund_int.set("name", "int")
+
+        # Fields as top-level elements (castxml v2 members-attribute style)
+        uf_x = SubElement(root, "Field")
+        uf_x.set("id", "_fx")
+        uf_x.set("name", "x")
+        uf_x.set("type", "_int")
+        uf_x.set("offset", "0")
+
+        uf_y = SubElement(root, "Field")
+        uf_y.set("id", "_fy")
+        uf_y.set("name", "y")
+        uf_y.set("type", "_int")
+        uf_y.set("offset", "0")
+
+        # Anonymous union using 'members' attribute
+        anon_union = SubElement(root, "Union")
+        anon_union.set("id", "_u1")
+        anon_union.set("name", "")
+        anon_union.set("file", "f1")
+        anon_union.set("size", "32")
+        anon_union.set("members", "_fx _fy")  # members attribute path
+
+        # Parent struct S with anonymous Field pointing to the union
+        struct_s = SubElement(root, "Struct")
+        struct_s.set("id", "_s1")
+        struct_s.set("name", "S")
+        struct_s.set("size", "32")
+        struct_s.set("file", "f1")
+
+        anon_field = SubElement(struct_s, "Field")
+        anon_field.set("name", "")
+        anon_field.set("type", "_u1")
+        anon_field.set("offset", "0")
+
+        parser = _CastxmlParser(root, exported_dynamic=set(), exported_static=set())
+        types = parser.parse_types()
+        s = next((t for t in types if t.name == "S"), None)
+        assert s is not None
+        field_names = {f.name for f in s.fields}
+        assert "x" in field_names, "x from anon union (members attr) must appear in S.fields"
+        assert "y" in field_names, "y from anon union (members attr) must appear in S.fields"
+        assert "" not in field_names

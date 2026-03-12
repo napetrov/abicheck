@@ -510,7 +510,9 @@ class _CastxmlParser:
             ))
         return fields
 
-    def _expand_anonymous_field(self, field_el: Any) -> list[TypeField]:
+    def _expand_anonymous_field(
+        self, field_el: Any, _depth: int = 0
+    ) -> list[TypeField]:
         """Flatten anonymous struct/union field into the parent's field list.
 
         In castxml output, anonymous unions/structs inside a struct appear as
@@ -518,7 +520,11 @@ class _CastxmlParser:
         element.  We inline their named fields at the correct offset to prevent
         false ``TYPE_FIELD_REMOVED`` reports when a named field moves into an
         anonymous union (issue #58).
+
+        ``_depth`` guards against malformed/cyclic XML (max nesting: 16).
         """
+        if _depth > 16:
+            return []
         type_id = field_el.get("type", "")
         type_el = self._resolve(type_id)
         if type_el is None or type_el.tag not in ("Union", "Struct"):
@@ -539,7 +545,7 @@ class _CastxmlParser:
             inner_name = inner.get("name", "")
             if not inner_name:
                 # Doubly-nested anonymous member — recurse
-                result.extend(self._expand_anonymous_field(inner))
+                result.extend(self._expand_anonymous_field(inner, _depth + 1))
                 continue
             inner_offset = self._optional_int_attr(inner, "offset") or 0
             bitfield_bits, is_bitfield = self._parse_bitfield_bits(inner.get("bits"))
