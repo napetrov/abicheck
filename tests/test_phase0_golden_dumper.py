@@ -8,7 +8,6 @@ import pytest
 from abicheck.dumper import dump
 from abicheck.serialization import snapshot_to_dict
 
-
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 # Anchor all paths to repo root (robust against CWD differences in CI)
 REPO_ROOT = Path(__file__).parent.parent

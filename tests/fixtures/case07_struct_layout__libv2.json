@@ -10,6 +10,10 @@
     {
       "name": "get_x",
       "return_type": "int"
+    },
+    {
+      "name": "init_point",
+      "return_type": "void"
     }
   ],
   "public_types": [
