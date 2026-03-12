@@ -30,10 +30,10 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 
 ## Case Index
 
-> Authoritative expected verdicts for benchmarking are in .
-> If a per-case README and benchmark expectation differ, treat  as source of truth.
+> Authoritative expected verdicts for benchmarking are in [`ground_truth.json`](ground_truth.json).
+> If a per-case README and benchmark expectation differ, treat [`ground_truth.json`](ground_truth.json) as source of truth.
 
-**42 cases total** — 29 BREAKING 🔴 | 9 COMPATIBLE 🟢 | 2 NO_CHANGE ✅ | 2 API_BREAK 🟠
+**48 published cases** (case 42 reserved) — 34 BREAKING 🔴 | 10 COMPATIBLE 🟢 | 2 NO_CHANGE ✅ | 2 API_BREAK 🟠
 
 | # | Case | Category | abicheck verdict |
 |---|------|----------|-----------------|
@@ -54,7 +54,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [15](case15_noexcept_change/README.md) | Noexcept Change | Breaking | BREAKING 🔴 |
 | [16](case16_inline_to_non_inline/README.md) | Inline To Non Inline | Compatible | COMPATIBLE 🟢 |
 | [17](case17_template_abi/README.md) | Template Abi | Breaking | BREAKING 🔴 |
-| [18](case18_dependency_leak/README.md) | Dependency Leak | ELF / Policy | COMPATIBLE 🟡 (bad practice) |
+| [18](case18_dependency_leak/README.md) | Dependency Leak | ELF / Policy | BREAKING 🔴 (bad practice) |
 | [19](case19_enum_member_removed/README.md) | Enum Member Removed | Breaking | BREAKING 🔴 |
 | [20](case20_enum_member_value_changed/README.md) | Enum Member Value Changed | Breaking | BREAKING 🔴 |
 | [21](case21_method_became_static/README.md) | Method Became Static | Breaking | BREAKING 🔴 |
@@ -79,6 +79,13 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [39](case39_var_const/README.md) | Var Const | Breaking | BREAKING 🔴 |
 | [40](case40_field_layout/README.md) | Field Layout | Breaking | BREAKING 🔴 |
 | [41](case41_type_changes/README.md) | Type Changes | Breaking | BREAKING 🔴 |
+| *(42 — reserved, not yet published)* | — | — | — |
+| [43](case43_base_class_member_added/README.md) | Base Class Member Added | C++ Layout | BREAKING 🔴 |
+| [44](case44_cyclic_type_member_added/README.md) | Cyclic Type Member Added | Struct Layout | BREAKING 🔴 |
+| [45](case45_multi_dim_array_change/README.md) | Multi-Dim Array Element Type Change | Struct Layout | BREAKING 🔴 |
+| [46](case46_pointer_chain_type_change/README.md) | Pointer Chain Type Change | Function Signature | BREAKING 🔴 |
+| [47](case47_inline_to_outlined/README.md) | Inline to Outlined | C++ Symbol | COMPATIBLE 🟢 |
+| [48](case48_leaf_struct_through_pointer/README.md) | Leaf Struct Change Through Pointer | Struct Layout | BREAKING 🔴 |
 
 ---
 
@@ -98,7 +105,7 @@ case's README for copy-paste build instructions.
 
 ---
 
-## Benchmark Snapshot (42 cases, 2026-03-11)
+## Benchmark Snapshot (48 cases, 2026-03-11)
 
 To avoid drift, this README keeps only a compact summary. Full per-case matrix and
 methodology live in docs:
@@ -107,22 +114,21 @@ methodology live in docs:
 
 | Tool | Correct / Scored | Accuracy |
 |------|------------------|----------|
-| **abicheck (compare)** | **42/42** | **100%** |
-| abicheck (compat) | 40/42 | 95% |
-| abicheck (strict, full) | 31/42 | 73% |
-| abidiff | 11/42 | 26% |
-| abidiff + headers | 11/42 | 26% |
-| ABICC (abi-dumper) | 20/30 | 66% (48% effective over 42) |
-| ABICC (xml) | 25/41 | 61% |
+| **abicheck (compare)** | **48/48** | **100%** |
+| abicheck (compat) | 46/48 | 96% |
+| abidiff | 12/48 | 25% |
+| abidiff + headers | 12/48 | 25% |
+| ABICC (xml) | 30/47 | 63% (1 timeout, 48 cases attempted) |
+| ABICC (abi-dumper) | 24/48 | 50% (12 error/timeout) |
 
 ### Why these numbers differ
 
 - **`compat` < `compare`**: `compat` follows ABICC vocabulary and cannot emit `API_BREAK`
-  (`case31`, `case34`), so max is 40/42 in this suite.
-- **`strict` can beat ABICC(dump)**: strict intentionally promotes some compatible changes,
-  while ABICC(dump) has many ERROR/TIMEOUT cases and only scores on 30/42.
+  (`case31`, `case34`), so max is 46/48 in this suite.
 - **`abidiff` == `abidiff+headers` here**: `--headers-dir` only filters public symbols;
   with `-fvisibility=default` in these examples, filtering does not change the set.
+- **ABICC(dumper)** missed case43 (base class member added) — classified as COMPATIBLE.
+  Reason: ABICC focuses on exported symbols, not derived class layout shifts.
 
 ---
 

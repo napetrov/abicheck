@@ -1,7 +1,7 @@
 # Architecture & Analysis Pipeline
 
-This page explains how `abicheck` works internally — what it analyzes, in what order,
-and how the four analysis tiers combine to produce a verdict.
+This page explains how `abicheck` works internally — what it analyses, in what order,
+and how all components combine to produce a verdict.
 
 ---
 
@@ -81,16 +81,17 @@ This is the recommended workflow for new integrations.
 │                  └─────────────┬──────────────────────────┘     │
 │                                │                                 │
 │                  ┌─────────────▼──────────────────────────┐     │
-│                  │  checker_policy                        │     │
+│                  │  Suppression engine                    │     │
+│                  │  • matches Changes against rules       │     │
+│                  │  • suppressed entries kept for audit   │     │
+│                  └─────────────┬──────────────────────────┘     │
+│                                │                                 │
+│                  ┌─────────────▼──────────────────────────┐     │
+│                  │  Policy                                │     │
 │                  │  • maps ChangeKind → Verdict           │     │
 │                  │  • 53 BREAKING + 38 COMPATIBLE         │     │
 │                  │  + 11 API_BREAK ChangeKinds            │     │
 │                  │  • final verdict = worst of all        │     │
-│                  └─────────────┬──────────────────────────┘     │
-│                                │                                 │
-│                  ┌─────────────▼──────────────────────────┐     │
-│                  │  DiffResult                            │     │
-│                  │  { verdict, changes: [Change] }        │     │
 │                  └─────────────┬──────────────────────────┘     │
 │                                │                                 │
 │            ┌───────────────────┼───────────────────────────┐    │
@@ -158,40 +159,59 @@ headers + .so (with -g)     ✅          ✅          ✅          ✅
 
 ```text
 abicheck/
-  cli.py            ← CLI entry points (dump / compare / compat / compat-dump)
-  dumper.py         ← builds ABI snapshot from .so + headers (calls all 4 tiers)
-  checker.py        ← runs detectors on two snapshots → DiffResult
-  checker_policy.py ← ChangeKind enum, BREAKING/COMPATIBLE/API_BREAK sets, verdict logic
-  detectors.py      ← detector protocol + detector result types
-  model.py          ← core data model: AbiSnapshot, Function, RecordType, Change
-  compat.py         ← ABICC XML descriptor parsing + compat mapping
-  report_summary.py ← canonical counters shared by all reporters
-  reporter.py       ← Markdown reporter
-  sarif.py          ← SARIF reporter (GitHub Code Scanning)
-  html_report.py    ← HTML reporter (ABICC-compatible)
-  xml_report.py     ← XML reporter (ABICC-compatible machine-readable)
-  suppression.py    ← suppression engine (compare YAML + compat -skip-* flags)
-  serialization.py  ← JSON snapshot read/write
-  elf_metadata.py   ← Tier 2: ELF symbol table, SONAME, visibility
-  dwarf_metadata.py ← Tier 3: DWARF struct layout, field offsets
-  dwarf_advanced.py ← Tier 4: calling conventions, packing, toolchain flags
-  dwarf_unified.py  ← unified DWARF pass (~50% I/O savings via single-pass read)
+  cli.py              ← CLI entry points (dump / compare / compat / compat-dump)
+  dumper.py           ← builds ABI snapshot from .so + headers (calls all 4 tiers)
+  checker.py          ← runs detectors on two snapshots → list[Change]
+  checker_policy.py   ← ChangeKind enum, BREAKING/COMPATIBLE/API_BREAK sets
+  detectors.py        ← detector protocol + detector result types
+  model.py            ← legacy data model: AbiSnapshot, Function, RecordType
+  compat.py           ← ABICC XML descriptor parsing + compat mapping
+  report_summary.py   ← canonical counters shared by all reporters
+  reporter.py         ← Markdown reporter
+  sarif.py            ← SARIF reporter (GitHub Code Scanning)
+  html_report.py      ← HTML reporter (ABICC-compatible)
+  xml_report.py       ← XML reporter (ABICC-compatible machine-readable)
+  suppression.py      ← CLI suppression engine (YAML rules for compare/compat)
+  serialization.py    ← JSON snapshot read/write
+  elf_metadata.py     ← Tier 2: ELF symbol table, SONAME, visibility
+  dwarf_metadata.py   ← Tier 3: DWARF struct layout, field offsets
+  dwarf_advanced.py   ← Tier 4: calling conventions, packing, toolchain flags
+  dwarf_unified.py    ← unified DWARF pass (~50% I/O savings via single-pass read)
+  core/
+    model/
+      change.py       ← Change, ChangeKind, ChangeSeverity, AnnotatedChange
+      origin.py       ← Origin (which tier detected the change)
+      policy_result.py← PolicyResult, PolicySummary, PolicyVerdict
+    corpus/
+      normalizer.py   ← AbiSnapshot → NormalizedSnapshot (dedup, intern, canonicalise)
+      builder.py      ← NormalizedSnapshot → Corpus (indexed for fast diff)
+    diff/
+      symbol_diff.py  ← symbol-level Changes (added/removed/changed functions & vars)
+      type_layout_diff.py ← struct/class layout Changes (field offsets, sizes)
+    suppressions/
+      rule.py         ← SuppressionRule, SuppressionScope dataclasses
+      engine.py       ← SuppressionEngine: RE2-based, O(N), compile-at-load
+    policy/
+      base.py         ← PolicyProfile ABC
+      strict_abi.py   ← StrictAbiPolicy  (BREAK→BLOCK, REVIEW_NEEDED→WARN)
+      sdk_vendor.py   ← SdkVendorPolicy  (same as strict currently)
+      plugin_abi.py   ← PluginAbiPolicy  (BREAK→WARN only)
+    pipeline.py       ← analyse() + analyse_full(): end-to-end Python API
 ```
 
 ---
 
-## Data flow (internal)
+## Full data flow
 
 ```text
 Input: libfoo.so + include/foo.h
            │
            ▼
       dumper.py
-      ├── castxml → parses headers → AST
-      │   └── extracts: functions, types, vtable, noexcept, inline
-      ├── elf_metadata.py → reads .dynsym, .gnu.version, SONAME
-      ├── dwarf_metadata.py → reads DWARF .debug_info (struct layouts)
-      └── dwarf_unified.py → single-pass DWARF read (performance)
+      ├── castxml            → parses headers → AST (functions, types, vtable)
+      ├── elf_metadata.py    → reads .dynsym, .gnu.version, SONAME
+      ├── dwarf_metadata.py  → reads DWARF .debug_info (struct layouts)
+      └── dwarf_unified.py   → single-pass DWARF read (performance)
            │
            ▼
       AbiSnapshot (JSON)
@@ -200,24 +220,107 @@ Input: libfoo.so + include/foo.h
      (compare two snapshots)
            │
            ▼
-      checker.py
-      └── runs each detector on (old_snapshot, new_snapshot)
-          ├── FuncDetector → FUNC_REMOVED, FUNC_PARAMS_CHANGED, ...
-          ├── TypeDetector → TYPE_SIZE_CHANGED, TYPE_VTABLE_CHANGED, ...
-          ├── ElfDetector  → SONAME_CHANGED, VISIBILITY_LEAK, ...
-          └── DwarfDetector → CALLING_CONVENTION_CHANGED, ...
+      core/corpus/normalizer.py
+      └── AbiSnapshot → NormalizedSnapshot
+          (dedup, intern strings, canonicalise type names)
            │
            ▼
-      checker_policy.py
-      compute_verdict(changes) → Verdict
-      (worst of: BREAKING > API_BREAK > COMPATIBLE > NO_CHANGE)
+      core/diff/symbol_diff.py        → list[Change]  (func/var level)
+      core/diff/type_layout_diff.py   → list[Change]  (struct/class level)
            │
-           ▼
-      DiffResult { verdict, changes: [Change] }
+           ▼  sorted(entity_type, entity_name, change_kind)
+           │
+      core/suppressions/engine.py
+      └── SuppressionEngine.apply(changes)
+          → SuppressionResult {
+              active:     list[Change]   (not matched by any rule)
+              suppressed: list[Change]   (severity = SUPPRESSED)
+              match_map:  audit trail    (entity_type, name, kind) → rule
+            }
+           │
+           ▼  sorted(active + suppressed) — restores original order
+           │
+      core/policy/<profile>.py
+      └── PolicyProfile.apply(changes)
+          → PolicyResult {
+              annotated_changes: list[AnnotatedChange]
+              summary: PolicySummary {
+                verdict,             ← PASS / WARN / BLOCK
+                incompatible_count,
+                suppressed_count,
+                review_needed_count,
+              }
+            }
            │
            ▼
       reporter / sarif / html_report / xml_report
 ```
+
+---
+
+## Suppression engine
+
+Intentional ABI changes can be acknowledged and filtered out without masking
+unrelated breakage. The suppression engine matches each `Change` against a list
+of `SuppressionRule` objects compiled at load time.
+
+### SuppressionRule (`abicheck/core/suppressions/rule.py`)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `entity_glob` | `str \| None` | `None` | Shell-style glob matched against the entity name (`std::*`, `*detail*`) |
+| `entity_regex` | `str \| None` | `None` | RE2 regex; if both glob and regex are set, **both must match** (AND semantics) |
+| `change_kind` | `str \| None` | `None` | `ChangeKind` value string (e.g. `"func_removed"`); `None` = any kind |
+| `scope` | `SuppressionScope` | `SuppressionScope()` | Platform/profile/version filters — **setting any sub-field currently raises `ValueError`** (not yet implemented; field is reserved for future use) |
+| `reason` | `str` | `""` | Human-readable justification (appears in report audit trail) |
+
+### SuppressionEngine (`abicheck/core/suppressions/engine.py`)
+
+- All glob and regex patterns compiled once in `__init__()` via **google-re2** — O(N) guaranteed, no backtracking.
+- **First-match wins**: earliest rule whose patterns + `change_kind` all match suppresses the Change.
+- Suppressed changes carry `severity = ChangeSeverity.SUPPRESSED` and are included in `SuppressionResult.suppressed` for audit.
+- Audit trail: `SuppressionResult.match_map[(entity_type, entity_name, change_kind.value)] → SuppressionRule`.
+
+### CLI suppression (YAML)
+
+The CLI (`abicheck compare` / `abicheck compat`) uses the YAML-based engine in
+`abicheck/suppression.py`. Rule fields: `symbol`, `symbol_pattern`, `type_pattern`, `change_kind`, `reason`.
+See `examples/suppression_example.yaml` for a runnable example.
+
+### Python API
+
+```python
+from abicheck.core.pipeline import analyse_full
+from abicheck.core.suppressions import SuppressionRule
+
+result = analyse_full(
+    snap_v1, snap_v2,
+    rules=[
+        SuppressionRule(entity_glob="*detail*", reason="internal namespace"),
+        SuppressionRule(
+            entity_regex=r"_ZN3foo6Client10disconnectEv",
+            change_kind="func_removed",
+            reason="deprecated in v1.8, removed in v2.0",
+        ),
+    ],
+    policy="strict_abi",   # or "sdk_vendor" / "plugin_abi"
+)
+print(result.summary.verdict)          # PolicyVerdict.PASS / WARN / BLOCK
+print(result.summary.suppressed_count)
+```
+
+---
+
+## Policy profiles (`abicheck/core/policy/`)
+
+| Profile | Class | Behaviour |
+|---------|-------|-----------|
+| `strict_abi` | `StrictAbiPolicy` | `BREAK → BLOCK`, `REVIEW_NEEDED → WARN`. Zero-tolerance; for system libraries and OS distributions. |
+| `sdk_vendor` | `SdkVendorPolicy` | Currently identical to `strict_abi`. Differentiated profile planned. For SDK/vendor libraries. |
+| `plugin_abi` | `PluginAbiPolicy` | `BREAK → WARN` only (no BLOCK). For plugin ABIs where some ABI growth is tolerated. |
+
+> Policy profiles are available via the Python API (`analyse_full(policy=...)`).
+> A `--policy` CLI flag is planned.
 
 ---
 
@@ -240,11 +343,11 @@ ABI snapshots are portable JSON files created by `abicheck dump`.
       "noexcept": false
     }
   ],
-  "types": [ ... ],
+  "types": [ "..." ],
   "elf": {
     "soname": "libfoo.so.1",
     "exported_symbols": ["_Z8foo_initv"],
-    "symbol_versions": { ... }
+    "symbol_versions": {}
   }
 }
 ```
@@ -276,7 +379,8 @@ Do you have ABICC XML descriptors already?
 |---------|-----------|---------|
 | Input | JSON snapshots | ABICC XML descriptors |
 | Output formats | md, json, sarif, html | html, json, xml, md |
-| Verdicts in report | NO_CHANGE / COMPATIBLE / API_BREAK / BREAKING | ABICC-style compatibility report |
+| Verdicts | NO_CHANGE / COMPATIBLE / API_BREAK / BREAKING | ABICC-style compatibility report |
 | Exit codes | 0 / 1(err) / 2 / 4 | 0 / 1 / 2(API_BREAK) |
-| ABICC flag parity | — | partial (core flags supported; see [from_abicc.md](../migration/from_abicc.md) for mapping) |
+| Suppression | YAML rules (`suppression.py`) | `-skip-*` flags + YAML |
+| ABICC flag parity | — | partial (see [from_abicc.md](../migration/from_abicc.md)) |
 | Recommended for | new integrations | migrating from ABICC |
