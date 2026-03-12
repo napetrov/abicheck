@@ -630,13 +630,15 @@ def _classify_compat_error_exit_code(exc: BaseException, *, context: str = "") -
         if "report" in ctx or "output" in ctx:
             return 7
 
-    if any(k in msg for k in ("not found in path", "command not found", "no such file or directory")):
-        return 3
-
     if "castxml failed" in msg or "cannot compile" in msg or "compilation terminated" in msg:
         return 5
 
-    if any(k in ctx for k in ("descriptor", "skip-symbols", "symbols-list", "suppression", "logging")):
+    if any(k in msg for k in ("not found in path", "command not found", "no such file or directory")):
+        return 3
+
+    if any(k in ctx for k in (
+        "descriptor", "skip-symbols", "symbols-list", "skip-internal", "suppression", "logging"
+    )):
         return 6
 
     if "report" in ctx or "output" in ctx:

@@ -186,7 +186,7 @@ class TestCompareSuppressionWarning:
 # ── compat descriptor errors ────────────────────────────────────────────
 
 class TestCompatErrors:
-    def test_invalid_descriptor_exits_2(self, tmp_path):
+    def test_invalid_descriptor_exits_6(self, tmp_path):
         old = tmp_path / "old.xml"
         new = tmp_path / "new.xml"
         old.write_text("<invalid>", encoding="utf-8")
@@ -195,10 +195,10 @@ class TestCompatErrors:
         result = runner.invoke(main, [
             "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
         ])
-        assert result.exit_code == 2
+        assert result.exit_code == 6
 
-    def test_missing_library_exits_2(self, tmp_path):
-        """Descriptor references a .so that doesn't exist → exit 2."""
+    def test_missing_library_exits_4(self, tmp_path):
+        """Descriptor references a .so that doesn't exist → exit 4."""
         old = tmp_path / "old.xml"
         new = tmp_path / "new.xml"
         old.write_text(
@@ -213,7 +213,7 @@ class TestCompatErrors:
         result = runner.invoke(main, [
             "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
         ])
-        assert result.exit_code == 2
+        assert result.exit_code == 4
 
 
 # ── compat help output ──────────────────────────────────────────────────

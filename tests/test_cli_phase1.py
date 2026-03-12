@@ -101,7 +101,7 @@ def test_compare_cmd_breaking_exits_with_code_4(tmp_path, monkeypatch):
     assert "BREAKING REPORT" in result.stdout
 
 
-def test_compat_cmd_descriptor_parse_error_exits_2(tmp_path, monkeypatch):
+def test_compat_cmd_descriptor_parse_error_exits_6(tmp_path, monkeypatch):
     old_desc = tmp_path / "old.xml"
     new_desc = tmp_path / "new.xml"
     old_desc.write_text("<xml/>", encoding="utf-8")
@@ -115,7 +115,7 @@ def test_compat_cmd_descriptor_parse_error_exits_2(tmp_path, monkeypatch):
         ["compat", "-lib", "foo", "-old", str(old_desc), "-new", str(new_desc)],
     )
 
-    assert result.exit_code == 2
+    assert result.exit_code == 6
     assert "Error parsing descriptor" in result.output
 
 
