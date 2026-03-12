@@ -655,6 +655,14 @@ def dump(
         exported_dynamic = exported_dynamic_funcs | exported_dynamic_objects
     dwarf_meta, dwarf_adv = parse_dwarf(so_path)
 
+    profile_hint: str | None = None
+    if lang is not None:
+        lu = lang.upper()
+        if lu == "C":
+            profile_hint = "c"
+        elif lu in ("C++", "CPP"):
+            profile_hint = "cpp"
+
     if not headers:
         warnings.warn(
             "No headers provided — only ELF-exported symbols will be captured; "
@@ -675,6 +683,7 @@ def dump(
             dwarf_advanced=dwarf_adv,
             elf_only_mode=True,
             platform="elf",
+            language_profile=profile_hint,
         )
         return snapshot
 
@@ -697,5 +706,6 @@ def dump(
         dwarf=dwarf_meta,
         dwarf_advanced=dwarf_adv,
         platform="elf",
+        language_profile=profile_hint,
     )
     return snapshot

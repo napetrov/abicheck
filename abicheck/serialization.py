@@ -239,6 +239,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         elf_only_mode=bool(d.get("elf_only_mode", False)),
         constants=d.get("constants", {}),
         platform=d.get("platform"),
+        language_profile=d.get("language_profile"),
     )
 
 
