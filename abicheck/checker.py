@@ -1335,8 +1335,18 @@ def compare(
     old: AbiSnapshot,
     new: AbiSnapshot,
     suppression: SuppressionList | None = None,
+    *,
+    policy: str = "strict_abi",
 ) -> DiffResult:
-    """Diff two AbiSnapshots and return a DiffResult with verdict."""
+    """Diff two AbiSnapshots and return a DiffResult with verdict.
+
+    Args:
+        old: Old ABI snapshot.
+        new: New ABI snapshot.
+        suppression: Optional suppression list to filter known changes.
+        policy: Policy profile name to use for verdict classification.
+            Available: "strict_abi" (default), "sdk_vendor", "plugin_abi".
+    """
 
     detector_fns: list[_DetectorSpec] = [
         _DetectorSpec("functions", _diff_functions),
@@ -1397,7 +1407,7 @@ def compare(
                 filtered.append(c)
         changes = filtered
 
-    verdict = compute_verdict(changes)
+    verdict = compute_verdict(changes, policy=policy)
     return DiffResult(
         old_version=old.version,
         new_version=new.version,
