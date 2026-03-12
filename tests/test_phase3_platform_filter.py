@@ -17,7 +17,6 @@ from abicheck.core.suppressions import SuppressionEngine, SuppressionRule
 from abicheck.core.suppressions.rule import SuppressionScope
 from abicheck.model import AbiSnapshot
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
