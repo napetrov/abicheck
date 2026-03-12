@@ -9,7 +9,6 @@ This directly tests the `_diff_function_pair` logic in symbol_diff.py.
 """
 from __future__ import annotations
 
-import pytest
 
 from abicheck.core.corpus.normalizer import NormalizedSnapshot
 from abicheck.core.diff.symbol_diff import diff_symbols

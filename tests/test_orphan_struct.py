@@ -23,7 +23,6 @@ from __future__ import annotations
 
 from xml.etree.ElementTree import Element, SubElement
 
-import pytest
 
 
 def _make_xml_with_orphan_struct() -> Element:

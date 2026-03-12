@@ -17,7 +17,6 @@ unstable diffs when template instantiations appeared in multiple TUs.
 """
 from __future__ import annotations
 
-import pytest
 
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.model import AbiSnapshot, Function, Visibility

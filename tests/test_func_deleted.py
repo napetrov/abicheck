@@ -14,7 +14,6 @@ The dumper already reads el.get("deleted") == "1" → is_deleted=True.
 """
 from __future__ import annotations
 
-import pytest
 
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.checker_policy import BREAKING_KINDS
