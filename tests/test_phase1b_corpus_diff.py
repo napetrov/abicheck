@@ -193,6 +193,21 @@ class TestTypeLayoutDiff:
         changes = diff_type_layouts(b, a)
         assert any("alignment" in c.before.entity_repr for c in changes)
 
+    def test_virtual_bases_change_detected(self) -> None:
+        """virtual_bases change must be caught by hash filter AND deep diff."""
+        normalizer = Normalizer()
+
+        t_old = RecordType(name="D", kind="class", size_bits=64,
+                           bases=["A"], virtual_bases=[])
+        t_new = RecordType(name="D", kind="class", size_bits=64,
+                           bases=["A"], virtual_bases=["B"])
+
+        b = normalizer.normalize(_snap(types=[t_old]))
+        a = normalizer.normalize(_snap(types=[t_new], version="v2"))
+
+        changes = diff_type_layouts(b, a)
+        assert any("virtual_bases" in c.before.entity_repr for c in changes)
+
     def test_added_type_is_compatible_extension(self) -> None:
         normalizer = Normalizer()
         b = normalizer.normalize(_snap(types=[]))

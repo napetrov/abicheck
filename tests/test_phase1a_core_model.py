@@ -147,6 +147,11 @@ class TestChange:
         with pytest.raises(ValueError, match="must be unique"):
             _make_change(origin=Origin.ELF, corroborating=(Origin.DWARF, Origin.DWARF))
 
+    def test_primary_must_be_highest_confidence(self) -> None:
+        """Lower-confidence primary with higher-confidence corroborating must be rejected."""
+        with pytest.raises(ValueError, match="highest-confidence"):
+            _make_change(origin=Origin.ELF, corroborating=(Origin.CASTXML,))
+
     def test_confidence_boundary_valid(self) -> None:
         _make_change(confidence=0.0)   # should not raise
         _make_change(confidence=1.0)   # should not raise
@@ -244,6 +249,7 @@ class TestPolicyResult:
         assert result.summary.verdict == PolicyVerdict.PASS
         assert result.summary.incompatible_count == 0
         assert result.summary.review_needed_count == 0
+        assert result.summary.compatible_extension_count == 1
 
     def test_suppressed_count(self) -> None:
         changes = [
@@ -291,6 +297,17 @@ class TestPolicyResult:
         changes = [self._annotated(PolicyVerdict.ERROR, ChangeSeverity.REVIEW_NEEDED)]
         result = PolicyResult.from_annotated(changes)
         assert result.summary.verdict == PolicyVerdict.ERROR
+        assert result.summary.error_count == 1
+
+    def test_error_takes_precedence_over_block(self) -> None:
+        """ERROR > BLOCK: pipeline failure supersedes breaking changes."""
+        changes = [
+            self._annotated(PolicyVerdict.BLOCK, ChangeSeverity.BREAK),
+            self._annotated(PolicyVerdict.ERROR, ChangeSeverity.REVIEW_NEEDED),
+        ]
+        result = PolicyResult.from_annotated(changes)
+        assert result.summary.verdict == PolicyVerdict.ERROR
+        assert result.summary.incompatible_count == 1
         assert result.summary.error_count == 1
 
     def test_warn_verdict_derives_from_annotated_verdict(self) -> None:

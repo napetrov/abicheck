@@ -43,6 +43,7 @@ def _type_structural_hash(t: RecordType) -> int:
         len(t.fields),
         field_sig,
         tuple(t.bases),
+        tuple(sorted(t.virtual_bases)),  # sorted: order-independent content hash
         tuple(t.vtable),
     ))
 
