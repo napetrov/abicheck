@@ -1,8 +1,0 @@
-Temporary header file '/tmp/IW6th0rbd7/dump1.h' with the following content will be compiled to create GCC translation unit dump:
-
-  // add includes
-  #include "/tmp/pytest-of-openclaw/pytest-194/test_both_produce_parseable_xm0/v1.h"
-
-The GCC parameters:
-  gcc -fdump-lang-raw -fkeep-inline-functions -c -x c++ -fpermissive -w "/tmp/IW6th0rbd7/dump1.h"
-
