@@ -4,8 +4,13 @@ When a struct gains an anonymous union member, the existing field `x` should
 NOT be reported as removed/changed if it's still present at the same offset.
 
 Scenario:
-  v1: struct S { int x; };
-  v2: struct S { union { int x; int y; }; };  // anon union, x still at offset 0
+  v1: struct S { int x
+  }
+  v2: struct S { union { int x
+  int y
+  }
+  }
+  // anon union, x still at offset 0
 
 Expected behavior:
 - MUST NOT emit STRUCT_FIELD_REMOVED for 'x'
@@ -202,32 +207,42 @@ class TestCastxmlAnonUnionExpansion:
     Uses real castxml XML format: elements carry 'file' attr directly.
     """
 
-    def _make_xml_with_anon_union(self) -> "Element":
+    def _make_xml_with_anon_union(self) -> Element:
         """Build castxml XML: struct S { union { int x; int y; }; };"""
         from xml.etree.ElementTree import Element, SubElement
         root = Element("CastXML")
 
         f1 = SubElement(root, "File")
-        f1.set("id", "f1"); f1.set("name", "mylib.h")
+        f1.set("id", "f1")
+        f1.set("name", "mylib.h")
 
         fund_int = SubElement(root, "FundamentalType")
-        fund_int.set("id", "_int"); fund_int.set("name", "int")
+        fund_int.set("id", "_int")
+        fund_int.set("name", "int")
 
         # Anonymous union
         anon_union = SubElement(root, "Union")
-        anon_union.set("id", "_u1"); anon_union.set("name", ""); anon_union.set("file", "f1")
+        anon_union.set("id", "_u1")
+        anon_union.set("name", "")
+        anon_union.set("file", "f1")
         anon_union.set("size", "32")
 
         uf_x = SubElement(anon_union, "Field")
-        uf_x.set("name", "x"); uf_x.set("type", "_int"); uf_x.set("offset", "0")
+        uf_x.set("name", "x")
+        uf_x.set("type", "_int")
+        uf_x.set("offset", "0")
 
         uf_y = SubElement(anon_union, "Field")
-        uf_y.set("name", "y"); uf_y.set("type", "_int"); uf_y.set("offset", "0")
+        uf_y.set("name", "y")
+        uf_y.set("type", "_int")
+        uf_y.set("offset", "0")
 
         # Parent struct S with anonymous Field pointing to the union
         struct_s = SubElement(root, "Struct")
-        struct_s.set("id", "_s1"); struct_s.set("name", "S")
-        struct_s.set("size", "32"); struct_s.set("file", "f1")
+        struct_s.set("id", "_s1")
+        struct_s.set("name", "S")
+        struct_s.set("size", "32")
+        struct_s.set("file", "f1")
 
         anon_field = SubElement(struct_s, "Field")
         anon_field.set("name", "")   # anonymous
@@ -236,44 +251,62 @@ class TestCastxmlAnonUnionExpansion:
 
         return root
 
-    def _make_xml_with_nested_anon(self) -> "Element":
+    def _make_xml_with_nested_anon(self) -> Element:
         """Build castxml XML: struct S { union { struct { int a; int b; }; int c; }; };"""
         from xml.etree.ElementTree import Element, SubElement
         root = Element("CastXML")
 
         f1 = SubElement(root, "File")
-        f1.set("id", "f1"); f1.set("name", "mylib.h")
+        f1.set("id", "f1")
+        f1.set("name", "mylib.h")
 
         fund_int = SubElement(root, "FundamentalType")
-        fund_int.set("id", "_int"); fund_int.set("name", "int")
+        fund_int.set("id", "_int")
+        fund_int.set("name", "int")
 
         # Inner anonymous struct { int a; int b; }
         inner_struct = SubElement(root, "Struct")
-        inner_struct.set("id", "_is1"); inner_struct.set("name", ""); inner_struct.set("file", "f1")
+        inner_struct.set("id", "_is1")
+        inner_struct.set("name", "")
+        inner_struct.set("file", "f1")
 
         ia = SubElement(inner_struct, "Field")
-        ia.set("name", "a"); ia.set("type", "_int"); ia.set("offset", "0")
+        ia.set("name", "a")
+        ia.set("type", "_int")
+        ia.set("offset", "0")
 
         ib = SubElement(inner_struct, "Field")
-        ib.set("name", "b"); ib.set("type", "_int"); ib.set("offset", "32")
+        ib.set("name", "b")
+        ib.set("type", "_int")
+        ib.set("offset", "32")
 
         # Outer anonymous union with anon struct + int c
         anon_union = SubElement(root, "Union")
-        anon_union.set("id", "_u1"); anon_union.set("name", ""); anon_union.set("file", "f1")
+        anon_union.set("id", "_u1")
+        anon_union.set("name", "")
+        anon_union.set("file", "f1")
 
         uf_struct = SubElement(anon_union, "Field")
-        uf_struct.set("name", ""); uf_struct.set("type", "_is1"); uf_struct.set("offset", "0")
+        uf_struct.set("name", "")
+        uf_struct.set("type", "_is1")
+        uf_struct.set("offset", "0")
 
         uf_c = SubElement(anon_union, "Field")
-        uf_c.set("name", "c"); uf_c.set("type", "_int"); uf_c.set("offset", "0")
+        uf_c.set("name", "c")
+        uf_c.set("type", "_int")
+        uf_c.set("offset", "0")
 
         # Parent struct S
         struct_s = SubElement(root, "Struct")
-        struct_s.set("id", "_s1"); struct_s.set("name", "S")
-        struct_s.set("size", "64"); struct_s.set("file", "f1")
+        struct_s.set("id", "_s1")
+        struct_s.set("name", "S")
+        struct_s.set("size", "64")
+        struct_s.set("file", "f1")
 
         anon_field = SubElement(struct_s, "Field")
-        anon_field.set("name", ""); anon_field.set("type", "_u1"); anon_field.set("offset", "0")
+        anon_field.set("name", "")
+        anon_field.set("type", "_u1")
+        anon_field.set("offset", "0")
 
         return root
 
