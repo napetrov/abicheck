@@ -134,6 +134,10 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     # Inline attribute changes (ABICC issue #125)
     ChangeKind.FUNC_BECAME_INLINE,
     ChangeKind.FUNC_LOST_INLINE,
+    # PR #89: ELF fallback for = delete and template inner-type analysis
+    ChangeKind.FUNC_DELETED_ELF_FALLBACK,
+    ChangeKind.TEMPLATE_PARAM_TYPE_CHANGED,
+    ChangeKind.TEMPLATE_RETURN_TYPE_CHANGED,
 }
 
 

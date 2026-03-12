@@ -1367,6 +1367,8 @@ def compare(
         _DetectorSpec("param_va_list", _diff_param_va_list),
         _DetectorSpec("constants", _diff_constants),
         _DetectorSpec("var_access", _diff_var_access),
+        _DetectorSpec("elf_deleted_fallback", _diff_elf_deleted_fallback),
+        _DetectorSpec("template_inner_types", _diff_template_inner_types),
     ]
 
     changes: list[Change] = []
@@ -1954,3 +1956,248 @@ def _diff_advanced_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         for kind_str, sym, desc, old_val, new_val in diff_advanced_dwarf(o, n)
         if kind_str in _kind_map
     ]
+
+
+# ── PR #89: ELF fallback for = delete (issue #100) ───────────────────────────
+
+def _diff_elf_deleted_fallback(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """ELF fallback for detecting implicitly-deleted / disappeared symbols.
+
+    When castxml metadata does NOT mark a function as deleted (no ``deleted="1"``)
+    but the symbol vanishes from the new library's ELF ``.dynsym`` while still
+    being declared in the new snapshot's header model (i.e., it's not FUNC_REMOVED),
+    this is strong evidence the function was deleted or made inline without proper
+    annotation.
+
+    Detection heuristic:
+    1. Function is PUBLIC in old snapshot and present in old ELF ``.dynsym``.
+    2. Function is still present in new snapshot (not FUNC_REMOVED) but
+       absent from new ELF ``.dynsym``.
+    3. Function is not already marked ``is_deleted=True`` (handled by FUNC_DELETED)
+       and not already marked ``is_inline=True`` (handled by FUNC_BECAME_INLINE).
+
+    Confidence: 0.75 (lower than FUNC_DELETED castxml path because we're inferring
+    from ELF absence rather than explicit annotation).
+    """
+    changes: list[Change] = []
+
+    old_elf = getattr(old, "elf", None)
+    new_elf = getattr(new, "elf", None)
+
+    # Need ELF data on both sides to compare symbol presence
+    if old_elf is None or new_elf is None:
+        return changes
+
+    old_elf_names: set[str] = {s.name for s in old_elf.symbols}
+    new_elf_names: set[str] = {s.name for s in new_elf.symbols}
+
+    # Get all new-snapshot functions keyed by mangled name
+    new_func_map = new.function_map
+
+    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
+    old_pub = {k: v for k, v in old.function_map.items() if v.visibility in vis}
+
+    for mangled, f_old in old_pub.items():
+        # Must be present in old ELF (this was a real exported symbol)
+        if mangled not in old_elf_names:
+            continue
+
+        # Must NOT be present in new ELF (symbol disappeared)
+        if mangled in new_elf_names:
+            continue
+
+        # Must still be declared in new snapshot (not simply FUNC_REMOVED)
+        f_new = new_func_map.get(mangled)
+        if f_new is None:
+            continue  # Already caught by FUNC_REMOVED — don't double-report
+
+        # Skip if already explicitly marked deleted (FUNC_DELETED handles it)
+        if f_new.is_deleted:
+            continue
+
+        # Skip if became inline (FUNC_BECAME_INLINE handles it)
+        if not f_old.is_inline and f_new.is_inline:
+            continue
+
+        # Skip if function moved to hidden visibility — FUNC_VISIBILITY_CHANGED handles it
+        if getattr(f_new, "visibility", None) == Visibility.HIDDEN:
+            continue
+
+        # Symbol disappeared from ELF without explicit annotation — likely deleted
+        changes.append(Change(
+            kind=ChangeKind.FUNC_DELETED_ELF_FALLBACK,
+            symbol=mangled,
+            description=(
+                f"Symbol disappeared from ELF .dynsym without explicit deletion marker: "
+                f"{f_old.name} — was exported in old library, absent in new library's "
+                f"dynamic symbol table while header still declares it"
+            ),
+            old_value="exported",
+            new_value="absent_from_dynsym",
+        ))
+
+    return changes
+
+
+# ── PR #89: Template inner-type deep analysis (issues #38 / #73) ─────────────
+
+def _extract_template_args(type_str: str) -> list[str] | None:
+    """Extract template argument string(s) from a type like ``vector<int>``.
+
+    Returns a list of top-level template arguments (splitting on ``,`` while
+    respecting nested ``<>``), or ``None`` if the type is not a template.
+
+    Examples::
+
+        "std::vector<int>"         → ["int"]
+        "std::map<int, double>"    → ["int", "double"]
+        "Foo<Bar<int>, double>"    → ["Bar<int>", "double"]
+        "int"                      → None
+        "std::vector<>"            → []
+    """
+    lt = type_str.find("<")
+    if lt == -1:
+        return None
+    # Find the matching closing >
+    depth = 0
+    for i, ch in enumerate(type_str[lt:], start=lt):
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth -= 1
+            if depth == 0:
+                inner = type_str[lt + 1 : i].strip()
+                if not inner:
+                    return []
+                # Split on top-level commas, respecting all nested delimiters.
+                # Tracks angle brackets AND parentheses so that types like
+                # ``std::function<void(int, double)>`` are not split incorrectly.
+                args: list[str] = []
+                current: list[str] = []
+                angle_nest = paren_nest = bracket_nest = brace_nest = 0
+                for c in inner:
+                    if c == "<":
+                        angle_nest += 1
+                        current.append(c)
+                    elif c == ">":
+                        angle_nest -= 1
+                        current.append(c)
+                    elif c == "(":
+                        paren_nest += 1
+                        current.append(c)
+                    elif c == ")":
+                        paren_nest -= 1
+                        current.append(c)
+                    elif c == "[":
+                        bracket_nest += 1
+                        current.append(c)
+                    elif c == "]":
+                        bracket_nest -= 1
+                        current.append(c)
+                    elif c == "{":
+                        brace_nest += 1
+                        current.append(c)
+                    elif c == "}":
+                        brace_nest -= 1
+                        current.append(c)
+                    elif (
+                        c == ","
+                        and angle_nest == 0
+                        and paren_nest == 0
+                        and bracket_nest == 0
+                        and brace_nest == 0
+                    ):
+                        args.append("".join(current).strip())
+                        current = []
+                    else:
+                        current.append(c)
+                if current:
+                    args.append("".join(current).strip())
+                return args
+    return None  # unbalanced brackets — skip
+
+
+def _template_outer(type_str: str) -> str:
+    """Return the outer template name, e.g. ``std::vector`` from ``std::vector<int>``."""
+    lt = type_str.find("<")
+    return type_str[:lt].rstrip() if lt != -1 else type_str
+
+
+def _diff_template_inner_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect ABI-relevant template inner-type changes in function signatures.
+
+    Compares param types and return types for functions present in both snapshots.
+    When both old and new have a template specialization (e.g. ``std::vector<T>``)
+    with the *same outer template name* but *different type arguments*, this is an
+    ABI break: the instantiation's layout, size, and ABI fingerprint all differ.
+
+    This detector fires in addition to FUNC_PARAMS_CHANGED / FUNC_RETURN_CHANGED
+    to provide a more specific, actionable description of the inner-type change.
+
+    Example::
+
+        void process(std::vector<int> v)   →   void process(std::vector<double> v)
+        # → TEMPLATE_PARAM_TYPE_CHANGED: "std::vector" inner type int → double
+
+    NOTE on mangling: Under the Itanium C++ ABI, parameter types ARE included in the
+    mangled symbol name, so a real ``std::vector<int>`` → ``std::vector<double>`` param
+    change produces different mangled names (FUNC_REMOVED + FUNC_ADDED, not an intersection
+    hit). This detector therefore only fires for:
+      1. Return type template changes (return type is NOT in Itanium mangling for
+         non-template functions, so the mangled name stays the same).
+      2. Cases where the snapshot was produced with simplified/un-mangled names (e.g.
+         from header-only analysis without a compiled .so).
+    For production ELF-based snapshots, FUNC_PARAMS_CHANGED is the primary signal.
+    """
+    changes: list[Change] = []
+    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
+    old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
+    new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+
+    for mangled in set(old_map) & set(new_map):
+        f_old = old_map[mangled]
+        f_new = new_map[mangled]
+
+        # --- Return type template inner change ---
+        old_ret_args = _extract_template_args(f_old.return_type)
+        new_ret_args = _extract_template_args(f_new.return_type)
+        if (
+            old_ret_args is not None
+            and new_ret_args is not None
+            and old_ret_args != new_ret_args
+            and _template_outer(f_old.return_type) == _template_outer(f_new.return_type)
+        ):
+            changes.append(Change(
+                kind=ChangeKind.TEMPLATE_RETURN_TYPE_CHANGED,
+                symbol=mangled,
+                description=(
+                    f"Template return type inner argument changed: {f_old.name} "
+                    f"({f_old.return_type} → {f_new.return_type})"
+                ),
+                old_value=f_old.return_type,
+                new_value=f_new.return_type,
+            ))
+
+        # --- Param template inner change ---
+        for i, (p_old, p_new) in enumerate(zip(f_old.params, f_new.params)):
+            old_args = _extract_template_args(p_old.type)
+            new_args = _extract_template_args(p_new.type)
+            if (
+                old_args is not None
+                and new_args is not None
+                and old_args != new_args
+                and _template_outer(p_old.type) == _template_outer(p_new.type)
+            ):
+                param_label = p_old.name or str(i)
+                changes.append(Change(
+                    kind=ChangeKind.TEMPLATE_PARAM_TYPE_CHANGED,
+                    symbol=mangled,
+                    description=(
+                        f"Template parameter inner type changed: {f_old.name} "
+                        f"param {param_label} ({p_old.type} → {p_new.type})"
+                    ),
+                    old_value=p_old.type,
+                    new_value=p_new.type,
+                ))
+
+    return changes
