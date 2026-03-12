@@ -64,11 +64,12 @@ class TestSuppressionEngine:
         assert engine is not None
 
     def test_scope_fields_fail_at_load(self) -> None:
+        # Phase 3: platform is now implemented, profile still fails
         with pytest.raises(ValueError, match="not yet implemented"):
             SuppressionEngine([
                 SuppressionRule(
                     entity_glob="foo*",
-                    scope=SuppressionScope(platform="elf"),
+                    scope=SuppressionScope(profile="c"),
                 ),
             ])
 

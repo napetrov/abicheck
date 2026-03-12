@@ -132,6 +132,11 @@ class AbiSnapshot:
     constants: dict[str, str] = field(default_factory=dict)  # #define / constexpr name -> value string
     elf_only_mode: bool = False  # True when dumped without headers (all functions are ELF_ONLY provenance)
 
+    # Phase 3: binary format platform — detected from ELF/PE/MachO metadata.
+    # None = unknown / not yet detected.
+    # Populated by detect_platform() in pipeline or by the dumper.
+    platform: str | None = None   # "elf" | "pe" | "macho" | None
+
     # Indexes (built lazily)
     _func_by_mangled: dict[str, Function] | None = field(default=None, repr=False, compare=False)
     _var_by_mangled: dict[str, Variable] | None = field(default=None, repr=False, compare=False)
