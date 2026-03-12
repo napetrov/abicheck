@@ -38,6 +38,15 @@ class ChangeKind(str, Enum):
     SOURCE_API_ONLY = "source_api_only"
 
 
+class EntityType(str, Enum):
+    """Type of entity involved in a change."""
+
+    FUNCTION = "function"
+    VARIABLE = "variable"
+    TYPE = "type"
+    FIELD = "field"
+
+
 @dataclass(slots=True)
 class SourceLocation:
     """File + line reference from DWARF or castxml."""
@@ -81,7 +90,7 @@ class Change:
     """
 
     change_kind: ChangeKind
-    entity_type: str
+    entity_type: EntityType
     entity_name: str
     before: EntitySnapshot
     after: EntitySnapshot

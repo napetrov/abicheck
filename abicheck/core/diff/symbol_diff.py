@@ -18,6 +18,7 @@ from abicheck.core.model import (
     ChangeKind,
     ChangeSeverity,
     EntitySnapshot,
+    EntityType,
     Origin,
 )
 from abicheck.model import Function, Variable, Visibility
@@ -82,7 +83,7 @@ def _diff_functions(
         f = before_pub[mangled]
         changes.append(Change(
             change_kind=ChangeKind.SYMBOL,
-            entity_type="function",
+            entity_type=EntityType.FUNCTION,
             entity_name=f.name,
             before=_func_snapshot(f),
             after=EntitySnapshot(entity_repr="<removed>"),
@@ -96,7 +97,7 @@ def _diff_functions(
         f = after_pub[mangled]
         changes.append(Change(
             change_kind=ChangeKind.SYMBOL,
-            entity_type="function",
+            entity_type=EntityType.FUNCTION,
             entity_name=f.name,
             before=EntitySnapshot(entity_repr="<absent>"),
             after=_func_snapshot(f),
@@ -128,7 +129,7 @@ def _diff_function_pair(f_old: Function, f_new: Function) -> list[Change]:
     if f_old.return_type != f_new.return_type:
         changes.append(Change(
             change_kind=ChangeKind.SYMBOL,
-            entity_type="function",
+            entity_type=EntityType.FUNCTION,
             entity_name=f_old.name,
             before=snap_old,
             after=snap_new,
@@ -144,7 +145,7 @@ def _diff_function_pair(f_old: Function, f_new: Function) -> list[Change]:
     ):
         changes.append(Change(
             change_kind=ChangeKind.SYMBOL,
-            entity_type="function",
+            entity_type=EntityType.FUNCTION,
             entity_name=f_old.name,
             before=snap_old,
             after=snap_new,
@@ -157,7 +158,7 @@ def _diff_function_pair(f_old: Function, f_new: Function) -> list[Change]:
     if f_old.is_noexcept and not f_new.is_noexcept:
         changes.append(Change(
             change_kind=ChangeKind.SYMBOL,
-            entity_type="function",
+            entity_type=EntityType.FUNCTION,
             entity_name=f_old.name,
             before=snap_old,
             after=snap_new,
@@ -192,7 +193,7 @@ def _diff_variables(
         v = before_pub[mangled]
         changes.append(Change(
             change_kind=ChangeKind.SYMBOL,
-            entity_type="variable",
+            entity_type=EntityType.VARIABLE,
             entity_name=v.name,
             before=_var_snapshot(v),
             after=EntitySnapshot(entity_repr="<removed>"),
@@ -205,7 +206,7 @@ def _diff_variables(
         v = after_pub[mangled]
         changes.append(Change(
             change_kind=ChangeKind.SYMBOL,
-            entity_type="variable",
+            entity_type=EntityType.VARIABLE,
             entity_name=v.name,
             before=EntitySnapshot(entity_repr="<absent>"),
             after=_var_snapshot(v),
@@ -220,7 +221,7 @@ def _diff_variables(
         if v_old.type != v_new.type:
             changes.append(Change(
                 change_kind=ChangeKind.SYMBOL,
-                entity_type="variable",
+                entity_type=EntityType.VARIABLE,
                 entity_name=v_old.name,
                 before=_var_snapshot(v_old),
                 after=_var_snapshot(v_new),

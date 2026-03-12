@@ -14,6 +14,7 @@ dependencies = [
     "defusedxml>=0.7.1",
     "pyelftools>=0.29",   # ELF/DWARF parsing — Sprint 2+ (ADR-001)
     "google-re2>=1.1",    # RE2 suppression engine — Phase 2 (O(N) guaranteed)
+    "packaging>=21.0",    # Version comparison for suppression version_range (Phase 2b)
 ]
 
 [project.scripts]

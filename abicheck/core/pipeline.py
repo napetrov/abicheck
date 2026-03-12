@@ -38,6 +38,8 @@ def analyse(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     Returns raw Changes (no suppression, no policy verdict), sorted
     deterministically by (entity_type, entity_name, change_kind).
     """
+    if old is None or new is None:
+        raise TypeError("AbiSnapshot cannot be None")
     norm_old = _normalizer.normalize(old)
     norm_new = _normalizer.normalize(new)
 
