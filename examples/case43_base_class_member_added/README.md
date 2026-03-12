@@ -21,7 +21,7 @@ abicheck detects: `TYPE_SIZE_CHANGED` on `Base`, `TYPE_FIELD_OFFSET_CHANGED` on 
 |--------|--------|
 | `class Base { int base_id; ... };` | `class Base { int base_id; int extra_field; ... };` |
 | `class Derived : public Base { int value; };` | `class Derived : public Base { int value; };` |
-| `sizeof(Derived)` ≈ 20 bytes | `sizeof(Derived)` ≈ 24 bytes — `value` shifts by 4 |
+| `sizeof(Derived)=16`, `Derived::value` @ offset 12 | `sizeof(Derived)=24`, `Derived::value` shifts to offset 16 (+4 bytes) |
 
 ## Real Failure Demo
 
