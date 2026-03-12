@@ -68,7 +68,7 @@ class TestFuncDeletedElfFallbackPolicy:
         assert ChangeKind.FUNC_DELETED_ELF_FALLBACK.value == "func_deleted_elf_fallback"
 
     def test_in_breaking_kinds(self) -> None:
-        """FUNC_DELETED_ELF_FALLBACK must be a binary ABI break."""
+        """FUNC_DELETED_ELF_FALLBACK must be classified as API_BREAK (heuristic, 0.75 confidence)."""
         assert ChangeKind.FUNC_DELETED_ELF_FALLBACK in API_BREAK_KINDS
 
 
@@ -282,6 +282,15 @@ class TestTemplatePolicyKinds:
 
 
 class TestTemplateParamTypeChanged:
+    """Tests for TEMPLATE_PARAM_TYPE_CHANGED detection.
+
+    NOTE: Under the Itanium C++ ABI, parameter types are encoded in the mangled
+    symbol name. A real std::vector<int> → std::vector<double> param change produces
+    different mangled names (FUNC_REMOVED + FUNC_ADDED). These tests simulate
+    header-only / simplified snapshot mode by reusing the same mangled name for
+    old and new, which is the documented use case #2 for this detector.
+    For ELF-based snapshots, FUNC_PARAMS_CHANGED is the primary signal.
+    """
     """Positive tests: template param inner type change is detected."""
 
     def _make_func_with_vec_param(
@@ -591,6 +600,14 @@ class TestSchemaVersionBaseline:
         )
         # Data should still load (best-effort)
         assert result.library == snap.library
+
+
+    def test_not_in_breaking_kinds(self) -> None:
+        """FUNC_DELETED_ELF_FALLBACK must NOT be in BREAKING_KINDS (it is a heuristic)."""
+        assert ChangeKind.FUNC_DELETED_ELF_FALLBACK not in BREAKING_KINDS, (
+            "FUNC_DELETED_ELF_FALLBACK is a 0.75-confidence heuristic and must "
+            "not produce Verdict.BREAKING — it lives in API_BREAK_KINDS"
+        )
 
     def test_elf_fallback_hidden_symbol_not_double_reported(self) -> None:
         """FUNC_DELETED_ELF_FALLBACK must not fire for symbols that moved to HIDDEN visibility."""
