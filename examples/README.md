@@ -33,7 +33,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 > Authoritative expected verdicts for benchmarking are in [`ground_truth.json`](ground_truth.json).
 > If a per-case README and benchmark expectation differ, treat [`ground_truth.json`](ground_truth.json) as source of truth.
 
-**48 cases total** — 34 BREAKING 🔴 | 10 COMPATIBLE 🟢 | 2 NO_CHANGE ✅ | 2 API_BREAK 🟠
+**48 published cases** (case 42 reserved) — 34 BREAKING 🔴 | 10 COMPATIBLE 🟢 | 2 NO_CHANGE ✅ | 2 API_BREAK 🟠
 
 | # | Case | Category | abicheck verdict |
 |---|------|----------|-----------------|

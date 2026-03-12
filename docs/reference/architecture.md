@@ -271,7 +271,7 @@ of `SuppressionRule` objects compiled at load time.
 | `entity_glob` | `str \| None` | `None` | Shell-style glob matched against the entity name (`std::*`, `*detail*`) |
 | `entity_regex` | `str \| None` | `None` | RE2 regex; if both glob and regex are set, **both must match** (AND semantics) |
 | `change_kind` | `str \| None` | `None` | `ChangeKind` value string (e.g. `"func_removed"`); `None` = any kind |
-| `scope` | `SuppressionScope` | `SuppressionScope()` | Platform/profile/version filters — parsed but not yet enforced; raises `ValueError` if set |
+| `scope` | `SuppressionScope` | `SuppressionScope()` | Platform/profile/version filters — **setting any sub-field currently raises `ValueError`** (not yet implemented; field is reserved for future use) |
 | `reason` | `str` | `""` | Human-readable justification (appears in report audit trail) |
 
 ### SuppressionEngine (`abicheck/core/suppressions/engine.py`)
@@ -284,7 +284,7 @@ of `SuppressionRule` objects compiled at load time.
 ### CLI suppression (YAML)
 
 The CLI (`abicheck compare` / `abicheck compat`) uses the YAML-based engine in
-`abicheck/suppression.py`. Rule fields: `symbol`, `symbol_pattern`, `type_pattern`, `reason`.
+`abicheck/suppression.py`. Rule fields: `symbol`, `symbol_pattern`, `type_pattern`, `change_kind`, `reason`.
 See `examples/suppression_example.yaml` for a runnable example.
 
 ### Python API
