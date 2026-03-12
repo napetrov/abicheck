@@ -273,96 +273,128 @@ Do you have ABICC XML descriptors already?
 ## Suppression Engine (Phase 2)
 
 The suppression engine (introduced in Phase 2) allows intentional ABI changes to be
-acknowledged and filtered out of reports without masking unrelated breakage. It is
-implemented in `abicheck/suppression.py` and integrated into the `analyse_full()`
-pipeline.
+acknowledged and filtered out of reports without masking unrelated breakage.
 
-### SuppressionRule model
+> **Two engines co-exist in this codebase:**
+> - `abicheck/suppression.py` — legacy file-based engine used by the current CLI
+>   (`abicheck compare` / `abicheck compat`); uses stdlib `re`; fields: `symbol`,
+>   `symbol_pattern`, `type_pattern`.
+> - `abicheck/core/suppressions/` — **new Phase 2 engine** (`SuppressionEngine` +
+>   `SuppressionRule`); uses RE2 (O(N) guaranteed); integrated via `analyse_full()`.
+>   The CLI migration to this engine is planned for Phase 3.
+>
+> This section documents the **new Phase 2 engine**.
 
-Each rule in a YAML suppression file corresponds to one `SuppressionRule` object:
+### SuppressionRule model (`abicheck/core/suppressions/rule.py`)
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `entity_glob` | str (optional) | Glob pattern matched against the mangled or demangled symbol/type name |
-| `entity_regex` | str (optional) | RE2-compatible regex matched against the mangled or demangled symbol/type name (takes precedence over `entity_glob`) |
-| `change_kind` | str (optional) | Specific `ChangeKind` to suppress (e.g. `func_removed`); omit to suppress all change kinds for the matched entity |
-| `scope` | str (optional) | Limit suppression to a sub-component or module path |
-| `reason` | str (required) | Human-readable justification recorded in the report |
+Each `SuppressionRule` is a Python dataclass with the following fields:
 
-Example (from `examples/suppression_example.yaml`):
-```yaml
-version: 1
-suppressions:
-  - symbol: "_ZN3foo6Client10disconnectEv"
-    change_kind: "func_removed"
-    reason: "Client::disconnect() was deprecated in v1.8 and removed in v2.0"
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `entity_glob` | `str \| None` | `None` | Shell-style glob (`std::*`) matched against the entity name |
+| `entity_regex` | `str \| None` | `None` | RE2 regex for complex patterns; if both `entity_glob` and `entity_regex` are set, **both must match** (AND semantics) |
+| `change_kind` | `str \| None` | `None` | `ChangeKind.value` string (e.g. `"func_removed"`); `None` matches any kind |
+| `scope` | `SuppressionScope` | `SuppressionScope()` | Platform/profile/version_range filters — **not yet enforced** (Phase 2b+); raises `ValueError` if set |
+| `reason` | `str` | `""` | Human-readable justification for audit trail |
 
-  - symbol_pattern: ".*N6detail.*"
-    reason: "detail:: namespace is internal implementation — not part of public ABI"
+Example using the Phase 2 Python API:
+```python
+from abicheck.core.suppressions import SuppressionEngine, SuppressionRule
+
+rules = [
+    # Suppress all changes in internal detail namespaces (glob)
+    SuppressionRule(
+        entity_glob="*detail*",
+        reason="detail:: is internal — not part of public ABI",
+    ),
+    # Suppress a specific symbol+kind (exact regex + change kind)
+    SuppressionRule(
+        entity_regex=r"_ZN3foo6Client10disconnectEv",
+        change_kind="func_removed",
+        reason="Client::disconnect() deprecated in v1.8, removed in v2.0",
+    ),
+]
 ```
 
-### SuppressionEngine
+> The YAML file format in `examples/suppression_example.yaml` uses the legacy
+> `abicheck/suppression.py` fields (`symbol`, `symbol_pattern`) and is for the CLI.
+> A Phase 2 YAML format is planned.
 
-`SuppressionEngine` compiles all regex patterns at load time using RE2-compatible
-semantics, giving **O(N)** matching cost per change (N = number of rules):
+### SuppressionEngine (`abicheck/core/suppressions/engine.py`)
 
-- Patterns are compiled once during `SuppressionEngine.__init__()`.
-- Matching is **first-match wins**: the first rule whose `entity_regex`/`entity_glob`
-  and optional `change_kind` match a `Change` object suppresses it.
-- Suppressed changes are removed from the `DiffResult.changes` list before policy
-  evaluation; they are preserved in `DiffResult.suppressed` for auditability.
-- A suppression reason string is attached to each suppressed entry in the report.
+`SuppressionEngine` compiles all patterns at load time using **google-re2**,
+giving guaranteed **O(N)** matching cost per change (N = number of rules):
 
-### Policy profiles
+- All glob and regex patterns are compiled in `SuppressionEngine.__init__()` — never inside the match loop.
+- Matching is **first-match wins**: the first rule whose patterns and optional `change_kind` all match a `Change` suppresses it.
+- Matched changes get `severity = ChangeSeverity.SUPPRESSED` and are collected in `SuppressionResult.suppressed`.
+- The audit trail is in `SuppressionResult.match_map`: `(entity_type, entity_name, change_kind.value) → SuppressionRule`.
 
-Phase 2 ships three built-in policy profiles that adjust which `ChangeKind` values
-are treated as BREAKING:
+### Policy profiles (`abicheck/core/policy/`)
 
-| Profile | Description | Promoted to BREAKING |
-|---------|-------------|---------------------|
-| `strict_abi` | Strictest — treats all changes as breaking. Suitable for system libraries and OS distributions. | All COMPATIBLE changes promoted |
-| `sdk_vendor` | Default — standard BREAKING + API_BREAK set. Suitable for SDK/vendor libraries. | Standard set (53 kinds) |
-| `plugin_abi` | Relaxed — only hard binary breaks. Suitable for plugin ABIs where some layout growth is tolerated. | Subset (symbol removal, vtable reorder, incompatible type changes) |
+Phase 2 ships three built-in policy profiles:
 
-Select a profile via `--policy <profile>` in `abicheck compare` or `abicheck compat`.
+| Profile | Class | Behaviour |
+|---------|-------|-----------|
+| `strict_abi` | `StrictAbiPolicy` | `BREAK → BLOCK`, `REVIEW_NEEDED → WARN`. Zero-tolerance; for system libraries and OS distributions. |
+| `sdk_vendor` | `SdkVendorPolicy` | Same as `strict_abi` currently (Phase 3 will differentiate). For SDK/vendor libraries. |
+| `plugin_abi` | `PluginAbiPolicy` | `BREAK → WARN` only (no BLOCK); for plugin ABIs where some ABI growth is tolerated. |
 
-### `analyse_full()` pipeline
+> **CLI integration:** Policy profiles are currently available via the Python API only
+> (`analyse_full(policy=...)`). A `--policy` CLI flag is planned for Phase 3.
 
-The complete analysis pipeline, including suppression and policy, follows this order:
+### `analyse_full()` pipeline (`abicheck/core/pipeline.py`)
+
+The complete Phase 2 analysis pipeline:
 
 ```text
-  libfoo_v1.so + headers
-  libfoo_v2.so + headers
+  AbiSnapshot (v1)  +  AbiSnapshot (v2)
           │
           ▼
-   abicheck dump × 2   →   v1.json, v2.json
+   Normalizer.normalize()    →   NormalizedSnapshot × 2
           │
           ▼
-   checker.py           →   raw DiffResult { verdict, changes: [Change] }
+   diff_symbols()            →   list[Change]
+   diff_type_layouts()           (sorted by entity_type, entity_name, change_kind)
           │
           ▼
-   SuppressionEngine     →   partitions changes into kept + suppressed
-   .apply(rules, diff)       suppressed entries carry .reason from the rule
+   SuppressionEngine         →   SuppressionResult {
+   .apply(changes)                 active:   list[Change]   (not suppressed)
+                                   suppressed: list[Change] (severity=SUPPRESSED)
+                                   match_map: audit trail
+                               }
           │
           ▼
-   checker_policy        →   re-evaluates verdict on kept changes only
-   .compute_verdict()        using the selected policy profile
+   sorted(active + suppressed)   (restores original deterministic order)
           │
           ▼
-   PolicyResult {
-     verdict,            ← worst ChangeKind of kept changes under profile
-     changes,            ← kept (non-suppressed) Change list
-     suppressed,         ← suppressed Change list (audit trail)
-     policy_profile,     ← name of the profile used
-   }
+   PolicyProfile.apply()     →   PolicyResult {
+                                   annotated_changes: list[AnnotatedChange]
+                                   summary: PolicySummary {
+                                     verdict,            ← PASS/WARN/BLOCK
+                                     incompatible_count,
+                                     suppressed_count,
+                                     review_needed_count,
+                                   }
+                               }
           │
           ▼
-   reporter / sarif / html / xml
-   (suppressed section included in reports with "suppressed by: <reason>")
+   reporter / sarif / html / json
 ```
 
-See `examples/suppression_example.yaml` for a runnable suppression file and
-`abicheck/core/suppressions/` for the implementation.
+Usage:
+```python
+from abicheck.core.pipeline import analyse_full
+from abicheck.core.suppressions import SuppressionRule
+
+result = analyse_full(snap_v1, snap_v2,
+                      rules=[SuppressionRule(entity_glob="*detail*", reason="internal")],
+                      policy="strict_abi")
+print(result.summary.verdict)        # PolicyVerdict.PASS / WARN / BLOCK
+print(result.summary.suppressed_count)
+```
+
+See `abicheck/core/suppressions/` for the implementation.
 
 ---
 

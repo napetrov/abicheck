@@ -79,6 +79,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [39](case39_var_const/README.md) | Var Const | Breaking | BREAKING 🔴 |
 | [40](case40_field_layout/README.md) | Field Layout | Breaking | BREAKING 🔴 |
 | [41](case41_type_changes/README.md) | Type Changes | Breaking | BREAKING 🔴 |
+| *(42 — reserved, not yet published)* | — | — | — |
 | [43](case43_base_class_member_added/README.md) | Base Class Member Added | C++ Layout | BREAKING 🔴 |
 | [44](case44_cyclic_type_member_added/README.md) | Cyclic Type Member Added | Struct Layout | BREAKING 🔴 |
 | [45](case45_multi_dim_array_change/README.md) | Multi-Dim Array Element Type Change | Struct Layout | BREAKING 🔴 |
