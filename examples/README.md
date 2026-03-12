@@ -54,7 +54,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [15](case15_noexcept_change/README.md) | Noexcept Change | Breaking | BREAKING 🔴 |
 | [16](case16_inline_to_non_inline/README.md) | Inline To Non Inline | Compatible | COMPATIBLE 🟢 |
 | [17](case17_template_abi/README.md) | Template Abi | Breaking | BREAKING 🔴 |
-| [18](case18_dependency_leak/README.md) | Dependency Leak | ELF / Policy | COMPATIBLE 🟡 (bad practice) |
+| [18](case18_dependency_leak/README.md) | Dependency Leak | ELF / Policy | BREAKING 🔴 (bad practice) |
 | [19](case19_enum_member_removed/README.md) | Enum Member Removed | Breaking | BREAKING 🔴 |
 | [20](case20_enum_member_value_changed/README.md) | Enum Member Value Changed | Breaking | BREAKING 🔴 |
 | [21](case21_method_became_static/README.md) | Method Became Static | Breaking | BREAKING 🔴 |
