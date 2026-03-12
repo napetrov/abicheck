@@ -511,7 +511,7 @@ class _CastxmlParser:
         return fields
 
     def _expand_anonymous_field(
-        self, field_el: Any, _depth: int = 0
+        self, field_el: Any, _depth: int = 0, _outer_offset: int = 0
     ) -> list[TypeField]:
         """Flatten anonymous struct/union field into the parent's field list.
 
@@ -522,6 +522,8 @@ class _CastxmlParser:
         anonymous union (issue #58).
 
         ``_depth`` guards against malformed/cyclic XML (max nesting: 16).
+        ``_outer_offset`` carries the accumulated offset from outer anonymous
+        members so doubly-nested fields get correct absolute ``offset_bits``.
         """
         if _depth > 16:
             return []
@@ -530,7 +532,7 @@ class _CastxmlParser:
         if type_el is None or type_el.tag not in ("Union", "Struct"):
             return []
 
-        parent_offset = self._optional_int_attr(field_el, "offset") or 0
+        this_offset = _outer_offset + (self._optional_int_attr(field_el, "offset") or 0)
         result: list[TypeField] = []
 
         # Collect inner Field elements (inline children or members attribute)
@@ -544,15 +546,17 @@ class _CastxmlParser:
         for inner in inner_fields:
             inner_name = inner.get("name", "")
             if not inner_name:
-                # Doubly-nested anonymous member — recurse
-                result.extend(self._expand_anonymous_field(inner, _depth + 1))
+                # Doubly-nested anonymous member — recurse, passing accumulated offset
+                result.extend(self._expand_anonymous_field(
+                    inner, _depth + 1, _outer_offset=this_offset,
+                ))
                 continue
             inner_offset = self._optional_int_attr(inner, "offset") or 0
             bitfield_bits, is_bitfield = self._parse_bitfield_bits(inner.get("bits"))
             result.append(TypeField(
                 name=inner_name,
                 type=self._type_name(inner.get("type", "")),
-                offset_bits=parent_offset + inner_offset,
+                offset_bits=this_offset + inner_offset,
                 is_bitfield=is_bitfield,
                 bitfield_bits=bitfield_bits,
                 access=self._access_level(inner),

@@ -1762,16 +1762,32 @@ def _diff_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 
 def _normalize_type_name(name: str) -> str:
-    """Strip 'struct '/'class '/'union ' prefixes for stable DWARF↔castxml comparison.
+    """Normalize a C/C++ type name for stable DWARF↔castxml comparison.
 
-    DWARF parsers historically prefix the tag keyword to type names
-    (e.g. "struct Foo"), while castxml returns bare names ("Foo").
-    Normalizing before comparison prevents false STRUCT_FIELD_TYPE_CHANGED.
+    Strips leading/trailing whitespace, CV-qualifiers, pointer/reference
+    decorations, and 'struct'/'class'/'union' tag keywords so that semantically
+    equivalent names compare equal regardless of DWARF vs castxml source:
+
+    Examples::
+
+        "struct Foo"     → "Foo"
+        "const struct Foo *" → "Foo"
+        "class Bar &"    → "Bar"
+        "union U"        → "U"
+        "int"            → "int"   (unchanged)
+
+    Note: this normalizer is intentionally lossy for comparison purposes only.
+    The original type names are still preserved in Change.old_value/new_value.
     """
-    for prefix in ("struct ", "class ", "union "):
-        if name.startswith(prefix):
-            return name[len(prefix):]
-    return name
+    import re as _re
+    s = name.strip()
+    # Remove trailing pointer/reference decorators and CV-qualifiers
+    s = _re.sub(r"[\s*&]+$", "", s).strip()
+    # Remove leading CV-qualifiers
+    s = _re.sub(r"^(const|volatile)(\s+(const|volatile))?\s+", "", s).strip()
+    # Remove struct/class/union tag keyword
+    s = _re.sub(r"^(struct|class|union)\s+", "", s).strip()
+    return s
 
 
 def _diff_struct_layouts(o: object, n: object) -> list[Change]:

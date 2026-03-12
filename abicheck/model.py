@@ -177,7 +177,12 @@ class AbiSnapshot:
 
         type_map: dict[str, RecordType] = {}
         for t in self.types:
-            if t.name not in type_map:
+            if t.name in type_map:
+                _model_log.warning(
+                    "Duplicate type name skipped (first-wins): %s in %s@%s",
+                    t.name, self.library, self.version,
+                )
+            else:
                 type_map[t.name] = t
         self._type_by_name = type_map
 
