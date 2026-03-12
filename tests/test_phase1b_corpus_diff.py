@@ -1,17 +1,16 @@
 from __future__ import annotations
 
+from abicheck.core.corpus import CorpusBuilder, Normalizer
+from abicheck.core.diff import diff_symbols, diff_type_layouts
+from abicheck.core.model import ChangeKind, ChangeSeverity
 from abicheck.model import (
     AbiSnapshot,
     Function,
-    Param,
     RecordType,
     TypeField,
     Variable,
     Visibility,
 )
-from abicheck.core.corpus import CorpusBuilder, Normalizer
-from abicheck.core.diff import diff_symbols, diff_type_layouts
-from abicheck.core.model import ChangeKind, ChangeSeverity
 
 
 def _snap(
@@ -55,14 +54,13 @@ class TestNormalizer:
 
     def test_intern_strings_identity(self) -> None:
         normalizer = Normalizer()
+        # Two functions sharing the same return_type string value
         f1 = Function(name="foo", mangled="_Z3foov", return_type="int")
-        f2 = Function(name="foo", mangled="_Z3foov", return_type="int")
+        f2 = Function(name="bar", mangled="_Z3barv", return_type="int")
 
         n = normalizer.normalize(_snap(funcs=[f1, f2]))
-        only = n.functions[0]
-        # interned strings should be stable and identical by identity
-        assert only.name is only.name
-        assert only.mangled is only.mangled
+        # After interning, same-value strings should be identical by identity
+        assert n.functions[0].return_type is n.functions[1].return_type
 
 
 class TestCorpusBuilder:

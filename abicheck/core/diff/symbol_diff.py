@@ -12,7 +12,6 @@ Pipeline position: corpus → **diff** → suppress → policy
 """
 from __future__ import annotations
 
-from abicheck.model import Function, Variable, Visibility
 from abicheck.core.corpus.normalizer import NormalizedSnapshot
 from abicheck.core.model import (
     Change,
@@ -21,6 +20,7 @@ from abicheck.core.model import (
     EntitySnapshot,
     Origin,
 )
+from abicheck.model import Function, Variable, Visibility
 
 
 def _func_snapshot(f: Function) -> EntitySnapshot:
@@ -116,6 +116,10 @@ def _diff_functions(
 
 
 def _diff_function_pair(f_old: Function, f_new: Function) -> list[Change]:
+    """Detect all changes for a single function present in both snapshots.
+
+    Reports each change type independently (return type, params, noexcept).
+    """
     changes: list[Change] = []
     snap_old = _func_snapshot(f_old)
     snap_new = _func_snapshot(f_new)
@@ -133,8 +137,8 @@ def _diff_function_pair(f_old: Function, f_new: Function) -> list[Change]:
             confidence=0.9,
         ))
 
-    # Parameter count / type change
-    elif len(f_old.params) != len(f_new.params) or any(
+    # Parameter count / type change (independent of return type)
+    if len(f_old.params) != len(f_new.params) or any(
         p_old.type != p_new.type
         for p_old, p_new in zip(f_old.params, f_new.params)
     ):
@@ -150,7 +154,7 @@ def _diff_function_pair(f_old: Function, f_new: Function) -> list[Change]:
         ))
 
     # noexcept removed → breaking (callers may not catch exceptions)
-    elif f_old.is_noexcept and not f_new.is_noexcept:
+    if f_old.is_noexcept and not f_new.is_noexcept:
         changes.append(Change(
             change_kind=ChangeKind.SYMBOL,
             entity_type="function",

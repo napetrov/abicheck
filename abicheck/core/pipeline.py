@@ -1,12 +1,11 @@
 """core/pipeline.py — Phase 1c end-to-end adapter.
 
-Wires the v0.2 components (Normalizer → CorpusBuilder → DiffEngine)
-into a single callable that accepts two AbiSnapshot objects and returns
-a list of v0.2 Change objects.
+Wires the v0.2 components (Normalizer → diff engines) into a single
+callable that accepts two AbiSnapshot objects and returns a list of
+v0.2 Change objects.
 
 This is the integration layer — it does NOT replace the existing
-`abicheck.checker.compare()`. Both coexist until Phase 1c deletion
-(after CI is green for a full cycle).
+``abicheck.checker.compare()``. Both coexist until Phase 2+ migration.
 
 Usage::
 
@@ -21,22 +20,18 @@ Pipeline::
 
     AbiSnapshot
         → Normalizer → NormalizedSnapshot
-        → CorpusBuilder → Corpus
         → diff_symbols + diff_type_layouts
         → list[Change]
 """
 from __future__ import annotations
 
-from abicheck.model import AbiSnapshot
 from abicheck.core.corpus.normalizer import Normalizer
-from abicheck.core.corpus.builder import CorpusBuilder
 from abicheck.core.diff.symbol_diff import diff_symbols
 from abicheck.core.diff.type_layout_diff import diff_type_layouts
 from abicheck.core.model import Change
-
+from abicheck.model import AbiSnapshot
 
 _normalizer = Normalizer()
-_builder = CorpusBuilder()
 
 
 def analyse(

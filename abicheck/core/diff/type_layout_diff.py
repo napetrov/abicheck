@@ -5,17 +5,12 @@ Two-phase diff for struct/class type layouts:
   Phase 2: Deep diff — only on types whose hash changed
 
 This prevents the O(N²) / unbounded graph traversal that naive type
-comparison would require for large C++ libraries (oneTBB scale:
-millions of type nodes, template instantiations).
+comparison would require for large C++ libraries.
 
 Pipeline position: corpus → **diff** → suppress → policy
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
-
-from abicheck.model import RecordType, TypeField
 from abicheck.core.corpus.normalizer import NormalizedSnapshot
 from abicheck.core.model import (
     Change,
@@ -24,7 +19,7 @@ from abicheck.core.model import (
     EntitySnapshot,
     Origin,
 )
-
+from abicheck.model import RecordType
 
 # ---------------------------------------------------------------------------
 # Structural hash (phase 1 filter)
@@ -100,14 +95,14 @@ def _diff_type_pair(t_old: RecordType, t_new: RecordType) -> list[Change]:
     # Field layout changes
     changes.extend(_diff_fields(t_old, t_new))
 
-    # Base class changes
-    if set(t_old.bases) != set(t_new.bases):
+    # Base class changes — compare as tuples to catch reordering
+    if tuple(t_old.bases) != tuple(t_new.bases):
         changes.append(Change(
             change_kind=ChangeKind.TYPE_LAYOUT,
             entity_type="type",
             entity_name=t_old.name,
-            before=EntitySnapshot(entity_repr=f"bases={t_old.bases}"),
-            after=EntitySnapshot(entity_repr=f"bases={t_new.bases}"),
+            before=EntitySnapshot(entity_repr=f"bases={list(t_old.bases)}"),
+            after=EntitySnapshot(entity_repr=f"bases={list(t_new.bases)}"),
             severity=ChangeSeverity.BREAK,
             origin=Origin.CASTXML,
             confidence=0.9,
@@ -140,9 +135,6 @@ def _diff_fields(t_old: RecordType, t_new: RecordType) -> list[Change]:
     old_fields = {f.name: f for f in t_old.fields}
     new_fields = {f.name: f for f in t_new.fields}
 
-    snap_old = _type_snapshot(t_old)
-    snap_new = _type_snapshot(t_new)
-
     # Removed fields
     for name in set(old_fields) - set(new_fields):
         changes.append(Change(
@@ -158,8 +150,6 @@ def _diff_fields(t_old: RecordType, t_new: RecordType) -> list[Change]:
 
     # Added fields
     for name in set(new_fields) - set(old_fields):
-        # Adding a field changes layout — breaking unless it's at the end
-        # and size already accounted for; conservative: always BREAK
         changes.append(Change(
             change_kind=ChangeKind.TYPE_LAYOUT,
             entity_type="field",
@@ -258,7 +248,6 @@ def diff_type_layouts(
         h_old = before_hashes[name]
         h_new = _type_structural_hash(t_new)
         if h_old != h_new:
-            # Phase 2: deep diff only for changed types
             changes.extend(_diff_type_pair(t_old, t_new))
 
     return changes

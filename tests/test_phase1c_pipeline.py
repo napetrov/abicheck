@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from abicheck.model import AbiSnapshot, Function, RecordType, TypeField, Variable, Visibility
-from abicheck.core.pipeline import analyse
 from abicheck.core.model import ChangeKind, ChangeSeverity
+from abicheck.core.pipeline import analyse
+from abicheck.model import AbiSnapshot, Function, RecordType, TypeField, Visibility
 
 REPO_ROOT = Path(__file__).parent.parent
 

@@ -6,7 +6,6 @@ Public surface:
 """
 from __future__ import annotations
 
-from .origin import Origin
 from .change import (
     Change,
     ChangeKind,
@@ -14,6 +13,7 @@ from .change import (
     EntitySnapshot,
     SourceLocation,
 )
+from .origin import Origin
 from .policy_result import (
     AnnotatedChange,
     PolicyResult,

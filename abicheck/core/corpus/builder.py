@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from abicheck.model import Function, RecordType, Variable, Visibility
+from abicheck.model import Function, RecordType, Visibility
 
 from .normalizer import NormalizedSnapshot
 

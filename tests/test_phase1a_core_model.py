@@ -16,7 +16,6 @@ from abicheck.core.model import (
     SourceLocation,
 )
 
-
 # ---------------------------------------------------------------------------
 # Origin
 # ---------------------------------------------------------------------------
@@ -55,10 +54,10 @@ class TestOrigin:
                 f"{a.name}.confidence ({a.confidence}) < {b.name}.confidence ({b.confidence})"
             )
 
-    def test_confidence_is_class_level_constant(self) -> None:
-        # Property should not rebuild a dict every call — same object each time
-        assert Origin.ELF.confidence == Origin.ELF.confidence  # trivially, but also:
-        assert Origin._CONFIDENCE is Origin._CONFIDENCE
+    def test_confidence_is_stable(self) -> None:
+        # Property returns the same value on repeated calls (no dict rebuild per call)
+        assert Origin.ELF.confidence == Origin.ELF.confidence
+        assert Origin.CASTXML.confidence == 1.0  # spot-check module constant
 
     def test_highest_returns_best(self) -> None:
         assert Origin.highest((Origin.ELF, Origin.DWARF, Origin.CASTXML)) == Origin.CASTXML
@@ -86,11 +85,16 @@ class TestSourceLocation:
         loc = SourceLocation(file="bar.h")
         assert str(loc) == "bar.h"
 
-    def test_str_drops_column(self) -> None:
-        """column is stored but intentionally omitted from __str__."""
+    def test_str_includes_column(self) -> None:
+        """column is included in __str__ when present alongside line."""
         loc = SourceLocation(file="foo.h", line=42, column=10)
-        assert str(loc) == "foo.h:42"
+        assert str(loc) == "foo.h:42:10"
         assert loc.column == 10  # accessible on instance
+
+    def test_str_line_only_no_column(self) -> None:
+        """column is omitted from __str__ when not set."""
+        loc = SourceLocation(file="foo.h", line=42)
+        assert str(loc) == "foo.h:42"
 
     def test_line_none_no_colon(self) -> None:
         loc = SourceLocation(file="foo.h", line=None, column=5)
@@ -167,6 +171,29 @@ class TestChange:
         assert "calling_convention" in kinds    # only with DWARF/castxml evidence
         assert "type_layout" in kinds
         assert "vtable_inheritance" in kinds
+
+    def test_calling_convention_requires_dwarf_or_castxml(self) -> None:
+        """CALLING_CONVENTION must not be emitted with binary-only evidence."""
+        with pytest.raises(ValueError, match="CALLING_CONVENTION requires DWARF or CASTXML"):
+            _make_change(
+                change_kind=ChangeKind.CALLING_CONVENTION,
+                origin=Origin.ELF,
+                corroborating=(),
+            )
+
+    def test_calling_convention_ok_with_dwarf(self) -> None:
+        c = _make_change(
+            change_kind=ChangeKind.CALLING_CONVENTION,
+            origin=Origin.DWARF,
+        )
+        assert c.change_kind == ChangeKind.CALLING_CONVENTION
+
+    def test_calling_convention_ok_with_castxml(self) -> None:
+        c = _make_change(
+            change_kind=ChangeKind.CALLING_CONVENTION,
+            origin=Origin.CASTXML,
+        )
+        assert c.change_kind == ChangeKind.CALLING_CONVENTION
 
 
 # ---------------------------------------------------------------------------
@@ -253,3 +280,17 @@ class TestPolicyResult:
         )
         assert result.summary.verdict == PolicyVerdict.ERROR
         assert result.summary.error_count == 1
+
+    def test_error_verdict_from_annotated(self) -> None:
+        """from_annotated: ERROR verdict when any annotated change has verdict ERROR."""
+        changes = [self._annotated(PolicyVerdict.ERROR, ChangeSeverity.REVIEW_NEEDED)]
+        result = PolicyResult.from_annotated(changes)
+        assert result.summary.verdict == PolicyVerdict.ERROR
+        assert result.summary.error_count == 1
+
+    def test_warn_verdict_derives_from_annotated_verdict(self) -> None:
+        """from_annotated: WARN is counted by AnnotatedChange.verdict, not change.severity."""
+        changes = [self._annotated(PolicyVerdict.WARN, ChangeSeverity.BREAK)]
+        result = PolicyResult.from_annotated(changes)
+        assert result.summary.verdict == PolicyVerdict.WARN
+        assert result.summary.review_needed_count == 1
