@@ -25,7 +25,6 @@ from __future__ import annotations
 
 from xml.etree.ElementTree import Element, SubElement
 
-import pytest
 
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.model import AbiSnapshot, RecordType, TypeField
@@ -76,7 +75,7 @@ class TestAnonUnionFalsePositive:
     def test_x_not_removed_when_anon_union_added(self) -> None:
         """Field 'x' must NOT be reported as removed when anon union is added."""
         result = compare(_snap_v1_plain_struct(), _snap_v2_anon_union_added())
-        kinds = {c.kind for c in result.changes}
+        _kinds = {c.kind for c in result.changes}  # noqa: F841
         # x is still at offset 0 → should NOT be removed
         removed_changes = [
             c for c in result.changes
@@ -90,7 +89,7 @@ class TestAnonUnionFalsePositive:
     def test_y_added_is_compatible(self) -> None:
         """Field 'y' (added at same offset, same struct size) → compatible addition."""
         result = compare(_snap_v1_plain_struct(), _snap_v2_anon_union_added())
-        kinds = {c.kind for c in result.changes}
+        _kinds = {c.kind for c in result.changes}  # noqa: F841
         # y is added at same offset (same size struct) → compatible
         # This may be TYPE_FIELD_ADDED_COMPATIBLE or TYPE_FIELD_ADDED depending on
         # whether the struct is standard-layout; either way not BREAKING for same size
@@ -124,7 +123,7 @@ class TestAnonUnionFalsePositive:
             )],
         )
         result = compare(old, new)
-        kinds = {c.kind for c in result.changes}
+        _kinds = {c.kind for c in result.changes}  # noqa: F841
         # x is NOT removed
         removed_for_x = [c for c in result.changes
                          if c.kind in (ChangeKind.TYPE_FIELD_REMOVED, ChangeKind.STRUCT_FIELD_REMOVED)
@@ -189,7 +188,6 @@ class TestAnonUnionFalsePositive:
 
     def test_anon_union_field_offsets(self) -> None:
         """Anonymous union fields share the same offset_bits."""
-        old = _snap_v1_plain_struct()
         new = _snap_v2_anon_union_added()
         # In v2, x and y both have offset_bits=0 (union semantics)
         s_new = new.types[0]

@@ -39,7 +39,7 @@ class TestUnknownTypeWarning:
         """
         die = _MockDie(tag="DW_TAG_GNU_formal_parameter_pack", offset=42)
         with caplog.at_level(logging.WARNING, logger="abicheck.dwarf_metadata"):
-            result = _compute_fallback_type_info(die, "DW_TAG_GNU_formal_parameter_pack")
+            _compute_fallback_type_info(die, "DW_TAG_GNU_formal_parameter_pack")
         # Warning must be emitted
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert warnings, (
@@ -50,7 +50,6 @@ class TestUnknownTypeWarning:
 
     def test_unknown_tag_with_name_no_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         """Unknown DWARF tag that HAS a name attribute must NOT warn (has useful info)."""
-        from elftools.dwarf.die import AttributeValue  # type: ignore[import]
 
         class _Attr:
             def __init__(self, value: object) -> None:
@@ -62,12 +61,12 @@ class TestUnknownTypeWarning:
             offset=99,
         )
         with caplog.at_level(logging.WARNING, logger="abicheck.dwarf_metadata"):
-            result = _compute_fallback_type_info(die, "DW_TAG_vendor_custom")
+            name, _ = _compute_fallback_type_info(die, "DW_TAG_vendor_custom")
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert not warnings, (
             "Should NOT warn when the DIE has a name (type is identifiable)"
         )
-        assert result[0] == "my_vendor_type"
+        assert name == "my_vendor_type"
 
     def test_fallback_returns_tag_name_for_unknown(self) -> None:
         """_compute_fallback_type_info must return (tag, 0) for unknown tagless DIE."""
@@ -97,7 +96,7 @@ class TestUnknownTypeWarning:
         )
         with caplog.at_level(logging.WARNING, logger="abicheck.dwarf_metadata"):
             # Directly calling fallback with a named DIE should not warn
-            result = _compute_fallback_type_info(die, "DW_TAG_base_type")
+            name2, _ = _compute_fallback_type_info(die, "DW_TAG_base_type")
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert not warnings, "Named DIE must not produce warning from fallback"
-        assert result[0] == "int"
+        assert name2 == "int"
