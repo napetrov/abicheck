@@ -270,6 +270,21 @@ abicheck compat-dump -lib libfoo -dump new_descriptor.xml -dump-path new.json
 abicheck compat -lib libfoo -old old.json -new new.json  # ✅
 ```
 
+
+### Repository workflow evaluation (representative)
+
+Validated against representative ABICC adopters:
+
+| Repository / script | Workflow style | Status with current `abicheck compat` |
+|---|---|---|
+| `bitcoin-core/secp256k1` `tools/check-abi.sh` | `abi-dumper` -> `ABI.dump` -> ABICC | ✅ verified end-to-end locally using generated dumps |
+| `ethereum/go-ethereum` vendored `libsecp256k1/tools/check-abi.sh` | Same `ABI.dump` pattern as secp256k1 | ✅ expected compatible (same dump shape; script inspection) |
+| `mongodb/mongo-c-driver` `.evergreen/scripts/abi-compliance-check.sh` | ABICC XML descriptor (`old.xml`/`new.xml`) | ✅ already supported (descriptor mode) |
+| `ros-industrial/industrial_ci` `src/tests/abi_check.sh` | per-library `.dump` files from `abi-dumper` | ✅ compatible with minimal Perl dump importer |
+| `moveit/moveit_ci` `check_abi.sh` | per-library `.dump` files from `abi-dumper` | ✅ compatible with minimal Perl dump importer |
+
+Note: ABICC XML **dump** variants (`<ABI_dump...>` / `<abi_dump...>`) are still unsupported.
+
 ## `-source` mode: what gets filtered
 
 In `-source` mode, ELF/binary-only changes are removed from the report and verdict:
