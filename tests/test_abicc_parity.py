@@ -159,18 +159,17 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "typedef enum { A=0, C=2 } E;\nE get_e(void);",
         "c", "BREAKING", "BREAKING", "parity",
     ),
-    # ── global variable removed — abicheck may not detect via castxml headers ──
-    # ABICC detects global variable removal. abicheck detects it if the variable
-    # appears in the castxml AST (extern declaration in header). Behaviour depends
-    # on the castxml version and compiler path — keeping as divergence until
-    # VAR_REMOVED detection is confirmed reliable end-to-end.
+    # ── global variable removed — parity confirmed ──
+    # abicheck now agrees with ABICC: removing exported global variable is BREAKING.
+    # Fixed in PR #94: castxml C-mode now uses -x c -std=gnu11 to avoid the
+    # -std=gnu++17 injection that prevented Variable elements from appearing in the AST.
     (
         "var_removed",
         "int api_version = 1;\nint get_version(void) { return api_version; }",
         "int get_version(void) { return 2; }",
         "extern int api_version;\nint get_version(void);",
         "int get_version(void);",
-        "c", "NO_CHANGE", "BREAKING", "divergence",
+        "c", "BREAKING", "BREAKING", "parity",
     ),
     # ── issue#128: non-trivial destructor changes calling convention (x64 SysV ABI) ──
     # Adding a user-defined destructor to a struct makes it non-trivial under the
@@ -425,8 +424,8 @@ def _run_abicheck(
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            old_snap = dump(old, headers=headers_v1, version="v1", compiler=compiler)
-            new_snap = dump(new, headers=headers_v2, version="v2", compiler=compiler)
+            old_snap = dump(old, headers=headers_v1, version="v1", compiler=compiler, lang=lang)
+            new_snap = dump(new, headers=headers_v2, version="v2", compiler=compiler, lang=lang)
 
         result = compare(old_snap, new_snap)
         return result.verdict.value
