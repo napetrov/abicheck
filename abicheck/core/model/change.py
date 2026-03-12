@@ -101,6 +101,11 @@ class Change:
     location: SourceLocation | None = None  # file/line from DWARF or castxml
 
     def __post_init__(self) -> None:
+        if not isinstance(self.entity_type, EntityType):
+            raise ValueError(
+                f"entity_type must be EntityType enum, got {type(self.entity_type).__name__!r} "
+                f"({self.entity_type!r}). Use EntityType.FUNCTION, EntityType.VARIABLE, etc."
+            )
         if not (0.0 <= self.confidence <= 1.0):
             raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence}")
         if self.origin in self.corroborating:

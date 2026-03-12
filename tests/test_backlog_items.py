@@ -108,6 +108,20 @@ class TestEntityTypeEnum:
         from abicheck.core.model import EntityType as ET  # noqa: PLC0415
         assert ET is EntityType
 
+    def test_bare_str_entity_type_raises(self) -> None:
+        """Change.__post_init__ rejects bare str for entity_type."""
+        with pytest.raises(ValueError, match="entity_type must be EntityType enum"):
+            Change(
+                change_kind=ChangeKind.SYMBOL,
+                entity_type="function",  # type: ignore[arg-type]
+                entity_name="foo",
+                before=EntitySnapshot("int foo()"),
+                after=EntitySnapshot("void foo()"),
+                severity=ChangeSeverity.BREAK,
+                origin=Origin.CASTXML,
+                confidence=0.9,
+            )
+
 
 # ---------------------------------------------------------------------------
 # Task 2: Phase 2b — version_range matching
@@ -227,7 +241,21 @@ class TestVersionRangeMatching:
         result = engine.apply([_make_change()], version_context="5")
         assert len(result.active) == 1
 
-    # ── version_context=None skips filter ────────────────────────────────
+    def test_intel_quarterly_exclusive_boundary_not_suppressed(self) -> None:
+        """inclusive=False: at-boundary version must NOT be suppressed."""
+        engine = self._engine_with_range("2024.1", "2024.3", inclusive=False, scheme="intel_quarterly")
+        result_at_lower = engine.apply([_make_change()], version_context="2024.1")
+        assert len(result_at_lower.active) == 1  # at lower bound → excluded
+        result_inside = engine.apply([_make_change()], version_context="2024.2")
+        assert len(result_inside.suppressed) == 1  # inside → suppressed
+
+    def test_linear_exclusive_boundary_not_suppressed(self) -> None:
+        """inclusive=False: at-boundary value must NOT be suppressed."""
+        engine = self._engine_with_range("10", "20", inclusive=False, scheme="linear")
+        result_at_lower = engine.apply([_make_change()], version_context="10")
+        assert len(result_at_lower.active) == 1  # at lower bound → excluded
+        result_inside = engine.apply([_make_change()], version_context="15")
+        assert len(result_inside.suppressed) == 1  # inside → suppressed
 
     def test_version_context_none_skips_filter_suppresses(self) -> None:
         """When version_context=None (no version info), range filter is skipped.
@@ -280,6 +308,22 @@ class TestVersionRangeMatching:
         # Override with a version inside the range
         result = engine.apply([_make_change()], version_context="1.5.0")
         assert len(result.suppressed) == 1
+
+    def test_version_context_apply_none_falls_back_to_init(self) -> None:
+        """apply(version_context=None) does NOT override init — falls back to init value.
+        Only non-None apply() values override; None means 'use init value'."""
+        engine = SuppressionEngine(
+            [SuppressionRule(
+                entity_glob="*",
+                scope=SuppressionScope(
+                    version_range=VersionRange(from_version="1.0.0", to_version="2.0.0")
+                ),
+            )],
+            version_context="3.0.0",  # outside range → no suppression
+        )
+        # apply(None) → falls back to init "3.0.0" (outside range) → active
+        result = engine.apply([_make_change()], version_context=None)
+        assert len(result.active) == 1  # still uses init "3.0.0" → not suppressed
 
     # ── invalid version_range at load time ──────────────────────────────
 
@@ -375,19 +419,24 @@ class TestSecurityLimits:
 class TestPipelineNullGuard:
     """Tests for null-input guards in pipeline.analyse()."""
 
-    def test_analyse_none_old_raises_type_error(self) -> None:
+    def test_analyse_none_old_raises_validation_error(self) -> None:
         snap = _empty_snap()
-        with pytest.raises(TypeError, match="old AbiSnapshot is None"):
+        with pytest.raises(ValidationError, match="old AbiSnapshot is None"):
             analyse(None, snap)  # type: ignore[arg-type]
 
-    def test_analyse_none_new_raises_type_error(self) -> None:
+    def test_analyse_none_new_raises_validation_error(self) -> None:
         snap = _empty_snap()
-        with pytest.raises(TypeError, match="new AbiSnapshot is None"):
+        with pytest.raises(ValidationError, match="new AbiSnapshot is None"):
             analyse(snap, None)  # type: ignore[arg-type]
 
-    def test_analyse_both_none_raises_type_error(self) -> None:
-        with pytest.raises(TypeError, match="old AbiSnapshot is None"):
+    def test_analyse_both_none_raises_validation_error(self) -> None:
+        with pytest.raises(ValidationError, match="old AbiSnapshot is None"):
             analyse(None, None)  # type: ignore[arg-type]
+
+    def test_validation_error_is_abicheckerror(self) -> None:
+        snap = _empty_snap()
+        with pytest.raises(AbicheckError):
+            analyse(None, snap)  # type: ignore[arg-type]
 
 
 class TestErrorHierarchy:
