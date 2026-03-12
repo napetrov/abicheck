@@ -29,10 +29,8 @@ import re2  # google-re2: O(N) guaranteed
 
 from abicheck.core.errors import SuppressionError
 from abicheck.core.model import Change, ChangeSeverity
+from abicheck.core.pipeline import KNOWN_PLATFORMS as _KNOWN_PLATFORMS  # noqa: PLC0415
 from abicheck.core.suppressions.rule import SuppressionRule, VersionRange
-
-# Valid platform values for scope.platform filtering (Phase 3).
-_KNOWN_PLATFORMS: frozenset[str] = frozenset({"elf", "pe", "macho"})
 
 # ---------------------------------------------------------------------------
 # Input length limits (security hardening)

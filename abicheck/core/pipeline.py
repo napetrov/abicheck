@@ -86,8 +86,10 @@ def analyse_full(
 ) -> PolicyResult:
     """Run the full v0.2 pipeline: diff → suppress → policy → PolicyResult.
 
-    Platform context is auto-detected from the 'new' snapshot and passed to
-    the suppression engine for scope.platform filtering (Phase 3).
+    Platform context is auto-detected from the snapshots (new first, old as fallback)
+    and passed to the suppression engine for scope.platform filtering (Phase 3).
+    When platform cannot be detected, platform_context=None is used — suppression
+    rules with scope.platform set will still apply (conservative skip semantics).
     """
     from abicheck.core.policy import get_profile  # noqa: PLC0415
     from abicheck.core.suppressions import SuppressionEngine as _Engine  # noqa: PLC0415
