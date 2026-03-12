@@ -108,6 +108,31 @@ class TestSymbolDiff:
         assert ChangeSeverity.BREAK in severities
         assert ChangeSeverity.COMPATIBLE_EXTENSION in severities
 
+    def test_single_function_pair_emits_multiple_changes(self) -> None:
+        """elif→if: return type AND parameter change simultaneously → two Change objects."""
+        normalizer = Normalizer()
+        from abicheck.model import Param
+
+        f_old = Function(
+            name="f", mangled="_Z1f", return_type="int", visibility=Visibility.PUBLIC,
+            params=[Param(name="x", type="int")],
+        )
+        f_new = Function(
+            name="f", mangled="_Z1f", return_type="void", visibility=Visibility.PUBLIC,
+            params=[Param(name="x", type="long")],  # both return type and param changed
+        )
+
+        b = normalizer.normalize(_snap(funcs=[f_old]))
+        a = normalizer.normalize(_snap(funcs=[f_new], version="v2"))
+        changes = diff_symbols(b, a)
+
+        # return type change + param type change = 2 independent Change objects for same function
+        func_changes = [c for c in changes if c.entity_name == "f"]
+        assert len(func_changes) == 2, (
+            f"Expected 2 changes for simultaneous return+param diff, got {len(func_changes)}"
+        )
+        assert all(c.severity == ChangeSeverity.BREAK for c in func_changes)
+
     def test_detect_variable_type_change(self) -> None:
         normalizer = Normalizer()
         b = normalizer.normalize(_snap(vars_=[
