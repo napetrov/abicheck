@@ -732,3 +732,24 @@ class TestAllAbiccFlagsAccepted:
         for flag_args in flags:
             result = self._invoke_compat(flag_args, tmp_path)
             assert "No such option" not in (result.output or ""), f"{flag_args} should be accepted"
+
+
+class TestCompatExtendedExitCodeMapping:
+    @pytest.mark.parametrize(
+        "exc,context,expected",
+        [
+            (FileNotFoundError("missing"), "parsing descriptor", 4),
+            (PermissionError("denied"), "parsing descriptor", 4),
+            (RuntimeError("castxml not found in PATH"), "during dump", 3),
+            (RuntimeError("castxml failed (exit 1): compilation terminated"), "during dump", 5),
+            (ValueError("invalid regex"), "in skip-symbols/skip-types", 6),
+            (OSError("disk full"), "writing report output", 7),
+            (RuntimeError("unexpected pipeline crash"), "during dump", 8),
+            (RuntimeError("unexpected internal error"), "other", 10),
+            (KeyboardInterrupt(), "during dump", 11),
+        ],
+    )
+    def test_classify_compat_error_exit_code(self, exc: BaseException, context: str, expected: int) -> None:
+        from abicheck.cli import _classify_compat_error_exit_code
+
+        assert _classify_compat_error_exit_code(exc, context=context) == expected

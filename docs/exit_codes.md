@@ -62,6 +62,24 @@ Matches `abi-compliance-checker` exit codes (ABICC drop-in):
 
 ---
 
+
+### Extended compat error codes (ABICC-style)
+
+In `abicheck compat`, non-verdict failures are further classified where possible:
+
+| Exit code | Typical cause |
+|-----------|---------------|
+| `3` | Required external command/tool is missing (for example `castxml`) |
+| `4` | Cannot access input files (missing or permission denied) |
+| `5` | Header compile/parsing failure during dump |
+| `6` | Invalid compat configuration/input (descriptor, suppression, regex flags) |
+| `7` | Failed to write report/output artifact |
+| `8` | Dump/analysis pipeline failure |
+| `10` | Generic internal/tool failure fallback |
+| `11` | Interrupted run |
+
+> Note: classification is best-effort and context-dependent; `API_BREAK` remains `2`.
+
 ## Summary table
 
 | Verdict / State | `compare` exit | `compat` exit |
