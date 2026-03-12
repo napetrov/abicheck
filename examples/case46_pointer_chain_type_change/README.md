@@ -1,25 +1,18 @@
 # Case 46: Pointer Chain Type Change
 
-**Category:** Function Signature | **Verdict:** 🔴 BREAKING
+**Category:** Breaking | **Verdict:** 🔴 BREAKING
 
 ## What breaks
-`get_matrix()` returns `int **` in v1 and `long **` in v2. The ultimate pointee type
-changes from `int` (4 bytes) to `long` (8 bytes on 64-bit). Callers that dereference
-the double-indirect pointer chain and read individual elements interpret each 8-byte
-`long` as a 4-byte `int`, reading only half the value and mistaking the next element's
-bytes for a separate cell.
 
-`set_cell()` and `sum_row()` also change their pointer-chain parameter types and return
-types along the same `int` → `long` axis.
+Functions return `int**` and accept `int*const*` in v1. In v2, the ultimate pointee
+type changes from `int` to `long`. Callers that dereference the returned pointer chain
+and write `int`-sized values will corrupt memory — `long` is 8 bytes on 64-bit,
+`int` is 4 bytes, so every write is half the expected size.
 
 ## Why abidiff catches it
-abidiff walks the full pointer chain in the DWARF/castxml type graph and detects the
-ultimate pointee-type change:
 
-- `FUNC_RETURN_CHANGED` on `get_matrix` (`int **` → `long **`)
-- `PARAM_TYPE_CHANGED` on `set_cell` and `sum_row` (pointer params `int *const *` → `long *const *`)
-- `FUNC_RETURN_CHANGED` on `sum_row` (`int` → `long`)
-- Exit code **4** (ABI change detected)
+abidiff reports `Function_Return_Type_Change` (indirect pointee type) and exits **4**.
+abicheck detects: `FUNC_RETURN_CHANGED`, `PARAM_TYPE_CHANGED`.
 
 ## Code diff
 
@@ -31,45 +24,32 @@ ultimate pointee-type change:
 
 ## Real Failure Demo
 
-**Severity: CRITICAL**
+**Severity: 🔴 CRITICAL — silent memory corruption**
 
-**Scenario:** compile caller against v1, swap in v2 `.so` without recompile.
+**Scenario:** v1 caller writes `int` values into memory allocated for `long` — adjacent cells are overwritten.
 
-```bash
-# Build v1 library + caller
-gcc -shared -fPIC -g v1.c -o libv1.so
-gcc -g -I. app.c -L. -lv1 -Wl,-rpath,. -o app
-./app
-# → sum_row(0) = 6  (correct for int row [1,2,3])
-
-# Swap in v2 library (no recompile)
-gcc -shared -fPIC -g v2.c -o libv1.so
-./app
-# → sum_row(0) = 0 or garbage: int-sized reads over long-sized array elements
-# → or: SIGSEGV if pointer alignment breaks
-```
-
-**Why CRITICAL:** The caller's dereferencing code treats each element as `sizeof(int)`
-(4 bytes) while the library writes them as `sizeof(long)` (8 bytes). Every second read
-lands in padding or the next element, producing wrong sums and potentially corrupting
-memory if `set_cell()` writes with the wrong stride.
-
-## Reproduce manually
 ```bash
 gcc -shared -fPIC -g v1.c -o libv1.so
 gcc -shared -fPIC -g v2.c -o libv2.so
-abidw --out-file v1.xml libv1.so
-abidw --out-file v2.xml libv2.so
-abidiff v1.xml v2.xml
-echo "exit: $?"   # → 4
+
+abidw --out-file v1.abi libv1.so
+abidw --out-file v2.abi libv2.so
+abidiff v1.abi v2.abi
+echo "exit: $?"   # → 4 (FUNC_RETURN_CHANGED)
+```
+
+## Reproduce manually
+
+```bash
+gcc -shared -fPIC -g v1.c -o libv1.so
+gcc -shared -fPIC -g v2.c -o libv2.so
+abidw --headers-dir . --out-file v1.abi libv1.so
+abidw --headers-dir . --out-file v2.abi libv2.so
+abidiff v1.abi v2.abi
 ```
 
 ## How to fix
-1. **Use fixed-width types** in public APIs (`int32_t`, `int64_t` from `<stdint.h>`)
-   and never change them — platform-size types like `long` vary across ABIs.
-2. **Opaque handle / stride parameter** — pass an opaque handle plus an explicit
-   element-size argument so the pointee type is decoupled from the ABI.
-3. **New symbol name** — introduce `get_matrix_l()` returning `long **`; keep
-   `get_matrix()` returning `int **` for backward compatibility.
-4. **SONAME bump** — if the signature must change, bump the major version and force
-   recompilation of all consumers.
+
+1. **Opaque element type**: `typedef int mat_cell_t;` at the API boundary — change only the typedef.
+2. **Never change primitive types deep in pointer chains** — consumers are forced to cast through every level.
+3. **SONAME bump** if the type change is unavoidable.

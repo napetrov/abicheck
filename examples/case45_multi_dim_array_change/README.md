@@ -3,74 +3,51 @@
 **Category:** Struct Layout | **Verdict:** 🔴 BREAKING
 
 ## What breaks
-`Matrix.data` changes from `float[4][4]` to `double[4][4]`. The element type doubles
-in size (4 → 8 bytes), so the array grows from 64 bytes to 128 bytes. Because `data`
-is the first member of `Matrix`, every subsequent field (`rows`, `cols`) shifts by
-64 bytes. Any caller that accesses `rows`, `cols`, or individual array elements
-through a stale v1-compiled binary reads completely wrong memory.
 
-Additionally, the return type of `matrix_get()` changes from `float` to `double`,
-which alters the calling convention on some architectures (different floating-point
-registers).
+The `Matrix` struct contains a 2D array member `data[ROWS][COLS]`. Its element type
+changes from `float` (4 bytes) to `double` (8 bytes), so `sizeof(Matrix)` doubles
+from **72 → 136 bytes** (`4×4×4 + 8 = 72` → `4×4×8 + 8 = 136`). Any consumer
+compiled against v1 headers will read/write the struct at the wrong offsets.
+Return types of `matrix_get()`/`matrix_set()` also change.
 
 ## Why abidiff catches it
-abidiff detects the element-type change within the multi-dimensional array sub-ranges:
 
-- `TYPE_SIZE_CHANGED` on `Matrix` (72 → 136 bytes)
-- `TYPE_FIELD_TYPE_CHANGED` on `data` (element type `float` → `double`)
-- `TYPE_FIELD_OFFSET_CHANGED` on `rows` and `cols` (offset shifts by 64 bytes)
-- `FUNC_RETURN_CHANGED` on `matrix_get` (`float` → `double`)
-- Exit code **4** (ABI change detected)
+abidiff reports `Subrange_Change` in multi-dim array and exits **4**.
+abicheck detects: `TYPE_SIZE_CHANGED`, `TYPE_FIELD_TYPE_CHANGED`, `FUNC_RETURN_CHANGED`.
 
 ## Code diff
 
 | v1.h | v2.h |
 |------|------|
-| `float data[ROWS][COLS];` (64 bytes) | `double data[ROWS][COLS];` (128 bytes) |
-| `float matrix_get(const Matrix *m, int r, int c);` | `double matrix_get(const Matrix *m, int r, int c);` |
-| `sizeof(Matrix) == 72` | `sizeof(Matrix) == 136` |
+| `float data[4][4];` — 64 bytes | `double data[4][4];` — 128 bytes |
+| `float matrix_get(...)` | `double matrix_get(...)` |
 
 ## Real Failure Demo
 
-**Severity: CRITICAL**
+**Severity: 🔴 CRITICAL**
 
-**Scenario:** compile caller against v1, swap in v2 `.so` without recompile.
-
-```bash
-# Build v1 library + caller
-gcc -shared -fPIC -g v1.c -o libv1.so
-gcc -g -I. app.c -L. -lv1 -Wl,-rpath,. -o app
-./app
-# → m.rows = 4, m.cols = 4, get(0,0) = 1.5  (correct)
-
-# Swap in v2 library (no recompile)
-gcc -shared -fPIC -g v2.c -o libv1.so
-./app
-# → m.rows = <garbage>, get(0,0) = NaN or wrong value
-# → caller passes float-sized buffer; lib reads as double, crosses field boundaries
-```
-
-**Why CRITICAL:** The caller allocates `Matrix` with `sizeof(Matrix)` baked in at
-compile time (72 bytes). The library treats the pointer as pointing to a 136-byte
-struct. Reading `rows` reads 64 bytes past the expected array end, hitting either
-uninitialised memory or another variable entirely.
-
-## Reproduce manually
 ```bash
 gcc -shared -fPIC -g v1.c -o libv1.so
 gcc -shared -fPIC -g v2.c -o libv2.so
-abidw --out-file v1.xml libv1.so
-abidw --out-file v2.xml libv2.so
-abidiff v1.xml v2.xml
-echo "exit: $?"   # → 4
+
+abidw --out-file v1.abi libv1.so
+abidw --out-file v2.abi libv2.so
+abidiff v1.abi v2.abi
+echo "exit: $?"   # → 4 (TYPE_SIZE_CHANGED + FUNC_RETURN_CHANGED)
+```
+
+## Reproduce manually
+
+```bash
+gcc -shared -fPIC -g v1.c -o libv1.so
+gcc -shared -fPIC -g v2.c -o libv2.so
+abidw --headers-dir . --out-file v1.abi libv1.so
+abidw --headers-dir . --out-file v2.abi libv2.so
+abidiff v1.abi v2.abi
 ```
 
 ## How to fix
-1. **Do not expose array element types in public structs.** Use an opaque handle or
-   pointer to an incomplete type; resize internally.
-2. **Template / generic matrix** — if the precision must be configurable, use a
-   separate type (`FloatMatrix` / `DoubleMatrix`) and never change an existing one.
-3. **Versioned struct** — introduce `Matrix_v2` with the new layout; keep `Matrix`
-   (v1) for backward compatibility, provide conversion helpers.
-4. **SONAME bump** — if the change is unavoidable, bump the major version and require
-   consumer recompilation.
+
+1. **Abstract the element type** via a typedef: `typedef float mat_elem_t;` — change the typedef, not the struct directly.
+2. **Version via SONAME** — element type changes in matrix structs require a major version bump.
+3. **Provide both** `matrix_float_get()` and `matrix_double_get()` during a deprecation window.
