@@ -8,6 +8,7 @@ Three test classes mirror the libabigail parity structure:
 - test_confirmed_parity: both tools agree on verdict (full parity).
 - test_abicheck_correct: abicheck detects the break; ABICC misses it.
 - test_known_divergence: intentional stable divergences.
+- test_risk: potentially breaking — abicheck emits API_BREAK/COMPATIBLE; ABICC may vary.
 
 Requires: abi-compliance-checker, gcc/g++, castxml.
 """
@@ -160,9 +161,8 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
     ),
     # ── global variable removed — abicheck may not detect via castxml headers ──
     # ABICC detects global variable removal. abicheck detects it if the variable
-    # appears in the castxml AST (extern declaration in header). When castxml
-    # does not emit the variable, abicheck reports NO_CHANGE. Marking as known
-    # divergence until the dumper reliably handles extern variable declarations.
+    # appears in the castxml AST (extern declaration in header). Behaviour depends
+    # on the castxml version and compiler path — keeping as divergence.
     (
         "var_removed",
         "int api_version = 1;\nint get_version(void) { return api_version; }",
@@ -175,11 +175,9 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
     # Adding a user-defined destructor to a struct makes it non-trivial under the
     # Itanium C++ ABI.  On x64 System V ABI, non-trivial structs cannot be returned
     # in SSE registers and must be passed via a hidden pointer instead — an
-    # ABI-breaking change.  Neither abicheck (COMPATIBLE, detects only ELF-level
-    # changes) nor ABICC 2.3 (NO_CHANGE) catches this calling-convention break,
-    # so the two tools also disagree with each other.  Recorded as a known
-    # divergence so regressions are caught if either tool starts detecting it.
-    # The ground-truth verdict is BREAKING; both tools currently miss it.
+    # ABI-breaking change.  abicheck now detects this via DWARF value-ABI trait
+    # analysis (VALUE_ABI_TRAIT_CHANGED).  ABICC 2.3 still misses it (NO_CHANGE).
+    # Recorded as correct (abicheck better than ABICC).
     # See: https://github.com/lvc/abi-compliance-checker/issues/128
     (
         "nontrivial_dtor_calling_convention",
@@ -189,7 +187,7 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "v get_v(void) { v x; x.a = 1.0f; x.b = 2.0f; return x; }",
         "struct v { float a; float b; };\nv get_v(void);",
         "struct v { float a; float b; ~v(); };\nv get_v(void);",
-        "cpp", "COMPATIBLE", "NO_CHANGE", "divergence",
+        "cpp", "BREAKING", "NO_CHANGE", "correct",
     ),
     # ── PR#109: typedef→derived class false positive in base detection ──
     # ABICC had a bug where a typedef pointing to a derived class caused a false
@@ -218,11 +216,148 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "MyType* get_obj(void);",
         "cpp", "NO_CHANGE", "NO_CHANGE", "parity",
     ),
+    # ── Issue #100 — = delete not detected ───────────────────────────────────
+    # Both abicheck and ABICC miss the = delete change through castxml/header path.
+    # castxml does not emit deleted functions/methods at all, so neither tool can
+    # detect the = delete annotation. This is a known gap in both tools for this
+    # class of change. Both tools return NO_CHANGE (parity — but incorrectly so).
+    # The "correct" behavior would be BREAKING, but neither tool achieves it here.
+    # See: https://github.com/lvc/abi-compliance-checker/issues/100
+    # TODO: detect = delete via a different mechanism (e.g. DWARF or ELF mangled names)
+    (
+        "func_deleted_marker",
+        "class Foo { public: Foo(); Foo(const Foo&); };\n"
+        "Foo* make_foo(int x) { (void)x; static Foo f; return &f; }",
+        "class Foo { public: Foo(); Foo(const Foo&) = delete; };\n"
+        "Foo* make_foo(int x) { (void)x; static Foo f; return &f; }",
+        "class Foo { public: Foo(); Foo(const Foo&); };\n"
+        "Foo* make_foo(int x);",
+        "class Foo { public: Foo(); Foo(const Foo&) = delete; };\n"
+        "Foo* make_foo(int x);",
+        "cpp", "NO_CHANGE", "NO_CHANGE", "parity",
+    ),
+    # ── Issue #96 — Incomplete type → complete type (type became opaque) ─────
+    # When a struct goes from complete definition to forward-declaration only,
+    # callers can no longer sizeof/use it directly → BREAKING.
+    # abicheck detects TYPE_BECAME_OPAQUE; ABICC detects this too.
+    # See: https://github.com/lvc/abi-compliance-checker/issues/96
+    # Note: v2 src still has the full definition (to produce a valid .so);
+    # the opaque change is only visible in the header (what callers see).
+    (
+        "type_became_opaque",
+        "struct Blob { int x; int y; };\n"
+        "struct Blob* alloc_blob(void) { static struct Blob b; return &b; }",
+        "struct Blob { int x; int y; };\n"
+        "struct Blob* alloc_blob(void) { static struct Blob b; return &b; }",
+        "struct Blob { int x; int y; };\n"
+        "struct Blob* alloc_blob(void);",
+        "struct Blob;\n"
+        "struct Blob* alloc_blob(void);",
+        "c", "BREAKING", "BREAKING", "parity",
+    ),
+    # ── Issue #125 — Inline functions not checked ─────────────────────────────
+    # When the header marks a function as inline, callers may stop linking against
+    # the DSO symbol (depending on optimizer). If the symbol later disappears from
+    # the DSO (e.g., due to -fvisibility=hidden or LTO), existing binaries that
+    # expected to call via PLT break. abicheck detects FUNC_BECAME_INLINE (API_BREAK).
+    # ABICC does NOT check inline annotations — it sees both .so files are identical
+    # and reports NO_CHANGE. abicheck is more conservative and correct here.
+    # See: https://github.com/lvc/abi-compliance-checker/issues/125
+    # Note: both v1/v2 .so compiled from same source (symbol still exported);
+    # only the header annotation differs.
+    (
+        "func_became_inline",
+        "int compute(int x) { return x * 2; }",
+        "int compute(int x) { return x * 2; }",
+        "int compute(int x);",
+        "inline int compute(int x);",
+        "cpp", "API_BREAK", "NO_CHANGE", "correct",
+    ),
+    # ── Issue #125 — Function loses inline attribute ──────────────────────────
+    # When an inline function loses the inline attribute in the header, the calling
+    # convention doesn't change for existing binaries (the inlined copy is baked in).
+    # New binaries link the exported symbol.
+    # Here: v1 header marks function inline but v2 removes the inline keyword.
+    # Both .so files compile the same body; v1 src keeps the function non-inline
+    # in the .so (so it exports). abicheck detects FUNC_LOST_INLINE (COMPATIBLE).
+    (
+        "func_lost_inline",
+        "int fast_compute(int x) { return x + 1; }",
+        "int fast_compute(int x) { return x + 1; }",
+        "inline int fast_compute(int x);",
+        "int fast_compute(int x);",
+        "cpp", "COMPATIBLE", "NO_CHANGE", "divergence",
+    ),
+    # ── Issue #128 — Non-trivial destructor changes calling convention ────────
+    # Adding a non-trivial destructor to a class affects whether the object is
+    # returned in registers vs via hidden pointer (System V AMD64 ABI §3.2.3).
+    # abicheck now detects via DWARF value-ABI trait
+    # See: https://github.com/lvc/abi-compliance-checker/issues/128
+    (
+        "nontrivial_dtor_calling_convention_widget",
+        "class Widget {\n"
+        "public:\n"
+        "    int value;\n"
+        "    Widget(int v) : value(v) {}\n"
+        "};\n"
+        "Widget make_widget(int v) { return Widget(v); }",
+        "class Widget {\n"
+        "public:\n"
+        "    int value;\n"
+        "    Widget(int v) : value(v) {}\n"
+        "    ~Widget() { value = -1; }  // non-trivial destructor\n"
+        "};\n"
+        "Widget make_widget(int v) { return Widget(v); }",
+        "class Widget {\n"
+        "public:\n"
+        "    int value;\n"
+        "    Widget(int v);\n"
+        "};\n"
+        "Widget make_widget(int v);",
+        "class Widget {\n"
+        "public:\n"
+        "    int value;\n"
+        "    Widget(int v);\n"
+        "    ~Widget();\n"
+        "};\n"
+        "Widget make_widget(int v);",
+        "cpp", "BREAKING", "NO_CHANGE", "correct",
+    ),
+    # ── Risk: global var type widened (int→long, same size LP64) ─────────────
+    # On LP64 (Linux x86-64), int=4 bytes, long=8 bytes.
+    # Changing an exported global from int to long changes its binary size and
+    # may break callers that access it. abicheck emits BREAKING via VAR_TYPE_CHANGED;
+    # ABICC may miss it if only the header descriptor is used (no abi-dumper).
+    # In practice ABICC catches it in full mode — recorded as "risk" to track
+    # cases where ABICC's verdict varies by invocation mode.
+    (
+        "global_var_type_widened",
+        "int api_level = 3;",
+        "long api_level = 3;",
+        "extern int api_level;",
+        "extern long api_level;",
+        "c", "BREAKING", "BREAKING", "parity",
+    ),
+    # ── parity: no spurious visibility change ─────────────────────────────────
+    # A class with a method that has an explicit visibility annotation should NOT
+    # produce a spurious visibility change report if nothing actually changed.
+    # Regression test: abicheck must report NO_CHANGE here.
+    (
+        "no_spurious_visibility_change",
+        '__attribute__((visibility("default"))) int public_api(int x) { return x; }',
+        '__attribute__((visibility("default"))) int public_api(int x) { return x; }',
+        '__attribute__((visibility("default"))) int public_api(int x);',
+        '__attribute__((visibility("default"))) int public_api(int x);',
+        "c", "NO_CHANGE", "NO_CHANGE", "parity",
+    ),
 ]
 
 _CONFIRMED = [c for c in PARITY_CASES if c[8] == "parity"]
 _CORRECT = [c for c in PARITY_CASES if c[8] == "correct"]
 _DIVERGE = [c for c in PARITY_CASES if c[8] == "divergence"]
+# "risk" tests: abicheck emits API_BREAK or COMPATIBLE; ABICC verdict may vary by version.
+# These represent potentially breaking changes that need human review.
+_RISK = [c for c in PARITY_CASES if c[8] == "risk"]
 
 
 # ---------------------------------------------------------------------------
@@ -490,3 +625,36 @@ def test_known_divergence(
         f"ABICC changed unexpectedly on '{name}': "
         f"expected {abicc_exp}, got {cc}\nDIAG:\n{diag}"
     )
+
+
+@pytest.mark.abicc
+@pytest.mark.parametrize(
+    "name,src_v1,src_v2,hdr_v1,hdr_v2,lang,abicheck_exp,abicc_exp,_",
+    _RISK, ids=[c[0] for c in _RISK],
+)
+def test_risk(
+    name: str, src_v1: str, src_v2: str,
+    hdr_v1: str | None, hdr_v2: str | None, lang: str,
+    abicheck_exp: str, abicc_exp: str, _: str, tmp_path: Path,
+) -> None:
+    """Potentially breaking changes (REVIEW_NEEDED / risk category).
+
+    abicheck emits API_BREAK or COMPATIBLE; ABICC verdict may vary by version.
+    These represent changes that need human review — analogous to libabigail's
+    'potentially ABI-breaking' classification.
+
+    If ABICC and abicheck both agree, move the case to _CONFIRMED.
+    """
+    ac, cc, diag = _setup(name, src_v1, src_v2, hdr_v1, hdr_v2, lang, tmp_path)
+    assert ac == abicheck_exp, (
+        f"abicheck changed unexpectedly on '{name}': "
+        f"expected {abicheck_exp}, got {ac}"
+    )
+    # ABICC verdict is informational for risk cases — log but don't hard-fail
+    if ac == cc:
+        # If both agree, suggest promoting to parity
+        warnings.warn(
+            f"Risk case '{name}': abicheck and ABICC now agree ({ac}). "
+            "Consider moving to _CONFIRMED.",
+            stacklevel=2,
+        )

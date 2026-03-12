@@ -100,6 +100,7 @@ class ChangeKind(str, Enum):
 
     # DWARF advanced (Sprint 4)
     CALLING_CONVENTION_CHANGED = "calling_convention_changed"   # DW_AT_calling_convention drift
+    VALUE_ABI_TRAIT_CHANGED = "value_abi_trait_changed"         # DWARF triviality-based calling conv heuristic
     STRUCT_PACKING_CHANGED = "struct_packing_changed"       # __attribute__((packed)) added/removed
     TYPE_VISIBILITY_CHANGED = "type_visibility_changed"      # typeinfo/vtable visibility changed
     TOOLCHAIN_FLAG_DRIFT = "toolchain_flag_drift"         # -fshort-enums/-fpack-struct drift
@@ -169,6 +170,10 @@ class ChangeKind(str, Enum):
     VAR_ACCESS_CHANGED = "var_access_changed"                # public→private/protected variable (narrowing)
     VAR_ACCESS_WIDENED = "var_access_widened"                 # private/protected→public variable (widening)
 
+    # ── Inline attribute changes (ABICC issue #125) ─────────────────────────────
+    FUNC_BECAME_INLINE = "func_became_inline"   # function became inline — symbol may disappear from DSO
+    FUNC_LOST_INLINE = "func_lost_inline"        # function lost inline — now has external linkage (compatible)
+
 
 class HasKind(Protocol):
     kind: ChangeKind
@@ -230,6 +235,7 @@ BREAKING_KINDS = {
     ChangeKind.STRUCT_ALIGNMENT_CHANGED,
     ChangeKind.ENUM_UNDERLYING_SIZE_CHANGED,
     ChangeKind.CALLING_CONVENTION_CHANGED,
+    ChangeKind.VALUE_ABI_TRAIT_CHANGED,
     ChangeKind.STRUCT_PACKING_CHANGED,
     # Sprint 2 — gap detectors
     ChangeKind.FUNC_DELETED,
@@ -318,6 +324,10 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
     ChangeKind.USED_RESERVED_FIELD,          # reserved field put into use: compatible (was unused)
     ChangeKind.VAR_VALUE_CHANGED,            # global data value change: compatible (compile-time risk only)
     ChangeKind.VAR_ACCESS_WIDENED,           # private/protected→public: widening is compatible
+
+    # Inline attribute changes
+    ChangeKind.FUNC_LOST_INLINE,             # losing inline gives the function external linkage — existing
+                                             # binaries with baked-in inline copies still work correctly
 }
 
 API_BREAK_KINDS: set[ChangeKind] = {
@@ -334,6 +344,11 @@ API_BREAK_KINDS: set[ChangeKind] = {
     ChangeKind.CONSTANT_REMOVED,             # #define removed: source code referencing it breaks
     ChangeKind.VAR_ACCESS_CHANGED,           # variable access narrowed: source-level break
     ChangeKind.SOURCE_LEVEL_KIND_CHANGED,    # struct↔class: source-level keyword change, binary identical
+
+    # Inline attribute changes (potentially breaking: symbol may vanish from DSO)
+    ChangeKind.FUNC_BECAME_INLINE,           # function became inline — callers compiled against old header
+                                             # may get UNDEFINED when linking against new DSO if the symbol
+                                             # is now emitted only inline; needs manual review
 }
 
 

@@ -150,7 +150,9 @@ def _dwarf_advanced_from_dict(d: dict[str, Any]) -> Any:
         has_dwarf=d.get("has_dwarf", False),
         toolchain=toolchain,
         calling_conventions=d.get("calling_conventions", {}),
+        value_abi_traits=d.get("value_abi_traits", {}),
         packed_structs=set(d.get("packed_structs", [])),
+        all_struct_names=set(d.get("all_struct_names", [])),
     )
 
 

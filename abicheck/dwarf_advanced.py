@@ -109,6 +109,10 @@ class AdvancedDwarfMetadata:
     # NOTE: on Linux x86-64 this dict mostly contains "normal" entries since
     # DW_AT_calling_convention is rarely emitted by GCC/Clang for System V AMD64.
     calling_conventions: dict[str, str] = field(default_factory=dict)
+    # linkage_name (mangled) → value ABI trait fingerprint derived from DWARF types.
+    # Used as fallback signal when DW_AT_calling_convention is not emitted.
+    # Example: "ret:v(trivial)" -> "ret:v(nontrivial)" can imply SysV ABI drift.
+    value_abi_traits: dict[str, str] = field(default_factory=dict)
     # struct names where any field has a misaligned byte offset → __attribute__((packed))
     packed_structs: set[str] = field(default_factory=set)
     # All struct/class names seen (for cross-referencing in diff to avoid
@@ -241,7 +245,7 @@ def _walk_cu(root: Any, meta: AdvancedDwarfMetadata, CU: Any) -> None:
             continue
 
         if tag in ("DW_TAG_subprogram", "DW_TAG_subroutine_type"):
-            _extract_calling_convention(die, meta)
+            _extract_calling_convention(die, meta, CU)
             # Don't descend into subprogram children — not needed for CC extraction
             # and avoids traversing all local variables, params, inlined calls
             continue
@@ -269,8 +273,86 @@ def _walk_cu(root: Any, meta: AdvancedDwarfMetadata, CU: Any) -> None:
 # Calling convention extraction
 # ---------------------------------------------------------------------------
 
-def _extract_calling_convention(die: Any, meta: AdvancedDwarfMetadata) -> None:
-    """Record calling conventions for ABI-exported functions.
+def _resolve_type_die(die: Any, CU: Any) -> Any | None:
+    """Resolve DW_AT_type reference on *die* to a target DIE."""
+    if "DW_AT_type" not in die.attributes:
+        return None
+    attr = die.attributes["DW_AT_type"]
+    raw: int = attr.value
+    abs_offset = raw if attr.form == "DW_FORM_ref_addr" else raw + CU.cu_offset
+    try:
+        return CU.get_DIE_from_refaddr(abs_offset)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _is_nontrivial_aggregate(type_die: Any) -> bool:
+    """Heuristic: aggregate with an explicit destructor method.
+
+    We treat a class/struct as non-trivial if a child subprogram looks like
+    a destructor (name starts with '~' or linkage contains D0/D1/D2).
+    """
+    tag = getattr(type_die, "tag", "")
+    if tag not in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
+        return False
+    for ch in type_die.iter_children():
+        if ch.tag != "DW_TAG_subprogram":
+            continue
+        name = _attr_str(ch, "DW_AT_name") or ""
+        linkage = _attr_str(ch, "DW_AT_linkage_name") or ""
+        if name.startswith("~"):
+            return True
+        if "D0Ev" in linkage or "D1Ev" in linkage or "D2Ev" in linkage:
+            return True
+    return False
+
+
+def _unwrap_qualifiers(type_die: Any, CU: Any) -> Any:
+    """Unwrap transparent qualifier/typedef layers."""
+    cur = type_die
+    for _ in range(12):
+        tag = getattr(cur, "tag", "")
+        if tag in (
+            "DW_TAG_typedef",
+            "DW_TAG_const_type",
+            "DW_TAG_volatile_type",
+            "DW_TAG_restrict_type",
+        ):
+            nxt = _resolve_type_die(cur, CU)
+            if nxt is None:
+                break
+            cur = nxt
+        else:
+            break
+    return cur
+
+
+def _value_abi_trait_for_typed_die(die: Any, CU: Any) -> str | None:
+    """Return ABI trait for by-value aggregate type (or None if irrelevant)."""
+    t0 = _resolve_type_die(die, CU)
+    if t0 is None:
+        return None
+
+    # Reference/pointer params are not passed by value and do not trigger SysV
+    # aggregate return/arg convention drift from triviality changes.
+    if t0.tag in (
+        "DW_TAG_pointer_type",
+        "DW_TAG_reference_type",
+        "DW_TAG_rvalue_reference_type",
+    ):
+        return None
+
+    t = _unwrap_qualifiers(t0, CU)
+    if t.tag not in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
+        return None
+
+    tname = _attr_str(t, "DW_AT_name") or "<anon>"
+    triviality = "nontrivial" if _is_nontrivial_aggregate(t) else "trivial"
+    return f"{tname}({triviality})"
+
+
+def _extract_calling_convention(die: Any, meta: AdvancedDwarfMetadata, CU: Any) -> None:
+    """Record calling conventions + DWARF value-ABI traits for ABI-exported functions.
 
     Key: DW_AT_linkage_name (mangled), falling back to DW_AT_MIPS_linkage_name,
     then DW_AT_name. Using the mangled name avoids collisions on overloaded C++
@@ -282,8 +364,9 @@ def _extract_calling_convention(die: Any, meta: AdvancedDwarfMetadata) -> None:
     ELF symbol lookup.
 
     On Linux x86-64 (System V AMD64), GCC/Clang rarely emit DW_AT_calling_convention
-    (it defaults to DW_CC_normal which is omitted). This detector is most useful
-    for Windows (__stdcall/__cdecl mixed) and embedded targets.
+    (it defaults to DW_CC_normal which is omitted). As a fallback, we also record
+    value-ABI traits derived from DWARF types (e.g., trivial→nontrivial aggregate
+    return/arg changes), which can imply calling convention drift.
     """
     # Only externally-visible functions matter for ABI surface
     if not _attr_bool(die, "DW_AT_external"):
@@ -302,6 +385,22 @@ def _extract_calling_convention(die: Any, meta: AdvancedDwarfMetadata) -> None:
     else:
         cc_name = "normal"
     meta.calling_conventions[key] = cc_name
+
+    # Fallback value-ABI trait (for platforms where DW_AT_calling_convention is omitted)
+    parts: list[str] = []
+    ret_trait = _value_abi_trait_for_typed_die(die, CU)
+    if ret_trait is not None:
+        parts.append(f"ret:{ret_trait}")
+    pidx = 0
+    for ch in die.iter_children():
+        if ch.tag != "DW_TAG_formal_parameter":
+            continue
+        ptrait = _value_abi_trait_for_typed_die(ch, CU)
+        if ptrait is not None:
+            parts.append(f"p{pidx}:{ptrait}")
+        pidx += 1
+    if parts:
+        meta.value_abi_traits[key] = "|".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +560,7 @@ def diff_advanced_dwarf(
 
     results: list[tuple[str, str, str, str | None, str | None]] = []
 
-    # 1. Calling convention drift.
+    # 1. Calling convention drift (explicit DW_AT_calling_convention).
     # calling_conventions now stores ALL external functions (including "normal"),
     # so we can distinguish "CC changed" from "function added/removed".
     # Functions present only in old → removed (handled by ELF checker, skip here).
@@ -477,6 +576,33 @@ def diff_advanced_dwarf(
                 "calling_convention_changed", fname,
                 f"Calling convention changed: {fname} ({old_cc} → {new_cc})",
                 old_cc, new_cc,
+            ))
+
+    # 1b. Value-ABI trait drift (DWARF-based heuristic for platforms where
+    # DW_AT_calling_convention is not emitted, e.g. Linux x86-64 System V AMD64).
+    #
+    # On x86-64 SysV ABI, whether an aggregate is passed by value in registers
+    # or by hidden pointer depends on its triviality (Itanium C++ ABI §3.1.2):
+    # - trivially-destructible (no user-defined dtor): may use registers
+    # - non-trivially-destructible (has user-defined dtor): passed by pointer
+    #
+    # We detect this by comparing the per-function value-ABI trait fingerprint
+    # (return-type + parameter triviality) between versions.
+    #
+    # Deduplication: skip if calling_convention_changed already fired for this function
+    # (explicit DW_AT_calling_convention change is more authoritative).
+    already_reported_cc = {fname for fname in (old_cc_keys & new_cc_keys)
+                           if old_meta.calling_conventions[fname] != new_meta.calling_conventions[fname]}
+    old_trait_keys = set(old_meta.value_abi_traits)
+    new_trait_keys = set(new_meta.value_abi_traits)
+    for fname in sorted((old_trait_keys & new_trait_keys) - already_reported_cc):
+        old_trait = old_meta.value_abi_traits[fname]
+        new_trait = new_meta.value_abi_traits[fname]
+        if old_trait != new_trait:
+            results.append((
+                "value_abi_trait_changed", fname,
+                f"DWARF value-ABI trait changed: {fname} ({old_trait} → {new_trait})",
+                old_trait, new_trait,
             ))
 
     # 2. Struct packing drift.

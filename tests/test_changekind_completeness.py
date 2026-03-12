@@ -130,6 +130,10 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.VAR_REMOVED,
     ChangeKind.VAR_TYPE_CHANGED,
     ChangeKind.VAR_VALUE_CHANGED,
+    ChangeKind.VALUE_ABI_TRAIT_CHANGED,
+    # Inline attribute changes (ABICC issue #125)
+    ChangeKind.FUNC_BECAME_INLINE,
+    ChangeKind.FUNC_LOST_INLINE,
 }
 
 
@@ -402,3 +406,49 @@ class TestTypedefToFunction:
         result = compare(old, new)
         assert ChangeKind.TYPEDEF_BASE_CHANGED in _kinds(result)
         assert result.verdict == Verdict.BREAKING
+
+
+# ===========================================================================
+# FUNC_BECAME_INLINE / FUNC_LOST_INLINE (ABICC issue #125)
+# ===========================================================================
+
+
+class TestInlineTransitions:
+
+    def test_func_became_inline_detected(self) -> None:
+        """non-inline → inline transition should emit FUNC_BECAME_INLINE."""
+        old = _snap(functions=[_func("compute", "_Z7computei", is_inline=False)])
+        new = _snap(functions=[_func("compute", "_Z7computei", is_inline=True)])
+        result = compare(old, new)
+        assert ChangeKind.FUNC_BECAME_INLINE in _kinds(result)
+
+    def test_func_became_inline_is_api_break(self) -> None:
+        """FUNC_BECAME_INLINE must be classified as API_BREAK (not BREAKING)."""
+        old = _snap(functions=[_func("foo", "_Z3foov", is_inline=False)])
+        new = _snap(functions=[_func("foo", "_Z3foov", is_inline=True)])
+        result = compare(old, new)
+        assert ChangeKind.FUNC_BECAME_INLINE in _kinds(result)
+        assert result.verdict == Verdict.API_BREAK
+
+    def test_func_lost_inline_detected(self) -> None:
+        """inline → non-inline transition should emit FUNC_LOST_INLINE."""
+        old = _snap(functions=[_func("fast", "_Z4fasti", is_inline=True)])
+        new = _snap(functions=[_func("fast", "_Z4fasti", is_inline=False)])
+        result = compare(old, new)
+        assert ChangeKind.FUNC_LOST_INLINE in _kinds(result)
+
+    def test_func_lost_inline_is_compatible(self) -> None:
+        """FUNC_LOST_INLINE must be classified as COMPATIBLE."""
+        old = _snap(functions=[_func("bar", "_Z3barv", is_inline=True)])
+        new = _snap(functions=[_func("bar", "_Z3barv", is_inline=False)])
+        result = compare(old, new)
+        assert ChangeKind.FUNC_LOST_INLINE in _kinds(result)
+        assert result.verdict == Verdict.COMPATIBLE
+
+    def test_inline_unchanged_no_report(self) -> None:
+        """No change in inline attribute → no inline-transition event."""
+        old = _snap(functions=[_func("baz", "_Z3bazv", is_inline=True)])
+        new = _snap(functions=[_func("baz", "_Z3bazv", is_inline=True)])
+        result = compare(old, new)
+        assert ChangeKind.FUNC_BECAME_INLINE not in _kinds(result)
+        assert ChangeKind.FUNC_LOST_INLINE not in _kinds(result)

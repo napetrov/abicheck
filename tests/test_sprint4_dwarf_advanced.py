@@ -35,6 +35,7 @@ def _adv(
     *,
     has_dwarf: bool = True,
     calling: dict[str, str] | None = None,
+    value_traits: dict[str, str] | None = None,
     packed: set[str] | None = None,
     flags: set[str] | None = None,
     all_structs: set[str] | None = None,
@@ -51,6 +52,7 @@ def _adv(
             abi_flags=flags or set(),
         ),
         calling_conventions=calling or {},
+        value_abi_traits=value_traits or {},
         packed_structs=packed_set,
         all_struct_names=struct_names,
     )
@@ -124,6 +126,23 @@ def test_calling_convention_unchanged_no_change() -> None:
         _adv(calling={"f": "program"}),
     )
     assert results == []
+
+
+def test_value_abi_trait_changed_breaking() -> None:
+    old = _snap(_adv(value_traits={"foo": "ret:v(trivial)"}))
+    new = _snap(_adv(value_traits={"foo": "ret:v(nontrivial)"}))
+    r = compare(old, new)
+    kinds = {c.kind for c in r.changes}
+    assert ChangeKind.VALUE_ABI_TRAIT_CHANGED in kinds
+    assert r.verdict == Verdict.BREAKING
+
+
+def test_value_abi_trait_unchanged_no_change() -> None:
+    results = diff_advanced_dwarf(
+        _adv(value_traits={"foo": "ret:v(trivial)|p0:v(trivial)"}),
+        _adv(value_traits={"foo": "ret:v(trivial)|p0:v(trivial)"}),
+    )
+    assert not any(r[0] == "value_abi_trait_changed" for r in results)
 
 
 # ── struct packing ────────────────────────────────────────────────────────────
