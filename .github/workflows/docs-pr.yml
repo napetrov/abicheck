@@ -1,0 +1,28 @@
+name: Docs PR Check
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - '.github/workflows/pages.yml'
+      - '.github/workflows/docs-pr.yml'
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install MkDocs + Material theme
+        run: pip install mkdocs mkdocs-material
+
+      - name: Build docs (strict)
+        run: mkdocs build --strict

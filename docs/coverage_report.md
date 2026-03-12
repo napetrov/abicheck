@@ -45,7 +45,7 @@ previously uncovered cases that bring the suite to 62/62.
 | `dumper.py` | 336 | 336 | 140 | 0 | **0%** |
 | **TOTAL** | **2135** | **797** | **814** | **79** | **60%** |
 
-> Test suite: 219 passed (unit + sprint tests, no external tools required)
+> Test suite: 219 passed (unit + targeted regression tests, no external tools required)
 
 ---
 

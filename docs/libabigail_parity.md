@@ -1,6 +1,6 @@
 # libabigail Parity Matrix
 
-_Sprint 6 — G3: libabigail test suite compatibility_
+_G3: libabigail test suite compatibility_
 
 This document tracks how abicheck verdict compares to `abidiff` (libabigail)
 on canonical ABI change scenarios.
@@ -21,12 +21,12 @@ on canonical ABI change scenarios.
 
 ## Known Divergences (tracked gaps)
 
-| # | Case | abicheck | abidiff | Root cause | Sprint |
+| # | Case | abicheck | abidiff | Root cause |
 |---|------|----------|---------|------------|--------|
-| 1 | struct_size | NO_CHANGE | COMPATIBLE¹ | ELF-only: no type info without headers | Sprint 7 |
-| 2 | return_type | NO_CHANGE | COMPATIBLE¹ | ELF-only: same symbol name, no type diff | Sprint 7 |
-| 3 | param_type | NO_CHANGE | COMPATIBLE¹ | ELF-only: same symbol name, no type diff | Sprint 7 |
-| 4 | vtable_reorder | NO_CHANGE | BREAKING | ELF-only: vtable not visible in dynsym | Sprint 7 |
+| 1 | struct_size | NO_CHANGE | COMPATIBLE¹ | ELF-only: no type info without headers |
+| 2 | return_type | NO_CHANGE | COMPATIBLE¹ | ELF-only: same symbol name, no type diff |
+| 3 | param_type | NO_CHANGE | COMPATIBLE¹ | ELF-only: same symbol name, no type diff |
+| 4 | vtable_reorder | NO_CHANGE | BREAKING | ELF-only: vtable not visible in dynsym |
 
 ¹ Note: abidiff with DWARF (-g but no headers) classifies type sub-changes as
 COMPATIBLE (exit=4), not BREAKING. To get BREAKING verdict from abidiff,
@@ -34,7 +34,7 @@ use `--headers-dir` option. abicheck with headers (castxml) returns BREAKING cor
 
 ## Gap closure plan
 
-Sprint 7: integrate castxml output into parity tests → all divergences close.
+After integrating castxml output into parity tests, all divergences close.
 When a gap is closed, update `PARITY_CASES` in `tests/test_abidiff_parity.py`
 and move the entry from `_DIVERGE` to `_CONFIRMED`.
 

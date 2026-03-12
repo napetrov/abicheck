@@ -95,7 +95,7 @@ These changes are immediately incompatible with existing compiled binaries.
 |------|-------------|
 | `field_bitfield_changed` | A bitfield's width or position changed. Callers accessing packed bitfields read the wrong bits — silent data corruption. |
 
-### DWARF / Struct Layout (Sprint 3–4)
+### DWARF / Struct Layout
 
 | Kind | Description |
 |------|-------------|

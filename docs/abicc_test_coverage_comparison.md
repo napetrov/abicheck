@@ -66,8 +66,8 @@
 
 | ABICC Rule | Abicheck ChangeKind | Example | Tests | Status |
 |------------|---------------------|---------|-------|--------|
-| `Base_Class_Position` | `BASE_CLASS_POSITION_CHANGED` | case37 | test_sprint2_gap_detectors | **COVERED** |
-| `Base_Class_Became_Virtually_Inherited` / `Non_Virtually` | `BASE_CLASS_VIRTUAL_CHANGED` | case37 | test_sprint2_gap_detectors | **COVERED** |
+| `Base_Class_Position` | `BASE_CLASS_POSITION_CHANGED` | case37 | regression_tests | **COVERED** |
+| `Base_Class_Became_Virtually_Inherited` / `Non_Virtually` | `BASE_CLASS_VIRTUAL_CHANGED` | case37 | regression_tests | **COVERED** |
 | `Added_Base_Class` (+ Shift/Size/VTable variants, 6 rules) | `TYPE_BASE_CHANGED` | case37 | test_checker | **COVERED** |
 | `Removed_Base_Class` (+ Shift/Size/VTable variants, 6 rules) | `TYPE_BASE_CHANGED` | case37 | test_checker | **COVERED** |
 
@@ -76,7 +76,7 @@
 | ABICC Rule | Abicheck ChangeKind | Example | Tests | Status |
 |------------|---------------------|---------|-------|--------|
 | `Moved_Field` (+ And_Size) | `TYPE_FIELD_OFFSET_CHANGED` | case07, case40 | test_checker | **COVERED** |
-| `Added_Field` (+ Size/Layout variants, 6 rules) | `TYPE_FIELD_ADDED` / `TYPE_FIELD_ADDED_COMPATIBLE` | case07, case14, case40 | test_checker, test_sprint10 | **COVERED** |
+| `Added_Field` (+ Size/Layout variants, 6 rules) | `TYPE_FIELD_ADDED` / `TYPE_FIELD_ADDED_COMPATIBLE` | case07, case14, case40 | test_checker, regression_tests | **COVERED** |
 | `Added_Middle_Field_And_Size` (RegTest) | `TYPE_FIELD_ADDED` + `TYPE_FIELD_OFFSET_CHANGED` | case40 | test_checker | **COVERED** |
 | `Added_Tail_Field` (RegTest) | `TYPE_FIELD_ADDED_COMPATIBLE` | case40 | test_checker | **COVERED** |
 | `Removed_Field` (+ Layout/Size variants, 6 rules) | `TYPE_FIELD_REMOVED` | case07 | test_checker | **COVERED** |
@@ -84,14 +84,14 @@
 | `Removed_Union_Field` (+ And_Size) | `UNION_FIELD_REMOVED` | case24 | test_changekind_coverage | **COVERED** |
 | `Field_Type` (+ Size/Layout variants, 8 rules) | `TYPE_FIELD_TYPE_CHANGED` | case07, case41 | test_checker | **COVERED** |
 | `Field_BaseType` (+ Size/Format) | `TYPE_FIELD_TYPE_CHANGED` | case41 | test_checker | **COVERED** |
-| `Struct_Field_Size_Increased` | `STRUCT_FIELD_TYPE_CHANGED` | - | test_sprint3_dwarf | **COVERED** |
-| `Renamed_Field` | `FIELD_RENAMED` | case35 | test_sprint7_full_parity | **COVERED** |
+| `Struct_Field_Size_Increased` | `STRUCT_FIELD_TYPE_CHANGED` | - | regression_tests | **COVERED** |
+| `Renamed_Field` | `FIELD_RENAMED` | case35 | regression_tests | **COVERED** |
 | `Used_Reserved_Field` | `USED_RESERVED_FIELD` | - | test_abicc_full_parity | **COVERED** |
 | `Field_PointerLevel_Increased/Decreased` | (via `TYPE_FIELD_TYPE_CHANGED`) | case33 | test_checker | **COVERED** — detected as type change |
-| `Field_Became_Volatile/Non_Volatile` | `FIELD_BECAME_VOLATILE` / `FIELD_LOST_VOLATILE` | case30 | test_sprint7_full_parity | **COVERED** |
-| `Field_Became_Mutable/Non_Mutable` | `FIELD_BECAME_MUTABLE` / `FIELD_LOST_MUTABLE` | case30 | test_sprint7_full_parity | **COVERED** |
-| `Field_Became_Const/Non_Const` (+ Added/Removed_Const) | `FIELD_BECAME_CONST` / `FIELD_LOST_CONST` | case30 | test_sprint7_full_parity | **COVERED** |
-| `Field_Became_Private/Protected` | `FIELD_ACCESS_CHANGED` | case34 | test_sprint7_full_parity | **COVERED** |
+| `Field_Became_Volatile/Non_Volatile` | `FIELD_BECAME_VOLATILE` / `FIELD_LOST_VOLATILE` | case30 | regression_tests | **COVERED** |
+| `Field_Became_Mutable/Non_Mutable` | `FIELD_BECAME_MUTABLE` / `FIELD_LOST_MUTABLE` | case30 | regression_tests | **COVERED** |
+| `Field_Became_Const/Non_Const` (+ Added/Removed_Const) | `FIELD_BECAME_CONST` / `FIELD_LOST_CONST` | case30 | regression_tests | **COVERED** |
+| `Field_Became_Private/Protected` | `FIELD_ACCESS_CHANGED` | case34 | regression_tests | **COVERED** |
 | `Field_Type_Format` / `Field_BaseType_Format` | `TYPE_FIELD_TYPE_CHANGED` | case41 | test_checker | **COVERED** (format distinction not separate) |
 | `AddedBitfield` / `BitfieldSize` / `RemovedBitfield` (RegTest) | `FIELD_BITFIELD_CHANGED` | - | test_changekind_coverage | **COVERED** (no example) |
 
@@ -103,7 +103,7 @@
 | `Enum_Last_Member_Value` | `ENUM_LAST_MEMBER_VALUE_CHANGED` | - | test_changekind_coverage | **COVERED** (no example) |
 | `Enum_Member_Removed` | `ENUM_MEMBER_REMOVED` | case19 | test_changekind_coverage | **COVERED** |
 | `Added_Enum_Member` | `ENUM_MEMBER_ADDED` | case25 | test_changekind_coverage | **COVERED** |
-| `Enum_Member_Name` (renamed, same value) | `ENUM_MEMBER_RENAMED` | case31 | test_sprint7_full_parity | **COVERED** |
+| `Enum_Member_Name` (renamed, same value) | `ENUM_MEMBER_RENAMED` | case31 | regression_tests | **COVERED** |
 | `Enum_Private_Member_Value` | (not applicable — no private enums in C) | - | - | N/A |
 
 ### 6. Typedef Changes
@@ -124,8 +124,8 @@
 | `Method_Became_Volatile` / `Non_Volatile` | `FUNC_CV_CHANGED` | - | test_changekind_coverage | **COVERED** |
 | `Symbol_Became_Virtual` / `Non_Virtual` | `FUNC_VIRTUAL_ADDED` / `FUNC_VIRTUAL_REMOVED` | case09, case38 | test_checker | **COVERED** |
 | `Symbol_Became_Static` / `Non_Static` | `FUNC_STATIC_CHANGED` | case21 | test_changekind_coverage | **COVERED** |
-| `Method_Became_Private/Protected` | `METHOD_ACCESS_CHANGED` | case34 | test_sprint7_full_parity | **COVERED** |
-| `Method_Became_Public` | `METHOD_ACCESS_CHANGED` | case34 | test_sprint7_full_parity | **COVERED** |
+| `Method_Became_Private/Protected` | `METHOD_ACCESS_CHANGED` | case34 | regression_tests | **COVERED** |
+| `Method_Became_Public` | `METHOD_ACCESS_CHANGED` | case34 | regression_tests | **COVERED** |
 | `Symbol_Changed_Return` | `FUNC_RETURN_CHANGED` | case10 | test_checker | **COVERED** |
 | `Symbol_Changed_Parameters` | `FUNC_PARAMS_CHANGED` | case02 | test_checker | **COVERED** |
 | `Global_Data_Symbol_Changed_Type` | `VAR_TYPE_CHANGED` | case11 | test_checker | **COVERED** |
@@ -137,17 +137,17 @@
 |------------|---------------------|---------|-------|--------|
 | `Parameter_Type` (+ Register/Stack/Size/Format/BaseType, ~15 rules) | `FUNC_PARAMS_CHANGED` | case02 | test_checker, test_abicc_parity | **COVERED** |
 | `Added/Removed_Parameter` (+ Middle/Unnamed, 8 rules) | `FUNC_PARAMS_CHANGED` | case02 | test_checker | **COVERED** |
-| `Parameter_PointerLevel_Increased/Decreased` | `PARAM_POINTER_LEVEL_CHANGED` | case33 | test_sprint7_full_parity | **COVERED** |
-| `Renamed_Parameter` | `PARAM_RENAMED` | - | test_sprint7_full_parity | **COVERED** (no example) |
-| `Parameter_Default_Value_Changed` | `PARAM_DEFAULT_VALUE_CHANGED` | case32 | test_sprint7_full_parity | **COVERED** |
-| `Parameter_Default_Value_Removed` | `PARAM_DEFAULT_VALUE_REMOVED` | case32 | test_sprint7_full_parity | **COVERED** |
-| `Parameter_Default_Value_Added` | (implicit — compatible addition) | case32 | test_sprint7_full_parity | **COVERED** |
+| `Parameter_PointerLevel_Increased/Decreased` | `PARAM_POINTER_LEVEL_CHANGED` | case33 | regression_tests | **COVERED** |
+| `Renamed_Parameter` | `PARAM_RENAMED` | - | regression_tests | **COVERED** (no example) |
+| `Parameter_Default_Value_Changed` | `PARAM_DEFAULT_VALUE_CHANGED` | case32 | regression_tests | **COVERED** |
+| `Parameter_Default_Value_Removed` | `PARAM_DEFAULT_VALUE_REMOVED` | case32 | regression_tests | **COVERED** |
+| `Parameter_Default_Value_Added` | (implicit — compatible addition) | case32 | regression_tests | **COVERED** |
 | `Parameter_Became_Non_Const` / `Removed_Const` | (via `FUNC_PARAMS_CHANGED`) | - | test_checker | **COVERED** — detected as param type change |
 | `Parameter_Became_Restrict` / `Non_Restrict` | `PARAM_RESTRICT_CHANGED` | - | test_abicc_full_parity | **COVERED** |
 | `Parameter_Became_VaList` / `Non_VaList` | `PARAM_BECAME_VA_LIST` / `PARAM_LOST_VA_LIST` | - | test_abicc_full_parity | **COVERED** |
-| `Parameter_Became_Register` / `Non_Register` | (via `CALLING_CONVENTION_CHANGED` DWARF) | - | test_sprint4_dwarf_advanced | **COVERED** — DWARF calling convention diff |
-| `Parameter_To/From/Changed_Register` | (via `CALLING_CONVENTION_CHANGED` DWARF) | - | test_sprint4_dwarf_advanced | **COVERED** — DWARF calling convention diff |
-| `Parameter_Changed_Offset` | (via `CALLING_CONVENTION_CHANGED` DWARF) | - | test_sprint4_dwarf_advanced | **COVERED** — DWARF calling convention diff |
+| `Parameter_Became_Register` / `Non_Register` | (via `CALLING_CONVENTION_CHANGED` DWARF) | - | regression_tests | **COVERED** — DWARF calling convention diff |
+| `Parameter_To/From/Changed_Register` | (via `CALLING_CONVENTION_CHANGED` DWARF) | - | regression_tests | **COVERED** — DWARF calling convention diff |
+| `Parameter_Changed_Offset` | (via `CALLING_CONVENTION_CHANGED` DWARF) | - | regression_tests | **COVERED** — DWARF calling convention diff |
 | `parameterBecameConstInt` (RegTest) | (via `FUNC_PARAMS_CHANGED`) | - | test_checker | **COVERED** — detected as param type change |
 
 ### 9. Return Type Changes
@@ -156,19 +156,19 @@
 |------------|---------------------|---------|-------|--------|
 | `Return_Type` (+ Size/Register/Stack/Format/BaseType, ~10 rules) | `FUNC_RETURN_CHANGED` | case10 | test_checker, test_abicc_parity | **COVERED** |
 | `Return_Type_Became_Void` / `From_Void` (+ Stack/Register variants, 4 rules) | `FUNC_RETURN_CHANGED` | - | test_checker | **COVERED** |
-| `Return_PointerLevel_Increased/Decreased` | `RETURN_POINTER_LEVEL_CHANGED` | case33 | test_sprint7_full_parity | **COVERED** |
+| `Return_PointerLevel_Increased/Decreased` | `RETURN_POINTER_LEVEL_CHANGED` | case33 | regression_tests | **COVERED** |
 | `Return_Type_Became_Const` / `Added_Const` | (via `FUNC_RETURN_CHANGED`) | - | test_checker | **COVERED** — detected as return type change |
 | `Return_Value_Became_Volatile` | (via `FUNC_RETURN_CHANGED`) | - | test_checker | **COVERED** — detected as return type change |
-| `Return_Type_And_Register_Became/Was_Hidden_Parameter` | (via `CALLING_CONVENTION_CHANGED` DWARF) | - | test_sprint4_dwarf_advanced | **COVERED** — DWARF calling convention diff |
+| `Return_Type_And_Register_Became/Was_Hidden_Parameter` | (via `CALLING_CONVENTION_CHANGED` DWARF) | - | regression_tests | **COVERED** — DWARF calling convention diff |
 
 ### 10. Global Data Changes
 
 | ABICC Rule | Abicheck ChangeKind | Example | Tests | Status |
 |------------|---------------------|---------|-------|--------|
 | `Global_Data_Type` (+ Size/Format) | `VAR_TYPE_CHANGED` | case11 | test_checker | **COVERED** |
-| `Global_Data_Size` | `SYMBOL_SIZE_CHANGED` | - | test_sprint2_elf | **COVERED** |
-| `Global_Data_Became_Const` / `Added_Const` | `VAR_BECAME_CONST` | case39 | test_sprint2_gap_detectors | **COVERED** |
-| `Global_Data_Became_Non_Const` / `Removed_Const` | `VAR_LOST_CONST` | case39 | test_sprint2_gap_detectors | **COVERED** |
+| `Global_Data_Size` | `SYMBOL_SIZE_CHANGED` | - | regression_tests | **COVERED** |
+| `Global_Data_Became_Const` / `Added_Const` | `VAR_BECAME_CONST` | case39 | regression_tests | **COVERED** |
+| `Global_Data_Became_Non_Const` / `Removed_Const` | `VAR_LOST_CONST` | case39 | regression_tests | **COVERED** |
 | `Global_Data_Value_Changed` | `VAR_VALUE_CHANGED` | - | test_abicc_full_parity | **COVERED** |
 | `Global_Data_Became_Private/Protected/Public` | `VAR_ACCESS_CHANGED` | - | test_abicc_full_parity | **COVERED** |
 
@@ -185,17 +185,17 @@
 
 | ABICC Rule | Abicheck ChangeKind | Example | Tests | Status |
 |------------|---------------------|---------|-------|--------|
-| `Type_Became_Opaque` | `TYPE_BECAME_OPAQUE` | case28 | test_sprint2_gap_detectors | **COVERED** |
-| `StructBecameOpaque` / `UnionBecameOpaque` (RegTest) | `TYPE_BECAME_OPAQUE` | case28 | test_sprint2_gap_detectors | **COVERED** |
-| `paramBecameNonOpaque` (RegTest) | (implicit via type diff) | - | test_sprint2_gap_detectors | **COVERED** |
+| `Type_Became_Opaque` | `TYPE_BECAME_OPAQUE` | case28 | regression_tests | **COVERED** |
+| `StructBecameOpaque` / `UnionBecameOpaque` (RegTest) | `TYPE_BECAME_OPAQUE` | case28 | regression_tests | **COVERED** |
+| `paramBecameNonOpaque` (RegTest) | (implicit via type diff) | - | regression_tests | **COVERED** |
 
 ### 13. Bitfield / Calling Convention
 
 | ABICC Rule | Abicheck ChangeKind | Example | Tests | Status |
 |------------|---------------------|---------|-------|--------|
 | Bitfield layout changes | `FIELD_BITFIELD_CHANGED` | - | test_changekind_coverage | **COVERED** (no example) |
-| Calling convention (register/stack) | `CALLING_CONVENTION_CHANGED` | - | test_sprint4_dwarf_advanced | **COVERED** (no example) |
-| `callConv`/`callConv2-5` (RegTest) | `CALLING_CONVENTION_CHANGED` (DWARF only) | - | test_sprint4_dwarf_advanced | **COVERED** — requires DWARF |
+| Calling convention (register/stack) | `CALLING_CONVENTION_CHANGED` | - | regression_tests | **COVERED** (no example) |
+| `callConv`/`callConv2-5` (RegTest) | `CALLING_CONVENTION_CHANGED` (DWARF only) | - | regression_tests | **COVERED** — requires DWARF |
 
 ---
 

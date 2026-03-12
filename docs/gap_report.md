@@ -8,15 +8,14 @@
 
 ## Summary
 
-- **abicheck covers:** ~55/55 de-duplicated ABI break scenarios (~100%) after Sprint 1-7
+- **abicheck covers:** ~55/55 de-duplicated ABI break scenarios (~100%) after recent releases
 - **Key differentiator:** abicheck uses multi-tier analysis (castxml headers + ELF symbols + DWARF layout) -- works on **release builds** with headers + `.so`, no debug symbols required for core checks. ABICC needs GCC `-fdump-lang-spec`, abidiff needs DWARF debug info.
-- **Closed gaps (Sprint 1-7):** All original P0/P1/P2 scenarios now detected. Sprint 7 added: enum rename, field/param rename, field qualifiers (const/volatile/mutable), pointer level changes, access level changes, param default value tracking, anonymous struct/union fields.
+- **Closed gaps:** All original P0/P1/P2 scenarios are now detected, including enum rename, field/param rename, field qualifiers (const/volatile/mutable), pointer level changes, access level changes, param default value tracking, and anonymous struct/union fields.
 - **Coverage: exceeds ABICC** — 85 ChangeKinds (52 BREAKING, 27 COMPATIBLE, 6 API_BREAK), covering all 49 ABICC-equivalent scenarios plus 6 additional scenarios ABICC does not detect (anon field changes, combined qualifier+rename, access level, param defaults as API breaks).
 - **Test coverage:** 85/85 ChangeKinds referenced in unit tests, 429 tests passing, with coverage validated against the current examples suite.
 
-> Note: ABICC has 90+ rules total, but many are sub-rules of the same scenario. The 55-row coverage table below is the expanded scenario count after Sprint 7.
+> Note: ABICC has 90+ rules total, but many are sub-rules of the same scenario. The 55-row coverage table below is the expanded scenario count for the current implementation.
 >
-> **Sprint status:** Sprint 1 (core detectors), Sprint 2 (ELF-only), Sprint 3 (DWARF layout), Sprint 4 (advanced DWARF), Sprint 5 (ABICC compat), Sprint 6 (libabigail parity), Sprint 7 (full parity + beyond) -- all implemented.
 
 ---
 
@@ -52,9 +51,9 @@
 
 ---
 
-## GAPS — Closed in Sprint 7 (previously uncovered, now implemented)
+## GAPS — Closed (historical, now implemented)
 
-> **All P0, P1, and P2 gaps are now closed.** The following sections document what was added in Sprint 7.
+> **All P0, P1, and P2 gaps are now closed.** The following sections preserve historical context for previously uncovered areas.
 
 ## Historical GAPS (now closed) — what abicheck previously did not cover
 
@@ -66,7 +65,7 @@
 | **Method became const / non-const** | ✅ `Method_Became_Const` | ✅ | Itanium ABI encodes cv-qualifier on `this` (`_ZNK...` for const) | `undefined symbol` |
 | **Method became volatile / non-volatile** | ✅ `Method_Became_Volatile` | ✅ | Part of mangled name; rare in practice but still a hard ABI break | `undefined symbol` |
 | **Enum member value changed** | ✅ `Enum_Member_Value` | ✅ | Old binaries pass stale integer value → switch corruption in library. (Note: technically UB only if library switch has no default; guaranteed behavioral mismatch regardless.) | Silent corruption |
-| **Virtual method position changed** | ✅ `Virtual_Method_Position` | ✅ | vtable slot reorder — old binary calls wrong function via stale slot index. No symbol error. Sprint 1 scope: single-inheritance detection only; full multi-inheritance requires hierarchy-aware vtable reconstruction. | Silent corruption |
+| **Virtual method position changed** | ✅ `Virtual_Method_Position` | ✅ | vtable slot reorder — old binary calls wrong function via stale slot index. No symbol error. Current scope: single-inheritance detection only; full multi-inheritance requires hierarchy-aware vtable reconstruction. | Silent corruption |
 | **Added pure virtual method** | ✅ `Added_Pure_Virtual_Method` | ✅ | Old derived class vtable has null/placeholder slot for the new pure virtual → null function pointer call at runtime. Distinct from "added virtual". | Crash at runtime |
 | **Enum member removed** | ✅ `Enum_Member_Removed` | ✅ | Old binaries pass removed enum value → potential UB in library switch statements; guaranteed behavioral mismatch. | Silent corruption |
 | **Union field changes** | ✅ `Added/Removed_Union_Field` | ✅ | abicheck detects union size change but NOT field-level changes. castxml exposes union members; gap is in checker, not data availability. | Missed layout bugs |
@@ -85,13 +84,13 @@
 | **Global data became const / non-const** | ✅ `Global_Data_Became_Const` | ✅ | Write to now-const data → SIGSEGV |
 | **Typedef base type changed** | ✅ `Typedef_BaseType` | ✅ | `typedef int T` → `typedef long T` — size/semantic change. **Note: treat as P0 for Intel library CI** (dnnl_dim_t, primitive impl typedefs). |
 | **Type became opaque** | ✅ `Type_Became_Opaque` | ✅ | Was complete struct, now forward-decl only; breaks stack allocation |
-| **Anonymous struct/union changes** | ⚠️ | ✅ (test44,45) | castxml assigns IDs to anon types but field path tracking needs validation — **TODO: verify with castxml dump before Sprint 2 commitment.** |
+| **Anonymous struct/union changes** | ⚠️ | ✅ (test44,45) | castxml assigns IDs to anon types but field path tracking needs validation — **TODO: verify with castxml dump.** |
 | **Base class became virtual/non-virtual** | ✅ `Base_Class_Became_Virtually_Inherited` | ✅ | Diamond inheritance layout change |
 | **Destructor ABI changes** | ✅ | ✅ | Itanium ABI has D0/D1/D2 destructors with separate vtable slots. Adding/removing virtual destructor, or trivial→non-trivial change, has specific ABI impact. |
 
 ### P2 — Nice to have (completeness / tooling quality)
 
-| Case | ABICC | abidiff | abicheck (Sprint 7) | Notes |
+| Case | ABICC | abidiff | abicheck | Notes |
 |------|-------|---------|---------------------|-------|
 | **Renamed field** | ✅ `Renamed_Field` | ❌ | ✅ `FIELD_RENAMED` | Heuristic: same offset+type, different name |
 | **Renamed parameter** | ✅ `Renamed_Parameter` | ❌ | ✅ `PARAM_RENAMED` | Same type+position, different name |
@@ -105,7 +104,7 @@
 | **Cross-architecture ABI diff** | ❌ | ✅ (test23) | ❌ | Out of scope: 32-bit vs 64-bit comparison |
 | **Bitfield layout changes** | ✅ | ✅ | ✅ `FIELD_BITFIELD_CHANGED` | |
 | **Constant added/removed/changed** | ✅ | ❌ | ⚠️ | `#define` / `constexpr` constant changes |
-| **Anonymous struct/union** | ⚠️ | ✅ (test44,45) | ✅ `ANON_FIELD_CHANGED` | New in Sprint 7 |
+| **Anonymous struct/union** | ⚠️ | ✅ (test44,45) | ✅ `ANON_FIELD_CHANGED` | Supported |
 | **Template instantiation ABI** | ⚠️ | ⚠️ | ⚠️ | Partial: explicit instantiations via ELF symtab |
 | **Move constructor/assignment ABI** | ❌ | ✅ | ❌ | Out of scope: requires binary analysis |
 | **CRC/ABI fingerprint** | ❌ | ✅ | ❌ | Kernel modules — out of scope |
@@ -160,72 +159,9 @@ abicheck workflow:         abidiff workflow:
 
 ---
 
-## Recommended Implementation Order
-
-### Sprint 1 — P0 core + Quick wins (close critical gaps)
-
-**P0 items (8 of 10 — excluding vtable reorder and base class position which need design):**
-
-1. **Enum member removed** → `ENUM_MEMBER_REMOVED` (BREAKING)
-   - castxml: full enum member list → compare old vs new
-
-2. **Method static changed** → `FUNC_STATIC_CHANGED` (BREAKING; covers both directions)
-   - castxml `static` attribute; cross-check via readelf symbol presence
-
-3. **Method const/volatile changed** → `FUNC_CV_CHANGED` (BREAKING)
-   - castxml `const`/`volatile` attributes on methods
-
-4. **Added pure virtual method** → `FUNC_PURE_VIRTUAL_ADDED` (BREAKING)
-   - castxml `pure_virtual` attribute; distinct from `FUNC_VIRTUAL_ADDED`
-
-5. **Union field-level changes** → `UNION_FIELD_ADDED` / `UNION_FIELD_REMOVED` / `UNION_FIELD_TYPE_CHANGED`
-   - Extend field diff to handle `kind="union"` separately
-
-6. **Enum member value changed** → `ENUM_MEMBER_VALUE_CHANGED` (BREAKING)
-   - Compare enum member integer values (not just type-level)
-
-7. **Virtual method became pure** → `FUNC_VIRTUAL_BECAME_PURE` (BREAKING) *(was P1)*
-   - castxml `pure_virtual` on existing virtual
-
-**Sprint 1 Quick Wins (low-effort P1 items, free riders with above):**
-
-8. **Enum last/boundary member value** → `ENUM_LAST_MEMBER_CHANGED` — free rider with #6
-9. **Typedef base type changed** → `TYPEDEF_BASE_CHANGED` — single castxml attribute lookup; **treat as P0 for Intel CI**
-10. **Bitfield layout** → `FIELD_BITFIELD_CHANGED` — castxml `bit_field` + `bits` attribute
-
-**Sprint 1 Design Spike (1 week before implementation):**
-
-- **Virtual method position / vtable reorder** (`VTABLE_SLOT_REORDER`): Sprint 1 scope = single-inheritance only (declaration order = vtable order for Itanium in simple cases). Full multi-inheritance requires class lattice traversal → Sprint 2 follow-up.
-- **Base class position reordered** (`BASE_CLASS_POSITION_CHANGED`): castxml exposes base class list order. Spike to validate detection heuristic.
-
-### Sprint 2 — Remaining P0 + P1
-
-11. **Base class position reordered** (after spike validation)
-12. **Virtual method position** (full multi-inheritance version)
-13. **Global data const qualifier** (`VAR_BECAME_CONST` / `VAR_LOST_CONST`)
-14. **Type became opaque** (complete struct → forward-decl detection)
-15. **Base class became virtual/non-virtual** (`BASE_CLASS_VIRTUAL_CHANGED`)
-16. **Function became deleted** (`FUNC_DELETED`)
-17. **Destructor ABI changes** (D0/D1/D2 vtable slot tracking)
-18. **Anonymous struct/union** (after castxml behavior validation)
-
-### Sprint 3 — P2 + Completeness
-
-19. **Parameter default value changes** (castxml exposes `default` expressions)
-20. **Field qualifiers** (volatile, mutable, const tracking on fields)
-21. **Renamed field/parameter** (rename heuristic: same offset + compatible type)
-22. **Pointer level changes** (`PARAM_POINTER_LEVEL_CHANGED`, `RETURN_POINTER_LEVEL_CHANGED`)
-23. **Explicit template instantiation tracking** (via readelf symtab, not full template analysis)
-24. **Parameter defaults** (castxml `default` expression nodes)
-25. **ABIXML export** *(scope TBD — libabigail XML schema is complex; needs dedicated planning)*
-
-**Exit criterion for each sprint:** run abicheck on dnnl APT 2025.10→2025.11 and verify no P0 false negatives introduced.
-
----
-
 ## Coverage Summary Table
 
-| Category | abicheck (current, S1-7) | ABICC | abidiff |
+| Category | abicheck (current) | ABICC | abidiff |
 |----------|-------------------------|-------|---------|
 | Function symbol ABI | 12/12 | 12/12 | 10/12 |
 | Type/struct layout | 10/10 | 10/10 | 10/10 |
@@ -242,7 +178,7 @@ abicheck workflow:         abidiff workflow:
 | Anonymous struct/union | 1/1 | 0/1 | 1/1 |
 | **Total** | **~55/55 (100%)** | **~48/55** | **~44/55** |
 
-> Sprint 7 closed all remaining gaps. abicheck now exceeds ABICC coverage:
+> Current implementation closes all remaining gaps in this matrix. abicheck now exceeds ABICC coverage:
 > - ABICC lacks: anonymous struct field tracking, combined access+qualifier detection
 > - abidiff lacks: enum renames, param defaults, access level changes, field/param renames
 > - Remaining out-of-scope items: cross-architecture ABI diff (32-bit vs 64-bit), BTF/CTF kernel support
