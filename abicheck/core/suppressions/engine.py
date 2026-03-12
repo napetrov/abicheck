@@ -30,6 +30,7 @@ import re2  # google-re2: O(N) guaranteed
 from abicheck.core.errors import SuppressionError
 from abicheck.core.model import Change, ChangeSeverity
 from abicheck.core.pipeline import KNOWN_PLATFORMS as _KNOWN_PLATFORMS  # noqa: PLC0415
+from abicheck.core.pipeline import KNOWN_PROFILES as _KNOWN_PROFILES
 from abicheck.core.suppressions.rule import SuppressionRule, VersionRange
 
 # ---------------------------------------------------------------------------
@@ -212,6 +213,7 @@ class _CompiledRule(NamedTuple):
     regex_compiled: re2.Pattern | None  # pre-compiled RE2 from entity_regex
     version_range: VersionRange | None  # Phase 2b: pre-validated version range
     platform: str | None               # Phase 3: "elf" | "pe" | "macho" | None=any
+    profile: str | None                # Phase 4: "c" | "cpp" | "sycl" | None=any
 
 
 # Stable key for match_map audit trail: (entity_type, entity_name, change_kind)
@@ -241,6 +243,9 @@ class SuppressionEngine:
 
     Phase 3: platform_context parameter enables scope.platform filtering.
     When platform_context is None, platform checks are skipped (conservative: suppress).
+
+    Phase 4: profile_context parameter enables scope.profile filtering.
+    When profile_context is None, profile checks are skipped (conservative: suppress).
     """
 
     def __init__(
@@ -248,9 +253,11 @@ class SuppressionEngine:
         rules: list[SuppressionRule],
         version_context: str | None = None,
         platform_context: str | None = None,
+        profile_context: str | None = None,
     ) -> None:
         self._version_context = version_context
         self._platform_context = platform_context
+        self._profile_context = profile_context
         self._compiled: list[_CompiledRule] = []
         for rule in rules:
             # ── Security: enforce input length limits ──────────────────────
@@ -300,14 +307,16 @@ class SuppressionEngine:
                     )
                 compiled_platform = scope.platform
 
-            # scope.profile still unimplemented — fail hard until Phase 4
-            if scope.profile:
-                raise SuppressionError(
-                    f"SuppressionRule scope field 'profile' "
-                    f"is not yet implemented (reason={rule.reason!r}). "
-                    f"Scope filtering is planned for Phase 4. "
-                    f"Remove the scope field until then."
-                )
+            # Phase 4: validate scope.profile value
+            compiled_profile: str | None = None
+            if scope.profile is not None:
+                if scope.profile not in _KNOWN_PROFILES:
+                    raise SuppressionError(
+                        f"Unknown profile {scope.profile!r} in suppression rule "
+                        f"(reason={rule.reason!r}). "
+                        f"Valid values: {sorted(_KNOWN_PROFILES)}"
+                    )
+                compiled_profile = scope.profile
 
             # Phase 2b: pre-validate version_range at load time
             compiled_vr: VersionRange | None = None
@@ -321,6 +330,7 @@ class SuppressionEngine:
                 regex_compiled=compiled_regex,
                 version_range=compiled_vr,
                 platform=compiled_platform,
+                profile=compiled_profile,
             ))
 
     def apply(
@@ -328,23 +338,29 @@ class SuppressionEngine:
         changes: list[Change],
         version_context: str | None = None,
         platform_context: str | None = None,
+        profile_context: str | None = None,
     ) -> SuppressionResult:
         """Apply all rules to a list of Changes. Returns SuppressionResult.
 
-        version_context overrides the version_context set at __init__ time.
-        platform_context overrides the platform_context set at __init__ time.
+        version_context/platform_context/profile_context override init-time values.
         Non-None values override init; None falls back to init value.
         """
         effective_version = version_context if version_context is not None else self._version_context
         effective_platform = platform_context if platform_context is not None else self._platform_context
+        effective_profile = profile_context if profile_context is not None else self._profile_context
         if effective_platform is not None and effective_platform not in _KNOWN_PLATFORMS:
             raise SuppressionError(
                 f"Unknown platform_context {effective_platform!r}. "
                 f"Valid values: {sorted(_KNOWN_PLATFORMS)}"
             )
+        if effective_profile is not None and effective_profile not in _KNOWN_PROFILES:
+            raise SuppressionError(
+                f"Unknown profile_context {effective_profile!r}. "
+                f"Valid values: {sorted(_KNOWN_PROFILES)}"
+            )
         result = SuppressionResult()
         for change in changes:
-            matched_rule = self._match(change, effective_version, effective_platform)
+            matched_rule = self._match(change, effective_version, effective_platform, effective_profile)
             if matched_rule is not None:
                 # Return a new Change with severity SUPPRESSED (Change is a frozen-ish dataclass)
                 suppressed = _with_severity(change, ChangeSeverity.SUPPRESSED)
@@ -364,10 +380,11 @@ class SuppressionEngine:
         change: Change,
         version_context: str | None,
         platform_context: str | None,
+        profile_context: str | None,
     ) -> SuppressionRule | None:
         """Return the first matching rule, or None."""
         for cr in self._compiled:
-            if self._rule_matches(cr, change, version_context, platform_context):
+            if self._rule_matches(cr, change, version_context, platform_context, profile_context):
                 return cr.rule
         return None
 
@@ -377,6 +394,7 @@ class SuppressionEngine:
         change: Change,
         version_context: str | None,
         platform_context: str | None,
+        profile_context: str | None,
     ) -> bool:
         rule = cr.rule
 
@@ -390,6 +408,13 @@ class SuppressionEngine:
         # When platform_context is None, skip (conservative: suppress if other fields match).
         if cr.platform is not None and platform_context is not None:
             if cr.platform != platform_context:
+                return False
+
+        # Phase 4: profile filter
+        # When profile_context is provided AND a profile is set on the rule, apply filter.
+        # When profile_context is None, skip (conservative: suppress if other fields match).
+        if cr.profile is not None and profile_context is not None:
+            if cr.profile != profile_context:
                 return False
 
         # Phase 2b: version_range filter
