@@ -639,6 +639,11 @@ def _resolve_inner_type_name(
 def _compute_fallback_type_info(die: Any, tag: str) -> tuple[str, int]:
     name = _attr_str(die, "DW_AT_name")
     size = _attr_int(die, "DW_AT_byte_size")
+    # Log unknown DWARF type tags so gaps in type resolution are visible.
+    # This helps diagnose missing coverage for new/vendor-specific DWARF extensions.
+    # abi-dumper #6: __unknown__ type entries should produce a diagnostic.
+    if not name:
+        log.warning("Unknown DWARF type tag: %s at offset %s", tag, getattr(die, "offset", "?"))
     return (name or tag or "unknown", size)
 
 

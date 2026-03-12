@@ -211,6 +211,7 @@ class _CompiledRule(NamedTuple):
     rule: SuppressionRule
     glob_re: re2.Pattern | None       # pre-compiled RE2 from glob (via fnmatch.translate)
     regex_compiled: re2.Pattern | None  # pre-compiled RE2 from entity_regex
+    namespace_re: re2.Pattern | None   # pre-compiled RE2 from namespace_pattern
     version_range: VersionRange | None  # Phase 2b: pre-validated version range
     platform: str | None               # Phase 3: "elf" | "pe" | "macho" | None=any
     profile: str | None                # Phase 4: "c" | "cpp" | "sycl" | None=any
@@ -295,6 +296,21 @@ class SuppressionEngine:
                         f"(reason={rule.reason!r}): {rule.entity_regex!r} — {exc}"
                     ) from exc
 
+            # Namespace pattern: compile RE2 for namespace prefix matching
+            namespace_re = None
+            if rule.namespace_pattern is not None:
+                if len(rule.namespace_pattern) > _MAX_REGEX_LEN:
+                    raise SuppressionError(
+                        f"namespace_pattern too long (max {_MAX_REGEX_LEN} chars)"
+                    )
+                try:
+                    namespace_re = re2.compile(rule.namespace_pattern)
+                except Exception as exc:
+                    raise SuppressionError(
+                        f"Invalid namespace_pattern in suppression rule "
+                        f"(reason={rule.reason!r}): {rule.namespace_pattern!r} — {exc}"
+                    ) from exc
+
             # Phase 3: validate scope.platform value
             scope = rule.scope
             compiled_platform: str | None = None
@@ -328,6 +344,7 @@ class SuppressionEngine:
                 rule=rule,
                 glob_re=glob_re,
                 regex_compiled=compiled_regex,
+                namespace_re=namespace_re,
                 version_range=compiled_vr,
                 platform=compiled_platform,
                 profile=compiled_profile,
@@ -436,6 +453,16 @@ class SuppressionEngine:
         # entity_regex match (RE2, pre-compiled) — fullmatch for full-string safety
         if cr.regex_compiled is not None:
             if not cr.regex_compiled.fullmatch(change.entity_name):
+                return False
+
+        # namespace_pattern match: extract namespace prefix (before last '::')
+        # and fullmatch against the compiled namespace RE2 pattern.
+        # Entity names without '::' have no namespace → namespace prefix is "".
+        # Example: "internal::Foo::bar" → namespace prefix = "internal::Foo"
+        if cr.namespace_re is not None:
+            sep = change.entity_name.rfind("::")
+            ns_prefix = change.entity_name[:sep] if sep != -1 else ""
+            if not cr.namespace_re.fullmatch(ns_prefix):
                 return False
 
         return True

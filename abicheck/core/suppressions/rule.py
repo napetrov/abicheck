@@ -46,17 +46,27 @@ class SuppressionRule:
     """A single suppression rule.
 
     Matching precedence:
-      1. entity_glob match (if provided) — shell-style glob
-      2. entity_regex match (if provided) — RE2 regex
-      3. change_kind match (always required unless None)
+      1. namespace_pattern match (if provided) — RE2 regex on the namespace
+         prefix of the entity name (everything before the last '::')
+      2. entity_glob match (if provided) — shell-style glob on full entity name
+      3. entity_regex match (if provided) — RE2 regex on full entity name
+      4. change_kind match (always required unless None)
 
-    If both entity_glob and entity_regex are provided, BOTH must match.
-    If neither is provided, the rule matches any entity name.
+    If multiple patterns are provided, ALL must match.
+    If neither entity_glob, entity_regex, nor namespace_pattern is provided,
+    the rule matches any entity name.
+
+    namespace_pattern usage:
+      - Matches the namespace prefix of the entity name (text before last '::')
+      - e.g. namespace_pattern="internal" matches "internal::Foo", "internal::bar"
+      - namespace_pattern="std" matches "std::string" but not "mystd::string"
+      - Uses RE2 fullmatch on the namespace prefix for safety
 
     scope filters are applied before entity matching.
     """
-    change_kind: str | None = None     # ChangeKind.value string, or None=any
-    entity_glob: str | None = None     # "std::*" — glob preferred
-    entity_regex: str | None = None    # "^std::.*$" — RE2 escape hatch
-    reason: str = ""                   # audit trail
+    change_kind: str | None = None         # ChangeKind.value string, or None=any
+    entity_glob: str | None = None         # "std::*" — glob preferred
+    entity_regex: str | None = None        # "^std::.*$" — RE2 escape hatch
+    namespace_pattern: str | None = None   # RE2 pattern matched against namespace prefix
+    reason: str = ""                       # audit trail
     scope: SuppressionScope = field(default_factory=SuppressionScope)
