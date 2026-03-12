@@ -261,13 +261,13 @@ description = "ABI compatibility checker: castxml-based header dumper + Python c
 
 The tool now has ELF-only and DWARF-based detection tiers that don't require castxml at all. The description undersells the tool's capabilities.
 
-### 4.6 `gap_report.md` Sprint Status Is Stale
+### 4.6 `gap_report.md` Phase Status Is Stale
 
-The gap report lists Sprint 1-4 items as roadmap/TODO, but all have been implemented:
-- Sprint 1: 10 detection gaps -- all implemented and tested
-- Sprint 2: ELF-only detectors -- all implemented
-- Sprint 3: DWARF layout -- implemented
-- Sprint 4: Advanced DWARF -- implemented
+The gap report listed roadmap/TODO items that have now been implemented:
+-  10 detection gaps -- all implemented and tested
+-  ELF-only detectors -- all implemented
+-  DWARF layout -- implemented
+-  Advanced DWARF -- implemented
 
 ### 4.7 `__init__.py` Module Docstring Uses Old Name
 
@@ -329,6 +329,6 @@ Integration tests skip silently when castxml/gcc aren't installed, which could m
 14. Expand parity test suite to match gap report scope
 
 ### P3 -- Documentation
-15. Update `gap_report.md` sprint status to reflect completed work
+15. Update `gap_report.md` status text to reflect completed work
 16. Fix `GOALS.md` claim about libabigail maintenance status
 17. Update `pyproject.toml` description to reflect multi-tier detection
