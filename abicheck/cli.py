@@ -79,8 +79,12 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
               help="Suppression file (YAML) to filter known/intentional changes.")
+@click.option("--policy", "policy",
+              type=click.Choice(["strict_abi", "sdk_vendor", "plugin_abi"], case_sensitive=False),
+              default="strict_abi", show_default=True,
+              help="Policy profile for verdict classification.")
 def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path | None,
-                suppress: Path | None) -> None:
+                suppress: Path | None, policy: str) -> None:
     """Compare two ABI snapshots and report changes.
 
     \b
@@ -89,6 +93,7 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
       abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o results.sarif
       abicheck compare libfoo-1.0.json libfoo-2.0.json --format html -o report.html
       abicheck compare libfoo-1.0.json libfoo-2.0.json --suppress suppressions.yaml
+      abicheck compare libfoo-1.0.json libfoo-2.0.json --policy sdk_vendor
     """
     from .suppression import SuppressionList
 
@@ -102,7 +107,7 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
         except (ValueError, OSError) as e:
             raise click.BadParameter(str(e), param_hint="--suppress") from e
 
-    result = compare(old, new, suppression=suppression)
+    result = compare(old, new, suppression=suppression, policy=policy)
 
     # Warn if suppression file swallowed all changes (potential misconfiguration)
     total_changes = len(result.changes) + result.suppressed_count
