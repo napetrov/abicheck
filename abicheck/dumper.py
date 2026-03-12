@@ -208,6 +208,12 @@ def _castxml_dump(
         # Split on whitespace, just like ABICC does
         cmd += gcc_options.split()
 
+    # Workaround: castxml with --castxml-cc-gnu gcc auto-injects -std=gnu++17
+    # which is rejected when parsing a .h file in C mode. Force explicit C
+    # language and standard so castxml passes these to the compiler instead.
+    if force_c and cc_id == "gnu":
+        cmd += ["-x", "c", "-std=gnu11"]
+
     cmd += ["-o", str(out_xml), str(agg_path)]
 
     try:
