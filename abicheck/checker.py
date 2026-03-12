@@ -2113,8 +2113,15 @@ def _diff_template_inner_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Chang
         void process(std::vector<int> v)   →   void process(std::vector<double> v)
         # → TEMPLATE_PARAM_TYPE_CHANGED: "std::vector" inner type int → double
 
-    Only fires when outer template name matches (same container, different element type).
-    Does NOT fire when the full type string already differs (FUNC_PARAMS_CHANGED covers it).
+    NOTE on mangling: Under the Itanium C++ ABI, parameter types ARE included in the
+    mangled symbol name, so a real ``std::vector<int>`` → ``std::vector<double>`` param
+    change produces different mangled names (FUNC_REMOVED + FUNC_ADDED, not an intersection
+    hit). This detector therefore only fires for:
+      1. Return type template changes (return type is NOT in Itanium mangling for
+         non-template functions, so the mangled name stays the same).
+      2. Cases where the snapshot was produced with simplified/un-mangled names (e.g.
+         from header-only analysis without a compiled .so).
+    For production ELF-based snapshots, FUNC_PARAMS_CHANGED is the primary signal.
     """
     changes: list[Change] = []
     vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)

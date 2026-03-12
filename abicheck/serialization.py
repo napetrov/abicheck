@@ -177,7 +177,9 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         import warnings
         warnings.warn(
             f"Snapshot schema_version {_schema_version} is newer than this abicheck "
-            f"(supports up to {SCHEMA_VERSION}). Data may be incomplete or misinterpreted.",
+            f"(supports up to schema_version {SCHEMA_VERSION}). "
+            "Data may be incomplete or misinterpreted. "
+            "Upgrade abicheck to read this snapshot correctly.",
             UserWarning,
             stacklevel=2,
         )
