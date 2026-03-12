@@ -94,6 +94,10 @@ class DwarfMetadata:
 # Tags whose subtrees we never descend into (function-local types, inline
 # frames, lexical blocks). Registering function-local structs as ABI
 # surfaces would produce noise and false positives.
+
+# Deduplicate unknown DWARF-tag warnings per process to avoid log flooding
+_SEEN_UNKNOWN_DWARF_TAGS: set[str] = set()
+
 _SKIP_TAGS: frozenset[str] = frozenset({
     "DW_TAG_subprogram",
     "DW_TAG_inlined_subroutine",
@@ -639,6 +643,18 @@ def _resolve_inner_type_name(
 def _compute_fallback_type_info(die: Any, tag: str) -> tuple[str, int]:
     name = _attr_str(die, "DW_AT_name")
     size = _attr_int(die, "DW_AT_byte_size")
+    # Log unknown DWARF type tags so gaps in type resolution are visible.
+    # This helps diagnose missing coverage for new/vendor-specific DWARF extensions.
+    # abi-dumper #6: __unknown__ type entries should produce a diagnostic.
+    if not name:
+        tag_key = tag or "<empty>"
+        if tag_key not in _SEEN_UNKNOWN_DWARF_TAGS:
+            _SEEN_UNKNOWN_DWARF_TAGS.add(tag_key)
+            log.warning(
+                "Unknown DWARF type tag: %s at offset %s",
+                tag,
+                getattr(die, "offset", "?"),
+            )
     return (name or tag or "unknown", size)
 
 
