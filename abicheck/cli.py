@@ -11,7 +11,11 @@ import click
 
 from .checker import ChangeKind, compare
 from .checker_policy import API_BREAK_KINDS as _POLICY_API_BREAK_KINDS
-from .abicc_dump_import import import_abicc_perl_dump, looks_like_perl_dump
+from .abicc_dump_import import (
+    import_abicc_perl_dump,
+    is_abicc_perl_dump_file,
+    looks_like_perl_dump,
+)
 from .compat import CompatDescriptor, parse_descriptor
 from .dumper import dump
 from .html_report import write_html_report
@@ -1033,6 +1037,16 @@ def compat_cmd(  # noqa: PLR0913
     # ── Resolve relpath overrides ────────────────────────────────────────
     old_relpath = relpath1 or relpath
     new_relpath = relpath2 or relpath
+
+    old_is_abicc_perl = is_abicc_perl_dump_file(old_desc)
+    new_is_abicc_perl = is_abicc_perl_dump_file(new_desc)
+    if old_is_abicc_perl or new_is_abicc_perl:
+        _do_echo(
+            "Info: ABICC Perl ABI.dump input detected. "
+            "Using migration-focused importer (full ABICC dump parity is not guaranteed). "
+            "Prefer abicheck JSON dumps for best fidelity.",
+            quiet,
+        )
 
     # ── Parse descriptors (support both XML descriptors and JSON dumps) ──
     try:

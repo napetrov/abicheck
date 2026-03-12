@@ -338,6 +338,80 @@ class TestLoadDescriptorOrDump:
             _load_descriptor_or_dump(dump_file)
 
 
+class TestAbiccPerlDumpInfoMessage:
+    def _write_dump(self, path: Path, lib: str) -> None:
+        path.write_text(
+            f"""
+            $VAR1 = {{
+              'LibraryName' => '{lib}',
+              'LibraryVersion' => '1.0',
+              'TypeInfo' => {{
+                '0' => {{ 'Name' => 'void', 'Type' => 'Intrinsic' }}
+              }},
+              'SymbolInfo' => {{
+                '1' => {{ 'MnglName' => 'foo', 'ShortName' => 'foo', 'Return' => '0' }}
+              }}
+            }};
+            """,
+            encoding="utf-8",
+        )
+
+    def test_info_message_shown_for_abicc_dump_input(self, tmp_path: Path) -> None:
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        old_dump = tmp_path / "old.dump"
+        new_dump = tmp_path / "new.dump"
+        self._write_dump(old_dump, "libfoo")
+        self._write_dump(new_dump, "libfoo")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "compat",
+                "-lib",
+                "libfoo",
+                "-old",
+                str(old_dump),
+                "-new",
+                str(new_dump),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Info: ABICC Perl ABI.dump input detected" in result.output
+
+    def test_info_message_suppressed_in_quiet_mode(self, tmp_path: Path) -> None:
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        old_dump = tmp_path / "old.dump"
+        new_dump = tmp_path / "new.dump"
+        self._write_dump(old_dump, "libfoo")
+        self._write_dump(new_dump, "libfoo")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "compat",
+                "-lib",
+                "libfoo",
+                "-old",
+                str(old_dump),
+                "-new",
+                str(new_dump),
+                "-q",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Info: ABICC Perl ABI.dump input detected" not in result.output
+
+
 # ── HTML title wiring ─────────────────────────────────────────────────────────
 
 class TestHtmlTitle:

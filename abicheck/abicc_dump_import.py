@@ -181,3 +181,14 @@ def _extract_record_types(type_map: dict[str, dict[str, object]]) -> list[Record
             )
         )
     return out
+
+
+def is_abicc_perl_dump_file(path: Path) -> bool:
+    """Return True if path looks like an ABICC Perl Data::Dumper dump."""
+    if path.suffix == ".dump":
+        return True
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")[:512]
+    except OSError:
+        return False
+    return looks_like_perl_dump(head)
