@@ -656,7 +656,7 @@ def _parse_frame_registers(elf: Any, dwarf: Any, meta: AdvancedDwarfMetadata) ->
     """
     try:
         # Determine architecture for register name lookup
-        arch = elf.get_machine_arch()  # type: ignore[no-untyped-call]
+        arch = elf.get_machine_arch()
         arch_key = {
             "x64": "x64", "x86_64": "x64",
             "x86": "x86", "i386": "x86",
@@ -671,7 +671,6 @@ def _parse_frame_registers(elf: Any, dwarf: Any, meta: AdvancedDwarfMetadata) ->
                 continue
             for sym in sect.iter_symbols():
                 st_value = sym.entry.st_value
-                st_size = sym.entry.st_size
                 bind = sym.entry.st_info.bind
                 if bind in ("STB_GLOBAL", "STB_WEAK") and st_value > 0:
                     addr_to_sym[st_value] = sym.name
@@ -679,12 +678,12 @@ def _parse_frame_registers(elf: Any, dwarf: Any, meta: AdvancedDwarfMetadata) ->
         # Parse .eh_frame (preferred) or .debug_frame (fallback)
         cfi_src = None
         try:
-            cfi_src = dwarf.get_EH_CFI_entries()  # type: ignore[no-untyped-call]
+            cfi_src = dwarf.get_EH_CFI_entries()
         except (AttributeError, ELFError):
             pass
         if cfi_src is None:
             try:
-                cfi_src = dwarf.get_CFI_entries()  # type: ignore[no-untyped-call]
+                cfi_src = dwarf.get_CFI_entries()
             except (AttributeError, ELFError):
                 return
 
@@ -697,7 +696,7 @@ def _parse_frame_registers(elf: Any, dwarf: Any, meta: AdvancedDwarfMetadata) ->
                 if not sym_name:
                     continue
                 # Decode the frame table and take the CFA register from first row
-                decoded = entry.get_decoded()  # type: ignore[no-untyped-call]
+                decoded = entry.get_decoded()
                 if not decoded.table:
                     continue
                 first_row = decoded.table[0]
