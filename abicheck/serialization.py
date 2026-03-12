@@ -164,6 +164,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
                 Param(
                     name=p.get("name", ""), type=p.get("type", ""),
                     kind=ParamKind(p.get("kind", "value")),
+                    default=p.get("default", None),
                     pointer_depth=p.get("pointer_depth", 0),
                     is_restrict=p.get("is_restrict", False),
                     is_va_list=p.get("is_va_list", False),
@@ -209,6 +210,9 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
                     offset_bits=f.get("offset_bits"),
                     is_bitfield=f.get("is_bitfield", False),
                     bitfield_bits=f.get("bitfield_bits"),
+                    is_const=f.get("is_const", False),
+                    is_volatile=f.get("is_volatile", False),
+                    is_mutable=f.get("is_mutable", False),
                     access=AccessLevel(f.get("access", "public")),
                 )
                 for f in t.get("fields", [])

@@ -333,3 +333,25 @@ NormalCtx g;
 
     assert meta.has_dwarf
     assert "NormalCtx" not in meta.packed_structs
+
+
+# ── C3: compare()-level no-change test for value_abi_traits ──────────────────
+
+def test_value_abi_traits_same_no_change_emitted() -> None:
+    """Same value_abi_traits in both snapshots must NOT emit VALUE_ABI_TRAIT_CHANGED."""
+    trait = "ret:trivial|p0:nontrivial"
+    old = _snap(_adv(value_traits={"_Z6computeP3Foo": trait}))
+    new = _snap(_adv(value_traits={"_Z6computeP3Foo": trait}))
+    r = compare(old, new)
+    kinds = {c.kind for c in r.changes}
+    assert ChangeKind.VALUE_ABI_TRAIT_CHANGED not in kinds
+    assert r.verdict == Verdict.NO_CHANGE
+
+
+def test_value_abi_traits_changed_emits_change() -> None:
+    """Different value_abi_traits for same symbol → VALUE_ABI_TRAIT_CHANGED emitted."""
+    old = _snap(_adv(value_traits={"_Z6computev": "ret:trivial"}))
+    new = _snap(_adv(value_traits={"_Z6computev": "ret:nontrivial"}))
+    r = compare(old, new)
+    kinds = {c.kind for c in r.changes}
+    assert ChangeKind.VALUE_ABI_TRAIT_CHANGED in kinds

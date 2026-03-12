@@ -49,13 +49,20 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
     Example:
       abicheck dump libfoo.so.1 -H include/foo.h --version 1.2.3 -o snap.json
     """
-    snap = dump(
-        so_path=so_path,
-        headers=list(headers),
-        extra_includes=list(includes),
-        version=version,
-        compiler=compiler,
-    )
+    from .core.errors import AbicheckError
+
+    try:
+        snap = dump(
+            so_path=so_path,
+            headers=list(headers),
+            extra_includes=list(includes),
+            version=version,
+            compiler=compiler,
+        )
+    except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(2)
+
     result = snapshot_to_json(snap)
     if output:
         output.write_text(result, encoding="utf-8")

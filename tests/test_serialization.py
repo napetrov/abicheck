@@ -57,7 +57,7 @@ class TestSerialization:
         assert "_var_by_mangled" not in d
 
     def test_is_inline_roundtrip(self):
-        """is_inline must survive snapshot_to_dict → snapshot_from_dict roundtrip."""
+        """is_inline=True must survive snapshot_to_dict → snapshot_from_dict roundtrip."""
         snap = AbiSnapshot(
             library="libfoo.so.1",
             version="1.0",
@@ -75,3 +75,23 @@ class TestSerialization:
         assert d["functions"][0]["is_inline"] is True
         snap2 = snapshot_from_dict(d)
         assert snap2.functions[0].is_inline is True
+
+    def test_is_inline_false_roundtrip(self):
+        """is_inline=False must survive snapshot_to_dict → snapshot_from_dict roundtrip."""
+        snap = AbiSnapshot(
+            library="libfoo.so.1",
+            version="1.0",
+            functions=[
+                Function(
+                    name="compute",
+                    mangled="_Z7computei",
+                    return_type="int",
+                    visibility=Visibility.PUBLIC,
+                    is_inline=False,
+                )
+            ],
+        )
+        d = snapshot_to_dict(snap)
+        assert d["functions"][0]["is_inline"] is False
+        snap2 = snapshot_from_dict(d)
+        assert snap2.functions[0].is_inline is False

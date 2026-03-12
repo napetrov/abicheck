@@ -270,7 +270,7 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "int compute(int x) { return x * 2; }",
         "int compute(int x) { return x * 2; }",
         "int compute(int x);",
-        "inline int compute(int x);",
+        "inline int compute(int x) { return x * 2; }",
         "cpp", "API_BREAK", "NO_CHANGE", "correct",
     ),
     # ── Issue #125 — Function loses inline attribute ──────────────────────────
@@ -282,7 +282,7 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "func_lost_inline",
         "int fast_compute(int x) { return x + 1; }",
         "int fast_compute(int x) { return x + 1; }",
-        "inline int fast_compute(int x);",
+        "inline int fast_compute(int x) { return x + 1; }",
         "int fast_compute(int x);",
         "cpp", "COMPATIBLE", "NO_CHANGE", "risk",
     ),
