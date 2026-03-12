@@ -1761,6 +1761,19 @@ def _diff_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+def _normalize_type_name(name: str) -> str:
+    """Strip 'struct '/'class '/'union ' prefixes for stable DWARF↔castxml comparison.
+
+    DWARF parsers historically prefix the tag keyword to type names
+    (e.g. "struct Foo"), while castxml returns bare names ("Foo").
+    Normalizing before comparison prevents false STRUCT_FIELD_TYPE_CHANGED.
+    """
+    for prefix in ("struct ", "class ", "union "):
+        if name.startswith(prefix):
+            return name[len(prefix):]
+    return name
+
+
 def _diff_struct_layouts(o: object, n: object) -> list[Change]:
     from .dwarf_metadata import StructLayout
 
@@ -1835,13 +1848,6 @@ def _diff_struct_layouts(o: object, n: object) -> list[Change]:
             # - catches same-size type substitutions (int→float, Foo*→Bar*)
             # - strip "struct "/"class "/"union " prefixes for stable comparison
             # - still includes explicit size drift when known on both sides
-            def _normalize_type_name(name: str) -> str:
-                """Strip 'struct '/'class '/'union ' prefixes for stable comparison."""
-                for prefix in ("struct ", "class ", "union "):
-                    if name.startswith(prefix):
-                        return name[len(prefix):]
-                return name
-
             type_name_changed = _normalize_type_name(old_f.type_name) != _normalize_type_name(new_f.type_name)
             type_size_changed = (
                 old_f.byte_size > 0
