@@ -150,7 +150,9 @@ def _dwarf_advanced_from_dict(d: dict[str, Any]) -> Any:
         has_dwarf=d.get("has_dwarf", False),
         toolchain=toolchain,
         calling_conventions=d.get("calling_conventions", {}),
+        value_abi_traits=d.get("value_abi_traits", {}),
         packed_structs=set(d.get("packed_structs", [])),
+        all_struct_names=set(d.get("all_struct_names", [])),
     )
 
 
@@ -177,6 +179,8 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             is_const=f.get("is_const", False),
             is_volatile=f.get("is_volatile", False),
             is_pure_virtual=f.get("is_pure_virtual", False),
+            is_deleted=f.get("is_deleted", False),
+            is_inline=f.get("is_inline", False),
             is_extern_c=f.get("is_extern_c", False),
             access=AccessLevel(f.get("access", "public")),
             return_pointer_depth=f.get("return_pointer_depth", 0),
