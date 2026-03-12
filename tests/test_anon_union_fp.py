@@ -4,8 +4,13 @@ When a struct gains an anonymous union member, the existing field `x` should
 NOT be reported as removed/changed if it's still present at the same offset.
 
 Scenario:
-  v1: struct S { int x; };
-  v2: struct S { union { int x; int y; }; };  // anon union, x still at offset 0
+  v1: struct S { int x
+  }
+  v2: struct S { union { int x
+  int y
+  }
+  }
+  // anon union, x still at offset 0
 
 Expected behavior:
 - MUST NOT emit STRUCT_FIELD_REMOVED for 'x'
@@ -194,3 +199,222 @@ class TestAnonUnionFalsePositive:
         x_field = next(f for f in s_new.fields if f.name == "x")
         y_field = next(f for f in s_new.fields if f.name == "y")
         assert x_field.offset_bits == y_field.offset_bits == 0
+
+
+class TestCastxmlAnonUnionExpansion:
+    """Verify _expand_anonymous_field correctly flattens anonymous union/struct.
+
+    Uses real castxml XML format: elements carry 'file' attr directly.
+    """
+
+    def _make_xml_with_anon_union(self) -> Element:
+        """Build castxml XML: struct S { union { int x; int y; }; };"""
+        from xml.etree.ElementTree import Element, SubElement
+        root = Element("CastXML")
+
+        f1 = SubElement(root, "File")
+        f1.set("id", "f1")
+        f1.set("name", "mylib.h")
+
+        fund_int = SubElement(root, "FundamentalType")
+        fund_int.set("id", "_int")
+        fund_int.set("name", "int")
+
+        # Anonymous union
+        anon_union = SubElement(root, "Union")
+        anon_union.set("id", "_u1")
+        anon_union.set("name", "")
+        anon_union.set("file", "f1")
+        anon_union.set("size", "32")
+
+        uf_x = SubElement(anon_union, "Field")
+        uf_x.set("name", "x")
+        uf_x.set("type", "_int")
+        uf_x.set("offset", "0")
+
+        uf_y = SubElement(anon_union, "Field")
+        uf_y.set("name", "y")
+        uf_y.set("type", "_int")
+        uf_y.set("offset", "0")
+
+        # Parent struct S with anonymous Field pointing to the union
+        struct_s = SubElement(root, "Struct")
+        struct_s.set("id", "_s1")
+        struct_s.set("name", "S")
+        struct_s.set("size", "32")
+        struct_s.set("file", "f1")
+
+        anon_field = SubElement(struct_s, "Field")
+        anon_field.set("name", "")   # anonymous
+        anon_field.set("type", "_u1")
+        anon_field.set("offset", "0")
+
+        return root
+
+    def _make_xml_with_nested_anon(self) -> Element:
+        """Build castxml XML: struct S { union { struct { int a; int b; }; int c; }; };"""
+        from xml.etree.ElementTree import Element, SubElement
+        root = Element("CastXML")
+
+        f1 = SubElement(root, "File")
+        f1.set("id", "f1")
+        f1.set("name", "mylib.h")
+
+        fund_int = SubElement(root, "FundamentalType")
+        fund_int.set("id", "_int")
+        fund_int.set("name", "int")
+
+        # Inner anonymous struct { int a; int b; }
+        inner_struct = SubElement(root, "Struct")
+        inner_struct.set("id", "_is1")
+        inner_struct.set("name", "")
+        inner_struct.set("file", "f1")
+
+        ia = SubElement(inner_struct, "Field")
+        ia.set("name", "a")
+        ia.set("type", "_int")
+        ia.set("offset", "0")
+
+        ib = SubElement(inner_struct, "Field")
+        ib.set("name", "b")
+        ib.set("type", "_int")
+        ib.set("offset", "32")
+
+        # Outer anonymous union with anon struct + int c
+        anon_union = SubElement(root, "Union")
+        anon_union.set("id", "_u1")
+        anon_union.set("name", "")
+        anon_union.set("file", "f1")
+
+        uf_struct = SubElement(anon_union, "Field")
+        uf_struct.set("name", "")
+        uf_struct.set("type", "_is1")
+        uf_struct.set("offset", "0")
+
+        uf_c = SubElement(anon_union, "Field")
+        uf_c.set("name", "c")
+        uf_c.set("type", "_int")
+        uf_c.set("offset", "0")
+
+        # Parent struct S
+        struct_s = SubElement(root, "Struct")
+        struct_s.set("id", "_s1")
+        struct_s.set("name", "S")
+        struct_s.set("size", "64")
+        struct_s.set("file", "f1")
+
+        anon_field = SubElement(struct_s, "Field")
+        anon_field.set("name", "")
+        anon_field.set("type", "_u1")
+        anon_field.set("offset", "0")
+
+        return root
+
+    def test_castxml_anon_union_expansion(self) -> None:
+        """struct S { union { int x; int y; }; } — anon field must be expanded."""
+        from abicheck.dumper import _CastxmlParser
+        root = self._make_xml_with_anon_union()
+        parser = _CastxmlParser(root, exported_dynamic=set(), exported_static=set())
+        types = parser.parse_types()
+        s = next((t for t in types if t.name == "S"), None)
+        assert s is not None, "Struct S must be parsed"
+        field_names = {f.name for f in s.fields}
+        assert "x" in field_names, "x from anon union must appear in S.fields"
+        assert "y" in field_names, "y from anon union must appear in S.fields"
+        # No empty-named field
+        assert "" not in field_names
+
+    def test_castxml_nested_anon_struct_expansion(self) -> None:
+        """struct S { union { struct { int a; int b; }; int c; }; } — all leaves."""
+        from abicheck.dumper import _CastxmlParser
+        root = self._make_xml_with_nested_anon()
+        parser = _CastxmlParser(root, exported_dynamic=set(), exported_static=set())
+        types = parser.parse_types()
+        s = next((t for t in types if t.name == "S"), None)
+        assert s is not None
+        field_names = {f.name for f in s.fields}
+        assert "a" in field_names
+        assert "b" in field_names
+        assert "c" in field_names
+        assert "" not in field_names
+
+    def test_false_positive_prevented_end_to_end(self) -> None:
+        """v1: struct S { int x; } vs v2: struct S { union { int x; int y; }; }
+        Must NOT emit TYPE_FIELD_REMOVED for x."""
+        from abicheck.checker import ChangeKind, compare
+        from abicheck.model import AbiSnapshot, RecordType, TypeField
+
+        old_snap = AbiSnapshot(library="lib.so", version="1.0", types=[
+            RecordType(name="S", kind="struct", fields=[
+                TypeField(name="x", type="int", offset_bits=0),
+            ])
+        ])
+        new_snap = AbiSnapshot(library="lib.so", version="2.0", types=[
+            RecordType(name="S", kind="struct", fields=[
+                TypeField(name="x", type="int", offset_bits=0),
+                TypeField(name="y", type="int", offset_bits=0),
+            ])
+        ])
+        result = compare(old_snap, new_snap)
+        kinds = {c.kind for c in result.changes}
+        assert ChangeKind.TYPE_FIELD_REMOVED not in kinds, (
+            "x must not be reported as removed when it's still present in anon union"
+        )
+
+    def test_anon_union_members_attribute_path(self) -> None:
+        """Anon union via 'members' attribute (castxml v2 format) is also expanded."""
+        from xml.etree.ElementTree import Element, SubElement
+
+        from abicheck.dumper import _CastxmlParser
+
+        root = Element("CastXML")
+
+        f1 = SubElement(root, "File")
+        f1.set("id", "f1")
+        f1.set("name", "mylib.h")
+
+        fund_int = SubElement(root, "FundamentalType")
+        fund_int.set("id", "_int")
+        fund_int.set("name", "int")
+
+        # Fields as top-level elements (castxml v2 members-attribute style)
+        uf_x = SubElement(root, "Field")
+        uf_x.set("id", "_fx")
+        uf_x.set("name", "x")
+        uf_x.set("type", "_int")
+        uf_x.set("offset", "0")
+
+        uf_y = SubElement(root, "Field")
+        uf_y.set("id", "_fy")
+        uf_y.set("name", "y")
+        uf_y.set("type", "_int")
+        uf_y.set("offset", "0")
+
+        # Anonymous union using 'members' attribute
+        anon_union = SubElement(root, "Union")
+        anon_union.set("id", "_u1")
+        anon_union.set("name", "")
+        anon_union.set("file", "f1")
+        anon_union.set("size", "32")
+        anon_union.set("members", "_fx _fy")  # members attribute path
+
+        # Parent struct S with anonymous Field pointing to the union
+        struct_s = SubElement(root, "Struct")
+        struct_s.set("id", "_s1")
+        struct_s.set("name", "S")
+        struct_s.set("size", "32")
+        struct_s.set("file", "f1")
+
+        anon_field = SubElement(struct_s, "Field")
+        anon_field.set("name", "")
+        anon_field.set("type", "_u1")
+        anon_field.set("offset", "0")
+
+        parser = _CastxmlParser(root, exported_dynamic=set(), exported_static=set())
+        types = parser.parse_types()
+        s = next((t for t in types if t.name == "S"), None)
+        assert s is not None
+        field_names = {f.name for f in s.fields}
+        assert "x" in field_names, "x from anon union (members attr) must appear in S.fields"
+        assert "y" in field_names, "y from anon union (members attr) must appear in S.fields"
+        assert "" not in field_names

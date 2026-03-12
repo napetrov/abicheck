@@ -1,6 +1,7 @@
 """ABI data model — shared across dumper, checker and reporter."""
 from __future__ import annotations
 
+import logging as _logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -9,6 +10,8 @@ if TYPE_CHECKING:
     from .dwarf_advanced import AdvancedDwarfMetadata
     from .dwarf_metadata import DwarfMetadata
     from .elf_metadata import ElfMetadata
+
+_model_log = _logging.getLogger(__name__)
 
 
 class Visibility(str, Enum):
@@ -149,9 +152,39 @@ class AbiSnapshot:
     _type_by_name: dict[str, RecordType] | None = field(default=None, repr=False, compare=False)
 
     def index(self) -> None:
-        self._func_by_mangled = {f.mangled: f for f in self.functions}
-        self._var_by_mangled = {v.mangled: v for v in self.variables}
-        self._type_by_name = {t.name: t for t in self.types}
+        """Build lookup indexes. Uses first-wins for duplicate mangled names."""
+        func_map: dict[str, Function] = {}
+        for f in self.functions:
+            if f.mangled in func_map:
+                _model_log.warning(
+                    "Duplicate mangled symbol skipped (first-wins): %s in %s@%s",
+                    f.mangled, self.library, self.version,
+                )
+            else:
+                func_map[f.mangled] = f
+        self._func_by_mangled = func_map
+
+        var_map: dict[str, Variable] = {}
+        for v in self.variables:
+            if v.mangled in var_map:
+                _model_log.warning(
+                    "Duplicate mangled variable skipped (first-wins): %s in %s@%s",
+                    v.mangled, self.library, self.version,
+                )
+            else:
+                var_map[v.mangled] = v
+        self._var_by_mangled = var_map
+
+        type_map: dict[str, RecordType] = {}
+        for t in self.types:
+            if t.name in type_map:
+                _model_log.warning(
+                    "Duplicate type name skipped (first-wins): %s in %s@%s",
+                    t.name, self.library, self.version,
+                )
+            else:
+                type_map[t.name] = t
+        self._type_by_name = type_map
 
     @property
     def function_map(self) -> dict[str, Function]:

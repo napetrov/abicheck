@@ -1761,6 +1761,35 @@ def _diff_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+def _normalize_type_name(name: str) -> str:
+    """Normalize a C/C++ type name for stable DWARF↔castxml comparison.
+
+    Strips leading/trailing whitespace, CV-qualifiers, pointer/reference
+    decorations, and 'struct'/'class'/'union' tag keywords so that semantically
+    equivalent names compare equal regardless of DWARF vs castxml source:
+
+    Examples::
+
+        "struct Foo"     → "Foo"
+        "const struct Foo *" → "Foo"
+        "class Bar &"    → "Bar"
+        "union U"        → "U"
+        "int"            → "int"   (unchanged)
+
+    Note: this normalizer is intentionally lossy for comparison purposes only.
+    The original type names are still preserved in Change.old_value/new_value.
+    """
+    import re as _re
+    s = name.strip()
+    # Remove trailing pointer/reference decorators and CV-qualifiers
+    s = _re.sub(r"[\s*&]+$", "", s).strip()
+    # Remove leading CV-qualifiers
+    s = _re.sub(r"^(const|volatile)(\s+(const|volatile))?\s+", "", s).strip()
+    # Remove struct/class/union tag keyword
+    s = _re.sub(r"^(struct|class|union)\s+", "", s).strip()
+    return s
+
+
 def _diff_struct_layouts(o: object, n: object) -> list[Change]:
     from .dwarf_metadata import StructLayout
 
@@ -1833,8 +1862,9 @@ def _diff_struct_layouts(o: object, n: object) -> list[Change]:
 
             # Field type drift:
             # - catches same-size type substitutions (int→float, Foo*→Bar*)
+            # - strip "struct "/"class "/"union " prefixes for stable comparison
             # - still includes explicit size drift when known on both sides
-            type_name_changed = old_f.type_name != new_f.type_name
+            type_name_changed = _normalize_type_name(old_f.type_name) != _normalize_type_name(new_f.type_name)
             type_size_changed = (
                 old_f.byte_size > 0
                 and new_f.byte_size > 0
