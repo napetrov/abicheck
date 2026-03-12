@@ -15,12 +15,10 @@ class PluginAbiPolicy(PolicyProfile):
     """Relaxed plugin/extension policy.
 
     - BREAK → WARN (plugins may be intentionally reloaded at new versions)
-    - REVIEW_NEEDED → PASS (informational, not actionable for plugins)
+    - REVIEW_NEEDED → PASS (informational only)
     - COMPATIBLE_EXTENSION → PASS
-    - SUPPRESSED → PASS
-
-    Note: If even a WARN is too noisy for your plugin contract,
-    consider a suppression rule rather than changing this policy.
+    Note: SUPPRESSED changes are handled by base apply() before classify_change() is called.
+    If even a WARN is too noisy, use a suppression rule.
     """
 
     profile_name = "plugin_abi"

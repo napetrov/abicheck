@@ -14,10 +14,10 @@ from .base import PolicyProfile
 class SdkVendorPolicy(PolicyProfile):
     """Permissive SDK/vendor policy.
 
-    - BREAK → BLOCK (hard breaks always block)
-    - REVIEW_NEEDED → WARN (flag for human review, don't block CI)
-    - COMPATIBLE_EXTENSION → PASS (extensions explicitly encouraged)
-    - SUPPRESSED → PASS
+    Currently identical to strict_abi — both BREAK→BLOCK, REVIEW_NEEDED→WARN.
+    # TODO Phase 3: differentiate — e.g. allow COMPATIBLE_EXTENSION with no warning,
+    #               or downgrade REVIEW_NEEDED to PASS for vendor-internal symbols.
+    Note: SUPPRESSED changes are handled by base apply() before classify_change() is called.
     """
 
     profile_name = "sdk_vendor"

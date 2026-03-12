@@ -72,28 +72,34 @@ def analyse_full(
     *,
     rules: list[SuppressionRule] | None = None,
     policy: str = "strict_abi",
+    engine: SuppressionEngine | None = None,
 ) -> PolicyResult:
     """Run the full v0.2 pipeline: diff → suppress → policy → PolicyResult.
 
     Args:
         old:    AbiSnapshot of the before version
         new:    AbiSnapshot of the after version
-        rules:  suppression rules (empty = no suppression)
+        rules:  suppression rules (empty = no suppression); ignored when engine is provided
         policy: policy profile name ("strict_abi" | "sdk_vendor" | "plugin_abi")
+        engine: pre-built SuppressionEngine (pass this for batch callers to avoid
+                re-compiling RE2 patterns on every call)
 
     Returns:
         PolicyResult with per-change AnnotatedChange list and aggregate summary.
     """
     changes = analyse(old, new)
 
-    # Suppression pass
-    engine = SuppressionEngine(rules or [])
+    # Suppression pass — pre-built engine takes precedence over rules
+    if engine is None:
+        engine = SuppressionEngine(rules or [])
     sup_result = engine.apply(changes)
 
-    # Merge: active + suppressed (with severity=SUPPRESSED)
-    all_changes = sup_result.active + sup_result.suppressed
-    suppressed_ids = frozenset(id(c) for c in sup_result.suppressed)
+    # Merge active + suppressed; restore original sort order
+    all_changes = sorted(
+        sup_result.active + sup_result.suppressed,
+        key=lambda c: (c.entity_type, c.entity_name, c.change_kind.value),
+    )
 
-    # Policy verdict
+    # Policy verdict — suppressed changes have severity=SUPPRESSED, handled by apply()
     profile = get_profile(policy)
-    return profile.apply(all_changes, suppressed_ids=suppressed_ids)
+    return profile.apply(all_changes)

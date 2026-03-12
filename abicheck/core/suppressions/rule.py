@@ -22,6 +22,10 @@ class VersionRange:
       "semver"           — semver ordering (1.2.3)
       "intel_quarterly"  — Intel quarterly notation (2024.1, 2024.2)
       "linear"           — simple string/numeric ordering
+
+    Note: `inclusive=True` covers [from, to] (fully closed range).
+    TODO Phase 2b: add from_inclusive/to_inclusive split to support half-open
+    ranges like [1.2.0, 2.0.0) which are common in semver policies.
     """
     from_version: str | None = None   # None = -inf
     to_version: str | None = None     # None = +inf

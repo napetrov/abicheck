@@ -35,14 +35,16 @@ class PolicyProfile(ABC):
     ) -> PolicyResult:
         """Apply this policy to a list of Changes.
 
-        suppressed_ids: set of id(change) for already-suppressed Changes.
-        Suppressed changes are annotated as PASS (they've been explicitly acknowledged).
+        Suppressed changes (severity == SUPPRESSED) are automatically annotated
+        as PASS — they've been explicitly acknowledged by a suppression rule.
+
+        suppressed_ids: deprecated parameter, kept for backward compat.
+        Suppression is now determined by change.severity == SUPPRESSED.
         """
-        suppressed_ids = suppressed_ids or frozenset()
         annotated: list[AnnotatedChange] = []
 
         for change in changes:
-            if id(change) in suppressed_ids or change.severity == ChangeSeverity.SUPPRESSED:
+            if change.severity == ChangeSeverity.SUPPRESSED:
                 verdict = PolicyVerdict.PASS
             else:
                 verdict = self.classify_change(change)

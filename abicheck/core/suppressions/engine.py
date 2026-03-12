@@ -16,8 +16,7 @@ Usage::
 """
 from __future__ import annotations
 
-import fnmatch
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import NamedTuple
 
 import re2  # google-re2: O(N) guaranteed
@@ -29,8 +28,8 @@ from abicheck.core.suppressions.rule import SuppressionRule
 class _CompiledRule(NamedTuple):
     """A SuppressionRule with pre-compiled RE2 patterns."""
     rule: SuppressionRule
-    glob_pattern: str | None          # raw glob (for fnmatch)
-    regex_compiled: re2.Pattern | None  # pre-compiled RE2
+    glob_re: re2.Pattern | None       # pre-compiled RE2 from glob (via fnmatch.translate)
+    regex_compiled: re2.Pattern | None  # pre-compiled RE2 from entity_regex
 
 
 @dataclass
@@ -54,6 +53,17 @@ class SuppressionEngine:
     def __init__(self, rules: list[SuppressionRule]) -> None:
         self._compiled: list[_CompiledRule] = []
         for rule in rules:
+            # Compile glob → RE2 (eliminates stdlib re via fnmatch)
+            glob_re = None
+            if rule.entity_glob is not None:
+                try:
+                    glob_re = _glob_to_re2(rule.entity_glob)
+                except Exception as exc:
+                    raise ValueError(
+                        f"Invalid glob pattern in suppression rule "
+                        f"(reason={rule.reason!r}): {rule.entity_glob!r} — {exc}"
+                    ) from exc
+
             compiled_regex = None
             if rule.entity_regex is not None:
                 try:
@@ -65,7 +75,7 @@ class SuppressionEngine:
                     ) from exc
             self._compiled.append(_CompiledRule(
                 rule=rule,
-                glob_pattern=rule.entity_glob,
+                glob_re=glob_re,
                 regex_compiled=compiled_regex,
             ))
 
@@ -102,9 +112,9 @@ class SuppressionEngine:
         # scope: profile (skip — no profile field on Change yet; Phase 4)
         # scope: version_range (skip — Phase 2b)
 
-        # entity_glob match (fnmatch for shell-style patterns)
-        if cr.glob_pattern is not None:
-            if not fnmatch.fnmatch(change.entity_name, cr.glob_pattern):
+        # entity_glob match (RE2, pre-compiled from glob pattern)
+        if cr.glob_re is not None:
+            if not cr.glob_re.match(change.entity_name):
                 return False
 
         # entity_regex match (RE2, pre-compiled)
@@ -116,6 +126,33 @@ class SuppressionEngine:
 
 
 def _with_severity(change: Change, severity: ChangeSeverity) -> Change:
-    """Return a copy of Change with a different severity (dataclass replace)."""
-    from dataclasses import replace
+    """Return a copy of Change with a different severity."""
     return replace(change, severity=severity)
+
+
+def _glob_to_re2(pattern: str) -> re2.Pattern:
+    r"""Convert a shell-style glob to a pre-compiled RE2 pattern.
+
+    fnmatch.translate() produces Python-specific anchors (\\Z) not supported by RE2.
+    We convert: * → .*, ? → ., [abc] → [abc], and anchor with ^ and $.
+    """
+    result = []
+    i = 0
+    while i < len(pattern):
+        c = pattern[i]
+        if c == '*':
+            result.append('.*')
+        elif c == '?':
+            result.append('.')
+        elif c == '[':
+            # pass through character classes as-is
+            j = pattern.find(']', i + 1)
+            if j == -1:
+                result.append(re2.escape(c))
+            else:
+                result.append(pattern[i:j + 1])
+                i = j
+        else:
+            result.append(re2.escape(c))
+        i += 1
+    return re2.compile('^' + ''.join(result) + '$')

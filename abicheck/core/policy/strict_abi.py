@@ -16,7 +16,7 @@ class StrictAbiPolicy(PolicyProfile):
     - BREAK → BLOCK
     - REVIEW_NEEDED → WARN
     - COMPATIBLE_EXTENSION → PASS (additive changes are always safe)
-    - SUPPRESSED → PASS
+    Note: SUPPRESSED changes are handled by base apply() before classify_change() is called.
     """
 
     profile_name = "strict_abi"
