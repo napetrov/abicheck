@@ -30,24 +30,22 @@ def _func(name: str, mangled: str, return_type: str = "void", **kwargs: object) 
 class TestDuplicateMangledSymbols:
     """Verify deduplication behavior for duplicate mangled names."""
 
-    def test_snapshot_index_last_wins(self) -> None:
-        """When two functions share a mangled name, last one wins in function_map.
+    def test_snapshot_index_first_wins(self) -> None:
+        """When two functions share a mangled name, first one wins in function_map.
 
-        The index is built via dict comprehension:
-          {f.mangled: f for f in self.functions}
-        which is last-wins for duplicate keys. This is documented behavior.
-        Callers must ensure no duplicate mangled names are inserted if
-        first-wins semantics are needed.
+        Policy: first-wins (abi-dumper #41 fix). The first Function inserted
+        with a given mangled name takes precedence; subsequent duplicates are
+        skipped with a warning.
         """
         mangled = "_Z3foov"
         f1 = _func("foo", mangled, return_type="void")
         f2 = _func("foo_alt", mangled, return_type="int")  # same mangled, different name
 
         snap = AbiSnapshot(library="lib.so", version="1.0", functions=[f1, f2])
-        # Dict comprehension → last-wins: f2 takes precedence
+        # first-wins: f1 takes precedence
         indexed = snap.function_map[mangled]
-        assert indexed.name == "foo_alt"
-        assert indexed.return_type == "int"
+        assert indexed.name == "foo"
+        assert indexed.return_type == "void"
 
     def test_snapshot_index_deduplication_deterministic(self) -> None:
         """function_map must always return the same function for a given mangled name."""
@@ -87,43 +85,80 @@ class TestDuplicateMangledSymbols:
         removed = [c for c in result.changes if c.kind == ChangeKind.FUNC_REMOVED]
         assert not removed
 
-    def test_duplicate_mangled_different_versions_detected(self) -> None:
-        """If two functions with same mangled name differ in return type,
-        the last one's signature (last-wins) is used for comparison."""
+    def test_duplicate_mangled_first_wins_for_comparison(self) -> None:
+        """First-wins: when two functions share mangled name, first signature is used."""
         mangled = "_Z6updatev"
-        f1_old = _func("update", mangled, return_type="void")
-        f2_old = _func("update_extra", mangled, return_type="int")  # duplicate, last-wins
+        f1_old = _func("update", mangled, return_type="void")       # first → wins
+        f2_old = _func("update_extra", mangled, return_type="int")  # duplicate → skipped
 
-        # In new snapshot, the function has return_type="int" (same as f2_old last-wins)
-        f1_new = _func("update", mangled, return_type="int")
+        # New snapshot has return_type="void" — same as first (first-wins) in old
+        f1_new = _func("update", mangled, return_type="void")
 
         old = AbiSnapshot(library="lib.so", version="1.0", functions=[f1_old, f2_old])
         new = AbiSnapshot(library="lib.so", version="2.0", functions=[f1_new])
 
         result = compare(old, new)
-        # Last-wins: old index has f2_old (return=int), new has f1_new (return=int)
+        # First-wins: old index has f1_old (return=void), new has f1_new (return=void)
         # → no return type change
         kinds = {c.kind for c in result.changes}
-        # Both sides have int return type (last-wins for old) → no FUNC_RETURN_CHANGED
         assert ChangeKind.FUNC_RETURN_CHANGED not in kinds
 
     def test_dedup_documented_behavior(self) -> None:
-        """Document last-wins deduplication: verify function_map iteration order
-        matches insertion order (Python dict maintains insertion order ≥3.7).
-
-        The index is built as: {f.mangled: f for f in self.functions}
-        For duplicate keys, the last entry wins (standard Python dict behavior).
-        """
+        """Document first-wins deduplication: first inserted entry wins."""
         mangled = "_Z3bazv"
         first = _func("baz_first", mangled, return_type="void")
         second = _func("baz_second", mangled, return_type="int")
 
         snap = AbiSnapshot(library="lib.so", version="1.0", functions=[first, second])
-        # Dict comprehension: {f.mangled: f for f in [first, second]} → last-wins
         indexed = snap.function_map[mangled]
-        # Last inserted (second) must win
-        assert indexed.name == "baz_second"
-        assert indexed.return_type == "int"
+        # First inserted must win
+        assert indexed.name == "baz_first"
+        assert indexed.return_type == "void"
+
+    def test_first_wins_semantics(self) -> None:
+        """Explicit first-wins: first Function with a given mangled name is kept."""
+        mangled = "_Z5firstEv"
+        kept = _func("kept", mangled, return_type="int")
+        dropped = _func("dropped", mangled, return_type="double")
+
+        snap = AbiSnapshot(library="lib.so", version="1.0", functions=[kept, dropped])
+        assert snap.function_map[mangled].name == "kept"
+
+    def test_duplicate_logs_warning(self) -> None:
+        """Inserting duplicate mangled symbol: first-wins and warning is logged."""
+        import logging
+        mangled = "_Z3dupv"
+        f1 = _func("dup", mangled, return_type="void")
+        f2 = _func("dup2", mangled, return_type="int")
+
+        snap = AbiSnapshot(library="lib.so", version="1.0", functions=[f1, f2])
+
+        # Capture WARNING from abicheck.model logger
+        with __import__("unittest.mock", fromlist=["patch"]).patch.object(
+            logging.getLogger("abicheck.model"), "warning"
+        ) as mock_warn:
+            _ = snap.function_map
+
+        # Warning should have been emitted for the duplicate
+        assert mock_warn.called
+        call_args = mock_warn.call_args[0]
+        assert mangled in call_args[1] or mangled in str(call_args)
+
+        # First-wins
+        assert snap.function_map[mangled].name == "dup"
+
+    def test_variable_first_wins(self) -> None:
+        """Variable deduplication: first-wins for duplicate mangled names."""
+        from abicheck.model import Variable
+
+        mangled = "_ZN3Foo3gVarE"
+        v1 = Variable(name="Foo::gVar", mangled=mangled, type="int")
+        v2 = Variable(name="Foo::gVar", mangled=mangled, type="double")  # duplicate
+
+        snap = AbiSnapshot(library="lib.so", version="1.0", variables=[v1, v2])
+        indexed = snap.variable_map[mangled]
+        # First wins
+        assert indexed.type == "int"
 
     def test_variable_dedup_consistent(self) -> None:
         """Variable deduplication must also be consistent."""
@@ -135,6 +170,6 @@ class TestDuplicateMangledSymbols:
 
         snap = AbiSnapshot(library="lib.so", version="1.0", variables=[v1, v2])
         indexed = snap.variable_map[mangled]
-        # Must be one of the two — deterministic
+        # Must be first one
         assert indexed.mangled == mangled
-        assert indexed.type in ("int", "double")
+        assert indexed.type == "int"
