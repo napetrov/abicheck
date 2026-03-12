@@ -179,12 +179,16 @@ def _build_skip_suppression(
             if any(c in name for c in ("*", "?", ".", "[")):
                 rules.append(Suppression(symbol_pattern=name))
             else:
-                # Exact symbol match (C symbols and already-mangled names)
                 rules.append(Suppression(symbol=name))
-                # ABICC -skip-symbols commonly contains unmangled short names.
-                # In our compare pipeline, function symbols can be Itanium-mangled
-                # (e.g. "sub" -> "_Z3subii"). Add a narrow fallback for those.
-                if name.isidentifier():
+                # ABICC -skip-symbols commonly contains plain C function names
+                # (e.g. "sub"), but our compare pipeline stores Itanium-mangled
+                # symbols (e.g. "_Z3subii"). Add a fallback pattern only when the
+                # name looks like a plain identifier (not already mangled, not a
+                # type/struct name — identifiers starting with uppercase are likely
+                # types and already matched by exact symbol= above).
+                if (name.isidentifier()
+                        and not name.startswith("_Z")
+                        and name[0].islower()):
                     rules.append(Suppression(symbol_pattern=rf"_Z\d+{name}.*"))
     return SuppressionList(suppressions=rules)
 
