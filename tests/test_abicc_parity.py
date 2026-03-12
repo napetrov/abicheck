@@ -424,8 +424,8 @@ def _run_abicheck(
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            old_snap = dump(old, headers=headers_v1, version="v1", compiler=compiler)
-            new_snap = dump(new, headers=headers_v2, version="v2", compiler=compiler)
+            old_snap = dump(old, headers=headers_v1, version="v1", compiler=compiler, lang=lang)
+            new_snap = dump(new, headers=headers_v2, version="v2", compiler=compiler, lang=lang)
 
         result = compare(old_snap, new_snap)
         return result.verdict.value
