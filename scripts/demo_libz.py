@@ -9,7 +9,6 @@ Requires: castxml, zlib1g-dev
 """
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 from pathlib import Path
@@ -83,8 +82,8 @@ def main() -> None:
         snap2_path = tmp / "libz-1.4.json"
         save_snapshot(snap_v2, snap2_path)
         print(f"  Removed : {removed}")
-        print(f"  Changed return type: zlibCompileFlags uLong → unsigned long")
-        print(f"  Added   : deflate2")
+        print("  Changed return type: zlibCompileFlags uLong → unsigned long")
+        print("  Added   : deflate2")
         print(f"  Saved → {snap2_path}\n")
 
         # ── Step 3: Compare ───────────────────────────────────────────────────
