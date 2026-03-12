@@ -332,21 +332,26 @@ class _CastxmlParser:
         return Visibility.HIDDEN
 
     def _is_builtin_element(self, el: Element) -> bool:
-        """Return True if element's source file is <built-in> or <command-line>."""
-        loc_id = el.get("location", "")
-        if not loc_id:
-            return False
-        loc_el = self._id_map.get(loc_id)
-        if loc_el is None:
-            return False
-        file_id = loc_el.get("file", "")
+        """Return True if element originates from a compiler built-in pseudo-file.
+
+        Real castxml output: elements carry a ``file`` attribute (e.g. ``file="f0"``)
+        pointing directly to a ``File`` element in the id-map — NOT via a separate
+        ``Location`` element.  The compound ``location`` attribute (``"f0:0"``) is
+        informational only and is NOT a map key.
+
+        Known built-in file names emitted by castxml:
+        - ``<builtin>``       (clang/castxml built-in declarations)
+        - ``<built-in>``      (older castxml / GCC)
+        - ``<command-line>``  (preprocessor command-line defines)
+        """
+        file_id = el.get("file", "")
         if not file_id:
             return False
         file_el = self._id_map.get(file_id)
         if file_el is None:
             return False
         fname = file_el.get("name", "")
-        return fname in ("<built-in>", "<command-line>")
+        return fname in ("<builtin>", "<built-in>", "<command-line>")
 
     def parse_functions(self) -> list[Function]:
         funcs = []
@@ -587,6 +592,8 @@ class _CastxmlParser:
             name = el.get("name", "")
             if not name or name.startswith("__"):
                 continue
+            if self._is_builtin_element(el):
+                continue
             members = []
             for child in el:
                 if child.tag == "EnumValue":
@@ -618,6 +625,8 @@ class _CastxmlParser:
                 continue
             name = el.get("name", "")
             if not name:
+                continue
+            if self._is_builtin_element(el):
                 continue
             type_id = el.get("type", "")
             # Flatten typedef chains: alias → alias2 → int  stored as  alias → int

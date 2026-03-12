@@ -1,22 +1,21 @@
 """B2: `<built-in>` types polluting dump (abi-dumper #38, abicc PR#124).
 
-castxml output can include entries referencing `<built-in>` or `<command-line>`
+castxml output can include entries referencing `<builtin>` or `<command-line>`
 pseudo-files. These represent compiler built-in type declarations (e.g.
 `__builtin_va_list`) and should not appear in the ABI snapshot as public types
 or functions, as they are not user-visible ABI surface.
 
 Detection mechanism:
-- castxml XML elements have a `location` attribute pointing to a Location id
-- The Location element has a `file` attribute pointing to a File element
-- The File element's `name` attribute may be `<built-in>` or `<command-line>`
-- Dumper should skip any element whose resolved file is `<built-in>` or
-  `<command-line>`
+- castxml XML elements carry a ``file`` attribute pointing directly to a
+  ``File`` element id (e.g. ``file="f0"``)
+- The ``File`` element's ``name`` attribute may be ``<builtin>``, ``<built-in>``,
+  or ``<command-line>``
+- There are NO separate ``Location`` elements in real castxml output (the
+  compound ``location="f0:0"`` attribute is informational only)
+- Dumper should skip any element whose resolved file is a pseudo-file
 
-Current status (verified): The dumper's _is_public_record_type() filters types
-with names starting with `__`, which catches many builtins. However, it does NOT
-explicitly check the file attribute for `<built-in>` / `<command-line>`.
-
-This test verifies the filtering behavior using a mock XML fixture.
+Filtering is applied in: parse_functions(), parse_variables(),
+_is_public_record_type(), parse_enums(), parse_typedefs().
 """
 from __future__ import annotations
 
@@ -24,40 +23,25 @@ from xml.etree.ElementTree import Element, SubElement
 
 
 def _make_castxml_xml_with_builtin() -> Element:
-    """Build a castxml XML tree that includes both user-defined and built-in types.
+    """Build a castxml XML tree using REAL castxml format.
 
-    Mirrors actual castxml output where some types come from <built-in>.
+    Uses ``file="fN"`` attributes on elements directly (no Location elements).
+    File names match actual castxml output: ``<builtin>`` (no hyphen).
     """
     root = Element("CastXML")
 
-    # File entries
+    # File entries — real castxml format
     user_file = SubElement(root, "File")
     user_file.set("id", "f1")
     user_file.set("name", "mylib.h")
 
     builtin_file = SubElement(root, "File")
-    builtin_file.set("id", "f2")
-    builtin_file.set("name", "<built-in>")
+    builtin_file.set("id", "f0")
+    builtin_file.set("name", "<builtin>")       # real castxml: no hyphen
 
     cmdline_file = SubElement(root, "File")
-    cmdline_file.set("id", "f3")
+    cmdline_file.set("id", "f2")
     cmdline_file.set("name", "<command-line>")
-
-    # Location entries
-    user_loc = SubElement(root, "Location")
-    user_loc.set("id", "l1")
-    user_loc.set("file", "f1")
-    user_loc.set("line", "5")
-
-    builtin_loc = SubElement(root, "Location")
-    builtin_loc.set("id", "l2")
-    builtin_loc.set("file", "f2")
-    builtin_loc.set("line", "0")
-
-    cmdline_loc = SubElement(root, "Location")
-    cmdline_loc.set("id", "l3")
-    cmdline_loc.set("file", "f3")
-    cmdline_loc.set("line", "0")
 
     # User-defined struct (should appear in snapshot)
     user_struct = SubElement(root, "Struct")
@@ -65,15 +49,17 @@ def _make_castxml_xml_with_builtin() -> Element:
     user_struct.set("name", "MyStruct")
     user_struct.set("size", "64")
     user_struct.set("align", "32")
-    user_struct.set("location", "l1")
+    user_struct.set("file", "f1")               # real castxml: direct file attr
+    user_struct.set("location", "f1:5")
 
-    # Built-in function (should NOT appear in snapshot)
+    # Built-in function with __ prefix (should NOT appear)
     builtin_func = SubElement(root, "Function")
     builtin_func.set("id", "_2")
     builtin_func.set("name", "__builtin_va_list")
     builtin_func.set("mangled", "__builtin_va_list")
     builtin_func.set("returns", "")
-    builtin_func.set("location", "l2")
+    builtin_func.set("file", "f0")
+    builtin_func.set("location", "f0:0")
 
     # User-defined function (should appear in snapshot)
     user_func = SubElement(root, "Function")
@@ -81,21 +67,24 @@ def _make_castxml_xml_with_builtin() -> Element:
     user_func.set("name", "my_func")
     user_func.set("mangled", "my_func")
     user_func.set("returns", "")
-    user_func.set("location", "l1")
+    user_func.set("file", "f1")
+    user_func.set("location", "f1:1")
 
-    # Built-in struct with __ prefix (should NOT appear — _is_public_record_type filters it)
+    # Built-in struct with __ prefix (should NOT appear — name filter catches it)
     builtin_struct = SubElement(root, "Struct")
     builtin_struct.set("id", "_4")
     builtin_struct.set("name", "__va_list_tag")
     builtin_struct.set("size", "32")
-    builtin_struct.set("location", "l2")
+    builtin_struct.set("file", "f0")
+    builtin_struct.set("location", "f0:0")
 
-    # command-line struct (should NOT appear)
+    # Command-line struct (should NOT appear)
     cmdline_struct = SubElement(root, "Struct")
     cmdline_struct.set("id", "_5")
     cmdline_struct.set("name", "__CMDLINE_DEFINE__")
     cmdline_struct.set("size", "32")
-    cmdline_struct.set("location", "l3")
+    cmdline_struct.set("file", "f2")
+    cmdline_struct.set("location", "f2:0")
 
     return root
 
@@ -144,33 +133,17 @@ class TestBuiltinsFiltered:
         assert "my_func" in names
 
     def test_builtin_func_filtered_from_snapshot(self) -> None:
-        """__builtin_va_list must NOT appear in snapshot types via name filter.
-
-        Note: castxml typically emits __builtin_* as Function elements with names
-        starting with __. The _is_public_record_type filter handles types;
-        function names starting with __ are a separate concern.
-
-        This test verifies the current behavior: __builtin_va_list is parsed as
-        a function but filtered out if it's not in the exported symbol set.
-        Since it's not in exported_dynamic, its visibility will be HIDDEN,
-        and the checker will not treat it as a public API symbol.
-        """
+        """__builtin_va_list must NOT appear in functions."""
         from abicheck.dumper import _CastxmlParser
-        from abicheck.model import Visibility
         root = _make_castxml_xml_with_builtin()
-        # __builtin_va_list is NOT in exported symbols
         parser = _CastxmlParser(
             root,
             exported_dynamic={"my_func"},
             exported_static={"my_func"},
         )
         funcs = parser.parse_functions()
-        # __builtin_va_list should either be absent or have HIDDEN visibility
-        builtin_funcs = [f for f in funcs if "__builtin" in f.name]
-        for f in builtin_funcs:
-            assert f.visibility == Visibility.HIDDEN, (
-                f"__builtin_* function {f.name!r} must be HIDDEN, not {f.visibility}"
-            )
+        names = {f.name for f in funcs}
+        assert "__builtin_va_list" not in names
 
     def test_snapshot_no_builtin_types_in_public_api(self) -> None:
         """End-to-end: comparing two snapshots with only user types → no noise changes."""
@@ -184,17 +157,17 @@ class TestBuiltinsFiltered:
             RecordType(name="MyStruct", kind="struct"),
         ])
         result = compare(old, new)
-        # No changes should be emitted for identical snapshots
         assert not result.changes
 
 
 class TestBuiltinLocationFilter:
-    """Verify _is_builtin_element filters by <built-in>/<command-line> location,
+    """Verify _is_builtin_element filters by <builtin>/<command-line> file,
     independent of the __ name prefix filter.
+    Uses real castxml XML format: file attr on element, File elements in id-map.
     """
 
-    def _make_xml_builtin_no_underscore(self) -> Element:
-        """Build XML where a non-__ named type comes from <built-in> location."""
+    def _make_xml_real_format(self) -> Element:
+        """Build XML in real castxml format (file attr on element, no Location elements)."""
         root = Element("CastXML")
 
         user_file = SubElement(root, "File")
@@ -202,74 +175,93 @@ class TestBuiltinLocationFilter:
         user_file.set("name", "mylib.h")
 
         builtin_file = SubElement(root, "File")
-        builtin_file.set("id", "f2")
-        builtin_file.set("name", "<built-in>")
+        builtin_file.set("id", "f0")
+        builtin_file.set("name", "<builtin>")   # real castxml: no hyphen
 
         cmdline_file = SubElement(root, "File")
-        cmdline_file.set("id", "f3")
+        cmdline_file.set("id", "f2")
         cmdline_file.set("name", "<command-line>")
-
-        user_loc = SubElement(root, "Location")
-        user_loc.set("id", "l1")
-        user_loc.set("file", "f1")
-        user_loc.set("line", "1")
-
-        builtin_loc = SubElement(root, "Location")
-        builtin_loc.set("id", "l2")
-        builtin_loc.set("file", "f2")
-        builtin_loc.set("line", "0")
-
-        cmdline_loc = SubElement(root, "Location")
-        cmdline_loc.set("id", "l3")
-        cmdline_loc.set("file", "f3")
-        cmdline_loc.set("line", "0")
 
         # Normal user struct — should appear
         user_struct = SubElement(root, "Struct")
         user_struct.set("id", "_1")
         user_struct.set("name", "UserType")
         user_struct.set("size", "32")
-        user_struct.set("location", "l1")
+        user_struct.set("file", "f1")
+        user_struct.set("location", "f1:1")
 
-        # Built-in struct WITHOUT __ prefix — must be filtered by location
+        # Built-in struct WITHOUT __ prefix — must be filtered by file location
         builtin_struct = SubElement(root, "Struct")
         builtin_struct.set("id", "_2")
-        builtin_struct.set("name", "va_list")
+        builtin_struct.set("name", "va_list")   # no __ prefix — only location filter catches it
         builtin_struct.set("size", "64")
-        builtin_struct.set("location", "l2")
+        builtin_struct.set("file", "f0")
+        builtin_struct.set("location", "f0:0")
 
         # Command-line struct WITHOUT __ prefix — must be filtered by location
         cmdline_struct = SubElement(root, "Struct")
         cmdline_struct.set("id", "_3")
         cmdline_struct.set("name", "SomeDefine")
         cmdline_struct.set("size", "32")
-        cmdline_struct.set("location", "l3")
+        cmdline_struct.set("file", "f2")
+        cmdline_struct.set("location", "f2:0")
 
-        # Function in <built-in> without __ prefix
+        # Function in <builtin> without __ prefix
         builtin_func = SubElement(root, "Function")
         builtin_func.set("id", "_4")
         builtin_func.set("name", "compiler_hint")
         builtin_func.set("mangled", "compiler_hint")
         builtin_func.set("returns", "")
-        builtin_func.set("location", "l2")
+        builtin_func.set("file", "f0")
+        builtin_func.set("location", "f0:0")
+
+        # Built-in typedef (e.g. size_t from <builtin>)
+        builtin_typedef = SubElement(root, "Typedef")
+        builtin_typedef.set("id", "_5")
+        builtin_typedef.set("name", "size_t")
+        builtin_typedef.set("type", "_1")
+        builtin_typedef.set("file", "f0")
+        builtin_typedef.set("location", "f0:0")
+
+        # User typedef — should appear
+        user_typedef = SubElement(root, "Typedef")
+        user_typedef.set("id", "_6")
+        user_typedef.set("name", "MyAlias")
+        user_typedef.set("type", "_1")
+        user_typedef.set("file", "f1")
+        user_typedef.set("location", "f1:2")
+
+        # Built-in enum without __ prefix (e.g. from <builtin>)
+        builtin_enum = SubElement(root, "Enumeration")
+        builtin_enum.set("id", "_7")
+        builtin_enum.set("name", "compiler_enum")
+        builtin_enum.set("file", "f0")
+        builtin_enum.set("location", "f0:0")
+
+        # User enum — should appear
+        user_enum = SubElement(root, "Enumeration")
+        user_enum.set("id", "_8")
+        user_enum.set("name", "MyEnum")
+        user_enum.set("file", "f1")
+        user_enum.set("location", "f1:3")
 
         return root
 
     def test_builtin_struct_no_underscore_filtered_by_location(self) -> None:
-        """Struct named 'va_list' (no __ prefix) from <built-in> must be filtered."""
+        """Struct 'va_list' (no __ prefix) from <builtin> must be filtered."""
         from abicheck.dumper import _CastxmlParser
-        root = self._make_xml_builtin_no_underscore()
+        root = self._make_xml_real_format()
         parser = _CastxmlParser(root, exported_dynamic=set(), exported_static=set())
         types = parser.parse_types()
         names = {t.name for t in types}
         assert "UserType" in names
-        assert "va_list" not in names, "va_list from <built-in> must be filtered"
+        assert "va_list" not in names, "va_list from <builtin> must be filtered"
         assert "SomeDefine" not in names, "SomeDefine from <command-line> must be filtered"
 
     def test_builtin_func_no_underscore_filtered_by_location(self) -> None:
-        """Function from <built-in> without __ prefix must not appear in functions."""
+        """Function from <builtin> must not appear even if in exported symbols."""
         from abicheck.dumper import _CastxmlParser
-        root = self._make_xml_builtin_no_underscore()
+        root = self._make_xml_real_format()
         parser = _CastxmlParser(
             root,
             exported_dynamic={"compiler_hint"},
@@ -277,6 +269,23 @@ class TestBuiltinLocationFilter:
         )
         funcs = parser.parse_functions()
         names = {f.name for f in funcs}
-        assert "compiler_hint" not in names, (
-            "compiler_hint from <built-in> must be filtered even if in exported symbols"
-        )
+        assert "compiler_hint" not in names
+
+    def test_builtin_typedef_filtered(self) -> None:
+        """Typedef from <builtin> (e.g. size_t) must not appear in typedefs."""
+        from abicheck.dumper import _CastxmlParser
+        root = self._make_xml_real_format()
+        parser = _CastxmlParser(root, exported_dynamic=set(), exported_static=set())
+        typedefs = parser.parse_typedefs()
+        assert "size_t" not in typedefs
+        assert "MyAlias" in typedefs
+
+    def test_builtin_enum_filtered(self) -> None:
+        """Enum from <builtin> without __ prefix must not appear in enums."""
+        from abicheck.dumper import _CastxmlParser
+        root = self._make_xml_real_format()
+        parser = _CastxmlParser(root, exported_dynamic=set(), exported_static=set())
+        enums = parser.parse_enums()
+        names = {e.name for e in enums}
+        assert "compiler_enum" not in names
+        assert "MyEnum" in names
