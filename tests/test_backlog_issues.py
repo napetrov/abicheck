@@ -198,3 +198,112 @@ class TestExternCEdgeCases:
             ],
         )
         assert detect_profile(snap) == "sycl"
+
+
+# ── parse_variables C-mode (no mangled attribute) ────────────────────────────
+
+class TestParseVariablesCMode:
+    """_CastxmlParser.parse_variables() must not drop C-mode Variable elements.
+
+    castxml in C-mode (-x c) emits <Variable name="foo" ...> without a mangled
+    attribute (C linkage has no name mangling). The parser must fall back to the
+    plain name as the symbol key — same pattern as parse_functions().
+    """
+
+    def _make_xml(self, dynsym_name: str = "api_version") -> Any:
+        """Build a minimal castxml XML tree with a C-linkage Variable element."""
+        from xml.etree.ElementTree import Element, SubElement
+
+        root = Element("CastXML", format="1.1.0")
+        # File element
+        f_el = SubElement(root, "File", {"id": "f1", "name": "/tmp/test.h"})  # noqa: F841
+        # FundamentalType for int
+        SubElement(root, "FundamentalType", {"id": "_1", "name": "int", "size": "32"})
+        # Variable element — C-mode: no mangled attribute
+        SubElement(root, "Variable", {
+            "id": "_2",
+            "name": dynsym_name,
+            "type": "_1",
+            "file": "f1",
+            "extern": "1",
+        })
+        return root
+
+    def test_c_variable_no_mangled_is_parsed(self) -> None:
+        """Variable without mangled attr must be parsed, not silently dropped."""
+        from abicheck.dumper import _CastxmlParser
+
+        root = self._make_xml("api_version")
+        parser = _CastxmlParser(root,
+                                exported_dynamic={"api_version"},
+                                exported_static={"api_version"})
+        variables = parser.parse_variables()
+        names = {v.name for v in variables}
+        assert "api_version" in names, (
+            "C-mode Variable without mangled attr must be parsed with name as key"
+        )
+
+    def test_c_variable_visibility_resolved(self) -> None:
+        """C-mode Variable must get PUBLIC visibility when in exported_dynamic."""
+        from abicheck.dumper import _CastxmlParser
+        from abicheck.model import Visibility
+
+        root = self._make_xml("api_version")
+        parser = _CastxmlParser(root,
+                                exported_dynamic={"api_version"},
+                                exported_static={"api_version"})
+        variables = parser.parse_variables()
+        var = next(v for v in variables if v.name == "api_version")
+        assert var.visibility == Visibility.PUBLIC
+
+    def test_var_removed_detected_via_castxml_cmode(self) -> None:
+        """VAR_REMOVED must be detected when a C-mode variable disappears."""
+        from xml.etree.ElementTree import Element, SubElement
+
+        from abicheck.checker import ChangeKind, compare
+        from abicheck.dumper import _CastxmlParser
+        from abicheck.model import AbiSnapshot
+
+        def _make_root(include_var: bool) -> Element:
+            root = Element("CastXML", format="1.1.0")
+            SubElement(root, "File", {"id": "f1", "name": "/tmp/test.h"})
+            SubElement(root, "FundamentalType", {"id": "_1", "name": "int", "size": "32"})
+            SubElement(root, "FundamentalType", {"id": "_2", "name": "void", "size": "0"})
+            SubElement(root, "Function", {
+                "id": "_3", "name": "get_version", "mangled": "get_version",
+                "returns": "_2", "file": "f1",
+            })
+            if include_var:
+                SubElement(root, "Variable", {
+                    "id": "_4", "name": "api_version",
+                    "type": "_1", "file": "f1", "extern": "1",
+                })
+            return root
+
+        old_root = _make_root(include_var=True)
+        new_root = _make_root(include_var=False)
+
+        old_parser = _CastxmlParser(old_root,
+                                    exported_dynamic={"get_version", "api_version"},
+                                    exported_static={"get_version", "api_version"})
+        new_parser = _CastxmlParser(new_root,
+                                    exported_dynamic={"get_version"},
+                                    exported_static={"get_version"})
+
+        old_snap = AbiSnapshot(
+            library="lib.so", version="v1",
+            functions=old_parser.parse_functions(),
+            variables=old_parser.parse_variables(),
+        )
+        new_snap = AbiSnapshot(
+            library="lib.so", version="v2",
+            functions=new_parser.parse_functions(),
+            variables=new_parser.parse_variables(),
+        )
+
+        result = compare(old_snap, new_snap)
+        kinds = {c.kind for c in result.changes}
+        assert ChangeKind.VAR_REMOVED in kinds, (
+            "Removing a C-mode variable (no mangled attr in castxml) "
+            "must be detected as VAR_REMOVED"
+        )
