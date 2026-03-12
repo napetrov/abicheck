@@ -137,6 +137,11 @@ class AbiSnapshot:
     # Populated by detect_platform() in pipeline or by the dumper.
     platform: str | None = None   # "elf" | "pe" | "macho" | None
 
+    # Phase 4: language profile — detected from symbol mangling / extern "C" annotations.
+    # None = unknown / mixed / not yet detected.
+    # Populated by detect_profile() in pipeline or by the dumper.
+    language_profile: str | None = None  # "c" | "cpp" | "sycl" | None
+
     # Indexes (built lazily)
     _func_by_mangled: dict[str, Function] | None = field(default=None, repr=False, compare=False)
     _var_by_mangled: dict[str, Variable] | None = field(default=None, repr=False, compare=False)

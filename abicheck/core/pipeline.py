@@ -35,6 +35,9 @@ _normalizer = Normalizer()
 # Valid platform values for scope.platform filtering (Phase 3).
 KNOWN_PLATFORMS: frozenset[str] = frozenset({"elf", "pe", "macho"})
 
+# Valid profile values for scope.profile filtering (Phase 4).
+KNOWN_PROFILES: frozenset[str] = frozenset({"c", "cpp", "sycl"})
+
 
 def detect_platform(snapshot: AbiSnapshot) -> Literal["elf", "pe", "macho"] | None:
     """Detect the binary format platform from an AbiSnapshot.
@@ -53,6 +56,43 @@ def detect_platform(snapshot: AbiSnapshot) -> Literal["elf", "pe", "macho"] | No
         return None
     if snapshot.elf is not None:
         return "elf"
+    return None
+
+
+def detect_profile(snapshot: AbiSnapshot) -> Literal["c", "cpp", "sycl"] | None:
+    """Detect the language profile from an AbiSnapshot.
+
+    Detection priority:
+    1. snapshot.language_profile if already set (explicit override by caller/dumper)
+    2. Heuristic from function symbols:
+       - All public functions are extern "C" (is_extern_c=True) → "c"
+       - Any function has C++ mangling (_Z prefix) → "cpp"
+    3. None (unknown — mixed or no functions)
+
+    Note: "sycl" cannot be auto-detected from the model; set snapshot.language_profile
+    explicitly when processing SYCL libraries.
+    """
+    if snapshot.language_profile is not None:
+        p = snapshot.language_profile
+        if p in KNOWN_PROFILES:
+            return p  # type: ignore[return-value]
+        return None
+
+    public_funcs = [
+        f for f in snapshot.functions
+        if f.visibility.value in ("public", "elf_only")
+    ]
+    if not public_funcs:
+        return None
+
+    # If any function has C++ mangling → cpp
+    if any(f.mangled.startswith("_Z") for f in public_funcs):
+        return "cpp"
+
+    # If all public functions are extern "C" → c
+    if all(f.is_extern_c for f in public_funcs):
+        return "c"
+
     return None
 
 
@@ -86,10 +126,10 @@ def analyse_full(
 ) -> PolicyResult:
     """Run the full v0.2 pipeline: diff → suppress → policy → PolicyResult.
 
-    Platform context is auto-detected from the snapshots (new first, old as fallback)
-    and passed to the suppression engine for scope.platform filtering (Phase 3).
-    When platform cannot be detected, platform_context=None is used — suppression
-    rules with scope.platform set will still apply (conservative skip semantics).
+    Platform and language profile are auto-detected from the snapshots (new first,
+    old as fallback) and passed to the suppression engine for scope filtering (Phase 3/4).
+    When context cannot be detected, conservative skip semantics apply — suppression
+    rules with scope filters still match (safest default).
     """
     from abicheck.core.policy import get_profile  # noqa: PLC0415
     from abicheck.core.suppressions import SuppressionEngine as _Engine  # noqa: PLC0415
@@ -97,7 +137,10 @@ def analyse_full(
     changes = analyse(old, new)
 
     # Phase 3: auto-detect platform from snapshot for suppression scope filtering.
-    platform = detect_platform(new) or detect_platform(old)
+    platform_ctx = detect_platform(new) or detect_platform(old)
+
+    # Phase 4: auto-detect language profile from snapshot.
+    profile_ctx = detect_profile(new) or detect_profile(old)
 
     if engine is None:
         engine = _Engine(rules or [])
@@ -108,12 +151,12 @@ def analyse_full(
             stacklevel=2,
         )
 
-    sup_result = engine.apply(changes, platform_context=platform)
+    sup_result = engine.apply(changes, platform_context=platform_ctx, profile_context=profile_ctx)
 
     all_changes = sorted(
         sup_result.active + sup_result.suppressed,
         key=lambda c: (c.entity_type, c.entity_name, c.change_kind.value),
     )
 
-    profile = get_profile(policy)
-    return profile.apply(all_changes)
+    policy_profile = get_profile(policy)
+    return policy_profile.apply(all_changes)

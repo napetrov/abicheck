@@ -63,13 +63,12 @@ class TestSuppressionEngine:
         engine = SuppressionEngine([SuppressionRule(entity_glob="std::*")])
         assert engine is not None
 
-    def test_scope_fields_fail_at_load(self) -> None:
-        # Phase 3: platform is now implemented, profile still fails
-        with pytest.raises(ValueError, match="not yet implemented"):
+    def test_scope_unknown_profile_fails_at_load(self) -> None:
+        with pytest.raises(ValueError, match="Unknown profile"):
             SuppressionEngine([
                 SuppressionRule(
                     entity_glob="foo*",
-                    scope=SuppressionScope(profile="c"),
+                    scope=SuppressionScope(profile="fortran"),
                 ),
             ])
 
@@ -322,12 +321,22 @@ class TestSuppressionEngineCoverage:
         assert [c.entity_name for c in result.active] == ["foocZ"]
 
     def test_scope_with_profile_field_raises(self) -> None:
-        """scope.profile set → ValueError at load time."""
-        with pytest.raises(ValueError, match="not yet implemented"):
+        """scope.profile set with unknown value → ValueError at load time."""
+        # Valid profile "cpp" should load
+        engine = SuppressionEngine([
+            SuppressionRule(
+                entity_glob="*",
+                scope=SuppressionScope(profile="cpp"),
+            ),
+        ])
+        assert engine is not None
+
+        # Unknown profile "fortran" should raise
+        with pytest.raises(ValueError, match="Unknown profile"):
             SuppressionEngine([
                 SuppressionRule(
                     entity_glob="*",
-                    scope=SuppressionScope(profile="cpp"),
+                    scope=SuppressionScope(profile="fortran"),
                 ),
             ])
 
