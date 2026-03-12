@@ -1,0 +1,53 @@
+# Case 45: Multi-Dimensional Array Element Type Change
+
+**Category:** Struct Layout | **Verdict:** 🔴 BREAKING
+
+## What breaks
+
+The `Matrix` struct contains a 2D array member `data[ROWS][COLS]`. Its element type
+changes from `float` (4 bytes) to `double` (8 bytes), so `sizeof(Matrix)` doubles
+from **72 → 136 bytes** (`4×4×4 + 8 = 72` → `4×4×8 + 8 = 136`). Any consumer
+compiled against v1 headers will read/write the struct at the wrong offsets.
+Return types of `matrix_get()`/`matrix_set()` also change.
+
+## Why abidiff catches it
+
+abidiff reports `Subrange_Change` in multi-dim array and exits **4**.
+abicheck detects: `TYPE_SIZE_CHANGED`, `TYPE_FIELD_TYPE_CHANGED`, `FUNC_RETURN_CHANGED`.
+
+## Code diff
+
+| v1.h | v2.h |
+|------|------|
+| `float data[4][4];` — 64 bytes | `double data[4][4];` — 128 bytes |
+| `float matrix_get(...)` | `double matrix_get(...)` |
+
+## Real Failure Demo
+
+**Severity: 🔴 CRITICAL**
+
+```bash
+gcc -shared -fPIC -g v1.c -o libv1.so
+gcc -shared -fPIC -g v2.c -o libv2.so
+
+abidw --out-file v1.abi libv1.so
+abidw --out-file v2.abi libv2.so
+abidiff v1.abi v2.abi
+echo "exit: $?"   # → 4 (TYPE_SIZE_CHANGED + FUNC_RETURN_CHANGED)
+```
+
+## Reproduce manually
+
+```bash
+gcc -shared -fPIC -g v1.c -o libv1.so
+gcc -shared -fPIC -g v2.c -o libv2.so
+abidw --headers-dir . --out-file v1.abi libv1.so
+abidw --headers-dir . --out-file v2.abi libv2.so
+abidiff v1.abi v2.abi
+```
+
+## How to fix
+
+1. **Abstract the element type** via a typedef: `typedef float mat_elem_t;` — change the typedef, not the struct directly.
+2. **Version via SONAME** — element type changes in matrix structs require a major version bump.
+3. **Provide both** `matrix_float_get()` and `matrix_double_get()` during a deprecation window.

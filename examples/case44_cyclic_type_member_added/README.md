@@ -1,0 +1,56 @@
+# Case 44: Cyclic Type Member Added
+
+**Category:** Struct Layout | **Verdict:** 🔴 BREAKING
+
+## What breaks
+
+A `long priority` field is added to a self-referential linked-list `Node` struct.
+On 64-bit systems, the existing padding is consumed and `sizeof(Node)` grows from
+**16 → 24 bytes**. Because `node_sum()` accepts `Node` **by value**, the size is
+directly part of the ABI calling convention — callers compiled against v1 pass
+a 16-byte struct on the stack while the v2 function expects 24 bytes.
+
+## Why abidiff catches it
+
+abidiff reports `Added_Non_Virtual_Member_Variable` and exits **4**.
+abicheck detects: `TYPE_SIZE_CHANGED` (Node: 16→24 bytes).
+
+## Code diff
+
+| v1.h | v2.h |
+|------|------|
+| `struct Node { int data; int flags; struct Node *next; }` | `struct Node { int data; int flags; long priority; struct Node *next; }` |
+| `int node_sum(Node n);` — by value, 16 bytes | `int node_sum(Node n);` — by value, 24 bytes |
+
+## Real Failure Demo
+
+**Severity: 🔴 CRITICAL**
+
+**Scenario:** compile app against v1, run with v2 `.so` — stack corruption due to by-value size mismatch.
+
+```bash
+gcc -shared -fPIC -g v1.c -o libv1.so
+gcc -shared -fPIC -g v2.c -o libv2.so
+
+abidw --out-file v1.abi libv1.so
+abidw --out-file v2.abi libv2.so
+abidiff v1.abi v2.abi
+echo "exit: $?"   # → 4 (TYPE_SIZE_CHANGED)
+```
+
+## Reproduce manually
+
+```bash
+gcc -shared -fPIC -g v1.c -o libv1.so
+gcc -shared -fPIC -g v2.c -o libv2.so
+abidw --headers-dir . --out-file v1.abi libv1.so
+abidw --headers-dir . --out-file v2.abi libv2.so
+abidiff v1.abi v2.abi
+```
+
+## How to fix
+
+Avoid by-value passing of structs in public API:
+1. **Pass by pointer** — `int node_sum(const Node *n)` — pointer size is stable.
+2. **Opaque handle** — hide `Node` behind a typedef to an incomplete struct.
+3. **Version bump** — if by-value semantics are required, bump SONAME.

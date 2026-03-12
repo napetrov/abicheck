@@ -1,0 +1,61 @@
+# Case 48: Leaf Struct Change Propagated Through Pointer
+
+**Category:** Breaking | **Verdict:** 🔴 BREAKING
+
+## What breaks
+
+A nested "leaf" struct `Leaf` gains a new `int z` field, growing from **4 → 8 bytes**.
+`Leaf` is embedded (not pointed to) inside `Container`, so `Container::flags` shifts
+from offset 8 to offset 16. The public API only takes `Container*` — no by-value
+`Leaf` in function signatures — but the size change propagates through the embedding.
+
+Callers compiled against v1 allocate `Container` with the old layout: passing such
+a struct to a v2 function causes `flags` to be read at the wrong offset.
+
+## Why abidiff catches it
+
+abidiff reports `Leaf_Type_Change` / `TYPE_SIZE_CHANGED` and exits **4**.
+abicheck detects: `TYPE_SIZE_CHANGED` on `Leaf` (4→8 bytes) propagates to `Container`.
+
+## Code diff
+
+| v1.h | v2.h |
+|------|------|
+| `typedef struct Leaf { short x; short y; } Leaf;` — 4 bytes | `typedef struct Leaf { short x; short y; int z; } Leaf;` — 8 bytes |
+| `Container { int id; Leaf position; int flags; }` — `flags` at offset 8 | `Container { int id; Leaf position; int flags; }` — `flags` at offset 16 |
+
+## Real Failure Demo
+
+**Severity: 🔴 CRITICAL — silent wrong-field reads**
+
+```bash
+gcc -shared -fPIC -g v1.c -o libv1.so
+gcc -shared -fPIC -g v2.c -o libv2.so
+
+abidw --out-file v1.abi libv1.so
+abidw --out-file v2.abi libv2.so
+abidiff v1.abi v2.abi
+echo "exit: $?"   # → 4 (TYPE_SIZE_CHANGED on Leaf → Container)
+```
+
+## Reproduce manually
+
+```bash
+gcc -shared -fPIC -g v1.c -o libv1.so
+gcc -shared -fPIC -g v2.c -o libv2.so
+abidw --headers-dir . --out-file v1.abi libv1.so
+abidw --headers-dir . --out-file v2.abi libv2.so
+abidiff v1.abi v2.abi
+```
+
+## How to fix
+
+1. **Pimpl on Leaf** — replace embedded `Leaf` with `Leaf*` (pointer to incomplete type); size is pointer-stable.
+2. **Add field without breaking**: only possible if there is tail padding in the struct — verify with `pahole`.
+3. **SONAME bump** if embedding is required and the field is necessary.
+
+## Real-world pattern
+
+Intel TBB `tbb::task_arena` was embedded in oneDal public headers. When TBB changed
+`task_arena`'s internal layout, all oneDAL consumers were broken — same propagation
+mechanism as this case. See `case18_dependency_leak` for the external-library variant.
