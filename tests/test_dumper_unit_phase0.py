@@ -4,8 +4,8 @@ from pathlib import Path
 from xml.etree.ElementTree import Element, SubElement
 
 from abicheck.dumper import (
-    _CastxmlParser,
     _cache_key,
+    _CastxmlParser,
     _parse_vtable_index,
     _vt_sort_key,
 )
