@@ -16,7 +16,6 @@ Usage::
 """
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass, field, replace
 from typing import NamedTuple
 
@@ -33,13 +32,18 @@ class _CompiledRule(NamedTuple):
     regex_compiled: re2.Pattern | None  # pre-compiled RE2 from entity_regex
 
 
+# Stable key for match_map audit trail: (entity_type, entity_name, change_kind)
+# Using a tuple instead of id(change) ensures the audit trail survives copies/serialization.
+_MatchKey = tuple[str, str, str]
+
+
 @dataclass
 class SuppressionResult:
     """Result of applying suppression rules to a list of Changes."""
     active: list[Change] = field(default_factory=list)      # not suppressed
     suppressed: list[Change] = field(default_factory=list)  # matched a rule
-    match_map: dict[int, SuppressionRule] = field(default_factory=dict)
-    # match_map: id(change) → matching rule (for audit trail)
+    match_map: dict[_MatchKey, SuppressionRule] = field(default_factory=dict)
+    # match_map: (entity_type, entity_name, change_kind.value) → matching rule (audit trail)
 
 
 class SuppressionEngine:
@@ -74,21 +78,20 @@ class SuppressionEngine:
                         f"Invalid RE2 pattern in suppression rule "
                         f"(reason={rule.reason!r}): {rule.entity_regex!r} — {exc}"
                     ) from exc
+            # Reject scope fields that are modelled but not yet enforced
+            scope = rule.scope
+            if scope.platform or scope.profile or scope.version_range:
+                raise ValueError(
+                    f"SuppressionRule scope fields (platform/profile/version_range) "
+                    f"are not yet implemented (reason={rule.reason!r}). "
+                    f"Scope filtering is planned for Phase 2b/3/4. "
+                    f"Remove the scope fields until then."
+                )
             self._compiled.append(_CompiledRule(
                 rule=rule,
                 glob_re=glob_re,
                 regex_compiled=compiled_regex,
             ))
-            # Warn if scope fields are set — they are modelled but not yet enforced
-            scope = rule.scope
-            if scope.platform or scope.profile or scope.version_range:
-                warnings.warn(
-                    f"SuppressionRule scope fields (platform/profile/version_range) "
-                    f"are not yet enforced (reason={rule.reason!r}). "
-                    f"The rule will match regardless of scope. "
-                    f"Scope filtering is planned for Phase 2b/3/4.",
-                    stacklevel=2,
-                )
 
     def apply(self, changes: list[Change]) -> SuppressionResult:
         """Apply all rules to a list of Changes. Returns SuppressionResult."""
@@ -99,7 +102,8 @@ class SuppressionEngine:
                 # Return a new Change with severity SUPPRESSED (Change is a frozen-ish dataclass)
                 suppressed = _with_severity(change, ChangeSeverity.SUPPRESSED)
                 result.suppressed.append(suppressed)
-                result.match_map[id(suppressed)] = matched_rule
+                key: _MatchKey = (change.entity_type, change.entity_name, change.change_kind.value)
+                result.match_map[key] = matched_rule
             else:
                 result.active.append(change)
         return result
@@ -156,12 +160,16 @@ def _glob_to_re2(pattern: str) -> re2.Pattern:
         elif c == '?':
             result.append('.')
         elif c == '[':
-            # pass through character classes as-is
+            # pass through character classes; convert shell negation [!...] → RE2 [^...]
             j = pattern.find(']', i + 1)
             if j == -1:
                 result.append(re2.escape(c))
             else:
-                result.append(pattern[i:j + 1])
+                char_class = pattern[i:j + 1]
+                if char_class.startswith('[!'):
+                    # [!abc] → [^abc]: shell negation → RE2 negation
+                    char_class = '[^' + char_class[2:]
+                result.append(char_class)
                 i = j
         else:
             result.append(re2.escape(c))

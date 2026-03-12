@@ -1,6 +1,6 @@
 """Policy Engine base — v0.2.
 
-Interface: (list[Change], suppressed: set) → PolicyResult
+Interface: list[Change] → PolicyResult
 
 Each policy profile applies domain-specific rules to classify Changes
 into PolicyVerdict (PASS/WARN/BLOCK/ERROR).
@@ -28,18 +28,11 @@ class PolicyProfile(ABC):
     profile_name: str = "base"
     profile_version: str = "0.2"
 
-    def apply(
-        self,
-        changes: list[Change],
-        suppressed_ids: frozenset[int] | None = None,
-    ) -> PolicyResult:
+    def apply(self, changes: list[Change]) -> PolicyResult:
         """Apply this policy to a list of Changes.
 
         Suppressed changes (severity == SUPPRESSED) are automatically annotated
         as PASS — they've been explicitly acknowledged by a suppression rule.
-
-        suppressed_ids: deprecated parameter, kept for backward compat.
-        Suppression is now determined by change.severity == SUPPRESSED.
         """
         annotated: list[AnnotatedChange] = []
 

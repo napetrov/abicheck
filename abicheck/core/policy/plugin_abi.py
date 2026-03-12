@@ -25,12 +25,6 @@ class PluginAbiPolicy(PolicyProfile):
     profile_version = "0.2"
 
     def classify_change(self, change: Change) -> PolicyVerdict:
-        match change.severity:
-            case ChangeSeverity.BREAK:
-                return PolicyVerdict.WARN   # breaking change is a warning for plugins
-            case ChangeSeverity.REVIEW_NEEDED:
-                return PolicyVerdict.PASS   # informational only
-            case ChangeSeverity.COMPATIBLE_EXTENSION:
-                return PolicyVerdict.PASS
-            case _:
-                return PolicyVerdict.PASS
+        if change.severity == ChangeSeverity.BREAK:
+            return PolicyVerdict.WARN  # breaking change is a warning for plugins
+        return PolicyVerdict.PASS

@@ -4,26 +4,9 @@ Wires the v0.2 components into a single callable:
 
     AbiSnapshot
         → Normalizer → NormalizedSnapshot
-        → diff_symbols + diff_type_layouts → list[Change]
+        → diff_symbols + diff_type_layout_diffs → list[Change]
         → SuppressionEngine → SuppressionResult
         → PolicyProfile → PolicyResult
-
-Usage::
-
-    from abicheck.core.pipeline import analyse, analyse_full
-    from abicheck.dumper import dump
-
-    snap_old = dump(so_old, [header_old])
-    snap_new = dump(so_new, [header_new])
-
-    # Simple: just get raw Changes
-    changes = analyse(snap_old, snap_new)
-
-    # Full: suppression + policy verdict
-    from abicheck.core.suppressions import SuppressionRule
-    rules = [SuppressionRule(entity_glob="__internal_*", reason="internal symbols")]
-    result = analyse_full(snap_old, snap_new, rules=rules, policy="strict_abi")
-    print(result.summary.verdict)
 
 Pipeline (Phase 2)::
 
@@ -31,12 +14,10 @@ Pipeline (Phase 2)::
 
 Note: importing abicheck.core.pipeline does NOT import re2 / suppressions.
       re2 is loaded lazily inside analyse_full() only.
-
-TODO Phase 3: add per-profile normalizer config
-TODO Phase 3: multiprocessing.Pool.map over per-binary extraction
 """
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 from abicheck.core.corpus.normalizer import Normalizer
@@ -48,19 +29,14 @@ from abicheck.model import AbiSnapshot
 if TYPE_CHECKING:
     from abicheck.core.suppressions import SuppressionEngine, SuppressionRule
 
-# Module-level singleton — stateless, safe for repeated calls.
-# TODO Phase 3: replace with per-profile Normalizer configuration
 _normalizer = Normalizer()
 
 
-def analyse(
-    old: AbiSnapshot,
-    new: AbiSnapshot,
-) -> list[Change]:
+def analyse(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Run the v0.2 diff pipeline on two AbiSnapshots.
 
-    Returns raw Changes (no suppression, no policy verdict).
-    Sorted deterministically by (entity_type, entity_name, change_kind).
+    Returns raw Changes (no suppression, no policy verdict), sorted
+    deterministically by (entity_type, entity_name, change_kind).
     """
     norm_old = _normalizer.normalize(old)
     norm_new = _normalizer.normalize(new)
@@ -80,38 +56,27 @@ def analyse_full(
     policy: str = "strict_abi",
     engine: SuppressionEngine | None = None,
 ) -> PolicyResult:
-    """Run the full v0.2 pipeline: diff → suppress → policy → PolicyResult.
-
-    Args:
-        old:    AbiSnapshot of the before version
-        new:    AbiSnapshot of the after version
-        rules:  suppression rules (empty = no suppression); ignored when engine provided
-        policy: policy profile name ("strict_abi" | "sdk_vendor" | "plugin_abi")
-        engine: pre-built SuppressionEngine for batch callers (avoids RE2 recompile)
-
-    Returns:
-        PolicyResult with per-change AnnotatedChange list and aggregate summary.
-
-    Note: re2 / suppressions are imported lazily here — importing pipeline itself
-    does not pull in google-re2 for callers that only use analyse().
-    """
-    # Lazy imports — keeps basic analyse() import path free of re2 dependency
+    """Run the full v0.2 pipeline: diff → suppress → policy → PolicyResult."""
     from abicheck.core.policy import get_profile  # noqa: PLC0415
     from abicheck.core.suppressions import SuppressionEngine as _Engine  # noqa: PLC0415
 
     changes = analyse(old, new)
 
-    # Suppression pass — pre-built engine takes precedence over rules
     if engine is None:
         engine = _Engine(rules or [])
+    elif rules:
+        warnings.warn(
+            "Both 'engine' and 'rules' provided to analyse_full(); "
+            "'rules' will be ignored in favor of the pre-built engine.",
+            stacklevel=2,
+        )
+
     sup_result = engine.apply(changes)
 
-    # Merge active + suppressed; restore original sort order
     all_changes = sorted(
         sup_result.active + sup_result.suppressed,
         key=lambda c: (c.entity_type, c.entity_name, c.change_kind.value),
     )
 
-    # Policy verdict — suppressed changes have severity=SUPPRESSED, handled by apply()
     profile = get_profile(policy)
     return profile.apply(all_changes)
