@@ -174,6 +174,18 @@ class ChangeKind(str, Enum):
     FUNC_BECAME_INLINE = "func_became_inline"   # function became inline — symbol may disappear from DSO
     FUNC_LOST_INLINE = "func_lost_inline"        # function lost inline — now has external linkage (compatible)
 
+    # ── PR #89: ELF fallback for = delete (issue #100) ───────────────────────────
+    # Emitted when castxml metadata lacks deleted="1" but the symbol disappears
+    # from the ELF .dynsym while the header model still declares the function.
+    # This is a best-effort fallback; lower confidence than FUNC_DELETED.
+    FUNC_DELETED_ELF_FALLBACK = "func_deleted_elf_fallback"
+
+    # ── PR #89: Template inner-type deep analysis (issues #38 / #73) ─────────────
+    # Emitted when a function param or return type is a template specialization
+    # whose inner type argument(s) change, e.g. vector<int> → vector<double>.
+    TEMPLATE_PARAM_TYPE_CHANGED = "template_param_type_changed"
+    TEMPLATE_RETURN_TYPE_CHANGED = "template_return_type_changed"
+
 
 class HasKind(Protocol):
     kind: ChangeKind
@@ -252,6 +264,11 @@ BREAKING_KINDS = {
     ChangeKind.ANON_FIELD_CHANGED,
     # ABICC full parity
     ChangeKind.TYPE_KIND_CHANGED,            # struct→union: layout completely changes
+    # PR #89: ELF fallback for = delete (binary break — symbol disappeared from DSO)
+    ChangeKind.FUNC_DELETED_ELF_FALLBACK,
+    # PR #89: Template inner-type changes are binary ABI breaks (different instantiation layout)
+    ChangeKind.TEMPLATE_PARAM_TYPE_CHANGED,
+    ChangeKind.TEMPLATE_RETURN_TYPE_CHANGED,
 }
 
 COMPATIBLE_KINDS: set[ChangeKind] = {
@@ -350,8 +367,6 @@ API_BREAK_KINDS: set[ChangeKind] = {
                                              # may get UNDEFINED when linking against new DSO if the symbol
                                              # is now emitted only inline; needs manual review
 }
-
-
 
 
 @dataclass(frozen=True)

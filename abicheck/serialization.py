@@ -20,6 +20,12 @@ from .model import (
     Visibility,
 )
 
+# Current schema version for snapshot serialization.
+# Increment this whenever the snapshot format changes in a backward-incompatible way.
+# v1: initial format (pre-schema-versioning; snapshots without schema_version are treated as v1)
+# v2: schema_version field added (PR #89)
+SCHEMA_VERSION: int = 2
+
 
 def _sets_to_lists(obj: Any) -> Any:
     """Recursively convert any set to a sorted list for JSON serialization.
@@ -56,6 +62,11 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     # Convert all sets → sorted lists (needed for AdvancedDwarfMetadata.packed_structs
     # and ToolchainInfo.abi_flags; json.dumps raises TypeError on set objects)
     converted: dict[str, Any] = _sets_to_lists(d)
+
+    # Embed schema version for forward-compatibility.
+    # Placed at top level so loaders can inspect it without parsing the full snapshot.
+    converted["schema_version"] = SCHEMA_VERSION
+
     return converted
 
 
@@ -157,6 +168,11 @@ def _dwarf_advanced_from_dict(d: dict[str, Any]) -> Any:
 
 
 def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
+    # Inspect schema version for future migration hooks.
+    # Snapshots without schema_version are treated as v1 (pre-versioning format).
+    # Currently only v1 and v2 exist and have the same on-disk layout, so no
+    # migration is required.  This baseline lets future PRs add migration logic here.
+    _schema_version: int = int(d.get("schema_version", 1))  # noqa: F841 — used by future migration
     funcs = [
         Function(
             name=f["name"], mangled=f["mangled"], return_type=f["return_type"],
