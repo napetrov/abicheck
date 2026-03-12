@@ -24,16 +24,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import re
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
+import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 REPO_DIR     = Path(__file__).parent.parent
 EXAMPLES_DIR = REPO_DIR / "examples"
@@ -43,8 +45,6 @@ BUILD_DIR    = REPORT_DIR / "_build"
 # Ensure we use abicheck from THIS repo, not any globally-installed version
 # (abicheck CLI shebang may point to a different Python/site-packages)
 os.environ.setdefault("PYTHONPATH", str(REPO_DIR))
-
-import sys as _sys
 
 _abicheck_bin = shutil.which("abicheck")
 if _abicheck_bin:
@@ -59,13 +59,13 @@ if _abicheck_bin:
             elif _tokens:
                 _PYTHON = _tokens[0]
             else:
-                _PYTHON = _sys.executable
+                _PYTHON = sys.executable
         else:
-            _PYTHON = _sys.executable
+            _PYTHON = sys.executable
     except (OSError, IsADirectoryError, IndexError, UnicodeDecodeError):
-        _PYTHON = _sys.executable
+        _PYTHON = sys.executable
 else:
-    _PYTHON = _sys.executable
+    _PYTHON = sys.executable
 _ABICHECK_ENV = {**os.environ, "PYTHONPATH": str(REPO_DIR)}
 # True when abicheck CLI is importable via _PYTHON (even without installed bin)
 def _abicheck_available() -> bool:
@@ -684,7 +684,7 @@ def parse_args() -> argparse.Namespace:
 
 
 # ── Helpers (module-level) ──────────────────────────────────────────────────
-def _remap_to_build(h: "Path | None", src: "Path", dst: "Path") -> "Path | None":
+def _remap_to_build(h: Path | None, src: Path, dst: Path) -> Path | None:
     """Remap a header path from the original case dir to the make_build copy."""
     if not h:
         return None
