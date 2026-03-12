@@ -9,6 +9,7 @@ from abicheck.core.model import (
     ChangeKind,
     ChangeSeverity,
     EntitySnapshot,
+    EntityType,
     Origin,
     PolicyResult,
     PolicySummary,
@@ -108,7 +109,7 @@ class TestSourceLocation:
 def _make_change(**kwargs) -> Change:
     defaults = dict(
         change_kind=ChangeKind.SYMBOL,
-        entity_type="function",
+        entity_type=EntityType.FUNCTION,
         entity_name="foo",
         before=EntitySnapshot("int foo()"),
         after=EntitySnapshot("void foo()"),

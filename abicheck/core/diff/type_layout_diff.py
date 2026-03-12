@@ -17,6 +17,7 @@ from abicheck.core.model import (
     ChangeKind,
     ChangeSeverity,
     EntitySnapshot,
+    EntityType,
     Origin,
 )
 from abicheck.model import RecordType
@@ -84,7 +85,7 @@ def _diff_type_pair(t_old: RecordType, t_new: RecordType) -> list[Change]:
     if t_old.size_bits != t_new.size_bits:
         changes.append(Change(
             change_kind=ChangeKind.SIZE_CHANGE,
-            entity_type="type",
+            entity_type=EntityType.TYPE,
             entity_name=t_old.name,
             before=snap_old,
             after=snap_new,
@@ -100,7 +101,7 @@ def _diff_type_pair(t_old: RecordType, t_new: RecordType) -> list[Change]:
     if (t_old.alignment_bits or 0) != (t_new.alignment_bits or 0):
         changes.append(Change(
             change_kind=ChangeKind.TYPE_LAYOUT,
-            entity_type="type",
+            entity_type=EntityType.TYPE,
             entity_name=t_old.name,
             before=EntitySnapshot(entity_repr=f"alignment={t_old.alignment_bits}"),
             after=EntitySnapshot(entity_repr=f"alignment={t_new.alignment_bits}"),
@@ -115,7 +116,7 @@ def _diff_type_pair(t_old: RecordType, t_new: RecordType) -> list[Change]:
     if sorted(t_old.bases) != sorted(t_new.bases) or tuple(t_old.bases) != tuple(t_new.bases):
         changes.append(Change(
             change_kind=ChangeKind.TYPE_LAYOUT,
-            entity_type="type",
+            entity_type=EntityType.TYPE,
             entity_name=t_old.name,
             before=EntitySnapshot(entity_repr=f"bases={list(t_old.bases)}"),
             after=EntitySnapshot(entity_repr=f"bases={list(t_new.bases)}"),
@@ -128,7 +129,7 @@ def _diff_type_pair(t_old: RecordType, t_new: RecordType) -> list[Change]:
     if sorted(t_old.virtual_bases) != sorted(t_new.virtual_bases):
         changes.append(Change(
             change_kind=ChangeKind.TYPE_LAYOUT,
-            entity_type="type",
+            entity_type=EntityType.TYPE,
             entity_name=t_old.name,
             before=EntitySnapshot(entity_repr=f"virtual_bases={list(t_old.virtual_bases)}"),
             after=EntitySnapshot(entity_repr=f"virtual_bases={list(t_new.virtual_bases)}"),
@@ -141,7 +142,7 @@ def _diff_type_pair(t_old: RecordType, t_new: RecordType) -> list[Change]:
     if t_old.vtable != t_new.vtable:
         changes.append(Change(
             change_kind=ChangeKind.VTABLE_INHERITANCE,
-            entity_type="type",
+            entity_type=EntityType.TYPE,
             entity_name=t_old.name,
             before=EntitySnapshot(
                 entity_repr=f"vtable={t_old.vtable}",
@@ -168,7 +169,7 @@ def _diff_fields(t_old: RecordType, t_new: RecordType) -> list[Change]:
     for name in set(old_fields) - set(new_fields):
         changes.append(Change(
             change_kind=ChangeKind.TYPE_LAYOUT,
-            entity_type="field",
+            entity_type=EntityType.FIELD,
             entity_name=f"{t_old.name}::{name}",
             before=EntitySnapshot(entity_repr=f"{old_fields[name].type} {name}"),
             after=EntitySnapshot(entity_repr="<removed>"),
@@ -181,7 +182,7 @@ def _diff_fields(t_old: RecordType, t_new: RecordType) -> list[Change]:
     for name in set(new_fields) - set(old_fields):
         changes.append(Change(
             change_kind=ChangeKind.TYPE_LAYOUT,
-            entity_type="field",
+            entity_type=EntityType.FIELD,
             entity_name=f"{t_old.name}::{name}",
             before=EntitySnapshot(entity_repr="<absent>"),
             after=EntitySnapshot(entity_repr=f"{new_fields[name].type} {name}"),
@@ -202,7 +203,7 @@ def _diff_fields(t_old: RecordType, t_new: RecordType) -> list[Change]:
         ):
             changes.append(Change(
                 change_kind=ChangeKind.TYPE_LAYOUT,
-                entity_type="field",
+                entity_type=EntityType.FIELD,
                 entity_name=f"{t_old.name}::{name}",
                 before=EntitySnapshot(
                     entity_repr=f"{f_old.type} {name} @{f_old.offset_bits}",
@@ -249,7 +250,7 @@ def diff_type_layouts(
         t = before_types[name]
         changes.append(Change(
             change_kind=ChangeKind.TYPE_LAYOUT,
-            entity_type="type",
+            entity_type=EntityType.TYPE,
             entity_name=name,
             before=_type_snapshot(t),
             after=EntitySnapshot(entity_repr="<removed>"),
@@ -263,7 +264,7 @@ def diff_type_layouts(
         t = after_types[name]
         changes.append(Change(
             change_kind=ChangeKind.TYPE_LAYOUT,
-            entity_type="type",
+            entity_type=EntityType.TYPE,
             entity_name=name,
             before=EntitySnapshot(entity_repr="<absent>"),
             after=_type_snapshot(t),

@@ -38,6 +38,15 @@ class ChangeKind(str, Enum):
     SOURCE_API_ONLY = "source_api_only"
 
 
+class EntityType(str, Enum):
+    """Type of entity involved in a change."""
+
+    FUNCTION = "function"
+    VARIABLE = "variable"
+    TYPE = "type"
+    FIELD = "field"
+
+
 @dataclass(slots=True)
 class SourceLocation:
     """File + line reference from DWARF or castxml."""
@@ -81,7 +90,7 @@ class Change:
     """
 
     change_kind: ChangeKind
-    entity_type: str
+    entity_type: EntityType
     entity_name: str
     before: EntitySnapshot
     after: EntitySnapshot
@@ -92,6 +101,11 @@ class Change:
     location: SourceLocation | None = None  # file/line from DWARF or castxml
 
     def __post_init__(self) -> None:
+        if not isinstance(self.entity_type, EntityType):
+            raise ValueError(
+                f"entity_type must be EntityType enum, got {type(self.entity_type).__name__!r} "
+                f"({self.entity_type!r}). Use EntityType.FUNCTION, EntityType.VARIABLE, etc."
+            )
         if not (0.0 <= self.confidence <= 1.0):
             raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence}")
         if self.origin in self.corroborating:
