@@ -62,10 +62,11 @@ def _write_abicc_descriptor(
     header_path: Path | None,
     desc_path: Path,
 ) -> None:
-    lines = [f"<version>{version}</version>"]
+    lines = ["<descriptor>", f"  <version>{version}</version>"]
     if header_path is not None and header_path.exists():
-        lines.append(f"<headers>{header_path}</headers>")
-    lines.append(f"<libs>{lib_path}</libs>")
+        lines.append(f"  <headers>{header_path}</headers>")
+    lines.append(f"  <libs>{lib_path}</libs>")
+    lines.append("</descriptor>")
     desc_path.write_text("\n".join(lines), encoding="utf-8")
 
 
