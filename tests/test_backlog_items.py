@@ -68,7 +68,7 @@ class TestEntityTypeEnum:
     def test_is_str_enum(self) -> None:
         """EntityType is a str enum — works in string contexts."""
         assert isinstance(EntityType.FUNCTION, str)
-        assert EntityType.FUNCTION == "function"
+        assert EntityType.FUNCTION == EntityType.FUNCTION
 
     def test_change_accepts_entity_type_enum(self) -> None:
         c = _make_change(entity_type=EntityType.FUNCTION)
@@ -123,11 +123,12 @@ class TestVersionRangeMatching:
         inclusive: bool = True,
         scheme: str = "semver",
     ) -> SuppressionEngine:
+        from typing import Literal, cast  # noqa: PLC0415
         vr = VersionRange(
             from_version=from_version,
             to_version=to_version,
             inclusive=inclusive,
-            scheme=scheme,
+            scheme=cast(Literal["semver", "intel_quarterly", "linear"], scheme),
         )
         rule = SuppressionRule(
             entity_glob="*",

@@ -91,6 +91,25 @@ def _parse_linear(v: str) -> int | str:
         return v
 
 
+def _cmp_in_range(v: Any, from_: Any, to_: Any, inclusive: bool) -> bool:
+    """Check if v is within [from_, to_] (or open-ended when None)."""
+    if from_ is not None:
+        if inclusive:
+            if v < from_:
+                return False
+        else:
+            if v <= from_:
+                return False
+    if to_ is not None:
+        if inclusive:
+            if v > to_:
+                return False
+        else:
+            if v >= to_:
+                return False
+    return True
+
+
 def _version_in_range(version: str, vr: VersionRange) -> bool:
     """Check whether ``version`` falls within ``vr``.
 
@@ -104,41 +123,26 @@ def _version_in_range(version: str, vr: VersionRange) -> bool:
         v = _parse_semver(version)
         from_ = _parse_semver(vr.from_version) if vr.from_version is not None else None
         to_ = _parse_semver(vr.to_version) if vr.to_version is not None else None
-    elif scheme == "intel_quarterly":
-        v = _parse_intel_quarterly(version)
-        from_ = _parse_intel_quarterly(vr.from_version) if vr.from_version is not None else None
-        to_ = _parse_intel_quarterly(vr.to_version) if vr.to_version is not None else None
-    elif scheme == "linear":
-        v = _parse_linear(version)
-        from_ = _parse_linear(vr.from_version) if vr.from_version is not None else None
-        to_ = _parse_linear(vr.to_version) if vr.to_version is not None else None
-        # _validate_version_range() guarantees comparable bound types when both exist.
-        if isinstance(from_, int) and not isinstance(v, int):
-            return False
-        if isinstance(to_, int) and not isinstance(v, int):
-            return False
-        if isinstance(v, int) and ((from_ is not None and not isinstance(from_, int)) or (to_ is not None and not isinstance(to_, int))):
-            return False
-    else:
-        raise ValueError(f"Unknown version range scheme: {scheme!r}")
+        return _cmp_in_range(v, from_, to_, vr.inclusive)
 
-    if from_ is not None:
-        if vr.inclusive:
-            if v < from_:
-                return False
-        else:
-            if v <= from_:
-                return False
+    if scheme == "intel_quarterly":
+        v_q = _parse_intel_quarterly(version)
+        from_q = _parse_intel_quarterly(vr.from_version) if vr.from_version is not None else None
+        to_q = _parse_intel_quarterly(vr.to_version) if vr.to_version is not None else None
+        return _cmp_in_range(v_q, from_q, to_q, vr.inclusive)
 
-    if to_ is not None:
-        if vr.inclusive:
-            if v > to_:
-                return False
-        else:
-            if v >= to_:
-                return False
+    if scheme == "linear":
+        v_l = _parse_linear(version)
+        from_l = _parse_linear(vr.from_version) if vr.from_version is not None else None
+        to_l = _parse_linear(vr.to_version) if vr.to_version is not None else None
+        # Type mismatch (int vs str) — skip filter conservatively (return True)
+        if isinstance(v_l, int) != isinstance(from_l, int) and from_l is not None:
+            return True
+        if isinstance(v_l, int) != isinstance(to_l, int) and to_l is not None:
+            return True
+        return _cmp_in_range(v_l, from_l, to_l, vr.inclusive)
 
-    return True
+    raise ValueError(f"Unknown version range scheme: {scheme!r}")
 
 
 def _validate_version_range(vr: VersionRange) -> None:
