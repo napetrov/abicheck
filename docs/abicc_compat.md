@@ -250,15 +250,21 @@ abicheck compare libfoo-v1.json libfoo-v2.json --format html -o report.html
 
 ### Dump format
 
-abicheck uses its own **JSON dump format** — it does not use ABICC's Perl
-`Data::Dumper` or XML dump formats. If you have existing ABICC dumps, you need
-to re-create them from the original XML descriptors:
+abicheck supports:
+
+- native **JSON** dumps, and
+- minimal ABICC Perl `Data::Dumper` (`ABI.dump`) input for migration workflows.
+
+ABICC XML dump variants (`<ABI_dump...>` / `<abi_dump...>`) are still unsupported.
 
 ```bash
-# ABICC dump → not supported:
-abicheck compat -old old.dump -new new.dump  # ❌ Error with migration guidance
+# ABICC Perl dump (default abi-dumper output):
+abicheck compat -lib libfoo -old old.ABI.dump -new new.ABI.dump  # ✅
 
-# Re-create from descriptor:
+# ABICC XML dump variant:
+abicheck compat -old old.xml_dump -new new.xml_dump  # ❌ not supported
+
+# Descriptor-based fallback:
 abicheck compat-dump -lib libfoo -dump old_descriptor.xml -dump-path old.json
 abicheck compat-dump -lib libfoo -dump new_descriptor.xml -dump-path new.json
 abicheck compat -lib libfoo -old old.json -new new.json  # ✅
@@ -377,7 +383,7 @@ Full coverage comparison: see [gap_report.md](gap_report.md).
 | `-limit-affected` | ✅ Full parity |
 | `-list-affected` | ✅ Generates `.affected.txt` |
 | `-q` / `-quiet` | ✅ Suppress console output |
-| `-dump` (via `compat-dump`) | ✅ JSON format (not ABICC Perl/XML) |
+| `-dump` (via `compat-dump`) | ✅ JSON format |
 | `-dump-path` (via `compat-dump`) | ✅ Full parity |
 | `-dump-format` (via `compat-dump`) | ✅ JSON only (with warning) |
 | `-vnum` (via `compat-dump`) | ✅ Version override for dumps |

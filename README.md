@@ -72,6 +72,9 @@ abicheck compat -lib foo -old old.xml -new new.xml \
 This mode supports ABICC-style descriptor workflows so teams can migrate without
 rewriting their entire pipeline on day one. See [ABICC compatibility reference](docs/abicc_compat.md) for full flag list.
 
+> Note: `compat` now supports minimal ABICC Perl `ABI.dump` (`Data::Dumper`) input for migration workflows.
+> ABICC XML dump variants (`<ABI_dump...>` / `<abi_dump...>`) are still unsupported.
+
 ---
 
 ## abicheck as a drop-in replacement for ABICC
