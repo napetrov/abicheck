@@ -33,8 +33,6 @@ These changes are immediately incompatible with existing compiled binaries.
 | `func_pure_virtual_added` | A virtual function became pure virtual. Any concrete class that does not implement it is now abstract — instantiation fails at link time. |
 | `func_virtual_became_pure` | A virtual method that had a default implementation is now pure. Derived classes that relied on the base implementation now fail to link. |
 | `func_deleted` | A function was marked `= delete`. Previously callable code now gets a link-time error (callers compiled against old header had no error). |
-| `func_noexcept_added` | `noexcept` specifier added to a function. Under C++17 (P0012R1), `noexcept` is part of the function type — this changes the mangled name. |
-| `func_noexcept_removed` | `noexcept` specifier removed. Widens the exception specification — callers compiled against the old declaration may violate their exception contracts. |
 
 ### Variable Changes
 

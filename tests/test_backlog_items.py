@@ -26,7 +26,6 @@ from abicheck.core.suppressions import SuppressionEngine, SuppressionRule
 from abicheck.core.suppressions.rule import SuppressionScope, VersionRange
 from abicheck.model import AbiSnapshot
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -304,6 +303,31 @@ class TestVersionRangeMatching:
                 ),
             )])
 
+    def test_invalid_intel_quarterly_quarter_out_of_range_raises(self) -> None:
+        with pytest.raises((ValueError, SuppressionError), match="quarter must be 1..4"):
+            SuppressionEngine([SuppressionRule(
+                entity_glob="*",
+                scope=SuppressionScope(
+                    version_range=VersionRange(
+                        from_version="2024.0",
+                        scheme="intel_quarterly",
+                    )
+                ),
+            )])
+
+    def test_invalid_linear_mixed_bound_types_raises(self) -> None:
+        with pytest.raises((ValueError, SuppressionError), match="both int or both str"):
+            SuppressionEngine([SuppressionRule(
+                entity_glob="*",
+                scope=SuppressionScope(
+                    version_range=VersionRange(
+                        from_version="10",
+                        to_version="zzz",
+                        scheme="linear",
+                    )
+                ),
+            )])
+
 
 # ---------------------------------------------------------------------------
 # Task 3: Security boundary hardening
@@ -352,16 +376,16 @@ class TestPipelineNullGuard:
 
     def test_analyse_none_old_raises_type_error(self) -> None:
         snap = _empty_snap()
-        with pytest.raises(TypeError, match="AbiSnapshot cannot be None"):
+        with pytest.raises(TypeError, match="old AbiSnapshot is None"):
             analyse(None, snap)  # type: ignore[arg-type]
 
     def test_analyse_none_new_raises_type_error(self) -> None:
         snap = _empty_snap()
-        with pytest.raises(TypeError, match="AbiSnapshot cannot be None"):
+        with pytest.raises(TypeError, match="new AbiSnapshot is None"):
             analyse(snap, None)  # type: ignore[arg-type]
 
     def test_analyse_both_none_raises_type_error(self) -> None:
-        with pytest.raises(TypeError, match="AbiSnapshot cannot be None"):
+        with pytest.raises(TypeError, match="old AbiSnapshot is None"):
             analyse(None, None)  # type: ignore[arg-type]
 
 

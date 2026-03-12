@@ -23,7 +23,7 @@ Phase 2b: version_range matching is implemented.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import re2  # google-re2: O(N) guaranteed
 
@@ -53,22 +53,38 @@ def _parse_semver(v: str) -> object:
 
 
 def _parse_intel_quarterly(v: str) -> tuple[int, int]:
-    """Parse Intel quarterly notation '2024.1' → (2024, 1)."""
+    """Parse Intel quarterly notation '2024.1' → (2024, 1).
+
+    Year must be a positive integer. Quarter must be in 1..4.
+    """
     parts = v.split(".")
     if len(parts) != 2:
         raise ValueError(
             f"Invalid intel_quarterly version {v!r}: expected 'YEAR.QUARTER' format"
         )
     try:
-        return (int(parts[0]), int(parts[1]))
+        year, quarter = int(parts[0]), int(parts[1])
     except ValueError as exc:
         raise ValueError(
             f"Invalid intel_quarterly version {v!r}: {exc}"
         ) from exc
+    if quarter < 1 or quarter > 4:
+        raise ValueError(
+            f"Invalid intel_quarterly version {v!r}: quarter must be 1..4, got {quarter}"
+        )
+    if year <= 0:
+        raise ValueError(
+            f"Invalid intel_quarterly version {v!r}: year must be positive, got {year}"
+        )
+    return (year, quarter)
 
 
 def _parse_linear(v: str) -> int | str:
-    """Parse a linear version: try int, fall back to string."""
+    """Parse a linear version: try int, fall back to string.
+
+    Returns a consistent type so that both bounds are comparable.
+    Callers must ensure both bounds use the same type (both int or both str).
+    """
     try:
         return int(v)
     except ValueError:
@@ -96,23 +112,30 @@ def _version_in_range(version: str, vr: VersionRange) -> bool:
         v = _parse_linear(version)
         from_ = _parse_linear(vr.from_version) if vr.from_version is not None else None
         to_ = _parse_linear(vr.to_version) if vr.to_version is not None else None
+        # _validate_version_range() guarantees comparable bound types when both exist.
+        if isinstance(from_, int) and not isinstance(v, int):
+            return False
+        if isinstance(to_, int) and not isinstance(v, int):
+            return False
+        if isinstance(v, int) and ((from_ is not None and not isinstance(from_, int)) or (to_ is not None and not isinstance(to_, int))):
+            return False
     else:
         raise ValueError(f"Unknown version range scheme: {scheme!r}")
 
     if from_ is not None:
         if vr.inclusive:
-            if v < from_:  # type: ignore[operator]
+            if v < from_:
                 return False
         else:
-            if v <= from_:  # type: ignore[operator]
+            if v <= from_:
                 return False
 
     if to_ is not None:
         if vr.inclusive:
-            if v > to_:  # type: ignore[operator]
+            if v > to_:
                 return False
         else:
-            if v >= to_:  # type: ignore[operator]
+            if v >= to_:
                 return False
 
     return True
@@ -122,29 +145,55 @@ def _validate_version_range(vr: VersionRange) -> None:
     """Pre-validate a VersionRange at load time, raising SuppressionError if invalid."""
     scheme = vr.scheme
     if scheme == "semver":
-        parse = _parse_semver
-    elif scheme == "intel_quarterly":
-        parse = _parse_intel_quarterly  # type: ignore[assignment]
-    elif scheme == "linear":
-        parse = _parse_linear  # type: ignore[assignment]
-    else:
-        raise SuppressionError(f"Unknown version range scheme: {scheme!r}")
+        if vr.from_version is not None:
+            try:
+                _parse_semver(vr.from_version)
+            except ValueError as exc:
+                raise SuppressionError(
+                    f"Invalid from_version in version_range: {exc}"
+                ) from exc
+        if vr.to_version is not None:
+            try:
+                _parse_semver(vr.to_version)
+            except ValueError as exc:
+                raise SuppressionError(
+                    f"Invalid to_version in version_range: {exc}"
+                ) from exc
+        return
 
-    if vr.from_version is not None:
-        try:
-            parse(vr.from_version)
-        except ValueError as exc:
-            raise SuppressionError(
-                f"Invalid from_version in version_range: {exc}"
-            ) from exc
+    if scheme == "intel_quarterly":
+        if vr.from_version is not None:
+            try:
+                _parse_intel_quarterly(vr.from_version)
+            except ValueError as exc:
+                raise SuppressionError(
+                    f"Invalid from_version in version_range: {exc}"
+                ) from exc
+        if vr.to_version is not None:
+            try:
+                _parse_intel_quarterly(vr.to_version)
+            except ValueError as exc:
+                raise SuppressionError(
+                    f"Invalid to_version in version_range: {exc}"
+                ) from exc
+        return
 
-    if vr.to_version is not None:
-        try:
-            parse(vr.to_version)
-        except ValueError as exc:
+    if scheme == "linear":
+        parsed_from: int | str | None = None
+        parsed_to: int | str | None = None
+        if vr.from_version is not None:
+            parsed_from = _parse_linear(vr.from_version)
+        if vr.to_version is not None:
+            parsed_to = _parse_linear(vr.to_version)
+        if parsed_from is not None and parsed_to is not None and type(parsed_from) is not type(parsed_to):
             raise SuppressionError(
-                f"Invalid to_version in version_range: {exc}"
-            ) from exc
+                "Invalid linear version_range bounds: from_version and to_version "
+                f"must be comparable (both int or both str), got "
+                f"{type(parsed_from).__name__} and {type(parsed_to).__name__}"
+            )
+        return
+
+    raise SuppressionError(f"Unknown version range scheme: {scheme!r}")
 
 
 # ---------------------------------------------------------------------------
