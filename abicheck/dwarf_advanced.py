@@ -236,6 +236,7 @@ def _walk_cu(root: Any, meta: AdvancedDwarfMetadata, CU: Any) -> None:
     children (handled directly in _check_packed).
     """
     stack: collections.deque[Any] = collections.deque([root])
+    cache = _DwarfTypeCache()  # per-CU cache to avoid redundant traversals
 
     while stack:
         die = stack.pop()
@@ -245,7 +246,7 @@ def _walk_cu(root: Any, meta: AdvancedDwarfMetadata, CU: Any) -> None:
             continue
 
         if tag in ("DW_TAG_subprogram", "DW_TAG_subroutine_type"):
-            _extract_calling_convention(die, meta, CU)
+            _extract_calling_convention(die, meta, CU, cache=cache)
             # Don't descend into subprogram children — not needed for CC extraction
             # and avoids traversing all local variables, params, inlined calls
             continue
@@ -286,29 +287,100 @@ def _resolve_type_die(die: Any, CU: Any) -> Any | None:
         return None
 
 
-def _is_nontrivial_aggregate(type_die: Any) -> bool:
-    """Heuristic: aggregate with an explicit destructor method.
+@dataclass
+class _DwarfTypeCache:
+    """Per-parse caches to avoid redundant DWARF traversals."""
+    unwrap: dict[int, Any] = field(default_factory=dict)    # die.offset → unwrapped DIE
+    nontrivial: dict[int, bool] = field(default_factory=dict)  # die.offset → bool
 
-    We treat a class/struct as non-trivial if a child subprogram looks like
-    a destructor (name starts with '~' or linkage contains D0/D1/D2).
+
+def _is_nontrivial_aggregate(
+    type_die: Any,
+    cache: dict[int, bool] | None = None,
+    CU: Any = None,
+) -> bool:
+    """Detect non-trivial-for-calls aggregate per Itanium C++ ABI §3.1.2.
+
+    Non-trivial if ANY of:
+    1. User-defined (non-defaulted, non-artificial) destructor present.
+    2. User-declared copy or move constructor (C1E/C2E in linkage name).
+    3. Any DW_TAG_inheritance child (base class) — conservative: base
+       triviality is not recursively resolved.
+    4. Any DW_TAG_member whose resolved type is itself non-trivial (e.g.
+       ``struct Outer { std::string s; }`` — no explicit dtor, but std::string
+       has one, making Outer non-trivial for calls too).
+       Member type resolution requires a CU reference; if CU is None, member
+       types are not checked (safe degradation — no false positives).
     """
+    key = getattr(type_die, "offset", None)
+    if cache is not None and key is not None and key in cache:
+        return cache[key]
+
     tag = getattr(type_die, "tag", "")
     if tag not in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
-        return False
+        result = False
+        if cache is not None and key is not None:
+            cache[key] = result
+        return result
+
+    # Sentinel: mark in-progress to break potential cycles (recursive member types).
+    if cache is not None and key is not None:
+        cache[key] = False  # assume trivial; overwrite below if non-trivial found
+
+    class_name = _attr_str(type_die, "DW_AT_name") or ""
+    result = False
+
     for ch in type_die.iter_children():
+        if ch.tag == "DW_TAG_inheritance":
+            # Any base class → conservatively non-trivial
+            result = True
+            break
+
+        if ch.tag == "DW_TAG_member" and CU is not None:
+            # Check if member's type is itself non-trivial (e.g. std::string member)
+            member_type_die = _resolve_type_die(ch, CU)
+            if member_type_die is not None:
+                member_tag = getattr(member_type_die, "tag", "")
+                if member_tag in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
+                    if _is_nontrivial_aggregate(member_type_die, cache=cache, CU=CU):
+                        result = True
+                        break
+            continue
+
         if ch.tag != "DW_TAG_subprogram":
             continue
+
         name = _attr_str(ch, "DW_AT_name") or ""
         linkage = _attr_str(ch, "DW_AT_linkage_name") or ""
-        if name.startswith("~"):
-            return True
-        if "D0Ev" in linkage or "D1Ev" in linkage or "D2Ev" in linkage:
-            return True
-    return False
+        # Skip defaulted and compiler-generated (artificial) members
+        defaulted = ch.attributes.get("DW_AT_defaulted")
+        artificial = ch.attributes.get("DW_AT_artificial")
+        if (defaulted is not None and int(defaulted.value) != 0) or (
+            artificial is not None and int(artificial.value) != 0
+        ):
+            continue
+        # User-defined destructor
+        if name.startswith("~") or any(p in linkage for p in ("D0Ev", "D1Ev", "D2Ev")):
+            result = True
+            break
+        # User-declared copy/move constructor
+        if class_name and linkage and any(
+            p in linkage for p in (f"{class_name}C1E", f"{class_name}C2E")
+        ):
+            result = True
+            break
+
+    if cache is not None and key is not None:
+        cache[key] = result
+    return result
 
 
-def _unwrap_qualifiers(type_die: Any, CU: Any) -> Any:
+def _unwrap_qualifiers(type_die: Any, CU: Any, cache: _DwarfTypeCache | None = None) -> Any:
     """Unwrap transparent qualifier/typedef layers."""
+    key = getattr(type_die, "offset", None)
+    if cache is not None and key is not None and key in cache.unwrap:
+        return cache.unwrap[key]
+
     cur = type_die
     for _ in range(12):
         tag = getattr(cur, "tag", "")
@@ -324,11 +396,23 @@ def _unwrap_qualifiers(type_die: Any, CU: Any) -> Any:
             cur = nxt
         else:
             break
+    else:
+        # for-else: exhausted depth without finding a non-qualifier tag
+        log.debug(
+            "_unwrap_qualifiers: depth limit reached at tag=%s", getattr(cur, "tag", "?")
+        )
+
+    if cache is not None and key is not None:
+        cache.unwrap[key] = cur
     return cur
 
 
-def _value_abi_trait_for_typed_die(die: Any, CU: Any) -> str | None:
-    """Return ABI trait for by-value aggregate type (or None if irrelevant)."""
+def _value_abi_trait_for_typed_die(die: Any, CU: Any, cache: _DwarfTypeCache | None = None) -> str | None:
+    """Return ABI trait for by-value aggregate type (or None if irrelevant).
+
+    Fingerprint contains only ABI-relevant triviality, not type name.
+    Type renames don't affect calling convention — including tname causes false positives.
+    """
     t0 = _resolve_type_die(die, CU)
     if t0 is None:
         return None
@@ -342,16 +426,17 @@ def _value_abi_trait_for_typed_die(die: Any, CU: Any) -> str | None:
     ):
         return None
 
-    t = _unwrap_qualifiers(t0, CU)
+    t = _unwrap_qualifiers(t0, CU, cache=cache)
     if t.tag not in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
         return None
 
-    tname = _attr_str(t, "DW_AT_name") or "<anon>"
-    triviality = "nontrivial" if _is_nontrivial_aggregate(t) else "trivial"
-    return f"{tname}({triviality})"
+    nontrivial_cache = cache.nontrivial if cache is not None else None
+    # Pass CU so member-type non-triviality (e.g. struct Outer { std::string s; }) is detected
+    triviality = "nontrivial" if _is_nontrivial_aggregate(t, cache=nontrivial_cache, CU=CU) else "trivial"
+    return triviality  # "trivial" or "nontrivial"
 
 
-def _extract_calling_convention(die: Any, meta: AdvancedDwarfMetadata, CU: Any) -> None:
+def _extract_calling_convention(die: Any, meta: AdvancedDwarfMetadata, CU: Any, cache: _DwarfTypeCache | None = None) -> None:
     """Record calling conventions + DWARF value-ABI traits for ABI-exported functions.
 
     Key: DW_AT_linkage_name (mangled), falling back to DW_AT_MIPS_linkage_name,
@@ -388,14 +473,14 @@ def _extract_calling_convention(die: Any, meta: AdvancedDwarfMetadata, CU: Any) 
 
     # Fallback value-ABI trait (for platforms where DW_AT_calling_convention is omitted)
     parts: list[str] = []
-    ret_trait = _value_abi_trait_for_typed_die(die, CU)
+    ret_trait = _value_abi_trait_for_typed_die(die, CU, cache=cache)
     if ret_trait is not None:
         parts.append(f"ret:{ret_trait}")
     pidx = 0
     for ch in die.iter_children():
         if ch.tag != "DW_TAG_formal_parameter":
             continue
-        ptrait = _value_abi_trait_for_typed_die(ch, CU)
+        ptrait = _value_abi_trait_for_typed_die(ch, CU, cache=cache)
         if ptrait is not None:
             parts.append(f"p{pidx}:{ptrait}")
         pidx += 1

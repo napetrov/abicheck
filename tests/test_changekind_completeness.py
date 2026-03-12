@@ -452,3 +452,25 @@ class TestInlineTransitions:
         result = compare(old, new)
         assert ChangeKind.FUNC_BECAME_INLINE not in _kinds(result)
         assert ChangeKind.FUNC_LOST_INLINE not in _kinds(result)
+
+    def test_func_became_inline_only_change(self) -> None:
+        """FUNC_BECAME_INLINE transition must be the ONLY change emitted (isolation)."""
+        old = _snap(functions=[_func("compute", "_Z7computei", is_inline=False)])
+        new = _snap(functions=[_func("compute", "_Z7computei", is_inline=True)])
+        result = compare(old, new)
+        kinds = _kinds(result)
+        assert ChangeKind.FUNC_BECAME_INLINE in kinds
+        # No other unexpected changes — only FUNC_BECAME_INLINE
+        unexpected = kinds - {ChangeKind.FUNC_BECAME_INLINE}
+        assert not unexpected, f"Unexpected extra changes: {unexpected}"
+
+    def test_func_lost_inline_only_change(self) -> None:
+        """FUNC_LOST_INLINE transition must be the ONLY change emitted (isolation)."""
+        old = _snap(functions=[_func("fast_path", "_Z9fast_pathv", is_inline=True)])
+        new = _snap(functions=[_func("fast_path", "_Z9fast_pathv", is_inline=False)])
+        result = compare(old, new)
+        kinds = _kinds(result)
+        assert ChangeKind.FUNC_LOST_INLINE in kinds
+        # No other unexpected changes — only FUNC_LOST_INLINE
+        unexpected = kinds - {ChangeKind.FUNC_LOST_INLINE}
+        assert not unexpected, f"Unexpected extra changes: {unexpected}"
