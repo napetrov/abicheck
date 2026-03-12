@@ -274,19 +274,17 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "cpp", "API_BREAK", "NO_CHANGE", "correct",
     ),
     # ── Issue #125 — Function loses inline attribute ──────────────────────────
-    # When an inline function loses the inline attribute in the header, the calling
-    # convention doesn't change for existing binaries (the inlined copy is baked in).
-    # New binaries link the exported symbol.
-    # Here: v1 header marks function inline but v2 removes the inline keyword.
-    # Both .so files compile the same body; v1 src keeps the function non-inline
-    # in the .so (so it exports). abicheck detects FUNC_LOST_INLINE (COMPATIBLE).
+    # When an inline function loses the inline attribute in the header, existing
+    # binaries with baked-in inline copies still work. New binaries will link the
+    # exported symbol. abicheck emits COMPATIBLE (FUNC_LOST_INLINE); ABICC NO_CHANGE.
+    # Recorded as "risk" — potentially breaking for callers that relied on inlining.
     (
         "func_lost_inline",
         "int fast_compute(int x) { return x + 1; }",
         "int fast_compute(int x) { return x + 1; }",
         "inline int fast_compute(int x);",
         "int fast_compute(int x);",
-        "cpp", "COMPATIBLE", "NO_CHANGE", "divergence",
+        "cpp", "COMPATIBLE", "NO_CHANGE", "risk",
     ),
     # ── Issue #128 — Non-trivial destructor changes calling convention ────────
     # Adding a non-trivial destructor to a class affects whether the object is
