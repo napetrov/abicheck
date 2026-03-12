@@ -494,9 +494,14 @@ class _CastxmlParser:
                     field_elements.append(member_el)
 
         for child in field_elements:
+            child_name = child.get("name", "")
+            if not child_name:
+                # Anonymous struct/union member — flatten its fields into parent
+                fields.extend(self._expand_anonymous_field(child))
+                continue
             bitfield_bits, is_bitfield = self._parse_bitfield_bits(child.get("bits"))
             fields.append(TypeField(
-                name=child.get("name", ""),
+                name=child_name,
                 type=self._type_name(child.get("type", "")),
                 offset_bits=self._optional_int_attr(child, "offset"),
                 is_bitfield=is_bitfield,
@@ -504,6 +509,49 @@ class _CastxmlParser:
                 access=self._access_level(child),
             ))
         return fields
+
+    def _expand_anonymous_field(self, field_el: Any) -> list[TypeField]:
+        """Flatten anonymous struct/union field into the parent's field list.
+
+        In castxml output, anonymous unions/structs inside a struct appear as
+        ``Field`` elements with ``name=""`` pointing to a ``Union`` or ``Struct``
+        element.  We inline their named fields at the correct offset to prevent
+        false ``TYPE_FIELD_REMOVED`` reports when a named field moves into an
+        anonymous union (issue #58).
+        """
+        type_id = field_el.get("type", "")
+        type_el = self._resolve(type_id)
+        if type_el is None or type_el.tag not in ("Union", "Struct"):
+            return []
+
+        parent_offset = self._optional_int_attr(field_el, "offset") or 0
+        result: list[TypeField] = []
+
+        # Collect inner Field elements (inline children or members attribute)
+        inner_fields: list[Any] = [c for c in type_el if c.tag == "Field"]
+        if not inner_fields:
+            for mid in type_el.get("members", "").split():
+                member_el = self._id_map.get(mid)
+                if member_el is not None and member_el.tag == "Field":
+                    inner_fields.append(member_el)
+
+        for inner in inner_fields:
+            inner_name = inner.get("name", "")
+            if not inner_name:
+                # Doubly-nested anonymous member — recurse
+                result.extend(self._expand_anonymous_field(inner))
+                continue
+            inner_offset = self._optional_int_attr(inner, "offset") or 0
+            bitfield_bits, is_bitfield = self._parse_bitfield_bits(inner.get("bits"))
+            result.append(TypeField(
+                name=inner_name,
+                type=self._type_name(inner.get("type", "")),
+                offset_bits=parent_offset + inner_offset,
+                is_bitfield=is_bitfield,
+                bitfield_bits=bitfield_bits,
+                access=self._access_level(inner),
+            ))
+        return result
 
     @staticmethod
     def _parse_bitfield_bits(bits_raw: str | None) -> tuple[int | None, bool]:
