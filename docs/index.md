@@ -62,8 +62,8 @@ abicheck compare libfoo-1.0.json libfoo-2.0.json
 
 ## Exit codes
 
-`abicheck compare` uses: `0` (`NO_CHANGE`/`COMPATIBLE`), `2` (`API_BREAK`),
-`4` (`BREAKING`).
+`abicheck compare` uses: `0` (`NO_CHANGE`/`COMPATIBLE`), `1` (tool/runtime
+error), `2` (`API_BREAK`), `4` (`BREAKING`).
 
 For full CI-ready guidance (including `compat` mode and strict-mode behavior),
 use the canonical reference: [Exit Codes](exit_codes.md).
