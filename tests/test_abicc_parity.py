@@ -171,6 +171,53 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
         "int get_version(void);",
         "c", "NO_CHANGE", "BREAKING", "divergence",
     ),
+    # ── issue#128: non-trivial destructor changes calling convention (x64 SysV ABI) ──
+    # Adding a user-defined destructor to a struct makes it non-trivial under the
+    # Itanium C++ ABI.  On x64 System V ABI, non-trivial structs cannot be returned
+    # in SSE registers and must be passed via a hidden pointer instead — an
+    # ABI-breaking change.  Neither abicheck (COMPATIBLE, detects only ELF-level
+    # changes) nor ABICC 2.3 (NO_CHANGE) catches this calling-convention break,
+    # so the two tools also disagree with each other.  Recorded as a known
+    # divergence so regressions are caught if either tool starts detecting it.
+    # The ground-truth verdict is BREAKING; both tools currently miss it.
+    # See: https://github.com/lvc/abi-compliance-checker/issues/128
+    (
+        "nontrivial_dtor_calling_convention",
+        "struct v { float a; float b; };\n"
+        "v get_v(void) { v x; x.a = 1.0f; x.b = 2.0f; return x; }",
+        "struct v { float a; float b; ~v() {} };\n"
+        "v get_v(void) { v x; x.a = 1.0f; x.b = 2.0f; return x; }",
+        "struct v { float a; float b; };\nv get_v(void);",
+        "struct v { float a; float b; ~v(); };\nv get_v(void);",
+        "cpp", "COMPATIBLE", "NO_CHANGE", "divergence",
+    ),
+    # ── PR#109: typedef→derived class false positive in base detection ──
+    # ABICC had a bug where a typedef pointing to a derived class caused a false
+    # positive "added base" report even when nothing changed between versions.
+    # abicheck correctly reports NO_CHANGE; ABICC 2.3 also reports NO_CHANGE,
+    # indicating that the fix from PR#109 is present in this version (or the
+    # specific scenario does not trigger the original bug).
+    # See: https://github.com/lvc/abi-compliance-checker/pull/109
+    (
+        "typedef_derived_false_base_change",
+        "struct Base { int x; };\n"
+        "struct Derived : public Base { int y; };\n"
+        "typedef Derived MyType;\n"
+        "MyType* get_obj(void) { static MyType obj; return &obj; }",
+        "struct Base { int x; };\n"
+        "struct Derived : public Base { int y; };\n"
+        "typedef Derived MyType;\n"
+        "MyType* get_obj(void) { static MyType obj; return &obj; }",
+        "struct Base { int x; };\n"
+        "struct Derived : public Base { int y; };\n"
+        "typedef Derived MyType;\n"
+        "MyType* get_obj(void);",
+        "struct Base { int x; };\n"
+        "struct Derived : public Base { int y; };\n"
+        "typedef Derived MyType;\n"
+        "MyType* get_obj(void);",
+        "cpp", "NO_CHANGE", "NO_CHANGE", "parity",
+    ),
 ]
 
 _CONFIRMED = [c for c in PARITY_CASES if c[8] == "parity"]
