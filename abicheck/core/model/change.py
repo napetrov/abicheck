@@ -100,6 +100,13 @@ class Change:
             )
         if len(self.corroborating) != len(set(self.corroborating)):
             raise ValueError("corroborating origins must be unique")
+        # Primary origin must have the highest confidence among all sources
+        all_origins = (self.origin, *self.corroborating)
+        if self.corroborating and self.origin != Origin.highest(all_origins):
+            raise ValueError(
+                f"primary origin {self.origin!r} must be the highest-confidence source; "
+                f"use origin={Origin.highest(all_origins)!r} instead"
+            )
         if self.change_kind == ChangeKind.CALLING_CONVENTION:
             evidence = (self.origin, *self.corroborating)
             if Origin.DWARF not in evidence and Origin.CASTXML not in evidence:

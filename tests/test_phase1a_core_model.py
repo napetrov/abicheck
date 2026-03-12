@@ -131,11 +131,11 @@ class TestChange:
 
     def test_corroborating_tuple(self) -> None:
         c = _make_change(
-            origin=Origin.ELF,
-            corroborating=(Origin.DWARF,),
+            origin=Origin.DWARF,
+            corroborating=(Origin.ELF,),  # primary must have highest confidence
         )
         assert isinstance(c.corroborating, tuple)
-        assert Origin.DWARF in c.corroborating
+        assert Origin.ELF in c.corroborating
 
     def test_corroborating_primary_not_in_corroborating(self) -> None:
         """Primary origin must not appear in corroborating."""

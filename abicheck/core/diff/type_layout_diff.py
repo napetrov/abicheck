@@ -123,6 +123,19 @@ def _diff_type_pair(t_old: RecordType, t_new: RecordType) -> list[Change]:
             confidence=0.9,
         ))
 
+    # Virtual base changes
+    if sorted(t_old.virtual_bases) != sorted(t_new.virtual_bases):
+        changes.append(Change(
+            change_kind=ChangeKind.TYPE_LAYOUT,
+            entity_type="type",
+            entity_name=t_old.name,
+            before=EntitySnapshot(entity_repr=f"virtual_bases={list(t_old.virtual_bases)}"),
+            after=EntitySnapshot(entity_repr=f"virtual_bases={list(t_new.virtual_bases)}"),
+            severity=ChangeSeverity.BREAK,
+            origin=Origin.CASTXML,
+            confidence=0.9,
+        ))
+
     # Vtable changes
     if t_old.vtable != t_new.vtable:
         changes.append(Change(
@@ -176,22 +189,29 @@ def _diff_fields(t_old: RecordType, t_new: RecordType) -> list[Change]:
             confidence=0.85,
         ))
 
-    # Changed fields (offset or type change)
+    # Changed fields (offset, type, or bitfield change)
     for name in set(old_fields) & set(new_fields):
         f_old = old_fields[name]
         f_new = new_fields[name]
-        if f_old.type != f_new.type or f_old.offset_bits != f_new.offset_bits:
+        if (
+            f_old.type != f_new.type
+            or f_old.offset_bits != f_new.offset_bits
+            or f_old.is_bitfield != f_new.is_bitfield
+            or f_old.bitfield_bits != f_new.bitfield_bits
+        ):
             changes.append(Change(
                 change_kind=ChangeKind.TYPE_LAYOUT,
                 entity_type="field",
                 entity_name=f"{t_old.name}::{name}",
                 before=EntitySnapshot(
                     entity_repr=f"{f_old.type} {name} @{f_old.offset_bits}",
-                    raw={"type": f_old.type, "offset_bits": f_old.offset_bits},
+                    raw={"type": f_old.type, "offset_bits": f_old.offset_bits,
+                         "is_bitfield": f_old.is_bitfield, "bitfield_bits": f_old.bitfield_bits},
                 ),
                 after=EntitySnapshot(
                     entity_repr=f"{f_new.type} {name} @{f_new.offset_bits}",
-                    raw={"type": f_new.type, "offset_bits": f_new.offset_bits},
+                    raw={"type": f_new.type, "offset_bits": f_new.offset_bits,
+                         "is_bitfield": f_new.is_bitfield, "bitfield_bits": f_new.bitfield_bits},
                 ),
                 severity=ChangeSeverity.BREAK,
                 origin=Origin.CASTXML,

@@ -97,8 +97,9 @@ class PolicyResult:
         else:
             verdict = PolicyVerdict.PASS
 
+        annotated_changes = list(changes)  # defensive copy — caller mutation won't stale summary
         return cls(
-            annotated_changes=changes,
+            annotated_changes=annotated_changes,
             summary=PolicySummary(
                 verdict=verdict,
                 incompatible_count=incompatible,
