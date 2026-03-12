@@ -118,8 +118,8 @@ methodology live in docs:
 | abicheck (compat) | 46/48 | 96% |
 | abidiff | 12/48 | 25% |
 | abidiff + headers | 12/48 | 25% |
-| ABICC (abi-dumper) | 25/36 | 69% (52% effective over 48) |
-| ABICC (xml) | 25/41 | 61% |
+| ABICC (xml) | 30/47 | 63% (1 timeout, 48 cases attempted) |
+| ABICC (abi-dumper) | 24/48 | 50% (12 error/timeout) |
 
 ### Why these numbers differ
 
