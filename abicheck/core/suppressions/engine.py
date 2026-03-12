@@ -16,6 +16,7 @@ Usage::
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field, replace
 from typing import NamedTuple
 
@@ -78,6 +79,16 @@ class SuppressionEngine:
                 glob_re=glob_re,
                 regex_compiled=compiled_regex,
             ))
+            # Warn if scope fields are set — they are modelled but not yet enforced
+            scope = rule.scope
+            if scope.platform or scope.profile or scope.version_range:
+                warnings.warn(
+                    f"SuppressionRule scope fields (platform/profile/version_range) "
+                    f"are not yet enforced (reason={rule.reason!r}). "
+                    f"The rule will match regardless of scope. "
+                    f"Scope filtering is planned for Phase 2b/3/4.",
+                    stacklevel=2,
+                )
 
     def apply(self, changes: list[Change]) -> SuppressionResult:
         """Apply all rules to a list of Changes. Returns SuppressionResult."""
@@ -117,9 +128,9 @@ class SuppressionEngine:
             if not cr.glob_re.match(change.entity_name):
                 return False
 
-        # entity_regex match (RE2, pre-compiled)
+        # entity_regex match (RE2, pre-compiled) — fullmatch for full-string safety
         if cr.regex_compiled is not None:
-            if not cr.regex_compiled.search(change.entity_name):
+            if not cr.regex_compiled.fullmatch(change.entity_name):
                 return False
 
         return True

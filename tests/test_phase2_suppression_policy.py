@@ -80,8 +80,9 @@ class TestSuppressionEngine:
         assert len(result.active) == 1
 
     def test_regex_suppresses_matching_entity(self) -> None:
+        """entity_regex uses fullmatch — pattern must cover the entire entity name."""
         engine = SuppressionEngine([
-            SuppressionRule(entity_regex=r"_Z.*internal", reason="internal ABI"),
+            SuppressionRule(entity_regex=r"_Z.*internal.*", reason="internal ABI"),
         ])
         changes = [
             _make_change(name="_Zinternalhook"),

@@ -29,18 +29,24 @@ Pipeline (Phase 2)::
 
     extract → normalize → diff → suppress → policy → PolicyResult
 
+Note: importing abicheck.core.pipeline does NOT import re2 / suppressions.
+      re2 is loaded lazily inside analyse_full() only.
+
 TODO Phase 3: add per-profile normalizer config
 TODO Phase 3: multiprocessing.Pool.map over per-binary extraction
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from abicheck.core.corpus.normalizer import Normalizer
 from abicheck.core.diff.symbol_diff import diff_symbols
 from abicheck.core.diff.type_layout_diff import diff_type_layouts
 from abicheck.core.model import Change, PolicyResult
-from abicheck.core.policy import get_profile
-from abicheck.core.suppressions import SuppressionEngine, SuppressionRule
 from abicheck.model import AbiSnapshot
+
+if TYPE_CHECKING:
+    from abicheck.core.suppressions import SuppressionEngine, SuppressionRule
 
 # Module-level singleton — stateless, safe for repeated calls.
 # TODO Phase 3: replace with per-profile Normalizer configuration
@@ -79,19 +85,25 @@ def analyse_full(
     Args:
         old:    AbiSnapshot of the before version
         new:    AbiSnapshot of the after version
-        rules:  suppression rules (empty = no suppression); ignored when engine is provided
+        rules:  suppression rules (empty = no suppression); ignored when engine provided
         policy: policy profile name ("strict_abi" | "sdk_vendor" | "plugin_abi")
-        engine: pre-built SuppressionEngine (pass this for batch callers to avoid
-                re-compiling RE2 patterns on every call)
+        engine: pre-built SuppressionEngine for batch callers (avoids RE2 recompile)
 
     Returns:
         PolicyResult with per-change AnnotatedChange list and aggregate summary.
+
+    Note: re2 / suppressions are imported lazily here — importing pipeline itself
+    does not pull in google-re2 for callers that only use analyse().
     """
+    # Lazy imports — keeps basic analyse() import path free of re2 dependency
+    from abicheck.core.policy import get_profile  # noqa: PLC0415
+    from abicheck.core.suppressions import SuppressionEngine as _Engine  # noqa: PLC0415
+
     changes = analyse(old, new)
 
     # Suppression pass — pre-built engine takes precedence over rules
     if engine is None:
-        engine = SuppressionEngine(rules or [])
+        engine = _Engine(rules or [])
     sup_result = engine.apply(changes)
 
     # Merge active + suppressed; restore original sort order
