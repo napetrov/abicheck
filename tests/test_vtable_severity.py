@@ -8,7 +8,6 @@ with more granular severity-focused tests.
 """
 from __future__ import annotations
 
-
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.checker_policy import BREAKING_KINDS
 from abicheck.model import AbiSnapshot, RecordType

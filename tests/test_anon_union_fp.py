@@ -25,7 +25,6 @@ from __future__ import annotations
 
 from xml.etree.ElementTree import Element, SubElement
 
-
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.model import AbiSnapshot, RecordType, TypeField
 
@@ -91,6 +90,7 @@ class TestAnonUnionFalsePositive:
         result = compare(_snap_v1_plain_struct(), _snap_v2_anon_union_added())
         _kinds = {c.kind for c in result.changes}  # noqa: F841
         # y is added at same offset (same size struct) → compatible
+        kinds = {c.kind for c in result.changes}
         # This may be TYPE_FIELD_ADDED_COMPATIBLE or TYPE_FIELD_ADDED depending on
         # whether the struct is standard-layout; either way not BREAKING for same size
         assert result.verdict != Verdict.BREAKING or ChangeKind.TYPE_SIZE_CHANGED in kinds, (

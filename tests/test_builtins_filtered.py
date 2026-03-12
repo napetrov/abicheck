@@ -23,7 +23,6 @@ from __future__ import annotations
 from xml.etree.ElementTree import Element, SubElement
 
 
-
 def _make_castxml_xml_with_builtin() -> Element:
     """Build a castxml XML tree that includes both user-defined and built-in types.
 

@@ -9,7 +9,6 @@ This directly tests the `_diff_function_pair` logic in symbol_diff.py.
 """
 from __future__ import annotations
 
-
 from abicheck.core.corpus.normalizer import NormalizedSnapshot
 from abicheck.core.diff.symbol_diff import diff_symbols
 from abicheck.core.model import ChangeKind, ChangeSeverity
@@ -118,7 +117,8 @@ class TestSymbolDiffNoexcept:
 
     def test_noexcept_removed_via_compare(self) -> None:
         """End-to-end: compare() reports FUNC_NOEXCEPT_REMOVED for noexcept removed."""
-        from abicheck.checker import ChangeKind as CK, compare
+        from abicheck.checker import ChangeKind as CK
+        from abicheck.checker import compare
 
         old = AbiSnapshot(library="lib.so", version="1.0", functions=[
             Function(name="process", mangled="_Zprocess", return_type="void",
@@ -134,7 +134,8 @@ class TestSymbolDiffNoexcept:
 
     def test_noexcept_added_via_compare(self) -> None:
         """End-to-end: compare() reports FUNC_NOEXCEPT_ADDED for noexcept added."""
-        from abicheck.checker import ChangeKind as CK, compare
+        from abicheck.checker import ChangeKind as CK
+        from abicheck.checker import compare
 
         old = AbiSnapshot(library="lib.so", version="1.0", functions=[
             Function(name="compute", mangled="_Zcompute", return_type="int",

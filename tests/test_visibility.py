@@ -13,7 +13,6 @@ Detection mechanism:
 """
 from __future__ import annotations
 
-
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.model import AbiSnapshot, Function, Visibility
 

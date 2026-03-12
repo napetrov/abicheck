@@ -24,7 +24,6 @@ from __future__ import annotations
 from xml.etree.ElementTree import Element, SubElement
 
 
-
 def _make_xml_with_orphan_struct() -> Element:
     """Build castxml XML with an orphan struct (not used in any function)."""
     root = Element("CastXML")

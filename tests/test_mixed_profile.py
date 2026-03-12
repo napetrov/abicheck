@@ -12,7 +12,6 @@ This extends TestCProfileDetection in test_issues_e1_e4.py with the mixed case.
 """
 from __future__ import annotations
 
-
 from abicheck.core.pipeline import detect_profile
 from abicheck.model import AbiSnapshot, Function, Visibility
 
