@@ -245,6 +245,15 @@ class TestBuiltinLocationFilter:
         user_enum.set("file", "f1")
         user_enum.set("location", "f1:3")
 
+        # Variable in <builtin> without __ prefix — must be filtered
+        builtin_var = SubElement(root, "Variable")
+        builtin_var.set("id", "_9")
+        builtin_var.set("name", "compiler_global")
+        builtin_var.set("mangled", "compiler_global")
+        builtin_var.set("type", "_1")
+        builtin_var.set("file", "f0")
+        builtin_var.set("location", "f0:0")
+
         return root
 
     def test_builtin_struct_no_underscore_filtered_by_location(self) -> None:
@@ -289,3 +298,19 @@ class TestBuiltinLocationFilter:
         names = {e.name for e in enums}
         assert "compiler_enum" not in names
         assert "MyEnum" in names
+
+    def test_builtin_variable_no_underscore_filtered_by_location(self) -> None:
+        """Variable from <builtin> must not appear even if it has a mangled name."""
+        from abicheck.dumper import _CastxmlParser
+
+        root = self._make_xml_real_format()
+        parser = _CastxmlParser(
+            root,
+            exported_dynamic={"compiler_global"},
+            exported_static={"compiler_global"},
+        )
+        variables = parser.parse_variables()
+        names = {v.name for v in variables}
+        assert "compiler_global" not in names, (
+            "compiler_global from <builtin> must be filtered even if in exported symbols"
+        )
