@@ -268,6 +268,7 @@ BREAKING_KINDS = {
     # PR #89: Template inner-type changes are binary ABI breaks (different instantiation layout)
     ChangeKind.TEMPLATE_PARAM_TYPE_CHANGED,
     ChangeKind.TEMPLATE_RETURN_TYPE_CHANGED,
+    ChangeKind.FUNC_DELETED_ELF_FALLBACK,  # ELF heuristic — symbol absent from dynsym is binary-incompatible
 }
 
 COMPATIBLE_KINDS: set[ChangeKind] = {
@@ -347,7 +348,6 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
 }
 
 API_BREAK_KINDS: set[ChangeKind] = {
-    ChangeKind.FUNC_DELETED_ELF_FALLBACK,  # heuristic (0.75 confidence) — downgraded from BREAKING
     # Source-level breaks: code won't compile but existing binaries are fine
     ChangeKind.ENUM_MEMBER_RENAMED,
     ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,

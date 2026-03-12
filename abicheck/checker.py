@@ -2069,18 +2069,44 @@ def _extract_template_args(type_str: str) -> list[str] | None:
                 inner = type_str[lt + 1 : i].strip()
                 if not inner:
                     return []
-                # Split on top-level commas
+                # Split on top-level commas, respecting all nested delimiters.
+                # Tracks angle brackets AND parentheses so that types like
+                # ``std::function<void(int, double)>`` are not split incorrectly.
                 args: list[str] = []
                 current: list[str] = []
-                nest = 0
+                angle_nest = paren_nest = bracket_nest = brace_nest = 0
                 for c in inner:
                     if c == "<":
-                        nest += 1
+                        angle_nest += 1
                         current.append(c)
                     elif c == ">":
-                        nest -= 1
+                        angle_nest -= 1
                         current.append(c)
-                    elif c == "," and nest == 0:
+                    elif c == "(":
+                        paren_nest += 1
+                        current.append(c)
+                    elif c == ")":
+                        paren_nest -= 1
+                        current.append(c)
+                    elif c == "[":
+                        bracket_nest += 1
+                        current.append(c)
+                    elif c == "]":
+                        bracket_nest -= 1
+                        current.append(c)
+                    elif c == "{":
+                        brace_nest += 1
+                        current.append(c)
+                    elif c == "}":
+                        brace_nest -= 1
+                        current.append(c)
+                    elif (
+                        c == ","
+                        and angle_nest == 0
+                        and paren_nest == 0
+                        and bracket_nest == 0
+                        and brace_nest == 0
+                    ):
                         args.append("".join(current).strip())
                         current = []
                     else:
