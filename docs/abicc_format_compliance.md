@@ -10,7 +10,7 @@ infrastructure) would continue to work with abicheck's output.
 | Dimension | Status | Risk |
 |-----------|--------|------|
 | Exit codes (0/1/2) | **Full parity** | None |
-| XML descriptor input | **Full parity** | None |
+| XML descriptor input | **Mostly compatible** | Medium |
 | CLI flag acceptance | **Full parity** (40+ flags) | None |
 | XML report output (`-report-format xml`) | **Implemented** (ABICC schema) | Low |
 | `htm` format alias | **Implemented** | None |
@@ -70,19 +70,35 @@ that only check for 0 vs non-zero.
 
 The `-strict` promotion (API_BREAK → exit 1) also matches.
 
-### 2. XML Descriptor Input Format (FULL PARITY)
+### 2. XML Descriptor Input Format (MOSTLY COMPATIBLE)
 
-Both tools accept the same XML descriptor format:
+`abicheck` accepts ABICC-style descriptor fields, but currently requires a
+well-formed XML document with a single root element (for example
+`<descriptor>...</descriptor>`).
+
+ABICC pipelines sometimes use descriptor *fragments* such as sibling
+`<version>`, `<headers>`, `<libs>` tags without a wrapper root. Those fragment
+files are not parseable XML documents and are rejected by `abicheck` with an
+XML parse error.
+
+Supported descriptor shape in `abicheck`:
 ```xml
+<descriptor>
 <version>2025.0</version>
 <headers>/path/to/include/</headers>
 <libs>/path/to/libfoo.so</libs>
+</descriptor>
 ```
 
 abicheck correctly supports:
 - Multiple `<headers>` and `<libs>` elements
 - `{RELPATH}` macro substitution
 - XXE-safe parsing (improvement over ABICC)
+
+Migration note:
+- If existing ABICC jobs generate fragment-style descriptor files, add a
+  one-time normalization step to wrap those tags in a root element before
+  running `abicheck compat`.
 
 ### 3. CLI Flag Acceptance (FULL PARITY)
 
