@@ -299,6 +299,12 @@ class SuppressionEngine:
             # Namespace pattern: compile RE2 for namespace prefix matching
             namespace_re = None
             if rule.namespace_pattern is not None:
+                if rule.namespace_pattern == "":
+                    import logging as _logging
+                    _logging.getLogger("abicheck").warning(
+                        "namespace_pattern='' in suppression rule %r matches ALL "
+                        "global-scope symbols (no-namespace entities)", rule.reason
+                    )
                 if len(rule.namespace_pattern) > _MAX_REGEX_LEN:
                     raise SuppressionError(
                         f"namespace_pattern too long (max {_MAX_REGEX_LEN} chars)"

@@ -58,7 +58,9 @@ class SuppressionRule:
 
     namespace_pattern usage:
       - Matches the namespace prefix of the entity name (text before last '::')
-      - e.g. namespace_pattern="internal" matches "internal::Foo", "internal::bar"
+      - e.g. namespace_pattern="internal" matches "internal::Foo" and "internal::bar"
+        but NOT "internal::detail::Foo" (only the immediate parent namespace is checked)
+      - To match all depths: namespace_pattern=r"internal(::.*)?"
       - namespace_pattern="std" matches "std::string" but not "mystd::string"
       - Uses RE2 fullmatch on the namespace prefix for safety
 
@@ -67,6 +69,6 @@ class SuppressionRule:
     change_kind: str | None = None         # ChangeKind.value string, or None=any
     entity_glob: str | None = None         # "std::*" — glob preferred
     entity_regex: str | None = None        # "^std::.*$" — RE2 escape hatch
-    namespace_pattern: str | None = None   # RE2 pattern matched against namespace prefix
     reason: str = ""                       # audit trail
+    namespace_pattern: str | None = None   # RE2 pattern matched against namespace prefix
     scope: SuppressionScope = field(default_factory=SuppressionScope)

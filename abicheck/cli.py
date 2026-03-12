@@ -179,7 +179,13 @@ def _build_skip_suppression(
             if any(c in name for c in ("*", "?", ".", "[")):
                 rules.append(Suppression(symbol_pattern=name))
             else:
+                # Exact symbol match (C symbols and already-mangled names)
                 rules.append(Suppression(symbol=name))
+                # ABICC -skip-symbols commonly contains unmangled short names.
+                # In our compare pipeline, function symbols can be Itanium-mangled
+                # (e.g. "sub" -> "_Z3subii"). Add a narrow fallback for those.
+                if name.isidentifier():
+                    rules.append(Suppression(symbol_pattern=rf"_Z\d+{name}.*"))
     return SuppressionList(suppressions=rules)
 
 
