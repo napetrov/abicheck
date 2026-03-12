@@ -610,8 +610,8 @@ class TestSchemaVersionBaseline:
         assert result.library == snap.library
 
 
-    def test_not_in_breaking_kinds(self) -> None:
-        """FUNC_DELETED_ELF_FALLBACK must NOT be in BREAKING_KINDS (it is a heuristic)."""
+    def test_not_in_api_break_kinds(self) -> None:
+        """FUNC_DELETED_ELF_FALLBACK must NOT be in API_BREAK_KINDS (it is a binary break)."""
         assert ChangeKind.FUNC_DELETED_ELF_FALLBACK not in API_BREAK_KINDS, (
             "FUNC_DELETED_ELF_FALLBACK must produce Verdict.BREAKING — symbol absent "
             "from dynsym is a binary ABI break"
