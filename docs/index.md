@@ -60,15 +60,13 @@ abicheck compare libfoo-1.0.json libfoo-2.0.json
     sarif_file: abi.sarif
 ```
 
-## Exit codes (abicheck compare)
+## Exit codes
 
-| Code | Meaning |
-|------|---------|
-| 0 | NO_CHANGE or COMPATIBLE |
-| 2 | API_BREAK |
-| 4 | BREAKING |
+`abicheck compare` uses: `0` (`NO_CHANGE`/`COMPATIBLE`), `2` (`API_BREAK`),
+`4` (`BREAKING`).
 
-For `compat` mode (ABICC drop-in), see [Exit Codes](exit_codes.md).
+For full CI-ready guidance (including `compat` mode and strict-mode behavior),
+use the canonical reference: [Exit Codes](exit_codes.md).
 
 ## Status
 

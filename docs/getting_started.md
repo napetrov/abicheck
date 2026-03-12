@@ -102,17 +102,16 @@ abicheck compare v1.json v2.json --format sarif -o abi.sarif
 
 ## 5) Exit codes (`abicheck compare`)
 
-| Code | Meaning |
-|------|---------|
-| `0` | `NO_CHANGE` or `COMPATIBLE` — no binary ABI break |
-| `1` | Tool error (bad inputs, missing file) |
-| `2` | `API_BREAK` — source-level break, existing binaries unaffected |
-| `4` | `BREAKING` — binary ABI break |
+`abicheck compare` uses four statuses:
+- `0` → `NO_CHANGE` or `COMPATIBLE`
+- `1` → tool/runtime error
+- `2` → `API_BREAK`
+- `4` → `BREAKING`
 
-> ⚠️ Exit `0` covers both `NO_CHANGE` and `COMPATIBLE`. To distinguish them, use
-> `--format json` and read the `verdict` field.
+> ⚠️ Exit `0` covers both `NO_CHANGE` and `COMPATIBLE`.
+> If you need exact verdicts in CI, parse `--format json` output.
 
-Full reference: [Exit Codes](exit_codes.md)
+Canonical reference (compare + compat + strict mode): [Exit Codes](exit_codes.md)
 
 ---
 
