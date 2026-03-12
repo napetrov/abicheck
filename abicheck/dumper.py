@@ -208,6 +208,12 @@ def _castxml_dump(
         # Split on whitespace, just like ABICC does
         cmd += gcc_options.split()
 
+    # Workaround: castxml with --castxml-cc-gnu gcc auto-injects -std=gnu++17
+    # which is rejected when parsing a .h file in C mode. Force explicit C
+    # language and standard so castxml passes these to the compiler instead.
+    if force_c and cc_id == "gnu":
+        cmd += ["-x", "c", "-std=gnu11"]
+
     cmd += ["-o", str(out_xml), str(agg_path)]
 
     try:
@@ -435,13 +441,16 @@ class _CastxmlParser:
         for el in self._root:
             if el.tag != "Variable":
                 continue
-            mangled = el.get("mangled", "")
+            name = el.get("name", "")
+            # C-mode castxml does not emit a mangled attribute for C-linkage variables
+            # (C has no name mangling); fall back to plain name as the symbol key,
+            # mirroring the same pattern in parse_functions().
+            mangled = el.get("mangled", "") or name
             if not mangled:
                 continue
             # Skip compiler built-ins and command-line synthetic declarations
             if self._is_builtin_element(el):
                 continue
-            name = el.get("name", mangled)
             type_name = self._type_name(el.get("type", ""))
             # Use castxml structured attribute first; fall back to word-boundary
             # regex on type_name to avoid false positives on names like
@@ -772,8 +781,14 @@ def dump(
             library=so_path.name,
             version=version,
             functions=[
-                Function(name=sym, mangled=sym, return_type="?",
-                         visibility=Visibility.ELF_ONLY)
+                Function(
+                    name=sym,
+                    mangled=sym,
+                    return_type="?",
+                    visibility=Visibility.ELF_ONLY,
+                    # Absence of Itanium _Z prefix is strong evidence of C linkage
+                    is_extern_c=not sym.startswith("_Z"),
+                )
                 for sym in sorted(exported_dynamic_funcs)
             ],
             elf=elf_meta,

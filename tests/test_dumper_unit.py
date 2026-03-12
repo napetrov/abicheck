@@ -425,12 +425,21 @@ class TestCastxmlParserVariables:
         p = _CastxmlParser(root, set(), set())
         assert p.parse_variables()[0].is_const is True
 
-    def test_skip_no_mangled(self):
+    def test_no_mangled_falls_back_to_name(self):
+        """C-mode castxml emits Variable without mangled attr; must fall back to name.
+
+        Previously this test asserted parse_variables() == [] (dropping the variable).
+        The correct behaviour (PR #94 fix) is to use the plain name as the symbol key,
+        mirroring the same fallback in parse_functions().
+        """
         ft = _fund_type("t1", "int")
         v = Element("Variable", id="v1", name="local", type="t1")
         root = _xml_root(ft, v)
         p = _CastxmlParser(root, set(), set())
-        assert p.parse_variables() == []
+        variables = p.parse_variables()
+        assert len(variables) == 1
+        assert variables[0].name == "local"
+        assert variables[0].mangled == "local"
 
 
 class TestCastxmlParserTypes:

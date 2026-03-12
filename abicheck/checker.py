@@ -502,6 +502,8 @@ def _diff_type_vtable(name: str, t_old: RecordType, t_new: RecordType) -> list[C
         kind=ChangeKind.TYPE_VTABLE_CHANGED,
         symbol=name,
         description=description,
+        old_value=", ".join(t_old.vtable),
+        new_value=", ".join(t_new.vtable),
     )]
 
 
