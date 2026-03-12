@@ -134,6 +134,16 @@ def test_parse_descriptor_relative_lib_resolved(tmp_path: Path) -> None:
     assert desc.libs[0].parent == tmp_path.resolve()
 
 
+def test_parse_descriptor_fragment_rejected(tmp_path: Path) -> None:
+    """Fragment descriptors without a root element are not well-formed XML."""
+    xml = """
+    <version>1.0</version>
+    <libs>/usr/lib/libx.so</libs>
+    """
+    with pytest.raises(ValueError, match="Invalid XML"):
+        parse_descriptor(_write_xml(tmp_path, xml))
+
+
 def test_parse_descriptor_invalid_xml_raises(tmp_path: Path) -> None:
     bad = tmp_path / "bad.xml"
     bad.write_text("<unclosed>", encoding="utf-8")

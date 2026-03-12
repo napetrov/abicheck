@@ -19,7 +19,10 @@ After (identical flags):
 abicheck compat -lib libfoo -old OLD.xml -new NEW.xml -report-path report.html
 ```
 
-> `OLD.xml` is your existing ABICC XML descriptor file — no conversion needed.
+> `OLD.xml` is your existing ABICC XML descriptor file in most pipelines.
+> If your ABICC setup emits XML *fragments* (sibling `<version>`, `<headers>`,
+> `<libs>` tags without a single wrapper root), add a one-time normalization
+> step to wrap them in a root element (for example `<descriptor>...</descriptor>`).
 > If you don't have XML descriptors yet, use `abicheck dump` to generate snapshots
 > and then `abicheck compare` instead.
 
