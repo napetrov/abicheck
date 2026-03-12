@@ -169,3 +169,24 @@ def test_compat_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypatch):
     assert report.exists()
     assert "BREAKING" in report.read_text(encoding="utf-8")
     assert "Verdict: BREAKING" in result.output
+
+
+def test_dump_cmd_non_elf_input_clean_error(tmp_path):
+    """abicheck dump /dev/null must print clean Error: ... and exit 2 (not raw traceback)."""
+    # Use /dev/null which is a valid path but not a valid ELF
+    runner = CliRunner()
+    result = runner.invoke(main, ["dump", "/dev/null"])
+    assert result.exit_code == 2
+    assert "Error:" in result.output
+    # Must NOT expose a raw Python traceback
+    assert "Traceback" not in result.output
+    assert "elftools" not in result.output
+
+
+def test_dump_cmd_missing_file_clean_error(tmp_path):
+    """abicheck dump on missing path must print clean error and exit non-zero."""
+    runner = CliRunner()
+    result = runner.invoke(main, ["dump", str(tmp_path / "no_such_file.so")])
+    # Click itself validates path existence and should give a clean error
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output

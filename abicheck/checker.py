@@ -206,12 +206,22 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         f_old = old_map[mangled]
         f_new = new_map[mangled]
         if not f_old.is_inline and f_new.is_inline:
-            # Function became inline: symbol may disappear from DSO export table
-            # (depends on compiler / visibility). Potentially breaking — needs review.
+            # Check if the symbol still appears in the new ELF exports.
+            # If yes → symbol kept, just annotation changed (still API_BREAK)
+            # If no or ELF unavailable → symbol may have been dropped
+            new_elf = new.elf
+            still_exported = (
+                new_elf is not None
+                and any(s.name == mangled for s in new_elf.symbols)
+            )
             changes.append(Change(
                 kind=ChangeKind.FUNC_BECAME_INLINE,
                 symbol=mangled,
-                description=f"Function became inline (symbol may be removed from DSO): {f_old.name}",
+                description=(
+                    f"Function became inline, symbol still exported: {f_old.name}"
+                    if still_exported
+                    else f"Function became inline (symbol may be removed from DSO): {f_old.name}"
+                ),
                 old_value="non-inline",
                 new_value="inline",
             ))

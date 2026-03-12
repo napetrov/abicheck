@@ -167,9 +167,20 @@ def _diff_function_pair(f_old: Function, f_new: Function) -> list[Change]:
             confidence=0.85,
         ))
 
-    # noexcept added (false→true) changes C++17 mangled name — ABI-breaking for callers
-    # compiled against the old signature. TODO: emit BREAK here in Phase 2 when
-    # mangled name comparison is available; for now silent (conservative: no false positives).
+    # noexcept added: in C++17, noexcept is part of the function type and mangled name.
+    # This is ABI-breaking: callers compiled against the old (non-noexcept) declaration
+    # will link against the old mangled symbol which no longer exists.
+    if not f_old.is_noexcept and f_new.is_noexcept:
+        changes.append(Change(
+            change_kind=ChangeKind.SYMBOL,
+            entity_type=EntityType.FUNCTION,
+            entity_name=f_old.name,
+            before=snap_old,
+            after=snap_new,
+            severity=ChangeSeverity.BREAK,
+            origin=Origin.CASTXML,
+            confidence=0.9,
+        ))
 
     return changes
 
