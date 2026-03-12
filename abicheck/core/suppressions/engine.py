@@ -1,0 +1,177 @@
+"""Suppression Engine — v0.2.
+
+Matches Changes against SuppressionRules using RE2 for guaranteed O(N) performance.
+
+Requirements (from plan):
+- MANDATORY: use google-re2 (pyre2) — O(N) guaranteed, no backtracking DoS
+- Pre-compile ALL patterns at rule load time (NEVER inside match loop)
+- Priority order: CLI > repository > user defaults > system defaults
+
+Usage::
+
+    engine = SuppressionEngine(rules)
+    result = engine.apply(changes)
+    # result.suppressed → list[Change] that matched a rule (severity → SUPPRESSED)
+    # result.active     → list[Change] not suppressed
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field, replace
+from typing import NamedTuple
+
+import re2  # google-re2: O(N) guaranteed
+
+from abicheck.core.model import Change, ChangeSeverity
+from abicheck.core.suppressions.rule import SuppressionRule
+
+
+class _CompiledRule(NamedTuple):
+    """A SuppressionRule with pre-compiled RE2 patterns."""
+    rule: SuppressionRule
+    glob_re: re2.Pattern | None       # pre-compiled RE2 from glob (via fnmatch.translate)
+    regex_compiled: re2.Pattern | None  # pre-compiled RE2 from entity_regex
+
+
+# Stable key for match_map audit trail: (entity_type, entity_name, change_kind)
+# Using a tuple instead of id(change) ensures the audit trail survives copies/serialization.
+_MatchKey = tuple[str, str, str]
+
+
+@dataclass
+class SuppressionResult:
+    """Result of applying suppression rules to a list of Changes."""
+    active: list[Change] = field(default_factory=list)      # not suppressed
+    suppressed: list[Change] = field(default_factory=list)  # matched a rule
+    match_map: dict[_MatchKey, SuppressionRule] = field(default_factory=dict)
+    # match_map: (entity_type, entity_name, change_kind.value) → matching rule (audit trail)
+
+
+class SuppressionEngine:
+    """Applies SuppressionRules to a list of Changes.
+
+    All patterns are compiled at __init__ time — never inside the match loop.
+    Uses RE2 for regex matching: O(N) guaranteed, safe for untrusted patterns.
+
+    Priority: rules are evaluated in order; first match wins.
+    """
+
+    def __init__(self, rules: list[SuppressionRule]) -> None:
+        self._compiled: list[_CompiledRule] = []
+        for rule in rules:
+            # Compile glob → RE2 (eliminates stdlib re via fnmatch)
+            glob_re = None
+            if rule.entity_glob is not None:
+                try:
+                    glob_re = _glob_to_re2(rule.entity_glob)
+                except Exception as exc:
+                    raise ValueError(
+                        f"Invalid glob pattern in suppression rule "
+                        f"(reason={rule.reason!r}): {rule.entity_glob!r} — {exc}"
+                    ) from exc
+
+            compiled_regex = None
+            if rule.entity_regex is not None:
+                try:
+                    compiled_regex = re2.compile(rule.entity_regex)
+                except Exception as exc:  # re2 raises re2._re2.Error, not stdlib re.error
+                    raise ValueError(
+                        f"Invalid RE2 pattern in suppression rule "
+                        f"(reason={rule.reason!r}): {rule.entity_regex!r} — {exc}"
+                    ) from exc
+            # Reject scope fields that are modelled but not yet enforced
+            scope = rule.scope
+            if scope.platform or scope.profile or scope.version_range:
+                raise ValueError(
+                    f"SuppressionRule scope fields (platform/profile/version_range) "
+                    f"are not yet implemented (reason={rule.reason!r}). "
+                    f"Scope filtering is planned for Phase 2b/3/4. "
+                    f"Remove the scope fields until then."
+                )
+            self._compiled.append(_CompiledRule(
+                rule=rule,
+                glob_re=glob_re,
+                regex_compiled=compiled_regex,
+            ))
+
+    def apply(self, changes: list[Change]) -> SuppressionResult:
+        """Apply all rules to a list of Changes. Returns SuppressionResult."""
+        result = SuppressionResult()
+        for change in changes:
+            matched_rule = self._match(change)
+            if matched_rule is not None:
+                # Return a new Change with severity SUPPRESSED (Change is a frozen-ish dataclass)
+                suppressed = _with_severity(change, ChangeSeverity.SUPPRESSED)
+                result.suppressed.append(suppressed)
+                key: _MatchKey = (change.entity_type, change.entity_name, change.change_kind.value)
+                result.match_map[key] = matched_rule
+            else:
+                result.active.append(change)
+        return result
+
+    def _match(self, change: Change) -> SuppressionRule | None:
+        """Return the first matching rule, or None."""
+        for cr in self._compiled:
+            if self._rule_matches(cr, change):
+                return cr.rule
+        return None
+
+    def _rule_matches(self, cr: _CompiledRule, change: Change) -> bool:
+        rule = cr.rule
+
+        # change_kind filter
+        if rule.change_kind is not None:
+            if change.change_kind.value != rule.change_kind:
+                return False
+
+        # scope: platform (skip — no platform field on Change yet; Phase 3)
+        # scope: profile (skip — no profile field on Change yet; Phase 4)
+        # scope: version_range (skip — Phase 2b)
+
+        # entity_glob match (RE2, pre-compiled from glob pattern)
+        if cr.glob_re is not None:
+            if not cr.glob_re.match(change.entity_name):
+                return False
+
+        # entity_regex match (RE2, pre-compiled) — fullmatch for full-string safety
+        if cr.regex_compiled is not None:
+            if not cr.regex_compiled.fullmatch(change.entity_name):
+                return False
+
+        return True
+
+
+def _with_severity(change: Change, severity: ChangeSeverity) -> Change:
+    """Return a copy of Change with a different severity."""
+    return replace(change, severity=severity)
+
+
+def _glob_to_re2(pattern: str) -> re2.Pattern:
+    r"""Convert a shell-style glob to a pre-compiled RE2 pattern.
+
+    fnmatch.translate() produces Python-specific anchors (\\Z) not supported by RE2.
+    We convert: * → .*, ? → ., [abc] → [abc], and anchor with ^ and $.
+    """
+    result = []
+    i = 0
+    while i < len(pattern):
+        c = pattern[i]
+        if c == '*':
+            result.append('.*')
+        elif c == '?':
+            result.append('.')
+        elif c == '[':
+            # pass through character classes; convert shell negation [!...] → RE2 [^...]
+            j = pattern.find(']', i + 1)
+            if j == -1:
+                result.append(re2.escape(c))
+            else:
+                char_class = pattern[i:j + 1]
+                if char_class.startswith('[!'):
+                    # [!abc] → [^abc]: shell negation → RE2 negation
+                    char_class = '[^' + char_class[2:]
+                result.append(char_class)
+                i = j
+        else:
+            result.append(re2.escape(c))
+        i += 1
+    return re2.compile('^' + ''.join(result) + '$')
