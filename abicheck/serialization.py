@@ -172,7 +172,15 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
     # Snapshots without schema_version are treated as v1 (pre-versioning format).
     # Currently only v1 and v2 exist and have the same on-disk layout, so no
     # migration is required.  This baseline lets future PRs add migration logic here.
-    _schema_version: int = int(d.get("schema_version", 1))  # noqa: F841 — used by future migration
+    _schema_version: int = int(d.get("schema_version", 1))
+    if _schema_version > SCHEMA_VERSION:
+        import warnings
+        warnings.warn(
+            f"Snapshot schema_version {_schema_version} is newer than this abicheck "
+            f"(supports up to {SCHEMA_VERSION}). Data may be incomplete or misinterpreted.",
+            UserWarning,
+            stacklevel=2,
+        )
     funcs = [
         Function(
             name=f["name"], mangled=f["mangled"], return_type=f["return_type"],

@@ -2019,6 +2019,10 @@ def _diff_elf_deleted_fallback(old: AbiSnapshot, new: AbiSnapshot) -> list[Chang
         if not f_old.is_inline and f_new.is_inline:
             continue
 
+        # Skip if function moved to hidden visibility — FUNC_VISIBILITY_CHANGED handles it
+        if getattr(f_new, "visibility", None) == Visibility.HIDDEN:
+            continue
+
         # Symbol disappeared from ELF without explicit annotation — likely deleted
         changes.append(Change(
             kind=ChangeKind.FUNC_DELETED_ELF_FALLBACK,

@@ -265,7 +265,6 @@ BREAKING_KINDS = {
     # ABICC full parity
     ChangeKind.TYPE_KIND_CHANGED,            # struct→union: layout completely changes
     # PR #89: ELF fallback for = delete (binary break — symbol disappeared from DSO)
-    ChangeKind.FUNC_DELETED_ELF_FALLBACK,
     # PR #89: Template inner-type changes are binary ABI breaks (different instantiation layout)
     ChangeKind.TEMPLATE_PARAM_TYPE_CHANGED,
     ChangeKind.TEMPLATE_RETURN_TYPE_CHANGED,
@@ -348,6 +347,7 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
 }
 
 API_BREAK_KINDS: set[ChangeKind] = {
+    ChangeKind.FUNC_DELETED_ELF_FALLBACK,  # heuristic (0.75 confidence) — downgraded from BREAKING
     # Source-level breaks: code won't compile but existing binaries are fine
     ChangeKind.ENUM_MEMBER_RENAMED,
     ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,

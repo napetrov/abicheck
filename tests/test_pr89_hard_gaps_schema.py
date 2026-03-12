@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 from abicheck.checker import ChangeKind, Verdict, compare
-from abicheck.checker_policy import BREAKING_KINDS
+from abicheck.checker_policy import API_BREAK_KINDS, BREAKING_KINDS
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import AbiSnapshot, Function, Param, ParamKind, Visibility
 from abicheck.serialization import (
@@ -69,7 +69,7 @@ class TestFuncDeletedElfFallbackPolicy:
 
     def test_in_breaking_kinds(self) -> None:
         """FUNC_DELETED_ELF_FALLBACK must be a binary ABI break."""
-        assert ChangeKind.FUNC_DELETED_ELF_FALLBACK in BREAKING_KINDS
+        assert ChangeKind.FUNC_DELETED_ELF_FALLBACK in API_BREAK_KINDS
 
 
 class TestFuncDeletedElfFallbackDetection:
@@ -88,7 +88,7 @@ class TestFuncDeletedElfFallbackDetection:
         )
         result = compare(old, new)
         assert ChangeKind.FUNC_DELETED_ELF_FALLBACK in _kinds(result)
-        assert result.verdict == Verdict.BREAKING
+        assert result.verdict == Verdict.API_BREAK
 
     def test_symbol_present_in_both_elf_no_change(self) -> None:
         """Symbol exported in both old and new ELF → no fallback change."""
@@ -575,3 +575,34 @@ class TestSchemaVersionBaseline:
         snap2 = snapshot_from_dict(d)
         assert snap2.elf is not None
         assert len(snap2.elf.symbols) == 1
+
+
+    def test_future_schema_version_warns(self) -> None:
+        """Loading a snapshot with schema_version > SCHEMA_VERSION must emit UserWarning."""
+        snap = _snap()
+        d = snapshot_to_dict(snap)
+        d["schema_version"] = 999
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = snapshot_from_dict(d)
+        assert any("schema_version 999" in str(warning.message) for warning in w), (
+            f"Expected UserWarning about schema_version 999, got: {[str(ww.message) for ww in w]}"
+        )
+        # Data should still load (best-effort)
+        assert result.library == snap.library
+
+    def test_elf_fallback_hidden_symbol_not_double_reported(self) -> None:
+        """FUNC_DELETED_ELF_FALLBACK must not fire for symbols that moved to HIDDEN visibility."""
+        from abicheck.checker import ChangeKind, compare
+
+        old_fn = _func("foo", "_Z3foov", visibility=Visibility.PUBLIC)
+        new_fn = _func("foo", "_Z3foov", visibility=Visibility.HIDDEN)
+        old_snap = _snap(functions=[old_fn], elf=_elf_with_syms("_Z3foov"))
+        new_snap = _snap(version="2.0", functions=[new_fn], elf=_elf_with_syms())
+
+        result = compare(old_snap, new_snap)
+        kinds = {c.kind for c in result.changes}
+        assert ChangeKind.FUNC_DELETED_ELF_FALLBACK not in kinds, (
+            "FUNC_DELETED_ELF_FALLBACK should not fire when visibility moved to HIDDEN"
+        )
