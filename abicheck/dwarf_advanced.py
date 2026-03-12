@@ -118,6 +118,11 @@ class AdvancedDwarfMetadata:
     # All struct/class names seen (for cross-referencing in diff to avoid
     # false "packing removed" when a struct was simply deleted)
     all_struct_names: set[str] = field(default_factory=set)
+    # linkage_name → CFA register name for exported functions (from .eh_frame / .debug_frame).
+    # Typically "rsp" or "rbp" on x86-64; empty string when not present.
+    # A change from "rbp" (frame-pointer) to "rsp" (stack-pointer) or vice-versa
+    # indicates a calling-convention / frame-layout drift (#117).
+    frame_registers: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +147,8 @@ def parse_advanced_dwarf(so_path: Path) -> AdvancedDwarfMetadata:
                     _process_cu(CU, meta)
                 except (ELFError, OSError, ValueError, KeyError) as exc:
                     log.warning("parse_advanced_dwarf: skipping CU: %s", exc)
+            # Parse .eh_frame / .debug_frame CFA register convention (#117)
+            _parse_frame_registers(elf, dwarf, meta)
             return meta
     except (ELFError, OSError, ValueError) as exc:
         log.warning("parse_advanced_dwarf: failed %s: %s", so_path, exc)
@@ -602,6 +609,111 @@ def _decode_member_location(member_die: Any) -> int:
 # DW_AT_producer parsing
 # ---------------------------------------------------------------------------
 
+# Register name tables for common architectures (pyelftools register numbers)
+_REG_NAMES_X86_64: dict[int, str] = {
+    0: "rax", 1: "rdx", 2: "rcx", 3: "rbx", 4: "rsi", 5: "rdi",
+    6: "rbp", 7: "rsp", 8: "r8",  9: "r9",  10: "r10", 11: "r11",
+    12: "r12", 13: "r13", 14: "r14", 15: "r15", 16: "rip",
+}
+_REG_NAMES_X86: dict[int, str] = {
+    0: "eax", 1: "ecx", 2: "edx", 3: "ebx", 4: "esp", 5: "ebp",
+    6: "esi", 7: "edi", 8: "eip",
+}
+_REG_NAMES_AARCH64: dict[int, str] = {
+    **{i: f"x{i}" for i in range(31)},
+    31: "sp", 32: "pc",
+}
+
+
+def _reg_name(reg_num: int, arch: str) -> str:
+    """Convert a register number to a human-readable name for the given arch."""
+    if arch in ("x64", "x86_64"):
+        return _REG_NAMES_X86_64.get(reg_num, f"reg{reg_num}")
+    if arch in ("x86", "i386"):
+        return _REG_NAMES_X86.get(reg_num, f"reg{reg_num}")
+    if arch in ("aarch64", "arm64"):
+        return _REG_NAMES_AARCH64.get(reg_num, f"reg{reg_num}")
+    return f"reg{reg_num}"
+
+
+def _parse_frame_registers(elf: Any, dwarf: Any, meta: AdvancedDwarfMetadata) -> None:
+    """Extract CFA register convention for exported functions from .eh_frame (#117).
+
+    For each FDE (Frame Description Entry) in .eh_frame (or .debug_frame as fallback),
+    records the dominant CFA register used in the initial CFA rule of each FDE.
+    When the CFA register changes between versions for the same function, it indicates
+    a frame-pointer convention change (e.g., rbp → rsp from -fomit-frame-pointer).
+
+    Strategy:
+    - Read the ELF machine architecture for register name resolution.
+    - Iterate FDEs; for each, take the CFA register from the first row of the
+      decoded frame table (the initial state after applying the CIE initial instructions
+      plus FDE instructions up to the first instruction boundary).
+    - Map FDE PC range to function mangled name via .symtab/.dynsym.
+    - Store as meta.frame_registers[mangled_name] = reg_name.
+
+    Graceful: any parsing error on an individual FDE is logged and skipped.
+    """
+    try:
+        # Determine architecture for register name lookup
+        arch = elf.get_machine_arch()
+        arch_key = {
+            "x64": "x64", "x86_64": "x64",
+            "x86": "x86", "i386": "x86",
+            "AArch64": "aarch64", "aarch64": "aarch64",
+        }.get(arch, arch)
+
+        # Build address → symbol name map from .dynsym (and .symtab if available)
+        addr_to_sym: dict[int, str] = {}
+        for section_name in (".dynsym", ".symtab"):
+            sect = elf.get_section_by_name(section_name)
+            if sect is None:
+                continue
+            for sym in sect.iter_symbols():
+                st_value = sym.entry.st_value
+                bind = sym.entry.st_info.bind
+                if bind in ("STB_GLOBAL", "STB_WEAK") and st_value > 0:
+                    addr_to_sym[st_value] = sym.name
+
+        # Parse .eh_frame (preferred) or .debug_frame (fallback)
+        cfi_src = None
+        try:
+            cfi_src = dwarf.get_EH_CFI_entries()
+        except (AttributeError, ELFError):
+            pass
+        if cfi_src is None:
+            try:
+                cfi_src = dwarf.get_CFI_entries()
+            except (AttributeError, ELFError):
+                return
+
+        for entry in cfi_src:
+            try:
+                if entry.__class__.__name__ != "FDE":
+                    continue
+                pc_begin: int = entry["initial_location"]
+                sym_name = addr_to_sym.get(pc_begin, "")
+                if not sym_name:
+                    continue
+                # Decode the frame table and take the CFA register from first row
+                decoded = entry.get_decoded()
+                if not decoded.table:
+                    continue
+                first_row = decoded.table[0]
+                cfa = first_row.get("cfa")
+                if cfa is None:
+                    continue
+                cfa_reg = getattr(cfa, "reg", None)
+                if cfa_reg is None:
+                    continue
+                meta.frame_registers[sym_name] = _reg_name(cfa_reg, arch_key)
+            except (ELFError, OSError, ValueError, KeyError, IndexError) as exc:
+                log.debug("_parse_frame_registers: skipping FDE: %s", exc)
+
+    except (ELFError, OSError, ValueError) as exc:
+        log.warning("_parse_frame_registers: failed: %s", exc)
+
+
 def _parse_producer(producer: str) -> ToolchainInfo:
     """Parse raw DW_AT_producer string into ToolchainInfo."""
     info = ToolchainInfo(producer_string=producer)
@@ -729,6 +841,21 @@ def diff_advanced_dwarf(
             ",".join(sorted(old_flags)) or None,
             ",".join(sorted(new_flags)) or None,
         ))
+
+    # 4. Frame register / CFA convention drift (#117)
+    # Compare the dominant CFA register for functions present in both binaries.
+    # rsp ↔ rbp transition is the canonical indicator of -fomit-frame-pointer drift.
+    old_fr_keys = set(old_meta.frame_registers)
+    new_fr_keys = set(new_meta.frame_registers)
+    for fname in sorted(old_fr_keys & new_fr_keys):
+        old_reg = old_meta.frame_registers[fname]
+        new_reg = new_meta.frame_registers[fname]
+        if old_reg != new_reg:
+            results.append((
+                "frame_register_changed", fname,
+                f"Frame/CFA register changed: {fname} ({old_reg} → {new_reg})",
+                old_reg, new_reg,
+            ))
 
     return results
 

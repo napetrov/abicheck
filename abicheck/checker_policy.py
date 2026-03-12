@@ -104,6 +104,7 @@ class ChangeKind(str, Enum):
     STRUCT_PACKING_CHANGED = "struct_packing_changed"       # __attribute__((packed)) added/removed
     TYPE_VISIBILITY_CHANGED = "type_visibility_changed"      # typeinfo/vtable visibility changed
     TOOLCHAIN_FLAG_DRIFT = "toolchain_flag_drift"         # -fshort-enums/-fpack-struct drift
+    FRAME_REGISTER_CHANGED = "frame_register_changed"      # CFA/frame-pointer convention changed (#117)
 
     # Sprint 2 — gap detectors
     FUNC_DELETED = "func_deleted"                        # = delete added → BREAKING (was callable)
@@ -249,6 +250,7 @@ BREAKING_KINDS = {
     ChangeKind.CALLING_CONVENTION_CHANGED,
     ChangeKind.VALUE_ABI_TRAIT_CHANGED,
     ChangeKind.STRUCT_PACKING_CHANGED,
+    ChangeKind.FRAME_REGISTER_CHANGED,        # CFA/frame-pointer convention changed (#117)
     # Sprint 2 — gap detectors
     ChangeKind.FUNC_DELETED,
     ChangeKind.VAR_BECAME_CONST,              # writes → SIGSEGV when variable moves to .rodata
