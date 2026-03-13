@@ -12,6 +12,30 @@ from .checker_policy import COMPATIBLE_KINDS as _COMPATIBLE_KINDS
 from .checker_policy import ChangeKind as ChangeKind
 from .checker_policy import Verdict as Verdict
 from .checker_policy import compute_verdict as compute_verdict
+from .checker_policy import SDK_VENDOR_COMPAT_KINDS as _SDK_VENDOR_COMPAT_KINDS
+from .checker_policy import PLUGIN_ABI_DOWNGRADED_KINDS as _PLUGIN_ABI_DOWNGRADED_KINDS
+
+
+def _policy_kind_sets(policy: str) -> tuple[set, set, set]:
+    """Return (breaking, api_break, compatible) kind sets for the given policy.
+
+    Used internally by DiffResult properties so that breaking/source_breaks/compatible
+    are consistent with the active policy rather than the static global sets.
+    """
+    if policy == "sdk_vendor":
+        return (
+            _BREAKING_KINDS,
+            _API_BREAK_KINDS - _SDK_VENDOR_COMPAT_KINDS,
+            _COMPATIBLE_KINDS | _SDK_VENDOR_COMPAT_KINDS,
+        )
+    elif policy == "plugin_abi":
+        return (
+            _BREAKING_KINDS - _PLUGIN_ABI_DOWNGRADED_KINDS,
+            _API_BREAK_KINDS,
+            _COMPATIBLE_KINDS | _PLUGIN_ABI_DOWNGRADED_KINDS,
+        )
+    else:
+        return _BREAKING_KINDS, _API_BREAK_KINDS, _COMPATIBLE_KINDS
 from .detectors import DetectorResult
 from .dwarf_advanced import diff_advanced_dwarf
 from .elf_metadata import SymbolBinding, SymbolType
@@ -58,18 +82,25 @@ class DiffResult:
     suppressed_changes: list[Change] = field(default_factory=list)  # full audit trail
     suppression_file_provided: bool = False  # True when --suppress was passed, even if 0 matched
     detector_results: list[DetectorResult] = field(default_factory=list)
+    policy: str = "strict_abi"  # active policy profile; drives breaking/source_breaks/compatible
 
     @property
     def breaking(self) -> list[Change]:
-        return [c for c in self.changes if c.kind in _BREAKING_KINDS]
+        """Changes classified as BREAKING under the active policy."""
+        breaking_set, _, _ = _policy_kind_sets(self.policy)
+        return [c for c in self.changes if c.kind in breaking_set]
 
     @property
     def source_breaks(self) -> list[Change]:
-        return [c for c in self.changes if c.kind in _API_BREAK_KINDS]
+        """Changes classified as API_BREAK under the active policy."""
+        _, api_break_set, _ = _policy_kind_sets(self.policy)
+        return [c for c in self.changes if c.kind in api_break_set]
 
     @property
     def compatible(self) -> list[Change]:
-        return [c for c in self.changes if c.kind in _COMPATIBLE_KINDS]
+        """Changes classified as COMPATIBLE under the active policy."""
+        _, _, compatible_set = _policy_kind_sets(self.policy)
+        return [c for c in self.changes if c.kind in compatible_set]
 
 
 @dataclass(frozen=True)
@@ -1415,6 +1446,7 @@ def compare(
         changes = filtered
 
     verdict = policy_file.compute_verdict(changes) if policy_file is not None else compute_verdict(changes, policy=policy)
+    effective_policy = policy_file.base_policy if policy_file is not None else policy
     return DiffResult(
         old_version=old.version,
         new_version=new.version,
@@ -1425,6 +1457,7 @@ def compare(
         suppressed_changes=suppressed,
         suppression_file_provided=suppression is not None,
         detector_results=detector_results,
+        policy=effective_policy,
     )
 
 

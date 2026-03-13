@@ -360,6 +360,39 @@ class TestCliPolicy:
         assert "--policy-file" in result.output
 
 
+class TestDiffResultPolicyAwareProperties:
+    """DiffResult.breaking/source_breaks/compatible must honour the active policy."""
+
+    def _mk_result(self, policy: str, *kinds: ChangeKind) -> DiffResult:
+        return DiffResult(
+            old_version="1.0",
+            new_version="2.0",
+            library="lib.so",
+            changes=[_change(k) for k in kinds],
+            verdict=Verdict.NO_CHANGE,
+            policy=policy,
+        )
+
+    def test_enum_rename_in_source_breaks_strict(self) -> None:
+        r = self._mk_result("strict_abi", ChangeKind.ENUM_MEMBER_RENAMED)
+        assert len(r.source_breaks) == 1
+        assert len(r.compatible) == 0
+
+    def test_enum_rename_in_compatible_sdk_vendor(self) -> None:
+        r = self._mk_result("sdk_vendor", ChangeKind.ENUM_MEMBER_RENAMED)
+        assert len(r.source_breaks) == 0
+        assert len(r.compatible) == 1
+
+    def test_calling_convention_in_breaking_strict(self) -> None:
+        r = self._mk_result("strict_abi", ChangeKind.CALLING_CONVENTION_CHANGED)
+        assert len(r.breaking) == 1
+
+    def test_calling_convention_in_compatible_plugin(self) -> None:
+        r = self._mk_result("plugin_abi", ChangeKind.CALLING_CONVENTION_CHANGED)
+        assert len(r.breaking) == 0
+        assert len(r.compatible) == 1
+
+
 class TestCompatPolicyExposure:
     def test_compat_help_has_no_policy_flag(self) -> None:
         from click.testing import CliRunner
