@@ -71,9 +71,15 @@ class PolicyFile:
         """Load and validate a policy file from *path*.
 
         Raises:
-            ValueError: If the file is malformed, contains unknown kind names,
-                invalid severity strings, or an unknown base_policy.
+            ValueError: If the file is malformed, ``base_policy`` is not a string,
+                has an unknown policy name, ``overrides`` is not a mapping, or
+                contains invalid severity strings.
             OSError: If the file cannot be read.
+
+        Note:
+            Unknown kind names in ``overrides`` emit a ``log.warning`` and are
+            skipped — they do not raise. This is intentional to tolerate typos
+            in large policy files without aborting the run.
         """
         try:
             import yaml
@@ -90,6 +96,8 @@ class PolicyFile:
             raise ValueError(f"Policy file must be a YAML mapping, got {type(raw).__name__}")
 
         base_policy = raw.get("base_policy", "strict_abi")
+        if not isinstance(base_policy, str):
+            raise ValueError("'base_policy' must be a string, got " + type(base_policy).__name__)
         if base_policy not in _VALID_BASE_POLICIES:
             raise ValueError(
                 f"Unknown base_policy {base_policy!r}. "

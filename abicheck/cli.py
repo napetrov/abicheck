@@ -117,6 +117,8 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
     if policy_file_path is not None:
         try:
             pf = PolicyFile.load(policy_file_path)
+        except ImportError as e:
+            raise click.ClickException(str(e)) from e
         except (ValueError, OSError) as e:
             raise click.BadParameter(str(e), param_hint="--policy-file") from e
         if policy != "strict_abi":
