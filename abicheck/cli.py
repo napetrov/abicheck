@@ -201,6 +201,8 @@ from .compat.cli import (  # noqa: E402,F401
     compat_dump_cmd,
 )
 
+# fmt: on
+
 main.add_command(compat_dump_cmd)
 main.add_command(compat_cmd)
 
