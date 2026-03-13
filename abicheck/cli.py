@@ -48,6 +48,12 @@ def _resolve_input(
                 "at least one header (-H/--header or --old-header/--new-header) "
                 "is required for ABI extraction."
             )
+        for hdr in headers:
+            if not hdr.exists():
+                raise click.ClickException(f"Header file not found: {hdr}")
+        for inc in includes:
+            if not inc.exists():
+                raise click.ClickException(f"Include directory not found: {inc}")
         try:
             return dump(
                 so_path=path,
@@ -66,10 +72,20 @@ def _resolve_input(
         raise click.ClickException(f"Cannot read '{path}': {exc}") from exc
 
     if text.lstrip().startswith("{"):
-        return load_snapshot(path)
+        try:
+            return load_snapshot(path)
+        except (ValueError, KeyError, UnicodeDecodeError, OSError) as exc:
+            raise click.ClickException(
+                f"Failed to load JSON snapshot '{path}': {exc}"
+            ) from exc
 
     if looks_like_perl_dump(text):
-        return import_abicc_perl_dump(path)
+        try:
+            return import_abicc_perl_dump(path)
+        except (ValueError, KeyError, UnicodeDecodeError, OSError) as exc:
+            raise click.ClickException(
+                f"Failed to import ABICC Perl dump '{path}': {exc}"
+            ) from exc
 
     raise click.UsageError(
         f"Cannot detect format of '{path}'. "
@@ -130,7 +146,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 @click.argument("new_input", type=click.Path(exists=True, path_type=Path))
 # ── Dump options (used when input is an ELF binary) ──────────────────────────
 @click.option("-H", "--header", "headers", multiple=True,
-              type=click.Path(exists=True, path_type=Path),
+              type=click.Path(path_type=Path),
               help="Public header file applied to both sides (repeat for multiple). "
                    "Required when input is a .so file.")
 @click.option("-I", "--include", "includes", multiple=True,
@@ -139,10 +155,10 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 @click.option("--compiler", default="c++", show_default=True,
               help="Compiler frontend for castxml (c++ or cc).")
 @click.option("--old-header", "old_headers_only", multiple=True,
-              type=click.Path(exists=True, path_type=Path),
+              type=click.Path(path_type=Path),
               help="Public header for old side only (overrides -H for old).")
 @click.option("--new-header", "new_headers_only", multiple=True,
-              type=click.Path(exists=True, path_type=Path),
+              type=click.Path(path_type=Path),
               help="Public header for new side only (overrides -H for new).")
 @click.option("--old-include", "old_includes_only", multiple=True,
               type=click.Path(path_type=Path),
@@ -218,12 +234,28 @@ def compare_cmd(
     old_inc = list(old_includes_only) if old_includes_only else list(includes)
     new_inc = list(new_includes_only) if new_includes_only else list(includes)
 
-    # Warn if dump options are provided but both inputs are non-ELF
-    if not _is_elf(old_input) and not _is_elf(new_input) and headers:
-        click.echo(
-            "Warning: -H/--header is ignored when both inputs are snapshots.",
-            err=True,
-        )
+    # Warn if dump-only options are provided but not used (both inputs are snapshots)
+    old_is_elf = _is_elf(old_input)
+    new_is_elf = _is_elf(new_input)
+    if not old_is_elf and not new_is_elf:
+        ignored_flags: list[str] = []
+        if headers:
+            ignored_flags.append("-H/--header")
+        if old_headers_only:
+            ignored_flags.append("--old-header")
+        if new_headers_only:
+            ignored_flags.append("--new-header")
+        if includes:
+            ignored_flags.append("-I/--include")
+        if old_includes_only:
+            ignored_flags.append("--old-include")
+        if new_includes_only:
+            ignored_flags.append("--new-include")
+        if ignored_flags:
+            click.echo(
+                f"Warning: {', '.join(ignored_flags)} ignored when both inputs are snapshots.",
+                err=True,
+            )
 
     old = _resolve_input(old_input, old_h, old_inc, old_version, compiler)
     new = _resolve_input(new_input, new_h, new_inc, new_version, compiler)

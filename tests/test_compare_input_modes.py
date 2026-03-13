@@ -109,6 +109,20 @@ class TestResolveInput:
         with pytest.raises(Exception, match="Cannot detect format"):
             _resolve_input(p, headers=[], includes=[], version="1.0", compiler="c++")
 
+    def test_malformed_json_raises_click_exception(self, tmp_path):
+        p = tmp_path / "bad.json"
+        p.write_text('{"not_a_valid_snapshot": true}', encoding="utf-8")
+        with pytest.raises(Exception, match="Failed to load JSON snapshot"):
+            _resolve_input(p, headers=[], includes=[], version="1.0", compiler="c++")
+
+    def test_elf_with_missing_header_raises(self, tmp_path):
+        p = _write_fake_elf(tmp_path / "lib.so")
+        missing = tmp_path / "nonexistent.h"
+        with pytest.raises(Exception, match="Header file not found"):
+            _resolve_input(
+                p, headers=[missing], includes=[], version="1.0", compiler="c++",
+            )
+
 
 # ── compare with .json + .json (backward compat) ────────────────────────
 
@@ -132,7 +146,6 @@ class TestCompareJsonJson:
     def test_headers_ignored_warning(self, tmp_path):
         """When both inputs are JSON, -H should emit a warning."""
         old_p, new_p = _write_snapshots(tmp_path)
-        # Create a dummy header for the -H option (click validates exists=True)
         hdr = tmp_path / "dummy.h"
         hdr.write_text("// dummy", encoding="utf-8")
         runner = CliRunner()
@@ -140,6 +153,21 @@ class TestCompareJsonJson:
             "compare", str(old_p), str(new_p), "-H", str(hdr),
         ])
         assert result.exit_code == 0
+        assert "ignored" in result.output.lower()
+
+    def test_per_side_headers_ignored_warning(self, tmp_path):
+        """When both inputs are JSON, --old-header/--new-header should warn."""
+        old_p, new_p = _write_snapshots(tmp_path)
+        hdr = tmp_path / "dummy.h"
+        hdr.write_text("// dummy", encoding="utf-8")
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare", str(old_p), str(new_p),
+            "--old-header", str(hdr), "--new-header", str(hdr),
+        ])
+        assert result.exit_code == 0
+        assert "--old-header" in result.output
+        assert "--new-header" in result.output
         assert "ignored" in result.output.lower()
 
 
@@ -410,6 +438,18 @@ class TestCompareSoOutputFormats:
 
 
 class TestCompareHelp:
+    def test_nonexistent_header_ok_for_snapshots(self, tmp_path):
+        """Headers with non-existent paths should not block snapshot-only runs."""
+        old_p, new_p = _write_snapshots(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare", str(old_p), str(new_p),
+            "-H", str(tmp_path / "nonexistent.h"),
+        ])
+        # Should succeed (with warning) — header is ignored for snapshot inputs
+        assert result.exit_code == 0
+        assert "ignored" in result.output.lower()
+
     def test_help_shows_new_options(self):
         runner = CliRunner()
         result = runner.invoke(main, ["compare", "--help"])
