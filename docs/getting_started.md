@@ -57,19 +57,22 @@ abicheck compare libv1.so libv2.so --old-header v1.h --new-header v2.h
 For your own C++ library:
 
 ```bash
-# Same header for both versions (header didn't change)
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
-
-# Different headers per version (header changed between releases)
+# Each version has its own header
 abicheck compare libfoo.so.1 libfoo.so.2 \
   --old-header include/v1/foo.h --new-header include/v2/foo.h
 
-# Multiple public headers
+# Multiple headers per version
 abicheck compare libfoo.so.1 libfoo.so.2 \
-  -H include/foo.h -H include/bar.h -I include/
+  --old-header include/v1/foo.h --old-header include/v1/bar.h \
+  --new-header include/v2/foo.h --new-header include/v2/bar.h \
+  -I include/
+
+# Shorthand: -H when the same header applies to both versions
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
 
 # With version labels
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h \
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header include/v1/foo.h --new-header include/v2/foo.h \
   --old-version 1.0 --new-version 2.0
 ```
 
@@ -79,16 +82,20 @@ abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h \
 
 ```bash
 # Default: markdown report to stdout
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header v1/foo.h --new-header v2/foo.h
 
 # JSON — includes precise verdict field for CI parsing
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --format json -o result.json
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header v1/foo.h --new-header v2/foo.h --format json -o result.json
 
 # SARIF — for GitHub Code Scanning
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --format sarif -o abi.sarif
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header v1/foo.h --new-header v2/foo.h --format sarif -o abi.sarif
 
 # HTML — human-readable standalone report
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --format html -o report.html
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header v1/foo.h --new-header v2/foo.h --format html -o report.html
 
 # Works the same with pre-dumped snapshots
 abicheck compare v1.json v2.json --format sarif -o abi.sarif
@@ -101,11 +108,12 @@ abicheck compare v1.json v2.json --format sarif -o abi.sarif
 When you need reusable baselines (e.g. store as CI artifact, commit to repo):
 
 ```bash
-# Dump snapshot once per release
-abicheck dump libfoo.so.1 -H include/foo.h --version 1.0 -o baseline.json
+# Dump snapshot once per release (header is baked into the snapshot)
+abicheck dump libfoo.so.1 -H include/v1/foo.h --version 1.0 -o baseline.json
 
 # In CI: compare saved baseline against current build
-abicheck compare baseline.json ./build/libfoo.so -H include/foo.h --new-version 2.0-dev
+abicheck compare baseline.json ./build/libfoo.so \
+  --new-header include/foo.h --new-version 2.0-dev
 
 # Or compare two snapshots (no headers needed — already baked in)
 abicheck compare old.json new.json
@@ -136,7 +144,7 @@ steps:
   - name: Compare ABI
     run: |
       abicheck compare libfoo_old.so libfoo_new.so \
-        -H include/foo.h \
+        --old-header include/v1/foo.h --new-header include/v2/foo.h \
         --old-version 1.0 --new-version 2.0 \
         --format sarif -o abi.sarif
       ret=$?
@@ -158,7 +166,7 @@ steps:
   - name: ABI check vs baseline
     run: |
       abicheck compare abi-baselines/libfoo-1.0.json ./build/libfoo.so \
-        -H include/foo.h --new-version ${{ github.sha }} \
+        --new-header include/foo.h --new-version ${{ github.sha }} \
         --format sarif -o abi.sarif
 ```
 

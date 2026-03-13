@@ -6,7 +6,6 @@ and per-side header options (--old-header / --new-header).
 from __future__ import annotations
 
 import json
-import struct
 from pathlib import Path
 
 import pytest
@@ -15,7 +14,6 @@ from click.testing import CliRunner
 from abicheck.cli import _is_elf, _resolve_input, main
 from abicheck.model import AbiSnapshot, Function, Visibility
 from abicheck.serialization import snapshot_to_json
-
 
 # ── helpers ──────────────────────────────────────────────────────────────
 

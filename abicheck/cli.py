@@ -39,8 +39,7 @@ def _resolve_input(
     - JSON file → load_snapshot()
     - ABICC Perl dump → import_abicc_perl_dump()
     """
-    from .errors import AbicheckError
-    from .model import AbiSnapshot  # noqa: F811
+    from .errors import AbicheckError  # noqa: PLC0415
 
     if _is_elf(path):
         if not headers:
@@ -188,20 +187,20 @@ def compare_cmd(
 
     \b
     Examples:
-      # One-liner: compare two .so files directly (primary flow)
-      abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
-      abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h -H include/bar.h
-
-      # Different headers per version
+      # One-liner: each version has its own header (primary flow)
       abicheck compare libfoo.so.1 libfoo.so.2 \\
         --old-header include/v1/foo.h --new-header include/v2/foo.h
 
+      # Shorthand: -H when the same header applies to both versions
+      abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
+
       # With version labels and SARIF output
-      abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h \\
+      abicheck compare libfoo.so.1 libfoo.so.2 \\
+        --old-header v1/foo.h --new-header v2/foo.h \\
         --old-version 1.0 --new-version 2.0 --format sarif -o abi.sarif
 
-      # Compare saved snapshot vs current build
-      abicheck compare baseline.json ./build/libfoo.so -H include/foo.h
+      # Compare saved snapshot vs current build (mixed mode)
+      abicheck compare baseline.json ./build/libfoo.so --new-header include/foo.h
 
       # Compare two pre-dumped snapshots (existing workflow)
       abicheck compare libfoo-1.0.json libfoo-2.0.json

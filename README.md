@@ -51,33 +51,35 @@ pip install -e .
 
 ### 1) Compare two libraries directly (primary flow)
 
-The simplest way to check ABI compatibility — pass two `.so` files and their headers:
+The simplest way to check ABI compatibility — pass two `.so` files and their
+public headers. Each library version gets its own header(s):
 
 ```bash
-# Same headers for both versions
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
-
-# Different headers per version (when headers changed between releases)
+# Each version has its own header
 abicheck compare libfoo.so.1 libfoo.so.2 \
   --old-header include/v1/foo.h --new-header include/v2/foo.h
 
-# Multiple headers
+# Multiple headers per version
 abicheck compare libfoo.so.1 libfoo.so.2 \
-  -H include/foo.h -H include/bar.h -I include/
+  --old-header include/v1/foo.h --old-header include/v1/bar.h \
+  --new-header include/v2/foo.h --new-header include/v2/bar.h
+
+# Shorthand: -H applies the same header to both sides
+# (only when the header itself didn't change between versions)
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
 
 # With version labels
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h \
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header include/v1/foo.h --new-header include/v2/foo.h \
   --old-version 1.0 --new-version 2.0
 
 # Output formats: markdown (default), json, sarif, html
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --format json -o report.json
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --format sarif -o abi.sarif
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --format html -o report.html
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header v1/foo.h --new-header v2/foo.h --format sarif -o abi.sarif
 
 # Policy and suppression
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --policy sdk_vendor
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --suppress suppressions.yaml
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --policy-file project_policy.yaml
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header v1/foo.h --new-header v2/foo.h --policy sdk_vendor
 ```
 
 `compare` auto-detects each input: `.so` files are dumped on-the-fly, `.json`
@@ -89,9 +91,9 @@ When you want to cache ABI baselines (e.g. store snapshots as CI artifacts or
 commit them to the repo), use the explicit two-step workflow:
 
 ```bash
-# Step 1: Create snapshots
-abicheck dump libfoo.so.1 -H include/foo.h --version 1.0 -o libfoo-1.0.json
-abicheck dump libfoo.so.2 -H include/foo.h --version 2.0 -o libfoo-2.0.json
+# Step 1: Create snapshots (each version uses its own header)
+abicheck dump libfoo.so.1 -H include/v1/foo.h --version 1.0 -o libfoo-1.0.json
+abicheck dump libfoo.so.2 -H include/v2/foo.h --version 2.0 -o libfoo-2.0.json
 
 # Step 2: Compare snapshots (no headers needed — already baked in)
 abicheck compare libfoo-1.0.json libfoo-2.0.json
@@ -109,11 +111,11 @@ the freshly built `.so`:
 ```bash
 # Compare stored baseline against current build
 abicheck compare baseline-1.0.json ./build/libfoo.so \
-  -H include/foo.h --new-version 2.0-dev
+  --new-header include/foo.h --new-version 2.0-dev
 
 # Or the other way: live old build vs stored new snapshot
 abicheck compare ./build-old/libfoo.so new-release.json \
-  -H include/foo.h --old-version 1.0-rc1
+  --old-header include/foo.h --old-version 1.0-rc1
 ```
 
 **Policy file example** (`project_policy.yaml`):
