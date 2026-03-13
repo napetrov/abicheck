@@ -43,7 +43,7 @@ Changelog = "https://github.com/napetrov/abicheck/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 castxml = [
-    "castxml>=0.4.5",
+    "castxml>=0.4.5",  # PyPI lags upstream (0.4.5 vs 0.7.0); prefer conda-forge or apt
 ]
 dev = [
     "pytest>=7.0",

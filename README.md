@@ -27,12 +27,14 @@ to both communities for defining the practical ABI-checking ecosystem.
 | **`g++` or `clang++`** | Must be accessible to castxml |
 
 ```bash
-# Install castxml via pip (recommended — no system package needed)
-pip install castxml
+# Ubuntu/Debian
+sudo apt install castxml g++
 
-# Or via system package manager
-sudo apt install castxml g++          # Ubuntu/Debian
-conda install -c conda-forge castxml  # conda
+# conda (recommended — latest version, cross-platform)
+conda install -c conda-forge castxml
+
+# pip (fallback — packages v0.4.5, may lag behind upstream)
+pip install castxml
 ```
 
 ### Install abicheck
