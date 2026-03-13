@@ -110,6 +110,7 @@ def _resolve_input(
                 extra_includes=includes,
                 version=version,
                 compiler=compiler,
+                lang=lang if lang == "c" else None,
             )
         except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
             raise click.ClickException(f"Failed to dump '{path}': {exc}") from exc

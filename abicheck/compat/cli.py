@@ -683,9 +683,9 @@ def compat_dump_cmd(
 @compat_group.command("check")
 # ── Core input flags ──────────────────────────────────────────────────────────
 @click.option("-lib", "-l", "-library", "lib_name", required=True, help="Library name (e.g. libdnnl).")
-@click.option("-old", "-d1", "old_desc", required=True, type=click.Path(exists=True, path_type=Path),
+@click.option("-old", "-d1", "old_desc", required=True, type=click.Path(path_type=Path),
               help="Path to old version ABICC XML descriptor or ABI dump.")
-@click.option("-new", "-d2", "-n", "new_desc", required=True, type=click.Path(exists=True, path_type=Path),
+@click.option("-new", "-d2", "-n", "new_desc", required=True, type=click.Path(path_type=Path),
               help="Path to new version ABICC XML descriptor or ABI dump.")
 @click.option("-d", "-f", "-filter", "filter_path", default=None, type=click.Path(path_type=Path),
               help="Path to XML descriptor with skip_* filtering rules.")

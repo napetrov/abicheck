@@ -249,6 +249,6 @@ See [benchmark_report.md](benchmark_report.md) for the full per-case table.
 |----------|-------------|
 | New CI pipeline, full accuracy | `abicheck compare` |
 | Migrating from ABICC XML pipeline | `abicheck compat check` |
-| Strict gate (any addition = fail) | `abicheck compat check -s --strict-mode api` |
+| Strict gate (any addition = fail) | `abicheck compat check -s` |
 | Debug build available, DWARF check | `abicheck compare` (castxml already better) |
 | Quick ELF-only sanity check | `abidiff` (fast, 26% but catches symbol removals) |

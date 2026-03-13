@@ -3,8 +3,6 @@ compat group structure, and dataclasses.replace() paths.
 """
 from __future__ import annotations
 
-import json
-import logging
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -12,7 +10,6 @@ from click.testing import CliRunner
 from abicheck.cli import main
 from abicheck.model import AbiSnapshot, Function, Visibility
 from abicheck.serialization import snapshot_to_json
-
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -90,6 +87,35 @@ class TestCompareLang:
             "compare", str(old_p), str(new_p), "--lang", "c++",
         ])
         assert result.exit_code == 0
+
+    def test_lang_c_forwarded_to_resolve_input(self, tmp_path, monkeypatch):
+        """When comparing ELF files with --lang c, _resolve_input passes lang='c' to dump()."""
+        # Write two fake ELF files (magic bytes)
+        old_so = tmp_path / "old.so"
+        new_so = tmp_path / "new.so"
+        old_so.write_bytes(b"\x7fELF" + b"\x00" * 100)
+        new_so.write_bytes(b"\x7fELF" + b"\x00" * 100)
+        header = tmp_path / "foo.h"
+        header.write_text("int foo();\n", encoding="utf-8")
+
+        captured_calls = []
+
+        def fake_dump(**kwargs):
+            captured_calls.append(kwargs)
+            return AbiSnapshot(library="libfoo.so", version="1.0")
+
+        monkeypatch.setattr("abicheck.cli.dump", fake_dump)
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare", str(old_so), str(new_so), "-H", str(header), "--lang", "c",
+        ])
+        assert result.exit_code == 0
+        # Both old and new sides should have lang="c" forwarded
+        assert len(captured_calls) == 2
+        for call in captured_calls:
+            assert call.get("lang") == "c"
+            assert call.get("compiler") == "cc"
 
     def test_lang_invalid_rejected(self, tmp_path):
         old_p, new_p = _write_snapshots(tmp_path)
@@ -316,6 +342,20 @@ class TestCompatGroupStructure:
         assert "-old" in result.output
         # -o should not appear as alias for -old in the help
         # (it was removed to avoid collision with -o/--output)
+
+    def test_compat_check_missing_descriptor_uses_internal_error_handling(self, tmp_path):
+        """Missing descriptor files should be handled by _compat_fail, not Click's exists=True."""
+        missing_old = tmp_path / "missing_old.xml"
+        missing_new = tmp_path / "missing_new.xml"
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compat", "check", "-lib", "foo",
+            "-old", str(missing_old), "-new", str(missing_new),
+        ])
+        # Should exit with compat error code (4 = file access error), not Click's
+        # generic exit code 2 from exists=True validation
+        assert result.exit_code != 2
+        assert result.exit_code != 0
 
 
 # ── compat dump CLI-level test ───────────────────────────────────────────

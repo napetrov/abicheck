@@ -1,7 +1,8 @@
 # ABICC Compatibility Reference
 
 `abicheck compat check` is a drop-in replacement for `abi-compliance-checker`.
-It accepts the same flags, produces the same exit codes, and reads the same XML descriptors.
+It accepts the same flags (except `-o` which was removed — use `-old` instead),
+produces the same exit codes, and reads the same XML descriptors.
 
 ## Quick start
 
