@@ -82,7 +82,7 @@
 | **Parameter default value changed/removed** | ✅ `Parameter_Default_Value_Changed` | ❌ | Source-level break; old callers pass stale defaults |
 | **Global data value changed** (initial value) | ✅ `Global_Data_Value_Changed` | ✅ | Old binaries use compile-time-inlined old value |
 | **Global data became const / non-const** | ✅ `Global_Data_Became_Const` | ✅ | Write to now-const data → SIGSEGV |
-| **Typedef base type changed** | ✅ `Typedef_BaseType` | ✅ | `typedef int T` → `typedef long T` — size/semantic change. **Note: treat as P0 for Intel library CI** (dnnl_dim_t, primitive impl typedefs). |
+| **Typedef base type changed** | ✅ `Typedef_BaseType` | ✅ | `typedef int T` → `typedef long T` — size/semantic change. **Note: treat as P0 for library CI** (dimension typedefs, primitive impl typedefs). |
 | **Type became opaque** | ✅ `Type_Became_Opaque` | ✅ | Was complete struct, now forward-decl only; breaks stack allocation |
 | **Anonymous struct/union changes** | ⚠️ | ✅ (test44,45) | castxml assigns IDs to anon types but field path tracking needs validation — **TODO: verify with castxml dump.** |
 | **Base class became virtual/non-virtual** | ✅ `Base_Class_Became_Virtually_Inherited` | ✅ | Diamond inheritance layout change |

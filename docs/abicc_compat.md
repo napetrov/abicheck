@@ -7,10 +7,10 @@ It accepts the same flags, produces the same exit codes, and reads the same XML 
 
 ```bash
 # Before (ABICC):
-abi-compliance-checker -lib libdnnl -old old.xml -new new.xml -report-path r.html
+abi-compliance-checker -lib libfoo -old old.xml -new new.xml -report-path r.html
 
 # After (abicheck — identical):
-abicheck compat -lib libdnnl -old old.xml -new new.xml -report-path r.html
+abicheck compat -lib libfoo -old old.xml -new new.xml -report-path r.html
 ```
 
 Exit codes match ABICC:
@@ -90,7 +90,7 @@ These override what is in the `<version>` element of the XML descriptor.
 _Z3foov
 _ZN3Foo3barEv
 # Regex patterns (any of: * ? . [) are matched as full-symbol patterns:
-_ZN.*intelEv
+_ZN.*detailEv
 ```
 
 `-symbols-list` / `-types-list` file format (same syntax):

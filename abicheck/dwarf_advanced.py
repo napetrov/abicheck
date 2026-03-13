@@ -93,7 +93,7 @@ _PRUNE_TAGS: frozenset[str] = frozenset({
 class ToolchainInfo:
     """Parsed DW_AT_producer metadata from a binary."""
     producer_string: str = ""       # raw DW_AT_producer value
-    compiler: str = ""              # "GCC", "clang", "ICC"
+    compiler: str = ""              # "GCC", "clang", "ICC" (ICC/ICX/DPC++ family)
     version: str = ""               # e.g. "13.2.1"
     abi_flags: set[str] = field(default_factory=set)  # extracted ABI-affecting flags
 
@@ -774,7 +774,7 @@ def _parse_producer(producer: str) -> ToolchainInfo:
         m = re.search(r"(\d+\.\d+(?:\.\d+)?)", producer)
         if m:
             info.version = m.group(1)
-    elif re.search(r"Intel|ICC|ICX", producer):
+    elif re.search(r"ICC|ICX|DPC\+\+", producer):
         info.compiler = "ICC"
         m = re.search(r"(\d+\.\d+(?:\.\d+)?)", producer)
         if m:

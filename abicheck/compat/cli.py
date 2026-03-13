@@ -682,7 +682,7 @@ def compat_dump_cmd(
 
 @click.command("compat")
 # ── Core input flags ──────────────────────────────────────────────────────────
-@click.option("-lib", "-l", "-library", "lib_name", required=True, help="Library name (e.g. libdnnl).")
+@click.option("-lib", "-l", "-library", "lib_name", required=True, help="Library name (e.g. libfoo).")
 @click.option("-old", "-d1", "-o", "old_desc", required=True, type=click.Path(exists=True, path_type=Path),
               help="Path to old version ABICC XML descriptor or ABI dump.")
 @click.option("-new", "-d2", "-n", "new_desc", required=True, type=click.Path(exists=True, path_type=Path),
@@ -914,10 +914,10 @@ def compat_cmd(  # noqa: PLR0913
     Examples::
 
         # Before:
-        abi-compliance-checker -lib libdnnl -old old.xml -new new.xml -report-path r.html
+        abi-compliance-checker -lib libfoo -old old.xml -new new.xml -report-path r.html
 
         # After (identical flags):
-        abicheck compat -lib libdnnl -old old.xml -new new.xml -report-path r.html
+        abicheck compat -lib libfoo -old old.xml -new new.xml -report-path r.html
     """
     from ..suppression import SuppressionList  # local import to avoid circular
 

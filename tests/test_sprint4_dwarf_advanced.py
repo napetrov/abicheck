@@ -238,7 +238,7 @@ def test_parse_producer_clang() -> None:
 
 
 def test_parse_producer_icc() -> None:
-    info = _parse_producer("Intel(R) oneAPI DPC++/C++ Compiler 2024.0.0 -m64")
+    info = _parse_producer("Vendor DPC++/C++ Compiler 2024.0.0 -m64")
     assert info.compiler == "ICC"
     assert "-m64" in info.abi_flags
 

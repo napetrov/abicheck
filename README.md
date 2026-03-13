@@ -158,10 +158,10 @@ Existing ABICC pipelines work with a one-line swap:
 
 ```bash
 # Before:
-abi-compliance-checker -lib libdnnl -old old.xml -new new.xml -report-path r.html
+abi-compliance-checker -lib libfoo -old old.xml -new new.xml -report-path r.html
 
 # After (identical flags):
-abicheck compat -lib libdnnl -old old.xml -new new.xml -report-path r.html
+abicheck compat -lib libfoo -old old.xml -new new.xml -report-path r.html
 ```
 
 Migration path:

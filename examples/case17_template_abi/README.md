@@ -38,10 +38,10 @@ referenced in the headers. It sees `capacity_` was added and reports:
 
 ## Real-world example
 
-In **Intel oneDAL (daal)**, `HomogenNumericTable<float>` is a template class with
-explicit instantiation in the `.so`. When a private member was added for thread-safety
-tracking (2022), downstream Python bindings compiled with old headers wrote past
-buffers. The bug was caught by ASAN in integration tests.
+In large numeric libraries, templated classes like `HomogenNumericTable<float>` are
+often explicitly instantiated in the `.so`. When a private member is added for
+thread-safety tracking, downstream bindings compiled with old headers write past
+buffers. This class of bug is typically caught by ASAN in integration tests.
 
 ## Code diff
 

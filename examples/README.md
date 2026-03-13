@@ -169,21 +169,20 @@ structs of the wrong size, causing heap corruption, stack smashes, or wrong resu
 
 | Library | Exposed types | Risk |
 |---------|--------------|------|
-| Intel TBB | `tbb::task_arena`, `tbb::mutex` | oneDAL includes these in public headers |
+| TBB | `tbb::task_arena`, `tbb::mutex` | Numeric libraries include these in public headers |
 | Boost | `boost::shared_ptr`, `boost::optional` | Layout differs between Boost versions |
 | protobuf | `google::protobuf::Message` | Proto3/ABI breakage between major versions |
 | libstdc++ | `std::string` (CXX11 ABI) | Changed in GCC 5.x — broke entire ecosystems |
-| Intel MKL | `MKL_Complex8`, sparse handles | Version-dependent layout |
+| BLAS/LAPACK | Complex number types, sparse handles | Version-dependent layout |
 
-### Intel-specific examples
+### Real-world examples
 
-**oneDAL** — Several oneDAL public headers (e.g. `data_management/data/numeric_table.h`)
-expose `tbb::task_arena` references. When Intel TBB changed `task_arena`'s internal
-layout in TBB 2021.3, oneDAL's ABI broke for users who had TBB 2021.2 installed.
-The `.so` files hadn't changed.
+**Numeric libraries** — Public headers that expose `tbb::task_arena` references are
+vulnerable when TBB changes `task_arena`'s internal layout between versions (e.g.
+TBB 2021.2 → 2021.3). The `.so` files don't change, but consumers break.
 
-**oneDNN** — Early versions exposed internal `dnnl::impl::*` types in semi-public
-headers. This required a major ABI break (`v1.x → v2.x`) to clean up.
+**Deep learning frameworks** — Early versions of some DNN libraries exposed internal
+implementation types in semi-public headers, requiring major ABI breaks to clean up.
 
 ### Best practices
 
