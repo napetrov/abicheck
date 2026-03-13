@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from .checker import DiffResult
     from .model import AbiSnapshot
     from .suppression import SuppressionList
+from . import __version__ as _abicheck_version
 
 
 @click.group()
