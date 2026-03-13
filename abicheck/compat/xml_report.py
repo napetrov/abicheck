@@ -45,8 +45,16 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from ..checker import _BREAKING_KINDS as _CHECKER_BREAKING_KINDS_ENUM
 from ..checker_policy import HasKind
+from ..report_classifications import (
+    ADDED_KINDS,
+    BINARY_ONLY_KINDS,
+    REMOVED_KINDS,
+    is_breaking,
+    is_type_problem,
+    kind_str,
+    severity,
+)
 from ..report_summary import compatibility_metrics
 
 if TYPE_CHECKING:
@@ -55,102 +63,12 @@ if TYPE_CHECKING:
 # ABICC XML report version
 _REPORT_VERSION = "1.2"
 
-# ── Change-kind classification for ABICC XML report ─────────────────────────
-
-#: Kinds involving type changes (problems_with_types).
-_TYPE_PROBLEM_PREFIXES = (
-    "type_", "struct_", "union_", "field_", "typedef_", "enum_", "base_class_",
-)
-
-#: Kinds involving symbol/interface changes (problems_with_symbols).
-_SYMBOL_PROBLEM_PREFIXES = (
-    "func_", "var_",
-)
-
-#: Kinds that count as "removed" in ABICC's XML report.
-_REMOVED_KINDS: frozenset[str] = frozenset({
-    "func_removed", "var_removed", "type_removed", "typedef_removed",
-    "union_field_removed", "enum_member_removed",
-})
-
-#: Kinds that count as "added" in ABICC's XML report.
-_ADDED_KINDS: frozenset[str] = frozenset({
-    "func_added", "var_added", "type_added", "func_virtual_added",
-    "enum_member_added", "union_field_added", "type_field_added",
-    "type_field_added_compatible",
-})
-
-#: Binary-only kinds (excluded from source compatibility section).
-_BINARY_ONLY_KINDS: frozenset[str] = frozenset({
-    "soname_changed", "needed_added", "needed_removed",
-    "rpath_changed", "runpath_changed",
-    "symbol_binding_changed", "symbol_binding_strengthened",
-    "symbol_type_changed", "symbol_size_changed",
-    "ifunc_introduced", "ifunc_removed", "common_symbol_risk",
-    "symbol_version_defined_removed",
-    "symbol_version_required_added", "symbol_version_required_removed",
-    "dwarf_info_missing", "toolchain_flag_drift",
-})
-
-#: Canonical breaking kinds from checker (single source of truth).
-_BREAKING_KINDS: frozenset[str] = frozenset(k.value for k in _CHECKER_BREAKING_KINDS_ENUM)
-
-# ── ABICC severity mapping ──────────────────────────────────────────────────
-# ABICC classifies problems into High/Medium/Low severity.
-# High: symbol removal, type size change, vtable change, base class change
-# Medium: field offset, return type, parameter type, calling convention
-# Low: enum value, const qualifier, visibility, access level
-
-_HIGH_SEVERITY_KINDS: frozenset[str] = frozenset({
-    "func_removed", "var_removed", "type_removed", "typedef_removed",
-    "type_size_changed", "type_vtable_changed", "type_base_changed",
-    "struct_size_changed", "func_virtual_removed",
-    "func_pure_virtual_added", "func_virtual_became_pure",
-    "base_class_position_changed", "base_class_virtual_changed",
-    "type_kind_changed", "func_deleted",
-})
-
-_MEDIUM_SEVERITY_KINDS: frozenset[str] = frozenset({
-    "func_return_changed", "func_params_changed",
-    "type_field_offset_changed", "type_field_type_changed",
-    "type_field_removed", "type_alignment_changed",
-    "struct_field_offset_changed", "struct_field_removed",
-    "struct_field_type_changed", "struct_alignment_changed",
-    "var_type_changed", "calling_convention_changed",
-    "soname_changed", "symbol_type_changed",
-    "symbol_version_defined_removed",
-    "return_pointer_level_changed", "param_pointer_level_changed",
-    "union_field_removed", "union_field_type_changed",
-    "typedef_base_changed", "struct_packing_changed",
-})
-
-# Everything else that is breaking but not high/medium → low severity
+# ── Change-kind classification — delegated to report_classifications ────────
 
 
-def _kind_str(change: object) -> str:
-    kind = getattr(change, "kind", None)
-    return kind.value if kind is not None and hasattr(kind, "value") else str(kind)
-
-
-def _is_breaking(change: object) -> bool:
-    return _kind_str(change) in _BREAKING_KINDS
-
-
-def _is_type_problem(kind_str: str) -> bool:
-    return any(kind_str.startswith(p) for p in _TYPE_PROBLEM_PREFIXES)
-
-
-def _is_symbol_problem(kind_str: str) -> bool:
-    return any(kind_str.startswith(p) for p in _SYMBOL_PROBLEM_PREFIXES)
-
-
-def _severity(kind_str: str) -> str:
-    """Map a change kind to ABICC severity tier."""
-    if kind_str in _HIGH_SEVERITY_KINDS:
-        return "high"
-    if kind_str in _MEDIUM_SEVERITY_KINDS:
-        return "medium"
-    return "low"
+def _severity_lower(kind_s: str) -> str:
+    """Map to ABICC severity tier (lowercase for XML)."""
+    return severity(kind_s).lower()
 
 
 def _compute_section(
@@ -162,15 +80,15 @@ def _compute_section(
     """Compute counts for one section (binary or source) of the XML report."""
     filtered = changes
     if exclude_binary_only:
-        filtered = [c for c in changes if _kind_str(c) not in _BINARY_ONLY_KINDS]
+        filtered = [c for c in changes if kind_str(c) not in BINARY_ONLY_KINDS]
 
-    breaking = [c for c in filtered if _is_breaking(c)]
-    removed = [c for c in filtered if _kind_str(c) in _REMOVED_KINDS]
-    added = [c for c in filtered if _kind_str(c) in _ADDED_KINDS]
+    breaking = [c for c in filtered if is_breaking(c)]
+    removed = [c for c in filtered if kind_str(c) in REMOVED_KINDS]
+    added = [c for c in filtered if kind_str(c) in ADDED_KINDS]
     # "problems" = breaking changes that are not simple removals/additions
     problems = [
         c for c in breaking
-        if _kind_str(c) not in _REMOVED_KINDS and _kind_str(c) not in _ADDED_KINDS
+        if kind_str(c) not in REMOVED_KINDS and kind_str(c) not in ADDED_KINDS
     ]
 
     # Classify problems by category and severity
@@ -178,9 +96,9 @@ def _compute_section(
     symbol_problems = {"high": 0, "medium": 0, "low": 0, "safe": 0}
 
     for c in problems:
-        ks = _kind_str(c)
-        sev = _severity(ks)
-        if _is_type_problem(ks):
+        ks = kind_str(c)
+        sev = _severity_lower(ks)
+        if is_type_problem(ks):
             type_problems[sev] += 1
         else:
             symbol_problems[sev] += 1
@@ -239,7 +157,7 @@ _EFFECT_TEXT: dict[str, str] = {
 
 def _add_problem_element(parent: ET.Element, change: object) -> None:
     """Add a <problem> element with <change>, <effect>, and optional <overcome>."""
-    ks = _kind_str(change)
+    ks = kind_str(change)
     prob = ET.SubElement(parent, "problem")
     prob.set("id", ks)
 
@@ -283,7 +201,7 @@ def _build_symbol_list(
     parent: ET.Element, tag: str, changes: list[object], kind_set: frozenset[str],
 ) -> None:
     """Build <added_symbols> or <removed_symbols> detail section."""
-    matched = [c for c in changes if _kind_str(c) in kind_set]
+    matched = [c for c in changes if kind_str(c) in kind_set]
     if matched:
         detail = ET.SubElement(parent, tag)
         for c in matched:
@@ -295,17 +213,17 @@ def _build_problem_details(parent: ET.Element, changes: list[object]) -> None:
     """Build severity-tiered <problems_with_types/symbols> detail sections."""
     problem_changes = [
         c for c in changes
-        if _is_breaking(c)
-        and _kind_str(c) not in _REMOVED_KINDS
-        and _kind_str(c) not in _ADDED_KINDS
+        if is_breaking(c)
+        and kind_str(c) not in REMOVED_KINDS
+        and kind_str(c) not in ADDED_KINDS
     ]
 
     for sev_label, sev_key in [("High", "high"), ("Medium", "medium"), ("Low", "low")]:
-        sev_changes = [c for c in problem_changes if _severity(_kind_str(c)) == sev_key]
+        sev_changes = [c for c in problem_changes if _severity_lower(kind_str(c)) == sev_key]
         if not sev_changes:
             continue
 
-        type_changes = [c for c in sev_changes if _is_type_problem(_kind_str(c))]
+        type_changes = [c for c in sev_changes if is_type_problem(kind_str(c))]
         if type_changes:
             types_detail = ET.SubElement(parent, "problems_with_types")
             types_detail.set("severity", sev_label)
@@ -314,7 +232,7 @@ def _build_problem_details(parent: ET.Element, changes: list[object]) -> None:
                 type_el.set("name", getattr(c, "symbol", "") or "")
                 _add_problem_element(type_el, c)
 
-        sym_changes = [c for c in sev_changes if not _is_type_problem(_kind_str(c))]
+        sym_changes = [c for c in sev_changes if not is_type_problem(kind_str(c))]
         if sym_changes:
             syms_detail = ET.SubElement(parent, "problems_with_symbols")
             syms_detail.set("severity", sev_label)
@@ -375,8 +293,8 @@ def _build_report_element(
         s.text = str(sp[sev])
 
     # Detail sections
-    _build_symbol_list(report, "added_symbols", data["changes"], _ADDED_KINDS)
-    _build_symbol_list(report, "removed_symbols", data["changes"], _REMOVED_KINDS)
+    _build_symbol_list(report, "added_symbols", data["changes"], ADDED_KINDS)
+    _build_symbol_list(report, "removed_symbols", data["changes"], REMOVED_KINDS)
     _build_problem_details(report, data["changes"])
 
     return report

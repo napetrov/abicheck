@@ -34,6 +34,11 @@ from typing import Any
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
+from .dwarf_utils import attr_bool as _attr_bool
+from .dwarf_utils import attr_int as _attr_int
+from .dwarf_utils import attr_str as _attr_str
+from .dwarf_utils import resolve_type_die as _resolve_type_die
+
 log = logging.getLogger(__name__)
 
 # DW_AT_calling_convention values (DWARF 5 standard + vendor extensions)
@@ -281,17 +286,7 @@ def _walk_cu(root: Any, meta: AdvancedDwarfMetadata, CU: Any) -> None:
 # Calling convention extraction
 # ---------------------------------------------------------------------------
 
-def _resolve_type_die(die: Any, CU: Any) -> Any | None:
-    """Resolve DW_AT_type reference on *die* to a target DIE."""
-    if "DW_AT_type" not in die.attributes:
-        return None
-    attr = die.attributes["DW_AT_type"]
-    raw: int = attr.value
-    abs_offset = raw if attr.form == "DW_FORM_ref_addr" else raw + CU.cu_offset
-    try:
-        return CU.get_DIE_from_refaddr(abs_offset)
-    except Exception:  # noqa: BLE001
-        return None
+# _resolve_type_die is imported from dwarf_utils at the top of this module.
 
 
 @dataclass
@@ -907,32 +902,10 @@ def diff_advanced_dwarf(
 
 
 # ---------------------------------------------------------------------------
-# Attribute helpers
+# Attribute helpers — delegated to dwarf_utils
 # ---------------------------------------------------------------------------
-
-def _attr_str(die: Any, attr: str) -> str:
-    if attr not in die.attributes:
-        return ""
-    val = die.attributes[attr].value
-    if isinstance(val, bytes):
-        return val.decode("utf-8", errors="replace")
-    return str(val) if val is not None else ""
-
-
-def _attr_int(die: Any, attr: str) -> int:
-    if attr not in die.attributes:
-        return 0
-    val = die.attributes[attr].value
-    try:
-        return int(val)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _attr_bool(die: Any, attr: str) -> bool:
-    if attr not in die.attributes:
-        return False
-    return bool(die.attributes[attr].value)
+# _attr_str, _attr_int, _attr_bool, and _resolve_type_die are imported
+# from dwarf_utils at the top of this module.
 
 # Public alias for dwarf_unified — keeps the contract visible to mypy.
 _process_cu_impl = _process_cu
