@@ -15,34 +15,63 @@ Huge thanks to both projects for pioneering ABI compatibility analysis.
 
 ## How to use abicheck
 
-The standard flow has 2 steps:
+### 1) Compare two libraries directly (primary flow)
 
-1. **Dump** ABI snapshots from each library version.
-2. **Compare** snapshots and act on verdict (`NO_CHANGE`, `COMPATIBLE`, `BREAKING`).
-
-### 1) Dump snapshots
+The simplest way — pass `.so` files and their public headers directly to
+`compare`. Each library version gets its own header(s):
 
 ```bash
-abicheck dump libfoo.so.1 -H include/foo.h --version 1.0 -o libfoo-1.0.json
-abicheck dump libfoo.so.2 -H include/foo.h --version 2.0 -o libfoo-2.0.json
+# Each version has its own header
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header include/v1/foo.h --new-header include/v2/foo.h
+
+# Multiple headers per version, with include dirs and version labels
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header include/v1/foo.h --old-header include/v1/bar.h \
+  --new-header include/v2/foo.h --new-header include/v2/bar.h \
+  -I include/ --old-version 1.0 --new-version 2.0
+
+# Shorthand: -H applies the same header to both sides
+# (only when the header itself didn't change between versions)
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
+
+# Output formats
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header v1/foo.h --new-header v2/foo.h --format sarif -o abi.sarif
 ```
 
-### 2) Compare snapshots
+`compare` auto-detects each input: `.so` files are dumped on-the-fly, `.json`
+snapshots and ABICC Perl dumps (Data::Dumper `.dump` files) are loaded directly.
+You can mix them freely (see below).
+
+### 2) Dump snapshots and compare later (for CI baselines)
+
+When you want to cache ABI baselines as CI artifacts or commit them to the repo:
 
 ```bash
-# Human-readable markdown in terminal
+# Step 1: Dump snapshots (each version uses its own header)
+abicheck dump libfoo.so.1 -H include/v1/foo.h --version 1.0 -o libfoo-1.0.json
+abicheck dump libfoo.so.2 -H include/v2/foo.h --version 2.0 -o libfoo-2.0.json
+
+# Step 2: Compare snapshots (no headers needed — already baked in)
 abicheck compare libfoo-1.0.json libfoo-2.0.json
-
-# JSON report
-abicheck compare libfoo-1.0.json libfoo-2.0.json --format json -o abi-report.json
-
-# SARIF for GitHub code scanning
-abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o abi-report.sarif
 ```
 
-### ABICC-compatible invocation
+### 3) Mixed mode: snapshot baseline vs live build
 
-abicheck supports ABICC-style descriptor input as a drop-in workflow.
+```bash
+# CI baseline snapshot vs current build
+abicheck compare baseline-1.0.json ./build/libfoo.so \
+  --new-header include/foo.h --new-version 2.0-dev
+
+# Live old build vs stored new snapshot
+abicheck compare ./build-old/libfoo.so new-release.json \
+  --old-header include/foo.h --old-version 1.0-rc1
+```
+
+### 4) ABICC-compatible invocation (for migration)
+
+For teams migrating from `abi-compliance-checker` — same flags, same XML descriptors.
 See [ABICC compatibility reference](abicc_compat.md) for the full flag list.
 
 ```bash
