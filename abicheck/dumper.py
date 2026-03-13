@@ -149,8 +149,8 @@ def _castxml_dump(
     """
     if not _castxml_available():
         raise RuntimeError(
-            "castxml not found in PATH. Install with: apt install castxml  "
-            "or  conda install -c conda-forge castxml"
+            "castxml not found in PATH. Install with: pip install castxml  "
+            "or  apt install castxml  or  conda install -c conda-forge castxml"
         )
 
     # Check disk cache
