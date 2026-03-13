@@ -347,3 +347,149 @@ def test_visibility_leak_not_fired_for_clean_public_symbols() -> None:
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.VISIBILITY_LEAK not in kinds
+
+
+def test_symbol_version_required_added_older_is_compat() -> None:
+    """Adding an OLDER version requirement (e.g. GLIBC_2.2.5 when max was GLIBC_2.34)
+    is NOT breaking — callers already satisfied the higher requirement.
+
+    Regression: oneTBB 2021.11→2021.13 false-positive BREAKING (issue tbb-fp-01).
+    """
+    old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]}))
+    new = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34", "GLIBC_2.2.5"]}))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    # Should be COMPAT kind, not BREAKING kind
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED not in kinds, (
+        "Adding GLIBC_2.2.5 when max was GLIBC_2.34 must not be BREAKING"
+    )
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT in kinds
+    assert result.verdict == Verdict.COMPATIBLE
+
+
+def test_symbol_version_required_added_newer_is_breaking() -> None:
+    """Adding a NEWER version requirement IS breaking — callers on older runtimes fail.
+
+    Original behavior must be preserved.
+    """
+    old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5"]}))
+    new = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]}))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kinds
+    assert result.verdict == Verdict.BREAKING
+
+
+def test_symbol_version_required_added_new_dep_is_compat() -> None:
+    """Adding version requirements for a brand-new DT_NEEDED lib is COMPATIBLE.
+
+    The lib addition itself is captured by needed_added; its version requirements
+    don't add extra constraints on callers who already link the old binary.
+
+    Regression: oneTBB 2021.13 adds libdl.so.2 / GLIBC_2.2.5 false-positive.
+    """
+    old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5"]}))
+    # libdl.so.2 is entirely new — wasn't in old
+    new = _snap(_elf(versions_required={
+        "libc.so.6": ["GLIBC_2.5"],
+        "libdl.so.2": ["GLIBC_2.2.5"],
+    }))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED not in kinds, (
+        "Version requirements for a newly-added lib must not be BREAKING"
+    )
+    # Positive assertions: the compat kind must appear and verdict must be COMPATIBLE
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT in kinds, (
+        "Version requirements for a newly-added lib must produce COMPAT kind"
+    )
+    assert result.verdict == Verdict.COMPATIBLE
+
+
+def test_symbol_version_required_tbb_like_upgrade() -> None:
+    """Full TBB-like scenario: upgrade removes newer requirements + adds older ones.
+
+    oneTBB 2021.11 required GLIBC_2.34 / GLIBCXX_3.4.32.
+    oneTBB 2021.13 dropped those and only requires GLIBC_2.2.5 / GLIBCXX_3.4.19.
+    Net effect: minimum system requirements lowered — this is COMPATIBLE.
+    """
+    old = _snap(_elf(versions_required={
+        "libc.so.6": ["GLIBC_2.4", "GLIBC_2.14", "GLIBC_2.32", "GLIBC_2.34", "GLIBC_2.2.5"],
+        "libstdc++.so.6": ["GLIBCXX_3.4", "GLIBCXX_3.4.11", "GLIBCXX_3.4.32", "CXXABI_1.3.13"],
+    }))
+    new = _snap(_elf(versions_required={
+        "libc.so.6": ["GLIBC_2.4", "GLIBC_2.14", "GLIBC_2.2.5"],           # removed 2.32, 2.34
+        "libstdc++.so.6": ["GLIBCXX_3.4", "GLIBCXX_3.4.11", "GLIBCXX_3.4.19"],  # dropped 3.4.32, CXXABI_1.3.13
+        "libdl.so.2": ["GLIBC_2.2.5"],                                        # new dep, old glibc
+        "libpthread.so.0": ["GLIBC_2.2.5"],                                   # new dep, old glibc
+    }))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    # No genuinely BREAKING version requirement should appear
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED not in kinds, (
+        f"TBB-like upgrade must not produce BREAKING version requirements, got: "
+        f"{[c for c in result.changes if c.kind == ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED]}"
+    )
+    # Compat variants may appear (informational)
+    assert result.verdict in (Verdict.COMPATIBLE, Verdict.NO_CHANGE), (
+        f"Expected COMPATIBLE, got {result.verdict}"
+    )
+
+
+def test_symbol_version_required_genuine_upgrade_is_breaking() -> None:
+    """Upgrading to a library that requires a NEWER glibc is BREAKING.
+
+    If a user is on an old system (only has GLIBC_2.17), they cannot run
+    a binary that now requires GLIBC_2.38.
+    """
+    old = _snap(_elf(versions_required={
+        "libc.so.6": ["GLIBC_2.4", "GLIBC_2.17"],
+    }))
+    new = _snap(_elf(versions_required={
+        "libc.so.6": ["GLIBC_2.4", "GLIBC_2.17", "GLIBC_2.38"],   # genuinely raised the bar
+    }))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kinds, (
+        "Raising minimum GLIBC requirement must be BREAKING"
+    )
+    assert result.verdict == Verdict.BREAKING
+
+
+def test_symbol_version_required_private_tag_is_breaking() -> None:
+    """Adding GLIBC_PRIVATE (non-numeric tag) must be BREAKING, not COMPAT.
+
+    GLIBC_PRIVATE symbols are internal ABI surface — requiring them is a
+    genuine runtime constraint that not all systems satisfy.
+    Regression guard for _parse_abi_version_tag sentinel logic.
+    """
+    old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]}))
+    new = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34", "GLIBC_PRIVATE"]}))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kinds, (
+        "Adding GLIBC_PRIVATE must be treated as BREAKING"
+    )
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT not in kinds
+    assert result.verdict == Verdict.BREAKING
+
+
+def test_symbol_version_required_cross_namespace_no_bleed() -> None:
+    """Adding newer CXXABI_1.3.14 must be BREAKING even if GLIBCXX_3.4.32 dominates old_max.
+
+    Without per-prefix grouping, GLIBCXX_3.4.32 (as global old_max=3.4.32) would
+    cause CXXABI_1.3.14 (1.3.14 <= 3.4.32) to be misclassified as COMPAT.
+    Fix: old_max is computed per version-tag prefix, not globally.
+    """
+    old = _snap(_elf(versions_required={
+        "libstdc++.so.6": ["GLIBCXX_3.4.32", "CXXABI_1.3.13"],
+    }))
+    new = _snap(_elf(versions_required={
+        "libstdc++.so.6": ["GLIBCXX_3.4.32", "CXXABI_1.3.13", "CXXABI_1.3.14"],
+    }))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kinds, (
+        "Adding newer CXXABI_1.3.14 must be BREAKING regardless of GLIBCXX version"
+    )
+    assert result.verdict == Verdict.BREAKING

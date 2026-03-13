@@ -1222,6 +1222,30 @@ def _diff_needed_libraries(old_needed: list[str], new_needed: list[str]) -> list
     return changes
 
 
+_UNPARSEABLE_VERSION: tuple[int, ...] = (2**31,)
+"""Sentinel returned by :func:`_parse_abi_version_tag` for non-numeric tags
+like ``GLIBC_PRIVATE``.  Sorts *above* any real version so that a new
+non-numeric requirement is always treated as potentially BREAKING — never
+silently COMPAT."""
+
+
+def _parse_abi_version_tag(ver: str) -> tuple[int, ...]:
+    """Parse a versioned symbol tag like ``GLIBC_2.34`` or ``GLIBCXX_3.4.19``
+    into a comparable integer tuple.
+
+    Only the numeric suffix after the last ``_`` is used:
+    ``GLIBC_2.34`` → ``(2, 34)``, ``GLIBCXX_3.4.19`` → ``(3, 4, 19)``.
+
+    Returns :data:`_UNPARSEABLE_VERSION` for non-numeric tags such as
+    ``GLIBC_PRIVATE`` — a very large sentinel that always compares as newer
+    than any real version, so such tags are conservatively treated as BREAKING.
+    """
+    parts = ver.rsplit("_", 1)
+    numeric = parts[-1] if len(parts) > 1 else ver
+    result = tuple(int(x) for x in numeric.split(".") if x.isdigit())
+    return result if result else _UNPARSEABLE_VERSION
+
+
 def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
     changes: list[Change] = []
     old_def = set(old_elf.versions_defined)
@@ -1245,13 +1269,44 @@ def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
     for lib in sorted(all_req_libs):
         old_vers = set(old_elf.versions_required.get(lib, []))
         new_vers = set(new_elf.versions_required.get(lib, []))
+        # The old maximum requirement for this lib — anything added that
+        # is *older* than this maximum is not a new constraint on the caller.
+        # If the lib is entirely new (not in old at all), its version
+        # requirements are already captured by needed_added → COMPATIBLE.
+        lib_is_new = lib not in old_elf.versions_required and lib not in getattr(old_elf, "needed", [])
+
+        # Compute old max PER VERSION-TAG PREFIX (e.g. "GLIBC", "GLIBCXX", "CXXABI")
+        # to avoid cross-namespace bleed: GLIBCXX_3.4.32 must not suppress a
+        # genuinely newer CXXABI_1.3.14 requirement.
+        def _old_max_for_prefix(prefix: str) -> tuple[int, ...]:
+            matching = [_parse_abi_version_tag(v) for v in old_vers
+                        if v.startswith(prefix + "_")]
+            return max(matching, default=(0,))
+
         for ver in sorted(new_vers - old_vers):
-            changes.append(Change(
-                kind=ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
-                symbol=ver,
-                description=f"New symbol version requirement: {ver} (from {lib})",
-                new_value=f"{lib}:{ver}",
-            ))
+            ver_tuple = _parse_abi_version_tag(ver)
+            prefix = ver.rsplit("_", 1)[0] if "_" in ver else ver
+            old_max = _old_max_for_prefix(prefix)
+            if lib_is_new or ver_tuple <= old_max:
+                # Either the whole lib is new (covered by needed_added), or the
+                # added requirement is not newer than the old max — COMPATIBLE.
+                changes.append(Change(
+                    kind=ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT,
+                    symbol=ver,
+                    description=(
+                        f"New symbol version requirement: {ver} (from {lib})"
+                        f" — not newer than previous max, backward-compatible"
+                    ),
+                    new_value=f"{lib}:{ver}",
+                ))
+            else:
+                # Genuinely newer requirement — callers on older runtimes will fail.
+                changes.append(Change(
+                    kind=ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+                    symbol=ver,
+                    description=f"New symbol version requirement: {ver} (from {lib})",
+                    new_value=f"{lib}:{ver}",
+                ))
         for ver in sorted(old_vers - new_vers):
             changes.append(Change(
                 kind=ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
