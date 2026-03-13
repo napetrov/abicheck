@@ -1,4 +1,4 @@
-"""ABICC XML descriptor parsing.
+"""Sprint 5: ABICC drop-in compatibility layer.
 
 Implements:
 - ABICC XML descriptor parsing (defusedxml, XXE-safe)
