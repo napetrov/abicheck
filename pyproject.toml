@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68,<76"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -69,6 +69,10 @@ markers = [
     "libabigail: requires abidiff + gcc/g++ — libabigail parity tests",
     "abicc: requires abi-compliance-checker + gcc/g++ — ABICC parity tests",
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["abicheck*"]
 
 [tool.coverage.run]
 branch = true
