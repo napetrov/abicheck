@@ -69,10 +69,30 @@ Core flags — fully supported:
 | `-warn-newsym` | | Treat new exported symbols as a break (exit 2) |
 | `-relpath PATH` | | Base path for relative paths in reports |
 
-Not supported (ABICC-only features):
-- `-xml` / `-dump` / `-dump-path` — ABICC's ABI dump generation; use `abicheck dump` instead
-- `-headers-only` — reserved, not yet implemented
-- `-cross-gcc` — cross-compilation checks not yet implemented
+Cross-compilation and advanced flags — also supported:
+
+| Flag | Description |
+|------|-------------|
+| `-gcc-path PATH` | Custom GCC/G++ path (passed to castxml) |
+| `-gcc-prefix PREFIX` | Cross-toolchain prefix, e.g. `aarch64-linux-gnu-` |
+| `-gcc-options FLAGS` | Extra compiler flags for castxml |
+| `-sysroot PATH` | Alternative sysroot |
+| `-nostdinc` | Skip standard include paths |
+| `-lang C\|C++` | Force language mode |
+| `-relpath1`/`-relpath2` | Per-side relpath substitution |
+| `-headers-only` | Accepted (ELF checks still run) |
+| `-v1num`/`-v2num` | ABICC 1.x version aliases → mapped to `-v1`/`-v2` |
+
+Dump workflow — supported via `abicheck compat-dump`:
+
+```bash
+# Create an ABI dump from an ABICC XML descriptor:
+abicheck compat-dump -lib libfoo -dump v1.xml
+abicheck compat-dump -lib libfoo -dump v2.xml
+abicheck compat -lib libfoo -old abi_dumps/libfoo/1.0/dump.json -new abi_dumps/libfoo/2.0/dump.json
+```
+
+See [abicc_compat.md](../abicc_compat.md) for the full flag reference.
 
 ---
 
