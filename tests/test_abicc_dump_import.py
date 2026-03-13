@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from abicheck.abicc_dump_import import (
+from abicheck.compat.abicc_dump_import import (
     _parse_perl_dumper_subset,
     _perl_expr_to_python_literal,
     _snapshot_from_abicc_dict,

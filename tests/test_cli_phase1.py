@@ -107,7 +107,7 @@ def test_compat_cmd_descriptor_parse_error_exits_6(tmp_path, monkeypatch):
     old_desc.write_text("<xml/>", encoding="utf-8")
     new_desc.write_text("<xml/>", encoding="utf-8")
 
-    monkeypatch.setattr("abicheck.cli.parse_descriptor", lambda *_, **__: (_ for _ in ()).throw(ValueError("bad")))
+    monkeypatch.setattr("abicheck.compat.cli.parse_descriptor", lambda *_, **__: (_ for _ in ()).throw(ValueError("bad")))
 
     runner = CliRunner()
     result = runner.invoke(
@@ -133,10 +133,10 @@ def test_compat_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypatch):
     old_d = SimpleNamespace(libs=[old_so], headers=[], version="1.0")
     new_d = SimpleNamespace(libs=[new_so], headers=[], version="2.0")
 
-    monkeypatch.setattr("abicheck.cli.parse_descriptor", lambda p, **_kw: old_d if p == old_desc else new_d)
-    monkeypatch.setattr("abicheck.cli.dump", lambda *_args, **_kwargs: _snap())
+    monkeypatch.setattr("abicheck.compat.cli.parse_descriptor", lambda p, **_kw: old_d if p == old_desc else new_d)
+    monkeypatch.setattr("abicheck.compat.cli.dump", lambda *_args, **_kwargs: _snap())
     monkeypatch.setattr(
-        "abicheck.cli.compare",
+        "abicheck.compat.cli.compare",
         lambda *_args, **_kwargs: DiffResult(
             old_version="1.0",
             new_version="2.0",
