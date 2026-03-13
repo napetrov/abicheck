@@ -18,6 +18,7 @@ Covers:
 """
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import textwrap
@@ -740,11 +741,20 @@ class TestCompatExtendedExitCodeMapping:
         [
             (FileNotFoundError("missing"), "parsing descriptor", 4),
             (PermissionError("denied"), "parsing descriptor", 4),
+            (OSError(errno.ENOENT, "missing input"), "during dump", 4),
+            (OSError(errno.EACCES, "permission denied"), "during dump", 4),
+            (OSError(errno.EPERM, "operation not permitted"), "during dump", 4),
             (RuntimeError("castxml not found in PATH"), "during dump", 3),
+            (RuntimeError("cannot compile headers"), "during dump", 5),
             (RuntimeError("castxml failed (exit 1): fatal error: foo.h: No such file or directory"), "during dump", 5),
             (RuntimeError("castxml failed (exit 1): compilation terminated"), "during dump", 5),
+            (RuntimeError("command not found"), "during dump", 3),
+            (RuntimeError("No such file or directory"), "other", 3),
             (ValueError("invalid regex"), "in skip-symbols/skip-types", 6),
             (ValueError("invalid regex"), "in skip-internal-symbols/skip-internal-types", 6),
+            (ValueError("bad descriptor"), "parsing descriptor", 6),
+            (ValueError("bad logging mode"), "setting up logging", 6),
+            (RuntimeError("cannot write"), "report generation", 7),
             (OSError("disk full"), "writing report output", 7),
             (RuntimeError("unexpected pipeline crash"), "during dump", 8),
             (RuntimeError("unexpected internal error"), "other", 10),
