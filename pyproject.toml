@@ -5,9 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "abicheck"
 version = "0.1.0"
-description = "ABI compatibility checker for C/C++ shared libraries (ELF/DWARF/castxml multi-tier analysis)"
+description = "ABI compatibility checker for C/C++ shared libraries"
 readme = "README.md"
 license = {text = "Apache-2.0"}
+authors = [{name = "Nikolay Petrov", email = "nikolay.a.petrov@intel.com"}]
 requires-python = ">=3.10"
 keywords = ["abi", "api", "compatibility", "checker", "shared-library", "elf", "dwarf", "castxml"]
 classifiers = [
@@ -29,9 +30,8 @@ dependencies = [
     "click>=8.0",
     "pyyaml>=6.0",
     "defusedxml>=0.7.1",
-    "pyelftools>=0.29",   # ELF/DWARF parsing — Sprint 2+ (ADR-001)
-    "google-re2>=1.1",    # RE2 suppression engine — Phase 2 (O(N) guaranteed)
-    "packaging>=21.0",    # Version comparison for suppression version_range (Phase 2b)
+    "pyelftools>=0.29",   # ELF/DWARF parsing
+    "packaging>=21.0",    # Version comparison for suppression version_range
 ]
 
 [project.scripts]
@@ -39,6 +39,7 @@ abicheck = "abicheck.cli:main"
 
 [project.urls]
 Repository = "https://github.com/napetrov/abicheck"
+Documentation = "https://napetrov.github.io/abicheck/"
 "Bug Tracker" = "https://github.com/napetrov/abicheck/issues"
 Changelog = "https://github.com/napetrov/abicheck/blob/main/CHANGELOG.md"
 
