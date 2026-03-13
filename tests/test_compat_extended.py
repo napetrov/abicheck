@@ -765,3 +765,15 @@ class TestCompatExtendedExitCodeMapping:
         from abicheck.cli import _classify_compat_error_exit_code
 
         assert _classify_compat_error_exit_code(exc, context=context) == expected
+
+
+class TestCompatFailHelper:
+    def test_compat_fail_raises_system_exit_with_classified_code(self, capsys) -> None:
+        from abicheck.cli import _compat_fail
+
+        with pytest.raises(SystemExit) as excinfo:
+            _compat_fail("parsing descriptor", ValueError("bad descriptor"))
+
+        assert excinfo.value.code == 6
+        err = capsys.readouterr().err
+        assert "Error parsing descriptor" in err

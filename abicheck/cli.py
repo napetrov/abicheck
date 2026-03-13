@@ -1257,7 +1257,10 @@ def compat_cmd(  # noqa: PLR0913
             / f"compat_report.{ext}"
         )
 
-    report_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _compat_fail("writing report output", exc)
 
     # Build effective title
     effective_title = title
@@ -1300,29 +1303,32 @@ def compat_cmd(  # noqa: PLR0913
             path.write_text(to_markdown(r), encoding="utf-8")
 
     # Write primary report
-    _generate_report(result, report_path)
+    try:
+        _generate_report(result, report_path)
 
-    # -bin-report-path / -src-report-path: generate split reports
-    if bin_report_path:
-        bin_report_path.parent.mkdir(parents=True, exist_ok=True)
-        bin_result = _filter_binary_only(full_result)
-        _generate_report(bin_result, bin_report_path)
-        _do_echo(f"Binary report: {bin_report_path}", quiet)
+        # -bin-report-path / -src-report-path: generate split reports
+        if bin_report_path:
+            bin_report_path.parent.mkdir(parents=True, exist_ok=True)
+            bin_result = _filter_binary_only(full_result)
+            _generate_report(bin_result, bin_report_path)
+            _do_echo(f"Binary report: {bin_report_path}", quiet)
 
-    if src_report_path:
-        src_report_path.parent.mkdir(parents=True, exist_ok=True)
-        src_result = _filter_source_only(full_result)
-        _generate_report(src_result, src_report_path)
-        _do_echo(f"Source report: {src_report_path}", quiet)
+        if src_report_path:
+            src_report_path.parent.mkdir(parents=True, exist_ok=True)
+            src_result = _filter_source_only(full_result)
+            _generate_report(src_result, src_report_path)
+            _do_echo(f"Source report: {src_report_path}", quiet)
 
-    # -list-affected: write affected symbols to separate file
-    if list_affected:
-        affected_path = report_path.with_suffix(".affected.txt")
-        _write_affected_list(result, affected_path)
-        _do_echo(f"Affected symbols: {affected_path}", quiet)
+        # -list-affected: write affected symbols to separate file
+        if list_affected:
+            affected_path = report_path.with_suffix(".affected.txt")
+            _write_affected_list(result, affected_path)
+            _do_echo(f"Affected symbols: {affected_path}", quiet)
 
-    if to_stdout:
-        click.echo(report_path.read_text(encoding="utf-8"))
+        if to_stdout:
+            click.echo(report_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        _compat_fail("writing report output", exc)
 
     # Compute BC% for console output (matches ABICC console format)
     from .report_summary import compatibility_metrics  # noqa: PLC0415
