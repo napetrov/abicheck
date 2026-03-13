@@ -278,7 +278,7 @@ Legend: ✅ correct · ⚠️ wrong/undercounted · ❌ wrong · ⏱️ timeout
 ## Architecture and dependencies
 
 ```text
-CLI (abicheck dump | compare | compat)
+CLI (abicheck dump | compare | compat-dump | compat)
   -> Dumper (castxml + ELF/DWARF metadata)
   -> Checker engine (detector orchestration)
        -> Checker policy (ChangeKind + verdict registry)

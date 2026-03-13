@@ -41,7 +41,7 @@ previously uncovered cases that bring the suite to 62/62.
 | `dwarf_metadata.py` | 306 | 118 | 130 | 32 | **56%** |
 | `elf_metadata.py` | 119 | 61 | 44 | 0 | **36%** |
 | `cli.py` | 132 | 132 | 40 | 0 | **0%** |
-| `compat.py` | 46 | 46 | 10 | 0 | **0%** |
+| `compat/` | — | — | — | — | (subpackage, see compat/*.py) |
 | `dumper.py` | 336 | 336 | 140 | 0 | **0%** |
 | **TOTAL** | **2135** | **797** | **814** | **79** | **60%** |
 
@@ -69,7 +69,7 @@ Both parse real ELF binaries via `pyelftools`/`readelf`. Unit tests mock the
 data; integration paths require compiled `.so` with debug symbols.
 Covered by `test_elf_parse_integration.py` (needs `readelf` on CI).
 
-### 🔴 cli.py / compat.py / dumper.py — 0%
+### 🔴 cli.py / compat/ / dumper.py — 0%
 These require the `abicheck` CLI binary in PATH + real `.so` files.
 Covered by `test_cli_phase1.py` / `test_compat.py` / `test_dumper_phase1.py`
 in integration mode (need `castxml` + `gcc`).
@@ -81,7 +81,7 @@ in integration mode (need `castxml` + `gcc`).
 | Priority | Action | Expected gain |
 |---|---|---|
 | P1 | Fix CLI test fixture: add `abicheck` to PATH in CI | +5% (cli.py) |
-| P1 | Add `compat.py` unit tests with mocked checker output | +2% |
+| P1 | Add `abicheck/compat/` unit tests with mocked checker output | +2% |
 | P2 | `dwarf_metadata.py` mock-based tests for DWARF DIE parsing | +5% |
 | P2 | `elf_metadata.py` tests with prebuilt minimal ELF fixtures | +3% |
 | P3 | `dumper.py` snapshot serialization round-trip tests | +5% |

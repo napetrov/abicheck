@@ -1,4 +1,4 @@
-"""CLI — abicheck dump | compare | scan | compat."""
+"""CLI — abicheck dump | compare | compat-dump | compat."""
 from __future__ import annotations
 
 import sys
