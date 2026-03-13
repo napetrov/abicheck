@@ -28,7 +28,8 @@ from types import SimpleNamespace
 import pytest
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
-from abicheck.cli import (
+from abicheck.compat import CompatDescriptor, parse_descriptor
+from abicheck.compat.cli import (
     _apply_warn_newsym,
     _build_internal_suppression,
     _build_skip_suppression,
@@ -40,7 +41,6 @@ from abicheck.cli import (
     _warn_stub_flags,
     _write_affected_list,
 )
-from abicheck.compat import CompatDescriptor, parse_descriptor
 from abicheck.html_report import generate_html_report
 from abicheck.model import AbiSnapshot, Function, Visibility
 from abicheck.serialization import save_snapshot
@@ -883,3 +883,5 @@ class TestCompatFailHelper:
         assert excinfo.value.code == 6
         err = capsys.readouterr().err
         assert "Error parsing descriptor" in err
+
+
