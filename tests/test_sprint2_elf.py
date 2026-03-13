@@ -347,3 +347,55 @@ def test_visibility_leak_not_fired_for_clean_public_symbols() -> None:
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.VISIBILITY_LEAK not in kinds
+
+
+def test_symbol_version_required_added_older_is_compat() -> None:
+    """Adding an OLDER version requirement (e.g. GLIBC_2.2.5 when max was GLIBC_2.34)
+    is NOT breaking — callers already satisfied the higher requirement.
+
+    Regression: oneTBB 2021.11→2021.13 false-positive BREAKING (issue tbb-fp-01).
+    """
+    old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]}))
+    new = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34", "GLIBC_2.2.5"]}))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    # Should be COMPAT kind, not BREAKING kind
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED not in kinds, (
+        "Adding GLIBC_2.2.5 when max was GLIBC_2.34 must not be BREAKING"
+    )
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT in kinds
+    assert result.verdict == Verdict.COMPATIBLE
+
+
+def test_symbol_version_required_added_newer_is_breaking() -> None:
+    """Adding a NEWER version requirement IS breaking — callers on older runtimes fail.
+
+    Original behavior must be preserved.
+    """
+    old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5"]}))
+    new = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]}))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kinds
+    assert result.verdict == Verdict.BREAKING
+
+
+def test_symbol_version_required_added_new_dep_is_compat() -> None:
+    """Adding version requirements for a brand-new DT_NEEDED lib is COMPATIBLE.
+
+    The lib addition itself is captured by needed_added; its version requirements
+    don't add extra constraints on callers who already link the old binary.
+
+    Regression: oneTBB 2021.13 adds libdl.so.2 / GLIBC_2.2.5 false-positive.
+    """
+    old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5"]}))
+    # libdl.so.2 is entirely new — wasn't in old
+    new = _snap(_elf(versions_required={
+        "libc.so.6": ["GLIBC_2.5"],
+        "libdl.so.2": ["GLIBC_2.2.5"],
+    }))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED not in kinds, (
+        "Version requirements for a newly-added lib must not be BREAKING"
+    )

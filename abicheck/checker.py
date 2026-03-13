@@ -1222,6 +1222,22 @@ def _diff_needed_libraries(old_needed: list[str], new_needed: list[str]) -> list
     return changes
 
 
+def _parse_abi_version_tag(ver: str) -> tuple[int, ...]:
+    """Parse a versioned symbol tag like ``GLIBC_2.34`` or ``GLIBCXX_3.4.19``
+    into a comparable integer tuple.
+
+    Only the numeric suffix after the last underscore-separated prefix is used.
+    Unknown / non-numeric tags fall back to ``(0,)``.
+    """
+    # Strip prefix: "GLIBC_2.34" -> "2.34", "GLIBCXX_3.4.19" -> "3.4.19"
+    parts = ver.rsplit("_", 1)
+    numeric = parts[-1] if len(parts) > 1 else ver
+    try:
+        return tuple(int(x) for x in numeric.split(".") if x.isdigit())
+    except (ValueError, AttributeError):
+        return (0,)
+
+
 def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
     changes: list[Change] = []
     old_def = set(old_elf.versions_defined)
@@ -1245,13 +1261,34 @@ def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
     for lib in sorted(all_req_libs):
         old_vers = set(old_elf.versions_required.get(lib, []))
         new_vers = set(new_elf.versions_required.get(lib, []))
+        # The old maximum requirement for this lib — anything added that
+        # is *older* than this maximum is not a new constraint on the caller.
+        # If the lib is entirely new (not in old at all), its version
+        # requirements are already captured by needed_added → COMPATIBLE.
+        lib_is_new = lib not in old_elf.versions_required and lib not in getattr(old_elf, "needed", [])
+        old_max = max((_parse_abi_version_tag(v) for v in old_vers), default=(0,))
         for ver in sorted(new_vers - old_vers):
-            changes.append(Change(
-                kind=ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
-                symbol=ver,
-                description=f"New symbol version requirement: {ver} (from {lib})",
-                new_value=f"{lib}:{ver}",
-            ))
+            ver_tuple = _parse_abi_version_tag(ver)
+            if lib_is_new or ver_tuple <= old_max:
+                # Either the whole lib is new (covered by needed_added), or the
+                # added requirement is not newer than the old max — COMPATIBLE.
+                changes.append(Change(
+                    kind=ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT,
+                    symbol=ver,
+                    description=(
+                        f"New symbol version requirement: {ver} (from {lib})"
+                        f" — not newer than previous max, backward-compatible"
+                    ),
+                    new_value=f"{lib}:{ver}",
+                ))
+            else:
+                # Genuinely newer requirement — callers on older runtimes will fail.
+                changes.append(Change(
+                    kind=ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+                    symbol=ver,
+                    description=f"New symbol version requirement: {ver} (from {lib})",
+                    new_value=f"{lib}:{ver}",
+                ))
         for ver in sorted(old_vers - new_vers):
             changes.append(Change(
                 kind=ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,

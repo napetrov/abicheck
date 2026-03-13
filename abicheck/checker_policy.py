@@ -86,7 +86,8 @@ class ChangeKind(str, Enum):
     # Symbol versioning contract
     SYMBOL_VERSION_DEFINED_REMOVED = "symbol_version_defined_removed"
     SYMBOL_VERSION_DEFINED_ADDED = "symbol_version_defined_added"   # versioning introduced
-    SYMBOL_VERSION_REQUIRED_ADDED = "symbol_version_required_added"   # new GLIBC_X
+    SYMBOL_VERSION_REQUIRED_ADDED = "symbol_version_required_added"   # new GLIBC_X — newer than old max (BREAKING)
+    SYMBOL_VERSION_REQUIRED_ADDED_COMPAT = "symbol_version_required_added_compat"  # added but older than old max (COMPATIBLE)
     SYMBOL_VERSION_REQUIRED_REMOVED = "symbol_version_required_removed"
 
     # DWARF layout (Sprint 3)
@@ -311,6 +312,10 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
     ChangeKind.RPATH_CHANGED,
     ChangeKind.COMMON_SYMBOL_RISK,        # STT_COMMON — risk, not proven break
     ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
+    # Added version tag that is OLDER than the library's previous maximum
+    # requirement — callers already satisfying the old requirement trivially
+    # satisfy this one.  No new runtime constraint imposed.
+    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT,
     ChangeKind.SYMBOL_BINDING_STRENGTHENED,  # WEAK→GLOBAL: backward-compatible for most consumers
 
     # GLOBAL→WEAK: symbol still exported and resolvable by the dynamic
