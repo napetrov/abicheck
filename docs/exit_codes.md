@@ -53,14 +53,29 @@ Matches `abi-compliance-checker` exit codes (ABICC drop-in):
 |-----------|---------|
 | `0` | No breaking changes (`NO_CHANGE` or `COMPATIBLE`) |
 | `1` | `BREAKING` (mirrors ABICC) |
-| `2` | `API_BREAK` **or** tool error (descriptor parse failure, missing `.so`, etc.) |
+| `2` | `API_BREAK` (source-level break; non-verdict failures use extended codes below) |
 
-> **⚠️ In `compat` mode, exit `2` covers both `API_BREAK` and tool errors.**
-> Always pre-validate that your XML descriptor files exist before running.
-> To disambiguate: use `--format json` — a tool error produces no `changes`
-> in the JSON output, while a real `API_BREAK` will have change entries.
+> Non-verdict/tool failures are classified via **Extended compat error codes (ABICC-style)** below (`3`, `4`, `5`, `6`, `7`, `8`, `10`, `11`).
 
 ---
+
+
+### Extended compat error codes (ABICC-style)
+
+In `abicheck compat`, non-verdict failures are further classified where possible:
+
+| Exit code | Typical cause |
+|-----------|---------------|
+| `3` | Required external command/tool is missing (for example `castxml`) |
+| `4` | Cannot access input files (missing or permission denied) |
+| `5` | Header compile/parsing failure during dump |
+| `6` | Invalid compat configuration/input (descriptor, suppression, regex flags) |
+| `7` | Failed to write report/output artifact |
+| `8` | Dump/analysis pipeline failure |
+| `10` | Generic internal/tool failure fallback |
+| `11` | Interrupted run |
+
+> Note: classification is best-effort and context-dependent; `API_BREAK` remains `2`.
 
 ## Summary table
 
@@ -70,7 +85,7 @@ Matches `abi-compliance-checker` exit codes (ABICC drop-in):
 | `COMPATIBLE` | `0` | `0` |
 | `API_BREAK` | `2` | `2` |
 | `BREAKING` | `4` | `1` |
-| Tool error | `1` | `2` |
+| Tool error | `1` | `3/4/5/6/7/8/10/11` |
 
 ---
 

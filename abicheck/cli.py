@@ -1,6 +1,7 @@
 """CLI — abicheck dump | compare | scan | compat."""
 from __future__ import annotations
 
+import errno
 import logging
 import re as _re
 import sys
@@ -616,6 +617,73 @@ def _warn_stub_flags(quiet: bool, **kwargs: object) -> None:
             _do_echo(f"Warning: {help_text}", quiet)
 
 
+def _classify_compat_error_exit_code(exc: BaseException, *, context: str = "") -> int:
+    """Classify compat-mode failures into ABICC-style extended exit codes.
+
+    Codes used:
+      3  - missing external command/tooling
+      4  - cannot access input files
+      5  - header compilation/parsing failed
+      6  - invalid descriptor/config/suppression inputs
+      7  - failed to write report/output artifacts
+      8  - dump/analysis pipeline failure
+      10 - generic internal/tool error fallback
+      11 - interrupted run
+    """
+    if isinstance(exc, KeyboardInterrupt):
+        return 11
+
+    msg = str(exc).lower()
+    ctx = context.lower()
+
+    tool_missing_msg = any(
+        k in msg for k in ("not found in path", "command not found")
+    )
+    tool_missing_ctx = any(k in ctx for k in ("castxml", "compiler tool", "external tool"))
+
+    if isinstance(exc, FileNotFoundError):
+        if tool_missing_msg or tool_missing_ctx:
+            return 3
+        return 4
+    if isinstance(exc, PermissionError):
+        return 4
+
+    if isinstance(exc, OSError):
+        if exc.errno in (errno.ENOENT,):
+            if tool_missing_msg or tool_missing_ctx:
+                return 3
+            return 4
+        if exc.errno in (errno.EACCES, errno.EPERM):
+            return 4
+        if "report" in ctx or "output" in ctx:
+            return 7
+
+    if "castxml failed" in msg or "cannot compile" in msg or "compilation terminated" in msg:
+        return 5
+
+    if any(k in msg for k in ("not found in path", "command not found", "no such file or directory")):
+        return 3
+
+    if any(k in ctx for k in (
+        "descriptor", "skip-symbols", "symbols-list", "skip-internal", "suppression", "logging"
+    )):
+        return 6
+
+    if "report" in ctx or "output" in ctx:
+        return 7
+
+    if "dump" in ctx:
+        return 8
+
+    return 10
+
+
+def _compat_fail(context: str, exc: BaseException) -> None:
+    """Print compat-mode error and exit with ABICC-style code."""
+    click.echo(f"Error {context}: {exc}", err=True)
+    sys.exit(_classify_compat_error_exit_code(exc, context=context))
+
+
 # ── compat dump subcommand ────────────────────────────────────────────────────
 
 @main.command("compat-dump")
@@ -706,8 +774,7 @@ def compat_dump_cmd(
     try:
         desc = parse_descriptor(desc_path, relpath=relpath)
     except (ValueError, FileNotFoundError, OSError) as exc:
-        click.echo(f"Error parsing descriptor: {exc}", err=True)
-        sys.exit(2)
+        _compat_fail("parsing descriptor", exc)
 
     if vnum:
         desc = desc.__class__(
@@ -732,8 +799,7 @@ def compat_dump_cmd(
             sysroot=sysroot, nostdinc=nostdinc, lang=lang,
         )
     except Exception as exc:  # noqa: BLE001
-        click.echo(f"Error during dump: {exc}", err=True)
-        sys.exit(2)
+        _compat_fail("during dump", exc)
 
     # Override library name to match -lib flag
     snap = snap.__class__(
@@ -990,7 +1056,8 @@ def compat_cmd(  # noqa: PLR0913
     Exit codes mirror ABICC:
       0 — compatible or no change (NO_CHANGE, COMPATIBLE)
       1 — breaking ABI change detected (BREAKING)
-      2 — source-level break (API_BREAK) or error
+      2 — source-level break (API_BREAK)
+      3-11 — classified compat-mode errors (best-effort mapping)
 
     Note: with -strict, API_BREAK is promoted to exit 1.
 
@@ -1008,8 +1075,7 @@ def compat_cmd(  # noqa: PLR0913
     try:
         _log1_handler, _log2_handler = _setup_logging(log_path, log1_path, log2_path, logging_mode, quiet)
     except OSError as exc:
-        click.echo(f"Error setting up logging: {exc}", err=True)
-        sys.exit(2)
+        _compat_fail("setting up logging", exc)
 
     # ── Warn about P2 stub flags ─────────────────────────────────────────
     _warn_stub_flags(
@@ -1067,8 +1133,7 @@ def compat_cmd(  # noqa: PLR0913
         old_d = _load_descriptor_or_dump(old_desc, relpath=old_relpath)
         new_d = _load_descriptor_or_dump(new_desc, relpath=new_relpath)
     except (ValueError, FileNotFoundError, OSError) as exc:
-        click.echo(f"Error parsing descriptor: {exc}", err=True)
-        sys.exit(2)
+        _compat_fail("parsing descriptor", exc)
 
     # ── Load skip-headers set ────────────────────────────────────────────
     _skip_headers_set = _load_skip_headers(skip_headers)
@@ -1114,8 +1179,7 @@ def compat_cmd(  # noqa: PLR0913
             skip_headers=_skip_headers_set or None,
         )
         if not so.exists():
-            click.echo(f"Error: library not found: {so}", err=True)
-            sys.exit(2)
+            _compat_fail("accessing input files", FileNotFoundError(f"library not found: {so}"))
         snap = dump(
             so, headers=hdrs, version=desc.version,
             gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
@@ -1146,8 +1210,7 @@ def compat_cmd(  # noqa: PLR0913
             _log1_handler.close()
         if _log2_handler is not None:
             _log2_handler.close()
-        click.echo(f"Error during dump: {exc}", err=True)
-        sys.exit(2)
+        _compat_fail("during dump", exc)
 
     if headers_only:
         _do_echo("Note: -headers-only is accepted — ELF/DWARF checks still run.", quiet)
@@ -1159,18 +1222,16 @@ def compat_cmd(  # noqa: PLR0913
     if skip_symbols_path is not None or skip_types_path is not None:
         try:
             suppression = _build_skip_suppression(skip_symbols_path, skip_types_path)
-        except ValueError as exc:
-            click.echo(f"Error in skip-symbols/skip-types: {exc}", err=True)
-            sys.exit(2)
+        except (ValueError, OSError) as exc:
+            _compat_fail("in skip-symbols/skip-types", exc)
 
     # -symbols-list / -types-list: whitelist (inverse of skip)
     if symbols_list_path is not None or types_list_path is not None:
         try:
             wl = _build_whitelist_suppression(symbols_list_path, types_list_path)
             suppression = _merge_suppression(suppression, wl)
-        except ValueError as exc:
-            click.echo(f"Error in symbols-list/types-list: {exc}", err=True)
-            sys.exit(2)
+        except (ValueError, OSError) as exc:
+            _compat_fail("in symbols-list/types-list", exc)
 
     # -skip-internal-symbols / -skip-internal-types: regex-based skip
     if skip_internal_symbols is not None or skip_internal_types is not None:
@@ -1178,16 +1239,14 @@ def compat_cmd(  # noqa: PLR0913
             internal = _build_internal_suppression(skip_internal_symbols, skip_internal_types)
             suppression = _merge_suppression(suppression, internal)
         except ValueError as exc:
-            click.echo(f"Error in skip-internal-symbols/skip-internal-types: {exc}", err=True)
-            sys.exit(2)
+            _compat_fail("in skip-internal-symbols/skip-internal-types", exc)
 
     # --suppress: YAML suppression file
     if suppress is not None:
         try:
             file_suppression = SuppressionList.load(suppress)
         except (ValueError, OSError) as exc:
-            click.echo(f"Error loading suppression file: {exc}", err=True)
-            sys.exit(2)
+            _compat_fail("loading suppression file", exc)
         suppression = _merge_suppression(suppression, file_suppression)
 
     result = compare(old_snap, new_snap, suppression=suppression, policy="strict_abi")
@@ -1236,7 +1295,10 @@ def compat_cmd(  # noqa: PLR0913
             / f"compat_report.{ext}"
         )
 
-    report_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _compat_fail("writing report output", exc)
 
     # Build effective title
     effective_title = title
@@ -1279,29 +1341,32 @@ def compat_cmd(  # noqa: PLR0913
             path.write_text(to_markdown(r), encoding="utf-8")
 
     # Write primary report
-    _generate_report(result, report_path)
+    try:
+        _generate_report(result, report_path)
 
-    # -bin-report-path / -src-report-path: generate split reports
-    if bin_report_path:
-        bin_report_path.parent.mkdir(parents=True, exist_ok=True)
-        bin_result = _filter_binary_only(full_result)
-        _generate_report(bin_result, bin_report_path)
-        _do_echo(f"Binary report: {bin_report_path}", quiet)
+        # -bin-report-path / -src-report-path: generate split reports
+        if bin_report_path:
+            bin_report_path.parent.mkdir(parents=True, exist_ok=True)
+            bin_result = _filter_binary_only(full_result)
+            _generate_report(bin_result, bin_report_path)
+            _do_echo(f"Binary report: {bin_report_path}", quiet)
 
-    if src_report_path:
-        src_report_path.parent.mkdir(parents=True, exist_ok=True)
-        src_result = _filter_source_only(full_result)
-        _generate_report(src_result, src_report_path)
-        _do_echo(f"Source report: {src_report_path}", quiet)
+        if src_report_path:
+            src_report_path.parent.mkdir(parents=True, exist_ok=True)
+            src_result = _filter_source_only(full_result)
+            _generate_report(src_result, src_report_path)
+            _do_echo(f"Source report: {src_report_path}", quiet)
 
-    # -list-affected: write affected symbols to separate file
-    if list_affected:
-        affected_path = report_path.with_suffix(".affected.txt")
-        _write_affected_list(result, affected_path)
-        _do_echo(f"Affected symbols: {affected_path}", quiet)
+        # -list-affected: write affected symbols to separate file
+        if list_affected:
+            affected_path = report_path.with_suffix(".affected.txt")
+            _write_affected_list(result, affected_path)
+            _do_echo(f"Affected symbols: {affected_path}", quiet)
 
-    if to_stdout:
-        click.echo(report_path.read_text(encoding="utf-8"))
+        if to_stdout:
+            click.echo(report_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        _compat_fail("writing report output", exc)
 
     # Compute BC% for console output (matches ABICC console format)
     from .report_summary import compatibility_metrics  # noqa: PLC0415
