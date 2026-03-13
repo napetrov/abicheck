@@ -24,7 +24,7 @@ from pathlib import Path
 from defusedxml.ElementTree import fromstring as xml_fromstring
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
-from abicheck.xml_report import generate_xml_report, write_xml_report
+from abicheck.compat.xml_report import generate_xml_report, write_xml_report
 
 
 def _make_result(
