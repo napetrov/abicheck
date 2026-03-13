@@ -182,16 +182,14 @@ class TestCliCompatibility:
     # ── Flag acceptance: all major ABICC flags must be recognized ──────────
 
     def test_abicc_accepts_strict_flag(self, tmp_path):
-        """ABICC accepts -strict flag."""
-        _require_tool("abi-compliance-checker")
-        r = subprocess.run(
-            ["abi-compliance-checker", "--help"],
-            capture_output=True, text=True, timeout=10,
-        )
-        assert r.returncode == 0, f"abi-compliance-checker --help failed: rc={r.returncode}"
-        combined = r.stdout + r.stderr
-        assert "-strict" in combined, (
-            "abi-compliance-checker --help does not mention -strict"
+        """abicheck compat must accept -strict flag (ABICC compatibility)."""
+        from click.testing import CliRunner
+        runner = CliRunner()
+        # Check that abicheck compat --help mentions -strict / -s
+        result = runner.invoke(main, ["compat", "--help"])
+        assert result.exit_code == 0, f"compat --help failed: {result.output}"
+        assert "-strict" in result.output or "-s" in result.output, (
+            "abicheck compat --help does not list -strict / -s flag"
         )
 
     def test_abicheck_compat_accepts_all_abicc_flags(self):

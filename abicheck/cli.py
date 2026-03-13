@@ -23,9 +23,11 @@ if TYPE_CHECKING:
     from .checker import DiffResult
     from .model import AbiSnapshot
     from .suppression import SuppressionList
+from . import __version__ as _abicheck_version
 
 
 @click.group()
+@click.version_option(version=_abicheck_version, prog_name="abicheck")
 def main() -> None:
     """abicheck — ABI compatibility checker for C/C++ shared libraries."""
 
@@ -50,7 +52,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
     Example:
       abicheck dump libfoo.so.1 -H include/foo.h --version 1.2.3 -o snap.json
     """
-    from .core.errors import AbicheckError
+    from .errors import AbicheckError
 
     try:
         snap = dump(
