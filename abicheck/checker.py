@@ -1274,9 +1274,19 @@ def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
         # If the lib is entirely new (not in old at all), its version
         # requirements are already captured by needed_added → COMPATIBLE.
         lib_is_new = lib not in old_elf.versions_required and lib not in getattr(old_elf, "needed", [])
-        old_max = max((_parse_abi_version_tag(v) for v in old_vers), default=(0,))
+
+        # Compute old max PER VERSION-TAG PREFIX (e.g. "GLIBC", "GLIBCXX", "CXXABI")
+        # to avoid cross-namespace bleed: GLIBCXX_3.4.32 must not suppress a
+        # genuinely newer CXXABI_1.3.14 requirement.
+        def _old_max_for_prefix(prefix: str) -> tuple[int, ...]:
+            matching = [_parse_abi_version_tag(v) for v in old_vers
+                        if v.startswith(prefix + "_")]
+            return max(matching, default=(0,))
+
         for ver in sorted(new_vers - old_vers):
             ver_tuple = _parse_abi_version_tag(ver)
+            prefix = ver.rsplit("_", 1)[0] if "_" in ver else ver
+            old_max = _old_max_for_prefix(prefix)
             if lib_is_new or ver_tuple <= old_max:
                 # Either the whole lib is new (covered by needed_added), or the
                 # added requirement is not newer than the old max — COMPATIBLE.

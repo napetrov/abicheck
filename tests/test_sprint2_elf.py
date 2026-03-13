@@ -399,6 +399,11 @@ def test_symbol_version_required_added_new_dep_is_compat() -> None:
     assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED not in kinds, (
         "Version requirements for a newly-added lib must not be BREAKING"
     )
+    # Positive assertions: the compat kind must appear and verdict must be COMPATIBLE
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT in kinds, (
+        "Version requirements for a newly-added lib must produce COMPAT kind"
+    )
+    assert result.verdict == Verdict.COMPATIBLE
 
 
 def test_symbol_version_required_tbb_like_upgrade() -> None:
@@ -466,4 +471,25 @@ def test_symbol_version_required_private_tag_is_breaking() -> None:
         "Adding GLIBC_PRIVATE must be treated as BREAKING"
     )
     assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT not in kinds
+    assert result.verdict == Verdict.BREAKING
+
+
+def test_symbol_version_required_cross_namespace_no_bleed() -> None:
+    """Adding newer CXXABI_1.3.14 must be BREAKING even if GLIBCXX_3.4.32 dominates old_max.
+
+    Without per-prefix grouping, GLIBCXX_3.4.32 (as global old_max=3.4.32) would
+    cause CXXABI_1.3.14 (1.3.14 <= 3.4.32) to be misclassified as COMPAT.
+    Fix: old_max is computed per version-tag prefix, not globally.
+    """
+    old = _snap(_elf(versions_required={
+        "libstdc++.so.6": ["GLIBCXX_3.4.32", "CXXABI_1.3.13"],
+    }))
+    new = _snap(_elf(versions_required={
+        "libstdc++.so.6": ["GLIBCXX_3.4.32", "CXXABI_1.3.13", "CXXABI_1.3.14"],
+    }))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kinds, (
+        "Adding newer CXXABI_1.3.14 must be BREAKING regardless of GLIBCXX version"
+    )
     assert result.verdict == Verdict.BREAKING
