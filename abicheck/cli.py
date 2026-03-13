@@ -14,7 +14,9 @@ from .serialization import load_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
     from .suppression import SuppressionList
+
 from . import __version__ as _abicheck_version
+from .model import AbiSnapshot
 
 
 def _is_elf(path: Path) -> bool:
@@ -39,6 +41,10 @@ def _resolve_input(
     - JSON file → load_snapshot()
     - ABICC Perl dump → import_abicc_perl_dump()
     """
+    from .abicc_dump_import import (  # noqa: PLC0415
+        import_abicc_perl_dump,
+        looks_like_perl_dump,
+    )
     from .errors import AbicheckError  # noqa: PLC0415
 
     if _is_elf(path):
