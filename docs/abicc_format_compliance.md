@@ -61,11 +61,11 @@ infrastructure) would continue to work with abicheck's output.
 | 3 | System command not found | Missing tool/command | PARTIAL |
 | 4 | Cannot access input files | File access/input errors | PARTIAL |
 | 5 | Cannot compile headers | castxml/header compile failure | PARTIAL |
-| 6-11 | Various specific errors | Classified by error context | PARTIAL |
+| 6,7,8,10,11 | Various specific errors | Classified by error context | PARTIAL |
 
-The primary verdict codes (0/1/2) match. ABICC's extended codes (3-11) are
-classified on a best-effort basis in compat mode; unknown internal failures
-use a generic fallback code.
+The primary verdict codes (0/1/2) match. Extended compat codes currently emitted are
+3, 4, 5, 6, 7, 8, 10, and 11 (best-effort classification); code 9 is not currently
+emitted, and unknown internal failures use fallback code 10.
 
 The `-strict` promotion (API_BREAK → exit 1) also matches.
 

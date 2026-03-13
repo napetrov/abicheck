@@ -1184,7 +1184,7 @@ def compat_cmd(  # noqa: PLR0913
     if skip_symbols_path is not None or skip_types_path is not None:
         try:
             suppression = _build_skip_suppression(skip_symbols_path, skip_types_path)
-        except ValueError as exc:
+        except (ValueError, OSError) as exc:
             _compat_fail("in skip-symbols/skip-types", exc)
 
     # -symbols-list / -types-list: whitelist (inverse of skip)
@@ -1192,7 +1192,7 @@ def compat_cmd(  # noqa: PLR0913
         try:
             wl = _build_whitelist_suppression(symbols_list_path, types_list_path)
             suppression = _merge_suppression(suppression, wl)
-        except ValueError as exc:
+        except (ValueError, OSError) as exc:
             _compat_fail("in symbols-list/types-list", exc)
 
     # -skip-internal-symbols / -skip-internal-types: regex-based skip

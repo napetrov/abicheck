@@ -301,6 +301,41 @@ class TestCompatClassifiedErrorPaths:
         ])
         assert result.exit_code == 6
 
+
+    def test_skip_symbols_missing_file_exits_4(self, tmp_path, monkeypatch):
+        old = tmp_path / "old.xml"
+        new = tmp_path / "new.xml"
+        old.write_text("<descriptor/>", encoding="utf-8")
+        new.write_text("<descriptor/>", encoding="utf-8")
+
+        snaps = [self._snap("1.0"), self._snap("2.0")]
+        monkeypatch.setattr("abicheck.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
+
+        missing = tmp_path / "missing_skip.txt"
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "-skip-symbols", str(missing),
+        ])
+        assert result.exit_code == 4
+
+    def test_symbols_list_missing_file_exits_4(self, tmp_path, monkeypatch):
+        old = tmp_path / "old.xml"
+        new = tmp_path / "new.xml"
+        old.write_text("<descriptor/>", encoding="utf-8")
+        new.write_text("<descriptor/>", encoding="utf-8")
+
+        snaps = [self._snap("1.0"), self._snap("2.0")]
+        monkeypatch.setattr("abicheck.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
+
+        missing = tmp_path / "missing_symbols_list.txt"
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "-symbols-list", str(missing),
+        ])
+        assert result.exit_code == 4
+
     def test_report_write_error_exits_7(self, tmp_path, monkeypatch):
         old = tmp_path / "old.xml"
         new = tmp_path / "new.xml"
