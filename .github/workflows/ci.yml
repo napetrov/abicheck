@@ -9,7 +9,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   lint-and-types:
@@ -28,9 +27,16 @@ jobs:
         run: ruff check abicheck tests
       - name: Type check (mypy)
         run: mypy abicheck
+      - name: Install docs dependencies
+        run: pip install mkdocs mkdocs-material pymdown-extensions
+      - name: Build docs (strict)
+        run: mkdocs build --strict
 
   unit-tests:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -68,6 +74,9 @@ jobs:
 
   integration-tests:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - name: Install system deps
