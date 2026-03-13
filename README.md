@@ -295,7 +295,7 @@ Key modules:
 - `abicheck.detectors` — detector protocol and detector result types
 - `abicheck.report_summary` — canonical summary metrics shared by reporters
 - `abicheck.compat` — ABICC XML compatibility layer
-- `abicheck.reporter`, `abicheck.sarif`, `abicheck.html_report`, `abicheck.xml_report` — output generators
+- `abicheck.reporter`, `abicheck.sarif`, `abicheck.html_report`, `abicheck.compat.xml_report` — output generators
 - `abicheck.elf_metadata`, `abicheck.dwarf_metadata`, `abicheck.dwarf_advanced` — metadata extraction
 
 ---
