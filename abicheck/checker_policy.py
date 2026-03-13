@@ -374,27 +374,30 @@ API_BREAK_KINDS: set[ChangeKind] = {
 # Policy-specific downgrade sets
 # ---------------------------------------------------------------------------
 
-# sdk_vendor: source-level-only kinds are not binary ABI breaks for SDK consumers.
-# A removed enum member name or renamed field won't break already-compiled code —
-# only source-recompilation is affected. Downgrade from BREAKING → API_BREAK.
-SDK_VENDOR_DOWNGRADED_KINDS: frozenset[ChangeKind] = frozenset({
+# sdk_vendor: these API_BREAK_KINDS are source-level-only and do not affect
+# already-compiled binary consumers. Under sdk_vendor policy they are downgraded
+# from API_BREAK → COMPATIBLE (no warning emitted).
+# Examples: enum member renamed, field renamed, param renamed, struct↔class.
+SDK_VENDOR_COMPAT_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.ENUM_MEMBER_RENAMED,
     ChangeKind.FIELD_RENAMED,
     ChangeKind.PARAM_RENAMED,
     ChangeKind.METHOD_ACCESS_CHANGED,
     ChangeKind.FIELD_ACCESS_CHANGED,
-    ChangeKind.SOURCE_LEVEL_KIND_CHANGED,   # struct↔class keyword: binary-identical
+    ChangeKind.SOURCE_LEVEL_KIND_CHANGED,   # struct↔class: binary-identical
     ChangeKind.REMOVED_CONST_OVERLOAD,
     ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,
     ChangeKind.PARAM_DEFAULT_VALUE_CHANGED,
 })
 
-# plugin_abi: plugin-safe kinds that are safe within a single process/plugin boundary.
-# Toolchain flag drift and calling-convention changes can be acceptable when
-# the plugin and host are built from the same toolchain at the same time.
+# plugin_abi: kinds that are acceptable when plugin and host are built from
+# the same toolchain at the same time (single-process boundary).
+# Downgraded from BREAKING → COMPATIBLE.
 PLUGIN_ABI_DOWNGRADED_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.TOOLCHAIN_FLAG_DRIFT,
     ChangeKind.CALLING_CONVENTION_CHANGED,
+    ChangeKind.FRAME_REGISTER_CHANGED,      # CFA register = physical calling convention
+    ChangeKind.VALUE_ABI_TRAIT_CHANGED,     # DWARF triviality heuristic — same signal
 })
 
 
@@ -439,27 +442,29 @@ def policy_registry_markdown() -> str:
 def compute_verdict(changes: Sequence[HasKind], *, policy: str = "strict_abi") -> Verdict:
     """Compute verdict from a list of changes, honoring the given policy profile.
 
-    Policy profiles change which ChangeKinds are BREAKING vs API_BREAK vs COMPATIBLE:
-    - ``strict_abi`` (default): full BREAKING set applies
-    - ``sdk_vendor``: source-level-only kinds (ENUM_MEMBER_RENAMED etc.) downgraded to API_BREAK
-    - ``plugin_abi``: plugin-safe kinds downgraded to COMPATIBLE
+    Policy profiles:
+    - ``strict_abi`` (default): full BREAKING / API_BREAK sets apply.
+    - ``sdk_vendor``: source-level-only kinds (rename, access) downgraded
+      from API_BREAK → COMPATIBLE (no warning for SDK consumers).
+    - ``plugin_abi``: plugin-safe calling-convention kinds (TOOLCHAIN_FLAG_DRIFT,
+      CALLING_CONVENTION_CHANGED) downgraded from BREAKING → COMPATIBLE.
 
-    Falls back gracefully to strict_abi for unknown policy names.
+    Unknown policy names fall back to ``strict_abi``.
     """
     if not changes:
         return Verdict.NO_CHANGE
 
     # Select policy-specific kind sets
     if policy == "sdk_vendor":
-        breaking = BREAKING_KINDS - SDK_VENDOR_DOWNGRADED_KINDS
-        api_break = API_BREAK_KINDS | (BREAKING_KINDS & SDK_VENDOR_DOWNGRADED_KINDS)
-        compatible = COMPATIBLE_KINDS
+        breaking = BREAKING_KINDS
+        api_break = API_BREAK_KINDS - SDK_VENDOR_COMPAT_KINDS
+        compatible = COMPATIBLE_KINDS | SDK_VENDOR_COMPAT_KINDS
     elif policy == "plugin_abi":
         breaking = BREAKING_KINDS - PLUGIN_ABI_DOWNGRADED_KINDS
         api_break = API_BREAK_KINDS
-        compatible = COMPATIBLE_KINDS | (BREAKING_KINDS & PLUGIN_ABI_DOWNGRADED_KINDS)
+        compatible = COMPATIBLE_KINDS | PLUGIN_ABI_DOWNGRADED_KINDS
     else:
-        # strict_abi (default) and any unknown policy: use full BREAKING set
+        # strict_abi (default) and any unknown policy
         breaking = BREAKING_KINDS
         api_break = API_BREAK_KINDS
         compatible = COMPATIBLE_KINDS

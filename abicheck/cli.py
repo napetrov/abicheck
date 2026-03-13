@@ -890,6 +890,10 @@ def compat_dump_cmd(
 @click.option("-skip-removed-constants", "skip_removed_constants", is_flag=True, default=False, hidden=True)
 @click.option("-count-symbols", "count_symbols", default=None, hidden=True)
 @click.option("-count-all-symbols", "count_all_symbols", default=None, hidden=True)
+@click.option("--policy", "policy",
+              type=click.Choice(["strict_abi", "sdk_vendor", "plugin_abi"], case_sensitive=False),
+              default="strict_abi", show_default=True,
+              help="Policy profile for verdict classification.")
 def compat_cmd(  # noqa: PLR0913
     lib_name: str,
     old_desc: Path,
@@ -902,6 +906,7 @@ def compat_cmd(  # noqa: PLR0913
     src_report_path: Path | None,
     fmt: str,
     suppress: Path | None,
+    policy: str,
     strict: bool,
     strict_mode: str,
     show_retval: bool,
@@ -1166,7 +1171,7 @@ def compat_cmd(  # noqa: PLR0913
             sys.exit(2)
         suppression = _merge_suppression(suppression, file_suppression)
 
-    result = compare(old_snap, new_snap, suppression=suppression)
+    result = compare(old_snap, new_snap, suppression=suppression, policy=policy)
 
     # ── Post-compare transforms ───────────────────────────────────────────
 
