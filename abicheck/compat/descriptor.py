@@ -7,15 +7,15 @@ Implements:
 
 Typical ABICC descriptor (old.xml):
     <version>2025.0</version>
-    <headers>/usr/include/dnnl</headers>
-    <libs>/usr/lib/libdnnl.so</libs>
+    <headers>/usr/include/foo</headers>
+    <libs>/usr/lib/libfoo.so</libs>
 
 Extended form (multiple headers/libs):
     <version>2025.0</version>
-    <headers>/usr/include/dnnl</headers>
-    <headers>/usr/include/dnnl/detail</headers>
-    <libs>/usr/lib/libdnnl.so</libs>
-    <libs>/usr/lib/libdnnl_extra.so</libs>
+    <headers>/usr/include/foo</headers>
+    <headers>/usr/include/foo/detail</headers>
+    <libs>/usr/lib/libfoo.so</libs>
+    <libs>/usr/lib/libfoo_extra.so</libs>
 """
 from __future__ import annotations
 

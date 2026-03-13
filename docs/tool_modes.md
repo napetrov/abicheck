@@ -39,7 +39,7 @@ and limitations.
         (no compiler needed — abi-dumper reads binary directly)
 ```
 
-> **Intel production default:** abidiff+headers + ABICC+headers (ABICC Usage #2).  
+> **Production default:** abidiff+headers + ABICC+headers (ABICC Usage #2).
 > Production `.so` files have no debug info → Usage #1 unavailable.
 
 ---
@@ -131,11 +131,11 @@ NEW.xml (headers + .so) ──► abi-compliance-checker ──► ABI-new.dump 
 | Two `.so` files | ✅ | |
 | Headers | ✅ | The main input for ABI description |
 | `abi-compliance-checker` | ✅ | |
-| **GCC** | ✅ **GCC only** | ABICC calls GCC internally to compile headers. Intel `icpx`/`icc` and Clang are **not supported**. |
+| **GCC** | ✅ **GCC only** | ABICC calls GCC internally to compile headers. Proprietary compilers (`icpx`/`icc`) and Clang are **not supported**. |
 | DWARF debug info | ❌ | Not needed — headers provide type information |
 
-> **For Intel projects:** GCC must be installed even if the library itself is built
-> with `icpx`. ABICC only uses GCC to parse headers, not to compile the library.
+> **Note:** GCC must be installed even if the library itself is built
+> with a different compiler (e.g. `icpx`). ABICC only uses GCC to parse headers, not to compile the library.
 
 ### What it catches (beyond abidiff)
 
@@ -239,7 +239,7 @@ abi-compliance-checker -lib libfoo -old ABI-1.dump -new ABI-2.dump
 
 ---
 
-## Our Pipeline (Intel Production)
+## Our Pipeline (Production Default)
 
 `abi-scanner` runs **abidiff+headers + ABICC+headers (ABICC Usage #2)** by default:
 
@@ -252,7 +252,7 @@ ABICC+headers (ABICC Usage #2) (GCC compiles headers) ────────�
 ```
 
 **Why not Usage #1 by default:**
-- Intel production `.so` files are stripped (no `-g`) — abi-dumper cannot read DWARF
+- Production `.so` files are stripped (no `-g`) — abi-dumper cannot read DWARF
 - Usage #2 works on production binaries and catches the C++ semantic cases (noexcept,
   templates, ODR) that abidiff misses
 - Usage #1 is available as an optional mode when CI/staging provides debug builds

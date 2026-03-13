@@ -13,7 +13,7 @@
  * abicheck detects: TYPEDEF_BASE_CHANGED, TYPEDEF_REMOVED, TYPE_BECAME_OPAQUE
  * ABICC equivalent: Typedef_BaseType, Type_Became_Opaque
  *
- * NOTE: Typedef tracking is critical for Intel CI (dnnl_dim_t, etc.)
+ * NOTE: Typedef tracking is critical for library CI (dimension typedefs, etc.)
  */
 #ifndef V1_H
 #define V1_H

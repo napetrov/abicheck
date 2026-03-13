@@ -190,11 +190,11 @@ def test_html_report_is_valid_html() -> None:
 
 def test_html_report_versions_in_title(tmp_path: Path) -> None:
     result = _make_fake_result(verdict="COMPATIBLE")
-    html_out = generate_html_report(result, lib_name="libdnnl",
+    html_out = generate_html_report(result, lib_name="libfoo",
                                     old_version="2025.0", new_version="2025.3")
     assert "2025.0" in html_out
     assert "2025.3" in html_out
-    assert "libdnnl" in html_out
+    assert "libfoo" in html_out
 
 
 def test_html_report_xss_escape() -> None:

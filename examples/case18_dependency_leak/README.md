@@ -53,8 +53,8 @@ reports it as a type layout change that affects the ABI of `libfoo`'s exported f
 
 ## Real-world example
 
-**Intel oneDAL** includes `tbb::task_arena` (a TBB type) in some public headers.
-When Intel TBB changed `task_arena`'s internal layout in TBB 2021.3, oneDAL's ABI
+Some large libraries include `tbb::task_arena` (a TBB type) in their public headers.
+When TBB changed `task_arena`'s internal layout in TBB 2021.3, those libraries' ABI
 broke for users who had TBB 2021.2 installed. The `.so` files hadn't changed.
 
 **Protocol Buffers (protobuf)**: Several gRPC components include `grpc::Status` which

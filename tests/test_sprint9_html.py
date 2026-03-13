@@ -71,8 +71,8 @@ def test_html_contains_verdict() -> None:
 
 def test_html_contains_library_and_versions() -> None:
     r = _result()
-    out = generate_html_report(r, lib_name="libdnnl", old_version="2025.0", new_version="2025.3")
-    assert "libdnnl" in out
+    out = generate_html_report(r, lib_name="libfoo", old_version="2025.0", new_version="2025.3")
+    assert "libfoo" in out
     assert "2025.0" in out
     assert "2025.3" in out
 

@@ -353,7 +353,7 @@ def test_symbol_version_required_added_older_is_compat() -> None:
     """Adding an OLDER version requirement (e.g. GLIBC_2.2.5 when max was GLIBC_2.34)
     is NOT breaking — callers already satisfied the higher requirement.
 
-    Regression: oneTBB 2021.11→2021.13 false-positive BREAKING (issue tbb-fp-01).
+    Regression: TBB 2021.11→2021.13 false-positive BREAKING (issue tbb-fp-01).
     """
     old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]}))
     new = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34", "GLIBC_2.2.5"]}))
@@ -386,7 +386,7 @@ def test_symbol_version_required_added_new_dep_is_compat() -> None:
     The lib addition itself is captured by needed_added; its version requirements
     don't add extra constraints on callers who already link the old binary.
 
-    Regression: oneTBB 2021.13 adds libdl.so.2 / GLIBC_2.2.5 false-positive.
+    Regression: TBB 2021.13 adds libdl.so.2 / GLIBC_2.2.5 false-positive.
     """
     old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5"]}))
     # libdl.so.2 is entirely new — wasn't in old
@@ -409,8 +409,8 @@ def test_symbol_version_required_added_new_dep_is_compat() -> None:
 def test_symbol_version_required_tbb_like_upgrade() -> None:
     """Full TBB-like scenario: upgrade removes newer requirements + adds older ones.
 
-    oneTBB 2021.11 required GLIBC_2.34 / GLIBCXX_3.4.32.
-    oneTBB 2021.13 dropped those and only requires GLIBC_2.2.5 / GLIBCXX_3.4.19.
+    TBB 2021.11 required GLIBC_2.34 / GLIBCXX_3.4.32.
+    TBB 2021.13 dropped those and only requires GLIBC_2.2.5 / GLIBCXX_3.4.19.
     Net effect: minimum system requirements lowered — this is COMPATIBLE.
     """
     old = _snap(_elf(versions_required={
