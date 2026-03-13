@@ -45,12 +45,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from .checker import _BREAKING_KINDS as _CHECKER_BREAKING_KINDS_ENUM
-from .checker_policy import HasKind
-from .report_summary import compatibility_metrics
+from ..checker import _BREAKING_KINDS as _CHECKER_BREAKING_KINDS_ENUM
+from ..checker_policy import HasKind
+from ..report_summary import compatibility_metrics
 
 if TYPE_CHECKING:
-    from .checker import DiffResult
+    from ..checker import DiffResult
 
 # ABICC XML report version
 _REPORT_VERSION = "1.2"
@@ -295,7 +295,9 @@ def _build_problem_details(parent: ET.Element, changes: list[object]) -> None:
     """Build severity-tiered <problems_with_types/symbols> detail sections."""
     problem_changes = [
         c for c in changes
-        if _is_breaking(c) and _kind_str(c) not in _REMOVED_KINDS
+        if _is_breaking(c)
+        and _kind_str(c) not in _REMOVED_KINDS
+        and _kind_str(c) not in _ADDED_KINDS
     ]
 
     for sev_label, sev_key in [("High", "high"), ("Medium", "medium"), ("Low", "low")]:

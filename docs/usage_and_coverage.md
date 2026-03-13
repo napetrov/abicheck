@@ -158,7 +158,7 @@ CLI (dump/compare/compat)
 - `abicheck.cli` — command-line entrypoints.
 - `abicheck.dumper` — snapshot construction from headers + binary metadata.
 - `abicheck.checker` — change detection and breakage classification.
-- `abicheck.compat` — ABICC XML descriptor compatibility layer.
+- `abicheck.compat` — ABICC compatibility layer (`abicheck.compat.descriptor`, `abicheck.compat.xml_report`, `abicheck.compat.cli`, `abicheck.compat.abicc_dump_import`).
 - `abicheck.reporter` / `abicheck.sarif` / `abicheck.html_report` — output generators.
 - `abicheck.elf_metadata`, `abicheck.dwarf_metadata`, `abicheck.dwarf_advanced` — low-level binary metadata extraction.
 

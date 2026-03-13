@@ -269,7 +269,7 @@ class TestCompatClassifiedErrorPaths:
         bad.write_text("([\n", encoding="utf-8")
 
         snaps = [self._snap("1.0"), self._snap("2.0")]
-        monkeypatch.setattr("abicheck.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
+        monkeypatch.setattr("abicheck.compat.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
 
         runner = CliRunner()
         result = runner.invoke(main, [
@@ -285,7 +285,7 @@ class TestCompatClassifiedErrorPaths:
         new.write_text("<descriptor/>", encoding="utf-8")
 
         snaps = [self._snap("1.0"), self._snap("2.0")]
-        monkeypatch.setattr("abicheck.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
+        monkeypatch.setattr("abicheck.compat.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
 
         runner = CliRunner()
         result = runner.invoke(main, [
@@ -303,7 +303,7 @@ class TestCompatClassifiedErrorPaths:
         sup.write_text("version: 1\n", encoding="utf-8")
 
         snaps = [self._snap("1.0"), self._snap("2.0")]
-        monkeypatch.setattr("abicheck.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
+        monkeypatch.setattr("abicheck.compat.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
 
         def _boom(_path):
             raise ValueError("bad suppression")
@@ -325,7 +325,7 @@ class TestCompatClassifiedErrorPaths:
         new.write_text("<descriptor/>", encoding="utf-8")
 
         snaps = [self._snap("1.0"), self._snap("2.0")]
-        monkeypatch.setattr("abicheck.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
+        monkeypatch.setattr("abicheck.compat.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
 
         missing = tmp_path / "missing_skip.txt"
         runner = CliRunner()
@@ -342,7 +342,7 @@ class TestCompatClassifiedErrorPaths:
         new.write_text("<descriptor/>", encoding="utf-8")
 
         snaps = [self._snap("1.0"), self._snap("2.0")]
-        monkeypatch.setattr("abicheck.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
+        monkeypatch.setattr("abicheck.compat.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
 
         missing = tmp_path / "missing_symbols_list.txt"
         runner = CliRunner()
@@ -359,12 +359,12 @@ class TestCompatClassifiedErrorPaths:
         new.write_text("<descriptor/>", encoding="utf-8")
 
         snaps = [self._snap("1.0"), self._snap("2.0")]
-        monkeypatch.setattr("abicheck.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
+        monkeypatch.setattr("abicheck.compat.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
 
         def _raise_write(*_a, **_k):
             raise OSError("write failed")
 
-        monkeypatch.setattr("abicheck.cli.write_html_report", _raise_write)
+        monkeypatch.setattr("abicheck.compat.cli.write_html_report", _raise_write)
 
         runner = CliRunner()
         result = runner.invoke(main, [
