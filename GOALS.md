@@ -68,11 +68,11 @@ For each break type: what it is, how it appears in the real world, and which too
 
 ## Goal 6 -- Distribution & Documentation
 ### conda-forge package
-Primary distribution via conda-forge: `conda install -c conda-forge abicheck`.
-- `castxml` declared as a conda run dependency — users get a working install with zero manual setup
-- PyPI remains available (`pip install abicheck`) for users who prefer pip, with
+Target: distribute via conda-forge — `conda install -c conda-forge abicheck`.
+- `castxml` will be declared as a conda run dependency so users get a working install with zero manual setup
+- PyPI will remain available (`pip install abicheck`) for users who prefer pip, with
   castxml as a documented external prerequisite
-- conda-forge recipe auto-updates on each PyPI release via conda-forge bot
+- conda-forge recipe will auto-update on each PyPI release via conda-forge bot
 
 ### GitHub Pages documentation site
 Public documentation at `https://napetrov.github.io/abicheck/`:

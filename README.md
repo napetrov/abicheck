@@ -154,7 +154,7 @@ steps:
       sarif_file: abi.sarif
 ```
 
-Exit codes for CI gates: `0` = compatible/no_change, `2` = API break, `4` = breaking ABI change.
+Exit codes for CI gates: `0` = compatible/no_change, `1` = tool/runtime error, `2` = API break, `4` = breaking ABI change.
 See [Exit Codes](docs/exit_codes.md) for full reference including `compat` mode.
 
 ---
@@ -180,7 +180,7 @@ for per-case analysis, timing data, and methodology.
 ## Documentation
 
 - **[Getting started](docs/getting_started.md)** — installation, first check, CI setup
-- **[Verdicts](docs/concepts/verdicts.md)** — BREAKING / API_BREAK / COMPATIBLE / NO_CHANGE
+- **[Verdicts](docs/concepts/verdicts.md)** — Source-level / BREAKING / API_BREAK / COMPATIBLE / NO_CHANGE
 - **[Exit Codes](docs/exit_codes.md)** — CI-ready exit code reference
 - **[Policy Profiles](docs/policies.md)** — built-in and custom policies
 - **[ABICC Migration](docs/migration/from_abicc.md)** — migrating from abi-compliance-checker

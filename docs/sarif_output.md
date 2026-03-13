@@ -24,9 +24,7 @@ jobs:
 
       - name: Install abicheck
         run: |
-          # conda-forge (recommended — includes castxml):
-          # conda install -c conda-forge abicheck
-          # or via pip (requires castxml installed separately):
+          sudo apt-get update && sudo apt-get install -y castxml g++
           pip install abicheck
 
       - name: Dump ABI (baseline)
