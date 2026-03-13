@@ -41,7 +41,8 @@ abicheck compare libfoo.so.1 libfoo.so.2 \
 ```
 
 `compare` auto-detects each input: `.so` files are dumped on-the-fly, `.json`
-snapshots are loaded directly. You can mix them freely (see below).
+snapshots and ABICC Perl dumps (Data::Dumper `.dump` files) are loaded directly.
+You can mix them freely (see below).
 
 ### 2) Dump snapshots and compare later (for CI baselines)
 

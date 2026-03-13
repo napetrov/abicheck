@@ -83,7 +83,8 @@ abicheck compare libfoo.so.1 libfoo.so.2 \
 ```
 
 `compare` auto-detects each input: `.so` files are dumped on-the-fly, `.json`
-snapshots are loaded directly. You can mix them freely.
+snapshots and ABICC Perl dumps (Data::Dumper `.dump` files) are loaded directly.
+You can mix them freely.
 
 ### 2) Dump snapshots and compare later (secondary flow)
 
