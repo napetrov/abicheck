@@ -49,22 +49,28 @@ cd abicheck/examples/case01_symbol_removal
 gcc -shared -fPIC -g v1.c -o libv1.so
 gcc -shared -fPIC -g v2.c -o libv2.so
 
-# Dump ABI snapshots (v1.h and v2.h are in the same directory)
-abicheck dump libv1.so -H v1.h --version 1.0 -o v1.json
-abicheck dump libv2.so -H v2.h --version 2.0 -o v2.json
-
-# Compare
-abicheck compare v1.json v2.json
+# One-liner: compare directly (each version has its own header)
+abicheck compare libv1.so libv2.so --old-header v1.h --new-header v2.h
 # Expected output: verdict BREAKING (symbol 'helper' was removed)
 ```
 
 For your own C++ library:
 
 ```bash
-# Replace with your actual paths
-abicheck dump libfoo.so.1 -H include/foo.h --version 1.0 -o foo-1.0.json
-abicheck dump libfoo.so.2 -H include/foo.h --version 2.0 -o foo-2.0.json
-abicheck compare foo-1.0.json foo-2.0.json
+# Same header for both versions (header didn't change)
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
+
+# Different headers per version (header changed between releases)
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header include/v1/foo.h --new-header include/v2/foo.h
+
+# Multiple public headers
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  -H include/foo.h -H include/bar.h -I include/
+
+# With version labels
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h \
+  --old-version 1.0 --new-version 2.0
 ```
 
 ---
@@ -73,18 +79,41 @@ abicheck compare foo-1.0.json foo-2.0.json
 
 ```bash
 # Default: markdown report to stdout
-abicheck compare v1.json v2.json
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
 
 # JSON — includes precise verdict field for CI parsing
-abicheck compare v1.json v2.json --format json -o result.json
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --format json -o result.json
 
 # SARIF — for GitHub Code Scanning
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --format sarif -o abi.sarif
+
+# HTML — human-readable standalone report
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --format html -o report.html
+
+# Works the same with pre-dumped snapshots
 abicheck compare v1.json v2.json --format sarif -o abi.sarif
 ```
 
 ---
 
-## 4) Exit codes (`abicheck compare`)
+## 4) Snapshot workflow (for CI baselines)
+
+When you need reusable baselines (e.g. store as CI artifact, commit to repo):
+
+```bash
+# Dump snapshot once per release
+abicheck dump libfoo.so.1 -H include/foo.h --version 1.0 -o baseline.json
+
+# In CI: compare saved baseline against current build
+abicheck compare baseline.json ./build/libfoo.so -H include/foo.h --new-version 2.0-dev
+
+# Or compare two snapshots (no headers needed — already baked in)
+abicheck compare old.json new.json
+```
+
+---
+
+## 5) Exit codes (`abicheck compare`)
 
 `abicheck compare` uses four statuses:
 - `0` → `NO_CHANGE` or `COMPATIBLE`
@@ -99,22 +128,17 @@ Canonical reference (compare + compat + strict mode): [Exit Codes](exit_codes.md
 
 ---
 
-## 5) Add to GitHub Actions
+## 6) Add to GitHub Actions
 
 ```yaml
 steps:
-  # Step 1: Generate baseline snapshot (typically from previous release tag)
-  - name: Dump old ABI snapshot
-    run: abicheck dump libfoo.so.1 -H include/foo.h --version 1.0 -o old.json
-
-  # Step 2: Dump new snapshot (from current build)
-  - name: Dump new ABI snapshot
-    run: abicheck dump libfoo.so.2 -H include/foo.h --version 2.0 -o new.json
-
-  # Step 3: Compare and generate SARIF
+  # One-step ABI check (compare .so files directly)
   - name: Compare ABI
     run: |
-      abicheck compare old.json new.json --format sarif -o abi.sarif
+      abicheck compare libfoo_old.so libfoo_new.so \
+        -H include/foo.h \
+        --old-version 1.0 --new-version 2.0 \
+        --format sarif -o abi.sarif
       ret=$?
       [ $ret -eq 1 ] && echo "Tool error" && exit 1
       [ $ret -eq 4 ] && echo "BREAKING ABI change — blocked" && exit 1
@@ -127,9 +151,20 @@ steps:
       sarif_file: abi.sarif
 ```
 
+Or using a saved baseline snapshot:
+
+```yaml
+steps:
+  - name: ABI check vs baseline
+    run: |
+      abicheck compare abi-baselines/libfoo-1.0.json ./build/libfoo.so \
+        -H include/foo.h --new-version ${{ github.sha }} \
+        --format sarif -o abi.sarif
+```
+
 ---
 
-## 6) Migrating from ABICC?
+## 7) Migrating from ABICC?
 
 If you have existing ABICC XML descriptors, use `compat` mode — same single-hyphen flags,
 no XML changes needed:
@@ -139,15 +174,15 @@ no XML changes needed:
 abicheck compat -lib foo -old OLD.xml -new NEW.xml
 
 # OLD.xml is the same ABICC descriptor format you already have.
-# If you don't have XML descriptors yet, use abicheck dump to generate snapshots
-# and then abicheck compare instead.
+# When ready to simplify, switch to:
+#   abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
 ```
 
 Read: [Migrating from ABICC](migration/from_abicc.md)
 
 ---
 
-## 7) Next steps
+## 8) Next steps
 
 - [Verdicts explained](concepts/verdicts.md)
 - [Limitations & known boundaries](concepts/limitations.md)

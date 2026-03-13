@@ -49,37 +49,71 @@ pip install -e .
 
 ## Quick start
 
-### 1) Create ABI snapshots
+### 1) Compare two libraries directly (primary flow)
+
+The simplest way to check ABI compatibility — pass two `.so` files and their headers:
 
 ```bash
+# Same headers for both versions
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
+
+# Different headers per version (when headers changed between releases)
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header include/v1/foo.h --new-header include/v2/foo.h
+
+# Multiple headers
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  -H include/foo.h -H include/bar.h -I include/
+
+# With version labels
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h \
+  --old-version 1.0 --new-version 2.0
+
+# Output formats: markdown (default), json, sarif, html
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --format json -o report.json
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --format sarif -o abi.sarif
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --format html -o report.html
+
+# Policy and suppression
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --policy sdk_vendor
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --suppress suppressions.yaml
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --policy-file project_policy.yaml
+```
+
+`compare` auto-detects each input: `.so` files are dumped on-the-fly, `.json`
+snapshots are loaded directly. You can mix them freely.
+
+### 2) Dump snapshots and compare later (secondary flow)
+
+When you want to cache ABI baselines (e.g. store snapshots as CI artifacts or
+commit them to the repo), use the explicit two-step workflow:
+
+```bash
+# Step 1: Create snapshots
 abicheck dump libfoo.so.1 -H include/foo.h --version 1.0 -o libfoo-1.0.json
 abicheck dump libfoo.so.2 -H include/foo.h --version 2.0 -o libfoo-2.0.json
-```
 
-### 2) Compare snapshots
-
-```bash
-# Markdown report (default)
+# Step 2: Compare snapshots (no headers needed — already baked in)
 abicheck compare libfoo-1.0.json libfoo-2.0.json
 
-# JSON / SARIF / HTML
-abicheck compare libfoo-1.0.json libfoo-2.0.json --format json -o report.json
-abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o results.sarif
-abicheck compare libfoo-1.0.json libfoo-2.0.json --format html -o report.html
+# Output formats and policies work the same way
+abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o abi.sarif
+abicheck compare libfoo-1.0.json libfoo-2.0.json --policy sdk_vendor
 ```
 
-### 3) Policy profiles
+### 3) Compare snapshot baseline vs current build (mixed mode)
+
+Ideal for CI: store a baseline snapshot from a known release, compare against
+the freshly built `.so`:
 
 ```bash
-# Built-in policy profiles
-abicheck compare libfoo-1.0.json libfoo-2.0.json --policy sdk_vendor
-abicheck compare libfoo-1.0.json libfoo-2.0.json --policy plugin_abi
+# Compare stored baseline against current build
+abicheck compare baseline-1.0.json ./build/libfoo.so \
+  -H include/foo.h --new-version 2.0-dev
 
-# Custom per-kind policy file
-abicheck compare libfoo-1.0.json libfoo-2.0.json --policy-file project_policy.yaml
-
-# Suppression file
-abicheck compare libfoo-1.0.json libfoo-2.0.json --suppress suppressions.yaml
+# Or the other way: live old build vs stored new snapshot
+abicheck compare ./build-old/libfoo.so new-release.json \
+  -H include/foo.h --old-version 1.0-rc1
 ```
 
 **Policy file example** (`project_policy.yaml`):
@@ -90,7 +124,28 @@ overrides:
   field_renamed: ignore
 ```
 
-See [Policy Profiles](docs/policies.md) for full reference.
+### 4) ABICC-compatible mode (for migration from ABICC)
+
+For teams migrating from `abi-compliance-checker` — same flags, same XML
+descriptor format:
+
+```bash
+# Minimal (same flags as abi-compliance-checker):
+abicheck compat -lib foo -old old.xml -new new.xml
+
+# Full flag parity:
+abicheck compat -lib foo -old old.xml -new new.xml \
+  -report-path report.html \
+  -s \
+  -show-retval \
+  -v1 1.0 -v2 2.0
+```
+
+This mode supports ABICC-style descriptor workflows so teams can migrate without
+rewriting their entire pipeline on day one. See [ABICC compatibility reference](docs/abicc_compat.md) for full flag list.
+
+> Note: `compat` now supports minimal ABICC Perl `ABI.dump` (`Data::Dumper`) input for migration workflows.
+> ABICC XML dump variants (`<ABI_dump...>` / `<abi_dump...>`) are still unsupported.
 
 ---
 
@@ -109,8 +164,9 @@ abicheck compat -lib libdnnl -old old.xml -new new.xml -report-path r.html
 Migration path:
 
 1. Keep your existing XML descriptor generation.
-2. Replace the ABICC CLI call with `abicheck compat`.
-3. Move to `dump` + `compare` when you want explicit snapshot control and richer outputs.
+2. Replace ABICC CLI call with `abicheck compat` (same flags, same XML).
+3. Move to `abicheck compare lib.so.1 lib.so.2 -H ...` for the simplest one-liner workflow.
+4. Optionally use `dump` + `compare` when you want explicit snapshot caching for CI baselines.
 
 See [ABICC compatibility reference](docs/abicc_compat.md) and [Migration guide](docs/migration/from_abicc.md) for full flag list and details.
 

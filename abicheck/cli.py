@@ -17,6 +17,67 @@ if TYPE_CHECKING:
 from . import __version__ as _abicheck_version
 
 
+def _is_elf(path: Path) -> bool:
+    """Check if file starts with ELF magic bytes."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == b"\x7fELF"
+    except OSError:
+        return False
+
+
+def _resolve_input(
+    path: Path,
+    headers: list[Path],
+    includes: list[Path],
+    version: str,
+    compiler: str,
+) -> AbiSnapshot:
+    """Auto-detect input type and return an AbiSnapshot.
+
+    - ELF binary → dump() on the fly (requires headers)
+    - JSON file → load_snapshot()
+    - ABICC Perl dump → import_abicc_perl_dump()
+    """
+    from .errors import AbicheckError
+    from .model import AbiSnapshot  # noqa: F811
+
+    if _is_elf(path):
+        if not headers:
+            raise click.UsageError(
+                f"Input '{path}' is an ELF binary — "
+                "at least one header (-H/--header or --old-header/--new-header) "
+                "is required for ABI extraction."
+            )
+        try:
+            return dump(
+                so_path=path,
+                headers=headers,
+                extra_includes=includes,
+                version=version,
+                compiler=compiler,
+            )
+        except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
+            raise click.ClickException(f"Failed to dump '{path}': {exc}") from exc
+
+    # Text-based formats: JSON snapshot or ABICC Perl dump
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise click.ClickException(f"Cannot read '{path}': {exc}") from exc
+
+    if text.lstrip().startswith("{"):
+        return load_snapshot(path)
+
+    if looks_like_perl_dump(text):
+        return import_abicc_perl_dump(path)
+
+    raise click.UsageError(
+        f"Cannot detect format of '{path}'. "
+        "Expected: ELF binary (.so), JSON snapshot (.json), or ABICC Perl dump."
+    )
+
+
 @click.group()
 @click.version_option(version=_abicheck_version, prog_name="abicheck")
 def main() -> None:
@@ -66,8 +127,35 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 
 
 @main.command("compare")
-@click.argument("old_snapshot", type=click.Path(exists=True, path_type=Path))
-@click.argument("new_snapshot", type=click.Path(exists=True, path_type=Path))
+@click.argument("old_input", type=click.Path(exists=True, path_type=Path))
+@click.argument("new_input", type=click.Path(exists=True, path_type=Path))
+# ── Dump options (used when input is an ELF binary) ──────────────────────────
+@click.option("-H", "--header", "headers", multiple=True,
+              type=click.Path(exists=True, path_type=Path),
+              help="Public header file applied to both sides (repeat for multiple). "
+                   "Required when input is a .so file.")
+@click.option("-I", "--include", "includes", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Extra include directory for castxml (applied to both sides).")
+@click.option("--compiler", default="c++", show_default=True,
+              help="Compiler frontend for castxml (c++ or cc).")
+@click.option("--old-header", "old_headers_only", multiple=True,
+              type=click.Path(exists=True, path_type=Path),
+              help="Public header for old side only (overrides -H for old).")
+@click.option("--new-header", "new_headers_only", multiple=True,
+              type=click.Path(exists=True, path_type=Path),
+              help="Public header for new side only (overrides -H for new).")
+@click.option("--old-include", "old_includes_only", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Include dir for old side only (overrides -I for old).")
+@click.option("--new-include", "new_includes_only", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Include dir for new side only (overrides -I for new).")
+@click.option("--old-version", "old_version", default="old", show_default=True,
+              help="Version label for old side (used when input is a .so file).")
+@click.option("--new-version", "new_version", default="new", show_default=True,
+              help="Version label for new side (used when input is a .so file).")
+# ── Compare options (unchanged) ──────────────────────────────────────────────
 @click.option("--format", "fmt", type=click.Choice(["json", "markdown", "sarif", "html"]),
               default="markdown", show_default=True)
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
@@ -80,24 +168,66 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 @click.option("--policy-file", "policy_file_path",
               type=click.Path(exists=True, path_type=Path), default=None,
               help="YAML policy file with per-kind verdict overrides. Overrides --policy.")
-def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path | None,
-                suppress: Path | None, policy: str, policy_file_path: Path | None) -> None:
-    """Compare two ABI snapshots and report changes.
+def compare_cmd(
+    old_input: Path, new_input: Path,
+    headers: tuple[Path, ...], includes: tuple[Path, ...], compiler: str,
+    old_headers_only: tuple[Path, ...], new_headers_only: tuple[Path, ...],
+    old_includes_only: tuple[Path, ...], new_includes_only: tuple[Path, ...],
+    old_version: str, new_version: str,
+    fmt: str, output: Path | None,
+    suppress: Path | None, policy: str, policy_file_path: Path | None,
+) -> None:
+    """Compare two ABI surfaces and report changes.
+
+    Each input (OLD, NEW) can be a .so shared library, a JSON snapshot from
+    'abicheck dump', or an ABICC Perl dump file. The format is auto-detected.
+
+    When a .so file is given, headers (-H) are required so that abicheck can
+    extract the public ABI. Use --old-header / --new-header when headers differ
+    between versions.
 
     \b
-    Example:
-      abicheck compare libfoo-1.0.json libfoo-2.0.json --format markdown
-      abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o results.sarif
-      abicheck compare libfoo-1.0.json libfoo-2.0.json --format html -o report.html
-      abicheck compare libfoo-1.0.json libfoo-2.0.json --suppress suppressions.yaml
-      abicheck compare libfoo-1.0.json libfoo-2.0.json --policy sdk_vendor
-      abicheck compare libfoo-1.0.json libfoo-2.0.json --policy-file project_policy.yaml
+    Examples:
+      # One-liner: compare two .so files directly (primary flow)
+      abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
+      abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h -H include/bar.h
+
+      # Different headers per version
+      abicheck compare libfoo.so.1 libfoo.so.2 \\
+        --old-header include/v1/foo.h --new-header include/v2/foo.h
+
+      # With version labels and SARIF output
+      abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h \\
+        --old-version 1.0 --new-version 2.0 --format sarif -o abi.sarif
+
+      # Compare saved snapshot vs current build
+      abicheck compare baseline.json ./build/libfoo.so -H include/foo.h
+
+      # Compare two pre-dumped snapshots (existing workflow)
+      abicheck compare libfoo-1.0.json libfoo-2.0.json
+
+      # Policy and suppression
+      abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --policy sdk_vendor
+      abicheck compare old.json new.json --suppress suppressions.yaml
     """
     from .policy_file import PolicyFile
     from .suppression import SuppressionList
 
-    old = load_snapshot(old_snapshot)
-    new = load_snapshot(new_snapshot)
+    # Resolve per-side headers/includes: --old-header overrides -H, etc.
+    old_h = list(old_headers_only) if old_headers_only else list(headers)
+    new_h = list(new_headers_only) if new_headers_only else list(headers)
+    old_inc = list(old_includes_only) if old_includes_only else list(includes)
+    new_inc = list(new_includes_only) if new_includes_only else list(includes)
+
+    # Warn if dump options are provided but both inputs are non-ELF
+    if not _is_elf(old_input) and not _is_elf(new_input) and headers:
+        click.echo(
+            "Warning: -H/--header is ignored when both inputs are snapshots.",
+            err=True,
+        )
+
+    old = _resolve_input(old_input, old_h, old_inc, old_version, compiler)
+    new = _resolve_input(new_input, new_h, new_inc, new_version, compiler)
 
     suppression: SuppressionList | None = None
     if suppress is not None:
