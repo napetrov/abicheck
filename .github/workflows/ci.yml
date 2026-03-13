@@ -46,7 +46,7 @@ jobs:
           - python-version: '3.13'
             allow-prereleases: false
           - python-version: '3.14'
-            allow-prereleases: true
+            allow-prereleases: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
