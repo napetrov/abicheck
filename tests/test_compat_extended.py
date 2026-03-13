@@ -740,8 +740,10 @@ class TestCompatExtendedExitCodeMapping:
         "exc,context,expected",
         [
             (FileNotFoundError("missing"), "parsing descriptor", 4),
+            (FileNotFoundError("castxml: command not found"), "during castxml run", 3),
             (PermissionError("denied"), "parsing descriptor", 4),
             (OSError(errno.ENOENT, "missing input"), "during dump", 4),
+            (OSError(errno.ENOENT, "castxml not found in PATH"), "during castxml run", 3),
             (OSError(errno.EACCES, "permission denied"), "during dump", 4),
             (OSError(errno.EPERM, "operation not permitted"), "during dump", 4),
             (RuntimeError("castxml not found in PATH"), "during dump", 3),
