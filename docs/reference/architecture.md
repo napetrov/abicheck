@@ -41,7 +41,7 @@ Result: one `DiffResult` with classified changes and verdict.
 - `abicheck/checker.py` — diff orchestration and change collection
 - `abicheck/checker_policy.py` — `ChangeKind`, built-in policies, verdict logic
 - `abicheck/policy_file.py` — YAML policy overrides (`--policy-file`)
-- `abicheck/reporter.py` / `html_report.py` / `xml_report.py` — output formats
+- `abicheck/reporter.py` / `abicheck/html_report.py` / `abicheck/xml_report.py` — output formats
 - `abicheck/suppression.py` — suppression rules and filtering
 
 ---

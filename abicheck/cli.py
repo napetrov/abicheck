@@ -23,10 +23,11 @@ if TYPE_CHECKING:
     from .checker import DiffResult
     from .model import AbiSnapshot
     from .suppression import SuppressionList
+from . import __version__ as _abicheck_version
 
 
 @click.group()
-@click.version_option(package_name="abicheck", prog_name="abicheck")
+@click.version_option(version=_abicheck_version, prog_name="abicheck")
 def main() -> None:
     """abicheck — ABI compatibility checker for C/C++ shared libraries."""
 
