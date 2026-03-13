@@ -295,7 +295,9 @@ def _build_problem_details(parent: ET.Element, changes: list[object]) -> None:
     """Build severity-tiered <problems_with_types/symbols> detail sections."""
     problem_changes = [
         c for c in changes
-        if _is_breaking(c) and _kind_str(c) not in _REMOVED_KINDS
+        if _is_breaking(c)
+        and _kind_str(c) not in _REMOVED_KINDS
+        and _kind_str(c) not in _ADDED_KINDS
     ]
 
     for sev_label, sev_key in [("High", "high"), ("Medium", "medium"), ("Low", "low")]:
