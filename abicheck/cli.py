@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING
 import click
 
 from .checker import compare
+from .compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_dump
 from .dumper import dump
+from .errors import AbicheckError
 from .reporter import to_json, to_markdown
 from .serialization import load_snapshot, snapshot_to_json
 
@@ -17,6 +19,9 @@ if TYPE_CHECKING:
 
 from . import __version__ as _abicheck_version
 from .model import AbiSnapshot
+
+# Number of bytes to read when sniffing file format (covers ELF magic + JSON/Perl head)
+_SNIFF_BYTES = 256
 
 
 def _is_elf(path: Path) -> bool:
@@ -28,26 +33,52 @@ def _is_elf(path: Path) -> bool:
         return False
 
 
+def _sniff_text_format(path: Path) -> str:
+    """Read a small header chunk and return 'json', 'perl', or 'unknown'."""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(_SNIFF_BYTES)
+        head = raw.decode("utf-8", errors="replace").lstrip()
+    except OSError:
+        return "unknown"
+    # Check Perl dump BEFORE JSON — a Perl dump can start with $VAR1 = {
+    # which would incorrectly match the JSON heuristic after the '{'
+    if looks_like_perl_dump(head):
+        return "perl"
+    if head.startswith("{"):
+        return "json"
+    return "unknown"
+
+
 def _resolve_input(
     path: Path,
     headers: list[Path],
     includes: list[Path],
     version: str,
     compiler: str,
+    *,
+    is_elf: bool | None = None,
 ) -> AbiSnapshot:
     """Auto-detect input type and return an AbiSnapshot.
 
-    - ELF binary → dump() on the fly (requires headers)
-    - JSON file → load_snapshot()
-    - ABICC Perl dump → import_abicc_perl_dump()
-    """
-    from .abicc_dump_import import (  # noqa: PLC0415
-        import_abicc_perl_dump,
-        looks_like_perl_dump,
-    )
-    from .errors import AbicheckError  # noqa: PLC0415
+    Detection order:
+    1. ELF binary (magic bytes ``\\x7fELF``) → :func:`dump` (requires headers)
+    2. ABICC Perl dump (``$VAR1`` prefix) → :func:`import_abicc_perl_dump`
+    3. JSON snapshot (``{`` prefix) → :func:`load_snapshot`
 
-    if _is_elf(path):
+    Args:
+        path: Path to the input file.
+        headers: Public header files (required for ELF inputs).
+        includes: Extra include directories (used for ELF inputs).
+        version: Version label to embed in the resulting snapshot.
+        compiler: Compiler frontend for castxml (``c++`` or ``cc``).
+        is_elf: Pre-computed ELF detection result; if *None*, detection is
+            performed here (avoids a second ``open()`` when the caller already
+            knows the result).
+    """
+    if is_elf is None:
+        is_elf = _is_elf(path)
+    if is_elf:
         if not headers:
             raise click.UsageError(
                 f"Input '{path}' is an ELF binary — "
@@ -55,11 +86,11 @@ def _resolve_input(
                 "is required for ABI extraction."
             )
         for hdr in headers:
-            if not hdr.exists():
-                raise click.ClickException(f"Header file not found: {hdr}")
+            if not hdr.exists() or not hdr.is_file():
+                raise click.ClickException(f"Header file not found or not a file: {hdr}")
         for inc in includes:
-            if not inc.exists():
-                raise click.ClickException(f"Include directory not found: {inc}")
+            if not inc.exists() or not inc.is_dir():
+                raise click.ClickException(f"Include directory not found or not a directory: {inc}")
         try:
             return dump(
                 so_path=path,
@@ -71,26 +102,23 @@ def _resolve_input(
         except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
             raise click.ClickException(f"Failed to dump '{path}': {exc}") from exc
 
-    # Text-based formats: JSON snapshot or ABICC Perl dump
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError as exc:
-        raise click.ClickException(f"Cannot read '{path}': {exc}") from exc
+    # Text-based formats: detect by sniffing only a small header chunk
+    fmt = _sniff_text_format(path)
 
-    if text.lstrip().startswith("{"):
+    if fmt == "perl":
+        try:
+            return import_abicc_perl_dump(path)
+        except (ValueError, KeyError, UnicodeDecodeError, OSError, AbicheckError) as exc:
+            raise click.ClickException(
+                f"Failed to import ABICC Perl dump '{path}': {exc}"
+            ) from exc
+
+    if fmt == "json":
         try:
             return load_snapshot(path)
         except (ValueError, KeyError, UnicodeDecodeError, OSError) as exc:
             raise click.ClickException(
                 f"Failed to load JSON snapshot '{path}': {exc}"
-            ) from exc
-
-    if looks_like_perl_dump(text):
-        try:
-            return import_abicc_perl_dump(path)
-        except (ValueError, KeyError, UnicodeDecodeError, OSError) as exc:
-            raise click.ClickException(
-                f"Failed to import ABICC Perl dump '{path}': {exc}"
             ) from exc
 
     raise click.UsageError(
@@ -263,8 +291,8 @@ def compare_cmd(
                 err=True,
             )
 
-    old = _resolve_input(old_input, old_h, old_inc, old_version, compiler)
-    new = _resolve_input(new_input, new_h, new_inc, new_version, compiler)
+    old = _resolve_input(old_input, old_h, old_inc, old_version, compiler, is_elf=old_is_elf)
+    new = _resolve_input(new_input, new_h, new_inc, new_version, compiler, is_elf=new_is_elf)
 
     suppression: SuppressionList | None = None
     if suppress is not None:
