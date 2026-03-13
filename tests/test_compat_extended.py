@@ -28,7 +28,7 @@ from types import SimpleNamespace
 import pytest
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
-from abicheck.cli import (
+from abicheck.compat.cli import (
     _apply_warn_newsym,
     _build_internal_suppression,
     _build_skip_suppression,
