@@ -15,6 +15,7 @@ from .serialization import load_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
     from .suppression import SuppressionList
+from . import __version__ as _abicheck_version
 
 
 @click.group()
