@@ -24,7 +24,7 @@ from pathlib import Path
 from defusedxml.ElementTree import fromstring as xml_fromstring
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
-from abicheck.xml_report import generate_xml_report, write_xml_report
+from abicheck.compat.xml_report import generate_xml_report, write_xml_report
 
 
 def _make_result(
@@ -344,6 +344,34 @@ class TestXmlReportDetailSections:
         assert binary.find("added_symbols") is None
         assert binary.find("removed_symbols") is None
         assert binary.find("problems_with_types[@severity]") is None
+
+    def test_added_kind_not_in_problem_details(self):
+        """Regression: TYPE_FIELD_ADDED is in both _BREAKING_KINDS and _ADDED_KINDS.
+        It must appear only in <added_symbols>, NOT in <problems_with_types/symbols>.
+        PR#110 fix: _build_problem_details() must filter _ADDED_KINDS explicitly."""
+        changes = [
+            Change(
+                kind=ChangeKind.TYPE_FIELD_ADDED,
+                symbol="MyClass",
+                description="field 'x' added to polymorphic class",
+            ),
+        ]
+        result = _make_result(changes=changes, verdict=Verdict.BREAKING)
+        xml = generate_xml_report(result)
+        root = xml_fromstring(xml)
+        binary = root.find("report[@kind='binary']")
+        # Must appear in <added_symbols>
+        added = binary.find("added_symbols")
+        assert added is not None, "TYPE_FIELD_ADDED should produce <added_symbols>"
+        names = [n.text for n in added.findall("name")]
+        assert "MyClass" in names, "TYPE_FIELD_ADDED symbol must be listed in <added_symbols>"
+        # Must NOT appear in <problems_with_types> or <problems_with_symbols>
+        assert binary.find("problems_with_types") is None, (
+            "TYPE_FIELD_ADDED must NOT appear in <problems_with_types> (it belongs in added_symbols)"
+        )
+        assert binary.find("problems_with_symbols") is None, (
+            "TYPE_FIELD_ADDED must NOT appear in <problems_with_symbols>"
+        )
 
 
 class TestXmlReportParsability:

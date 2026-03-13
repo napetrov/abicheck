@@ -21,7 +21,7 @@ The project is a Python-based ABI compatibility checker for C/C++ shared librari
 | `elf_metadata.py` | ELF dynamic section + symbol table via pyelftools |
 | `dwarf_metadata.py` | DWARF type layout extraction via pyelftools |
 | `dwarf_advanced.py` | Calling convention, packing, toolchain flag drift |
-| `compat.py` | ABICC XML descriptor parsing (drop-in replacement) |
+| `compat/` | ABICC compatibility layer: descriptor parsing, XML report generation, CLI commands, Perl dump import |
 | `cli.py` | Click-based CLI (dump, compare, compat) |
 
 ---
@@ -44,7 +44,7 @@ This is architecturally sound and allows graceful degradation when debug info is
 
 ### 2.3 Security Considerations
 - `defusedxml` used for XML parsing (XXE prevention)
-- Path traversal check in `compat.py:_resolve()` for descriptor paths
+- Path traversal check in `compat/descriptor.py:_resolve()` for descriptor paths
 - TOCTOU prevention via `os.fstat()` after `open()` in `elf_metadata.py`
 - `yaml.safe_load()` used (not `yaml.load()`)
 
