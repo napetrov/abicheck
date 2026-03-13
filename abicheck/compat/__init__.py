@@ -4,7 +4,7 @@ Submodules:
 - descriptor: ABICC XML descriptor parsing (CompatDescriptor, parse_descriptor)
 - xml_report: ABICC-format XML report generation
 - abicc_dump_import: ABICC Perl dump importer
-- cli: compat/compat-dump CLI subcommands and helpers
+- cli: compat group CLI subcommands (``compat check``, ``compat dump``) and helpers
 """
 from .descriptor import CompatDescriptor, parse_descriptor
 

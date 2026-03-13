@@ -171,7 +171,7 @@ class TestCompatCliFlags:
 
     def _invoke_help(self, *args):
         runner = CliRunner()
-        return runner.invoke(main, ["compat", "--help"])
+        return runner.invoke(main, ["compat", "check", "--help"])
 
     def test_help_contains_strict_flag(self):
         result = self._invoke_help()
@@ -204,7 +204,7 @@ class TestCompatCliFlags:
     def test_d1_d2_aliases_accepted(self):
         """Verify -d1/-d2 aliases for -old/-new are registered."""
         runner = CliRunner()
-        result = runner.invoke(main, ["compat", "--help"])
+        result = runner.invoke(main, ["compat", "check", "--help"])
         assert "-d1" in result.output or "d1" in result.output
 
 

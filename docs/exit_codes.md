@@ -45,7 +45,7 @@ verdict=$(python3 -c "import json,sys; d=json.load(open('result.json')); print(d
 
 ---
 
-## `abicheck compat`
+## `abicheck compat check`
 
 Matches `abi-compliance-checker` exit codes (ABICC drop-in):
 
@@ -62,7 +62,7 @@ Matches `abi-compliance-checker` exit codes (ABICC drop-in):
 
 ### Extended compat error codes (ABICC-style)
 
-In `abicheck compat`, non-verdict failures are further classified where possible:
+In `abicheck compat check`, non-verdict failures are further classified where possible:
 
 | Exit code | Typical cause |
 |-----------|---------------|
@@ -79,7 +79,7 @@ In `abicheck compat`, non-verdict failures are further classified where possible
 
 ## Summary table
 
-| Verdict / State | `compare` exit | `compat` exit |
+| Verdict / State | `compare` exit | `compat check` exit |
 |-----------------|---------------|---------------|
 | `NO_CHANGE` | `0` | `0` |
 | `COMPATIBLE` | `0` | `0` |
@@ -91,14 +91,14 @@ In `abicheck compat`, non-verdict failures are further classified where possible
 
 ## Strict mode (`-s` / `-strict`)
 
-`compat` (and only `compat`) supports strict mode to promote lesser verdicts:
+`compat check` (and only `compat check`) supports strict mode to promote lesser verdicts:
 
 ```bash
 # Strict mode: COMPATIBLE + API_BREAK → exit 1 (BREAKING)
-abicheck compat -lib foo -old OLD.xml -new NEW.xml -s
+abicheck compat check -lib foo -old OLD.xml -new NEW.xml -s
 
 # Strict API-only: only API_BREAK → exit 1; COMPATIBLE stays exit 0
-abicheck compat -lib foo -old OLD.xml -new NEW.xml -s --strict-mode api
+abicheck compat check -lib foo -old OLD.xml -new NEW.xml -s --strict-mode api
 ```
 
 `--strict-mode` values:

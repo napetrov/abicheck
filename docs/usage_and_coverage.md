@@ -57,6 +57,49 @@ abicheck dump libfoo.so.2 -H include/v2/foo.h --version 2.0 -o libfoo-2.0.json
 abicheck compare libfoo-1.0.json libfoo-2.0.json
 ```
 
+#### Language mode
+
+By default castxml uses C++ mode. For pure C libraries, pass `--lang c`:
+
+```bash
+abicheck dump libfoo.so -H foo.h --lang c -o snap.json
+abicheck compare libv1.so libv2.so -H foo.h --lang c
+```
+
+#### Cross-compilation
+
+When analysing libraries built for a different architecture, pass cross-compilation
+flags to `dump`:
+
+```bash
+abicheck dump libfoo.so -H include/foo.h \
+  --gcc-prefix aarch64-linux-gnu- \
+  --sysroot /opt/sysroots/aarch64 \
+  --gcc-options "-march=armv8-a" \
+  -o snap.json
+
+# Or specify the cross-compiler binary directly:
+abicheck dump libfoo.so -H include/foo.h \
+  --gcc-path /usr/bin/aarch64-linux-gnu-g++ \
+  -o snap.json
+```
+
+Available cross-compilation flags:
+- `--gcc-path` — path to the cross-compiler binary
+- `--gcc-prefix` — toolchain prefix (e.g. `aarch64-linux-gnu-`)
+- `--gcc-options` — extra compiler flags passed to castxml
+- `--sysroot` — alternative system root directory
+- `--nostdinc` — do not search standard system include paths
+
+#### Verbose output
+
+Add `-v` / `--verbose` to any native command to enable debug logging:
+
+```bash
+abicheck dump libfoo.so -H foo.h -v
+abicheck compare old.json new.json -v
+```
+
 ### 3) Mixed mode: snapshot baseline vs live build
 
 ```bash
@@ -76,16 +119,16 @@ See [ABICC compatibility reference](abicc_compat.md) for the full flag list.
 
 ```bash
 # Minimal (identical to abi-compliance-checker):
-abicheck compat -lib foo -old old.xml -new new.xml
+abicheck compat check -lib foo -old old.xml -new new.xml
 
 # With strict mode and version labels:
-abicheck compat -lib foo -old old.xml -new new.xml -s -v1 1.0 -v2 2.0
+abicheck compat check -lib foo -old old.xml -new new.xml -s -v1 1.0 -v2 2.0
 
 # Source/API compat only (ignore ELF metadata):
-abicheck compat -lib foo -old old.xml -new new.xml -source
+abicheck compat check -lib foo -old old.xml -new new.xml -source
 
 # Skip known symbols:
-abicheck compat -lib foo -old old.xml -new new.xml -skip-symbols skip.txt
+abicheck compat check -lib foo -old old.xml -new new.xml -skip-symbols skip.txt
 ```
 
 ## abicheck as a drop-in replacement for ABICC
@@ -105,7 +148,7 @@ while modernizing internals and outputs.
 ### Practical migration path
 
 1. Keep your existing ABICC XML descriptor generation.
-2. Replace ABICC compare call with `abicheck compat ...` (flags are identical).
+2. Replace ABICC compare call with `abicheck compat check ...` (flags are identical).
 3. Optionally move to native `dump/compare` commands for explicit snapshot control.
 4. Switch CI gates to JSON/SARIF-based policy checks.
 
@@ -176,10 +219,14 @@ Legend: ✅ strong support, ⚠️ partial/conditional, ❌ generally not covere
 ## High-level architecture
 
 ```text
-CLI (dump/compare/compat)
-  -> dumper (castxml AST + ELF metadata)
-  -> checker (rule-based diff + severity)
-  -> reporters (markdown/json/sarif/html)
+CLI
+  dump                         — dump ABI snapshot to JSON
+  compare                      — compare two ABI surfaces
+  compat check                 — ABICC drop-in comparison
+  compat dump                  — dump from ABICC XML descriptor
+    -> dumper (castxml AST + ELF metadata)
+    -> checker (rule-based diff + severity)
+    -> reporters (markdown/json/sarif/html)
 ```
 
 ## Core modules and purpose

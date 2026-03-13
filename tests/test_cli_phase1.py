@@ -101,7 +101,7 @@ def test_compare_cmd_breaking_exits_with_code_4(tmp_path, monkeypatch):
     assert "BREAKING REPORT" in result.stdout
 
 
-def test_compat_cmd_descriptor_parse_error_exits_6(tmp_path, monkeypatch):
+def test_compat_check_cmd_descriptor_parse_error_exits_6(tmp_path, monkeypatch):
     old_desc = tmp_path / "old.xml"
     new_desc = tmp_path / "new.xml"
     old_desc.write_text("<xml/>", encoding="utf-8")
@@ -112,14 +112,14 @@ def test_compat_cmd_descriptor_parse_error_exits_6(tmp_path, monkeypatch):
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["compat", "-lib", "foo", "-old", str(old_desc), "-new", str(new_desc)],
+        ["compat", "check", "-lib", "foo", "-old", str(old_desc), "-new", str(new_desc)],
     )
 
     assert result.exit_code == 6
     assert "Error parsing descriptor" in result.output
 
 
-def test_compat_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypatch):
+def test_compat_check_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypatch):
     old_desc = tmp_path / "old.xml"
     new_desc = tmp_path / "new.xml"
     old_desc.write_text("<xml/>", encoding="utf-8")
@@ -152,6 +152,7 @@ def test_compat_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypatch):
         main,
         [
             "compat",
+            "check",
             "-lib",
             "foo",
             "-old",
@@ -172,11 +173,11 @@ def test_compat_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypatch):
 
 
 def test_dump_cmd_non_elf_input_clean_error(tmp_path):
-    """abicheck dump /dev/null must print clean Error: ... and exit 2 (not raw traceback)."""
+    """abicheck dump /dev/null must print clean Error: ... and exit 1 (not raw traceback)."""
     # Use /dev/null which is a valid path but not a valid ELF
     runner = CliRunner()
     result = runner.invoke(main, ["dump", "/dev/null"])
-    assert result.exit_code == 2
+    assert result.exit_code == 1
     assert "Error:" in result.output
     # Must NOT expose a raw Python traceback
     assert "Traceback" not in result.output

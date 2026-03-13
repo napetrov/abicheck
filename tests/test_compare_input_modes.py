@@ -94,33 +94,33 @@ class TestResolveInput:
     def test_json_snapshot_loaded(self, tmp_path):
         snap = _make_snapshot("1.0")
         p = _write_snapshot(tmp_path / "snap.json", snap)
-        result = _resolve_input(p, headers=[], includes=[], version="1.0", compiler="c++")
+        result = _resolve_input(p, headers=[], includes=[], version="1.0", lang="c++")
         assert result.library == "libtest.so"
         assert result.version == "1.0"
 
     def test_elf_without_headers_raises(self, tmp_path):
         p = _write_fake_elf(tmp_path / "lib.so")
         with pytest.raises(Exception, match="header"):
-            _resolve_input(p, headers=[], includes=[], version="1.0", compiler="c++")
+            _resolve_input(p, headers=[], includes=[], version="1.0", lang="c++")
 
     def test_unknown_format_raises(self, tmp_path):
         p = tmp_path / "mystery.dat"
         p.write_text("not json, not perl, not elf", encoding="utf-8")
         with pytest.raises(Exception, match="Cannot detect format"):
-            _resolve_input(p, headers=[], includes=[], version="1.0", compiler="c++")
+            _resolve_input(p, headers=[], includes=[], version="1.0", lang="c++")
 
     def test_malformed_json_raises_click_exception(self, tmp_path):
         p = tmp_path / "bad.json"
         p.write_text('{"not_a_valid_snapshot": true}', encoding="utf-8")
         with pytest.raises(Exception, match="Failed to load JSON snapshot"):
-            _resolve_input(p, headers=[], includes=[], version="1.0", compiler="c++")
+            _resolve_input(p, headers=[], includes=[], version="1.0", lang="c++")
 
     def test_elf_with_missing_header_raises(self, tmp_path):
         p = _write_fake_elf(tmp_path / "lib.so")
         missing = tmp_path / "nonexistent.h"
         with pytest.raises(Exception, match="Header file not found"):
             _resolve_input(
-                p, headers=[missing], includes=[], version="1.0", compiler="c++",
+                p, headers=[missing], includes=[], version="1.0", lang="c++",
             )
 
 
@@ -188,7 +188,7 @@ class TestCompareSoSo:
         call_count = [0]
 
         def mock_dump(so_path, headers, extra_includes=None, version="unknown",
-                      compiler="c++", **kw):
+                      lang="c++", **kw):
             call_count[0] += 1
             if "v1" in str(so_path):
                 return old_snap
@@ -215,7 +215,7 @@ class TestCompareSoSo:
         recorded_headers: list[list[Path]] = []
 
         def mock_dump(so_path, headers, extra_includes=None, version="unknown",
-                      compiler="c++", **kw):
+                      lang="c++", **kw):
             recorded_headers.append(list(headers))
             return _make_snapshot(version)
 
@@ -254,7 +254,7 @@ class TestCompareSoSo:
         recorded_versions: list[str] = []
 
         def mock_dump(so_path, headers, extra_includes=None, version="unknown",
-                      compiler="c++", **kw):
+                      lang="c++", **kw):
             recorded_versions.append(version)
             return _make_snapshot(version)
 
@@ -280,7 +280,7 @@ class TestCompareSoSo:
         recorded_includes: list[list[Path]] = []
 
         def mock_dump(so_path, headers, extra_includes=None, version="unknown",
-                      compiler="c++", **kw):
+                      lang="c++", **kw):
             recorded_includes.append(list(extra_includes or []))
             return _make_snapshot(version)
 
@@ -309,7 +309,7 @@ class TestCompareMixed:
         hdr.write_text("int foo(void);", encoding="utf-8")
 
         def mock_dump(so_path, headers, extra_includes=None, version="unknown",
-                      compiler="c++", **kw):
+                      lang="c++", **kw):
             return _make_snapshot(version)
 
         monkeypatch.setattr("abicheck.cli.dump", mock_dump)
@@ -329,7 +329,7 @@ class TestCompareMixed:
         hdr.write_text("int foo(void);", encoding="utf-8")
 
         def mock_dump(so_path, headers, extra_includes=None, version="unknown",
-                      compiler="c++", **kw):
+                      lang="c++", **kw):
             return _make_snapshot(version)
 
         monkeypatch.setattr("abicheck.cli.dump", mock_dump)
@@ -349,7 +349,7 @@ class TestCompareMixed:
         hdr.write_text("int foo(void);", encoding="utf-8")
 
         def mock_dump(so_path, headers, extra_includes=None, version="unknown",
-                      compiler="c++", **kw):
+                      lang="c++", **kw):
             return new_snap
 
         monkeypatch.setattr("abicheck.cli.dump", mock_dump)
@@ -370,7 +370,7 @@ class TestCompareMixed:
         recorded_headers: list[list[Path]] = []
 
         def mock_dump(so_path, headers, extra_includes=None, version="unknown",
-                      compiler="c++", **kw):
+                      lang="c++", **kw):
             recorded_headers.append(list(headers))
             return _make_snapshot(version)
 
@@ -398,7 +398,7 @@ class TestCompareSoOutputFormats:
         hdr.write_text("int foo(void);", encoding="utf-8")
 
         def mock_dump(so_path, headers, extra_includes=None, version="unknown",
-                      compiler="c++", **kw):
+                      lang="c++", **kw):
             return _make_snapshot(version)
 
         monkeypatch.setattr("abicheck.cli.dump", mock_dump)
@@ -456,7 +456,7 @@ class TestCompareHelp:
         assert result.exit_code == 0
         for flag in ["-H", "--header", "--old-header", "--new-header",
                      "--old-version", "--new-version", "--old-include",
-                     "--new-include", "--compiler"]:
+                     "--new-include", "--lang"]:
             assert flag in result.output, f"{flag} not in help output"
 
     def test_help_shows_examples(self):

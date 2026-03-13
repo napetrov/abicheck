@@ -372,6 +372,7 @@ class TestAbiccPerlDumpInfoMessage:
             main,
             [
                 "compat",
+                "check",
                 "-lib",
                 "libfoo",
                 "-old",
@@ -399,6 +400,7 @@ class TestAbiccPerlDumpInfoMessage:
             main,
             [
                 "compat",
+                "check",
                 "-lib",
                 "libfoo",
                 "-old",
@@ -724,7 +726,7 @@ class TestAllAbiccFlagsAccepted:
                 encoding="utf-8",
             )
 
-        base_args = ["compat", "-lib", "test", "-old", str(tmp_path / "old.xml"),
+        base_args = ["compat", "check", "-lib", "test", "-old", str(tmp_path / "old.xml"),
                       "-new", str(tmp_path / "new.xml")]
         runner = CliRunner()
         return runner.invoke(main, base_args + args)

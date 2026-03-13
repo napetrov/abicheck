@@ -36,7 +36,7 @@ Result: one `DiffResult` with classified changes and verdict.
 
 ## Main modules
 
-- `abicheck/cli.py` — CLI entrypoint (`dump`, `compare`, `compat`, `compat-dump`)
+- `abicheck/cli.py` — CLI entrypoint (`dump`, `compare`, `compat check`, `compat dump`)
 - `abicheck/dumper.py` — snapshot generation from `.so` + headers
 - `abicheck/checker.py` — diff orchestration and change collection
 - `abicheck/checker_policy.py` — `ChangeKind`, built-in policies, verdict logic
