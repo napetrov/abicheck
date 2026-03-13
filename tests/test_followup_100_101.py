@@ -259,34 +259,58 @@ class TestPluginAbiVerdict:
 # ── CLI/report-filter policy integration ─────────────────────────────────────
 
 class TestCliPolicyFiltering:
-    def _mk_result(self, *kinds: ChangeKind) -> DiffResult:
+    def _mk_result(self, policy: str = "strict_abi", *kinds: ChangeKind) -> DiffResult:
         return DiffResult(
             old_version="1.0",
             new_version="2.0",
             library="lib.so",
             changes=[_change(k) for k in kinds],
             verdict=Verdict.NO_CHANGE,
+            policy=policy,
         )
 
-    def test_filter_source_only_honors_policy(self) -> None:
+    def test_filter_source_only_strict(self) -> None:
         from abicheck.cli import _filter_source_only
 
-        result = self._mk_result(ChangeKind.ENUM_MEMBER_RENAMED)
-        strict = _filter_source_only(result, policy="strict_abi")
-        sdk = _filter_source_only(result, policy="sdk_vendor")
+        result = self._mk_result("strict_abi", ChangeKind.ENUM_MEMBER_RENAMED)
+        filtered = _filter_source_only(result)
 
-        assert strict.verdict == Verdict.API_BREAK
-        assert sdk.verdict == Verdict.COMPATIBLE
+        assert filtered.policy == "strict_abi"
+        assert filtered.verdict == Verdict.API_BREAK
+        assert len(filtered.source_breaks) == 1
 
-    def test_filter_binary_only_honors_policy(self) -> None:
+    def test_filter_source_only_sdk_vendor_propagates_policy(self) -> None:
+        from abicheck.cli import _filter_source_only
+
+        result = self._mk_result("sdk_vendor", ChangeKind.ENUM_MEMBER_RENAMED)
+        filtered = _filter_source_only(result)
+
+        # policy must be propagated — verdict AND .source_breaks both sdk_vendor
+        assert filtered.policy == "sdk_vendor"
+        assert filtered.verdict == Verdict.COMPATIBLE
+        assert len(filtered.source_breaks) == 0
+        assert len(filtered.compatible) == 1
+
+    def test_filter_binary_only_strict(self) -> None:
         from abicheck.cli import _filter_binary_only
 
-        result = self._mk_result(ChangeKind.CALLING_CONVENTION_CHANGED)
-        strict = _filter_binary_only(result, policy="strict_abi")
-        plugin = _filter_binary_only(result, policy="plugin_abi")
+        result = self._mk_result("strict_abi", ChangeKind.CALLING_CONVENTION_CHANGED)
+        filtered = _filter_binary_only(result)
 
-        assert strict.verdict == Verdict.BREAKING
-        assert plugin.verdict == Verdict.COMPATIBLE
+        assert filtered.policy == "strict_abi"
+        assert filtered.verdict == Verdict.BREAKING
+        assert len(filtered.breaking) == 1
+
+    def test_filter_binary_only_plugin_abi_propagates_policy(self) -> None:
+        from abicheck.cli import _filter_binary_only
+
+        result = self._mk_result("plugin_abi", ChangeKind.CALLING_CONVENTION_CHANGED)
+        filtered = _filter_binary_only(result)
+
+        assert filtered.policy == "plugin_abi"
+        assert filtered.verdict == Verdict.COMPATIBLE
+        assert len(filtered.breaking) == 0
+        assert len(filtered.compatible) == 1
 
 
 # ── CLI --policy end-to-end ───────────────────────────────────────────────────
@@ -348,6 +372,38 @@ class TestCliPolicy:
             )
 
         assert result.exit_code == 0, result.output
+
+    def test_policy_file_wins_over_policy_flag(self, tmp_path: Any) -> None:
+        """--policy-file base_policy takes precedence; --policy is ignored."""
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        old_p, new_p = self._write_snapshots(tmp_path)
+        # YAML file explicitly sets base_policy=strict_abi
+        policy_p = tmp_path / "strict.yaml"
+        policy_p.write_text("base_policy: strict_abi\noverrides: {}\n", encoding="utf-8")
+
+        captured: dict = {}
+
+        def _fake_compare(*_args: Any, **kwargs: Any) -> DiffResult:
+            captured["policy"] = kwargs.get("policy")
+            captured["policy_file"] = kwargs.get("policy_file")
+            return DiffResult(old_version="1.0", new_version="2.0", library="lib.so", changes=[], verdict=Verdict.NO_CHANGE)
+
+        with patch("abicheck.cli.compare", side_effect=_fake_compare):
+            result = CliRunner().invoke(
+                main,
+                ["compare", str(old_p), str(new_p),
+                 "--policy", "sdk_vendor",
+                 "--policy-file", str(policy_p)],
+            )
+
+        assert result.exit_code == 0, result.output
+        # policy_file must be passed (not None)
+        assert captured["policy_file"] is not None
+        # warning emitted on stderr
+        assert "--policy" in result.output or "ignored" in result.output
 
     def test_help_lists_policy_choices(self) -> None:
         from click.testing import CliRunner

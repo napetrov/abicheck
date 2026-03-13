@@ -119,6 +119,12 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
             pf = PolicyFile.load(policy_file_path)
         except (ValueError, OSError) as e:
             raise click.BadParameter(str(e), param_hint="--policy-file") from e
+        if policy != "strict_abi":
+            click.echo(
+                f"Warning: --policy={policy!r} is ignored when --policy-file is given. "
+                "Set base_policy in the YAML file to override the base policy.",
+                err=True,
+            )
 
     result = compare(old, new, suppression=suppression, policy=policy, policy_file=pf)
 
@@ -347,14 +353,16 @@ def _apply_strict(result: DiffResult, *, mode: str = "full") -> DiffResult:
     return result
 
 
-def _filter_source_only(result: DiffResult, *, policy: str = "strict_abi") -> DiffResult:
+def _filter_source_only(result: DiffResult) -> DiffResult:
     """Remove binary-only changes from result for -source mode.
 
-    Re-derives the verdict using compute_verdict with the given policy so that
-    policy-specific kind downgrades are applied consistently to split reports.
+    Re-derives the verdict and propagates result.policy so that the returned
+    DiffResult is fully self-consistent (verdict, .breaking, .source_breaks,
+    .compatible all use the same policy).
     """
     from .checker import DiffResult  # noqa: PLC0415
 
+    policy = result.policy
     filtered = [c for c in result.changes if c.kind not in _BINARY_ONLY_KINDS]
     verdict = _compute_verdict(filtered, policy=policy)
 
@@ -367,17 +375,20 @@ def _filter_source_only(result: DiffResult, *, policy: str = "strict_abi") -> Di
         suppressed_count=result.suppressed_count,
         suppressed_changes=result.suppressed_changes,
         suppression_file_provided=result.suppression_file_provided,
+        policy=policy,
     )
 
 
-def _filter_binary_only(result: DiffResult, *, policy: str = "strict_abi") -> DiffResult:
+def _filter_binary_only(result: DiffResult) -> DiffResult:
     """Remove source-only changes from result for -binary mode.
 
-    Re-derives the verdict using compute_verdict with the given policy so that
-    policy-specific kind downgrades are applied consistently to split reports.
+    Re-derives the verdict and propagates result.policy so that the returned
+    DiffResult is fully self-consistent (verdict, .breaking, .source_breaks,
+    .compatible all use the same policy).
     """
     from .checker import DiffResult  # noqa: PLC0415
 
+    policy = result.policy
     filtered = [c for c in result.changes if c.kind not in _API_BREAK_KINDS]
     verdict = _compute_verdict(filtered, policy=policy)
 
@@ -390,6 +401,7 @@ def _filter_binary_only(result: DiffResult, *, policy: str = "strict_abi") -> Di
         suppressed_count=result.suppressed_count,
         suppressed_changes=result.suppressed_changes,
         suppression_file_provided=result.suppression_file_provided,
+        policy=policy,
     )
 
 
@@ -408,6 +420,7 @@ def _apply_warn_newsym(result: DiffResult) -> DiffResult:
             suppressed_count=result.suppressed_count,
             suppressed_changes=result.suppressed_changes,
             suppression_file_provided=result.suppression_file_provided,
+            policy=result.policy,
         )
     return result
 
@@ -436,6 +449,7 @@ def _limit_affected_changes(result: DiffResult, limit: int) -> DiffResult:
         suppressed_count=result.suppressed_count,
         suppressed_changes=result.suppressed_changes,
         suppression_file_provided=result.suppression_file_provided,
+        policy=result.policy,
     )
 
 
@@ -1179,7 +1193,7 @@ def compat_cmd(  # noqa: PLR0913
     # from the primary report (matching ABICC semantics). _filter_binary_only
     # is only used for -bin-report-path split reports.
     if source_only and not binary_only:
-        result = _filter_source_only(result, policy="strict_abi")
+        result = _filter_source_only(result)
 
     # -strict: treat COMPATIBLE and API_BREAK as BREAKING.
     # Applied AFTER source filtering so that -source -strict --strict-mode api
@@ -1251,13 +1265,13 @@ def compat_cmd(  # noqa: PLR0913
     # -bin-report-path / -src-report-path: generate split reports
     if bin_report_path:
         bin_report_path.parent.mkdir(parents=True, exist_ok=True)
-        bin_result = _filter_binary_only(full_result, policy="strict_abi")
+        bin_result = _filter_binary_only(full_result)
         _generate_report(bin_result, bin_report_path)
         _do_echo(f"Binary report: {bin_report_path}", quiet)
 
     if src_report_path:
         src_report_path.parent.mkdir(parents=True, exist_ok=True)
-        src_result = _filter_source_only(full_result, policy="strict_abi")
+        src_result = _filter_source_only(full_result)
         _generate_report(src_result, src_report_path)
         _do_echo(f"Source report: {src_report_path}", quiet)
 

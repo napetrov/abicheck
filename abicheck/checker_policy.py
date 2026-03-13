@@ -461,6 +461,33 @@ def policy_registry_markdown() -> str:
         )
     return "\n".join(lines)
 
+VALID_BASE_POLICIES: frozenset[str] = frozenset({"strict_abi", "sdk_vendor", "plugin_abi"})
+"""Canonical set of valid built-in policy names. Import from here — do not redefine."""
+
+
+def policy_kind_sets(policy: str) -> tuple[frozenset, frozenset, frozenset]:
+    """Return (breaking, api_break, compatible) kind sets for the given policy name.
+
+    This is the single source of truth for policy → kind-set mapping.
+    Used by compute_verdict(), DiffResult properties, and report classification.
+    Unknown policy names fall back to strict_abi.
+    """
+    if policy == "sdk_vendor":
+        return (
+            frozenset(BREAKING_KINDS),
+            frozenset(API_BREAK_KINDS - SDK_VENDOR_COMPAT_KINDS),
+            frozenset(COMPATIBLE_KINDS | SDK_VENDOR_COMPAT_KINDS),
+        )
+    elif policy == "plugin_abi":
+        return (
+            frozenset(BREAKING_KINDS - PLUGIN_ABI_DOWNGRADED_KINDS),
+            frozenset(API_BREAK_KINDS),
+            frozenset(COMPATIBLE_KINDS | PLUGIN_ABI_DOWNGRADED_KINDS),
+        )
+    else:
+        return frozenset(BREAKING_KINDS), frozenset(API_BREAK_KINDS), frozenset(COMPATIBLE_KINDS)
+
+
 def compute_verdict(changes: Sequence[HasKind], *, policy: str = "strict_abi") -> Verdict:
     """Compute verdict from a list of changes, honoring the given policy profile.
 
@@ -478,21 +505,7 @@ def compute_verdict(changes: Sequence[HasKind], *, policy: str = "strict_abi") -
     if not changes:
         return Verdict.NO_CHANGE
 
-    # Select policy-specific kind sets
-    if policy == "sdk_vendor":
-        breaking = BREAKING_KINDS
-        api_break = API_BREAK_KINDS - SDK_VENDOR_COMPAT_KINDS
-        compatible = COMPATIBLE_KINDS | SDK_VENDOR_COMPAT_KINDS
-    elif policy == "plugin_abi":
-        breaking = BREAKING_KINDS - PLUGIN_ABI_DOWNGRADED_KINDS
-        api_break = API_BREAK_KINDS
-        compatible = COMPATIBLE_KINDS | PLUGIN_ABI_DOWNGRADED_KINDS
-    else:
-        # strict_abi (default) and any unknown policy
-        breaking = BREAKING_KINDS
-        api_break = API_BREAK_KINDS
-        compatible = COMPATIBLE_KINDS
-
+    breaking, api_break, compatible = policy_kind_sets(policy)
     kinds = {c.kind for c in changes}
     if kinds & breaking:
         return Verdict.BREAKING

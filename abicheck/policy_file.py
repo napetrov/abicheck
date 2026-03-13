@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .checker_policy import ChangeKind, Verdict, compute_verdict
+from .checker_policy import ChangeKind, Verdict, compute_verdict, VALID_BASE_POLICIES
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ _SEVERITY_MAP: dict[str, Verdict] = {
     "ignore": Verdict.COMPATIBLE,
 }
 
-_VALID_BASE_POLICIES = {"strict_abi", "sdk_vendor", "plugin_abi"}
+_VALID_BASE_POLICIES = VALID_BASE_POLICIES  # re-export alias for backward compat
 
 
 @dataclass

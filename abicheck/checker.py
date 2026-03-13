@@ -12,30 +12,7 @@ from .checker_policy import COMPATIBLE_KINDS as _COMPATIBLE_KINDS
 from .checker_policy import ChangeKind as ChangeKind
 from .checker_policy import Verdict as Verdict
 from .checker_policy import compute_verdict as compute_verdict
-from .checker_policy import SDK_VENDOR_COMPAT_KINDS as _SDK_VENDOR_COMPAT_KINDS
-from .checker_policy import PLUGIN_ABI_DOWNGRADED_KINDS as _PLUGIN_ABI_DOWNGRADED_KINDS
-
-
-def _policy_kind_sets(policy: str) -> tuple[set, set, set]:
-    """Return (breaking, api_break, compatible) kind sets for the given policy.
-
-    Used internally by DiffResult properties so that breaking/source_breaks/compatible
-    are consistent with the active policy rather than the static global sets.
-    """
-    if policy == "sdk_vendor":
-        return (
-            _BREAKING_KINDS,
-            _API_BREAK_KINDS - _SDK_VENDOR_COMPAT_KINDS,
-            _COMPATIBLE_KINDS | _SDK_VENDOR_COMPAT_KINDS,
-        )
-    elif policy == "plugin_abi":
-        return (
-            _BREAKING_KINDS - _PLUGIN_ABI_DOWNGRADED_KINDS,
-            _API_BREAK_KINDS,
-            _COMPATIBLE_KINDS | _PLUGIN_ABI_DOWNGRADED_KINDS,
-        )
-    else:
-        return _BREAKING_KINDS, _API_BREAK_KINDS, _COMPATIBLE_KINDS
+from .checker_policy import policy_kind_sets as _policy_kind_sets
 from .detectors import DetectorResult
 from .dwarf_advanced import diff_advanced_dwarf
 from .elf_metadata import SymbolBinding, SymbolType
