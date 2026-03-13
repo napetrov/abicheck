@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/napetrov/abicheck/actions/workflows/ci.yml/badge.svg)](https://github.com/napetrov/abicheck/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/napetrov/abicheck/branch/main/graph/badge.svg)](https://codecov.io/gh/napetrov/abicheck)
+[![conda-forge](https://img.shields.io/conda/vn/conda-forge/abicheck.svg)](https://anaconda.org/conda-forge/abicheck)
 [![PyPI](https://img.shields.io/pypi/v/abicheck.svg)](https://pypi.org/project/abicheck/)
 
 **abicheck checks C/C++ library compatibility at both API and ABI levels.**
@@ -17,34 +18,46 @@ to both communities for defining the practical ABI-checking ecosystem.
 
 ## Installation
 
+### Option A: conda-forge (recommended)
+
+conda-forge provides abicheck with all dependencies — including `castxml` — resolved
+automatically. No separate system package installation needed.
+
+```bash
+conda install -c conda-forge abicheck
+abicheck --version
+```
+
+### Option B: pip (requires separate castxml install)
+
+When installing via pip, `castxml` must be installed separately since it is a C++ binary
+that pip cannot provide.
+
+```bash
+pip install abicheck
+
+# castxml must be installed separately:
+# Ubuntu/Debian
+sudo apt install castxml g++
+# or via conda (even if abicheck itself was pip-installed)
+conda install -c conda-forge castxml
+
+abicheck --version
+```
+
+> **Note:** A `castxml` package exists on PyPI but is unmaintained (v0.4.5, Sep 2022)
+> while upstream is at v0.7.0. Use system packages or conda-forge instead.
+
 ### Prerequisites
 
 | Requirement | Notes |
 |-------------|-------|
 | **Linux** | ELF/DWARF only |
 | **Python >= 3.10** | |
-| **`castxml`** | Required for `dump` command (header-based analysis) |
+| **`castxml`** | Required for `dump` command (header-based analysis). Included automatically with conda-forge install. |
 | **`g++` or `clang++`** | Must be accessible to castxml |
 
-```bash
-# Ubuntu/Debian
-sudo apt install castxml g++
-
-# conda-forge (cross-platform, including aarch64 and macOS)
-conda install -c conda-forge castxml
-```
-
-> **Note:** A `castxml` package exists on PyPI but is unmaintained (v0.4.5, Sep 2022)
-> while upstream is at v0.7.0. Use system packages or conda-forge instead.
-
-### Install abicheck
-
-```bash
-pip install abicheck
-abicheck --version
-```
-
-For development from source:
+### Development from source
 
 ```bash
 git clone https://github.com/napetrov/abicheck.git

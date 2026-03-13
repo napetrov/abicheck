@@ -48,8 +48,21 @@ parse path goes through pyelftools only (no subprocess, no text parsing).
 | Library | Role | Maintenance status |
 |---------|------|-------------------|
 | `pyelftools` | ELF/DWARF parsing | Active PyPI project, used by angr, pwntools, ROPgadget |
-| `castxml` | C++ header → XML AST | Maintained by Kitware (VTK team) |
+| `castxml` | C++ header → XML AST | Maintained by Kitware (VTK team); available on conda-forge |
 | `defusedxml` | Safe XML parsing | Security hardening for castxml output |
+
+### Distribution
+
+abicheck is distributed via both **conda-forge** (recommended) and **PyPI**:
+
+- **conda-forge**: `conda install -c conda-forge abicheck` — declares `castxml` as a run
+  dependency, giving users a complete install with no manual system package setup.
+  All Python and non-Python dependencies (including `castxml`, `google-re2`, and `re2`)
+  are resolved by the conda solver.
+- **PyPI**: `pip install abicheck` — installs Python dependencies only. `castxml` must be
+  installed separately via system packages (`apt install castxml`) or conda-forge
+  (`conda install -c conda-forge castxml`). The `castxml` PyPI package is unmaintained
+  (v0.4.5, Sep 2022) and should not be used.
 
 Note: An earlier version of this ADR incorrectly stated pyelftools is used by Ghidra.
 Ghidra is Java-based and uses its own ELF parser. The correct reference projects are

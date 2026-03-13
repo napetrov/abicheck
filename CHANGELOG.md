@@ -63,9 +63,15 @@ additional capabilities.
 ### Platform
 - **Linux only** (ELF/DWARF). Windows (PE) and macOS (Mach-O) are not yet supported.
 
+### Installation
+- **conda-forge** (recommended): `conda install -c conda-forge abicheck` — installs all
+  dependencies including `castxml` automatically
+- **pip**: `pip install abicheck` — requires separate `castxml` install via system packages
+  or conda-forge (pip cannot provide the `castxml` C++ binary)
+
 ### Requirements
 - Python ≥ 3.10
-- `castxml` (mandatory — for header-based C/C++ AST parsing)
+- `castxml` (mandatory — for header-based C/C++ AST parsing; included in conda-forge install)
 - `g++` or `clang++` (accessible to castxml)
 - See [Installation](docs/getting_started.md) for full setup instructions
 

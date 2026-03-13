@@ -66,7 +66,15 @@ For each break type: what it is, how it appears in the real world, and which too
 
 ---
 
-## Goal 6 -- GitHub Pages Documentation Site
+## Goal 6 -- Distribution & Documentation
+### conda-forge package
+Primary distribution via conda-forge: `conda install -c conda-forge abicheck`.
+- `castxml` declared as a conda run dependency — users get a working install with zero manual setup
+- PyPI remains available (`pip install abicheck`) for users who prefer pip, with
+  castxml as a documented external prerequisite
+- conda-forge recipe auto-updates on each PyPI release via conda-forge bot
+
+### GitHub Pages documentation site
 Public documentation at `https://napetrov.github.io/abicheck/`:
 - Getting started / installation
 - CLI reference
@@ -74,7 +82,7 @@ Public documentation at `https://napetrov.github.io/abicheck/`:
 - Tool comparison table
 - Architecture overview
 
-**TODO:** Set up `docs/` Jekyll/MkDocs site, GitHub Actions publish workflow.
+**TODO:** Submit conda-forge recipe to staged-recipes. Set up `docs/` Jekyll/MkDocs site, GitHub Actions publish workflow.
 
 ---
 
@@ -87,4 +95,4 @@ Public documentation at `https://napetrov.github.io/abicheck/`:
 | G3: libabigail tests | Sprint 6 started: 10 parity cases |
 | G4: Agent-friendly | Partial -- JSON/snapshot done, SARIF TODO |
 | G5: Break encyclopedia | In progress -- cases 01-24 done |
-| G6: GitHub Pages | Not started |
+| G6: Distribution & docs | conda-forge recipe planned; GitHub Pages not started |

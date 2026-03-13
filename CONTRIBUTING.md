@@ -11,7 +11,24 @@ Thank you for your interest in contributing!
 
 ## Setup
 
+### Option A: conda-forge (recommended)
+
 ```bash
+# Create a development environment with all dependencies
+conda create -n abicheck-dev python=3.10 castxml -c conda-forge
+conda activate abicheck-dev
+
+git clone https://github.com/napetrov/abicheck.git
+cd abicheck
+pip install -e ".[dev]"
+```
+
+### Option B: pip + system castxml
+
+```bash
+# Install castxml separately (Ubuntu/Debian)
+sudo apt install castxml g++
+
 git clone https://github.com/napetrov/abicheck.git
 cd abicheck
 pip install -e ".[dev]"

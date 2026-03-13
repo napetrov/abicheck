@@ -26,6 +26,10 @@ can continue evolving ABI checks in modern CI environments.
 ## Quick start
 
 ```bash
+# conda-forge (recommended — installs castxml automatically)
+conda install -c conda-forge abicheck
+
+# or via pip (castxml must be installed separately — see Getting Started)
 pip install abicheck
 
 # Dump ABI snapshots

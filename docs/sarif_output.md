@@ -23,7 +23,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install abicheck
-        run: pip install abicheck
+        run: |
+          # conda-forge (recommended — includes castxml):
+          # conda install -c conda-forge abicheck
+          # or via pip (requires castxml installed separately):
+          pip install abicheck
 
       - name: Dump ABI (baseline)
         run: |
