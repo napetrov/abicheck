@@ -774,7 +774,7 @@ def _parse_producer(producer: str) -> ToolchainInfo:
         m = re.search(r"(\d+\.\d+(?:\.\d+)?)", producer)
         if m:
             info.version = m.group(1)
-    elif re.search(r"ICC|ICX|DPC\+\+", producer):
+    elif re.search(r"Intel|ICC|ICX|DPC\+\+", producer):
         info.compiler = "ICC"
         m = re.search(r"(\d+\.\d+(?:\.\d+)?)", producer)
         if m:
