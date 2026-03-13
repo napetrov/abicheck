@@ -41,6 +41,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - python-version: '3.12'
+            allow-prereleases: false
           - python-version: '3.13'
             allow-prereleases: false
           - python-version: '3.14'

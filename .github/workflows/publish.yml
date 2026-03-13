@@ -11,10 +11,15 @@ on:
         default: false
         type: boolean
 
+# Deny all permissions by default; jobs declare only what they need.
+permissions: {}
+
 jobs:
   build:
     name: Build distribution
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -35,11 +40,17 @@ jobs:
           twine check dist/*
           ls -lh dist/
 
+      - name: Smoke-test wheel install
+        run: |
+          pip install dist/*.whl
+          python -c "import abicheck; print('abicheck version:', abicheck.__version__)"
+
       - name: Upload dist artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
+          retention-days: 7
 
   publish:
     name: Publish to PyPI
@@ -62,3 +73,5 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         # Uses Trusted Publishing (OIDC) — no API token needed.
         # Configure at: https://pypi.org/manage/project/abicheck/settings/publishing/
+        # Note: pypa/gh-action-pypi-publish is pinned to branch 'release/v1'.
+        # For stricter supply-chain hardening, pin to a commit SHA.
