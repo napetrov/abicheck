@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "ABI compatibility checker for C/C++ shared libraries"
 readme = "README.md"
 license = {text = "Apache-2.0"}
-authors = [{name = "Nikolay Petrov", email = "nikolay.a.petrov@intel.com"}]
+authors = [{name = "Nikolay Petrov", email = "sfasp.post@gmail.com"}]
 requires-python = ">=3.10"
 keywords = ["abi", "api", "compatibility", "checker", "shared-library", "elf", "dwarf", "castxml"]
 classifiers = [
