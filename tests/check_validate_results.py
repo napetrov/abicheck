@@ -1,4 +1,5 @@
-import json, sys
+import json
+import sys
 
 data = json.load(open("results/validate_examples.json"))
 s = data["summary"]
