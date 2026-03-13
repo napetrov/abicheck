@@ -96,50 +96,7 @@ See [abicc_compat.md](../abicc_compat.md) for the full flag reference.
 
 ---
 
-## 4) Real-world validation examples
-
-No-header scanning works out of the box — ELF metadata and symbol versioning
-are captured even without `.h` files:
-
-```bash
-# oneTBB 2021.11 → 2021.13: 3 breaking changes, 16 compatible additions
-cat > tbb_v1.xml <<'EOF'
-<descriptor>
-  <version>2021.11.0</version>
-  <libs>/usr/lib/x86_64-linux-gnu/libtbb.so.12.11</libs>
-</descriptor>
-EOF
-
-cat > tbb_v2.xml <<'EOF'
-<descriptor>
-  <version>2021.13.0</version>
-  <libs>/path/to/libtbb.so.12.13</libs>
-</descriptor>
-EOF
-
-abicheck compat -lib libtbb -old tbb_v1.xml -new tbb_v2.xml
-# Binary compatibility: 96.7%
-# Total binary compatibility problems: 3, warnings: 0
-# Verdict: BREAKING
-```
-
-With headers, you also get full type and parameter analysis via castxml.
-
-### ROS 2 / OSRF workflow
-
-If your project currently uses `auto-abi-checker` or ABICC in ROS 2 CI:
-
-```bash
-# Before (OSRF auto-abi-checker):
-./auto-abi.py --orig-type ros-pkg --orig rclcpp --new-type local-dir --new /colcon_ws/install
-
-# After (abicheck — same result, no Perl dependency):
-abicheck compat -lib rclcpp -old rclcpp_old.xml -new rclcpp_new.xml -s
-```
-
----
-
-## 5) Migration checklist
+## 4) Migration checklist
 
 1. Replace ABICC binary call with `abicheck compat` (keep XML descriptors unchanged)
 2. Validate exit code behavior in CI — especially: compat exit `1` = BREAKING, exit `2` = API_BREAK or error
@@ -155,7 +112,7 @@ abicheck compat -lib rclcpp -old rclcpp_old.xml -new rclcpp_new.xml -s
 
 ---
 
-## 6) Jenkins stage example
+## 5) Jenkins stage example
 
 ```bash
 # Pre-validate inputs to avoid exit-2 ambiguity (missing file → exit 2 = same as API_BREAK)
@@ -181,7 +138,7 @@ echo "ABI check passed"
 
 ---
 
-## 7) When to move beyond `compat`
+## 6) When to move beyond `compat`
 
 Use `abicheck compare` if you need:
 - `API_BREAK` as an explicit, unambiguous verdict (not conflated with errors)
