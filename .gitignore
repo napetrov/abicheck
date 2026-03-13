@@ -10,3 +10,6 @@ htmlcov/
 examples/**/*.so
 logs/
 compat_reports/
+dist/
+build/
+site/

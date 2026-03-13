@@ -575,7 +575,7 @@ under-allocate memory when running against the v2 library.
 
 ### noexcept added or removed
 
-See [case15_noexcept_change](#case15_noexcept_change--source-level-contract-change-compatible) above.
+See [case15_noexcept_change](#case15_noexcept_change-source-level-contract-change-compatible) above.
 
 ### GLOBAL→WEAK symbol binding
 

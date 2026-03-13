@@ -57,6 +57,10 @@ nav:
     - Coverage Report: coverage_report.md
     - Benchmark Report: benchmark_report.md
     - V2 Coverage Plan: v2_coverage_plan.md
+  - Development:
+    - Testing Strategy: testing_coverage.md
+    - Codebase Analysis: codebase_analysis.md
+    - ABICC Test Coverage Comparison: abicc_test_coverage_comparison.md
   - Architecture Decisions:
     - ADR Index: adr/index.md
     - ADR-001 Technology Stack: adr/001-technology-stack.md

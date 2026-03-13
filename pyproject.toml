@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68,<75"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -60,9 +60,26 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 # pyelftools has no type stubs or py.typed marker — all its APIs are untyped.
 # Disable strict checks for modules that directly call pyelftools APIs.
-module = ["abicheck.elf_metadata", "abicheck.dwarf_metadata"]
+module = [
+    "abicheck.elf_metadata",
+    "abicheck.dwarf_metadata",
+    "abicheck.dwarf_advanced",
+    "abicheck.dwarf_unified",
+    "abicheck.dumper",
+]
 disallow_untyped_calls = false
 disable_error_code = ["attr-defined", "unused-ignore"]
+
+[[tool.mypy.overrides]]
+# Click decorators (@click.command, @click.option, etc.) are untyped.
+module = ["abicheck.cli", "abicheck.compat.cli"]
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+# types-PyYAML stubs may not be found in all environments;
+# the package is listed in [project.optional-dependencies.dev].
+module = ["abicheck.policy_file", "abicheck.suppression"]
+disable_error_code = ["import-untyped"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
