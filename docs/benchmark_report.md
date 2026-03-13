@@ -1,6 +1,6 @@
 # ABI Tool Comparison: abicheck vs abidiff vs ABICC
 
-_Last updated: 2026-03-11 — 42 example cases, onedal-build (Ubuntu, 8 vCPU)_
+_Last updated: 2026-03-11 — 42 example cases, ci-runner (Ubuntu, 8 vCPU)_
 
 > **For a detailed explanation of how each tool works, why the numbers are what they are,
 > and how to choose the right tool — see [tool_comparison.md](tool_comparison.md).**
@@ -153,7 +153,7 @@ Legend: ✅ correct · ⚠️ wrong/undercounted (e.g. COMPATIBLE when BREAKING 
 | ABICC (dumper) | ~294s | abi-dumper + abi-compliance-checker per case |
 | ABICC (xml) | ~445s | GCC compilation per case; case09+case16 TIMEOUT |
 
-> Measured on: Ubuntu 22.04, 8 vCPU, 32GB RAM (onedal-build, AWS t3.2xlarge equivalent).
+> Measured on: Ubuntu 22.04, 8 vCPU, 32GB RAM (ci-runner, AWS t3.2xlarge equivalent).
 > All runs are sequential (one case at a time). Parallelising abicheck across CPUs
 > would reduce its wall time proportionally.
 
@@ -194,5 +194,5 @@ python3 scripts/benchmark_comparison.py --tools abicheck_compat abicheck_strict
 
 ## Environment
 
-Tested on: Ubuntu 22.04, 8 vCPU, 32GB RAM (onedal-build)  
+Tested on: Ubuntu 22.04, 8 vCPU, 32GB RAM (ci-runner)  
 castxml 0.6+, gcc 13, abidiff 2.4+, abi-compliance-checker 2.3, abi-dumper 1.2

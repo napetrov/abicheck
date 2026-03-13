@@ -56,6 +56,6 @@ abidiff v1.abi v2.abi
 
 ## Real-world pattern
 
-Intel TBB `tbb::task_arena` was embedded in oneDal public headers. When TBB changed
-`task_arena`'s internal layout, all oneDAL consumers were broken — same propagation
-mechanism as this case. See `case18_dependency_leak` for the external-library variant.
+TBB's `tbb::task_arena` was embedded in some library public headers. When TBB changed
+`task_arena`'s internal layout, all consumers of those libraries were broken — same
+propagation mechanism as this case. See `case18_dependency_leak` for the external-library variant.
