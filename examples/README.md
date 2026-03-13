@@ -211,8 +211,8 @@ headers. This required a major ABI break (`v1.x → v2.x`) to clean up.
 3. **Version your dependencies** — if you must expose a type, document the exact
    version requirement and check it at CMake configure time.
 
-4. **Use abi-scanner** — run ABICC with `--header-include-path` pointing at all
-   transitive dependency headers to detect leaks before release.
+4. **Use abicheck** — run `abicheck dump` with all transitive dependency headers
+   to detect leaks before release.
 
 See [case18_dependency_leak](case18_dependency_leak/README.md) for a runnable example.
 
@@ -223,22 +223,3 @@ See [case18_dependency_leak](case18_dependency_leak/README.md) for a runnable ex
 
 For comparing locally built libraries against published releases and using
 pre-saved ABI snapshots in CI, see **[docs/local_compare.md](../docs/local_compare.md)**.
-
-Quick reference:
-
-```bash
-# Compare local build vs published APT package (one-off)
-abi-scanner compare \
-  apt:intel-oneapi-dnnl=2025.2.0 \
-  local:/path/to/libdnnl.so \
-  --library-name libdnnl.so --fail-on breaking
-
-# Save ABI baseline for offline use
-abi-scanner snapshot apt:intel-oneapi-dnnl=2025.2.0 \
-  --output-dir ~/.abi-snapshots/dnnl
-
-# Compare against snapshot (fast, no download)
-abi-scanner compare \
-  dump:~/.abi-snapshots/dnnl/libdnnl.so-2025.2.0.abi \
-  local:/path/to/libdnnl.so --fail-on breaking
-```
