@@ -73,7 +73,6 @@ additional capabilities.
 
 - **Suppression system**: label/tag-based suppression, file-scoped suppression (by `source_location`),
   and suppression expiry dates are not yet implemented. Planned for v0.2.
-- Windows PE and macOS Mach-O support is not implemented (Linux/ELF only).
 
 ---
 
