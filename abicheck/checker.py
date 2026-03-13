@@ -12,12 +12,14 @@ from .checker_policy import COMPATIBLE_KINDS as _COMPATIBLE_KINDS
 from .checker_policy import ChangeKind as ChangeKind
 from .checker_policy import Verdict as Verdict
 from .checker_policy import compute_verdict as compute_verdict
+from .checker_policy import policy_kind_sets as _policy_kind_sets
 from .detectors import DetectorResult
 from .dwarf_advanced import diff_advanced_dwarf
 from .elf_metadata import SymbolBinding, SymbolType
 from .model import AbiSnapshot, EnumType, Function, RecordType, TypeField, Visibility
 
 if TYPE_CHECKING:
+    from .policy_file import PolicyFile
     from .suppression import SuppressionList
 
 
@@ -57,18 +59,25 @@ class DiffResult:
     suppressed_changes: list[Change] = field(default_factory=list)  # full audit trail
     suppression_file_provided: bool = False  # True when --suppress was passed, even if 0 matched
     detector_results: list[DetectorResult] = field(default_factory=list)
+    policy: str = "strict_abi"  # active policy profile; drives breaking/source_breaks/compatible
 
     @property
     def breaking(self) -> list[Change]:
-        return [c for c in self.changes if c.kind in _BREAKING_KINDS]
+        """Changes classified as BREAKING under the active policy."""
+        breaking_set, _, _ = _policy_kind_sets(self.policy)
+        return [c for c in self.changes if c.kind in breaking_set]
 
     @property
     def source_breaks(self) -> list[Change]:
-        return [c for c in self.changes if c.kind in _API_BREAK_KINDS]
+        """Changes classified as API_BREAK under the active policy."""
+        _, api_break_set, _ = _policy_kind_sets(self.policy)
+        return [c for c in self.changes if c.kind in api_break_set]
 
     @property
     def compatible(self) -> list[Change]:
-        return [c for c in self.changes if c.kind in _COMPATIBLE_KINDS]
+        """Changes classified as COMPATIBLE under the active policy."""
+        _, _, compatible_set = _policy_kind_sets(self.policy)
+        return [c for c in self.changes if c.kind in compatible_set]
 
 
 @dataclass(frozen=True)
@@ -1337,6 +1346,7 @@ def compare(
     suppression: SuppressionList | None = None,
     *,
     policy: str = "strict_abi",
+    policy_file: PolicyFile | None = None,
 ) -> DiffResult:
     """Diff two AbiSnapshots and return a DiffResult with verdict.
 
@@ -1346,6 +1356,11 @@ def compare(
         suppression: Optional suppression list to filter known changes.
         policy: Policy profile name to use for verdict classification.
             Available: "strict_abi" (default), "sdk_vendor", "plugin_abi".
+            Ignored when *policy_file* is provided.
+        policy_file: Optional :class:`~abicheck.policy_file.PolicyFile` instance
+            for user-defined per-kind verdict overrides.  When provided,
+            *policy* is used only as the ``base_policy`` fallback inside the
+            file (i.e. the file's own ``base_policy`` field takes precedence).
     """
 
     detector_fns: list[_DetectorSpec] = [
@@ -1407,7 +1422,8 @@ def compare(
                 filtered.append(c)
         changes = filtered
 
-    verdict = compute_verdict(changes, policy=policy)
+    verdict = policy_file.compute_verdict(changes) if policy_file is not None else compute_verdict(changes, policy=policy)
+    effective_policy = policy_file.base_policy if policy_file is not None else policy
     return DiffResult(
         old_version=old.version,
         new_version=new.version,
@@ -1418,6 +1434,7 @@ def compare(
         suppressed_changes=suppressed,
         suppression_file_provided=suppression is not None,
         detector_results=detector_results,
+        policy=effective_policy,
     )
 
 

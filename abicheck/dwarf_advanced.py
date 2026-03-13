@@ -636,56 +636,111 @@ def _reg_name(reg_num: int, arch: str) -> str:
     return f"reg{reg_num}"
 
 
+def _normalize_arch(elf: Any) -> str:
+    """Normalize ELF machine arch string to internal arch_key for register lookup."""
+    arch = str(elf.get_machine_arch())
+    return {
+        "x64": "x64", "x86_64": "x64",
+        "x86": "x86", "i386": "x86",
+        "AArch64": "aarch64", "aarch64": "aarch64",
+    }.get(arch, arch)
+
+
+def _build_addr_to_sym(elf: Any) -> dict[int, str]:
+    """Build address → symbol name map from .dynsym (preferred) and .symtab.
+
+    .dynsym is iterated first to populate exported symbol names.
+    .symtab is iterated second but does NOT overwrite existing .dynsym entries:
+    .dynsym contains only exported ABI symbols; .symtab additionally contains
+    local/static symbols that could shadow exported names at the same address.
+
+    Only STB_GLOBAL and STB_WEAK symbols at non-zero addresses are included.
+    """
+    addr_to_sym: dict[int, str] = {}
+    for section_name in (".dynsym", ".symtab"):
+        sect = elf.get_section_by_name(section_name)
+        if sect is None:
+            continue
+        for sym in sect.iter_symbols():
+            st_value = sym.entry.st_value
+            bind = sym.entry.st_info.bind
+            if bind in ("STB_GLOBAL", "STB_WEAK") and st_value > 0:
+                # .dynsym entries take priority — do not overwrite with .symtab
+                if st_value not in addr_to_sym:
+                    addr_to_sym[st_value] = sym.name
+    return addr_to_sym
+
+
+def _get_cfi_source(dwarf: Any) -> Any:
+    """Return CFI entry iterator, preferring .eh_frame over .debug_frame."""
+    try:
+        src = dwarf.get_EH_CFI_entries()
+        if src is not None:
+            return src
+    except (AttributeError, ELFError):
+        pass
+    try:
+        return dwarf.get_CFI_entries()
+    except (AttributeError, ELFError):
+        return None
+
+
+def _extract_cfa_reg_from_fde(entry: Any, arch_key: str) -> str | None:
+    """Extract the dominant CFA register name from an FDE.
+
+    Returns the register name string (e.g. 'rsp', 'rbp') or None if not found.
+
+    Heuristic:
+    - Build a sequence of (pc, reg_num) rows where CFA is available.
+    - Select the modal CFA register across decoded rows (most frequent), which
+      captures the settled function-body convention and avoids epilogue bias.
+    - Break ties by selecting the register from the highest-PC row among tied
+      candidates (preserves post-prologue behavior for 2-row entry/body tables).
+    """
+    try:
+        decoded = entry.get_decoded()
+        if not decoded.table:
+            return None
+
+        regs_by_pc: list[tuple[int, int]] = []
+        for row in decoded.table:
+            cfa = row.get("cfa")
+            if cfa is None:
+                continue
+            cfa_reg = getattr(cfa, "reg", None)
+            if cfa_reg is None:
+                continue
+            regs_by_pc.append((int(row.get("pc", 0)), int(cfa_reg)))
+
+        if not regs_by_pc:
+            return None
+
+        counts = collections.Counter(reg for _, reg in regs_by_pc)
+        max_count = max(counts.values())
+        tied_regs = {reg for reg, cnt in counts.items() if cnt == max_count}
+        dominant_reg = max((pc, reg) for pc, reg in regs_by_pc if reg in tied_regs)[1]
+
+        return _reg_name(dominant_reg, arch_key)
+    except (ELFError, OSError, ValueError, KeyError, IndexError):
+        return None
+
+
 def _parse_frame_registers(elf: Any, dwarf: Any, meta: AdvancedDwarfMetadata) -> None:
     """Extract CFA register convention for exported functions from .eh_frame (#117).
 
     For each FDE (Frame Description Entry) in .eh_frame (or .debug_frame as fallback),
-    records the dominant CFA register used in the initial CFA rule of each FDE.
-    When the CFA register changes between versions for the same function, it indicates
-    a frame-pointer convention change (e.g., rbp → rsp from -fomit-frame-pointer).
+    records the dominant post-prologue CFA register for each exported function.
+    When the CFA register changes between versions, it indicates a frame-pointer
+    convention change (e.g., rbp → rsp from -fomit-frame-pointer).
 
-    Strategy:
-    - Read the ELF machine architecture for register name resolution.
-    - Iterate FDEs; for each, take the CFA register from the first row of the
-      decoded frame table (the initial state after applying the CIE initial instructions
-      plus FDE instructions up to the first instruction boundary).
-    - Map FDE PC range to function mangled name via .symtab/.dynsym.
-    - Store as meta.frame_registers[mangled_name] = reg_name.
-
-    Graceful: any parsing error on an individual FDE is logged and skipped.
+    Graceful: any parsing error is logged/skipped. Never raises.
     """
     try:
-        # Determine architecture for register name lookup
-        arch = elf.get_machine_arch()
-        arch_key = {
-            "x64": "x64", "x86_64": "x64",
-            "x86": "x86", "i386": "x86",
-            "AArch64": "aarch64", "aarch64": "aarch64",
-        }.get(arch, arch)
-
-        # Build address → symbol name map from .dynsym (and .symtab if available)
-        addr_to_sym: dict[int, str] = {}
-        for section_name in (".dynsym", ".symtab"):
-            sect = elf.get_section_by_name(section_name)
-            if sect is None:
-                continue
-            for sym in sect.iter_symbols():
-                st_value = sym.entry.st_value
-                bind = sym.entry.st_info.bind
-                if bind in ("STB_GLOBAL", "STB_WEAK") and st_value > 0:
-                    addr_to_sym[st_value] = sym.name
-
-        # Parse .eh_frame (preferred) or .debug_frame (fallback)
-        cfi_src = None
-        try:
-            cfi_src = dwarf.get_EH_CFI_entries()
-        except (AttributeError, ELFError):
-            pass
+        arch_key = _normalize_arch(elf)
+        addr_to_sym = _build_addr_to_sym(elf)
+        cfi_src = _get_cfi_source(dwarf)
         if cfi_src is None:
-            try:
-                cfi_src = dwarf.get_CFI_entries()
-            except (AttributeError, ELFError):
-                return
+            return
 
         for entry in cfi_src:
             try:
@@ -695,18 +750,9 @@ def _parse_frame_registers(elf: Any, dwarf: Any, meta: AdvancedDwarfMetadata) ->
                 sym_name = addr_to_sym.get(pc_begin, "")
                 if not sym_name:
                     continue
-                # Decode the frame table and take the CFA register from first row
-                decoded = entry.get_decoded()
-                if not decoded.table:
-                    continue
-                first_row = decoded.table[0]
-                cfa = first_row.get("cfa")
-                if cfa is None:
-                    continue
-                cfa_reg = getattr(cfa, "reg", None)
-                if cfa_reg is None:
-                    continue
-                meta.frame_registers[sym_name] = _reg_name(cfa_reg, arch_key)
+                reg = _extract_cfa_reg_from_fde(entry, arch_key)
+                if reg is not None:
+                    meta.frame_registers[sym_name] = reg
             except (ELFError, OSError, ValueError, KeyError, IndexError) as exc:
                 log.debug("_parse_frame_registers: skipping FDE: %s", exc)
 
