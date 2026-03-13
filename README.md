@@ -39,7 +39,10 @@ conda install -c conda-forge castxml  # conda
 ```bash
 git clone https://github.com/napetrov/abicheck.git
 cd abicheck
-pip install -e ".[dev]"
+pip install -e .
+
+# Contributor / development install (includes test & lint dependencies):
+# pip install -e ".[dev]"
 ```
 
 ---

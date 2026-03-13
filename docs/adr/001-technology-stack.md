@@ -62,8 +62,9 @@ Future distribution plans:
   `castxml` as a run dependency, giving users a complete install with no manual system
   package setup.
 - **PyPI** (planned): `pip install abicheck` — will install Python dependencies only.
-  `castxml` must be installed separately via system packages (`apt install castxml`) or
-  conda-forge (`conda install -c conda-forge castxml`).
+  `castxml` must be installed separately via system packages (`apt install castxml`),
+  conda-forge (`conda install -c conda-forge castxml`), or — if a maintained castxml
+  wheel becomes available — via an optional extra (`pip install abicheck[castxml]`).
 
 Note: An earlier version of this ADR incorrectly stated pyelftools is used by Ghidra.
 Ghidra is Java-based and uses its own ELF parser. The correct reference projects are

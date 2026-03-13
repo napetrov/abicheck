@@ -34,14 +34,14 @@ pip install -e .
 
 ---
 
-## 3) First check (using repo examples)
+## 2) First check (using repo examples)
 
 The repo includes a broad set of ABI break examples (C and C++) with paired
 `v1`/`v2` sources and headers. This makes it easy to verify your install is
 working correctly and to understand typical break patterns.
 
 ```bash
-# Clone the repo (skip if already done in step 2)
+# Clone the repo (skip if already done in step 1)
 git clone https://github.com/napetrov/abicheck.git
 cd abicheck/examples/case01_symbol_removal
 
@@ -69,7 +69,7 @@ abicheck compare foo-1.0.json foo-2.0.json
 
 ---
 
-## 4) Output formats
+## 3) Output formats
 
 ```bash
 # Default: markdown report to stdout
@@ -84,7 +84,7 @@ abicheck compare v1.json v2.json --format sarif -o abi.sarif
 
 ---
 
-## 5) Exit codes (`abicheck compare`)
+## 4) Exit codes (`abicheck compare`)
 
 `abicheck compare` uses four statuses:
 - `0` → `NO_CHANGE` or `COMPATIBLE`
@@ -99,7 +99,7 @@ Canonical reference (compare + compat + strict mode): [Exit Codes](exit_codes.md
 
 ---
 
-## 6) Add to GitHub Actions
+## 5) Add to GitHub Actions
 
 ```yaml
 steps:
@@ -129,7 +129,7 @@ steps:
 
 ---
 
-## 7) Migrating from ABICC?
+## 6) Migrating from ABICC?
 
 If you have existing ABICC XML descriptors, use `compat` mode — same single-hyphen flags,
 no XML changes needed:
@@ -147,7 +147,7 @@ Read: [Migrating from ABICC](migration/from_abicc.md)
 
 ---
 
-## 8) Next steps
+## 7) Next steps
 
 - [Verdicts explained](concepts/verdicts.md)
 - [Limitations & known boundaries](concepts/limitations.md)
