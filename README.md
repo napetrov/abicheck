@@ -161,16 +161,16 @@ See [Exit Codes](docs/exit_codes.md) for full reference including `compat` mode.
 
 ## Benchmark results
 
-abicheck achieves **100% accuracy** across 48 example cases covering all major ABI break
+abicheck achieves **100% accuracy** across 42 benchmarked cases covering all major ABI break
 categories (symbol removal, struct layout, vtable drift, enum changes, calling convention, etc.):
 
 | Tool | Correct / Scored | Accuracy |
 |------|-----------------|----------|
-| **abicheck (compare)** | **48/48** | **100%** |
-| abicheck (compat) | 46/48 | 96% |
-| ABICC (xml) | 30/47 | 63% |
-| ABICC (abi-dumper) | 24/48 | 50% |
-| abidiff | 12/48 | 25% |
+| **abicheck (compare)** | **42/42** | **100%** |
+| abicheck (compat) | 40/42 | 95% |
+| ABICC (xml) | 25/41 | 61% |
+| ABICC (abi-dumper) | 20/30 | 66% |
+| abidiff | 11/42 | 26% |
 
 See [Benchmark report](docs/benchmark_report.md) and [Tool comparison](docs/tool_comparison.md)
 for per-case analysis, timing data, and methodology.
@@ -184,7 +184,7 @@ for per-case analysis, timing data, and methodology.
 - **[Exit Codes](docs/exit_codes.md)** — CI-ready exit code reference
 - **[Policy Profiles](docs/policies.md)** — built-in and custom policies
 - **[ABICC Migration](docs/migration/from_abicc.md)** — migrating from abi-compliance-checker
-- **[ABI Break Catalog](docs/abi_breaking_cases_catalog.md)** — 48 documented break scenarios
+- **[ABI Break Catalog](docs/abi_breaking_cases_catalog.md)** — documented break scenarios (cases 01–29)
 - **[Examples](examples/README.md)** — runnable C/C++ examples with expected verdicts
 - **[Tool Comparison](docs/tool_comparison.md)** — abicheck vs abidiff vs ABICC
 - **[Architecture](docs/reference/architecture.md)** — pipeline, modules, and design
