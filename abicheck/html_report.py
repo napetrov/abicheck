@@ -85,10 +85,10 @@ _BREAKING_KINDS: frozenset[str] = frozenset(k.value for k in _CHECKER_BREAKING_K
 
 #: Category buckets for the summary table — mirrors ABICC section headers.
 _CATEGORY_PREFIXES: list[tuple[str, tuple[str, ...]]] = [
-    ("Functions",  ("func_",)),
-    ("Variables",  ("var_",)),
-    ("Types",      ("type_", "struct_", "union_", "field_", "typedef_")),
-    ("Enums",      ("enum_",)),
+    ("Functions", ("func_",)),
+    ("Variables", ("var_",)),
+    ("Types", ("type_", "struct_", "union_", "field_", "typedef_")),
+    ("Enums", ("enum_",)),
     ("ELF / DWARF", ("soname_", "symbol_", "needed_", "rpath_", "runpath_",
                      "ifunc_", "common_", "dwarf_")),
 ]
@@ -620,7 +620,7 @@ def generate_html_report(
 
     # Split changes into buckets
     removed = [ch for ch in changes if _change_bucket(ch) == "removed"]
-    added   = [ch for ch in changes if _change_bucket(ch) == "added"]
+    added = [ch for ch in changes if _change_bucket(ch) == "added"]
     changed = [ch for ch in changes if _change_bucket(ch) == "changed"]
 
     metrics = compatibility_metrics(cast(list[HasKind], changes), old_symbol_count)
@@ -629,9 +629,9 @@ def generate_html_report(
     affected_pct = metrics.affected_pct
 
     h = html.escape
-    lib_display  = h(lib_name)  if lib_name  else "library"
-    old_display  = h(old_version) if old_version else "old"
-    new_display  = h(new_version) if new_version else "new"
+    lib_display = h(lib_name) if lib_name else "library"
+    old_display = h(old_version) if old_version else "old"
+    new_display = h(new_version) if new_version else "new"
 
     if compat_html:
         return _generate_compat_html(
@@ -648,7 +648,7 @@ def generate_html_report(
                     "NO_CHANGE": "🔵", "API_BREAK": "🟠"}.get(verdict, "⚪")
 
     summary_html = _summary_table(removed, changed, added, suppressed_count)
-    nav_html     = _nav_bar(removed, changed, added, suppressed_count)
+    nav_html = _nav_bar(removed, changed, added, suppressed_count)
 
     def _section(title: str, anchor: str, css_class: str, items: list[object]) -> str:
         count = len(items)

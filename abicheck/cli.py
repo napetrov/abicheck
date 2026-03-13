@@ -212,6 +212,102 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
         click.echo(result)
 
 
+def _resolve_per_side_options(
+    headers: tuple[Path, ...], includes: tuple[Path, ...],
+    old_headers_only: tuple[Path, ...], new_headers_only: tuple[Path, ...],
+    old_includes_only: tuple[Path, ...], new_includes_only: tuple[Path, ...],
+) -> tuple[list[Path], list[Path], list[Path], list[Path]]:
+    """Resolve per-side headers/includes: --old-header overrides -H, etc."""
+    old_h = list(old_headers_only) if old_headers_only else list(headers)
+    new_h = list(new_headers_only) if new_headers_only else list(headers)
+    old_inc = list(old_includes_only) if old_includes_only else list(includes)
+    new_inc = list(new_includes_only) if new_includes_only else list(includes)
+    return old_h, new_h, old_inc, new_inc
+
+
+def _warn_ignored_flags(
+    old_is_elf: bool, new_is_elf: bool,
+    headers: tuple[Path, ...], includes: tuple[Path, ...],
+    old_headers_only: tuple[Path, ...], new_headers_only: tuple[Path, ...],
+    old_includes_only: tuple[Path, ...], new_includes_only: tuple[Path, ...],
+) -> None:
+    """Warn if dump-only options are provided but not used (both inputs are snapshots)."""
+    if old_is_elf or new_is_elf:
+        return
+    flag_pairs: list[tuple[tuple[Path, ...], str]] = [
+        (headers, "-H/--header"),
+        (old_headers_only, "--old-header"),
+        (new_headers_only, "--new-header"),
+        (includes, "-I/--include"),
+        (old_includes_only, "--old-include"),
+        (new_includes_only, "--new-include"),
+    ]
+    ignored_flags = [label for value, label in flag_pairs if value]
+    if ignored_flags:
+        click.echo(
+            f"Warning: {', '.join(ignored_flags)} ignored when both inputs are snapshots.",
+            err=True,
+        )
+
+
+def _load_suppression_and_policy(
+    suppress: Path | None, policy: str, policy_file_path: Path | None,
+) -> tuple["SuppressionList | None", "PolicyFile | None"]:
+    """Load suppression list and policy file from CLI arguments."""
+    from .policy_file import PolicyFile
+    from .suppression import SuppressionList
+
+    suppression: SuppressionList | None = None
+    if suppress is not None:
+        try:
+            suppression = SuppressionList.load(suppress)
+        except (ValueError, OSError) as e:
+            raise click.BadParameter(str(e), param_hint="--suppress") from e
+
+    pf: PolicyFile | None = None
+    if policy_file_path is not None:
+        try:
+            pf = PolicyFile.load(policy_file_path)
+        except ImportError as e:
+            raise click.ClickException(str(e)) from e
+        except (ValueError, OSError) as e:
+            raise click.BadParameter(str(e), param_hint="--policy-file") from e
+        if policy != "strict_abi":
+            click.echo(
+                f"Warning: --policy={policy!r} is ignored when --policy-file is given. "
+                "Set base_policy in the YAML file to override the base policy.",
+                err=True,
+            )
+    return suppression, pf
+
+
+def _render_output(fmt: str, result: object, old: AbiSnapshot, new: AbiSnapshot | None = None) -> str:
+    """Render comparison result in the requested output format."""
+    if fmt == "json":
+        return to_json(result)
+    if fmt == "sarif":
+        from .sarif import to_sarif_str
+        return to_sarif_str(result)
+    if fmt == "html":
+        from .html_report import generate_html_report
+        from .model import Visibility
+        old_symbol_count = sum(
+            1 for f in old.functions
+            if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
+        ) + sum(
+            1 for v in old.variables
+            if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
+        )
+        return generate_html_report(
+            result,
+            lib_name=old.library,
+            old_version=old.version,
+            new_version=new.version if new else "new",
+            old_symbol_count=old_symbol_count or None,
+        )
+    return to_markdown(result)
+
+
 @main.command("compare")
 @click.argument("old_input", type=click.Path(exists=True, path_type=Path))
 @click.argument("new_input", type=click.Path(exists=True, path_type=Path))
@@ -309,64 +405,26 @@ def compare_cmd(
       abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --policy sdk_vendor
       abicheck compare old.json new.json --suppress suppressions.yaml
     """
-    from .policy_file import PolicyFile
-    from .suppression import SuppressionList
-
     _setup_verbosity(verbose)
 
-    # Resolve per-side headers/includes: --old-header overrides -H, etc.
-    old_h = list(old_headers_only) if old_headers_only else list(headers)
-    new_h = list(new_headers_only) if new_headers_only else list(headers)
-    old_inc = list(old_includes_only) if old_includes_only else list(includes)
-    new_inc = list(new_includes_only) if new_includes_only else list(includes)
+    old_h, new_h, old_inc, new_inc = _resolve_per_side_options(
+        headers, includes, old_headers_only, new_headers_only,
+        old_includes_only, new_includes_only,
+    )
 
-    # Warn if dump-only options are provided but not used (both inputs are snapshots)
     old_is_elf = _is_elf(old_input)
     new_is_elf = _is_elf(new_input)
-    if not old_is_elf and not new_is_elf:
-        ignored_flags: list[str] = []
-        if headers:
-            ignored_flags.append("-H/--header")
-        if old_headers_only:
-            ignored_flags.append("--old-header")
-        if new_headers_only:
-            ignored_flags.append("--new-header")
-        if includes:
-            ignored_flags.append("-I/--include")
-        if old_includes_only:
-            ignored_flags.append("--old-include")
-        if new_includes_only:
-            ignored_flags.append("--new-include")
-        if ignored_flags:
-            click.echo(
-                f"Warning: {', '.join(ignored_flags)} ignored when both inputs are snapshots.",
-                err=True,
-            )
+    _warn_ignored_flags(
+        old_is_elf, new_is_elf,
+        headers, includes,
+        old_headers_only, new_headers_only,
+        old_includes_only, new_includes_only,
+    )
 
     old = _resolve_input(old_input, old_h, old_inc, old_version, lang, is_elf=old_is_elf)
     new = _resolve_input(new_input, new_h, new_inc, new_version, lang, is_elf=new_is_elf)
 
-    suppression: SuppressionList | None = None
-    if suppress is not None:
-        try:
-            suppression = SuppressionList.load(suppress)
-        except (ValueError, OSError) as e:
-            raise click.BadParameter(str(e), param_hint="--suppress") from e
-
-    pf: PolicyFile | None = None
-    if policy_file_path is not None:
-        try:
-            pf = PolicyFile.load(policy_file_path)
-        except ImportError as e:
-            raise click.ClickException(str(e)) from e
-        except (ValueError, OSError) as e:
-            raise click.BadParameter(str(e), param_hint="--policy-file") from e
-        if policy != "strict_abi":
-            click.echo(
-                f"Warning: --policy={policy!r} is ignored when --policy-file is given. "
-                "Set base_policy in the YAML file to override the base policy.",
-                err=True,
-            )
+    suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
 
     result = compare(old, new, suppression=suppression, policy=policy, policy_file=pf)
 
@@ -379,31 +437,7 @@ def compare_cmd(
             err=True,
         )
 
-    if fmt == "json":
-        text = to_json(result)
-    elif fmt == "sarif":
-        from .sarif import to_sarif_str
-        text = to_sarif_str(result)
-    elif fmt == "html":
-        from .html_report import generate_html_report
-        from .model import Visibility
-        old_symbol_count = sum(
-            1 for f in old.functions
-            if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
-        ) + sum(
-            1 for v in old.variables
-            if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
-        )
-        text = generate_html_report(
-            result,
-            lib_name=old.library,
-            old_version=old.version,
-            new_version=new.version,
-            old_symbol_count=old_symbol_count or None,
-        )
-    else:
-        text = to_markdown(result)
-
+    text = _render_output(fmt, result, old, new)
     if output:
         output.write_text(text, encoding="utf-8")
         click.echo(f"Report written to {output}", err=True)

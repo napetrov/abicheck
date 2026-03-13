@@ -91,134 +91,97 @@ class _DetectorSpec:
             return True, None
         return self.is_supported(old, new)
 
-def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
-    elf_only_mode = getattr(old, "elf_only_mode", False)
+def _check_removed_function(
+    mangled: str, f_old: Function, new_all: dict[str, Function],
+    elf_only_mode: bool,
+) -> Change:
+    """Create a Change for a function that was removed or hidden."""
+    f_hidden = new_all.get(mangled)
+    if f_hidden is not None and f_hidden.visibility == Visibility.HIDDEN:
+        return Change(
+            kind=ChangeKind.FUNC_VISIBILITY_CHANGED,
+            symbol=mangled,
+            description=f"Function visibility changed to hidden: {f_old.name}",
+            old_value=f_old.visibility.value,
+            new_value=f_hidden.visibility.value,
+        )
+    removed_kind = (
+        ChangeKind.FUNC_REMOVED_ELF_ONLY
+        if (elf_only_mode and f_old.visibility == Visibility.ELF_ONLY)
+        else ChangeKind.FUNC_REMOVED
+    )
+    return Change(
+        kind=removed_kind,
+        symbol=mangled,
+        description=f"{f_old.visibility.value.capitalize()} function removed: {f_old.name}",
+        old_value=f_old.name,
+    )
+
+
+def _check_function_signature(mangled: str, f_old: Function, f_new: Function) -> list[Change]:
+    """Compare signatures and qualifiers of two matched functions."""
     changes: list[Change] = []
-    old_map = {k: v for k, v in old.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
-    new_map = {k: v for k, v in new.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
 
-    # Build a lookup of ALL functions in new snapshot (including hidden).
-    # When dump() uses castxml headers, _CastxmlParser._visibility() assigns
-    # Visibility.HIDDEN to functions present in XML but absent from .dynsym —
-    # so new_all correctly contains hidden functions in the castxml path.
-    # ELF_ONLY→HIDDEN is also treated as FUNC_VISIBILITY_CHANGED: callers
-    # that resolved the symbol dynamically will still break.
-    new_all = new.function_map
+    if f_old.return_type != f_new.return_type:
+        changes.append(Change(
+            kind=ChangeKind.FUNC_RETURN_CHANGED,
+            symbol=mangled,
+            description=f"Return type changed: {f_old.name}",
+            old_value=f_old.return_type,
+            new_value=f_new.return_type,
+        ))
 
-    for mangled, f_old in old_map.items():
-        if mangled not in new_map:
-            # Check if it moved to hidden visibility (not truly removed)
-            f_hidden = new_all.get(mangled)
-            if f_hidden is not None and f_hidden.visibility == Visibility.HIDDEN:
-                changes.append(Change(
-                    kind=ChangeKind.FUNC_VISIBILITY_CHANGED,
-                    symbol=mangled,
-                    description=f"Function visibility changed to hidden: {f_old.name}",
-                    old_value=f_old.visibility.value,
-                    new_value=f_hidden.visibility.value,
-                ))
-            else:
-                # When the snapshot was produced in ELF-only mode (no headers),
-                # all functions have ELF_ONLY visibility and any removal *may* be
-                # an internal symbol getting properly hidden. Gate on explicit
-                # elf_only_mode provenance to avoid false COMPATIBLE on real
-                # public symbol removals when snapshots are mixed.
-                removed_kind = (
-                    ChangeKind.FUNC_REMOVED_ELF_ONLY
-                    if (elf_only_mode and f_old.visibility == Visibility.ELF_ONLY)
-                    else ChangeKind.FUNC_REMOVED
-                )
-                changes.append(Change(
-                    kind=removed_kind,
-                    symbol=mangled,
-                    description=f"{f_old.visibility.value.capitalize()} function removed: {f_old.name}",
-                    old_value=f_old.name,
-                ))
-            continue
-        f_new = new_map[mangled]
+    old_params = [(p.type, p.kind) for p in f_old.params]
+    new_params = [(p.type, p.kind) for p in f_new.params]
+    if old_params != new_params:
+        changes.append(Change(
+            kind=ChangeKind.FUNC_PARAMS_CHANGED,
+            symbol=mangled,
+            description=f"Parameters changed: {f_old.name}",
+            old_value=str(old_params),
+            new_value=str(new_params),
+        ))
 
-        if f_old.return_type != f_new.return_type:
-            changes.append(Change(
-                kind=ChangeKind.FUNC_RETURN_CHANGED,
-                symbol=mangled,
-                description=f"Return type changed: {f_old.name}",
-                old_value=f_old.return_type,
-                new_value=f_new.return_type,
-            ))
+    if f_old.is_noexcept and not f_new.is_noexcept:
+        changes.append(Change(
+            kind=ChangeKind.FUNC_NOEXCEPT_REMOVED,
+            symbol=mangled,
+            description=f"noexcept specifier removed: {f_old.name}",
+        ))
+    elif not f_old.is_noexcept and f_new.is_noexcept:
+        changes.append(Change(
+            kind=ChangeKind.FUNC_NOEXCEPT_ADDED,
+            symbol=mangled,
+            description=f"noexcept specifier added: {f_old.name}",
+        ))
 
-        old_params = [(p.type, p.kind) for p in f_old.params]
-        new_params = [(p.type, p.kind) for p in f_new.params]
-        if old_params != new_params:
-            changes.append(Change(
-                kind=ChangeKind.FUNC_PARAMS_CHANGED,
-                symbol=mangled,
-                description=f"Parameters changed: {f_old.name}",
-                old_value=str(old_params),
-                new_value=str(new_params),
-            ))
+    if not f_old.is_virtual and f_new.is_virtual:
+        changes.append(Change(
+            kind=ChangeKind.FUNC_VIRTUAL_ADDED,
+            symbol=mangled,
+            description=f"Function became virtual: {f_old.name}",
+        ))
+    elif f_old.is_virtual and not f_new.is_virtual:
+        changes.append(Change(
+            kind=ChangeKind.FUNC_VIRTUAL_REMOVED,
+            symbol=mangled,
+            description=f"Function is no longer virtual: {f_old.name}",
+        ))
 
-        if f_old.is_noexcept and not f_new.is_noexcept:
-            changes.append(Change(
-                kind=ChangeKind.FUNC_NOEXCEPT_REMOVED,
-                symbol=mangled,
-                description=f"noexcept specifier removed: {f_old.name}",
-            ))
-        elif not f_old.is_noexcept and f_new.is_noexcept:
-            changes.append(Change(
-                kind=ChangeKind.FUNC_NOEXCEPT_ADDED,
-                symbol=mangled,
-                description=f"noexcept specifier added: {f_old.name}",
-            ))
+    return changes
 
-        if not f_old.is_virtual and f_new.is_virtual:
-            changes.append(Change(
-                kind=ChangeKind.FUNC_VIRTUAL_ADDED,
-                symbol=mangled,
-                description=f"Function became virtual: {f_old.name}",
-            ))
-        elif f_old.is_virtual and not f_new.is_virtual:
-            changes.append(Change(
-                kind=ChangeKind.FUNC_VIRTUAL_REMOVED,
-                symbol=mangled,
-                description=f"Function is no longer virtual: {f_old.name}",
-            ))
 
-    for mangled, f_new in new_map.items():
-        if mangled not in old_map:
-            changes.append(Change(
-                kind=ChangeKind.FUNC_ADDED,
-                symbol=mangled,
-                description=f"New public function: {f_new.name}",
-                new_value=f_new.name,
-            ))
-
-    # FUNC_DELETED: function was not deleted before, now marked = delete
-    # Use all-functions maps (not just public) to catch deleted declarations
-    old_all = old.function_map
-    new_all_map = new.function_map
-    for mangled, f_new in new_all_map.items():
-        if not f_new.is_deleted:
-            continue
-        f_old_any = old_all.get(mangled)
-        if f_old_any is not None and not f_old_any.is_deleted:
-            changes.append(Change(
-                kind=ChangeKind.FUNC_DELETED,
-                symbol=mangled,
-                description=f"Function explicitly deleted (= delete): {f_new.name}",
-                old_value="callable",
-                new_value="deleted",
-            ))
-
-    # FUNC_BECAME_INLINE / FUNC_LOST_INLINE: detect inline↔non-inline transitions
-    # (ABICC issue #125). Only check functions present in both snapshots.
+def _check_inline_transitions(
+    old_map: dict[str, Function], new_map: dict[str, Function],
+    new_snapshot: AbiSnapshot,
+) -> list[Change]:
+    """Detect inline/non-inline transitions for functions present in both snapshots."""
+    changes: list[Change] = []
     for mangled in set(old_map) & set(new_map):
         f_old = old_map[mangled]
         f_new = new_map[mangled]
         if not f_old.is_inline and f_new.is_inline:
-            # Check if the symbol still appears in the new ELF exports.
-            # If yes → symbol kept, just annotation changed (still API_BREAK)
-            # If no or ELF unavailable → symbol may have been dropped
-            new_elf = new.elf
+            new_elf = new_snapshot.elf
             still_exported = (
                 new_elf is not None
                 and any(s.name == mangled for s in new_elf.symbols)
@@ -235,8 +198,6 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 new_value="inline",
             ))
         elif f_old.is_inline and not f_new.is_inline:
-            # Function lost inline: now has external linkage.
-            # Existing binaries have the inline copy baked in; new binaries link the symbol.
             changes.append(Change(
                 kind=ChangeKind.FUNC_LOST_INLINE,
                 symbol=mangled,
@@ -244,6 +205,51 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 old_value="inline",
                 new_value="non-inline",
             ))
+    return changes
+
+
+def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    elf_only_mode = getattr(old, "elf_only_mode", False)
+    changes: list[Change] = []
+    old_map = {k: v for k, v in old.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
+    new_map = {k: v for k, v in new.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
+
+    # Build a lookup of ALL functions in new snapshot (including hidden).
+    new_all = new.function_map
+
+    for mangled, f_old in old_map.items():
+        if mangled not in new_map:
+            changes.append(_check_removed_function(mangled, f_old, new_all, elf_only_mode))
+            continue
+        changes.extend(_check_function_signature(mangled, f_old, new_map[mangled]))
+
+    for mangled, f_new in new_map.items():
+        if mangled not in old_map:
+            changes.append(Change(
+                kind=ChangeKind.FUNC_ADDED,
+                symbol=mangled,
+                description=f"New public function: {f_new.name}",
+                new_value=f_new.name,
+            ))
+
+    # FUNC_DELETED: function was not deleted before, now marked = delete
+    old_all = old.function_map
+    new_all_map = new.function_map
+    for mangled, f_new in new_all_map.items():
+        if not f_new.is_deleted:
+            continue
+        f_old_any = old_all.get(mangled)
+        if f_old_any is not None and not f_old_any.is_deleted:
+            changes.append(Change(
+                kind=ChangeKind.FUNC_DELETED,
+                symbol=mangled,
+                description=f"Function explicitly deleted (= delete): {f_new.name}",
+                old_value="callable",
+                new_value="deleted",
+            ))
+
+    # FUNC_BECAME_INLINE / FUNC_LOST_INLINE: detect inline↔non-inline transitions
+    changes.extend(_check_inline_transitions(old_map, new_map, new))
 
     return changes
 
@@ -469,7 +475,7 @@ def _diff_type_bases(name: str, t_old: RecordType, t_new: RecordType) -> list[Ch
     new_virt_set = set(t_new.virtual_bases)
     # Bases that moved from non-virtual to virtual or vice versa
     became_virtual = (new_virt_set - old_virt_set) & old_bases_set
-    lost_virtual   = (old_virt_set - new_virt_set) & new_bases_set
+    lost_virtual = (old_virt_set - new_virt_set) & new_bases_set
     if became_virtual or lost_virtual:
         desc_parts = []
         if became_virtual:
@@ -785,6 +791,66 @@ def _diff_enum_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+def _check_field_qualifier_pair(
+    name: str, fname: str, f_old: TypeField, f_new: TypeField,
+) -> list[Change]:
+    """Check const/volatile/mutable qualifier changes for a single field pair."""
+    changes: list[Change] = []
+
+    if not f_old.is_const and f_new.is_const:
+        changes.append(Change(
+            kind=ChangeKind.FIELD_BECAME_CONST,
+            symbol=name,
+            description=f"Field became const: {name}::{fname}",
+            old_value="non-const",
+            new_value="const",
+        ))
+    elif f_old.is_const and not f_new.is_const:
+        changes.append(Change(
+            kind=ChangeKind.FIELD_LOST_CONST,
+            symbol=name,
+            description=f"Field lost const: {name}::{fname}",
+            old_value="const",
+            new_value="non-const",
+        ))
+
+    if not f_old.is_volatile and f_new.is_volatile:
+        changes.append(Change(
+            kind=ChangeKind.FIELD_BECAME_VOLATILE,
+            symbol=name,
+            description=f"Field became volatile: {name}::{fname}",
+            old_value="non-volatile",
+            new_value="volatile",
+        ))
+    elif f_old.is_volatile and not f_new.is_volatile:
+        changes.append(Change(
+            kind=ChangeKind.FIELD_LOST_VOLATILE,
+            symbol=name,
+            description=f"Field lost volatile: {name}::{fname}",
+            old_value="volatile",
+            new_value="non-volatile",
+        ))
+
+    if not f_old.is_mutable and f_new.is_mutable:
+        changes.append(Change(
+            kind=ChangeKind.FIELD_BECAME_MUTABLE,
+            symbol=name,
+            description=f"Field became mutable: {name}::{fname}",
+            old_value="non-mutable",
+            new_value="mutable",
+        ))
+    elif f_old.is_mutable and not f_new.is_mutable:
+        changes.append(Change(
+            kind=ChangeKind.FIELD_LOST_MUTABLE,
+            symbol=name,
+            description=f"Field lost mutable: {name}::{fname}",
+            old_value="mutable",
+            new_value="non-mutable",
+        ))
+
+    return changes
+
+
 def _diff_field_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect field-level const/volatile/mutable qualifier changes."""
     changes: list[Change] = []
@@ -802,57 +868,7 @@ def _diff_field_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             f_new = new_fields.get(fname)
             if f_new is None:
                 continue
-
-            if not f_old.is_const and f_new.is_const:
-                changes.append(Change(
-                    kind=ChangeKind.FIELD_BECAME_CONST,
-                    symbol=name,
-                    description=f"Field became const: {name}::{fname}",
-                    old_value="non-const",
-                    new_value="const",
-                ))
-            elif f_old.is_const and not f_new.is_const:
-                changes.append(Change(
-                    kind=ChangeKind.FIELD_LOST_CONST,
-                    symbol=name,
-                    description=f"Field lost const: {name}::{fname}",
-                    old_value="const",
-                    new_value="non-const",
-                ))
-
-            if not f_old.is_volatile and f_new.is_volatile:
-                changes.append(Change(
-                    kind=ChangeKind.FIELD_BECAME_VOLATILE,
-                    symbol=name,
-                    description=f"Field became volatile: {name}::{fname}",
-                    old_value="non-volatile",
-                    new_value="volatile",
-                ))
-            elif f_old.is_volatile and not f_new.is_volatile:
-                changes.append(Change(
-                    kind=ChangeKind.FIELD_LOST_VOLATILE,
-                    symbol=name,
-                    description=f"Field lost volatile: {name}::{fname}",
-                    old_value="volatile",
-                    new_value="non-volatile",
-                ))
-
-            if not f_old.is_mutable and f_new.is_mutable:
-                changes.append(Change(
-                    kind=ChangeKind.FIELD_BECAME_MUTABLE,
-                    symbol=name,
-                    description=f"Field became mutable: {name}::{fname}",
-                    old_value="non-mutable",
-                    new_value="mutable",
-                ))
-            elif f_old.is_mutable and not f_new.is_mutable:
-                changes.append(Change(
-                    kind=ChangeKind.FIELD_LOST_MUTABLE,
-                    symbol=name,
-                    description=f"Field lost mutable: {name}::{fname}",
-                    old_value="mutable",
-                    new_value="non-mutable",
-                ))
+            changes.extend(_check_field_qualifier_pair(name, fname, f_old, f_new))
 
     return changes
 
@@ -2002,7 +2018,7 @@ def _diff_enum_layouts(o: object, n: object) -> list[Change]:
         # rename candidate only when its value appears in exactly one new-only
         # member (CodeRabbit P1: avoid false suppression with alias-heavy enums).
         _removed_names = {m for m in old_e.members if m not in new_e.members}
-        _added_names   = {m for m in new_e.members if m not in old_e.members}
+        _added_names = {m for m in new_e.members if m not in old_e.members}
         # Build set of removed old-member names whose value uniquely maps to one new name
         _renamed_old: set[str] = set()
         _claimed_new: set[str] = set()
@@ -2156,6 +2172,36 @@ def _diff_elf_deleted_fallback(old: AbiSnapshot, new: AbiSnapshot) -> list[Chang
 
 # ── PR #89: Template inner-type deep analysis (issues #38 / #73) ─────────────
 
+def _split_top_level_args(inner: str) -> list[str]:
+    """Split a template argument string on top-level commas.
+
+    Respects nested ``<>``, ``()``, ``[]``, and ``{}`` delimiters so that
+    types like ``std::function<void(int, double)>`` are not split incorrectly.
+    """
+    _OPEN = {"<": 0, "(": 1, "[": 2, "{": 3}
+    _CLOSE = {">": 0, ")": 1, "]": 2, "}": 3}
+
+    args: list[str] = []
+    current: list[str] = []
+    nesting = [0, 0, 0, 0]  # angle, paren, bracket, brace
+
+    for c in inner:
+        if c in _OPEN:
+            nesting[_OPEN[c]] += 1
+            current.append(c)
+        elif c in _CLOSE:
+            nesting[_CLOSE[c]] -= 1
+            current.append(c)
+        elif c == "," and all(n == 0 for n in nesting):
+            args.append("".join(current).strip())
+            current = []
+        else:
+            current.append(c)
+    if current:
+        args.append("".join(current).strip())
+    return args
+
+
 def _extract_template_args(type_str: str) -> list[str] | None:
     """Extract template argument string(s) from a type like ``vector<int>``.
 
@@ -2184,51 +2230,7 @@ def _extract_template_args(type_str: str) -> list[str] | None:
                 inner = type_str[lt + 1 : i].strip()
                 if not inner:
                     return []
-                # Split on top-level commas, respecting all nested delimiters.
-                # Tracks angle brackets AND parentheses so that types like
-                # ``std::function<void(int, double)>`` are not split incorrectly.
-                args: list[str] = []
-                current: list[str] = []
-                angle_nest = paren_nest = bracket_nest = brace_nest = 0
-                for c in inner:
-                    if c == "<":
-                        angle_nest += 1
-                        current.append(c)
-                    elif c == ">":
-                        angle_nest -= 1
-                        current.append(c)
-                    elif c == "(":
-                        paren_nest += 1
-                        current.append(c)
-                    elif c == ")":
-                        paren_nest -= 1
-                        current.append(c)
-                    elif c == "[":
-                        bracket_nest += 1
-                        current.append(c)
-                    elif c == "]":
-                        bracket_nest -= 1
-                        current.append(c)
-                    elif c == "{":
-                        brace_nest += 1
-                        current.append(c)
-                    elif c == "}":
-                        brace_nest -= 1
-                        current.append(c)
-                    elif (
-                        c == ","
-                        and angle_nest == 0
-                        and paren_nest == 0
-                        and bracket_nest == 0
-                        and brace_nest == 0
-                    ):
-                        args.append("".join(current).strip())
-                        current = []
-                    else:
-                        current.append(c)
-                if current:
-                    args.append("".join(current).strip())
-                return args
+                return _split_top_level_args(inner)
     return None  # unbalanced brackets — skip
 
 
