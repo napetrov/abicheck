@@ -44,8 +44,8 @@ additional capabilities.
 #### CLI
 - `abicheck dump` — create ABI snapshot JSON from `.so` + headers
 - `abicheck compare` — diff two snapshots with `--policy`, `--policy-file`, `--format` (markdown/json/sarif/html), `--suppress`
-- `abicheck compat` — ABICC drop-in CLI (accepts all ABICC flags)
-- `abicheck compat-dump` — create snapshot from ABICC XML descriptor
+- `abicheck compat check` — ABICC drop-in CLI (accepts all ABICC flags)
+- `abicheck compat dump` — create snapshot from ABICC XML descriptor
 - `abicheck --version` — print version
 
 #### Reports

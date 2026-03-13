@@ -134,10 +134,10 @@ descriptor format:
 
 ```bash
 # Minimal (same flags as abi-compliance-checker):
-abicheck compat -lib foo -old old.xml -new new.xml
+abicheck compat check -lib foo -old old.xml -new new.xml
 
 # Full flag parity:
-abicheck compat -lib foo -old old.xml -new new.xml \
+abicheck compat check -lib foo -old old.xml -new new.xml \
   -report-path report.html \
   -s \
   -show-retval \
@@ -161,13 +161,13 @@ Existing ABICC pipelines work with a one-line swap:
 abi-compliance-checker -lib libfoo -old old.xml -new new.xml -report-path r.html
 
 # After (identical flags):
-abicheck compat -lib libfoo -old old.xml -new new.xml -report-path r.html
+abicheck compat check -lib libdnnl -old old.xml -new new.xml -report-path r.html
 ```
 
 Migration path:
 
 1. Keep your existing XML descriptor generation.
-2. Replace ABICC CLI call with `abicheck compat` (same flags, same XML).
+2. Replace ABICC CLI call with `abicheck compat check` (same flags, same XML).
 3. Move to `abicheck compare lib.so.1 lib.so.2 -H ...` for the simplest one-liner workflow.
 4. Optionally use `dump` + `compare` when you want explicit snapshot caching for CI baselines.
 

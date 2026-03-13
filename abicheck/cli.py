@@ -1,6 +1,7 @@
-"""CLI — abicheck dump | compare | compat-dump | compat."""
+"""CLI — abicheck dump | compare | compat (dump | check)."""
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -22,6 +23,16 @@ from .model import AbiSnapshot
 
 # Number of bytes to read when sniffing file format (covers ELF magic + JSON/Perl head)
 _SNIFF_BYTES = 256
+
+_logger = logging.getLogger("abicheck")
+
+
+def _setup_verbosity(verbose: bool) -> None:
+    """Configure logging verbosity for native commands."""
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    _logger.addHandler(handler)
+    _logger.setLevel(logging.DEBUG if verbose else logging.WARNING)
 
 
 def _is_elf(path: Path) -> bool:
@@ -55,7 +66,7 @@ def _resolve_input(
     headers: list[Path],
     includes: list[Path],
     version: str,
-    compiler: str,
+    lang: str,
     *,
     is_elf: bool | None = None,
 ) -> AbiSnapshot:
@@ -71,7 +82,7 @@ def _resolve_input(
         headers: Public header files (required for ELF inputs).
         includes: Extra include directories (used for ELF inputs).
         version: Version label to embed in the resulting snapshot.
-        compiler: Compiler frontend for castxml (``c++`` or ``cc``).
+        lang: Language mode for castxml (``c++`` or ``c``).
         is_elf: Pre-computed ELF detection result; if *None*, detection is
             performed here (avoids a second ``open()`` when the caller already
             knows the result).
@@ -91,6 +102,7 @@ def _resolve_input(
         for inc in includes:
             if not inc.exists() or not inc.is_dir():
                 raise click.ClickException(f"Include directory not found or not a directory: {inc}")
+        compiler = "c++" if lang == "c++" else "cc"
         try:
             return dump(
                 so_path=path,
@@ -141,20 +153,39 @@ def main() -> None:
               help="Extra include directory for castxml.")
 @click.option("--version", "version", default="unknown", show_default=True,
               help="Library version string to embed in snapshot.")
-@click.option("--compiler", default="c++", show_default=True,
-              help="Compiler frontend for castxml (c++ or cc).")
+@click.option("--lang", default="c++", show_default=True,
+              type=click.Choice(["c++", "c"], case_sensitive=False),
+              help="Language mode for castxml.")
 @click.option("-o", "--output", "output", type=click.Path(path_type=Path), default=None,
               help="Output JSON file. Defaults to stdout.")
+# ── Cross-compilation flags ───────────────────────────────────────────────────
+@click.option("--gcc-path", default=None,
+              help="Path to GCC/G++ cross-compiler binary.")
+@click.option("--gcc-prefix", default=None,
+              help="Cross-toolchain prefix (e.g. aarch64-linux-gnu-).")
+@click.option("--gcc-options", default=None,
+              help="Extra compiler flags passed through to castxml.")
+@click.option("--sysroot", type=click.Path(path_type=Path), default=None,
+              help="Alternative system root directory.")
+@click.option("--nostdinc", is_flag=True, default=False,
+              help="Do not search standard system include paths.")
+@click.option("-v", "--verbose", is_flag=True, default=False,
+              help="Enable verbose/debug output.")
 def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...],
-             version: str, compiler: str, output: Path | None) -> None:
+             version: str, lang: str, output: Path | None,
+             gcc_path: str | None, gcc_prefix: str | None, gcc_options: str | None,
+             sysroot: Path | None, nostdinc: bool, verbose: bool) -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
     \b
     Example:
       abicheck dump libfoo.so.1 -H include/foo.h --version 1.2.3 -o snap.json
+      abicheck dump libfoo.so.1 -H include/foo.h --lang c -o snap.json
+      abicheck dump libfoo.so.1 -H include/foo.h --gcc-prefix aarch64-linux-gnu-
     """
-    from .errors import AbicheckError
+    _setup_verbosity(verbose)
 
+    compiler = "c++" if lang == "c++" else "cc"
     try:
         snap = dump(
             so_path=so_path,
@@ -162,10 +193,15 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             extra_includes=list(includes),
             version=version,
             compiler=compiler,
+            gcc_path=gcc_path,
+            gcc_prefix=gcc_prefix,
+            gcc_options=gcc_options,
+            sysroot=sysroot,
+            nostdinc=nostdinc,
+            lang=lang if lang == "c" else None,
         )
     except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
-        click.echo(f"Error: {exc}", err=True)
-        sys.exit(2)
+        raise click.ClickException(str(exc)) from exc
 
     result = snapshot_to_json(snap)
     if output:
@@ -182,18 +218,22 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 @click.option("-H", "--header", "headers", multiple=True,
               type=click.Path(path_type=Path),
               help="Public header file applied to both sides (repeat for multiple). "
-                   "Required when input is a .so file.")
+                   "Required when input is a .so file. "
+                   "Validated when input is ELF; ignored for snapshots.")
 @click.option("-I", "--include", "includes", multiple=True,
               type=click.Path(path_type=Path),
               help="Extra include directory for castxml (applied to both sides).")
-@click.option("--compiler", default="c++", show_default=True,
-              help="Compiler frontend for castxml (c++ or cc).")
+@click.option("--lang", default="c++", show_default=True,
+              type=click.Choice(["c++", "c"], case_sensitive=False),
+              help="Language mode for castxml.")
 @click.option("--old-header", "old_headers_only", multiple=True,
               type=click.Path(path_type=Path),
-              help="Public header for old side only (overrides -H for old).")
+              help="Public header for old side only (overrides -H for old). "
+                   "Validated when input is ELF; ignored for snapshots.")
 @click.option("--new-header", "new_headers_only", multiple=True,
               type=click.Path(path_type=Path),
-              help="Public header for new side only (overrides -H for new).")
+              help="Public header for new side only (overrides -H for new). "
+                   "Validated when input is ELF; ignored for snapshots.")
 @click.option("--old-include", "old_includes_only", multiple=True,
               type=click.Path(path_type=Path),
               help="Include dir for old side only (overrides -I for old).")
@@ -217,14 +257,17 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 @click.option("--policy-file", "policy_file_path",
               type=click.Path(exists=True, path_type=Path), default=None,
               help="YAML policy file with per-kind verdict overrides. Overrides --policy.")
+@click.option("-v", "--verbose", is_flag=True, default=False,
+              help="Enable verbose/debug output.")
 def compare_cmd(
     old_input: Path, new_input: Path,
-    headers: tuple[Path, ...], includes: tuple[Path, ...], compiler: str,
+    headers: tuple[Path, ...], includes: tuple[Path, ...], lang: str,
     old_headers_only: tuple[Path, ...], new_headers_only: tuple[Path, ...],
     old_includes_only: tuple[Path, ...], new_includes_only: tuple[Path, ...],
     old_version: str, new_version: str,
     fmt: str, output: Path | None,
     suppress: Path | None, policy: str, policy_file_path: Path | None,
+    verbose: bool,
 ) -> None:
     """Compare two ABI surfaces and report changes.
 
@@ -234,6 +277,12 @@ def compare_cmd(
     When a .so file is given, headers (-H) are required so that abicheck can
     extract the public ABI. Use --old-header / --new-header when headers differ
     between versions.
+
+    \b
+    Exit codes:
+      0  NO_CHANGE or COMPATIBLE — no binary ABI break
+      2  API_BREAK — source-level break; existing binaries are safe
+      4  BREAKING — binary ABI break detected
 
     \b
     Examples:
@@ -261,6 +310,8 @@ def compare_cmd(
     """
     from .policy_file import PolicyFile
     from .suppression import SuppressionList
+
+    _setup_verbosity(verbose)
 
     # Resolve per-side headers/includes: --old-header overrides -H, etc.
     old_h = list(old_headers_only) if old_headers_only else list(headers)
@@ -291,8 +342,8 @@ def compare_cmd(
                 err=True,
             )
 
-    old = _resolve_input(old_input, old_h, old_inc, old_version, compiler, is_elf=old_is_elf)
-    new = _resolve_input(new_input, new_h, new_inc, new_version, compiler, is_elf=new_is_elf)
+    old = _resolve_input(old_input, old_h, old_inc, old_version, lang, is_elf=old_is_elf)
+    new = _resolve_input(new_input, new_h, new_inc, new_version, lang, is_elf=new_is_elf)
 
     suppression: SuppressionList | None = None
     if suppress is not None:
@@ -322,7 +373,7 @@ def compare_cmd(
     total_changes = len(result.changes) + result.suppressed_count
     if result.suppression_file_provided and total_changes > 0 and len(result.changes) == 0:
         click.echo(
-            "⚠️  Warning: all ABI changes were suppressed by the suppression file. "
+            "Warning: all ABI changes were suppressed by the suppression file. "
             "Verify your suppression rules are not too broad.",
             err=True,
         )
@@ -392,14 +443,12 @@ from .compat.cli import (  # noqa: E402,F401
     _setup_logging,
     _warn_stub_flags,
     _write_affected_list,
-    compat_cmd,
-    compat_dump_cmd,
+    compat_group,
 )
 
 # fmt: on
 
-main.add_command(compat_dump_cmd)
-main.add_command(compat_cmd)
+main.add_command(compat_group)
 
 
 if __name__ == "__main__":

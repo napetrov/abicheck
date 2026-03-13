@@ -22,7 +22,7 @@ class TestReportFormatChoices:
         runner = CliRunner()
         # Just test that 'htm' is accepted (will fail on missing descriptor, not on format)
         result = runner.invoke(main, [
-            "compat", "-lib", "test", "-old", "/nonexistent", "-new", "/nonexistent",
+            "compat", "check", "-lib", "test", "-old", "/nonexistent", "-new", "/nonexistent",
             "-report-format", "htm",
         ])
         # Should NOT fail with "invalid choice: htm"
@@ -33,7 +33,7 @@ class TestReportFormatChoices:
         from abicheck.cli import main
         runner = CliRunner()
         result = runner.invoke(main, [
-            "compat", "-lib", "test", "-old", "/nonexistent", "-new", "/nonexistent",
+            "compat", "check", "-lib", "test", "-old", "/nonexistent", "-new", "/nonexistent",
             "-report-format", "xml",
         ])
         assert "Invalid value for '-report-format'" not in (result.output or "")
@@ -42,7 +42,7 @@ class TestReportFormatChoices:
         from abicheck.cli import main
         runner = CliRunner()
         result = runner.invoke(main, [
-            "compat", "-lib", "test", "-old", "/nonexistent", "-new", "/nonexistent",
+            "compat", "check", "-lib", "test", "-old", "/nonexistent", "-new", "/nonexistent",
             "-report-format", "html",
         ])
         assert "Invalid value for '-report-format'" not in (result.output or "")
@@ -103,7 +103,7 @@ class TestCompatHtmlFlag:
         from abicheck.cli import main
         runner = CliRunner()
         result = runner.invoke(main, [
-            "compat", "-lib", "test", "-old", "/nonexistent", "-new", "/nonexistent",
+            "compat", "check", "-lib", "test", "-old", "/nonexistent", "-new", "/nonexistent",
             "-compat-html",
         ])
         # Should not fail with "no such option"
@@ -114,7 +114,7 @@ class TestCompatHtmlFlag:
         from abicheck.cli import main
         runner = CliRunner()
         result = runner.invoke(main, [
-            "compat", "-lib", "test", "-old", "/nonexistent", "-new", "/nonexistent",
+            "compat", "check", "-lib", "test", "-old", "/nonexistent", "-new", "/nonexistent",
             "-old-style",
         ])
         assert "no such option" not in (result.output or "").lower()

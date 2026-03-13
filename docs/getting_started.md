@@ -179,7 +179,7 @@ no XML changes needed:
 
 ```bash
 # Direct drop-in
-abicheck compat -lib foo -old OLD.xml -new NEW.xml
+abicheck compat check -lib foo -old OLD.xml -new NEW.xml
 
 # OLD.xml is the same ABICC descriptor format you already have.
 # When ready to simplify, switch to:

@@ -1,6 +1,6 @@
 # ABICC Compatibility Reference
 
-`abicheck compat` is a drop-in replacement for `abi-compliance-checker`.
+`abicheck compat check` is a drop-in replacement for `abi-compliance-checker`.
 It accepts the same flags, produces the same exit codes, and reads the same XML descriptors.
 
 ## Quick start
@@ -10,7 +10,7 @@ It accepts the same flags, produces the same exit codes, and reads the same XML 
 abi-compliance-checker -lib libfoo -old old.xml -new new.xml -report-path r.html
 
 # After (abicheck — identical):
-abicheck compat -lib libfoo -old old.xml -new new.xml -report-path r.html
+abicheck compat check -lib libdnnl -old old.xml -new new.xml -report-path r.html
 ```
 
 Exit codes match ABICC:
@@ -136,7 +136,7 @@ Relpath substitution is an ABICC feature for portable XML descriptors:
 ```
 
 ```bash
-abicheck compat -lib libfoo -old desc.xml -new desc.xml \
+abicheck compat check -lib libfoo -old desc.xml -new desc.xml \
   -relpath1 /builds/v1 -relpath2 /builds/v2
 ```
 
@@ -196,27 +196,27 @@ useful for CI pipelines that build versions at different times.
 
 ```bash
 # Create an ABI dump from an XML descriptor:
-abicheck compat-dump -lib libfoo -dump v1.xml
+abicheck compat dump -lib libfoo -dump v1.xml
 
 # With explicit output path:
-abicheck compat-dump -lib libfoo -dump v1.xml -dump-path libfoo-v1.json
+abicheck compat dump -lib libfoo -dump v1.xml -dump-path libfoo-v1.json
 
 # Override version label:
-abicheck compat-dump -lib libfoo -dump v1.xml -vnum 2025.1
+abicheck compat dump -lib libfoo -dump v1.xml -vnum 2025.1
 
 # Cross-compilation:
-abicheck compat-dump -lib libfoo -dump v1.xml -gcc-prefix aarch64-linux-gnu-
+abicheck compat dump -lib libfoo -dump v1.xml -gcc-prefix aarch64-linux-gnu-
 
 # With sysroot:
-abicheck compat-dump -lib libfoo -dump v1.xml -sysroot /opt/cross/sysroot
+abicheck compat dump -lib libfoo -dump v1.xml -sysroot /opt/cross/sysroot
 
 # Force C language:
-abicheck compat-dump -lib libfoo -dump v1.xml -lang C
+abicheck compat dump -lib libfoo -dump v1.xml -lang C
 ```
 
 Default output: `abi_dumps/<lib>/<version>/dump.json`
 
-### compat-dump flags
+### compat dump flags
 
 | Flag | Alias(es) | Required | Description |
 |------|-----------|:--------:|-------------|
@@ -242,7 +242,7 @@ or to the native `compare` command:
 
 ```bash
 # Via compat mode (ABICC-style exit codes):
-abicheck compat -lib libfoo -old libfoo-v1.json -new libfoo-v2.json
+abicheck compat check -lib libfoo -old libfoo-v1.json -new libfoo-v2.json
 
 # Via native compare (abicheck exit codes):
 abicheck compare libfoo-v1.json libfoo-v2.json --format html -o report.html
@@ -259,15 +259,15 @@ ABICC XML dump variants (`<ABI_dump...>` / `<abi_dump...>`) are still unsupporte
 
 ```bash
 # ABICC Perl dump (default abi-dumper output):
-abicheck compat -lib libfoo -old old.ABI.dump -new new.ABI.dump  # ✅
+abicheck compat check -lib libfoo -old old.ABI.dump -new new.ABI.dump  # ✅
 
 # ABICC XML dump variant:
-abicheck compat -lib libfoo -old old.xml_dump -new new.xml_dump  # ❌ not supported
+abicheck compat check -lib libfoo -old old.xml_dump -new new.xml_dump  # ❌ not supported
 
 # Descriptor-based fallback:
-abicheck compat-dump -lib libfoo -dump old_descriptor.xml -dump-path old.json
-abicheck compat-dump -lib libfoo -dump new_descriptor.xml -dump-path new.json
-abicheck compat -lib libfoo -old old.json -new new.json  # ✅
+abicheck compat dump -lib libfoo -dump old_descriptor.xml -dump-path old.json
+abicheck compat dump -lib libfoo -dump new_descriptor.xml -dump-path new.json
+abicheck compat check -lib libfoo -old old.json -new new.json  # ✅
 ```
 
 
@@ -336,7 +336,7 @@ The `{RELPATH}` macro is supported for portable descriptors (see Relpath macros 
 
 ## Detector coverage vs ABICC
 
-abicheck compat mode uses **all abicheck detectors** — it does not emulate ABICC's
+abicheck compat check mode uses **all abicheck detectors** — it does not emulate ABICC's
 blind spots. This means abicheck may report issues that ABICC would miss:
 
 | Scenario | ABICC | abicheck compat |
@@ -384,10 +384,10 @@ Full coverage comparison: see [gap_report.md](gap_report.md).
 | `-limit-affected` | ✅ Full parity |
 | `-list-affected` | ✅ Generates `.affected.txt` |
 | `-q` / `-quiet` | ✅ Suppress console output |
-| `-dump` (via `compat-dump`) | ✅ JSON format |
-| `-dump-path` (via `compat-dump`) | ✅ Full parity |
-| `-dump-format` (via `compat-dump`) | ✅ JSON only (with warning) |
-| `-vnum` (via `compat-dump`) | ✅ Version override for dumps |
+| `-dump` (via `compat dump`) | ✅ JSON format |
+| `-dump-path` (via `compat dump`) | ✅ Full parity |
+| `-dump-format` (via `compat dump`) | ✅ JSON only (with warning) |
+| `-vnum` (via `compat dump`) | ✅ Version override for dumps |
 | `-gcc-path` / `-cross-gcc` | ✅ Passed to castxml |
 | `-gcc-prefix` / `-cross-prefix` | ✅ Builds cross-compiler name |
 | `-gcc-options` | ✅ Extra compiler flags |
@@ -440,7 +440,7 @@ To validate abicheck produces correct results for your CI pipeline:
 ```bash
 # 1. Run both tools on the same inputs
 abi-compliance-checker -lib libfoo -old old.xml -new new.xml; ABICC_EXIT=$?
-abicheck compat -lib libfoo -old old.xml -new new.xml; ABICHECK_EXIT=$?
+abicheck compat check -lib libfoo -old old.xml -new new.xml; ABICHECK_EXIT=$?
 
 # 2. Compare exit codes
 test $ABICC_EXIT -eq $ABICHECK_EXIT && echo "PASS" || echo "FAIL: $ABICC_EXIT vs $ABICHECK_EXIT"
@@ -450,59 +450,59 @@ test $ABICC_EXIT -eq $ABICHECK_EXIT && echo "PASS" || echo "FAIL: $ABICC_EXIT vs
 
 ```bash
 # Basic comparison
-abicheck compat -lib mylib -old v1.xml -new v2.xml
+abicheck compat check -lib mylib -old v1.xml -new v2.xml
 
 # Strict: any change fails CI
-abicheck compat -lib mylib -old v1.xml -new v2.xml -s
+abicheck compat check -lib mylib -old v1.xml -new v2.xml -s
 
 # Source/API compat only (ignore ELF metadata changes)
-abicheck compat -lib mylib -old v1.xml -new v2.xml -source
+abicheck compat check -lib mylib -old v1.xml -new v2.xml -source
 
 # Override version labels
-abicheck compat -lib mylib -old v1.xml -new v2.xml -v1 2025.0 -v2 2025.1
+abicheck compat check -lib mylib -old v1.xml -new v2.xml -v1 2025.0 -v2 2025.1
 
 # Skip known-breaking symbols
 echo "_Z14legacy_internalv" > skip.txt
-abicheck compat -lib mylib -old v1.xml -new v2.xml -skip-symbols skip.txt
+abicheck compat check -lib mylib -old v1.xml -new v2.xml -skip-symbols skip.txt
 
 # Whitelist: only check public API symbols
-abicheck compat -lib mylib -old v1.xml -new v2.xml -symbols-list public_api.txt
+abicheck compat check -lib mylib -old v1.xml -new v2.xml -symbols-list public_api.txt
 
 # Skip internal symbols by regex
-abicheck compat -lib mylib -old v1.xml -new v2.xml -skip-internal-symbols "_ZN.*detail.*"
+abicheck compat check -lib mylib -old v1.xml -new v2.xml -skip-internal-symbols "_ZN.*detail.*"
 
 # Treat new symbols as breaks
-abicheck compat -lib mylib -old v1.xml -new v2.xml -warn-newsym
+abicheck compat check -lib mylib -old v1.xml -new v2.xml -warn-newsym
 
 # Limit output + affected list
-abicheck compat -lib mylib -old v1.xml -new v2.xml -limit-affected 5 -list-affected
+abicheck compat check -lib mylib -old v1.xml -new v2.xml -limit-affected 5 -list-affected
 
 # Print report to stdout (for CI log capture)
-abicheck compat -lib mylib -old v1.xml -new v2.xml -stdout
+abicheck compat check -lib mylib -old v1.xml -new v2.xml -stdout
 
 # Quiet mode (report written, no console output)
-abicheck compat -lib mylib -old v1.xml -new v2.xml -q
+abicheck compat check -lib mylib -old v1.xml -new v2.xml -q
 
 # JSON output
-abicheck compat -lib mylib -old v1.xml -new v2.xml -report-format json
+abicheck compat check -lib mylib -old v1.xml -new v2.xml -report-format json
 
 # Cross-compilation
-abicheck compat -lib mylib -old v1.xml -new v2.xml -gcc-prefix aarch64-linux-gnu- -sysroot /opt/sysroot
+abicheck compat check -lib mylib -old v1.xml -new v2.xml -gcc-prefix aarch64-linux-gnu- -sysroot /opt/sysroot
 
 # Relpath macros (portable descriptors)
-abicheck compat -lib mylib -old desc.xml -new desc.xml -relpath1 /builds/v1 -relpath2 /builds/v2
+abicheck compat check -lib mylib -old desc.xml -new desc.xml -relpath1 /builds/v1 -relpath2 /builds/v2
 
 # Split binary + source reports
-abicheck compat -lib mylib -old v1.xml -new v2.xml -bin-report-path bin.html -src-report-path src.html
+abicheck compat check -lib mylib -old v1.xml -new v2.xml -bin-report-path bin.html -src-report-path src.html
 
 # Log to file
-abicheck compat -lib mylib -old v1.xml -new v2.xml -log-path analysis.log
+abicheck compat check -lib mylib -old v1.xml -new v2.xml -log-path analysis.log
 
 # Two-stage workflow: dump then compare
-abicheck compat-dump -lib mylib -dump v1.xml
-abicheck compat-dump -lib mylib -dump v2.xml
-abicheck compat -lib mylib -old abi_dumps/mylib/1.0/dump.json -new abi_dumps/mylib/2.0/dump.json
+abicheck compat dump -lib mylib -dump v1.xml
+abicheck compat dump -lib mylib -dump v2.xml
+abicheck compat check -lib mylib -old abi_dumps/mylib/1.0/dump.json -new abi_dumps/mylib/2.0/dump.json
 
 # Cross-compiled dump
-abicheck compat-dump -lib mylib -dump v1.xml -gcc-prefix aarch64-linux-gnu- -sysroot /opt/sysroot
+abicheck compat dump -lib mylib -dump v1.xml -gcc-prefix aarch64-linux-gnu- -sysroot /opt/sysroot
 ```

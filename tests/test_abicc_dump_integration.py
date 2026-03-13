@@ -57,6 +57,7 @@ def test_compat_accepts_real_abicc_abi_dump(tmp_path: Path) -> None:
             "-m",
             "abicheck.cli",
             "compat",
+            "check",
             "-lib",
             "libx",
             "-old",

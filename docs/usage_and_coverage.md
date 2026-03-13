@@ -76,16 +76,16 @@ See [ABICC compatibility reference](abicc_compat.md) for the full flag list.
 
 ```bash
 # Minimal (identical to abi-compliance-checker):
-abicheck compat -lib foo -old old.xml -new new.xml
+abicheck compat check -lib foo -old old.xml -new new.xml
 
 # With strict mode and version labels:
-abicheck compat -lib foo -old old.xml -new new.xml -s -v1 1.0 -v2 2.0
+abicheck compat check -lib foo -old old.xml -new new.xml -s -v1 1.0 -v2 2.0
 
 # Source/API compat only (ignore ELF metadata):
-abicheck compat -lib foo -old old.xml -new new.xml -source
+abicheck compat check -lib foo -old old.xml -new new.xml -source
 
 # Skip known symbols:
-abicheck compat -lib foo -old old.xml -new new.xml -skip-symbols skip.txt
+abicheck compat check -lib foo -old old.xml -new new.xml -skip-symbols skip.txt
 ```
 
 ## abicheck as a drop-in replacement for ABICC
@@ -105,7 +105,7 @@ while modernizing internals and outputs.
 ### Practical migration path
 
 1. Keep your existing ABICC XML descriptor generation.
-2. Replace ABICC compare call with `abicheck compat ...` (flags are identical).
+2. Replace ABICC compare call with `abicheck compat check ...` (flags are identical).
 3. Optionally move to native `dump/compare` commands for explicit snapshot control.
 4. Switch CI gates to JSON/SARIF-based policy checks.
 
