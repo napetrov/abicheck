@@ -618,7 +618,7 @@ def _classify_compat_error_exit_code(exc: BaseException, *, context: str = "") -
     ctx = context.lower()
 
     tool_missing_msg = any(
-        k in msg for k in ("not found in path", "command not found", "no such file or directory")
+        k in msg for k in ("not found in path", "command not found")
     )
     tool_missing_ctx = any(k in ctx for k in ("castxml", "compiler tool", "external tool"))
 
