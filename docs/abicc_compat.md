@@ -30,7 +30,7 @@ Exit codes match ABICC:
 | Flag | Alias(es) | Required | Description |
 |------|-----------|:--------:|-------------|
 | `-lib NAME` | `-l`, `-library` | ✅ | Library name (used in report and output path) |
-| `-old PATH` | `-d1`, `-o` | ✅ | Path to old version XML descriptor or ABI dump |
+| `-old PATH` | `-d1` | ✅ | Path to old version XML descriptor or ABI dump |
 | `-new PATH` | `-d2`, `-n` | ✅ | Path to new version XML descriptor or ABI dump |
 | `-report-path PATH` | | | Output report path (default: `compat_reports/<lib>/<v1>_to_<v2>/report.html`) |
 | `-report-format FMT` | | | Report format: `html` (default), `json`, `md` |
@@ -358,7 +358,7 @@ Full coverage comparison: see [gap_report.md](gap_report.md).
 | ABICC Flag | Status |
 |---|---|
 | `-lib` / `-l` / `-library` | ✅ Full parity |
-| `-old` / `-d1` / `-o` | ✅ Full parity |
+| `-old` / `-d1` | ✅ Full parity (`-o` alias removed to avoid collision with `-o/--output`) |
 | `-new` / `-d2` / `-n` | ✅ Full parity |
 | `-v1` / `-vnum1` / `-version1` | ✅ Full parity |
 | `-v2` / `-vnum2` / `-version2` | ✅ Full parity |

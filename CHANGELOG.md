@@ -84,6 +84,19 @@ additional capabilities.
 
 ## [Unreleased]
 
+### Added
+- `--lang` option on `dump` and `compare` — select C (`--lang c`) or C++ (`--lang c++`, default) mode for castxml
+- Cross-compilation flags on native `dump` command: `--gcc-path`, `--gcc-prefix`, `--gcc-options`, `--sysroot`, `--nostdinc`
+- `--verbose` / `-v` flag on `dump` and `compare` for debug logging
+- `compat` is now a command group: `abicheck compat check` (was `abicheck compat`), `abicheck compat dump` (was `abicheck compat-dump`)
+- Exit codes documented in `compare --help` output
+
+### Changed
+- `--compiler` option renamed to `--lang` (breaking CLI change)
+- Dump error handling uses `click.ClickException` (exit 1) instead of `sys.exit(2)`
+- Snapshot reconstruction uses `dataclasses.replace()` for safety
+- `-o` alias removed from `-old` in `compat check` to avoid collision with `-o/--output`
+
 ### Planned
 - Windows PE support
 - Expanded parity test suite

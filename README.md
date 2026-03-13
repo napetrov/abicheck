@@ -104,6 +104,24 @@ abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o abi.sarif
 abicheck compare libfoo-1.0.json libfoo-2.0.json --policy sdk_vendor
 ```
 
+#### Language mode and cross-compilation
+
+```bash
+# Pure C library (default is C++)
+abicheck dump libfoo.so -H foo.h --lang c -o snap.json
+abicheck compare libv1.so libv2.so -H foo.h --lang c
+
+# Cross-compilation (aarch64 example)
+abicheck dump libfoo.so -H include/foo.h \
+  --gcc-prefix aarch64-linux-gnu- \
+  --sysroot /opt/sysroots/aarch64 \
+  -o snap.json
+```
+
+Cross-compilation flags: `--gcc-path`, `--gcc-prefix`, `--gcc-options`, `--sysroot`, `--nostdinc`.
+
+Add `-v` / `--verbose` to any command for debug output.
+
 ### 3) Compare snapshot baseline vs current build (mixed mode)
 
 Ideal for CI: store a baseline snapshot from a known release, compare against
