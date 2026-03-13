@@ -9,6 +9,11 @@ from typing import TYPE_CHECKING
 
 import click
 
+from .abicc_dump_import import (
+    import_abicc_perl_dump,
+    is_abicc_perl_dump_file,
+    looks_like_perl_dump,
+)
 from .checker import ChangeKind, compare
 from .checker_policy import API_BREAK_KINDS as _POLICY_API_BREAK_KINDS
 from .checker_policy import compute_verdict as _compute_verdict
@@ -1047,6 +1052,16 @@ def compat_cmd(  # noqa: PLR0913
     old_relpath = relpath1 or relpath
     new_relpath = relpath2 or relpath
 
+    old_is_abicc_perl = is_abicc_perl_dump_file(old_desc)
+    new_is_abicc_perl = is_abicc_perl_dump_file(new_desc)
+    if old_is_abicc_perl or new_is_abicc_perl:
+        _do_echo(
+            "Info: ABICC Perl ABI.dump input detected. "
+            "Using migration-focused importer (full ABICC dump parity is not guaranteed). "
+            "Prefer abicheck JSON dumps for best fidelity.",
+            quiet,
+        )
+
     # ── Parse descriptors (support both XML descriptors and JSON dumps) ──
     try:
         old_d = _load_descriptor_or_dump(old_desc, relpath=old_relpath)
@@ -1318,15 +1333,9 @@ def _load_descriptor_or_dump(path: Path, *, relpath: str | None = None) -> Compa
     Raises:
         ValueError: If the file is an ABICC Perl dump (unsupported format).
     """
-    # Detect ABICC Perl dump format (.dump extension or Data::Dumper content)
+    # ABICC Perl dump support (minimal migration-focused importer)
     if path.suffix == ".dump":
-        raise ValueError(
-            f"ABICC Perl dump format is not supported: {path}\n"
-            "  abicheck uses its own JSON dump format.\n"
-            "  To migrate, re-create the dump from the original XML descriptor:\n"
-            "    abicheck compat-dump -lib LIBNAME -dump descriptor.xml -dump-path output.json\n"
-            "  Then use the JSON dump for comparison."
-        )
+        return import_abicc_perl_dump(path)
 
     # Heuristic: if the file is JSON, load as a dump
     if path.suffix == ".json":
@@ -1340,23 +1349,16 @@ def _load_descriptor_or_dump(path: Path, *, relpath: str | None = None) -> Compa
         head = ""
 
     # Detect ABICC Perl Data::Dumper format (starts with $VAR1 = { or similar)
-    if head.lstrip().startswith("$VAR1"):
-        raise ValueError(
-            f"ABICC Perl dump format detected: {path}\n"
-            "  abicheck uses its own JSON dump format.\n"
-            "  To migrate, re-create the dump from the original XML descriptor:\n"
-            "    abicheck compat-dump -lib LIBNAME -dump descriptor.xml -dump-path output.json\n"
-            "  Then use the JSON dump for comparison."
-        )
+    if looks_like_perl_dump(head):
+        return import_abicc_perl_dump(path)
 
     # Detect ABICC XML dump format (contains <ABI_dump_* or <abi_dump tags)
     if "<ABI_dump" in head or "<abi_dump" in head or "ABI_COMPLIANCE_CHECKER" in head:
         raise ValueError(
             f"ABICC XML dump format detected: {path}\n"
-            "  abicheck uses its own JSON dump format and cannot read ABICC XML dumps.\n"
-            "  To migrate, re-create the dump from the original XML descriptor:\n"
-            "    abicheck compat-dump -lib LIBNAME -dump descriptor.xml -dump-path output.json\n"
-            "  Then use the JSON dump for comparison."
+            "  abicheck currently supports ABICC Perl Data::Dumper dumps, not ABICC XML dumps.\n"
+            "  If possible, generate the default ABI.dump (Perl) format with abi-dumper,\n"
+            "  or convert via descriptor using compat-dump to abicheck JSON."
         )
 
     # Otherwise parse as XML descriptor

@@ -8,7 +8,7 @@ Covers:
 - -skip-internal-symbols / -skip-internal-types regex flags
 - -title wired to HTML output
 - -quiet flag
-- ABICC dump format detection and clear error messaging
+- ABICC dump loading (Perl Data::Dumper) and XML dump error messaging
 - JSON dump input support for compat mode
 - relpath support in descriptor parsing
 - P2 stub flag acceptance
@@ -280,17 +280,47 @@ class TestLoadDescriptorOrDump:
         assert isinstance(result, CompatDescriptor)
         assert result.version == "2.0"
 
-    def test_rejects_abicc_perl_dump_by_extension(self, tmp_path: Path) -> None:
+    def test_loads_abicc_perl_dump_by_extension(self, tmp_path: Path) -> None:
         dump_file = tmp_path / "old.dump"
-        dump_file.write_text("$VAR1 = { ... }", encoding="utf-8")
-        with pytest.raises(ValueError, match="ABICC Perl dump format is not supported"):
-            _load_descriptor_or_dump(dump_file)
+        dump_file.write_text("""
+            $VAR1 = {
+              'LibraryName' => 'libfoo',
+              'LibraryVersion' => '1.2.3',
+              'TypeInfo' => {
+                '0' => { 'Name' => 'void', 'Type' => 'Intrinsic' }
+              },
+              'SymbolInfo' => {
+                '1' => { 'MnglName' => 'foo', 'ShortName' => 'foo', 'Return' => '0' }
+              }
+            };
+        """, encoding="utf-8")
 
-    def test_rejects_abicc_perl_dump_by_content(self, tmp_path: Path) -> None:
+        result = _load_descriptor_or_dump(dump_file)
+        from abicheck.model import AbiSnapshot
+        assert isinstance(result, AbiSnapshot)
+        assert result.library == "libfoo"
+        assert result.version == "1.2.3"
+        assert any(f.mangled == "foo" for f in result.functions)
+
+    def test_loads_abicc_perl_dump_by_content(self, tmp_path: Path) -> None:
         dump_file = tmp_path / "old.txt"
-        dump_file.write_text("$VAR1 = {\n  'LibraryName' => 'libfoo',\n};", encoding="utf-8")
-        with pytest.raises(ValueError, match="ABICC Perl dump format detected"):
-            _load_descriptor_or_dump(dump_file)
+        dump_file.write_text("""
+            $VAR1 = {
+              'LibraryName' => 'libbar',
+              'LibraryVersion' => '9',
+              'TypeInfo' => {
+                '0' => { 'Name' => 'void', 'Type' => 'Intrinsic' }
+              },
+              'SymbolInfo' => {
+                '1' => { 'MnglName' => 'bar', 'ShortName' => 'bar', 'Return' => '0' }
+              }
+            };
+        """, encoding="utf-8")
+
+        result = _load_descriptor_or_dump(dump_file)
+        from abicheck.model import AbiSnapshot
+        assert isinstance(result, AbiSnapshot)
+        assert result.library == "libbar"
 
     def test_rejects_abicc_xml_dump(self, tmp_path: Path) -> None:
         dump_file = tmp_path / "dump.xml"
@@ -301,11 +331,85 @@ class TestLoadDescriptorOrDump:
         with pytest.raises(ValueError, match="ABICC XML dump format detected"):
             _load_descriptor_or_dump(dump_file)
 
-    def test_error_message_guides_migration(self, tmp_path: Path) -> None:
-        dump_file = tmp_path / "old.dump"
-        dump_file.write_text("$VAR1 = {}", encoding="utf-8")
-        with pytest.raises(ValueError, match="compat-dump"):
+    def test_error_message_for_abicc_xml_dump_mentions_current_support(self, tmp_path: Path) -> None:
+        dump_file = tmp_path / "dump.xml"
+        dump_file.write_text("<?xml version='1.0'?><ABI_dump_1.0/>", encoding="utf-8")
+        with pytest.raises(ValueError, match="supports ABICC Perl Data::Dumper dumps"):
             _load_descriptor_or_dump(dump_file)
+
+
+class TestAbiccPerlDumpInfoMessage:
+    def _write_dump(self, path: Path, lib: str) -> None:
+        path.write_text(
+            f"""
+            $VAR1 = {{
+              'LibraryName' => '{lib}',
+              'LibraryVersion' => '1.0',
+              'TypeInfo' => {{
+                '0' => {{ 'Name' => 'void', 'Type' => 'Intrinsic' }}
+              }},
+              'SymbolInfo' => {{
+                '1' => {{ 'MnglName' => 'foo', 'ShortName' => 'foo', 'Return' => '0' }}
+              }}
+            }};
+            """,
+            encoding="utf-8",
+        )
+
+    def test_info_message_shown_for_abicc_dump_input(self, tmp_path: Path) -> None:
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        old_dump = tmp_path / "old.dump"
+        new_dump = tmp_path / "new.dump"
+        self._write_dump(old_dump, "libfoo")
+        self._write_dump(new_dump, "libfoo")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "compat",
+                "-lib",
+                "libfoo",
+                "-old",
+                str(old_dump),
+                "-new",
+                str(new_dump),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Info: ABICC Perl ABI.dump input detected" in result.output
+
+    def test_info_message_suppressed_in_quiet_mode(self, tmp_path: Path) -> None:
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        old_dump = tmp_path / "old.dump"
+        new_dump = tmp_path / "new.dump"
+        self._write_dump(old_dump, "libfoo")
+        self._write_dump(new_dump, "libfoo")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "compat",
+                "-lib",
+                "libfoo",
+                "-old",
+                str(old_dump),
+                "-new",
+                str(new_dump),
+                "-q",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Info: ABICC Perl ABI.dump input detected" not in result.output
 
 
 # ── HTML title wiring ─────────────────────────────────────────────────────────
