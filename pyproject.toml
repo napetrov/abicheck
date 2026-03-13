@@ -6,8 +6,24 @@ build-backend = "setuptools.build_meta"
 name = "abicheck"
 version = "0.1.0"
 description = "ABI compatibility checker for C/C++ shared libraries (ELF/DWARF/castxml multi-tier analysis)"
+readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
+keywords = ["abi", "api", "compatibility", "checker", "shared-library", "elf", "dwarf", "castxml"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
     "click>=8.0",
     "pyyaml>=6.0",
@@ -20,11 +36,17 @@ dependencies = [
 [project.scripts]
 abicheck = "abicheck.cli:main"
 
+[project.urls]
+Repository = "https://github.com/napetrov/abicheck"
+"Bug Tracker" = "https://github.com/napetrov/abicheck/issues"
+Changelog = "https://github.com/napetrov/abicheck/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
     "pytest-cov",
     "ruff>=0.3",
+    "mypy>=1.0",
     "types-PyYAML",
 ]
 

@@ -216,6 +216,22 @@ class TestCompatErrors:
         assert result.exit_code == 2
 
 
+# ── --version ───────────────────────────────────────────────────────────
+
+class TestVersionFlag:
+    def test_version_flag_prints_semver(self):
+        """abicheck --version prints a semver-shaped string."""
+        import re
+        runner = CliRunner()
+        result = runner.invoke(main, ["--version"])
+        assert result.exit_code == 0
+        # should contain at least one digit.digit pattern (e.g. "0.1.0")
+        assert re.search(r"\d+\.\d+", result.output), (
+            f"--version output doesn't look like a version: {result.output!r}"
+        )
+        assert "abicheck" in result.output.lower()
+
+
 # ── compat help output ──────────────────────────────────────────────────
 
 class TestCompatHelp:
