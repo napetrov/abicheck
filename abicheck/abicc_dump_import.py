@@ -61,11 +61,7 @@ def _parse_perl_dumper_subset(text: str) -> object:
     if rhs.endswith(";"):
         rhs = rhs[:-1].strip()
 
-    # Convert Perl hash rocket syntax to Python dict syntax and undef to None.
-    # This remains safe because we parse via ast.literal_eval (no execution).
-    py_expr = rhs.replace("=>", ":")
-    py_expr = py_expr.replace(" undef", " None").replace("[undef", "[None")
-    py_expr = py_expr.replace("{undef", "{None")
+    py_expr = _perl_expr_to_python_literal(rhs)
 
     try:
         obj = ast.literal_eval(py_expr)
@@ -77,6 +73,57 @@ def _parse_perl_dumper_subset(text: str) -> object:
         return json.loads(json.dumps(obj))
     except (TypeError, json.JSONDecodeError) as exc:
         raise ValueError(f"Failed to normalize ABICC Perl dump structure: {exc}") from exc
+
+
+def _perl_expr_to_python_literal(expr: str) -> str:
+    """Translate a safe Perl-literal subset to Python literal syntax.
+
+    Only performs syntax-token conversion outside single-quoted strings:
+    - ``=>`` -> ``:``
+    - bareword ``undef`` -> ``None``
+    """
+    out: list[str] = []
+    i = 0
+    in_single = False
+    n = len(expr)
+
+    while i < n:
+        ch = expr[i]
+
+        if in_single:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                i += 1
+                out.append(expr[i])
+            elif ch == "'":
+                in_single = False
+            i += 1
+            continue
+
+        if ch == "'":
+            in_single = True
+            out.append(ch)
+            i += 1
+            continue
+
+        if ch == "=" and i + 1 < n and expr[i + 1] == ">":
+            out.append(":")
+            i += 2
+            continue
+
+        if expr.startswith("undef", i):
+            prev_ok = i == 0 or not (expr[i - 1].isalnum() or expr[i - 1] == "_")
+            j = i + 5
+            next_ok = j >= n or not (expr[j].isalnum() or expr[j] == "_")
+            if prev_ok and next_ok:
+                out.append("None")
+                i = j
+                continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
 
 
 def _snapshot_from_abicc_dict(data: dict[str, object], path: Path) -> AbiSnapshot:

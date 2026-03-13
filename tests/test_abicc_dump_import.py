@@ -5,8 +5,11 @@ from pathlib import Path
 import pytest
 
 from abicheck.abicc_dump_import import (
+    _parse_perl_dumper_subset,
+    _perl_expr_to_python_literal,
     _snapshot_from_abicc_dict,
     import_abicc_perl_dump,
+    is_abicc_perl_dump_file,
     looks_like_perl_dump,
 )
 
@@ -102,3 +105,28 @@ def test_import_abicc_perl_dump_safe_roundtrip_without_perl(tmp_path: Path) -> N
     assert snap.library == "libok"
     assert snap.version == "1"
     assert any(f.mangled == "foo" for f in snap.functions)
+
+
+def test_perl_expr_conversion_preserves_spaceship_inside_strings() -> None:
+    expr = "{'SymbolName' => 'operator<=>', 'Kind' => 'demo'}"
+    converted = _perl_expr_to_python_literal(expr)
+    assert "'operator<=>'" in converted
+    assert converted == "{'SymbolName' : 'operator<=>', 'Kind' : 'demo'}"
+
+
+def test_parse_subset_converts_undef_only_as_bareword() -> None:
+    dump = "$VAR1 = {'a' => undef, 'b' => 'undef', 'c' => ['x', undef]};"
+    parsed = _parse_perl_dumper_subset(dump)
+    assert parsed == {"a": None, "b": "undef", "c": ["x", None]}
+
+
+def test_is_abicc_perl_dump_file_by_content(tmp_path: Path) -> None:
+    p = tmp_path / "dump.txt"
+    p.write_text("$VAR1 = {};", encoding="utf-8")
+    assert is_abicc_perl_dump_file(p)
+
+
+def test_is_abicc_perl_dump_file_false_for_regular_xml(tmp_path: Path) -> None:
+    p = tmp_path / "desc.xml"
+    p.write_text("<descriptor/>", encoding="utf-8")
+    assert not is_abicc_perl_dump_file(p)

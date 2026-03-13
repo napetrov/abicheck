@@ -19,8 +19,8 @@ Covers:
 from __future__ import annotations
 
 import json
-import shutil
 import logging
+import shutil
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
