@@ -52,6 +52,8 @@ from ..report_summary import compatibility_metrics
 if TYPE_CHECKING:
     from ..checker import DiffResult
 
+__all__ = ["generate_xml_report", "write_xml_report"]
+
 # ABICC XML report version
 _REPORT_VERSION = "1.2"
 

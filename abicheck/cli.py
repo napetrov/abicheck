@@ -169,8 +169,10 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
 
 
 # ── ABICC compat subcommands (implementation in abicheck.compat) ─────────────
-# Re-exported here for backward compatibility with code/tests that import
-# private helpers directly from abicheck.cli.
+# NOTE: This block eagerly loads abicheck.compat.cli at import time, which is
+# intentional — all abicheck.cli consumers get compat commands registered
+# automatically without extra setup. Private helpers are re-exported here for
+# backward compatibility with code that imports them from abicheck.cli.
 from .compat.cli import (  # noqa: E402,F401
     _API_BREAK_KINDS,
     _BINARY_ONLY_KINDS,
