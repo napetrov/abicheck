@@ -18,6 +18,7 @@ Covers:
 """
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import textwrap
@@ -836,3 +837,49 @@ class TestAllAbiccFlagsAccepted:
         for flag_args in flags:
             result = self._invoke_compat(flag_args, tmp_path)
             assert "No such option" not in (result.output or ""), f"{flag_args} should be accepted"
+
+
+class TestCompatExtendedExitCodeMapping:
+    @pytest.mark.parametrize(
+        "exc,context,expected",
+        [
+            (FileNotFoundError("missing"), "parsing descriptor", 4),
+            (FileNotFoundError("castxml: command not found"), "during castxml run", 3),
+            (PermissionError("denied"), "parsing descriptor", 4),
+            (OSError(errno.ENOENT, "missing input"), "during dump", 4),
+            (OSError(errno.ENOENT, "castxml not found in PATH"), "during castxml run", 3),
+            (OSError(errno.EACCES, "permission denied"), "during dump", 4),
+            (OSError(errno.EPERM, "operation not permitted"), "during dump", 4),
+            (RuntimeError("castxml not found in PATH"), "during dump", 3),
+            (RuntimeError("cannot compile headers"), "during dump", 5),
+            (RuntimeError("castxml failed (exit 1): fatal error: foo.h: No such file or directory"), "during dump", 5),
+            (RuntimeError("castxml failed (exit 1): compilation terminated"), "during dump", 5),
+            (RuntimeError("command not found"), "during dump", 3),
+            (RuntimeError("No such file or directory"), "other", 3),
+            (ValueError("invalid regex"), "in skip-symbols/skip-types", 6),
+            (ValueError("invalid regex"), "in skip-internal-symbols/skip-internal-types", 6),
+            (ValueError("bad descriptor"), "parsing descriptor", 6),
+            (ValueError("bad logging mode"), "setting up logging", 6),
+            (RuntimeError("cannot write"), "report generation", 7),
+            (OSError("disk full"), "writing report output", 7),
+            (RuntimeError("unexpected pipeline crash"), "during dump", 8),
+            (RuntimeError("unexpected internal error"), "other", 10),
+            (KeyboardInterrupt(), "during dump", 11),
+        ],
+    )
+    def test_classify_compat_error_exit_code(self, exc: BaseException, context: str, expected: int) -> None:
+        from abicheck.cli import _classify_compat_error_exit_code
+
+        assert _classify_compat_error_exit_code(exc, context=context) == expected
+
+
+class TestCompatFailHelper:
+    def test_compat_fail_raises_system_exit_with_classified_code(self, capsys) -> None:
+        from abicheck.cli import _compat_fail
+
+        with pytest.raises(SystemExit) as excinfo:
+            _compat_fail("parsing descriptor", ValueError("bad descriptor"))
+
+        assert excinfo.value.code == 6
+        err = capsys.readouterr().err
+        assert "Error parsing descriptor" in err

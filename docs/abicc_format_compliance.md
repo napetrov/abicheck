@@ -19,7 +19,7 @@ infrastructure) would continue to work with abicheck's output.
 | HTML report — default mode | Similar but NOT identical | Medium |
 | HTML report — `-compat-html` mode | **Implemented** (ABICC IDs + META_DATA) | Low |
 | Perl dump format input | NOT supported (by design) | Medium |
-| ABICC exit codes 3-11 | NOT implemented | Low |
+| ABICC exit codes 3-11 | Implemented (best-effort mapping) | Low |
 
 ### What Was Fixed
 
@@ -44,9 +44,8 @@ infrastructure) would continue to work with abicheck's output.
    (`#Title`, `#Summary`, `#Added`, `#Removed`, `#TypeProblems_High`, etc.)
    that scrapers depend on. Our HTML uses different structure.
 
-2. **ABICC extended exit codes** — ABICC defines codes 3-11 for specific
-   errors (not found, access error, compile error, etc.). We use 2 for all
-   errors.
+2. **ABICC extended exit codes** — abicheck now maps common error classes to
+   ABICC-style codes 3-11 (best-effort); unknown failures fall back to 10.
 
 ---
 
@@ -59,14 +58,14 @@ infrastructure) would continue to work with abicheck's output.
 | 0 | Compatible / no change | Compatible / no change | YES |
 | 1 | Incompatible (breaking) | Breaking ABI change | YES |
 | 2 | Source-level break or error | Source-level break or error | YES |
-| 3 | System command not found | (uses exit 2) | NO |
-| 4 | Cannot access input files | (uses exit 2) | NO |
-| 5 | Cannot compile headers | (uses exit 2) | NO |
-| 6-11 | Various specific errors | (uses exit 2) | NO |
+| 3 | System command not found | Missing tool/command | PARTIAL |
+| 4 | Cannot access input files | File access/input errors | PARTIAL |
+| 5 | Cannot compile headers | castxml/header compile failure | PARTIAL |
+| 6,7,8,10,11 | Various specific errors | Classified by error context | PARTIAL |
 
-The primary verdict codes (0/1/2) match. ABICC's extended codes (3-11) are
-all mapped to exit 2 in abicheck, which is acceptable for most CI pipelines
-that only check for 0 vs non-zero.
+The primary verdict codes (0/1/2) match. Extended compat codes currently emitted are
+3, 4, 5, 6, 7, 8, 10, and 11 (best-effort classification); code 9 is not currently
+emitted, and unknown internal failures use fallback code 10.
 
 The `-strict` promotion (API_BREAK → exit 1) also matches.
 
@@ -309,8 +308,7 @@ this mapping for the XML report:
 
 ### P3 — Low
 
-4. Map ABICC exit codes 3-11 to specific error conditions
-5. Remove emoji from default HTML reports for terminal compatibility
+4. Remove emoji from default HTML reports for terminal compatibility
 
 ---
 

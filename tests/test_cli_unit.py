@@ -186,7 +186,7 @@ class TestCompareSuppressionWarning:
 # ── compat descriptor errors ────────────────────────────────────────────
 
 class TestCompatErrors:
-    def test_invalid_descriptor_exits_2(self, tmp_path):
+    def test_invalid_descriptor_exits_6(self, tmp_path):
         old = tmp_path / "old.xml"
         new = tmp_path / "new.xml"
         old.write_text("<invalid>", encoding="utf-8")
@@ -195,10 +195,10 @@ class TestCompatErrors:
         result = runner.invoke(main, [
             "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
         ])
-        assert result.exit_code == 2
+        assert result.exit_code == 6
 
-    def test_missing_library_exits_2(self, tmp_path):
-        """Descriptor references a .so that doesn't exist → exit 2."""
+    def test_missing_library_exits_4(self, tmp_path):
+        """Descriptor references a .so that doesn't exist → exit 4."""
         old = tmp_path / "old.xml"
         new = tmp_path / "new.xml"
         old.write_text(
@@ -213,7 +213,7 @@ class TestCompatErrors:
         result = runner.invoke(main, [
             "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
         ])
-        assert result.exit_code == 2
+        assert result.exit_code == 4
 
 
 # ── --version ───────────────────────────────────────────────────────────
@@ -242,3 +242,133 @@ class TestCompatHelp:
         for flag in ["-lib", "-old", "-new", "-s", "-source", "-stdout",
                      "-skip-symbols", "-v1", "-v2"]:
             assert flag in result.output, f"{flag} not in help output"
+
+
+class TestCompatClassifiedErrorPaths:
+    def _snap(self, version: str) -> AbiSnapshot:
+        return AbiSnapshot(library="libtest.so", version=version)
+
+    def test_setup_logging_error_exits_6(self, tmp_path, monkeypatch):
+        old = tmp_path / "old.xml"
+        new = tmp_path / "new.xml"
+        old.write_text("<descriptor/>", encoding="utf-8")
+        new.write_text("<descriptor/>", encoding="utf-8")
+
+        monkeypatch.setattr("abicheck.cli._setup_logging", lambda *_a, **_k: (_ for _ in ()).throw(OSError("bad logging mode")))
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["compat", "-lib", "libtest", "-old", str(old), "-new", str(new)])
+        assert result.exit_code == 6
+
+    def test_skip_symbols_invalid_regex_exits_6(self, tmp_path, monkeypatch):
+        old = tmp_path / "old.xml"
+        new = tmp_path / "new.xml"
+        old.write_text("<descriptor/>", encoding="utf-8")
+        new.write_text("<descriptor/>", encoding="utf-8")
+        bad = tmp_path / "skip.txt"
+        bad.write_text("([\n", encoding="utf-8")
+
+        snaps = [self._snap("1.0"), self._snap("2.0")]
+        monkeypatch.setattr("abicheck.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "-skip-symbols", str(bad),
+        ])
+        assert result.exit_code == 6
+
+    def test_skip_internal_invalid_regex_exits_6(self, tmp_path, monkeypatch):
+        old = tmp_path / "old.xml"
+        new = tmp_path / "new.xml"
+        old.write_text("<descriptor/>", encoding="utf-8")
+        new.write_text("<descriptor/>", encoding="utf-8")
+
+        snaps = [self._snap("1.0"), self._snap("2.0")]
+        monkeypatch.setattr("abicheck.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "-skip-internal-symbols", "([",
+        ])
+        assert result.exit_code == 6
+
+    def test_suppression_load_error_exits_6(self, tmp_path, monkeypatch):
+        old = tmp_path / "old.xml"
+        new = tmp_path / "new.xml"
+        old.write_text("<descriptor/>", encoding="utf-8")
+        new.write_text("<descriptor/>", encoding="utf-8")
+        sup = tmp_path / "sup.yaml"
+        sup.write_text("version: 1\n", encoding="utf-8")
+
+        snaps = [self._snap("1.0"), self._snap("2.0")]
+        monkeypatch.setattr("abicheck.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
+
+        def _boom(_path):
+            raise ValueError("bad suppression")
+
+        monkeypatch.setattr("abicheck.suppression.SuppressionList.load", staticmethod(_boom))
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "--suppress", str(sup),
+        ])
+        assert result.exit_code == 6
+
+
+    def test_skip_symbols_missing_file_exits_4(self, tmp_path, monkeypatch):
+        old = tmp_path / "old.xml"
+        new = tmp_path / "new.xml"
+        old.write_text("<descriptor/>", encoding="utf-8")
+        new.write_text("<descriptor/>", encoding="utf-8")
+
+        snaps = [self._snap("1.0"), self._snap("2.0")]
+        monkeypatch.setattr("abicheck.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
+
+        missing = tmp_path / "missing_skip.txt"
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "-skip-symbols", str(missing),
+        ])
+        assert result.exit_code == 4
+
+    def test_symbols_list_missing_file_exits_4(self, tmp_path, monkeypatch):
+        old = tmp_path / "old.xml"
+        new = tmp_path / "new.xml"
+        old.write_text("<descriptor/>", encoding="utf-8")
+        new.write_text("<descriptor/>", encoding="utf-8")
+
+        snaps = [self._snap("1.0"), self._snap("2.0")]
+        monkeypatch.setattr("abicheck.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
+
+        missing = tmp_path / "missing_symbols_list.txt"
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "-symbols-list", str(missing),
+        ])
+        assert result.exit_code == 4
+
+    def test_report_write_error_exits_7(self, tmp_path, monkeypatch):
+        old = tmp_path / "old.xml"
+        new = tmp_path / "new.xml"
+        old.write_text("<descriptor/>", encoding="utf-8")
+        new.write_text("<descriptor/>", encoding="utf-8")
+
+        snaps = [self._snap("1.0"), self._snap("2.0")]
+        monkeypatch.setattr("abicheck.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
+
+        def _raise_write(*_a, **_k):
+            raise OSError("write failed")
+
+        monkeypatch.setattr("abicheck.cli.write_html_report", _raise_write)
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "-report-path", str(tmp_path / "r.html"), "-report-format", "html",
+        ])
+        assert result.exit_code == 7
