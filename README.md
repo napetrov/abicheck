@@ -2,8 +2,11 @@
 
 [![CI](https://github.com/napetrov/abicheck/actions/workflows/ci.yml/badge.svg)](https://github.com/napetrov/abicheck/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/napetrov/abicheck/branch/main/graph/badge.svg)](https://codecov.io/gh/napetrov/abicheck)
+[![PyPI](https://img.shields.io/pypi/v/abicheck.svg)](https://pypi.org/project/abicheck/)
 
 **abicheck checks C/C++ library compatibility at both API and ABI levels.**
+
+> ⚠️ **Platform support:** Linux only (ELF/DWARF). Windows (PE) and macOS (Mach-O) are not yet supported.
 
 abicheck is inspired by two foundational projects:
 
@@ -11,25 +14,38 @@ abicheck is inspired by two foundational projects:
 - [ABI Compliance Checker (ABICC)](https://lvc.github.io/abi-compliance-checker/)
 
 Many thanks and kudos to both communities for defining the practical ABI-checking ecosystem.
-Sadly, both projects are effectively no longer maintained for many modern contributor workflows,
-and it is often not practical to land new fixes there. abicheck is designed to be a
-**drop-in replacement for ABICC** while providing a modern, maintainable Python codebase.
+abicheck is designed as a **drop-in replacement for ABICC** with a modern, maintainable Python codebase.
 
 ---
 
 ## Requirements
 
-### Mandatory
+| Requirement | Notes |
+|-------------|-------|
+| **Linux** | ELF/DWARF only. Windows/macOS not supported in v0.1. |
+| **Python ≥ 3.10** | |
+| **`castxml`** | Mandatory for `dump` command. Install: `apt install castxml` or `conda install -c conda-forge castxml` |
+| **`g++` or `clang++`** | Must be accessible to castxml |
 
-- Python 3.10+
-- `castxml` (for header-based C/C++ API parsing)
-- A C/C++ compiler available to castxml (`g++` or `clang++`)
+```bash
+# Ubuntu/Debian
+sudo apt install castxml g++
 
-### Runtime Python dependencies
+# conda
+conda install -c conda-forge castxml gxx
+```
 
-- `click` (CLI)
-- `pyelftools` (ELF/DWARF metadata extraction)
-- `defusedxml` (safe ABICC XML parsing)
+---
+
+## Installation
+
+```bash
+pip install abicheck
+```
+
+```bash
+abicheck --version
+```
 
 ---
 
@@ -48,11 +64,28 @@ abicheck dump libfoo.so.2 -H include/foo.h --version 2.0 -o libfoo-2.0.json
 # Markdown report (default)
 abicheck compare libfoo-1.0.json libfoo-2.0.json
 
-# JSON
+# JSON / SARIF / HTML
 abicheck compare libfoo-1.0.json libfoo-2.0.json --format json -o report.json
+abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o results.sarif
+abicheck compare libfoo-1.0.json libfoo-2.0.json --format html -o report.html
 
-# SARIF
-abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o report.sarif
+# Built-in policy profiles
+abicheck compare libfoo-1.0.json libfoo-2.0.json --policy sdk_vendor
+abicheck compare libfoo-1.0.json libfoo-2.0.json --policy plugin_abi
+
+# Custom per-kind policy file
+abicheck compare libfoo-1.0.json libfoo-2.0.json --policy-file project_policy.yaml
+
+# Suppression file
+abicheck compare libfoo-1.0.json libfoo-2.0.json --suppress suppressions.yaml
+```
+
+**Policy file example** (`project_policy.yaml`):
+```yaml
+base_policy: strict_abi
+overrides:
+  enum_member_renamed: ignore   # break | warn | ignore
+  field_renamed: ignore
 ```
 
 ### 3) ABICC-compatible mode

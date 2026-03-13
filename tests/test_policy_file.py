@@ -89,6 +89,54 @@ overrides:
     assert "enum_member_renamed: ignore" in text
 
 
+def test_policy_file_non_dict_yaml_rejected(tmp_path: Path) -> None:
+    p = tmp_path / "list.yaml"
+    p.write_text("- a\n- b\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be a YAML mapping"):
+        PolicyFile.load(p)
+
+
+def test_policy_file_base_policy_non_string_rejected(tmp_path: Path) -> None:
+    p = tmp_path / "list_base.yaml"
+    p.write_text("base_policy:\n  - sdk_vendor\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be a string"):
+        PolicyFile.load(p)
+
+
+def test_policy_file_overrides_non_dict_rejected(tmp_path: Path) -> None:
+    p = tmp_path / "bad_overrides.yaml"
+    p.write_text("overrides: not_a_mapping\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be a YAML mapping"):
+        PolicyFile.load(p)
+
+
+def test_policy_file_mixed_override_and_base(tmp_path: Path) -> None:
+    """One change overridden, one falls through to base policy."""
+    p = tmp_path / "mixed.yaml"
+    p.write_text(
+        """
+base_policy: strict_abi
+overrides:
+  enum_member_renamed: ignore
+""".strip(),
+        encoding="utf-8",
+    )
+    pf = PolicyFile.load(p)
+
+    override_change = MagicMock()
+    override_change.kind = ChangeKind.ENUM_MEMBER_RENAMED
+
+    base_change = MagicMock()
+    base_change.kind = ChangeKind.FUNC_REMOVED  # BREAKING in strict_abi
+
+    # Mix: override says COMPATIBLE, base says BREAKING → BREAKING wins
+    result = pf.compute_verdict([override_change, base_change])
+    assert result == Verdict.BREAKING
+
+
 def test_policy_file_unknown_kind_logs_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     p = tmp_path / "unknown_kind.yaml"
     p.write_text(
