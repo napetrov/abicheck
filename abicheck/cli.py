@@ -11,6 +11,7 @@ import click
 
 from .checker import ChangeKind, compare
 from .checker_policy import API_BREAK_KINDS as _POLICY_API_BREAK_KINDS
+from .checker_policy import compute_verdict as _compute_verdict
 from .compat import CompatDescriptor, parse_descriptor
 from .dumper import dump
 from .html_report import write_html_report
@@ -80,11 +81,14 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 @click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
               help="Suppression file (YAML) to filter known/intentional changes.")
 @click.option("--policy", "policy",
-              type=click.Choice(["strict_abi", "sdk_vendor", "plugin_abi"], case_sensitive=False),
+              type=click.Choice(["strict_abi", "sdk_vendor", "plugin_abi"], case_sensitive=True),
               default="strict_abi", show_default=True,
-              help="Policy profile for verdict classification.")
+              help="Built-in policy profile for verdict classification. Ignored when --policy-file is given.")
+@click.option("--policy-file", "policy_file_path",
+              type=click.Path(exists=True, path_type=Path), default=None,
+              help="YAML policy file with per-kind verdict overrides. Overrides --policy.")
 def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path | None,
-                suppress: Path | None, policy: str) -> None:
+                suppress: Path | None, policy: str, policy_file_path: Path | None) -> None:
     """Compare two ABI snapshots and report changes.
 
     \b
@@ -94,7 +98,9 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
       abicheck compare libfoo-1.0.json libfoo-2.0.json --format html -o report.html
       abicheck compare libfoo-1.0.json libfoo-2.0.json --suppress suppressions.yaml
       abicheck compare libfoo-1.0.json libfoo-2.0.json --policy sdk_vendor
+      abicheck compare libfoo-1.0.json libfoo-2.0.json --policy-file project_policy.yaml
     """
+    from .policy_file import PolicyFile
     from .suppression import SuppressionList
 
     old = load_snapshot(old_snapshot)
@@ -107,7 +113,22 @@ def compare_cmd(old_snapshot: Path, new_snapshot: Path, fmt: str, output: Path |
         except (ValueError, OSError) as e:
             raise click.BadParameter(str(e), param_hint="--suppress") from e
 
-    result = compare(old, new, suppression=suppression, policy=policy)
+    pf: PolicyFile | None = None
+    if policy_file_path is not None:
+        try:
+            pf = PolicyFile.load(policy_file_path)
+        except ImportError as e:
+            raise click.ClickException(str(e)) from e
+        except (ValueError, OSError) as e:
+            raise click.BadParameter(str(e), param_hint="--policy-file") from e
+        if policy != "strict_abi":
+            click.echo(
+                f"Warning: --policy={policy!r} is ignored when --policy-file is given. "
+                "Set base_policy in the YAML file to override the base policy.",
+                err=True,
+            )
+
+    result = compare(old, new, suppression=suppression, policy=policy, policy_file=pf)
 
     # Warn if suppression file swallowed all changes (potential misconfiguration)
     total_changes = len(result.changes) + result.suppressed_count
@@ -335,27 +356,17 @@ def _apply_strict(result: DiffResult, *, mode: str = "full") -> DiffResult:
 
 
 def _filter_source_only(result: DiffResult) -> DiffResult:
-    """Remove binary-only changes from result for -source mode."""
-    from .checker import (  # noqa: PLC0415
-        _API_BREAK_KINDS as _SBK,
-    )
-    from .checker import (
-        _BREAKING_KINDS,
-        _COMPATIBLE_KINDS,
-        DiffResult,
-        Verdict,
-    )
+    """Remove binary-only changes from result for -source mode.
 
+    Re-derives the verdict and propagates result.policy so that the returned
+    DiffResult is fully self-consistent (verdict, .breaking, .source_breaks,
+    .compatible all use the same policy).
+    """
+    from .checker import DiffResult  # noqa: PLC0415
+
+    policy = result.policy
     filtered = [c for c in result.changes if c.kind not in _BINARY_ONLY_KINDS]
-
-    if any(c.kind in _BREAKING_KINDS for c in filtered):
-        verdict = Verdict.BREAKING
-    elif any(c.kind in _SBK for c in filtered):
-        verdict = Verdict.API_BREAK
-    elif any(c.kind in _COMPATIBLE_KINDS for c in filtered):
-        verdict = Verdict.COMPATIBLE
-    else:
-        verdict = Verdict.NO_CHANGE
+    verdict = _compute_verdict(filtered, policy=policy)
 
     return DiffResult(
         old_version=result.old_version,
@@ -366,29 +377,22 @@ def _filter_source_only(result: DiffResult) -> DiffResult:
         suppressed_count=result.suppressed_count,
         suppressed_changes=result.suppressed_changes,
         suppression_file_provided=result.suppression_file_provided,
+        policy=policy,
     )
 
 
 def _filter_binary_only(result: DiffResult) -> DiffResult:
-    """Remove source-only changes from result for -binary mode."""
-    from .checker import (  # noqa: PLC0415
-        _BREAKING_KINDS,
-        _COMPATIBLE_KINDS,
-        DiffResult,
-        Verdict,
-    )
+    """Remove source-only changes from result for -binary mode.
 
-    # _API_BREAK_KINDS is module-level (from checker_policy); use it directly.
+    Re-derives the verdict and propagates result.policy so that the returned
+    DiffResult is fully self-consistent (verdict, .breaking, .source_breaks,
+    .compatible all use the same policy).
+    """
+    from .checker import DiffResult  # noqa: PLC0415
+
+    policy = result.policy
     filtered = [c for c in result.changes if c.kind not in _API_BREAK_KINDS]
-
-    if any(c.kind in _BREAKING_KINDS for c in filtered):
-        verdict = Verdict.BREAKING
-    elif any(c.kind in _API_BREAK_KINDS for c in filtered):
-        verdict = Verdict.API_BREAK
-    elif any(c.kind in _COMPATIBLE_KINDS for c in filtered):
-        verdict = Verdict.COMPATIBLE
-    else:
-        verdict = Verdict.NO_CHANGE
+    verdict = _compute_verdict(filtered, policy=policy)
 
     return DiffResult(
         old_version=result.old_version,
@@ -399,6 +403,7 @@ def _filter_binary_only(result: DiffResult) -> DiffResult:
         suppressed_count=result.suppressed_count,
         suppressed_changes=result.suppressed_changes,
         suppression_file_provided=result.suppression_file_provided,
+        policy=policy,
     )
 
 
@@ -417,6 +422,7 @@ def _apply_warn_newsym(result: DiffResult) -> DiffResult:
             suppressed_count=result.suppressed_count,
             suppressed_changes=result.suppressed_changes,
             suppression_file_provided=result.suppression_file_provided,
+            policy=result.policy,
         )
     return result
 
@@ -445,6 +451,7 @@ def _limit_affected_changes(result: DiffResult, limit: int) -> DiffResult:
         suppressed_count=result.suppressed_count,
         suppressed_changes=result.suppressed_changes,
         suppression_file_provided=result.suppression_file_provided,
+        policy=result.policy,
     )
 
 
@@ -1166,7 +1173,7 @@ def compat_cmd(  # noqa: PLR0913
             sys.exit(2)
         suppression = _merge_suppression(suppression, file_suppression)
 
-    result = compare(old_snap, new_snap, suppression=suppression)
+    result = compare(old_snap, new_snap, suppression=suppression, policy="strict_abi")
 
     # ── Post-compare transforms ───────────────────────────────────────────
 

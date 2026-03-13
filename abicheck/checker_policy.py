@@ -374,28 +374,53 @@ API_BREAK_KINDS: set[ChangeKind] = {
 # Policy-specific downgrade sets
 # ---------------------------------------------------------------------------
 
-# sdk_vendor: source-level-only kinds are not binary ABI breaks for SDK consumers.
-# A removed enum member name or renamed field won't break already-compiled code —
-# only source-recompilation is affected. Downgrade from BREAKING → API_BREAK.
-SDK_VENDOR_DOWNGRADED_KINDS: frozenset[ChangeKind] = frozenset({
+# sdk_vendor: source-level-only kinds that are in API_BREAK_KINDS but do not
+# affect already-compiled binary consumers. Under sdk_vendor policy they are
+# downgraded from API_BREAK → COMPATIBLE (no warning emitted).
+# All members MUST be in API_BREAK_KINDS — enforced by the assertion below.
+SDK_VENDOR_COMPAT_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.ENUM_MEMBER_RENAMED,
     ChangeKind.FIELD_RENAMED,
     ChangeKind.PARAM_RENAMED,
     ChangeKind.METHOD_ACCESS_CHANGED,
     ChangeKind.FIELD_ACCESS_CHANGED,
-    ChangeKind.SOURCE_LEVEL_KIND_CHANGED,   # struct↔class keyword: binary-identical
+    ChangeKind.SOURCE_LEVEL_KIND_CHANGED,   # struct↔class: binary-identical
     ChangeKind.REMOVED_CONST_OVERLOAD,
     ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,
-    ChangeKind.PARAM_DEFAULT_VALUE_CHANGED,
+    # NOTE: PARAM_DEFAULT_VALUE_CHANGED is intentionally omitted — it already
+    # lives in COMPATIBLE_KINDS, so including it here would be a no-op.
 })
 
-# plugin_abi: plugin-safe kinds that are safe within a single process/plugin boundary.
-# Toolchain flag drift and calling-convention changes can be acceptable when
-# the plugin and host are built from the same toolchain at the same time.
+# Deprecated alias kept for external consumers; will be removed in v2.0.
+SDK_VENDOR_DOWNGRADED_KINDS: frozenset[ChangeKind] = SDK_VENDOR_COMPAT_KINDS
+
+# plugin_abi: kinds that are acceptable when the plugin and host are built from
+# the same toolchain at the same time (single-process boundary).
+# These are all in BREAKING_KINDS and are downgraded from BREAKING → COMPATIBLE.
+# All members MUST be in BREAKING_KINDS — enforced by the assertion below.
 PLUGIN_ABI_DOWNGRADED_KINDS: frozenset[ChangeKind] = frozenset({
-    ChangeKind.TOOLCHAIN_FLAG_DRIFT,
+    # NOTE: TOOLCHAIN_FLAG_DRIFT is intentionally omitted — it already lives in
+    # COMPATIBLE_KINDS (informational), so it is not in BREAKING_KINDS and
+    # including it here would be a silent no-op in the subtraction logic.
     ChangeKind.CALLING_CONVENTION_CHANGED,
+    ChangeKind.FRAME_REGISTER_CHANGED,      # CFA register = physical calling convention
+    # VALUE_ABI_TRAIT_CHANGED: DWARF trivially-copyable heuristic controls
+    # pass-by-register vs pass-by-pointer in the Itanium C++ ABI. Under
+    # plugin_abi this is safe to downgrade ONLY because the plugin and host
+    # are always rebuilt together from the same toolchain — ensuring ABI
+    # triviality decisions are in sync. Do NOT include this in sdk_vendor.
+    ChangeKind.VALUE_ABI_TRAIT_CHANGED,
 })
+
+# Integrity assertions: catch miscategorisation at import time.
+assert SDK_VENDOR_COMPAT_KINDS <= API_BREAK_KINDS, (
+    "SDK_VENDOR_COMPAT_KINDS must be a strict subset of API_BREAK_KINDS; "
+    f"offending kinds: {SDK_VENDOR_COMPAT_KINDS - API_BREAK_KINDS}"
+)
+assert PLUGIN_ABI_DOWNGRADED_KINDS <= BREAKING_KINDS, (
+    "PLUGIN_ABI_DOWNGRADED_KINDS must be a strict subset of BREAKING_KINDS; "
+    f"offending kinds: {PLUGIN_ABI_DOWNGRADED_KINDS - BREAKING_KINDS}"
+)
 
 
 @dataclass(frozen=True)
@@ -436,34 +461,51 @@ def policy_registry_markdown() -> str:
         )
     return "\n".join(lines)
 
+VALID_BASE_POLICIES: frozenset[str] = frozenset({"strict_abi", "sdk_vendor", "plugin_abi"})
+"""Canonical set of valid built-in policy names. Import from here — do not redefine."""
+
+
+def policy_kind_sets(policy: str) -> tuple[frozenset[ChangeKind], frozenset[ChangeKind], frozenset[ChangeKind]]:
+    """Return (breaking, api_break, compatible) kind sets for the given policy name.
+
+    This is the single source of truth for policy → kind-set mapping.
+    Used by compute_verdict(), DiffResult properties, and report classification.
+    Unknown policy names fall back to strict_abi.
+    """
+    if policy == "sdk_vendor":
+        return (
+            frozenset(BREAKING_KINDS),
+            frozenset(API_BREAK_KINDS - SDK_VENDOR_COMPAT_KINDS),
+            frozenset(COMPATIBLE_KINDS | SDK_VENDOR_COMPAT_KINDS),
+        )
+    elif policy == "plugin_abi":
+        return (
+            frozenset(BREAKING_KINDS - PLUGIN_ABI_DOWNGRADED_KINDS),
+            frozenset(API_BREAK_KINDS),
+            frozenset(COMPATIBLE_KINDS | PLUGIN_ABI_DOWNGRADED_KINDS),
+        )
+    else:
+        return frozenset(BREAKING_KINDS), frozenset(API_BREAK_KINDS), frozenset(COMPATIBLE_KINDS)
+
+
 def compute_verdict(changes: Sequence[HasKind], *, policy: str = "strict_abi") -> Verdict:
     """Compute verdict from a list of changes, honoring the given policy profile.
 
-    Policy profiles change which ChangeKinds are BREAKING vs API_BREAK vs COMPATIBLE:
-    - ``strict_abi`` (default): full BREAKING set applies
-    - ``sdk_vendor``: source-level-only kinds (ENUM_MEMBER_RENAMED etc.) downgraded to API_BREAK
-    - ``plugin_abi``: plugin-safe kinds downgraded to COMPATIBLE
+    Policy profiles:
+    - ``strict_abi`` (default): full BREAKING / API_BREAK sets apply.
+    - ``sdk_vendor``: source-level-only kinds (rename, access) downgraded
+      from API_BREAK → COMPATIBLE (no warning for SDK consumers).
+    - ``plugin_abi``: calling-convention kinds (CALLING_CONVENTION_CHANGED,
+      FRAME_REGISTER_CHANGED, VALUE_ABI_TRAIT_CHANGED) downgraded from
+      BREAKING → COMPATIBLE. Only valid when plugin and host are always
+      rebuilt together from the same toolchain.
 
-    Falls back gracefully to strict_abi for unknown policy names.
+    Unknown policy names fall back to ``strict_abi``.
     """
     if not changes:
         return Verdict.NO_CHANGE
 
-    # Select policy-specific kind sets
-    if policy == "sdk_vendor":
-        breaking = BREAKING_KINDS - SDK_VENDOR_DOWNGRADED_KINDS
-        api_break = API_BREAK_KINDS | (BREAKING_KINDS & SDK_VENDOR_DOWNGRADED_KINDS)
-        compatible = COMPATIBLE_KINDS
-    elif policy == "plugin_abi":
-        breaking = BREAKING_KINDS - PLUGIN_ABI_DOWNGRADED_KINDS
-        api_break = API_BREAK_KINDS
-        compatible = COMPATIBLE_KINDS | (BREAKING_KINDS & PLUGIN_ABI_DOWNGRADED_KINDS)
-    else:
-        # strict_abi (default) and any unknown policy: use full BREAKING set
-        breaking = BREAKING_KINDS
-        api_break = API_BREAK_KINDS
-        compatible = COMPATIBLE_KINDS
-
+    breaking, api_break, compatible = policy_kind_sets(policy)
     kinds = {c.kind for c in changes}
     if kinds & breaking:
         return Verdict.BREAKING
