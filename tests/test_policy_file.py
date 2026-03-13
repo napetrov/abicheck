@@ -137,6 +137,17 @@ overrides:
     assert result == Verdict.BREAKING
 
 
+def test_policy_file_describe_no_overrides(tmp_path: Path) -> None:
+    """describe() formats correctly when overrides is empty (covers line 177 branch)."""
+    p = tmp_path / "no_overrides.yaml"
+    p.write_text("base_policy: strict_abi\n", encoding="utf-8")
+
+    pf = PolicyFile.load(p)
+    text = pf.describe()
+    assert "base_policy: strict_abi" in text
+    assert "overrides: (none)" in text
+
+
 def test_policy_file_unknown_kind_logs_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     p = tmp_path / "unknown_kind.yaml"
     p.write_text(

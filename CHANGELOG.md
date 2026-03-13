@@ -69,10 +69,13 @@ additional capabilities.
 - `g++` or `clang++` (accessible to castxml)
 - See [Installation](docs/getting_started.md) for full setup instructions
 
-### Known Issues
+### Known Limitations
+
+- **Suppression system**: label/tag-based suppression, file-scoped suppression (by `source_location`),
+  and suppression expiry dates are not yet implemented. Planned for v0.2.
+- Windows PE and macOS Mach-O support is not implemented (Linux/ELF only).
 - `test_abicc_accepts_strict_flag` requires a specific version of abi-compliance-checker
-  that prints `-strict` in `--help`; marked `xfail` in CI environments without it
-- Windows PE and macOS Mach-O support is not implemented
+  that prints `-strict` in `--help`; marked `xfail` in CI environments without it.
 
 ---
 
