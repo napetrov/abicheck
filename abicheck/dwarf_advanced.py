@@ -686,26 +686,41 @@ def _get_cfi_source(dwarf: Any) -> Any:
 
 
 def _extract_cfa_reg_from_fde(entry: Any, arch_key: str) -> str | None:
-    """Extract the dominant (post-prologue) CFA register name from an FDE.
+    """Extract the dominant CFA register name from an FDE.
 
     Returns the register name string (e.g. 'rsp', 'rbp') or None if not found.
 
-    Selects the row with the highest PC as the best proxy for the settled
-    post-prologue CFA (function body, after push rbp / mov rbp,rsp).
-    table[0] would capture entry-state before the prologue completes.
+    Heuristic:
+    - Build a sequence of (pc, reg_num) rows where CFA is available.
+    - Select the modal CFA register across decoded rows (most frequent), which
+      captures the settled function-body convention and avoids epilogue bias.
+    - Break ties by selecting the register from the highest-PC row among tied
+      candidates (preserves post-prologue behavior for 2-row entry/body tables).
     """
     try:
         decoded = entry.get_decoded()
         if not decoded.table:
             return None
-        row = max(decoded.table, key=lambda r: int(r.get("pc", 0)))
-        cfa = row.get("cfa")
-        if cfa is None:
+
+        regs_by_pc: list[tuple[int, int]] = []
+        for row in decoded.table:
+            cfa = row.get("cfa")
+            if cfa is None:
+                continue
+            cfa_reg = getattr(cfa, "reg", None)
+            if cfa_reg is None:
+                continue
+            regs_by_pc.append((int(row.get("pc", 0)), int(cfa_reg)))
+
+        if not regs_by_pc:
             return None
-        cfa_reg = getattr(cfa, "reg", None)
-        if cfa_reg is None:
-            return None
-        return _reg_name(cfa_reg, arch_key)
+
+        counts = collections.Counter(reg for _, reg in regs_by_pc)
+        max_count = max(counts.values())
+        tied_regs = {reg for reg, cnt in counts.items() if cnt == max_count}
+        dominant_reg = max((pc, reg) for pc, reg in regs_by_pc if reg in tied_regs)[1]
+
+        return _reg_name(dominant_reg, arch_key)
     except (ELFError, OSError, ValueError, KeyError, IndexError):
         return None
 

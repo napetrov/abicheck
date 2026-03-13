@@ -19,6 +19,7 @@ from .model import AbiSnapshot, EnumType, Function, RecordType, TypeField, Visib
 
 if TYPE_CHECKING:
     from .suppression import SuppressionList
+    from .policy_file import PolicyFile
 
 
 __all__ = [
@@ -1337,6 +1338,7 @@ def compare(
     suppression: SuppressionList | None = None,
     *,
     policy: str = "strict_abi",
+    policy_file: "PolicyFile | None" = None,
 ) -> DiffResult:
     """Diff two AbiSnapshots and return a DiffResult with verdict.
 
@@ -1346,6 +1348,11 @@ def compare(
         suppression: Optional suppression list to filter known changes.
         policy: Policy profile name to use for verdict classification.
             Available: "strict_abi" (default), "sdk_vendor", "plugin_abi".
+            Ignored when *policy_file* is provided.
+        policy_file: Optional :class:`~abicheck.policy_file.PolicyFile` instance
+            for user-defined per-kind verdict overrides.  When provided,
+            *policy* is used only as the ``base_policy`` fallback inside the
+            file (i.e. the file's own ``base_policy`` field takes precedence).
     """
 
     detector_fns: list[_DetectorSpec] = [
@@ -1407,7 +1414,7 @@ def compare(
                 filtered.append(c)
         changes = filtered
 
-    verdict = compute_verdict(changes, policy=policy)
+    verdict = policy_file.compute_verdict(changes) if policy_file is not None else compute_verdict(changes, policy=policy)
     return DiffResult(
         old_version=old.version,
         new_version=new.version,

@@ -374,10 +374,10 @@ API_BREAK_KINDS: set[ChangeKind] = {
 # Policy-specific downgrade sets
 # ---------------------------------------------------------------------------
 
-# sdk_vendor: these API_BREAK_KINDS are source-level-only and do not affect
-# already-compiled binary consumers. Under sdk_vendor policy they are downgraded
-# from API_BREAK → COMPATIBLE (no warning emitted).
-# Examples: enum member renamed, field renamed, param renamed, struct↔class.
+# sdk_vendor: source-level-only kinds that are in API_BREAK_KINDS but do not
+# affect already-compiled binary consumers. Under sdk_vendor policy they are
+# downgraded from API_BREAK → COMPATIBLE (no warning emitted).
+# All members MUST be in API_BREAK_KINDS — enforced by the assertion below.
 SDK_VENDOR_COMPAT_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.ENUM_MEMBER_RENAMED,
     ChangeKind.FIELD_RENAMED,
@@ -387,18 +387,40 @@ SDK_VENDOR_COMPAT_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.SOURCE_LEVEL_KIND_CHANGED,   # struct↔class: binary-identical
     ChangeKind.REMOVED_CONST_OVERLOAD,
     ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,
-    ChangeKind.PARAM_DEFAULT_VALUE_CHANGED,
+    # NOTE: PARAM_DEFAULT_VALUE_CHANGED is intentionally omitted — it already
+    # lives in COMPATIBLE_KINDS, so including it here would be a no-op.
 })
 
-# plugin_abi: kinds that are acceptable when plugin and host are built from
+# Deprecated alias kept for external consumers; will be removed in v2.0.
+SDK_VENDOR_DOWNGRADED_KINDS: frozenset[ChangeKind] = SDK_VENDOR_COMPAT_KINDS
+
+# plugin_abi: kinds that are acceptable when the plugin and host are built from
 # the same toolchain at the same time (single-process boundary).
-# Downgraded from BREAKING → COMPATIBLE.
+# These are all in BREAKING_KINDS and are downgraded from BREAKING → COMPATIBLE.
+# All members MUST be in BREAKING_KINDS — enforced by the assertion below.
 PLUGIN_ABI_DOWNGRADED_KINDS: frozenset[ChangeKind] = frozenset({
-    ChangeKind.TOOLCHAIN_FLAG_DRIFT,
+    # NOTE: TOOLCHAIN_FLAG_DRIFT is intentionally omitted — it already lives in
+    # COMPATIBLE_KINDS (informational), so it is not in BREAKING_KINDS and
+    # including it here would be a silent no-op in the subtraction logic.
     ChangeKind.CALLING_CONVENTION_CHANGED,
     ChangeKind.FRAME_REGISTER_CHANGED,      # CFA register = physical calling convention
-    ChangeKind.VALUE_ABI_TRAIT_CHANGED,     # DWARF triviality heuristic — same signal
+    # VALUE_ABI_TRAIT_CHANGED: DWARF trivially-copyable heuristic controls
+    # pass-by-register vs pass-by-pointer in the Itanium C++ ABI. Under
+    # plugin_abi this is safe to downgrade ONLY because the plugin and host
+    # are always rebuilt together from the same toolchain — ensuring ABI
+    # triviality decisions are in sync. Do NOT include this in sdk_vendor.
+    ChangeKind.VALUE_ABI_TRAIT_CHANGED,
 })
+
+# Integrity assertions: catch miscategorisation at import time.
+assert SDK_VENDOR_COMPAT_KINDS <= API_BREAK_KINDS, (
+    "SDK_VENDOR_COMPAT_KINDS must be a strict subset of API_BREAK_KINDS; "
+    f"offending kinds: {SDK_VENDOR_COMPAT_KINDS - API_BREAK_KINDS}"
+)
+assert PLUGIN_ABI_DOWNGRADED_KINDS <= BREAKING_KINDS, (
+    "PLUGIN_ABI_DOWNGRADED_KINDS must be a strict subset of BREAKING_KINDS; "
+    f"offending kinds: {PLUGIN_ABI_DOWNGRADED_KINDS - BREAKING_KINDS}"
+)
 
 
 @dataclass(frozen=True)
@@ -446,8 +468,10 @@ def compute_verdict(changes: Sequence[HasKind], *, policy: str = "strict_abi") -
     - ``strict_abi`` (default): full BREAKING / API_BREAK sets apply.
     - ``sdk_vendor``: source-level-only kinds (rename, access) downgraded
       from API_BREAK → COMPATIBLE (no warning for SDK consumers).
-    - ``plugin_abi``: plugin-safe calling-convention kinds (TOOLCHAIN_FLAG_DRIFT,
-      CALLING_CONVENTION_CHANGED) downgraded from BREAKING → COMPATIBLE.
+    - ``plugin_abi``: calling-convention kinds (CALLING_CONVENTION_CHANGED,
+      FRAME_REGISTER_CHANGED, VALUE_ABI_TRAIT_CHANGED) downgraded from
+      BREAKING → COMPATIBLE. Only valid when plugin and host are always
+      rebuilt together from the same toolchain.
 
     Unknown policy names fall back to ``strict_abi``.
     """
