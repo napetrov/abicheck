@@ -64,7 +64,7 @@ def test_compat_accepts_real_abicc_abi_dump(tmp_path: Path) -> None:
             "-new",
             str(dump),
         ],
-        cwd="/workspace/abicheck",
+        cwd=str(Path(__file__).resolve().parents[1]),
         text=True,
         capture_output=True,
         check=False,

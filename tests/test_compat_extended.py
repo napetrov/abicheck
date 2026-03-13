@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
@@ -281,7 +280,6 @@ class TestLoadDescriptorOrDump:
         assert isinstance(result, CompatDescriptor)
         assert result.version == "2.0"
 
-    @pytest.mark.skipif(shutil.which("perl") is None, reason="perl is required for ABICC Perl dump import")
     def test_loads_abicc_perl_dump_by_extension(self, tmp_path: Path) -> None:
         dump_file = tmp_path / "old.dump"
         dump_file.write_text("""
@@ -304,7 +302,6 @@ class TestLoadDescriptorOrDump:
         assert result.version == "1.2.3"
         assert any(f.mangled == "foo" for f in result.functions)
 
-    @pytest.mark.skipif(shutil.which("perl") is None, reason="perl is required for ABICC Perl dump import")
     def test_loads_abicc_perl_dump_by_content(self, tmp_path: Path) -> None:
         dump_file = tmp_path / "old.txt"
         dump_file.write_text("""
