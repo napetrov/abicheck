@@ -1,8 +1,8 @@
 # Getting Started
 
-> ⚠️ **Before you start:** `abicheck compare` exits `0` for both `NO_CHANGE` *and*
-> `COMPATIBLE`. Checking `$? -eq 0` does **not** mean "nothing changed" — it means
-> "no binary ABI break". See [Exit Codes](exit_codes.md) for CI gate patterns.
+**abicheck** compares two versions of a C/C++ shared library and tells you whether existing binaries will break. It analyses ELF symbols, C/C++ header AST (via castxml), and DWARF debug info to catch ABI incompatibilities that other tools miss.
+
+> **Platform:** Linux only (ELF binaries + DWARF + C/C++ headers).
 
 ---
 
@@ -13,14 +13,18 @@
 ### Requirements
 
 - Python 3.10+
-- `castxml` (for header-based analysis) — see [castxml project](https://github.com/CastXML/CastXML)
+- `castxml` (Clang-based C/C++ AST parser) — see [castxml project](https://github.com/CastXML/CastXML)
 - C/C++ compiler (`gcc`/`g++` or `clang`/`clang++`)
 
+Install castxml on Ubuntu/Debian:
+
 ```bash
-# Install castxml
-# Ubuntu / Debian
 sudo apt-get update && sudo apt-get install -y castxml gcc g++
-# or via conda
+```
+
+Or via conda:
+
+```bash
 conda install -c conda-forge castxml
 ```
 
@@ -36,88 +40,90 @@ pip install -e .
 
 ## 2) First check (using repo examples)
 
-The repo includes a broad set of ABI break examples (C and C++) with paired
-`v1`/`v2` sources and headers. This makes it easy to verify your install is
-working correctly and to understand typical break patterns.
+The repo includes 48 ABI break examples with paired `v1`/`v2` sources and headers:
 
 ```bash
-# Clone the repo (skip if already done in step 1)
-git clone https://github.com/napetrov/abicheck.git
 cd abicheck/examples/case01_symbol_removal
+```
 
+```bash
 # Build v1 and v2 shared libraries
 gcc -shared -fPIC -g v1.c -o libv1.so
 gcc -shared -fPIC -g v2.c -o libv2.so
-
-# One-liner: compare directly (each version has its own header)
-abicheck compare libv1.so libv2.so --old-header v1.h --new-header v2.h
-# Expected output: verdict BREAKING (symbol 'helper' was removed)
 ```
 
-For your own C++ library:
+```bash
+# Compare
+abicheck compare libv1.so libv2.so --old-header v1.h --new-header v2.h
+# Verdict: BREAKING (symbol 'helper' was removed)
+```
+
+For your own library:
 
 ```bash
-# Each version has its own header
 abicheck compare libfoo.so.1 libfoo.so.2 \
   --old-header include/v1/foo.h --new-header include/v2/foo.h
+```
 
-# Multiple headers per version
-abicheck compare libfoo.so.1 libfoo.so.2 \
-  --old-header include/v1/foo.h --old-header include/v1/bar.h \
-  --new-header include/v2/foo.h --new-header include/v2/bar.h \
-  -I include/
+If the header is the same for both versions:
 
-# Shorthand: -H when the same header applies to both versions
+```bash
 abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
-
-# With version labels
-abicheck compare libfoo.so.1 libfoo.so.2 \
-  --old-header include/v1/foo.h --new-header include/v2/foo.h \
-  --old-version 1.0 --new-version 2.0
 ```
 
 ---
 
 ## 3) Output formats
 
+abicheck supports four output formats: `markdown` (default), `json`, `sarif`, `html`.
+
+Markdown (default, printed to stdout):
+
 ```bash
-# Default: markdown report to stdout
-abicheck compare libfoo.so.1 libfoo.so.2 \
-  --old-header v1/foo.h --new-header v2/foo.h
+abicheck compare libfoo.so.1 libfoo.so.2 -H foo.h
+```
 
-# JSON — includes precise verdict field for CI parsing
-abicheck compare libfoo.so.1 libfoo.so.2 \
-  --old-header v1/foo.h --new-header v2/foo.h --format json -o result.json
+JSON — machine-readable, includes precise verdict field:
 
-# SARIF — for GitHub Code Scanning
-abicheck compare libfoo.so.1 libfoo.so.2 \
-  --old-header v1/foo.h --new-header v2/foo.h --format sarif -o abi.sarif
+```bash
+abicheck compare libfoo.so.1 libfoo.so.2 -H foo.h --format json -o result.json
+```
 
-# HTML — human-readable standalone report
-abicheck compare libfoo.so.1 libfoo.so.2 \
-  --old-header v1/foo.h --new-header v2/foo.h --format html -o report.html
+SARIF — for GitHub Code Scanning:
 
-# Works the same with pre-dumped snapshots
-abicheck compare v1.json v2.json --format sarif -o abi.sarif
+```bash
+abicheck compare libfoo.so.1 libfoo.so.2 -H foo.h --format sarif -o abi.sarif
+```
+
+HTML — standalone human-readable report:
+
+```bash
+abicheck compare libfoo.so.1 libfoo.so.2 -H foo.h --format html -o report.html
 ```
 
 ---
 
 ## 4) Snapshot workflow (for CI baselines)
 
-When you need reusable baselines (e.g. store as CI artifact, commit to repo):
+Save a snapshot once per release, then compare against new builds without re-dumping:
 
 ```bash
-# Dump snapshot once per release (header is baked into the snapshot)
-abicheck dump libfoo.so.1 -H include/v1/foo.h --version 1.0 -o baseline.json
+# Save baseline (header is baked into the snapshot)
+abicheck dump libfoo.so -H include/foo.h --version 1.0 -o baseline.json
+```
 
-# In CI: compare saved baseline against current build
+```bash
+# Compare saved baseline against current build
 abicheck compare baseline.json ./build/libfoo.so \
   --new-header include/foo.h --new-version 2.0-dev
+```
 
+```bash
 # Or compare two snapshots (no headers needed — already baked in)
 abicheck compare old.json new.json
 ```
+
+`compare` auto-detects each input: `.so` files are dumped on-the-fly, `.json` snapshots are loaded directly. You can mix them freely.
 
 ### Language mode
 
@@ -125,7 +131,6 @@ Use `--lang c` for pure C libraries (default is `c++`):
 
 ```bash
 abicheck dump libfoo.so -H foo.h --lang c -o snap.json
-abicheck compare libv1.so libv2.so -H foo.h --lang c
 ```
 
 ### Cross-compilation
@@ -139,11 +144,9 @@ abicheck dump libfoo.so -H include/foo.h \
   -o snap.json
 ```
 
-Flags: `--gcc-path`, `--gcc-prefix`, `--gcc-options`, `--sysroot`, `--nostdinc`.
+Available flags: `--gcc-path`, `--gcc-prefix`, `--gcc-options`, `--sysroot`, `--nostdinc`.
 
 ### Verbose output
-
-Add `-v` or `--verbose` to any command for debug logging:
 
 ```bash
 abicheck compare old.json new.json -v
@@ -151,37 +154,30 @@ abicheck compare old.json new.json -v
 
 ---
 
-## 5) Exit codes (`abicheck compare`)
+## 5) Exit codes
 
-`abicheck compare` uses four statuses:
-- `0` → `NO_CHANGE` or `COMPATIBLE`
-- `1` → tool/runtime error
-- `2` → `API_BREAK`
-- `4` → `BREAKING`
+| Exit code | Verdict | Meaning |
+|-----------|---------|---------|
+| `0` | `NO_CHANGE` or `COMPATIBLE` | Safe — no breaking changes |
+| `1` | — | Tool/runtime error |
+| `2` | `API_BREAK` | Source-level break (recompile needed, binary may work) |
+| `4` | `BREAKING` | Binary ABI break |
 
-> ⚠️ Exit `0` covers both `NO_CHANGE` and `COMPATIBLE`.
+> Exit `0` covers both `NO_CHANGE` and `COMPATIBLE`.
 > If you need exact verdicts in CI, parse `--format json` output.
 
-Canonical reference (compare + compat + strict mode): [Exit Codes](exit_codes.md)
+Full reference (including `compat` mode and strict mode): [Exit Codes](exit_codes.md)
 
 ---
 
 ## 6) Add to GitHub Actions
 
+One-liner with a saved baseline:
+
 ```yaml
 steps:
-  # One-step ABI check (compare .so files directly)
-  - name: Compare ABI
-    run: |
-      abicheck compare libfoo_old.so libfoo_new.so \
-        --old-header include/v1/foo.h --new-header include/v2/foo.h \
-        --old-version 1.0 --new-version 2.0 \
-        --format sarif -o abi.sarif
-      ret=$?
-      [ $ret -eq 1 ] && echo "Tool error" && exit 1
-      [ $ret -eq 4 ] && echo "BREAKING ABI change — blocked" && exit 1
-      [ $ret -eq 2 ] && echo "::warning::API_BREAK detected"
-      exit 0
+  - name: ABI check
+    run: abicheck compare abi-baseline.json ./build/libfoo.so --new-header include/foo.h --format sarif -o abi.sarif
 
   - uses: github/codeql-action/upload-sarif@v3
     if: always()
@@ -189,40 +185,46 @@ steps:
       sarif_file: abi.sarif
 ```
 
-Or using a saved baseline snapshot:
+Full workflow (dump + compare):
 
 ```yaml
 steps:
-  - name: ABI check vs baseline
+  - name: Compare ABI
     run: |
-      abicheck compare abi-baselines/libfoo-1.0.json ./build/libfoo.so \
-        --new-header include/foo.h --new-version ${{ github.sha }} \
+      abicheck compare libfoo_old.so libfoo_new.so \
+        --old-header include/v1/foo.h --new-header include/v2/foo.h \
         --format sarif -o abi.sarif
+
+  - uses: github/codeql-action/upload-sarif@v3
+    if: always()
+    with:
+      sarif_file: abi.sarif
 ```
 
 ---
 
 ## 7) Migrating from ABICC?
 
-If you have existing ABICC XML descriptors, use `compat` mode — same single-hyphen flags,
-no XML changes needed:
+If you have existing ABICC XML descriptors, use `compat` mode — same single-hyphen flags, no XML changes needed:
 
 ```bash
-# Direct drop-in
 abicheck compat check -lib foo -old OLD.xml -new NEW.xml
-
-# OLD.xml is the same ABICC descriptor format you already have.
-# When ready to simplify, switch to:
-#   abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
 ```
 
-Read: [Migrating from ABICC](migration/from_abicc.md)
+When ready, switch to the simpler native workflow:
+
+```bash
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
+```
+
+See [Migrating from ABICC](migration/from_abicc.md) for the full guide.
 
 ---
 
 ## 8) Next steps
 
 - [Verdicts explained](concepts/verdicts.md)
-- [Limitations & known boundaries](concepts/limitations.md)
-- [Tool comparison: abicheck vs abidiff vs ABICC](tool_comparison.md)
-- [Examples breakage guide](examples_breakage_guide.md)
+- [Policy Profiles](policies.md) — control how changes are classified
+- [Examples & Breakage Guide](examples_breakage_guide.md) — 48 real-world ABI break scenarios
+- [Limitations](concepts/limitations.md)
+- [Benchmark & Tool Comparison](tool_comparison.md) — abicheck vs abidiff vs ABICC

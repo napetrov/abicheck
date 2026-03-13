@@ -3,14 +3,11 @@
 [![CI](https://github.com/napetrov/abicheck/actions/workflows/ci.yml/badge.svg)](https://github.com/napetrov/abicheck/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/napetrov/abicheck/branch/main/graph/badge.svg)](https://codecov.io/gh/napetrov/abicheck)
 
-**abicheck checks C/C++ library compatibility at both API and ABI levels.**
+**abicheck** is a command-line tool that detects breaking changes in C/C++ shared libraries before they reach production. It compares two versions of a `.so` library — along with their public headers — and reports whether existing binaries will continue to work or break at runtime.
 
-> **Platform support:** Linux only (ELF/DWARF). Windows (PE) and macOS (Mach-O) are not yet supported.
+Typical problems it catches: removed or renamed symbols, changed function signatures, struct layout drift, vtable reordering, enum value reassignment, and dozens of other ABI/API incompatibilities that cause crashes, silent data corruption, or linker failures after a library upgrade.
 
-abicheck is designed as a **drop-in replacement for [ABI Compliance Checker (ABICC)](https://lvc.github.io/abi-compliance-checker/)**
-with a modern, maintainable Python codebase. It is inspired by both ABICC and
-[libabigail / abidiff](https://sourceware.org/libabigail/) — many thanks and kudos
-to both communities for defining the practical ABI-checking ecosystem.
+> **Platform:** Linux (ELF binaries + DWARF debug info + C/C++ headers). Windows PE and macOS Mach-O are not yet supported.
 
 ---
 
@@ -22,16 +19,19 @@ to both communities for defining the practical ABI-checking ecosystem.
 
 | Requirement | Notes |
 |-------------|-------|
-| **Linux** | ELF/DWARF only |
+| **Linux** | ELF/DWARF + header-based analysis |
 | **Python >= 3.10** | |
-| **`castxml`** | Required for `dump` command (header-based analysis) |
+| **`castxml`** | Clang-based C/C++ AST parser for header analysis |
 | **`g++` or `clang++`** | Must be accessible to castxml |
 
 ```bash
-# Install castxml
-sudo apt install castxml g++          # Ubuntu/Debian
-# or
-conda install -c conda-forge castxml  # conda
+# Ubuntu / Debian
+sudo apt install castxml g++
+```
+
+```bash
+# conda
+conda install -c conda-forge castxml
 ```
 
 ### Install from source
@@ -40,104 +40,121 @@ conda install -c conda-forge castxml  # conda
 git clone https://github.com/napetrov/abicheck.git
 cd abicheck
 pip install -e .
+```
 
-# Contributor / development install (includes test & lint dependencies):
-# pip install -e ".[dev]"
+For development (includes test & lint dependencies):
+
+```bash
+pip install -e ".[dev]"
 ```
 
 ---
 
 ## Quick start
 
-### 1) Compare two libraries directly (primary flow)
+### Compare two library versions
 
-The simplest way to check ABI compatibility — pass two `.so` files and their
-public headers. Each library version gets its own header(s):
+The simplest way to check ABI compatibility — pass two `.so` files and their public headers:
 
 ```bash
-# Each version has its own header
 abicheck compare libfoo.so.1 libfoo.so.2 \
   --old-header include/v1/foo.h --new-header include/v2/foo.h
+```
 
-# Multiple headers per version
-abicheck compare libfoo.so.1 libfoo.so.2 \
-  --old-header include/v1/foo.h --old-header include/v1/bar.h \
-  --new-header include/v2/foo.h --new-header include/v2/bar.h
+If the header file is the same for both versions, use the shorthand:
 
-# Shorthand: -H applies the same header to both sides
-# (only when the header itself didn't change between versions)
+```bash
 abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
-
-# With version labels
-abicheck compare libfoo.so.1 libfoo.so.2 \
-  --old-header include/v1/foo.h --new-header include/v2/foo.h \
-  --old-version 1.0 --new-version 2.0
-
-# Output formats: markdown (default), json, sarif, html
-abicheck compare libfoo.so.1 libfoo.so.2 \
-  --old-header v1/foo.h --new-header v2/foo.h --format sarif -o abi.sarif
-
-# Policy and suppression
-abicheck compare libfoo.so.1 libfoo.so.2 \
-  --old-header v1/foo.h --new-header v2/foo.h --policy sdk_vendor
 ```
 
-`compare` auto-detects each input: `.so` files are dumped on-the-fly, `.json`
-snapshots and ABICC Perl dumps (Data::Dumper `.dump` files) are loaded directly.
-You can mix them freely.
+### Use saved snapshots (for CI baselines)
 
-### 2) Dump snapshots and compare later (secondary flow)
-
-When you want to cache ABI baselines (e.g. store snapshots as CI artifacts or
-commit them to the repo), use the explicit two-step workflow:
+Save an ABI snapshot once per release, then compare against new builds:
 
 ```bash
-# Step 1: Create snapshots (each version uses its own header)
-abicheck dump libfoo.so.1 -H include/v1/foo.h --version 1.0 -o libfoo-1.0.json
-abicheck dump libfoo.so.2 -H include/v2/foo.h --version 2.0 -o libfoo-2.0.json
-
-# Step 2: Compare snapshots (no headers needed — already baked in)
-abicheck compare libfoo-1.0.json libfoo-2.0.json
-
-# Output formats and policies work the same way
-abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o abi.sarif
-abicheck compare libfoo-1.0.json libfoo-2.0.json --policy sdk_vendor
+# Save baseline
+abicheck dump libfoo.so -H include/foo.h --version 1.0 -o baseline.json
 ```
-
-#### Language mode and cross-compilation
 
 ```bash
-# Pure C library (default is C++)
-abicheck dump libfoo.so -H foo.h --lang c -o snap.json
-abicheck compare libv1.so libv2.so -H foo.h --lang c
-
-# Cross-compilation (aarch64 example)
-abicheck dump libfoo.so -H include/foo.h \
-  --gcc-prefix aarch64-linux-gnu- \
-  --sysroot /opt/sysroots/aarch64 \
-  -o snap.json
+# Compare new build against saved baseline
+abicheck compare baseline.json ./build/libfoo.so --new-header include/foo.h
 ```
 
-Cross-compilation flags: `--gcc-path`, `--gcc-prefix`, `--gcc-options`, `--sysroot`, `--nostdinc`.
+### Key flags
 
-Add `-v` / `--verbose` to any command for debug output.
+| Flag | Description |
+|------|-------------|
+| `--old-header` / `--new-header` | Public headers for each version |
+| `-H` | Same header for both versions (shorthand) |
+| `--format` | Output format: `markdown` (default), `json`, `sarif`, `html` |
+| `-o` | Write report to file |
+| `--policy` | Verdict policy: `strict_abi` (default), `sdk_vendor`, `plugin_abi` |
+| `--policy-file` | Custom YAML policy overrides |
+| `--lang` | Language mode: `c++` (default) or `c` |
+| `-v` / `--verbose` | Debug output |
 
-### 3) Compare snapshot baseline vs current build (mixed mode)
+For full CLI reference and advanced options (cross-compilation, suppression files, symbol filtering), see the [documentation](https://napetrov.github.io/abicheck/getting_started/).
 
-Ideal for CI: store a baseline snapshot from a known release, compare against
-the freshly built `.so`:
+---
+
+## Output formats and reports
+
+abicheck supports four output formats:
 
 ```bash
-# Compare stored baseline against current build
-abicheck compare baseline-1.0.json ./build/libfoo.so \
-  --new-header include/foo.h --new-version 2.0-dev
-
-# Or the other way: live old build vs stored new snapshot
-abicheck compare ./build-old/libfoo.so new-release.json \
-  --old-header include/foo.h --old-version 1.0-rc1
+# Markdown (default) — human-readable, printed to stdout
+abicheck compare old.so new.so -H foo.h
 ```
 
-**Policy file example** (`project_policy.yaml`):
+```bash
+# JSON — machine-readable, includes precise verdict field for CI parsing
+abicheck compare old.so new.so -H foo.h --format json -o result.json
+```
+
+```bash
+# SARIF — for GitHub Code Scanning integration
+abicheck compare old.so new.so -H foo.h --format sarif -o abi.sarif
+```
+
+```bash
+# HTML — standalone report for review
+abicheck compare old.so new.so -H foo.h --format html -o report.html
+```
+
+### Example report (markdown)
+
+```
+Verdict: BREAKING
+
+Changes (3):
+  BREAKING  func_removed        _Z6helperv (helper)
+  BREAKING  struct_size_changed  Config: 8 → 16 bytes
+  COMPATIBLE func_added          _Z11new_featurev (new_feature)
+```
+
+---
+
+## Policy profiles
+
+Policies control how detected changes are classified. A change that is `BREAKING` under `strict_abi` might be downgraded to `COMPATIBLE` under `sdk_vendor`.
+
+**Built-in profiles:**
+
+| Profile | Use case | Behavior |
+|---------|----------|----------|
+| `strict_abi` (default) | System libraries, public SDKs | Every ABI change at maximum severity |
+| `sdk_vendor` | Vendor SDKs, optional extensions | Source-only changes (renames, access) downgraded to COMPATIBLE |
+| `plugin_abi` | Plugins rebuilt with host | Calling-convention changes downgraded to COMPATIBLE |
+
+```bash
+abicheck compare old.so new.so -H foo.h --policy sdk_vendor
+```
+
+### Custom policy file
+
+Create a YAML file to override classification of specific change kinds:
+
 ```yaml
 base_policy: strict_abi
 overrides:
@@ -145,62 +162,54 @@ overrides:
   field_renamed: ignore
 ```
 
-### 4) ABICC-compatible mode (for migration from ABICC)
-
-For teams migrating from `abi-compliance-checker` — same flags, same XML
-descriptor format:
-
 ```bash
-# Minimal (same flags as abi-compliance-checker):
-abicheck compat check -lib foo -old old.xml -new new.xml
-
-# Full flag parity:
-abicheck compat check -lib foo -old old.xml -new new.xml \
-  -report-path report.html \
-  -s \
-  -show-retval \
-  -v1 1.0 -v2 2.0
+abicheck compare old.so new.so -H foo.h --policy-file project_policy.yaml
 ```
 
-This mode supports ABICC-style descriptor workflows so teams can migrate without
-rewriting their entire pipeline on day one. See [ABICC compatibility reference](docs/abicc_compat.md) for full flag list.
+Semantics: `break` = BREAKING (exit 4), `warn` = API_BREAK (exit 2), `ignore` = COMPATIBLE (exit 0). Kinds not listed in `overrides` use the `base_policy`.
 
-> Note: `compat` now supports minimal ABICC Perl `ABI.dump` (`Data::Dumper`) input for migration workflows.
-> ABICC XML dump variants (`<ABI_dump...>` / `<abi_dump...>`) are still unsupported.
+See [Policy Profiles](https://napetrov.github.io/abicheck/policies/) for full details.
 
 ---
 
-## ABICC drop-in replacement
+## Exit codes
 
-Existing ABICC pipelines work with a one-line swap:
+| Exit code | Verdict | Meaning |
+|-----------|---------|---------|
+| `0` | `NO_CHANGE` or `COMPATIBLE` | Safe — no breaking changes |
+| `1` | — | Tool/runtime error |
+| `2` | `API_BREAK` | Source-level break (recompile needed, binary may work) |
+| `4` | `BREAKING` | Binary ABI break (old binaries will crash or misbehave) |
 
-```bash
-# Before:
-abi-compliance-checker -lib libfoo -old old.xml -new new.xml -report-path r.html
-
-# After (identical flags):
-abicheck compat check -lib libdnnl -old old.xml -new new.xml -report-path r.html
-```
-
-Migration path:
-
-1. Keep your existing XML descriptor generation.
-2. Replace ABICC CLI call with `abicheck compat check` (same flags, same XML).
-3. Move to `abicheck compare lib.so.1 lib.so.2 -H ...` for the simplest one-liner workflow.
-4. Optionally use `dump` + `compare` when you want explicit snapshot caching for CI baselines.
-
-See [ABICC compatibility reference](docs/abicc_compat.md) and [Migration guide](docs/migration/from_abicc.md) for full flag list and details.
+Use exit codes directly in CI gates. For precise verdicts, parse `--format json` output.
 
 ---
 
 ## GitHub Actions integration
 
+### One-liner with saved baseline
+
+If you already have a baseline JSON snapshot (e.g. stored as a CI artifact or committed to the repo):
+
+```yaml
+steps:
+  - name: ABI check
+    run: abicheck compare abi-baseline.json ./build/libfoo.so --new-header include/foo.h --format sarif -o abi.sarif
+
+  - uses: github/codeql-action/upload-sarif@v3
+    if: always()
+    with:
+      sarif_file: abi.sarif
+```
+
+### Full workflow (dump + compare)
+
 ```yaml
 steps:
   - name: Dump ABI snapshots
     run: |
-      abicheck dump libfoo.so.1 -H include/foo.h --version 1.0 -o old.json
-      abicheck dump libfoo.so.2 -H include/foo.h --version 2.0 -o new.json
+      abicheck dump libfoo_old.so -H include/foo.h --version 1.0 -o old.json
+      abicheck dump libfoo_new.so -H include/foo.h --version 2.0 -o new.json
 
   - name: Compare ABI
     run: abicheck compare old.json new.json --format sarif -o abi.sarif
@@ -211,15 +220,81 @@ steps:
       sarif_file: abi.sarif
 ```
 
-Exit codes for CI gates: `0` = compatible/no_change, `1` = tool/runtime error, `2` = API break, `4` = breaking ABI change.
-See [Exit Codes](docs/exit_codes.md) for full reference including `compat` mode.
+Exit codes for CI gates: `0` = compatible, `1` = tool error, `2` = API break, `4` = breaking ABI change.
 
 ---
 
-## Benchmark results
+## ABICC drop-in replacement
 
-abicheck achieves **100% accuracy** across 42 benchmarked cases covering all major ABI break
-categories (symbol removal, struct layout, vtable drift, enum changes, calling convention, etc.):
+For teams migrating from [ABI Compliance Checker (ABICC)](https://lvc.github.io/abi-compliance-checker/) — swap one command, keep your existing XML descriptors:
+
+```bash
+# Before (ABICC):
+abi-compliance-checker -lib libfoo -old old.xml -new new.xml -report-path r.html
+```
+
+```bash
+# After (abicheck — same flags):
+abicheck compat check -lib libfoo -old old.xml -new new.xml -report-path r.html
+```
+
+When ready, migrate to the simpler native workflow:
+
+```bash
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
+```
+
+See [ABICC Migration Guide](https://napetrov.github.io/abicheck/migration/from_abicc/) for full flag reference, exit code differences, and migration checklist.
+
+---
+
+## Examples and ABI breakage catalog
+
+The `examples/` directory contains **48 real-world ABI break scenarios** — each with paired `v1`/`v2` source code, a consumer app that demonstrates the actual failure, and a Makefile to reproduce it.
+
+### Try an example
+
+```bash
+cd examples/case01_symbol_removal
+make
+abicheck compare libv1.so libv2.so --old-header v1.h --new-header v2.h
+# Verdict: BREAKING — symbol 'helper' was removed
+```
+
+### What the examples cover
+
+**Breaking changes** — changes that crash or corrupt existing binaries:
+
+| Category | Cases | Examples |
+|----------|-------|---------|
+| Symbol removal / rename | 01, 12 | Function removed from export table |
+| Type/signature changes | 02, 10, 33 | Parameter type, return type, pointer level changed |
+| Struct/class layout | 07, 14, 40, 43, 44 | Field added/reordered, class size changed |
+| Enum changes | 08, 19, 20 | Value reassigned, member removed |
+| C++ vtable / virtual | 09, 23, 38 | Vtable reorder, pure virtual added |
+| Qualifiers / binding | 21, 22, 30, 39 | Method became static, const changed |
+| Templates / typedefs | 17, 28, 45, 46, 48 | Template layout, typedef opaque |
+| Complex types | 24, 26, 35, 36, 37 | Union field removed, field renamed, base class changed |
+
+**Compatible changes** — safe, no binary break:
+
+| Cases | Examples |
+|-------|---------|
+| 03, 25, 26b | New symbol added, enum member appended, union in reserved space |
+| 04, 32 | No change, parameter defaults changed |
+| 05, 06 | SONAME policy, visibility leak (bad practice but binary-safe) |
+| 13, 27, 29, 47 | Symbol versioning, weak binding, IFUNC, inline-to-outlined |
+| 16 | Inline to non-inline (ODR concern, not binary break) |
+
+**API-only breaks** — source-level break, binary still works:
+
+| Cases | Examples |
+|-------|---------|
+| 31, 34 | Enum renamed, access level changed |
+
+### Benchmarks
+
+These same examples serve as the accuracy benchmark. All 48 cases have expected verdicts in `examples/ground_truth.json`:
 
 | Tool | Correct / Scored | Accuracy |
 |------|-----------------|----------|
@@ -229,38 +304,102 @@ categories (symbol removal, struct layout, vtable drift, enum changes, calling c
 | ABICC (abi-dumper) | 20/30 | 66% |
 | abidiff | 11/42 | 26% |
 
-See [Benchmark report](docs/benchmark_report.md) and [Tool comparison](docs/tool_comparison.md)
-for per-case analysis, timing data, and methodology.
+See [Benchmark & Tool Comparison](https://napetrov.github.io/abicheck/tool_comparison/) for per-case results, methodology, and timing data.
+
+---
+
+## ABI compatibility guide
+
+Understanding what breaks ABI and what doesn't is essential for library maintainers. Here is a quick reference:
+
+### Changes that break binary compatibility
+
+- **Removing or renaming** an exported function or variable
+- **Changing function signature** — parameter types, return type, calling convention
+- **Modifying struct/class layout** — adding/removing/reordering fields, changing field types
+- **Changing enum values** — reassigning numeric values, removing members
+- **C++ vtable changes** — reordering virtual methods, adding pure virtuals
+- **Changing method qualifiers** — `const`, `static`, `noexcept` (when it affects mangling)
+- **Changing global variable type** — size/alignment mismatch
+
+### Changes that are safe (binary compatible)
+
+- **Adding** new exported functions or variables
+- **Adding** new enum members at the end (without shifting existing values)
+- **Weakening** symbol binding (GLOBAL to WEAK)
+- **Adding** IFUNC resolvers
+- **Adding** symbol version tags
+
+### Best practices for library maintainers
+
+1. **Treat public headers as ABI contracts** — any change is potentially breaking
+2. **Use SONAME versioning** — bump major version on incompatible changes
+3. **Hide implementation details** — use Pimpl pattern, opaque handles, `-fvisibility=hidden`
+4. **Add, don't modify** — introduce `foo_v2()` instead of changing `foo()`
+5. **Freeze enum values** — never renumber released constants
+6. **Don't expose third-party types** in public API — wrap them behind stable project-owned types
+
+See [Examples Breakage Guide](https://napetrov.github.io/abicheck/examples_breakage_guide/) for detailed code examples and failure demonstrations for each case.
+
+---
+
+## Architecture
+
+abicheck uses a 3-layer comparison pipeline:
+
+1. **ELF metadata** (via pyelftools) — exported symbols, SONAME, visibility, binding, symbol versions
+2. **Header AST** (via castxml/Clang) — function signatures, classes, fields, typedefs, enums, vtable layout
+3. **DWARF cross-check** (optional) — validates actual compiled struct sizes, member offsets, vtable slots
+
+Each layer provides independent signals. Combining all three gives abicheck higher accuracy than tools that rely on only one or two sources (e.g., abidiff uses only DWARF; ABICC uses only GCC AST).
+
+### Key modules
+
+| Module | Responsibility |
+|--------|---------------|
+| `cli.py` | CLI entrypoint (`dump`, `compare`, `compat check/dump`) |
+| `dumper.py` | Snapshot generation from `.so` + headers |
+| `checker.py` | Diff orchestration and change collection |
+| `checker_policy.py` | Change classification, built-in policies, verdict logic |
+| `detectors.py` | ABI change detection rules |
+| `reporter.py` | Output formatting (markdown, JSON, SARIF, HTML) |
+| `suppression.py` | Suppression rules and symbol filtering |
+| `policy_file.py` | Custom YAML policy file parsing |
+
+See [Architecture reference](https://napetrov.github.io/abicheck/reference/architecture/) for the full design documentation.
 
 ---
 
 ## Documentation
 
-- **[Getting started](docs/getting_started.md)** — installation, first check, CI setup
-- **[Verdicts](docs/concepts/verdicts.md)** — Source-level / BREAKING / API_BREAK / COMPATIBLE / NO_CHANGE
-- **[Exit Codes](docs/exit_codes.md)** — CI-ready exit code reference
-- **[Policy Profiles](docs/policies.md)** — built-in and custom policies
-- **[ABICC Migration](docs/migration/from_abicc.md)** — migrating from abi-compliance-checker
-- **[ABI Break Catalog](docs/abi_breaking_cases_catalog.md)** — documented break scenarios (cases 01–29)
-- **[Examples](examples/README.md)** — runnable C/C++ examples with expected verdicts
-- **[Tool Comparison](docs/tool_comparison.md)** — abicheck vs abidiff vs ABICC
-- **[Architecture](docs/reference/architecture.md)** — pipeline, modules, and design
-- **[Benchmark Report](docs/benchmark_report.md)** — full per-case results
+Full documentation is available at **[napetrov.github.io/abicheck](https://napetrov.github.io/abicheck/)**.
+
+**Getting started:**
+- [Installation & first check](https://napetrov.github.io/abicheck/getting_started/)
+- [Exit codes reference](https://napetrov.github.io/abicheck/exit_codes/)
+
+**Concepts:**
+- [Verdicts explained](https://napetrov.github.io/abicheck/concepts/verdicts/) — NO_CHANGE / COMPATIBLE / API_BREAK / BREAKING
+- [Limitations](https://napetrov.github.io/abicheck/concepts/limitations/)
+- [Troubleshooting](https://napetrov.github.io/abicheck/concepts/troubleshooting/)
+
+**User guide:**
+- [Policy profiles](https://napetrov.github.io/abicheck/policies/)
+- [SARIF output](https://napetrov.github.io/abicheck/sarif_output/)
+- [Examples & breakage guide](https://napetrov.github.io/abicheck/examples_breakage_guide/)
+- [ABICC migration](https://napetrov.github.io/abicheck/migration/from_abicc/)
+
+**Reference:**
+- [Architecture](https://napetrov.github.io/abicheck/reference/architecture/)
+- [Change kind reference](https://napetrov.github.io/abicheck/reference/change_kinds/)
+- [Benchmark & tool comparison](https://napetrov.github.io/abicheck/tool_comparison/)
+- [ABICC compatibility reference](https://napetrov.github.io/abicheck/abicc_compat/)
 
 ---
 
-## Testing
+## Contributing
 
-```bash
-# Fast tests (default CI gate)
-pytest tests/ -v --tb=short -m "not integration and not libabigail and not abicc" \
-  --cov=abicheck --cov-report=term-missing
-
-# Full suite (requires castxml, abidiff, abi-compliance-checker)
-pytest --cov=abicheck --cov-report=term-missing
-```
-
----
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, testing, code style, and PR workflow.
 
 ## License
 
