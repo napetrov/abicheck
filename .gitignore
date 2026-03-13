@@ -9,3 +9,4 @@ coverage-integration.xml
 htmlcov/
 examples/**/*.so
 logs/
+compat_reports/
