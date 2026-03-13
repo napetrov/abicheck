@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries",
     "Topic :: Software Development :: Quality Assurance",
 ]
@@ -69,6 +70,9 @@ markers = [
     "libabigail: requires abidiff + gcc/g++ — libabigail parity tests",
     "abicc: requires abi-compliance-checker + gcc/g++ — ABICC parity tests",
 ]
+
+[tool.setuptools.packages.find]
+include = ["abicheck*"]
 
 [tool.coverage.run]
 branch = true
