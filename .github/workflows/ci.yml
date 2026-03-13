@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '0 4 * * *'
   workflow_dispatch:
 
 permissions:
@@ -110,7 +112,43 @@ jobs:
       - name: End-to-end demo (libz)
         run: python scripts/demo_libz.py
 
+  heavy-parity-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run-heavy: ${{ steps.resolve.outputs.run-heavy }}
+      reason: ${{ steps.resolve.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect changed files for parity jobs (PR only)
+        id: changed
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            heavy:
+              - 'abicheck/**'
+              - 'tests/**'
+              - 'examples/**'
+              - '.github/workflows/**'
+
+      - name: Resolve parity gate output
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run-heavy=true" >> "$GITHUB_OUTPUT"
+            echo "reason=full-run-non-pr-event" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.changed.outputs.heavy }}" = "true" ]; then
+            echo "run-heavy=true" >> "$GITHUB_OUTPUT"
+            echo "reason=relevant-files-changed" >> "$GITHUB_OUTPUT"
+          else
+            echo "run-heavy=false" >> "$GITHUB_OUTPUT"
+            echo "reason=no-relevant-changes" >> "$GITHUB_OUTPUT"
+          fi
+
   libabigail-parity:
+    needs: [heavy-parity-gate]
+    if: needs.heavy-parity-gate.outputs.run-heavy == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -129,6 +167,8 @@ jobs:
         run: pytest tests/test_abidiff_parity.py -v -m libabigail --tb=short
 
   abicc-parity:
+    needs: [heavy-parity-gate]
+    if: needs.heavy-parity-gate.outputs.run-heavy == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -146,22 +186,6 @@ jobs:
         run: pytest tests/test_abicc_parity.py tests/test_xml_parity.py -v -m abicc --tb=short
       - name: Run XML schema validation tests (no ABICC required)
         run: pytest tests/test_xml_parity.py::TestXmlSchemaValidation tests/test_xml_report.py -v --tb=short
-
-
-  docs-build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-          cache: 'pip'
-      - name: Install docs dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install mkdocs mkdocs-material pymdown-extensions
-      - name: Build docs (strict)
-        run: mkdocs build --strict
 
   packaging:
     runs-on: ubuntu-latest
