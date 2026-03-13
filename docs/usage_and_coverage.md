@@ -97,50 +97,21 @@ detected and reported for awareness but do not trigger a BREAKING verdict. See t
 [ABI Break Catalog](abi_breaking_cases_catalog.md) for the full
 rationale table.
 
-## ABI/API breakages and what each tool mode can detect
+## ABI/API breakages and tool coverage
 
-This section maps breakage types to example cases under `examples/` and compares:
+High-level guidance:
 
-- `abicheck` (header + ELF metadata pipeline)
-- `abidiff + headers`
-- `ABICC Usage #2` (header-based ABICC mode)
-- `ABICC Usage #1` (abi-dumper / DWARF dump mode)
+- `abicheck compare` is the canonical mode for highest-fidelity verdicts (`NO_CHANGE`, `COMPATIBLE`, `API_BREAK`, `BREAKING`).
+- `abicheck compat` is the ABICC drop-in mode and intentionally constrained to ABICC-style semantics.
+- `abicheck compat -s` (`strict`) intentionally promotes compatible changes to breaking for conservative policy gates.
 
-Legend: ✅ strong support, ⚠️ partial/conditional, ❌ generally not covered.
+To avoid data drift, detailed per-case matrices are maintained in dedicated docs:
 
-| Case | Breakage type | Verdict | abicheck | abidiff + headers | ABICC #2 (headers) | ABICC #1 (dumps) |
-|---|---|---|:---:|:---:|:---:|:---:|
-| case01_symbol_removal | Public symbol removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case02_param_type_change | Function parameter type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case03_compat_addition | Compatible API addition | COMPATIBLE | ✅ | ✅ | ✅ | ✅ |
-| case04_no_change | No ABI change baseline | NO_CHANGE | ✅ | ✅ | ✅ | ✅ |
-| case05_soname | SONAME / packaging policy issue | BREAKING | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| case06_visibility | Visibility/export policy drift | BREAKING | ✅ | ✅ | ⚠️ | ⚠️ |
-| case07_struct_layout | Struct layout changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case08_enum_value_change | Enum value changed | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
-| case09_cpp_vtable | VTable/method order/signature drift | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case10_return_type | Function return type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case11_global_var_type | Global variable type changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case12_function_removed | API function removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case13_symbol_versioning | Symbol version policy regression | COMPATIBLE | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| case14_cpp_class_size | C++ class size/layout changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case15_noexcept_change | `noexcept` contract changed | COMPATIBLE | ✅ | ⚠️ | ✅ | ❌ |
-| case16_inline_to_non_inline | Inline/ODR surface change | BREAKING | ✅ | ⚠️ | ✅ | ❌ |
-| case17_template_abi | Template-instantiation ABI drift | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
-| case18_dependency_leak | Transitive dependency leaked into API | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
-| case19_enum_member_removed | Enum member removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case20_enum_member_value_changed | Enum member value changed | BREAKING | ✅ | ⚠️ | ✅ | ✅ |
-| case21_method_became_static | Method became static | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case22_method_const_changed | Method const-qualifier changed | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case23_pure_virtual_added | Added pure virtual method | BREAKING | ✅ | ✅ | ✅ | ✅ |
-| case24_union_field_removed | Union field removed | BREAKING | ✅ | ✅ | ✅ | ✅ |
+- [Benchmark report](benchmark_report.md) — exact scored results, denominators, and timing notes
+- [Tool comparison](tool_comparison.md) — interpretation and trade-offs by workflow
+- [ABI break catalog](abi_breaking_cases_catalog.md) — rationale for classification of each change kind
 
-### Summary by breakage category
-
-- **API surface breaks** (removed/changed signatures): all modes generally catch these.
-- **C++ semantic contract breaks** (`noexcept`, inline/ODR): header-aware analysis is strongest.
-- **DWARF-only detail** (some anonymous/internal layout details): ABICC dump mode can be strongest when debug info exists.
-- **Policy/linking hygiene** (SONAME/versioning/visibility): best handled by a tool that includes explicit ELF policy checks.
+This page intentionally keeps only workflow-level guidance and links to those canonical sources.
 
 ## Architecture and dependencies
 

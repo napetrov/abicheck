@@ -102,7 +102,7 @@ abicheck compare v1.json v2.json --format sarif -o abi.sarif
 
 ## 5) Exit codes (`abicheck compare`)
 
-`abicheck compare` uses four statuses:
+`abicheck compare` uses four exit-code outcomes:
 - `0` → `NO_CHANGE` or `COMPATIBLE`
 - `1` → tool/runtime error
 - `2` → `API_BREAK`
