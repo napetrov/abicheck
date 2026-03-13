@@ -42,6 +42,9 @@ Repository = "https://github.com/napetrov/abicheck"
 Changelog = "https://github.com/napetrov/abicheck/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+castxml = [
+    "castxml>=0.4.5",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov",

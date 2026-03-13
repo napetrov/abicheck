@@ -12,12 +12,17 @@
 - `castxml` (for header-based analysis) — [castxml project](https://github.com/CastXML/CastXML)
 - C/C++ compiler (`gcc`/`g++` or `clang`/`clang++`)
 
-### Install system dependencies first
+### Install castxml
+
+castxml is available as a pip package (recommended) or via system package managers:
 
 ```bash
-# Ubuntu / Debian
-sudo apt-get update
-sudo apt-get install -y castxml gcc g++
+# Option 1: pip (recommended — no system package needed)
+pip install castxml
+
+# Option 2: system package manager
+sudo apt-get update && sudo apt-get install -y castxml gcc g++   # Ubuntu/Debian
+conda install -c conda-forge castxml                              # conda
 
 # macOS (development only — ELF analysis requires Linux)
 # abicheck analyzes Linux ELF binaries only; macOS Mach-O is not supported.
