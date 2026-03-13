@@ -8,14 +8,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 from click.testing import CliRunner
 
-from abicheck.cli import _is_elf, _resolve_input, _sniff_text_format, main
-from abicheck.model import AbiSnapshot, Function, Visibility
+from abicheck.cli import _resolve_input, _sniff_text_format, main
+from abicheck.model import AbiSnapshot
 from abicheck.serialization import snapshot_to_json
-
 
 # ── _sniff_text_format ─────────────────────────────────────────────────
 

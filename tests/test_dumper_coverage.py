@@ -13,20 +13,16 @@ import subprocess
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 from xml.etree.ElementTree import Element, SubElement
 
 import pytest
 
 from abicheck.dumper import (
     _cache_key,
-    _CastxmlParser,
     _castxml_dump,
-    _pyelftools_exported_symbols,
+    _CastxmlParser,
     dump,
 )
-from abicheck.model import AbiSnapshot, Function, Visibility
-
 
 # ── _castxml_dump internal branches ────────────────────────────────────
 
@@ -417,7 +413,7 @@ class TestCastxmlParserAccessLevel:
     def test_protected_access(self):
         ft = _fund_type("t1", "int")
         s = Element("Struct", id="s1", name="S")
-        f = SubElement(s, "Field", name="x", type="t1", access="protected")
+        SubElement(s, "Field", name="x", type="t1", access="protected")
         root = _xml_root(ft, s)
         p = _CastxmlParser(root, set(), set())
         types = p.parse_types()

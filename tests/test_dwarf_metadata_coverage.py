@@ -7,43 +7,26 @@ branches, _attr_str/_attr_int edge cases, and _compute_fallback_type_info.
 """
 from __future__ import annotations
 
-import logging
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from abicheck.dwarf_metadata import (
     DwarfMetadata,
-    EnumInfo,
-    FieldInfo,
-    StructLayout,
     _attr_int,
     _attr_str,
-    _compute_array_type_info,
     _compute_fallback_type_info,
-    _compute_qualified_type_info,
-    _compute_record_type_info,
     _compute_type_info,
-    _compute_typedef_info,
-    _die_to_type_info,
     _expand_anonymous_member,
     _parse,
-    _process_cu,
     _process_enum,
-    _process_enum_named,
     _process_member,
     _process_struct,
-    _process_struct_named,
     _process_typedef,
     _resolve_inner_type_info,
-    _resolve_ref,
     _resolve_type,
     _walk_die_iter,
     parse_dwarf_metadata,
 )
-
 
 # ── Mock helpers ───────────────────────────────────────────────────────
 
@@ -90,7 +73,6 @@ class TestParseDwarfMetadata:
     def test_non_regular_file_returns_empty(self, tmp_path):
         """Passing a directory-like path returns empty metadata."""
         # Create a named pipe or use a special file; for simplicity, mock os.fstat
-        import os
         import stat
 
         f = tmp_path / "weird.so"
