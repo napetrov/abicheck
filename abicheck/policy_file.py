@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .checker_policy import ChangeKind, Verdict, compute_verdict, VALID_BASE_POLICIES
+from .checker_policy import VALID_BASE_POLICIES, ChangeKind, Verdict, compute_verdict
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ class PolicyFile:
     source_path: Path | None = None
 
     @classmethod
-    def load(cls, path: Path) -> "PolicyFile":
+    def load(cls, path: Path) -> PolicyFile:
         """Load and validate a policy file from *path*.
 
         Raises:
@@ -76,7 +76,7 @@ class PolicyFile:
             OSError: If the file cannot be read.
         """
         try:
-            import yaml  # type: ignore[import]
+            import yaml
         except ImportError as exc:  # pragma: no cover
             raise ImportError(
                 "PyYAML is required for --policy-file support. "

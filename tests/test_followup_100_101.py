@@ -30,7 +30,6 @@ from abicheck.dwarf_advanced import (
 )
 from abicheck.model import AbiSnapshot
 
-
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _change(kind: ChangeKind) -> Any:
@@ -165,9 +164,12 @@ class TestExtractCfaRegFromFde:
 
     def test_modal_register_avoids_epilogue_bias(self) -> None:
         """3-row table: entry/body rbp, epilogue rsp -> dominant should be rbp."""
-        cfa_entry = MagicMock(); cfa_entry.reg = 6   # rbp
-        cfa_body = MagicMock(); cfa_body.reg = 6    # rbp
-        cfa_epi = MagicMock(); cfa_epi.reg = 7      # rsp
+        cfa_entry = MagicMock()
+        cfa_entry.reg = 6   # rbp
+        cfa_body = MagicMock()
+        cfa_body.reg = 6    # rbp
+        cfa_epi = MagicMock()
+        cfa_epi.reg = 7     # rsp
 
         rows = [
             {"pc": 0x1000, "cfa": cfa_entry},

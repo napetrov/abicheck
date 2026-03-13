@@ -19,8 +19,8 @@ from .elf_metadata import SymbolBinding, SymbolType
 from .model import AbiSnapshot, EnumType, Function, RecordType, TypeField, Visibility
 
 if TYPE_CHECKING:
-    from .suppression import SuppressionList
     from .policy_file import PolicyFile
+    from .suppression import SuppressionList
 
 
 __all__ = [
@@ -1346,7 +1346,7 @@ def compare(
     suppression: SuppressionList | None = None,
     *,
     policy: str = "strict_abi",
-    policy_file: "PolicyFile | None" = None,
+    policy_file: PolicyFile | None = None,
 ) -> DiffResult:
     """Diff two AbiSnapshots and return a DiffResult with verdict.
 

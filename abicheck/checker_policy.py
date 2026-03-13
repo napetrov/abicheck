@@ -465,7 +465,7 @@ VALID_BASE_POLICIES: frozenset[str] = frozenset({"strict_abi", "sdk_vendor", "pl
 """Canonical set of valid built-in policy names. Import from here — do not redefine."""
 
 
-def policy_kind_sets(policy: str) -> tuple[frozenset, frozenset, frozenset]:
+def policy_kind_sets(policy: str) -> tuple[frozenset[ChangeKind], frozenset[ChangeKind], frozenset[ChangeKind]]:
     """Return (breaking, api_break, compatible) kind sets for the given policy name.
 
     This is the single source of truth for policy → kind-set mapping.
