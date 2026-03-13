@@ -2,6 +2,10 @@
 
 All ABICC-specific command logic lives here.
 Core abicheck commands (dump/compare) remain in abicheck.cli.
+
+Commands:
+  abicheck compat check  — ABICC drop-in comparison (was ``abicheck compat``)
+  abicheck compat dump   — dump from ABICC XML descriptor (was ``abicheck compat-dump``)
 """
 from __future__ import annotations
 
@@ -534,9 +538,16 @@ def _compat_fail(context: str, exc: BaseException) -> None:
     sys.exit(_classify_compat_error_exit_code(exc, context=context))
 
 
+# ── compat group ──────────────────────────────────────────────────────────────
+
+@click.group("compat")
+def compat_group() -> None:
+    """ABICC-compatible commands (drop-in replacement for abi-compliance-checker)."""
+
+
 # ── compat dump subcommand ────────────────────────────────────────────────────
 
-@click.command("compat-dump")
+@compat_group.command("dump")
 @click.option("-lib", "-l", "-library", "lib_name", required=True, help="Library name.")
 @click.option("-dump", "desc_path", required=True, type=click.Path(exists=True, path_type=Path),
               help="Path to ABICC XML descriptor to dump.")
@@ -591,23 +602,23 @@ def compat_dump_cmd(
 ) -> None:
     """Create an ABI dump from an ABICC XML descriptor (ABICC -dump equivalent).
 
-    Produces a JSON ABI snapshot that can be used with ``abicheck compat`` or
-    ``abicheck compare`` for later comparison. This enables two-stage CI workflows:
-    dump once, compare later.
+    Produces a JSON ABI snapshot that can be used with ``abicheck compat check``
+    or ``abicheck compare`` for later comparison. This enables two-stage CI
+    workflows: dump once, compare later.
 
     \b
     Examples::
         # Create dump from descriptor:
-        abicheck compat-dump -lib libfoo -dump v1.xml
+        abicheck compat dump -lib libfoo -dump v1.xml
 
         # With explicit output path:
-        abicheck compat-dump -lib libfoo -dump v1.xml -dump-path libfoo-v1.json
+        abicheck compat dump -lib libfoo -dump v1.xml -dump-path libfoo-v1.json
 
         # Override version label:
-        abicheck compat-dump -lib libfoo -dump v1.xml -vnum 2025.1
+        abicheck compat dump -lib libfoo -dump v1.xml -vnum 2025.1
 
         # Cross-compilation:
-        abicheck compat-dump -lib libfoo -dump v1.xml -gcc-prefix aarch64-linux-gnu-
+        abicheck compat dump -lib libfoo -dump v1.xml -gcc-prefix aarch64-linux-gnu-
     """
     _warn_stub_flags(quiet, sort_dump=sort_dump, extra_dump=extra_dump,
                      extra_info=extra_info, check=check, xml_format=xml_format)
@@ -627,9 +638,8 @@ def compat_dump_cmd(
         _compat_fail("parsing descriptor", exc)
 
     if vnum:
-        desc = desc.__class__(
-            version=vnum, headers=desc.headers, libs=desc.libs, path=desc.path
-        )
+        from dataclasses import replace as _replace  # noqa: PLC0415
+        desc = _replace(desc, version=vnum)
 
     so_path = desc.libs[0]
     if len(desc.libs) > 1:
@@ -652,18 +662,8 @@ def compat_dump_cmd(
         _compat_fail("during dump", exc)
 
     # Override library name to match -lib flag
-    snap = snap.__class__(
-        library=lib_name,
-        version=snap.version,
-        functions=snap.functions,
-        variables=snap.variables,
-        types=snap.types,
-        elf=snap.elf,
-        dwarf=snap.dwarf,
-        dwarf_advanced=snap.dwarf_advanced,
-        enums=snap.enums,
-        typedefs=snap.typedefs,
-    )
+    from dataclasses import replace as _replace  # noqa: PLC0415
+    snap = _replace(snap, library=lib_name)
 
     if dump_path is None:
         dump_path = (
@@ -680,12 +680,12 @@ def compat_dump_cmd(
 
 # ── compat compare subcommand ─────────────────────────────────────────────────
 
-@click.command("compat")
+@compat_group.command("check")
 # ── Core input flags ──────────────────────────────────────────────────────────
-@click.option("-lib", "-l", "-library", "lib_name", required=True, help="Library name (e.g. libfoo).")
-@click.option("-old", "-d1", "-o", "old_desc", required=True, type=click.Path(exists=True, path_type=Path),
+@click.option("-lib", "-l", "-library", "lib_name", required=True, help="Library name (e.g. libdnnl).")
+@click.option("-old", "-d1", "old_desc", required=True, type=click.Path(path_type=Path),
               help="Path to old version ABICC XML descriptor or ABI dump.")
-@click.option("-new", "-d2", "-n", "new_desc", required=True, type=click.Path(exists=True, path_type=Path),
+@click.option("-new", "-d2", "-n", "new_desc", required=True, type=click.Path(path_type=Path),
               help="Path to new version ABICC XML descriptor or ABI dump.")
 @click.option("-d", "-f", "-filter", "filter_path", default=None, type=click.Path(path_type=Path),
               help="Path to XML descriptor with skip_* filtering rules.")
@@ -820,7 +820,7 @@ def compat_dump_cmd(
 @click.option("-skip-removed-constants", "skip_removed_constants", is_flag=True, default=False, hidden=True)
 @click.option("-count-symbols", "count_symbols", default=None, hidden=True)
 @click.option("-count-all-symbols", "count_all_symbols", default=None, hidden=True)
-def compat_cmd(  # noqa: PLR0913
+def compat_check_cmd(  # noqa: PLR0913
     lib_name: str,
     old_desc: Path,
     new_desc: Path,
@@ -903,6 +903,7 @@ def compat_cmd(  # noqa: PLR0913
     Reads ABICC-format XML descriptors and produces an ABI compatibility report.
     Supports all ABICC flags for drop-in CI replacement.
 
+    \b
     Exit codes mirror ABICC:
       0 — compatible or no change (NO_CHANGE, COMPATIBLE)
       1 — breaking ABI change detected (BREAKING)
@@ -911,13 +912,14 @@ def compat_cmd(  # noqa: PLR0913
 
     Note: with -strict, API_BREAK is promoted to exit 1.
 
+    \b
     Examples::
 
         # Before:
         abi-compliance-checker -lib libfoo -old old.xml -new new.xml -report-path r.html
 
-        # After (identical flags):
-        abicheck compat -lib libfoo -old old.xml -new new.xml -report-path r.html
+        # After:
+        abicheck compat check -lib libdnnl -old old.xml -new new.xml -report-path r.html
     """
     from ..suppression import SuppressionList  # local import to avoid circular
 
@@ -1002,21 +1004,15 @@ def compat_cmd(  # noqa: PLR0913
         if isinstance(d, _AbiSnapshot):
             version = vnum_override or d.version
             if vnum_override:
-                d = d.__class__(
-                    library=d.library, version=vnum_override,
-                    functions=d.functions, variables=d.variables,
-                    types=d.types, elf=d.elf, dwarf=d.dwarf,
-                    dwarf_advanced=d.dwarf_advanced,
-                    enums=d.enums, typedefs=d.typedefs,
-                )
+                from dataclasses import replace as _replace  # noqa: PLC0415
+                d = _replace(d, version=vnum_override)
             return d, version
 
         # It's a CompatDescriptor — dump it
         desc: CompatDescriptor = d
         if vnum_override:
-            desc = desc.__class__(
-                version=vnum_override, headers=desc.headers, libs=desc.libs, path=desc.path
-            )
+            from dataclasses import replace as _replace  # noqa: PLC0415
+            desc = _replace(desc, version=vnum_override)
         so = desc.libs[0]
         if len(desc.libs) > 1:
             _do_echo(
@@ -1273,7 +1269,7 @@ def _load_descriptor_or_dump(path: Path, *, relpath: str | None = None) -> Compa
             f"ABICC XML dump format detected: {path}\n"
             "  abicheck currently supports ABICC Perl Data::Dumper dumps, not ABICC XML dumps.\n"
             "  If possible, generate the default ABI.dump (Perl) format with abi-dumper,\n"
-            "  or convert via descriptor using compat-dump to abicheck JSON."
+            "  or convert via descriptor using 'abicheck compat dump' to abicheck JSON."
         )
 
     # Otherwise parse as XML descriptor

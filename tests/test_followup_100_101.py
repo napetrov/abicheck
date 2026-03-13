@@ -456,6 +456,6 @@ class TestCompatPolicyExposure:
         from click.testing import CliRunner
 
         from abicheck.cli import main
-        result = CliRunner().invoke(main, ["compat", "--help"])
+        result = CliRunner().invoke(main, ["compat", "check", "--help"])
         assert result.exit_code == 0, result.output
         assert "--policy" not in result.output

@@ -1,6 +1,6 @@
 # Migrating from ABI Compliance Checker (ABICC)
 
-`abicheck compat` is designed as a practical drop-in path for ABICC pipelines.
+`abicheck compat check` is designed as a practical drop-in path for ABICC pipelines.
 Flags use single-hyphen style (`-lib`, `-old`, `-new`) to match ABICC exactly.
 
 ---
@@ -16,7 +16,7 @@ abi-compliance-checker -lib libfoo -old OLD.xml -new NEW.xml -report-path report
 After (identical flags):
 
 ```bash
-abicheck compat -lib libfoo -old OLD.xml -new NEW.xml -report-path report.html
+abicheck compat check -lib libfoo -old OLD.xml -new NEW.xml -report-path report.html
 ```
 
 > `OLD.xml` is your existing ABICC XML descriptor file in most pipelines.
@@ -35,7 +35,7 @@ abicheck compat -lib libfoo -old OLD.xml -new NEW.xml -report-path report.html
 | Tool / mode | 0 | 1 | 2 | 4 |
 |-------------|---|---|---|---|
 | ABICC | ok | breaking | error | — |
-| `abicheck compat` | ok | BREAKING | API_BREAK or tool error | — |
+| `abicheck compat check` | ok | BREAKING | API_BREAK or tool error | — |
 | `abicheck compare` | NO_CHANGE or COMPATIBLE | tool error | API_BREAK | BREAKING |
 
 > ⚠️ In `compat` mode, exit `1` = BREAKING (mirrors ABICC). Exit `2` = API_BREAK
@@ -83,13 +83,13 @@ Cross-compilation and advanced flags — also supported:
 | `-headers-only` | Accepted (ELF checks still run) |
 | `-v1num`/`-v2num` | ABICC 1.x version aliases → mapped to `-v1`/`-v2` |
 
-Dump workflow — supported via `abicheck compat-dump`:
+Dump workflow — supported via `abicheck compat dump`:
 
 ```bash
 # Create an ABI dump from an ABICC XML descriptor:
-abicheck compat-dump -lib libfoo -dump v1.xml
-abicheck compat-dump -lib libfoo -dump v2.xml
-abicheck compat -lib libfoo -old abi_dumps/libfoo/1.0/dump.json -new abi_dumps/libfoo/2.0/dump.json
+abicheck compat dump -lib libfoo -dump v1.xml
+abicheck compat dump -lib libfoo -dump v2.xml
+abicheck compat check -lib libfoo -old abi_dumps/libfoo/1.0/dump.json -new abi_dumps/libfoo/2.0/dump.json
 ```
 
 See [abicc_compat.md](../abicc_compat.md) for the full flag reference.
@@ -98,17 +98,20 @@ See [abicc_compat.md](../abicc_compat.md) for the full flag reference.
 
 ## 4) Migration checklist
 
-1. Replace ABICC binary call with `abicheck compat` (keep XML descriptors unchanged)
+1. Replace ABICC binary call with `abicheck compat check` (keep XML descriptors unchanged)
 2. Validate exit code behavior in CI — especially: compat exit `1` = BREAKING, exit `2` = API_BREAK or error
 3. Run on 3–5 historical releases to establish confidence, e.g.:
    ```bash
    for ver in v1.0 v1.1 v1.2; do
-     abicheck compat -lib libfoo -old ${ver}.xml -new current.xml \
+     abicheck compat check -lib libfoo -old ${ver}.xml -new current.xml \
        -report-path report-${ver}.html
      echo "vs ${ver}: exit $?"
    done
    ```
 4. Optionally migrate to `abicheck compare` for unambiguous `API_BREAK` verdict and JSON/SARIF workflows
+
+> **Migration note (v0.2):** `abicheck compat -lib ...` was renamed to `abicheck compat check -lib ...`.
+> `abicheck compat-dump ...` was renamed to `abicheck compat dump ...`.
 
 ---
 
@@ -121,7 +124,7 @@ if [ ! -f OLD.xml ] || [ ! -f NEW.xml ]; then
   exit 1
 fi
 
-abicheck compat -lib libfoo -old OLD.xml -new NEW.xml \
+abicheck compat check -lib libfoo -old OLD.xml -new NEW.xml \
   -report-format html -report-path abi-report.html
 ret=$?
 

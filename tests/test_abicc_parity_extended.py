@@ -186,7 +186,7 @@ class TestCliCompatibility:
         from click.testing import CliRunner
         runner = CliRunner()
         # Check that abicheck compat --help mentions -strict / -s
-        result = runner.invoke(main, ["compat", "--help"])
+        result = runner.invoke(main, ["compat", "check", "--help"])
         assert result.exit_code == 0, f"compat --help failed: {result.output}"
         assert "-strict" in result.output or "-s" in result.output, (
             "abicheck compat --help does not list -strict / -s flag"
@@ -196,7 +196,7 @@ class TestCliCompatibility:
         """abicheck compat --help lists all ABICC-equivalent flags."""
         from click.testing import CliRunner
         runner = CliRunner()
-        result = runner.invoke(main, ["compat", "--help"])
+        result = runner.invoke(main, ["compat", "check", "--help"])
         assert result.exit_code == 0
 
         required_flags = [

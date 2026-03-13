@@ -104,6 +104,24 @@ abicheck compare libfoo-1.0.json libfoo-2.0.json --format sarif -o abi.sarif
 abicheck compare libfoo-1.0.json libfoo-2.0.json --policy sdk_vendor
 ```
 
+#### Language mode and cross-compilation
+
+```bash
+# Pure C library (default is C++)
+abicheck dump libfoo.so -H foo.h --lang c -o snap.json
+abicheck compare libv1.so libv2.so -H foo.h --lang c
+
+# Cross-compilation (aarch64 example)
+abicheck dump libfoo.so -H include/foo.h \
+  --gcc-prefix aarch64-linux-gnu- \
+  --sysroot /opt/sysroots/aarch64 \
+  -o snap.json
+```
+
+Cross-compilation flags: `--gcc-path`, `--gcc-prefix`, `--gcc-options`, `--sysroot`, `--nostdinc`.
+
+Add `-v` / `--verbose` to any command for debug output.
+
 ### 3) Compare snapshot baseline vs current build (mixed mode)
 
 Ideal for CI: store a baseline snapshot from a known release, compare against
@@ -134,10 +152,10 @@ descriptor format:
 
 ```bash
 # Minimal (same flags as abi-compliance-checker):
-abicheck compat -lib foo -old old.xml -new new.xml
+abicheck compat check -lib foo -old old.xml -new new.xml
 
 # Full flag parity:
-abicheck compat -lib foo -old old.xml -new new.xml \
+abicheck compat check -lib foo -old old.xml -new new.xml \
   -report-path report.html \
   -s \
   -show-retval \
@@ -161,13 +179,13 @@ Existing ABICC pipelines work with a one-line swap:
 abi-compliance-checker -lib libfoo -old old.xml -new new.xml -report-path r.html
 
 # After (identical flags):
-abicheck compat -lib libfoo -old old.xml -new new.xml -report-path r.html
+abicheck compat check -lib libdnnl -old old.xml -new new.xml -report-path r.html
 ```
 
 Migration path:
 
 1. Keep your existing XML descriptor generation.
-2. Replace ABICC CLI call with `abicheck compat` (same flags, same XML).
+2. Replace ABICC CLI call with `abicheck compat check` (same flags, same XML).
 3. Move to `abicheck compare lib.so.1 lib.so.2 -H ...` for the simplest one-liner workflow.
 4. Optionally use `dump` + `compare` when you want explicit snapshot caching for CI baselines.
 

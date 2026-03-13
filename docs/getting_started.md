@@ -119,6 +119,36 @@ abicheck compare baseline.json ./build/libfoo.so \
 abicheck compare old.json new.json
 ```
 
+### Language mode
+
+Use `--lang c` for pure C libraries (default is `c++`):
+
+```bash
+abicheck dump libfoo.so -H foo.h --lang c -o snap.json
+abicheck compare libv1.so libv2.so -H foo.h --lang c
+```
+
+### Cross-compilation
+
+When analysing libraries built for a different architecture:
+
+```bash
+abicheck dump libfoo.so -H include/foo.h \
+  --gcc-prefix aarch64-linux-gnu- \
+  --sysroot /opt/sysroots/aarch64 \
+  -o snap.json
+```
+
+Flags: `--gcc-path`, `--gcc-prefix`, `--gcc-options`, `--sysroot`, `--nostdinc`.
+
+### Verbose output
+
+Add `-v` or `--verbose` to any command for debug logging:
+
+```bash
+abicheck compare old.json new.json -v
+```
+
 ---
 
 ## 5) Exit codes (`abicheck compare`)
@@ -179,7 +209,7 @@ no XML changes needed:
 
 ```bash
 # Direct drop-in
-abicheck compat -lib foo -old OLD.xml -new NEW.xml
+abicheck compat check -lib foo -old OLD.xml -new NEW.xml
 
 # OLD.xml is the same ABICC descriptor format you already have.
 # When ready to simplify, switch to:

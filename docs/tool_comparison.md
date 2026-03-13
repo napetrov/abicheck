@@ -40,7 +40,7 @@ instead of snapshots:
 </descriptor>
 ```
 
-Used as a drop-in for ABICC-based CI pipelines (`abicheck compat -lib foo -old v1.xml -new v2.xml`).
+Used as a drop-in for ABICC-based CI pipelines (`abicheck compat check -lib foo -old v1.xml -new v2.xml`).
 
 **Why compat scores lower (40/42 vs 42/42):**  
 `compat` follows ABICC's verdict vocabulary: COMPATIBLE, BREAKING, NO_CHANGE.
@@ -248,7 +248,7 @@ See [benchmark_report.md](benchmark_report.md) for the full per-case table.
 | Scenario | Recommended |
 |----------|-------------|
 | New CI pipeline, full accuracy | `abicheck compare` |
-| Migrating from ABICC XML pipeline | `abicheck compat` |
-| Strict gate (any addition = fail) | `abicheck compat -s --strict-mode api` |
+| Migrating from ABICC XML pipeline | `abicheck compat check` |
+| Strict gate (any addition = fail) | `abicheck compat check -s` |
 | Debug build available, DWARF check | `abicheck compare` (castxml already better) |
 | Quick ELF-only sanity check | `abidiff` (fast, 26% but catches symbol removals) |

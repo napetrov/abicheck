@@ -1,7 +1,7 @@
 """Unit tests for cli.py — compare and compat subcommands.
 
 Covers compare_cmd output formats, exit codes, suppression handling,
-and compat_cmd descriptor parsing/error paths.
+and compat_check_cmd descriptor parsing/error paths.
 """
 from __future__ import annotations
 
@@ -193,7 +193,7 @@ class TestCompatErrors:
         new.write_text("<invalid>", encoding="utf-8")
         runner = CliRunner()
         result = runner.invoke(main, [
-            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "compat", "check", "-lib", "libtest", "-old", str(old), "-new", str(new),
         ])
         assert result.exit_code == 6
 
@@ -211,7 +211,7 @@ class TestCompatErrors:
         )
         runner = CliRunner()
         result = runner.invoke(main, [
-            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "compat", "check", "-lib", "libtest", "-old", str(old), "-new", str(new),
         ])
         assert result.exit_code == 4
 
@@ -237,7 +237,7 @@ class TestVersionFlag:
 class TestCompatHelp:
     def test_compat_help_lists_flags(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["compat", "--help"])
+        result = runner.invoke(main, ["compat", "check", "--help"])
         assert result.exit_code == 0
         for flag in ["-lib", "-old", "-new", "-s", "-source", "-stdout",
                      "-skip-symbols", "-v1", "-v2"]:
@@ -257,7 +257,7 @@ class TestCompatClassifiedErrorPaths:
         monkeypatch.setattr("abicheck.cli._setup_logging", lambda *_a, **_k: (_ for _ in ()).throw(OSError("bad logging mode")))
 
         runner = CliRunner()
-        result = runner.invoke(main, ["compat", "-lib", "libtest", "-old", str(old), "-new", str(new)])
+        result = runner.invoke(main, ["compat", "check", "-lib", "libtest", "-old", str(old), "-new", str(new)])
         assert result.exit_code == 6
 
     def test_skip_symbols_invalid_regex_exits_6(self, tmp_path, monkeypatch):
@@ -273,7 +273,7 @@ class TestCompatClassifiedErrorPaths:
 
         runner = CliRunner()
         result = runner.invoke(main, [
-            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "compat", "check", "-lib", "libtest", "-old", str(old), "-new", str(new),
             "-skip-symbols", str(bad),
         ])
         assert result.exit_code == 6
@@ -289,7 +289,7 @@ class TestCompatClassifiedErrorPaths:
 
         runner = CliRunner()
         result = runner.invoke(main, [
-            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "compat", "check", "-lib", "libtest", "-old", str(old), "-new", str(new),
             "-skip-internal-symbols", "([",
         ])
         assert result.exit_code == 6
@@ -312,7 +312,7 @@ class TestCompatClassifiedErrorPaths:
 
         runner = CliRunner()
         result = runner.invoke(main, [
-            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "compat", "check", "-lib", "libtest", "-old", str(old), "-new", str(new),
             "--suppress", str(sup),
         ])
         assert result.exit_code == 6
@@ -330,7 +330,7 @@ class TestCompatClassifiedErrorPaths:
         missing = tmp_path / "missing_skip.txt"
         runner = CliRunner()
         result = runner.invoke(main, [
-            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "compat", "check", "-lib", "libtest", "-old", str(old), "-new", str(new),
             "-skip-symbols", str(missing),
         ])
         assert result.exit_code == 4
@@ -347,7 +347,7 @@ class TestCompatClassifiedErrorPaths:
         missing = tmp_path / "missing_symbols_list.txt"
         runner = CliRunner()
         result = runner.invoke(main, [
-            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "compat", "check", "-lib", "libtest", "-old", str(old), "-new", str(new),
             "-symbols-list", str(missing),
         ])
         assert result.exit_code == 4
@@ -368,7 +368,7 @@ class TestCompatClassifiedErrorPaths:
 
         runner = CliRunner()
         result = runner.invoke(main, [
-            "compat", "-lib", "libtest", "-old", str(old), "-new", str(new),
+            "compat", "check", "-lib", "libtest", "-old", str(old), "-new", str(new),
             "-report-path", str(tmp_path / "r.html"), "-report-format", "html",
         ])
         assert result.exit_code == 7

@@ -356,7 +356,7 @@ def run_abicheck_compat(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path 
     _t0 = time.monotonic()
     try:
         r = subprocess.run(
-            [_PYTHON, "-m", "abicheck.cli", "compat", "-lib", case,
+            [_PYTHON, "-m", "abicheck.cli", "compat", "check", "-lib", case,
              "-old", str(v1_xml), "-new", str(v2_xml)],
             capture_output=True, text=True, timeout=60, env=_ABICHECK_ENV,
         )
@@ -410,7 +410,7 @@ def run_abicheck_strict(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path 
     _t0 = time.monotonic()
     try:
         r = subprocess.run(
-            [_PYTHON, "-m", "abicheck.cli", "compat", "-lib", case,
+            [_PYTHON, "-m", "abicheck.cli", "compat", "check", "-lib", case,
              "-old", str(v1_xml), "-new", str(v2_xml),
              "-report-path", str(rdir / f"{case}_strict_report.html"),
              "-s"],

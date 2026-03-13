@@ -21,9 +21,9 @@ don't exactly match what was compiled, results will be unreliable.
 - Always use the exact same headers that were used to build the `.so`
 - Pass compile-time defines to castxml: `abicheck dump libfoo.so -H foo.h --castxml-arg=-DFEATURE_X`
 - For `abicheck compat`, use `-s` (strict mode) to promote `COMPATIBLE`/`API_BREAK` to BREAKING:
-  `abicheck compat -lib foo -old OLD.xml -new NEW.xml -s`
+  `abicheck compat check -lib foo -old OLD.xml -new NEW.xml -s`
   (use `--strict-mode api` to promote only `API_BREAK`; `-s` is not available on `abicheck compare`)
-- Cross-check with `abicheck compat` (ABICC mode) for independent validation
+- Cross-check with `abicheck compat check` (ABICC mode) for independent validation
 
 ---
 
