@@ -30,12 +30,12 @@ to both communities for defining the practical ABI-checking ecosystem.
 # Ubuntu/Debian
 sudo apt install castxml g++
 
-# conda (recommended — latest version, cross-platform)
+# conda-forge (cross-platform, including aarch64 and macOS)
 conda install -c conda-forge castxml
-
-# pip (fallback — packages v0.4.5, may lag behind upstream)
-pip install castxml
 ```
+
+> **Note:** A `castxml` package exists on PyPI but is unmaintained (v0.4.5, Sep 2022)
+> while upstream is at v0.7.0. Use system packages or conda-forge instead.
 
 ### Install abicheck
 

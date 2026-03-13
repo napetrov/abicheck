@@ -14,18 +14,14 @@
 
 ### Install castxml
 
-castxml is available via system package managers or pip:
+castxml is available via system package managers or conda-forge:
 
 ```bash
 # Ubuntu / Debian
 sudo apt-get update && sudo apt-get install -y castxml gcc g++
 
-# conda (recommended — latest version 0.7.0, cross-platform including aarch64/macOS)
+# conda-forge (cross-platform: linux-64, linux-aarch64, osx-64, osx-arm64, win-64)
 conda install -c conda-forge castxml
-
-# pip (fallback — packages v0.4.5 which lags behind upstream;
-#   sufficient for basic use but may miss newer C++ features)
-pip install castxml
 
 # macOS (development only — ELF analysis requires Linux)
 # abicheck analyzes Linux ELF binaries only; macOS Mach-O is not supported.
@@ -33,6 +29,10 @@ pip install castxml
 # but Tier 2/3/4 ELF analysis requires a Linux environment.
 brew install castxml llvm
 ```
+
+> **Note:** A `castxml` PyPI package exists (`pip install castxml`) but is
+> [unmaintained](https://github.com/CastXML/CastXML-python-distributions/issues/18)
+> (v0.4.5, Sep 2022) while upstream is at v0.7.0. Prefer apt or conda-forge.
 
 ---
 
