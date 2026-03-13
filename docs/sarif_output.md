@@ -25,7 +25,7 @@ jobs:
       - name: Install abicheck
         run: |
           sudo apt-get update && sudo apt-get install -y castxml g++
-          pip install abicheck
+          pip install abicheck  # TODO: not yet published to PyPI — install from source for now
 
       - name: Dump ABI (baseline)
         run: |

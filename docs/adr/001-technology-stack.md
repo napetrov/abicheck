@@ -53,16 +53,17 @@ parse path goes through pyelftools only (no subprocess, no text parsing).
 
 ### Distribution
 
-abicheck is distributed via both **conda-forge** (recommended) and **PyPI**:
+abicheck is not yet published to PyPI or conda-forge. Currently it must be installed
+from source (`pip install -e ".[dev]"`).
 
-- **conda-forge**: `conda install -c conda-forge abicheck` — declares `castxml` as a run
-  dependency, giving users a complete install with no manual system package setup.
-  All Python and non-Python dependencies (including `castxml`, `google-re2`, and `re2`)
-  are resolved by the conda solver.
-- **PyPI**: `pip install abicheck` — installs Python dependencies only. `castxml` must be
-  installed separately via system packages (`apt install castxml`) or conda-forge
-  (`conda install -c conda-forge castxml`). The `castxml` PyPI package is unmaintained
-  (v0.4.5, Sep 2022) and should not be used.
+Future distribution plans:
+
+- **conda-forge** (planned): `conda install -c conda-forge abicheck` — will declare
+  `castxml` as a run dependency, giving users a complete install with no manual system
+  package setup.
+- **PyPI** (planned): `pip install abicheck` — will install Python dependencies only.
+  `castxml` must be installed separately via system packages (`apt install castxml`) or
+  conda-forge (`conda install -c conda-forge castxml`).
 
 Note: An earlier version of this ADR incorrectly stated pyelftools is used by Ghidra.
 Ghidra is Java-based and uses its own ELF parser. The correct reference projects are

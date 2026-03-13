@@ -8,53 +8,23 @@
 
 ## 1) Install abicheck
 
-### Option A: conda-forge (recommended)
-
-conda-forge provides abicheck with all dependencies — including `castxml` — resolved
-automatically. No separate system package installation needed.
-
-```bash
-conda install -c conda-forge abicheck
-abicheck --version
-```
-
-### Option B: pip (requires separate castxml install)
-
-When installing via pip, `castxml` must be installed separately since it is a C++ binary
-that pip cannot provide.
-
-```bash
-# Recommended: use a virtual environment
-python3 -m venv .venv && source .venv/bin/activate
-
-pip install abicheck
-
-# castxml must be installed separately:
-# Ubuntu / Debian
-sudo apt-get update && sudo apt-get install -y castxml gcc g++
-# or via conda (even if abicheck itself was pip-installed)
-conda install -c conda-forge castxml
-
-# macOS (development only — ELF analysis requires Linux)
-# abicheck analyzes Linux ELF binaries only; macOS Mach-O is not supported.
-# castxml can be installed for Tier 1 header-parsing development,
-# but Tier 2/3/4 ELF analysis requires a Linux environment.
-brew install castxml llvm
-
-abicheck --version
-```
-
-> **Note:** A `castxml` PyPI package exists (`pip install castxml`) but is
-> [unmaintained](https://github.com/CastXML/CastXML-python-distributions/issues/18)
-> (v0.4.5, Sep 2022) while upstream is at v0.7.0. Prefer apt or conda-forge.
+> **Note:** abicheck is not yet published to PyPI or conda-forge. Install from source.
 
 ### Requirements
 
 - Python 3.10+
-- `castxml` (for header-based analysis) — included in conda-forge install, or see [castxml project](https://github.com/CastXML/CastXML)
+- `castxml` (for header-based analysis) — see [castxml project](https://github.com/CastXML/CastXML)
 - C/C++ compiler (`gcc`/`g++` or `clang`/`clang++`)
 
-### Development from source
+```bash
+# Install castxml
+# Ubuntu / Debian
+sudo apt-get update && sudo apt-get install -y castxml gcc g++
+# or via conda
+conda install -c conda-forge castxml
+```
+
+### Install from source
 
 ```bash
 git clone https://github.com/napetrov/abicheck.git
