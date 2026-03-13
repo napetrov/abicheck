@@ -54,7 +54,7 @@ class TestDefaultReportPath:
     def test_default_filename_is_compat_report(self):
         """ABICC default filename is compat_report.html, not report.html."""
         from pathlib import Path
-        source = Path(__file__).parent.parent / "abicheck" / "cli.py"
+        source = Path(__file__).parent.parent / "abicheck" / "compat" / "cli.py"
         content = source.read_text()
         assert "compat_report." in content, (
             "Default report filename should be 'compat_report.*' to match ABICC convention"
@@ -67,7 +67,7 @@ class TestConsoleOutputFormat:
     def test_bc_percentage_line_in_source(self):
         """Console output should include 'Binary compatibility: XX.X%' like ABICC."""
         from pathlib import Path
-        source = Path(__file__).parent.parent / "abicheck" / "cli.py"
+        source = Path(__file__).parent.parent / "abicheck" / "compat" / "cli.py"
         content = source.read_text()
         assert "Binary compatibility:" in content, (
             "Console output should include ABICC-format 'Binary compatibility: XX.X%'"
@@ -76,7 +76,7 @@ class TestConsoleOutputFormat:
     def test_total_problems_line_in_source(self):
         """Console output should include ABICC-format problem count."""
         from pathlib import Path
-        source = Path(__file__).parent.parent / "abicheck" / "cli.py"
+        source = Path(__file__).parent.parent / "abicheck" / "compat" / "cli.py"
         content = source.read_text()
         assert "Total binary compatibility problems:" in content, (
             "Console output should include ABICC-format problem count"
