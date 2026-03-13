@@ -449,3 +449,21 @@ def test_symbol_version_required_genuine_upgrade_is_breaking() -> None:
         "Raising minimum GLIBC requirement must be BREAKING"
     )
     assert result.verdict == Verdict.BREAKING
+
+
+def test_symbol_version_required_private_tag_is_breaking() -> None:
+    """Adding GLIBC_PRIVATE (non-numeric tag) must be BREAKING, not COMPAT.
+
+    GLIBC_PRIVATE symbols are internal ABI surface — requiring them is a
+    genuine runtime constraint that not all systems satisfy.
+    Regression guard for _parse_abi_version_tag sentinel logic.
+    """
+    old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]}))
+    new = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34", "GLIBC_PRIVATE"]}))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kinds, (
+        "Adding GLIBC_PRIVATE must be treated as BREAKING"
+    )
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT not in kinds
+    assert result.verdict == Verdict.BREAKING

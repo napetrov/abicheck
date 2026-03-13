@@ -1222,20 +1222,28 @@ def _diff_needed_libraries(old_needed: list[str], new_needed: list[str]) -> list
     return changes
 
 
+_UNPARSEABLE_VERSION: tuple[int, ...] = (2**31,)
+"""Sentinel returned by :func:`_parse_abi_version_tag` for non-numeric tags
+like ``GLIBC_PRIVATE``.  Sorts *above* any real version so that a new
+non-numeric requirement is always treated as potentially BREAKING — never
+silently COMPAT."""
+
+
 def _parse_abi_version_tag(ver: str) -> tuple[int, ...]:
     """Parse a versioned symbol tag like ``GLIBC_2.34`` or ``GLIBCXX_3.4.19``
     into a comparable integer tuple.
 
-    Only the numeric suffix after the last underscore-separated prefix is used.
-    Unknown / non-numeric tags fall back to ``(0,)``.
+    Only the numeric suffix after the last ``_`` is used:
+    ``GLIBC_2.34`` → ``(2, 34)``, ``GLIBCXX_3.4.19`` → ``(3, 4, 19)``.
+
+    Returns :data:`_UNPARSEABLE_VERSION` for non-numeric tags such as
+    ``GLIBC_PRIVATE`` — a very large sentinel that always compares as newer
+    than any real version, so such tags are conservatively treated as BREAKING.
     """
-    # Strip prefix: "GLIBC_2.34" -> "2.34", "GLIBCXX_3.4.19" -> "3.4.19"
     parts = ver.rsplit("_", 1)
     numeric = parts[-1] if len(parts) > 1 else ver
-    try:
-        return tuple(int(x) for x in numeric.split(".") if x.isdigit())
-    except (ValueError, AttributeError):
-        return (0,)
+    result = tuple(int(x) for x in numeric.split(".") if x.isdigit())
+    return result if result else _UNPARSEABLE_VERSION
 
 
 def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
