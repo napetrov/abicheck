@@ -63,9 +63,15 @@ additional capabilities.
 ### Platform
 - **Linux only** (ELF/DWARF). Windows (PE) and macOS (Mach-O) are not yet supported.
 
+### Installation
+- **From source** (only option for now — not yet published to PyPI or conda-forge):
+  `git clone … && pip install -e ".[dev]"`
+- `castxml` must be installed separately via system packages (`apt install castxml`)
+  or conda-forge (`conda install -c conda-forge castxml`)
+
 ### Requirements
 - Python ≥ 3.10
-- `castxml` (mandatory — for header-based C/C++ AST parsing)
+- `castxml` (mandatory — for header-based C/C++ AST parsing; included in conda-forge install)
 - `g++` or `clang++` (accessible to castxml)
 - See [Installation](docs/getting_started.md) for full setup instructions
 

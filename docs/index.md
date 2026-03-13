@@ -26,7 +26,9 @@ can continue evolving ABI checks in modern CI environments.
 ## Quick start
 
 ```bash
-pip install abicheck
+# Install from source (not yet published to PyPI or conda-forge)
+git clone https://github.com/napetrov/abicheck.git
+cd abicheck && pip install -e ".[dev]"
 
 # Dump ABI snapshots
 abicheck dump libfoo.so.1 -H include/foo.h --version 1.0 -o libfoo-1.0.json
