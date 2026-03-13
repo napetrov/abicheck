@@ -239,7 +239,7 @@ BREAKING_KINDS = {
     ChangeKind.SYMBOL_SIZE_CHANGED,           # in ELF-only mode (no headers/DWARF) this may be
                                               # the sole signal for vtable/variable layout changes
     ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
-    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED, # library fails to load on runtimes lacking the version
+    # NOTE: SYMBOL_VERSION_REQUIRED_ADDED moved to COMPATIBLE_KINDS (see below)
     # DWARF Sprint 3 + 4
     ChangeKind.STRUCT_SIZE_CHANGED,
     ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
@@ -312,6 +312,12 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
     ChangeKind.COMMON_SYMBOL_RISK,        # STT_COMMON — risk, not proven break
     ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
     ChangeKind.SYMBOL_BINDING_STRENGTHENED,  # WEAK→GLOBAL: backward-compatible for most consumers
+    # New symbol version requirement: existing binaries are unaffected (already linked);
+    # this is a deployment risk (requires target OS ≥ that glibc version) but NOT a
+    # binary ABI break for already-compiled consumers. Produced false positives on
+    # real-world patch releases (libpng 1.6.43→1.6.44, zlib 1.3.0→1.3.1) where
+    # GLIBC_2.14 (released 2011) was flagged as BREAKING.
+    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
 
     # GLOBAL→WEAK: symbol still exported and resolvable by the dynamic
     # linker; interposition semantics change but existing binaries work.
