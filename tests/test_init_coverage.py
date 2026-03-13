@@ -8,15 +8,15 @@ def test_version_fallback_when_not_installed(monkeypatch):
     """When the package is not installed, __version__ falls back to dev string."""
     from importlib.metadata import PackageNotFoundError
 
-    monkeypatch.setattr(
-        "importlib.metadata.version",
-        lambda _name: (_ for _ in ()).throw(PackageNotFoundError("abicheck")),
-    )
-
-    # Force reimport to exercise the except branch
     import abicheck
-    importlib.reload(abicheck)
-    assert abicheck.__version__ == "0.0.0.dev0"
 
-    # Restore normal state
+    with monkeypatch.context() as m:
+        m.setattr(
+            "importlib.metadata.version",
+            lambda _name: (_ for _ in ()).throw(PackageNotFoundError("abicheck")),
+        )
+        importlib.reload(abicheck)
+        assert abicheck.__version__ == "0.0.0.dev0"
+
+    # Patch is reverted — restore real version
     importlib.reload(abicheck)
