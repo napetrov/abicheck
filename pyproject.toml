@@ -72,7 +72,6 @@ markers = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["."]
 include = ["abicheck*"]
 
 [tool.coverage.run]
