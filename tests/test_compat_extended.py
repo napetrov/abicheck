@@ -21,6 +21,8 @@ from __future__ import annotations
 import errno
 import json
 import logging
+import subprocess
+import sys
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
@@ -883,3 +885,57 @@ class TestCompatFailHelper:
         assert excinfo.value.code == 6
         err = capsys.readouterr().err
         assert "Error parsing descriptor" in err
+
+
+# ---------------------------------------------------------------------------
+# Real-binary integration tests (no castxml/headers required)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    not Path("/usr/lib/x86_64-linux-gnu/libz.so.1.3").exists(),
+    reason="requires system libz.so.1.3",
+)
+def test_compat_real_libz_no_change(tmp_path: Path) -> None:
+    """abicheck compat: same libz version → NO_CHANGE, exit 0."""
+    desc = tmp_path / "libz.xml"
+    so = "/usr/lib/x86_64-linux-gnu/libz.so.1.3"
+    desc.write_text(
+        f"<descriptor><version>1.3</version><libs>{so}</libs></descriptor>",
+        encoding="utf-8",
+    )
+    r = subprocess.run(
+        [sys.executable, "-m", "abicheck.cli", "compat",
+         "-lib", "libz", "-old", str(desc), "-new", str(desc),
+         "-report-format", "json", "-report-path", str(tmp_path / "report.json")],
+        capture_output=True, text=True,
+        cwd=str(Path(__file__).parent.parent),
+    )
+    assert r.returncode == 0, f"Expected NO_CHANGE (rc=0), got {r.returncode}\nstderr: {r.stderr}"
+    report = tmp_path / "report.json"
+    if report.exists() and report.stat().st_size > 0:
+        data = json.loads(report.read_text(encoding="utf-8"))
+        assert data["verdict"] in ("NO_CHANGE", "COMPATIBLE")
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    not Path("/usr/lib/x86_64-linux-gnu/libzstd.so.1.5.5").exists(),
+    reason="requires system libzstd.so.1.5.5",
+)
+def test_compat_real_libzstd_no_change(tmp_path: Path) -> None:
+    """abicheck compat: same libzstd.so identity → NO_CHANGE, exit 0."""
+    so = "/usr/lib/x86_64-linux-gnu/libzstd.so.1.5.5"
+    desc = tmp_path / "libzstd.xml"
+    desc.write_text(
+        f"<descriptor><version>1.5.5</version><libs>{so}</libs></descriptor>",
+        encoding="utf-8",
+    )
+    r = subprocess.run(
+        [sys.executable, "-m", "abicheck.cli", "compat",
+         "-lib", "libzstd", "-old", str(desc), "-new", str(desc),
+         "-report-format", "json", "-report-path", str(tmp_path / "report.json")],
+        capture_output=True, text=True,
+        cwd=str(Path(__file__).parent.parent),
+    )
+    assert r.returncode == 0, f"Expected NO_CHANGE, got {r.returncode}\nstderr: {r.stderr}"

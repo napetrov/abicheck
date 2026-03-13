@@ -69,14 +69,77 @@ Core flags — fully supported:
 | `-warn-newsym` | | Treat new exported symbols as a break (exit 2) |
 | `-relpath PATH` | | Base path for relative paths in reports |
 
-Not supported (ABICC-only features):
-- `-xml` / `-dump` / `-dump-path` — ABICC's ABI dump generation; use `abicheck dump` instead
-- `-headers-only` — reserved, not yet implemented
-- `-cross-gcc` — cross-compilation checks not yet implemented
+Cross-compilation and advanced flags — also supported:
+
+| Flag | Description |
+|------|-------------|
+| `-gcc-path PATH` | Custom GCC/G++ path (passed to castxml) |
+| `-gcc-prefix PREFIX` | Cross-toolchain prefix, e.g. `aarch64-linux-gnu-` |
+| `-gcc-options FLAGS` | Extra compiler flags for castxml |
+| `-sysroot PATH` | Alternative sysroot |
+| `-nostdinc` | Skip standard include paths |
+| `-lang C\|C++` | Force language mode |
+| `-relpath1`/`-relpath2` | Per-side relpath substitution |
+| `-headers-only` | Accepted (ELF checks still run) |
+| `-v1num`/`-v2num` | ABICC 1.x version aliases → mapped to `-v1`/`-v2` |
+
+Dump workflow — supported via `abicheck compat-dump`:
+
+```bash
+# Create an ABI dump from an ABICC XML descriptor:
+abicheck compat-dump -lib libfoo -dump v1.xml
+abicheck compat-dump -lib libfoo -dump v2.xml
+abicheck compat -lib libfoo -old abi_dumps/libfoo/1.0/dump.json -new abi_dumps/libfoo/2.0/dump.json
+```
+
+See [abicc_compat.md](../abicc_compat.md) for the full flag reference.
 
 ---
 
-## 4) Migration checklist
+## 4) Real-world validation examples
+
+No-header scanning works out of the box — ELF metadata and symbol versioning
+are captured even without `.h` files:
+
+```bash
+# oneTBB 2021.11 → 2021.13: 3 breaking changes, 16 compatible additions
+cat > tbb_v1.xml <<'EOF'
+<descriptor>
+  <version>2021.11.0</version>
+  <libs>/usr/lib/x86_64-linux-gnu/libtbb.so.12.11</libs>
+</descriptor>
+EOF
+
+cat > tbb_v2.xml <<'EOF'
+<descriptor>
+  <version>2021.13.0</version>
+  <libs>/path/to/libtbb.so.12.13</libs>
+</descriptor>
+EOF
+
+abicheck compat -lib libtbb -old tbb_v1.xml -new tbb_v2.xml
+# Binary compatibility: 96.7%
+# Total binary compatibility problems: 3, warnings: 0
+# Verdict: BREAKING
+```
+
+With headers, you also get full type and parameter analysis via castxml.
+
+### ROS 2 / OSRF workflow
+
+If your project currently uses `auto-abi-checker` or ABICC in ROS 2 CI:
+
+```bash
+# Before (OSRF auto-abi-checker):
+./auto-abi.py --orig-type ros-pkg --orig rclcpp --new-type local-dir --new /colcon_ws/install
+
+# After (abicheck — same result, no Perl dependency):
+abicheck compat -lib rclcpp -old rclcpp_old.xml -new rclcpp_new.xml -s
+```
+
+---
+
+## 5) Migration checklist
 
 1. Replace ABICC binary call with `abicheck compat` (keep XML descriptors unchanged)
 2. Validate exit code behavior in CI — especially: compat exit `1` = BREAKING, exit `2` = API_BREAK or error
@@ -92,7 +155,7 @@ Not supported (ABICC-only features):
 
 ---
 
-## 5) Jenkins stage example
+## 6) Jenkins stage example
 
 ```bash
 # Pre-validate inputs to avoid exit-2 ambiguity (missing file → exit 2 = same as API_BREAK)
@@ -118,7 +181,7 @@ echo "ABI check passed"
 
 ---
 
-## 6) When to move beyond `compat`
+## 7) When to move beyond `compat`
 
 Use `abicheck compare` if you need:
 - `API_BREAK` as an explicit, unambiguous verdict (not conflated with errors)
