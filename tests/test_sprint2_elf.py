@@ -399,3 +399,53 @@ def test_symbol_version_required_added_new_dep_is_compat() -> None:
     assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED not in kinds, (
         "Version requirements for a newly-added lib must not be BREAKING"
     )
+
+
+def test_symbol_version_required_tbb_like_upgrade() -> None:
+    """Full TBB-like scenario: upgrade removes newer requirements + adds older ones.
+
+    oneTBB 2021.11 required GLIBC_2.34 / GLIBCXX_3.4.32.
+    oneTBB 2021.13 dropped those and only requires GLIBC_2.2.5 / GLIBCXX_3.4.19.
+    Net effect: minimum system requirements lowered — this is COMPATIBLE.
+    """
+    old = _snap(_elf(versions_required={
+        "libc.so.6": ["GLIBC_2.4", "GLIBC_2.14", "GLIBC_2.32", "GLIBC_2.34", "GLIBC_2.2.5"],
+        "libstdc++.so.6": ["GLIBCXX_3.4", "GLIBCXX_3.4.11", "GLIBCXX_3.4.32", "CXXABI_1.3.13"],
+    }))
+    new = _snap(_elf(versions_required={
+        "libc.so.6": ["GLIBC_2.4", "GLIBC_2.14", "GLIBC_2.2.5"],           # removed 2.32, 2.34
+        "libstdc++.so.6": ["GLIBCXX_3.4", "GLIBCXX_3.4.11", "GLIBCXX_3.4.19"],  # dropped 3.4.32, CXXABI_1.3.13
+        "libdl.so.2": ["GLIBC_2.2.5"],                                        # new dep, old glibc
+        "libpthread.so.0": ["GLIBC_2.2.5"],                                   # new dep, old glibc
+    }))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    # No genuinely BREAKING version requirement should appear
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED not in kinds, (
+        f"TBB-like upgrade must not produce BREAKING version requirements, got: "
+        f"{[c for c in result.changes if c.kind == ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED]}"
+    )
+    # Compat variants may appear (informational)
+    assert result.verdict in (Verdict.COMPATIBLE, Verdict.NO_CHANGE), (
+        f"Expected COMPATIBLE, got {result.verdict}"
+    )
+
+
+def test_symbol_version_required_genuine_upgrade_is_breaking() -> None:
+    """Upgrading to a library that requires a NEWER glibc is BREAKING.
+
+    If a user is on an old system (only has GLIBC_2.17), they cannot run
+    a binary that now requires GLIBC_2.38.
+    """
+    old = _snap(_elf(versions_required={
+        "libc.so.6": ["GLIBC_2.4", "GLIBC_2.17"],
+    }))
+    new = _snap(_elf(versions_required={
+        "libc.so.6": ["GLIBC_2.4", "GLIBC_2.17", "GLIBC_2.38"],   # genuinely raised the bar
+    }))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kinds, (
+        "Raising minimum GLIBC requirement must be BREAKING"
+    )
+    assert result.verdict == Verdict.BREAKING
