@@ -49,7 +49,7 @@ def resolve_die_ref(die: Any, attr_name: str, CU: Any) -> Any:
     """
     attr = die.attributes[attr_name]
     form = attr.form
-    raw_val: int = attr.value  # type: ignore[assignment]
+    raw_val: int = attr.value
 
     if form == "DW_FORM_ref_addr":
         # Section-relative: already an absolute offset
