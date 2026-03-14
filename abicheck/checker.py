@@ -54,6 +54,7 @@ __all__ = [
     "_RISK_KINDS",
     "_SOURCE_BREAK_KINDS",  # deprecated alias
     "Change",
+    "LibraryMetadata",
     "DiffResult",
     "compare",
 ]
@@ -69,6 +70,16 @@ class Change:
     description: str          # human-readable
     old_value: str | None = None
     new_value: str | None = None
+    source_location: str | None = None   # "header.h:42" if available
+    affected_symbols: list[str] | None = None  # exported functions using this type
+
+
+@dataclass
+class LibraryMetadata:
+    """File-level metadata for a library artifact (path, hash, size)."""
+    path: str                     # file path as given on the CLI
+    sha256: str                   # hex digest
+    size_bytes: int               # file size in bytes
 
 
 @dataclass
@@ -83,6 +94,8 @@ class DiffResult:
     suppression_file_provided: bool = False  # True when --suppress was passed, even if 0 matched
     detector_results: list[DetectorResult] = field(default_factory=list)
     policy: str = "strict_abi"  # active policy profile; drives breaking/source_breaks/compatible
+    old_metadata: LibraryMetadata | None = None
+    new_metadata: LibraryMetadata | None = None
 
     @property
     def breaking(self) -> list[Change]:
@@ -1439,6 +1452,202 @@ def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]
     return changes
 
 
+# ── Post-processing: enrich and deduplicate ────────────────────────────────
+
+# Mapping from DWARF change kinds to their AST equivalents for deduplication.
+_DWARF_TO_AST_EQUIV: dict[ChangeKind, set[ChangeKind]] = {
+    ChangeKind.STRUCT_SIZE_CHANGED: {ChangeKind.TYPE_SIZE_CHANGED},
+    ChangeKind.STRUCT_ALIGNMENT_CHANGED: {ChangeKind.TYPE_ALIGNMENT_CHANGED},
+    ChangeKind.STRUCT_FIELD_OFFSET_CHANGED: {ChangeKind.TYPE_FIELD_OFFSET_CHANGED},
+    ChangeKind.STRUCT_FIELD_REMOVED: {ChangeKind.TYPE_FIELD_REMOVED},
+    ChangeKind.STRUCT_FIELD_TYPE_CHANGED: {ChangeKind.TYPE_FIELD_TYPE_CHANGED},
+}
+
+# Type/enum/struct change kinds for which affected-symbol enrichment makes sense.
+_TYPE_CHANGE_KINDS: frozenset[ChangeKind] = frozenset({
+    ChangeKind.TYPE_SIZE_CHANGED, ChangeKind.TYPE_ALIGNMENT_CHANGED,
+    ChangeKind.TYPE_FIELD_REMOVED, ChangeKind.TYPE_FIELD_ADDED,
+    ChangeKind.TYPE_FIELD_OFFSET_CHANGED, ChangeKind.TYPE_FIELD_TYPE_CHANGED,
+    ChangeKind.TYPE_BASE_CHANGED, ChangeKind.TYPE_VTABLE_CHANGED,
+    ChangeKind.TYPE_REMOVED, ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
+    ChangeKind.TYPE_BECAME_OPAQUE,
+    ChangeKind.BASE_CLASS_POSITION_CHANGED, ChangeKind.BASE_CLASS_VIRTUAL_CHANGED,
+    ChangeKind.ENUM_MEMBER_REMOVED, ChangeKind.ENUM_MEMBER_ADDED,
+    ChangeKind.ENUM_MEMBER_VALUE_CHANGED, ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
+    ChangeKind.ENUM_UNDERLYING_SIZE_CHANGED,
+    ChangeKind.UNION_FIELD_ADDED, ChangeKind.UNION_FIELD_REMOVED,
+    ChangeKind.UNION_FIELD_TYPE_CHANGED, ChangeKind.TYPEDEF_BASE_CHANGED,
+    ChangeKind.STRUCT_SIZE_CHANGED, ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
+    ChangeKind.STRUCT_FIELD_REMOVED, ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+    ChangeKind.STRUCT_ALIGNMENT_CHANGED,
+})
+
+
+def _enrich_source_locations(
+    changes: list[Change], old: AbiSnapshot, new: AbiSnapshot,
+) -> None:
+    """Fill in source_location on Changes from the model data."""
+    # Build type→location lookup
+    type_loc: dict[str, str] = {}
+    for t in old.types:
+        if t.source_location:
+            type_loc[t.name] = t.source_location
+    for t in new.types:
+        if t.source_location:
+            type_loc.setdefault(t.name, t.source_location)
+
+    # Build function→location lookup
+    func_loc: dict[str, str] = {}
+    for f in old.functions:
+        if f.source_location:
+            func_loc[f.mangled] = f.source_location
+    for f in new.functions:
+        if f.source_location:
+            func_loc.setdefault(f.mangled, f.source_location)
+
+    # Build variable→location lookup
+    var_loc: dict[str, str] = {}
+    for v in old.variables:
+        if v.source_location:
+            var_loc[v.mangled] = v.source_location
+    for v in new.variables:
+        if v.source_location:
+            var_loc.setdefault(v.mangled, v.source_location)
+
+    for c in changes:
+        if c.source_location:
+            continue
+        # Try function/variable first (symbol is mangled name), then type name
+        loc = func_loc.get(c.symbol) or var_loc.get(c.symbol) or type_loc.get(c.symbol)
+        # For qualified symbols like "MyStruct::field", fall back to base type name
+        if not loc and "::" in c.symbol:
+            base_type = c.symbol.split("::")[0]
+            loc = type_loc.get(base_type)
+        if loc:
+            c.source_location = loc
+
+
+def _enrich_affected_symbols(
+    changes: list[Change], old: AbiSnapshot,
+) -> None:
+    """For type/enum changes, find exported functions that use the affected type."""
+    # Only compute if there are type-related changes
+    type_changes = [c for c in changes if c.kind in _TYPE_CHANGE_KINDS]
+    if not type_changes:
+        return
+
+    # Collect affected type names
+    affected_types: set[str] = set()
+    for c in type_changes:
+        # symbol is the type name (e.g. "Point", "Container", "Status")
+        # Strip field qualifiers like "Container::flags" → "Container"
+        type_name = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
+        affected_types.add(type_name)
+
+    if not affected_types:
+        return
+
+    # Build type→functions mapping from old snapshot
+    type_to_funcs: dict[str, list[str]] = {t: [] for t in affected_types}
+    old_pub = _public_functions(old)
+    for mangled, func in old_pub.items():
+        # Check return type
+        func_types_used: set[str] = set()
+        if func.return_type:
+            func_types_used.add(func.return_type)
+        for p in func.params:
+            if p.type:
+                func_types_used.add(p.type)
+
+        for tname in affected_types:
+            # Check if the type name appears in any parameter or return type
+            if any(tname in ft for ft in func_types_used):
+                type_to_funcs[tname].append(func.name)
+
+    # Also check if types are embedded in struct fields used by functions
+    # (e.g., Container has a Leaf field → functions taking Container* are affected by Leaf changes)
+    type_embeds: dict[str, set[str]] = {}  # child_type → {parent_type, ...}
+    for t in old.types:
+        for fld in t.fields:
+            for tname in affected_types:
+                if tname in fld.type:
+                    type_embeds.setdefault(tname, set()).add(t.name)
+
+    # Compute transitive closure: if Leaf is in Container is in Wrapper,
+    # functions using Wrapper are also affected by Leaf changes.
+    def _all_ancestors(tname: str) -> set[str]:
+        """BFS over type_embeds to find all transitive parent types."""
+        visited: set[str] = set()
+        queue = list(type_embeds.get(tname, set()))
+        while queue:
+            parent = queue.pop()
+            if parent in visited:
+                continue
+            visited.add(parent)
+            queue.extend(type_embeds.get(parent, set()))
+        return visited
+
+    for tname in affected_types:
+        ancestors = _all_ancestors(tname)
+        for parent in ancestors:
+            if parent in type_to_funcs:
+                type_to_funcs[tname].extend(type_to_funcs[parent])
+            else:
+                # Check functions for parent too
+                for mangled, func in old_pub.items():
+                    func_types_used = {func.return_type} | {p.type for p in func.params}
+                    if any(parent in ft for ft in func_types_used if ft):
+                        type_to_funcs[tname].append(func.name)
+
+    # Assign to changes
+    for c in type_changes:
+        type_name = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
+        funcs = type_to_funcs.get(type_name, [])
+        if funcs:
+            # Deduplicate and sort
+            c.affected_symbols = sorted(set(funcs))
+
+
+def _deduplicate_ast_dwarf(changes: list[Change]) -> list[Change]:
+    """Remove DWARF findings that duplicate an AST finding for the same symbol.
+
+    Two dedup passes:
+
+    1. **Exact dedup** — collapses entries with the same ``(kind, description)``.
+       Using description (not symbol) handles cases where the same logical
+       finding is reported under different symbol granularities (e.g. ``Status``
+       vs ``Status::FOO``).
+
+    2. **Cross-kind dedup** — drops a DWARF finding when an equivalent AST
+       finding exists for the *same full symbol* (e.g. STRUCT_SIZE_CHANGED for
+       ``S`` is dropped when TYPE_SIZE_CHANGED for ``S`` is already present).
+       Full-symbol matching prevents collapsing different fields of the same
+       type (``S::a`` vs ``S::b``).
+    """
+    # First pass: index all findings by (kind, symbol) for cross-kind dedup
+    ast_findings: set[tuple[str, str]] = set()
+    for c in changes:
+        ast_findings.add((c.kind.value, c.symbol))
+
+    # Second pass: filter out DWARF duplicates
+    result: list[Change] = []
+    seen: set[tuple[str, str]] = set()  # exact dedup by (kind, description)
+    for c in changes:
+        key = (c.kind.value, c.description)
+        # Exact dedup: same kind + same description = same finding
+        if key in seen:
+            continue
+        seen.add(key)
+
+        # Check if this DWARF finding has an AST equivalent already present
+        equiv_ast_kinds = _DWARF_TO_AST_EQUIV.get(c.kind)
+        if equiv_ast_kinds:
+            if any((ak.value, c.symbol) in ast_findings for ak in equiv_ast_kinds):
+                continue  # skip DWARF duplicate
+        result.append(c)
+    return result
+
+
 def compare(
     old: AbiSnapshot,
     new: AbiSnapshot,
@@ -1511,6 +1720,11 @@ def compare(
         changes.extend(detected)
         detector_results.append(DetectorResult(name=spec.name, changes_count=len(detected), enabled=True))
 
+    # Deduplicate AST/DWARF before suppression so a single canonical change
+    # remains for suppression matching (avoids suppressed AST entry leaving
+    # an unsuppressed DWARF duplicate).
+    changes = _deduplicate_ast_dwarf(changes)
+
     suppressed: list[Change] = []
     if suppression is not None:
         filtered: list[Change] = []
@@ -1520,6 +1734,10 @@ def compare(
             else:
                 filtered.append(c)
         changes = filtered
+
+    # Post-processing: enrich remaining changes with source locations and affected symbols
+    _enrich_source_locations(changes, old, new)
+    _enrich_affected_symbols(changes, old)
 
     verdict = policy_file.compute_verdict(changes) if policy_file is not None else compute_verdict(changes, policy=policy)
     effective_policy = policy_file.base_policy if policy_file is not None else policy
