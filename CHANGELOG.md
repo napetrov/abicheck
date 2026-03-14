@@ -80,43 +80,35 @@ additional capabilities.
 - **Suppression system**: label/tag-based suppression, file-scoped suppression (by `source_location`),
   and suppression expiry dates are not yet implemented. Planned for v0.2.
 
+#### Deployment Risk Verdict
+- New verdict `COMPATIBLE_WITH_RISK`: binary-compatible changes that pose a deployment
+  risk requiring manual verification of target environment constraints.
+- `RISK_KINDS` classification set in `checker_policy.py` (currently: `SYMBOL_VERSION_REQUIRED_ADDED`).
+- `DiffResult.risk` property to query risk-classified changes.
+- `"risk"` severity level in YAML policy files (maps to `COMPATIBLE_WITH_RISK`).
+- `SYMBOL_VERSION_REQUIRED_ADDED` moved from `BREAKING_KINDS` → `RISK_KINDS`:
+  new GLIBC version requirements in `DT_VERNEED` now produce `COMPATIBLE_WITH_RISK`
+  instead of `BREAKING` — existing compiled consumers are unaffected (already linked).
+- `policy_kind_sets()` now returns a 4-tuple `(breaking, api_break, compatible, risk)`.
+- `plugin_abi` policy treats `SYMBOL_VERSION_REQUIRED_ADDED` as `BREAKING`
+  (host/plugin deployment-floor raise is an in-process load blocker).
+- `_apply_warn_newsym` promotes `COMPATIBLE_WITH_RISK` → `BREAKING` when `-warn-newsym` is active.
+
+#### SARIF exit code changes (migration note)
+- `BREAKING`: exit code `1` → `4`
+- `API_BREAK`: now emits `2` (was `0`)
+- `COMPATIBLE_WITH_RISK`: emits `0` (binary-compatible; risk surfaced via `exitCodeDescription`)
+- If your CI pipeline checks `exitCode == 1` on BREAKING, update to `exitCode == 4`.
+
 ---
 
 ## [Unreleased]
-
-### Added
-- New verdict `COMPATIBLE_WITH_RISK`: binary-compatible changes that pose a deployment
-  risk requiring manual verification of target environment constraints.
-- `RISK_KINDS` classification set in `checker_policy.py`.
-- `DiffResult.risk` property to query risk-classified changes.
-- `"risk"` severity level in YAML policy files (maps to `COMPATIBLE_WITH_RISK`).
-- Integrity assertions ensuring `RISK_KINDS` is disjoint from all other kind sets.
-
-### Changed
-- `SYMBOL_VERSION_REQUIRED_ADDED` moved from `BREAKING_KINDS` → `RISK_KINDS`.
-  New GLIBC version requirements in `DT_VERNEED` now produce `COMPATIBLE_WITH_RISK`
-  instead of `BREAKING` — existing compiled consumers are unaffected (already linked).
-- `policy_kind_sets()` now returns a 4-tuple `(breaking, api_break, compatible, risk)`.
-- **SARIF `invocations[].exitCode` semantics changed** (migration note):
-  - `BREAKING`: `1` → `4` (aligns with `abicheck compare` CLI exit code contract)
-  - `API_BREAK`: now emits `2` (was `0`)
-  - `COMPATIBLE_WITH_RISK`: emits `0` (binary-compatible; risk surfaced via `exitCodeDescription`)
-  - If your CI pipeline checks for `exitCode == 1` on BREAKING results, update to `exitCode == 4`.
-- `RISK_KINDS` is now a `frozenset` (was `set`) to prevent accidental mutation.
-- `_apply_warn_newsym` now promotes `COMPATIBLE_WITH_RISK` → `BREAKING` when `-warn-newsym` is set,
-  consistent with its behavior for `COMPATIBLE` and `API_BREAK`.
-- `plugin_abi` policy now treats `SYMBOL_VERSION_REQUIRED_ADDED` as `BREAKING`
-  (host/plugin deployment-floor raise is an in-process load blocker).
-
-### Fixed
-- False positives on patch releases (libpng 1.6.43→1.6.44, zlib 1.3.0→1.3.1) where
-  `GLIBC_2.14` VERNEED addition was incorrectly classified as `BREAKING`.
-
 
 ### Planned
 - Windows PE support
 - Expanded parity test suite
 - `--policy-file` schema validation improvements
+- Version-stamped typedef suppression (libpng `png_libpng_version_X_Y_Z` pattern)
 
 [0.1.0]: https://github.com/napetrov/abicheck/releases/tag/v0.1.0
 [Unreleased]: https://github.com/napetrov/abicheck/compare/v0.1.0...HEAD
