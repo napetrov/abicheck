@@ -44,6 +44,10 @@ def _compile_so(tmp_path: Path, name: str, src: str, lang: str = "c") -> Path:
     )
     if r.returncode != 0:
         pytest.skip(f"Compilation failed: {r.stderr[:200]}")
+    # On macOS, gcc/clang produces Mach-O, not ELF — skip if not ELF
+    with open(so_file, "rb") as f:
+        if f.read(4) != b"\x7fELF":
+            pytest.skip("Compiled binary is not ELF (non-Linux platform)")
     return so_file
 
 

@@ -120,7 +120,13 @@ def _resolve(p: str, base: Path) -> Path:
     Path containment check: relative paths must not escape the base directory
     (guards against crafted descriptors with '../../' traversal sequences).
     Absolute paths are accepted as-is (matching ABICC behaviour for system paths).
+
+    On Windows, Unix-style absolute paths (starting with ``/``) are treated as
+    absolute to support cross-platform descriptor files written on Linux.
     """
+    # Treat Unix absolute paths as absolute even on Windows
+    if p.startswith("/"):
+        return Path(p)
     resolved = Path(p)
     if not resolved.is_absolute():
         resolved = (base / resolved).resolve()

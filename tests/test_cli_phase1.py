@@ -173,10 +173,12 @@ def test_compat_check_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypat
 
 
 def test_dump_cmd_non_elf_input_clean_error(tmp_path):
-    """abicheck dump /dev/null must print clean Error: ... and exit 1 (not raw traceback)."""
-    # Use /dev/null which is a valid path but not a valid ELF
+    """abicheck dump on empty file must print clean Error: ... and exit 1 (not raw traceback)."""
+    # Create an empty file (not a valid ELF) — cross-platform alternative to /dev/null
+    empty = tmp_path / "empty.so"
+    empty.write_bytes(b"")
     runner = CliRunner()
-    result = runner.invoke(main, ["dump", "/dev/null"])
+    result = runner.invoke(main, ["dump", str(empty)])
     assert result.exit_code == 1
     assert "Error:" in result.output
     # Must NOT expose a raw Python traceback

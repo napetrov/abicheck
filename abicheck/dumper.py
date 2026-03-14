@@ -305,7 +305,7 @@ def _castxml_dump(
 
     # Cross-compilation / toolchain flags
     if sysroot:
-        cmd += [f"--sysroot={sysroot}"]
+        cmd += [f"--sysroot={sysroot.as_posix()}"]
     if nostdinc:
         cmd += ["-nostdinc"]
     if gcc_options:
