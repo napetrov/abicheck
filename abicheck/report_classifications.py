@@ -26,6 +26,9 @@ ADDED_KINDS: frozenset[str] = frozenset({
 })
 
 #: Binary-only kinds (excluded from source compatibility section).
+#: These are derived from ELF metadata or DWARF debug info and have no
+#: source-level visibility — recompiling from the same source with the
+#: same flags cannot produce these changes.
 BINARY_ONLY_KINDS: frozenset[str] = frozenset({
     "soname_changed", "needed_added", "needed_removed",
     "rpath_changed", "runpath_changed",
@@ -35,6 +38,9 @@ BINARY_ONLY_KINDS: frozenset[str] = frozenset({
     "symbol_version_defined_removed",
     "symbol_version_required_added", "symbol_version_required_removed",
     "dwarf_info_missing", "toolchain_flag_drift",
+    # DWARF-derived calling convention and frame register changes (#117)
+    "calling_convention_changed", "value_abi_trait_changed",
+    "frame_register_changed",
 })
 
 #: Canonical breaking kinds (single source of truth from checker_policy).

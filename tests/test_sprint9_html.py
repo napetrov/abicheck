@@ -360,14 +360,14 @@ def test_enum_member_removed_bucket_is_removed() -> None:
 # ---------------------------------------------------------------------------
 
 def test_changed_breaking_kinds_subset_of_breaking_kinds() -> None:
-    """_CHANGED_BREAKING_KINDS must be a strict subset of _BREAKING_KINDS."""
-    from abicheck.html_report import _BREAKING_KINDS, _CHANGED_BREAKING_KINDS
-    assert _CHANGED_BREAKING_KINDS <= _BREAKING_KINDS, (
-        "_CHANGED_BREAKING_KINDS has entries not in _BREAKING_KINDS: "
-        f"{_CHANGED_BREAKING_KINDS - _BREAKING_KINDS}"
+    """CHANGED_BREAKING_KINDS must be a strict subset of BREAKING_KINDS."""
+    from abicheck.report_classifications import BREAKING_KINDS, CHANGED_BREAKING_KINDS
+    assert CHANGED_BREAKING_KINDS <= BREAKING_KINDS, (
+        "CHANGED_BREAKING_KINDS has entries not in BREAKING_KINDS: "
+        f"{CHANGED_BREAKING_KINDS - BREAKING_KINDS}"
     )
 
 
 def test_removed_kinds_subset_of_breaking_kinds() -> None:
-    from abicheck.html_report import _BREAKING_KINDS, _REMOVED_KINDS
-    assert _REMOVED_KINDS <= _BREAKING_KINDS
+    from abicheck.report_classifications import BREAKING_KINDS, REMOVED_KINDS
+    assert REMOVED_KINDS <= BREAKING_KINDS
