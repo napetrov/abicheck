@@ -33,7 +33,7 @@ dependencies = [
     "pyyaml>=6.0",
     "defusedxml>=0.7.1",
     "pyelftools>=0.29",   # ELF/DWARF parsing
-    "pefile>=2023.2.7",   # Windows PE/COFF parsing
+    "packaging>=21.0",    # Version comparison for suppression version_range
 ]
 
 [project.scripts]
@@ -46,10 +46,15 @@ Documentation = "https://napetrov.github.io/abicheck/"
 Changelog = "https://github.com/napetrov/abicheck/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+# pefile is needed only for Windows PE/COFF (.dll) analysis.  Users working
+# exclusively with ELF (Linux) or Mach-O (macOS) binaries can skip it.
 pe = [
     "pefile>=2023.2.7",       # Windows PE/COFF parsing
 ]
-macho = []                    # Pure-Python Mach-O parser — no external deps required
+# Mach-O support is built-in — macho_metadata.py is a pure-Python parser that
+# reads Mach-O headers, load commands, and export tries directly, so no
+# external package is required.
+macho = []
 all = [
     "abicheck[pe]",
 ]

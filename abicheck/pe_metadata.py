@@ -119,6 +119,7 @@ def parse_pe_metadata(dll_path: Path) -> PeMetadata:
         raise ImportError(
             "pefile is required for PE parsing: pip install 'abicheck[pe]' or pip install pefile"
         )
+
     try:
         with open(dll_path, "rb") as f:
             st = os.fstat(f.fileno())
