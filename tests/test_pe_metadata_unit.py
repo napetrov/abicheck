@@ -267,16 +267,6 @@ class TestParsePeMetadata:
         assert isinstance(meta, PeMetadata)
         assert meta.exports == []
 
-    def test_pefile_not_installed(self, tmp_path):
-        """When pefile is not available, raise ImportError."""
-        import pytest
-
-        f = tmp_path / "test.dll"
-        f.write_bytes(b"MZ" + b"\x00" * 256)
-        with patch("abicheck.pe_metadata._PEFILE_AVAILABLE", False):
-            with pytest.raises(ImportError, match="pefile is required"):
-                parse_pe_metadata(f)
-
     def test_parse_with_mock_pefile(self, tmp_path):
         """Exercise _parse via a mocked pefile module."""
         f = tmp_path / "test.dll"
@@ -320,8 +310,7 @@ class TestParsePeMetadata:
             "IMAGE_DIRECTORY_ENTRY_RESOURCE": 2,
         }
 
-        with patch("abicheck.pe_metadata.pefile", mock_pefile), \
-             patch("abicheck.pe_metadata._PEFILE_AVAILABLE", True):
+        with patch("abicheck.pe_metadata.pefile", mock_pefile):
             meta = parse_pe_metadata(f)
 
         assert meta.machine == "IMAGE_FILE_MACHINE_AMD64"
@@ -364,8 +353,7 @@ class TestParsePeMetadata:
             "IMAGE_DIRECTORY_ENTRY_RESOURCE": 2,
         }
 
-        with patch("abicheck.pe_metadata.pefile", mock_pefile), \
-             patch("abicheck.pe_metadata._PEFILE_AVAILABLE", True):
+        with patch("abicheck.pe_metadata.pefile", mock_pefile):
             meta = parse_pe_metadata(f)
 
         assert meta.file_version == "10.0.19041.1"
@@ -385,8 +373,7 @@ class TestParsePeMetadata:
             "IMAGE_DIRECTORY_ENTRY_RESOURCE": 2,
         }
 
-        with patch("abicheck.pe_metadata.pefile", mock_pefile), \
-             patch("abicheck.pe_metadata._PEFILE_AVAILABLE", True):
+        with patch("abicheck.pe_metadata.pefile", mock_pefile):
             meta = parse_pe_metadata(f)
 
         assert isinstance(meta, PeMetadata)

@@ -27,12 +27,7 @@ from enum import Enum
 from functools import cached_property
 from pathlib import Path
 
-try:
-    import pefile as pefile  # type: ignore[import-untyped]
-    _PEFILE_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    pefile = None  # type: ignore[assignment]
-    _PEFILE_AVAILABLE = False
+import pefile  # type: ignore[import-untyped]
 
 log = logging.getLogger(__name__)
 
@@ -113,13 +108,7 @@ def parse_pe_metadata(dll_path: Path) -> PeMetadata:
     """Extract PE export/import metadata from *dll_path* using pefile.
 
     Returns an empty ``PeMetadata`` on any parse error (logged as WARNING).
-    Raises ``ImportError`` (with helpful message) if pefile is not installed.
     """
-    if not _PEFILE_AVAILABLE:
-        raise ImportError(
-            "pefile is required for PE parsing: pip install 'abicheck[pe]' or pip install pefile"
-        )
-
     try:
         with open(dll_path, "rb") as f:
             st = os.fstat(f.fileno())
