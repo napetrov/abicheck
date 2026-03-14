@@ -1163,6 +1163,7 @@ def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes.extend(_diff_elf_symbol_versioning(o, n))
     changes.extend(_diff_elf_symbol_metadata(o, n))
     changes.extend(_diff_visibility_leak(old, new))
+    changes.extend(_diff_leaked_dependency_symbols(o, n))
     return changes
 
 
@@ -1213,6 +1214,77 @@ def _diff_visibility_leak(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         ),
         old_value=str(len(leaked)),
     )]
+
+def _diff_leaked_dependency_symbols(old_elf: Any, new_elf: Any) -> list[Change]:
+    """Detect symbols that were added or removed and appear to originate from a dependency.
+
+    When a symbol exported by this library was detected as likely originating from
+    a dependency (libstdc++, libgcc, libc, …), any *addition* or *removal* of that
+    symbol gets annotated as ``SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED``.
+
+    Symbols that exist in both old and new with the same origin are intentionally
+    **not** re-emitted here — ``_diff_elf_symbol_metadata`` already covers changes
+    to the symbol's type/binding/size and emits its own Change records.  Emitting a
+    second Change for the same symbol from both detectors would produce contradictory
+    messages (one BREAKING, one RISK) for the same event.
+
+    This is a real ABI fact — the library is leaking dependency symbols into its
+    public ABI surface — but the verdict is ``COMPATIBLE_WITH_RISK`` rather than
+    ``BREAKING``, because direct consumers of this library typically resolve those
+    symbols through the dependency directly and are not affected by the leak.
+
+    The risk is that on other systems with a different version of the dependency
+    the leaked symbols may differ, causing failures.
+
+    Consider applying ``-fvisibility=hidden`` to prevent this.
+    """
+    changes: list[Change] = []
+    old_syms = old_elf.symbol_map
+    new_syms = new_elf.symbol_map
+
+    # Symbols that were *removed* (present in old, absent in new)
+    for sym_name, s_old in old_syms.items():
+        if sym_name in new_syms:
+            # Symbol still exists — skip to avoid double-annotation with
+            # _diff_elf_symbol_metadata which handles changed symbols.
+            continue
+        origin = s_old.origin_lib
+        if origin is None:
+            continue
+        changes.append(Change(
+            kind=ChangeKind.SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED,
+            symbol=sym_name,
+            description=(
+                f"Symbol '{sym_name}' was removed but appears to originate from "
+                f"'{origin}' (a dependency of this library). This is a real ABI "
+                f"change — the library is leaking dependency symbols into its public "
+                f"ABI surface. Consider applying -fvisibility=hidden."
+            ),
+            old_value=origin,
+            new_value=None,
+        ))
+
+    # Symbols that were *added* (absent in old, present in new with origin_lib)
+    for sym_name, s_new in new_syms.items():
+        if sym_name in old_syms:
+            continue  # Already present in old — not a pure addition
+        if s_new.origin_lib is None:
+            continue
+        changes.append(Change(
+            kind=ChangeKind.SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED,
+            symbol=sym_name,
+            description=(
+                f"Symbol '{sym_name}' was added but appears to originate from "
+                f"'{s_new.origin_lib}' (a dependency of this library). This is a real "
+                f"ABI change — the library is leaking dependency symbols into its public "
+                f"ABI surface. Consider applying -fvisibility=hidden."
+            ),
+            old_value=None,
+            new_value=s_new.origin_lib,
+        ))
+
+    return changes
+
 
 def _diff_elf_dynamic_section(old_elf: Any, new_elf: Any) -> list[Change]:
     changes: list[Change] = []
