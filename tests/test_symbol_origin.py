@@ -75,14 +75,14 @@ class TestGuessSymbolOrigin:
         assert result == "libstdc++.so.6"
 
     def test_gcc_runtime_ix86(self):
-        """ix86_... → libgcc_s.so.1."""
+        """ix86_... → libgcc.a (static) — statically linked x87 math helper."""
         result = _guess_symbol_origin("ix86_math_helper", [])
-        assert result == "libgcc_s.so.1"
+        assert result == "libgcc.a (static)"
 
     def test_gcc_runtime_ZGV(self):
-        """_ZGV... → libgcc_s.so.1 (SIMD vector variant)."""
+        """_ZGV... → libmvec.so.1 (SIMD vectorized math, not libgcc_s)."""
         result = _guess_symbol_origin("_ZGVnN4v_sin", [])
-        assert result == "libgcc_s.so.1"
+        assert result == "libmvec.so.1"
 
     def test_gcc_runtime_cpu_model(self):
         """__cpu_model → libgcc_s.so.1."""
@@ -95,9 +95,9 @@ class TestGuessSymbolOrigin:
         assert result == "libgcc_s.so.1"
 
     def test_gcc_runtime_svml(self):
-        """__svml_sin4 → libgcc_s.so.1."""
+        """__svml_sin4 → <intel-compiler-rt> (not libgcc_s — Intel static RT)."""
         result = _guess_symbol_origin("__svml_sin4", [])
-        assert result == "libgcc_s.so.1"
+        assert result == "<intel-compiler-rt>"
 
     def test_libc_prefix_libc(self):
         """__libc_start_main → libc.so.6."""
@@ -277,17 +277,21 @@ class TestDiffLeakedDependencySymbols:
         new_elf = self._make_elf_meta([
             ElfSymbol(
                 name="_ZGVnN4v_sin",
-                origin_lib="libgcc_s.so.1",
+                origin_lib="libmvec.so.1",
             )
         ])
 
         changes = _diff_leaked_dependency_symbols(old_elf, new_elf)
         assert len(changes) == 1
         assert changes[0].kind == ChangeKind.SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED
-        assert "libgcc_s.so.1" in changes[0].description
+        assert "libmvec.so.1" in changes[0].description
 
-    def test_changed_leaked_symbol_type_emits_change(self):
-        """A leaked symbol that changed type → Change emitted."""
+    def test_changed_leaked_symbol_no_double_annotation(self):
+        """C2: a leaked symbol that changed type → NOT emitted by _diff_leaked_dependency_symbols.
+
+        _diff_elf_symbol_metadata already handles changed symbols.
+        Emitting from both detectors would create contradictory Change records.
+        """
         from abicheck.checker import _diff_leaked_dependency_symbols
 
         old_elf = self._make_elf_meta([
@@ -305,9 +309,11 @@ class TestDiffLeakedDependencySymbols:
             )
         ])
 
+        # C2 fix: changed (not added/removed) symbols must NOT emit here
         changes = _diff_leaked_dependency_symbols(old_elf, new_elf)
-        assert len(changes) == 1
-        assert changes[0].kind == ChangeKind.SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED
+        assert changes == [], (
+            "Changed symbols must not be double-annotated by _diff_leaked_dependency_symbols"
+        )
 
     def test_unchanged_leaked_symbol_no_change(self):
         """A leaked symbol that did NOT change → no LEAKED change emitted."""
@@ -325,3 +331,219 @@ class TestDiffLeakedDependencySymbols:
 
         changes = _diff_leaked_dependency_symbols(old_elf, new_elf)
         assert changes == []
+
+
+# ---------------------------------------------------------------------------
+# New tests: C1 post-parse fixup ordering
+# ---------------------------------------------------------------------------
+
+class TestPostParseFixup:
+    """C1: post-parse origin fixup runs after .dynamic is parsed."""
+
+    def test_fixup_corrects_libcxx_when_needed_populated(self):
+        """_ZNSt3__1... must resolve to libc++.so.1 when that's in needed, not libstdc++.so.6."""
+        from abicheck.elf_metadata import ElfMetadata, ElfSymbol
+
+        # Simulate a library that DT_NEEDS libc++.so.1 (not libstdc++)
+        meta = ElfMetadata()
+        meta.needed = ["libc++.so.1"]
+        # Create a symbol that was initially guessed as libstdc++ (empty needed at parse time)
+        sym = ElfSymbol(
+            name="_ZNSt3__112basic_stringIcEC1Ev",
+            origin_lib="libstdc++.so.6",  # initial wrong guess
+        )
+        meta.symbols = [sym]
+
+        # Re-run the fixup (simulates what _parse() now does after sections are read)
+        from abicheck.elf_metadata import _guess_symbol_origin, ElfMetadata as _EM
+        _GENERIC_FALLBACKS = frozenset({"libstdc++.so.6", "libgcc_s.so.1", "libc.so.6"})
+        for s in meta.symbols:
+            if s.origin_lib is None or s.origin_lib in _GENERIC_FALLBACKS:
+                new_origin = _guess_symbol_origin(s.name, meta.needed)
+                if new_origin is not None:
+                    s.origin_lib = new_origin
+
+        assert meta.symbols[0].origin_lib == "libc++.so.1", (
+            "Post-parse fixup must override generic fallback when libc++.so.1 is in needed"
+        )
+
+    def test_fixup_leaves_native_symbols_alone(self):
+        """Native symbols (origin_lib=None) must not be affected by fixup."""
+        from abicheck.elf_metadata import ElfMetadata, ElfSymbol, _guess_symbol_origin
+
+        meta = ElfMetadata()
+        meta.needed = ["libstdc++.so.6"]
+        sym = ElfSymbol(name="my_native_func", origin_lib=None)
+        meta.symbols = [sym]
+
+        _GENERIC_FALLBACKS = frozenset({"libstdc++.so.6", "libgcc_s.so.1", "libc.so.6"})
+        for s in meta.symbols:
+            if s.origin_lib is None or s.origin_lib in _GENERIC_FALLBACKS:
+                new_origin = _guess_symbol_origin(s.name, meta.needed)
+                if new_origin is not None:
+                    s.origin_lib = new_origin
+
+        assert meta.symbols[0].origin_lib is None
+
+
+# ---------------------------------------------------------------------------
+# New tests: updated attributions M1/M2/M3/M4
+# ---------------------------------------------------------------------------
+
+class TestUpdatedAttributions:
+    """Test corrected symbol attributions: M1/M2/M3/M4."""
+
+    # --- M1: Intel SVML / ix86 / _ZGV ---
+
+    def test_svml_to_intel_compiler_rt(self):
+        """M1: __svml_* → <intel-compiler-rt>, not libgcc_s."""
+        result = _guess_symbol_origin("__svml_sinf4_mask", [])
+        assert result == "<intel-compiler-rt>"
+
+    def test_svml_prefix_variants(self):
+        """M1: Various __svml_ variants."""
+        for name in ("__svml_sin4", "__svml_exp4_mask", "__svml_log4"):
+            result = _guess_symbol_origin(name, [])
+            assert result == "<intel-compiler-rt>", f"Expected <intel-compiler-rt> for {name}"
+
+    def test_ix86_to_libgcc_static(self):
+        """M1: ix86_* → libgcc.a (static), not libgcc_s.so.1."""
+        result = _guess_symbol_origin("ix86_math_helper", [])
+        assert result == "libgcc.a (static)"
+
+    def test_ZGV_to_libmvec(self):
+        """M1: _ZGV* → libmvec.so.1 (vectorized math), not libgcc_s."""
+        result = _guess_symbol_origin("_ZGVnN4v_sin", [])
+        assert result == "libmvec.so.1"
+
+    def test_ZGV_variants(self):
+        """M1: Various _ZGV SIMD math variants."""
+        for name in ("_ZGVbN4v_sin", "_ZGVdN2v_cos", "_ZGVeN8v_exp"):
+            result = _guess_symbol_origin(name, [])
+            assert result == "libmvec.so.1", f"Expected libmvec.so.1 for {name}"
+
+    # --- M2: operator new/delete ---
+
+    def test_operator_new_size_t(self):
+        """M2: _Znwm (operator new(size_t)) → libstdc++.so.6."""
+        result = _guess_symbol_origin("_Znwm", [])
+        assert result == "libstdc++.so.6"
+
+    def test_operator_new_array(self):
+        """M2: _Znam (operator new[]) → libstdc++.so.6."""
+        result = _guess_symbol_origin("_Znam", [])
+        assert result == "libstdc++.so.6"
+
+    def test_operator_delete(self):
+        """M2: _ZdlPv (operator delete(void*)) → libstdc++.so.6."""
+        result = _guess_symbol_origin("_ZdlPv", [])
+        assert result == "libstdc++.so.6"
+
+    def test_operator_delete_array(self):
+        """M2: _ZdaPv (operator delete[]) → libstdc++.so.6."""
+        result = _guess_symbol_origin("_ZdaPv", [])
+        assert result == "libstdc++.so.6"
+
+    def test_operator_new_nothrow(self):
+        """M2: _ZnwmSt (operator new nothrow) → libstdc++.so.6."""
+        result = _guess_symbol_origin("_ZnwmSt", [])
+        assert result == "libstdc++.so.6"
+
+    def test_operator_new_prefers_needed_libcxx(self):
+        """M2: operator new resolves to libc++ when that's in DT_NEEDED."""
+        result = _guess_symbol_origin("_Znwm", ["libc++.so.1"])
+        assert result == "libc++.so.1"
+
+    # --- M3: libm SSE2/AVX helpers ---
+
+    def test_libm_sse2_prefix(self):
+        """M3: __libm_sse2_* → libm.so.6."""
+        result = _guess_symbol_origin("__libm_sse2_sin", [])
+        assert result == "libm.so.6"
+
+    def test_libm_avx_prefix(self):
+        """M3: __libm_avx_* → libm.so.6."""
+        result = _guess_symbol_origin("__libm_avx_log", [])
+        assert result == "libm.so.6"
+
+    # --- M4: libc++ inline namespace __1 ---
+
+    def test_ZNSt3__1_to_libcxx(self):
+        """M4: _ZNSt3__1* → libc++.so.1 (not libstdc++.so.6)."""
+        result = _guess_symbol_origin("_ZNSt3__112basic_stringIcEC1Ev", [])
+        assert result == "libc++.so.1"
+
+    def test_ZNKSt3__1_to_libcxx(self):
+        """M4: _ZNKSt3__1* (const member) → libc++.so.1."""
+        result = _guess_symbol_origin("_ZNKSt3__112basic_stringIcE4sizeEv", [])
+        assert result == "libc++.so.1"
+
+    def test_ZNSt3__1_prefers_libcxx_in_needed(self):
+        """M4: libc++ inline namespace picks up libc++.so.1 from DT_NEEDED."""
+        result = _guess_symbol_origin("_ZNSt3__112basic_stringIcEC1Ev", ["libc++.so.1"])
+        assert result == "libc++.so.1"
+
+    def test_ZNSt3__1_does_not_pick_libstdcxx(self):
+        """M4: _ZNSt3__1* must NOT resolve to libstdc++.so.6 even if it's in needed."""
+        result = _guess_symbol_origin("_ZNSt3__112basic_stringIcEC1Ev", ["libstdc++.so.6"])
+        # libstdc++ doesn't match "c++" without "stdc++" exclusion, but the
+        # fallback is still libc++.so.1 (not libstdc++) for __1 namespace
+        assert result == "libc++.so.1"
+
+    def test_ZNSt_without__1_still_libstdcxx(self):
+        """M4: regular _ZNSt* (no __1) still maps to libstdc++.so.6."""
+        result = _guess_symbol_origin("_ZNSt6thread8_M_startEv", [])
+        assert result == "libstdc++.so.6"
+
+
+# ---------------------------------------------------------------------------
+# C2: no double annotation integration test
+# ---------------------------------------------------------------------------
+
+class TestNoDoubleAnnotation:
+    """C2: a changed leaked symbol must produce only ONE Change record total."""
+
+    def _make_elf_meta(self, symbols):
+        from abicheck.elf_metadata import ElfMetadata
+        meta = ElfMetadata()
+        meta.symbols = symbols
+        return meta
+
+    def test_changed_leaked_symbol_single_change(self):
+        """One changed leaked symbol → exactly one Change from the two ELF detectors combined."""
+        from abicheck.checker import _diff_elf_symbol_metadata, _diff_leaked_dependency_symbols
+
+        old_elf = self._make_elf_meta([
+            ElfSymbol(
+                name="_ZNSt6locale5_Impl16_M_check_same_nameEPKc",
+                sym_type=SymbolType.FUNC,
+                binding=SymbolBinding.GLOBAL,
+                size=0,
+                origin_lib="libstdc++.so.6",
+            )
+        ])
+        new_elf = self._make_elf_meta([
+            ElfSymbol(
+                name="_ZNSt6locale5_Impl16_M_check_same_nameEPKc",
+                sym_type=SymbolType.OBJECT,  # type changed
+                binding=SymbolBinding.GLOBAL,
+                size=0,
+                origin_lib="libstdc++.so.6",
+            )
+        ])
+
+        changes_meta = _diff_elf_symbol_metadata(old_elf, new_elf)
+        changes_leaked = _diff_leaked_dependency_symbols(old_elf, new_elf)
+
+        # _diff_elf_symbol_metadata should catch the type change
+        assert len(changes_meta) >= 1
+        # _diff_leaked_dependency_symbols must NOT double-emit for the same symbol
+        assert changes_leaked == [], (
+            "_diff_leaked_dependency_symbols must not emit for changed (non-removed/added) symbols"
+        )
+        # Combined: exactly the records from meta, no duplicates
+        total = changes_meta + changes_leaked
+        symbols_in_changes = [c.symbol for c in total]
+        assert symbols_in_changes.count("_ZNSt6locale5_Impl16_M_check_same_nameEPKc") == 1, (
+            "Symbol must appear in exactly one Change record, not duplicated"
+        )

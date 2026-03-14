@@ -173,6 +173,22 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
             )
         ]
 
+    # Post-parse fixup: re-run origin detection now that meta.needed is fully
+    # populated.  .dynsym is often parsed before .dynamic, so the initial
+    # _guess_symbol_origin call in _parse_dynsym always sees an empty needed list.
+    # The fixup also corrects symbols that were mis-attributed to the wrong
+    # default library (e.g. libstdc++.so.6 vs libc++.so.1).
+    _GENERIC_FALLBACKS = frozenset({
+        "libstdc++.so.6",
+        "libgcc_s.so.1",
+        "libc.so.6",
+    })
+    for sym in meta.symbols:
+        if sym.origin_lib is None or sym.origin_lib in _GENERIC_FALLBACKS:
+            new_origin = _guess_symbol_origin(sym.name, meta.needed)
+            if new_origin is not None:
+                sym.origin_lib = new_origin
+
     return meta
 
 
@@ -227,6 +243,14 @@ def _guess_symbol_origin(name: str, needed_libs: list[str]) -> str | None:
     itself.  The result is used to annotate the ``origin_lib`` field of
     :class:`ElfSymbol`; it is informational and never suppresses real changes.
     """
+    # libc++ inline namespace __1 symbols — must be checked BEFORE generic _ZNSt.
+    # _ZNSt3__1 / _ZNKSt3__1 are Itanium-mangled names in the libc++ ABI.
+    if name.startswith(("_ZNSt3__1", "_ZNKSt3__1")):
+        for lib in needed_libs:
+            if "c++" in lib and "stdc++" not in lib:
+                return lib
+        return "libc++.so.1"
+
     # C++ stdlib symbols (libstdc++ / libc++)
     # These prefixes match Itanium-mangled names from <stdexcept>, <string>,
     # <typeinfo>, <exception>, and C++ ABI support classes.
@@ -236,10 +260,36 @@ def _guess_symbol_origin(name: str, needed_libs: list[str]) -> str | None:
                 return lib
         return "libstdc++.so.6"  # likely even if not listed in DT_NEEDED
 
+    # C++ operator new / delete (Itanium ABI — libstdc++ or libc++)
+    if name.startswith((
+        "_Znwm", "_Znwj", "_Znam", "_Znaj",    # operator new / new[]
+        "_ZdlPv", "_ZdaPv",                      # operator delete / delete[]
+        "_ZnwmSt", "_ZnamSt",                    # nothrow variants
+    )):
+        for lib in needed_libs:
+            if "stdc++" in lib or "c++" in lib:
+                return lib
+        return "libstdc++.so.6"
+
+    # Intel SVML — Intel compiler static runtime (not libgcc_s)
+    if name.startswith("__svml_"):
+        return "<intel-compiler-rt>"
+
+    # _ZGV* — vectorized math functions (SIMD variants), from libmvec (glibc)
+    if name.startswith("_ZGV"):
+        return "libmvec.so.1"
+
+    # ix86_* — statically linked x87 math helpers from libgcc.a (not the shared libgcc_s)
+    if name.startswith("ix86_"):
+        return "libgcc.a (static)"
+
+    # libm SIMD helpers (SSE2/AVX variants of math functions)
+    if name.startswith(("__libm_sse2_", "__libm_avx_")):
+        return "libm.so.6"
+
     # GCC runtime support symbols
-    # ix86_ = x87 math helpers; _ZGV = SIMD vector variants; __cpu_model / __cpu_features
-    # are GCC CPU-feature-detection helpers; __svml_ = Intel SVML vectorized functions.
-    if name.startswith(("ix86_", "_ZGV", "__cpu_model", "__cpu_features", "__svml_")):
+    # __cpu_model / __cpu_features are GCC CPU-feature-detection helpers.
+    if name.startswith(("__cpu_model", "__cpu_features")):
         return "libgcc_s.so.1"
 
     # GNU libc internal symbols
