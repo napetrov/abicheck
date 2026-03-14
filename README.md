@@ -219,37 +219,49 @@ Use exit codes directly in CI gates. For precise verdicts, parse `--format json`
 
 ## GitHub Actions integration
 
-### One-liner with saved baseline
-
-If you already have a baseline JSON snapshot (e.g. stored as a CI artifact or committed to the repo):
+A typical CI flow: dump the ABI snapshot once at release time, then compare every new build against that saved baseline.
 
 ```yaml
-steps:
-  - name: ABI check
-    run: abicheck compare abi-baseline.json ./build/libfoo.so --new-header include/foo.h --format sarif -o abi.sarif
+name: ABI check
+on: [push, pull_request]
 
-  - uses: github/codeql-action/upload-sarif@v3
-    if: always()
-    with:
-      sarif_file: abi.sarif
-```
+jobs:
+  abi-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-### Full workflow (dump + compare)
+      - name: Install abicheck
+        run: pip install git+https://github.com/napetrov/abicheck.git
 
-```yaml
-steps:
-  - name: Dump ABI snapshots
-    run: |
-      abicheck dump libfoo_old.so -H include/foo.h --version 1.0 -o old.json
-      abicheck dump libfoo_new.so -H include/foo.h --version 2.0 -o new.json
+      # ── Release step (run once when cutting a release) ─────────────
+      # Dump the ABI baseline and upload it as a release artifact:
+      #
+      #   abicheck dump ./build/libfoo.so -H include/foo.h \
+      #     --version ${{ github.ref_name }} -o abi-baseline.json
+      #
+      # Then download it in CI (e.g. from a release asset or artifact).
 
-  - name: Compare ABI
-    run: abicheck compare old.json new.json --format sarif -o abi.sarif
+      - name: Download ABI baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: abi-baseline
+          # abi-baseline.json saved from the last release
 
-  - uses: github/codeql-action/upload-sarif@v3
-    if: always()
-    with:
-      sarif_file: abi.sarif
+      - name: Build current library
+        run: make -C src/   # produces ./build/libfoo.so
+
+      # ── CI step: compare new build against saved baseline ──────────
+      - name: Compare ABI
+        run: |
+          abicheck compare abi-baseline.json ./build/libfoo.so \
+            --new-header include/foo.h \
+            --format sarif -o abi.sarif
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: abi.sarif
 ```
 
 Exit codes for CI gates: `0` = compatible, `1` = tool error, `2` = API break, `4` = breaking ABI change.
@@ -326,7 +338,7 @@ abicheck compare libv1.so libv2.so --old-header v1.h --new-header v2.h
 
 ### Benchmarks
 
-These same examples serve as the accuracy benchmark. All 48 cases have expected verdicts in `examples/ground_truth.json`:
+These same examples serve as the accuracy benchmark. All 48 cases have expected verdicts in `examples/ground_truth.json`. The benchmark table below covers the first 42 cases (cases 43-48 were added later and are not yet included in the cross-tool comparison):
 
 | Tool | Correct / Scored | Accuracy |
 |------|-----------------|----------|
@@ -335,6 +347,8 @@ These same examples serve as the accuracy benchmark. All 48 cases have expected 
 | ABICC (xml) | 25/41 | 61% |
 | ABICC (abi-dumper) | 20/30 | 66% |
 | abidiff | 11/42 | 26% |
+
+abicheck passes all 48 cases (including cases 43-48). Run `python3 scripts/benchmark_comparison.py` to reproduce with all available tools.
 
 See [Benchmark & Tool Comparison](https://napetrov.github.io/abicheck/tool_comparison/) for per-case results, methodology, and timing data.
 

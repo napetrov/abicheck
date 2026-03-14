@@ -42,9 +42,14 @@ abicheck compare baseline.json ./build/libfoo.so --new-header include/foo.h
 
 ## GitHub Actions
 
+Save baseline at release time, compare in CI:
+
 ```yaml
-- name: ABI check
-  run: abicheck compare abi-baseline.json ./build/libfoo.so --new-header include/foo.h --format sarif -o abi.sarif
+# Compare new build against saved baseline snapshot
+- name: Compare ABI
+  run: |
+    abicheck compare abi-baseline.json ./build/libfoo.so \
+      --new-header include/foo.h --format sarif -o abi.sarif
 
 - uses: github/codeql-action/upload-sarif@v3
   if: always()

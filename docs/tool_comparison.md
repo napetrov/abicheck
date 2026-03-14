@@ -1,7 +1,11 @@
 # Benchmark & Tool Comparison
 
 This document explains how each ABI checking tool works, what analysis method it uses,
-benchmark results on 42 real-world test cases, and why the numbers come out the way they do.
+benchmark results across real-world test cases, and why the numbers come out the way they do.
+
+> **Note:** The cross-tool benchmark table below covers 42 cases (case01-41 + case26b).
+> Cases 43-48 were added later and are included in `examples/ground_truth.json` (48 total)
+> but are not yet reflected in the cross-tool comparison rows. abicheck passes all 48 cases.
 
 ---
 

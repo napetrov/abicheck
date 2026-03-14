@@ -172,27 +172,29 @@ Full reference (including `compat` mode and strict mode): [Exit Codes](exit_code
 
 ## 6) Add to GitHub Actions
 
-One-liner with a saved baseline:
+Typical flow: dump the ABI baseline once at release time, then compare every new build against it.
 
-```yaml
-steps:
-  - name: ABI check
-    run: abicheck compare abi-baseline.json ./build/libfoo.so --new-header include/foo.h --format sarif -o abi.sarif
+**Release step** — save the baseline as an artifact:
 
-  - uses: github/codeql-action/upload-sarif@v3
-    if: always()
-    with:
-      sarif_file: abi.sarif
+```bash
+abicheck dump ./build/libfoo.so -H include/foo.h \
+  --version 1.0 -o abi-baseline.json
+# Upload abi-baseline.json as a release artifact
 ```
 
-Full workflow (dump + compare):
+**CI step** — compare new build against saved baseline:
 
 ```yaml
 steps:
+  - name: Download ABI baseline
+    uses: actions/download-artifact@v4
+    with:
+      name: abi-baseline
+
   - name: Compare ABI
     run: |
-      abicheck compare libfoo_old.so libfoo_new.so \
-        --old-header include/v1/foo.h --new-header include/v2/foo.h \
+      abicheck compare abi-baseline.json ./build/libfoo.so \
+        --new-header include/foo.h \
         --format sarif -o abi.sarif
 
   - uses: github/codeql-action/upload-sarif@v3
