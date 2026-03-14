@@ -1470,8 +1470,11 @@ _TYPE_CHANGE_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.TYPE_FIELD_OFFSET_CHANGED, ChangeKind.TYPE_FIELD_TYPE_CHANGED,
     ChangeKind.TYPE_BASE_CHANGED, ChangeKind.TYPE_VTABLE_CHANGED,
     ChangeKind.TYPE_REMOVED, ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
+    ChangeKind.TYPE_BECAME_OPAQUE,
+    ChangeKind.BASE_CLASS_POSITION_CHANGED, ChangeKind.BASE_CLASS_VIRTUAL_CHANGED,
     ChangeKind.ENUM_MEMBER_REMOVED, ChangeKind.ENUM_MEMBER_ADDED,
     ChangeKind.ENUM_MEMBER_VALUE_CHANGED, ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
+    ChangeKind.ENUM_UNDERLYING_SIZE_CHANGED,
     ChangeKind.UNION_FIELD_ADDED, ChangeKind.UNION_FIELD_REMOVED,
     ChangeKind.UNION_FIELD_TYPE_CHANGED, ChangeKind.TYPEDEF_BASE_CHANGED,
     ChangeKind.STRUCT_SIZE_CHANGED, ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
@@ -1608,13 +1611,18 @@ def _enrich_affected_symbols(
 def _deduplicate_ast_dwarf(changes: list[Change]) -> list[Change]:
     """Remove DWARF findings that duplicate an AST finding for the same symbol.
 
-    When both AST and DWARF detectors report equivalent changes (e.g.,
-    TYPE_SIZE_CHANGED from AST and STRUCT_SIZE_CHANGED from DWARF),
-    keep only the AST finding and drop the DWARF duplicate.
-    Also deduplicates exact duplicates (same kind + description).
+    Two dedup passes:
 
-    Uses full symbol for field-level matching to avoid false negatives
-    (e.g., S::a and S::b are distinct findings that must not be collapsed).
+    1. **Exact dedup** — collapses entries with the same ``(kind, description)``.
+       Using description (not symbol) handles cases where the same logical
+       finding is reported under different symbol granularities (e.g. ``Status``
+       vs ``Status::FOO``).
+
+    2. **Cross-kind dedup** — drops a DWARF finding when an equivalent AST
+       finding exists for the *same full symbol* (e.g. STRUCT_SIZE_CHANGED for
+       ``S`` is dropped when TYPE_SIZE_CHANGED for ``S`` is already present).
+       Full-symbol matching prevents collapsing different fields of the same
+       type (``S::a`` vs ``S::b``).
     """
     # First pass: index all findings by (kind, symbol) for cross-kind dedup
     ast_findings: set[tuple[str, str]] = set()
@@ -1623,10 +1631,10 @@ def _deduplicate_ast_dwarf(changes: list[Change]) -> list[Change]:
 
     # Second pass: filter out DWARF duplicates
     result: list[Change] = []
-    seen: set[tuple[str, str]] = set()  # dedup by (kind, description)
+    seen: set[tuple[str, str]] = set()  # exact dedup by (kind, description)
     for c in changes:
         key = (c.kind.value, c.description)
-        # Duplicate removal: same kind + same description = same finding
+        # Exact dedup: same kind + same description = same finding
         if key in seen:
             continue
         seen.add(key)

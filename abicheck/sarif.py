@@ -186,8 +186,8 @@ def to_sarif(result: DiffResult) -> dict[str, Any]:
                     "library": result.library,
                     "changeCount": len(result.changes),
                     "suppressedCount": result.suppressed_count,
-                    **({"oldFile": {"path": result.old_metadata.path, "sha256": result.old_metadata.sha256, "sizeBytes": result.old_metadata.size_bytes}} if getattr(result, "old_metadata", None) else {}),
-                    **({"newFile": {"path": result.new_metadata.path, "sha256": result.new_metadata.sha256, "sizeBytes": result.new_metadata.size_bytes}} if getattr(result, "new_metadata", None) else {}),
+                    **({"oldFile": {"path": result.old_metadata.path, "sha256": result.old_metadata.sha256, "sizeBytes": result.old_metadata.size_bytes}} if result.old_metadata is not None else {}),
+                    **({"newFile": {"path": result.new_metadata.path, "sha256": result.new_metadata.sha256, "sizeBytes": result.new_metadata.size_bytes}} if result.new_metadata is not None else {}),
                 },
             }
         ],
