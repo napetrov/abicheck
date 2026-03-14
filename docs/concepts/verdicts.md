@@ -18,7 +18,7 @@ Changes found, but **backwards-compatible** — existing compiled consumers can 
 
 Examples:
 - New exported symbol added
-- `noexcept` specifier added/removed *(for plain non-template functions; in C++17+, `noexcept` is part of function type and can affect mangling in function-pointer/template contexts — see [edge case](#edge-case-noexcept-case15). Note: abicheck does not currently flag function-pointer or template context noexcept changes separately.)*
+- `noexcept` specifier added/removed (mangled name unchanged; binary-compatible)
 - `GLOBAL` → `WEAK` symbol binding (ELF/Linux only — weak symbols have different semantics on Mach-O/macOS; abicheck targets Linux ELF)
 - Enum member added at end of enum
 
@@ -41,8 +41,7 @@ Examples:
 ---
 
 ### `API_BREAK`
-A **source-level (compile-time) break** that does not break existing compiled binaries.
-Pre-compiled consumers still work at runtime. Consumers that **recompile** against new headers get compile errors.
+A **source-level API break** — the public header contract changed in a way that breaks downstream source code, but **does not break already-compiled binaries**. Pre-compiled consumers continue to work at runtime. Consumers that **recompile** against new headers may get compile errors or semantic changes.
 
 Examples:
 - Field rename (same binary layout, different source name)
@@ -71,23 +70,6 @@ Examples:
 - `const` qualifier added to global variable (moves to `.rodata`, breaks writes)
 
 **CI action:** always fail; do not ship.
-
----
-
-## Edge case: `noexcept` (case15)
-
-`FUNC_NOEXCEPT_REMOVED` (removing a `noexcept` specifier) normally maps to `COMPATIBLE`
-for plain non-template functions.
-
-**case15** is classified `COMPATIBLE_WITH_RISK`. The function was compiled with `throw()` —
-the legacy C++03 exception specification. Compiled with `-std=c++03`, `throw()` generates
-a call to `__cxa_call_unexpected`, which pulls in the `GLIBCXX_3.4.21` version symbol.
-Removing `throw()` adds `SYMBOL_VERSION_REQUIRED_ADDED: GLIBCXX_3.4.21` — a deployment
-risk for systems lacking that glibc/libstdc++ version, but not a binary break for
-consumers already compiled and linked against the old library.
-
-The verdict is the **worst** of all detected ChangeKinds: `FUNC_NOEXCEPT_REMOVED` alone
-is `COMPATIBLE`, and combined with `SYMBOL_VERSION_REQUIRED_ADDED` becomes `COMPATIBLE_WITH_RISK`.
 
 ---
 
@@ -124,24 +106,10 @@ ret=$?
 exit 0
 ```
 
-> For `compat` mode CI patterns, see [Migrating from ABICC](../migration/from_abicc.md).
-> Note: in compat mode, exit `1` = BREAKING, exit `2` = API_BREAK **or** tool error.
-> Use `--format json` to distinguish tool errors from real `API_BREAK` verdicts.
+> For `compat` mode CI patterns, see [ABICC Compatibility](../abicc_compat.md).
+> Note: in compat mode, exit `1` = BREAKING, exit `2` = API_BREAK.
+> Non-verdict failures use extended codes (`3`–`11`) — see [Exit Codes](../exit_codes.md).
 
 ---
 
-## Exit code summary
-
-| Verdict | `compare` exit | `compat` exit |
-|---------|---------------|---------------|
-| `NO_CHANGE` | `0` | `0` |
-| `COMPATIBLE` | `0` | `0` |
-| `COMPATIBLE_WITH_RISK` | `0` | `0` |
-| `API_BREAK` | `2` | `2` |
-| `BREAKING` | `4` | `1` |
-| Tool error | `1` | `2` |
-
-> ⚠️ `compare` exits `0` for both `NO_CHANGE` and `COMPATIBLE`.
-> Use `--format json` + `verdict` field to distinguish them in automation.
-
-Full reference: [exit_codes.md](../exit_codes.md)
+Full exit code reference: [Exit Codes](../exit_codes.md)

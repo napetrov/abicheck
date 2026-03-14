@@ -1,6 +1,8 @@
 # Exit Codes
 
-`abicheck` uses different exit codes depending on the command.
+`abicheck` uses different exit codes for `compare` and `compat` commands.
+
+**Why they differ:** `compare` is the native interface with a wider exit code range (0/1/2/4) that distinguishes tool errors from API breaks from binary breaks. `compat` mirrors `abi-compliance-checker` exit codes (0/1/2) so existing ABICC CI scripts work without changes.
 
 ---
 

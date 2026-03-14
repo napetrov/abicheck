@@ -2,11 +2,53 @@
 
 `abicheck compat check` is a drop-in replacement for `abi-compliance-checker` (ABICC).
 It accepts the same single-hyphen flags, reads the same XML descriptors, and produces
-mostly compatible exit codes — so you can swap it into existing ABICC pipelines with
-a one-line change. (Note: exit code `2` may mean either `API_BREAK` or a tool error
-such as a missing descriptor file — see the exit codes table below for details.)
+compatible exit codes — so you can swap it into existing ABICC pipelines with
+a one-line change.
 
-For the migration guide (step-by-step checklist), see [Migrating from ABICC](migration/from_abicc.md).
+## Migrating from ABICC
+
+### Step 1: Swap the command
+
+Replace the ABICC binary call with `abicheck compat check`. Keep your existing XML descriptors — no changes needed:
+
+```bash
+# Before (ABICC):
+abi-compliance-checker -lib libfoo -old OLD.xml -new NEW.xml -report-path report.html
+
+# After (abicheck — same flags):
+abicheck compat check -lib libfoo -old OLD.xml -new NEW.xml -report-path report.html
+```
+
+### Step 2: Update CI exit code checks
+
+| Exit code | ABICC | abicheck compat |
+|-----------|-------|-----------------|
+| `0` | Compatible | Compatible / no change |
+| `1` | Breaking | BREAKING |
+| `2` | Error | `API_BREAK` (source-level break) |
+| `3`–`11` | — | Non-verdict failures (missing tool, file access, parse error, etc.) |
+
+> Non-verdict failures use extended error codes (`3`–`11`) instead of overloading exit `2`. See [Exit Codes](exit_codes.md#extended-compat-error-codes-abicc-style) for the full table.
+
+### Step 3: Validate on historical releases
+
+```bash
+for ver in v1.0 v1.1 v1.2; do
+  abicheck compat check -lib libfoo -old ${ver}.xml -new current.xml \
+    -report-path report-${ver}.html
+  echo "vs ${ver}: exit $?"
+done
+```
+
+### Step 4 (optional): Switch to native mode
+
+When ready, switch from XML descriptors to the simpler native workflow:
+
+```bash
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
+```
+
+Benefits: unambiguous `API_BREAK` verdict, JSON/SARIF output, no XML descriptors needed, exit code `4` = BREAKING (separate from tool errors).
 
 ## Quick start
 
@@ -24,7 +66,8 @@ Exit codes match ABICC:
 |------|---------|
 | `0` | Compatible or no change |
 | `1` | Breaking ABI change detected |
-| `2` | Source-level break (`API_BREAK`) or error (descriptor parse failure, missing files) |
+| `2` | `API_BREAK` (source-level break) |
+| `3`–`11` | Non-verdict failures (see [Exit Codes](exit_codes.md)) |
 
 > **Note:** In `-strict` mode, `API_BREAK` is promoted to exit `1` (BREAKING).
 

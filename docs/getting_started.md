@@ -154,37 +154,30 @@ abicheck compare old.json new.json -v
 
 ---
 
-## 5) Exit codes
+## 5) Exit codes and CI
 
 | Exit code | Verdict | Meaning |
 |-----------|---------|---------|
-| `0` | `NO_CHANGE` or `COMPATIBLE` | Safe — no breaking changes |
+| `0` | `NO_CHANGE` / `COMPATIBLE` | Safe — no breaking changes |
 | `1` | — | Tool/runtime error |
-| `2` | `API_BREAK` | Source-level break (recompile needed, binary may work) |
+| `2` | `API_BREAK` | Source-level API break (binary still works) |
 | `4` | `BREAKING` | Binary ABI break |
 
-> Exit `0` covers both `NO_CHANGE` and `COMPATIBLE`.
-> If you need exact verdicts in CI, parse `--format json` output.
+Full reference (including `compat` mode): [Exit Codes](exit_codes.md)
 
-Full reference (including `compat` mode and strict mode): [Exit Codes](exit_codes.md)
+### GitHub Actions example
 
----
-
-## 6) Add to GitHub Actions
-
-Typical flow: dump the ABI baseline once at release time, then compare every new build against it.
-
-**Release step** — save the baseline as an artifact:
+Save a baseline once at release time, then compare every new build:
 
 ```bash
+# Release step — save baseline as an artifact
 abicheck dump ./build/libfoo.so -H include/foo.h \
   --version 1.0 -o abi-baseline.json
 # Upload abi-baseline.json as a release artifact
 ```
 
-**CI step** — compare new build against saved baseline:
-
 ```yaml
+# CI step — compare new build against saved baseline
 steps:
   - name: Download ABI baseline
     uses: actions/download-artifact@v4
@@ -205,28 +198,10 @@ steps:
 
 ---
 
-## 7) Migrating from ABICC?
+## Next steps
 
-If you have existing ABICC XML descriptors, use `compat` mode — same single-hyphen flags, no XML changes needed:
-
-```bash
-abicheck compat check -lib foo -old OLD.xml -new NEW.xml
-```
-
-When ready, switch to the simpler native workflow:
-
-```bash
-abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
-```
-
-See [Migrating from ABICC](migration/from_abicc.md) for the full guide.
-
----
-
-## 8) Next steps
-
-- [Verdicts explained](concepts/verdicts.md)
+- [Verdicts](concepts/verdicts.md) — what each verdict means
 - [Policy Profiles](policies.md) — control how changes are classified
-- [Examples & Breakage Guide](examples_breakage_guide.md) — 48 real-world ABI break scenarios
+- [Examples & Breakage Guide](examples_breakage_guide.md) — real-world ABI/API break scenarios
+- [ABICC Compatibility](abicc_compat.md) — migrating from abi-compliance-checker
 - [Limitations](concepts/limitations.md)
-- [Benchmark & Tool Comparison](tool_comparison.md) — abicheck vs abidiff vs ABICC
