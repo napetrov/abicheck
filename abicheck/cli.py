@@ -16,6 +16,7 @@ from .reporter import to_json, to_markdown
 from .serialization import load_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
+    from .policy_file import PolicyFile
     from .suppression import SuppressionList
 
 from . import __version__ as _abicheck_version
@@ -252,7 +253,7 @@ def _warn_ignored_flags(
 
 def _load_suppression_and_policy(
     suppress: Path | None, policy: str, policy_file_path: Path | None,
-) -> tuple["SuppressionList | None", "PolicyFile | None"]:
+) -> tuple[SuppressionList | None, PolicyFile | None]:
     """Load suppression list and policy file from CLI arguments."""
     from .policy_file import PolicyFile
     from .suppression import SuppressionList

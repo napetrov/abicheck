@@ -97,7 +97,11 @@ def _check_removed_function(
 ) -> Change:
     """Create a Change for a function that was removed or hidden."""
     f_hidden = new_all.get(mangled)
-    if f_hidden is not None and f_hidden.visibility == Visibility.HIDDEN:
+    if (
+        f_hidden is not None
+        and f_hidden.visibility == Visibility.HIDDEN
+        and not (elf_only_mode and f_old.visibility == Visibility.ELF_ONLY)
+    ):
         return Change(
             kind=ChangeKind.FUNC_VISIBILITY_CHANGED,
             symbol=mangled,
@@ -2189,7 +2193,10 @@ def _split_top_level_args(inner: str) -> list[str]:
         if c in _OPEN:
             nesting[_OPEN[c]] += 1
             current.append(c)
-        elif c in _CLOSE:
+        elif c == ">" and all(n == 0 for n in nesting[1:]) and nesting[0] > 0:
+            nesting[0] -= 1
+            current.append(c)
+        elif c in _CLOSE and c != ">":
             nesting[_CLOSE[c]] -= 1
             current.append(c)
         elif c == "," and all(n == 0 for n in nesting):
