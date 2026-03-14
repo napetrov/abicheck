@@ -167,8 +167,23 @@ Full reference (including `compat` mode): [Exit Codes](exit_codes.md)
 
 ### GitHub Actions example
 
+Save a baseline once at release time, then compare every new build:
+
+```bash
+# Release step — save baseline as an artifact
+abicheck dump ./build/libfoo.so -H include/foo.h \
+  --version 1.0 -o abi-baseline.json
+# Upload abi-baseline.json as a release artifact
+```
+
 ```yaml
+# CI step — compare new build against saved baseline
 steps:
+  - name: Download ABI baseline
+    uses: actions/download-artifact@v4
+    with:
+      name: abi-baseline
+
   - name: Compare ABI
     run: |
       abicheck compare abi-baseline.json ./build/libfoo.so \

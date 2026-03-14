@@ -2,7 +2,7 @@
 
 > Updated: 2026-03-09 (independently verified against raw GitHub sources)
 > Source: ABICC `RulesBin.xml` (196 rules), `RulesSrc.xml` (100 rules + `Removed_Const_Overload`), `RegTests.pm` (~153 C++ + ~102 C named scenarios)
-> Target: abicheck `examples/` (48 cases), `tests/` (690+ tests), `ChangeKind` enum (100+ kinds)
+> Target: abicheck `examples/` (48 cases), `tests/` (690+ tests), `ChangeKind` enum (118 kinds)
 >
 > **Analysis modes:** Abicheck uses **both** header comparison (via castxml) **and** binary analysis (ELF/DWARF).
 > The `dump()` function combines castxml header parsing (types, functions, enums, typedefs, constants) with
@@ -22,14 +22,9 @@
 | ABICC RegTests.pm named scenarios | ~255 (~153 C++ + ~102 C) |
 | ABICC de-duplicated scenarios | ~66 |
 | **Abicheck covers (has ChangeKind + tests)** | **66/66 (100%)** |
-| Abicheck ChangeKind enum members | 98 |
-| All 98 ChangeKinds have assertion tests | **Yes** |
-| Abicheck example cases | 41 |
-| Detectors with example case | 52 |
-| Detectors without example case (unit-tested only) | 26 |
-| Detectors total (52 + 26) | 78 |
-| Abicheck-only detectors (not in ABICC) | 20 |
-| **Note:** 78 + 20 = 98 total ChangeKind members | |
+| Abicheck ChangeKind enum members | 118 |
+| All 118 ChangeKinds have assertion tests | **Yes** |
+| Abicheck example cases | 48 |
 | ABICC scenarios NOT in abicheck | **0** |
 
 ---
@@ -378,6 +373,6 @@ These detectors exist in abicheck but have no ABICC equivalent:
 
 **0 remaining gaps.** All ABICC de-duplicated detection scenarios are covered by abicheck with dedicated ChangeKinds and explicit assertion tests, including the `TypedefToFunction` scenario (covered in `test_changekind_completeness.py`).
 
-**All 98 ChangeKinds have assertion-level test coverage.** Previously, 3 ChangeKinds (`SYMBOL_BINDING_STRENGTHENED`, `VAR_ACCESS_WIDENED`, `TYPE_VTABLE_CHANGED`) were only referenced in set/list definitions but lacked explicit assertion tests. These are now covered in `test_changekind_completeness.py`.
+**All 118 ChangeKinds have assertion-level test coverage.** Previously, 3 ChangeKinds (`SYMBOL_BINDING_STRENGTHENED`, `VAR_ACCESS_WIDENED`, `TYPE_VTABLE_CHANGED`) were only referenced in set/list definitions but lacked explicit assertion tests. These are now covered in `test_changekind_completeness.py`.
 
 **Inline function scenarios (4):** `RemovedInlineMethod`, `removedInlineFunction`, `functionBecameInline`, `RemovedInlineVirtualFunction` — these ABICC scenarios detect inline function removal via header comparison. In abicheck, inline functions declared in headers are parsed by castxml but filtered against ELF `.dynsym` (inline functions have no exported symbol). If headers are provided, castxml captures the declaration; detection depends on whether the symbol was previously exported. Virtual inline function removal is still detected via vtable changes (`TYPE_VTABLE_CHANGED`). These are classified as **edge cases** rather than gaps, since the typical ABI contract concerns exported symbols.

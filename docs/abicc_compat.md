@@ -2,9 +2,8 @@
 
 `abicheck compat check` is a drop-in replacement for `abi-compliance-checker` (ABICC).
 It accepts the same single-hyphen flags, reads the same XML descriptors, and produces
-mostly compatible exit codes — so you can swap it into existing ABICC pipelines with
-a one-line change. (Note: exit code `2` may mean either `API_BREAK` or a tool error
-such as a missing descriptor file — see the exit codes table below for details.)
+compatible exit codes — so you can swap it into existing ABICC pipelines with
+a one-line change.
 
 ## Migrating from ABICC
 
@@ -26,9 +25,10 @@ abicheck compat check -lib libfoo -old OLD.xml -new NEW.xml -report-path report.
 |-----------|-------|-----------------|
 | `0` | Compatible | Compatible / no change |
 | `1` | Breaking | BREAKING |
-| `2` | Error | API_BREAK or tool error |
+| `2` | Error | `API_BREAK` (source-level break) |
+| `3`–`11` | — | Non-verdict failures (missing tool, file access, parse error, etc.) |
 
-> **Tip:** Pre-validate that your XML descriptor files exist before running to avoid ambiguity with exit code `2`.
+> Non-verdict failures use extended error codes (`3`–`11`) instead of overloading exit `2`. See [Exit Codes](exit_codes.md#extended-compat-error-codes-abicc-style) for the full table.
 
 ### Step 3: Validate on historical releases
 
@@ -66,7 +66,8 @@ Exit codes match ABICC:
 |------|---------|
 | `0` | Compatible or no change |
 | `1` | Breaking ABI change detected |
-| `2` | Source-level break (`API_BREAK`) or error (descriptor parse failure, missing files) |
+| `2` | `API_BREAK` (source-level break) |
+| `3`–`11` | Non-verdict failures (see [Exit Codes](exit_codes.md)) |
 
 > **Note:** In `-strict` mode, `API_BREAK` is promoted to exit `1` (BREAKING).
 
