@@ -45,7 +45,9 @@ from typing import Any
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
-from .dwarf_utils import attr_bool as _attr_bool  # noqa: F401 — available for future use
+from .dwarf_utils import (
+    attr_bool as _attr_bool,  # noqa: F401 — available for future use
+)
 from .dwarf_utils import attr_int as _attr_int
 from .dwarf_utils import attr_str as _attr_str
 from .dwarf_utils import resolve_die_ref as _resolve_ref

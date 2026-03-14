@@ -16,7 +16,15 @@ from .checker_policy import policy_kind_sets as _policy_kind_sets
 from .detectors import DetectorResult
 from .dwarf_advanced import diff_advanced_dwarf
 from .elf_metadata import SymbolBinding, SymbolType
-from .model import AbiSnapshot, EnumType, Function, RecordType, TypeField, Variable, Visibility
+from .model import (
+    AbiSnapshot,
+    EnumType,
+    Function,
+    RecordType,
+    TypeField,
+    Variable,
+    Visibility,
+)
 
 if TYPE_CHECKING:
     from .policy_file import PolicyFile
