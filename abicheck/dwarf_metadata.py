@@ -45,6 +45,13 @@ from typing import Any
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
+from .dwarf_utils import (
+    attr_bool as _attr_bool,  # noqa: F401 — available for future use
+)
+from .dwarf_utils import attr_int as _attr_int
+from .dwarf_utils import attr_str as _attr_str
+from .dwarf_utils import resolve_die_ref as _resolve_ref
+
 log = logging.getLogger(__name__)
 
 
@@ -449,26 +456,7 @@ def _process_enum_named(
 # DWARF reference resolution
 # ---------------------------------------------------------------------------
 
-def _resolve_ref(die: Any, attr_name: str, CU: Any) -> Any:
-    """Resolve a DW_AT_type (or similar) reference to the target DIE.
-
-    Handles both CU-relative refs (DW_FORM_ref1/2/4/8/udata) and
-    section-absolute refs (DW_FORM_ref_addr).  pyelftools stores the raw
-    offset in .value; for CU-relative forms we add CU.cu_offset to get
-    the absolute .debug_info position expected by get_DIE_from_refaddr().
-    """
-    attr = die.attributes[attr_name]
-    form = attr.form
-    raw_val: int = attr.value  # type: ignore[assignment]
-
-    if form == "DW_FORM_ref_addr":
-        # Section-relative: already an absolute offset
-        abs_offset = raw_val
-    else:
-        # CU-relative (DW_FORM_ref1/2/4/8/ref_udata): add CU header offset
-        abs_offset = raw_val + CU.cu_offset
-
-    return CU.get_DIE_from_refaddr(abs_offset)
+# _resolve_ref is imported from dwarf_utils at the top of this module.
 
 
 # ---------------------------------------------------------------------------
@@ -661,31 +649,10 @@ def _compute_fallback_type_info(die: Any, tag: str) -> tuple[str, int]:
 
 
 # ---------------------------------------------------------------------------
-# Attribute helpers
+# Attribute helpers — delegated to dwarf_utils
 # ---------------------------------------------------------------------------
-
-def _attr_str(die: Any, attr: str) -> str:
-    """Return string value of a DIE attribute, or ''."""
-    if attr not in die.attributes:
-        return ""
-    val = die.attributes[attr].value
-    if isinstance(val, bytes):
-        return val.decode("utf-8", errors="replace")
-    return str(val) if val is not None else ""
-
-
-def _attr_int(die: Any, attr: str) -> int:
-    """Return integer value of a DIE attribute, or 0.
-
-    Handles signed DW_FORM_sdata values correctly (e.g. negative enum consts).
-    """
-    if attr not in die.attributes:
-        return 0
-    val = die.attributes[attr].value
-    try:
-        return int(val)
-    except (TypeError, ValueError):
-        return 0
+# _attr_str, _attr_int, and _resolve_ref are imported from dwarf_utils
+# at the top of this module.
 
 # Public alias for dwarf_unified — keeps the contract visible to mypy.
 _process_cu_impl = _process_cu
