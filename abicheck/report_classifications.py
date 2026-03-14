@@ -112,10 +112,10 @@ SYMBOL_PROBLEM_PREFIXES: tuple[str, ...] = (
 
 #: Category buckets for summary tables — mirrors ABICC section headers.
 CATEGORY_PREFIXES: list[tuple[str, tuple[str, ...]]] = [
-    ("Functions",  ("func_",)),
-    ("Variables",  ("var_",)),
-    ("Types",      ("type_", "struct_", "union_", "field_", "typedef_")),
-    ("Enums",      ("enum_",)),
+    ("Functions", ("func_",)),
+    ("Variables", ("var_",)),
+    ("Types", ("type_", "struct_", "union_", "field_", "typedef_")),
+    ("Enums", ("enum_",)),
     ("ELF / DWARF", ("soname_", "symbol_", "needed_", "rpath_", "runpath_",
                      "ifunc_", "common_", "dwarf_")),
 ]
