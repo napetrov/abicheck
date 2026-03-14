@@ -571,7 +571,7 @@ class TestRelpathDescriptor:
             </descriptor>
         """)
         desc = parse_descriptor(xml, relpath="/opt/myproject")
-        assert str(desc.libs[0]) == "/opt/myproject/lib/libfoo.so"
+        assert desc.libs[0].as_posix() == "/opt/myproject/lib/libfoo.so"
 
     def test_relpath_replaces_macro_in_headers(self, tmp_path: Path) -> None:
         xml = _write_file(tmp_path, "desc.xml", """
@@ -582,7 +582,7 @@ class TestRelpathDescriptor:
             </descriptor>
         """)
         desc = parse_descriptor(xml, relpath="/opt/myproject")
-        assert str(desc.headers[0]) == "/opt/myproject/include"
+        assert desc.headers[0].as_posix() == "/opt/myproject/include"
 
     def test_no_relpath_leaves_macros(self, tmp_path: Path) -> None:
         xml = _write_file(tmp_path, "desc.xml", """
@@ -603,7 +603,7 @@ class TestRelpathDescriptor:
         """)
         result = _load_descriptor_or_dump(xml, relpath="/opt/build")
         assert isinstance(result, CompatDescriptor)
-        assert "/opt/build/lib/libfoo.so" in str(result.libs[0])
+        assert "/opt/build/lib/libfoo.so" in result.libs[0].as_posix()
 
 
 # ── Headers list resolution ──────────────────────────────────────────────────

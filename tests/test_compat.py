@@ -48,9 +48,9 @@ def test_parse_descriptor_basic(tmp_path: Path) -> None:
     assert isinstance(desc, CompatDescriptor)
     assert desc.version == "2025.3"
     assert len(desc.libs) == 1
-    assert desc.libs[0] == Path("/usr/lib/libmylib.so")
+    assert desc.libs[0].as_posix() == "/usr/lib/libmylib.so"
     assert len(desc.headers) == 1
-    assert desc.headers[0] == Path("/usr/include/mylib")
+    assert desc.headers[0].as_posix() == "/usr/include/mylib"
 
 
 def test_parse_descriptor_multiple_headers(tmp_path: Path) -> None:
@@ -64,7 +64,7 @@ def test_parse_descriptor_multiple_headers(tmp_path: Path) -> None:
     """
     desc = parse_descriptor(_write_xml(tmp_path, xml))
     assert len(desc.headers) == 2
-    assert Path("/usr/include/foo/detail") in desc.headers
+    assert any(h.as_posix() == "/usr/include/foo/detail" for h in desc.headers)
 
 
 def test_parse_descriptor_multiple_libs(tmp_path: Path) -> None:
@@ -226,4 +226,4 @@ def test_parse_descriptor_first_lib_used_warning(tmp_path: Path) -> None:
     desc = parse_descriptor(_write_xml(tmp_path, xml))
     # Both are captured — CLI is responsible for emitting the warning
     assert len(desc.libs) == 2
-    assert desc.libs[0] == Path("/lib/liba.so")
+    assert desc.libs[0].as_posix() == "/lib/liba.so"
