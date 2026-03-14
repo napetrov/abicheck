@@ -13,7 +13,7 @@ Windows PE and macOS Mach-O are not supported.
 
 ## Analysis pipeline
 
-```
+```text
                     ┌──────────────────────────────┐
  .so (v1) + headers │  1. ELF: symbols, SONAME,    │
  ──────────────────►│     visibility, binding       │

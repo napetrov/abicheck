@@ -43,7 +43,7 @@ pip install -e .
 The repo includes 48 ABI break examples with paired `v1`/`v2` sources and headers:
 
 ```bash
-cd abicheck/examples/case01_symbol_removal
+cd examples/case01_symbol_removal
 ```
 
 ```bash

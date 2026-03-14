@@ -124,7 +124,7 @@ abicheck compare old.so new.so -H foo.h --format html -o report.html
 
 ### Example report (markdown)
 
-```
+```text
 Verdict: BREAKING
 
 Changes (3):

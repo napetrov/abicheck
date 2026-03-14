@@ -2,7 +2,9 @@
 
 `abicheck compat check` is a drop-in replacement for `abi-compliance-checker` (ABICC).
 It accepts the same single-hyphen flags, reads the same XML descriptors, and produces
-compatible exit codes — so you can swap it into existing ABICC pipelines with a one-line change.
+mostly compatible exit codes — so you can swap it into existing ABICC pipelines with
+a one-line change. (Note: exit code `2` may mean either `API_BREAK` or a tool error
+such as a missing descriptor file — see the exit codes table below for details.)
 
 For the migration guide (step-by-step checklist), see [Migrating from ABICC](migration/from_abicc.md).
 

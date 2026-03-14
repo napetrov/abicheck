@@ -49,7 +49,7 @@ If you later switch to `abicheck compare` (recommended), exit codes change:
 
 ## Step 3: Validate on historical releases
 
-Run both tools on 3-5 known releases to verify matching results:
+Run abicheck on 3-5 known releases and compare results against your existing ABICC outputs:
 
 ```bash
 for ver in v1.0 v1.1 v1.2; do
