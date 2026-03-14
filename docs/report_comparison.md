@@ -94,9 +94,9 @@ struct Point — 2 changes:
 | Old value                       | Yes (`"old_value": "32"`) | Yes (in text) | Yes (in text) |
 | New value                       | Yes (`"new_value": "64"`) | Yes (in text) | Yes (in text) |
 | Human description               | Yes (`"description": "..."`) | Yes (verbose, with impact explanation) | Yes (terse) |
-| **Impact explanation**          | **NO** | **YES** ("may result in crash or incorrect behavior") | Partial ("note that this is an ABI incompatible change") |
-| **Affected functions list**     | **NO** | **YES** (lists all functions whose signatures use the type) | Implicit (report is function-centric) |
-| **Source file location**        | **NO** | Yes (header file name) | Yes (`at v2.c:2:1`) |
+| **Impact explanation**          | Yes (`"impact": "..."` — per-kind human-readable text in all formats) | Yes ("may result in crash or incorrect behavior") | Partial ("note that this is an ABI incompatible change") |
+| **Affected functions list**     | Yes (`"affected_symbols": [...]` — exported functions using the type) | Yes (lists all functions whose signatures use the type) | Implicit (report is function-centric) |
+| **Source file location**        | Yes (`"source_location": "header.h:42"` — in SARIF, Markdown, HTML) | Yes (header file name) | Yes (`at v2.c:2:1`) |
 | **Severity level**              | Implicit via kind (BREAKING/API_BREAK/COMPATIBLE) | Yes (High/Medium/Low) | No |
 | **Detector/layer that found it** | Yes (`detectors` array in JSON) | No | No |
 
@@ -115,6 +115,9 @@ struct Point — 2 changes:
 | Suppressed changes              | Yes (list + count) | No | Yes (suppression specs supported) |
 | Policy/profile used             | In JSON (`"policy": "strict_abi"`) | No | No |
 | Detector results breakdown      | Yes (JSON: per-detector change count + enabled + coverage_gap) | No | No |
+| **Library file path**           | Yes (all formats, `old_file`/`new_file`) | No | No |
+| **Library SHA-256**             | Yes (all formats) | No | No |
+| **Library file size**           | Yes (all formats) | No | No |
 | Tool version                    | In SARIF | Yes | Yes (via --version) |
 | Architecture                    | No | Yes (x86_64, shown in report) | No |
 | Compiler used for analysis      | No | Yes (GCC version) | No |

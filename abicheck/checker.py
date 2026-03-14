@@ -1516,6 +1516,10 @@ def _enrich_source_locations(
             continue
         # Try function/variable first (symbol is mangled name), then type name
         loc = func_loc.get(c.symbol) or var_loc.get(c.symbol) or type_loc.get(c.symbol)
+        # For qualified symbols like "MyStruct::field", fall back to base type name
+        if not loc and "::" in c.symbol:
+            base_type = c.symbol.split("::")[0]
+            loc = type_loc.get(base_type)
         if loc:
             c.source_location = loc
 
@@ -1561,15 +1565,28 @@ def _enrich_affected_symbols(
     # (e.g., Container has a Leaf field → functions taking Container* are affected by Leaf changes)
     type_embeds: dict[str, set[str]] = {}  # child_type → {parent_type, ...}
     for t in old.types:
-        for field in t.fields:
+        for fld in t.fields:
             for tname in affected_types:
-                if tname in field.type:
+                if tname in fld.type:
                     type_embeds.setdefault(tname, set()).add(t.name)
 
-    # Propagate: if Leaf is embedded in Container, functions using Container are affected by Leaf
+    # Compute transitive closure: if Leaf is in Container is in Wrapper,
+    # functions using Wrapper are also affected by Leaf changes.
+    def _all_ancestors(tname: str) -> set[str]:
+        """BFS over type_embeds to find all transitive parent types."""
+        visited: set[str] = set()
+        queue = list(type_embeds.get(tname, set()))
+        while queue:
+            parent = queue.pop()
+            if parent in visited:
+                continue
+            visited.add(parent)
+            queue.extend(type_embeds.get(parent, set()))
+        return visited
+
     for tname in affected_types:
-        parents = type_embeds.get(tname, set())
-        for parent in parents:
+        ancestors = _all_ancestors(tname)
+        for parent in ancestors:
             if parent in type_to_funcs:
                 type_to_funcs[tname].extend(type_to_funcs[parent])
             else:
@@ -1594,13 +1611,15 @@ def _deduplicate_ast_dwarf(changes: list[Change]) -> list[Change]:
     When both AST and DWARF detectors report equivalent changes (e.g.,
     TYPE_SIZE_CHANGED from AST and STRUCT_SIZE_CHANGED from DWARF),
     keep only the AST finding and drop the DWARF duplicate.
-    Also deduplicates exact duplicates (same kind + symbol).
+    Also deduplicates exact duplicates (same kind + description).
+
+    Uses full symbol for field-level matching to avoid false negatives
+    (e.g., S::a and S::b are distinct findings that must not be collapsed).
     """
-    # First pass: collect (kind, base_symbol) pairs from non-DWARF changes
+    # First pass: index all findings by (kind, symbol) for cross-kind dedup
     ast_findings: set[tuple[str, str]] = set()
     for c in changes:
-        base_sym = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
-        ast_findings.add((c.kind.value, base_sym))
+        ast_findings.add((c.kind.value, c.symbol))
 
     # Second pass: filter out DWARF duplicates
     result: list[Change] = []
@@ -1615,8 +1634,7 @@ def _deduplicate_ast_dwarf(changes: list[Change]) -> list[Change]:
         # Check if this DWARF finding has an AST equivalent already present
         equiv_ast_kinds = _DWARF_TO_AST_EQUIV.get(c.kind)
         if equiv_ast_kinds:
-            base_sym = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
-            if any((ak.value, base_sym) in ast_findings for ak in equiv_ast_kinds):
+            if any((ak.value, c.symbol) in ast_findings for ak in equiv_ast_kinds):
                 continue  # skip DWARF duplicate
         result.append(c)
     return result
@@ -1694,6 +1712,11 @@ def compare(
         changes.extend(detected)
         detector_results.append(DetectorResult(name=spec.name, changes_count=len(detected), enabled=True))
 
+    # Deduplicate AST/DWARF before suppression so a single canonical change
+    # remains for suppression matching (avoids suppressed AST entry leaving
+    # an unsuppressed DWARF duplicate).
+    changes = _deduplicate_ast_dwarf(changes)
+
     suppressed: list[Change] = []
     if suppression is not None:
         filtered: list[Change] = []
@@ -1704,10 +1727,9 @@ def compare(
                 filtered.append(c)
         changes = filtered
 
-    # Post-processing: enrich changes with source locations and affected symbols
+    # Post-processing: enrich remaining changes with source locations and affected symbols
     _enrich_source_locations(changes, old, new)
     _enrich_affected_symbols(changes, old)
-    changes = _deduplicate_ast_dwarf(changes)
 
     verdict = policy_file.compute_verdict(changes) if policy_file is not None else compute_verdict(changes, policy=policy)
     effective_policy = policy_file.base_policy if policy_file is not None else policy

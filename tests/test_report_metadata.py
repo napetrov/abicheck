@@ -10,16 +10,13 @@ Covers:
 - Deduplication of AST/DWARF findings
 """
 
-import json
 import hashlib
+import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from abicheck.checker import Change, ChangeKind, DiffResult, LibraryMetadata, Verdict
 from abicheck.reporter import to_json, to_markdown
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -420,3 +417,93 @@ class TestDeduplication:
         ]
         result = _deduplicate_ast_dwarf(changes)
         assert len(result) == 2
+
+    def test_different_fields_not_collapsed(self):
+        """DWARF findings for different fields of the same struct must not be collapsed."""
+        from abicheck.checker import _deduplicate_ast_dwarf
+
+        changes = [
+            # AST found offset change for field S::a
+            Change(ChangeKind.TYPE_FIELD_OFFSET_CHANGED, "S::a",
+                   "Field offset changed: S::a (0 → 8)", old_value="0", new_value="8"),
+            # DWARF found offset change for field S::b — different field, must keep
+            Change(ChangeKind.STRUCT_FIELD_OFFSET_CHANGED, "S::b",
+                   "Field offset changed: S::b (8 → 16)", old_value="8", new_value="16"),
+        ]
+        result = _deduplicate_ast_dwarf(changes)
+        assert len(result) == 2
+        symbols = {c.symbol for c in result}
+        assert "S::a" in symbols
+        assert "S::b" in symbols
+
+    def test_same_field_ast_dwarf_collapsed(self):
+        """DWARF finding for same field as AST should be collapsed."""
+        from abicheck.checker import _deduplicate_ast_dwarf
+
+        changes = [
+            Change(ChangeKind.TYPE_FIELD_OFFSET_CHANGED, "S::a",
+                   "Field offset changed: S::a (0 → 8)", old_value="0", new_value="8"),
+            Change(ChangeKind.STRUCT_FIELD_OFFSET_CHANGED, "S::a",
+                   "Field offset changed: S::a (0 → 8)", old_value="0", new_value="8"),
+        ]
+        result = _deduplicate_ast_dwarf(changes)
+        assert len(result) == 1
+        assert result[0].kind == ChangeKind.TYPE_FIELD_OFFSET_CHANGED
+
+
+# ---------------------------------------------------------------------------
+# Markdown falsey value handling
+# ---------------------------------------------------------------------------
+
+class TestMarkdownFalseyValues:
+    def test_zero_old_value_shown(self):
+        """old_value='0' (falsey but not None) should be displayed."""
+        c = Change(ChangeKind.TYPE_FIELD_OFFSET_CHANGED, "S::x",
+                   "offset changed", old_value="0", new_value="8")
+        md = to_markdown(_result(changes=[c]))
+        assert "`0`" in md
+        assert "`8`" in md
+
+    def test_empty_string_old_value_shown(self):
+        """old_value='' (falsey but not None) should be displayed."""
+        c = Change(ChangeKind.FUNC_PARAMS_CHANGED, "foo",
+                   "params changed", old_value="", new_value="int")
+        md = to_markdown(_result(changes=[c]))
+        assert "→" in md
+        assert "`int`" in md
+
+    def test_new_only_value_shown(self):
+        """When old_value is None but new_value has a value, new_value should appear."""
+        c = Change(ChangeKind.FUNC_RETURN_CHANGED, "foo",
+                   "return type changed", new_value="int")
+        md = to_markdown(_result(changes=[c]))
+        assert "`int`" in md
+
+
+# ---------------------------------------------------------------------------
+# PolicyEntry.impact populated
+# ---------------------------------------------------------------------------
+
+class TestPolicyEntryImpact:
+    def test_impact_populated_for_breaking_kinds(self):
+        from abicheck.checker_policy import policy_for
+        entry = policy_for(ChangeKind.FUNC_REMOVED)
+        assert entry.impact != ""
+        assert "symbol" in entry.impact.lower() or "crash" in entry.impact.lower() or "linker" in entry.impact.lower()
+
+    def test_impact_populated_for_type_changes(self):
+        from abicheck.checker_policy import policy_for
+        entry = policy_for(ChangeKind.TYPE_SIZE_CHANGED)
+        assert entry.impact != ""
+
+    def test_impact_matches_impact_for(self):
+        from abicheck.checker_policy import impact_for, policy_for
+        for kind in [ChangeKind.FUNC_REMOVED, ChangeKind.TYPE_SIZE_CHANGED,
+                     ChangeKind.ENUM_MEMBER_VALUE_CHANGED]:
+            assert policy_for(kind).impact == impact_for(kind)
+
+    def test_compatible_kind_impact(self):
+        from abicheck.checker_policy import policy_for
+        entry = policy_for(ChangeKind.FUNC_ADDED)
+        assert entry.impact != ""
+        assert "unaffected" in entry.impact.lower()

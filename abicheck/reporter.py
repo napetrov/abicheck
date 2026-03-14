@@ -236,10 +236,12 @@ def _format_change_md(c: object) -> str:
 
     # Base line
     old_new = ""
-    if old_val and new_val:
+    if old_val is not None and new_val is not None:
         old_new = f" (`{old_val}` → `{new_val}`)"
-    elif old_val:
+    elif old_val is not None:
         old_new = f" (`{old_val}`)"
+    elif new_val is not None:
+        old_new = f" (`{new_val}`)"
     line = f"- **{kind_val}**: {desc}{old_new}"
 
     # Source location

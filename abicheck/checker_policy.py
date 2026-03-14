@@ -591,13 +591,13 @@ IMPACT_TEXT: dict[ChangeKind, str] = {
 
 
 POLICY_REGISTRY: dict[ChangeKind, PolicyEntry] = (
-    {k: PolicyEntry(Verdict.BREAKING, "error", k.value) for k in BREAKING_KINDS}
-    | {k: PolicyEntry(Verdict.API_BREAK, "warning", k.value) for k in API_BREAK_KINDS}
+    {k: PolicyEntry(Verdict.BREAKING, "error", k.value, IMPACT_TEXT.get(k, "")) for k in BREAKING_KINDS}
+    | {k: PolicyEntry(Verdict.API_BREAK, "warning", k.value, IMPACT_TEXT.get(k, "")) for k in API_BREAK_KINDS}
     | {
-        k: PolicyEntry(Verdict.COMPATIBLE_WITH_RISK, "warning", k.value)
+        k: PolicyEntry(Verdict.COMPATIBLE_WITH_RISK, "warning", k.value, IMPACT_TEXT.get(k, ""))
         for k in RISK_KINDS
     }
-    | {k: PolicyEntry(Verdict.COMPATIBLE, "warning", k.value) for k in COMPATIBLE_KINDS}
+    | {k: PolicyEntry(Verdict.COMPATIBLE, "warning", k.value, IMPACT_TEXT.get(k, "")) for k in COMPATIBLE_KINDS}
 )
 
 
