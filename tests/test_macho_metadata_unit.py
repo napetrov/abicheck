@@ -111,6 +111,17 @@ class TestIsMacho:
         p.write_bytes(b"\xbe\xba\xfe\xca" + b"\x00" * 100)
         assert is_macho(p) is True
 
+    def test_fat64_binary(self, tmp_path):
+        """FAT_MAGIC_64 (fat64 universal binary) must be recognized."""
+        p = tmp_path / "lib.dylib"
+        p.write_bytes(b"\xca\xfe\xba\xbf" + b"\x00" * 100)
+        assert is_macho(p) is True
+
+    def test_fat64_binary_swapped(self, tmp_path):
+        p = tmp_path / "lib.dylib"
+        p.write_bytes(b"\xbf\xba\xfe\xca" + b"\x00" * 100)
+        assert is_macho(p) is True
+
     def test_elf_not_macho(self, tmp_path):
         p = tmp_path / "lib.so"
         p.write_bytes(b"\x7fELF" + b"\x00" * 100)
@@ -536,8 +547,18 @@ class TestParseMachoMetadata:
         f = tmp_path / "libfat_multi.dylib"
         f.write_bytes(fat)
         meta = parse_macho_metadata(f)
-        # Should pick one of the known arches (not crash), install_name must match
-        assert meta.install_name in ("/usr/lib/libfat_x86.dylib", "/usr/lib/libfat_arm.dylib")
+        # Verify host-arch preference: arm64/aarch64 runners should get arm slice,
+        # x86_64 runners should get x86 slice, not silently always first-wins.
+        import platform as _plat
+        machine = _plat.machine().lower()
+        if machine in ("arm64", "aarch64"):
+            assert meta.install_name == "/usr/lib/libfat_arm.dylib", (
+                f"Expected arm64 slice on {machine}, got: {meta.install_name}"
+            )
+        else:
+            assert meta.install_name == "/usr/lib/libfat_x86.dylib", (
+                f"Expected x86_64 slice on {machine}, got: {meta.install_name}"
+            )
 
     def test_parse_fat_binary_empty_arches(self, tmp_path):
         """Fat binary with 0 arches returns empty metadata."""

@@ -128,6 +128,8 @@ _MACHO_MAGICS = {
     b"\xcf\xfa\xed\xfe",   # MH_CIGAM_64 (64-bit, swapped)
     b"\xca\xfe\xba\xbe",   # FAT_MAGIC (universal binary)
     b"\xbe\xba\xfe\xca",   # FAT_CIGAM (universal, swapped)
+    b"\xca\xfe\xba\xbf",   # FAT_MAGIC_64 (fat64 universal binary)
+    b"\xbf\xba\xfe\xca",   # FAT_CIGAM_64 (fat64, swapped)
 }
 
 

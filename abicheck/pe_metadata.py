@@ -170,6 +170,9 @@ def _parse(dll_path: Path) -> PeMetadata:
                 for imp in entry.imports:
                     if imp.name:
                         funcs.append(imp.name.decode("utf-8", errors="replace"))
+                    elif getattr(imp, "import_by_ordinal", False):
+                        # Ordinal-only import (name=None, import_by_ordinal=True)
+                        funcs.append(f"ordinal:{imp.ordinal}")
                 meta.imports[dll_name] = funcs
 
         # Version resource

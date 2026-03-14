@@ -327,6 +327,25 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
     """
     _setup_verbosity(verbose)
 
+    # Auto-detect binary format — PE/Mach-O skip the ELF/castxml path
+    binary_fmt = _detect_binary_format(so_path)
+    if binary_fmt in ("pe", "macho"):
+        try:
+            snap = _dump_native_binary(
+                so_path, binary_fmt, list(headers), list(includes), version, lang,
+            )
+        except click.ClickException:
+            raise
+        except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        result = snapshot_to_json(snap)
+        if output:
+            output.write_text(result, encoding="utf-8")
+            click.echo(f"Snapshot written to {output}", err=True)
+        else:
+            click.echo(result)
+        return
+
     compiler = "c++" if lang == "c++" else "cc"
     try:
         snap = dump(
