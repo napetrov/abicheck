@@ -4,10 +4,10 @@ Thank you for your interest in contributing!
 
 ## Requirements
 
-- Linux (ELF/DWARF tooling is Linux-specific)
 - Python >= 3.10
-- `castxml` + `g++` or `clang++`
 - `git`
+- Linux for full test suite: `castxml` + `g++` or `clang++` (ELF/DWARF/header tests)
+- Windows/macOS: unit tests and PE/Mach-O tests run without extra system dependencies
 
 ## Setup
 

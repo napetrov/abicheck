@@ -3,44 +3,76 @@
 ## Overview
 
 abicheck is a Python CLI tool that compares two versions of a C/C++ shared library
-to detect ABI and API incompatibilities. It uses a 3-layer analysis pipeline to
-achieve higher accuracy than tools that rely on a single data source.
+to detect ABI and API incompatibilities. On Linux it uses a 3-layer analysis pipeline
+to achieve higher accuracy than tools that rely on a single data source. On Windows
+and macOS it provides binary metadata analysis (exports, imports, dependencies).
 
-**Platform scope:** Linux only — ELF binaries (`.so`), DWARF debug info, and C/C++ headers.
-Windows PE and macOS Mach-O are not supported.
+**Supported platforms and binary formats:**
+
+| Platform | Format | Deep analysis (AST + DWARF) | Binary metadata |
+|----------|--------|:---------------------------:|:---------------:|
+| Linux | ELF (`.so`) | Yes | Yes |
+| Windows | PE/COFF (`.dll`) | — | Yes |
+| macOS | Mach-O (`.dylib`) | — | Yes |
 
 ---
 
 ## Analysis pipeline
 
 ```text
-                    ┌──────────────────────────────┐
- .so (v1) + headers │  1. ELF: symbols, SONAME,    │
- ──────────────────►│     visibility, binding       │
-                    │  2. castxml: Clang AST —      │──► Snapshot (JSON)
-                    │     types, vtable, noexcept   │         │
-                    │  3. DWARF: size cross-check,  │         │
-                    │     offsets, alignment         │         ▼
-                    └──────────────────────────────┘    Checker engine
-                                                           │
- .so (v2) + headers ──► (same pipeline) ──► Snapshot ──────┘
-                                                           │
-                                                      Classified changes
-                                                      + Verdict
+                    ┌─────────────────────────────────────────────┐
+                    │                abicheck CLI                  │
+                    │      dump · compare · compat check/dump     │
+                    └──────────┬──────────────┬───────────────────┘
+                               │              │
+                    ┌──────────▼──────────┐   │
+                    │   Format detection  │   │
+                    │  (ELF / PE / Mach-O)│   │
+                    └──┬──────┬───────┬───┘   │
+                       │      │       │       │
+              ┌────────▼┐ ┌───▼────┐ ┌▼───────▼──┐
+              │   ELF   │ │   PE   │ │  Mach-O   │
+              │ pyelftools│ │ pefile │ │ macholib  │
+              └────┬────┘ └───┬────┘ └─────┬─────┘
+                   │          │            │
+              ┌────▼──────────▼────────────▼─────┐
+              │        Snapshot (JSON model)       │
+              └────────────────┬──────────────────┘
+                               │
+              ┌────────────────▼──────────────────┐
+              │ Header AST (castxml) — Linux only  │
+              │ DWARF cross-check  — Linux only    │
+              └────────────────┬──────────────────┘
+                               │
+              ┌────────────────▼──────────────────┐
+              │    Checker → Changes → Verdict     │
+              └───────────────────────────────────┘
 ```
 
-### Layer 1: ELF metadata (pyelftools)
+### Layer 1: Binary metadata
 
-Reads the ELF dynamic symbol table (`.dynsym`):
+Reads native binary metadata using format-specific parsers:
 
-- Exported symbols (functions, variables)
-- SONAME
-- Symbol binding (GLOBAL, WEAK, LOCAL)
-- Symbol versioning (version definitions, requirements)
-- NEEDED dependencies
-- Visibility attributes
+**ELF** (Linux, via `pyelftools`):
+- Exported symbols (functions, variables) from `.dynsym`
+- SONAME, symbol binding (GLOBAL, WEAK, LOCAL), symbol versioning
+- NEEDED dependencies, visibility attributes
 
-### Layer 2: Header AST (castxml / Clang)
+**PE/COFF** (Windows, via `pefile`):
+- Exported functions and ordinals from the export table
+- Imported DLLs and functions from the import table
+- Machine type, characteristics, DLL characteristics
+- File and product version from VS_FIXEDFILEINFO resource
+
+**Mach-O** (macOS, via `macholib`):
+- Exported symbols from the symbol table (including weak definitions)
+- Install name (LC_ID_DYLIB — equivalent of ELF SONAME)
+- Dependent libraries (LC_LOAD_DYLIB — equivalent of ELF DT_NEEDED)
+- Re-exported libraries (LC_REEXPORT_DYLIB)
+- Current and compatibility versions, minimum OS version
+- Fat/universal binary support (automatic architecture selection)
+
+### Layer 2: Header AST (castxml / Clang) — Linux only
 
 Parses C/C++ headers through castxml to extract:
 
@@ -55,7 +87,7 @@ Parses C/C++ headers through castxml to extract:
 This is the primary source for type-level analysis. It catches changes invisible to
 DWARF-only tools: `noexcept`, `static` qualifier, const qualifier, access level changes.
 
-### Layer 3: DWARF cross-check (optional)
+### Layer 3: DWARF cross-check (optional, Linux only)
 
 When DWARF debug info is available in the `.so` files:
 
@@ -71,7 +103,10 @@ When DWARF debug info is available in the `.so` files:
 | Module | Responsibility |
 |--------|---------------|
 | `cli.py` | CLI entrypoint — `dump`, `compare`, `compat check`, `compat dump` commands |
-| `dumper.py` | Snapshot generation: reads `.so` + headers → JSON snapshot |
+| `dumper.py` | Snapshot generation: reads binary + headers → JSON snapshot |
+| `elf_metadata.py` | ELF reader — Linux `.so` binaries (via `pyelftools`) |
+| `pe_metadata.py` | PE/COFF reader — Windows `.dll` binaries (via `pefile`) |
+| `macho_metadata.py` | Mach-O reader — macOS `.dylib` binaries (via `macholib`) |
 | `checker.py` | Diff orchestration: compares two snapshots, collects changes |
 | `checker_policy.py` | `ChangeKind` enum, built-in policy profiles, verdict computation |
 | `detectors.py` | Individual ABI change detection rules |
@@ -81,10 +116,9 @@ When DWARF debug info is available in the `.so` files:
 | `sarif.py` | SARIF output for GitHub Code Scanning |
 | `suppression.py` | Suppression rules, symbol/type filtering |
 | `serialization.py` | JSON snapshot serialization/deserialization |
-| `elf_metadata.py` | ELF reader (layer 1) |
-| `dwarf_unified.py` | Unified DWARF handling (layer 3) |
-| `dwarf_advanced.py` | Advanced DWARF analysis |
-| `dwarf_metadata.py` | DWARF metadata extraction |
+| `dwarf_unified.py` | Unified DWARF handling (layer 3, Linux only) |
+| `dwarf_advanced.py` | Advanced DWARF analysis (Linux only) |
+| `dwarf_metadata.py` | DWARF metadata extraction (Linux only) |
 | `model.py` | Data models for snapshots and changes |
 | `errors.py` | Custom exception definitions |
 | `compat/` | ABICC compatibility layer (compat check, compat dump, XML parsing) |

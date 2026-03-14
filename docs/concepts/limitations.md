@@ -5,7 +5,22 @@ limitations you should understand before relying on it in production.
 
 ---
 
-## Header / Binary Mismatch Risk
+## Platform support matrix
+
+| Platform | Format | Binary metadata | Header AST | DWARF cross-check |
+|----------|--------|:---------------:|:----------:|:------------------:|
+| Linux | ELF (`.so`) | Yes (pyelftools) | Yes (castxml) | Yes (pyelftools) |
+| Windows | PE/COFF (`.dll`) | Yes (pefile) | — | — |
+| macOS | Mach-O (`.dylib`) | Yes (macholib) | — | — |
+
+On **Windows** and **macOS**, abicheck analyzes exported/imported symbols, library
+dependencies, and version metadata. Deep type-level analysis (header AST, DWARF
+cross-check) is not available — these platforms lack castxml integration and use
+different debug info formats.
+
+---
+
+## Header / Binary Mismatch Risk (Linux)
 
 **The most important limitation.** `abicheck` uses `castxml` to parse headers and
 compares the result against the compiled `.so`. If the headers passed to analysis

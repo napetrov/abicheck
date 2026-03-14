@@ -35,6 +35,8 @@ requires a non-Python build chain and is primarily aimed at Rust FFI, not C/C++ 
 ```
 abicheck (Python)
 ├── ELF metadata + DWARF  → pyelftools   (pure Python ELF/DWARF parser)
+├── PE/COFF metadata      → pefile       (pure Python PE parser)
+├── Mach-O metadata       → macholib     (pure Python Mach-O parser)
 ├── C++ header AST        → castxml      (C++ → XML, maintained by Kitware)
 └── Diff + verdict        → our Python   (thin, testable, no C extension)
 ```
@@ -47,8 +49,10 @@ parse path goes through pyelftools only (no subprocess, no text parsing).
 
 | Library | Role | Maintenance status |
 |---------|------|-------------------|
-| `pyelftools` | ELF/DWARF parsing | Active PyPI project, used by angr, pwntools, ROPgadget |
-| `castxml` | C++ header → XML AST | Maintained by Kitware (VTK team); available on conda-forge |
+| `pyelftools` | ELF/DWARF parsing (Linux) | Active PyPI project, used by angr, pwntools, ROPgadget |
+| `pefile` | PE/COFF parsing (Windows) | Active PyPI project, widely used for malware analysis and PE tooling |
+| `macholib` | Mach-O parsing (macOS) | Active PyPI project, maintained by the py2app team |
+| `castxml` | C++ header → XML AST (Linux) | Maintained by Kitware (VTK team); available on conda-forge |
 | `defusedxml` | Safe XML parsing | Security hardening for castxml output |
 
 ### Distribution
@@ -115,9 +119,13 @@ if subprocess overhead becomes a bottleneck.
 
 ## Platform Scope
 
-- **Supported:** Linux ELF x86-64, aarch64
-- **Not supported:** Windows PE/COFF, macOS Mach-O (explicit non-goal)
+- **Full analysis (ELF + header AST + DWARF):** Linux ELF x86-64, aarch64
+- **Binary metadata analysis:** Windows PE/COFF (`.dll`), macOS Mach-O (`.dylib`)
 - **DWARF version:** DWARF 4 (GCC ≤10 default) fully supported; DWARF 5 (GCC 11+ default) partially supported via pyelftools ≥0.29
+
+Windows and macOS support covers exported/imported symbols, library dependencies,
+and version metadata via `pefile` and `macholib` respectively. Deep type-level
+analysis (header AST, DWARF cross-check) is Linux-only and requires castxml.
 
 ## pyelftools Maintenance Risk & Mitigation
 

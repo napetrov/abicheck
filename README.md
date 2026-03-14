@@ -4,11 +4,11 @@
 [![codecov](https://codecov.io/gh/napetrov/abicheck/branch/main/graph/badge.svg)](https://codecov.io/gh/napetrov/abicheck)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-**abicheck** is a command-line tool that detects breaking changes in C/C++ shared libraries before they reach production. It compares two versions of a `.so` library — along with their public headers — and reports whether existing binaries will continue to work or break at runtime.
+**abicheck** is a command-line tool that detects breaking changes in C/C++ shared libraries before they reach production. It compares two versions of a shared library — along with their public headers — and reports whether existing binaries will continue to work or break at runtime.
 
 Typical problems it catches: removed or renamed symbols, changed function signatures, struct layout drift, vtable reordering, enum value reassignment, and dozens of other ABI/API incompatibilities that cause crashes, silent data corruption, or linker failures after a library upgrade.
 
-> **Platform:** Linux (ELF binaries + DWARF debug info + C/C++ headers). Windows PE and macOS Mach-O are not yet supported.
+> **Platforms:** Linux (ELF), Windows (PE/COFF), macOS (Mach-O). Full deep analysis (header AST + DWARF) is available on Linux; Windows and macOS support covers native binary metadata (exports, imports, dependencies).
 
 ---
 
@@ -20,18 +20,19 @@ Typical problems it catches: removed or renamed symbols, changed function signat
 
 | Requirement | Notes |
 |-------------|-------|
-| **Linux** | ELF/DWARF + header-based analysis |
-| **Python >= 3.10** | |
-| **`castxml`** | Clang-based C/C++ AST parser for header analysis |
-| **`g++` or `clang++`** | Must be accessible to castxml |
+| **Python >= 3.10** | All platforms |
+| **`castxml`** | Linux only — Clang-based C/C++ AST parser for header analysis |
+| **`g++` or `clang++`** | Linux only — must be accessible to castxml |
+
+`castxml` and a C++ compiler are only required for deep header/DWARF analysis on Linux. Windows PE and macOS Mach-O analysis works out of the box with no extra system dependencies.
 
 ```bash
-# Ubuntu / Debian
+# Ubuntu / Debian (for full ELF + header analysis)
 sudo apt install castxml g++
 ```
 
 ```bash
-# conda
+# conda (for full ELF + header analysis)
 conda install -c conda-forge castxml
 ```
 
@@ -390,13 +391,59 @@ See [Examples Breakage Guide](https://napetrov.github.io/abicheck/examples_break
 
 ## Architecture
 
-abicheck uses a 3-layer comparison pipeline:
+abicheck supports three binary formats, each with a dedicated metadata parser:
 
-1. **ELF metadata** (via pyelftools) — exported symbols, SONAME, visibility, binding, symbol versions
-2. **Header AST** (via castxml/Clang) — function signatures, classes, fields, typedefs, enums, vtable layout
-3. **DWARF cross-check** (optional) — validates actual compiled struct sizes, member offsets, vtable slots
+```text
+                    ┌─────────────────────────────────────────────┐
+                    │                abicheck CLI                  │
+                    │      dump · compare · compat check/dump     │
+                    └──────────┬──────────────┬───────────────────┘
+                               │              │
+                    ┌──────────▼──────────┐   │
+                    │   Format detection  │   │
+                    │  (ELF / PE / Mach-O)│   │
+                    └──┬──────┬───────┬───┘   │
+                       │      │       │       │
+              ┌────────▼┐ ┌───▼────┐ ┌▼───────▼──┐
+              │   ELF   │ │   PE   │ │  Mach-O   │
+              │ pyelftools│ │ pefile │ │ macholib  │
+              └────┬────┘ └───┬────┘ └─────┬─────┘
+                   │          │            │
+              ┌────▼──────────▼────────────▼─────┐
+              │        Snapshot (JSON model)       │
+              └────────────────┬──────────────────┘
+                               │
+              ┌────────────────▼──────────────────┐
+              │ Header AST (castxml) — Linux only  │
+              │ DWARF cross-check  — Linux only    │
+              └────────────────┬──────────────────┘
+                               │
+              ┌────────────────▼──────────────────┐
+              │    Checker → Changes → Verdict     │
+              └───────────────────────────────────┘
+```
 
-Each layer provides independent signals. Combining all three gives abicheck higher accuracy than tools that rely on only one or two sources (e.g., abidiff uses only DWARF; ABICC uses only GCC AST).
+### Analysis layers
+
+| Layer | Technology | Platforms | What it provides |
+|-------|-----------|-----------|-----------------|
+| **Binary metadata** | pyelftools / pefile / macholib | Linux, Windows, macOS | Exported symbols, imports, dependencies, versions |
+| **Header AST** | castxml (Clang) | Linux | Function signatures, classes, vtable layout, enums, typedefs |
+| **DWARF cross-check** | pyelftools | Linux | Struct sizes, member offsets, vtable slot validation |
+
+On Linux all three layers combine for maximum accuracy. On Windows and macOS, the binary metadata layer provides export/import diffing, dependency tracking, and version checks.
+
+### Python dependencies
+
+| Package | Role | Platforms |
+|---------|------|-----------|
+| `pyelftools` | ELF/DWARF parsing | Linux |
+| `pefile` | PE/COFF parsing (`.dll`, `.exe`) | All (pure Python) |
+| `macholib` | Mach-O parsing (`.dylib`, `.framework`) | All (pure Python) |
+| `click` | CLI framework | All |
+| `pyyaml` | YAML policy file parsing | All |
+| `defusedxml` | Safe XML parsing (castxml output) | All |
+| `packaging` | Version comparison | All |
 
 ### Key modules
 
@@ -404,6 +451,9 @@ Each layer provides independent signals. Combining all three gives abicheck high
 |--------|---------------|
 | `cli.py` | CLI entrypoint (`dump`, `compare`, `compat check/dump`) |
 | `dumper.py` | Snapshot generation from `.so` + headers |
+| `elf_metadata.py` | ELF binary parser (Linux `.so`) |
+| `pe_metadata.py` | PE binary parser (Windows `.dll`) |
+| `macho_metadata.py` | Mach-O binary parser (macOS `.dylib`) |
 | `checker.py` | Diff orchestration and change collection |
 | `checker_policy.py` | Change classification, built-in policies, verdict logic |
 | `detectors.py` | ABI change detection rules |

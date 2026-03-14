@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
+from typing import Any
 
 from macholib.mach_o import (  # type: ignore[import-untyped]
     CPU_TYPE_NAMES,
@@ -189,10 +190,11 @@ def parse_macho_metadata(dylib_path: Path) -> MachoMetadata:
         return MachoMetadata()
 
 
-def _select_header(macho: MachO) -> object | None:
+def _select_header(macho: MachO) -> Any:
     """Pick the best architecture header from a (possibly fat) MachO object.
 
     Prefers arm64 on Apple Silicon, x86_64 otherwise; falls back to first.
+    Returns a ``MachOHeader`` instance or *None*.
     """
     if not macho.headers:
         return None

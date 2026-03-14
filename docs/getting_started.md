@@ -1,8 +1,10 @@
 # Getting Started
 
-**abicheck** compares two versions of a C/C++ shared library and tells you whether existing binaries will break. It analyses ELF symbols, C/C++ header AST (via castxml), and DWARF debug info to catch ABI incompatibilities that other tools miss.
+**abicheck** compares two versions of a C/C++ shared library and tells you whether existing binaries will break. It supports ELF (Linux), PE/COFF (Windows), and Mach-O (macOS) binaries.
 
-> **Platform:** Linux only (ELF binaries + DWARF + C/C++ headers).
+On Linux it provides deep analysis: ELF symbols + C/C++ header AST (via castxml) + DWARF cross-check. On Windows and macOS it provides binary metadata analysis (exports, imports, dependencies, versions).
+
+> **Platforms:** Linux, Windows, macOS.
 
 ---
 
@@ -13,10 +15,11 @@
 ### Requirements
 
 - Python 3.10+
-- `castxml` (Clang-based C/C++ AST parser) — see [castxml project](https://github.com/CastXML/CastXML)
-- C/C++ compiler (`gcc`/`g++` or `clang`/`clang++`)
+- `castxml` + C/C++ compiler — **Linux only**, for deep header/DWARF analysis
 
-Install castxml on Ubuntu/Debian:
+All Python dependencies (pyelftools, pefile, macholib, etc.) are installed automatically. On Windows and macOS no extra system packages are needed.
+
+Install castxml on Ubuntu/Debian (for full ELF + header analysis):
 
 ```bash
 sudo apt-get update && sudo apt-get install -y castxml gcc g++
