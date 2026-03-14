@@ -1352,6 +1352,22 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             description=f"new dependency: {dep}",
         ))
 
+    # Detect re-exported dylib changes (LC_REEXPORT_DYLIB)
+    old_reexports = set(o.reexported_libs)
+    new_reexports = set(n.reexported_libs)
+    for lib in sorted(old_reexports - new_reexports):
+        changes.append(Change(
+            kind=ChangeKind.NEEDED_REMOVED,
+            symbol=lib,
+            description=f"re-exported dylib removed: {lib}",
+        ))
+    for lib in sorted(new_reexports - old_reexports):
+        changes.append(Change(
+            kind=ChangeKind.NEEDED_ADDED,
+            symbol=lib,
+            description=f"new re-exported dylib: {lib}",
+        ))
+
     return changes
 
 
@@ -1944,16 +1960,16 @@ def compare(
             "pe",
             _diff_pe,
             lambda o, n: (
-                o.pe is not None and n.pe is not None and not o.functions and not n.functions,
-                "missing PE metadata or functions already materialized",
+                o.pe is not None and n.pe is not None,
+                "missing PE metadata",
             ),
         ),
         _DetectorSpec(
             "macho",
             _diff_macho,
             lambda o, n: (
-                o.macho is not None and n.macho is not None and not o.functions and not n.functions,
-                "missing Mach-O metadata or functions already materialized",
+                o.macho is not None and n.macho is not None,
+                "missing Mach-O metadata",
             ),
         ),
         _DetectorSpec("dwarf", _diff_dwarf),

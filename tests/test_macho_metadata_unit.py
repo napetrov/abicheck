@@ -495,7 +495,7 @@ class TestParseMachoMetadata:
         assert "/usr/lib/libreexport.dylib" in meta.reexported_libs
 
     def test_parse_fat_binary_returns_metadata(self, tmp_path):
-        """Fat binary should parse first slice."""
+        """Fat binary with single slice should parse that slice."""
         # Build a single-arch Mach-O
         inner = _build_macho_64_le(install_name="/usr/lib/libfat.dylib")
         # Build fat header: magic(4), nfat_arch(4), then fat_arch entry(20)
@@ -512,6 +512,32 @@ class TestParseMachoMetadata:
         meta = parse_macho_metadata(f)
         assert meta.cpu_type == "ARM64"
         assert meta.install_name == "/usr/lib/libfat.dylib"
+
+    def test_parse_fat_binary_multi_arch_prefers_known_arch(self, tmp_path):
+        """Fat binary with x86_64 + arm64 slices: both are parseable (arch selection is deterministic)."""
+        import platform
+        inner_x86 = _build_macho_64_le(install_name="/usr/lib/libfat_x86.dylib")
+        inner_arm = _build_macho_64_le(install_name="/usr/lib/libfat_arm.dylib")
+        # fat header: magic + nfat_arch
+        n_arches = 2
+        header_size = 4 + 4 + n_arches * 20
+        fat_offset_x86 = (header_size + 7) & ~7
+        fat_offset_arm = (fat_offset_x86 + len(inner_x86) + 7) & ~7
+
+        fat = struct.pack(">II", 0xCAFEBABE, n_arches)
+        # x86_64: cputype=0x01000007
+        fat += struct.pack(">IIIII", 0x01000007, 3, fat_offset_x86, len(inner_x86), 3)
+        # arm64: cputype=0x0100000C
+        fat += struct.pack(">IIIII", 0x0100000C, 0, fat_offset_arm, len(inner_arm), 3)
+        fat += b"\x00" * (fat_offset_x86 - len(fat))
+        fat += inner_x86
+        fat += b"\x00" * (fat_offset_arm - len(fat))
+        fat += inner_arm
+        f = tmp_path / "libfat_multi.dylib"
+        f.write_bytes(fat)
+        meta = parse_macho_metadata(f)
+        # Should pick one of the known arches (not crash), install_name must match
+        assert meta.install_name in ("/usr/lib/libfat_x86.dylib", "/usr/lib/libfat_arm.dylib")
 
     def test_parse_fat_binary_empty_arches(self, tmp_path):
         """Fat binary with 0 arches returns empty metadata."""
@@ -599,7 +625,7 @@ class TestCliIntegration:
         assert snap.macho is macho_meta
 
     def test_dump_native_binary_pe_empty_exports_raises(self, tmp_path):
-        """PE with valid machine but no named exports raises ClickException."""
+        """PE with valid machine but no exports (named or ordinal) raises ClickException."""
         from unittest.mock import patch as mock_patch
 
         import click
@@ -610,14 +636,14 @@ class TestCliIntegration:
 
         f = tmp_path / "empty.dll"
         f.write_bytes(b"fake")
-        # machine set (parse succeeded) but no exports
+        # machine set (parse succeeded) but no exports at all
         with mock_patch("abicheck.pe_metadata.parse_pe_metadata",
                         return_value=PeMetadata(machine="IMAGE_FILE_MACHINE_AMD64")):
-            with pytest.raises(click.ClickException, match="no named exports"):
+            with pytest.raises(click.ClickException, match="no exports"):
                 _dump_native_binary(f, "pe", [], [], "1.0", "c")
 
     def test_dump_native_binary_macho_empty_exports_raises(self, tmp_path):
-        """Mach-O with no exports raises ClickException."""
+        """Mach-O with no exports and no load-command metadata raises ClickException."""
         from unittest.mock import patch as mock_patch
 
         import click
@@ -628,8 +654,9 @@ class TestCliIntegration:
 
         f = tmp_path / "empty.dylib"
         f.write_bytes(b"fake")
+        # Completely empty metadata — no exports, no install_name, no dependent_libs
         with mock_patch("abicheck.macho_metadata.parse_macho_metadata", return_value=MachoMetadata()):
-            with pytest.raises(click.ClickException, match="has no exports"):
+            with pytest.raises(click.ClickException, match="no exports or load-command metadata"):
                 _dump_native_binary(f, "macho", [], [], "1.0", "c")
 
     def test_dump_native_binary_unsupported_format(self, tmp_path):

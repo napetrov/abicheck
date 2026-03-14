@@ -246,7 +246,8 @@ def _castxml_dump(
     if not _castxml_available():
         raise RuntimeError(
             "castxml not found in PATH. Install with: apt install castxml, "
-            "brew install castxml, or conda install -c conda-forge castxml"
+            "brew install castxml, conda install -c conda-forge castxml, "
+            "or choco install castxml (Windows); then ensure castxml is in PATH."
         )
 
     # Check disk cache

@@ -16,7 +16,7 @@
 
 Pure-Python parser for Mach-O headers, load commands, exported symbols,
 and dependency information from Apple shared libraries. Supports both
-single-arch and fat/universal binaries (first slice is analyzed).
+single-arch and fat/universal binaries (preferred arch slice is analyzed).
 """
 from __future__ import annotations
 
@@ -181,7 +181,8 @@ def parse_macho_metadata(dylib_path: Path) -> MachoMetadata:
     """Extract Mach-O export/import metadata from *dylib_path*.
 
     Uses a minimal pure-Python parser for Mach-O headers and load commands.
-    For fat/universal binaries, analyzes the first architecture slice.
+    For fat/universal binaries, selects the host-architecture slice (arm64 or
+    x86_64); falls back to the first available slice.
 
     Returns an empty ``MachoMetadata`` on any parse error (logged as WARNING).
     """
@@ -410,7 +411,13 @@ def _parse_symtab(
 
 
 def _parse_fat(f: Any, dylib_path: Path, magic: bytes) -> MachoMetadata:
-    """Parse a fat/universal binary — extract metadata from the first slice."""
+    """Parse a fat/universal binary.
+
+    Reads all architecture slices. Returns the slice for the host architecture
+    (arm64 on Apple Silicon, x86_64 otherwise), or the first slice if neither
+    preferred arch is present. This avoids silently hiding ABI differences that
+    exist only in a non-first slice.
+    """
     big_endian = magic == b"\xca\xfe\xba\xbe"
     endian = ">" if big_endian else "<"
 
@@ -418,15 +425,42 @@ def _parse_fat(f: Any, dylib_path: Path, magic: bytes) -> MachoMetadata:
     if nfat_arch == 0:
         return MachoMetadata()
 
-    # Read first fat_arch entry: cputype(4), cpusubtype(4), offset(4), size(4), align(4)
-    arch_data = f.read(20)
-    if len(arch_data) < 20:
+    # CPU type constants
+    _CPU_TYPE_X86_64 = 0x01000007
+    _CPU_TYPE_ARM64  = 0x0100000C
+
+    import platform
+    preferred_cputype = _CPU_TYPE_ARM64 if platform.machine() == "arm64" else _CPU_TYPE_X86_64
+
+    # Read all fat_arch entries: cputype(4), cpusubtype(4), offset(4), size(4), align(4)
+    arches: list[tuple[int, int]] = []  # (cputype, offset)
+    for _ in range(nfat_arch):
+        arch_data = f.read(20)
+        if len(arch_data) < 20:
+            break
+        cputype, _cpusubtype, offset, _size, _align = struct.unpack(
+            f"{endian}IIIII", arch_data,
+        )
+        arches.append((cputype, offset))
+
+    if not arches:
         return MachoMetadata()
 
-    _cputype, _cpusubtype, offset, _size, _align = struct.unpack(
-        f"{endian}IIIII", arch_data,
-    )
+    # Prefer host arch, then x86_64, then arm64, then first available
+    chosen_offset: int | None = None
+    for cputype, offset in arches:
+        if cputype == preferred_cputype:
+            chosen_offset = offset
+            break
+    if chosen_offset is None:
+        # fallback: pick the other known arch if present
+        fallback = _CPU_TYPE_X86_64 if preferred_cputype == _CPU_TYPE_ARM64 else _CPU_TYPE_ARM64
+        for cputype, offset in arches:
+            if cputype == fallback:
+                chosen_offset = offset
+                break
+    if chosen_offset is None:
+        chosen_offset = arches[0][1]
 
-    # Seek to the first slice and parse it
-    f.seek(offset)
+    f.seek(chosen_offset)
     return _parse(f, dylib_path)

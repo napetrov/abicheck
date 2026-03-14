@@ -160,18 +160,20 @@ def _dump_native_binary(
             )
         if not pe_meta.exports:
             raise click.ClickException(
-                f"PE file '{path}' has no named exports. "
-                "DLLs with only ordinal exports are not yet supported."
+                f"PE file '{path}' has no exports (named or ordinal). "
+                "Verify the file is a valid DLL."
             )
-        # Build snapshot from PE export table
+        # Build snapshot from PE export table — include ordinal-only exports
         from .model import Function, Visibility
         funcs = [
             Function(
-                name=exp.name, mangled=exp.name, return_type="?",
+                name=(exp.name or f"ordinal:{exp.ordinal}"),
+                mangled=(exp.name or f"ordinal:{exp.ordinal}"),
+                return_type="?",
                 visibility=Visibility.PUBLIC,
-                is_extern_c=not exp.name.startswith("?"),  # MSVC mangling uses ? prefix
+                is_extern_c=not (exp.name or "").startswith("?"),  # MSVC mangling uses ? prefix
             )
-            for exp in pe_meta.exports if exp.name
+            for exp in pe_meta.exports
         ]
         return AbiSnapshot(
             library=path.name, version=version,
@@ -187,9 +189,9 @@ def _dump_native_binary(
             raise click.ClickException(
                 f"Failed to parse Mach-O '{path}': {exc}"
             ) from exc
-        if not macho_meta.exports:
+        if not macho_meta.exports and not macho_meta.install_name and not macho_meta.dependent_libs:
             raise click.ClickException(
-                f"Mach-O file '{path}' has no exports. "
+                f"Mach-O file '{path}' has no exports or load-command metadata. "
                 "Verify the file is a valid dynamic library."
             )
         # Build snapshot from Mach-O export table
