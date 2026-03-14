@@ -26,7 +26,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
-from typing import Any
+
+import pefile  # type: ignore[import-untyped]
 
 log = logging.getLogger(__name__)
 
@@ -107,17 +108,7 @@ def parse_pe_metadata(dll_path: Path) -> PeMetadata:
     """Extract PE export/import metadata from *dll_path* using pefile.
 
     Returns an empty ``PeMetadata`` on any parse error (logged as WARNING).
-    Requires the ``pefile`` package (``pip install pefile``).
     """
-    try:
-        import pefile  # type: ignore[import-untyped]
-    except ImportError:
-        log.warning(
-            "parse_pe_metadata: pefile package not installed. "
-            "Install with: pip install pefile"
-        )
-        return PeMetadata()
-
     try:
         with open(dll_path, "rb") as f:
             st = os.fstat(f.fileno())
@@ -125,13 +116,13 @@ def parse_pe_metadata(dll_path: Path) -> PeMetadata:
                 log.warning("parse_pe_metadata: not a regular file: %s", dll_path)
                 return PeMetadata()
 
-        return _parse(dll_path, pefile)
+        return _parse(dll_path)
     except (pefile.PEFormatError, OSError, ValueError, AttributeError) as exc:
         log.warning("parse_pe_metadata: failed to parse %s: %s", dll_path, exc)
         return PeMetadata()
 
 
-def _parse(dll_path: Path, pefile: Any) -> PeMetadata:
+def _parse(dll_path: Path) -> PeMetadata:
     pe = pefile.PE(str(dll_path), fast_load=True)
     pe.parse_data_directories(
         directories=[

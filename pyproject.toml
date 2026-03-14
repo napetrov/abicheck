@@ -33,6 +33,7 @@ dependencies = [
     "pyyaml>=6.0",
     "defusedxml>=0.7.1",
     "pyelftools>=0.29",   # ELF/DWARF parsing
+    "pefile>=2023.2.7",   # Windows PE/COFF parsing
 ]
 
 [project.scripts]
@@ -45,23 +46,12 @@ Documentation = "https://napetrov.github.io/abicheck/"
 Changelog = "https://github.com/napetrov/abicheck/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-pe = [
-    "pefile>=2023.2.7",       # Windows PE/COFF parsing
-]
-macho = [
-    "macholib>=1.16",         # macOS Mach-O parsing (fat binary support)
-]
-all = [
-    "abicheck[pe,macho]",
-]
 dev = [
     "pytest>=7.0",
     "pytest-cov",
     "ruff>=0.3",
     "mypy>=1.0",
     "types-PyYAML",
-    "pefile>=2023.2.7",
-    "macholib>=1.16",
 ]
 
 [tool.mypy]

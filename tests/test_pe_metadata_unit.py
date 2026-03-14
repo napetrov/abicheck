@@ -267,35 +267,16 @@ class TestParsePeMetadata:
         assert isinstance(meta, PeMetadata)
         assert meta.exports == []
 
-    def test_pefile_not_installed(self, tmp_path):
-        """When pefile is not importable, return empty metadata."""
-        f = tmp_path / "test.dll"
-        f.write_bytes(b"MZ" + b"\x00" * 256)
-        with patch.dict("sys.modules", {"pefile": None}):
-            meta = parse_pe_metadata(f)
-        assert isinstance(meta, PeMetadata)
-
     def test_parse_with_mock_pefile(self, tmp_path):
         """Exercise _parse via a mocked pefile module."""
         f = tmp_path / "test.dll"
         f.write_bytes(b"MZ" + b"\x00" * 256)
-
-        # Build mock pefile module
-        mock_pefile = MagicMock()
 
         # Mock PE object
         mock_pe = MagicMock()
         mock_pe.FILE_HEADER.Machine = 0x8664
         mock_pe.FILE_HEADER.Characteristics = 0x2022
         mock_pe.OPTIONAL_HEADER.DllCharacteristics = 0x8160
-
-        # MACHINE_TYPE mapping
-        mock_pefile.MACHINE_TYPE = {0x8664: "IMAGE_FILE_MACHINE_AMD64"}
-        mock_pefile.DIRECTORY_ENTRY = {
-            "IMAGE_DIRECTORY_ENTRY_EXPORT": 0,
-            "IMAGE_DIRECTORY_ENTRY_IMPORT": 1,
-            "IMAGE_DIRECTORY_ENTRY_RESOURCE": 2,
-        }
 
         # Exports
         exp1 = MagicMock()
@@ -319,10 +300,17 @@ class TestParsePeMetadata:
         # No version resource
         del mock_pe.VS_FIXEDFILEINFO
 
+        mock_pefile = MagicMock()
         mock_pefile.PE.return_value = mock_pe
         mock_pefile.PEFormatError = Exception
+        mock_pefile.MACHINE_TYPE = {0x8664: "IMAGE_FILE_MACHINE_AMD64"}
+        mock_pefile.DIRECTORY_ENTRY = {
+            "IMAGE_DIRECTORY_ENTRY_EXPORT": 0,
+            "IMAGE_DIRECTORY_ENTRY_IMPORT": 1,
+            "IMAGE_DIRECTORY_ENTRY_RESOURCE": 2,
+        }
 
-        with patch.dict("sys.modules", {"pefile": mock_pefile}):
+        with patch("abicheck.pe_metadata.pefile", mock_pefile):
             meta = parse_pe_metadata(f)
 
         assert meta.machine == "IMAGE_FILE_MACHINE_AMD64"
@@ -339,17 +327,10 @@ class TestParsePeMetadata:
         f = tmp_path / "test.dll"
         f.write_bytes(b"MZ" + b"\x00" * 256)
 
-        mock_pefile = MagicMock()
         mock_pe = MagicMock()
         mock_pe.FILE_HEADER.Machine = 0x14C
         mock_pe.FILE_HEADER.Characteristics = 0
         mock_pe.OPTIONAL_HEADER.DllCharacteristics = 0
-        mock_pefile.MACHINE_TYPE = {0x14C: "IMAGE_FILE_MACHINE_I386"}
-        mock_pefile.DIRECTORY_ENTRY = {
-            "IMAGE_DIRECTORY_ENTRY_EXPORT": 0,
-            "IMAGE_DIRECTORY_ENTRY_IMPORT": 1,
-            "IMAGE_DIRECTORY_ENTRY_RESOURCE": 2,
-        }
         # No exports/imports
         del mock_pe.DIRECTORY_ENTRY_EXPORT
         del mock_pe.DIRECTORY_ENTRY_IMPORT
@@ -362,10 +343,17 @@ class TestParsePeMetadata:
         vinfo.ProductVersionLS = (19041 << 16) | 1
         mock_pe.VS_FIXEDFILEINFO = [vinfo]
 
+        mock_pefile = MagicMock()
         mock_pefile.PE.return_value = mock_pe
         mock_pefile.PEFormatError = Exception
+        mock_pefile.MACHINE_TYPE = {0x14C: "IMAGE_FILE_MACHINE_I386"}
+        mock_pefile.DIRECTORY_ENTRY = {
+            "IMAGE_DIRECTORY_ENTRY_EXPORT": 0,
+            "IMAGE_DIRECTORY_ENTRY_IMPORT": 1,
+            "IMAGE_DIRECTORY_ENTRY_RESOURCE": 2,
+        }
 
-        with patch.dict("sys.modules", {"pefile": mock_pefile}):
+        with patch("abicheck.pe_metadata.pefile", mock_pefile):
             meta = parse_pe_metadata(f)
 
         assert meta.file_version == "10.0.19041.1"
@@ -379,13 +367,8 @@ class TestParsePeMetadata:
         mock_pefile = MagicMock()
         mock_pefile.PEFormatError = type("PEFormatError", (Exception,), {})
         mock_pefile.PE.side_effect = mock_pefile.PEFormatError("bad")
-        mock_pefile.DIRECTORY_ENTRY = {
-            "IMAGE_DIRECTORY_ENTRY_EXPORT": 0,
-            "IMAGE_DIRECTORY_ENTRY_IMPORT": 1,
-            "IMAGE_DIRECTORY_ENTRY_RESOURCE": 2,
-        }
 
-        with patch.dict("sys.modules", {"pefile": mock_pefile}):
+        with patch("abicheck.pe_metadata.pefile", mock_pefile):
             meta = parse_pe_metadata(f)
 
         assert isinstance(meta, PeMetadata)

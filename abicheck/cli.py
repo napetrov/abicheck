@@ -150,7 +150,7 @@ def _dump_native_binary(
         if not pe_meta.exports:
             raise click.ClickException(
                 f"PE file '{path}' has no exports. "
-                "Is pefile installed? (pip install abicheck[pe])"
+                "Verify the file is a valid DLL with exported symbols."
             )
         # Build snapshot from PE export table
         from .model import Function, Visibility
