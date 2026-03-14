@@ -13,6 +13,7 @@
 ## ❌ Breaking Changes
 
 - **enum_member_value_changed**: Enum member value changed: Color::GREEN (`1` → `5`)
+  > Old binaries use stale numeric values; logic comparisons and switch statements silently break.
 
 ---
 ## Legend

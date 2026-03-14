@@ -258,6 +258,8 @@ def _changes_table(changes: list[object]) -> str:
     if not changes:
         return "<p class='empty'>No changes in this category.</p>"
 
+    from .checker_policy import impact_for as _impact_for
+
     rows = []
     for ch in changes:
         ks = _kind_str(ch)
@@ -266,12 +268,39 @@ def _changes_table(changes: list[object]) -> str:
         old_val = html.escape(str(getattr(ch, "old_value", "") or ""))
         new_val = html.escape(str(getattr(ch, "new_value", "") or ""))
         sym_cell = _symbol_cell(ch)
+        loc = getattr(ch, "source_location", None)
+        affected = getattr(ch, "affected_symbols", None)
+
+        # Build extended description with impact + affected + location
+        desc_parts = [desc]
+        kind = getattr(ch, "kind", None)
+        if kind:
+            impact = _impact_for(kind)
+            if impact:
+                desc_parts.append(
+                    f"<div style='font-size:0.85em; color:#666; margin-top:3px;'>"
+                    f"💡 {html.escape(impact)}</div>"
+                )
+        if affected:
+            names = ", ".join(html.escape(s) for s in affected[:5])
+            suffix = f" (+{len(affected) - 5} more)" if len(affected) > 5 else ""
+            desc_parts.append(
+                f"<div style='font-size:0.82em; color:#1565c0; margin-top:2px;'>"
+                f"📎 Affected: <code>{names}</code>{suffix}</div>"
+            )
+        if loc:
+            desc_parts.append(
+                f"<div style='font-size:0.82em; color:#999; margin-top:2px;'>"
+                f"📍 {html.escape(loc)}</div>"
+            )
+        full_desc = "".join(desc_parts)
+
         rows.append(
             f"<tr>"
             f"<td><span class='kind-badge'>{html.escape(ks)}</span></td>"
             f"<td class='sym'>{sym_cell}</td>"
             f"<td><span class='cat-badge'>{html.escape(cat)}</span></td>"
-            f"<td>{desc}</td>"
+            f"<td>{full_desc}</td>"
             f"<td>{old_val}</td>"
             f"<td>{new_val}</td>"
             f"</tr>"

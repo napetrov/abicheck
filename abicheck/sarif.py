@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
-from abicheck.checker_policy import policy_for
+from abicheck.checker_policy import impact_for, policy_for
 
 # ---------------------------------------------------------------------------
 # Severity mapping
@@ -46,13 +46,13 @@ def _rule_for(kind: ChangeKind) -> dict[str, Any]:
     severity = policy_for(kind).severity
     doc_slug = policy_for(kind).doc_slug
     help_uri = f"https://github.com/napetrov/abicheck/blob/main/docs/abi_breaking_cases_catalog.md#{doc_slug}"
+    impact = impact_for(kind)
+    full_desc = impact if impact else f"ABI change detected: {rule_id.replace('_', ' ')}"
     return {
         "id": rule_id,
         "name": "".join(w.capitalize() for w in rule_id.split("_")),
         "shortDescription": {"text": rule_id.replace("_", " ").capitalize()},
-        "fullDescription": {
-            "text": f"ABI change detected: {rule_id.replace('_', ' ')}"
-        },
+        "fullDescription": {"text": full_desc},
         "helpUri": help_uri,
         "defaultConfiguration": {"level": severity},
         "properties": {"tags": ["abi", "binary-compatibility"]},
@@ -67,6 +67,37 @@ def _result_for(
     if change.old_value or change.new_value:
         msg_parts.append(f"({change.old_value or '?'} → {change.new_value or '?'})")
 
+    # Build physical location — prefer source header over .so when available
+    phys_loc: dict[str, Any]
+    if change.source_location:
+        # Parse "header.h:42" into file + line
+        parts = change.source_location.rsplit(":", 1)
+        uri = parts[0]
+        phys_loc = {
+            "artifactLocation": {"uri": uri, "uriBaseId": "%SRCROOT%"},
+        }
+        if len(parts) == 2:
+            try:
+                phys_loc["region"] = {"startLine": int(parts[1])}
+            except ValueError:
+                pass
+    else:
+        phys_loc = {
+            "artifactLocation": {"uri": library, "uriBaseId": "%SRCROOT%"},
+        }
+
+    properties: dict[str, Any] = {
+        "symbol": change.symbol,
+        "oldVersion": old_version,
+        "newVersion": new_version,
+    }
+    if change.old_value is not None:
+        properties["oldValue"] = change.old_value
+    if change.new_value is not None:
+        properties["newValue"] = change.new_value
+    if change.affected_symbols:
+        properties["affectedSymbols"] = change.affected_symbols
+
     return {
         "ruleId": change.kind.value,
         "level": _severity(change),
@@ -75,12 +106,7 @@ def _result_for(
         },
         "locations": [
             {
-                "physicalLocation": {
-                    "artifactLocation": {
-                        "uri": library,
-                        "uriBaseId": "%SRCROOT%",
-                    },
-                },
+                "physicalLocation": phys_loc,
                 "logicalLocations": [
                     {
                         "name": change.symbol,
@@ -89,11 +115,7 @@ def _result_for(
                 ],
             }
         ],
-        "properties": {
-            "symbol": change.symbol,
-            "oldVersion": old_version,
-            "newVersion": new_version,
-        },
+        "properties": properties,
     }
 
 

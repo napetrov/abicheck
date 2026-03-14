@@ -13,6 +13,7 @@
 ## ❌ Breaking Changes
 
 - **type_size_changed**: Size changed: Point (64 → 96 bits) (`64` → `96`)
+  > Old code allocates or copies the type with the old size; heap/stack corruption, out-of-bounds access.
 
 ## ✅ Compatible Additions
 

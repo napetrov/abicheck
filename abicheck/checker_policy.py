@@ -497,6 +497,97 @@ class PolicyEntry:
     default_verdict: Verdict
     severity: str
     doc_slug: str
+    impact: str = ""  # human-readable impact explanation
+
+
+# Impact explanations per ChangeKind — describes *what goes wrong* for the user.
+IMPACT_TEXT: dict[ChangeKind, str] = {
+    # Function/variable
+    ChangeKind.FUNC_REMOVED: "Old binaries call a symbol that no longer exists; dynamic linker will refuse to load or crash at call site.",
+    ChangeKind.FUNC_REMOVED_ELF_ONLY: "Symbol removed from ELF but was not in public headers; low risk unless dlsym() callers depend on it.",
+    ChangeKind.FUNC_ADDED: "New function available; existing binaries are unaffected.",
+    ChangeKind.FUNC_RETURN_CHANGED: "Callers expect the old return type layout in registers/stack; misinterpretation causes data corruption.",
+    ChangeKind.FUNC_PARAMS_CHANGED: "Callers push arguments with the old layout; callee reads wrong data from stack/registers.",
+    ChangeKind.FUNC_NOEXCEPT_ADDED: "In C++17 noexcept is part of the function type; old callers compiled against non-noexcept signature get a different mangled name.",
+    ChangeKind.FUNC_NOEXCEPT_REMOVED: "Old callers may rely on noexcept guarantee for optimizations; removing it can cause unexpected std::terminate.",
+    ChangeKind.FUNC_VIRTUAL_ADDED: "Vtable layout changes; old binaries call wrong virtual function slot, leading to crashes or wrong behavior.",
+    ChangeKind.FUNC_VIRTUAL_REMOVED: "Vtable entry removed; old binaries that dispatch through the vtable call the wrong slot.",
+    ChangeKind.VAR_REMOVED: "Old binaries reference a global variable that no longer exists; link or load failure.",
+    ChangeKind.VAR_ADDED: "New variable available; existing binaries are unaffected.",
+    ChangeKind.VAR_TYPE_CHANGED: "Old binaries read/write the variable with wrong size or layout; data corruption or segfault.",
+    # Type changes
+    ChangeKind.TYPE_SIZE_CHANGED: "Old code allocates or copies the type with the old size; heap/stack corruption, out-of-bounds access.",
+    ChangeKind.TYPE_ALIGNMENT_CHANGED: "Misaligned access can cause bus errors on strict architectures or silent data corruption with SIMD.",
+    ChangeKind.TYPE_FIELD_REMOVED: "Old code accesses a field that no longer exists at the expected offset; reads garbage or writes out of bounds.",
+    ChangeKind.TYPE_FIELD_ADDED: "New field shifts subsequent fields; old code reads wrong offsets for all fields after insertion point.",
+    ChangeKind.TYPE_FIELD_OFFSET_CHANGED: "Old code reads/writes fields at stale offsets; silent data corruption.",
+    ChangeKind.TYPE_FIELD_TYPE_CHANGED: "Field has different size or representation; old code misinterprets the data.",
+    ChangeKind.TYPE_BASE_CHANGED: "Base class layout change shifts derived member offsets and vtable pointers; this-pointer arithmetic breaks.",
+    ChangeKind.TYPE_VTABLE_CHANGED: "Vtable slot reordering; virtual dispatch calls wrong method.",
+    ChangeKind.TYPE_ADDED: "New type available; existing binaries are unaffected.",
+    ChangeKind.TYPE_REMOVED: "Old code references a type that no longer exists; compilation or link failure.",
+    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE: "Field appended without changing existing offsets; old code works but won't initialize the new field.",
+    # Enum changes
+    ChangeKind.ENUM_MEMBER_REMOVED: "Old code uses a constant that no longer exists; compile error for source, stale value for binaries.",
+    ChangeKind.ENUM_MEMBER_ADDED: "New enumerator may shift subsequent values in non-fixed enums; switch defaults may miss the new case.",
+    ChangeKind.ENUM_MEMBER_VALUE_CHANGED: "Old binaries use stale numeric values; logic comparisons and switch statements silently break.",
+    ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED: "Sentinel/MAX value changed; old code using it for array sizes allocates wrong amount.",
+    ChangeKind.TYPEDEF_REMOVED: "Old code using the typedef name won't compile; binary impact depends on usage.",
+    # Method qualifiers
+    ChangeKind.FUNC_STATIC_CHANGED: "Static/non-static transition changes calling convention (implicit this pointer); ABI mismatch.",
+    ChangeKind.FUNC_CV_CHANGED: "const/volatile on 'this' changes the mangled name; old binaries link to the wrong symbol.",
+    ChangeKind.FUNC_VISIBILITY_CHANGED: "Symbol hidden from dynamic linking; old binaries can't find it at load time.",
+    # Virtual
+    ChangeKind.FUNC_PURE_VIRTUAL_ADDED: "Old subclasses don't implement the pure virtual; instantiation causes linker error or UB.",
+    ChangeKind.FUNC_VIRTUAL_BECAME_PURE: "Concrete virtual became pure; old binaries calling it get unresolved dispatch.",
+    # Union
+    ChangeKind.UNION_FIELD_ADDED: "Union size may grow; old code allocating with old sizeof gets truncated data.",
+    ChangeKind.UNION_FIELD_REMOVED: "Old code accessing removed alternative reads uninitialized memory.",
+    ChangeKind.UNION_FIELD_TYPE_CHANGED: "Old code interprets the union member with wrong type layout.",
+    # Typedef
+    ChangeKind.TYPEDEF_BASE_CHANGED: "Underlying type changed; old code using the typedef operates on wrong representation.",
+    # Bitfield
+    ChangeKind.FIELD_BITFIELD_CHANGED: "Bit-field width or offset changed; old code reads/writes wrong bits.",
+    # ELF
+    ChangeKind.SONAME_CHANGED: "Dynamic linker looks for old SONAME; library won't be found without symlink.",
+    ChangeKind.SONAME_MISSING: "Library has no SONAME; package managers and ldconfig cannot track versions.",
+    ChangeKind.VISIBILITY_LEAK: "Internal symbols exported without -fvisibility=hidden; namespace pollution risk.",
+    ChangeKind.NEEDED_ADDED: "New shared library dependency; may not be available on target systems.",
+    ChangeKind.NEEDED_REMOVED: "Dependency removed; should be transparent to consumers.",
+    ChangeKind.SYMBOL_BINDING_CHANGED: "GLOBAL→WEAK binding lets interposers override unexpectedly; old code may get wrong implementation.",
+    ChangeKind.SYMBOL_BINDING_STRENGTHENED: "WEAK→GLOBAL binding; safe upgrade, interposition still possible via LD_PRELOAD.",
+    ChangeKind.SYMBOL_TYPE_CHANGED: "Symbol type changed (e.g. FUNC→OBJECT); callers using wrong calling convention.",
+    ChangeKind.SYMBOL_SIZE_CHANGED: "ELF symbol size changed; copy relocations or memcpy-based consumers get truncated/oversized data.",
+    ChangeKind.IFUNC_INTRODUCED: "IFUNC resolver indirection added; transparent to well-behaved callers.",
+    ChangeKind.IFUNC_REMOVED: "IFUNC removed; transparent to callers.",
+    # Symbol versioning
+    ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED: "Defined symbol version removed; old binaries requesting that version get link error.",
+    ChangeKind.SYMBOL_VERSION_DEFINED_ADDED: "New symbol version defined; transparent to existing consumers.",
+    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED: "Requires a newer symbol version than old system provides; may fail to load on older systems.",
+    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT: "New version requirement added but older than existing max; safe on current systems.",
+    ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED: "Version requirement dropped; broadens compatibility.",
+    # DWARF
+    ChangeKind.STRUCT_SIZE_CHANGED: "sizeof(T) changed in debug info; confirms layout break visible at binary level.",
+    ChangeKind.STRUCT_FIELD_OFFSET_CHANGED: "Field moved to different offset; old code accesses wrong memory.",
+    ChangeKind.STRUCT_FIELD_REMOVED: "Field removed from struct; old code accessing it reads/writes garbage.",
+    ChangeKind.STRUCT_FIELD_TYPE_CHANGED: "Field type changed in binary; old code misinterprets the field data.",
+    ChangeKind.STRUCT_ALIGNMENT_CHANGED: "Struct alignment changed; may cause misaligned access in embedded structs.",
+    ChangeKind.ENUM_UNDERLYING_SIZE_CHANGED: "Enum underlying type changed (e.g. int→long); affects ABI of functions passing enums by value.",
+    # DWARF advanced
+    ChangeKind.CALLING_CONVENTION_CHANGED: "Function calling convention changed; registers/stack usage differs, call crashes.",
+    ChangeKind.STRUCT_PACKING_CHANGED: "Packing attribute changed; field offsets differ from what old code expects.",
+    ChangeKind.TOOLCHAIN_FLAG_DRIFT: "Compiler flags differ between versions; may cause subtle ABI mismatches.",
+    # Gap detectors
+    ChangeKind.FUNC_DELETED: "Function marked = delete; old binaries still call it, getting link error or UB.",
+    ChangeKind.VAR_BECAME_CONST: "Variable moved to read-only section; old code writing to it gets SIGSEGV.",
+    ChangeKind.VAR_LOST_CONST: "Variable no longer const; ODR violations possible if old code inlined the value.",
+    ChangeKind.TYPE_BECAME_OPAQUE: "Type became forward-declaration only; old code using sizeof or accessing fields fails.",
+    # Source-level
+    ChangeKind.ENUM_MEMBER_RENAMED: "Enumerator name changed but value is the same; source code using old name won't compile.",
+    ChangeKind.FIELD_RENAMED: "Field name changed but offset is the same; source code using old name won't compile.",
+    ChangeKind.METHOD_ACCESS_CHANGED: "Method access level narrowed (e.g. public→private); old code calling it won't compile.",
+    ChangeKind.FIELD_ACCESS_CHANGED: "Field access level narrowed; old code accessing it won't compile.",
+}
 
 
 POLICY_REGISTRY: dict[ChangeKind, PolicyEntry] = (
@@ -516,6 +607,11 @@ def policy_for(kind: ChangeKind) -> PolicyEntry:
     Unknown kinds are treated as BREAKING by default (fail-safe).
     """
     return POLICY_REGISTRY.get(kind, PolicyEntry(Verdict.BREAKING, "error", kind.value))
+
+
+def impact_for(kind: ChangeKind) -> str:
+    """Return human-readable impact explanation for a ChangeKind, or empty string."""
+    return IMPACT_TEXT.get(kind, "")
 
 
 def policy_registry_markdown() -> str:

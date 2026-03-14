@@ -13,6 +13,7 @@
 ## ❌ Breaking Changes
 
 - **func_removed**: Public function removed: helper (`helper`)
+  > Old binaries call a symbol that no longer exists; dynamic linker will refuse to load or crash at call site.
 
 ---
 ## Legend

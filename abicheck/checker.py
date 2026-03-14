@@ -69,6 +69,8 @@ class Change:
     description: str          # human-readable
     old_value: str | None = None
     new_value: str | None = None
+    source_location: str | None = None   # "header.h:42" if available
+    affected_symbols: list[str] | None = None  # exported functions using this type
 
 
 @dataclass
@@ -1439,6 +1441,176 @@ def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]
     return changes
 
 
+# ── Post-processing: enrich and deduplicate ────────────────────────────────
+
+# Mapping from DWARF change kinds to their AST equivalents for deduplication.
+_DWARF_TO_AST_EQUIV: dict[ChangeKind, set[ChangeKind]] = {
+    ChangeKind.STRUCT_SIZE_CHANGED: {ChangeKind.TYPE_SIZE_CHANGED},
+    ChangeKind.STRUCT_ALIGNMENT_CHANGED: {ChangeKind.TYPE_ALIGNMENT_CHANGED},
+    ChangeKind.STRUCT_FIELD_OFFSET_CHANGED: {ChangeKind.TYPE_FIELD_OFFSET_CHANGED},
+    ChangeKind.STRUCT_FIELD_REMOVED: {ChangeKind.TYPE_FIELD_REMOVED},
+    ChangeKind.STRUCT_FIELD_TYPE_CHANGED: {ChangeKind.TYPE_FIELD_TYPE_CHANGED},
+}
+
+# Type/enum/struct change kinds for which affected-symbol enrichment makes sense.
+_TYPE_CHANGE_KINDS: frozenset[ChangeKind] = frozenset({
+    ChangeKind.TYPE_SIZE_CHANGED, ChangeKind.TYPE_ALIGNMENT_CHANGED,
+    ChangeKind.TYPE_FIELD_REMOVED, ChangeKind.TYPE_FIELD_ADDED,
+    ChangeKind.TYPE_FIELD_OFFSET_CHANGED, ChangeKind.TYPE_FIELD_TYPE_CHANGED,
+    ChangeKind.TYPE_BASE_CHANGED, ChangeKind.TYPE_VTABLE_CHANGED,
+    ChangeKind.TYPE_REMOVED, ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
+    ChangeKind.ENUM_MEMBER_REMOVED, ChangeKind.ENUM_MEMBER_ADDED,
+    ChangeKind.ENUM_MEMBER_VALUE_CHANGED, ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
+    ChangeKind.UNION_FIELD_ADDED, ChangeKind.UNION_FIELD_REMOVED,
+    ChangeKind.UNION_FIELD_TYPE_CHANGED, ChangeKind.TYPEDEF_BASE_CHANGED,
+    ChangeKind.STRUCT_SIZE_CHANGED, ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
+    ChangeKind.STRUCT_FIELD_REMOVED, ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+    ChangeKind.STRUCT_ALIGNMENT_CHANGED,
+})
+
+
+def _enrich_source_locations(
+    changes: list[Change], old: AbiSnapshot, new: AbiSnapshot,
+) -> None:
+    """Fill in source_location on Changes from the model data."""
+    # Build type→location lookup
+    type_loc: dict[str, str] = {}
+    for t in old.types:
+        if t.source_location:
+            type_loc[t.name] = t.source_location
+    for t in new.types:
+        if t.source_location:
+            type_loc.setdefault(t.name, t.source_location)
+
+    # Build function→location lookup
+    func_loc: dict[str, str] = {}
+    for f in old.functions:
+        if f.source_location:
+            func_loc[f.mangled] = f.source_location
+    for f in new.functions:
+        if f.source_location:
+            func_loc.setdefault(f.mangled, f.source_location)
+
+    # Build variable→location lookup
+    var_loc: dict[str, str] = {}
+    for v in old.variables:
+        if v.source_location:
+            var_loc[v.mangled] = v.source_location
+    for v in new.variables:
+        if v.source_location:
+            var_loc.setdefault(v.mangled, v.source_location)
+
+    for c in changes:
+        if c.source_location:
+            continue
+        # Try function/variable first (symbol is mangled name), then type name
+        loc = func_loc.get(c.symbol) or var_loc.get(c.symbol) or type_loc.get(c.symbol)
+        if loc:
+            c.source_location = loc
+
+
+def _enrich_affected_symbols(
+    changes: list[Change], old: AbiSnapshot,
+) -> None:
+    """For type/enum changes, find exported functions that use the affected type."""
+    # Only compute if there are type-related changes
+    type_changes = [c for c in changes if c.kind in _TYPE_CHANGE_KINDS]
+    if not type_changes:
+        return
+
+    # Collect affected type names
+    affected_types: set[str] = set()
+    for c in type_changes:
+        # symbol is the type name (e.g. "Point", "Container", "Status")
+        # Strip field qualifiers like "Container::flags" → "Container"
+        type_name = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
+        affected_types.add(type_name)
+
+    if not affected_types:
+        return
+
+    # Build type→functions mapping from old snapshot
+    type_to_funcs: dict[str, list[str]] = {t: [] for t in affected_types}
+    old_pub = _public_functions(old)
+    for mangled, func in old_pub.items():
+        # Check return type
+        func_types_used: set[str] = set()
+        if func.return_type:
+            func_types_used.add(func.return_type)
+        for p in func.params:
+            if p.type:
+                func_types_used.add(p.type)
+
+        for tname in affected_types:
+            # Check if the type name appears in any parameter or return type
+            if any(tname in ft for ft in func_types_used):
+                type_to_funcs[tname].append(func.name)
+
+    # Also check if types are embedded in struct fields used by functions
+    # (e.g., Container has a Leaf field → functions taking Container* are affected by Leaf changes)
+    type_embeds: dict[str, set[str]] = {}  # child_type → {parent_type, ...}
+    for t in old.types:
+        for field in t.fields:
+            for tname in affected_types:
+                if tname in field.type:
+                    type_embeds.setdefault(tname, set()).add(t.name)
+
+    # Propagate: if Leaf is embedded in Container, functions using Container are affected by Leaf
+    for tname in affected_types:
+        parents = type_embeds.get(tname, set())
+        for parent in parents:
+            if parent in type_to_funcs:
+                type_to_funcs[tname].extend(type_to_funcs[parent])
+            else:
+                # Check functions for parent too
+                for mangled, func in old_pub.items():
+                    func_types_used = {func.return_type} | {p.type for p in func.params}
+                    if any(parent in ft for ft in func_types_used if ft):
+                        type_to_funcs[tname].append(func.name)
+
+    # Assign to changes
+    for c in type_changes:
+        type_name = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
+        funcs = type_to_funcs.get(type_name, [])
+        if funcs:
+            # Deduplicate and sort
+            c.affected_symbols = sorted(set(funcs))
+
+
+def _deduplicate_ast_dwarf(changes: list[Change]) -> list[Change]:
+    """Remove DWARF findings that duplicate an AST finding for the same symbol.
+
+    When both AST and DWARF detectors report equivalent changes (e.g.,
+    TYPE_SIZE_CHANGED from AST and STRUCT_SIZE_CHANGED from DWARF),
+    keep only the AST finding and drop the DWARF duplicate.
+    Also deduplicates exact duplicates (same kind + symbol).
+    """
+    # First pass: collect (kind, base_symbol) pairs from non-DWARF changes
+    ast_findings: set[tuple[str, str]] = set()
+    for c in changes:
+        base_sym = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
+        ast_findings.add((c.kind.value, base_sym))
+
+    # Second pass: filter out DWARF duplicates
+    result: list[Change] = []
+    seen: set[tuple[str, str]] = set()  # dedup by (kind, description)
+    for c in changes:
+        key = (c.kind.value, c.description)
+        # Duplicate removal: same kind + same description = same finding
+        if key in seen:
+            continue
+        seen.add(key)
+
+        # Check if this DWARF finding has an AST equivalent already present
+        equiv_ast_kinds = _DWARF_TO_AST_EQUIV.get(c.kind)
+        if equiv_ast_kinds:
+            base_sym = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
+            if any((ak.value, base_sym) in ast_findings for ak in equiv_ast_kinds):
+                continue  # skip DWARF duplicate
+        result.append(c)
+    return result
+
+
 def compare(
     old: AbiSnapshot,
     new: AbiSnapshot,
@@ -1520,6 +1692,11 @@ def compare(
             else:
                 filtered.append(c)
         changes = filtered
+
+    # Post-processing: enrich changes with source locations and affected symbols
+    _enrich_source_locations(changes, old, new)
+    _enrich_affected_symbols(changes, old)
+    changes = _deduplicate_ast_dwarf(changes)
 
     verdict = policy_file.compute_verdict(changes) if policy_file is not None else compute_verdict(changes, policy=policy)
     effective_policy = policy_file.base_policy if policy_file is not None else policy
