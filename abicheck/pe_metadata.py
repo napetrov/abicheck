@@ -26,7 +26,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
-from typing import Any
 
 try:
     import pefile as pefile  # type: ignore[import-untyped]

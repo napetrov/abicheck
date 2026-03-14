@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
-import platform as _platform
+import platform
 import stat
 import struct
 from dataclasses import dataclass, field
@@ -428,8 +428,7 @@ def _parse_fat(f: Any, dylib_path: Path, magic: bytes) -> MachoMetadata:
     _CPU_TYPE_X86_64 = 0x01000007
     _CPU_TYPE_ARM64  = 0x0100000C
 
-    import platform as _platform
-    preferred_cputype = _CPU_TYPE_ARM64 if _platform.machine() in ("arm64", "aarch64") else _CPU_TYPE_X86_64
+    preferred_cputype = _CPU_TYPE_ARM64 if platform.machine() in ("arm64", "aarch64") else _CPU_TYPE_X86_64
 
     # Read all fat_arch entries: cputype(4), cpusubtype(4), offset(4), size(4), align(4)
     arches: list[tuple[int, int]] = []  # (cputype, offset)
