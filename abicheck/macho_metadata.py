@@ -14,8 +14,9 @@
 
 """Mach-O metadata for macOS/iOS dynamic libraries (.dylib / .framework).
 
-Uses ``macholib`` (pure Python) for parsing Mach-O headers, load commands,
-exported symbols, and dependency information from Apple shared libraries.
+Pure-Python parser for Mach-O headers, load commands, exported symbols,
+and dependency information from Apple shared libraries. Supports both
+single-arch and fat/universal binaries (first slice is analyzed).
 """
 from __future__ import annotations
 
@@ -149,6 +150,11 @@ _LC_SEGMENT_64 = 0x19
 _LC_VERSION_MIN_MACOSX = 0x24
 _LC_BUILD_VERSION = 0x32
 
+# Resource limits to prevent DoS via crafted binaries
+_MAX_LOAD_CMDS = 65_536
+_MAX_SYMBOLS = 500_000
+_MAX_STRTAB_SIZE = 128 * 1024 * 1024  # 128 MB
+
 # nlist symbol type flags
 _N_EXT = 0x01
 _N_TYPE_MASK = 0x0E
@@ -175,7 +181,7 @@ def parse_macho_metadata(dylib_path: Path) -> MachoMetadata:
     """Extract Mach-O export/import metadata from *dylib_path*.
 
     Uses a minimal pure-Python parser for Mach-O headers and load commands.
-    Falls back to ``macholib`` if available for fat/universal binary handling.
+    For fat/universal binaries, analyzes the first architecture slice.
 
     Returns an empty ``MachoMetadata`` on any parse error (logged as WARNING).
     """
@@ -230,6 +236,8 @@ def _parse(f: Any, dylib_path: Path) -> MachoMetadata:
     cputype = hdr[0]
     filetype = hdr[2]
     ncmds = hdr[3]
+    if ncmds > _MAX_LOAD_CMDS:
+        raise ValueError(f"ncmds={ncmds} exceeds sanity limit {_MAX_LOAD_CMDS}, possible corrupt/malicious file")
     flags = hdr[5] if len(hdr) > 5 else 0
 
     meta.cpu_type = _CPU_TYPE_NAMES.get(cputype, f"0x{cputype:x}")
@@ -248,6 +256,10 @@ def _parse(f: Any, dylib_path: Path) -> MachoMetadata:
         if len(cmd_hdr) < 8:
             break
         cmd, cmdsize = struct.unpack(f"{endian}II", cmd_hdr)
+        # Guard against malformed load command sizes to prevent infinite loops
+        if cmdsize < 8:
+            log.warning("parse_macho_metadata: invalid cmdsize=%d at offset, stopping", cmdsize)
+            break
 
         if cmd == _LC_ID_DYLIB:
             meta.install_name, meta.current_version, meta.compat_version = \
@@ -331,6 +343,14 @@ def _parse_symtab(
     is_64: bool, endian: str,
 ) -> list[MachoExport]:
     """Parse the LC_SYMTAB symbol table and extract exported symbols."""
+    # Guard against malformed/malicious binaries
+    if nsyms > _MAX_SYMBOLS:
+        log.warning("parse_macho_metadata: nsyms=%d exceeds limit %d, truncating", nsyms, _MAX_SYMBOLS)
+        nsyms = _MAX_SYMBOLS
+    if strtab_size > _MAX_STRTAB_SIZE:
+        log.warning("parse_macho_metadata: strtab_size=%d exceeds limit, truncating", strtab_size)
+        strtab_size = _MAX_STRTAB_SIZE
+
     # Read string table
     f.seek(strtab_offset)
     strtab = f.read(strtab_size)
@@ -364,10 +384,13 @@ def _parse_symtab(
         if (n_type & _N_TYPE_MASK) == _N_UNDF:
             continue
 
-        # Extract name from string table
+        # Extract name from string table — use try/except for O(n) total scan
         if n_strx >= len(strtab):
             continue
-        end = strtab.index(b"\x00", n_strx) if b"\x00" in strtab[n_strx:] else len(strtab)
+        try:
+            end = strtab.index(b"\x00", n_strx)
+        except ValueError:
+            end = len(strtab)
         name = strtab[n_strx:end].decode("utf-8", errors="replace")
 
         # Strip leading underscore (Mach-O C symbol convention)

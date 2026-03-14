@@ -46,12 +46,20 @@ Documentation = "https://napetrov.github.io/abicheck/"
 Changelog = "https://github.com/napetrov/abicheck/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+pe = [
+    "pefile>=2023.2.7",       # Windows PE/COFF parsing
+]
+macho = []                    # Pure-Python Mach-O parser — no external deps required
+all = [
+    "abicheck[pe]",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov",
     "ruff>=0.3",
     "mypy>=1.0",
     "types-PyYAML",
+    "pefile>=2023.2.7",
 ]
 
 [tool.mypy]
