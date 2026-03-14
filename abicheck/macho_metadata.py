@@ -283,8 +283,8 @@ def _parse(dylib_path: Path) -> MachoMetadata:
             is_weak = bool(n_desc & N_WEAK_DEF)
             sym_type = MachoSymbolType.WEAK if is_weak else MachoSymbolType.EXPORTED
             meta.exports.append(MachoExport(name=name, sym_type=sym_type, is_weak=is_weak))
-    except Exception:  # noqa: BLE001
-        # SymbolTable may fail on binaries without LC_SYMTAB
-        pass
+    except Exception as exc:  # noqa: BLE001
+        # SymbolTable may fail on binaries without LC_SYMTAB (stripped, .tbd stubs, etc.)
+        log.debug("parse_macho_metadata: SymbolTable failed for %s: %s", dylib_path, exc)
 
     return meta
