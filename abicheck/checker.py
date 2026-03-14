@@ -16,11 +16,32 @@ from .checker_policy import policy_kind_sets as _policy_kind_sets
 from .detectors import DetectorResult
 from .dwarf_advanced import diff_advanced_dwarf
 from .elf_metadata import SymbolBinding, SymbolType
-from .model import AbiSnapshot, EnumType, Function, RecordType, TypeField, Visibility
+from .model import (
+    AbiSnapshot,
+    EnumType,
+    Function,
+    RecordType,
+    TypeField,
+    Variable,
+    Visibility,
+)
 
 if TYPE_CHECKING:
     from .policy_file import PolicyFile
     from .suppression import SuppressionList
+
+# Visibility levels that constitute the public ABI surface.
+_PUBLIC_VIS = (Visibility.PUBLIC, Visibility.ELF_ONLY)
+
+
+def _public_functions(snap: AbiSnapshot) -> dict[str, Function]:
+    """Return public/ELF-only functions from *snap*."""
+    return {k: v for k, v in snap.function_map.items() if v.visibility in _PUBLIC_VIS}
+
+
+def _public_variables(snap: AbiSnapshot) -> dict[str, Variable]:
+    """Return public/ELF-only variables from *snap*."""
+    return {k: v for k, v in snap.variable_map.items() if v.visibility in _PUBLIC_VIS}
 
 
 __all__ = [
@@ -260,8 +281,8 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 def _diff_variables(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
-    old_map = {k: v for k, v in old.variable_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
-    new_map = {k: v for k, v in new.variable_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
+    old_map = _public_variables(old)
+    new_map = _public_variables(new)
 
     for mangled, v_old in old_map.items():
         if mangled not in new_map:
@@ -624,9 +645,8 @@ def _diff_method_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     to find cross-qualifier pairs in the removed/added sets.
     """
     changes: list[Change] = []
-    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
-    old_by_mangled = {k: v for k, v in old.function_map.items() if v.visibility in vis}
-    new_by_mangled = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+    old_by_mangled = _public_functions(old)
+    new_by_mangled = _public_functions(new)
 
     # --- Same-mangled checks: pure_virtual and is_static don't change mangling ---
     # is_static: Itanium ABI does NOT encode static-ness in the mangled name
@@ -915,9 +935,8 @@ def _diff_field_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 def _diff_param_defaults(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect parameter default value changes/removals."""
     changes: list[Change] = []
-    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
-    old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
-    new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+    old_map = _public_functions(old)
+    new_map = _public_functions(new)
 
     for mangled, f_old in old_map.items():
         f_new = new_map.get(mangled)
@@ -948,9 +967,8 @@ def _diff_param_defaults(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 def _diff_param_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect parameter renames (same type+position, different name)."""
     changes: list[Change] = []
-    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
-    old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
-    new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+    old_map = _public_functions(old)
+    new_map = _public_functions(new)
 
     for mangled, f_old in old_map.items():
         f_new = new_map.get(mangled)
@@ -972,9 +990,8 @@ def _diff_param_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 def _diff_pointer_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect pointer level changes in params and return types."""
     changes: list[Change] = []
-    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
-    old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
-    new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+    old_map = _public_functions(old)
+    new_map = _public_functions(new)
 
     for mangled, f_old in old_map.items():
         f_new = new_map.get(mangled)
@@ -1029,9 +1046,8 @@ def _diff_access_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
 
     # Method access changes (narrowing only)
-    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
-    old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
-    new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+    old_map = _public_functions(old)
+    new_map = _public_functions(new)
 
     for mangled, f_old in old_map.items():
         f_new = new_map.get(mangled)
@@ -1523,9 +1539,8 @@ def _diff_var_values(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     use stale compile-time-inlined values (constant propagation).
     """
     changes: list[Change] = []
-    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
-    old_map = {k: v for k, v in old.variable_map.items() if v.visibility in vis}
-    new_map = {k: v for k, v in new.variable_map.items() if v.visibility in vis}
+    old_map = _public_variables(old)
+    new_map = _public_variables(new)
 
     for mangled, v_old in old_map.items():
         v_new = new_map.get(mangled)
@@ -1619,9 +1634,8 @@ def _diff_const_overloads(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     existed in old, but only the non-const version remains in new.
     """
     changes: list[Change] = []
-    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
-    old_funcs = [f for f in old.functions if f.visibility in vis]
-    new_funcs = [f for f in new.functions if f.visibility in vis]
+    old_funcs = [f for f in old.functions if f.visibility in _PUBLIC_VIS]
+    new_funcs = [f for f in new.functions if f.visibility in _PUBLIC_VIS]
 
     # Group by (name, param_signature) to find const/non-const pairs
     from collections import defaultdict
@@ -1664,9 +1678,8 @@ def _diff_const_overloads(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 def _diff_param_restrict(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect restrict qualifier changes on parameters (ABICC: Parameter_Became_Restrict)."""
     changes: list[Change] = []
-    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
-    old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
-    new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+    old_map = _public_functions(old)
+    new_map = _public_functions(new)
 
     for mangled, f_old in old_map.items():
         f_new = new_map.get(mangled)
@@ -1688,9 +1701,8 @@ def _diff_param_restrict(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 def _diff_param_va_list(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect va_list parameter changes (ABICC: Parameter_Became_VaList/Non_VaList)."""
     changes: list[Change] = []
-    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
-    old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
-    new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+    old_map = _public_functions(old)
+    new_map = _public_functions(new)
 
     for mangled, f_old in old_map.items():
         f_new = new_map.get(mangled)
@@ -1754,9 +1766,8 @@ def _diff_constants(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 def _diff_var_access(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect global data access level changes (ABICC: Global_Data_Became_Private/Protected/Public)."""
     changes: list[Change] = []
-    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
-    old_map = {k: v for k, v in old.variable_map.items() if v.visibility in vis}
-    new_map = {k: v for k, v in new.variable_map.items() if v.visibility in vis}
+    old_map = _public_variables(old)
+    new_map = _public_variables(new)
 
     for mangled, v_old in old_map.items():
         v_new = new_map.get(mangled)
@@ -2129,8 +2140,7 @@ def _diff_elf_deleted_fallback(old: AbiSnapshot, new: AbiSnapshot) -> list[Chang
     # Get all new-snapshot functions keyed by mangled name
     new_func_map = new.function_map
 
-    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
-    old_pub = {k: v for k, v in old.function_map.items() if v.visibility in vis}
+    old_pub = _public_functions(old)
 
     for mangled, f_old in old_pub.items():
         # Must be present in old ELF (this was a real exported symbol)
@@ -2274,9 +2284,8 @@ def _diff_template_inner_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Chang
     For production ELF-based snapshots, FUNC_PARAMS_CHANGED is the primary signal.
     """
     changes: list[Change] = []
-    vis = (Visibility.PUBLIC, Visibility.ELF_ONLY)
-    old_map = {k: v for k, v in old.function_map.items() if v.visibility in vis}
-    new_map = {k: v for k, v in new.function_map.items() if v.visibility in vis}
+    old_map = _public_functions(old)
+    new_map = _public_functions(new)
 
     for mangled in set(old_map) & set(new_map):
         f_old = old_map[mangled]
