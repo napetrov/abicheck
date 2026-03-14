@@ -1181,6 +1181,120 @@ def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """PE-specific detectors for Windows DLL ABI changes."""
+    from .pe_metadata import PeMetadata
+
+    o: PeMetadata = getattr(old, "pe", None) or PeMetadata()
+    n: PeMetadata = getattr(new, "pe", None) or PeMetadata()
+    if not o.exports and not n.exports:
+        return []
+    changes: list[Change] = []
+
+    # Detect removed exports
+    old_names = {e.name for e in o.exports if e.name}
+    new_names = {e.name for e in n.exports if e.name}
+    for name in sorted(old_names - new_names):
+        changes.append(Change(
+            kind=ChangeKind.FUNC_REMOVED,
+            symbol=name,
+            description=f"export removed from DLL: {name}",
+        ))
+
+    # Detect new exports (informational)
+    for name in sorted(new_names - old_names):
+        changes.append(Change(
+            kind=ChangeKind.FUNC_ADDED,
+            symbol=name,
+            description=f"new export in DLL: {name}",
+        ))
+
+    # Detect changed import dependencies
+    old_deps = set(o.imports.keys())
+    new_deps = set(n.imports.keys())
+    for dep in sorted(old_deps - new_deps):
+        changes.append(Change(
+            kind=ChangeKind.NEEDED_REMOVED,
+            symbol=dep,
+            description=f"import dependency removed: {dep}",
+        ))
+    for dep in sorted(new_deps - old_deps):
+        changes.append(Change(
+            kind=ChangeKind.NEEDED_ADDED,
+            symbol=dep,
+            description=f"new import dependency: {dep}",
+        ))
+
+    return changes
+
+
+def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Mach-O-specific detectors for macOS dylib ABI changes."""
+    from .macho_metadata import MachoMetadata
+
+    o: MachoMetadata = getattr(old, "macho", None) or MachoMetadata()
+    n: MachoMetadata = getattr(new, "macho", None) or MachoMetadata()
+    if not o.exports and not n.exports:
+        return []
+    changes: list[Change] = []
+
+    # Detect removed exports
+    old_names = {e.name for e in o.exports if e.name}
+    new_names = {e.name for e in n.exports if e.name}
+    for name in sorted(old_names - new_names):
+        changes.append(Change(
+            kind=ChangeKind.FUNC_REMOVED,
+            symbol=name,
+            description=f"export removed from dylib: {name}",
+        ))
+
+    # Detect new exports
+    for name in sorted(new_names - old_names):
+        changes.append(Change(
+            kind=ChangeKind.FUNC_ADDED,
+            symbol=name,
+            description=f"new export in dylib: {name}",
+        ))
+
+    # Install name change (equivalent of SONAME change)
+    if o.install_name and n.install_name and o.install_name != n.install_name:
+        changes.append(Change(
+            kind=ChangeKind.SONAME_CHANGED,
+            symbol="LC_ID_DYLIB",
+            old_value=o.install_name,
+            new_value=n.install_name,
+            description=f"install name changed: {o.install_name} → {n.install_name}",
+        ))
+
+    # Compatibility version change
+    if o.compat_version and n.compat_version and o.compat_version != n.compat_version:
+        changes.append(Change(
+            kind=ChangeKind.SONAME_CHANGED,
+            symbol="compat_version",
+            old_value=o.compat_version,
+            new_value=n.compat_version,
+            description=f"compatibility version changed: {o.compat_version} → {n.compat_version}",
+        ))
+
+    # Detect dependency changes
+    old_deps = set(o.dependent_libs)
+    new_deps = set(n.dependent_libs)
+    for dep in sorted(old_deps - new_deps):
+        changes.append(Change(
+            kind=ChangeKind.NEEDED_REMOVED,
+            symbol=dep,
+            description=f"dependency removed: {dep}",
+        ))
+    for dep in sorted(new_deps - old_deps):
+        changes.append(Change(
+            kind=ChangeKind.NEEDED_ADDED,
+            symbol=dep,
+            description=f"new dependency: {dep}",
+        ))
+
+    return changes
+
+
 
 
 _INTERNAL_NAME_PATTERNS = (
@@ -1766,6 +1880,16 @@ def compare(
         _DetectorSpec("unions", _diff_unions),
         _DetectorSpec("typedefs", _diff_typedefs),
         _DetectorSpec("elf", _diff_elf),
+        _DetectorSpec(
+            "pe",
+            _diff_pe,
+            lambda o, n: ((o.pe is not None and n.pe is not None), "missing PE metadata"),
+        ),
+        _DetectorSpec(
+            "macho",
+            _diff_macho,
+            lambda o, n: ((o.macho is not None and n.macho is not None), "missing Mach-O metadata"),
+        ),
         _DetectorSpec("dwarf", _diff_dwarf),
         _DetectorSpec(
             "advanced_dwarf",

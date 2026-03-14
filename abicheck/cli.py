@@ -59,6 +59,32 @@ def _is_elf(path: Path) -> bool:
         return False
 
 
+def _is_pe(path: Path) -> bool:
+    """Check if file is a PE binary (Windows DLL/EXE)."""
+    from .pe_metadata import is_pe
+    return is_pe(path)
+
+
+def _is_macho(path: Path) -> bool:
+    """Check if file is a Mach-O binary (macOS dylib/framework)."""
+    from .macho_metadata import is_macho
+    return is_macho(path)
+
+
+def _detect_binary_format(path: Path) -> str | None:
+    """Detect binary format from magic bytes.
+
+    Returns 'elf', 'pe', 'macho', or None for non-binary / unknown.
+    """
+    if _is_elf(path):
+        return "elf"
+    if _is_pe(path):
+        return "pe"
+    if _is_macho(path):
+        return "macho"
+    return None
+
+
 def _sniff_text_format(path: Path) -> str:
     """Read a small header chunk and return 'json', 'perl', or 'unknown'."""
     try:
@@ -76,35 +102,20 @@ def _sniff_text_format(path: Path) -> str:
     return "unknown"
 
 
-def _resolve_input(
-    path: Path,
-    headers: list[Path],
-    includes: list[Path],
-    version: str,
-    lang: str,
-    *,
-    is_elf: bool | None = None,
+def _dump_native_binary(
+    path: Path, binary_fmt: str,
+    headers: list[Path], includes: list[Path],
+    version: str, lang: str,
 ) -> AbiSnapshot:
-    """Auto-detect input type and return an AbiSnapshot.
+    """Dump ABI snapshot from a native binary (ELF, PE, or Mach-O).
 
-    Detection order:
-    1. ELF binary (magic bytes ``\\x7fELF``) → :func:`dump` (requires headers)
-    2. ABICC Perl dump (``$VAR1`` prefix) → :func:`import_abicc_perl_dump`
-    3. JSON snapshot (``{`` prefix) → :func:`load_snapshot`
-
-    Args:
-        path: Path to the input file.
-        headers: Public header files (required for ELF inputs).
-        includes: Extra include directories (used for ELF inputs).
-        version: Version label to embed in the resulting snapshot.
-        lang: Language mode for castxml (``c++`` or ``c``).
-        is_elf: Pre-computed ELF detection result; if *None*, detection is
-            performed here (avoids a second ``open()`` when the caller already
-            knows the result).
+    For ELF, headers are required for full AST analysis. For PE/Mach-O,
+    headers are optional — export tables provide the symbol surface.
     """
-    if is_elf is None:
-        is_elf = _is_elf(path)
-    if is_elf:
+    fmt_labels = {"elf": "ELF", "pe": "PE (Windows DLL)", "macho": "Mach-O (macOS dylib)"}
+    fmt_label = fmt_labels.get(binary_fmt, binary_fmt)
+
+    if binary_fmt == "elf":
         if not headers:
             raise click.UsageError(
                 f"Input '{path}' is an ELF binary — "
@@ -130,6 +141,90 @@ def _resolve_input(
         except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
             raise click.ClickException(f"Failed to dump '{path}': {exc}") from exc
 
+    if binary_fmt == "pe":
+        from .pe_metadata import parse_pe_metadata
+        try:
+            pe_meta = parse_pe_metadata(path)
+        except (RuntimeError, OSError, ValueError) as exc:
+            raise click.ClickException(f"Failed to parse PE '{path}': {exc}") from exc
+        # Build snapshot from PE export table
+        from .model import Function, Visibility
+        funcs = [
+            Function(
+                name=exp.name, mangled=exp.name, return_type="?",
+                visibility=Visibility.PUBLIC,
+                is_extern_c=not exp.name.startswith("?"),  # MSVC mangling uses ? prefix
+            )
+            for exp in pe_meta.exports if exp.name
+        ]
+        return AbiSnapshot(
+            library=path.name, version=version,
+            functions=funcs, pe=pe_meta,
+            elf_only_mode=True, platform="pe",
+        )
+
+    if binary_fmt == "macho":
+        from .macho_metadata import parse_macho_metadata
+        try:
+            macho_meta = parse_macho_metadata(path)
+        except (RuntimeError, OSError, ValueError) as exc:
+            raise click.ClickException(
+                f"Failed to parse Mach-O '{path}': {exc}"
+            ) from exc
+        # Build snapshot from Mach-O export table
+        from .model import Function, Visibility
+        funcs = [
+            Function(
+                name=exp.name, mangled=exp.name, return_type="?",
+                visibility=Visibility.PUBLIC,
+                is_extern_c=not exp.name.startswith("_Z"),
+            )
+            for exp in macho_meta.exports if exp.name
+        ]
+        return AbiSnapshot(
+            library=path.name, version=version,
+            functions=funcs, macho=macho_meta,
+            elf_only_mode=True, platform="macho",
+        )
+
+    raise click.ClickException(f"Unsupported binary format: {fmt_label}")
+
+
+def _resolve_input(
+    path: Path,
+    headers: list[Path],
+    includes: list[Path],
+    version: str,
+    lang: str,
+    *,
+    is_elf: bool | None = None,
+) -> AbiSnapshot:
+    """Auto-detect input type and return an AbiSnapshot.
+
+    Detection order:
+    1. Native binary (ELF / PE / Mach-O, detected by magic bytes)
+    2. ABICC Perl dump (``$VAR1`` prefix) → :func:`import_abicc_perl_dump`
+    3. JSON snapshot (``{`` prefix) → :func:`load_snapshot`
+
+    Args:
+        path: Path to the input file.
+        headers: Public header files (required for ELF inputs).
+        includes: Extra include directories (used for ELF inputs).
+        version: Version label to embed in the resulting snapshot.
+        lang: Language mode for castxml (``c++`` or ``c``).
+        is_elf: Pre-computed ELF detection result; if *None*, detection is
+            performed here (avoids a second ``open()`` when the caller already
+            knows the result).
+    """
+    # Fast path: caller already knows it's ELF
+    if is_elf is True:
+        return _dump_native_binary(path, "elf", headers, includes, version, lang)
+
+    # Detect binary format from magic bytes
+    binary_fmt = _detect_binary_format(path) if is_elf is None else None
+    if binary_fmt is not None:
+        return _dump_native_binary(path, binary_fmt, headers, includes, version, lang)
+
     # Text-based formats: detect by sniffing only a small header chunk
     fmt = _sniff_text_format(path)
 
@@ -151,7 +246,7 @@ def _resolve_input(
 
     raise click.UsageError(
         f"Cannot detect format of '{path}'. "
-        "Expected: ELF binary (.so), JSON snapshot (.json), or ABICC Perl dump."
+        "Expected: ELF (.so), PE (.dll), Mach-O (.dylib), JSON snapshot, or ABICC Perl dump."
     )
 
 
@@ -253,13 +348,13 @@ def _resolve_per_side_options(
 
 
 def _warn_ignored_flags(
-    old_is_elf: bool, new_is_elf: bool,
+    old_is_binary: bool, new_is_binary: bool,
     headers: tuple[Path, ...], includes: tuple[Path, ...],
     old_headers_only: tuple[Path, ...], new_headers_only: tuple[Path, ...],
     old_includes_only: tuple[Path, ...], new_includes_only: tuple[Path, ...],
 ) -> None:
     """Warn if dump-only options are provided but not used (both inputs are snapshots)."""
-    if old_is_elf or new_is_elf:
+    if old_is_binary or new_is_binary:
         return
     flag_pairs: list[tuple[tuple[Path, ...], str]] = [
         (headers, "-H/--header"),
@@ -440,17 +535,19 @@ def compare_cmd(
         old_includes_only, new_includes_only,
     )
 
-    old_is_elf = _is_elf(old_input)
-    new_is_elf = _is_elf(new_input)
+    old_fmt = _detect_binary_format(old_input)
+    new_fmt = _detect_binary_format(new_input)
     _warn_ignored_flags(
-        old_is_elf, new_is_elf,
+        old_fmt is not None, new_fmt is not None,
         headers, includes,
         old_headers_only, new_headers_only,
         old_includes_only, new_includes_only,
     )
 
-    old = _resolve_input(old_input, old_h, old_inc, old_version, lang, is_elf=old_is_elf)
-    new = _resolve_input(new_input, new_h, new_inc, new_version, lang, is_elf=new_is_elf)
+    old = _resolve_input(old_input, old_h, old_inc, old_version, lang,
+                         is_elf=True if old_fmt == "elf" else (False if old_fmt else None))
+    new = _resolve_input(new_input, new_h, new_inc, new_version, lang,
+                         is_elf=True if new_fmt == "elf" else (False if new_fmt else None))
 
     suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
 
