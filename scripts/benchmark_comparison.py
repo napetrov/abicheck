@@ -37,10 +37,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-REPO_DIR     = Path(__file__).parent.parent
+REPO_DIR = Path(__file__).parent.parent
 EXAMPLES_DIR = REPO_DIR / "examples"
-REPORT_DIR   = REPO_DIR / "benchmark_reports"
-BUILD_DIR    = REPORT_DIR / "_build"
+REPORT_DIR = REPO_DIR / "benchmark_reports"
+BUILD_DIR = REPORT_DIR / "_build"
 
 # Ensure we use abicheck from THIS repo, not any globally-installed version
 # (abicheck CLI shebang may point to a different Python/site-packages)
@@ -630,25 +630,25 @@ def run_abidiff_headers(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path 
 
 
 TOOL_REGISTRY: list[Tool] = [
-    Tool("abicheck",        run_abicheck,        "abicheck",    12, "expected"),         # noqa: E241
-    Tool("abicheck_compat", run_abicheck_compat, "ac-compat",   12, "expected_compat"),  # noqa: E241
-    Tool("abicheck_strict", run_abicheck_strict, "ac-strict",   14, "expected"),         # noqa: E241
-    Tool("abidiff",         run_abidiff,         "abidiff",     12, "expected"),         # noqa: E241
-    Tool("abidiff_headers", run_abidiff_headers, "abidiff+hdr", 12, "expected"),         # noqa: E241
-    Tool("abicc_dumper",    run_abicc_dumper,    "ABICC(dump)", 12, "expected_abicc", show_slowest=True),  # noqa: E241
-    Tool("abicc_xml",       run_abicc_xml,       "ABICC(xml)",  12, "expected_abicc", show_slowest=True),  # noqa: E241
+    Tool("abicheck", run_abicheck, "abicheck", 12, "expected"),
+    Tool("abicheck_compat", run_abicheck_compat, "ac-compat", 12, "expected_compat"),
+    Tool("abicheck_strict", run_abicheck_strict, "ac-strict", 14, "expected"),
+    Tool("abidiff", run_abidiff, "abidiff", 12, "expected"),
+    Tool("abidiff_headers", run_abidiff_headers, "abidiff+hdr", 12, "expected"),
+    Tool("abicc_dumper", run_abicc_dumper, "ABICC(dump)", 12, "expected_abicc", show_slowest=True),
+    Tool("abicc_xml", run_abicc_xml, "ABICC(xml)", 12, "expected_abicc", show_slowest=True),
 ]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 _COLORS = {
-    "BREAKING":     "\033[91m",
+    "BREAKING": "\033[91m",
     "API_BREAK": "\033[94m",  # blue — source-only, binary-safe
-    "COMPATIBLE":   "\033[93m",
-    "NO_CHANGE":    "\033[92m",
-    "ERROR":        "\033[95m",
-    "SKIP":         "\033[90m",
-    "TIMEOUT":      "\033[95m",
+    "COMPATIBLE": "\033[93m",
+    "NO_CHANGE": "\033[92m",
+    "ERROR": "\033[95m",
+    "SKIP": "\033[90m",
+    "TIMEOUT": "\033[95m",
 }
 _RESET = "\033[0m"
 
@@ -704,7 +704,7 @@ def main() -> None:
     all_cases = sorted(d for d in EXAMPLES_DIR.iterdir() if d.is_dir() and d.name.startswith("case"))
 
     use_dumper = not args.skip_abicc and args.abicc_mode in ("dumper", "both")
-    use_xml    = not args.skip_abicc and args.abicc_mode in ("xml", "both")
+    use_xml = not args.skip_abicc and args.abicc_mode in ("xml", "both")
     use_compat = not args.skip_compat
 
     selected_tools = set(args.tools or [

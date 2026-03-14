@@ -67,7 +67,7 @@ def parse_dwarf(so_path: Path) -> tuple[DwarfMetadata, AdvancedDwarfMetadata]:
                 return empty
 
             meta = DwarfMetadata(has_dwarf=True)
-            adv  = AdvancedDwarfMetadata(has_dwarf=True)
+            adv = AdvancedDwarfMetadata(has_dwarf=True)
 
             dwarf = elf.get_dwarf_info()  # type: ignore[no-untyped-call]
 
