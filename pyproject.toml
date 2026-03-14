@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [{name = "Nikolay Petrov", email = "sfasp.post@gmail.com"}]
 requires-python = ">=3.10"
-keywords = ["abi", "api", "compatibility", "checker", "shared-library", "elf", "dwarf", "castxml"]
+keywords = ["abi", "api", "compatibility", "checker", "shared-library", "elf", "pe", "macho", "dwarf", "castxml"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -45,12 +45,23 @@ Documentation = "https://napetrov.github.io/abicheck/"
 Changelog = "https://github.com/napetrov/abicheck/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+pe = [
+    "pefile>=2023.2.7",       # Windows PE/COFF parsing
+]
+macho = [
+    "macholib>=1.16",         # macOS Mach-O parsing (fat binary support)
+]
+all = [
+    "abicheck[pe,macho]",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov",
     "ruff>=0.3",
     "mypy>=1.0",
     "types-PyYAML",
+    "pefile>=2023.2.7",
+    "macholib>=1.16",
 ]
 
 [tool.mypy]
@@ -63,6 +74,8 @@ ignore_missing_imports = true
 # Disable strict checks for modules that directly call pyelftools APIs.
 module = [
     "abicheck.elf_metadata",
+    "abicheck.pe_metadata",
+    "abicheck.macho_metadata",
     "abicheck.dwarf_metadata",
     "abicheck.dwarf_advanced",
     "abicheck.dwarf_unified",
