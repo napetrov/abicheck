@@ -8,19 +8,21 @@ Covers:
 """
 from __future__ import annotations
 
-import pytest
-
 from abicheck.checker_policy import (
+    API_BREAK_KINDS,
     BREAKING_KINDS,
     COMPATIBLE_KINDS,
-    API_BREAK_KINDS,
     RISK_KINDS,
     ChangeKind,
     Verdict,
     compute_verdict,
 )
-from abicheck.elf_metadata import ElfSymbol, SymbolBinding, SymbolType, _guess_symbol_origin
-
+from abicheck.elf_metadata import (
+    ElfSymbol,
+    SymbolBinding,
+    SymbolType,
+    _guess_symbol_origin,
+)
 
 # ---------------------------------------------------------------------------
 # Tests for _guess_symbol_origin
@@ -355,7 +357,7 @@ class TestPostParseFixup:
         meta.symbols = [sym]
 
         # Re-run the fixup (simulates what _parse() now does after sections are read)
-        from abicheck.elf_metadata import _guess_symbol_origin, ElfMetadata as _EM
+        from abicheck.elf_metadata import _guess_symbol_origin
         _GENERIC_FALLBACKS = frozenset({"libstdc++.so.6", "libgcc_s.so.1", "libc.so.6"})
         for s in meta.symbols:
             if s.origin_lib is None or s.origin_lib in _GENERIC_FALLBACKS:
@@ -511,7 +513,10 @@ class TestNoDoubleAnnotation:
 
     def test_changed_leaked_symbol_single_change(self):
         """One changed leaked symbol → exactly one Change from the two ELF detectors combined."""
-        from abicheck.checker import _diff_elf_symbol_metadata, _diff_leaked_dependency_symbols
+        from abicheck.checker import (
+            _diff_elf_symbol_metadata,
+            _diff_leaked_dependency_symbols,
+        )
 
         old_elf = self._make_elf_meta([
             ElfSymbol(

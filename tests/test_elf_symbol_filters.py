@@ -11,7 +11,6 @@ import pytest
 
 from abicheck.dumper import _is_abi_relevant_symbol
 
-
 # ---------------------------------------------------------------------------
 # Bug 1: GCC / compiler-internal symbols — must be filtered
 # ---------------------------------------------------------------------------
