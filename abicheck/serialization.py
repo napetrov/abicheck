@@ -38,7 +38,8 @@ from .model import (
 # Increment this whenever the snapshot format changes in a backward-incompatible way.
 # v1: initial format (pre-schema-versioning; snapshots without schema_version are treated as v1)
 # v2: schema_version field added (PR #89)
-SCHEMA_VERSION: int = 2
+# v3: pe/macho metadata fields added (multi-format support)
+SCHEMA_VERSION: int = 3
 
 
 def _sets_to_lists(obj: Any) -> Any:

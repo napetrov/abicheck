@@ -281,6 +281,23 @@ class TestDiffMacho:
         new = AbiSnapshot(library="libfoo.dylib", version="2.0", macho=MachoMetadata())
         assert _diff_macho(old, new) == []
 
+    def test_metadata_diff_without_exports(self):
+        """Install name and dependency changes detected even with no exports."""
+        from abicheck.checker import ChangeKind, _diff_macho
+        from abicheck.model import AbiSnapshot
+
+        old = AbiSnapshot(library="libfoo.dylib", version="1.0", macho=MachoMetadata(
+            install_name="/usr/lib/libfoo.1.dylib",
+            dependent_libs=["/usr/lib/libSystem.B.dylib"],
+        ))
+        new = AbiSnapshot(library="libfoo.dylib", version="2.0", macho=MachoMetadata(
+            install_name="/usr/lib/libfoo.2.dylib",
+            dependent_libs=["/usr/lib/libSystem.B.dylib", "/usr/lib/libc++.1.dylib"],
+        ))
+        changes = _diff_macho(old, new)
+        assert any(c.kind == ChangeKind.SONAME_CHANGED for c in changes)
+        assert any(c.kind == ChangeKind.NEEDED_ADDED for c in changes)
+
 
 # ── Synthetic Mach-O binary builder ──────────────────────────────────────
 
@@ -577,6 +594,38 @@ class TestCliIntegration:
         assert len(snap.functions) == 1
         assert snap.functions[0].name == "macho_func"
         assert snap.macho is macho_meta
+
+    def test_dump_native_binary_pe_empty_exports_raises(self, tmp_path):
+        """PE with no exports raises ClickException."""
+        from unittest.mock import patch as mock_patch
+
+        import click
+        import pytest
+
+        from abicheck.cli import _dump_native_binary
+        from abicheck.pe_metadata import PeMetadata
+
+        f = tmp_path / "empty.dll"
+        f.write_bytes(b"fake")
+        with mock_patch("abicheck.pe_metadata.parse_pe_metadata", return_value=PeMetadata()):
+            with pytest.raises(click.ClickException, match="has no exports"):
+                _dump_native_binary(f, "pe", [], [], "1.0", "c")
+
+    def test_dump_native_binary_macho_empty_exports_raises(self, tmp_path):
+        """Mach-O with no exports raises ClickException."""
+        from unittest.mock import patch as mock_patch
+
+        import click
+        import pytest
+
+        from abicheck.cli import _dump_native_binary
+        from abicheck.macho_metadata import MachoMetadata
+
+        f = tmp_path / "empty.dylib"
+        f.write_bytes(b"fake")
+        with mock_patch("abicheck.macho_metadata.parse_macho_metadata", return_value=MachoMetadata()):
+            with pytest.raises(click.ClickException, match="has no exports"):
+                _dump_native_binary(f, "macho", [], [], "1.0", "c")
 
     def test_dump_native_binary_unsupported_format(self, tmp_path):
         """Unsupported binary format raises ClickException."""

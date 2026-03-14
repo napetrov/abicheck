@@ -147,6 +147,11 @@ def _dump_native_binary(
             pe_meta = parse_pe_metadata(path)
         except (RuntimeError, OSError, ValueError) as exc:
             raise click.ClickException(f"Failed to parse PE '{path}': {exc}") from exc
+        if not pe_meta.exports:
+            raise click.ClickException(
+                f"PE file '{path}' has no exports. "
+                "Is pefile installed? (pip install abicheck[pe])"
+            )
         # Build snapshot from PE export table
         from .model import Function, Visibility
         funcs = [
@@ -171,6 +176,11 @@ def _dump_native_binary(
             raise click.ClickException(
                 f"Failed to parse Mach-O '{path}': {exc}"
             ) from exc
+        if not macho_meta.exports:
+            raise click.ClickException(
+                f"Mach-O file '{path}' has no exports. "
+                "Verify the file is a valid dynamic library."
+            )
         # Build snapshot from Mach-O export table
         from .model import Function, Visibility
         funcs = [
@@ -545,9 +555,9 @@ def compare_cmd(
     )
 
     old = _resolve_input(old_input, old_h, old_inc, old_version, lang,
-                         is_elf=True if old_fmt == "elf" else (False if old_fmt else None))
+                         is_elf=True if old_fmt == "elf" else None)
     new = _resolve_input(new_input, new_h, new_inc, new_version, lang,
-                         is_elf=True if new_fmt == "elf" else (False if new_fmt else None))
+                         is_elf=True if new_fmt == "elf" else None)
 
     suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
 

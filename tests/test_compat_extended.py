@@ -572,7 +572,7 @@ class TestRelpathDescriptor:
             </descriptor>
         """)
         desc = parse_descriptor(xml, relpath="/opt/myproject")
-        assert desc.libs[0].as_posix() == "/opt/myproject/lib/libfoo.so"
+        assert re.fullmatch(r"([A-Za-z]:)?/opt/myproject/lib/libfoo\.so", desc.libs[0].as_posix())
 
     def test_relpath_replaces_macro_in_headers(self, tmp_path: Path) -> None:
         xml = _write_file(tmp_path, "desc.xml", """
@@ -583,7 +583,7 @@ class TestRelpathDescriptor:
             </descriptor>
         """)
         desc = parse_descriptor(xml, relpath="/opt/myproject")
-        assert desc.headers[0].as_posix() == "/opt/myproject/include"
+        assert re.fullmatch(r"([A-Za-z]:)?/opt/myproject/include", desc.headers[0].as_posix())
 
     def test_no_relpath_leaves_macros(self, tmp_path: Path) -> None:
         xml = _write_file(tmp_path, "desc.xml", """

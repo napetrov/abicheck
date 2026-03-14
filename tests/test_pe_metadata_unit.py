@@ -222,6 +222,37 @@ class TestDiffPe:
         new = AbiSnapshot(library="test.dll", version="2.0", pe=PeMetadata())
         assert _diff_pe(old, new) == []
 
+    def test_ordinal_only_export_removed(self):
+        """Ordinal-only exports (no name) should still be tracked."""
+        from abicheck.checker import ChangeKind, _diff_pe
+        from abicheck.model import AbiSnapshot
+
+        old = AbiSnapshot(library="test.dll", version="1.0", pe=PeMetadata(
+            exports=[PeExport(name="", ordinal=42), PeExport(name="named")],
+        ))
+        new = AbiSnapshot(library="test.dll", version="2.0", pe=PeMetadata(
+            exports=[PeExport(name="named")],
+        ))
+        changes = _diff_pe(old, new)
+        removed = [c for c in changes if c.kind == ChangeKind.FUNC_REMOVED]
+        assert len(removed) == 1
+        assert removed[0].symbol == "ordinal:42"
+
+    def test_ordinal_only_export_added(self):
+        from abicheck.checker import ChangeKind, _diff_pe
+        from abicheck.model import AbiSnapshot
+
+        old = AbiSnapshot(library="test.dll", version="1.0", pe=PeMetadata(
+            exports=[PeExport(name="named")],
+        ))
+        new = AbiSnapshot(library="test.dll", version="2.0", pe=PeMetadata(
+            exports=[PeExport(name="named"), PeExport(name="", ordinal=99)],
+        ))
+        changes = _diff_pe(old, new)
+        added = [c for c in changes if c.kind == ChangeKind.FUNC_ADDED]
+        assert len(added) == 1
+        assert added[0].symbol == "ordinal:99"
+
 
 # ── parse_pe_metadata ───────────────────────────────────────────────────
 

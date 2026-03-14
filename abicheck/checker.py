@@ -1187,26 +1187,29 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
     o: PeMetadata = getattr(old, "pe", None) or PeMetadata()
     n: PeMetadata = getattr(new, "pe", None) or PeMetadata()
-    if not o.exports and not n.exports:
-        return []
     changes: list[Change] = []
 
+    # Build identifier sets — use name if present, else ordinal
+    def _export_id(e: Any) -> str:
+        return e.name if e.name else f"ordinal:{e.ordinal}"
+
+    old_ids = {_export_id(e) for e in o.exports}
+    new_ids = {_export_id(e) for e in n.exports}
+
     # Detect removed exports
-    old_names = {e.name for e in o.exports if e.name}
-    new_names = {e.name for e in n.exports if e.name}
-    for name in sorted(old_names - new_names):
+    for eid in sorted(old_ids - new_ids):
         changes.append(Change(
             kind=ChangeKind.FUNC_REMOVED,
-            symbol=name,
-            description=f"export removed from DLL: {name}",
+            symbol=eid,
+            description=f"export removed from DLL: {eid}",
         ))
 
     # Detect new exports (informational)
-    for name in sorted(new_names - old_names):
+    for eid in sorted(new_ids - old_ids):
         changes.append(Change(
             kind=ChangeKind.FUNC_ADDED,
-            symbol=name,
-            description=f"new export in DLL: {name}",
+            symbol=eid,
+            description=f"new export in DLL: {eid}",
         ))
 
     # Detect changed import dependencies
@@ -1234,30 +1237,28 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
     o: MachoMetadata = getattr(old, "macho", None) or MachoMetadata()
     n: MachoMetadata = getattr(new, "macho", None) or MachoMetadata()
-    if not o.exports and not n.exports:
-        return []
     changes: list[Change] = []
 
-    # Detect removed exports
-    old_names = {e.name for e in o.exports if e.name}
-    new_names = {e.name for e in n.exports if e.name}
-    for name in sorted(old_names - new_names):
-        changes.append(Change(
-            kind=ChangeKind.FUNC_REMOVED,
-            symbol=name,
-            description=f"export removed from dylib: {name}",
-        ))
+    # Detect removed/added exports (only when at least one side has exports)
+    if o.exports or n.exports:
+        old_names = {e.name for e in o.exports if e.name}
+        new_names = {e.name for e in n.exports if e.name}
+        for name in sorted(old_names - new_names):
+            changes.append(Change(
+                kind=ChangeKind.FUNC_REMOVED,
+                symbol=name,
+                description=f"export removed from dylib: {name}",
+            ))
 
-    # Detect new exports
-    for name in sorted(new_names - old_names):
-        changes.append(Change(
-            kind=ChangeKind.FUNC_ADDED,
-            symbol=name,
-            description=f"new export in dylib: {name}",
-        ))
+        for name in sorted(new_names - old_names):
+            changes.append(Change(
+                kind=ChangeKind.FUNC_ADDED,
+                symbol=name,
+                description=f"new export in dylib: {name}",
+            ))
 
     # Install name change (equivalent of SONAME change)
-    if o.install_name and n.install_name and o.install_name != n.install_name:
+    if o.install_name != n.install_name and (o.install_name or n.install_name):
         changes.append(Change(
             kind=ChangeKind.SONAME_CHANGED,
             symbol="LC_ID_DYLIB",
@@ -1267,7 +1268,7 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         ))
 
     # Compatibility version change
-    if o.compat_version and n.compat_version and o.compat_version != n.compat_version:
+    if o.compat_version != n.compat_version and (o.compat_version or n.compat_version):
         changes.append(Change(
             kind=ChangeKind.SONAME_CHANGED,
             symbol="compat_version",
@@ -1883,12 +1884,18 @@ def compare(
         _DetectorSpec(
             "pe",
             _diff_pe,
-            lambda o, n: ((o.pe is not None and n.pe is not None), "missing PE metadata"),
+            lambda o, n: (
+                (o.pe is not None and n.pe is not None and not o.functions and not n.functions),
+                "missing PE metadata or functions already materialized",
+            ),
         ),
         _DetectorSpec(
             "macho",
             _diff_macho,
-            lambda o, n: ((o.macho is not None and n.macho is not None), "missing Mach-O metadata"),
+            lambda o, n: (
+                (o.macho is not None and n.macho is not None and not o.functions and not n.functions),
+                "missing Mach-O metadata or functions already materialized",
+            ),
         ),
         _DetectorSpec("dwarf", _diff_dwarf),
         _DetectorSpec(
