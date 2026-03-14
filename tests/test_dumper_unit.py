@@ -184,6 +184,63 @@ class TestCastxmlDump:
         # And must still be gone after
         assert not cache_xml.exists()
 
+    def test_castxml_empty_output_file_raises(self, tmp_path, monkeypatch):
+        """castxml exits 0 but writes no output file → RuntimeError."""
+        import subprocess
+        monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/castxml")
+        monkeypatch.setattr("abicheck.dumper._cache_key", lambda *a, **kw: "k")
+        monkeypatch.setattr("abicheck.dumper._cache_path", lambda k: tmp_path / "c.xml")
+
+        def fake_run(*args, **kwargs):
+            # Do NOT write out_xml — simulate castxml exiting 0 with no output
+            return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr("abicheck.dumper.subprocess.run", fake_run)
+        with pytest.raises(RuntimeError, match="no output file"):
+            _castxml_dump([Path("h.h")], [])
+
+    def test_castxml_invalid_xml_raises(self, tmp_path, monkeypatch):
+        """castxml exits 0 but writes invalid XML → RuntimeError."""
+        import subprocess
+        monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/castxml")
+        monkeypatch.setattr("abicheck.dumper._cache_key", lambda *a, **kw: "k")
+        monkeypatch.setattr("abicheck.dumper._cache_path", lambda k: tmp_path / "c.xml")
+
+        def fake_run(*args, **kwargs):
+            # Write the output file with garbage XML
+            for a in args:
+                if isinstance(a, list):
+                    for part in a:
+                        if str(part).endswith(".xml") and "castxml" not in str(part):
+                            Path(part).write_text("<<<not xml>>>")
+            return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr("abicheck.dumper.subprocess.run", fake_run)
+        with pytest.raises(RuntimeError, match="invalid XML|no output file"):
+            _castxml_dump([Path("h.h")], [])
+
+    def test_castxml_empty_root_raises(self, tmp_path, monkeypatch):
+        """castxml exits 0 but writes XML with empty root → RuntimeError."""
+        import subprocess
+        from xml.etree.ElementTree import ElementTree
+        monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/castxml")
+        monkeypatch.setattr("abicheck.dumper._cache_key", lambda *a, **kw: "k")
+        monkeypatch.setattr("abicheck.dumper._cache_path", lambda k: tmp_path / "c.xml")
+
+        def fake_run(*args, **kwargs):
+            # Write valid XML with empty root (no declarations)
+            for a in args:
+                if isinstance(a, list):
+                    for part in a:
+                        if str(part).endswith(".xml") and "castxml" not in str(part):
+                            root = Element("CastXML")
+                            ElementTree(root).write(str(part))
+            return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr("abicheck.dumper.subprocess.run", fake_run)
+        with pytest.raises(RuntimeError, match="empty XML|no output file"):
+            _castxml_dump([Path("h.h")], [])
+
 
 # ── _CastxmlParser ─────────────────────────────────────────────────────
 

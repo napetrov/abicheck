@@ -127,6 +127,11 @@ class TestVersionStampedTypedefInChecker:
         kinds = {c.kind for c in result.changes}
         assert ChangeKind.TYPEDEF_REMOVED not in kinds
         assert result.verdict != Verdict.BREAKING
+        # Both removed sentinels must be downgraded — not just one
+        sentinel_changes = [c for c in result.changes if c.kind == ChangeKind.TYPEDEF_VERSION_SENTINEL]
+        assert len(sentinel_changes) == 2, (
+            f"Expected 2 TYPEDEF_VERSION_SENTINEL changes, got {len(sentinel_changes)}"
+        )
 
     def test_version_sentinel_mixed_with_real_break(self) -> None:
         """Version sentinel + a real break → overall still BREAKING."""
