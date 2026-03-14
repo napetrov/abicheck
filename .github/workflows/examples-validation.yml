@@ -44,7 +44,7 @@ jobs:
       - name: Install test deps
         run: |
           python -m pip install --upgrade pip
-          pip install pytest click pyyaml defusedxml pyelftools
+          pip install -e ".[dev]"
 
       - name: Validate ground_truth.json
         run: |

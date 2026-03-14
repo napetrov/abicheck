@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     from .dwarf_advanced import AdvancedDwarfMetadata
     from .dwarf_metadata import DwarfMetadata
     from .elf_metadata import ElfMetadata
+    from .macho_metadata import MachoMetadata
+    from .pe_metadata import PeMetadata
 
 _model_log = _logging.getLogger(__name__)
 
@@ -143,6 +145,8 @@ class AbiSnapshot:
     variables: list[Variable] = field(default_factory=list)
     types: list[RecordType] = field(default_factory=list)
     elf: ElfMetadata | None = field(default=None)    # ELF dynamic/symbol metadata (Sprint 2)
+    pe: PeMetadata | None = field(default=None)      # PE/COFF metadata (Windows DLL)
+    macho: MachoMetadata | None = field(default=None)  # Mach-O metadata (macOS dylib)
     dwarf: DwarfMetadata | None = field(default=None)           # DWARF layout metadata (Sprint 3)
     dwarf_advanced: AdvancedDwarfMetadata | None = field(default=None)  # Sprint 4
     enums: list[EnumType] = field(default_factory=list)

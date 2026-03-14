@@ -21,6 +21,7 @@ from __future__ import annotations
 import errno
 import json
 import logging
+import re
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
@@ -571,7 +572,7 @@ class TestRelpathDescriptor:
             </descriptor>
         """)
         desc = parse_descriptor(xml, relpath="/opt/myproject")
-        assert str(desc.libs[0]) == "/opt/myproject/lib/libfoo.so"
+        assert re.fullmatch(r"([A-Za-z]:)?/opt/myproject/lib/libfoo\.so", desc.libs[0].as_posix())
 
     def test_relpath_replaces_macro_in_headers(self, tmp_path: Path) -> None:
         xml = _write_file(tmp_path, "desc.xml", """
@@ -582,7 +583,7 @@ class TestRelpathDescriptor:
             </descriptor>
         """)
         desc = parse_descriptor(xml, relpath="/opt/myproject")
-        assert str(desc.headers[0]) == "/opt/myproject/include"
+        assert re.fullmatch(r"([A-Za-z]:)?/opt/myproject/include", desc.headers[0].as_posix())
 
     def test_no_relpath_leaves_macros(self, tmp_path: Path) -> None:
         xml = _write_file(tmp_path, "desc.xml", """
@@ -603,7 +604,9 @@ class TestRelpathDescriptor:
         """)
         result = _load_descriptor_or_dump(xml, relpath="/opt/build")
         assert isinstance(result, CompatDescriptor)
-        assert "/opt/build/lib/libfoo.so" in str(result.libs[0])
+        posix = result.libs[0].as_posix()
+        # On Windows, a drive letter prefix (e.g. "C:") is expected.
+        assert re.fullmatch(r"([A-Za-z]:)?/opt/build/lib/libfoo\.so", posix), posix
 
 
 # ── Headers list resolution ──────────────────────────────────────────────────

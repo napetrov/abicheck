@@ -38,7 +38,8 @@ from .model import (
 # Increment this whenever the snapshot format changes in a backward-incompatible way.
 # v1: initial format (pre-schema-versioning; snapshots without schema_version are treated as v1)
 # v2: schema_version field added (PR #89)
-SCHEMA_VERSION: int = 2
+# v3: pe/macho metadata fields added (multi-format support)
+SCHEMA_VERSION: int = 3
 
 
 def _sets_to_lists(obj: Any) -> Any:
@@ -72,6 +73,18 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
         for sym in elf.get("symbols", []):
             sym["binding"] = sym["binding"] if isinstance(sym["binding"], str) else sym["binding"].value
             sym["sym_type"] = sym["sym_type"] if isinstance(sym["sym_type"], str) else sym["sym_type"].value
+
+    # Serialize PeMetadata enums to strings
+    if d.get("pe"):
+        pe = d["pe"]
+        for exp in pe.get("exports", []):
+            exp["sym_type"] = exp["sym_type"] if isinstance(exp["sym_type"], str) else exp["sym_type"].value
+
+    # Serialize MachoMetadata enums to strings
+    if d.get("macho"):
+        macho = d["macho"]
+        for exp in macho.get("exports", []):
+            exp["sym_type"] = exp["sym_type"] if isinstance(exp["sym_type"], str) else exp["sym_type"].value
 
     # Convert all sets → sorted lists (needed for AdvancedDwarfMetadata.packed_structs
     # and ToolchainInfo.abi_flags; json.dumps raises TypeError on set objects)
@@ -118,6 +131,52 @@ def _elf_from_dict(e: dict[str, Any]) -> Any:
         versions_defined=e.get("versions_defined", []),
         versions_required=e.get("versions_required", {}),
         symbols=syms,
+    )
+
+
+def _pe_from_dict(e: dict[str, Any]) -> Any:
+    from .pe_metadata import PeExport, PeMetadata, PeSymbolType
+    exports = [
+        PeExport(
+            name=x["name"],
+            ordinal=x.get("ordinal", 0),
+            sym_type=PeSymbolType(x.get("sym_type", "exported")),
+            forwarder=x.get("forwarder", ""),
+        )
+        for x in e.get("exports", [])
+    ]
+    return PeMetadata(
+        machine=e.get("machine", ""),
+        characteristics=e.get("characteristics", 0),
+        dll_characteristics=e.get("dll_characteristics", 0),
+        exports=exports,
+        imports=e.get("imports", {}),
+        file_version=e.get("file_version", ""),
+        product_version=e.get("product_version", ""),
+    )
+
+
+def _macho_from_dict(e: dict[str, Any]) -> Any:
+    from .macho_metadata import MachoExport, MachoMetadata, MachoSymbolType
+    exports = [
+        MachoExport(
+            name=x["name"],
+            sym_type=MachoSymbolType(x.get("sym_type", "exported")),
+            is_weak=x.get("is_weak", False),
+        )
+        for x in e.get("exports", [])
+    ]
+    return MachoMetadata(
+        cpu_type=e.get("cpu_type", ""),
+        filetype=e.get("filetype", ""),
+        flags=e.get("flags", 0),
+        install_name=e.get("install_name", ""),
+        dependent_libs=e.get("dependent_libs", []),
+        reexported_libs=e.get("reexported_libs", []),
+        exports=exports,
+        current_version=e.get("current_version", ""),
+        compat_version=e.get("compat_version", ""),
+        min_os_version=e.get("min_os_version", ""),
     )
 
 
@@ -268,10 +327,14 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
     enums = [_enum_type_from_dict(e) for e in d.get("enums", [])]
     typedefs: dict[str, str] = d.get("typedefs", {})
     elf_data = d.get("elf")
+    pe_data = d.get("pe")
+    macho_data = d.get("macho")
     dwarf_data = d.get("dwarf")
     dwarf_adv_data = d.get("dwarf_advanced")
 
     elf = _elf_from_dict(elf_data) if isinstance(elf_data, dict) else None
+    pe = _pe_from_dict(pe_data) if isinstance(pe_data, dict) else None
+    macho = _macho_from_dict(macho_data) if isinstance(macho_data, dict) else None
     dwarf = _dwarf_from_dict(dwarf_data) if isinstance(dwarf_data, dict) else None
     dwarf_advanced = (
         _dwarf_advanced_from_dict(dwarf_adv_data)
@@ -283,7 +346,8 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         library=d["library"], version=d["version"],
         functions=funcs, variables=variables, types=types,
         enums=enums, typedefs=typedefs,
-        elf=elf, dwarf=dwarf, dwarf_advanced=dwarf_advanced,
+        elf=elf, pe=pe, macho=macho,
+        dwarf=dwarf, dwarf_advanced=dwarf_advanced,
         elf_only_mode=bool(d.get("elf_only_mode", False)),
         constants=d.get("constants", {}),
         platform=d.get("platform"),

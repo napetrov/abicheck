@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import warnings
 from pathlib import Path
@@ -206,7 +207,15 @@ def _cache_key(
 
 
 def _cache_path(key: str) -> Path:
-    cache_dir = Path.home() / ".cache" / "abi_check" / "castxml"
+    if sys.platform == "win32":
+        # Use %LOCALAPPDATA%/abi_check/castxml on Windows
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            cache_dir = Path(local) / "abi_check" / "castxml"
+        else:
+            cache_dir = Path.home() / "AppData" / "Local" / "abi_check" / "castxml"
+    else:
+        cache_dir = Path.home() / ".cache" / "abi_check" / "castxml"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir / f"{key}.xml"
 
@@ -236,8 +245,9 @@ def _castxml_dump(
     """
     if not _castxml_available():
         raise RuntimeError(
-            "castxml not found in PATH. Install with: apt install castxml  "
-            "or  conda install -c conda-forge castxml"
+            "castxml not found in PATH. Install with: apt install castxml, "
+            "brew install castxml, conda install -c conda-forge castxml, "
+            "or choco install castxml (Windows); then ensure castxml is in PATH."
         )
 
     # Check disk cache
@@ -296,7 +306,7 @@ def _castxml_dump(
 
     # Cross-compilation / toolchain flags
     if sysroot:
-        cmd += [f"--sysroot={sysroot}"]
+        cmd += [f"--sysroot={sysroot.as_posix()}"]
     if nostdinc:
         cmd += ["-nostdinc"]
     if gcc_options:

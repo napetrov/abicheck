@@ -450,8 +450,10 @@ class TestCompareExitCodeDocs:
 class TestDumpClickException:
     def test_dump_error_exits_1_not_2(self, tmp_path):
         """dump on non-ELF file should exit 1 (ClickException) not 2 (sys.exit)."""
+        empty = tmp_path / "empty.so"
+        empty.write_bytes(b"")
         runner = CliRunner()
-        result = runner.invoke(main, ["dump", "/dev/null"])
+        result = runner.invoke(main, ["dump", str(empty)])
         assert result.exit_code == 1
         assert "Error:" in result.output
         assert "Traceback" not in result.output

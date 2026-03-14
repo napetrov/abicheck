@@ -35,6 +35,8 @@ requires a non-Python build chain and is primarily aimed at Rust FFI, not C/C++ 
 ```
 abicheck (Python)
 ├── ELF metadata + DWARF  → pyelftools   (pure Python ELF/DWARF parser)
+├── PE/COFF metadata      → pefile       (pure Python PE parser)
+├── Mach-O metadata       → macholib     (pure Python Mach-O parser)
 ├── C++ header AST        → castxml      (C++ → XML, maintained by Kitware)
 └── Diff + verdict        → our Python   (thin, testable, no C extension)
 ```
@@ -47,8 +49,10 @@ parse path goes through pyelftools only (no subprocess, no text parsing).
 
 | Library | Role | Maintenance status |
 |---------|------|-------------------|
-| `pyelftools` | ELF/DWARF parsing | Active PyPI project, used by angr, pwntools, ROPgadget |
-| `castxml` | C++ header → XML AST | Maintained by Kitware (VTK team); available on conda-forge |
+| `pyelftools` | ELF/DWARF parsing (Linux) | Active PyPI project, used by angr, pwntools, ROPgadget |
+| `pefile` | PE/COFF parsing (Windows) | Active PyPI project, widely used for malware analysis and PE tooling |
+| `macholib` | Mach-O parsing (macOS) | Active PyPI project, maintained by the py2app team |
+| `castxml` | C++ header → XML AST (all platforms) | Maintained by Kitware (VTK team); available on conda-forge, Homebrew, apt |
 | `defusedxml` | Safe XML parsing | Security hardening for castxml output |
 
 ### Distribution
@@ -115,9 +119,16 @@ if subprocess overhead becomes a bottleneck.
 
 ## Platform Scope
 
-- **Supported:** Linux ELF x86-64, aarch64
-- **Not supported:** Windows PE/COFF, macOS Mach-O (explicit non-goal)
+| Capability | Linux (ELF) | Windows (PE) | macOS (Mach-O) |
+|-----------|:-----:|:-------:|:-----:|
+| Binary metadata | Yes (pyelftools) | Yes (pefile) | Yes (macholib) |
+| Header AST (castxml) | Yes (GCC, Clang) | Yes (MSVC, MinGW) | Yes (Clang, GCC) |
+| Debug info cross-check | Yes (DWARF) | Planned (PDB) | Yes (DWARF) |
+
+- **Header AST analysis** works on all platforms via castxml (cross-platform, maintained by Kitware). castxml emulates the target compiler's preprocessor via `--castxml-cc-gnu` (GCC/Clang) or `--castxml-cc-msvc` (MSVC)
+- **Debug info cross-check** uses DWARF (Linux, macOS) via pyelftools; PDB support for Windows is planned
 - **DWARF version:** DWARF 4 (GCC ≤10 default) fully supported; DWARF 5 (GCC 11+ default) partially supported via pyelftools ≥0.29
+- **Architectures:** x86-64, aarch64 (ELF); any architecture for PE and Mach-O metadata
 
 ## pyelftools Maintenance Risk & Mitigation
 
