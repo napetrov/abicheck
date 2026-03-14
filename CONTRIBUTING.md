@@ -5,7 +5,7 @@ Thank you for your interest in contributing!
 ## Requirements
 
 - Linux (ELF/DWARF tooling is Linux-specific)
-- Python ≥ 3.10
+- Python >= 3.10
 - `castxml` + `g++` or `clang++`
 - `git`
 
@@ -34,14 +34,57 @@ cd abicheck
 pip install -e ".[dev]"
 ```
 
-## Running tests
+## Testing
+
+abicheck uses a layered testing strategy with `pytest`.
+
+### Quick tests (default CI gate)
+
+Fast unit and component tests — no external tools required:
 
 ```bash
-# Unit + integration tests (no external tools required)
-python -m pytest tests/ -m "not integration and not libabigail and not abicc"
+pytest tests/ -v --tb=short \
+  -m "not integration and not libabigail and not abicc" \
+  --cov=abicheck --cov-report=term-missing
+```
 
-# Full suite (requires castxml, abidiff, abi-compliance-checker)
-python -m pytest tests/
+### Integration tests
+
+Requires `castxml` and `gcc`/`g++`:
+
+```bash
+pytest tests/ -v -m "integration"
+```
+
+### Full suite (all external tools)
+
+Requires `castxml`, `abidiff`, and `abi-compliance-checker`:
+
+```bash
+pytest tests/ --cov=abicheck --cov-report=term-missing
+```
+
+### Test markers
+
+| Marker | Requirements | What it covers |
+|--------|-------------|----------------|
+| (default) | Python only | Core logic, report serialization, suppression rules, CLI |
+| `integration` | castxml, gcc/g++ | Real toolchain interactions, ELF/DWARF parsing |
+| `libabigail` | abidiff, gcc/g++ | libabigail parity tests |
+| `abicc` | abi-compliance-checker, gcc/g++ | ABICC compatibility parity tests |
+
+### Example validation
+
+Run the 48 example cases against ground truth:
+
+```bash
+pytest tests/ -v -k "example" --tb=short
+```
+
+Or use the benchmark script:
+
+```bash
+python3 scripts/benchmark_comparison.py --skip-abicc
 ```
 
 ## Code style

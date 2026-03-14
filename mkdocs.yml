@@ -1,5 +1,5 @@
 site_name: abicheck
-site_description: ABI compatibility checker for shared libraries — drop-in replacement for ABICC, libabigail-aware
+site_description: ABI compatibility checker for C/C++ shared libraries
 site_url: https://napetrov.github.io/abicheck
 repo_url: https://github.com/napetrov/abicheck
 repo_name: napetrov/abicheck
@@ -42,28 +42,20 @@ nav:
     - Exit Codes: exit_codes.md
     - Policy Profiles: policies.md
     - SARIF Output: sarif_output.md
-    - Migrating from ABICC: migration/from_abicc.md
-    - Examples Breakage Guide: examples_breakage_guide.md
+    - Examples & Breakage Guide: examples_breakage_guide.md
     - Local Compare: local_compare.md
   - Reference:
     - Architecture: reference/architecture.md
     - Change Kind Reference: reference/change_kinds.md
     - ABI Break Catalog: abi_breaking_cases_catalog.md
+    - Benchmark & Tool Comparison: tool_comparison.md
     - ABICC Compatibility: abicc_compat.md
     - Format Compliance: abicc_format_compliance.md
     - libabigail Parity: libabigail_parity.md
-    - Tool Comparison: tool_comparison.md
-    - Gap Report: gap_report.md
-    - Coverage Report: coverage_report.md
-    - Benchmark Report: benchmark_report.md
-    - V2 Coverage Plan: v2_coverage_plan.md
+  - Migration:
+    - Migrating from ABICC: migration/from_abicc.md
   - Development:
-    - Testing Strategy: testing_coverage.md
     - Codebase Analysis: codebase_analysis.md
-    - ABICC Test Coverage Comparison: abicc_test_coverage_comparison.md
-  - Architecture Decisions:
-    - ADR Index: adr/index.md
-    - ADR-001 Technology Stack: adr/001-technology-stack.md
 
 plugins:
   - search

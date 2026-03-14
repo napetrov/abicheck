@@ -1,8 +1,12 @@
 # ABICC Compatibility Reference
 
-`abicheck compat check` is a drop-in replacement for `abi-compliance-checker`.
-It accepts the same flags (except `-o` which was removed — use `-old` instead),
-produces the same exit codes, and reads the same XML descriptors.
+`abicheck compat check` is a drop-in replacement for `abi-compliance-checker` (ABICC).
+It accepts the same single-hyphen flags, reads the same XML descriptors, and produces
+mostly compatible exit codes — so you can swap it into existing ABICC pipelines with
+a one-line change. (Note: exit code `2` may mean either `API_BREAK` or a tool error
+such as a missing descriptor file — see the exit codes table below for details.)
+
+For the migration guide (step-by-step checklist), see [Migrating from ABICC](migration/from_abicc.md).
 
 ## Quick start
 
@@ -11,7 +15,7 @@ produces the same exit codes, and reads the same XML descriptors.
 abi-compliance-checker -lib libfoo -old old.xml -new new.xml -report-path r.html
 
 # After (abicheck — identical):
-abicheck compat check -lib libdnnl -old old.xml -new new.xml -report-path r.html
+abicheck compat check -lib libfoo -old old.xml -new new.xml -report-path r.html
 ```
 
 Exit codes match ABICC:
