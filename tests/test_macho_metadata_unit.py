@@ -516,7 +516,6 @@ class TestParseMachoMetadata:
 
     def test_parse_fat_binary_multi_arch_prefers_known_arch(self, tmp_path):
         """Fat binary with x86_64 + arm64 slices: both are parseable (arch selection is deterministic)."""
-        import platform
         inner_x86 = _build_macho_64_le(install_name="/usr/lib/libfat_x86.dylib")
         inner_arm = _build_macho_64_le(install_name="/usr/lib/libfat_arm.dylib")
         # fat header: magic + nfat_arch
