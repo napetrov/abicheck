@@ -142,6 +142,8 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.TEMPLATE_RETURN_TYPE_CHANGED,
     # Symbol origin detection
     ChangeKind.SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED,
+    # Version-stamped typedef sentinels (libpng-style compile-time version checks)
+    ChangeKind.TYPEDEF_VERSION_SENTINEL,
 }
 
 

@@ -248,7 +248,15 @@ def _castxml_dump(
     )
     cached = _cache_path(key)
     if cached.exists():
-        return cast(Element, DefusedET.parse(str(cached)).getroot())
+        try:
+            _cached_root = DefusedET.parse(str(cached)).getroot()
+        except Exception:
+            _cached_root = None
+        if _cached_root is None:
+            # Corrupt/unparseable cache entry — remove and re-run castxml
+            cached.unlink(missing_ok=True)
+        else:
+            return cast(Element, _cached_root)
 
     # Map logical compiler name → castxml cc flag
     _cc_map = {"c++": "g++", "cc": "gcc", "g++": "g++", "gcc": "gcc",
@@ -309,9 +317,37 @@ def _castxml_dump(
             raise RuntimeError(
                 f"castxml failed (exit {result.returncode}):\n{result.stderr[:2000]}"
             )
+        # Guard against castxml exiting 0 but not writing an output file,
+        # or writing an empty/truncated file (happens with some header errors).
+        if not out_xml.exists() or out_xml.stat().st_size == 0:
+            stderr_snippet = result.stderr[:1000].strip()
+            detail = f"\ncastxml stderr: {stderr_snippet}" if stderr_snippet else ""
+            raise RuntimeError(
+                f"castxml exited 0 but produced no output file (or empty file).{detail}"
+            )
+        # Parse the XML; propagate parse errors as RuntimeError with context.
+        try:
+            root = cast(Element, DefusedET.parse(str(out_xml)).getroot())
+        except Exception as xml_exc:
+            stderr_snippet = result.stderr[:1000].strip()
+            detail = f"\ncastxml stderr: {stderr_snippet}" if stderr_snippet else ""
+            raise RuntimeError(
+                f"castxml produced invalid XML: {xml_exc}{detail}"
+            ) from xml_exc
+        # castxml may exit 0 but emit an empty root element when the header
+        # fails to parse (no children = no type/function declarations captured).
+        # This is a silent failure that would yield a false COMPATIBLE verdict.
+        if len(root) == 0:
+            stderr_snippet = result.stderr[:1000].strip()
+            detail = f"\ncastxml stderr: {stderr_snippet}" if stderr_snippet else ""
+            raise RuntimeError(
+                f"castxml produced an empty XML document (no declarations found). "
+                f"Check that the header paths are correct and the compiler can "
+                f"parse them.{detail}"
+            )
         # Save to cache
         shutil.copy2(str(out_xml), str(cached))
-        return cast(Element, DefusedET.parse(str(out_xml)).getroot())
+        return root
     finally:
         agg_path.unlink(missing_ok=True)
         out_xml.unlink(missing_ok=True)

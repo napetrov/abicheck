@@ -15,6 +15,7 @@
 """Checker — diff two AbiSnapshots, classify changes, produce a verdict."""
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -791,11 +792,69 @@ def _diff_unions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+_VERSION_STAMPED_TYPEDEF_RE = re.compile(r"^(.*?)_version_\d+_\d+_\d+$", re.IGNORECASE)
+"""Pattern for version-stamped compile-time sentinel typedefs.
+
+Some libraries (e.g. libpng) define typedefs whose names encode the library
+version, e.g. ``typedef char* png_libpng_version_1_6_46``.  The name changes
+every release by design — this is NOT a binary ABI break because the typedef
+is never exported as an ELF symbol; it exists solely to produce a
+compile-time error if headers from different versions are mixed.
+
+When such a typedef disappears (``typedef_removed``), abicheck would
+otherwise report BREAKING.  This guard downgrades the change to
+TYPEDEF_VERSION_SENTINEL (COMPATIBLE) instead.
+"""
+
+
+def _is_version_stamped_typedef(name: str) -> bool:
+    """Return True if *name* looks like a version-stamped sentinel typedef."""
+    return bool(_VERSION_STAMPED_TYPEDEF_RE.match(name))
+
+
+def _has_version_family_successor(name: str, new_typedefs: dict[str, str]) -> bool:
+    """Return True if *new_typedefs* contains another version-stamped typedef
+    with the same family prefix (e.g. ``png_libpng_version_``).
+
+    This distinguishes a sentinel rotation (old version removed, new version
+    added) from a genuine typedef removal where the name happens to match the
+    version-stamp pattern.
+    """
+    m = _VERSION_STAMPED_TYPEDEF_RE.match(name)
+    if not m:
+        return False
+    prefix = m.group(1).lower()
+    # Require a non-empty family prefix to avoid matching unrelated sentinels
+    # when the name itself starts with _version_ (e.g. ``_version_1_0_0``).
+    if not prefix:
+        return False
+    prefix = prefix + "_version_"
+    return any(k.lower().startswith(prefix) for k in new_typedefs)
+
+
 def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
     for alias, old_type in old.typedefs.items():
         new_type = new.typedefs.get(alias)
         if new_type is None:
+            # Version-stamped typedefs (e.g. png_libpng_version_1_6_46) are
+            # compile-time sentinels — their name encodes the version and
+            # changes every release intentionally.  They are never exported as
+            # ELF symbols, so their removal is NOT a binary ABI break.
+            # Require a same-family successor in new_typedefs to avoid hiding
+            # genuine TYPEDEF_REMOVED breaks for names that merely match the
+            # version-stamp pattern.
+            if _is_version_stamped_typedef(alias) and _has_version_family_successor(alias, new.typedefs):
+                changes.append(Change(
+                    kind=ChangeKind.TYPEDEF_VERSION_SENTINEL,
+                    symbol=alias,
+                    description=(
+                        f"Version-stamped typedef removed (compile-time sentinel, "
+                        f"not an ABI break): {alias}"
+                    ),
+                    old_value=old_type,
+                ))
+                continue
             # Typedef removed — breaking for consumers that used the alias
             changes.append(Change(
                 kind=ChangeKind.TYPEDEF_REMOVED,

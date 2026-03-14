@@ -237,11 +237,17 @@ class ChangeKind(str, Enum):
     # This is a best-effort fallback; lower confidence than FUNC_DELETED.
     FUNC_DELETED_ELF_FALLBACK = "func_deleted_elf_fallback"
 
-    # ── PR #89: Template inner-type deep analysis (issues #38 / #73) ─────────────
+    # ── PR: Template inner-type deep analysis (issues #38 / #73) ─────────────
     # Emitted when a function param or return type is a template specialization
     # whose inner type argument(s) change, e.g. vector<int> → vector<double>.
     TEMPLATE_PARAM_TYPE_CHANGED = "template_param_type_changed"
     TEMPLATE_RETURN_TYPE_CHANGED = "template_return_type_changed"
+
+    # ── Version-stamped typedef sentinel ────────────────────────────────────
+    # Emitted when a typedef whose name encodes a version number
+    # (e.g. png_libpng_version_1_6_46) is removed.  These are compile-time
+    # sentinels only and are never exported as ELF symbols — NOT an ABI break.
+    TYPEDEF_VERSION_SENTINEL = "typedef_version_sentinel"
 
     # ── Symbol origin detection ────────────────────────────────────────────────
     # Emitted when a symbol that changed (removed, type-changed, etc.) is detected
@@ -409,6 +415,9 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
     # Inline attribute changes
     ChangeKind.FUNC_LOST_INLINE,  # losing inline gives the function external linkage — existing
     # binaries with baked-in inline copies still work correctly
+
+    # Version-stamped typedef sentinels: compile-time only, never exported as ELF symbols
+    ChangeKind.TYPEDEF_VERSION_SENTINEL,
 }
 
 # Changes that are binary-compatible for already-compiled consumers but represent
@@ -623,6 +632,12 @@ IMPACT_TEXT: dict[ChangeKind, str] = {
     ChangeKind.FIELD_RENAMED: "Field name changed but offset is the same; source code using old name won't compile.",
     ChangeKind.METHOD_ACCESS_CHANGED: "Method access level narrowed (e.g. public→private); old code calling it won't compile.",
     ChangeKind.FIELD_ACCESS_CHANGED: "Field access level narrowed; old code accessing it won't compile.",
+    # Version-stamped typedef sentinels
+    ChangeKind.TYPEDEF_VERSION_SENTINEL: (
+        "Typedef name encodes a version number (e.g. png_libpng_version_1_6_46) — "
+        "this is a compile-time sentinel that changes every release by design; "
+        "it is never exported as an ELF symbol and does not affect binary ABI."
+    ),
 }
 
 
