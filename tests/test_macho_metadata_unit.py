@@ -562,7 +562,10 @@ class TestCliIntegration:
         from abicheck.cli import _dump_native_binary
         from abicheck.pe_metadata import PeExport, PeMetadata
 
-        pe_meta = PeMetadata(exports=[PeExport(name="test_func", ordinal=1)])
+        pe_meta = PeMetadata(
+            machine="IMAGE_FILE_MACHINE_AMD64",
+            exports=[PeExport(name="test_func", ordinal=1)],
+        )
         f = tmp_path / "test.dll"
         f.write_bytes(b"fake")
 
@@ -570,7 +573,7 @@ class TestCliIntegration:
             snap = _dump_native_binary(f, "pe", [], [], "1.0", "c")
 
         assert snap.platform == "pe"
-        assert snap.elf_only_mode is True
+        assert snap.elf_only_mode is False
         assert len(snap.functions) == 1
         assert snap.functions[0].name == "test_func"
         assert snap.pe is pe_meta
@@ -590,13 +593,13 @@ class TestCliIntegration:
             snap = _dump_native_binary(f, "macho", [], [], "1.0", "c")
 
         assert snap.platform == "macho"
-        assert snap.elf_only_mode is True
+        assert snap.elf_only_mode is False
         assert len(snap.functions) == 1
         assert snap.functions[0].name == "macho_func"
         assert snap.macho is macho_meta
 
     def test_dump_native_binary_pe_empty_exports_raises(self, tmp_path):
-        """PE with no exports raises ClickException."""
+        """PE with valid machine but no named exports raises ClickException."""
         from unittest.mock import patch as mock_patch
 
         import click
@@ -607,8 +610,10 @@ class TestCliIntegration:
 
         f = tmp_path / "empty.dll"
         f.write_bytes(b"fake")
-        with mock_patch("abicheck.pe_metadata.parse_pe_metadata", return_value=PeMetadata()):
-            with pytest.raises(click.ClickException, match="has no exports"):
+        # machine set (parse succeeded) but no exports
+        with mock_patch("abicheck.pe_metadata.parse_pe_metadata",
+                        return_value=PeMetadata(machine="IMAGE_FILE_MACHINE_AMD64")):
+            with pytest.raises(click.ClickException, match="no named exports"):
                 _dump_native_binary(f, "pe", [], [], "1.0", "c")
 
     def test_dump_native_binary_macho_empty_exports_raises(self, tmp_path):

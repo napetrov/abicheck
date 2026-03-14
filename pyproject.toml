@@ -49,11 +49,9 @@ Changelog = "https://github.com/napetrov/abicheck/blob/main/CHANGELOG.md"
 pe = [
     "pefile>=2023.2.7",       # Windows PE/COFF parsing
 ]
-macho = [
-    "macholib>=1.16",         # macOS Mach-O parsing (fat binary support)
-]
+macho = []                    # Pure-Python Mach-O parser — no external deps required
 all = [
-    "abicheck[pe,macho]",
+    "abicheck[pe]",
 ]
 dev = [
     "pytest>=7.0",
@@ -62,7 +60,6 @@ dev = [
     "mypy>=1.0",
     "types-PyYAML",
     "pefile>=2023.2.7",
-    "macholib>=1.16",
 ]
 
 [tool.mypy]

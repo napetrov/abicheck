@@ -144,13 +144,24 @@ def _dump_native_binary(
     if binary_fmt == "pe":
         from .pe_metadata import parse_pe_metadata
         try:
+            import pefile as _pefile_check  # noqa: F401
+        except ImportError:
+            raise click.ClickException(
+                f"Parsing PE files requires 'pefile': pip install 'abicheck[pe]'"
+            )
+        try:
             pe_meta = parse_pe_metadata(path)
         except (RuntimeError, OSError, ValueError) as exc:
             raise click.ClickException(f"Failed to parse PE '{path}': {exc}") from exc
+        if not pe_meta.machine:
+            raise click.ClickException(
+                f"Failed to extract PE metadata from '{path}'. "
+                "The file may be corrupt or not a valid PE binary."
+            )
         if not pe_meta.exports:
             raise click.ClickException(
-                f"PE file '{path}' has no exports. "
-                "Is pefile installed? (pip install abicheck[pe])"
+                f"PE file '{path}' has no named exports. "
+                "DLLs with only ordinal exports are not yet supported."
             )
         # Build snapshot from PE export table
         from .model import Function, Visibility
@@ -165,7 +176,7 @@ def _dump_native_binary(
         return AbiSnapshot(
             library=path.name, version=version,
             functions=funcs, pe=pe_meta,
-            elf_only_mode=True, platform="pe",
+            platform="pe",
         )
 
     if binary_fmt == "macho":
@@ -194,7 +205,7 @@ def _dump_native_binary(
         return AbiSnapshot(
             library=path.name, version=version,
             functions=funcs, macho=macho_meta,
-            elf_only_mode=True, platform="macho",
+            platform="macho",
         )
 
     raise click.ClickException(f"Unsupported binary format: {fmt_label}")

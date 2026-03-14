@@ -1885,7 +1885,7 @@ def compare(
             "pe",
             _diff_pe,
             lambda o, n: (
-                (o.pe is not None and n.pe is not None and not o.functions and not n.functions),
+                o.pe is not None and n.pe is not None and not o.functions and not n.functions,
                 "missing PE metadata or functions already materialized",
             ),
         ),
@@ -1893,7 +1893,7 @@ def compare(
             "macho",
             _diff_macho,
             lambda o, n: (
-                (o.macho is not None and n.macho is not None and not o.functions and not n.functions),
+                o.macho is not None and n.macho is not None and not o.functions and not n.functions,
                 "missing Mach-O metadata or functions already materialized",
             ),
         ),
