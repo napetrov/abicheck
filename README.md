@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/napetrov/abicheck/actions/workflows/ci.yml/badge.svg)](https://github.com/napetrov/abicheck/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/napetrov/abicheck/branch/main/graph/badge.svg)](https://codecov.io/gh/napetrov/abicheck)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 **abicheck** is a command-line tool that detects breaking changes in C/C++ shared libraries before they reach production. It compares two versions of a `.so` library — along with their public headers — and reports whether existing binaries will continue to work or break at runtime.
 
@@ -447,4 +448,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, testing, code sty
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
+
+Copyright 2026 Nikolay Petrov
