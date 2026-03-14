@@ -48,7 +48,12 @@ class TestCastxmlDumpBranches:
             captured_cmd.extend(cmd)
             for i, arg in enumerate(cmd):
                 if arg == "-o" and i + 1 < len(cmd):
-                    Path(cmd[i + 1]).write_text("<GCC_XML/>", encoding="utf-8")
+                    # Write minimal non-empty castxml XML so the empty-root guard passes.
+                    Path(cmd[i + 1]).write_text(
+                        '<?xml version="1.0"?>'
+                        '<GCC_XML><Namespace id="_1" name="::" context="_1"/></GCC_XML>',
+                        encoding="utf-8",
+                    )
                     break
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
