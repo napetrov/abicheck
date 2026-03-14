@@ -152,6 +152,23 @@ class TestCastxmlDump:
         result = _castxml_dump([Path("h.h")], [])
         assert result.tag == "GCC_XML"
 
+    def test_corrupt_cache_is_discarded(self, tmp_path, monkeypatch):
+        """A cache file whose root is None (empty/corrupt XML) is removed and castxml re-runs."""
+        monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/castxml")
+        # Write an XML file that parses but has no root (empty file produces None root)
+        cache_xml = tmp_path / "cached.xml"
+        cache_xml.write_text("")  # empty → DefusedET.parse().getroot() returns None
+
+        monkeypatch.setattr("abicheck.dumper._cache_key", lambda *a, **kw: "testkey")
+        monkeypatch.setattr("abicheck.dumper._cache_path", lambda k: cache_xml)
+
+        # castxml will fail because h.h doesn't exist — that's fine, we just
+        # want to confirm the corrupt cache didn't short-circuit the run
+        with pytest.raises(Exception):
+            _castxml_dump([Path("h.h")], [])
+        # Cache file should have been removed
+        assert not cache_xml.exists()
+
 
 # ── _CastxmlParser ─────────────────────────────────────────────────────
 

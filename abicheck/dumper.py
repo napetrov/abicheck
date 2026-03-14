@@ -234,7 +234,15 @@ def _castxml_dump(
     )
     cached = _cache_path(key)
     if cached.exists():
-        return cast(Element, DefusedET.parse(str(cached)).getroot())
+        try:
+            _cached_root = DefusedET.parse(str(cached)).getroot()
+        except Exception:
+            _cached_root = None
+        if _cached_root is None:
+            # Corrupt/unparseable cache entry — remove and re-run castxml
+            cached.unlink(missing_ok=True)
+        else:
+            return cast(Element, _cached_root)
 
     # Map logical compiler name → castxml cc flag
     _cc_map = {"c++": "g++", "cc": "gcc", "g++": "g++", "gcc": "gcc",

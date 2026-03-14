@@ -13,8 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from abicheck.checker import ChangeKind, Verdict, compare
-from abicheck.checker import _is_version_stamped_typedef
+from abicheck.checker import ChangeKind, Verdict, _is_version_stamped_typedef, compare
 from abicheck.model import AbiSnapshot
 
 
@@ -150,7 +149,8 @@ class TestVersionStampedTypedefInChecker:
     def test_version_sentinel_change_description(self) -> None:
         """TYPEDEF_VERSION_SENTINEL change has informative description."""
         old = _snap({"mylib_version_2_5_3": "unsigned int"}, version="2.5.3")
-        new = _snap({}, version="2.6.0")
+        # Successor must be present so same-family check passes
+        new = _snap({"mylib_version_2_6_0": "unsigned int"}, version="2.6.0")
         result = compare(old, new)
         sentinel_changes = [
             c for c in result.changes

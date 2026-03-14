@@ -778,7 +778,7 @@ def _diff_unions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
-_VERSION_STAMPED_TYPEDEF_RE = re.compile(r".*_version_\d+_\d+_\d+$", re.IGNORECASE)
+_VERSION_STAMPED_TYPEDEF_RE = re.compile(r"^(.*?)_version_\d+_\d+_\d+$", re.IGNORECASE)
 """Pattern for version-stamped compile-time sentinel typedefs.
 
 Some libraries (e.g. libpng) define typedefs whose names encode the library
@@ -798,6 +798,21 @@ def _is_version_stamped_typedef(name: str) -> bool:
     return bool(_VERSION_STAMPED_TYPEDEF_RE.match(name))
 
 
+def _has_version_family_successor(name: str, new_typedefs: dict[str, str]) -> bool:
+    """Return True if *new_typedefs* contains another version-stamped typedef
+    with the same family prefix (e.g. ``png_libpng_version_``).
+
+    This distinguishes a sentinel rotation (old version removed, new version
+    added) from a genuine typedef removal where the name happens to match the
+    version-stamp pattern.
+    """
+    m = _VERSION_STAMPED_TYPEDEF_RE.match(name)
+    if not m:
+        return False
+    prefix = m.group(1).lower() + "_version_"
+    return any(k.lower().startswith(prefix) for k in new_typedefs)
+
+
 def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
     for alias, old_type in old.typedefs.items():
@@ -807,7 +822,10 @@ def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             # compile-time sentinels — their name encodes the version and
             # changes every release intentionally.  They are never exported as
             # ELF symbols, so their removal is NOT a binary ABI break.
-            if _is_version_stamped_typedef(alias):
+            # Require a same-family successor in new_typedefs to avoid hiding
+            # genuine TYPEDEF_REMOVED breaks for names that merely match the
+            # version-stamp pattern.
+            if _is_version_stamped_typedef(alias) and _has_version_family_successor(alias, new.typedefs):
                 changes.append(Change(
                     kind=ChangeKind.TYPEDEF_VERSION_SENTINEL,
                     symbol=alias,
