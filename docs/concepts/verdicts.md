@@ -54,7 +54,7 @@ Examples:
 
 > **Note:** `abicheck compat` *does* emit exit code `2` for `API_BREAK` conditions.
 > However, the `compat` HTML/text report uses ABICC-style phrasing
-> ("⚠️ API_BREAK — Source-level API change, binary compatible") rather than a bare
+> ("⚠️ API_BREAK — Source-level API change — recompilation required") rather than a bare
 > `API_BREAK` verdict string. Use `abicheck compare --format json` for machine-readable
 > verdict values.
 

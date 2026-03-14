@@ -1243,7 +1243,7 @@ def compat_check_cmd(  # noqa: PLR0913
     #   0 = NO_CHANGE, COMPATIBLE, or COMPATIBLE_WITH_RISK
     #       (COMPATIBLE_WITH_RISK is binary-compatible; deployment risk surfaced in report only)
     #   1 = BREAKING
-    #   2 = API_BREAK (source-level break, binary compatible)
+    #   2 = API_BREAK (source-level API break — recompilation required)
     if verdict == "BREAKING":
         sys.exit(1)
     if verdict == "API_BREAK":

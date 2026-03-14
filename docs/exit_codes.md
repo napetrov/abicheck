@@ -10,7 +10,7 @@
 |-----------|---------|
 | `0` | `NO_CHANGE`, `COMPATIBLE`, or `COMPATIBLE_WITH_RISK` — no binary ABI break |
 | `1` | Tool error (missing input, invalid snapshot) — Click/Python uncaught exception |
-| `2` | `API_BREAK` — source-level break; existing binaries are safe |
+| `2` | `API_BREAK` — source-level API break — recompilation required |
 | `4` | `BREAKING` — binary ABI break |
 
 > **⚠️ Exit `0` covers `NO_CHANGE`, `COMPATIBLE`, and `COMPATIBLE_WITH_RISK`.** If your pipeline needs

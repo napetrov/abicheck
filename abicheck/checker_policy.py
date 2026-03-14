@@ -240,7 +240,7 @@ class Verdict(str, Enum):
     COMPATIBLE_WITH_RISK = (
         "COMPATIBLE_WITH_RISK"  # binary-compatible but deployment risk present
     )
-    API_BREAK = "API_BREAK"  # source-level break, binary compatible
+    API_BREAK = "API_BREAK"  # source-level break — recompilation required
     BREAKING = "BREAKING"  # binary ABI break
 
 
