@@ -1,10 +1,10 @@
 # Verdicts
 
-Every `abicheck compare` run produces one of four verdicts.
+Every `abicheck compare` run produces one of five verdicts.
 
 ---
 
-## The four verdicts
+## The five verdicts
 
 ### `NO_CHANGE`
 The two snapshots are **identical** — no differences found.
@@ -23,6 +23,20 @@ Examples:
 - Enum member added at end of enum
 
 **CI action:** warn; do not fail. Use `-s` to promote to BREAKING if your policy requires.
+
+---
+
+### `COMPATIBLE_WITH_RISK`
+A change that **does not break** existing compiled consumers (they are already linked and continue to work), but introduces a **deployment risk** that must be verified manually.
+
+The library upgrade may fail on some target environments — for example, if the new library requires a newer glibc version that is absent on the deployment target.
+
+Examples:
+- New symbol version requirement added to `DT_VERNEED` (e.g. `GLIBC_2.17`) — existing binaries are safe, but the new `.so` won't load on systems with older glibc
+
+**CI action:** warn; inspect the specific change kind and verify target environment requirements. Do not fail automatically unless your policy mandates it.
+
+> Use `abicheck compare --format json` to check the exact `verdict` field — `COMPATIBLE_WITH_RISK` exits with code `0`, same as `COMPATIBLE`.
 
 ---
 
@@ -65,15 +79,15 @@ Examples:
 `FUNC_NOEXCEPT_REMOVED` (removing a `noexcept` specifier) normally maps to `COMPATIBLE`
 for plain non-template functions.
 
-However, **case15** is classified `BREAKING`. The function was compiled with `throw()` —
+**case15** is classified `COMPATIBLE_WITH_RISK`. The function was compiled with `throw()` —
 the legacy C++03 exception specification. Compiled with `-std=c++03`, `throw()` generates
 a call to `__cxa_call_unexpected`, which pulls in the `GLIBCXX_3.4.21` version symbol.
-Removing `throw()` drops that versioned symbol from the binary, triggering
-`SYMBOL_VERSION_REQUIRED_ADDED: GLIBCXX_3.4.21` — a hard binary break for consumers
-linked against the old symbol version.
+Removing `throw()` adds `SYMBOL_VERSION_REQUIRED_ADDED: GLIBCXX_3.4.21` — a deployment
+risk for systems lacking that glibc/libstdc++ version, but not a binary break for
+consumers already compiled and linked against the old library.
 
 The verdict is the **worst** of all detected ChangeKinds: `FUNC_NOEXCEPT_REMOVED` alone
-is `COMPATIBLE`, but combined with `SYMBOL_VERSION_REQUIRED_ADDED` it becomes `BREAKING`.
+is `COMPATIBLE`, and combined with `SYMBOL_VERSION_REQUIRED_ADDED` becomes `COMPATIBLE_WITH_RISK`.
 
 ---
 
@@ -122,6 +136,7 @@ exit 0
 |---------|---------------|---------------|
 | `NO_CHANGE` | `0` | `0` |
 | `COMPATIBLE` | `0` | `0` |
+| `COMPATIBLE_WITH_RISK` | `0` | `0` |
 | `API_BREAK` | `2` | `2` |
 | `BREAKING` | `4` | `1` |
 | Tool error | `1` | `2` |

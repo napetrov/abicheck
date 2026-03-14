@@ -203,3 +203,71 @@ class TestSerialization:
     def test_to_sarif_str_indented(self) -> None:
         s = to_sarif_str(_make_result([]), indent=4)
         assert "    " in s  # 4-space indent present
+
+
+# ---------------------------------------------------------------------------
+# Exit code contract tests
+# ---------------------------------------------------------------------------
+
+class TestExitCodes:
+    """SARIF invocations[].exitCode must mirror abicheck compare CLI contract.
+
+    Contract:
+      BREAKING     → exitCode=4
+      API_BREAK    → exitCode=2
+      COMPATIBLE   → exitCode=0
+      COMPATIBLE_WITH_RISK → exitCode=0 (binary-compatible; risk surfaced via exitCodeDescription)
+      NO_CHANGE    → exitCode=0
+    """
+
+    def test_breaking_exit_code_is_4(self) -> None:
+        doc = to_sarif(_make_result([_breaking_change()], verdict=Verdict.BREAKING))
+        assert doc["runs"][0]["invocations"][0]["exitCode"] == 4
+
+    def test_api_break_exit_code_is_2(self) -> None:
+        from abicheck.checker import ChangeKind
+        api_change = Change(
+            kind=ChangeKind.ENUM_MEMBER_RENAMED,
+            symbol="Status",
+            description="Enum member renamed",
+        )
+        doc = to_sarif(_make_result([api_change], verdict=Verdict.API_BREAK))
+        assert doc["runs"][0]["invocations"][0]["exitCode"] == 2
+
+    def test_compatible_exit_code_is_0(self) -> None:
+        doc = to_sarif(_make_result([_compatible_change()], verdict=Verdict.COMPATIBLE))
+        assert doc["runs"][0]["invocations"][0]["exitCode"] == 0
+
+    def test_compatible_with_risk_exit_code_is_0(self) -> None:
+        """COMPATIBLE_WITH_RISK is binary-compatible — exits 0.
+
+        Deployment risk is surfaced via exitCodeDescription, not a non-zero exit.
+        """
+        from abicheck.checker import ChangeKind, Verdict
+        risk_change = Change(
+            kind=ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+            symbol="libc.so.6",
+            description="New GLIBC_2.34 version requirement added",
+        )
+        doc = to_sarif(_make_result([risk_change], verdict=Verdict.COMPATIBLE_WITH_RISK))
+        invocation = doc["runs"][0]["invocations"][0]
+        assert invocation["exitCode"] == 0
+        assert invocation["exitCodeDescription"] == "COMPATIBLE_WITH_RISK"
+
+    def test_no_change_exit_code_is_0(self) -> None:
+        doc = to_sarif(_make_result([], verdict=Verdict.NO_CHANGE))
+        assert doc["runs"][0]["invocations"][0]["exitCode"] == 0
+
+    def test_exit_code_description_matches_verdict(self) -> None:
+        for verdict, expected_code in [
+            (Verdict.BREAKING, 4),
+            (Verdict.API_BREAK, 2),
+            (Verdict.COMPATIBLE, 0),
+            (Verdict.NO_CHANGE, 0),
+        ]:
+            doc = to_sarif(_make_result([], verdict=verdict))
+            inv = doc["runs"][0]["invocations"][0]
+            assert inv["exitCode"] == expected_code, (
+                f"Verdict {verdict}: expected exitCode={expected_code}, got {inv['exitCode']}"
+            )
+            assert inv["exitCodeDescription"] == verdict.value

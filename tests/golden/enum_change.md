@@ -7,6 +7,7 @@
 | **Verdict** | ❌ `BREAKING` |
 | Breaking changes | 1 |
 | Source-level breaks | 0 |
+| Deployment risk changes | 0 |
 | Compatible additions | 0 |
 
 ## ❌ Breaking Changes
@@ -20,6 +21,7 @@
 |---------|---------|
 | ✅ NO_CHANGE | Identical ABI |
 | ✅ COMPATIBLE | Only additions (backward compatible) |
+| ⚠️ COMPATIBLE_WITH_RISK | Binary-compatible; verify target environment |
 | ⚠️ API_BREAK | Source-level API change, binary compatible |
 | ❌ BREAKING | Binary ABI break — recompilation required |
 

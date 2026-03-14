@@ -10,6 +10,7 @@ GitHub Code Scanning docs:
 
 SARIF spec: https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html
 """
+
 from __future__ import annotations
 
 import json
@@ -44,27 +45,27 @@ def _rule_for(kind: ChangeKind) -> dict[str, Any]:
     rule_id = kind.value
     severity = policy_for(kind).severity
     doc_slug = policy_for(kind).doc_slug
-    help_uri = (
-        f"https://github.com/napetrov/abicheck/blob/main/docs/abi_breaking_cases_catalog.md#{doc_slug}"
-    )
+    help_uri = f"https://github.com/napetrov/abicheck/blob/main/docs/abi_breaking_cases_catalog.md#{doc_slug}"
     return {
         "id": rule_id,
         "name": "".join(w.capitalize() for w in rule_id.split("_")),
         "shortDescription": {"text": rule_id.replace("_", " ").capitalize()},
-        "fullDescription": {"text": f"ABI change detected: {rule_id.replace('_', ' ')}"},
+        "fullDescription": {
+            "text": f"ABI change detected: {rule_id.replace('_', ' ')}"
+        },
         "helpUri": help_uri,
         "defaultConfiguration": {"level": severity},
         "properties": {"tags": ["abi", "binary-compatibility"]},
     }
 
 
-def _result_for(change: Change, library: str, old_version: str, new_version: str) -> dict[str, Any]:
+def _result_for(
+    change: Change, library: str, old_version: str, new_version: str
+) -> dict[str, Any]:
     """Produce a SARIF result object for a Change."""
     msg_parts = [change.description]
     if change.old_value or change.new_value:
-        msg_parts.append(
-            f"({change.old_value or '?'} → {change.new_value or '?'})"
-        )
+        msg_parts.append(f"({change.old_value or '?'} → {change.new_value or '?'})")
 
     return {
         "ruleId": change.kind.value,
@@ -131,8 +132,16 @@ def to_sarif(result: DiffResult) -> dict[str, Any]:
                 "invocations": [
                     {
                         "executionSuccessful": invocation_success,
-                        "exitCode": 0 if result.verdict == Verdict.NO_CHANGE else (
-                            1 if result.verdict == Verdict.BREAKING else 0
+                        # Exit codes mirror abicheck compare CLI contract:
+                        # BREAKING=4 (mapped to SARIF 1), API_BREAK=2, others=0.
+                        # COMPATIBLE_WITH_RISK intentionally exits 0 — binary-compatible,
+                        # deployment risk is surfaced via exitCodeDescription only.
+                        "exitCode": (
+                            4
+                            if result.verdict == Verdict.BREAKING
+                            else 2
+                            if result.verdict == Verdict.API_BREAK
+                            else 0
                         ),
                         "exitCodeDescription": result.verdict.value,
                     }

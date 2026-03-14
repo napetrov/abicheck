@@ -10,6 +10,7 @@ Format example (``my_policy.yaml``)::
     #
     # break  -> BREAKING verdict (exit code 4)
     # warn   -> API_BREAK verdict (exit code 2)
+    # risk   -> COMPATIBLE_WITH_RISK verdict (deployment risk, needs review)
     # ignore -> COMPATIBLE verdict (exit code 0)
     #
     # Any kind not listed falls back to the base policy (default: strict_abi).
@@ -31,6 +32,7 @@ Notes:
 - Checks are always executed; only verdict classification changes.
 - Unknown kind names emit a warning and are skipped.
 """
+
 from __future__ import annotations
 
 import logging
@@ -46,6 +48,7 @@ log = logging.getLogger(__name__)
 _SEVERITY_MAP: dict[str, Verdict] = {
     "break": Verdict.BREAKING,
     "warn": Verdict.API_BREAK,
+    "risk": Verdict.COMPATIBLE_WITH_RISK,
     "ignore": Verdict.COMPATIBLE,
 }
 
@@ -93,11 +96,15 @@ class PolicyFile:
         if raw is None:
             return cls(source_path=path)
         if not isinstance(raw, dict):
-            raise ValueError(f"Policy file must be a YAML mapping, got {type(raw).__name__}")
+            raise ValueError(
+                f"Policy file must be a YAML mapping, got {type(raw).__name__}"
+            )
 
         base_policy = raw.get("base_policy", "strict_abi")
         if not isinstance(base_policy, str):
-            raise ValueError("'base_policy' must be a string, got " + type(base_policy).__name__)
+            raise ValueError(
+                "'base_policy' must be a string, got " + type(base_policy).__name__
+            )
         if base_policy not in _VALID_BASE_POLICIES:
             raise ValueError(
                 f"Unknown base_policy {base_policy!r}. "
@@ -128,12 +135,13 @@ class PolicyFile:
         if unknown_kinds:
             log.warning(
                 "policy file %s: unknown ChangeKind slugs (skipped): %s",
-                path, ", ".join(sorted(unknown_kinds)),
+                path,
+                ", ".join(sorted(unknown_kinds)),
             )
         if unknown_severities:
             raise ValueError(
                 f"Invalid severity values in {path}: {unknown_severities}. "
-                "Valid values: break, warn, ignore"
+                "Valid values: break, warn, risk, ignore"
             )
 
         return cls(base_policy=base_policy, overrides=overrides, source_path=path)
@@ -162,7 +170,13 @@ class PolicyFile:
                 verdicts.append(single_verdict)
 
         # Worst verdict wins
-        order = [Verdict.NO_CHANGE, Verdict.COMPATIBLE, Verdict.API_BREAK, Verdict.BREAKING]
+        order = [
+            Verdict.NO_CHANGE,
+            Verdict.COMPATIBLE,
+            Verdict.COMPATIBLE_WITH_RISK,
+            Verdict.API_BREAK,
+            Verdict.BREAKING,
+        ]
         return max(verdicts, key=lambda v: order.index(v) if v in order else 0)
 
     def describe(self) -> str:
@@ -170,7 +184,9 @@ class PolicyFile:
         lines = [f"base_policy: {self.base_policy}"]
         if self.overrides:
             lines.append("overrides:")
-            for kind, verdict in sorted(self.overrides.items(), key=lambda x: x[0].value):
+            for kind, verdict in sorted(
+                self.overrides.items(), key=lambda x: x[0].value
+            ):
                 sev = next(s for s, v in _SEVERITY_MAP.items() if v == verdict)
                 lines.append(f"  {kind.value}: {sev}")
         else:

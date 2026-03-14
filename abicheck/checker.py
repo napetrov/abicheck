@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from .checker_policy import API_BREAK_KINDS as _API_BREAK_KINDS
 from .checker_policy import BREAKING_KINDS as _BREAKING_KINDS
 from .checker_policy import COMPATIBLE_KINDS as _COMPATIBLE_KINDS
+from .checker_policy import RISK_KINDS as _RISK_KINDS
 from .checker_policy import ChangeKind as ChangeKind
 from .checker_policy import Verdict as Verdict
 from .checker_policy import compute_verdict as compute_verdict
@@ -50,6 +51,7 @@ __all__ = [
     "_BREAKING_KINDS",
     "_COMPATIBLE_KINDS",
     "_API_BREAK_KINDS",
+    "_RISK_KINDS",
     "_SOURCE_BREAK_KINDS",  # deprecated alias
     "Change",
     "DiffResult",
@@ -85,20 +87,26 @@ class DiffResult:
     @property
     def breaking(self) -> list[Change]:
         """Changes classified as BREAKING under the active policy."""
-        breaking_set, _, _ = _policy_kind_sets(self.policy)
+        breaking_set, _, _, _ = _policy_kind_sets(self.policy)
         return [c for c in self.changes if c.kind in breaking_set]
 
     @property
     def source_breaks(self) -> list[Change]:
         """Changes classified as API_BREAK under the active policy."""
-        _, api_break_set, _ = _policy_kind_sets(self.policy)
+        _, api_break_set, _, _ = _policy_kind_sets(self.policy)
         return [c for c in self.changes if c.kind in api_break_set]
 
     @property
     def compatible(self) -> list[Change]:
         """Changes classified as COMPATIBLE under the active policy."""
-        _, _, compatible_set = _policy_kind_sets(self.policy)
+        _, _, compatible_set, _ = _policy_kind_sets(self.policy)
         return [c for c in self.changes if c.kind in compatible_set]
+
+    @property
+    def risk(self) -> list[Change]:
+        """Changes classified as COMPATIBLE_WITH_RISK under the active policy."""
+        _, _, _, risk_set = _policy_kind_sets(self.policy)
+        return [c for c in self.changes if c.kind in risk_set]
 
 
 @dataclass(frozen=True)

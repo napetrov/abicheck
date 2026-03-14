@@ -68,3 +68,34 @@ def test_policy_for_unknown_kind_falls_back_to_breaking() -> None:
     assert entry.default_verdict == Verdict.BREAKING
     assert entry.severity == "error"
     assert entry.doc_slug == "unknown_kind"
+
+
+def test_build_summary_risk_count_nonzero() -> None:
+    """build_summary() populates risk_count correctly for COMPATIBLE_WITH_RISK changes."""
+    result = DiffResult(
+        old_version="1.0",
+        new_version="2.0",
+        library="libx.so",
+        changes=[Change(ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED, "libc.so.6", "New GLIBC_2.34 requirement")],
+        verdict=Verdict.COMPATIBLE_WITH_RISK,
+    )
+    summary = build_summary(result)
+    assert summary.risk_count == 1
+    assert summary.breaking == 0
+    assert summary.source_breaks == 0
+    assert summary.compatible_additions == 0
+    assert summary.total_changes == 1
+
+
+def test_build_summary_risk_count_zero_for_compatible() -> None:
+    """build_summary() returns risk_count=0 for purely COMPATIBLE results."""
+    result = DiffResult(
+        old_version="1.0",
+        new_version="2.0",
+        library="libx.so",
+        changes=[Change(ChangeKind.FUNC_ADDED, "_Z3barv", "New function added")],
+        verdict=Verdict.COMPATIBLE,
+    )
+    summary = build_summary(result)
+    assert summary.risk_count == 0
+    assert summary.compatible_additions == 1

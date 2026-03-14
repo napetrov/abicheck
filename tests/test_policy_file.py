@@ -163,3 +163,34 @@ overrides:
 
     assert pf.overrides == {}
     assert "unknown ChangeKind slugs" in caplog.text
+
+
+def test_policy_file_risk_severity_produces_compatible_with_risk(tmp_path: Path) -> None:
+    """severity: risk in YAML policy file → COMPATIBLE_WITH_RISK verdict."""
+    p = tmp_path / "policy.yaml"
+    p.write_text(
+        """
+base_policy: strict_abi
+overrides:
+  func_added: risk
+""".strip(),
+        encoding="utf-8",
+    )
+
+    pf = PolicyFile.load(p)
+    result = pf.compute_verdict([_change(ChangeKind.FUNC_ADDED)])
+    assert result == Verdict.COMPATIBLE_WITH_RISK, (
+        f"Expected COMPATIBLE_WITH_RISK for severity=risk override, got {result}"
+    )
+
+
+def test_policy_file_symbol_version_required_added_is_risk_by_default(tmp_path: Path) -> None:
+    """SYMBOL_VERSION_REQUIRED_ADDED must produce COMPATIBLE_WITH_RISK with default policy."""
+    p = tmp_path / "policy.yaml"
+    p.write_text("base_policy: strict_abi", encoding="utf-8")
+
+    pf = PolicyFile.load(p)
+    result = pf.compute_verdict([_change(ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED)])
+    assert result == Verdict.COMPATIBLE_WITH_RISK, (
+        f"SYMBOL_VERSION_REQUIRED_ADDED must be COMPATIBLE_WITH_RISK, got {result}"
+    )

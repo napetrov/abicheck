@@ -250,6 +250,20 @@ class TestPluginAbiVerdict:
     def test_func_removed_still_breaking_in_plugin(self) -> None:
         assert compute_verdict([_change(ChangeKind.FUNC_REMOVED)], policy="plugin_abi") == Verdict.BREAKING
 
+    def test_symbol_version_required_added_is_breaking_in_plugin_policy(self) -> None:
+        """plugin_abi treats deployment floor raises as BREAKING (host/plugin load risk)."""
+        assert (
+            compute_verdict([_change(ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED)], policy="plugin_abi")
+            == Verdict.BREAKING
+        )
+
+    def test_symbol_version_required_added_is_risk_in_strict_policy(self) -> None:
+        """strict_abi keeps this as COMPATIBLE_WITH_RISK."""
+        assert (
+            compute_verdict([_change(ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED)], policy="strict_abi")
+            == Verdict.COMPATIBLE_WITH_RISK
+        )
+
     def test_all_plugin_downgraded_kinds_produce_compatible(self) -> None:
         for kind in PLUGIN_ABI_DOWNGRADED_KINDS:
             result = compute_verdict([_change(kind)], policy="plugin_abi")
@@ -456,6 +470,6 @@ class TestCompatPolicyExposure:
         from click.testing import CliRunner
 
         from abicheck.cli import main
-        result = CliRunner().invoke(main, ["compat", "check", "--help"])
+        result = CliRunner().invoke(main, ["compat", "--help"])
         assert result.exit_code == 0, result.output
         assert "--policy" not in result.output

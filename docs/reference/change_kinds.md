@@ -10,6 +10,7 @@ for binary ABI compatibility, source API compatibility, or neither.
 |---------|---------|
 | `BREAKING` | Binary ABI break — existing compiled binaries may crash, fail to load, or produce incorrect results. |
 | `API_BREAK` | Source API break — existing source code will fail to compile, but compiled binaries are still compatible. |
+| `COMPATIBLE_WITH_RISK` | Binary-compatible but with a deployment risk — existing compiled binaries are unaffected, but the change may prevent the library from loading on some target environments. **Needs manual review.** |
 | `COMPATIBLE` | Compatible change — additive or informational; no impact on existing binaries or source. |
 
 ---
@@ -126,7 +127,7 @@ These changes are immediately incompatible with existing compiled binaries.
 | Kind | Description |
 |------|-------------|
 | `symbol_version_defined_removed` | A symbol version definition (`GLIBC_2.5`, etc.) was removed from the library. Binaries linked against that version tag cannot find the symbol. |
-| `symbol_version_required_added` | A new required symbol version appeared in the library (e.g., new `GLIBC_X.Y` dependency). The library now fails to load on runtimes that lack that version. |
+
 
 ### ELF Dynamic Section
 
@@ -182,6 +183,18 @@ These changes break source-level compilation but do not affect already-compiled 
 |------|-------------|
 | `constant_changed` | A `#define` constant's value changed. Source code that used the constant in a way that depended on its exact value gets different behavior at compile time. |
 | `constant_removed` | A `#define` constant was removed entirely. Source code referencing it fails to compile. |
+
+---
+
+## Deployment Risk (`COMPATIBLE_WITH_RISK`)
+
+These changes do **not** break existing compiled binaries (consumers already linked
+against the old library continue to work). However, they may prevent the **new**
+library from loading in some deployment environments. Manual review is required.
+
+| Kind | Description |
+|------|-------------|
+| `symbol_version_required_added` | A new required symbol version appeared in `DT_VERNEED` (e.g., a new `GLIBC_2.17` dependency). Existing compiled consumers are unaffected — they are already linked. However, the new library will fail to load on systems whose libc does not provide that version. Verify that all target deployment environments satisfy the new requirement. |
 
 ---
 
