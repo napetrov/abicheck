@@ -52,7 +52,7 @@ parse path goes through pyelftools only (no subprocess, no text parsing).
 | `pyelftools` | ELF/DWARF parsing (Linux) | Active PyPI project, used by angr, pwntools, ROPgadget |
 | `pefile` | PE/COFF parsing (Windows) | Active PyPI project, widely used for malware analysis and PE tooling |
 | `macholib` | Mach-O parsing (macOS) | Active PyPI project, maintained by the py2app team |
-| `castxml` | C++ header → XML AST (Linux) | Maintained by Kitware (VTK team); available on conda-forge |
+| `castxml` | C++ header → XML AST (all platforms) | Maintained by Kitware (VTK team); available on conda-forge, Homebrew, apt |
 | `defusedxml` | Safe XML parsing | Security hardening for castxml output |
 
 ### Distribution
@@ -119,13 +119,13 @@ if subprocess overhead becomes a bottleneck.
 
 ## Platform Scope
 
-| Capability | Linux | Windows | macOS |
+| Capability | Linux (ELF) | Windows (PE) | macOS (Mach-O) |
 |-----------|:-----:|:-------:|:-----:|
 | Binary metadata | Yes (pyelftools) | Yes (pefile) | Yes (macholib) |
-| Header AST (castxml) | Yes | Yes | Yes |
+| Header AST (castxml) | Yes (GCC, Clang) | Yes (MSVC, MinGW) | Yes (Clang, GCC) |
 | Debug info cross-check | Yes (DWARF) | Planned (PDB) | Yes (DWARF) |
 
-- **Header AST analysis** works on all platforms via castxml (cross-platform, maintained by Kitware)
+- **Header AST analysis** works on all platforms via castxml (cross-platform, maintained by Kitware). castxml emulates the target compiler's preprocessor via `--castxml-cc-gnu` (GCC/Clang) or `--castxml-cc-msvc` (MSVC)
 - **Debug info cross-check** uses DWARF (Linux, macOS) via pyelftools; PDB support for Windows is planned
 - **DWARF version:** DWARF 4 (GCC ≤10 default) fully supported; DWARF 5 (GCC 11+ default) partially supported via pyelftools ≥0.29
 - **Architectures:** x86-64, aarch64 (ELF); any architecture for PE and Mach-O metadata

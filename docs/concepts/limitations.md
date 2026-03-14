@@ -7,11 +7,11 @@ limitations you should understand before relying on it in production.
 
 ## Platform support matrix
 
-| Platform | Format | Binary metadata | Header AST (castxml) | Debug info cross-check |
-|----------|--------|:---------------:|:--------------------:|:----------------------:|
-| Linux | ELF (`.so`) | Yes (pyelftools) | Yes | Yes (DWARF) |
-| Windows | PE/COFF (`.dll`) | Yes (pefile) | Yes | Planned (PDB) |
-| macOS | Mach-O (`.dylib`) | Yes (macholib) | Yes | Yes (DWARF) |
+| Platform | Binary format | Binary metadata | Header AST (castxml) | Debug info cross-check |
+|----------|--------------|:---------------:|:--------------------:|:----------------------:|
+| Linux | ELF (`.so`) | Yes (pyelftools) | Yes (GCC, Clang) | Yes (DWARF) |
+| Windows | PE/COFF (`.dll`) | Yes (pefile) | Yes (MSVC, MinGW) | Planned (PDB) |
+| macOS | Mach-O (`.dylib`) | Yes (macholib) | Yes (Clang, GCC) | Yes (DWARF) |
 
 **Header AST analysis** (via castxml) is available on all platforms. castxml is
 maintained by Kitware and available via conda-forge, Homebrew, apt, or direct download.

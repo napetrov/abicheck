@@ -439,13 +439,37 @@ abicheck supports three binary formats, each with a dedicated metadata parser:
 
 ### Analysis layers
 
-| Layer | Technology | Linux | Windows | macOS |
+| Layer | Technology | Linux (ELF) | Windows (PE) | macOS (Mach-O) |
 |-------|-----------|:-----:|:-------:|:-----:|
 | **Binary metadata** | pyelftools / pefile / macholib | Yes | Yes | Yes |
 | **Header AST** | castxml (Clang) | Yes | Yes | Yes |
 | **Debug info cross-check** | DWARF (pyelftools) / PDB | Yes (DWARF) | Planned (PDB) | Yes (DWARF) |
 
 All three layers combine for maximum accuracy. castxml is cross-platform (provided by Kitware for Linux, Windows, and macOS), so header AST analysis works everywhere. Debug info cross-check currently uses DWARF (Linux and macOS); PDB support for Windows is planned.
+
+### castxml compiler support
+
+castxml uses an internal Clang compiler for parsing but can emulate the preprocessor and target platform of an external compiler via `--castxml-cc-<id>`:
+
+| Compiler ID | Compiler | Platforms |
+|-------------|----------|-----------|
+| `gnu` | GCC / g++ | Linux, macOS, Windows (MinGW) |
+| `gnu-c` | GCC / gcc (C mode) | Linux, macOS, Windows (MinGW) |
+| `msvc` | Microsoft Visual C++ (cl) | Windows |
+| `msvc-c` | Microsoft Visual C (cl, C mode) | Windows |
+
+abicheck auto-detects the compiler mode: if the compiler binary is `cl` or `cl.exe`, it uses `--castxml-cc-msvc`; otherwise it uses `--castxml-cc-gnu`. You can override the compiler via `--gcc-path`:
+
+```bash
+# Use a specific GCC
+abicheck dump libfoo.so -H foo.h --gcc-path /usr/bin/g++-12
+
+# Use MSVC on Windows
+abicheck dump foo.dll -H foo.h --gcc-path cl
+
+# Use MinGW on Windows
+abicheck dump foo.dll -H foo.h --gcc-path x86_64-w64-mingw32-g++
+```
 
 ### Python dependencies
 

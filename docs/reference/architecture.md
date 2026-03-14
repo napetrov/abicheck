@@ -8,11 +8,11 @@ to achieve higher accuracy than tools that rely on a single data source.
 
 **Supported platforms and binary formats:**
 
-| Platform | Format | Binary metadata | Header AST (castxml) | Debug info cross-check |
-|----------|--------|:---------------:|:--------------------:|:----------------------:|
-| Linux | ELF (`.so`) | Yes (pyelftools) | Yes | Yes (DWARF) |
-| Windows | PE/COFF (`.dll`) | Yes (pefile) | Yes | Planned (PDB) |
-| macOS | Mach-O (`.dylib`) | Yes (macholib) | Yes | Yes (DWARF) |
+| Platform | Binary format | Binary metadata | Header AST (castxml) | Debug info cross-check |
+|----------|--------------|:---------------:|:--------------------:|:----------------------:|
+| Linux | ELF (`.so`) | Yes (pyelftools) | Yes (GCC, Clang) | Yes (DWARF) |
+| Windows | PE/COFF (`.dll`) | Yes (pefile) | Yes (MSVC, MinGW) | Planned (PDB) |
+| macOS | Mach-O (`.dylib`) | Yes (macholib) | Yes (Clang, GCC) | Yes (DWARF) |
 
 ---
 
@@ -91,6 +91,20 @@ castxml is a cross-platform tool maintained by Kitware (available via conda-forg
 system packages, or direct download for Linux, Windows, and macOS). It is the primary
 source for type-level analysis, catching changes invisible to debug-info-only tools:
 `noexcept`, `static` qualifier, const qualifier, access level changes.
+
+**Compiler support:** castxml uses an internal Clang compiler for parsing but emulates
+the preprocessor and target platform of an external compiler via `--castxml-cc-<id>`:
+
+| Compiler ID | Compiler | Typical platforms |
+|-------------|----------|-------------------|
+| `gnu` | GCC / g++ | Linux, macOS, Windows (MinGW) |
+| `gnu-c` | GCC / gcc (C mode) | Linux, macOS, Windows (MinGW) |
+| `msvc` | Microsoft Visual C++ (cl) | Windows |
+| `msvc-c` | Microsoft Visual C (cl, C mode) | Windows |
+
+abicheck auto-detects the compiler mode from the binary name and passes the
+appropriate `--castxml-cc-gnu` or `--castxml-cc-msvc` flag. Users can override
+the compiler with `--gcc-path`.
 
 ### Layer 3: Debug info cross-check (optional)
 
