@@ -581,6 +581,13 @@ IMPACT_TEXT: dict[ChangeKind, str] = {
     ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED: "Requires a newer symbol version than old system provides; may fail to load on older systems.",
     ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT: "New version requirement added but older than existing max; safe on current systems.",
     ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED: "Version requirement dropped; broadens compatibility.",
+    ChangeKind.SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED: (
+        "Symbol originates from a dependency library (e.g. libstdc++, libgcc) that leaked "
+        "into this library's public ABI surface. The symbol changed between versions — "
+        "existing consumers are unlikely to be affected directly, but the leak itself is a "
+        "library quality issue. Apply -fvisibility=hidden to prevent accidental ABI surface "
+        "enlargement from dependencies."
+    ),
     # DWARF
     ChangeKind.STRUCT_SIZE_CHANGED: "sizeof(T) changed in debug info; confirms layout break visible at binary level.",
     ChangeKind.STRUCT_FIELD_OFFSET_CHANGED: "Field moved to different offset; old code accesses wrong memory.",

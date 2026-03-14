@@ -156,3 +156,43 @@ def test_golden_compatible_with_risk(update_goldens: bool) -> None:
     new = _snap(ver="2.0")
     new.elf = ElfMetadata(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]})
     _run_golden("compatible_with_risk", old, new, update_goldens)
+
+
+@pytest.mark.golden
+def test_golden_leaked_dependency_symbol(update_goldens: bool) -> None:
+    """Leaked dependency symbol removed → COMPATIBLE_WITH_RISK output is stable."""
+    from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
+
+    def _elf_sym(name: str, origin: str | None = None) -> ElfSymbol:
+        return ElfSymbol(
+            name=name,
+            binding=SymbolBinding.WEAK,
+            sym_type=SymbolType.FUNC,
+            size=0,
+            version="",
+            is_default=True,
+            visibility="default",
+            origin_lib=origin,
+        )
+
+    old = _snap(ver="1.0", funcs=[_fn("compute", "_Z7computei")])
+    old.elf = ElfMetadata(
+        soname="libfoo.so.1",
+        needed=["libstdc++.so.6"],
+        symbols=[
+            _elf_sym("_Z7computei"),
+            _elf_sym("_ZNSt6thread8_M_startEv", "libstdc++.so.6"),
+        ],
+    )
+
+    new = _snap(ver="2.0", funcs=[_fn("compute", "_Z7computei")])
+    new.elf = ElfMetadata(
+        soname="libfoo.so.1",
+        needed=["libstdc++.so.6"],
+        symbols=[
+            _elf_sym("_Z7computei"),
+            # _ZNSt6thread8_M_startEv removed in new version
+        ],
+    )
+
+    _run_golden("leaked_dependency_symbol", old, new, update_goldens)
