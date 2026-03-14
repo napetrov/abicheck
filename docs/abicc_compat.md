@@ -6,7 +6,49 @@ mostly compatible exit codes — so you can swap it into existing ABICC pipeline
 a one-line change. (Note: exit code `2` may mean either `API_BREAK` or a tool error
 such as a missing descriptor file — see the exit codes table below for details.)
 
-For the migration guide (step-by-step checklist), see [Migrating from ABICC](migration/from_abicc.md).
+## Migrating from ABICC
+
+### Step 1: Swap the command
+
+Replace the ABICC binary call with `abicheck compat check`. Keep your existing XML descriptors — no changes needed:
+
+```bash
+# Before (ABICC):
+abi-compliance-checker -lib libfoo -old OLD.xml -new NEW.xml -report-path report.html
+
+# After (abicheck — same flags):
+abicheck compat check -lib libfoo -old OLD.xml -new NEW.xml -report-path report.html
+```
+
+### Step 2: Update CI exit code checks
+
+| Exit code | ABICC | abicheck compat |
+|-----------|-------|-----------------|
+| `0` | Compatible | Compatible / no change |
+| `1` | Breaking | BREAKING |
+| `2` | Error | API_BREAK or tool error |
+
+> **Tip:** Pre-validate that your XML descriptor files exist before running to avoid ambiguity with exit code `2`.
+
+### Step 3: Validate on historical releases
+
+```bash
+for ver in v1.0 v1.1 v1.2; do
+  abicheck compat check -lib libfoo -old ${ver}.xml -new current.xml \
+    -report-path report-${ver}.html
+  echo "vs ${ver}: exit $?"
+done
+```
+
+### Step 4 (optional): Switch to native mode
+
+When ready, switch from XML descriptors to the simpler native workflow:
+
+```bash
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
+```
+
+Benefits: unambiguous `API_BREAK` verdict, JSON/SARIF output, no XML descriptors needed, exit code `4` = BREAKING (separate from tool errors).
 
 ## Quick start
 

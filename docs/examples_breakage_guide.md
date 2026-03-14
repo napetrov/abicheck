@@ -1,11 +1,42 @@
-# Full ABI/API breakage guide for `examples/case01..case29`
+# Examples & Breakage Guide
 
-This guide is intentionally verbose. Every case includes:
+The `examples/` directory contains real-world ABI/API break scenarios. Each case has paired `v1`/`v2` source files, expected verdicts, and build scripts. Run any case yourself:
 
-- a minimal **v1 vs v2** change snippet,
-- a **consumer-side example** showing how downstream code is affected,
-- a detailed explanation of **why** compatibility is broken,
-- practical mitigation strategies.
+```bash
+cd examples/case01_symbol_removal
+gcc -shared -fPIC -g v1.c -o libv1.so
+gcc -shared -fPIC -g v2.c -o libv2.so
+abicheck compare libv1.so libv2.so --old-header v1.h --new-header v2.h
+```
+
+Expected verdicts for all cases are in [`examples/ground_truth.json`](https://github.com/napetrov/abicheck/blob/main/examples/ground_truth.json). For the complete list of detected change types, see [Change Kind Reference](reference/change_kinds.md).
+
+## Categories
+
+| Category | Cases | Verdict |
+|----------|-------|---------|
+| **Symbol/function removal** | 01, 12 | BREAKING |
+| **Signature changes** (params, return type) | 02, 10 | BREAKING |
+| **Struct/class layout** | 07, 14, 36, 40 | BREAKING |
+| **Enum changes** (values, removal) | 08, 19, 20 | BREAKING |
+| **C++ vtable / virtual methods** | 09, 23, 38 | BREAKING |
+| **Global variable type** | 11 | BREAKING |
+| **Qualifier changes** (const, static) | 21, 22, 30, 39 | BREAKING |
+| **Template / dependency** | 17, 18 | BREAKING |
+| **Pointer level / typedef** | 28, 33 | BREAKING |
+| **Field rename / base class** | 35, 37 | BREAKING |
+| **Union field removed** | 24 | BREAKING |
+| **Enum/field rename** (API-only) | 31, 34 | API_BREAK |
+| **Additive changes** (new symbol, enum member) | 03, 25, 26b, 29 | COMPATIBLE |
+| **Policy / metadata** (SONAME, visibility, versioning) | 05, 06, 13, 27 | COMPATIBLE |
+| **Inline / noexcept** | 15, 16, 47 | COMPATIBLE |
+| **No change** | 04, 32 | NO_CHANGE |
+
+---
+
+## Detailed case walkthroughs
+
+Each case below includes a minimal code diff, a consumer-side example showing how downstream code is affected, and practical mitigation advice.
 
 ---
 

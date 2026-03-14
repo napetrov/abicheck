@@ -339,7 +339,7 @@ abicheck compare libv1.so libv2.so --old-header v1.h --new-header v2.h
 
 ### Benchmarks
 
-These same examples serve as the accuracy benchmark. All 48 cases have expected verdicts in `examples/ground_truth.json`. The benchmark table below covers the first 42 cases (cases 43-48 were added later and are not yet included in the cross-tool comparison):
+abicheck detects 100+ change types across ELF, AST, and DWARF layers. The `examples/` directory contains 48 representative test cases with expected verdicts in `examples/ground_truth.json`. Cross-tool comparison on 42 of these cases:
 
 | Tool | Correct / Scored | Accuracy |
 |------|-----------------|----------|
@@ -349,7 +349,7 @@ These same examples serve as the accuracy benchmark. All 48 cases have expected 
 | ABICC (abi-dumper) | 20/30 | 66% |
 | abidiff | 11/42 | 26% |
 
-abicheck passes all 48 cases (including cases 43-48). Run `python3 scripts/benchmark_comparison.py` to reproduce with all available tools.
+abicheck passes all 48 cases. Run `python3 scripts/benchmark_comparison.py` to reproduce.
 
 See [Benchmark & Tool Comparison](https://napetrov.github.io/abicheck/tool_comparison/) for per-case results, methodology, and timing data.
 

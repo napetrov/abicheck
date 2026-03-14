@@ -1,8 +1,8 @@
-# ABI Breaking Cases Catalog (v2)
+# ABI Breaking Cases Catalog
 
-This catalog summarizes breakage patterns covered by `examples/case01..case29`.
-For full code walkthroughs and deep per-case narrative, see
-[`docs/examples_breakage_guide.md`](examples_breakage_guide.md).
+This catalog summarizes breakage patterns covered by the `examples/` directory (48 cases).
+For full code walkthroughs, see [Examples & Breakage Guide](examples_breakage_guide.md).
+For the complete list of 100+ detected change types, see [Change Kind Reference](reference/change_kinds.md).
 
 ## 1) Symbol/API surface breaks
 

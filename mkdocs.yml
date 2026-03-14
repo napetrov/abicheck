@@ -49,13 +49,9 @@ nav:
     - Change Kind Reference: reference/change_kinds.md
     - ABI Break Catalog: abi_breaking_cases_catalog.md
     - Benchmark & Tool Comparison: tool_comparison.md
-    - ABICC Compatibility: abicc_compat.md
+    - ABICC Compatibility & Migration: abicc_compat.md
     - Format Compliance: abicc_format_compliance.md
     - libabigail Parity: libabigail_parity.md
-  - Migration:
-    - Migrating from ABICC: migration/from_abicc.md
-  - Development:
-    - Codebase Analysis: codebase_analysis.md
 
 plugins:
   - search

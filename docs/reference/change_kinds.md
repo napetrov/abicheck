@@ -141,7 +141,7 @@ These changes are immediately incompatible with existing compiled binaries.
 
 ## Source API Breaks (`API_BREAK`)
 
-These changes break source-level compilation but do not affect already-compiled binaries.
+These changes break the source-level API contract but do not affect already-compiled binaries.
 
 ### Naming and Renaming
 
