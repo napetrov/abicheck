@@ -552,3 +552,29 @@ class TestNoDoubleAnnotation:
         assert symbols_in_changes.count("_ZNSt6locale5_Impl16_M_check_same_nameEPKc") == 1, (
             "Symbol must appear in exactly one Change record, not duplicated"
         )
+
+
+class TestEdgeCoverage:
+    """Cover remaining edge cases in elf_metadata for 100% coverage."""
+
+    def test_guess_symbol_origin_libcxx_fallback_no_needed(self):
+        """_ZNSt3__1 with empty needed_libs → fallback to libc++.so.1"""
+        from abicheck.elf_metadata import _guess_symbol_origin
+        result = _guess_symbol_origin("_ZNSt3__1string8nposE", [])
+        assert result == "libc++.so.1"
+
+    def test_guess_symbol_origin_libcxx_in_needed(self):
+        """_ZNSt3__1 with libc++ in needed_libs → returns that lib"""
+        from abicheck.elf_metadata import _guess_symbol_origin
+        result = _guess_symbol_origin("_ZNKSt3__16vectorIiNS_9allocatorIiEEE4sizeEv", ["libc++.so.1"])
+        assert result == "libc++.so.1"
+
+    def test_parse_elf_metadata_non_regular_file(self, tmp_path):
+        """parse_elf_metadata returns empty ElfMetadata for non-regular files (e.g. dir)."""
+        from abicheck.elf_metadata import parse_elf_metadata
+        # Use a directory — not a regular file
+        result = parse_elf_metadata(tmp_path)
+        assert result is not None
+        # Should return empty metadata gracefully
+        from abicheck.elf_metadata import ElfMetadata
+        assert isinstance(result, ElfMetadata)
