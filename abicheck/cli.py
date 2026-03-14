@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import click
 
-from .checker import compare
+from .checker import DiffResult, compare
 from .compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_dump
 from .dumper import dump
 from .errors import AbicheckError
@@ -282,7 +282,7 @@ def _load_suppression_and_policy(
     return suppression, pf
 
 
-def _render_output(fmt: str, result: object, old: AbiSnapshot, new: AbiSnapshot | None = None) -> str:
+def _render_output(fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnapshot | None = None) -> str:
     """Render comparison result in the requested output format."""
     if fmt == "json":
         return to_json(result)
