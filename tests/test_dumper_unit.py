@@ -153,20 +153,26 @@ class TestCastxmlDump:
         assert result.tag == "GCC_XML"
 
     def test_corrupt_cache_is_discarded(self, tmp_path, monkeypatch):
-        """A cache file whose root is None (empty/corrupt XML) is removed and castxml re-runs."""
+        """Corrupt cache entry is removed and castxml is actually re-invoked."""
+        import subprocess
         monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/castxml")
-        # Write an XML file that parses but has no root (empty file produces None root)
+        # Write an unparseable (empty) XML cache file
         cache_xml = tmp_path / "cached.xml"
-        cache_xml.write_text("")  # empty → DefusedET.parse().getroot() returns None
+        cache_xml.write_text("")
 
         monkeypatch.setattr("abicheck.dumper._cache_key", lambda *a, **kw: "testkey")
         monkeypatch.setattr("abicheck.dumper._cache_path", lambda k: cache_xml)
 
-        # castxml will fail because h.h doesn't exist — that's fine, we just
-        # want to confirm the corrupt cache didn't short-circuit the run
-        with pytest.raises(Exception):
+        # Stub subprocess.run so castxml appears to fail with a known error
+        fake_result = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="castxml stub error"
+        )
+        monkeypatch.setattr("abicheck.dumper.subprocess.run", lambda *a, **kw: fake_result)
+
+        with pytest.raises(RuntimeError, match="castxml failed"):
             _castxml_dump([Path("h.h")], [])
-        # Cache file should have been removed
+
+        # The corrupt cache must have been deleted before the re-run
         assert not cache_xml.exists()
 
 
