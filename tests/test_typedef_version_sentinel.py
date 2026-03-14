@@ -146,6 +146,26 @@ class TestVersionStampedTypedefInChecker:
         assert ChangeKind.TYPEDEF_REMOVED in kinds
         assert result.verdict == Verdict.BREAKING
 
+    def test_sentinel_without_successor_is_breaking(self) -> None:
+        """Version-stamped typedef removed with NO successor → still TYPEDEF_REMOVED."""
+        old = _snap({"mylib_version_2_5_3": "unsigned int"}, version="2.5.3")
+        new = _snap({}, version="3.0.0")  # no successor at all
+        result = compare(old, new)
+        kinds = {c.kind for c in result.changes}
+        # No successor → cannot confirm it's a sentinel rotation → report as BREAKING
+        assert ChangeKind.TYPEDEF_REMOVED in kinds
+        assert ChangeKind.TYPEDEF_VERSION_SENTINEL not in kinds
+
+    def test_empty_prefix_sentinel_not_downgraded(self) -> None:
+        """Typedef named _version_1_0_0 (empty family prefix) is not downgraded."""
+        # Empty prefix would match ANY version-stamped successor — too broad, reject.
+        old = _snap({"_version_1_0_0": "int"}, version="1.0.0")
+        new = _snap({"unrelated_version_2_0_0": "int"}, version="2.0.0")
+        result = compare(old, new)
+        kinds = {c.kind for c in result.changes}
+        assert ChangeKind.TYPEDEF_REMOVED in kinds
+        assert ChangeKind.TYPEDEF_VERSION_SENTINEL not in kinds
+
     def test_version_sentinel_change_description(self) -> None:
         """TYPEDEF_VERSION_SENTINEL change has informative description."""
         old = _snap({"mylib_version_2_5_3": "unsigned int"}, version="2.5.3")

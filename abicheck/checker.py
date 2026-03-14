@@ -809,7 +809,12 @@ def _has_version_family_successor(name: str, new_typedefs: dict[str, str]) -> bo
     m = _VERSION_STAMPED_TYPEDEF_RE.match(name)
     if not m:
         return False
-    prefix = m.group(1).lower() + "_version_"
+    prefix = m.group(1).lower()
+    # Require a non-empty family prefix to avoid matching unrelated sentinels
+    # when the name itself starts with _version_ (e.g. ``_version_1_0_0``).
+    if not prefix:
+        return False
+    prefix = prefix + "_version_"
     return any(k.lower().startswith(prefix) for k in new_typedefs)
 
 

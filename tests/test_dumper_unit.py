@@ -153,7 +153,7 @@ class TestCastxmlDump:
         assert result.tag == "GCC_XML"
 
     def test_corrupt_cache_is_discarded(self, tmp_path, monkeypatch):
-        """Corrupt cache entry is removed and castxml is actually re-invoked."""
+        """Corrupt cache entry is removed before castxml is re-invoked."""
         import subprocess
         monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/castxml")
         # Write an unparseable (empty) XML cache file
@@ -163,16 +163,25 @@ class TestCastxmlDump:
         monkeypatch.setattr("abicheck.dumper._cache_key", lambda *a, **kw: "testkey")
         monkeypatch.setattr("abicheck.dumper._cache_path", lambda k: cache_xml)
 
-        # Stub subprocess.run so castxml appears to fail with a known error
-        fake_result = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="castxml stub error"
-        )
-        monkeypatch.setattr("abicheck.dumper.subprocess.run", lambda *a, **kw: fake_result)
+        # Track whether cache was already gone when subprocess.run was called
+        cache_existed_at_run = []
+
+        def fake_run(*args, **kwargs):
+            cache_existed_at_run.append(cache_xml.exists())
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="castxml stub error"
+            )
+
+        monkeypatch.setattr("abicheck.dumper.subprocess.run", fake_run)
 
         with pytest.raises(RuntimeError, match="castxml failed"):
             _castxml_dump([Path("h.h")], [])
 
-        # The corrupt cache must have been deleted before the re-run
+        # subprocess.run must have been called (cache didn't short-circuit)
+        assert cache_existed_at_run, "subprocess.run was never called"
+        # The corrupt cache must have been deleted BEFORE the re-run
+        assert not cache_existed_at_run[0], "Cache was not deleted before castxml re-run"
+        # And must still be gone after
         assert not cache_xml.exists()
 
 
