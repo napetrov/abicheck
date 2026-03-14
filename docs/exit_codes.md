@@ -8,13 +8,13 @@
 
 | Exit code | Meaning |
 |-----------|---------|
-| `0` | `NO_CHANGE` or `COMPATIBLE` — no binary ABI break |
+| `0` | `NO_CHANGE`, `COMPATIBLE`, or `COMPATIBLE_WITH_RISK` — no binary ABI break |
 | `1` | Tool error (missing input, invalid snapshot) — Click/Python uncaught exception |
-| `2` | `API_BREAK` — source-level break; existing binaries are safe |
+| `2` | `API_BREAK` — source-level API break — recompilation required |
 | `4` | `BREAKING` — binary ABI break |
 
-> **⚠️ Exit `0` covers both `NO_CHANGE` and `COMPATIBLE`.** If your pipeline needs
-> to distinguish them (e.g. warn on new symbol exports), use `--format json` and
+> **⚠️ Exit `0` covers `NO_CHANGE`, `COMPATIBLE`, and `COMPATIBLE_WITH_RISK`.** If your pipeline needs
+> to distinguish them (e.g. warn on deployment risk), use `--format json` and
 > read the `verdict` field — exit code alone is not sufficient.
 
 ### CI gate patterns
@@ -45,7 +45,7 @@ verdict=$(python3 -c "import json,sys; d=json.load(open('result.json')); print(d
 
 ---
 
-## `abicheck compat check`
+## `abicheck compat`
 
 Matches `abi-compliance-checker` exit codes (ABICC drop-in):
 
@@ -62,7 +62,7 @@ Matches `abi-compliance-checker` exit codes (ABICC drop-in):
 
 ### Extended compat error codes (ABICC-style)
 
-In `abicheck compat check`, non-verdict failures are further classified where possible:
+In `abicheck compat`, non-verdict failures are further classified where possible:
 
 | Exit code | Typical cause |
 |-----------|---------------|
@@ -79,10 +79,11 @@ In `abicheck compat check`, non-verdict failures are further classified where po
 
 ## Summary table
 
-| Verdict / State | `compare` exit | `compat check` exit |
+| Verdict / State | `compare` exit | `compat` exit |
 |-----------------|---------------|---------------|
 | `NO_CHANGE` | `0` | `0` |
 | `COMPATIBLE` | `0` | `0` |
+| `COMPATIBLE_WITH_RISK` | `0` | `0` |
 | `API_BREAK` | `2` | `2` |
 | `BREAKING` | `4` | `1` |
 | Tool error | `1` | `3/4/5/6/7/8/10/11` |
@@ -91,14 +92,14 @@ In `abicheck compat check`, non-verdict failures are further classified where po
 
 ## Strict mode (`-s` / `-strict`)
 
-`compat check` (and only `compat check`) supports strict mode to promote lesser verdicts:
+`compat` (and only `compat`) supports strict mode to promote lesser verdicts:
 
 ```bash
 # Strict mode: COMPATIBLE + API_BREAK → exit 1 (BREAKING)
-abicheck compat check -lib foo -old OLD.xml -new NEW.xml -s
+abicheck compat -lib foo -old OLD.xml -new NEW.xml -s
 
 # Strict API-only: only API_BREAK → exit 1; COMPATIBLE stays exit 0
-abicheck compat check -lib foo -old OLD.xml -new NEW.xml -s --strict-mode api
+abicheck compat -lib foo -old OLD.xml -new NEW.xml -s --strict-mode api
 ```
 
 `--strict-mode` values:

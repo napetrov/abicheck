@@ -4,13 +4,20 @@
 |---|---|
 | **Old version** | `1.0` |
 | **New version** | `2.0` |
-| **Verdict** | ✅ `NO_CHANGE` |
+| **Verdict** | ⚠️ `COMPATIBLE_WITH_RISK` |
 | Breaking changes | 0 |
 | Source-level breaks | 0 |
-| Deployment risk changes | 0 |
+| Deployment risk changes | 1 |
 | Compatible additions | 0 |
 
-_No ABI changes detected._
+## ⚠️ Deployment Risk Changes
+
+> These changes are **binary-compatible** but may cause the library to fail
+> loading on older systems (e.g. a new GLIBC version requirement). Verify
+> your target environment before deploying.
+
+- **symbol_version_required_added**: New symbol version requirement: GLIBC_2.34 (from libc.so.6)
+
 ---
 ## Legend
 

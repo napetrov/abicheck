@@ -2,6 +2,7 @@
 
 Does NOT require a full compile/run of examples — tests harness logic only.
 """
+
 from __future__ import annotations
 
 import json
@@ -23,8 +24,12 @@ from tests.validate_examples import (  # noqa: E402
 # ── ground_truth.json paths ───────────────────────────────────────────────
 
 _GROUND_TRUTH = Path(__file__).parent.parent / "examples" / "ground_truth.json"
-_VALID_CATEGORIES = frozenset({"breaking", "compatible", "bad_practice", "api_break"})
-_VALID_VERDICTS = frozenset({"BREAKING", "COMPATIBLE", "NO_CHANGE", "API_BREAK"})
+_VALID_CATEGORIES = frozenset(
+    {"breaking", "compatible", "bad_practice", "api_break", "risk"}
+)
+_VALID_VERDICTS = frozenset(
+    {"BREAKING", "COMPATIBLE", "COMPATIBLE_WITH_RISK", "NO_CHANGE", "API_BREAK"}
+)
 _EXPECTED_CASE_COUNT = 48
 
 
@@ -57,14 +62,20 @@ class TestGroundTruthIntegrity:
         assert not missing
 
     def test_all_categories_are_valid(self, verdicts: dict) -> None:
-        invalid = {k: v["category"] for k, v in verdicts.items()
-                   if v.get("category") not in _VALID_CATEGORIES}
+        invalid = {
+            k: v["category"]
+            for k, v in verdicts.items()
+            if v.get("category") not in _VALID_CATEGORIES
+        }
         assert not invalid
 
     def test_all_verdicts_are_valid(self, verdicts: dict) -> None:
-        invalid = {k: v["expected"] for k, v in verdicts.items()
-                   if v.get("expected") not in _VALID_VERDICTS
-                   and v.get("expected") is not None}
+        invalid = {
+            k: v["expected"]
+            for k, v in verdicts.items()
+            if v.get("expected") not in _VALID_VERDICTS
+            and v.get("expected") is not None
+        }
         assert not invalid
 
 
@@ -74,29 +85,40 @@ class TestGroundTruthIntegrity:
 def _make_gt(tmp_path: Path, cases: dict) -> Path:
     """Write a minimal ground_truth.json and return its path."""
     gt_file = tmp_path / "ground_truth.json"
-    gt_file.write_text(json.dumps({"version": "1", "description": "", "verdicts": cases}))
+    gt_file.write_text(
+        json.dumps({"version": "1", "description": "", "verdicts": cases})
+    )
     return gt_file
 
 
 class TestMainCategoryFilter:
     """--category must restrict processed cases to the matching category."""
 
-    def test_filters_out_other_categories(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_filters_out_other_categories(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import tests.validate_examples as ve
 
-        gt_file = _make_gt(tmp_path, {
-            "case_breaking": {"expected": "BREAKING", "category": "breaking"},
-            "case_compatible": {"expected": "COMPATIBLE", "category": "compatible"},
-        })
+        gt_file = _make_gt(
+            tmp_path,
+            {
+                "case_breaking": {"expected": "BREAKING", "category": "breaking"},
+                "case_compatible": {"expected": "COMPATIBLE", "category": "compatible"},
+            },
+        )
         monkeypatch.setattr(ve, "GROUND_TRUTH", gt_file)
         monkeypatch.setattr(ve, "EXAMPLES_DIR", tmp_path)
         monkeypatch.setattr(shutil, "which", lambda t: f"/usr/bin/{t}")
 
         captured: list[str] = []
 
-        def fake_run(name: str, entry: dict, tmp_base: Path, fail_fast: bool = False) -> CaseResult:
+        def fake_run(
+            name: str, entry: dict, tmp_base: Path, fail_fast: bool = False
+        ) -> CaseResult:
             captured.append(name)
-            return CaseResult(name, "PASS", entry.get("expected"), entry.get("expected"), "")
+            return CaseResult(
+                name, "PASS", entry.get("expected"), entry.get("expected"), ""
+            )
 
         with patch.object(ve, "run_case", side_effect=fake_run):
             main(["--category", "breaking", "--json"])
@@ -108,33 +130,51 @@ class TestMainCategoryFilter:
 class TestMainExitCodes:
     """CLI exit codes: 0=all pass, 1=failures, 2=preflight error."""
 
-    def test_exits_0_when_all_pass(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_exits_0_when_all_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import tests.validate_examples as ve
 
-        gt_file = _make_gt(tmp_path, {
-            "case01": {"expected": "BREAKING", "category": "breaking"},
-        })
+        gt_file = _make_gt(
+            tmp_path,
+            {
+                "case01": {"expected": "BREAKING", "category": "breaking"},
+            },
+        )
         monkeypatch.setattr(ve, "GROUND_TRUTH", gt_file)
         monkeypatch.setattr(ve, "EXAMPLES_DIR", tmp_path)
         monkeypatch.setattr(shutil, "which", lambda t: f"/usr/bin/{t}")
 
-        with patch.object(ve, "run_case",
-                          return_value=CaseResult("case01", "PASS", "BREAKING", "BREAKING", "")):
+        with patch.object(
+            ve,
+            "run_case",
+            return_value=CaseResult("case01", "PASS", "BREAKING", "BREAKING", ""),
+        ):
             rc = main(["--json"])
         assert rc == 0
 
-    def test_exits_1_on_failure(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_exits_1_on_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import tests.validate_examples as ve
 
-        gt_file = _make_gt(tmp_path, {
-            "case01": {"expected": "BREAKING", "category": "breaking"},
-        })
+        gt_file = _make_gt(
+            tmp_path,
+            {
+                "case01": {"expected": "BREAKING", "category": "breaking"},
+            },
+        )
         monkeypatch.setattr(ve, "GROUND_TRUTH", gt_file)
         monkeypatch.setattr(ve, "EXAMPLES_DIR", tmp_path)
         monkeypatch.setattr(shutil, "which", lambda t: f"/usr/bin/{t}")
 
-        with patch.object(ve, "run_case",
-                          return_value=CaseResult("case01", "FAIL", "BREAKING", "COMPATIBLE", "mismatch")):
+        with patch.object(
+            ve,
+            "run_case",
+            return_value=CaseResult(
+                "case01", "FAIL", "BREAKING", "COMPATIBLE", "mismatch"
+            ),
+        ):
             rc = main(["--json"])
         assert rc == 1
 

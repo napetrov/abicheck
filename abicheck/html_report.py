@@ -12,22 +12,15 @@ abi-compliance-checker (ABICC) reports:
 
 No external CSS/JS dependencies — fully self-contained single HTML file.
 """
+
 from __future__ import annotations
 
 import html
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from .checker import _BREAKING_KINDS as _CHECKER_BREAKING_KINDS_ENUM
 from .checker_policy import HasKind
-from .report_classifications import (
-    ADDED_KINDS,
-    CATEGORY_PREFIXES,
-    REMOVED_KINDS,
-    category,
-    is_type_problem,
-    kind_str,
-    severity,
-)
 from .report_summary import compatibility_metrics
 
 if TYPE_CHECKING:
@@ -39,22 +32,136 @@ if TYPE_CHECKING:
 
 _VERDICT_STYLE: dict[str, tuple[str, str]] = {
     "BREAKING": ("#b71c1c", "#ffcdd2"),
+    "COMPATIBLE_WITH_RISK": ("#e65100", "#fff3e0"),  # orange — deployment caution
     "COMPATIBLE": ("#1b5e20", "#c8e6c9"),
     "NO_CHANGE": ("#0d47a1", "#bbdefb"),
     "API_BREAK": ("#e65100", "#ffe0b2"),
 }
 
 # ---------------------------------------------------------------------------
-# Change-kind classification helpers — delegated to report_classifications
+# Change-kind classification helpers
 # ---------------------------------------------------------------------------
+
+#: Kinds that count as "removed" in the ABICC sense (symbol no longer available).
+_REMOVED_KINDS: frozenset[str] = frozenset(
+    {
+        "func_removed",
+        "var_removed",
+        "type_removed",
+        "typedef_removed",
+        "union_field_removed",
+        "enum_member_removed",  # removing an enum member is ABI-breaking (callers rely on value)
+    }
+)
+
+#: Kinds that count as "added" (new API surface — compatible).
+_ADDED_KINDS: frozenset[str] = frozenset(
+    {
+        "func_added",
+        "var_added",
+        "type_added",
+        "func_virtual_added",
+        "enum_member_added",
+        "union_field_added",
+        "type_field_added",
+        "type_field_added_compatible",
+    }
+)
+
+#: Kinds that are breaking but neither a simple removal nor addition.
+_CHANGED_BREAKING_KINDS: frozenset[str] = frozenset(
+    {
+        "func_params_changed",
+        "func_return_changed",
+        "func_virtual_removed",
+        "func_virtual_became_pure",
+        "func_pure_virtual_added",
+        "func_static_changed",
+        "func_cv_changed",
+        "var_type_changed",
+        "type_size_changed",
+        "type_alignment_changed",
+        "type_field_removed",
+        "type_field_offset_changed",
+        "type_field_type_changed",
+        "type_base_changed",
+        "type_vtable_changed",
+        "enum_member_value_changed",
+        "enum_last_member_value_changed",
+        "enum_underlying_size_changed",
+        "struct_size_changed",
+        "struct_field_offset_changed",
+        "struct_field_removed",
+        "struct_field_type_changed",
+        "struct_alignment_changed",
+        "field_bitfield_changed",
+        "calling_convention_changed",
+        "struct_packing_changed",
+        "func_visibility_changed",  # public→hidden: symbol removed from ABI
+        "typedef_base_changed",
+        "union_field_type_changed",
+        "type_visibility_changed",
+        # ELF-layer
+        "soname_changed",
+        "symbol_type_changed",
+        "symbol_size_changed",
+        "symbol_version_defined_removed",
+    }
+)
+
+#: Canonical breaking kinds imported from checker — single source of truth.
+#: Converted to frozenset[str] (kind.value) so kind_str lookups work without
+#: importing ChangeKind enum in this module.
+_BREAKING_KINDS: frozenset[str] = frozenset(
+    k.value for k in _CHECKER_BREAKING_KINDS_ENUM
+)
+
+#: Category buckets for the summary table — mirrors ABICC section headers.
+_CATEGORY_PREFIXES: list[tuple[str, tuple[str, ...]]] = [
+    ("Functions", ("func_",)),
+    ("Variables", ("var_",)),
+    ("Types", ("type_", "struct_", "union_", "field_", "typedef_")),
+    ("Enums", ("enum_",)),
+    (
+        "ELF / DWARF",
+        (
+            "soname_",
+            "symbol_",
+            "needed_",
+            "rpath_",
+            "runpath_",
+            "ifunc_",
+            "common_",
+            "dwarf_",
+        ),
+    ),
+]
+
+
+def _category(kind_str: str) -> str:
+    for label, prefixes in _CATEGORY_PREFIXES:
+        if any(kind_str.startswith(p) for p in prefixes):
+            return label
+    return "Other"
+
+
+def _is_breaking(change: object) -> bool:
+    kind = getattr(change, "kind", None)
+    kind_str = kind.value if kind is not None and hasattr(kind, "value") else str(kind)
+    return kind_str in _BREAKING_KINDS
+
+
+def _kind_str(change: object) -> str:
+    kind = getattr(change, "kind", None)
+    return kind.value if kind is not None and hasattr(kind, "value") else str(kind)
 
 
 def _change_bucket(change: object) -> str:
     """Classify a change into 'removed', 'added', or 'changed'."""
-    ks = kind_str(change)
-    if ks in REMOVED_KINDS:
+    ks = _kind_str(change)
+    if ks in _REMOVED_KINDS:
         return "removed"
-    if ks in ADDED_KINDS:
+    if ks in _ADDED_KINDS:
         return "added"
     return "changed"
 
@@ -153,8 +260,8 @@ def _changes_table(changes: list[object]) -> str:
 
     rows = []
     for ch in changes:
-        ks = kind_str(ch)
-        cat = category(ks)
+        ks = _kind_str(ch)
+        cat = _category(ks)
         desc = html.escape(getattr(ch, "description", "") or "")
         old_val = html.escape(str(getattr(ch, "old_value", "") or ""))
         new_val = html.escape(str(getattr(ch, "new_value", "") or ""))
@@ -185,32 +292,39 @@ def _changes_table(changes: list[object]) -> str:
 
 
 def _summary_table(
-    removed: list[object], changed: list[object], added: list[object], suppressed_count: int
+    removed: list[object],
+    changed: list[object],
+    added: list[object],
+    suppressed_count: int,
 ) -> str:
     """Build category-level summary table (mirrors ABICC's overview section)."""
 
     # Count by category
     cats: dict[str, dict[str, int]] = {}
-    for label, _ in CATEGORY_PREFIXES:
+    for label, _ in _CATEGORY_PREFIXES:
         cats[label] = {"removed": 0, "changed": 0, "added": 0}
     cats["Other"] = {"removed": 0, "changed": 0, "added": 0}
 
     for ch in removed:
-        cats[category(kind_str(ch))]["removed"] += 1
+        cats[_category(_kind_str(ch))]["removed"] += 1
     for ch in changed:
-        cats[category(kind_str(ch))]["changed"] += 1
+        cats[_category(_kind_str(ch))]["changed"] += 1
     for ch in added:
-        cats[category(kind_str(ch))]["added"] += 1
+        cats[_category(_kind_str(ch))]["added"] += 1
 
     rows = []
-    for label in [lbl for lbl, _ in CATEGORY_PREFIXES] + ["Other"]:
+    for label in [lbl for lbl, _ in _CATEGORY_PREFIXES] + ["Other"]:
         c = cats[label]
         if c["removed"] == 0 and c["changed"] == 0 and c["added"] == 0:
             continue
         r = f"<span class='num num-red'>{c['removed']}</span>" if c["removed"] else "—"
-        ch_n = f"<span class='num num-blue'>{c['changed']}</span>" if c["changed"] else "—"
+        ch_n = (
+            f"<span class='num num-blue'>{c['changed']}</span>" if c["changed"] else "—"
+        )
         a = f"<span class='num num-green'>{c['added']}</span>" if c["added"] else "—"
-        rows.append(f"<tr><td>{html.escape(label)}</td><td>{r}</td><td>{ch_n}</td><td>{a}</td></tr>")
+        rows.append(
+            f"<tr><td>{html.escape(label)}</td><td>{r}</td><td>{ch_n}</td><td>{a}</td></tr>"
+        )
 
     total_r = f"<span class='num num-red'>{len(removed)}</span>"
     total_ch = f"<span class='num num-blue'>{len(changed)}</span>"
@@ -240,12 +354,21 @@ def _summary_table(
 </div>"""
 
 
-def _nav_bar(removed: list[object], changed: list[object], added: list[object], suppressed_count: int) -> str:
+def _nav_bar(
+    removed: list[object],
+    changed: list[object],
+    added: list[object],
+    suppressed_count: int,
+) -> str:
     links = []
     if removed:
-        links.append(f"<a href='#removed' class='breaking'>⛔ Removed ({len(removed)})</a>")
+        links.append(
+            f"<a href='#removed' class='breaking'>⛔ Removed ({len(removed)})</a>"
+        )
     if changed:
-        links.append(f"<a href='#changed' class='breaking'>⚠️ Changed ({len(changed)})</a>")
+        links.append(
+            f"<a href='#changed' class='breaking'>⚠️ Changed ({len(changed)})</a>"
+        )
     if added:
         links.append(f"<a href='#added' class='added'>✅ Added ({len(added)})</a>")
     if suppressed_count:
@@ -256,8 +379,82 @@ def _nav_bar(removed: list[object], changed: list[object], added: list[object], 
 
 
 # ---------------------------------------------------------------------------
-# Severity / type / symbol classification — delegated to report_classifications
+# ABICC severity classification (imported from xml_report for consistency)
 # ---------------------------------------------------------------------------
+
+_HIGH_SEVERITY_KINDS: frozenset[str] = frozenset(
+    {
+        "func_removed",
+        "var_removed",
+        "type_removed",
+        "typedef_removed",
+        "type_size_changed",
+        "type_vtable_changed",
+        "type_base_changed",
+        "struct_size_changed",
+        "func_virtual_removed",
+        "func_pure_virtual_added",
+        "func_virtual_became_pure",
+        "base_class_position_changed",
+        "base_class_virtual_changed",
+        "type_kind_changed",
+        "func_deleted",
+    }
+)
+
+_MEDIUM_SEVERITY_KINDS: frozenset[str] = frozenset(
+    {
+        "func_return_changed",
+        "func_params_changed",
+        "type_field_offset_changed",
+        "type_field_type_changed",
+        "type_field_removed",
+        "type_alignment_changed",
+        "struct_field_offset_changed",
+        "struct_field_removed",
+        "struct_field_type_changed",
+        "struct_alignment_changed",
+        "var_type_changed",
+        "calling_convention_changed",
+        "soname_changed",
+        "symbol_type_changed",
+        "symbol_version_defined_removed",
+        "return_pointer_level_changed",
+        "param_pointer_level_changed",
+        "union_field_removed",
+        "union_field_type_changed",
+        "typedef_base_changed",
+        "struct_packing_changed",
+    }
+)
+
+
+def _severity(kind_str: str) -> str:
+    if kind_str in _HIGH_SEVERITY_KINDS:
+        return "High"
+    if kind_str in _MEDIUM_SEVERITY_KINDS:
+        return "Medium"
+    return "Low"
+
+
+def _is_type_problem(kind_str: str) -> bool:
+    return any(
+        kind_str.startswith(p)
+        for p in (
+            "type_",
+            "struct_",
+            "union_",
+            "field_",
+            "typedef_",
+            "enum_",
+            "base_class_",
+        )
+    )
+
+
+def _is_symbol_problem(kind_str: str) -> bool:
+    return any(kind_str.startswith(p) for p in ("func_", "var_"))
+
 
 # ---------------------------------------------------------------------------
 # ABICC-compatible HTML (compat_html mode)
@@ -280,24 +477,24 @@ table.problem th { background: #f5f5f5; text-align: left; }
 """
 
 
-def _compat_changes_table(items: list[object], showseverity: bool = False) -> str:
+def _compat_changes_table(items: list[object], show_severity: bool = False) -> str:
     """Render a changes table in ABICC style."""
     if not items:
         return "<p>No changes.</p>"
     h = html.escape
     rows = []
     for ch in items:
-        ks = kind_str(ch)
+        ks = _kind_str(ch)
         sym = h(getattr(ch, "symbol", "") or "")
         desc = h(getattr(ch, "description", "") or "")
         old_val = h(str(getattr(ch, "old_value", "") or ""))
         new_val = h(str(getattr(ch, "new_value", "") or ""))
-        sev_cell = f"<td>{severity(ks)}</td>" if showseverity else ""
+        sev_cell = f"<td>{_severity(ks)}</td>" if show_severity else ""
         rows.append(
             f"<tr><td class='sym'>{sym}</td><td>{h(ks)}</td>"
             f"{sev_cell}<td>{desc}</td><td>{old_val}</td><td>{new_val}</td></tr>"
         )
-    sev_hdr = "<th>Severity</th>" if showseverity else ""
+    sev_hdr = "<th>Severity</th>" if show_severity else ""
     return (
         f"<table class='problem'><thead><tr>"
         f"<th>Symbol</th><th>Kind</th>{sev_hdr}"
@@ -343,9 +540,9 @@ def _generate_compat_html(
     type_problems: dict[str, list[object]] = {"High": [], "Medium": [], "Low": []}
     symbol_problems: dict[str, list[object]] = {"High": [], "Medium": [], "Low": []}
     for ch in changed:
-        ks = kind_str(ch)
-        sev = severity(ks)
-        if is_type_problem(ks):
+        ks = _kind_str(ch)
+        sev = _severity(ks)
+        if _is_type_problem(ks):
             type_problems[sev].append(ch)
         else:
             symbol_problems[sev].append(ch)
@@ -358,8 +555,12 @@ def _generate_compat_html(
     sp_med = len(symbol_problems["Medium"])
     sp_low = len(symbol_problems["Low"])
 
-    compat_verdict = "incompatible" if verdict in ("BREAKING", "API_BREAK") else "compatible"
-    bc_css = "incompatible" if bc_pct < 90 else ("warning" if bc_pct < 100 else "compatible")
+    compat_verdict = (
+        "incompatible" if verdict in ("BREAKING", "API_BREAK") else "compatible"
+    )
+    bc_css = (
+        "incompatible" if bc_pct < 90 else ("warning" if bc_pct < 100 else "compatible")
+    )
     affected_pct_label = f"{affected_pct:.1f}" if old_symbol_count else "0"
 
     kind_label = report_kind.capitalize()  # "Binary" or "Source"
@@ -381,9 +582,10 @@ def _generate_compat_html(
 
     # Build title matching ABICC convention
     abicc_title = (
-        h(title) if title
+        h(title)
+        if title
         else f"{kind_label} compatibility report for the <b>{lib_display}</b> "
-             f"library between <b>{old_display}</b> and <b>{new_display}</b> versions"
+        f"library between <b>{old_display}</b> and <b>{new_display}</b> versions"
     )
 
     # Build sections
@@ -401,7 +603,7 @@ def _generate_compat_html(
 
 <h2>Test Results</h2>
 <table class='summary'>
-<tr><th>Total Symbols</th><td>{old_symbol_count or 'N/A'}</td></tr>
+<tr><th>Total Symbols</th><td>{old_symbol_count or "N/A"}</td></tr>
 <tr><th>{kind_label} Compatibility</th><td class='{bc_css}'>{bc_pct:.1f}%</td></tr>
 <tr><th>Verdict</th><td class='{bc_css}'>{compat_verdict}</td></tr>
 </table>
@@ -439,7 +641,7 @@ def _generate_compat_html(
             sections_html.append(f"""
 <div id='TypeProblems_{sev}'>
 <h2>Problems with Data Types — {sev} Severity ({len(items)})</h2>
-{_compat_changes_table(items, showseverity=True)}
+{_compat_changes_table(items, show_severity=True)}
 </div>""")
 
     # Interface (symbol) problems by severity
@@ -449,7 +651,7 @@ def _generate_compat_html(
             sections_html.append(f"""
 <div id='InterfaceProblems_{sev}'>
 <h2>Problems with Symbols — {sev} Severity ({len(items)})</h2>
-{_compat_changes_table(items, showseverity=True)}
+{_compat_changes_table(items, show_severity=True)}
 </div>""")
 
     body_html = "\n".join(sections_html)
@@ -506,7 +708,11 @@ def generate_html_report(
     Returns:
         Complete self-contained HTML document as a string.
     """
-    verdict = result.verdict.value if hasattr(result.verdict, "value") else str(result.verdict)
+    verdict = (
+        result.verdict.value
+        if hasattr(result.verdict, "value")
+        else str(result.verdict)
+    )
     fg, bg = _VERDICT_STYLE.get(verdict, ("#212121", "#f5f5f5"))
 
     changes: list[object] = list(getattr(result, "changes", None) or [])
@@ -530,17 +736,32 @@ def generate_html_report(
 
     if compat_html:
         return _generate_compat_html(
-            result, changes, removed, changed, added,
-            suppressed, suppressed_count,
-            bc_pct, affected_pct, breaking_count, verdict,
-            lib_display, old_display, new_display,
-            old_symbol_count, title,
+            result,
+            changes,
+            removed,
+            changed,
+            added,
+            suppressed,
+            suppressed_count,
+            bc_pct,
+            affected_pct,
+            breaking_count,
+            verdict,
+            lib_display,
+            old_display,
+            new_display,
+            old_symbol_count,
+            title,
             report_kind=report_kind,
         )
 
     # Verdict icon
-    verdict_icon = {"BREAKING": "🔴", "COMPATIBLE": "🟢",
-                    "NO_CHANGE": "🔵", "API_BREAK": "🟠"}.get(verdict, "⚪")
+    verdict_icon = {
+        "BREAKING": "🔴",
+        "COMPATIBLE": "🟢",
+        "NO_CHANGE": "🔵",
+        "API_BREAK": "🟠",
+    }.get(verdict, "⚪")
 
     summary_html = _summary_table(removed, changed, added, suppressed_count)
     nav_html = _nav_bar(removed, changed, added, suppressed_count)
@@ -557,14 +778,21 @@ def generate_html_report(
 
     sections = []
     if removed:
-        sections.append(_section("⛔ Removed Symbols", "removed", "section-removed", removed))
+        sections.append(
+            _section("⛔ Removed Symbols", "removed", "section-removed", removed)
+        )
     if changed:
-        sections.append(_section("⚠️ Changed Symbols", "changed", "section-changed", changed))
+        sections.append(
+            _section("⚠️ Changed Symbols", "changed", "section-changed", changed)
+        )
     if added:
         sections.append(_section("✅ Added Symbols", "added", "section-added", added))
     if suppressed:
-        sections.append(_section("🔕 Suppressed Changes", "suppressed",
-                                  "section-suppressed", suppressed))
+        sections.append(
+            _section(
+                "🔕 Suppressed Changes", "suppressed", "section-suppressed", suppressed
+            )
+        )
     elif suppressed_count and not suppressed:
         # Count known but details not stored
         sections.append(
@@ -585,22 +813,20 @@ def generate_html_report(
 
     symbol_count_note = ""
     if old_symbol_count:
-        symbol_count_note = (
-            f" / {old_symbol_count} exported symbols"
-        )
+        symbol_count_note = f" / {old_symbol_count} exported symbols"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{h(title) if title else f'ABI Report: {lib_display} {old_display} → {new_display}'}</title>
+  <title>{h(title) if title else f"ABI Report: {lib_display} {old_display} → {new_display}"}</title>
   <style>{_CSS}</style>
 </head>
 <body>
 
 <div class="header">
-  <h1>{h(title) if title else f'ABI Compatibility Report — {lib_display}'}</h1>
+  <h1>{h(title) if title else f"ABI Compatibility Report — {lib_display}"}</h1>
   <div class="meta">
     {old_display} → {new_display} &nbsp;|&nbsp;
     Generated by <strong>abicheck</strong> (ABICC-compatible)

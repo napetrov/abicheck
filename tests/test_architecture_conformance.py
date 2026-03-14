@@ -7,6 +7,7 @@ from abicheck.checker_policy import (
     BREAKING_KINDS,
     COMPATIBLE_KINDS,
     POLICY_REGISTRY,
+    RISK_KINDS,
     ChangeKind,
 )
 
@@ -15,8 +16,11 @@ def test_policy_sets_are_disjoint_and_complete() -> None:
     assert not (BREAKING_KINDS & COMPATIBLE_KINDS)
     assert not (BREAKING_KINDS & API_BREAK_KINDS)
     assert not (COMPATIBLE_KINDS & API_BREAK_KINDS)
+    assert not (RISK_KINDS & BREAKING_KINDS)
+    assert not (RISK_KINDS & COMPATIBLE_KINDS)
+    assert not (RISK_KINDS & API_BREAK_KINDS)
 
-    classified = BREAKING_KINDS | COMPATIBLE_KINDS | API_BREAK_KINDS
+    classified = BREAKING_KINDS | COMPATIBLE_KINDS | API_BREAK_KINDS | RISK_KINDS
     assert classified == set(ChangeKind)
 
 
@@ -29,4 +33,13 @@ def test_readme_mentions_all_verdict_levels() -> None:
     assert "NO_CHANGE" in text
     assert "COMPATIBLE" in text
     assert "BREAKING" in text
-    assert "Source-level" in text or "source-level" in text
+    assert "API_BREAK" in text
+
+
+def test_readme_mentions_compatible_with_risk() -> None:
+    """README must document COMPATIBLE_WITH_RISK so users know about the new verdict."""
+    text = Path("README.md").read_text(encoding="utf-8")
+    assert "COMPATIBLE_WITH_RISK" in text, (
+        "README must mention COMPATIBLE_WITH_RISK verdict. "
+        "Add it to the verdicts/exit-codes table or the feature list."
+    )

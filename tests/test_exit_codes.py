@@ -84,6 +84,33 @@ def test_exit_0_compatible(tmp_path: Path) -> None:
     assert "COMPATIBLE" in result.output
 
 
+def test_exit_0_compatible_with_risk(tmp_path: Path) -> None:
+    """SYMBOL_VERSION_REQUIRED_ADDED → COMPATIBLE_WITH_RISK → exit 0.
+
+    New GLIBC version requirement is binary-compatible for existing consumers
+    (already linked at build time). Deployment risk only — exits 0.
+    Previously (before PR #121) this would have exited 4 (BREAKING).
+    """
+    from abicheck.elf_metadata import ElfMetadata
+
+    runner = CliRunner()
+    old_path = tmp_path / "old.json"
+    new_path = tmp_path / "new.json"
+
+    old = _snap("1.0")
+    old.elf = ElfMetadata(versions_required={"libc.so.6": ["GLIBC_2.5"]})
+    new = _snap("2.0")
+    new.elf = ElfMetadata(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]})
+    _write_snap(old_path, old)
+    _write_snap(new_path, new)
+
+    result = runner.invoke(main, ["compare", str(old_path), str(new_path)])
+    assert result.exit_code == 0, (
+        f"Expected exit 0 (COMPATIBLE_WITH_RISK), got {result.exit_code}\n{result.output}"
+    )
+    assert "COMPATIBLE_WITH_RISK" in result.output
+
+
 # ---------------------------------------------------------------------------
 # Exit code 2 — API_BREAK
 # ---------------------------------------------------------------------------

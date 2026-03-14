@@ -28,6 +28,7 @@ Full strictness — every detected ABI change is classified at its maximum sever
 |---------|---------|
 | `BREAKING` | Binary ABI break — old callers will crash or misbehave |
 | `API_BREAK` | Source-level break — recompile required, but binary may still work |
+| `COMPATIBLE_WITH_RISK` | Binary-compatible, but deployment risk present — verify target environments |
 | `COMPATIBLE` | Safe addition or informational |
 | `NO_CHANGE` | No differences found |
 
@@ -102,6 +103,7 @@ overrides:
 Semantics:
 - `break`  → `BREAKING` (exit code 4)
 - `warn`   → `API_BREAK` (exit code 2)
+- `risk`   → `COMPATIBLE_WITH_RISK` (exit code 0; deployment risk visible in output)
 - `ignore` → `COMPATIBLE` (exit code 0)
 - kinds not listed in `overrides` use `base_policy`
 
@@ -116,6 +118,7 @@ For `abicheck compare`, exit codes are the same for all policies — only the ve
 | Exit Code | Verdict |
 |-----------|---------|
 | `0` | `NO_CHANGE` or `COMPATIBLE` |
+| `0` | `COMPATIBLE_WITH_RISK` (deployment risk, inspect output) |
 | `2` | `API_BREAK` (source-level break) |
 | `4` | `BREAKING` (binary ABI break) |
 

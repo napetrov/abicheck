@@ -144,3 +144,15 @@ def test_golden_compatible_addition(update_goldens: bool) -> None:
     old = _snap(ver="1.0", funcs=[_fn("compute", "_Z7computei")])
     new = _snap(ver="2.0", funcs=[_fn("compute", "_Z7computei"), _fn("helper", "_Z6helperi")])
     _run_golden("compatible_addition", old, new, update_goldens)
+
+
+@pytest.mark.golden
+def test_golden_compatible_with_risk(update_goldens: bool) -> None:
+    """New GLIBC version requirement → COMPATIBLE_WITH_RISK output is stable."""
+    from abicheck.elf_metadata import ElfMetadata
+
+    old = _snap(ver="1.0")
+    old.elf = ElfMetadata(versions_required={"libc.so.6": ["GLIBC_2.5"]})
+    new = _snap(ver="2.0")
+    new.elf = ElfMetadata(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]})
+    _run_golden("compatible_with_risk", old, new, update_goldens)

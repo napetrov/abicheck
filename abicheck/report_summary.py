@@ -1,4 +1,5 @@
 """Canonical summary metric computation for all report formats."""
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -12,6 +13,7 @@ from .checker_policy import HasKind
 class ReportSummary:
     breaking: int
     source_breaks: int
+    risk_count: int
     compatible_additions: int
     total_changes: int
     binary_compatibility_pct: float
@@ -25,7 +27,9 @@ class CompatibilityMetrics:
     affected_pct: float
 
 
-def compatibility_metrics(changes: Sequence[HasKind], old_symbol_count: int | None = None) -> CompatibilityMetrics:
+def compatibility_metrics(
+    changes: Sequence[HasKind], old_symbol_count: int | None = None
+) -> CompatibilityMetrics:
     """Compute canonical ABICC-style binary compatibility counters/percentages."""
     breaking_count = sum(1 for c in changes if c.kind in _BREAKING_KINDS)
 
@@ -54,6 +58,7 @@ def build_summary(result: DiffResult) -> ReportSummary:
     return ReportSummary(
         breaking=len(result.breaking),
         source_breaks=len(result.source_breaks),
+        risk_count=len(result.risk),
         compatible_additions=len(result.compatible),
         total_changes=len(result.changes),
         binary_compatibility_pct=metrics.binary_compatibility_pct,

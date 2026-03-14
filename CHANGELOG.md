@@ -44,8 +44,8 @@ additional capabilities.
 #### CLI
 - `abicheck dump` — create ABI snapshot JSON from `.so` + headers
 - `abicheck compare` — diff two snapshots with `--policy`, `--policy-file`, `--format` (markdown/json/sarif/html), `--suppress`
-- `abicheck compat check` — ABICC drop-in CLI (accepts all ABICC flags)
-- `abicheck compat dump` — create snapshot from ABICC XML descriptor
+- `abicheck compat` — ABICC drop-in CLI (accepts all ABICC flags)
+- `abicheck compat-dump` — create snapshot from ABICC XML descriptor
 - `abicheck --version` — print version
 
 #### Reports
@@ -85,17 +85,33 @@ additional capabilities.
 ## [Unreleased]
 
 ### Added
-- `--lang` option on `dump` and `compare` — select C (`--lang c`) or C++ (`--lang c++`, default) mode for castxml
-- Cross-compilation flags on native `dump` command: `--gcc-path`, `--gcc-prefix`, `--gcc-options`, `--sysroot`, `--nostdinc`
-- `--verbose` / `-v` flag on `dump` and `compare` for debug logging
-- `compat` is now a command group: `abicheck compat check` (was `abicheck compat`), `abicheck compat dump` (was `abicheck compat-dump`)
-- Exit codes documented in `compare --help` output
+- New verdict `COMPATIBLE_WITH_RISK`: binary-compatible changes that pose a deployment
+  risk requiring manual verification of target environment constraints.
+- `RISK_KINDS` classification set in `checker_policy.py`.
+- `DiffResult.risk` property to query risk-classified changes.
+- `"risk"` severity level in YAML policy files (maps to `COMPATIBLE_WITH_RISK`).
+- Integrity assertions ensuring `RISK_KINDS` is disjoint from all other kind sets.
 
 ### Changed
-- `--compiler` option renamed to `--lang` (breaking CLI change)
-- Dump error handling uses `click.ClickException` (exit 1) instead of `sys.exit(2)`
-- Snapshot reconstruction uses `dataclasses.replace()` for safety
-- `-o` alias removed from `-old` in `compat check` to avoid collision with `-o/--output`
+- `SYMBOL_VERSION_REQUIRED_ADDED` moved from `BREAKING_KINDS` → `RISK_KINDS`.
+  New GLIBC version requirements in `DT_VERNEED` now produce `COMPATIBLE_WITH_RISK`
+  instead of `BREAKING` — existing compiled consumers are unaffected (already linked).
+- `policy_kind_sets()` now returns a 4-tuple `(breaking, api_break, compatible, risk)`.
+- **SARIF `invocations[].exitCode` semantics changed** (migration note):
+  - `BREAKING`: `1` → `4` (aligns with `abicheck compare` CLI exit code contract)
+  - `API_BREAK`: now emits `2` (was `0`)
+  - `COMPATIBLE_WITH_RISK`: emits `0` (binary-compatible; risk surfaced via `exitCodeDescription`)
+  - If your CI pipeline checks for `exitCode == 1` on BREAKING results, update to `exitCode == 4`.
+- `RISK_KINDS` is now a `frozenset` (was `set`) to prevent accidental mutation.
+- `_apply_warn_newsym` now promotes `COMPATIBLE_WITH_RISK` → `BREAKING` when `-warn-newsym` is set,
+  consistent with its behavior for `COMPATIBLE` and `API_BREAK`.
+- `plugin_abi` policy now treats `SYMBOL_VERSION_REQUIRED_ADDED` as `BREAKING`
+  (host/plugin deployment-floor raise is an in-process load blocker).
+
+### Fixed
+- False positives on patch releases (libpng 1.6.43→1.6.44, zlib 1.3.0→1.3.1) where
+  `GLIBC_2.14` VERNEED addition was incorrectly classified as `BREAKING`.
+
 
 ### Planned
 - Windows PE support

@@ -17,6 +17,7 @@ Covers all new ChangeKinds added in Sprint 7:
 
 All tests build AbiSnapshot objects directly (no castxml required).
 """
+
 from __future__ import annotations
 
 from abicheck.checker import ChangeKind, Verdict, compare
@@ -57,6 +58,7 @@ def _kinds(result) -> set[ChangeKind]:
 # Binary compatibility is preserved (old compiled enum value unchanged).
 # ===========================================================================
 
+
 class TestEnumMemberRenamed:
     """Detect when an enum value keeps its integer value but gets renamed.
 
@@ -66,19 +68,29 @@ class TestEnumMemberRenamed:
 
     def test_enum_member_renamed_detected(self) -> None:
         """Simple rename: OK(0), ERROR(1) → OK(0), FAILURE(1)."""
-        old = _snap(enums=[EnumType("Status", [EnumMember("OK", 0), EnumMember("ERROR", 1)])])
-        new = _snap(enums=[EnumType("Status", [EnumMember("OK", 0), EnumMember("FAILURE", 1)])])
+        old = _snap(
+            enums=[EnumType("Status", [EnumMember("OK", 0), EnumMember("ERROR", 1)])]
+        )
+        new = _snap(
+            enums=[EnumType("Status", [EnumMember("OK", 0), EnumMember("FAILURE", 1)])]
+        )
         result = compare(old, new)
         assert ChangeKind.ENUM_MEMBER_RENAMED in _kinds(result)
-        change = next(c for c in result.changes if c.kind == ChangeKind.ENUM_MEMBER_RENAMED)
+        change = next(
+            c for c in result.changes if c.kind == ChangeKind.ENUM_MEMBER_RENAMED
+        )
         assert change.old_value == "ERROR"
         assert change.new_value == "FAILURE"
 
     def test_enum_member_renamed_is_at_least_source_break(self) -> None:
         """Rename also triggers ENUM_MEMBER_REMOVED (old name gone), which is BREAKING.
         The rename is detected as an additional signal alongside the removal."""
-        old = _snap(enums=[EnumType("Color", [EnumMember("RED", 0), EnumMember("GRN", 1)])])
-        new = _snap(enums=[EnumType("Color", [EnumMember("RED", 0), EnumMember("GREEN", 1)])])
+        old = _snap(
+            enums=[EnumType("Color", [EnumMember("RED", 0), EnumMember("GRN", 1)])]
+        )
+        new = _snap(
+            enums=[EnumType("Color", [EnumMember("RED", 0), EnumMember("GREEN", 1)])]
+        )
         result = compare(old, new)
         assert ChangeKind.ENUM_MEMBER_RENAMED in _kinds(result)
         # Also triggers ENUM_MEMBER_REMOVED for old name → BREAKING verdict
@@ -99,14 +111,24 @@ class TestEnumMemberRenamed:
 
     def test_multiple_renames_in_same_enum(self) -> None:
         """Multiple members renamed simultaneously."""
-        old = _snap(enums=[EnumType("E", [
-            EnumMember("X", 0), EnumMember("Y", 1), EnumMember("Z", 2)
-        ])])
-        new = _snap(enums=[EnumType("E", [
-            EnumMember("A", 0), EnumMember("B", 1), EnumMember("C", 2)
-        ])])
+        old = _snap(
+            enums=[
+                EnumType(
+                    "E", [EnumMember("X", 0), EnumMember("Y", 1), EnumMember("Z", 2)]
+                )
+            ]
+        )
+        new = _snap(
+            enums=[
+                EnumType(
+                    "E", [EnumMember("A", 0), EnumMember("B", 1), EnumMember("C", 2)]
+                )
+            ]
+        )
         result = compare(old, new)
-        renames = [c for c in result.changes if c.kind == ChangeKind.ENUM_MEMBER_RENAMED]
+        renames = [
+            c for c in result.changes if c.kind == ChangeKind.ENUM_MEMBER_RENAMED
+        ]
         assert len(renames) == 3
 
 
@@ -118,6 +140,7 @@ class TestEnumMemberRenamed:
 # Changing a default is informational (recompiled callers get new value).
 # ===========================================================================
 
+
 class TestParamDefaultValueChanged:
     """Detect default argument value changes in function signatures.
 
@@ -126,37 +149,77 @@ class TestParamDefaultValueChanged:
     """
 
     def test_default_value_changed(self) -> None:
-        old = _snap(functions=[_func("connect", "_Z7connecti",
-                    params=[Param("timeout", "int", default="30")])])
-        new = _snap(functions=[_func("connect", "_Z7connecti",
-                    params=[Param("timeout", "int", default="60")])])
+        old = _snap(
+            functions=[
+                _func(
+                    "connect",
+                    "_Z7connecti",
+                    params=[Param("timeout", "int", default="30")],
+                )
+            ]
+        )
+        new = _snap(
+            functions=[
+                _func(
+                    "connect",
+                    "_Z7connecti",
+                    params=[Param("timeout", "int", default="60")],
+                )
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.PARAM_DEFAULT_VALUE_CHANGED in _kinds(result)
 
     def test_default_value_removed_is_source_break(self) -> None:
-        old = _snap(functions=[_func("init", "_Z4initb",
-                    params=[Param("verbose", "bool", default="true")])])
-        new = _snap(functions=[_func("init", "_Z4initb",
-                    params=[Param("verbose", "bool", default=None)])])
+        old = _snap(
+            functions=[
+                _func(
+                    "init",
+                    "_Z4initb",
+                    params=[Param("verbose", "bool", default="true")],
+                )
+            ]
+        )
+        new = _snap(
+            functions=[
+                _func(
+                    "init", "_Z4initb", params=[Param("verbose", "bool", default=None)]
+                )
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.PARAM_DEFAULT_VALUE_REMOVED in _kinds(result)
         assert result.verdict == Verdict.API_BREAK
 
     def test_default_value_added_not_reported(self) -> None:
         """Adding a default is backward-compatible and not reported."""
-        old = _snap(functions=[_func("init", "_Z4initb",
-                    params=[Param("verbose", "bool", default=None)])])
-        new = _snap(functions=[_func("init", "_Z4initb",
-                    params=[Param("verbose", "bool", default="false")])])
+        old = _snap(
+            functions=[
+                _func(
+                    "init", "_Z4initb", params=[Param("verbose", "bool", default=None)]
+                )
+            ]
+        )
+        new = _snap(
+            functions=[
+                _func(
+                    "init",
+                    "_Z4initb",
+                    params=[Param("verbose", "bool", default="false")],
+                )
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.PARAM_DEFAULT_VALUE_REMOVED not in _kinds(result)
         assert ChangeKind.PARAM_DEFAULT_VALUE_CHANGED not in _kinds(result)
 
     def test_default_unchanged_no_report(self) -> None:
-        old = _snap(functions=[_func("f", "_Z1fi",
-                    params=[Param("x", "int", default="42")])])
-        new = _snap(functions=[_func("f", "_Z1fi",
-                    params=[Param("x", "int", default="42")])])
+        old = _snap(
+            functions=[_func("f", "_Z1fi", params=[Param("x", "int", default="42")])]
+        )
+        new = _snap(
+            functions=[_func("f", "_Z1fi", params=[Param("x", "int", default="42")])]
+        )
         result = compare(old, new)
         assert ChangeKind.PARAM_DEFAULT_VALUE_CHANGED not in _kinds(result)
 
@@ -169,6 +232,7 @@ class TestParamDefaultValueChanged:
 # may indicate semantic API contract changes.
 # ===========================================================================
 
+
 class TestFieldBecameConst:
     """Detect const qualifier added/removed from struct fields.
 
@@ -177,26 +241,48 @@ class TestFieldBecameConst:
     """
 
     def test_field_became_const(self) -> None:
-        old = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", is_const=False)])])
-        new = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", is_const=True)])])
+        old = _snap(
+            types=[
+                RecordType(
+                    "S", "struct", fields=[TypeField("x", "int", is_const=False)]
+                )
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType("S", "struct", fields=[TypeField("x", "int", is_const=True)])
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.FIELD_BECAME_CONST in _kinds(result)
 
     def test_field_lost_const(self) -> None:
-        old = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", is_const=True)])])
-        new = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", is_const=False)])])
+        old = _snap(
+            types=[
+                RecordType("S", "struct", fields=[TypeField("x", "int", is_const=True)])
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType(
+                    "S", "struct", fields=[TypeField("x", "int", is_const=False)]
+                )
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.FIELD_LOST_CONST in _kinds(result)
 
     def test_const_unchanged_no_report(self) -> None:
-        old = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", is_const=True)])])
-        new = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", is_const=True)])])
+        old = _snap(
+            types=[
+                RecordType("S", "struct", fields=[TypeField("x", "int", is_const=True)])
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType("S", "struct", fields=[TypeField("x", "int", is_const=True)])
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.FIELD_BECAME_CONST not in _kinds(result)
         assert ChangeKind.FIELD_LOST_CONST not in _kinds(result)
@@ -206,18 +292,46 @@ class TestFieldBecameVolatile:
     """Detect volatile qualifier changes on struct fields."""
 
     def test_field_became_volatile(self) -> None:
-        old = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("counter", "int", is_volatile=False)])])
-        new = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("counter", "int", is_volatile=True)])])
+        old = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "struct",
+                    fields=[TypeField("counter", "int", is_volatile=False)],
+                )
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "struct",
+                    fields=[TypeField("counter", "int", is_volatile=True)],
+                )
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.FIELD_BECAME_VOLATILE in _kinds(result)
 
     def test_field_lost_volatile(self) -> None:
-        old = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("counter", "int", is_volatile=True)])])
-        new = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("counter", "int", is_volatile=False)])])
+        old = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "struct",
+                    fields=[TypeField("counter", "int", is_volatile=True)],
+                )
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "struct",
+                    fields=[TypeField("counter", "int", is_volatile=False)],
+                )
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.FIELD_LOST_VOLATILE in _kinds(result)
 
@@ -230,18 +344,42 @@ class TestFieldBecameMutable:
     """
 
     def test_field_became_mutable(self) -> None:
-        old = _snap(types=[RecordType("Cache", "class", fields=[
-            TypeField("size", "int", is_mutable=False)])])
-        new = _snap(types=[RecordType("Cache", "class", fields=[
-            TypeField("size", "int", is_mutable=True)])])
+        old = _snap(
+            types=[
+                RecordType(
+                    "Cache",
+                    "class",
+                    fields=[TypeField("size", "int", is_mutable=False)],
+                )
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType(
+                    "Cache", "class", fields=[TypeField("size", "int", is_mutable=True)]
+                )
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.FIELD_BECAME_MUTABLE in _kinds(result)
 
     def test_field_lost_mutable(self) -> None:
-        old = _snap(types=[RecordType("Cache", "class", fields=[
-            TypeField("size", "int", is_mutable=True)])])
-        new = _snap(types=[RecordType("Cache", "class", fields=[
-            TypeField("size", "int", is_mutable=False)])])
+        old = _snap(
+            types=[
+                RecordType(
+                    "Cache", "class", fields=[TypeField("size", "int", is_mutable=True)]
+                )
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType(
+                    "Cache",
+                    "class",
+                    fields=[TypeField("size", "int", is_mutable=False)],
+                )
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.FIELD_LOST_MUTABLE in _kinds(result)
 
@@ -250,18 +388,36 @@ class TestFieldQualifierVerdicts:
     """Field qualifier changes should be COMPATIBLE (informational, not breaking)."""
 
     def test_field_const_change_is_compatible(self) -> None:
-        old = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", is_const=False)])])
-        new = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", is_const=True)])])
+        old = _snap(
+            types=[
+                RecordType(
+                    "S", "struct", fields=[TypeField("x", "int", is_const=False)]
+                )
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType("S", "struct", fields=[TypeField("x", "int", is_const=True)])
+            ]
+        )
         result = compare(old, new)
         assert result.verdict == Verdict.COMPATIBLE
 
     def test_field_volatile_change_is_compatible(self) -> None:
-        old = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", is_volatile=False)])])
-        new = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", is_volatile=True)])])
+        old = _snap(
+            types=[
+                RecordType(
+                    "S", "struct", fields=[TypeField("x", "int", is_volatile=False)]
+                )
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType(
+                    "S", "struct", fields=[TypeField("x", "int", is_volatile=True)]
+                )
+            ]
+        )
         result = compare(old, new)
         assert result.verdict == Verdict.COMPATIBLE
 
@@ -274,6 +430,7 @@ class TestFieldQualifierVerdicts:
 # Binary compatibility preserved (layout unchanged).
 # ===========================================================================
 
+
 class TestFieldRenamed:
     """Detect field renames: same offset and type, different name.
 
@@ -282,12 +439,30 @@ class TestFieldRenamed:
     """
 
     def test_field_renamed_detected(self) -> None:
-        old = _snap(types=[RecordType("P", "struct", fields=[
-            TypeField("x", "int", offset_bits=0),
-            TypeField("y", "int", offset_bits=32)])])
-        new = _snap(types=[RecordType("P", "struct", fields=[
-            TypeField("col", "int", offset_bits=0),
-            TypeField("row", "int", offset_bits=32)])])
+        old = _snap(
+            types=[
+                RecordType(
+                    "P",
+                    "struct",
+                    fields=[
+                        TypeField("x", "int", offset_bits=0),
+                        TypeField("y", "int", offset_bits=32),
+                    ],
+                )
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType(
+                    "P",
+                    "struct",
+                    fields=[
+                        TypeField("col", "int", offset_bits=0),
+                        TypeField("row", "int", offset_bits=32),
+                    ],
+                )
+            ]
+        )
         result = compare(old, new)
         renames = [c for c in result.changes if c.kind == ChangeKind.FIELD_RENAMED]
         assert len(renames) == 2
@@ -296,18 +471,32 @@ class TestFieldRenamed:
 
     def test_field_renamed_not_triggered_for_type_change(self) -> None:
         """Different type at same offset is TYPE_FIELD_TYPE_CHANGED, not rename."""
-        old = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", offset_bits=0)])])
-        new = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("y", "float", offset_bits=0)])])
+        old = _snap(
+            types=[
+                RecordType("S", "struct", fields=[TypeField("x", "int", offset_bits=0)])
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType(
+                    "S", "struct", fields=[TypeField("y", "float", offset_bits=0)]
+                )
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.FIELD_RENAMED not in _kinds(result)
 
     def test_no_rename_when_name_unchanged(self) -> None:
-        old = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", offset_bits=0)])])
-        new = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", offset_bits=0)])])
+        old = _snap(
+            types=[
+                RecordType("S", "struct", fields=[TypeField("x", "int", offset_bits=0)])
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType("S", "struct", fields=[TypeField("x", "int", offset_bits=0)])
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.FIELD_RENAMED not in _kinds(result)
 
@@ -319,36 +508,42 @@ class TestParamRenamed:
     """
 
     def test_param_renamed_detected(self) -> None:
-        old = _snap(functions=[_func("draw", "_Z4drawii",
-                    params=[Param("width", "int"), Param("height", "int")])])
-        new = _snap(functions=[_func("draw", "_Z4drawii",
-                    params=[Param("w", "int"), Param("h", "int")])])
+        old = _snap(
+            functions=[
+                _func(
+                    "draw",
+                    "_Z4drawii",
+                    params=[Param("width", "int"), Param("height", "int")],
+                )
+            ]
+        )
+        new = _snap(
+            functions=[
+                _func(
+                    "draw", "_Z4drawii", params=[Param("w", "int"), Param("h", "int")]
+                )
+            ]
+        )
         result = compare(old, new)
         renames = [c for c in result.changes if c.kind == ChangeKind.PARAM_RENAMED]
         assert len(renames) == 2
 
     def test_param_renamed_is_source_break(self) -> None:
-        old = _snap(functions=[_func("f", "_Z1fi",
-                    params=[Param("count", "int")])])
-        new = _snap(functions=[_func("f", "_Z1fi",
-                    params=[Param("n", "int")])])
+        old = _snap(functions=[_func("f", "_Z1fi", params=[Param("count", "int")])])
+        new = _snap(functions=[_func("f", "_Z1fi", params=[Param("n", "int")])])
         result = compare(old, new)
         assert result.verdict == Verdict.API_BREAK
 
     def test_no_rename_when_unchanged(self) -> None:
-        old = _snap(functions=[_func("f", "_Z1fi",
-                    params=[Param("x", "int")])])
-        new = _snap(functions=[_func("f", "_Z1fi",
-                    params=[Param("x", "int")])])
+        old = _snap(functions=[_func("f", "_Z1fi", params=[Param("x", "int")])])
+        new = _snap(functions=[_func("f", "_Z1fi", params=[Param("x", "int")])])
         result = compare(old, new)
         assert ChangeKind.PARAM_RENAMED not in _kinds(result)
 
     def test_no_rename_for_empty_names(self) -> None:
         """Parameters without names should not trigger rename detection."""
-        old = _snap(functions=[_func("f", "_Z1fi",
-                    params=[Param("", "int")])])
-        new = _snap(functions=[_func("f", "_Z1fi",
-                    params=[Param("", "int")])])
+        old = _snap(functions=[_func("f", "_Z1fi", params=[Param("", "int")])])
+        new = _snap(functions=[_func("f", "_Z1fi", params=[Param("", "int")])])
         result = compare(old, new)
         assert ChangeKind.PARAM_RENAMED not in _kinds(result)
 
@@ -361,6 +556,7 @@ class TestParamRenamed:
 # Binary ABI break: wrong dereference depth causes crashes or corruption.
 # ===========================================================================
 
+
 class TestPointerLevelChanges:
     """Detect pointer indirection level changes in function signatures.
 
@@ -369,45 +565,71 @@ class TestPointerLevelChanges:
     """
 
     def test_param_pointer_level_increased(self) -> None:
-        old = _snap(functions=[_func("f", "_Z1fPi",
-                    params=[Param("p", "int*", pointer_depth=1)])])
-        new = _snap(functions=[_func("f", "_Z1fPi",
-                    params=[Param("p", "int**", pointer_depth=2)])])
+        old = _snap(
+            functions=[
+                _func("f", "_Z1fPi", params=[Param("p", "int*", pointer_depth=1)])
+            ]
+        )
+        new = _snap(
+            functions=[
+                _func("f", "_Z1fPi", params=[Param("p", "int**", pointer_depth=2)])
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.PARAM_POINTER_LEVEL_CHANGED in _kinds(result)
         assert result.verdict == Verdict.BREAKING
 
     def test_param_pointer_level_decreased(self) -> None:
-        old = _snap(functions=[_func("f", "_Z1fPPi",
-                    params=[Param("p", "int**", pointer_depth=2)])])
-        new = _snap(functions=[_func("f", "_Z1fPPi",
-                    params=[Param("p", "int*", pointer_depth=1)])])
+        old = _snap(
+            functions=[
+                _func("f", "_Z1fPPi", params=[Param("p", "int**", pointer_depth=2)])
+            ]
+        )
+        new = _snap(
+            functions=[
+                _func("f", "_Z1fPPi", params=[Param("p", "int*", pointer_depth=1)])
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.PARAM_POINTER_LEVEL_CHANGED in _kinds(result)
 
     def test_return_pointer_level_changed(self) -> None:
-        old = _snap(functions=[_func("get", "_Z3getv",
-                    return_type="int*", return_pointer_depth=1)])
-        new = _snap(functions=[_func("get", "_Z3getv",
-                    return_type="int**", return_pointer_depth=2)])
+        old = _snap(
+            functions=[
+                _func("get", "_Z3getv", return_type="int*", return_pointer_depth=1)
+            ]
+        )
+        new = _snap(
+            functions=[
+                _func("get", "_Z3getv", return_type="int**", return_pointer_depth=2)
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.RETURN_POINTER_LEVEL_CHANGED in _kinds(result)
         assert result.verdict == Verdict.BREAKING
 
     def test_pointer_depth_unchanged_no_report(self) -> None:
-        old = _snap(functions=[_func("f", "_Z1fPi",
-                    params=[Param("p", "int*", pointer_depth=1)])])
-        new = _snap(functions=[_func("f", "_Z1fPi",
-                    params=[Param("p", "int*", pointer_depth=1)])])
+        old = _snap(
+            functions=[
+                _func("f", "_Z1fPi", params=[Param("p", "int*", pointer_depth=1)])
+            ]
+        )
+        new = _snap(
+            functions=[
+                _func("f", "_Z1fPi", params=[Param("p", "int*", pointer_depth=1)])
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.PARAM_POINTER_LEVEL_CHANGED not in _kinds(result)
 
     def test_zero_depth_to_zero_no_report(self) -> None:
         """Non-pointer types (depth=0) should not trigger pointer level changes."""
-        old = _snap(functions=[_func("f", "_Z1fi",
-                    params=[Param("x", "int", pointer_depth=0)])])
-        new = _snap(functions=[_func("f", "_Z1fi",
-                    params=[Param("x", "int", pointer_depth=0)])])
+        old = _snap(
+            functions=[_func("f", "_Z1fi", params=[Param("x", "int", pointer_depth=0)])]
+        )
+        new = _snap(
+            functions=[_func("f", "_Z1fi", params=[Param("x", "int", pointer_depth=0)])]
+        )
         result = compare(old, new)
         assert ChangeKind.PARAM_POINTER_LEVEL_CHANGED not in _kinds(result)
 
@@ -420,6 +642,7 @@ class TestPointerLevelChanges:
 # Source break: previously accessible API becomes inaccessible.
 # ===========================================================================
 
+
 class TestMethodAccessChanged:
     """Detect method access level changes (public → protected/private).
 
@@ -429,28 +652,42 @@ class TestMethodAccessChanged:
     """
 
     def test_method_became_private(self) -> None:
-        old = _snap(functions=[_func("render", "_ZN6Widget6renderEv",
-                    access=AccessLevel.PUBLIC)])
-        new = _snap(functions=[_func("render", "_ZN6Widget6renderEv",
-                    access=AccessLevel.PRIVATE)])
+        old = _snap(
+            functions=[
+                _func("render", "_ZN6Widget6renderEv", access=AccessLevel.PUBLIC)
+            ]
+        )
+        new = _snap(
+            functions=[
+                _func("render", "_ZN6Widget6renderEv", access=AccessLevel.PRIVATE)
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.METHOD_ACCESS_CHANGED in _kinds(result)
         assert result.verdict == Verdict.API_BREAK
 
     def test_method_became_protected(self) -> None:
-        old = _snap(functions=[_func("init", "_ZN6Widget4initEv",
-                    access=AccessLevel.PUBLIC)])
-        new = _snap(functions=[_func("init", "_ZN6Widget4initEv",
-                    access=AccessLevel.PROTECTED)])
+        old = _snap(
+            functions=[_func("init", "_ZN6Widget4initEv", access=AccessLevel.PUBLIC)]
+        )
+        new = _snap(
+            functions=[_func("init", "_ZN6Widget4initEv", access=AccessLevel.PROTECTED)]
+        )
         result = compare(old, new)
         assert ChangeKind.METHOD_ACCESS_CHANGED in _kinds(result)
 
     def test_method_access_widened_not_reported(self) -> None:
         """Widening access (private → public) is backward-compatible, not reported."""
-        old = _snap(functions=[_func("helper", "_ZN6Widget6helperEv",
-                    access=AccessLevel.PRIVATE)])
-        new = _snap(functions=[_func("helper", "_ZN6Widget6helperEv",
-                    access=AccessLevel.PUBLIC)])
+        old = _snap(
+            functions=[
+                _func("helper", "_ZN6Widget6helperEv", access=AccessLevel.PRIVATE)
+            ]
+        )
+        new = _snap(
+            functions=[
+                _func("helper", "_ZN6Widget6helperEv", access=AccessLevel.PUBLIC)
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.METHOD_ACCESS_CHANGED not in _kinds(result)
 
@@ -469,19 +706,47 @@ class TestFieldAccessChanged:
     """
 
     def test_field_became_private(self) -> None:
-        old = _snap(types=[RecordType("S", "class", fields=[
-            TypeField("data", "int", access=AccessLevel.PUBLIC)])])
-        new = _snap(types=[RecordType("S", "class", fields=[
-            TypeField("data", "int", access=AccessLevel.PRIVATE)])])
+        old = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "class",
+                    fields=[TypeField("data", "int", access=AccessLevel.PUBLIC)],
+                )
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "class",
+                    fields=[TypeField("data", "int", access=AccessLevel.PRIVATE)],
+                )
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.FIELD_ACCESS_CHANGED in _kinds(result)
         assert result.verdict == Verdict.API_BREAK
 
     def test_field_access_unchanged(self) -> None:
-        old = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", access=AccessLevel.PUBLIC)])])
-        new = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", access=AccessLevel.PUBLIC)])])
+        old = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "struct",
+                    fields=[TypeField("x", "int", access=AccessLevel.PUBLIC)],
+                )
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "struct",
+                    fields=[TypeField("x", "int", access=AccessLevel.PUBLIC)],
+                )
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.FIELD_ACCESS_CHANGED not in _kinds(result)
 
@@ -492,6 +757,7 @@ class TestFieldAccessChanged:
 # ABICC/abidiff test cases: test44, test45
 # Binary break: anonymous member layout change affects containing struct.
 # ===========================================================================
+
 
 class TestAnonFieldChanged:
     """Detect changes in anonymous struct/union members.
@@ -504,30 +770,66 @@ class TestAnonFieldChanged:
     """
 
     def test_anon_field_type_changed(self) -> None:
-        old = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("__anon0", "union{int,float}", offset_bits=0),
-            TypeField("z", "int", offset_bits=32)])])
-        new = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("__anon0", "union{int,double}", offset_bits=0),
-            TypeField("z", "int", offset_bits=64)])])
+        old = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "struct",
+                    fields=[
+                        TypeField("__anon0", "union{int,float}", offset_bits=0),
+                        TypeField("z", "int", offset_bits=32),
+                    ],
+                )
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "struct",
+                    fields=[
+                        TypeField("__anon0", "union{int,double}", offset_bits=0),
+                        TypeField("z", "int", offset_bits=64),
+                    ],
+                )
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.ANON_FIELD_CHANGED in _kinds(result)
         assert result.verdict == Verdict.BREAKING
 
     def test_anon_field_removed(self) -> None:
-        old = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("__anon0", "union{int,float}", offset_bits=0),
-            TypeField("x", "int", offset_bits=32)])])
-        new = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", offset_bits=0)])])
+        old = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "struct",
+                    fields=[
+                        TypeField("__anon0", "union{int,float}", offset_bits=0),
+                        TypeField("x", "int", offset_bits=32),
+                    ],
+                )
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType("S", "struct", fields=[TypeField("x", "int", offset_bits=0)])
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.ANON_FIELD_CHANGED in _kinds(result)
 
     def test_no_anon_fields_no_report(self) -> None:
-        old = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", offset_bits=0)])])
-        new = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("x", "int", offset_bits=0)])])
+        old = _snap(
+            types=[
+                RecordType("S", "struct", fields=[TypeField("x", "int", offset_bits=0)])
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType("S", "struct", fields=[TypeField("x", "int", offset_bits=0)])
+            ]
+        )
         result = compare(old, new)
         assert ChangeKind.ANON_FIELD_CHANGED not in _kinds(result)
 
@@ -539,15 +841,30 @@ class TestAnonFieldChanged:
 # or missed interactions. These go BEYOND what ABICC tests.
 # ===========================================================================
 
+
 class TestCombinedScenarios:
     """Complex scenarios testing multiple ABI breaks simultaneously."""
 
     def test_field_rename_plus_qualifier_change(self) -> None:
         """Field renamed AND became const — both should be reported."""
-        old = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("data", "int", offset_bits=0, is_const=False)])])
-        new = _snap(types=[RecordType("S", "struct", fields=[
-            TypeField("value", "int", offset_bits=0, is_const=True)])])
+        old = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "struct",
+                    fields=[TypeField("data", "int", offset_bits=0, is_const=False)],
+                )
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "struct",
+                    fields=[TypeField("value", "int", offset_bits=0, is_const=True)],
+                )
+            ]
+        )
         result = compare(old, new)
         kinds = _kinds(result)
         assert ChangeKind.FIELD_RENAMED in kinds
@@ -555,9 +872,14 @@ class TestCombinedScenarios:
     def test_enum_rename_plus_new_member(self) -> None:
         """Member renamed AND new member added — both detected."""
         old = _snap(enums=[EnumType("E", [EnumMember("A", 0), EnumMember("B", 1)])])
-        new = _snap(enums=[EnumType("E", [
-            EnumMember("ALPHA", 0), EnumMember("B", 1), EnumMember("C", 2)
-        ])])
+        new = _snap(
+            enums=[
+                EnumType(
+                    "E",
+                    [EnumMember("ALPHA", 0), EnumMember("B", 1), EnumMember("C", 2)],
+                )
+            ]
+        )
         result = compare(old, new)
         kinds = _kinds(result)
         assert ChangeKind.ENUM_MEMBER_RENAMED in kinds
@@ -566,10 +888,16 @@ class TestCombinedScenarios:
     def test_param_pointer_plus_rename(self) -> None:
         """Param pointer level change AND rename — pointer break dominates.
         Note: type change ('int*' → 'int**') also triggers FUNC_PARAMS_CHANGED."""
-        old = _snap(functions=[_func("f", "_Z1fPi",
-                    params=[Param("data", "int*", pointer_depth=1)])])
-        new = _snap(functions=[_func("f", "_Z1fPi",
-                    params=[Param("ptr", "int**", pointer_depth=2)])])
+        old = _snap(
+            functions=[
+                _func("f", "_Z1fPi", params=[Param("data", "int*", pointer_depth=1)])
+            ]
+        )
+        new = _snap(
+            functions=[
+                _func("f", "_Z1fPi", params=[Param("ptr", "int**", pointer_depth=2)])
+            ]
+        )
         result = compare(old, new)
         kinds = _kinds(result)
         assert ChangeKind.PARAM_POINTER_LEVEL_CHANGED in kinds
@@ -578,10 +906,32 @@ class TestCombinedScenarios:
 
     def test_access_change_with_const_field(self) -> None:
         """Field access changed AND became const simultaneously."""
-        old = _snap(types=[RecordType("S", "class", fields=[
-            TypeField("cache", "int", access=AccessLevel.PUBLIC, is_const=False)])])
-        new = _snap(types=[RecordType("S", "class", fields=[
-            TypeField("cache", "int", access=AccessLevel.PRIVATE, is_const=True)])])
+        old = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "class",
+                    fields=[
+                        TypeField(
+                            "cache", "int", access=AccessLevel.PUBLIC, is_const=False
+                        )
+                    ],
+                )
+            ]
+        )
+        new = _snap(
+            types=[
+                RecordType(
+                    "S",
+                    "class",
+                    fields=[
+                        TypeField(
+                            "cache", "int", access=AccessLevel.PRIVATE, is_const=True
+                        )
+                    ],
+                )
+            ]
+        )
         result = compare(old, new)
         kinds = _kinds(result)
         assert ChangeKind.FIELD_ACCESS_CHANGED in kinds
@@ -589,19 +939,43 @@ class TestCombinedScenarios:
 
     def test_multiple_default_changes_in_one_function(self) -> None:
         """Multiple params with default changes in the same function."""
-        old = _snap(functions=[_func("configure", "_Z9configureiii", params=[
-            Param("width", "int", default="800"),
-            Param("height", "int", default="600"),
-            Param("depth", "int", default="32"),
-        ])])
-        new = _snap(functions=[_func("configure", "_Z9configureiii", params=[
-            Param("width", "int", default="1920"),
-            Param("height", "int", default=None),
-            Param("depth", "int", default="32"),
-        ])])
+        old = _snap(
+            functions=[
+                _func(
+                    "configure",
+                    "_Z9configureiii",
+                    params=[
+                        Param("width", "int", default="800"),
+                        Param("height", "int", default="600"),
+                        Param("depth", "int", default="32"),
+                    ],
+                )
+            ]
+        )
+        new = _snap(
+            functions=[
+                _func(
+                    "configure",
+                    "_Z9configureiii",
+                    params=[
+                        Param("width", "int", default="1920"),
+                        Param("height", "int", default=None),
+                        Param("depth", "int", default="32"),
+                    ],
+                )
+            ]
+        )
         result = compare(old, new)
-        changed = [c for c in result.changes if c.kind == ChangeKind.PARAM_DEFAULT_VALUE_CHANGED]
-        removed = [c for c in result.changes if c.kind == ChangeKind.PARAM_DEFAULT_VALUE_REMOVED]
+        changed = [
+            c
+            for c in result.changes
+            if c.kind == ChangeKind.PARAM_DEFAULT_VALUE_CHANGED
+        ]
+        removed = [
+            c
+            for c in result.changes
+            if c.kind == ChangeKind.PARAM_DEFAULT_VALUE_REMOVED
+        ]
         assert len(changed) == 1  # width
         assert len(removed) == 1  # height
 
@@ -612,17 +986,20 @@ class TestCombinedScenarios:
 # Ensure all new ChangeKinds are correctly classified in the sets.
 # ===========================================================================
 
+
 class TestClassification:
     """Verify that all Sprint 7 ChangeKinds are in the correct classification set."""
 
     def test_breaking_kinds_contains_pointer_changes(self) -> None:
         from abicheck.checker import _BREAKING_KINDS
+
         assert ChangeKind.PARAM_POINTER_LEVEL_CHANGED in _BREAKING_KINDS
         assert ChangeKind.RETURN_POINTER_LEVEL_CHANGED in _BREAKING_KINDS
         assert ChangeKind.ANON_FIELD_CHANGED in _BREAKING_KINDS
 
     def test_source_break_kinds(self) -> None:
         from abicheck.checker import _API_BREAK_KINDS
+
         assert ChangeKind.ENUM_MEMBER_RENAMED in _API_BREAK_KINDS
         assert ChangeKind.PARAM_DEFAULT_VALUE_REMOVED in _API_BREAK_KINDS
         assert ChangeKind.FIELD_RENAMED in _API_BREAK_KINDS
@@ -632,6 +1009,7 @@ class TestClassification:
 
     def test_compatible_kinds_contains_qualifier_changes(self) -> None:
         from abicheck.checker import _COMPATIBLE_KINDS
+
         assert ChangeKind.FIELD_BECAME_CONST in _COMPATIBLE_KINDS
         assert ChangeKind.FIELD_LOST_CONST in _COMPATIBLE_KINDS
         assert ChangeKind.FIELD_BECAME_VOLATILE in _COMPATIBLE_KINDS
@@ -646,8 +1024,12 @@ class TestClassification:
             _API_BREAK_KINDS,
             _BREAKING_KINDS,
             _COMPATIBLE_KINDS,
+            _RISK_KINDS,
         )
-        all_classified = _BREAKING_KINDS | _COMPATIBLE_KINDS | _API_BREAK_KINDS
+
+        all_classified = (
+            _BREAKING_KINDS | _COMPATIBLE_KINDS | _API_BREAK_KINDS | _RISK_KINDS
+        )
         for kind in ChangeKind:
             assert kind in all_classified, (
                 f"{kind} is not classified in any set — add it to "

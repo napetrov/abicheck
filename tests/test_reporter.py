@@ -60,3 +60,31 @@ class TestMarkdownReporter:
     def test_legend_always_present(self):
         md = to_markdown(_result(Verdict.NO_CHANGE))
         assert "Legend" in md
+
+    def test_risk_changes_in_json(self):
+        """JSON summary must include risk_changes field with correct count."""
+        c = Change(ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED, "libc.so.6",
+                   "New GLIBC_2.34 version requirement added")
+        r = _result(Verdict.COMPATIBLE_WITH_RISK, changes=[c])
+        d = json.loads(to_json(r))
+        assert d["verdict"] == "COMPATIBLE_WITH_RISK"
+        assert "risk_changes" in d["summary"], "JSON summary must contain 'risk_changes' key"
+        assert d["summary"]["risk_changes"] == 1
+        assert d["summary"]["breaking"] == 0
+
+    def test_risk_section_in_markdown(self):
+        """Markdown must include Deployment Risk Changes section when risk > 0."""
+        c = Change(ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED, "libc.so.6",
+                   "New GLIBC_2.34 version requirement added")
+        md = to_markdown(_result(Verdict.COMPATIBLE_WITH_RISK, [c]))
+        assert "COMPATIBLE_WITH_RISK" in md
+        assert "⚠️ Deployment Risk Changes" in md
+        assert "binary-compatible" in md
+        assert "symbol_version_required_added" in md
+
+    def test_compatible_with_risk_emoji_in_markdown(self):
+        """COMPATIBLE_WITH_RISK verdict uses ⚠️ emoji in header table."""
+        c = Change(ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED, "libc.so.6",
+                   "New GLIBC_2.34 version requirement added")
+        md = to_markdown(_result(Verdict.COMPATIBLE_WITH_RISK, [c]))
+        assert "⚠️ `COMPATIBLE_WITH_RISK`" in md

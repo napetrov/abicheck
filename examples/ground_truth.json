@@ -101,11 +101,12 @@
       "bad_practice": false
     },
     "case15_noexcept_change": {
-      "expected": "BREAKING",
-      "category": "breaking",
-      "abi_break": true,
+      "expected": "COMPATIBLE_WITH_RISK",
+      "category": "risk",
+      "abi_break": false,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "note": "noexcept change itself is COMPATIBLE; GLIBCXX version requirement is deployment risk"
     },
     "case16_inline_to_non_inline": {
       "expected": "COMPATIBLE",

@@ -378,8 +378,9 @@ def compare_cmd(
 
     \b
     Exit codes:
-      0  NO_CHANGE or COMPATIBLE — no binary ABI break
-      2  API_BREAK — source-level break; existing binaries are safe
+      0  NO_CHANGE, COMPATIBLE, or COMPATIBLE_WITH_RISK — no binary ABI break
+         (COMPATIBLE_WITH_RISK: deployment risk present; check the report)
+      2  API_BREAK — source-level API break — recompilation required
       4  BREAKING — binary ABI break detected
 
     \b

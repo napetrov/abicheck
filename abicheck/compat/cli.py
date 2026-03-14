@@ -159,6 +159,10 @@ _BINARY_ONLY_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.IFUNC_REMOVED,
     ChangeKind.COMMON_SYMBOL_RISK,
     ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
+    # NOTE: SYMBOL_VERSION_REQUIRED_ADDED is now RISK_KINDS (COMPATIBLE_WITH_RISK verdict),
+    # but it remains here because it is an ELF/binary-only signal (not visible in source
+    # analysis). _filter_source_only re-derives verdict via compute_verdict() after
+    # filtering, so RISK classification is preserved correctly.
     ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
     ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
     ChangeKind.DWARF_INFO_MISSING,
@@ -209,8 +213,12 @@ def _apply_strict(result: DiffResult, *, mode: str = "full") -> DiffResult:
 
     from ..checker import Verdict  # noqa: PLC0415
 
+    # COMPATIBLE_WITH_RISK is promoted to BREAKING in full strict mode:
+    # it indicates a deployment-environment risk that the caller has opted-in
+    # to treating as a hard failure. In 'api' mode it is left as-is because
+    # it is binary-compatible — only the deployment environment is affected.
     verdicts_to_promote = (
-        {"COMPATIBLE", "API_BREAK"} if mode == "full" else {"API_BREAK"}
+        {"COMPATIBLE", "COMPATIBLE_WITH_RISK", "API_BREAK"} if mode == "full" else {"API_BREAK"}
     )
     if result.verdict.value in verdicts_to_promote:
         return replace(result, verdict=Verdict.BREAKING)
@@ -274,7 +282,11 @@ def _apply_warn_newsym(result: DiffResult) -> DiffResult:
     from ..checker import DiffResult, Verdict  # noqa: PLC0415
 
     has_new = any(c.kind in _NEW_SYMBOL_KINDS for c in result.changes)
-    if has_new and result.verdict.value in ("COMPATIBLE", "NO_CHANGE", "API_BREAK"):
+    # Include COMPATIBLE_WITH_RISK: if the library adds a new symbol alongside a RISK_KINDS
+    # change, the verdict may be COMPATIBLE_WITH_RISK. The user opted into -warn-newsym to
+    # treat any new symbol as a hard failure — that intent applies regardless of concurrent
+    # deployment-risk changes.
+    if has_new and result.verdict.value in ("COMPATIBLE", "COMPATIBLE_WITH_RISK", "NO_CHANGE", "API_BREAK"):
         return DiffResult(
             old_version=result.old_version,
             new_version=result.new_version,
@@ -905,12 +917,14 @@ def compat_check_cmd(  # noqa: PLR0913
 
     \b
     Exit codes mirror ABICC:
-      0 — compatible or no change (NO_CHANGE, COMPATIBLE)
+      0 — compatible or no change (NO_CHANGE, COMPATIBLE, COMPATIBLE_WITH_RISK)
+          COMPATIBLE_WITH_RISK exits 0 — binary-compatible; risk is surfaced in report only.
+          With -strict, it is promoted to exit 1.
       1 — breaking ABI change detected (BREAKING)
       2 — source-level break (API_BREAK)
       3-11 — classified compat-mode errors (best-effort mapping)
 
-    Note: with -strict, API_BREAK is promoted to exit 1.
+    Note: with -strict, API_BREAK is also promoted to exit 1.
 
     \b
     Examples::
@@ -1226,9 +1240,10 @@ def compat_check_cmd(  # noqa: PLR0913
     _do_echo(f"Report:  {report_path}", quiet)
 
     # Exit codes mirror ABICC:
-    #   0 = NO_CHANGE or COMPATIBLE
+    #   0 = NO_CHANGE, COMPATIBLE, or COMPATIBLE_WITH_RISK
+    #       (COMPATIBLE_WITH_RISK is binary-compatible; deployment risk surfaced in report only)
     #   1 = BREAKING
-    #   2 = API_BREAK (source-level break, binary compatible)
+    #   2 = API_BREAK (source-level API break — recompilation required)
     if verdict == "BREAKING":
         sys.exit(1)
     if verdict == "API_BREAK":

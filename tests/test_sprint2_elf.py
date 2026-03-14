@@ -2,6 +2,7 @@
 
 All tests build AbiSnapshot + ElfMetadata directly — no castxml, no readelf required.
 """
+
 from __future__ import annotations
 
 from abicheck.checker import ChangeKind, Verdict, compare
@@ -34,6 +35,7 @@ def _sym(name: str, **kwargs: object) -> ElfSymbol:
 # ---------------------------------------------------------------------------
 # Dynamic section tests
 # ---------------------------------------------------------------------------
+
 
 def test_soname_changed() -> None:
     old = _snap(_elf(soname="libfoo.so.1"))
@@ -93,6 +95,7 @@ def test_runpath_changed() -> None:
 # Symbol versioning tests
 # ---------------------------------------------------------------------------
 
+
 def test_symbol_version_defined_removed() -> None:
     old = _snap(_elf(versions_defined=["LIBFOO_1.0", "LIBFOO_2.0"]))
     new = _snap(_elf(versions_defined=["LIBFOO_2.0"]))
@@ -118,7 +121,7 @@ def test_symbol_version_required_added() -> None:
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kinds
-    assert result.verdict == Verdict.BREAKING
+    assert result.verdict == Verdict.COMPATIBLE_WITH_RISK
 
 
 def test_symbol_version_required_removed() -> None:
@@ -132,6 +135,7 @@ def test_symbol_version_required_removed() -> None:
 # ---------------------------------------------------------------------------
 # Per-symbol metadata tests
 # ---------------------------------------------------------------------------
+
 
 def test_symbol_binding_global_to_weak() -> None:
     old = _snap(_elf(symbols=[_sym("foo", binding=SymbolBinding.GLOBAL)]))
@@ -188,25 +192,27 @@ def test_common_symbol_risk() -> None:
 # No-change negative tests
 # ---------------------------------------------------------------------------
 
-_ELF_CHANGE_KINDS: frozenset[ChangeKind] = frozenset({
-    ChangeKind.SONAME_CHANGED,
-    ChangeKind.SONAME_MISSING,
-    ChangeKind.NEEDED_ADDED,
-    ChangeKind.NEEDED_REMOVED,
-    ChangeKind.RPATH_CHANGED,
-    ChangeKind.RUNPATH_CHANGED,
-    ChangeKind.SYMBOL_BINDING_CHANGED,
-    ChangeKind.SYMBOL_TYPE_CHANGED,
-    ChangeKind.SYMBOL_SIZE_CHANGED,
-    ChangeKind.IFUNC_INTRODUCED,
-    ChangeKind.IFUNC_REMOVED,
-    ChangeKind.COMMON_SYMBOL_RISK,
-    ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
-    ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
-    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
-    ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
-    ChangeKind.SYMBOL_BINDING_STRENGTHENED,
-})
+_ELF_CHANGE_KINDS: frozenset[ChangeKind] = frozenset(
+    {
+        ChangeKind.SONAME_CHANGED,
+        ChangeKind.SONAME_MISSING,
+        ChangeKind.NEEDED_ADDED,
+        ChangeKind.NEEDED_REMOVED,
+        ChangeKind.RPATH_CHANGED,
+        ChangeKind.RUNPATH_CHANGED,
+        ChangeKind.SYMBOL_BINDING_CHANGED,
+        ChangeKind.SYMBOL_TYPE_CHANGED,
+        ChangeKind.SYMBOL_SIZE_CHANGED,
+        ChangeKind.IFUNC_INTRODUCED,
+        ChangeKind.IFUNC_REMOVED,
+        ChangeKind.COMMON_SYMBOL_RISK,
+        ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
+        ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
+        ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+        ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
+        ChangeKind.SYMBOL_BINDING_STRENGTHENED,
+    }
+)
 
 
 def test_no_elf_changes() -> None:
@@ -215,13 +221,17 @@ def test_no_elf_changes() -> None:
         needed=["libc.so.6"],
         versions_defined=["LIBFOO_1.0"],
         versions_required={"libc.so.6": ["GLIBC_2.5"]},
-        symbols=[_sym("foo", binding=SymbolBinding.GLOBAL, sym_type=SymbolType.FUNC, size=32)],
+        symbols=[
+            _sym("foo", binding=SymbolBinding.GLOBAL, sym_type=SymbolType.FUNC, size=32)
+        ],
     )
     old = _snap(elf)
     new = _snap(elf)
     result = compare(old, new)
     elf_kinds = {c.kind for c in result.changes if c.kind in _ELF_CHANGE_KINDS}
-    assert elf_kinds == set(), f"Unexpected ELF changes on identical metadata: {elf_kinds}"
+    assert elf_kinds == set(), (
+        f"Unexpected ELF changes on identical metadata: {elf_kinds}"
+    )
 
 
 def test_both_elf_none_produces_no_changes() -> None:
@@ -267,7 +277,11 @@ def test_versions_required_entire_lib_removed() -> None:
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED in kinds
-    removed = [c.symbol for c in result.changes if c.kind == ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED]
+    removed = [
+        c.symbol
+        for c in result.changes
+        if c.kind == ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED
+    ]
     assert set(removed) == {"GLIBC_2.5", "GLIBC_2.17"}
 
 
@@ -275,18 +289,17 @@ def test_versions_required_entire_lib_removed() -> None:
 # Verdict mapping checks
 # ---------------------------------------------------------------------------
 
+
 def test_elf_breaking_kinds_verdict() -> None:
-    """All BREAKING ELF kinds produce BREAKING verdict."""
+    """BREAKING ELF kinds (soname, defined version removed, type changed) produce BREAKING verdict."""
     breaking_cases = [
-        _snap(_elf(soname="libfoo.so.1")),     # SONAME_CHANGED
-        _snap(_elf(versions_defined=["V1"])),   # SYMBOL_VERSION_DEFINED_REMOVED
-        _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5"]})),  # VER_REQ_ADDED
+        _snap(_elf(soname="libfoo.so.1")),  # SONAME_CHANGED
+        _snap(_elf(versions_defined=["V1"])),  # SYMBOL_VERSION_DEFINED_REMOVED
         _snap(_elf(symbols=[_sym("f", sym_type=SymbolType.FUNC)])),  # TYPE_CHANGED
     ]
     new_cases = [
         _snap(_elf(soname="libfoo.so.2")),
         _snap(_elf(versions_defined=[])),
-        _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]})),
         _snap(_elf(symbols=[_sym("f", sym_type=SymbolType.OBJECT)])),
     ]
     for old, new in zip(breaking_cases, new_cases):
@@ -296,9 +309,20 @@ def test_elf_breaking_kinds_verdict() -> None:
         )
 
 
+def test_elf_risk_kinds_verdict() -> None:
+    """RISK ELF kinds (new required version) produce COMPATIBLE_WITH_RISK verdict."""
+    old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5"]}))
+    new = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]}))
+    result = compare(old, new)
+    assert result.verdict == Verdict.COMPATIBLE_WITH_RISK, (
+        f"Expected COMPATIBLE_WITH_RISK, got {result.verdict}: {[c.kind for c in result.changes]}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Visibility leak detector tests
 # ---------------------------------------------------------------------------
+
 
 def _elf_only_snap(symbols: list[str]) -> AbiSnapshot:
     """Build an ELF-only snapshot (elf_only_mode=True) with given symbol names."""
@@ -327,10 +351,15 @@ def test_visibility_leak_detected() -> None:
 def test_visibility_leak_not_fired_without_elf_only_mode() -> None:
     """VISIBILITY_LEAK only fires when elf_only_mode=True (no-header dump)."""
     old = AbiSnapshot(
-        library="libfoo.so", version="1.0",
+        library="libfoo.so",
+        version="1.0",
         functions=[
-            Function(name="internal_helper", mangled="internal_helper",
-                     return_type="void", visibility=Visibility.ELF_ONLY)
+            Function(
+                name="internal_helper",
+                mangled="internal_helper",
+                return_type="void",
+                visibility=Visibility.ELF_ONLY,
+            )
         ],
         elf_only_mode=False,  # headers were provided
     )
@@ -356,7 +385,11 @@ def test_symbol_version_required_added_older_is_compat() -> None:
     Regression: TBB 2021.11→2021.13 false-positive BREAKING (issue tbb-fp-01).
     """
     old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]}))
-    new = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34", "GLIBC_2.2.5"]}))
+    new = _snap(
+        _elf(
+            versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34", "GLIBC_2.2.5"]}
+        )
+    )
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     # Should be COMPAT kind, not BREAKING kind
@@ -367,17 +400,19 @@ def test_symbol_version_required_added_older_is_compat() -> None:
     assert result.verdict == Verdict.COMPATIBLE
 
 
-def test_symbol_version_required_added_newer_is_breaking() -> None:
-    """Adding a NEWER version requirement IS breaking — callers on older runtimes fail.
+def test_symbol_version_required_added_newer_is_compatible_with_risk() -> None:
+    """Adding a NEWER GLIBC version requirement produces COMPATIBLE_WITH_RISK.
 
-    Original behavior must be preserved.
+    Existing compiled consumers are unaffected (already linked at build time).
+    Deployment risk: the library will not load on systems with an older glibc.
+    This is NOT BREAKING — it is a deployment environment constraint.
     """
     old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5"]}))
     new = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]}))
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kinds
-    assert result.verdict == Verdict.BREAKING
+    assert result.verdict == Verdict.COMPATIBLE_WITH_RISK
 
 
 def test_symbol_version_required_added_new_dep_is_compat() -> None:
@@ -390,10 +425,14 @@ def test_symbol_version_required_added_new_dep_is_compat() -> None:
     """
     old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5"]}))
     # libdl.so.2 is entirely new — wasn't in old
-    new = _snap(_elf(versions_required={
-        "libc.so.6": ["GLIBC_2.5"],
-        "libdl.so.2": ["GLIBC_2.2.5"],
-    }))
+    new = _snap(
+        _elf(
+            versions_required={
+                "libc.so.6": ["GLIBC_2.5"],
+                "libdl.so.2": ["GLIBC_2.2.5"],
+            }
+        )
+    )
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED not in kinds, (
@@ -413,16 +452,43 @@ def test_symbol_version_required_tbb_like_upgrade() -> None:
     TBB 2021.13 dropped those and only requires GLIBC_2.2.5 / GLIBCXX_3.4.19.
     Net effect: minimum system requirements lowered — this is COMPATIBLE.
     """
-    old = _snap(_elf(versions_required={
-        "libc.so.6": ["GLIBC_2.4", "GLIBC_2.14", "GLIBC_2.32", "GLIBC_2.34", "GLIBC_2.2.5"],
-        "libstdc++.so.6": ["GLIBCXX_3.4", "GLIBCXX_3.4.11", "GLIBCXX_3.4.32", "CXXABI_1.3.13"],
-    }))
-    new = _snap(_elf(versions_required={
-        "libc.so.6": ["GLIBC_2.4", "GLIBC_2.14", "GLIBC_2.2.5"],           # removed 2.32, 2.34
-        "libstdc++.so.6": ["GLIBCXX_3.4", "GLIBCXX_3.4.11", "GLIBCXX_3.4.19"],  # dropped 3.4.32, CXXABI_1.3.13
-        "libdl.so.2": ["GLIBC_2.2.5"],                                        # new dep, old glibc
-        "libpthread.so.0": ["GLIBC_2.2.5"],                                   # new dep, old glibc
-    }))
+    old = _snap(
+        _elf(
+            versions_required={
+                "libc.so.6": [
+                    "GLIBC_2.4",
+                    "GLIBC_2.14",
+                    "GLIBC_2.32",
+                    "GLIBC_2.34",
+                    "GLIBC_2.2.5",
+                ],
+                "libstdc++.so.6": [
+                    "GLIBCXX_3.4",
+                    "GLIBCXX_3.4.11",
+                    "GLIBCXX_3.4.32",
+                    "CXXABI_1.3.13",
+                ],
+            }
+        )
+    )
+    new = _snap(
+        _elf(
+            versions_required={
+                "libc.so.6": [
+                    "GLIBC_2.4",
+                    "GLIBC_2.14",
+                    "GLIBC_2.2.5",
+                ],  # removed 2.32, 2.34
+                "libstdc++.so.6": [
+                    "GLIBCXX_3.4",
+                    "GLIBCXX_3.4.11",
+                    "GLIBCXX_3.4.19",
+                ],  # dropped 3.4.32, CXXABI_1.3.13
+                "libdl.so.2": ["GLIBC_2.2.5"],  # new dep, old glibc
+                "libpthread.so.0": ["GLIBC_2.2.5"],  # new dep, old glibc
+            }
+        )
+    )
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     # No genuinely BREAKING version requirement should appear
@@ -442,18 +508,30 @@ def test_symbol_version_required_genuine_upgrade_is_breaking() -> None:
     If a user is on an old system (only has GLIBC_2.17), they cannot run
     a binary that now requires GLIBC_2.38.
     """
-    old = _snap(_elf(versions_required={
-        "libc.so.6": ["GLIBC_2.4", "GLIBC_2.17"],
-    }))
-    new = _snap(_elf(versions_required={
-        "libc.so.6": ["GLIBC_2.4", "GLIBC_2.17", "GLIBC_2.38"],   # genuinely raised the bar
-    }))
+    old = _snap(
+        _elf(
+            versions_required={
+                "libc.so.6": ["GLIBC_2.4", "GLIBC_2.17"],
+            }
+        )
+    )
+    new = _snap(
+        _elf(
+            versions_required={
+                "libc.so.6": [
+                    "GLIBC_2.4",
+                    "GLIBC_2.17",
+                    "GLIBC_2.38",
+                ],  # genuinely raised the bar
+            }
+        )
+    )
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kinds, (
-        "Raising minimum GLIBC requirement must be BREAKING"
+        "Raising minimum GLIBC requirement must be COMPATIBLE_WITH_RISK (deployment risk)"
     )
-    assert result.verdict == Verdict.BREAKING
+    assert result.verdict == Verdict.COMPATIBLE_WITH_RISK
 
 
 def test_symbol_version_required_private_tag_is_breaking() -> None:
@@ -464,14 +542,20 @@ def test_symbol_version_required_private_tag_is_breaking() -> None:
     Regression guard for _parse_abi_version_tag sentinel logic.
     """
     old = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34"]}))
-    new = _snap(_elf(versions_required={"libc.so.6": ["GLIBC_2.5", "GLIBC_2.34", "GLIBC_PRIVATE"]}))
+    new = _snap(
+        _elf(
+            versions_required={
+                "libc.so.6": ["GLIBC_2.5", "GLIBC_2.34", "GLIBC_PRIVATE"]
+            }
+        )
+    )
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kinds, (
         "Adding GLIBC_PRIVATE must be treated as BREAKING"
     )
     assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT not in kinds
-    assert result.verdict == Verdict.BREAKING
+    assert result.verdict == Verdict.COMPATIBLE_WITH_RISK
 
 
 def test_symbol_version_required_cross_namespace_no_bleed() -> None:
@@ -481,15 +565,23 @@ def test_symbol_version_required_cross_namespace_no_bleed() -> None:
     cause CXXABI_1.3.14 (1.3.14 <= 3.4.32) to be misclassified as COMPAT.
     Fix: old_max is computed per version-tag prefix, not globally.
     """
-    old = _snap(_elf(versions_required={
-        "libstdc++.so.6": ["GLIBCXX_3.4.32", "CXXABI_1.3.13"],
-    }))
-    new = _snap(_elf(versions_required={
-        "libstdc++.so.6": ["GLIBCXX_3.4.32", "CXXABI_1.3.13", "CXXABI_1.3.14"],
-    }))
+    old = _snap(
+        _elf(
+            versions_required={
+                "libstdc++.so.6": ["GLIBCXX_3.4.32", "CXXABI_1.3.13"],
+            }
+        )
+    )
+    new = _snap(
+        _elf(
+            versions_required={
+                "libstdc++.so.6": ["GLIBCXX_3.4.32", "CXXABI_1.3.13", "CXXABI_1.3.14"],
+            }
+        )
+    )
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kinds, (
         "Adding newer CXXABI_1.3.14 must be BREAKING regardless of GLIBCXX version"
     )
-    assert result.verdict == Verdict.BREAKING
+    assert result.verdict == Verdict.COMPATIBLE_WITH_RISK
