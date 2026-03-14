@@ -49,19 +49,13 @@ class TestVersionStampedTypedefPattern:
         "callback_t",
         "png_voidp",
         "size_t",
-        "my_version",                 # no _d+_d+_d+ suffix
-        "version_1_2",                # only two parts
-        "version_1_2_",               # trailing underscore
-        "_version_1_2_3_extra",       # extra suffix after triple (must NOT match)
+        "my_version",                 # no _\d+_\d+_\d+ suffix
+        "version_1_2",                # only two parts (not three)
+        "version_1_2_",               # trailing underscore (not digit)
+        "_version_1_2_3_extra",       # trailing non-numeric content after triple
     ])
     def test_rejects_non_version_stamped(self, name: str) -> None:
-        # Only names that end exactly in _\d+_\d+_\d+ should match
-        # Note: "_version_1_2_3_extra" has four numeric parts — not a match.
-        if name == "_version_1_2_3_extra":
-            # This should NOT match — it has trailing content after the triple
-            assert not _is_version_stamped_typedef(name), f"Expected {name!r} NOT to match"
-        else:
-            assert not _is_version_stamped_typedef(name), f"Expected {name!r} NOT to match"
+        assert not _is_version_stamped_typedef(name), f"Expected {name!r} NOT to match"
 
 
 # ── Integration tests: checker verdict ────────────────────────────────────────
