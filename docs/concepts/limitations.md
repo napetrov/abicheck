@@ -7,20 +7,22 @@ limitations you should understand before relying on it in production.
 
 ## Platform support matrix
 
-| Platform | Format | Binary metadata | Header AST | DWARF cross-check |
-|----------|--------|:---------------:|:----------:|:------------------:|
-| Linux | ELF (`.so`) | Yes (pyelftools) | Yes (castxml) | Yes (pyelftools) |
-| Windows | PE/COFF (`.dll`) | Yes (pefile) | — | — |
-| macOS | Mach-O (`.dylib`) | Yes (macholib) | — | — |
+| Platform | Format | Binary metadata | Header AST (castxml) | Debug info cross-check |
+|----------|--------|:---------------:|:--------------------:|:----------------------:|
+| Linux | ELF (`.so`) | Yes (pyelftools) | Yes | Yes (DWARF) |
+| Windows | PE/COFF (`.dll`) | Yes (pefile) | Yes | Planned (PDB) |
+| macOS | Mach-O (`.dylib`) | Yes (macholib) | Yes | Yes (DWARF) |
 
-On **Windows** and **macOS**, abicheck analyzes exported/imported symbols, library
-dependencies, and version metadata. Deep type-level analysis (header AST, DWARF
-cross-check) is not available — these platforms lack castxml integration and use
-different debug info formats.
+**Header AST analysis** (via castxml) is available on all platforms. castxml is
+maintained by Kitware and available via conda-forge, Homebrew, apt, or direct download.
+
+**Debug info cross-check** currently uses DWARF (Linux and macOS). Windows uses PDB
+(Program Database) files for debug information — PDB cross-check is planned for a
+future release.
 
 ---
 
-## Header / Binary Mismatch Risk (Linux)
+## Header / Binary Mismatch Risk
 
 **The most important limitation.** `abicheck` uses `castxml` to parse headers and
 compares the result against the compiled `.so`. If the headers passed to analysis

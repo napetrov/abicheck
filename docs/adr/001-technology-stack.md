@@ -119,13 +119,16 @@ if subprocess overhead becomes a bottleneck.
 
 ## Platform Scope
 
-- **Full analysis (ELF + header AST + DWARF):** Linux ELF x86-64, aarch64
-- **Binary metadata analysis:** Windows PE/COFF (`.dll`), macOS Mach-O (`.dylib`)
-- **DWARF version:** DWARF 4 (GCC ≤10 default) fully supported; DWARF 5 (GCC 11+ default) partially supported via pyelftools ≥0.29
+| Capability | Linux | Windows | macOS |
+|-----------|:-----:|:-------:|:-----:|
+| Binary metadata | Yes (pyelftools) | Yes (pefile) | Yes (macholib) |
+| Header AST (castxml) | Yes | Yes | Yes |
+| Debug info cross-check | Yes (DWARF) | Planned (PDB) | Yes (DWARF) |
 
-Windows and macOS support covers exported/imported symbols, library dependencies,
-and version metadata via `pefile` and `macholib` respectively. Deep type-level
-analysis (header AST, DWARF cross-check) is Linux-only and requires castxml.
+- **Header AST analysis** works on all platforms via castxml (cross-platform, maintained by Kitware)
+- **Debug info cross-check** uses DWARF (Linux, macOS) via pyelftools; PDB support for Windows is planned
+- **DWARF version:** DWARF 4 (GCC ≤10 default) fully supported; DWARF 5 (GCC 11+ default) partially supported via pyelftools ≥0.29
+- **Architectures:** x86-64, aarch64 (ELF); any architecture for PE and Mach-O metadata
 
 ## pyelftools Maintenance Risk & Mitigation
 

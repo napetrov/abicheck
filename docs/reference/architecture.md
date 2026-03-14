@@ -3,17 +3,16 @@
 ## Overview
 
 abicheck is a Python CLI tool that compares two versions of a C/C++ shared library
-to detect ABI and API incompatibilities. On Linux it uses a 3-layer analysis pipeline
-to achieve higher accuracy than tools that rely on a single data source. On Windows
-and macOS it provides binary metadata analysis (exports, imports, dependencies).
+to detect ABI and API incompatibilities. It uses a 3-layer analysis pipeline
+to achieve higher accuracy than tools that rely on a single data source.
 
 **Supported platforms and binary formats:**
 
-| Platform | Format | Deep analysis (AST + DWARF) | Binary metadata |
-|----------|--------|:---------------------------:|:---------------:|
-| Linux | ELF (`.so`) | Yes | Yes |
-| Windows | PE/COFF (`.dll`) | — | Yes |
-| macOS | Mach-O (`.dylib`) | — | Yes |
+| Platform | Format | Binary metadata | Header AST (castxml) | Debug info cross-check |
+|----------|--------|:---------------:|:--------------------:|:----------------------:|
+| Linux | ELF (`.so`) | Yes (pyelftools) | Yes | Yes (DWARF) |
+| Windows | PE/COFF (`.dll`) | Yes (pefile) | Yes | Planned (PDB) |
+| macOS | Mach-O (`.dylib`) | Yes (macholib) | Yes | Yes (DWARF) |
 
 ---
 
@@ -40,8 +39,12 @@ and macOS it provides binary metadata analysis (exports, imports, dependencies).
               └────────────────┬──────────────────┘
                                │
               ┌────────────────▼──────────────────┐
-              │ Header AST (castxml) — Linux only  │
-              │ DWARF cross-check  — Linux only    │
+              │  Header AST (castxml) — all platforms│
+              └────────────────┬──────────────────┘
+                               │
+              ┌────────────────▼──────────────────┐
+              │ Debug info cross-check             │
+              │  DWARF (Linux, macOS) │ PDB (Win)  │
               └────────────────┬──────────────────┘
                                │
               ┌────────────────▼──────────────────┐
@@ -72,7 +75,7 @@ Reads native binary metadata using format-specific parsers:
 - Current and compatibility versions, minimum OS version
 - Fat/universal binary support (automatic architecture selection)
 
-### Layer 2: Header AST (castxml / Clang) — Linux only
+### Layer 2: Header AST (castxml / Clang) — all platforms
 
 Parses C/C++ headers through castxml to extract:
 
@@ -84,17 +87,24 @@ Parses C/C++ headers through castxml to extract:
 - `noexcept` specifications
 - Access levels (public, protected, private)
 
-This is the primary source for type-level analysis. It catches changes invisible to
-DWARF-only tools: `noexcept`, `static` qualifier, const qualifier, access level changes.
+castxml is a cross-platform tool maintained by Kitware (available via conda-forge,
+system packages, or direct download for Linux, Windows, and macOS). It is the primary
+source for type-level analysis, catching changes invisible to debug-info-only tools:
+`noexcept`, `static` qualifier, const qualifier, access level changes.
 
-### Layer 3: DWARF cross-check (optional, Linux only)
+### Layer 3: Debug info cross-check (optional)
 
-When DWARF debug info is available in the `.so` files:
+When debug info is available in the binary:
 
+**DWARF** (Linux `.so`, macOS `.dylib` — via `pyelftools`):
 - Cross-validates struct/class sizes against header-computed sizes
 - Verifies member offsets (catches `#pragma pack` or `-march`-specific alignment differences)
 - Checks vtable slot offsets
 - Detects calling convention and frame register changes
+
+**PDB** (Windows `.dll` — planned):
+- Windows uses PDB (Program Database) files for debug information
+- PDB cross-check support is planned for a future release
 
 ---
 

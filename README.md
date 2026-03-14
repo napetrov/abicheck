@@ -8,7 +8,7 @@
 
 Typical problems it catches: removed or renamed symbols, changed function signatures, struct layout drift, vtable reordering, enum value reassignment, and dozens of other ABI/API incompatibilities that cause crashes, silent data corruption, or linker failures after a library upgrade.
 
-> **Platforms:** Linux (ELF), Windows (PE/COFF), macOS (Mach-O). Full deep analysis (header AST + DWARF) is available on Linux; Windows and macOS support covers native binary metadata (exports, imports, dependencies).
+> **Platforms:** Linux (ELF), Windows (PE/COFF), macOS (Mach-O). Binary metadata and header AST analysis on all platforms; debug info cross-check uses DWARF (Linux, macOS) with PDB support planned for Windows.
 
 ---
 
@@ -21,19 +21,29 @@ Typical problems it catches: removed or renamed symbols, changed function signat
 | Requirement | Notes |
 |-------------|-------|
 | **Python >= 3.10** | All platforms |
-| **`castxml`** | Linux only — Clang-based C/C++ AST parser for header analysis |
-| **`g++` or `clang++`** | Linux only — must be accessible to castxml |
+| **`castxml`** | Clang-based C/C++ AST parser for header analysis (all platforms) |
+| **`g++` or `clang++`** | Must be accessible to castxml |
 
-`castxml` and a C++ compiler are only required for deep header/DWARF analysis on Linux. Windows PE and macOS Mach-O analysis works out of the box with no extra system dependencies.
+`castxml` and a C++ compiler are required for header AST analysis. Without them, abicheck still works in binary-only mode (exports, imports, dependencies). castxml is available on all platforms via conda-forge or system packages.
 
 ```bash
-# Ubuntu / Debian (for full ELF + header analysis)
+# Ubuntu / Debian
 sudo apt install castxml g++
 ```
 
 ```bash
-# conda (for full ELF + header analysis)
+# macOS
+brew install castxml
+```
+
+```bash
+# conda (all platforms)
 conda install -c conda-forge castxml
+```
+
+```bash
+# Windows — install castxml from https://github.com/CastXML/CastXML/releases
+# and ensure it is on PATH, along with a C++ compiler (MSVC or MinGW g++)
 ```
 
 ### Install from source
@@ -414,8 +424,12 @@ abicheck supports three binary formats, each with a dedicated metadata parser:
               └────────────────┬──────────────────┘
                                │
               ┌────────────────▼──────────────────┐
-              │ Header AST (castxml) — Linux only  │
-              │ DWARF cross-check  — Linux only    │
+              │  Header AST (castxml) — all platforms│
+              └────────────────┬──────────────────┘
+                               │
+              ┌────────────────▼──────────────────┐
+              │ Debug info cross-check             │
+              │  DWARF (Linux, macOS) │ PDB (Win)  │
               └────────────────┬──────────────────┘
                                │
               ┌────────────────▼──────────────────┐
@@ -425,13 +439,13 @@ abicheck supports three binary formats, each with a dedicated metadata parser:
 
 ### Analysis layers
 
-| Layer | Technology | Platforms | What it provides |
-|-------|-----------|-----------|-----------------|
-| **Binary metadata** | pyelftools / pefile / macholib | Linux, Windows, macOS | Exported symbols, imports, dependencies, versions |
-| **Header AST** | castxml (Clang) | Linux | Function signatures, classes, vtable layout, enums, typedefs |
-| **DWARF cross-check** | pyelftools | Linux | Struct sizes, member offsets, vtable slot validation |
+| Layer | Technology | Linux | Windows | macOS |
+|-------|-----------|:-----:|:-------:|:-----:|
+| **Binary metadata** | pyelftools / pefile / macholib | Yes | Yes | Yes |
+| **Header AST** | castxml (Clang) | Yes | Yes | Yes |
+| **Debug info cross-check** | DWARF (pyelftools) / PDB | Yes (DWARF) | Planned (PDB) | Yes (DWARF) |
 
-On Linux all three layers combine for maximum accuracy. On Windows and macOS, the binary metadata layer provides export/import diffing, dependency tracking, and version checks.
+All three layers combine for maximum accuracy. castxml is cross-platform (provided by Kitware for Linux, Windows, and macOS), so header AST analysis works everywhere. Debug info cross-check currently uses DWARF (Linux and macOS); PDB support for Windows is planned.
 
 ### Python dependencies
 

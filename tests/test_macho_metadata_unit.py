@@ -527,8 +527,8 @@ class TestParseMachoMetadata:
 
     def test_parse_fat_binary_multi_arch_prefers_known_arch(self, tmp_path):
         """Fat binary with x86_64 + arm64 slices: both are parseable (arch selection is deterministic)."""
-        inner_x86 = _build_macho_64_le(install_name="/usr/lib/libfat_x86.dylib")
-        inner_arm = _build_macho_64_le(install_name="/usr/lib/libfat_arm.dylib")
+        inner_x86 = _build_macho_64_le(cputype=0x01000007, install_name="/usr/lib/libfat_x86.dylib")
+        inner_arm = _build_macho_64_le(cputype=0x0100000C, install_name="/usr/lib/libfat_arm.dylib")
         # fat header: magic + nfat_arch
         n_arches = 2
         header_size = 4 + 4 + n_arches * 20

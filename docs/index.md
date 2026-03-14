@@ -4,7 +4,7 @@
 
 Typical problems it catches: removed or renamed symbols, changed function signatures, struct layout drift, vtable reordering, enum value reassignment, and dozens of other ABI/API incompatibilities that cause crashes, silent data corruption, or linker failures after a library upgrade.
 
-> **Platforms:** Linux (ELF), Windows (PE/COFF), macOS (Mach-O). Full deep analysis (header AST + DWARF) is available on Linux; Windows and macOS support covers native binary metadata (exports, imports, dependencies).
+> **Platforms:** Linux (ELF), Windows (PE/COFF), macOS (Mach-O). Binary metadata and header AST analysis on all platforms; debug info cross-check uses DWARF (Linux, macOS) with PDB support planned for Windows.
 
 ## Why abicheck
 
