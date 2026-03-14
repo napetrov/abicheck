@@ -34,6 +34,7 @@ Extended form (multiple headers/libs):
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -126,6 +127,10 @@ def _resolve(p: str, base: Path) -> Path:
     """
     # Treat Unix absolute paths as absolute even on Windows
     if p.startswith("/"):
+        if os.name == "nt":
+            # On Windows, Path("/usr/lib/...") is drive-relative, not absolute.
+            # Prepend the current drive letter so the result is truly absolute.
+            return Path(Path.cwd().drive + p)
         return Path(p)
     resolved = Path(p)
     if not resolved.is_absolute():

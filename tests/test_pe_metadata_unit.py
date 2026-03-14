@@ -12,17 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for pe_metadata — dataclass construction, magic detection, and serialization."""
+"""Unit tests for pe_metadata — dataclass construction, magic detection, serialization, and parsing."""
 from __future__ import annotations
 
 import struct
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from abicheck.pe_metadata import (
     PeExport,
     PeMetadata,
     PeSymbolType,
     is_pe,
+    parse_pe_metadata,
 )
 
 # ── PeMetadata dataclass ────────────────────────────────────────────────
@@ -219,3 +221,141 @@ class TestDiffPe:
         old = AbiSnapshot(library="test.dll", version="1.0", pe=PeMetadata())
         new = AbiSnapshot(library="test.dll", version="2.0", pe=PeMetadata())
         assert _diff_pe(old, new) == []
+
+
+# ── parse_pe_metadata ───────────────────────────────────────────────────
+
+class TestParsePeMetadata:
+    def test_nonexistent_file_returns_empty(self):
+        meta = parse_pe_metadata(Path("/nonexistent/fake.dll"))
+        assert isinstance(meta, PeMetadata)
+        assert meta.exports == []
+
+    def test_directory_returns_empty(self, tmp_path):
+        meta = parse_pe_metadata(tmp_path)
+        assert isinstance(meta, PeMetadata)
+        assert meta.exports == []
+
+    def test_pefile_not_installed(self, tmp_path):
+        """When pefile is not importable, return empty metadata."""
+        f = tmp_path / "test.dll"
+        f.write_bytes(b"MZ" + b"\x00" * 256)
+        with patch.dict("sys.modules", {"pefile": None}):
+            meta = parse_pe_metadata(f)
+        assert isinstance(meta, PeMetadata)
+
+    def test_parse_with_mock_pefile(self, tmp_path):
+        """Exercise _parse via a mocked pefile module."""
+        f = tmp_path / "test.dll"
+        f.write_bytes(b"MZ" + b"\x00" * 256)
+
+        # Build mock pefile module
+        mock_pefile = MagicMock()
+
+        # Mock PE object
+        mock_pe = MagicMock()
+        mock_pe.FILE_HEADER.Machine = 0x8664
+        mock_pe.FILE_HEADER.Characteristics = 0x2022
+        mock_pe.OPTIONAL_HEADER.DllCharacteristics = 0x8160
+
+        # MACHINE_TYPE mapping
+        mock_pefile.MACHINE_TYPE = {0x8664: "IMAGE_FILE_MACHINE_AMD64"}
+        mock_pefile.DIRECTORY_ENTRY = {
+            "IMAGE_DIRECTORY_ENTRY_EXPORT": 0,
+            "IMAGE_DIRECTORY_ENTRY_IMPORT": 1,
+            "IMAGE_DIRECTORY_ENTRY_RESOURCE": 2,
+        }
+
+        # Exports
+        exp1 = MagicMock()
+        exp1.name = b"my_func"
+        exp1.ordinal = 1
+        exp1.forwarder = None
+        exp2 = MagicMock()
+        exp2.name = b"fwd_func"
+        exp2.ordinal = 2
+        exp2.forwarder = b"OTHER.init"
+        mock_pe.DIRECTORY_ENTRY_EXPORT.symbols = [exp1, exp2]
+
+        # Imports
+        imp_entry = MagicMock()
+        imp_entry.dll = b"KERNEL32.dll"
+        imp_func = MagicMock()
+        imp_func.name = b"LoadLibraryA"
+        imp_entry.imports = [imp_func]
+        mock_pe.DIRECTORY_ENTRY_IMPORT = [imp_entry]
+
+        # No version resource
+        del mock_pe.VS_FIXEDFILEINFO
+
+        mock_pefile.PE.return_value = mock_pe
+        mock_pefile.PEFormatError = Exception
+
+        with patch.dict("sys.modules", {"pefile": mock_pefile}):
+            meta = parse_pe_metadata(f)
+
+        assert meta.machine == "IMAGE_FILE_MACHINE_AMD64"
+        assert meta.characteristics == 0x2022
+        assert len(meta.exports) == 2
+        assert meta.exports[0].name == "my_func"
+        assert meta.exports[1].sym_type == PeSymbolType.FORWARDED
+        assert meta.exports[1].forwarder == "OTHER.init"
+        assert meta.imports == {"KERNEL32.dll": ["LoadLibraryA"]}
+        mock_pe.close.assert_called_once()
+
+    def test_parse_with_version_resource(self, tmp_path):
+        """Exercise VS_FIXEDFILEINFO parsing."""
+        f = tmp_path / "test.dll"
+        f.write_bytes(b"MZ" + b"\x00" * 256)
+
+        mock_pefile = MagicMock()
+        mock_pe = MagicMock()
+        mock_pe.FILE_HEADER.Machine = 0x14C
+        mock_pe.FILE_HEADER.Characteristics = 0
+        mock_pe.OPTIONAL_HEADER.DllCharacteristics = 0
+        mock_pefile.MACHINE_TYPE = {0x14C: "IMAGE_FILE_MACHINE_I386"}
+        mock_pefile.DIRECTORY_ENTRY = {
+            "IMAGE_DIRECTORY_ENTRY_EXPORT": 0,
+            "IMAGE_DIRECTORY_ENTRY_IMPORT": 1,
+            "IMAGE_DIRECTORY_ENTRY_RESOURCE": 2,
+        }
+        # No exports/imports
+        del mock_pe.DIRECTORY_ENTRY_EXPORT
+        del mock_pe.DIRECTORY_ENTRY_IMPORT
+
+        # Version resource
+        vinfo = MagicMock()
+        vinfo.FileVersionMS = (10 << 16) | 0
+        vinfo.FileVersionLS = (19041 << 16) | 1
+        vinfo.ProductVersionMS = (10 << 16) | 0
+        vinfo.ProductVersionLS = (19041 << 16) | 1
+        mock_pe.VS_FIXEDFILEINFO = [vinfo]
+
+        mock_pefile.PE.return_value = mock_pe
+        mock_pefile.PEFormatError = Exception
+
+        with patch.dict("sys.modules", {"pefile": mock_pefile}):
+            meta = parse_pe_metadata(f)
+
+        assert meta.file_version == "10.0.19041.1"
+        assert meta.product_version == "10.0.19041.1"
+
+    def test_parse_format_error(self, tmp_path):
+        """PEFormatError should be caught, return empty metadata."""
+        f = tmp_path / "bad.dll"
+        f.write_bytes(b"MZ" + b"\x00" * 256)
+
+        mock_pefile = MagicMock()
+        mock_pefile.PEFormatError = type("PEFormatError", (Exception,), {})
+        mock_pefile.PE.side_effect = mock_pefile.PEFormatError("bad")
+        mock_pefile.DIRECTORY_ENTRY = {
+            "IMAGE_DIRECTORY_ENTRY_EXPORT": 0,
+            "IMAGE_DIRECTORY_ENTRY_IMPORT": 1,
+            "IMAGE_DIRECTORY_ENTRY_RESOURCE": 2,
+        }
+
+        with patch.dict("sys.modules", {"pefile": mock_pefile}):
+            meta = parse_pe_metadata(f)
+
+        assert isinstance(meta, PeMetadata)
+        assert meta.exports == []
