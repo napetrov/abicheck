@@ -54,6 +54,7 @@ __all__ = [
     "_RISK_KINDS",
     "_SOURCE_BREAK_KINDS",  # deprecated alias
     "Change",
+    "LibraryMetadata",
     "DiffResult",
     "compare",
 ]
@@ -74,6 +75,14 @@ class Change:
 
 
 @dataclass
+class LibraryMetadata:
+    """File-level metadata for a library artifact (path, hash, size)."""
+    path: str                     # file path as given on the CLI
+    sha256: str                   # hex digest
+    size_bytes: int               # file size in bytes
+
+
+@dataclass
 class DiffResult:
     old_version: str
     new_version: str
@@ -85,6 +94,8 @@ class DiffResult:
     suppression_file_provided: bool = False  # True when --suppress was passed, even if 0 matched
     detector_results: list[DetectorResult] = field(default_factory=list)
     policy: str = "strict_abi"  # active policy profile; drives breaking/source_breaks/compatible
+    old_metadata: LibraryMetadata | None = None
+    new_metadata: LibraryMetadata | None = None
 
     @property
     def breaking(self) -> list[Change]:

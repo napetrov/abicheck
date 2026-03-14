@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import click
 
-from .checker import DiffResult, compare
+from .checker import DiffResult, LibraryMetadata, compare
 from .compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_dump
 from .dumper import dump
 from .errors import AbicheckError
@@ -138,6 +138,18 @@ def _resolve_input(
     raise click.UsageError(
         f"Cannot detect format of '{path}'. "
         "Expected: ELF binary (.so), JSON snapshot (.json), or ABICC Perl dump."
+    )
+
+
+def _collect_metadata(path: Path) -> LibraryMetadata:
+    """Compute SHA-256 and file size for a library artifact."""
+    import hashlib
+
+    data = path.read_bytes()
+    return LibraryMetadata(
+        path=str(path),
+        sha256=hashlib.sha256(data).hexdigest(),
+        size_bytes=len(data),
     )
 
 
@@ -429,6 +441,10 @@ def compare_cmd(
     suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
 
     result = compare(old, new, suppression=suppression, policy=policy, policy_file=pf)
+
+    # Attach file-level metadata (path, SHA-256, size) for report traceability
+    result.old_metadata = _collect_metadata(old_input)
+    result.new_metadata = _collect_metadata(new_input)
 
     # Warn if suppression file swallowed all changes (potential misconfiguration)
     total_changes = len(result.changes) + result.suppressed_count
