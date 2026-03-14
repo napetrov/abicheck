@@ -21,6 +21,7 @@ from __future__ import annotations
 import errno
 import json
 import logging
+import re
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
@@ -603,7 +604,9 @@ class TestRelpathDescriptor:
         """)
         result = _load_descriptor_or_dump(xml, relpath="/opt/build")
         assert isinstance(result, CompatDescriptor)
-        assert "/opt/build/lib/libfoo.so" in result.libs[0].as_posix()
+        posix = result.libs[0].as_posix()
+        # On Windows, a drive letter prefix (e.g. "C:") is expected.
+        assert re.fullmatch(r"([A-Za-z]:)?/opt/build/lib/libfoo\.so", posix), posix
 
 
 # ── Headers list resolution ──────────────────────────────────────────────────
