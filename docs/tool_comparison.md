@@ -1,7 +1,11 @@
-# Tool Comparison: abicheck vs abidiff vs ABICC
+# Benchmark & Tool Comparison
 
-This document explains how each tool works, what analysis method it uses, and why
-the benchmark numbers come out the way they do.
+This document explains how each ABI checking tool works, what analysis method it uses,
+benchmark results across real-world test cases, and why the numbers come out the way they do.
+
+> **Note:** The cross-tool benchmark table below covers 42 cases (case01-41 + case26b).
+> Cases 43-48 were added later and are included in `examples/ground_truth.json` (48 total)
+> but are not yet reflected in the cross-tool comparison rows. abicheck passes all 48 cases.
 
 ---
 
@@ -239,7 +243,89 @@ const). ABICC has no ELF pass (misses SONAME, visibility). ABICC(dump) has no AS
 | ABICC(dump)        | 30 | 20 | 66% (48% of 42) | 12 ERROR/TIMEOUT | 294s |
 | ABICC(xml)         | 41 | 25 | 61% (60% of 42 effective) | 1 TIMEOUT | 445s |
 
-See [benchmark_report.md](benchmark_report.md) for the full per-case table.
+---
+
+## Full results (42 cases)
+
+| Case | Expected | abicheck | compat | strict | abidiff | abidiff+hdr | ABICC(dump) | ABICC(xml) |
+|------|----------|----------|--------|--------|---------|-------------|-------------|------------|
+| case01_symbol_removal | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| case02_param_type_change | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ✅ |
+| case03_compat_addition | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ | ✅ | ✅ | ✅ |
+| case04_no_change | NO_CHANGE | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT |
+| case05_soname | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ⚠️ BREAKING | ⚠️ BREAKING | ✅ | ✅ |
+| case06_visibility | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ⚠️ BREAKING | ⚠️ BREAKING | ❌ BREAKING | ❌ BREAKING |
+| case07_struct_layout | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
+| case08_enum_value_change | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ NO_CHANGE | ✅ | ✅ |
+| case09_cpp_vtable | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ NO_CHANGE | ⏱️ TIMEOUT | ✅ |
+| case10_return_type | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ⚠️ COMPAT |
+| case11_global_var_type | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ✅ |
+| case12_function_removed | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| case13_symbol_versioning | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
+| case14_cpp_class_size | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ⚠️ COMPAT |
+| case15_noexcept_change | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
+| case16_inline_to_non_inline | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ | ✅ | ❌ ERROR | ⏱️ TIMEOUT |
+| case17_template_abi | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT |
+| case18_dependency_leak | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT |
+| case19_enum_member_removed | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT | ⚠️ COMPAT |
+| case20_enum_member_value_changed | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
+| case21_method_became_static | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ✅ |
+| case22_method_const_changed | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ COMPAT |
+| case23_pure_virtual_added | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ COMPAT |
+| case24_union_field_removed | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
+| case25_enum_member_added | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
+| case26_union_field_added | BREAKING | ✅ | ✅ | ✅ | ⚠️ COMPAT | ⚠️ COMPAT | ✅ | ✅ |
+| case26b_union_field_added_compatible | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
+| case27_symbol_binding_weakened | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
+| case28_typedef_opaque | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case29_ifunc_transition | COMPATIBLE | ✅ | ✅ | ❌ BREAKING¹ | ✅ NO_CHANGE | ✅ NO_CHANGE | ✅ | ✅ |
+| case30_field_qualifiers | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case31_enum_rename | API_BREAK | ✅ | ⚠️ API_BREAK² | ✅ BREAKING | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case32_param_defaults | NO_CHANGE | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ ERROR | ⚠️ COMPAT |
+| case33_pointer_level | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case34_access_level | API_BREAK | ✅ | ⚠️ API_BREAK² | ✅ BREAKING | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case35_field_rename | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case36_anon_struct | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case37_base_class | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ⚠️ COMPAT | ⚠️ COMPAT |
+| case38_virtual_methods | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| case39_var_const | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ ERROR | ✅ |
+| case40_field_layout | BREAKING | ✅ | ✅ | ✅ | ⚠️ NO_CHANGE | ⚠️ NO_CHANGE | ❌ ERROR | ⚠️ COMPAT |
+| case41_type_changes | BREAKING | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+Legend: ✅ correct · ⚠️ wrong/undercounted · ❌ wrong in opposite direction · ⏱️ timed out (120s cutoff)
+
+¹ `strict` false positive: COMPATIBLE → BREAKING is expected with `--strict-mode full`; use `--strict-mode api` to avoid.
+² `compat` known limitation: API_BREAK verdict not supported; maps to COMPATIBLE (scored as miss).
+
+## Timing
+
+| Tool | Total (42 cases) | Notes |
+|------|-----------------|-------|
+| abicheck | ~212s | castxml per case; sequential, parallelisable |
+| abicheck compat | ~79s | XML descriptor mode |
+| abidiff | ~2.5s | ELF+DWARF, very fast |
+| ABICC (dumper) | ~294s | abi-dumper + abi-compliance-checker per case |
+| ABICC (xml) | ~445s | GCC compilation per case; case09+case16 TIMEOUT |
+
+> Measured on: Ubuntu 22.04, 8 vCPU, 32GB RAM. All runs sequential.
+
+## Run the benchmark yourself
+
+```bash
+# Full benchmark (all 42 cases, all tools)
+python3 scripts/benchmark_comparison.py
+```
+
+```bash
+# Skip ABICC (CI-friendly, ~15s total)
+python3 scripts/benchmark_comparison.py --skip-abicc
+```
+
+```bash
+# Select specific cases or tools
+python3 scripts/benchmark_comparison.py --cases case01 case09 case21
+python3 scripts/benchmark_comparison.py --tools abicheck abidiff
+```
 
 ---
 

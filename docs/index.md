@@ -1,74 +1,72 @@
 # abicheck
 
-**abicheck checks C/C++ library compatibility at both API and ABI levels.**
+**abicheck** is a command-line tool that detects breaking changes in C/C++ shared libraries before they reach production. It compares two versions of a `.so` library — along with their public headers — and reports whether existing binaries will continue to work or break at runtime.
 
-It is designed as a drop-in replacement for
-[ABI Compliance Checker (ABICC)](https://lvc.github.io/abi-compliance-checker/),
-with modern CLI ergonomics, Python integration, and machine-readable reports.
+Typical problems it catches: removed or renamed symbols, changed function signatures, struct layout drift, vtable reordering, enum value reassignment, and dozens of other ABI/API incompatibilities that cause crashes, silent data corruption, or linker failures after a library upgrade.
 
-This project is inspired by:
-
-- [libabigail / abidiff](https://sourceware.org/libabigail/)
-- [ABI Compliance Checker (ABICC)](https://lvc.github.io/abi-compliance-checker/)
-
-Both projects made ABI tooling possible for many teams; thank you to their authors
-and maintainers. abicheck exists to provide an actively extensible path where teams
-can continue evolving ABI checks in modern CI environments.
+> **Platform:** Linux (ELF binaries + DWARF debug info + C/C++ headers). Windows PE and macOS Mach-O are not yet supported.
 
 ## Features
 
-- 🔍 **Deep analysis** — struct layout, vtable, enum values, calling conventions, symbol visibility
-- 📄 **SARIF output** — native GitHub Code Scanning integration
-- 🔌 **ABICC drop-in** — full flag parity: `-lib`, `-old`, `-new`, `-s`, `-source`, `-skip-symbols`, `-v1/-v2`, `-stdout` and more ([reference](abicc_compat.md))
-- 🐍 **Python API** — import and use programmatically
-- ⚡ **Fast** — no DWARF required for header-based analysis
+- **Three-layer analysis** — ELF symbol table + Clang AST via castxml + DWARF cross-check for maximum accuracy
+- **100% benchmark accuracy** — correct on all 42 test cases (vs 61% ABICC, 26% abidiff)
+- **Multiple output formats** — Markdown, JSON, SARIF (GitHub Code Scanning), HTML
+- **Policy profiles** — `strict_abi`, `sdk_vendor`, `plugin_abi`, or custom YAML overrides
+- **ABICC drop-in** — full flag parity for migrating from abi-compliance-checker
+- **CI-ready** — clear exit codes, SARIF upload, snapshot-based baselines
 
 ## Quick start
 
 ```bash
-# Install from source (not yet published to PyPI or conda-forge)
+# Install (from source)
 git clone https://github.com/napetrov/abicheck.git
-cd abicheck && pip install -e ".[dev]"
+cd abicheck && pip install -e .
 
-# Dump ABI snapshots
-abicheck dump libfoo.so.1 -H include/foo.h --version 1.0 -o libfoo-1.0.json
-abicheck dump libfoo.so.2 -H include/foo.h --version 2.0 -o libfoo-2.0.json
+# Compare two library versions
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header include/v1/foo.h --new-header include/v2/foo.h
 
-# Compare
-abicheck compare libfoo-1.0.json libfoo-2.0.json
-```
-
-## Next steps
-
-- [Getting Started](getting_started.md)
-- [Verdicts](concepts/verdicts.md)
-- [Exit Codes](exit_codes.md)
-- [Migrating from ABICC](migration/from_abicc.md)
-- [Using abicheck, Compatibility Modes, and Coverage](usage_and_coverage.md)
-- [Examples Breakage Guide](examples_breakage_guide.md)
-- [Tool Modes](tool_modes.md)
-- [Tool Comparison: abicheck vs abidiff vs ABICC](tool_comparison.md)
-- [Benchmark Report](benchmark_report.md)
-
-## GitHub Actions
-
-```yaml
-- name: Check ABI
-  run: |
-    abicheck compare old.json new.json --format sarif -o abi.sarif
-
-- uses: github/codeql-action/upload-sarif@v3
-  with:
-    sarif_file: abi.sarif
+# Or: save a baseline, compare later in CI
+abicheck dump libfoo.so -H include/foo.h --version 1.0 -o baseline.json
+abicheck compare baseline.json ./build/libfoo.so --new-header include/foo.h
 ```
 
 ## Exit codes
 
-`abicheck compare` uses: `0` (`NO_CHANGE`/`COMPATIBLE`), `1` (tool/runtime
-error), `2` (`API_BREAK`), `4` (`BREAKING`).
+| Exit code | Verdict | Meaning |
+|-----------|---------|---------|
+| `0` | `NO_CHANGE` or `COMPATIBLE` | Safe — no breaking changes |
+| `1` | — | Tool/runtime error |
+| `2` | `API_BREAK` | Source-level break (recompile needed, binary may work) |
+| `4` | `BREAKING` | Binary ABI break (old binaries will crash or misbehave) |
 
-For full CI-ready guidance (including `compat` mode and strict-mode behavior),
-use the canonical reference: [Exit Codes](exit_codes.md).
+## GitHub Actions
+
+Save baseline at release time, compare in CI:
+
+```yaml
+# Compare new build against saved baseline snapshot
+- name: Compare ABI
+  run: |
+    abicheck compare abi-baseline.json ./build/libfoo.so \
+      --new-header include/foo.h --format sarif -o abi.sarif
+
+- uses: github/codeql-action/upload-sarif@v3
+  if: always()
+  with:
+    sarif_file: abi.sarif
+```
+
+## Next steps
+
+- [Getting Started](getting_started.md) — installation, first check, CI setup
+- [Verdicts](concepts/verdicts.md) — NO_CHANGE / COMPATIBLE / API_BREAK / BREAKING
+- [Exit Codes](exit_codes.md) — CI-ready exit code reference
+- [Policy Profiles](policies.md) — built-in and custom policies
+- [Examples & Breakage Guide](examples_breakage_guide.md) — 48 real-world ABI break scenarios
+- [Benchmark & Tool Comparison](tool_comparison.md) — abicheck vs abidiff vs ABICC
+- [ABICC Migration](migration/from_abicc.md) — migrating from abi-compliance-checker
+- [Architecture](reference/architecture.md) — pipeline, modules, and design
 
 ## Status
 
