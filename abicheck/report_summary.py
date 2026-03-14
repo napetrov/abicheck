@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .checker import _BREAKING_KINDS, _RISK_KINDS, DiffResult
+from .checker import _BREAKING_KINDS, DiffResult
 from .checker_policy import HasKind
 
 
