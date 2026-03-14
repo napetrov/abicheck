@@ -1,6 +1,7 @@
 """Tests for Sprint 5: ABICC compat layer (descriptor parser + HTML report)."""
 from __future__ import annotations
 
+import re
 import textwrap
 from pathlib import Path
 
@@ -48,9 +49,9 @@ def test_parse_descriptor_basic(tmp_path: Path) -> None:
     assert isinstance(desc, CompatDescriptor)
     assert desc.version == "2025.3"
     assert len(desc.libs) == 1
-    assert desc.libs[0].as_posix() == "/usr/lib/libmylib.so"
+    assert re.fullmatch(r"([A-Za-z]:)?/usr/lib/libmylib\.so", desc.libs[0].as_posix())
     assert len(desc.headers) == 1
-    assert desc.headers[0].as_posix() == "/usr/include/mylib"
+    assert re.fullmatch(r"([A-Za-z]:)?/usr/include/mylib", desc.headers[0].as_posix())
 
 
 def test_parse_descriptor_multiple_headers(tmp_path: Path) -> None:
@@ -64,7 +65,7 @@ def test_parse_descriptor_multiple_headers(tmp_path: Path) -> None:
     """
     desc = parse_descriptor(_write_xml(tmp_path, xml))
     assert len(desc.headers) == 2
-    assert any(h.as_posix() == "/usr/include/foo/detail" for h in desc.headers)
+    assert any(re.fullmatch(r"([A-Za-z]:)?/usr/include/foo/detail", h.as_posix()) for h in desc.headers)
 
 
 def test_parse_descriptor_multiple_libs(tmp_path: Path) -> None:
@@ -226,4 +227,4 @@ def test_parse_descriptor_first_lib_used_warning(tmp_path: Path) -> None:
     desc = parse_descriptor(_write_xml(tmp_path, xml))
     # Both are captured — CLI is responsible for emitting the warning
     assert len(desc.libs) == 2
-    assert desc.libs[0].as_posix() == "/lib/liba.so"
+    assert re.fullmatch(r"([A-Za-z]:)?/lib/liba\.so", desc.libs[0].as_posix())
