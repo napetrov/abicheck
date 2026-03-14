@@ -229,6 +229,15 @@ class ChangeKind(str, Enum):
     TEMPLATE_PARAM_TYPE_CHANGED = "template_param_type_changed"
     TEMPLATE_RETURN_TYPE_CHANGED = "template_return_type_changed"
 
+    # ── Symbol origin detection ────────────────────────────────────────────────
+    # Emitted when a symbol that changed (removed, type-changed, etc.) is detected
+    # as likely originating from a dependency library (libstdc++, libgcc, libc, …)
+    # rather than being natively defined by this library.  This is a real ABI fact
+    # but the root cause is dependency versioning, not the library's own API.
+    # Verdict: COMPATIBLE_WITH_RISK (not BREAKING — direct consumers do not link
+    # against these symbols; they resolve through the dependency directly).
+    SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED = "symbol_leaked_from_dependency_changed"
+
 
 class HasKind(Protocol):
     kind: ChangeKind
@@ -397,6 +406,12 @@ RISK_KINDS: frozenset[ChangeKind] = frozenset({
     # Deployment risk: the new library will NOT load on systems with a glibc
     # older than the required version. The user must verify target environments.
     ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+    # A symbol exported by this library that originates from a dependency changed.
+    # This is a real ABI change but caused by dependency versioning, not the
+    # library's own API.  Direct consumers do not link against these symbols
+    # directly — they go through the dependency itself.  Risk: on other systems
+    # with a different version of the dependency this may break.
+    ChangeKind.SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED,
 })
 
 API_BREAK_KINDS: set[ChangeKind] = {

@@ -140,6 +140,8 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.FUNC_DELETED_ELF_FALLBACK,
     ChangeKind.TEMPLATE_PARAM_TYPE_CHANGED,
     ChangeKind.TEMPLATE_RETURN_TYPE_CHANGED,
+    # Symbol origin detection
+    ChangeKind.SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED,
 }
 
 

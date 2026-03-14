@@ -54,6 +54,7 @@ class ElfSymbol:
     version: str = ""       # version tag from .gnu.version_d/.gnu.version_r
     is_default: bool = True
     visibility: str = "default"  # default / hidden / protected / internal
+    origin_lib: str | None = None  # Detected source library, None = native
 
 
 @dataclass
@@ -211,6 +212,43 @@ def _parse_version_need(section: GNUVerNeedSection, meta: ElfMetadata) -> None:
                 meta.versions_required[lib].append(ver)
 
 
+def _guess_symbol_origin(name: str, needed_libs: list[str]) -> str | None:
+    """Guess which dependency library a symbol likely originates from.
+
+    Analyses the symbol's mangled name prefix to determine whether it is likely
+    exported by a well-known runtime dependency (libstdc++, libgcc, libc) rather
+    than natively defined by the library being inspected.
+
+    Returns a library name hint (e.g. ``'libstdc++.so.6'``) or ``None`` if the
+    symbol appears to be native to this library.
+
+    This is a heuristic — false positives are possible for symbols that happen to
+    share a prefix with standard-library symbols but are defined by the library
+    itself.  The result is used to annotate the ``origin_lib`` field of
+    :class:`ElfSymbol`; it is informational and never suppresses real changes.
+    """
+    # C++ stdlib symbols (libstdc++ / libc++)
+    # These prefixes match Itanium-mangled names from <stdexcept>, <string>,
+    # <typeinfo>, <exception>, and C++ ABI support classes.
+    if name.startswith(("_ZNSt", "_ZNKSt", "_ZSt", "_ZTI", "_ZTS", "_ZTVN10__cxxabiv")):
+        for lib in needed_libs:
+            if "stdc++" in lib or "c++" in lib:
+                return lib
+        return "libstdc++.so.6"  # likely even if not listed in DT_NEEDED
+
+    # GCC runtime support symbols
+    # ix86_ = x87 math helpers; _ZGV = SIMD vector variants; __cpu_model / __cpu_features
+    # are GCC CPU-feature-detection helpers; __svml_ = Intel SVML vectorized functions.
+    if name.startswith(("ix86_", "_ZGV", "__cpu_model", "__cpu_features", "__svml_")):
+        return "libgcc_s.so.1"
+
+    # GNU libc internal symbols
+    if name.startswith(("__libc_", "__glibc_")):
+        return "libc.so.6"
+
+    return None  # likely native to this library
+
+
 def _parse_dynsym(section: SymbolTableSection, meta: ElfMetadata) -> None:
     for sym in section.iter_symbols():
         # Skip undefined (imported) and absolute (version-def markers) symbols.
@@ -250,4 +288,5 @@ def _parse_dynsym(section: SymbolTableSection, meta: ElfMetadata) -> None:
             version="",
             is_default=True,
             visibility=vis_str.replace("STV_", "").lower(),
+            origin_lib=_guess_symbol_origin(name, meta.needed),
         ))
