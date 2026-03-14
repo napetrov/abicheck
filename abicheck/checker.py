@@ -1326,10 +1326,10 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             description=f"install name changed: {o.install_name} → {n.install_name}",
         ))
 
-    # Compatibility version change
+    # Compatibility version change (LC_ID_DYLIB compat_version — binary contract)
     if o.compat_version != n.compat_version and (o.compat_version or n.compat_version):
         changes.append(Change(
-            kind=ChangeKind.SONAME_CHANGED,
+            kind=ChangeKind.COMPAT_VERSION_CHANGED,
             symbol="compat_version",
             old_value=o.compat_version,
             new_value=n.compat_version,

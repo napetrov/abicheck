@@ -26,8 +26,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
+from typing import Any
 
-import pefile  # type: ignore[import-untyped]
+try:
+    import pefile as pefile  # type: ignore[import-untyped]
+    _PEFILE_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    pefile = None  # type: ignore[assignment]
+    _PEFILE_AVAILABLE = False
 
 log = logging.getLogger(__name__)
 
@@ -108,7 +114,12 @@ def parse_pe_metadata(dll_path: Path) -> PeMetadata:
     """Extract PE export/import metadata from *dll_path* using pefile.
 
     Returns an empty ``PeMetadata`` on any parse error (logged as WARNING).
+    Raises ``ImportError`` (with helpful message) if pefile is not installed.
     """
+    if not _PEFILE_AVAILABLE:
+        raise ImportError(
+            "pefile is required for PE parsing: pip install 'abicheck[pe]' or pip install pefile"
+        )
     try:
         with open(dll_path, "rb") as f:
             st = os.fstat(f.fileno())
@@ -117,79 +128,82 @@ def parse_pe_metadata(dll_path: Path) -> PeMetadata:
                 return PeMetadata()
 
         return _parse(dll_path)
-    except (pefile.PEFormatError, OSError, ValueError, AttributeError) as exc:
+    except Exception as exc:  # noqa: BLE001
+        # Catch pefile.PEFormatError (only available when pefile is installed)
         log.warning("parse_pe_metadata: failed to parse %s: %s", dll_path, exc)
         return PeMetadata()
 
 
 def _parse(dll_path: Path) -> PeMetadata:
     pe = pefile.PE(str(dll_path), fast_load=True)
-    pe.parse_data_directories(
-        directories=[
-            pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_EXPORT"],
-            pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"],
-            pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_RESOURCE"],
-        ]
-    )
+    try:
+        pe.parse_data_directories(
+            directories=[
+                pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_EXPORT"],
+                pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"],
+                pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_RESOURCE"],
+            ]
+        )
 
-    meta = PeMetadata()
+        meta = PeMetadata()
 
-    # Machine type
-    meta.machine = pefile.MACHINE_TYPE.get(
-        pe.FILE_HEADER.Machine, f"0x{pe.FILE_HEADER.Machine:04x}"
-    )
-    meta.characteristics = pe.FILE_HEADER.Characteristics
-    if hasattr(pe, "OPTIONAL_HEADER"):
-        meta.dll_characteristics = getattr(pe.OPTIONAL_HEADER, "DllCharacteristics", 0)
+        # Machine type
+        meta.machine = pefile.MACHINE_TYPE.get(
+            pe.FILE_HEADER.Machine, f"0x{pe.FILE_HEADER.Machine:04x}"
+        )
+        meta.characteristics = pe.FILE_HEADER.Characteristics
+        if hasattr(pe, "OPTIONAL_HEADER"):
+            meta.dll_characteristics = getattr(pe.OPTIONAL_HEADER, "DllCharacteristics", 0)
 
-    # Exports
-    if hasattr(pe, "DIRECTORY_ENTRY_EXPORT"):
-        for exp in pe.DIRECTORY_ENTRY_EXPORT.symbols:
-            name = exp.name.decode("utf-8", errors="replace") if exp.name else ""
-            forwarder = ""
-            sym_type = PeSymbolType.EXPORTED
+        # Exports
+        if hasattr(pe, "DIRECTORY_ENTRY_EXPORT"):
+            for exp in pe.DIRECTORY_ENTRY_EXPORT.symbols:
+                name = exp.name.decode("utf-8", errors="replace") if exp.name else ""
+                forwarder = ""
+                sym_type = PeSymbolType.EXPORTED
 
-            if exp.forwarder:
-                forwarder = exp.forwarder.decode("utf-8", errors="replace")
-                sym_type = PeSymbolType.FORWARDED
+                if exp.forwarder:
+                    forwarder = exp.forwarder.decode("utf-8", errors="replace")
+                    sym_type = PeSymbolType.FORWARDED
 
-            meta.exports.append(PeExport(
-                name=name,
-                ordinal=exp.ordinal,
-                sym_type=sym_type,
-                forwarder=forwarder,
-            ))
+                meta.exports.append(PeExport(
+                    name=name,
+                    ordinal=exp.ordinal,
+                    sym_type=sym_type,
+                    forwarder=forwarder,
+                ))
 
-    # Imports
-    if hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
-        for entry in pe.DIRECTORY_ENTRY_IMPORT:
-            dll_name = entry.dll.decode("utf-8", errors="replace") if entry.dll else ""
-            funcs: list[str] = []
-            for imp in entry.imports:
-                if imp.name:
-                    funcs.append(imp.name.decode("utf-8", errors="replace"))
-            meta.imports[dll_name] = funcs
+        # Imports
+        if hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
+            for entry in pe.DIRECTORY_ENTRY_IMPORT:
+                dll_name = entry.dll.decode("utf-8", errors="replace") if entry.dll else ""
+                funcs: list[str] = []
+                for imp in entry.imports:
+                    if imp.name:
+                        funcs.append(imp.name.decode("utf-8", errors="replace"))
+                meta.imports[dll_name] = funcs
 
-    # Version resource
-    if hasattr(pe, "VS_FIXEDFILEINFO"):
-        for finfo in pe.VS_FIXEDFILEINFO:
-            ms_ver = finfo.FileVersionMS
-            ls_ver = finfo.FileVersionLS
-            meta.file_version = (
-                f"{(ms_ver >> 16) & 0xFFFF}."
-                f"{ms_ver & 0xFFFF}."
-                f"{(ls_ver >> 16) & 0xFFFF}."
-                f"{ls_ver & 0xFFFF}"
-            )
-            ms_prod = finfo.ProductVersionMS
-            ls_prod = finfo.ProductVersionLS
-            meta.product_version = (
-                f"{(ms_prod >> 16) & 0xFFFF}."
-                f"{ms_prod & 0xFFFF}."
-                f"{(ls_prod >> 16) & 0xFFFF}."
-                f"{ls_prod & 0xFFFF}"
-            )
-            break  # only first entry
+        # Version resource
+        if hasattr(pe, "VS_FIXEDFILEINFO"):
+            for finfo in pe.VS_FIXEDFILEINFO:
+                ms_ver = finfo.FileVersionMS
+                ls_ver = finfo.FileVersionLS
+                meta.file_version = (
+                    f"{(ms_ver >> 16) & 0xFFFF}."
+                    f"{ms_ver & 0xFFFF}."
+                    f"{(ls_ver >> 16) & 0xFFFF}."
+                    f"{ls_ver & 0xFFFF}"
+                )
+                ms_prod = finfo.ProductVersionMS
+                ls_prod = finfo.ProductVersionLS
+                meta.product_version = (
+                    f"{(ms_prod >> 16) & 0xFFFF}."
+                    f"{ms_prod & 0xFFFF}."
+                    f"{(ls_prod >> 16) & 0xFFFF}."
+                    f"{ls_prod & 0xFFFF}"
+                )
+                break  # only first entry
 
-    pe.close()
-    return meta
+        return meta
+    finally:
+        pe.close()

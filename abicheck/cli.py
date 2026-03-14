@@ -144,13 +144,9 @@ def _dump_native_binary(
     if binary_fmt == "pe":
         from .pe_metadata import parse_pe_metadata
         try:
-            import pefile as _pefile_check  # noqa: F401
-        except ImportError:
-            raise click.ClickException(
-                f"Parsing PE files requires 'pefile': pip install 'abicheck[pe]'"
-            )
-        try:
             pe_meta = parse_pe_metadata(path)
+        except ImportError as exc:
+            raise click.ClickException(str(exc)) from exc
         except (RuntimeError, OSError, ValueError) as exc:
             raise click.ClickException(f"Failed to parse PE '{path}': {exc}") from exc
         if not pe_meta.machine:

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import platform as _platform
 import stat
 import struct
 from dataclasses import dataclass, field
@@ -222,11 +223,12 @@ def _parse(f: Any, dylib_path: Path) -> MachoMetadata:
 
     # Parse Mach-O header
     if is_64:
-        hdr_fmt = f"{endian}IIIiIII"  # cputype, cpusubtype, filetype, ncmds, sizeofcmds, flags, reserved
+        # 64-bit: cputype(I), cpusubtype(I), filetype(I), ncmds(I), sizeofcmds(I), flags(I), reserved(I)
+        hdr_fmt = f"{endian}IIIIIII"
         hdr_size = 32  # 4 (magic) + 28
     else:
-        hdr_fmt = f"{endian}IIIiIII"[:-1]  # no reserved field
-        hdr_fmt = f"{endian}IIIiII"
+        # 32-bit: no reserved field
+        hdr_fmt = f"{endian}IIIIII"
         hdr_size = 28  # 4 (magic) + 24
 
     hdr_data = f.read(hdr_size - 4)  # magic already read
@@ -370,14 +372,11 @@ def _parse_symtab(
         if offset + entry_size > len(symdata):
             break
 
-        if is_64:
-            n_strx, n_type, _n_sect, n_desc = struct.unpack(
-                f"{endian}IBBH", symdata[offset:offset + 8],
-            )
-        else:
-            n_strx, n_type, _n_sect, n_desc = struct.unpack(
-                f"{endian}IBBH", symdata[offset:offset + 8],
-            )
+        # nlist/nlist_64: first 8 bytes are identical (n_strx, n_type, n_sect, n_desc)
+        # entry_size differs (16 vs 12), but the header fields are the same layout
+        n_strx, n_type, _n_sect, n_desc = struct.unpack(
+            f"{endian}IBBH", symdata[offset:offset + 8],
+        )
 
         # Only exported symbols: N_EXT set and defined (N_SECT type, not N_UNDF)
         if not (n_type & _N_EXT):
@@ -429,8 +428,8 @@ def _parse_fat(f: Any, dylib_path: Path, magic: bytes) -> MachoMetadata:
     _CPU_TYPE_X86_64 = 0x01000007
     _CPU_TYPE_ARM64  = 0x0100000C
 
-    import platform
-    preferred_cputype = _CPU_TYPE_ARM64 if platform.machine() == "arm64" else _CPU_TYPE_X86_64
+    import platform as _platform
+    preferred_cputype = _CPU_TYPE_ARM64 if _platform.machine() in ("arm64", "aarch64") else _CPU_TYPE_X86_64
 
     # Read all fat_arch entries: cputype(4), cpusubtype(4), offset(4), size(4), align(4)
     arches: list[tuple[int, int]] = []  # (cputype, offset)

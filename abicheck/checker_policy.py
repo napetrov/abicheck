@@ -97,6 +97,9 @@ class ChangeKind(str, Enum):
     RPATH_CHANGED = "rpath_changed"
     RUNPATH_CHANGED = "runpath_changed"
 
+    # ── Mach-O specific ──────────────────────────────────────────────────
+    COMPAT_VERSION_CHANGED = "compat_version_changed"  # LC_ID_DYLIB compat_version changed → BREAKING
+
     # Symbol metadata drift (ELF .dynsym)
     SYMBOL_BINDING_CHANGED = "symbol_binding_changed"  # GLOBAL→WEAK (breaking)
     SYMBOL_BINDING_STRENGTHENED = (
@@ -309,6 +312,7 @@ BREAKING_KINDS = {
     ChangeKind.FIELD_BITFIELD_CHANGED,
     # ELF Sprint 2
     ChangeKind.SONAME_CHANGED,
+    ChangeKind.COMPAT_VERSION_CHANGED,  # Mach-O compat_version → BREAKING
     ChangeKind.SYMBOL_TYPE_CHANGED,
     ChangeKind.SYMBOL_SIZE_CHANGED,  # in ELF-only mode (no headers/DWARF) this may be
     # the sole signal for vtable/variable layout changes
@@ -586,8 +590,9 @@ IMPACT_TEXT: dict[ChangeKind, str] = {
     ChangeKind.TYPEDEF_BASE_CHANGED: "Underlying type changed; old code using the typedef operates on wrong representation.",
     # Bitfield
     ChangeKind.FIELD_BITFIELD_CHANGED: "Bit-field width or offset changed; old code reads/writes wrong bits.",
-    # ELF
+    # ELF / Mach-O
     ChangeKind.SONAME_CHANGED: "Dynamic linker looks for old SONAME; library won't be found without symlink.",
+    ChangeKind.COMPAT_VERSION_CHANGED: "Mach-O compatibility version changed; dylibs linked against old version may fail to load.",
     ChangeKind.SONAME_MISSING: "Library has no SONAME; package managers and ldconfig cannot track versions.",
     ChangeKind.VISIBILITY_LEAK: "Internal symbols exported without -fvisibility=hidden; namespace pollution risk.",
     ChangeKind.NEEDED_ADDED: "New shared library dependency; may not be available on target systems.",

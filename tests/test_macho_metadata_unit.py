@@ -227,7 +227,7 @@ class TestDiffMacho:
         assert soname[0].new_value == "/usr/lib/libfoo.2.dylib"
 
     def test_compat_version_change(self):
-        from abicheck.checker import _diff_macho
+        from abicheck.checker import ChangeKind, _diff_macho
         from abicheck.model import AbiSnapshot
 
         old = AbiSnapshot(library="libfoo.dylib", version="1.0", macho=MachoMetadata(
@@ -241,6 +241,7 @@ class TestDiffMacho:
         changes = _diff_macho(old, new)
         compat = [c for c in changes if c.symbol == "compat_version"]
         assert len(compat) == 1
+        assert compat[0].kind == ChangeKind.COMPAT_VERSION_CHANGED
 
     def test_dependency_changes(self):
         from abicheck.checker import ChangeKind, _diff_macho
