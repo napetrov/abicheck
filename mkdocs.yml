@@ -37,19 +37,19 @@ nav:
     - Limitations: concepts/limitations.md
     - Troubleshooting: concepts/troubleshooting.md
   - User Guide:
-    - Using abicheck: usage_and_coverage.md
+    - CLI Usage: usage_and_coverage.md
     - Tool Modes: tool_modes.md
-    - Exit Codes: exit_codes.md
     - Policy Profiles: policies.md
     - SARIF Output: sarif_output.md
     - Examples & Breakage Guide: examples_breakage_guide.md
     - Local Compare: local_compare.md
+    - ABICC Compatibility: abicc_compat.md
   - Reference:
-    - Architecture: reference/architecture.md
+    - Exit Codes: exit_codes.md
     - Change Kind Reference: reference/change_kinds.md
     - ABI Break Catalog: abi_breaking_cases_catalog.md
+    - Architecture: reference/architecture.md
     - Benchmark & Tool Comparison: tool_comparison.md
-    - ABICC Compatibility & Migration: abicc_compat.md
     - Format Compliance: abicc_format_compliance.md
     - libabigail Parity: libabigail_parity.md
 

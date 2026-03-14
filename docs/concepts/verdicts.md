@@ -106,9 +106,9 @@ ret=$?
 exit 0
 ```
 
-> For `compat` mode CI patterns, see [Migrating from ABICC](../migration/from_abicc.md).
-> Note: in compat mode, exit `1` = BREAKING, exit `2` = API_BREAK **or** tool error.
-> Use `--format json` to distinguish tool errors from real `API_BREAK` verdicts.
+> For `compat` mode CI patterns, see [ABICC Compatibility](../abicc_compat.md).
+> Note: in compat mode, exit `1` = BREAKING, exit `2` = API_BREAK.
+> Non-verdict failures use extended codes (`3`–`11`) — see [Exit Codes](../exit_codes.md).
 
 ---
 
