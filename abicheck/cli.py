@@ -24,6 +24,7 @@ import click
 
 from .checker import DiffResult, LibraryMetadata, compare
 from .compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_dump
+from .compat.cli import compat_group
 from .dumper import dump
 from .errors import AbicheckError
 from .reporter import to_json, to_markdown
@@ -616,10 +617,6 @@ def compare_cmd(
     elif result.verdict.value == "API_BREAK":
         sys.exit(2)
 
-# ── ABICC compat subcommands (implementation in abicheck.compat) ─────────────
-from .compat.cli import compat_group  # noqa: E402
-
-# fmt: on
 
 main.add_command(compat_group)
 
