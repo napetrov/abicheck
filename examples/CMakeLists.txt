@@ -19,8 +19,15 @@ endif()
 # Individual cases override this when testing visibility / dllexport.
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
-# Place all binaries in the per-case build directory so tests can find them
-# next to each other (libv1 + libv2 + app in the same folder).
+# Force multi-config generators (Visual Studio, Xcode, Ninja Multi-Config) to
+# place outputs directly in the per-case directory without a config subdirectory.
+# This ensures tests find libv1/libv2 at a predictable path on all platforms.
+foreach(_cfg IN ITEMS DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+  string(TOUPPER ${_cfg} _CFG)
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${_CFG} ${CMAKE_BINARY_DIR})
+  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${_CFG} ${CMAKE_BINARY_DIR})
+  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${_CFG} ${CMAKE_BINARY_DIR})
+endforeach()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
@@ -52,7 +59,6 @@ function(abicheck_add_case CASE_NAME)
 
   # --- Platform filter ---
   if(ARG_PLATFORMS)
-    set(_dominated FALSE)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
       list(FIND ARG_PLATFORMS "linux" _idx)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
@@ -72,15 +78,36 @@ function(abicheck_add_case CASE_NAME)
   set(_out ${CMAKE_BINARY_DIR}/${CASE_NAME})
   file(MAKE_DIRECTORY ${_out})
 
+  # Per-case output dirs for multi-config generators (no Debug/Release subdirs)
+  foreach(_cfg IN ITEMS DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    string(TOUPPER ${_cfg} _CFG)
+    set(_LIBRARY_OUTPUT_DIRECTORY_${_CFG} ${_out})
+    set(_RUNTIME_OUTPUT_DIRECTORY_${_CFG} ${_out})
+    set(_ARCHIVE_OUTPUT_DIRECTORY_${_CFG} ${_out})
+  endforeach()
+
   # --- v1 library ---
   set(_v1 ${CASE_NAME}_v1)
   add_library(${_v1} SHARED ${ARG_V1_SOURCES})
   set_target_properties(${_v1} PROPERTIES
     OUTPUT_NAME v1
     PREFIX "lib"
+    NO_SONAME ON
     LIBRARY_OUTPUT_DIRECTORY ${_out}
     RUNTIME_OUTPUT_DIRECTORY ${_out}
     ARCHIVE_OUTPUT_DIRECTORY ${_out}
+    LIBRARY_OUTPUT_DIRECTORY_DEBUG ${_out}
+    LIBRARY_OUTPUT_DIRECTORY_RELEASE ${_out}
+    LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO ${_out}
+    LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL ${_out}
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG ${_out}
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE ${_out}
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${_out}
+    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${_out}
+    ARCHIVE_OUTPUT_DIRECTORY_DEBUG ${_out}
+    ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${_out}
+    ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO ${_out}
+    ARCHIVE_OUTPUT_DIRECTORY_MINSIZEREL ${_out}
   )
   if(ARG_V1_INCLUDE_DIRS)
     target_include_directories(${_v1} PRIVATE ${ARG_V1_INCLUDE_DIRS})
@@ -107,9 +134,22 @@ function(abicheck_add_case CASE_NAME)
   set_target_properties(${_v2} PROPERTIES
     OUTPUT_NAME v2
     PREFIX "lib"
+    NO_SONAME ON
     LIBRARY_OUTPUT_DIRECTORY ${_out}
     RUNTIME_OUTPUT_DIRECTORY ${_out}
     ARCHIVE_OUTPUT_DIRECTORY ${_out}
+    LIBRARY_OUTPUT_DIRECTORY_DEBUG ${_out}
+    LIBRARY_OUTPUT_DIRECTORY_RELEASE ${_out}
+    LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO ${_out}
+    LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL ${_out}
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG ${_out}
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE ${_out}
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${_out}
+    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${_out}
+    ARCHIVE_OUTPUT_DIRECTORY_DEBUG ${_out}
+    ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${_out}
+    ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO ${_out}
+    ARCHIVE_OUTPUT_DIRECTORY_MINSIZEREL ${_out}
   )
   if(ARG_V2_INCLUDE_DIRS)
     target_include_directories(${_v2} PRIVATE ${ARG_V2_INCLUDE_DIRS})
@@ -137,6 +177,10 @@ function(abicheck_add_case CASE_NAME)
     set_target_properties(${_app} PROPERTIES
       OUTPUT_NAME app_v1
       RUNTIME_OUTPUT_DIRECTORY ${_out}
+      RUNTIME_OUTPUT_DIRECTORY_DEBUG ${_out}
+      RUNTIME_OUTPUT_DIRECTORY_RELEASE ${_out}
+      RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${_out}
+      RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${_out}
     )
     target_link_libraries(${_app} PRIVATE ${_v1})
     if(ARG_APP_INCLUDE_DIRS)
@@ -145,7 +189,12 @@ function(abicheck_add_case CASE_NAME)
     if(ARG_APP_LINK_LIBRARIES)
       target_link_libraries(${_app} PRIVATE ${ARG_APP_LINK_LIBRARIES})
     endif()
-    if(NOT MSVC)
+    if(APPLE)
+      set_target_properties(${_app} PROPERTIES
+        BUILD_RPATH "@loader_path"
+        INSTALL_RPATH "@loader_path"
+      )
+    elseif(NOT MSVC)
       set_target_properties(${_app} PROPERTIES
         BUILD_RPATH "$ORIGIN"
         INSTALL_RPATH "$ORIGIN"

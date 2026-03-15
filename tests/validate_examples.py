@@ -167,14 +167,25 @@ def _compile(src: Path, out: Path) -> str | None:
 
 
 def _find_built_lib(directory: Path, name: str) -> Path | None:
-    """Find a shared library named *name* in *directory* (any platform extension)."""
+    """Find a shared library named *name* in *directory* (any platform extension).
+
+    Also checks common multi-config generator subdirectories (Debug/, Release/)
+    in case the per-config output directory overrides were not applied.
+    """
     if not directory.exists():
         return None
-    for prefix in ("lib", ""):
-        for suffix in (".so", ".dylib", ".dll"):
-            lib = directory / f"{prefix}{name}{suffix}"
-            if lib.exists():
-                return lib
+    # Directories to search: the directory itself, then config subdirs
+    search_dirs = [directory]
+    for cfg in ("Debug", "Release", "RelWithDebInfo", "MinSizeRel"):
+        sub = directory / cfg
+        if sub.is_dir():
+            search_dirs.append(sub)
+    for search_dir in search_dirs:
+        for prefix in ("lib", ""):
+            for suffix in (".so", ".dylib", ".dll"):
+                lib = search_dir / f"{prefix}{name}{suffix}"
+                if lib.exists():
+                    return lib
     return None
 
 
@@ -198,7 +209,8 @@ def _build_with_cmake(case_dir: Path, build_dir: Path) -> tuple[Path | None, Pat
     v1_target = f"{case_name}_v1"
     v2_target = f"{case_name}_v2"
     r = subprocess.run(
-        [cmake, "--build", str(build_dir), "--target", v1_target, v2_target],
+        [cmake, "--build", str(build_dir), "--target", v1_target, v2_target,
+         "--config", "Debug"],
         capture_output=True, text=True, timeout=120,
     )
     if r.returncode != 0:
@@ -254,14 +266,25 @@ def run_case(
     tmp.mkdir(parents=True)
 
     # Build strategy: CMake > direct compilation
-    if (case_dir / "CMakeLists.txt").exists() and shutil.which("cmake"):
+    has_cmake_file = (case_dir / "CMakeLists.txt").exists()
+    has_cmake = bool(shutil.which("cmake"))
+
+    if has_cmake_file and has_cmake:
         cmake_build = tmp / "cmake_build"
         v1_so, v2_so, err = _build_with_cmake(case_dir, cmake_build)
         if err:
             return CaseResult(name, "ERROR", expected_raw, None, err)
         v1_hdr_path = v1_hdr
         v2_hdr_path = v2_hdr
-    else:
+    elif has_cmake_file and not has_cmake:
+        # CMakeLists.txt exists but cmake is not available — check if the case
+        # needs special build flags that direct compilation cannot replicate.
+        cmake_text = (case_dir / "CMakeLists.txt").read_text()
+        _special = ("FORCE_INCLUDE", "LINK_OPTIONS", "COMPILE_OPTIONS",
+                     "fvisibility", "version-script", "soname")
+        if any(tok in cmake_text for tok in _special):
+            return CaseResult(name, "SKIP", expected_raw, None,
+                              f"requires cmake (CMakeLists.txt has special build flags)")
         v1_so = tmp / f"libv1{SHARED_LIB_SUFFIX}"
         v2_so = tmp / f"libv2{SHARED_LIB_SUFFIX}"
         err = _compile(v1_src, v1_so)
