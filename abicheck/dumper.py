@@ -835,6 +835,28 @@ class _CastxmlParser:
         return typedefs
 
 
+def _detect_format(path: Path) -> str:
+    """Detect binary format from magic bytes. Returns 'elf', 'macho', 'pe', or 'unknown'."""
+    try:
+        with open(path, "rb") as f:
+            magic = f.read(4)
+    except OSError:
+        return "unknown"
+    if magic == b"\x7fELF":
+        return "elf"
+    _macho_magics = {
+        b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+        b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca",
+    }
+    if magic in _macho_magics:
+        return "macho"
+    if magic[:2] == b"MZ":
+        return "pe"
+    return "unknown"
+
+
 def dump(
     so_path: Path,
     headers: list[Path],
@@ -849,10 +871,14 @@ def dump(
     nostdinc: bool = False,
     lang: str | None = None,
 ) -> AbiSnapshot:
-    """Create an AbiSnapshot from a .so + headers.
+    """Create an AbiSnapshot from a shared library + headers.
+
+    Supports ELF (.so), Mach-O (.dylib), and PE (.dll) binaries.
+    Binary format is auto-detected from magic bytes.  For all formats,
+    castxml header analysis is performed when *headers* are provided.
 
     Args:
-        so_path: Path to the shared library (.so).
+        so_path: Path to the shared library (.so / .dylib / .dll).
         headers: List of public header files to parse.
         extra_includes: Additional -I include directories for castxml.
         version: Version string for the snapshot (e.g. "1.2.3").
@@ -867,7 +893,44 @@ def dump(
     Returns:
         AbiSnapshot with functions, variables, and types populated.
     """
-    extra_includes = extra_includes or []
+    fmt = _detect_format(so_path)
+
+    if fmt == "macho":
+        return _dump_macho(
+            so_path, headers, extra_includes or [], version, compiler,
+            gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
+            sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+        )
+    if fmt == "pe":
+        return _dump_pe(
+            so_path, headers, extra_includes or [], version, compiler,
+            gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
+            sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+        )
+
+    # Default: ELF (original path)
+    return _dump_elf(
+        so_path, headers, extra_includes or [], version, compiler,
+        gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
+        sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+    )
+
+
+def _dump_elf(
+    so_path: Path,
+    headers: list[Path],
+    extra_includes: list[Path],
+    version: str,
+    compiler: str,
+    *,
+    gcc_path: str | None = None,
+    gcc_prefix: str | None = None,
+    gcc_options: str | None = None,
+    sysroot: Path | None = None,
+    nostdinc: bool = False,
+    lang: str | None = None,
+) -> AbiSnapshot:
+    """ELF-specific dump: pyelftools + DWARF + castxml."""
     exported_dynamic, exported_static = _pyelftools_exported_symbols(so_path)
 
     from .dwarf_unified import parse_dwarf
@@ -955,3 +1018,171 @@ def dump(
         language_profile=profile_hint,
     )
     return snapshot
+
+
+def _dump_macho(
+    dylib_path: Path,
+    headers: list[Path],
+    extra_includes: list[Path],
+    version: str,
+    compiler: str,
+    *,
+    gcc_path: str | None = None,
+    gcc_prefix: str | None = None,
+    gcc_options: str | None = None,
+    sysroot: Path | None = None,
+    nostdinc: bool = False,
+    lang: str | None = None,
+) -> AbiSnapshot:
+    """Mach-O dump: export table from macholib + castxml header analysis."""
+    from .macho_metadata import parse_macho_metadata
+
+    macho_meta = parse_macho_metadata(dylib_path)
+    # Build exported symbol set from Mach-O export table
+    exported_dynamic: set[str] = {
+        exp.name for exp in macho_meta.exports
+        if exp.name and _is_abi_relevant_symbol(exp.name)
+    }
+
+    profile_hint: str | None = None
+    if lang is not None:
+        lu = lang.upper()
+        if lu == "C":
+            profile_hint = "c"
+        elif lu in ("C++", "CPP"):
+            profile_hint = "cpp"
+
+    if not headers:
+        warnings.warn(
+            "No headers provided — only Mach-O exported symbols will be captured; "
+            "type information will be missing.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return AbiSnapshot(
+            library=dylib_path.name,
+            version=version,
+            functions=[
+                Function(
+                    name=sym, mangled=sym, return_type="?",
+                    # ELF_ONLY: marks symbols as export-table-only (no header
+                    # confirmation).  This ensures the checker uses
+                    # FUNC_REMOVED_ELF_ONLY (compatible) rather than
+                    # FUNC_REMOVED (breaking) for visibility-cleanup removals.
+                    visibility=Visibility.ELF_ONLY,
+                    is_extern_c=not sym.startswith("_Z"),
+                )
+                for sym in sorted(exported_dynamic)
+            ],
+            macho=macho_meta,
+            elf_only_mode=True,
+            platform="macho",
+            language_profile=profile_hint,
+        )
+
+    xml_root = _castxml_dump(
+        headers, extra_includes, compiler=compiler,
+        gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
+        sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+    )
+    # On macOS, C symbols have a leading underscore in the export table
+    # (Mach-O convention). Strip it for matching against castxml names.
+    exported_no_underscore: set[str] = set()
+    for sym in exported_dynamic:
+        if sym.startswith("_") and not sym.startswith("__Z"):
+            exported_no_underscore.add(sym[1:])
+        else:
+            exported_no_underscore.add(sym)
+    parser = _CastxmlParser(
+        xml_root, exported_no_underscore, exported_no_underscore,
+    )
+
+    return AbiSnapshot(
+        library=dylib_path.name,
+        version=version,
+        functions=parser.parse_functions(),
+        variables=parser.parse_variables(),
+        types=parser.parse_types(),
+        enums=parser.parse_enums(),
+        typedefs=parser.parse_typedefs(),
+        macho=macho_meta,
+        platform="macho",
+        language_profile=profile_hint,
+    )
+
+
+def _dump_pe(
+    dll_path: Path,
+    headers: list[Path],
+    extra_includes: list[Path],
+    version: str,
+    compiler: str,
+    *,
+    gcc_path: str | None = None,
+    gcc_prefix: str | None = None,
+    gcc_options: str | None = None,
+    sysroot: Path | None = None,
+    nostdinc: bool = False,
+    lang: str | None = None,
+) -> AbiSnapshot:
+    """PE dump: export table from pefile + castxml header analysis."""
+    from .pe_metadata import parse_pe_metadata
+
+    pe_meta = parse_pe_metadata(dll_path)
+    exported_dynamic: set[str] = {
+        (exp.name or f"ordinal:{exp.ordinal}")
+        for exp in pe_meta.exports
+    }
+    exported_static: set[str] = set(exported_dynamic)
+
+    profile_hint: str | None = None
+    if lang is not None:
+        lu = lang.upper()
+        if lu == "C":
+            profile_hint = "c"
+        elif lu in ("C++", "CPP"):
+            profile_hint = "cpp"
+
+    if not headers:
+        warnings.warn(
+            "No headers provided — only PE exported symbols will be captured; "
+            "type information will be missing.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return AbiSnapshot(
+            library=dll_path.name,
+            version=version,
+            functions=[
+                Function(
+                    name=sym, mangled=sym, return_type="?",
+                    visibility=Visibility.ELF_ONLY,
+                    is_extern_c=not sym.startswith("?"),
+                )
+                for sym in sorted(exported_dynamic)
+            ],
+            pe=pe_meta,
+            elf_only_mode=True,
+            platform="pe",
+            language_profile=profile_hint,
+        )
+
+    xml_root = _castxml_dump(
+        headers, extra_includes, compiler=compiler,
+        gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
+        sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+    )
+    parser = _CastxmlParser(xml_root, exported_dynamic, exported_static)
+
+    return AbiSnapshot(
+        library=dll_path.name,
+        version=version,
+        functions=parser.parse_functions(),
+        variables=parser.parse_variables(),
+        types=parser.parse_types(),
+        enums=parser.parse_enums(),
+        typedefs=parser.parse_typedefs(),
+        pe=pe_meta,
+        platform="pe",
+        language_profile=profile_hint,
+    )

@@ -287,87 +287,6 @@ def _find_built_lib(directory: Path, name: str) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
-# Format-aware dump helper (dump() is ELF-only; Mach-O/PE need routing)
-# ---------------------------------------------------------------------------
-def _dump_library(
-    lib_path: Path,
-    headers: list[Path] | None = None,
-    version: str = "unknown",
-) -> object:
-    """Create an ABI snapshot from a shared library, auto-detecting format.
-
-    For ELF: delegates to ``dumper.dump()`` (full AST + ELF analysis).
-    For Mach-O/PE: builds a snapshot from export table metadata (mirrors the
-    CLI's ``_dump_native_binary`` logic).
-    """
-    from abicheck.model import AbiSnapshot, Function, Visibility
-
-    # Detect binary format from magic bytes
-    try:
-        with open(lib_path, "rb") as f:
-            magic = f.read(4)
-    except OSError as exc:
-        raise RuntimeError(f"Cannot read {lib_path}: {exc}") from exc
-
-    is_elf = magic == b"\x7fELF"
-    # Mach-O magic numbers (32/64-bit, both byte orders, fat/universal)
-    _macho_magics = {
-        b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
-        b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
-        b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
-        b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca",
-    }
-    is_mach = magic in _macho_magics
-    is_pe = magic[:2] == b"MZ"
-
-    if is_elf:
-        from abicheck.dumper import dump
-        hdrs = headers or []
-        return dump(lib_path, headers=hdrs, version=version)
-
-    if is_mach:
-        from abicheck.macho_metadata import parse_macho_metadata
-        meta = parse_macho_metadata(lib_path)
-        funcs = [
-            Function(
-                name=exp.name, mangled=exp.name, return_type="?",
-                visibility=Visibility.PUBLIC,
-                is_extern_c=not exp.name.startswith("_Z"),
-            )
-            for exp in meta.exports if exp.name
-        ]
-        return AbiSnapshot(
-            library=lib_path.name, version=version,
-            functions=funcs, macho=meta,
-            platform="macho",
-        )
-
-    if is_pe:
-        from abicheck.pe_metadata import parse_pe_metadata
-        pe_meta = parse_pe_metadata(lib_path)
-        funcs = [
-            Function(
-                name=(exp.name or f"ordinal:{exp.ordinal}"),
-                mangled=(exp.name or f"ordinal:{exp.ordinal}"),
-                return_type="?",
-                visibility=Visibility.PUBLIC,
-                is_extern_c=not (exp.name or "").startswith("?"),
-            )
-            for exp in pe_meta.exports
-        ]
-        return AbiSnapshot(
-            library=lib_path.name, version=version,
-            functions=funcs, pe=pe_meta,
-            platform="pe",
-        )
-
-    raise RuntimeError(
-        f"Unrecognised binary format for {lib_path} "
-        f"(magic: {magic.hex()})"
-    )
-
-
-# ---------------------------------------------------------------------------
 # Auto-discovery: build test parameter list
 # ---------------------------------------------------------------------------
 def _collect_cases() -> list[tuple[str, str | None]]:
@@ -450,10 +369,11 @@ def test_example_pipeline(case_name: str, expected_verdict: str, tmp_path: Path)
 
     # Run abicheck pipeline via Python API (always uses THIS repo's code)
     from abicheck.checker import compare
+    from abicheck.dumper import dump
 
     try:
-        snap1 = _dump_library(v1_lib, headers=headers_v1, version="v1")
-        snap2 = _dump_library(v2_lib, headers=headers_v2, version="v2")
+        snap1 = dump(v1_lib, headers=headers_v1, version="v1")
+        snap2 = dump(v2_lib, headers=headers_v2, version="v2")
     except Exception as exc:
         pytest.fail(f"{case_name}: dump failed: {exc}")
 
