@@ -502,3 +502,39 @@ class TestElfOnlyModeRemoved:
         result = compare(old, new)
         kinds = [c.kind for c in result.changes]
         assert ChangeKind.FUNC_REMOVED in kinds
+
+
+class TestElfOnlyModePeMacho:
+    """Cover elf_only_mode branch in _diff_pe and _diff_macho."""
+
+    def test_diff_pe_elf_only_removed(self):
+        """_diff_pe: removed export in elf_only_mode → FUNC_REMOVED_ELF_ONLY."""
+        from abicheck.checker import compare
+        from abicheck.checker_policy import ChangeKind
+        from abicheck.pe_metadata import PeExport, PeMetadata
+
+        old_pe = PeMetadata(machine="x86_64", exports=[PeExport(name="FooExport", ordinal=1)])
+        new_pe = PeMetadata(machine="x86_64", exports=[])
+
+        old = AbiSnapshot(library="foo.dll", version="1.0", pe=old_pe, platform="pe", elf_only_mode=True)
+        new = AbiSnapshot(library="foo.dll", version="2.0", pe=new_pe, platform="pe", elf_only_mode=True)
+
+        result = compare(old, new)
+        kinds = [c.kind for c in result.changes]
+        assert ChangeKind.FUNC_REMOVED_ELF_ONLY in kinds
+
+    def test_diff_macho_elf_only_removed(self):
+        """_diff_macho: removed export in elf_only_mode → FUNC_REMOVED_ELF_ONLY."""
+        from abicheck.checker import compare
+        from abicheck.checker_policy import ChangeKind
+        from abicheck.macho_metadata import MachoExport, MachoMetadata
+
+        old_macho = MachoMetadata(exports=[MachoExport(name="_foo_func")])
+        new_macho = MachoMetadata(exports=[])
+
+        old = AbiSnapshot(library="libfoo.dylib", version="1.0", macho=old_macho, platform="macho", elf_only_mode=True)
+        new = AbiSnapshot(library="libfoo.dylib", version="2.0", macho=new_macho, platform="macho", elf_only_mode=True)
+
+        result = compare(old, new)
+        kinds = [c.kind for c in result.changes]
+        assert ChangeKind.FUNC_REMOVED_ELF_ONLY in kinds
