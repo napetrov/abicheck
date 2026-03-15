@@ -798,8 +798,10 @@ class TypeDatabase:
                 pos = self._skip_subrecord(sub_leaf, d, pos)
 
             elif sub_leaf >= 0xF0:
-                # Padding bytes — skip
-                pos = pos  # already past the leaf byte
+                # Padding bytes — lower nibble is total pad length;
+                # subtract 2 for the two bytes already consumed.
+                skip = sub_leaf & 0x0F
+                pos += max(0, skip - 2)
                 continue
 
             else:
