@@ -73,14 +73,15 @@ automatically, then runs ABI comparison and reports results.
 | `upload-sarif` | `false` | Upload SARIF to GitHub Code Scanning |
 | `fail-on-breaking` | `true` | Fail step on binary ABI break |
 | `fail-on-api-break` | `false` | Fail step on source-level API break |
+| `fail-on-additions` | `false` | Fail step when new public symbols/types are added (detects unintentional API expansion) |
 | `add-job-summary` | `true` | Write summary to Job Summary panel |
 
 ## Outputs
 
 | Output | Description |
 |--------|-------------|
-| `verdict` | `COMPATIBLE`, `API_BREAK`, `BREAKING`, or `ERROR` |
-| `exit-code` | `0` (compatible), `2` (API break), `4` (ABI break) |
+| `verdict` | `COMPATIBLE`, `ADDITIONS`, `API_BREAK`, `BREAKING`, or `ERROR` |
+| `exit-code` | `0` (compatible), `1` (API additions), `2` (API break), `4` (ABI break) |
 | `report-path` | Path to the generated report file |
 
 ## Usage examples
@@ -263,6 +264,28 @@ Allow API breaks but block binary ABI breaks:
           fail-on-breaking: true
           fail-on-api-break: false
 ```
+
+### Detect unintentional API expansion
+
+Block PRs that accidentally add new public symbols or types:
+
+```yaml
+      - uses: napetrov/abicheck@v1
+        with:
+          old-library: baseline.json
+          new-library: build/libfoo.so
+          new-header: include/foo.h
+          fail-on-breaking: true
+          fail-on-additions: true   # exit code 1 if any new public API appears
+```
+
+When `fail-on-additions: true`:
+- Exit code `1` → new public symbol/type added (`verdict: ADDITIONS`)
+- Exit code `0` → no additions, no breaks (`verdict: COMPATIBLE`)
+- Exit code `4` → binary ABI break (`verdict: BREAKING`)
+
+This is useful when your library has a stable frozen API and any expansion
+must be a deliberate, reviewed decision rather than an accidental side effect.
 
 ## Versioning
 
