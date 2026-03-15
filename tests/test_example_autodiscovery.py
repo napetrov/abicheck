@@ -239,11 +239,12 @@ def _build_with_cmake(case_dir: Path, build_dir: Path) -> tuple[Path, Path]:
     if r.returncode != 0:
         pytest.fail(f"cmake configure failed for {case_name}:\n{r.stderr[:600]}")
 
-    # Build only this case's targets
+    # Build only this case's targets (--config for multi-config generators)
     v1_target = f"{case_name}_v1"
     v2_target = f"{case_name}_v2"
     r = subprocess.run(
-        [cmake, "--build", str(build_dir), "--target", v1_target, v2_target],
+        [cmake, "--build", str(build_dir), "--target", v1_target, v2_target,
+         "--config", "Debug"],
         capture_output=True, text=True, timeout=120,
     )
     if r.returncode != 0:
@@ -263,18 +264,25 @@ def _build_with_cmake(case_dir: Path, build_dir: Path) -> tuple[Path, Path]:
 
 
 def _find_built_lib(directory: Path, name: str) -> Path | None:
-    """Find a shared library named *name* in *directory* (any platform extension)."""
+    """Find a shared library named *name* in *directory* (any platform extension).
+
+    Also checks common multi-config generator subdirectories (Debug/, Release/)
+    in case the per-config output directory overrides were not applied.
+    """
     if not directory.exists():
         return None
-    for suffix in (".so", ".dylib", ".dll"):
-        lib = directory / f"lib{name}{suffix}"
-        if lib.exists():
-            return lib
-    # Windows: may not have lib prefix
-    for suffix in (".dll", ".so", ".dylib"):
-        lib = directory / f"{name}{suffix}"
-        if lib.exists():
-            return lib
+    # Directories to search: the directory itself, then config subdirs
+    search_dirs = [directory]
+    for cfg in ("Debug", "Release", "RelWithDebInfo", "MinSizeRel"):
+        sub = directory / cfg
+        if sub.is_dir():
+            search_dirs.append(sub)
+    for search_dir in search_dirs:
+        for prefix in ("lib", ""):
+            for suffix in (".so", ".dylib", ".dll"):
+                lib = search_dir / f"{prefix}{name}{suffix}"
+                if lib.exists():
+                    return lib
     return None
 
 
@@ -323,10 +331,31 @@ def test_example_pipeline(case_name: str, expected_verdict: str, tmp_path: Path)
     # Build strategy:
     # 1. CMake (if CMakeLists.txt exists) — cross-platform, handles special flags
     # 2. Direct compilation fallback — simple cases without special flags
-    if (case_dir / "CMakeLists.txt").exists() and shutil.which("cmake"):
+    has_cmake_file = (case_dir / "CMakeLists.txt").exists()
+    has_cmake = bool(shutil.which("cmake"))
+
+    if has_cmake_file and has_cmake:
         build_dir = tmp_path / "cmake_build"
         v1_lib, v2_lib = _build_with_cmake(case_dir, build_dir)
         # Resolve header paths — headers stay in the source tree
+        headers_v1 = [v1_hdr] if v1_hdr and v1_hdr.exists() else []
+        headers_v2 = [v2_hdr] if v2_hdr and v2_hdr.exists() else []
+    elif has_cmake_file and not has_cmake:
+        # CMakeLists.txt exists but cmake is not available — check if the case
+        # needs special build flags that direct compilation cannot replicate.
+        cmake_text = (case_dir / "CMakeLists.txt").read_text()
+        _special = ("FORCE_INCLUDE", "LINK_OPTIONS", "COMPILE_OPTIONS",
+                    "fvisibility", "version-script", "soname")
+        if any(tok in cmake_text for tok in _special):
+            pytest.skip(
+                f"{case_name} requires cmake (CMakeLists.txt has special "
+                f"build flags) but cmake is not in PATH"
+            )
+        # Simple case — safe to compile directly
+        v1_lib = tmp_path / f"libv1{SHARED_LIB_SUFFIX}"
+        v2_lib = tmp_path / f"libv2{SHARED_LIB_SUFFIX}"
+        _compile_shared(v1_src, v1_lib)
+        _compile_shared(v2_src, v2_lib)
         headers_v1 = [v1_hdr] if v1_hdr and v1_hdr.exists() else []
         headers_v2 = [v2_hdr] if v2_hdr and v2_hdr.exists() else []
     else:

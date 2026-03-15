@@ -165,14 +165,23 @@ PLATFORMS: dict[str, list[str]] = {
 }
 
 def _find_cmake_lib(directory: Path, name: str) -> Path | None:
-    """Find a shared library named *name* built by CMake in *directory*."""
+    """Find a shared library named *name* built by CMake in *directory*.
+
+    Also checks common multi-config generator subdirectories (Debug/, Release/).
+    """
     if not directory.exists():
         return None
-    for prefix in ("lib", ""):
-        for suffix in (".so", ".dylib", ".dll"):
-            lib = directory / f"{prefix}{name}{suffix}"
-            if lib.exists():
-                return lib
+    search_dirs = [directory]
+    for cfg in ("Debug", "Release", "RelWithDebInfo", "MinSizeRel"):
+        sub = directory / cfg
+        if sub.is_dir():
+            search_dirs.append(sub)
+    for search_dir in search_dirs:
+        for prefix in ("lib", ""):
+            for suffix in (".so", ".dylib", ".dll"):
+                lib = search_dir / f"{prefix}{name}{suffix}"
+                if lib.exists():
+                    return lib
     return None
 
 
@@ -855,7 +864,8 @@ def main() -> None:
                 if cr.returncode == 0:
                     cr = subprocess.run(
                         ["cmake", "--build", str(cmake_build),
-                         "--target", f"{name}_v1", f"{name}_v2"],
+                         "--target", f"{name}_v1", f"{name}_v2",
+                         "--config", "Debug"],
                         capture_output=True, text=True, timeout=120,
                     )
             except subprocess.TimeoutExpired:

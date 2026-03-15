@@ -105,12 +105,23 @@ def _compile_shared(src: Path, out: Path) -> bool:
 
 
 def _find_lib(directory: Path, name: str) -> Path | None:
-    """Find a shared library in directory across platforms."""
-    for prefix in ("lib", ""):
-        for suffix in (".so", ".dylib", ".dll"):
-            p = directory / f"{prefix}{name}{suffix}"
-            if p.exists():
-                return p
+    """Find a shared library in directory across platforms.
+
+    Also checks multi-config generator subdirectories (Debug/, Release/).
+    """
+    if not directory.exists():
+        return None
+    search_dirs = [directory]
+    for cfg in ("Debug", "Release", "RelWithDebInfo", "MinSizeRel"):
+        sub = directory / cfg
+        if sub.is_dir():
+            search_dirs.append(sub)
+    for search_dir in search_dirs:
+        for prefix in ("lib", ""):
+            for suffix in (".so", ".dylib", ".dll"):
+                p = search_dir / f"{prefix}{name}{suffix}"
+                if p.exists():
+                    return p
     return None
 
 
@@ -172,7 +183,8 @@ def test_abi_example(case_name, expected_verdict, hdr_v1, hdr_v2, tmp_path):
         if r.returncode == 0:
             r = subprocess.run(
                 ["cmake", "--build", str(cmake_build),
-                 "--target", f"{case_name}_v1", f"{case_name}_v2"],
+                 "--target", f"{case_name}_v1", f"{case_name}_v2",
+                 "--config", "Debug"],
                 capture_output=True, text=True, timeout=120,
             )
             if r.returncode == 0:
@@ -181,9 +193,32 @@ def test_abi_example(case_name, expected_verdict, hdr_v1, hdr_v2, tmp_path):
                 libv2 = _find_lib(out_dir, "v2")
 
     if not libv1 or not libv2:
-        # Fallback: direct compilation
-        src_v1 = build_dir / hdr_v1  # hdr_v1 is actually the source file name
-        src_v2 = build_dir / hdr_v2
+        # Fallback: direct compilation.
+        # hdr_v1/hdr_v2 may be header names (e.g. v1.hpp, foo_v1.h) rather
+        # than compilable source files. Try to find the actual source file.
+        def _find_source(d: Path, hint: str) -> Path:
+            """Resolve a compilable source from a hint that may be a header."""
+            p = d / hint
+            if p.suffix in (".c", ".cpp"):
+                return p
+            # hint is a header — look for matching source
+            stem = p.stem
+            for ext in (".c", ".cpp"):
+                src = d / f"{stem}{ext}"
+                if src.exists():
+                    return src
+            # libfoo pattern: foo_v1.h → libfoo_v1.c
+            if stem.endswith(("_v1", "_v2")):
+                base = stem[:-3]  # e.g. "foo"
+                tag = stem[-3:]   # e.g. "_v1"
+                for ext in (".c", ".cpp"):
+                    src = d / f"lib{base}{tag}{ext}"
+                    if src.exists():
+                        return src
+            return p  # best effort
+
+        src_v1 = _find_source(build_dir, hdr_v1)
+        src_v2 = _find_source(build_dir, hdr_v2)
         libv1 = tmp_path / f"libv1{suffix}"
         libv2 = tmp_path / f"libv2{suffix}"
         if not _compile_shared(src_v1, libv1):

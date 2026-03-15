@@ -311,7 +311,11 @@ The `examples/` directory contains **48 real-world ABI break scenarios** — eac
 ```bash
 cd examples
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build --target case01_symbol_removal_v1 case01_symbol_removal_v2
+cmake --build build --target case01_symbol_removal_v1 case01_symbol_removal_v2 --config Debug
+
+# Linux:   libv1.so / libv2.so
+# macOS:   libv1.dylib / libv2.dylib
+# Windows: libv1.dll / libv2.dll
 abicheck compare build/case01_symbol_removal/libv1.so build/case01_symbol_removal/libv2.so \
     --old-header case01_symbol_removal/v1.h --new-header case01_symbol_removal/v2.h
 # Verdict: BREAKING — symbol 'helper' was removed
