@@ -52,7 +52,7 @@ class TestCompareVerbose:
 class TestDumpVerbose:
     def test_verbose_flag_accepted(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
         out = tmp_path / "snap.json"
@@ -132,7 +132,7 @@ class TestCompareLang:
 class TestDumpLang:
     def test_lang_c_accepted(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
 
@@ -153,7 +153,7 @@ class TestDumpLang:
 
     def test_lang_cpp_sends_cpp_compiler(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
 
@@ -177,7 +177,7 @@ class TestDumpLang:
 class TestDumpCrossCompilation:
     def test_gcc_path_forwarded(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
 
@@ -198,7 +198,7 @@ class TestDumpCrossCompilation:
 
     def test_gcc_prefix_forwarded(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
 
@@ -219,7 +219,7 @@ class TestDumpCrossCompilation:
 
     def test_gcc_options_forwarded(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
 
@@ -240,7 +240,7 @@ class TestDumpCrossCompilation:
 
     def test_sysroot_forwarded(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
         sysroot_dir = tmp_path / "sysroot"
@@ -263,7 +263,7 @@ class TestDumpCrossCompilation:
 
     def test_nostdinc_forwarded(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
 
@@ -283,7 +283,7 @@ class TestDumpCrossCompilation:
 
     def test_multiple_cross_flags_combined(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
 

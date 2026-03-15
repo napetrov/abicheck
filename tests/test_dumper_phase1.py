@@ -11,7 +11,7 @@ from abicheck.model import Function, Visibility
 
 def test_dump_without_headers_warns_and_returns_exported_symbols(tmp_path, monkeypatch):
     so_path = tmp_path / "libfoo.so"
-    so_path.write_bytes(b"elf")
+    so_path.write_bytes(b"\x7fELF")
 
     monkeypatch.setattr("abicheck.dumper._pyelftools_exported_symbols", lambda _p: ({"z_sym", "a_sym"}, {"z_sym", "a_sym"}))
     monkeypatch.setattr("abicheck.elf_metadata.parse_elf_metadata", lambda _p: None)
@@ -51,7 +51,7 @@ class _FakeParser:
 
 def test_dump_with_headers_uses_castxml_parser_results(tmp_path, monkeypatch):
     so_path = tmp_path / "libfoo.so"
-    so_path.write_bytes(b"elf")
+    so_path.write_bytes(b"\x7fELF")
     header = tmp_path / "foo.h"
     header.write_text("void foo();\n", encoding="utf-8")
 
@@ -72,7 +72,7 @@ def test_dump_with_headers_uses_castxml_parser_results(tmp_path, monkeypatch):
 
 def test_dump_with_headers_propagates_castxml_error(tmp_path, monkeypatch):
     so_path = tmp_path / "libfoo.so"
-    so_path.write_bytes(b"elf")
+    so_path.write_bytes(b"\x7fELF")
     header = tmp_path / "foo.h"
     header.write_text("void foo();\n", encoding="utf-8")
 
