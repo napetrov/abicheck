@@ -182,7 +182,7 @@ def _dump_native_binary(
             from .pdb_utils import locate_pdb
             pdb_file = locate_pdb(
                 path, pdb_path_override=pdb_path,
-                allow_network=pdb_path is not None,
+                allow_network=False,  # never auto-download from symbol servers
             )
             if pdb_file is not None:
                 dwarf_meta, dwarf_adv = parse_pdb_debug_info(pdb_file)
