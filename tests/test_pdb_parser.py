@@ -30,10 +30,10 @@ from pathlib import Path
 import pytest
 
 from abicheck.pdb_parser import (
+    _CC_NAMES,
     LF_ARRAY,
     LF_BITFIELD,
     LF_CHAR,
-    LF_CLASS,
     LF_ENUM,
     LF_ENUMERATE,
     LF_FIELDLIST,
@@ -48,18 +48,13 @@ from abicheck.pdb_parser import (
     LF_ULONG,
     LF_UNION,
     LF_USHORT,
-    MsfFile,
-    TpiRecord,
-    TpiStream,
     TypeDatabase,
-    _CC_NAMES,
     _read_cstring,
     _read_numeric_leaf,
     parse_dbi_stream,
     parse_msf,
     parse_tpi_stream,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helper: build a minimal MSF PDB file in memory

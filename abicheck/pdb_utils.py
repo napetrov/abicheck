@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import struct
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pefile  # type: ignore[import-untyped]
 
@@ -35,13 +35,38 @@ _NB10_SIG = b"NB10"
 _DEBUG_TYPE_CODEVIEW = 2
 
 
-def locate_pdb(dll_path: Path, *, pdb_path_override: Path | None = None) -> Path | None:
+def _is_network_path(p: str | Path) -> bool:
+    """Return True if *p* looks like a UNC or network path."""
+    s = str(p)
+    if s.startswith("\\\\") or s.startswith("//"):
+        return True
+    # Also check via PureWindowsPath — catches normalised UNC anchors.
+    try:
+        anchor = PureWindowsPath(s).anchor
+        if anchor.startswith("\\\\"):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def locate_pdb(
+    dll_path: Path,
+    *,
+    pdb_path_override: Path | None = None,
+    allow_network: bool = False,
+) -> Path | None:
     """Find the PDB file for a PE binary.
 
     Search order:
     1. Explicit ``pdb_path_override`` (from --pdb-path CLI flag)
     2. PDB path embedded in PE debug directory (RSDS/NB10 CodeView entry)
     3. Same directory as the DLL, with ``.pdb`` extension
+
+    When *allow_network* is False (default), any candidate whose path looks
+    like a UNC/network share (``\\\\server\\...``) is silently skipped during
+    auto-discovery.  An explicit *pdb_path_override* is always honoured
+    regardless of *allow_network*.
 
     Returns the path if found (and the file exists), otherwise ``None``.
     """
@@ -55,10 +80,14 @@ def locate_pdb(dll_path: Path, *, pdb_path_override: Path | None = None) -> Path
     embedded = _extract_pdb_path_from_pe(dll_path)
     if embedded is not None:
         embedded_path = Path(embedded)
-        # Try the embedded path directly
-        if embedded_path.is_file():
-            return embedded_path
-        # Try just the filename in the DLL's directory
+        # Skip network paths during auto-discovery unless allowed
+        if not allow_network and _is_network_path(embedded_path):
+            log.debug("locate_pdb: skipping network path %s (use --pdb-path to override)", embedded)
+        else:
+            # Try the embedded path directly
+            if embedded_path.is_file():
+                return embedded_path
+        # Try just the filename in the DLL's directory (always local)
         local = dll_path.parent / embedded_path.name
         if local.is_file():
             return local

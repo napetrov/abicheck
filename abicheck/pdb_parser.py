@@ -35,7 +35,7 @@ import math
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any
 
 log = logging.getLogger(__name__)
 

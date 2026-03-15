@@ -36,18 +36,17 @@ from __future__ import annotations
 
 import logging
 import re
+import struct
 from pathlib import Path
 
 from .dwarf_advanced import AdvancedDwarfMetadata, ToolchainInfo
 from .dwarf_metadata import DwarfMetadata, EnumInfo, FieldInfo, StructLayout
 from .pdb_parser import (
-    CvBitfield,
     CvEnumerator,
     CvMember,
     CvStruct,
     PdbFile,
     TypeDatabase,
-    _CC_NAMES,
     parse_pdb,
 )
 
@@ -80,7 +79,7 @@ def parse_pdb_debug_info(
 
     try:
         pdb = parse_pdb(pdb_path)
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, struct.error) as exc:
         log.warning("parse_pdb_debug_info: failed to parse %s: %s", pdb_path, exc)
         return empty
 
@@ -230,20 +229,16 @@ def _extract_calling_conventions(
 ) -> None:
     """Extract calling conventions from LF_PROCEDURE and LF_MFUNCTION.
 
-    Populates ``adv.calling_conventions`` and ``adv.packed_structs``.
+    Populates ``adv.packed_structs``.
+
+    Note: ``adv.calling_conventions`` is NOT populated because TPI type
+    indices are not stable across builds — unrelated type insertions shift
+    all indices.  ``diff_advanced_dwarf()`` compares calling conventions by
+    key intersection, so using TPI indices as keys would cause false
+    ``calling_convention_changed`` reports.  Populating this dict requires
+    stable function identities (linkage names) from the PDB symbol stream,
+    which is not yet implemented.
     """
-    # Collect calling conventions from procedures
-    for ti, proc in types.all_procedures().items():
-        cc_name = types.calling_convention_name(proc.calling_convention)
-        # We store by type index as we don't have linkage names from TPI alone.
-        # The symbol stream would be needed for linkage names, but for ABI
-        # comparison purposes the CC set per binary is what matters.
-        adv.calling_conventions[f"<proc:0x{ti:x}>"] = cc_name
-
-    for ti, mfunc in types.all_mfunctions().items():
-        cc_name = types.calling_convention_name(mfunc.calling_convention)
-        adv.calling_conventions[f"<mfunc:0x{ti:x}>"] = cc_name
-
     # Collect packed structs
     for ti, cv_struct in types.all_structs().items():
         if cv_struct.is_forward_ref:
@@ -269,8 +264,6 @@ def _extract_toolchain_info(pdb: PdbFile, adv: AdvancedDwarfMetadata) -> None:
     # BuildNumber: bits 0-7 = minor, bits 8-14 = major, bit 15 = new format
     major = (h.build_number >> 8) & 0x7F
     minor = h.build_number & 0xFF
-    is_new = bool(h.build_number & 0x8000)
-
     # Construct a producer-like string from DBI metadata
     producer = f"MSVC {major}.{minor}"
     if machine:

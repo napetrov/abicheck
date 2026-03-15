@@ -50,7 +50,6 @@ from tests.test_pdb_parser import (
     _make_lf_union,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -245,19 +244,17 @@ class TestPdbToDwarfMetadata:
 class TestPdbToAdvancedDwarfMetadata:
     """Verify that PDB-derived AdvancedDwarfMetadata matches DWARF pipeline's model."""
 
-    def test_calling_conventions(self, pdb_with_struct_and_enum: Path) -> None:
+    def test_calling_conventions_not_populated(self, pdb_with_struct_and_enum: Path) -> None:
+        """calling_conventions is intentionally empty — TPI type indices are
+        not stable across builds, so per-function matching would cause false
+        positives in diff_advanced_dwarf().  Populating this dict requires
+        stable function identities (linkage names) from the PDB symbol stream.
+        """
         _, adv = parse_pdb_debug_info(pdb_with_struct_and_enum)
 
         assert isinstance(adv, AdvancedDwarfMetadata)
         assert adv.has_dwarf is True
-
-        # Should have procedures with various calling conventions
-        cc_values = set(adv.calling_conventions.values())
-        assert "cdecl" in cc_values
-        assert "stdcall" in cc_values
-        assert "fastcall" in cc_values
-        assert "thiscall" in cc_values
-        assert "vectorcall" in cc_values
+        assert adv.calling_conventions == {}
 
     def test_packed_structs_in_advanced(self, pdb_packed_struct: Path) -> None:
         _, adv = parse_pdb_debug_info(pdb_packed_struct)
