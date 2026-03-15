@@ -617,7 +617,18 @@ def compare_cmd(
         sys.exit(2)
 
 # ── ABICC compat subcommands (implementation in abicheck.compat) ─────────────
-from .compat.cli import compat_group  # noqa: E402
+from .compat.cli import (  # noqa: E402
+    compat_group,
+    _BINARY_ONLY_KINDS,
+    _apply_strict,
+    _apply_warn_newsym,
+    _build_skip_suppression,
+    _classify_compat_error_exit_code,
+    _compat_fail,
+    _filter_binary_only,
+    _filter_source_only,
+    _merge_suppression,
+)
 
 # fmt: on
 
