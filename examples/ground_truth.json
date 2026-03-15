@@ -5,7 +5,11 @@
     "case01_symbol_removal": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -13,7 +17,9 @@
     "case02_param_type_change": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -21,7 +27,11 @@
     "case03_compat_addition": {
       "expected": "COMPATIBLE",
       "category": "compatible",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": false,
       "api_break": false,
       "bad_practice": false
@@ -29,7 +39,11 @@
     "case04_no_change": {
       "expected": "NO_CHANGE",
       "category": "compatible",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": false,
       "api_break": false,
       "bad_practice": false
@@ -37,7 +51,9 @@
     "case05_soname": {
       "expected": "COMPATIBLE",
       "category": "bad_practice",
-      "platforms": ["linux"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": false,
       "api_break": false,
       "bad_practice": true
@@ -45,7 +61,10 @@
     "case06_visibility": {
       "expected": "COMPATIBLE",
       "category": "bad_practice",
-      "platforms": ["linux", "macos"],
+      "platforms": [
+        "linux",
+        "macos"
+      ],
       "abi_break": false,
       "api_break": false,
       "bad_practice": true
@@ -53,7 +72,9 @@
     "case07_struct_layout": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -61,7 +82,9 @@
     "case08_enum_value_change": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -69,7 +92,9 @@
     "case09_cpp_vtable": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -77,7 +102,9 @@
     "case10_return_type": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -85,7 +112,9 @@
     "case11_global_var_type": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -93,7 +122,11 @@
     "case12_function_removed": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -101,7 +134,9 @@
     "case13_symbol_versioning": {
       "expected": "COMPATIBLE",
       "category": "compatible",
-      "platforms": ["linux"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": false,
       "api_break": false,
       "bad_practice": false
@@ -109,7 +144,9 @@
     "case14_cpp_class_size": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -117,7 +154,9 @@
     "case15_noexcept_change": {
       "expected": "COMPATIBLE_WITH_RISK",
       "category": "risk",
-      "platforms": ["linux", "macos"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": false,
       "api_break": true,
       "bad_practice": false,
@@ -126,7 +165,9 @@
     "case16_inline_to_non_inline": {
       "expected": "COMPATIBLE",
       "category": "compatible",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": false,
       "api_break": false,
       "bad_practice": false
@@ -134,7 +175,9 @@
     "case17_template_abi": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -142,7 +185,9 @@
     "case18_dependency_leak": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": true,
       "api_break": false,
       "bad_practice": true
@@ -150,7 +195,11 @@
     "case19_enum_member_removed": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -158,7 +207,11 @@
     "case20_enum_member_value_changed": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -166,7 +219,11 @@
     "case21_method_became_static": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -174,7 +231,11 @@
     "case22_method_const_changed": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -182,7 +243,11 @@
     "case23_pure_virtual_added": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -190,7 +255,11 @@
     "case24_union_field_removed": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -198,7 +267,11 @@
     "case25_enum_member_added": {
       "expected": "COMPATIBLE",
       "category": "compatible",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": false,
       "api_break": false,
       "bad_practice": false
@@ -206,7 +279,11 @@
     "case26_union_field_added": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": false,
       "bad_practice": false
@@ -214,7 +291,9 @@
     "case27_symbol_binding_weakened": {
       "expected": "COMPATIBLE",
       "category": "compatible",
-      "platforms": ["linux"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": false,
       "api_break": false,
       "bad_practice": false
@@ -222,7 +301,11 @@
     "case28_typedef_opaque": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -230,7 +313,9 @@
     "case29_ifunc_transition": {
       "expected": "COMPATIBLE",
       "category": "compatible",
-      "platforms": ["linux"],
+      "platforms": [
+        "linux"
+      ],
       "abi_break": false,
       "api_break": false,
       "bad_practice": false
@@ -238,7 +323,11 @@
     "case30_field_qualifiers": {
       "expected": "BREAKING",
       "category": "api_break",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -247,7 +336,11 @@
       "expected": "API_BREAK",
       "category": "api_break",
       "expected_compat": "NO_CHANGE",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": false,
       "api_break": true,
       "bad_practice": false
@@ -255,7 +348,11 @@
     "case32_param_defaults": {
       "expected": "NO_CHANGE",
       "category": "compatible",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": false,
       "api_break": false,
       "bad_practice": false
@@ -263,7 +360,11 @@
     "case33_pointer_level": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -272,7 +373,11 @@
       "expected": "API_BREAK",
       "category": "api_break",
       "expected_compat": "NO_CHANGE",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": false,
       "api_break": true,
       "bad_practice": false
@@ -280,7 +385,11 @@
     "case35_field_rename": {
       "expected": "BREAKING",
       "category": "api_break",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": false,
       "api_break": true,
       "bad_practice": false
@@ -288,7 +397,11 @@
     "case36_anon_struct": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -296,7 +409,11 @@
     "case37_base_class": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -304,7 +421,11 @@
     "case38_virtual_methods": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -312,7 +433,11 @@
     "case39_var_const": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -320,7 +445,11 @@
     "case40_field_layout": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -328,7 +457,11 @@
     "case41_type_changes": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false
@@ -336,7 +469,11 @@
     "case26b_union_field_added_compatible": {
       "expected": "COMPATIBLE",
       "category": "compatible",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": false,
       "api_break": false,
       "bad_practice": false
@@ -344,7 +481,11 @@
     "case43_base_class_member_added": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
@@ -353,7 +494,11 @@
     "case44_cyclic_type_member_added": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
@@ -362,7 +507,11 @@
     "case45_multi_dim_array_change": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
@@ -371,7 +520,11 @@
     "case46_pointer_chain_type_change": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
@@ -380,7 +533,11 @@
     "case47_inline_to_outlined": {
       "expected": "COMPATIBLE",
       "category": "compatible",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": false,
       "api_break": false,
       "bad_practice": false,
@@ -389,7 +546,11 @@
     "case48_leaf_struct_through_pointer": {
       "expected": "BREAKING",
       "category": "breaking",
-      "platforms": ["linux", "macos", "windows"],
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
