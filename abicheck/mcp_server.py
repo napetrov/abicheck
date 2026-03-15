@@ -214,6 +214,9 @@ def _render_output(
     fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnapshot,
 ) -> str:
     """Render comparison result in the requested output format."""
+    if fmt not in _VALID_FORMATS:
+        msg = f"Unknown output format {fmt!r}. Valid formats: {sorted(_VALID_FORMATS)}"
+        raise ValueError(msg)
     if fmt == "json":
         return to_json(result)
     if fmt == "sarif":
@@ -236,6 +239,9 @@ def _render_output(
             old_symbol_count=old_symbol_count or None,
         )
     return to_markdown(result)
+
+
+_VALID_FORMATS = frozenset({"json", "sarif", "html", "markdown"})
 
 
 def _impact_category(kind: ChangeKind, policy: str = "strict_abi") -> str:

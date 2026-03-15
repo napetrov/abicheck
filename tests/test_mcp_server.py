@@ -397,8 +397,13 @@ class TestRenderOutput:
 
     def test_render_default_is_markdown(self):
         result, old, new = self._make_diff_result()
-        output = _render_output("unknown_format", result, old, new)
+        output = _render_output("markdown", result, old, new)
         assert "ABI Report" in output
+
+    def test_render_unknown_format_raises(self):
+        result, old, new = self._make_diff_result()
+        with pytest.raises(ValueError, match="Unknown output format"):
+            _render_output("unknown_format", result, old, new)
 
 
 # ---------------------------------------------------------------------------
@@ -568,3 +573,124 @@ class TestPolicyAwareImpact:
         rename_changes = [c for c in data["changes"] if c["kind"] == "enum_member_renamed"]
         assert rename_changes
         assert rename_changes[0]["impact"] == "compatible"
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap closers
+# ---------------------------------------------------------------------------
+
+class TestRenderOutputValidation:
+    """Ensure _render_output rejects unknown format strings."""
+
+    def _make_diff_result(self):
+        from abicheck.mcp_server import _render_output  # noqa: F401 (used below)
+        old = AbiSnapshot(library="libtest.so.1", version="1.0")
+        new = AbiSnapshot(library="libtest.so.1", version="2.0")
+        from abicheck.checker import compare
+        result = compare(old, new)
+        return result, old, new
+
+    def test_unknown_format_raises_value_error(self):
+        from abicheck.mcp_server import _render_output
+        result, old, new = self._make_diff_result()
+        with pytest.raises(ValueError, match="Unknown output format"):
+            _render_output("xml", result, old, new)
+
+
+class TestImpactCategoryFallback:
+    """_impact_category fall-safe for unknown kinds."""
+
+    def test_breaking_kind_returns_breaking(self):
+        from abicheck.checker_policy import ChangeKind
+        from abicheck.mcp_server import _impact_category
+        assert _impact_category(ChangeKind.FUNC_REMOVED) == "breaking"
+
+    def test_compatible_kind_returns_compatible(self):
+        from abicheck.checker_policy import ChangeKind
+        from abicheck.mcp_server import _impact_category
+        assert _impact_category(ChangeKind.FUNC_ADDED) == "compatible"
+
+    def test_policy_sdk_vendor(self):
+        from abicheck.checker_policy import ChangeKind
+        from abicheck.mcp_server import _impact_category
+        result = _impact_category(ChangeKind.ENUM_MEMBER_RENAMED, policy="sdk_vendor")
+        assert result == "compatible"
+
+
+class TestAbiCompareValidation:
+    """abi_compare rejects invalid policy and format."""
+
+    def test_invalid_policy_returns_error(self, tmp_path: Path):
+        old = AbiSnapshot(library="lib.so", version="1.0")
+        new = AbiSnapshot(library="lib.so", version="2.0")
+        old_p = tmp_path / "old.json"
+        new_p = tmp_path / "new.json"
+        old_p.write_text(snapshot_to_json(old), encoding="utf-8")
+        new_p.write_text(snapshot_to_json(new), encoding="utf-8")
+        raw = abi_compare(str(old_p), str(new_p), policy="nonexistent_policy")
+        data = json.loads(raw)
+        assert "error" in data
+        assert "Unknown policy" in data["error"]
+
+    def test_invalid_format_returns_error(self, tmp_path: Path):
+        old = AbiSnapshot(library="lib.so", version="1.0")
+        new = AbiSnapshot(library="lib.so", version="2.0")
+        old_p = tmp_path / "old.json"
+        new_p = tmp_path / "new.json"
+        old_p.write_text(snapshot_to_json(old), encoding="utf-8")
+        new_p.write_text(snapshot_to_json(new), encoding="utf-8")
+        raw = abi_compare(str(old_p), str(new_p), format="xml")
+        data = json.loads(raw)
+        assert "error" in data
+        assert "Unknown output format" in data["error"]
+
+    def test_suppression_file(self, tmp_path: Path):
+        old = AbiSnapshot(library="lib.so", version="1.0")
+        new = AbiSnapshot(library="lib.so", version="2.0")
+        old_p = tmp_path / "old.json"
+        new_p = tmp_path / "new.json"
+        old_p.write_text(snapshot_to_json(old), encoding="utf-8")
+        new_p.write_text(snapshot_to_json(new), encoding="utf-8")
+        # Empty suppression file (version field required)
+        sup = tmp_path / "suppressions.yaml"
+        sup.write_text("version: 1\nsuppressions: []\n", encoding="utf-8")
+        raw = abi_compare(str(old_p), str(new_p), suppression_file=str(sup))
+        data = json.loads(raw)
+        assert data.get("status") == "ok"
+
+    def test_policy_file(self, tmp_path: Path):
+        old = AbiSnapshot(library="lib.so", version="1.0")
+        new = AbiSnapshot(library="lib.so", version="2.0")
+        old_p = tmp_path / "old.json"
+        new_p = tmp_path / "new.json"
+        old_p.write_text(snapshot_to_json(old), encoding="utf-8")
+        new_p.write_text(snapshot_to_json(new), encoding="utf-8")
+        # Minimal policy file
+        pf = tmp_path / "policy.yaml"
+        pf.write_text("base: strict_abi\noverrides: {}\n", encoding="utf-8")
+        raw = abi_compare(str(old_p), str(new_p), policy_file=str(pf))
+        data = json.loads(raw)
+        assert data.get("status") == "ok"
+
+    def test_headers_side_specific_empty_list(self, tmp_path: Path):
+        """old_headers=[] should override shared headers (not fall back to them)."""
+        old = AbiSnapshot(library="lib.so", version="1.0")
+        new = AbiSnapshot(library="lib.so", version="2.0")
+        old_p = tmp_path / "old.json"
+        new_p = tmp_path / "new.json"
+        old_p.write_text(snapshot_to_json(old), encoding="utf-8")
+        new_p.write_text(snapshot_to_json(new), encoding="utf-8")
+        raw = abi_compare(str(old_p), str(new_p), old_headers=[], new_headers=[])
+        data = json.loads(raw)
+        assert data.get("status") == "ok"
+
+
+class TestMainFunction:
+    """main() sets up logging and calls mcp.run."""
+
+    def test_main_runs_without_error(self, monkeypatch):
+        from abicheck import mcp_server
+        calls = []
+        monkeypatch.setattr(mcp_server.mcp, "run", lambda transport: calls.append(transport))
+        mcp_server.main()
+        assert calls == ["stdio"]
