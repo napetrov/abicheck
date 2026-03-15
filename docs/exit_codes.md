@@ -11,13 +11,16 @@
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | `NO_CHANGE`, `COMPATIBLE`, or `COMPATIBLE_WITH_RISK` — no binary ABI break |
-| `1` | Tool error (missing input, invalid snapshot) — Click/Python uncaught exception |
+| `1` | `ADDITIONS` — new public symbols/types detected (only with `--fail-on-additions`) |
 | `2` | `API_BREAK` — source-level API break — recompilation required |
 | `4` | `BREAKING` — binary ABI break |
 
 > **⚠️ Exit `0` covers `NO_CHANGE`, `COMPATIBLE`, and `COMPATIBLE_WITH_RISK`.** If your pipeline needs
 > to distinguish them (e.g. warn on deployment risk), use `--format json` and
 > read the `verdict` field — exit code alone is not sufficient.
+
+> **ℹ️ Exit `1` (ADDITIONS)** is only produced when `--fail-on-additions` is passed.
+> Without that flag, API additions are reported as `COMPATIBLE` with exit code `0`.
 
 ### CI gate patterns
 
