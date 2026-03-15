@@ -33,7 +33,7 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y castxml gcc g++
+          sudo apt-get install -y castxml gcc g++ cmake
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v5
