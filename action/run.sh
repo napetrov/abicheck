@@ -88,14 +88,11 @@ elif [[ "$MODE" == "compare" ]]; then
   add_single_flag "--policy" "${INPUT_POLICY:-}"
   add_single_flag "--policy-file" "${INPUT_POLICY_FILE:-}"
   add_single_flag "--suppress" "${INPUT_SUPPRESS:-}"
-  add_single_flag "--gcc-path" "${INPUT_GCC_PATH:-}"
-  add_single_flag "--gcc-prefix" "${INPUT_GCC_PREFIX:-}"
-  add_single_flag "--gcc-options" "${INPUT_GCC_OPTIONS:-}"
-  add_single_flag "--sysroot" "${INPUT_SYSROOT:-}"
 
-  if [[ "${INPUT_NOSTDINC:-false}" == "true" ]]; then
-    CMD+=(--nostdinc)
-  fi
+  # Note: --gcc-path, --gcc-prefix, --gcc-options, --sysroot, --nostdinc are
+  # dump-only flags. In compare mode abicheck performs the dump internally
+  # when an input is a binary, but these cross-compilation flags are not
+  # exposed on the compare CLI. They are only passed in dump mode.
 
 else
   echo "::error::Unknown mode '$MODE'. Use 'compare' or 'dump'."
@@ -115,25 +112,50 @@ echo ""
 
 ABICHECK_EXIT=0
 ABICHECK_OUTPUT=""
+STDERR_FILE=$(mktemp)
+trap 'rm -f "$STDERR_FILE"' EXIT
+
 if [[ -n "${OUTPUT_FILE:-}" ]]; then
-  # Output goes to file; capture stderr for diagnostics
-  "${CMD[@]}" 2>&1 || ABICHECK_EXIT=$?
+  # Output goes to file; capture stderr separately for error detection
+  "${CMD[@]}" 2>"$STDERR_FILE" || ABICHECK_EXIT=$?
+  if [[ -s "$STDERR_FILE" ]]; then
+    cat "$STDERR_FILE" >&2
+  fi
 else
-  # Capture stdout for job summary
-  ABICHECK_OUTPUT=$("${CMD[@]}" 2>&1) || ABICHECK_EXIT=$?
+  # Capture stdout for job summary; stderr goes to temp file
+  ABICHECK_OUTPUT=$("${CMD[@]}" 2>"$STDERR_FILE") || ABICHECK_EXIT=$?
   echo "$ABICHECK_OUTPUT"
+  if [[ -s "$STDERR_FILE" ]]; then
+    cat "$STDERR_FILE" >&2
+  fi
 fi
 echo "::endgroup::"
 
 # ---------------------------------------------------------------------------
 # Map exit code to verdict
 # ---------------------------------------------------------------------------
-case $ABICHECK_EXIT in
-  0) VERDICT="COMPATIBLE" ;;
-  2) VERDICT="API_BREAK" ;;
-  4) VERDICT="BREAKING" ;;
-  *) VERDICT="ERROR" ;;
-esac
+# abicheck exit codes: 0=compatible, 2=API_BREAK, 4=BREAKING.
+# However, Click (the CLI framework) also uses exit code 2 for usage/argument
+# errors (e.g. invalid option, missing required arg). We distinguish them by
+# checking stderr for Click's "Error:" or "Usage:" markers.
+STDERR_CONTENT=""
+if [[ -s "$STDERR_FILE" ]]; then
+  STDERR_CONTENT=$(cat "$STDERR_FILE")
+fi
+
+if [[ $ABICHECK_EXIT -eq 2 ]] && echo "$STDERR_CONTENT" | grep -qE '(^Usage:|^Error:|^Try )'; then
+  # This is a CLI/argument error, not a real API_BREAK verdict
+  VERDICT="ERROR"
+  echo "::error::abicheck failed due to a CLI argument or configuration error (exit code 2)."
+  echo "::error::Check the command and inputs above. This is NOT an API break — the check did not run."
+else
+  case $ABICHECK_EXIT in
+    0) VERDICT="COMPATIBLE" ;;
+    2) VERDICT="API_BREAK" ;;
+    4) VERDICT="BREAKING" ;;
+    *) VERDICT="ERROR" ;;
+  esac
+fi
 
 echo "abicheck verdict: $VERDICT (exit code $ABICHECK_EXIT)"
 
@@ -209,8 +231,8 @@ if [[ $ABICHECK_EXIT -eq 2 && "${INPUT_FAIL_ON_API_BREAK:-false}" == "true" ]]; 
   FINAL_EXIT=1
 fi
 
-if [[ $ABICHECK_EXIT -ne 0 && $ABICHECK_EXIT -ne 2 && $ABICHECK_EXIT -ne 4 ]]; then
-  echo "::error::abicheck failed with unexpected exit code $ABICHECK_EXIT"
+if [[ "$VERDICT" == "ERROR" ]]; then
+  echo "::error::abicheck failed with exit code $ABICHECK_EXIT"
   FINAL_EXIT=1
 fi
 

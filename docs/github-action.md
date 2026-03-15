@@ -47,11 +47,11 @@ automatically, then runs ABI comparison and reports results.
 | Input | Default | Description |
 |-------|---------|-------------|
 | `lang` | `c++` | Language mode: `c++` or `c` |
-| `gcc-path` | — | Path to cross-compiler binary |
-| `gcc-prefix` | — | Cross-toolchain prefix (e.g. `aarch64-linux-gnu-`) |
-| `gcc-options` | — | Extra flags for castxml |
-| `sysroot` | — | Alternative system root |
-| `nostdinc` | `false` | Skip standard include paths |
+| `gcc-path` | — | Path to cross-compiler binary (dump mode only) |
+| `gcc-prefix` | — | Cross-toolchain prefix, e.g. `aarch64-linux-gnu-` (dump mode only) |
+| `gcc-options` | — | Extra flags for castxml (dump mode only) |
+| `sysroot` | — | Alternative system root (dump mode only) |
+| `nostdinc` | `false` | Skip standard include paths (dump mode only) |
 
 ### Output and policy
 
