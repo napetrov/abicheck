@@ -285,7 +285,7 @@ def run_case(
                      "fvisibility", "version-script", "soname")
         if any(tok in cmake_text for tok in _special):
             return CaseResult(name, "SKIP", expected_raw, None,
-                              f"requires cmake (CMakeLists.txt has special build flags)")
+                              "requires cmake (CMakeLists.txt has special build flags)")
         v1_so = tmp / f"libv1{SHARED_LIB_SUFFIX}"
         v2_so = tmp / f"libv2{SHARED_LIB_SUFFIX}"
         err = _compile(v1_src, v1_so)
