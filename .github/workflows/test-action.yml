@@ -6,14 +6,14 @@ on:
       - 'action.yml'
       - 'action/**'
       - '.github/workflows/test-action.yml'
-      - 'tests/fixtures/action_test_*.json'
+      - 'tests/fixtures/action/**'
   push:
     branches: [main]
     paths:
       - 'action.yml'
       - 'action/**'
       - '.github/workflows/test-action.yml'
-      - 'tests/fixtures/action_test_*.json'
+      - 'tests/fixtures/action/**'
 
 jobs:
   # ── Test B: compare mode with snapshot fixtures (no system deps) ──────────
@@ -27,8 +27,8 @@ jobs:
         id: abi
         uses: ./
         with:
-          old-library: tests/fixtures/action_test_v1.json
-          new-library: tests/fixtures/action_test_v2.json
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v2.json
           old-version: '1.0'
           new-version: '2.0'
           format: markdown
@@ -59,8 +59,8 @@ jobs:
         id: abi
         uses: ./
         with:
-          old-library: tests/fixtures/action_test_v1.json
-          new-library: tests/fixtures/action_test_v1_compat.json
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v1_compat.json
           old-version: '1.0'
           new-version: '1.1'
           install-deps: false
@@ -84,8 +84,8 @@ jobs:
         id: abi
         uses: ./
         with:
-          old-library: tests/fixtures/action_test_v1.json
-          new-library: tests/fixtures/action_test_v2.json
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v2.json
           format: sarif
           output-file: results.sarif
           install-deps: false
@@ -128,8 +128,8 @@ jobs:
         id: abi
         uses: ./
         with:
-          old-library: tests/fixtures/action_test_v1.json
-          new-library: tests/fixtures/action_test_v2.json
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v2.json
           format: json
           output-file: results.json
           install-deps: false
@@ -159,8 +159,8 @@ jobs:
         uses: ./
         continue-on-error: true
         with:
-          old-library: tests/fixtures/action_test_v1.json
-          new-library: tests/fixtures/action_test_v2.json
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v2.json
           install-deps: false
           fail-on-breaking: true
 
@@ -188,8 +188,8 @@ jobs:
         id: abi
         uses: ./
         with:
-          old-library: tests/fixtures/action_test_v1.json
-          new-library: tests/fixtures/action_test_v2.json
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v2.json
           old-version: '1.0'
           new-version: '2.0'
           format: json
@@ -221,8 +221,8 @@ jobs:
         id: abi
         uses: ./
         with:
-          old-library: tests/fixtures/action_test_v1.json
-          new-library: tests/fixtures/action_test_v2.json
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v2.json
           install-deps: false
           fail-on-breaking: false
 
