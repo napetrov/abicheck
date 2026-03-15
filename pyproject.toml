@@ -72,6 +72,9 @@ module = [
     "abicheck.dwarf_advanced",
     "abicheck.dwarf_unified",
     "abicheck.dumper",
+    "abicheck.pdb_parser",
+    "abicheck.pdb_metadata",
+    "abicheck.pdb_utils",
 ]
 disallow_untyped_calls = false
 disable_error_code = ["attr-defined", "unused-ignore"]

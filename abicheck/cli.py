@@ -106,6 +106,8 @@ def _dump_native_binary(
     path: Path, binary_fmt: str,
     headers: list[Path], includes: list[Path],
     version: str, lang: str,
+    *,
+    pdb_path: Path | None = None,
 ) -> AbiSnapshot:
     """Dump ABI snapshot from a native binary (ELF, PE, or Mach-O).
 
@@ -171,9 +173,27 @@ def _dump_native_binary(
             )
             for exp in pe_meta.exports
         ]
+
+        # PDB debug info extraction (struct layouts, enums, calling conventions)
+        dwarf_meta = None
+        dwarf_adv = None
+        try:
+            from .pdb_metadata import parse_pdb_debug_info
+            from .pdb_utils import locate_pdb
+            pdb_file = locate_pdb(path, pdb_path_override=pdb_path)
+            if pdb_file is not None:
+                dwarf_meta, dwarf_adv = parse_pdb_debug_info(pdb_file)
+                _logger.info("PDB debug info loaded from %s", pdb_file)
+            else:
+                _logger.debug("No PDB file found for %s", path)
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning("PDB parsing failed for %s: %s", path, exc)
+
         return AbiSnapshot(
             library=path.name, version=version,
             functions=funcs, pe=pe_meta,
+            dwarf=dwarf_meta,
+            dwarf_advanced=dwarf_adv,
             platform="pe",
         )
 
@@ -217,6 +237,7 @@ def _resolve_input(
     lang: str,
     *,
     is_elf: bool | None = None,
+    pdb_path: Path | None = None,
 ) -> AbiSnapshot:
     """Auto-detect input type and return an AbiSnapshot.
 
@@ -242,7 +263,8 @@ def _resolve_input(
     # Detect binary format from magic bytes
     binary_fmt = _detect_binary_format(path) if is_elf is None else None
     if binary_fmt is not None:
-        return _dump_native_binary(path, binary_fmt, headers, includes, version, lang)
+        return _dump_native_binary(path, binary_fmt, headers, includes, version, lang,
+                                   pdb_path=pdb_path)
 
     # Text-based formats: detect by sniffing only a small header chunk
     fmt = _sniff_text_format(path)
@@ -311,12 +333,16 @@ def main() -> None:
               help="Alternative system root directory.")
 @click.option("--nostdinc", is_flag=True, default=False,
               help="Do not search standard system include paths.")
+@click.option("--pdb-path", "pdb_path", type=click.Path(path_type=Path), default=None,
+              help="Explicit path to PDB file for Windows PE debug info. "
+                   "Overrides automatic PDB discovery from the PE debug directory.")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...],
              version: str, lang: str, output: Path | None,
              gcc_path: str | None, gcc_prefix: str | None, gcc_options: str | None,
-             sysroot: Path | None, nostdinc: bool, verbose: bool) -> None:
+             sysroot: Path | None, nostdinc: bool, pdb_path: Path | None,
+             verbose: bool) -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
     \b
@@ -333,6 +359,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
         try:
             snap = _dump_native_binary(
                 so_path, binary_fmt, list(headers), list(includes), version, lang,
+                pdb_path=pdb_path,
             )
         except click.ClickException:
             raise
@@ -514,6 +541,13 @@ def _render_output(fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnaps
 @click.option("--policy-file", "policy_file_path",
               type=click.Path(exists=True, path_type=Path), default=None,
               help="YAML policy file with per-kind verdict overrides. Overrides --policy.")
+@click.option("--pdb-path", "pdb_path", type=click.Path(path_type=Path), default=None,
+              help="Explicit PDB file path for Windows PE debug info (applied to both sides). "
+                   "Overrides automatic PDB discovery.")
+@click.option("--old-pdb-path", "old_pdb_path", type=click.Path(path_type=Path), default=None,
+              help="PDB file path for old side only (overrides --pdb-path for old).")
+@click.option("--new-pdb-path", "new_pdb_path", type=click.Path(path_type=Path), default=None,
+              help="PDB file path for new side only (overrides --pdb-path for new).")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def compare_cmd(
@@ -524,6 +558,7 @@ def compare_cmd(
     old_version: str, new_version: str,
     fmt: str, output: Path | None,
     suppress: Path | None, policy: str, policy_file_path: Path | None,
+    pdb_path: Path | None, old_pdb_path: Path | None, new_pdb_path: Path | None,
     verbose: bool,
 ) -> None:
     """Compare two ABI surfaces and report changes.
@@ -582,10 +617,16 @@ def compare_cmd(
         old_includes_only, new_includes_only,
     )
 
+    # Resolve per-side PDB paths: --old-pdb-path overrides --pdb-path for old, etc.
+    resolved_old_pdb = old_pdb_path if old_pdb_path else pdb_path
+    resolved_new_pdb = new_pdb_path if new_pdb_path else pdb_path
+
     old = _resolve_input(old_input, old_h, old_inc, old_version, lang,
-                         is_elf=True if old_fmt == "elf" else None)
+                         is_elf=True if old_fmt == "elf" else None,
+                         pdb_path=resolved_old_pdb)
     new = _resolve_input(new_input, new_h, new_inc, new_version, lang,
-                         is_elf=True if new_fmt == "elf" else None)
+                         is_elf=True if new_fmt == "elf" else None,
+                         pdb_path=resolved_new_pdb)
 
     suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
 

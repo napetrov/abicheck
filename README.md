@@ -8,7 +8,7 @@
 
 Typical problems it catches: removed or renamed symbols, changed function signatures, struct layout drift, vtable reordering, enum value reassignment, and dozens of other ABI/API incompatibilities that cause crashes, silent data corruption, or linker failures after a library upgrade.
 
-> **Platforms:** Linux (ELF), Windows (PE/COFF), macOS (Mach-O). Binary metadata and header AST analysis on all platforms; debug info cross-check uses DWARF (Linux, macOS) with PDB support planned for Windows.
+> **Platforms:** Linux (ELF), Windows (PE/COFF), macOS (Mach-O). Binary metadata and header AST analysis on all platforms; debug info cross-check uses DWARF (Linux, macOS) and PDB (Windows).
 
 ---
 
@@ -443,9 +443,9 @@ abicheck supports three binary formats, each with a dedicated metadata parser:
 |-------|-----------|:-----:|:-------:|:-----:|
 | **Binary metadata** | pyelftools / pefile / macholib | Yes | Yes | Yes |
 | **Header AST** | castxml (Clang) | Yes | Yes | Yes |
-| **Debug info cross-check** | DWARF (pyelftools) / PDB | Yes (DWARF) | Planned (PDB) | Yes (DWARF) |
+| **Debug info cross-check** | DWARF (pyelftools) / PDB | Yes (DWARF) | Yes (PDB) | Yes (DWARF) |
 
-All three layers combine for maximum accuracy. castxml is cross-platform (provided by Kitware for Linux, Windows, and macOS), so header AST analysis works everywhere. Debug info cross-check currently uses DWARF (Linux and macOS); PDB support for Windows is planned.
+All three layers combine for maximum accuracy. castxml is cross-platform (provided by Kitware for Linux, Windows, and macOS), so header AST analysis works everywhere. Debug info cross-check uses DWARF (Linux and macOS) and PDB (Windows).
 
 ### castxml compiler support
 
@@ -497,6 +497,9 @@ abicheck dump foo.dll -H foo.h --gcc-path x86_64-w64-mingw32-g++
 | `detectors.py` | ABI change detection rules |
 | `reporter.py` | Output formatting (markdown, JSON, SARIF, HTML) |
 | `suppression.py` | Suppression rules and symbol filtering |
+| `pdb_parser.py` | Minimal PDB parser (MSF container, TPI, DBI streams) |
+| `pdb_metadata.py` | PDB debug info → DwarfMetadata/AdvancedDwarfMetadata |
+| `pdb_utils.py` | PDB file location from PE debug directory |
 | `policy_file.py` | Custom YAML policy file parsing |
 
 See [Architecture reference](https://napetrov.github.io/abicheck/reference/architecture/) for the full design documentation.

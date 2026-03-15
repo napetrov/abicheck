@@ -116,9 +116,13 @@ When debug info is available in the binary:
 - Checks vtable slot offsets
 - Detects calling convention and frame register changes
 
-**PDB** (Windows `.dll` — planned):
-- Windows uses PDB (Program Database) files for debug information
-- PDB cross-check support is planned for a future release
+**PDB** (Windows `.dll` — via built-in PDB parser):
+- Extracts struct/class/union sizes and field layouts from TPI stream
+- Extracts enum underlying types and member values
+- Detects calling convention changes (`__cdecl`, `__stdcall`, `__fastcall`,
+  `__thiscall`, `__vectorcall`) from `LF_PROCEDURE` / `LF_MFUNCTION` records
+- Extracts MSVC toolchain info (version, machine type, ABI flags) from DBI stream
+- Auto-discovers PDB files from PE debug directory; use `--pdb-path` to override
 
 ---
 
@@ -140,9 +144,12 @@ When debug info is available in the binary:
 | `sarif.py` | SARIF output for GitHub Code Scanning |
 | `suppression.py` | Suppression rules, symbol/type filtering |
 | `serialization.py` | JSON snapshot serialization/deserialization |
-| `dwarf_unified.py` | Unified DWARF handling (layer 3, Linux only) |
-| `dwarf_advanced.py` | Advanced DWARF analysis (Linux only) |
-| `dwarf_metadata.py` | DWARF metadata extraction (Linux only) |
+| `dwarf_unified.py` | Unified DWARF handling (layer 3, Linux/macOS) |
+| `dwarf_advanced.py` | Advanced DWARF analysis (Linux/macOS) |
+| `dwarf_metadata.py` | DWARF metadata extraction (Linux/macOS) |
+| `pdb_parser.py` | Minimal PDB parser (MSF container, TPI, DBI streams) |
+| `pdb_metadata.py` | PDB debug info → DwarfMetadata/AdvancedDwarfMetadata |
+| `pdb_utils.py` | PDB file location from PE debug directory |
 | `model.py` | Data models for snapshots and changes |
 | `errors.py` | Custom exception definitions |
 | `compat/` | ABICC compatibility layer (compat check, compat dump, XML parsing) |
