@@ -5,28 +5,29 @@ protocol layer) to verify they produce correct structured JSON responses.
 """
 
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
 
-from abicheck.checker import ChangeKind, Verdict
+from abicheck.checker import ChangeKind
 from abicheck.model import AbiSnapshot, Function, Variable, Visibility
 
 # Guard: skip entire module if the mcp package is not installed.
 pytest.importorskip("mcp", reason="mcp package not installed")
 
 from abicheck.mcp_server import (  # noqa: E402
+    _detect_binary_format,
+    _impact_category,
+    _is_elf,
+    _render_output,
+    _resolve_input,
+    _snapshot_summary,
     abi_compare,
     abi_dump,
     abi_explain_change,
     abi_list_changes,
-    _impact_category,
-    _resolve_input,
-    _snapshot_summary,
 )
 from abicheck.serialization import snapshot_to_json  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -324,3 +325,172 @@ class TestHelpers:
         assert summary["variables"] == 1
         assert summary["library"] == "libtest.so.1"
         assert summary["version"] == "1.0"
+
+    def test_is_elf_nonexistent_file(self):
+        assert _is_elf(Path("/nonexistent/file.so")) is False
+
+    def test_is_elf_non_elf_file(self, tmp_path: Path):
+        f = tmp_path / "not_elf.bin"
+        f.write_bytes(b"not an elf file")
+        assert _is_elf(f) is False
+
+    def test_detect_binary_format_json_file(self, tmp_path: Path):
+        f = tmp_path / "snap.json"
+        f.write_text("{}", encoding="utf-8")
+        assert _detect_binary_format(f) is None
+
+    def test_detect_binary_format_nonexistent(self):
+        assert _detect_binary_format(Path("/nonexistent/file")) is None
+
+    def test_resolve_input_json_snapshot(self, tmp_path: Path):
+        snap = _make_snapshot("1.0", functions=[_pub_func("foo", "_Z3foov")])
+        p = tmp_path / "snap.json"
+        p.write_text(snapshot_to_json(snap), encoding="utf-8")
+        result = _resolve_input(p, [], [], "1.0", "c++")
+        assert result.library == "libtest.so.1"
+        assert len(result.functions) == 1
+
+    def test_resolve_input_unknown_format(self, tmp_path: Path):
+        f = tmp_path / "weird.xyz"
+        f.write_text("not a recognized format", encoding="utf-8")
+        from abicheck.errors import AbicheckError
+        with pytest.raises(AbicheckError, match="Cannot detect format"):
+            _resolve_input(f, [], [], "1.0", "c++")
+
+
+# ---------------------------------------------------------------------------
+# _render_output
+# ---------------------------------------------------------------------------
+
+class TestRenderOutput:
+    def _make_diff_result(self) -> tuple[object, AbiSnapshot, AbiSnapshot]:
+        from abicheck.checker import DiffResult, Verdict
+        old = _make_snapshot("1.0", functions=[_pub_func("init", "_Z4initv")])
+        new = _make_snapshot("2.0", functions=[_pub_func("init", "_Z4initv")])
+        result = DiffResult(
+            old_version="1.0", new_version="2.0",
+            library="libtest.so.1", verdict=Verdict.NO_CHANGE,
+        )
+        return result, old, new
+
+    def test_render_json(self):
+        result, old, new = self._make_diff_result()
+        output = _render_output("json", result, old, new)
+        parsed = json.loads(output)
+        assert parsed["verdict"] == "NO_CHANGE"
+
+    def test_render_markdown(self):
+        result, old, new = self._make_diff_result()
+        output = _render_output("markdown", result, old, new)
+        assert "ABI Report" in output
+
+    def test_render_sarif(self):
+        result, old, new = self._make_diff_result()
+        output = _render_output("sarif", result, old, new)
+        parsed = json.loads(output)
+        assert parsed["$schema"] or parsed.get("version")
+
+    def test_render_html(self):
+        result, old, new = self._make_diff_result()
+        output = _render_output("html", result, old, new)
+        assert "<html" in output.lower() or "<!doctype" in output.lower()
+
+    def test_render_default_is_markdown(self):
+        result, old, new = self._make_diff_result()
+        output = _render_output("unknown_format", result, old, new)
+        assert "ABI Report" in output
+
+
+# ---------------------------------------------------------------------------
+# abi_compare — additional edge cases
+# ---------------------------------------------------------------------------
+
+class TestAbiCompareEdgeCases:
+    def test_api_break_exit_code(self, tmp_path: Path):
+        """API_BREAK verdict should produce exit_code=2."""
+        from abicheck.model import EnumMember, EnumType
+        old_enum = EnumType(name="Color", members=[
+            EnumMember(name="RED", value="0"),
+        ])
+        new_enum = EnumType(name="Color", members=[
+            EnumMember(name="ROUGE", value="0"),  # renamed → API_BREAK
+        ])
+        old = AbiSnapshot(library="libtest.so", version="1.0", enums=[old_enum])
+        new = AbiSnapshot(library="libtest.so", version="2.0", enums=[new_enum])
+        old_path = tmp_path / "old.json"
+        new_path = tmp_path / "new.json"
+        old_path.write_text(snapshot_to_json(old), encoding="utf-8")
+        new_path.write_text(snapshot_to_json(new), encoding="utf-8")
+        raw = abi_compare(str(old_path), str(new_path))
+        data = json.loads(raw)
+        assert data["verdict"] == "API_BREAK"
+        assert data["exit_code"] == 2
+
+    def test_sarif_format(self, tmp_path: Path):
+        snap = _make_snapshot("1.0", functions=[_pub_func("init", "_Z4initv")])
+        p = tmp_path / "snap.json"
+        p.write_text(snapshot_to_json(snap), encoding="utf-8")
+        raw = abi_compare(str(p), str(p), format="sarif")
+        data = json.loads(raw)
+        assert data["status"] == "ok"
+        # SARIF report should be valid JSON
+        sarif = json.loads(data["report"])
+        assert "runs" in sarif or "$schema" in sarif
+
+    def test_html_format(self, snapshot_pair: tuple[Path, Path]):
+        old_path, new_path = snapshot_pair
+        raw = abi_compare(str(old_path), str(new_path), format="html")
+        data = json.loads(raw)
+        assert data["status"] == "ok"
+        assert "<html" in data["report"].lower() or "<!doctype" in data["report"].lower()
+
+    def test_with_suppression_file(self, snapshot_pair: tuple[Path, Path], tmp_path: Path):
+        old_path, new_path = snapshot_pair
+        supp = tmp_path / "suppress.yaml"
+        supp.write_text(
+            "version: 1\n"
+            "suppressions:\n"
+            "  - symbol: _Z4initv\n"
+            "    change_kind: func_removed\n"
+            "    reason: intentional removal\n",
+            encoding="utf-8",
+        )
+        raw = abi_compare(str(old_path), str(new_path), suppression_file=str(supp))
+        data = json.loads(raw)
+        assert data["status"] == "ok"
+        assert data["suppressed_count"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# abi_explain_change — risk kind
+# ---------------------------------------------------------------------------
+
+class TestAbiExplainChangeRisk:
+    def test_risk_kind(self):
+        raw = abi_explain_change("symbol_version_required_added")
+        data = json.loads(raw)
+        assert data["kind"] == "symbol_version_required_added"
+        assert data["impact"] == "risk"
+        assert "deployment risk" in data["fix_guidance"].lower() or "environment" in data["fix_guidance"].lower()
+
+
+# ---------------------------------------------------------------------------
+# abi_dump — version and language parameters
+# ---------------------------------------------------------------------------
+
+class TestAbiDumpParams:
+    def test_custom_version(self, tmp_path: Path):
+        snap = _make_snapshot("1.0", functions=[_pub_func("foo", "_Z3foov")])
+        snap_path = tmp_path / "input.json"
+        snap_path.write_text(snapshot_to_json(snap), encoding="utf-8")
+        raw = abi_dump(str(snap_path), version="3.14.0")
+        data = json.loads(raw)
+        assert data["status"] == "ok"
+
+    def test_custom_language(self, tmp_path: Path):
+        snap = _make_snapshot("1.0", functions=[_pub_func("foo", "_Z3foov")])
+        snap_path = tmp_path / "input.json"
+        snap_path.write_text(snapshot_to_json(snap), encoding="utf-8")
+        raw = abi_dump(str(snap_path), language="c")
+        data = json.loads(raw)
+        assert data["status"] == "ok"

@@ -86,6 +86,11 @@ module = ["abicheck.cli", "abicheck.compat.cli"]
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
+# FastMCP decorators (@mcp.tool, etc.) are untyped.
+module = ["abicheck.mcp_server"]
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
 # types-PyYAML stubs may not be found in all environments;
 # the package is listed in [project.optional-dependencies.dev].
 module = ["abicheck.policy_file", "abicheck.suppression"]

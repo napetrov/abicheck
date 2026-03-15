@@ -42,8 +42,8 @@ except ImportError as _exc:
 
 from .checker import DiffResult, compare
 from .checker_policy import (
-    BREAKING_KINDS,
     API_BREAK_KINDS,
+    BREAKING_KINDS,
     COMPATIBLE_KINDS,
     RISK_KINDS,
     ChangeKind,
@@ -125,8 +125,8 @@ def _resolve_input(
         )
 
     if binary_fmt == "pe":
-        from .pe_metadata import parse_pe_metadata
         from .model import Function
+        from .pe_metadata import parse_pe_metadata
         pe_meta = parse_pe_metadata(path)
         funcs = [
             Function(
