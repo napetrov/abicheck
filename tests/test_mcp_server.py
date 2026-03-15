@@ -743,22 +743,44 @@ class TestSafeWritePath:
         with pytest.raises(ValueError, match=".json"):
             _safe_write_path(str(tmp_path / "out.txt"))
 
+    @pytest.mark.skipif(
+        __import__("platform").system() == "Windows",
+        reason="/etc and /dev are not sensitive paths on Windows",
+    )
     def test_system_path_raises(self) -> None:
         from abicheck.mcp_server import _safe_write_path
         with pytest.raises(ValueError, match="sensitive system path"):
             _safe_write_path("/etc/out.json")
 
+    @pytest.mark.skipif(
+        __import__("platform").system() == "Windows",
+        reason="//etc is not a sensitive path on Windows",
+    )
     def test_double_slash_path_blocked(self) -> None:
-        """//etc/out.json (double slash) must not bypass the path guard."""
+        """//etc/out.json (double slash) must not bypass the path guard on POSIX."""
         from abicheck.mcp_server import _safe_write_path
         with pytest.raises(ValueError, match="sensitive system path"):
             _safe_write_path("//etc/out.json")
 
+    @pytest.mark.skipif(
+        __import__("platform").system() == "Windows",
+        reason="/dev is not a sensitive path on Windows",
+    )
     def test_dev_path_blocked(self) -> None:
-        """/dev/ paths are blocked."""
+        """/dev/ paths are blocked on POSIX."""
         from abicheck.mcp_server import _safe_write_path
         with pytest.raises(ValueError, match="sensitive system path"):
             _safe_write_path("/dev/out.json")
+
+    @pytest.mark.skipif(
+        __import__("platform").system() != "Windows",
+        reason="Windows-specific sensitive path test",
+    )
+    def test_windows_system_path_blocked(self, tmp_path: Path) -> None:
+        """C:\\Windows\\ is blocked on Windows."""
+        from abicheck.mcp_server import _safe_write_path
+        with pytest.raises(ValueError, match="sensitive system path"):
+            _safe_write_path("C:\\Windows\\out.json")
 
     def test_ssh_dir_raises(self) -> None:
         from abicheck.mcp_server import _safe_write_path
