@@ -50,6 +50,28 @@ def _is_network_path(p: str | Path) -> bool:
     return False
 
 
+def _resolve_embedded_pdb(
+    dll_path: Path,
+    allow_network: bool,
+) -> Path | None:
+    """Try to locate a PDB via the path embedded in the PE debug directory."""
+    embedded = _extract_pdb_path_from_pe(dll_path)
+    if embedded is None:
+        return None
+    embedded_path = Path(embedded)
+    if not allow_network and _is_network_path(embedded_path):
+        log.debug(
+            "locate_pdb: skipping network path %s (use --pdb-path to override)", embedded
+        )
+    elif embedded_path.is_file():
+        return embedded_path
+    # Fall back to same filename in the DLL's directory (always local)
+    local = dll_path.parent / embedded_path.name
+    if local.is_file():
+        return local
+    return None
+
+
 def locate_pdb(
     dll_path: Path,
     *,
@@ -76,21 +98,9 @@ def locate_pdb(
         log.warning("locate_pdb: explicit pdb_path does not exist: %s", pdb_path_override)
         return None
 
-    # Try extracting from PE debug directory
-    embedded = _extract_pdb_path_from_pe(dll_path)
-    if embedded is not None:
-        embedded_path = Path(embedded)
-        # Skip network paths during auto-discovery unless allowed
-        if not allow_network and _is_network_path(embedded_path):
-            log.debug("locate_pdb: skipping network path %s (use --pdb-path to override)", embedded)
-        else:
-            # Try the embedded path directly
-            if embedded_path.is_file():
-                return embedded_path
-        # Try just the filename in the DLL's directory (always local)
-        local = dll_path.parent / embedded_path.name
-        if local.is_file():
-            return local
+    found = _resolve_embedded_pdb(dll_path, allow_network)
+    if found is not None:
+        return found
 
     # Fallback: same name with .pdb extension
     stem_pdb = dll_path.with_suffix(".pdb")

@@ -49,8 +49,8 @@ class TestIsNetworkPath:
     def test_empty_string(self) -> None:
         assert _is_network_path("") is False
 
-    def test_path_object(self) -> None:
-        assert _is_network_path(Path("/tmp/foo.pdb")) is False
+    def test_path_object(self, tmp_path: Path) -> None:
+        assert _is_network_path(tmp_path / "foo.pdb") is False
 
     def test_exception_handling(self) -> None:
         """PureWindowsPath parsing exception should be logged and return False."""

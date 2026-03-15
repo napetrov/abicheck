@@ -312,7 +312,7 @@ def _read_numeric_leaf(data: bytes, offset: int) -> tuple[int, int]:
     # value), which is correct for most CodeView numeric encodings.  May be
     # wrong for exotic leaf types; if this fires frequently, consider adding
     # explicit support for the leaf type.
-    # TODO: validate skip length or abort parsing when unknown leaves appear.
+    # Note: skip length is not validated; unknown leaves may cause mis-alignment.
     log.debug("Unknown numeric leaf 0x%04x at offset %d", val, offset)
     return (0, offset + 6)
 
