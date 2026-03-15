@@ -88,11 +88,12 @@ That reverse scenario is a separate test case.
 
 | Test suite | How it builds | v1 | v2 | Verdict |
 |-----------|--------------|----|----|---------|
-| `test_abi_examples.py` | Runs `make` in the case dir | `bad.c` (unversioned) | `good.c + libfoo.map` (versioned) | **COMPATIBLE** |
-| `test_example_autodiscovery.py` | Compiles source files directly via `gcc` without Makefile flags | `bad.c` | `good.c` (no `--version-script`!) | **NO_CHANGE** (both lack version sections) |
+| `test_abi_examples.py` | Builds via CMake (applies `--version-script`) | `bad.c` (unversioned) | `good.c + libfoo.map` (versioned) | **COMPATIBLE** |
+| `test_example_autodiscovery.py` | Compiles source files directly without CMake linker flags | `bad.c` | `good.c` (no `--version-script`!) | **NO_CHANGE** (both lack version sections) |
 
-The autodiscovery test does not re-apply linker flags from the Makefile, so both `.so`
-files it compiles lack `.gnu.version_d` → no version change detected → `NO_CHANGE`.
+The autodiscovery test fallback compilation does not re-apply linker flags from
+CMakeLists.txt, so both `.so` files it compiles lack `.gnu.version_d` → no version
+change detected → `NO_CHANGE`.
 This is a known gap, listed in `KNOWN_GAPS` in `test_example_autodiscovery.py`.
 
 ---
