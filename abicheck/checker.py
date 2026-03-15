@@ -1267,10 +1267,16 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     old_ids = {_export_id(e) for e in o.exports}
     new_ids = {_export_id(e) for e in n.exports}
 
+    # Use ELF_ONLY (compatible) when both snapshots lack header analysis
+    removed_kind = (
+        ChangeKind.FUNC_REMOVED_ELF_ONLY
+        if getattr(old, "elf_only_mode", False) and getattr(new, "elf_only_mode", False)
+        else ChangeKind.FUNC_REMOVED
+    )
     # Detect removed exports
     for eid in sorted(old_ids - new_ids):
         changes.append(Change(
-            kind=ChangeKind.FUNC_REMOVED,
+            kind=removed_kind,
             symbol=eid,
             description=f"export removed from DLL: {eid}",
         ))
@@ -1314,9 +1320,15 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     if o.exports or n.exports:
         old_names = {e.name for e in o.exports if e.name}
         new_names = {e.name for e in n.exports if e.name}
+        # Use ELF_ONLY (compatible) when both snapshots lack header analysis
+        removed_kind = (
+            ChangeKind.FUNC_REMOVED_ELF_ONLY
+            if getattr(old, "elf_only_mode", False) and getattr(new, "elf_only_mode", False)
+            else ChangeKind.FUNC_REMOVED
+        )
         for name in sorted(old_names - new_names):
             changes.append(Change(
-                kind=ChangeKind.FUNC_REMOVED,
+                kind=removed_kind,
                 symbol=name,
                 description=f"export removed from dylib: {name}",
             ))
