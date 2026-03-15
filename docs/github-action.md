@@ -79,7 +79,7 @@ automatically, then runs ABI comparison and reports results.
 
 | Output | Description |
 |--------|-------------|
-| `verdict` | `COMPATIBLE`, `API_BREAK`, `BREAKING`, etc. |
+| `verdict` | `COMPATIBLE`, `API_BREAK`, `BREAKING`, or `ERROR` |
 | `exit-code` | `0` (compatible), `2` (API break), `4` (ABI break) |
 | `report-path` | Path to the generated report file |
 

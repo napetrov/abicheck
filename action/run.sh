@@ -226,7 +226,7 @@ if [[ $ABICHECK_EXIT -eq 4 && "${INPUT_FAIL_ON_BREAKING:-true}" == "true" ]]; th
   FINAL_EXIT=1
 fi
 
-if [[ $ABICHECK_EXIT -eq 2 && "${INPUT_FAIL_ON_API_BREAK:-false}" == "true" ]]; then
+if [[ "$VERDICT" == "API_BREAK" && "${INPUT_FAIL_ON_API_BREAK:-false}" == "true" ]]; then
   echo "::error::API break detected. Set fail-on-api-break: false to ignore API-level breaks."
   FINAL_EXIT=1
 fi
