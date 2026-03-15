@@ -1,5 +1,6 @@
 """conftest.py — pytest configuration for abicheck tests."""
 import shutil
+import sys
 
 import pytest
 
@@ -17,7 +18,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
-        "integration: requires castxml, gcc/g++ installed",
+        "integration: requires platform-specific compiler (gcc/g++ on Linux, clang on macOS, MinGW gcc on Windows)",
     )
     config.addinivalue_line(
         "markers",
@@ -29,10 +30,34 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
-def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
+def _integration_skip_reason() -> str | None:
+    """Return a skip reason if integration tests cannot run, or None if they can.
+
+    Platform-specific requirements:
+    - Linux: castxml + gcc + g++ (ELF integration tests)
+    - macOS: clang (Mach-O integration tests; ships with Xcode CLT)
+    - Windows: gcc from MinGW (PE/DLL integration tests)
+    """
+    if sys.platform == "darwin":
+        if shutil.which("clang") is None:
+            return "clang not found in PATH (required for macOS integration tests)"
+        return None
+
+    if sys.platform == "win32":
+        if shutil.which("gcc") is None:
+            return "gcc (MinGW) not found in PATH (required for Windows integration tests)"
+        return None
+
+    # Linux / other Unix: require castxml + gcc + g++ for ELF tests
     missing = [t for t in ("castxml", "gcc", "g++") if shutil.which(t) is None]
     if missing:
-        reason = f"Required tools not found: {', '.join(missing)}"
+        return f"Required tools not found: {', '.join(missing)}"
+    return None
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
+    reason = _integration_skip_reason()
+    if reason:
         skip = pytest.mark.skip(reason=reason)
         for item in items:
             if "integration" in item.keywords:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -313,6 +314,7 @@ def test_full_snapshot_pipeline_dwarf_only() -> None:
 # ── integration: real .so with -g ─────────────────────────────────────────────
 
 @pytest.mark.integration
+@pytest.mark.skipif(sys.platform != "linux", reason="ELF/DWARF tests require Linux")
 def test_parse_dwarf_real_so() -> None:
     """Compile a .so with debug info and verify DWARF layout extracted correctly."""
     src = """
@@ -347,6 +349,7 @@ def test_parse_dwarf_real_so() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(sys.platform != "linux", reason="ELF/DWARF tests require Linux")
 def test_parse_dwarf_struct_size_regression() -> None:
     """int → long field: DWARF detects struct size change as BREAKING."""
     src_v1 = "typedef struct { int n; } Ctx; int use(Ctx *c) { return c->n; }"
