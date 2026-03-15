@@ -89,6 +89,11 @@ elif [[ "$MODE" == "compare" ]]; then
   add_single_flag "--policy-file" "${INPUT_POLICY_FILE:-}"
   add_single_flag "--suppress" "${INPUT_SUPPRESS:-}"
 
+  # API addition detection
+  if [[ "${INPUT_FAIL_ON_ADDITIONS:-false}" == "true" ]]; then
+    CMD+=(--fail-on-additions)
+  fi
+
   # Note: --gcc-path, --gcc-prefix, --gcc-options, --sysroot, --nostdinc are
   # dump-only flags. In compare mode abicheck performs the dump internally
   # when an input is a binary, but these cross-compilation flags are not
@@ -151,6 +156,7 @@ if [[ $ABICHECK_EXIT -eq 2 ]] && echo "$STDERR_CONTENT" | grep -qE '(^Usage:|^Er
 else
   case $ABICHECK_EXIT in
     0) VERDICT="COMPATIBLE" ;;
+    1) VERDICT="ADDITIONS" ;;
     2) VERDICT="API_BREAK" ;;
     4) VERDICT="BREAKING" ;;
     *) VERDICT="ERROR" ;;
@@ -179,6 +185,9 @@ if [[ "${INPUT_ADD_JOB_SUMMARY:-true}" == "true" && "$MODE" == "compare" ]]; the
     case $VERDICT in
       COMPATIBLE)
         echo "> **Verdict: COMPATIBLE** — No binary ABI break detected."
+        ;;
+      ADDITIONS)
+        echo "> **Verdict: ADDITIONS** ⚠️ — No binary ABI break, but new public API was added unexpectedly."
         ;;
       API_BREAK)
         echo "> **Verdict: API_BREAK** — Source-level API break detected. Recompilation required."
@@ -232,7 +241,11 @@ if [[ "$VERDICT" == "API_BREAK" && "${INPUT_FAIL_ON_API_BREAK:-false}" == "true"
 fi
 
 if [[ "$VERDICT" == "ERROR" ]]; then
-  echo "::error::abicheck failed with exit code $ABICHECK_EXIT"
+  if [[ $ABICHECK_EXIT -eq 1 ]]; then
+    echo "::error::API additions detected (unintentional API expansion). Set fail-on-additions: false to allow."
+  else
+    echo "::error::abicheck failed with exit code $ABICHECK_EXIT"
+  fi
   FINAL_EXIT=1
 fi
 

@@ -552,6 +552,9 @@ def _render_output(fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnaps
               help="PDB file path for old side only (overrides --pdb-path for old).")
 @click.option("--new-pdb-path", "new_pdb_path", type=click.Path(path_type=Path), default=None,
               help="PDB file path for new side only (overrides --pdb-path for new).")
+@click.option("--fail-on-additions", "fail_on_additions", is_flag=True, default=False,
+              help="Exit with code 1 if any new public symbols, types, or fields were added "
+                   "(COMPATIBLE changes). Useful for detecting unintentional API expansion in PRs.")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def compare_cmd(
@@ -563,6 +566,7 @@ def compare_cmd(
     fmt: str, output: Path | None,
     suppress: Path | None, policy: str, policy_file_path: Path | None,
     pdb_path: Path | None, old_pdb_path: Path | None, new_pdb_path: Path | None,
+    fail_on_additions: bool,
     verbose: bool,
 ) -> None:
     """Compare two ABI surfaces and report changes.
@@ -661,6 +665,53 @@ def compare_cmd(
     elif result.verdict.value == "API_BREAK":
         sys.exit(2)
 
+    # --fail-on-additions: exit 1 if any new public symbols/types were added
+    if fail_on_additions:
+        from .checker_policy import COMPATIBLE_KINDS
+        _ADDITION_KINDS = {k for k in COMPATIBLE_KINDS if k.value.endswith("_added")}
+        additions = [c for c in result.compatible if c.kind in _ADDITION_KINDS]
+        if additions:
+            click.echo(
+                f"API expansion detected: {len(additions)} addition(s) "
+                f"({', '.join(sorted({c.kind.value for c in additions}))}). "
+                "Use --fail-on-additions=false to allow API growth.",
+                err=True,
+            )
+            sys.exit(1)
+
+# ── ABICC compat subcommands (implementation in abicheck.compat) ─────────────
+# NOTE: eagerly loads abicheck.compat.cli at import time — intentional so all
+# consumers get compat commands registered. Private helpers re-exported for
+# backward compatibility with code importing from abicheck.cli directly.
+from .compat.cli import (  # noqa: E402,F401
+    _API_BREAK_KINDS,
+    _BINARY_ONLY_KINDS,
+    _NEW_SYMBOL_KINDS,
+    _P2_STUB_FLAGS,
+    _apply_strict,
+    _apply_warn_newsym,
+    _build_internal_suppression,
+    _build_skip_suppression,
+    _build_whitelist_suppression,
+    _classify_compat_error_exit_code,
+    _compat_fail,
+    _detect_compiler_version,
+    _do_echo,
+    _filter_binary_only,
+    _filter_source_only,
+    _limit_affected_changes,
+    _load_descriptor_or_dump,
+    _load_skip_headers,
+    _merge_suppression,
+    _resolve_headers_from_list,
+    _safe_path,
+    _setup_logging,
+    _warn_stub_flags,
+    _write_affected_list,
+    compat_group,
+)
+
+# fmt: on
 
 main.add_command(compat_group)
 
