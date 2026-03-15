@@ -1,0 +1,212 @@
+name: 'abicheck — ABI Compatibility Checker'
+description: >
+  Detect breaking ABI/API changes in C/C++ shared libraries before they reach production.
+  Compares two library versions and reports removed symbols, changed signatures,
+  struct layout drift, vtable reordering, and 80+ other incompatibility types.
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  # ── Operation mode ──────────────────────────────────────────────────────────
+  mode:
+    description: >
+      Operation mode: "compare" (default) compares two ABI surfaces;
+      "dump" generates a JSON baseline snapshot from a single library.
+    required: false
+    default: 'compare'
+
+  # ── Library inputs ──────────────────────────────────────────────────────────
+  old-library:
+    description: >
+      Path to the old library, JSON snapshot, or ABICC Perl dump.
+      Required when mode=compare.
+    required: false
+  new-library:
+    description: >
+      Path to the new (current) library or binary.
+      Required for both compare and dump modes.
+    required: true
+
+  # ── Header inputs ───────────────────────────────────────────────────────────
+  header:
+    description: >
+      Public header file(s) applied to both sides (space-separated).
+      Required when input is an ELF binary; ignored for JSON snapshots.
+    required: false
+  old-header:
+    description: 'Public header(s) for the old side only (overrides header for old). Space-separated.'
+    required: false
+  new-header:
+    description: 'Public header(s) for the new side only (overrides header for new). Space-separated.'
+    required: false
+
+  # ── Include directories ─────────────────────────────────────────────────────
+  include:
+    description: 'Extra include directories for castxml, applied to both sides. Space-separated.'
+    required: false
+  old-include:
+    description: 'Include directories for old side only. Space-separated.'
+    required: false
+  new-include:
+    description: 'Include directories for new side only. Space-separated.'
+    required: false
+
+  # ── Version labels ──────────────────────────────────────────────────────────
+  old-version:
+    description: 'Version label for the old library (embedded in reports).'
+    required: false
+    default: 'old'
+  new-version:
+    description: 'Version label for the new library (embedded in reports).'
+    required: false
+    default: 'new'
+
+  # ── Language & compiler ─────────────────────────────────────────────────────
+  lang:
+    description: 'Language mode for castxml: "c++" or "c".'
+    required: false
+    default: 'c++'
+  gcc-path:
+    description: 'Path to GCC/G++ cross-compiler binary.'
+    required: false
+  gcc-prefix:
+    description: 'Cross-toolchain prefix (e.g. aarch64-linux-gnu-).'
+    required: false
+  gcc-options:
+    description: 'Extra compiler flags passed through to castxml.'
+    required: false
+  sysroot:
+    description: 'Alternative system root directory for cross-compilation.'
+    required: false
+  nostdinc:
+    description: 'Do not search standard system include paths.'
+    required: false
+    default: 'false'
+
+  # ── Output & policy ─────────────────────────────────────────────────────────
+  format:
+    description: 'Output format: markdown (default), json, sarif, html.'
+    required: false
+    default: 'markdown'
+  output-file:
+    description: 'Path to write the report file. If not set, output goes to stdout and job summary.'
+    required: false
+  policy:
+    description: 'Built-in policy profile: strict_abi (default), sdk_vendor, plugin_abi.'
+    required: false
+    default: 'strict_abi'
+  policy-file:
+    description: 'Path to a YAML policy file with per-kind verdict overrides.'
+    required: false
+  suppress:
+    description: 'Path to a YAML suppression file to filter known/intentional changes.'
+    required: false
+  verbose:
+    description: 'Enable verbose/debug output from abicheck.'
+    required: false
+    default: 'false'
+
+  # ── Action-specific behaviour ───────────────────────────────────────────────
+  python-version:
+    description: 'Python version for setup-python.'
+    required: false
+    default: '3.13'
+  install-deps:
+    description: 'Install system dependencies (castxml, gcc). Set to false if pre-installed.'
+    required: false
+    default: 'true'
+  upload-sarif:
+    description: >
+      Upload SARIF results to GitHub Code Scanning (requires security-events: write permission).
+      Only effective when format=sarif.
+    required: false
+    default: 'false'
+  fail-on-breaking:
+    description: 'Fail the step when a binary ABI break is detected (exit code 4).'
+    required: false
+    default: 'true'
+  fail-on-api-break:
+    description: 'Fail the step when a source-level API break is detected (exit code 2).'
+    required: false
+    default: 'false'
+  add-job-summary:
+    description: 'Write a markdown summary to the GitHub Actions Job Summary.'
+    required: false
+    default: 'true'
+
+outputs:
+  verdict:
+    description: >
+      ABI comparison verdict: NO_CHANGE, COMPATIBLE, COMPATIBLE_WITH_RISK,
+      API_BREAK, or BREAKING.
+    value: ${{ steps.run-abicheck.outputs.verdict }}
+  exit-code:
+    description: 'abicheck exit code: 0 (compatible), 2 (API break), 4 (ABI break).'
+    value: ${{ steps.run-abicheck.outputs.exit-code }}
+  report-path:
+    description: 'Path to the generated report file (if output-file was set).'
+    value: ${{ steps.run-abicheck.outputs.report-path }}
+
+runs:
+  using: 'composite'
+  steps:
+    # ── 1. Python ─────────────────────────────────────────────────────────────
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    # ── 2. System dependencies ────────────────────────────────────────────────
+    - name: Install system dependencies
+      if: inputs.install-deps == 'true'
+      shell: bash
+      run: bash "${{ github.action_path }}/action/install-deps.sh"
+
+    # ── 3. Install abicheck ──────────────────────────────────────────────────
+    - name: Install abicheck
+      shell: bash
+      run: pip install "${{ github.action_path }}"
+
+    # ── 4. Run abicheck ──────────────────────────────────────────────────────
+    - name: Run abicheck
+      id: run-abicheck
+      shell: bash
+      env:
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_OLD_LIBRARY: ${{ inputs.old-library }}
+        INPUT_NEW_LIBRARY: ${{ inputs.new-library }}
+        INPUT_HEADER: ${{ inputs.header }}
+        INPUT_OLD_HEADER: ${{ inputs.old-header }}
+        INPUT_NEW_HEADER: ${{ inputs.new-header }}
+        INPUT_INCLUDE: ${{ inputs.include }}
+        INPUT_OLD_INCLUDE: ${{ inputs.old-include }}
+        INPUT_NEW_INCLUDE: ${{ inputs.new-include }}
+        INPUT_OLD_VERSION: ${{ inputs.old-version }}
+        INPUT_NEW_VERSION: ${{ inputs.new-version }}
+        INPUT_LANG: ${{ inputs.lang }}
+        INPUT_GCC_PATH: ${{ inputs.gcc-path }}
+        INPUT_GCC_PREFIX: ${{ inputs.gcc-prefix }}
+        INPUT_GCC_OPTIONS: ${{ inputs.gcc-options }}
+        INPUT_SYSROOT: ${{ inputs.sysroot }}
+        INPUT_NOSTDINC: ${{ inputs.nostdinc }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_OUTPUT_FILE: ${{ inputs.output-file }}
+        INPUT_POLICY: ${{ inputs.policy }}
+        INPUT_POLICY_FILE: ${{ inputs.policy-file }}
+        INPUT_SUPPRESS: ${{ inputs.suppress }}
+        INPUT_VERBOSE: ${{ inputs.verbose }}
+        INPUT_FAIL_ON_BREAKING: ${{ inputs.fail-on-breaking }}
+        INPUT_FAIL_ON_API_BREAK: ${{ inputs.fail-on-api-break }}
+        INPUT_ADD_JOB_SUMMARY: ${{ inputs.add-job-summary }}
+      run: bash "${{ github.action_path }}/action/run.sh"
+
+    # ── 5. Upload SARIF ──────────────────────────────────────────────────────
+    - name: Upload SARIF to Code Scanning
+      if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.run-abicheck.outputs.report-path != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.run-abicheck.outputs.report-path }}
+        category: abicheck
+      continue-on-error: true
