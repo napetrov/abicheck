@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """Negative tests -- verify that benign changes are NOT flagged as breaking.
 
 These tests ensure abicheck does not produce false positives for changes that

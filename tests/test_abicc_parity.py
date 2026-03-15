@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """ABICC parity tests.
 
 Verifies that abicheck and abi-compliance-checker agree on ABI verdict

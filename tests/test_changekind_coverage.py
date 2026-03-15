@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """tests/test_changekind_coverage.py — Explicit ChangeKind assertion coverage.
 
 Covers the 10 ChangeKinds that had no explicit ``assert c.kind ==`` check:

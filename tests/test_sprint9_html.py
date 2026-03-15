@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """Sprint 9: Tests for ABICC-compatible HTML report generator."""
 from __future__ import annotations
 

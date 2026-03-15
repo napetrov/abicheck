@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 # Copyright 2026 Nikolay Petrov
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

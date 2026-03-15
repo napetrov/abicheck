@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """Extended ABICC parity tests: CLI compatibility, output format parity,
 and strict-mode case-level equivalence.
 
