@@ -127,6 +127,13 @@ function(abicheck_add_case CASE_NAME)
   if(ARG_V1_LINK_OPTIONS)
     target_link_options(${_v1} PRIVATE ${ARG_V1_LINK_OPTIONS})
   endif()
+  # macOS: normalize install name so v1 and v2 share the same LC_ID_DYLIB.
+  # Without this, libv1.dylib and libv2.dylib get different install names,
+  # causing spurious soname_changed diffs (same class of issue as NO_SONAME
+  # on ELF).  We force both to "@rpath/lib.dylib".
+  if(APPLE)
+    target_link_options(${_v1} PRIVATE -install_name @rpath/lib.dylib)
+  endif()
 
   # --- v2 library ---
   set(_v2 ${CASE_NAME}_v2)
@@ -168,6 +175,9 @@ function(abicheck_add_case CASE_NAME)
   endif()
   if(ARG_V2_LINK_OPTIONS)
     target_link_options(${_v2} PRIVATE ${ARG_V2_LINK_OPTIONS})
+  endif()
+  if(APPLE)
+    target_link_options(${_v2} PRIVATE -install_name @rpath/lib.dylib)
   endif()
 
   # --- Consumer app (optional) ---
