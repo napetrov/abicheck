@@ -139,8 +139,10 @@ inputs:
 outputs:
   verdict:
     description: >
-      ABI comparison verdict: NO_CHANGE, COMPATIBLE, COMPATIBLE_WITH_RISK,
-      API_BREAK, or BREAKING.
+      ABI comparison verdict: COMPATIBLE (no binary break, includes
+      no-change and compatible-addition cases), API_BREAK (source-level
+      break), BREAKING (binary ABI break), or ERROR (tool/configuration
+      failure).
     value: ${{ steps.run-abicheck.outputs.verdict }}
   exit-code:
     description: 'abicheck exit code: 0 (compatible), 2 (API break), 4 (ABI break).'
