@@ -555,7 +555,6 @@ class TestDumpRoutingMachoPe:
 
     def test_dump_macho_with_headers(self, tmp_path: Path) -> None:
         """_dump_macho: with headers → castxml path, underscore stripping."""
-        import xml.etree.ElementTree as ET
         from unittest.mock import MagicMock, patch
 
         from abicheck import dumper
@@ -572,7 +571,7 @@ class TestDumpRoutingMachoPe:
         mock_meta = MagicMock()
         mock_meta.exports = [mock_exp_c, mock_exp_cpp]
 
-        fake_xml = ET.fromstring("<CastXML Format='1.1.0'/>")
+        fake_xml = Element("CastXML", {"Format": "1.1.0"})
 
         import abicheck.macho_metadata as _macho_mod
         with patch.object(dumper, "_detect_format", return_value="macho"), \
@@ -615,7 +614,6 @@ class TestDumpRoutingMachoPe:
 
     def test_dump_pe_with_headers(self, tmp_path: Path) -> None:
         """_dump_pe: with headers → castxml path used."""
-        import xml.etree.ElementTree as ET
         from unittest.mock import MagicMock, patch
 
         from abicheck import dumper
@@ -631,7 +629,7 @@ class TestDumpRoutingMachoPe:
         mock_meta.exports = [mock_exp]
         mock_meta.machine = "x86_64"
 
-        fake_xml = ET.fromstring("<CastXML Format='1.1.0'/>")
+        fake_xml = Element("CastXML", {"Format": "1.1.0"})
 
         import abicheck.pe_metadata as _pe_mod
         with patch.object(dumper, "_detect_format", return_value="pe"), \
