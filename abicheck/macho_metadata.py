@@ -272,7 +272,7 @@ def _parse(dylib_path: Path) -> MachoMetadata:
             n_desc = int(nlist_entry.n_desc)
 
             # Only exported, defined symbols
-            if not n_type & N_EXT:
+            if not (n_type & N_EXT):
                 continue
             if (n_type & N_TYPE) == N_UNDF:
                 continue
