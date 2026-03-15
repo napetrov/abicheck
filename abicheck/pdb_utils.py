@@ -38,11 +38,16 @@ _DEBUG_TYPE_CODEVIEW = 2
 def _is_network_path(p: str | Path) -> bool:
     """Return True if *p* looks like a UNC or network path."""
     s = str(p)
-    if s.startswith("\\\\") or s.startswith("//"):
+    # Normalise to backslashes for uniform checking
+    s_norm = s.replace("/", "\\")
+    if s_norm.startswith("\\\\"):
         return True
-    # Also check via PureWindowsPath — catches normalised UNC anchors.
+    # Also check Win32 extended UNC prefix \\?\UNC\
+    if s_norm.startswith("\\\\?\\UNC\\"):
+        return True
+    # Fallback via PureWindowsPath — catches edge cases after normalisation
     try:
-        anchor = PureWindowsPath(s).anchor
+        anchor = PureWindowsPath(s_norm).anchor
         if anchor.startswith("\\\\"):
             return True
     except Exception:  # noqa: BLE001
@@ -50,22 +55,61 @@ def _is_network_path(p: str | Path) -> bool:
     return False
 
 
+# Maximum CodeView debug directory entry size we're willing to allocate.
+# PDB filenames are at most MAX_PATH (260) chars; RSDS header is 24 bytes.
+_MAX_CODEVIEW_SIZE = 4096
+
+
 def _resolve_embedded_pdb(
     dll_path: Path,
     allow_network: bool,
 ) -> Path | None:
-    """Try to locate a PDB via the path embedded in the PE debug directory."""
+    """Try to locate a PDB via the path embedded in the PE debug directory.
+
+    Only considers the PDB path embedded in the PE's CodeView debug entry.
+    The resolved path must be either:
+    - An absolute path sharing the same drive/root as the DLL (prevents
+      path traversal to unrelated filesystem locations), or
+    - A relative path resolved against the DLL's directory.
+
+    Network/UNC paths are always blocked unless *allow_network* is True.
+    """
     embedded = _extract_pdb_path_from_pe(dll_path)
     if embedded is None:
         return None
     embedded_path = Path(embedded)
+
+    # Block network/UNC paths during auto-discovery
     if not allow_network and _is_network_path(embedded_path):
         log.debug(
             "locate_pdb: skipping network path %s (use --pdb-path to override)", embedded
         )
+        # Still try the filename-only fallback (always local)
+        local = dll_path.parent / embedded_path.name
+        if local.is_file():
+            return local
+        return None
+
+    # Security: only trust absolute embedded paths if they share the same
+    # drive/root as the DLL itself, to prevent traversal to arbitrary locations.
+    if embedded_path.is_absolute():
+        try:
+            dll_root = Path(dll_path).resolve().anchor
+            emb_root = embedded_path.resolve().anchor
+            if dll_root and emb_root and dll_root.lower() != emb_root.lower():
+                log.debug(
+                    "locate_pdb: skipping embedded path on different drive %s", embedded
+                )
+                embedded_path = embedded_path.with_drive("") if hasattr(embedded_path, "with_drive") else embedded_path
+                # Fall through to filename-only lookup below
+            elif embedded_path.is_file():
+                return embedded_path
+        except (ValueError, OSError):
+            pass  # drive comparison failed; fall through to filename-only
     elif embedded_path.is_file():
         return embedded_path
-    # Fall back to same filename in the DLL's directory (always local)
+
+    # Fall back to same filename in the DLL's directory (always local, no traversal)
     local = dll_path.parent / embedded_path.name
     if local.is_file():
         return local
@@ -138,7 +182,9 @@ def _extract_pdb_path_from_pe(dll_path: Path) -> str | None:
                 # Fall back to raw data via AddressOfRawData (RVA),
                 # which is what pe.get_data() expects.
                 size = dbg.struct.SizeOfData
-                if size and dbg.struct.AddressOfRawData:
+                # Sanity cap: CodeView header + MAX_PATH is well under 1 KB.
+                # Reject oversized entries to prevent OOM from crafted PEs.
+                if size and size <= _MAX_CODEVIEW_SIZE and dbg.struct.AddressOfRawData:
                     raw: bytes = pe.get_data(dbg.struct.AddressOfRawData, size)
                     if raw and len(raw) >= 24 and raw[:4] == _RSDS_SIG:
                         # RSDS: 4 (sig) + 16 (GUID) + 4 (age) + filename
