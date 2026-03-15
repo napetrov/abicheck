@@ -157,6 +157,7 @@ def _compile(src: Path, out: Path) -> str | None:
         args = [compiler, "/LD", "/Zi", "/Fe:" + str(out), str(src)]
     elif sys.platform == "darwin":
         args = [compiler, "-dynamiclib", "-g", "-Og", "-fvisibility=default",
+                "-install_name", "@rpath/lib.dylib",
                 "-o", str(out), str(src)]
     else:
         args = [compiler, "-shared", "-fPIC", "-g", "-Og", "-fvisibility=default",

@@ -209,6 +209,7 @@ def compile_so(src: Path, out_so: Path) -> bool:
         args = [compiler, "/LD", "/Zi", "/Fe:" + str(out_so), str(src)]
     elif sys.platform == "darwin":
         args = [compiler, "-dynamiclib", "-g", "-Og", "-fvisibility=default",
+                "-install_name", "@rpath/lib.dylib",
                 "-o", str(out_so), str(src)]
     else:
         args = [compiler, "-shared", "-fPIC", "-g", "-Og", "-fvisibility=default",
