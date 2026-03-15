@@ -69,19 +69,19 @@ inputs:
     required: false
     default: 'c++'
   gcc-path:
-    description: 'Path to GCC/G++ cross-compiler binary.'
+    description: 'Path to GCC/G++ cross-compiler binary (dump mode only).'
     required: false
   gcc-prefix:
-    description: 'Cross-toolchain prefix (e.g. aarch64-linux-gnu-).'
+    description: 'Cross-toolchain prefix, e.g. aarch64-linux-gnu- (dump mode only).'
     required: false
   gcc-options:
-    description: 'Extra compiler flags passed through to castxml.'
+    description: 'Extra compiler flags passed through to castxml (dump mode only).'
     required: false
   sysroot:
-    description: 'Alternative system root directory for cross-compilation.'
+    description: 'Alternative system root directory for cross-compilation (dump mode only).'
     required: false
   nostdinc:
-    description: 'Do not search standard system include paths.'
+    description: 'Do not search standard system include paths (dump mode only).'
     required: false
     default: 'false'
 
