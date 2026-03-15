@@ -1,0 +1,40 @@
+{
+  "library": "libexample.so",
+  "version": "2.0",
+  "functions": [
+    {
+      "name": "compute",
+      "mangled": "compute",
+      "return_type": "int",
+      "params": [],
+      "visibility": "public",
+      "is_virtual": false,
+      "is_noexcept": false,
+      "is_extern_c": true,
+      "vtable_index": null,
+      "source_location": null,
+      "is_static": false,
+      "is_const": false,
+      "is_volatile": false,
+      "is_pure_virtual": false,
+      "is_deleted": false,
+      "is_inline": false,
+      "access": "public",
+      "return_pointer_depth": 0
+    }
+  ],
+  "variables": [],
+  "types": [],
+  "elf": null,
+  "pe": null,
+  "macho": null,
+  "dwarf": null,
+  "dwarf_advanced": null,
+  "enums": [],
+  "typedefs": {},
+  "constants": {},
+  "elf_only_mode": false,
+  "platform": null,
+  "language_profile": null,
+  "schema_version": 3
+}

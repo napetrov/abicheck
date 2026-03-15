@@ -39,6 +39,7 @@ nav:
   - User Guide:
     - CLI Usage: usage_and_coverage.md
     - Tool Modes: tool_modes.md
+    - GitHub Action: github-action.md
     - Policy Profiles: policies.md
     - SARIF Output: sarif_output.md
     - Examples & Breakage Guide: examples_breakage_guide.md
