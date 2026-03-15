@@ -284,7 +284,7 @@ def _castxml_dump(
 
     # Determine GNU vs MSVC dialect (inspect executable name, not substring,
     # to avoid misclassifying paths like "/opt/local/bin/g++")
-    exe_name = Path(cc_bin).name
+    exe_name = Path(cc_bin).name.lower()
     cc_id = "msvc" if exe_name in ("cl", "cl.exe") else "gnu"
 
     with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:

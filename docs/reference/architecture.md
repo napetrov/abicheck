@@ -107,9 +107,10 @@ so the resulting AST matches what the external compiler would produce.
 | `msvc-c` | Microsoft Visual C (cl, C mode) | Windows |
 
 **Auto-detection logic** (see `dumper.py:_castxml_dump()`): abicheck extracts the
-*filename* from the compiler binary path (via `Path(cc_bin).name`) and checks whether it
-is exactly `cl` or `cl.exe`. If so, it passes `--castxml-cc-msvc`; otherwise it passes
-`--castxml-cc-gnu`. This covers gcc, g++, clang, clang++, and MinGW cross-compilers.
+*filename* from the compiler binary path (via `Path(cc_bin).name`), lower-cases it, and
+checks whether it is `cl` or `cl.exe`. If so, it passes `--castxml-cc-msvc`; otherwise it
+passes `--castxml-cc-gnu`. The comparison is case-insensitive so `CL.EXE`, `Cl.exe`, etc.
+are all correctly detected on Windows.
 
 **Compiler resolution priority** (highest to lowest):
 
