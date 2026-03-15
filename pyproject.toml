@@ -40,6 +40,7 @@ dependencies = [
 
 [project.scripts]
 abicheck = "abicheck.cli:main"
+abicheck-mcp = "abicheck.mcp_server:main"
 
 [project.urls]
 Repository = "https://github.com/napetrov/abicheck"
@@ -48,6 +49,9 @@ Documentation = "https://napetrov.github.io/abicheck/"
 Changelog = "https://github.com/napetrov/abicheck/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+mcp = [
+    "mcp[cli]>=1.2.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov",
