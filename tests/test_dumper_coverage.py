@@ -551,3 +551,146 @@ class TestDumpRoutingMachoPe:
         with patch.object(dumper, "_detect_format", return_value="unknown"):
             with pytest.raises((ValueError, Exception), match="(?i)unknown|unrecogni"):
                 dump(f, headers=[], version="1.0")
+
+
+    def test_dump_macho_with_headers(self, tmp_path: Path) -> None:
+        """_dump_macho: with headers → castxml path, underscore stripping."""
+        from unittest.mock import MagicMock, patch
+        import xml.etree.ElementTree as ET
+
+        from abicheck import dumper
+        from abicheck.model import AbiSnapshot
+
+        dylib = tmp_path / "libfoo.dylib"
+        dylib.write_bytes(b"\xcf\xfa\xed\xfe")
+
+        # Regular C symbol (_foo → foo) and C++ mangled (__Zfoo → _Zfoo)
+        mock_exp_c = MagicMock()
+        mock_exp_c.name = "_foo_func"
+        mock_exp_cpp = MagicMock()
+        mock_exp_cpp.name = "__Zfoo"
+        mock_meta = MagicMock()
+        mock_meta.exports = [mock_exp_c, mock_exp_cpp]
+
+        fake_xml = ET.fromstring("<CastXML Format='1.1.0'/>")
+
+        import abicheck.macho_metadata as _macho_mod
+        with patch.object(dumper, "_detect_format", return_value="macho"), \
+             patch.object(_macho_mod, "parse_macho_metadata", return_value=mock_meta), \
+             patch.object(dumper, "_castxml_dump", return_value=fake_xml), \
+             patch.object(dumper._CastxmlParser, "parse_functions", return_value=[]), \
+             patch.object(dumper._CastxmlParser, "parse_variables", return_value=[]), \
+             patch.object(dumper._CastxmlParser, "parse_types", return_value=[]), \
+             patch.object(dumper._CastxmlParser, "parse_enums", return_value=[]), \
+             patch.object(dumper._CastxmlParser, "parse_typedefs", return_value=[]):
+            header = tmp_path / "foo.h"
+            header.write_text("void foo_func(void);")
+            snap = dump(dylib, headers=[header], version="2.0", lang="c")
+
+        assert isinstance(snap, AbiSnapshot)
+        assert snap.platform == "macho"
+
+    def test_dump_macho_lang_cpp(self, tmp_path: Path) -> None:
+        """_dump_macho: lang='c++' sets profile_hint='cpp'."""
+        from unittest.mock import MagicMock, patch
+
+        from abicheck import dumper
+
+        dylib = tmp_path / "libfoo.dylib"
+        dylib.write_bytes(b"\xcf\xfa\xed\xfe")
+
+        mock_meta = MagicMock()
+        mock_meta.exports = []
+
+        import abicheck.macho_metadata as _macho_mod
+        import warnings
+        with patch.object(dumper, "_detect_format", return_value="macho"), \
+             patch.object(_macho_mod, "parse_macho_metadata", return_value=mock_meta):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                snap = dump(dylib, headers=[], version="1.0", lang="c++")
+
+        assert snap.language_profile == "cpp"
+
+    def test_dump_pe_with_headers(self, tmp_path: Path) -> None:
+        """_dump_pe: with headers → castxml path used."""
+        from unittest.mock import MagicMock, patch
+        import xml.etree.ElementTree as ET
+
+        from abicheck import dumper
+        from abicheck.model import AbiSnapshot
+
+        dll = tmp_path / "foo.dll"
+        dll.write_bytes(b"MZ\x90\x00")
+
+        mock_exp = MagicMock()
+        mock_exp.name = "FooFunc"
+        mock_exp.ordinal = 1
+        mock_meta = MagicMock()
+        mock_meta.exports = [mock_exp]
+        mock_meta.machine = "x86_64"
+
+        fake_xml = ET.fromstring("<CastXML Format='1.1.0'/>")
+
+        import abicheck.pe_metadata as _pe_mod
+        with patch.object(dumper, "_detect_format", return_value="pe"), \
+             patch.object(_pe_mod, "parse_pe_metadata", return_value=mock_meta), \
+             patch.object(dumper, "_castxml_dump", return_value=fake_xml), \
+             patch.object(dumper._CastxmlParser, "parse_functions", return_value=[]), \
+             patch.object(dumper._CastxmlParser, "parse_variables", return_value=[]), \
+             patch.object(dumper._CastxmlParser, "parse_types", return_value=[]), \
+             patch.object(dumper._CastxmlParser, "parse_enums", return_value=[]), \
+             patch.object(dumper._CastxmlParser, "parse_typedefs", return_value=[]):
+            header = tmp_path / "foo.h"
+            header.write_text("void FooFunc(void);")
+            snap = dump(dll, headers=[header], version="1.0")
+
+        assert isinstance(snap, AbiSnapshot)
+        assert snap.platform == "pe"
+
+    def test_dump_pe_lang_cpp(self, tmp_path: Path) -> None:
+        """_dump_pe: lang='cpp' sets profile_hint='cpp'."""
+        from unittest.mock import MagicMock, patch
+
+        from abicheck import dumper
+
+        dll = tmp_path / "foo.dll"
+        dll.write_bytes(b"MZ\x90\x00")
+
+        mock_exp = MagicMock()
+        mock_exp.name = "FooFunc"
+        mock_exp.ordinal = 1
+        mock_meta = MagicMock()
+        mock_meta.exports = [mock_exp]
+
+        import abicheck.pe_metadata as _pe_mod
+        import warnings
+        with patch.object(dumper, "_detect_format", return_value="pe"), \
+             patch.object(_pe_mod, "parse_pe_metadata", return_value=mock_meta):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                snap = dump(dll, headers=[], version="1.0", lang="cpp")
+
+        assert snap.language_profile == "cpp"
+
+    def test_dump_pe_lang_c(self, tmp_path: Path) -> None:
+        """_dump_pe: lang='C' sets profile_hint='c'."""
+        from unittest.mock import MagicMock, patch
+
+        from abicheck import dumper
+
+        dll = tmp_path / "foo.dll"
+        dll.write_bytes(b"MZ\x90\x00")
+
+        mock_meta = MagicMock()
+        mock_meta.exports = []
+
+        import abicheck.pe_metadata as _pe_mod
+        import warnings
+        with patch.object(dumper, "_detect_format", return_value="pe"), \
+             patch.object(_pe_mod, "parse_pe_metadata", return_value=mock_meta):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                snap = dump(dll, headers=[], version="1.0", lang="C")
+
+        assert snap.language_profile == "c"
