@@ -555,8 +555,8 @@ class TestDumpRoutingMachoPe:
 
     def test_dump_macho_with_headers(self, tmp_path: Path) -> None:
         """_dump_macho: with headers → castxml path, underscore stripping."""
-        from unittest.mock import MagicMock, patch
         import xml.etree.ElementTree as ET
+        from unittest.mock import MagicMock, patch
 
         from abicheck import dumper
         from abicheck.model import AbiSnapshot
@@ -602,8 +602,9 @@ class TestDumpRoutingMachoPe:
         mock_meta = MagicMock()
         mock_meta.exports = []
 
-        import abicheck.macho_metadata as _macho_mod
         import warnings
+
+        import abicheck.macho_metadata as _macho_mod
         with patch.object(dumper, "_detect_format", return_value="macho"), \
              patch.object(_macho_mod, "parse_macho_metadata", return_value=mock_meta):
             with warnings.catch_warnings():
@@ -614,8 +615,8 @@ class TestDumpRoutingMachoPe:
 
     def test_dump_pe_with_headers(self, tmp_path: Path) -> None:
         """_dump_pe: with headers → castxml path used."""
-        from unittest.mock import MagicMock, patch
         import xml.etree.ElementTree as ET
+        from unittest.mock import MagicMock, patch
 
         from abicheck import dumper
         from abicheck.model import AbiSnapshot
@@ -663,8 +664,9 @@ class TestDumpRoutingMachoPe:
         mock_meta = MagicMock()
         mock_meta.exports = [mock_exp]
 
-        import abicheck.pe_metadata as _pe_mod
         import warnings
+
+        import abicheck.pe_metadata as _pe_mod
         with patch.object(dumper, "_detect_format", return_value="pe"), \
              patch.object(_pe_mod, "parse_pe_metadata", return_value=mock_meta):
             with warnings.catch_warnings():
@@ -685,8 +687,9 @@ class TestDumpRoutingMachoPe:
         mock_meta = MagicMock()
         mock_meta.exports = []
 
-        import abicheck.pe_metadata as _pe_mod
         import warnings
+
+        import abicheck.pe_metadata as _pe_mod
         with patch.object(dumper, "_detect_format", return_value="pe"), \
              patch.object(_pe_mod, "parse_pe_metadata", return_value=mock_meta):
             with warnings.catch_warnings():
