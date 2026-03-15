@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import json
 import logging
+import platform
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -110,15 +112,31 @@ def _safe_write_path(raw: str, *, label: str = "output_path") -> Path:
         )
 
     # Block writes to sensitive system locations
-    sensitive_prefixes = (
-        "/etc/", "/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/",
-        "/boot/", "/sys/", "/proc/",
-    )
-    p_str = str(p)
-    for prefix in sensitive_prefixes:
-        if p_str.startswith(prefix):
+    # Use Path objects for comparison to handle symlinks (e.g. /etc -> /private/etc on macOS)
+    _os = platform.system()
+    if _os in ("Linux", "Darwin"):
+        sensitive_system_dirs = [
+            Path("/etc"), Path("/bin"), Path("/sbin"),
+            Path("/usr/bin"), Path("/usr/sbin"),
+            Path("/boot"), Path("/sys"), Path("/proc"),
+        ]
+        for sys_dir in sensitive_system_dirs:
+            try:
+                p.relative_to(sys_dir.resolve())
+                raise ValueError(
+                    f"{label} points to a sensitive system path: {sys_dir}..."
+                )
+            except ValueError as e:
+                if "sensitive system path" in str(e):
+                    raise
+    elif _os == "Windows":
+        _win_sensitive = re.compile(
+            r"^[A-Za-z]:[/\\](?:Windows|System32|Program Files|ProgramData)[/\\]",
+            re.IGNORECASE,
+        )
+        if _win_sensitive.match(str(p)):
             raise ValueError(
-                f"{label} points to a sensitive system path: {prefix}..."
+                f"{label} points to a sensitive system path"
             )
 
     # Block writes to SSH/credential directories
