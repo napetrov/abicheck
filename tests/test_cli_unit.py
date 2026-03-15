@@ -377,11 +377,8 @@ class TestCompatClassifiedErrorPaths:
 class TestFailOnAdditions:
     """Tests for --fail-on-additions flag in compare command."""
 
-    def _make_snapshot(self, tmp_path, name: str, funcs: list[str]) -> "Path":
+    def _make_snapshot(self, tmp_path: Path, name: str, funcs: list[str]) -> Path:
         """Create a minimal JSON snapshot with the given function names."""
-        import json
-        from pathlib import Path
-
         snap = {
             "library": "libtest.so",
             "version": "1.0",
@@ -406,11 +403,8 @@ class TestFailOnAdditions:
         p.write_text(json.dumps(snap))
         return p
 
-    def test_fail_on_additions_exits_1_when_function_added(self, tmp_path):
+    def test_fail_on_additions_exits_1_when_function_added(self, tmp_path: Path) -> None:
         """--fail-on-additions: new public function → exit code 1."""
-        from click.testing import CliRunner
-
-        from abicheck.cli import main
 
         old = self._make_snapshot(tmp_path, "old", ["foo"])
         new = self._make_snapshot(tmp_path, "new", ["foo", "bar"])
@@ -420,11 +414,8 @@ class TestFailOnAdditions:
         assert result.exit_code == 1, f"Expected exit 1, got {result.exit_code}"
         assert "addition" in result.output.lower() or "addition" in (result.stderr or "").lower()
 
-    def test_fail_on_additions_exits_0_when_no_additions(self, tmp_path):
+    def test_fail_on_additions_exits_0_when_no_additions(self, tmp_path: Path) -> None:
         """--fail-on-additions: no additions → exit code 0."""
-        from click.testing import CliRunner
-
-        from abicheck.cli import main
 
         snap = self._make_snapshot(tmp_path, "snap", ["foo", "bar"])
 
@@ -432,11 +423,8 @@ class TestFailOnAdditions:
         result = runner.invoke(main, ["compare", str(snap), str(snap), "--fail-on-additions"])
         assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}"
 
-    def test_no_fail_on_additions_by_default(self, tmp_path):
+    def test_no_fail_on_additions_by_default(self, tmp_path: Path) -> None:
         """Without --fail-on-additions: new function → exit code 0 (COMPATIBLE)."""
-        from click.testing import CliRunner
-
-        from abicheck.cli import main
 
         old = self._make_snapshot(tmp_path, "old", ["foo"])
         new = self._make_snapshot(tmp_path, "new", ["foo", "bar"])
