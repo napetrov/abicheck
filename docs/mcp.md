@@ -278,3 +278,21 @@ The server uses **stdio** transport — the agent spawns `abicheck-mcp` as a loc
 │   dumper / checker / reporter    │
 └──────────────────────────────────┘
 ```
+
+## Security
+
+### Path restrictions for `output_path`
+
+When `abi_dump` writes a snapshot to disk via `output_path`, the MCP server
+enforces the following policy:
+
+- **Extension**: only `.json` files are allowed
+- **System directories**: writes to `/etc`, `/bin`, `/sbin`, `/usr/bin`,
+  `/usr/sbin`, `/boot`, `/sys`, `/proc`, `/dev` are blocked on Linux/macOS;
+  `C:\Windows\`, `C:\System32\` etc. are blocked on Windows
+- **Credential directories**: `~/.ssh`, `~/.aws`, `~/.gnupg` are always blocked
+- **Symlink-safe**: resolved paths are used for comparison to prevent traversal
+  via `../../etc/` or `//etc/` bypasses
+
+Read paths (`library_path`, `headers`, `include_dirs`) are not restricted —
+they follow the same access controls as the user running the MCP server.
