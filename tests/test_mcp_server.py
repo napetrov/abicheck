@@ -738,10 +738,10 @@ class TestSafeWritePath:
         with pytest.raises(ValueError, match="Empty"):
             _safe_write_path("")
 
-    def test_non_json_suffix_raises(self) -> None:
+    def test_non_json_suffix_raises(self, tmp_path: Path) -> None:
         from abicheck.mcp_server import _safe_write_path
         with pytest.raises(ValueError, match=".json"):
-            _safe_write_path("/tmp/out.txt")
+            _safe_write_path(str(tmp_path / "out.txt"))
 
     def test_system_path_raises(self) -> None:
         from abicheck.mcp_server import _safe_write_path
