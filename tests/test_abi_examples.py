@@ -84,12 +84,16 @@ def _find_compiler(is_cpp: bool = False) -> str | None:
     return None
 
 
-def _compile_shared(src: Path, out: Path) -> bool:
-    """Compile src into a shared library. Returns True on success."""
+def _compile_shared(src: Path, out: Path) -> str | None:
+    """Compile *src* into a shared library at *out*.
+
+    Returns None on success, ``"no_compiler"`` when no compiler is found,
+    or an error message string when compilation fails.
+    """
     is_cpp = src.suffix == ".cpp"
     compiler = _find_compiler(is_cpp)
     if not compiler:
-        return False
+        return "no_compiler"
 
     if compiler == "cl":
         args = [compiler, "/LD", "/Zi", "/Fe:" + str(out), str(src)]
@@ -101,16 +105,22 @@ def _compile_shared(src: Path, out: Path) -> bool:
                 "-o", str(out), str(src)]
 
     r = subprocess.run(args, capture_output=True, text=True)
-    return r.returncode == 0
+    if r.returncode != 0:
+        return f"compile failed (exit {r.returncode}):\n{r.stderr[:500]}"
+    return None
 
 
 def _find_lib(directory: Path, name: str) -> Path | None:
-    """Find a shared library in directory across platforms.
+    """Find a shared library in *directory* across platforms.
 
-    Also checks multi-config generator subdirectories (Debug/, Release/).
+    Search order:
+    1. Direct children of *directory*
+    2. Common multi-config generator subdirectories (Debug/, Release/, …)
+    3. Recursive glob fallback — catches lib/, nested generator layouts, etc.
     """
     if not directory.exists():
         return None
+    # 1+2: explicit directory + well-known config subdirs
     search_dirs = [directory]
     for cfg in ("Debug", "Release", "RelWithDebInfo", "MinSizeRel"):
         sub = directory / cfg
@@ -122,6 +132,12 @@ def _find_lib(directory: Path, name: str) -> Path | None:
                 p = search_dir / f"{prefix}{name}{suffix}"
                 if p.exists():
                     return p
+    # 3: recursive glob fallback for unusual generator layouts
+    for prefix in ("lib", ""):
+        for suffix in (".so", ".dylib", ".dll"):
+            hits = list(directory.rglob(f"{prefix}{name}{suffix}"))
+            if hits:
+                return hits[0]
     return None
 
 
@@ -221,10 +237,18 @@ def test_abi_example(case_name, expected_verdict, hdr_v1, hdr_v2, tmp_path):
         src_v2 = _find_source(build_dir, hdr_v2)
         libv1 = tmp_path / f"libv1{suffix}"
         libv2 = tmp_path / f"libv2{suffix}"
-        if not _compile_shared(src_v1, libv1):
-            pytest.skip(f"compilation failed for {case_name} v1")
-        if not _compile_shared(src_v2, libv2):
-            pytest.skip(f"compilation failed for {case_name} v2")
+
+        err = _compile_shared(src_v1, libv1)
+        if err == "no_compiler":
+            pytest.skip(f"no compiler found for {case_name} v1")
+        elif err:
+            pytest.fail(f"{case_name} v1: {err}")
+
+        err = _compile_shared(src_v2, libv2)
+        if err == "no_compiler":
+            pytest.skip(f"no compiler found for {case_name} v2")
+        elif err:
+            pytest.fail(f"{case_name} v2: {err}")
 
     snap1 = tmp_path / "snap1.json"
     snap2 = tmp_path / "snap2.json"
