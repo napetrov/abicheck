@@ -46,10 +46,12 @@ from .checker_policy import (
     BREAKING_KINDS,
     COMPATIBLE_KINDS,
     RISK_KINDS,
+    VALID_BASE_POLICIES,
     ChangeKind,
     Verdict,
     impact_for,
     policy_for,
+    policy_kind_sets,
 )
 from .errors import AbicheckError
 from .model import AbiSnapshot, Visibility
@@ -128,6 +130,16 @@ def _resolve_input(
         from .model import Function
         from .pe_metadata import parse_pe_metadata
         pe_meta = parse_pe_metadata(path)
+        if not pe_meta.machine:
+            raise AbicheckError(
+                f"Failed to extract PE metadata from '{path}'. "
+                "The file may be corrupt or not a valid PE binary."
+            )
+        if not pe_meta.exports:
+            raise AbicheckError(
+                f"PE file '{path}' has no exports (named or ordinal). "
+                "Verify the file is a valid DLL."
+            )
         funcs = [
             Function(
                 name=(exp.name or f"ordinal:{exp.ordinal}"),
@@ -147,6 +159,11 @@ def _resolve_input(
         from .macho_metadata import parse_macho_metadata
         from .model import Function
         macho_meta = parse_macho_metadata(path)
+        if not macho_meta.exports and not macho_meta.install_name and not macho_meta.dependent_libs:
+            raise AbicheckError(
+                f"Mach-O file '{path}' has no exports or load-command metadata. "
+                "Verify the file is a valid dynamic library."
+            )
         funcs = [
             Function(
                 name=exp.name, mangled=exp.name, return_type="?",
@@ -221,15 +238,22 @@ def _render_output(
     return to_markdown(result)
 
 
-def _impact_category(kind: ChangeKind) -> str:
-    """Return the impact category string for a ChangeKind."""
-    if kind in BREAKING_KINDS:
+def _impact_category(kind: ChangeKind, policy: str = "strict_abi") -> str:
+    """Return the impact category string for a ChangeKind under the given policy.
+
+    When *policy* is not ``strict_abi``, some kinds may be downgraded
+    (e.g. ``sdk_vendor`` downgrades source-level renames from ``api_break``
+    to ``compatible``).  This ensures per-change impact labels agree with
+    the policy-aware verdict.
+    """
+    breaking, api_break, compatible, risk = policy_kind_sets(policy)
+    if kind in breaking:
         return "breaking"
-    if kind in API_BREAK_KINDS:
+    if kind in api_break:
         return "api_break"
-    if kind in RISK_KINDS:
+    if kind in risk:
         return "risk"
-    if kind in COMPATIBLE_KINDS:
+    if kind in compatible:
         return "compatible"
     return "breaking"  # fail-safe for unknown kinds
 
@@ -338,6 +362,13 @@ def abi_compare(
             if not p.exists():
                 return json.dumps({"error": f"File not found for {label}: {p}"})
 
+        # Validate policy name
+        if policy not in VALID_BASE_POLICIES:
+            return json.dumps({
+                "error": f"Unknown policy: {policy!r}. "
+                f"Valid policies: {', '.join(sorted(VALID_BASE_POLICIES))}"
+            })
+
         # Resolve per-side headers
         shared = [Path(h) for h in (headers or [])]
         old_h = [Path(h) for h in old_headers] if old_headers else shared
@@ -360,6 +391,10 @@ def abi_compare(
             pf = PolicyFile.load(Path(policy_file))
 
         result = compare(old_snap, new_snap, suppression=suppression, policy=policy, policy_file=pf)
+
+        # Use the active policy from the result (may differ from input when
+        # policy_file overrides the base policy).
+        active_policy = result.policy
 
         # Determine exit code (matches CLI semantics)
         exit_code = 0
@@ -385,7 +420,7 @@ def abi_compare(
                     "kind": c.kind.value,
                     "symbol": c.symbol,
                     "description": c.description,
-                    "impact": _impact_category(c.kind),
+                    "impact": _impact_category(c.kind, active_policy),
                     "old_value": c.old_value,
                     "new_value": c.new_value,
                     "source_location": c.source_location,

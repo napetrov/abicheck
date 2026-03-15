@@ -494,3 +494,77 @@ class TestAbiDumpParams:
         raw = abi_dump(str(snap_path), language="c")
         data = json.loads(raw)
         assert data["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Policy validation
+# ---------------------------------------------------------------------------
+
+class TestPolicyValidation:
+    def test_invalid_policy_returns_error(self, tmp_path: Path):
+        snap = _make_snapshot("1.0", functions=[_pub_func("init", "_Z4initv")])
+        p = tmp_path / "snap.json"
+        p.write_text(snapshot_to_json(snap), encoding="utf-8")
+        raw = abi_compare(str(p), str(p), policy="plugin-abi")  # typo: dash instead of underscore
+        data = json.loads(raw)
+        assert "error" in data
+        assert "plugin-abi" in data["error"]
+
+    def test_valid_policies_accepted(self, tmp_path: Path):
+        snap = _make_snapshot("1.0", functions=[_pub_func("init", "_Z4initv")])
+        p = tmp_path / "snap.json"
+        p.write_text(snapshot_to_json(snap), encoding="utf-8")
+        for policy_name in ("strict_abi", "sdk_vendor", "plugin_abi"):
+            raw = abi_compare(str(p), str(p), policy=policy_name)
+            data = json.loads(raw)
+            assert data["status"] == "ok", f"policy={policy_name} failed"
+
+
+# ---------------------------------------------------------------------------
+# Policy-aware impact category
+# ---------------------------------------------------------------------------
+
+class TestPolicyAwareImpact:
+    def test_strict_abi_keeps_api_break(self):
+        # enum_member_renamed is API_BREAK under strict_abi
+        assert _impact_category(ChangeKind.ENUM_MEMBER_RENAMED, "strict_abi") == "api_break"
+
+    def test_sdk_vendor_downgrades_to_compatible(self):
+        # enum_member_renamed is downgraded to compatible under sdk_vendor
+        assert _impact_category(ChangeKind.ENUM_MEMBER_RENAMED, "sdk_vendor") == "compatible"
+
+    def test_plugin_abi_downgrades_calling_convention(self):
+        # calling_convention_changed is BREAKING under strict_abi
+        assert _impact_category(ChangeKind.CALLING_CONVENTION_CHANGED, "strict_abi") == "breaking"
+        # but compatible under plugin_abi
+        assert _impact_category(ChangeKind.CALLING_CONVENTION_CHANGED, "plugin_abi") == "compatible"
+
+    def test_compare_impact_respects_policy(self, tmp_path: Path):
+        """Per-change impact labels in abi_compare should honor the policy."""
+        from abicheck.model import EnumMember, EnumType
+        old_enum = EnumType(name="Color", members=[
+            EnumMember(name="RED", value="0"),
+        ])
+        new_enum = EnumType(name="Color", members=[
+            EnumMember(name="ROUGE", value="0"),  # renamed
+        ])
+        old = AbiSnapshot(library="libtest.so", version="1.0", enums=[old_enum])
+        new = AbiSnapshot(library="libtest.so", version="2.0", enums=[new_enum])
+        old_path = tmp_path / "old.json"
+        new_path = tmp_path / "new.json"
+        old_path.write_text(snapshot_to_json(old), encoding="utf-8")
+        new_path.write_text(snapshot_to_json(new), encoding="utf-8")
+
+        # Under strict_abi: enum_member_renamed is api_break
+        raw = abi_compare(str(old_path), str(new_path), policy="strict_abi")
+        data = json.loads(raw)
+        rename_changes = [c for c in data["changes"] if c["kind"] == "enum_member_renamed"]
+        assert rename_changes
+        assert rename_changes[0]["impact"] == "api_break"
+
+        # Under sdk_vendor: enum_member_renamed is downgraded to compatible
+        raw = abi_compare(str(old_path), str(new_path), policy="sdk_vendor")
+        data = json.loads(raw)
+        rename_changes = [c for c in data["changes"] if c["kind"] == "enum_member_renamed"]
+        assert rename_changes
+        assert rename_changes[0]["impact"] == "compatible"
