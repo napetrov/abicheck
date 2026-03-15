@@ -457,3 +457,48 @@ class TestDumpClickException:
         assert result.exit_code == 1
         assert "Error:" in result.output
         assert "Traceback" not in result.output
+
+
+# ── elf_only_mode: FUNC_REMOVED_ELF_ONLY path ───────────────────────────────
+
+class TestElfOnlyModeRemoved:
+    """Verify checker uses FUNC_REMOVED_ELF_ONLY when both snapshots are elf_only."""
+
+    def test_removed_func_elf_only_mode(self):
+        """Function removed in elf_only_mode with ELF_ONLY visibility → FUNC_REMOVED_ELF_ONLY."""
+        from abicheck.checker import compare
+        from abicheck.checker_policy import ChangeKind
+
+        old = AbiSnapshot(
+            library="lib.so", version="1.0",
+            functions=[
+                Function(name="foo", mangled="_Z3foov", return_type="void",
+                         visibility=Visibility.ELF_ONLY),
+            ],
+            elf_only_mode=True,
+        )
+        new = AbiSnapshot(
+            library="lib.so", version="2.0",
+            functions=[],
+            elf_only_mode=True,
+        )
+        result = compare(old, new)
+        kinds = [c.kind for c in result.changes]
+        assert ChangeKind.FUNC_REMOVED_ELF_ONLY in kinds
+
+    def test_removed_func_normal_mode(self):
+        """Function removed in normal mode → FUNC_REMOVED (breaking)."""
+        from abicheck.checker import compare
+        from abicheck.checker_policy import ChangeKind
+
+        old = AbiSnapshot(
+            library="lib.so", version="1.0",
+            functions=[
+                Function(name="foo", mangled="_Z3foov", return_type="void",
+                         visibility=Visibility.PUBLIC),
+            ],
+        )
+        new = AbiSnapshot(library="lib.so", version="2.0", functions=[])
+        result = compare(old, new)
+        kinds = [c.kind for c in result.changes]
+        assert ChangeKind.FUNC_REMOVED in kinds
