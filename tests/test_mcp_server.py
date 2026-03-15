@@ -18,7 +18,6 @@ pytest.importorskip("mcp", reason="mcp package not installed")
 from abicheck.mcp_server import (  # noqa: E402
     _detect_binary_format,
     _impact_category,
-    _is_elf,
     _render_output,
     _resolve_input,
     _snapshot_summary,
@@ -226,16 +225,17 @@ class TestAbiCompare:
 
     def test_report_included(self, snapshot_pair: tuple[Path, Path]):
         old_path, new_path = snapshot_pair
-        raw = abi_compare(str(old_path), str(new_path), format="json")
+        raw = abi_compare(str(old_path), str(new_path), output_format="json")
         data = json.loads(raw)
         assert "report" in data
-        # JSON report should be valid JSON
-        report = json.loads(data["report"])
+        # JSON format: report is embedded as a nested object (not a string)
+        report = data["report"]
+        assert isinstance(report, dict)
         assert "verdict" in report
 
     def test_markdown_format(self, snapshot_pair: tuple[Path, Path]):
         old_path, new_path = snapshot_pair
-        raw = abi_compare(str(old_path), str(new_path), format="markdown")
+        raw = abi_compare(str(old_path), str(new_path), output_format="markdown")
         data = json.loads(raw)
         assert "report" in data
         assert "ABI Report" in data["report"]
@@ -326,13 +326,13 @@ class TestHelpers:
         assert summary["library"] == "libtest.so.1"
         assert summary["version"] == "1.0"
 
-    def test_is_elf_nonexistent_file(self):
-        assert _is_elf(Path("/nonexistent/file.so")) is False
+    def test_detect_format_nonexistent_file(self):
+        assert _detect_binary_format(Path("/nonexistent/file.so")) is None
 
-    def test_is_elf_non_elf_file(self, tmp_path: Path):
+    def test_detect_format_non_elf_file(self, tmp_path: Path):
         f = tmp_path / "not_elf.bin"
         f.write_bytes(b"not an elf file")
-        assert _is_elf(f) is False
+        assert _detect_binary_format(f) is None
 
     def test_detect_binary_format_json_file(self, tmp_path: Path):
         f = tmp_path / "snap.json"
@@ -435,7 +435,7 @@ class TestAbiCompareEdgeCases:
         snap = _make_snapshot("1.0", functions=[_pub_func("init", "_Z4initv")])
         p = tmp_path / "snap.json"
         p.write_text(snapshot_to_json(snap), encoding="utf-8")
-        raw = abi_compare(str(p), str(p), format="sarif")
+        raw = abi_compare(str(p), str(p), output_format="sarif")
         data = json.loads(raw)
         assert data["status"] == "ok"
         # SARIF report should be valid JSON
@@ -444,7 +444,7 @@ class TestAbiCompareEdgeCases:
 
     def test_html_format(self, snapshot_pair: tuple[Path, Path]):
         old_path, new_path = snapshot_pair
-        raw = abi_compare(str(old_path), str(new_path), format="html")
+        raw = abi_compare(str(old_path), str(new_path), output_format="html")
         data = json.loads(raw)
         assert data["status"] == "ok"
         assert "<html" in data["report"].lower() or "<!doctype" in data["report"].lower()
@@ -639,7 +639,7 @@ class TestAbiCompareValidation:
         new_p = tmp_path / "new.json"
         old_p.write_text(snapshot_to_json(old), encoding="utf-8")
         new_p.write_text(snapshot_to_json(new), encoding="utf-8")
-        raw = abi_compare(str(old_p), str(new_p), format="xml")
+        raw = abi_compare(str(old_p), str(new_p), output_format="xml")
         data = json.loads(raw)
         assert "error" in data
         assert "Unknown output format" in data["error"]

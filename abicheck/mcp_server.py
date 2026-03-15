@@ -60,6 +60,99 @@ from .serialization import load_snapshot, snapshot_to_json
 
 _logger = logging.getLogger("abicheck.mcp")
 
+# ---------------------------------------------------------------------------
+# Path safety helpers
+# ---------------------------------------------------------------------------
+
+# Allowed extensions for output files written by abi_dump
+_ALLOWED_OUTPUT_SUFFIXES = frozenset({".json"})
+
+# Allowed extensions for input binary files
+_ALLOWED_BINARY_SUFFIXES = frozenset({".so", ".dll", ".dylib", ".json", ".dump", ""})
+
+
+def _safe_read_path(raw: str, *, label: str = "path") -> Path:
+    """Resolve and validate a path for reading.
+
+    - Resolves symlinks and `..` components.
+    - Does NOT restrict to a specific directory (read paths are user-specified).
+    - Returns the resolved Path.
+
+    Raises ValueError with a generic message on obviously bad input.
+    """
+    if not raw or raw.strip() == "":
+        raise ValueError(f"Empty {label} is not allowed")
+    try:
+        return Path(raw).resolve()
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid {label}: {exc!s}") from exc
+
+
+def _safe_write_path(raw: str, *, label: str = "output_path") -> Path:
+    """Resolve and validate a path for writing.
+
+    Enforces:
+    - Must have an allowed suffix (.json only)
+    - Must not be a system-sensitive location
+
+    Raises ValueError on policy violation.
+    """
+    if not raw or raw.strip() == "":
+        raise ValueError(f"Empty {label} is not allowed")
+    try:
+        p = Path(raw).resolve()
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid {label}: {exc!s}") from exc
+
+    if p.suffix.lower() not in _ALLOWED_OUTPUT_SUFFIXES:
+        raise ValueError(
+            f"{label} must have a .json extension, got: {p.suffix!r}"
+        )
+
+    # Block writes to sensitive system locations
+    sensitive_prefixes = (
+        "/etc/", "/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/",
+        "/boot/", "/sys/", "/proc/",
+    )
+    p_str = str(p)
+    for prefix in sensitive_prefixes:
+        if p_str.startswith(prefix):
+            raise ValueError(
+                f"{label} points to a sensitive system path: {prefix}..."
+            )
+
+    # Block writes to SSH/credential directories
+    home = Path.home()
+    for sensitive_dir in [home / ".ssh", home / ".aws", home / ".gnupg"]:
+        try:
+            p.relative_to(sensitive_dir)
+            raise ValueError(
+                f"{label} points to a sensitive credential directory"
+            )
+        except ValueError as e:
+            if "credential" in str(e):
+                raise
+
+    return p
+
+
+def _sanitize_error(exc: Exception, *, context: str = "operation") -> str:
+    """Return a safe error message that does not leak filesystem paths or internals."""
+    # Known domain errors: safe to surface as-is
+    from .errors import AbicheckError
+    if isinstance(exc, AbicheckError):
+        return str(exc)
+    if isinstance(exc, (ValueError, KeyError)):
+        return str(exc)
+    # OS/IO errors: return generic message, log details internally
+    if isinstance(exc, (OSError, FileNotFoundError, PermissionError)):
+        _logger.debug("OS error in %s: %s", context, exc, exc_info=True)
+        return f"{context} failed: file system error (check logs for details)"
+    # All others: generic
+    _logger.debug("Unexpected error in %s: %s", context, exc, exc_info=True)
+    return f"{context} failed: unexpected error"
+
+
 mcp = FastMCP(
     "abicheck",
     instructions=(
@@ -75,29 +168,27 @@ mcp = FastMCP(
 # Helpers — reuse CLI logic without Click dependency
 # ---------------------------------------------------------------------------
 
-def _is_elf(path: Path) -> bool:
-    try:
-        with open(path, "rb") as f:
-            return f.read(4) == b"\x7fELF"
-    except OSError:
-        return False
+# Mach-O magic bytes (fat/BE32/LE32/BE64/LE64)
+_MACHO_MAGICS = frozenset({
+    b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+})
 
 
 def _detect_binary_format(path: Path) -> str | None:
-    if _is_elf(path):
+    """Detect binary format from magic bytes — single file open."""
+    try:
+        with open(path, "rb") as f:
+            magic = f.read(4)
+    except OSError:
+        return None
+    if magic == b"\x7fELF":
         return "elf"
-    try:
-        from .pe_metadata import is_pe
-        if is_pe(path):
-            return "pe"
-    except Exception:
-        pass
-    try:
-        from .macho_metadata import is_macho
-        if is_macho(path):
-            return "macho"
-    except Exception:
-        pass
+    if magic[:2] == b"MZ":
+        return "pe"
+    if magic in _MACHO_MAGICS:
+        return "macho"
     return None
 
 
@@ -210,6 +301,9 @@ def _snapshot_summary(snap: AbiSnapshot) -> dict[str, Any]:
     }
 
 
+_VALID_FORMATS = frozenset({"json", "sarif", "html", "markdown"})
+
+
 def _render_output(
     fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnapshot,
 ) -> str:
@@ -241,8 +335,6 @@ def _render_output(
     return to_markdown(result)
 
 
-_VALID_FORMATS = frozenset({"json", "sarif", "html", "markdown"})
-
 
 def _impact_category(kind: ChangeKind, policy: str = "strict_abi") -> str:
     """Return the impact category string for a ChangeKind under the given policy.
@@ -261,6 +353,7 @@ def _impact_category(kind: ChangeKind, policy: str = "strict_abi") -> str:
         return "risk"
     if kind in compatible:
         return "compatible"
+    _logger.warning("_impact_category: unknown ChangeKind %r, defaulting to breaking", kind)
     return "breaking"  # fail-safe for unknown kinds
 
 
@@ -284,7 +377,9 @@ def abi_dump(
 
     Args:
         library_path: Path to .so, .dll, or .dylib file.
-        headers: Public header file paths (required for ELF/Linux binaries).
+        headers: Public header file paths. Required for ELF (.so) — omitting them
+            produces a symbol-only snapshot with no type information. Not used for
+            PE (.dll) or Mach-O (.dylib) inputs.
         include_dirs: Extra include directories for the C/C++ parser.
         version: Version label to embed in the snapshot (e.g. "1.2.3").
         language: Language mode — "c++" (default) or "c".
@@ -292,18 +387,18 @@ def abi_dump(
             Otherwise the snapshot JSON is returned inline.
     """
     try:
-        lib = Path(library_path)
+        lib = _safe_read_path(library_path, label="library_path")
         if not lib.exists():
-            return json.dumps({"error": f"Library file not found: {library_path}"})
+            return json.dumps({"status": "error", "error": "Library file not found"})
 
-        hdr_paths = [Path(h) for h in (headers or [])]
-        inc_paths = [Path(d) for d in (include_dirs or [])]
+        hdr_paths = [_safe_read_path(h, label="header") for h in (headers or [])]
+        inc_paths = [_safe_read_path(d, label="include_dir") for d in (include_dirs or [])]
 
         snap = _resolve_input(lib, hdr_paths, inc_paths, version, language)
         snap_json = snapshot_to_json(snap)
 
         if output_path:
-            out = Path(output_path)
+            out = _safe_write_path(output_path, label="output_path")
             out.write_text(snap_json, encoding="utf-8")
             return json.dumps({
                 "status": "ok",
@@ -318,7 +413,7 @@ def abi_dump(
         })
     except Exception as exc:
         _logger.exception("abi_dump failed")
-        return json.dumps({"error": str(exc)})
+        return json.dumps({"status": "error", "error": _sanitize_error(exc, context="abi_dump")})
 
 
 @mcp.tool()
@@ -333,12 +428,12 @@ def abi_compare(
     policy: str = "strict_abi",
     policy_file: str | None = None,
     suppression_file: str | None = None,
-    format: str = "json",
+    output_format: str = "json",
 ) -> str:
     """Compare two ABI surfaces and report breaking changes.
 
-    Each input can be a shared library (.so/.dll/.dylib) or a JSON snapshot
-    from abi_dump. The format is auto-detected.
+    Each input can be a shared library (.so/.dll/.dylib), a JSON snapshot
+    from abi_dump, or an ABICC Perl dump (.pl). The format is auto-detected.
 
     Returns a structured JSON result with verdict, change summary, and the
     full list of changes. The verdict indicates binary ABI compatibility:
@@ -359,14 +454,14 @@ def abi_compare(
         policy: Built-in policy: "strict_abi" (default), "sdk_vendor", or "plugin_abi".
         policy_file: Path to custom YAML policy file (overrides policy parameter).
         suppression_file: Path to YAML suppression file to filter known changes.
-        format: Output format for the rendered report: "json" (default), "markdown", "sarif", "html".
+        output_format: Output format for the rendered report: "json" (default), "markdown", "sarif", "html".
     """
     try:
-        old_path = Path(old_input)
-        new_path = Path(new_input)
+        old_path = _safe_read_path(old_input, label="old_input")
+        new_path = _safe_read_path(new_input, label="new_input")
         for p, label in [(old_path, "old_input"), (new_path, "new_input")]:
             if not p.exists():
-                return json.dumps({"error": f"File not found for {label}: {p}"})
+                return json.dumps({"status": "error", "error": f"File not found for {label}"})
 
         # Validate policy name
         if policy not in VALID_BASE_POLICIES:
@@ -376,10 +471,10 @@ def abi_compare(
             })
 
         # Resolve per-side headers
-        shared = [Path(h) for h in (headers or [])]
-        old_h = [Path(h) for h in old_headers] if old_headers else shared
-        new_h = [Path(h) for h in new_headers] if new_headers else shared
-        inc = [Path(d) for d in (include_dirs or [])]
+        shared = [_safe_read_path(h, label="header") for h in (headers or [])]
+        old_h = [_safe_read_path(h, label="old_header") for h in old_headers] if old_headers is not None else shared
+        new_h = [_safe_read_path(h, label="new_header") for h in new_headers] if new_headers is not None else shared
+        inc = [_safe_read_path(d, label="include_dir") for d in (include_dirs or [])]
 
         old_snap = _resolve_input(old_path, old_h, inc, "old", language)
         new_snap = _resolve_input(new_path, new_h, inc, "new", language)
@@ -388,13 +483,17 @@ def abi_compare(
         suppression = None
         if suppression_file:
             from .suppression import SuppressionList
-            suppression = SuppressionList.load(Path(suppression_file))
+            suppression = SuppressionList.load(_safe_read_path(suppression_file, label="suppression_file"))
 
         # Load policy file
         pf = None
         if policy_file:
             from .policy_file import PolicyFile
-            pf = PolicyFile.load(Path(policy_file))
+            pf = PolicyFile.load(_safe_read_path(policy_file, label="policy_file"))
+
+        # Validate output_format early (before expensive compare)
+        if output_format not in _VALID_FORMATS:
+            return json.dumps({"status": "error", "error": f"Unknown output format {output_format!r}. Valid: {sorted(_VALID_FORMATS)}"})
 
         result = compare(old_snap, new_snap, suppression=suppression, policy=policy, policy_file=pf)
 
@@ -437,13 +536,17 @@ def abi_compare(
         }
 
         # Include rendered report
-        rendered = _render_output(format, result, old_snap, new_snap)
-        response["report"] = rendered
+        rendered = _render_output(output_format, result, old_snap, new_snap)
+        # When format is json, embed as nested object (not double-encoded string)
+        if output_format == "json":
+            response["report"] = json.loads(rendered)
+        else:
+            response["report"] = rendered
 
         return json.dumps(response)
     except Exception as exc:
         _logger.exception("abi_compare failed")
-        return json.dumps({"error": str(exc)})
+        return json.dumps({"status": "error", "error": _sanitize_error(exc, context="abi_compare")})
 
 
 @mcp.tool()
@@ -471,6 +574,7 @@ def abi_list_changes(
         filter_set = COMPATIBLE_KINDS
     elif impact is not None:
         return json.dumps({
+            "status": "error",
             "error": f"Unknown impact filter: {impact!r}. "
             "Use one of: breaking, api_break, risk, compatible"
         })
@@ -515,6 +619,7 @@ def abi_explain_change(
                 break
         else:
             return json.dumps({
+                "status": "error",
                 "error": f"Unknown change kind: {change_kind!r}. "
                 "Use abi_list_changes to see all available kinds."
             })
