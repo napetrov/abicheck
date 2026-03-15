@@ -514,6 +514,9 @@ def _render_output(fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnaps
 @click.option("--policy-file", "policy_file_path",
               type=click.Path(exists=True, path_type=Path), default=None,
               help="YAML policy file with per-kind verdict overrides. Overrides --policy.")
+@click.option("--fail-on-additions", "fail_on_additions", is_flag=True, default=False,
+              help="Exit with code 1 if any new public symbols, types, or fields were added "
+                   "(COMPATIBLE changes). Useful for detecting unintentional API expansion in PRs.")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def compare_cmd(
@@ -524,6 +527,7 @@ def compare_cmd(
     old_version: str, new_version: str,
     fmt: str, output: Path | None,
     suppress: Path | None, policy: str, policy_file_path: Path | None,
+    fail_on_additions: bool,
     verbose: bool,
 ) -> None:
     """Compare two ABI surfaces and report changes.
@@ -615,6 +619,20 @@ def compare_cmd(
         sys.exit(4)
     elif result.verdict.value == "API_BREAK":
         sys.exit(2)
+
+    # --fail-on-additions: exit 1 if any new public symbols/types were added
+    if fail_on_additions:
+        from .checker_policy import COMPATIBLE_KINDS
+        _ADDITION_KINDS = {k for k in COMPATIBLE_KINDS if k.value.endswith("_added")}
+        additions = [c for c in result.compatible if c.kind in _ADDITION_KINDS]
+        if additions:
+            click.echo(
+                f"API expansion detected: {len(additions)} addition(s) "
+                f"({', '.join(sorted({c.kind.value for c in additions}))}). "
+                "Use --fail-on-additions=false to allow API growth.",
+                err=True,
+            )
+            sys.exit(1)
 
 # ── ABICC compat subcommands (implementation in abicheck.compat) ─────────────
 # NOTE: eagerly loads abicheck.compat.cli at import time — intentional so all

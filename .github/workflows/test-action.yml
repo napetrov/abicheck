@@ -234,3 +234,56 @@ jobs:
             echo "::error::Expected BREAKING on ${{ matrix.os }}"
             exit 1
           fi
+
+  # ── Test: fail-on-additions ────────────────────────────────────────────────
+  test-fail-on-additions:
+    name: 'fail-on-additions: detect unexpected API expansion'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run abicheck (compatible additions, should fail)
+        id: abi
+        uses: ./
+        continue-on-error: true
+        with:
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v1_with_addition.json
+          install-deps: false
+          fail-on-breaking: false
+          fail-on-additions: true
+
+      - name: Verify step failed due to additions
+        shell: bash
+        run: |
+          echo "Outcome: ${{ steps.abi.outcome }}"
+          if [[ "${{ steps.abi.outcome }}" != "failure" ]]; then
+            echo "::error::Expected failure on API additions, got ${{ steps.abi.outcome }}"
+            exit 1
+          fi
+          echo "Correctly failed on unexpected API additions"
+
+  test-fail-on-additions-allowed:
+    name: 'fail-on-additions=false: additions pass through'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run abicheck (additions allowed explicitly)
+        id: abi
+        uses: ./
+        with:
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v1_with_addition.json
+          install-deps: false
+          fail-on-breaking: false
+          fail-on-additions: false
+
+      - name: Verify step succeeded
+        shell: bash
+        run: |
+          if [[ "${{ steps.abi.outcome }}" != "success" ]]; then
+            echo "::error::Expected success when fail-on-additions=false"
+            exit 1
+          fi
+          echo "Correctly passed with additions allowed"

@@ -131,6 +131,12 @@ inputs:
     description: 'Fail the step when a source-level API break is detected (exit code 2).'
     required: false
     default: 'false'
+  fail-on-additions:
+    description: >
+      Fail the step (exit code 1) when any new public symbols, types, or fields were added.
+      Useful for detecting unintentional API expansion in PRs.
+    required: false
+    default: 'false'
   add-job-summary:
     description: 'Write a markdown summary to the GitHub Actions Job Summary.'
     required: false
@@ -201,6 +207,7 @@ runs:
         INPUT_VERBOSE: ${{ inputs.verbose }}
         INPUT_FAIL_ON_BREAKING: ${{ inputs.fail-on-breaking }}
         INPUT_FAIL_ON_API_BREAK: ${{ inputs.fail-on-api-break }}
+        INPUT_FAIL_ON_ADDITIONS: ${{ inputs.fail-on-additions }}
         INPUT_ADD_JOB_SUMMARY: ${{ inputs.add-job-summary }}
       run: bash "${{ github.action_path }}/action/run.sh"
 
