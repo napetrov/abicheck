@@ -748,6 +748,18 @@ class TestSafeWritePath:
         with pytest.raises(ValueError, match="sensitive system path"):
             _safe_write_path("/etc/out.json")
 
+    def test_double_slash_path_blocked(self) -> None:
+        """//etc/out.json (double slash) must not bypass the path guard."""
+        from abicheck.mcp_server import _safe_write_path
+        with pytest.raises(ValueError, match="sensitive system path"):
+            _safe_write_path("//etc/out.json")
+
+    def test_dev_path_blocked(self) -> None:
+        """/dev/ paths are blocked."""
+        from abicheck.mcp_server import _safe_write_path
+        with pytest.raises(ValueError, match="sensitive system path"):
+            _safe_write_path("/dev/out.json")
+
     def test_ssh_dir_raises(self) -> None:
         from abicheck.mcp_server import _safe_write_path
         home = Path.home()

@@ -102,15 +102,6 @@ def _safe_write_path(raw: str, *, label: str = "output_path") -> Path:
     if not raw or raw.strip() == "":
         raise ValueError(f"Empty {label} is not allowed")
 
-    # Block obvious POSIX sensitive paths directly from user input on any OS
-    # (e.g. '/etc/out.json' should be rejected even on Windows runners).
-    _raw_norm = raw.replace("\\", "/")
-    for _prefix in ("/etc/", "/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/", "/boot/", "/sys/", "/proc/"):
-        if _raw_norm.startswith(_prefix):
-            raise ValueError(
-                f"{label} points to a sensitive system path: {_prefix}..."
-            )
-
     try:
         p = Path(raw).resolve()
     except (TypeError, ValueError) as exc:
@@ -121,14 +112,16 @@ def _safe_write_path(raw: str, *, label: str = "output_path") -> Path:
             f"{label} must have a .json extension, got: {p.suffix!r}"
         )
 
-    # Block writes to sensitive system locations
-    # Use Path objects for comparison to handle symlinks (e.g. /etc -> /private/etc on macOS)
+    # Block writes to sensitive system locations.
+    # Use resolved Path objects to handle symlinks (/etc -> /private/etc on macOS)
+    # and canonicalize traversal sequences (../../etc bypasses raw-string checks).
     _os = platform.system()
     if _os in ("Linux", "Darwin"):
         sensitive_system_dirs = [
             Path("/etc"), Path("/bin"), Path("/sbin"),
             Path("/usr/bin"), Path("/usr/sbin"),
             Path("/boot"), Path("/sys"), Path("/proc"),
+            Path("/dev"),
         ]
         for sys_dir in sensitive_system_dirs:
             try:
