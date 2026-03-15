@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """Unit tests for elf_metadata — mock pyelftools to cover internal parsing.
 
 These tests exercise _parse, _parse_dynamic, _parse_version_def,

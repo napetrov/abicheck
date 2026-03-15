@@ -36,6 +36,7 @@ Coverage note:
   The toolchain flag detector (DW_AT_producer) provides broader coverage for
   ABI-flag drift on Linux.
 """
+# pylint: disable=invalid-name  # CU is the standard DWARF term (Compilation Unit)
 from __future__ import annotations
 
 import collections

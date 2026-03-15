@@ -322,7 +322,7 @@ def _castxml_dump(
     cmd += ["-o", str(out_xml), str(agg_path)]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
         if result.returncode != 0:
             raise RuntimeError(
                 f"castxml failed (exit {result.returncode}):\n{result.stderr[:2000]}"

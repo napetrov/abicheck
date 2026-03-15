@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """B2: `<built-in>` types polluting dump (abi-dumper #38, abicc PR#124).
 
 castxml output can include entries referencing `<builtin>` or `<command-line>`

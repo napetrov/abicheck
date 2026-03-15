@@ -467,7 +467,7 @@ class TestCrossValidationHelpers:
 
     def test_strict_plus_warn_newsym_composition(self) -> None:
         """When both -strict and -warn-newsym are active, FUNC_ADDED → BREAKING."""
-        from abicheck.cli import _apply_strict, _apply_warn_newsym
+        from abicheck.compat.cli import _apply_strict, _apply_warn_newsym
 
         result = _make_result(
             changes=[_change(ChangeKind.FUNC_ADDED)],
@@ -480,7 +480,7 @@ class TestCrossValidationHelpers:
 
     def test_source_filter_plus_strict(self) -> None:
         """Source-only filter + strict: binary-only changes are removed before strict."""
-        from abicheck.cli import _apply_strict, _filter_source_only
+        from abicheck.compat.cli import _apply_strict, _filter_source_only
 
         result = _make_result(
             changes=[
@@ -496,7 +496,7 @@ class TestCrossValidationHelpers:
 
     def test_whitelist_plus_skip_composition(self, tmp_path: Path) -> None:
         """Whitelist and skip can be combined: whitelist first, then skip further."""
-        from abicheck.cli import _merge_suppression
+        from abicheck.compat.cli import _merge_suppression
 
         wl_file = _write_file(tmp_path, "wl.txt", "_Z3foov\n_Z3barv\n")
         skip_file = _write_file(tmp_path, "skip.txt", "_Z3barv\n")
@@ -873,14 +873,14 @@ class TestCompatExtendedExitCodeMapping:
         ],
     )
     def test_classify_compat_error_exit_code(self, exc: BaseException, context: str, expected: int) -> None:
-        from abicheck.cli import _classify_compat_error_exit_code
+        from abicheck.compat.cli import _classify_compat_error_exit_code
 
         assert _classify_compat_error_exit_code(exc, context=context) == expected
 
 
 class TestCompatFailHelper:
     def test_compat_fail_raises_system_exit_with_classified_code(self, capsys) -> None:
-        from abicheck.cli import _compat_fail
+        from abicheck.compat.cli import _compat_fail
 
         with pytest.raises(SystemExit) as excinfo:
             _compat_fail("parsing descriptor", ValueError("bad descriptor"))

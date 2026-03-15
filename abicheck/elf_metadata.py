@@ -192,7 +192,7 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
     # _guess_symbol_origin call in _parse_dynsym always sees an empty needed list.
     # The fixup also corrects symbols that were mis-attributed to the wrong
     # default library (e.g. libstdc++.so.6 vs libc++.so.1).
-    _GENERIC_FALLBACKS = frozenset({
+    _GENERIC_FALLBACKS = frozenset({  # pylint: disable=invalid-name
         "libstdc++.so.6",
         "libgcc_s.so.1",
         "libc.so.6",
@@ -222,7 +222,7 @@ def _parse_version_def(section: GNUVerDefSection, meta: ElfMetadata) -> None:
     # ELF version definition section (.gnu.version_d).
     # The first entry has VER_FLG_BASE (flags==1) and names the SONAME -- skip it.
     # Only real named version nodes (e.g. LIBFOO_1.0) should appear in versions_defined.
-    VER_FLG_BASE = 0x1
+    VER_FLG_BASE = 0x1  # pylint: disable=invalid-name
     for verdef, verdaux_iter in section.iter_versions():
         is_base = bool(verdef.entry.vd_flags & VER_FLG_BASE)
         for verdaux in verdaux_iter:

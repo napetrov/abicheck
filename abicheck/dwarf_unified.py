@@ -33,6 +33,7 @@ The two legacy modules (dwarf_metadata.py, dwarf_advanced.py) keep their
 internal helpers unchanged and are re-exported here so no import sites
 outside dumper.py need updating.
 """
+# pylint: disable=invalid-name  # CU is the standard DWARF term (Compilation Unit)
 from __future__ import annotations
 
 import logging

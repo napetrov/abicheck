@@ -17,12 +17,12 @@ from click.testing import CliRunner
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
 from abicheck.checker_policy import API_BREAK_KINDS as _API_BREAK_KINDS
-from abicheck.cli import (
+from abicheck.cli import main
+from abicheck.compat.cli import (
     _BINARY_ONLY_KINDS,
     _apply_strict,
     _build_skip_suppression,
     _filter_source_only,
-    main,
 )
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -223,7 +223,7 @@ class TestKindSets:
 
     def test_filter_source_only_source_break_verdict(self):
         """_filter_source_only: API_BREAK_KINDS changes → correct verdict + filtering."""
-        from abicheck.cli import _filter_source_only
+        from abicheck.compat.cli import _filter_source_only
         r = _result(Verdict.BREAKING, [ChangeKind.SONAME_CHANGED, ChangeKind.FUNC_PARAMS_CHANGED])
         filtered = _filter_source_only(r)
         # SONAME removed, FUNC_PARAMS_CHANGED stays

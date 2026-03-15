@@ -17,6 +17,7 @@
 Used by dwarf_metadata.py, dwarf_advanced.py, and dwarf_unified.py to avoid
 duplicating low-level DIE attribute extraction logic.
 """
+# pylint: disable=invalid-name  # CU is the standard DWARF term (Compilation Unit)
 from __future__ import annotations
 
 from typing import Any

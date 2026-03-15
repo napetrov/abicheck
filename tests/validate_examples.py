@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """validate_examples.py — standalone CLI validation of all abicheck example cases.
 
 Reads expected verdicts from examples/ground_truth.json, compiles each

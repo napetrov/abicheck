@@ -286,7 +286,7 @@ class TestCliPolicyFiltering:
         )
 
     def test_filter_source_only_strict(self) -> None:
-        from abicheck.cli import _filter_source_only
+        from abicheck.compat.cli import _filter_source_only
 
         result = self._mk_result("strict_abi", ChangeKind.ENUM_MEMBER_RENAMED)
         filtered = _filter_source_only(result)
@@ -296,7 +296,7 @@ class TestCliPolicyFiltering:
         assert len(filtered.source_breaks) == 1
 
     def test_filter_source_only_sdk_vendor_propagates_policy(self) -> None:
-        from abicheck.cli import _filter_source_only
+        from abicheck.compat.cli import _filter_source_only
 
         result = self._mk_result("sdk_vendor", ChangeKind.ENUM_MEMBER_RENAMED)
         filtered = _filter_source_only(result)
@@ -308,7 +308,7 @@ class TestCliPolicyFiltering:
         assert len(filtered.compatible) == 1
 
     def test_filter_binary_only_strict(self) -> None:
-        from abicheck.cli import _filter_binary_only
+        from abicheck.compat.cli import _filter_binary_only
 
         result = self._mk_result("strict_abi", ChangeKind.CALLING_CONVENTION_CHANGED)
         filtered = _filter_binary_only(result)
@@ -318,7 +318,7 @@ class TestCliPolicyFiltering:
         assert len(filtered.breaking) == 1
 
     def test_filter_binary_only_plugin_abi_propagates_policy(self) -> None:
-        from abicheck.cli import _filter_binary_only
+        from abicheck.compat.cli import _filter_binary_only
 
         result = self._mk_result("plugin_abi", ChangeKind.CALLING_CONVENTION_CHANGED)
         filtered = _filter_binary_only(result)

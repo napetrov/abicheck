@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """Sprint 6: libabigail parity tests.
 
 Verifies that abicheck and abidiff agree on ABI verdict for canonical

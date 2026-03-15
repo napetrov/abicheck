@@ -20,4 +20,3 @@ try:
     __version__: str = _pkg_version("abicheck")
 except PackageNotFoundError:
     __version__ = "0.0.0.dev0"  # running from source without install
-

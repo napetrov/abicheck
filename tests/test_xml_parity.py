@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """ABICC XML report format parity tests.
 
 Validates that abicheck's XML reports match the ABICC schema well enough

@@ -254,7 +254,7 @@ class TestCompatClassifiedErrorPaths:
         old.write_text("<descriptor/>", encoding="utf-8")
         new.write_text("<descriptor/>", encoding="utf-8")
 
-        monkeypatch.setattr("abicheck.cli._setup_logging", lambda *_a, **_k: (_ for _ in ()).throw(OSError("bad logging mode")))
+        monkeypatch.setattr("abicheck.compat.cli._setup_logging", lambda *_a, **_k: (_ for _ in ()).throw(OSError("bad logging mode")))
 
         runner = CliRunner()
         result = runner.invoke(main, ["compat", "check", "-lib", "libtest", "-old", str(old), "-new", str(new)])

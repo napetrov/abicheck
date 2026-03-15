@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """B4: Anonymous union false positive (abicc #58).
 
 When a struct gains an anonymous union member, the existing field `x` should
