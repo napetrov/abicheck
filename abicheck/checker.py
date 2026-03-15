@@ -21,14 +21,26 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .checker_policy import API_BREAK_KINDS as _API_BREAK_KINDS
-from .checker_policy import BREAKING_KINDS as _BREAKING_KINDS
-from .checker_policy import COMPATIBLE_KINDS as _COMPATIBLE_KINDS
-from .checker_policy import RISK_KINDS as _RISK_KINDS
-from .checker_policy import ChangeKind
-from .checker_policy import Verdict
-from .checker_policy import compute_verdict
-from .checker_policy import policy_kind_sets as _policy_kind_sets
+from .checker_policy import (
+    API_BREAK_KINDS as _API_BREAK_KINDS,
+)
+from .checker_policy import (
+    BREAKING_KINDS as _BREAKING_KINDS,
+)
+from .checker_policy import (
+    COMPATIBLE_KINDS as _COMPATIBLE_KINDS,
+)
+from .checker_policy import (
+    RISK_KINDS as _RISK_KINDS,
+)
+from .checker_policy import (
+    ChangeKind,
+    Verdict,
+    compute_verdict,
+)
+from .checker_policy import (
+    policy_kind_sets as _policy_kind_sets,
+)
 from .detectors import DetectorResult
 from .dwarf_advanced import diff_advanced_dwarf
 from .elf_metadata import SymbolBinding, SymbolType
