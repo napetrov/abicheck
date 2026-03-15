@@ -62,6 +62,7 @@ Save a baseline at release time, compare every new build:
 - [Change Kind Reference](reference/change_kinds.md) — full list of 100+ detected change types
 - [Policy Profiles](policies.md) — built-in and custom policies
 - [ABICC Compatibility](abicc_compat.md) — drop-in replacement and migration from abi-compliance-checker
+- [MCP Server (Agent Integration)](mcp.md) — use abicheck from AI agents via MCP
 - [Benchmark & Tool Comparison](tool_comparison.md) — abicheck vs abidiff vs ABICC
 
 ## Status
