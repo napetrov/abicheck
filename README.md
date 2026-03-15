@@ -449,27 +449,20 @@ All three layers combine for maximum accuracy. castxml is cross-platform (provid
 
 ### castxml compiler support
 
-castxml uses an internal Clang compiler for parsing but can emulate the preprocessor and target platform of an external compiler via `--castxml-cc-<id>`:
+castxml uses an internal Clang for parsing but emulates an external compiler's
+preprocessor defines and include paths via `--castxml-cc-<id>`. Supported IDs:
+`gnu` / `gnu-c` (GCC, Clang, MinGW) and `msvc` / `msvc-c` (MSVC on Windows).
 
-| Compiler ID | Compiler | Platforms |
-|-------------|----------|-----------|
-| `gnu` | GCC / g++ | Linux, macOS, Windows (MinGW) |
-| `gnu-c` | GCC / gcc (C mode) | Linux, macOS, Windows (MinGW) |
-| `msvc` | Microsoft Visual C++ (cl) | Windows |
-| `msvc-c` | Microsoft Visual C (cl, C mode) | Windows |
-
-abicheck auto-detects the compiler mode: if the compiler binary is `cl` or `cl.exe`, it uses `--castxml-cc-msvc`; otherwise it uses `--castxml-cc-gnu`. You can override the compiler via `--gcc-path`:
+abicheck auto-detects the dialect from the binary name (`cl`/`cl.exe` → msvc,
+everything else → gnu). Override with `--gcc-path`:
 
 ```bash
-# Use a specific GCC
 abicheck dump libfoo.so -H foo.h --gcc-path /usr/bin/g++-12
-
-# Use MSVC on Windows
 abicheck dump foo.dll -H foo.h --gcc-path cl
-
-# Use MinGW on Windows
-abicheck dump foo.dll -H foo.h --gcc-path x86_64-w64-mingw32-g++
 ```
+
+castxml only supports C/C++. Non-standard extensions (SYCL, CUDA) may fail to
+parse. See [architecture.md](docs/reference/architecture.md) for details.
 
 ### Python dependencies
 

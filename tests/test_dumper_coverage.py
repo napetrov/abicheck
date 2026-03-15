@@ -85,6 +85,13 @@ class TestCastxmlDumpBranches:
         _castxml_dump([header], [], gcc_path="cl.exe")
         assert "--castxml-cc-msvc" in captured
 
+    @pytest.mark.parametrize("name", ["CL.EXE", "Cl.exe", "CL"])
+    def test_msvc_detection_case_insensitive(self, tmp_path, monkeypatch, name):
+        header = self._setup(monkeypatch, tmp_path)
+        captured = self._make_spy(monkeypatch)
+        _castxml_dump([header], [], gcc_path=name)
+        assert "--castxml-cc-msvc" in captured
+
     def test_sysroot_flag(self, tmp_path, monkeypatch):
         header = self._setup(monkeypatch, tmp_path)
         captured = self._make_spy(monkeypatch)
