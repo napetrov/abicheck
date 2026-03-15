@@ -694,3 +694,138 @@ class TestMainFunction:
         monkeypatch.setattr(mcp_server.mcp, "run", lambda transport: calls.append(transport))
         mcp_server.main()
         assert calls == ["stdio"]
+
+
+# ---------------------------------------------------------------------------
+# Path safety helpers coverage
+# ---------------------------------------------------------------------------
+
+class TestSafeReadPath:
+    def test_valid_path(self, tmp_path: Path) -> None:
+        from abicheck.mcp_server import _safe_read_path
+        f = tmp_path / "lib.so"
+        f.write_bytes(b"x")
+        result = _safe_read_path(str(f))
+        assert result.is_absolute()
+
+    def test_empty_raises(self) -> None:
+        from abicheck.mcp_server import _safe_read_path
+        with pytest.raises(ValueError, match="Empty"):
+            _safe_read_path("")
+
+    def test_whitespace_raises(self) -> None:
+        from abicheck.mcp_server import _safe_read_path
+        with pytest.raises(ValueError, match="Empty"):
+            _safe_read_path("   ")
+
+    def test_resolves_dotdot(self, tmp_path: Path) -> None:
+        from abicheck.mcp_server import _safe_read_path
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        # ../sub/../sub is valid, just gets resolved
+        result = _safe_read_path(str(sub))
+        assert result == sub.resolve()
+
+
+class TestSafeWritePath:
+    def test_valid_json_path(self, tmp_path: Path) -> None:
+        from abicheck.mcp_server import _safe_write_path
+        result = _safe_write_path(str(tmp_path / "out.json"))
+        assert result.suffix == ".json"
+
+    def test_empty_raises(self) -> None:
+        from abicheck.mcp_server import _safe_write_path
+        with pytest.raises(ValueError, match="Empty"):
+            _safe_write_path("")
+
+    def test_non_json_suffix_raises(self) -> None:
+        from abicheck.mcp_server import _safe_write_path
+        with pytest.raises(ValueError, match=".json"):
+            _safe_write_path("/tmp/out.txt")
+
+    def test_system_path_raises(self) -> None:
+        from abicheck.mcp_server import _safe_write_path
+        with pytest.raises(ValueError, match="sensitive system path"):
+            _safe_write_path("/etc/out.json")
+
+    def test_ssh_dir_raises(self) -> None:
+        from abicheck.mcp_server import _safe_write_path
+        home = Path.home()
+        with pytest.raises(ValueError, match="credential directory"):
+            _safe_write_path(str(home / ".ssh" / "out.json"))
+
+    def test_aws_dir_raises(self) -> None:
+        from abicheck.mcp_server import _safe_write_path
+        home = Path.home()
+        with pytest.raises(ValueError, match="credential directory"):
+            _safe_write_path(str(home / ".aws" / "out.json"))
+
+
+class TestSanitizeError:
+    def test_abicheck_error_passes_through(self) -> None:
+        from abicheck.errors import AbicheckError
+        from abicheck.mcp_server import _sanitize_error
+        exc = AbicheckError("specific error message")
+        assert _sanitize_error(exc) == "specific error message"
+
+    def test_value_error_passes_through(self) -> None:
+        from abicheck.mcp_server import _sanitize_error
+        assert _sanitize_error(ValueError("bad value")) == "bad value"
+
+    def test_os_error_redacted(self) -> None:
+        from abicheck.mcp_server import _sanitize_error
+        exc = OSError("[Errno 13] Permission denied: '/home/user/.ssh/id_rsa'")
+        result = _sanitize_error(exc, context="test")
+        assert "/home/user" not in result
+        assert "file system error" in result
+
+    def test_unexpected_error_generic(self) -> None:
+        from abicheck.mcp_server import _sanitize_error
+        exc = RuntimeError("internal detail that should not leak")
+        result = _sanitize_error(exc, context="test_op")
+        assert "internal detail" not in result
+        assert "unexpected error" in result
+
+
+class TestDetectBinaryFormatMagic:
+    def test_elf_magic(self, tmp_path: Path) -> None:
+        f = tmp_path / "lib.so"
+        f.write_bytes(b"\x7fELF\x00\x00")
+        assert _detect_binary_format(f) == "elf"
+
+    def test_pe_magic(self, tmp_path: Path) -> None:
+        f = tmp_path / "lib.dll"
+        f.write_bytes(b"MZ\x90\x00")
+        assert _detect_binary_format(f) == "pe"
+
+    def test_macho_magic(self, tmp_path: Path) -> None:
+        f = tmp_path / "lib.dylib"
+        f.write_bytes(b"\xcf\xfa\xed\xfe")
+        assert _detect_binary_format(f) == "macho"
+
+    def test_unknown_magic(self, tmp_path: Path) -> None:
+        f = tmp_path / "lib.bin"
+        f.write_bytes(b"\x00\x01\x02\x03")
+        assert _detect_binary_format(f) is None
+
+    def test_nonexistent_file(self) -> None:
+        assert _detect_binary_format(Path("/nonexistent/file.so")) is None
+
+
+class TestAbiDumpSafePathValidation:
+    def test_invalid_output_path_suffix_returns_error(self, tmp_path: Path) -> None:
+        old = AbiSnapshot(library="lib.so", version="1.0")
+        snap_p = tmp_path / "snap.json"
+        snap_p.write_text(snapshot_to_json(old), encoding="utf-8")
+        raw = abi_dump(str(snap_p), output_path=str(tmp_path / "out.txt"))
+        data = json.loads(raw)
+        assert data.get("status") == "error"
+        assert ".json" in data.get("error", "")
+
+    def test_system_output_path_blocked(self, tmp_path: Path) -> None:
+        old = AbiSnapshot(library="lib.so", version="1.0")
+        snap_p = tmp_path / "snap.json"
+        snap_p.write_text(snapshot_to_json(old), encoding="utf-8")
+        raw = abi_dump(str(snap_p), output_path="/etc/malicious.json")
+        data = json.loads(raw)
+        assert data.get("status") == "error"
