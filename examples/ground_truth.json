@@ -373,8 +373,7 @@
       "expected_compat": "NO_CHANGE",
       "platforms": [
         "linux",
-        "macos",
-        "windows"
+        "macos"
       ],
       "abi_break": false,
       "api_break": true,
@@ -457,8 +456,7 @@
       "category": "breaking",
       "platforms": [
         "linux",
-        "macos",
-        "windows"
+        "macos"
       ],
       "abi_break": true,
       "api_break": true,
