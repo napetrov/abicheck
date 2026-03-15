@@ -3,11 +3,13 @@
 These tests compile minimal C shared libraries and verify the full
 pyelftools parse round-trip: compile → parse_elf_metadata → assert fields.
 
-Requires: gcc, available in CI.
+Requires: gcc on Linux (produces ELF output).  On macOS/Windows gcc produces
+Mach-O/PE binaries, so these tests are Linux-only.
 """
 from __future__ import annotations
 
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -18,6 +20,12 @@ from abicheck.elf_metadata import (
     SymbolBinding,
     SymbolType,
     parse_elf_metadata,
+)
+
+# gcc on macOS produces Mach-O (not ELF); on Windows MinGW produces PE.
+pytestmark = pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="ELF integration tests require Linux (gcc produces Mach-O on macOS, PE on Windows)",
 )
 
 # ── helpers ────────────────────────────────────────────────────────────────

@@ -14,7 +14,10 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.integration
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(sys.platform != "linux", reason="ELF/castxml tests require Linux"),
+]
 
 
 def _run_abicheck(args: list[str]) -> subprocess.CompletedProcess[str]:

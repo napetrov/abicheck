@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -286,6 +287,7 @@ def test_serialization_empty_sets_roundtrip() -> None:
 # ── Integration: real packed struct detection via DWARF ───────────────────────
 
 @pytest.mark.integration
+@pytest.mark.skipif(sys.platform != "linux", reason="ELF/DWARF tests require Linux")
 def test_packed_struct_detected_from_real_dwarf() -> None:
     """Compile a packed struct with gcc -g and verify DWARF detection."""
     src = """
@@ -314,6 +316,7 @@ PackedCtx g_ctx;
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(sys.platform != "linux", reason="ELF/DWARF tests require Linux")
 def test_standard_struct_not_flagged_as_packed() -> None:
     """Standard-layout struct must NOT be flagged as packed."""
     src = """

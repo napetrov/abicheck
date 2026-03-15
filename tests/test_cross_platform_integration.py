@@ -222,7 +222,10 @@ class TestMachoIntegration:
                 capture_output=True, text=True, check=False,
             )
 
-        assert cmp.returncode == 4, f"Expected BREAKING (exit 4), got {cmp.returncode}"
+        assert cmp.returncode == 4, (
+            f"Expected BREAKING (exit 4), got {cmp.returncode}\n"
+            f"stderr: {cmp.stderr}\nstdout: {cmp.stdout}"
+        )
         assert "api_fn" in cmp.stdout
 
 
@@ -338,13 +341,18 @@ class TestPeIntegration:
                 )
                 assert r.returncode == 0, f"dump failed: {r.stderr}"
 
-            # Compare
+            # Compare — set PYTHONUTF8=1 so markdown emoji output doesn't
+            # fail with UnicodeEncodeError on Windows cp1252 consoles.
+            env = {**subprocess.os.environ, "PYTHONUTF8": "1"}
             cmp = subprocess.run(
                 [sys.executable, "-m", "abicheck.cli", "compare",
                  str(td_path / "old.json"), str(td_path / "new.json"),
                  "--format", "markdown"],
-                capture_output=True, text=True, check=False,
+                capture_output=True, text=True, check=False, env=env,
             )
 
-        assert cmp.returncode == 4, f"Expected BREAKING (exit 4), got {cmp.returncode}"
+        assert cmp.returncode == 4, (
+            f"Expected BREAKING (exit 4), got {cmp.returncode}\n"
+            f"stderr: {cmp.stderr}\nstdout: {cmp.stdout}"
+        )
         assert "api_fn" in cmp.stdout
