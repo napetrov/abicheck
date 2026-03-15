@@ -449,7 +449,14 @@ All three layers combine for maximum accuracy. castxml is cross-platform (provid
 
 ### castxml compiler support
 
-castxml uses an internal Clang compiler for parsing but can emulate the preprocessor and target platform of an external compiler via `--castxml-cc-<id>`:
+castxml uses an **internal Clang compiler** for actual C/C++ parsing but can **emulate**
+the preprocessor defines, include paths, and target platform of an external compiler via
+`--castxml-cc-<id> <compiler-binary>`. At invocation time castxml calls the external
+compiler to query its built-in defines (e.g. `__GNUC__`, `_MSC_VER`) and default include
+search paths, then feeds those into its internal Clang so the resulting AST matches what
+the external compiler would see.
+
+**Supported compiler IDs:**
 
 | Compiler ID | Compiler | Platforms |
 |-------------|----------|-----------|
@@ -458,10 +465,15 @@ castxml uses an internal Clang compiler for parsing but can emulate the preproce
 | `msvc` | Microsoft Visual C++ (cl) | Windows |
 | `msvc-c` | Microsoft Visual C (cl, C mode) | Windows |
 
-abicheck auto-detects the compiler mode: if the compiler binary is `cl` or `cl.exe`, it uses `--castxml-cc-msvc`; otherwise it uses `--castxml-cc-gnu`. You can override the compiler via `--gcc-path`:
+**Auto-detection:** abicheck inspects the compiler binary *filename* (not the full path)
+to choose the dialect — if the name is exactly `cl` or `cl.exe` it uses
+`--castxml-cc-msvc`; everything else (gcc, g++, clang, clang++, MinGW cross-compilers)
+uses `--castxml-cc-gnu`.
+
+**Overriding the compiler with `--gcc-path`:**
 
 ```bash
-# Use a specific GCC
+# Use a specific GCC version (headers parsed with GCC-12's defines & includes)
 abicheck dump libfoo.so -H foo.h --gcc-path /usr/bin/g++-12
 
 # Use MSVC on Windows
@@ -470,6 +482,22 @@ abicheck dump foo.dll -H foo.h --gcc-path cl
 # Use MinGW on Windows
 abicheck dump foo.dll -H foo.h --gcc-path x86_64-w64-mingw32-g++
 ```
+
+**Compiler resolution priority** (highest to lowest):
+
+1. `--gcc-path /path/to/compiler` — explicit path, used as-is
+2. `--gcc-prefix <prefix>` — prefix + `g++` or `gcc` (for cross-toolchains)
+3. Default mapping — logical name (`c++` → `g++`, `cc` → `gcc`, etc.)
+
+**Limitations — non-C/C++ languages and compiler extensions:**
+
+castxml can only parse **C and C++** (it is Clang internally). It cannot parse Fortran,
+Rust, Ada, or other languages. For compilers that add language extensions beyond standard
+C/C++ (e.g. Intel DPC++/SYCL, CUDA `nvcc`, OpenACC), castxml can query the external
+compiler's preprocessor state but its internal Clang may reject extension-specific syntax.
+Scanning SYCL or CUDA headers typically requires a CastXML build linked against the
+matching Clang fork, or a different AST extraction tool that uses that compiler's
+libclang directly.
 
 ### Python dependencies
 
