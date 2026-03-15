@@ -308,7 +308,11 @@ def _read_numeric_leaf(data: bytes, offset: int) -> tuple[int, int]:
     if val == LF_UQUADWORD:
         (v,) = struct.unpack_from("<Q", data, offset + 2)
         return (v, offset + 10)
-    # Unknown numeric leaf — skip 4 bytes as a guess
+    # Unknown numeric leaf — best-effort skip of 6 bytes (2-byte tag + 4-byte
+    # value), which is correct for most CodeView numeric encodings.  May be
+    # wrong for exotic leaf types; if this fires frequently, consider adding
+    # explicit support for the leaf type.
+    # TODO: validate skip length or abort parsing when unknown leaves appear.
     log.debug("Unknown numeric leaf 0x%04x at offset %d", val, offset)
     return (0, offset + 6)
 
@@ -736,7 +740,17 @@ class TypeDatabase:
             count=count,
         )
 
-    def _parse_fieldlist(self, ti: int, d: bytes) -> None:
+    def _parse_fieldlist(
+        self, ti: int, d: bytes,
+        _visited: set[int] | None = None,
+    ) -> None:
+        if _visited is None:
+            _visited = set()
+        if ti in _visited:
+            log.warning("Circular LF_INDEX reference at ti=0x%x, skipping", ti)
+            return
+        _visited.add(ti)
+
         members: list[Any] = []
         pos = 0
         while pos + 2 <= len(d):
@@ -773,7 +787,7 @@ class TypeDatabase:
                 # Resolve continuation
                 cont_rec = self._tpi.get(cont_ti)
                 if cont_rec and cont_rec.leaf == LF_FIELDLIST:
-                    self._parse_fieldlist(cont_ti, cont_rec.data)
+                    self._parse_fieldlist(cont_ti, cont_rec.data, _visited)
                     cont_members = self._fieldlists.get(cont_ti, [])
                     members.extend(cont_members)
 

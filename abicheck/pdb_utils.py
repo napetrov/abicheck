@@ -46,7 +46,7 @@ def _is_network_path(p: str | Path) -> bool:
         if anchor.startswith("\\\\"):
             return True
     except Exception:  # noqa: BLE001
-        pass
+        log.debug("PureWindowsPath parsing failed for %r", s, exc_info=True)
     return False
 
 
@@ -125,11 +125,12 @@ def _extract_pdb_path_from_pe(dll_path: Path) -> str | None:
 
             data = dbg.entry
             if data is None:
-                # Fall back to raw data at PointerToRawData
+                # Fall back to raw data via AddressOfRawData (RVA),
+                # which is what pe.get_data() expects.
                 offset = dbg.struct.PointerToRawData
                 size = dbg.struct.SizeOfData
                 if offset and size:
-                    raw = pe.get_data(dbg.struct.AddressOfRawData, size)
+                    raw: bytes = pe.get_data(dbg.struct.AddressOfRawData, size)
                     if raw and len(raw) >= 24 and raw[:4] == _RSDS_SIG:
                         # RSDS: 4 (sig) + 16 (GUID) + 4 (age) + filename
                         pdb_name = raw[24:].split(b"\x00", 1)[0]
