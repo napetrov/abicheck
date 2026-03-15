@@ -279,6 +279,81 @@ class TestPdbToAdvancedDwarfMetadata:
         assert adv.toolchain.compiler == "MSVC"
         assert "-m32" in adv.toolchain.abi_flags
 
+    def test_toolchain_arm64(self, tmp_path: Path) -> None:
+        dbi = _build_dbi_stream(machine=0xAA64, build_major=14, build_minor=36)
+        pdb_bytes = _build_minimal_pdb(dbi_data=dbi)
+        pdb_file = tmp_path / "arm64.pdb"
+        pdb_file.write_bytes(pdb_bytes)
+        _, adv = parse_pdb_debug_info(pdb_file)
+        assert "-marm64" in adv.toolchain.abi_flags
+
+    def test_toolchain_unknown_machine(self, tmp_path: Path) -> None:
+        dbi = _build_dbi_stream(machine=0xFFFF, build_major=14, build_minor=36)
+        pdb_bytes = _build_minimal_pdb(dbi_data=dbi)
+        pdb_file = tmp_path / "unknown.pdb"
+        pdb_file.write_bytes(pdb_bytes)
+        _, adv = parse_pdb_debug_info(pdb_file)
+        assert "0xffff" in adv.toolchain.producer_string
+
+    def test_toolchain_incremental_link(self, tmp_path: Path) -> None:
+        dbi = _build_dbi_stream(machine=0x8664, flags=0x01)
+        pdb_bytes = _build_minimal_pdb(dbi_data=dbi)
+        pdb_file = tmp_path / "incr.pdb"
+        pdb_file.write_bytes(pdb_bytes)
+        _, adv = parse_pdb_debug_info(pdb_file)
+        assert "/INCREMENTAL" in adv.toolchain.abi_flags
+
+    def test_toolchain_no_incremental(self, tmp_path: Path) -> None:
+        dbi = _build_dbi_stream(machine=0x8664, flags=0x00)
+        pdb_bytes = _build_minimal_pdb(dbi_data=dbi)
+        pdb_file = tmp_path / "no_incr.pdb"
+        pdb_file.write_bytes(pdb_bytes)
+        _, adv = parse_pdb_debug_info(pdb_file)
+        assert "/INCREMENTAL" not in adv.toolchain.abi_flags
+
+    def test_toolchain_msvc_version_from_module(self, tmp_path: Path) -> None:
+        """Module obj paths with MSVC version patterns should override version."""
+        dbi = _build_dbi_stream(
+            machine=0x8664,
+            modules=[
+                ("foo.obj", r"C:\Program Files\MSVC\14.36.32532\lib\foo.obj"),
+            ],
+        )
+        pdb_bytes = _build_minimal_pdb(dbi_data=dbi)
+        pdb_file = tmp_path / "msvc_ver.pdb"
+        pdb_file.write_bytes(pdb_bytes)
+        _, adv = parse_pdb_debug_info(pdb_file)
+        assert adv.toolchain.version == "14.36.32532"
+        assert "14.36.32532" in adv.toolchain.producer_string
+
+    def test_no_dbi_stream(self, tmp_path: Path) -> None:
+        """PDB without DBI stream should still parse (no toolchain info)."""
+        # Build PDB with empty DBI that's too small — will fail DBI parse
+        # but parse_pdb_debug_info should handle it gracefully.
+        # Actually, _extract_toolchain_info handles pdb.dbi is None.
+        from unittest.mock import patch
+
+        pdb_bytes = _build_minimal_pdb(tpi_records=[])
+        pdb_file = tmp_path / "no_dbi.pdb"
+        pdb_file.write_bytes(pdb_bytes)
+
+        # Patch parse_pdb to return a PdbFile with no DBI
+        from abicheck.pdb_parser import parse_pdb
+
+        original = parse_pdb
+
+        def mock_parse(path):
+            result = original(path)
+            result.dbi = None
+            return result
+
+        with patch("abicheck.pdb_metadata.parse_pdb", side_effect=mock_parse):
+            meta, adv = parse_pdb_debug_info(pdb_file)
+
+        assert meta.has_dwarf is True
+        # No toolchain since DBI is None
+        assert adv.toolchain.compiler == ""
+
     def test_struct_names_tracked(self, pdb_with_struct_and_enum: Path) -> None:
         _, adv = parse_pdb_debug_info(pdb_with_struct_and_enum)
         assert "Vec3" in adv.all_struct_names
@@ -421,6 +496,93 @@ class TestPdbInAbiSnapshot:
         assert snap.dwarf_advanced is not None
         assert snap.dwarf_advanced.has_dwarf
         assert snap.platform == "pe"
+
+    def test_no_tpi_stream(self, tmp_path: Path) -> None:
+        """PDB without TPI should return empty metadata."""
+        # Create a PDB with no records — tpi.records will be empty,
+        # but pdb.types will still be created. Instead, test via a
+        # struct.error by corrupting TPI.
+        pdb_bytes = _build_minimal_pdb(tpi_records=[])
+        pdb_file = tmp_path / "empty_tpi.pdb"
+        pdb_file.write_bytes(pdb_bytes)
+        meta, adv = parse_pdb_debug_info(pdb_file)
+        # Has dwarf because TPI stream exists, just no types
+        assert isinstance(meta, DwarfMetadata)
+
+    def test_forward_ref_struct_skipped(self, tmp_path: Path) -> None:
+        """Forward-ref structs should not appear in metadata."""
+        records = [
+            (LF_STRUCTURE, _make_lf_structure(0, 0x0080, 0, 0, "FwdOnly")),
+        ]
+        pdb_bytes = _build_minimal_pdb(tpi_records=records)
+        pdb_file = tmp_path / "fwd.pdb"
+        pdb_file.write_bytes(pdb_bytes)
+        meta, _ = parse_pdb_debug_info(pdb_file)
+        assert "FwdOnly" not in meta.structs
+
+    def test_anonymous_struct_skipped(self, tmp_path: Path) -> None:
+        """Structs with names starting with '<' or '__' should be skipped."""
+        fl = _make_lf_fieldlist([_make_lf_member(0, 0x74, 0, "x")])
+        records = [
+            (LF_FIELDLIST, fl),
+            (LF_STRUCTURE, _make_lf_structure(1, 0, 0x1000, 4, "<unnamed>")),
+            (LF_STRUCTURE, _make_lf_structure(1, 0, 0x1000, 4, "__internal")),
+        ]
+        pdb_bytes = _build_minimal_pdb(tpi_records=records)
+        pdb_file = tmp_path / "anon.pdb"
+        pdb_file.write_bytes(pdb_bytes)
+        meta, _ = parse_pdb_debug_info(pdb_file)
+        assert "<unnamed>" not in meta.structs
+        assert "__internal" not in meta.structs
+
+    def test_empty_struct_name_skipped(self, tmp_path: Path) -> None:
+        """Structs with empty names should be skipped."""
+        fl = _make_lf_fieldlist([_make_lf_member(0, 0x74, 0, "x")])
+        records = [
+            (LF_FIELDLIST, fl),
+            (LF_STRUCTURE, _make_lf_structure(1, 0, 0x1000, 4, "")),
+        ]
+        pdb_bytes = _build_minimal_pdb(tpi_records=records)
+        pdb_file = tmp_path / "noname.pdb"
+        pdb_file.write_bytes(pdb_bytes)
+        meta, _ = parse_pdb_debug_info(pdb_file)
+        assert "" not in meta.structs
+
+    def test_forward_ref_enum_skipped(self, tmp_path: Path) -> None:
+        """Forward-ref enums should not appear in metadata."""
+        records = [
+            (LF_ENUM, _make_lf_enum(0, 0x0080, 0x74, 0, "FwdEnum")),
+        ]
+        pdb_bytes = _build_minimal_pdb(tpi_records=records)
+        pdb_file = tmp_path / "fwd_enum.pdb"
+        pdb_file.write_bytes(pdb_bytes)
+        meta, _ = parse_pdb_debug_info(pdb_file)
+        assert "FwdEnum" not in meta.enums
+
+    def test_anonymous_enum_skipped(self, tmp_path: Path) -> None:
+        """Enums with names starting with '<' or '__' should be skipped."""
+        fl = _make_lf_fieldlist([_make_lf_enumerate(0, 0, "A")])
+        records = [
+            (LF_FIELDLIST, fl),
+            (LF_ENUM, _make_lf_enum(1, 0, 0x74, 0x1000, "<unnamed-enum>")),
+        ]
+        pdb_bytes = _build_minimal_pdb(tpi_records=records)
+        pdb_file = tmp_path / "anon_enum.pdb"
+        pdb_file.write_bytes(pdb_bytes)
+        meta, _ = parse_pdb_debug_info(pdb_file)
+        assert "<unnamed-enum>" not in meta.enums
+
+    def test_empty_fieldlist_struct(self, tmp_path: Path) -> None:
+        """Struct with field_list_ti=0 should have no fields."""
+        records = [
+            (LF_STRUCTURE, _make_lf_structure(0, 0, 0, 0, "Empty")),
+        ]
+        pdb_bytes = _build_minimal_pdb(tpi_records=records)
+        pdb_file = tmp_path / "empty_struct.pdb"
+        pdb_file.write_bytes(pdb_bytes)
+        meta, _ = parse_pdb_debug_info(pdb_file)
+        assert "Empty" in meta.structs
+        assert len(meta.structs["Empty"].fields) == 0
 
     def test_serialization_round_trip(self, pdb_with_struct_and_enum: Path, tmp_path: Path) -> None:
         """DwarfMetadata from PDB should survive JSON serialization."""

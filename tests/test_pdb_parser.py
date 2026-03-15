@@ -31,23 +31,34 @@ import pytest
 
 from abicheck.pdb_parser import (
     _CC_NAMES,
+    LF_ARGLIST,
     LF_ARRAY,
+    LF_BCLASS,
     LF_BITFIELD,
     LF_CHAR,
     LF_ENUM,
     LF_ENUMERATE,
     LF_FIELDLIST,
+    LF_INDEX,
     LF_LONG,
     LF_MEMBER,
+    LF_METHOD,
     LF_MFUNCTION,
     LF_MODIFIER,
+    LF_NESTTYPE,
+    LF_ONEMETHOD,
     LF_POINTER,
     LF_PROCEDURE,
+    LF_QUADWORD,
     LF_SHORT,
+    LF_STMEMBER,
     LF_STRUCTURE,
     LF_ULONG,
     LF_UNION,
+    LF_UQUADWORD,
     LF_USHORT,
+    LF_VBCLASS,
+    LF_VFUNCTAB,
     TypeDatabase,
     _read_cstring,
     _read_numeric_leaf,
@@ -810,3 +821,454 @@ class TestPdbRoundTrip:
         p = pdb.types.get_procedure(0x1004)
         assert p is not None
         assert p.calling_convention == 0x07  # stdcall
+
+
+# ---------------------------------------------------------------------------
+# Tests: additional coverage for edge cases
+# ---------------------------------------------------------------------------
+
+class TestNumericLeafExtended:
+    def test_truncated_data(self) -> None:
+        """Offset past end of data returns (0, offset+2)."""
+        val, pos = _read_numeric_leaf(b"", 0)
+        assert val == 0
+        assert pos == 2
+
+    def test_lf_quadword(self) -> None:
+        data = struct.pack("<Hq", LF_QUADWORD, -(2**60))
+        val, pos = _read_numeric_leaf(data, 0)
+        assert val == -(2**60)
+        assert pos == 10
+
+    def test_lf_uquadword(self) -> None:
+        data = struct.pack("<HQ", LF_UQUADWORD, 2**63)
+        val, pos = _read_numeric_leaf(data, 0)
+        assert val == 2**63
+        assert pos == 10
+
+    def test_unknown_leaf(self) -> None:
+        """Unknown leaf tag should return (0, offset+6)."""
+        data = struct.pack("<HI", 0x800F, 0xDEADBEEF)
+        val, pos = _read_numeric_leaf(data, 0)
+        assert val == 0
+        assert pos == 6
+
+
+class TestCStringExtended:
+    def test_no_null_terminator(self) -> None:
+        """String without null terminator returns empty string."""
+        data = b"abc"
+        s, pos = _read_cstring(data, 0)
+        assert s == ""
+        assert pos == len(data)
+
+
+class TestMsfParserExtended:
+    def test_stream_data_negative_index(self) -> None:
+        pdb_data = _build_minimal_pdb()
+        msf = parse_msf(pdb_data)
+        assert msf.stream_data(-1) == b""
+
+    def test_stream_data_out_of_range(self) -> None:
+        pdb_data = _build_minimal_pdb()
+        msf = parse_msf(pdb_data)
+        assert msf.stream_data(999) == b""
+
+    def test_invalid_block_size(self) -> None:
+        """Invalid block size in header should raise ValueError."""
+        pdb_data = bytearray(_build_minimal_pdb())
+        # Patch block_size field (at offset 32) to an unsupported value
+        struct.pack_into("<I", pdb_data, 32, 8192)
+        with pytest.raises(ValueError, match="Unsupported PDB block size"):
+            parse_msf(bytes(pdb_data))
+
+
+class TestTpiParserExtended:
+    def test_record_with_small_rec_len(self) -> None:
+        """Record with rec_len < 2 should stop parsing."""
+        # Build TPI header for 1 record
+        ti_begin = 0x1000
+        ti_end = 0x1001
+        # Create a record with rec_len=1 (< 2 threshold)
+        rec_data = struct.pack("<H", 1)  # rec_len = 1
+        rec_data += b"\x00" * 2  # padding
+        header = struct.pack("<IIIII", 20040203, 56, ti_begin, ti_end, len(rec_data))
+        header += b"\x00" * (56 - len(header))
+        tpi = parse_tpi_stream(header + rec_data)
+        assert len(tpi.records) == 0
+
+    def test_tpi_get_method(self) -> None:
+        """TpiStream.get() returns records by type index."""
+        fieldlist_payload = _make_lf_fieldlist([
+            _make_lf_member(0, 0x74, 0, "x"),
+        ])
+        tpi_data = _build_tpi_stream([(LF_FIELDLIST, fieldlist_payload)])
+        tpi = parse_tpi_stream(tpi_data)
+        rec = tpi.get(0x1000)
+        assert rec is not None
+        assert rec.leaf == LF_FIELDLIST
+        assert tpi.get(0xFFFF) is None
+
+
+class TestTypeDatabaseExtended:
+    def _make_db(self, records: list[tuple[int, bytes]]) -> TypeDatabase:
+        tpi_data = _build_tpi_stream(records)
+        tpi = parse_tpi_stream(tpi_data)
+        db = TypeDatabase(tpi)
+        db.parse_all()
+        return db
+
+    def test_all_structs(self) -> None:
+        struct_payload = _make_lf_structure(0, 0, 0, 4, "Foo")
+        db = self._make_db([(LF_STRUCTURE, struct_payload)])
+        assert len(db.all_structs()) == 1
+
+    def test_all_enums(self) -> None:
+        fl = _make_lf_fieldlist([_make_lf_enumerate(0, 0, "A")])
+        enum_payload = _make_lf_enum(1, 0, 0x74, 0x1000, "E")
+        db = self._make_db([(LF_FIELDLIST, fl), (LF_ENUM, enum_payload)])
+        assert len(db.all_enums()) == 1
+
+    def test_all_procedures(self) -> None:
+        db = self._make_db([(LF_PROCEDURE, _make_lf_procedure(0x74, 0, 0, 0))])
+        assert len(db.all_procedures()) == 1
+
+    def test_all_mfunctions(self) -> None:
+        db = self._make_db([(LF_MFUNCTION, _make_lf_mfunction(0x74, 0, 0, 0, 0, 0))])
+        assert len(db.all_mfunctions()) == 1
+
+    def test_modifier_volatile(self) -> None:
+        mod_payload = _make_lf_modifier(0x74, is_volatile=True)
+        db = self._make_db([(LF_MODIFIER, mod_payload)])
+        name = db.type_name(0x1000)
+        assert "volatile" in name
+        assert "int" in name
+
+    def test_type_name_depth_limit(self) -> None:
+        db = self._make_db([])
+        assert db.type_name(0x74, depth=11) == "..."
+
+    def test_type_size_depth_limit(self) -> None:
+        db = self._make_db([])
+        assert db.type_size(0x74, depth=11) == 0
+
+    def test_type_name_unknown_ti(self) -> None:
+        db = self._make_db([])
+        name = db.type_name(0x9999)
+        assert "<ti:0x9999>" == name
+
+    def test_type_size_enum(self) -> None:
+        fl = _make_lf_fieldlist([_make_lf_enumerate(0, 0, "X")])
+        enum_payload = _make_lf_enum(1, 0, 0x74, 0x1000, "MyEnum")
+        db = self._make_db([(LF_FIELDLIST, fl), (LF_ENUM, enum_payload)])
+        # Enum size should resolve to underlying type (int = 4)
+        assert db.type_size(0x1001) == 4
+
+    def test_type_name_enum(self) -> None:
+        fl = _make_lf_fieldlist([_make_lf_enumerate(0, 0, "X")])
+        enum_payload = _make_lf_enum(1, 0, 0x74, 0x1000, "MyEnum")
+        db = self._make_db([(LF_FIELDLIST, fl), (LF_ENUM, enum_payload)])
+        assert db.type_name(0x1001) == "enum MyEnum"
+
+    def test_type_name_procedure(self) -> None:
+        db = self._make_db([(LF_PROCEDURE, _make_lf_procedure(0x74, 0, 0, 0))])
+        assert db.type_name(0x1000) == "fn(...)"
+
+    def test_type_name_mfunction(self) -> None:
+        db = self._make_db([(LF_MFUNCTION, _make_lf_mfunction(0x74, 0, 0, 0, 0, 0))])
+        assert db.type_name(0x1000) == "fn(...)"
+
+    def test_simple_type_near32_pointer(self) -> None:
+        """Near32 pointer mode (0x02) should resolve to pointer."""
+        db = self._make_db([])
+        ti = 0x0274  # mode=0x02 (near32), kind=0x74 (int)
+        name = db.type_name(ti)
+        assert "*" in name
+        assert db.type_size(ti) == 4
+
+    def test_simple_type_other_pointer_mode(self) -> None:
+        """Unknown pointer mode should still produce pointer name."""
+        db = self._make_db([])
+        ti = 0x0374  # mode=0x03, kind=0x74
+        name = db.type_name(ti)
+        assert "*" in name
+        assert db.type_size(ti) == 8  # default ptr size
+
+    def test_pointer_lvalue_reference(self) -> None:
+        """LValueReference pointer mode (1)."""
+        # attrs: mode=1 at bits 5-7 → (1 << 5) = 0x20, plus near64 marker
+        attrs = (8 << 13) | (1 << 5) | 0x0C
+        payload = struct.pack("<II", 0x74, attrs)
+        db = self._make_db([(LF_POINTER, payload)])
+        name = db.type_name(0x1000)
+        assert "&" in name
+        assert "&&" not in name
+
+    def test_pointer_rvalue_reference(self) -> None:
+        """RValueReference pointer mode (4)."""
+        attrs = (8 << 13) | (4 << 5) | 0x0C
+        payload = struct.pack("<II", 0x74, attrs)
+        db = self._make_db([(LF_POINTER, payload)])
+        name = db.type_name(0x1000)
+        assert "&&" in name
+
+    def test_calling_convention_unknown(self) -> None:
+        db = self._make_db([])
+        assert db.calling_convention_name(0xFF) == "cc_0xff"
+
+    def test_parse_all_idempotent(self) -> None:
+        """Calling parse_all() twice should not break anything."""
+        db = self._make_db([(LF_STRUCTURE, _make_lf_structure(0, 0, 0, 4, "S"))])
+        db.parse_all()  # second call, should be no-op
+        assert len(db.all_structs()) == 1
+
+    def test_truncated_struct_data(self) -> None:
+        """Struct with truncated data should be skipped."""
+        db = self._make_db([(LF_STRUCTURE, b"\x00" * 4)])  # < 16 bytes
+        assert len(db.all_structs()) == 0
+
+    def test_truncated_union_data(self) -> None:
+        db = self._make_db([(LF_UNION, b"\x00" * 4)])  # < 8 bytes
+        assert len(db.all_structs()) == 0
+
+    def test_truncated_enum_data(self) -> None:
+        db = self._make_db([(LF_ENUM, b"\x00" * 4)])  # < 12 bytes
+        assert len(db.all_enums()) == 0
+
+    def test_truncated_procedure_data(self) -> None:
+        db = self._make_db([(LF_PROCEDURE, b"\x00" * 4)])  # < 12 bytes
+        assert len(db.all_procedures()) == 0
+
+    def test_truncated_mfunction_data(self) -> None:
+        db = self._make_db([(LF_MFUNCTION, b"\x00" * 4)])  # < 24 bytes
+        assert len(db.all_mfunctions()) == 0
+
+    def test_truncated_pointer_data(self) -> None:
+        db = self._make_db([(LF_POINTER, b"\x00" * 4)])  # < 8 bytes
+        # Should be silently skipped
+        assert db.type_name(0x1000) == "<ti:0x1000>"
+
+    def test_truncated_modifier_data(self) -> None:
+        db = self._make_db([(LF_MODIFIER, b"\x00" * 2)])  # < 6 bytes
+        assert db.type_name(0x1000) == "<ti:0x1000>"
+
+    def test_truncated_bitfield_data(self) -> None:
+        db = self._make_db([(LF_BITFIELD, b"\x00" * 2)])  # < 6 bytes
+        assert db.type_name(0x1000) == "<ti:0x1000>"
+
+    def test_truncated_array_data(self) -> None:
+        db = self._make_db([(LF_ARRAY, b"\x00" * 4)])  # < 8 bytes
+        assert db.type_name(0x1000) == "<ti:0x1000>"
+
+    def test_truncated_arglist_data(self) -> None:
+        db = self._make_db([(LF_ARGLIST, b"\x00" * 2)])  # < 4 bytes
+        assert db.type_name(0x1000) == "<ti:0x1000>"
+
+    def test_arglist_truncated_entries(self) -> None:
+        """Arglist with count > available data should parse partial."""
+        # count=5 but only room for 2
+        payload = struct.pack("<III", 5, 0x74, 0x74)
+        db = self._make_db([(LF_ARGLIST, payload)])
+        args = db._arglists.get(0x1000, [])
+        assert len(args) == 2
+
+
+class TestFieldlistExtended:
+    def _make_db(self, records: list[tuple[int, bytes]]) -> TypeDatabase:
+        tpi_data = _build_tpi_stream(records)
+        tpi = parse_tpi_stream(tpi_data)
+        db = TypeDatabase(tpi)
+        db.parse_all()
+        return db
+
+    def test_lf_index_continuation(self) -> None:
+        """LF_INDEX should follow continuation to another fieldlist."""
+        # First fieldlist: member "a", then LF_INDEX pointing to 0x1001
+        fl1_data = _make_lf_member(0, 0x74, 0, "a")
+        # Pad to 4-byte boundary
+        pad = (4 - (len(fl1_data) % 4)) % 4
+        fl1_data += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        # Add LF_INDEX sub-record: leaf(2) + pad(2) + cont_ti(4)
+        fl1_data += struct.pack("<HHI", LF_INDEX, 0, 0x1001)
+
+        # Second fieldlist: member "b"
+        fl2_data = _make_lf_fieldlist([_make_lf_member(0, 0x74, 4, "b")])
+
+        db = self._make_db([
+            (LF_FIELDLIST, fl1_data),      # 0x1000
+            (LF_FIELDLIST, fl2_data),       # 0x1001
+        ])
+        members = db.get_fieldlist(0x1000)
+        names = [m.name for m in members]
+        assert "a" in names
+        assert "b" in names
+
+    def test_circular_lf_index(self) -> None:
+        """Circular LF_INDEX reference should be detected and skipped."""
+        # Fieldlist with LF_INDEX pointing to itself (0x1000)
+        fl_data = struct.pack("<HHI", LF_INDEX, 0, 0x1000)
+        db = self._make_db([(LF_FIELDLIST, fl_data)])
+        # Should not raise (infinite recursion guarded)
+        members = db.get_fieldlist(0x1000)
+        assert isinstance(members, list)
+
+    def test_padding_bytes(self) -> None:
+        """Padding bytes (>= 0xF0) should be skipped correctly."""
+        fl = _make_lf_fieldlist([
+            _make_lf_member(0, 0x74, 0, "a"),
+            _make_lf_member(0, 0x74, 4, "b"),
+        ])
+        db = self._make_db([(LF_FIELDLIST, fl)])
+        members = db.get_fieldlist(0x1000)
+        assert len(members) == 2
+
+    def test_unknown_sub_leaf(self) -> None:
+        """Unknown sub-leaf should stop parsing (break)."""
+        # Unknown leaf 0x0001 followed by valid member
+        data = struct.pack("<H", 0x0001)  # unknown sub-leaf
+        data += _make_lf_member(0, 0x74, 0, "x")
+        db = self._make_db([(LF_FIELDLIST, data)])
+        members = db.get_fieldlist(0x1000)
+        assert len(members) == 0  # stopped at unknown
+
+    def test_truncated_lf_member(self) -> None:
+        """LF_MEMBER with truncated data should break out."""
+        data = struct.pack("<H", LF_MEMBER) + b"\x00" * 2  # only 2 extra bytes, need 6
+        db = self._make_db([(LF_FIELDLIST, data)])
+        members = db.get_fieldlist(0x1000)
+        assert len(members) == 0
+
+    def test_truncated_lf_enumerate(self) -> None:
+        """LF_ENUMERATE with truncated data should break out."""
+        data = struct.pack("<H", LF_ENUMERATE)  # no attr bytes
+        db = self._make_db([(LF_FIELDLIST, data)])
+        members = db.get_fieldlist(0x1000)
+        assert len(members) == 0
+
+    def test_truncated_lf_index(self) -> None:
+        """LF_INDEX with truncated data should break out."""
+        data = struct.pack("<H", LF_INDEX) + b"\x00" * 2  # need 4+ extra bytes
+        db = self._make_db([(LF_FIELDLIST, data)])
+        members = db.get_fieldlist(0x1000)
+        assert len(members) == 0
+
+
+class TestSkipSubrecord:
+    def _make_db(self, records: list[tuple[int, bytes]]) -> TypeDatabase:
+        tpi_data = _build_tpi_stream(records)
+        tpi = parse_tpi_stream(tpi_data)
+        db = TypeDatabase(tpi)
+        db.parse_all()
+        return db
+
+    def test_lf_stmember(self) -> None:
+        """LF_STMEMBER sub-record should be skipped, allowing next member."""
+        # Build fieldlist with LF_STMEMBER then LF_MEMBER
+        stmember = struct.pack("<HHI", LF_STMEMBER, 0, 0x74) + _cv_cstring("sval")
+        pad = (4 - (len(stmember) % 4)) % 4
+        stmember += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        member = _make_lf_member(0, 0x74, 0, "x")
+        data = stmember + member
+        db = self._make_db([(LF_FIELDLIST, data)])
+        members = db.get_fieldlist(0x1000)
+        assert any(m.name == "x" for m in members)
+
+    def test_lf_nesttype(self) -> None:
+        """LF_NESTTYPE should be skipped."""
+        nesttype = struct.pack("<HHI", LF_NESTTYPE, 0, 0x1001) + _cv_cstring("Inner")
+        pad = (4 - (len(nesttype) % 4)) % 4
+        nesttype += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        member = _make_lf_member(0, 0x74, 0, "val")
+        data = nesttype + member
+        db = self._make_db([(LF_FIELDLIST, data)])
+        members = db.get_fieldlist(0x1000)
+        assert any(m.name == "val" for m in members)
+
+    def test_lf_onemethod_nonvirtual(self) -> None:
+        """LF_ONEMETHOD (non-virtual) should be skipped."""
+        # attr with mprop=0 (not virtual), so no vbaseoff
+        onemethod = struct.pack("<HHI", LF_ONEMETHOD, 0, 0x1001) + _cv_cstring("foo")
+        pad = (4 - (len(onemethod) % 4)) % 4
+        onemethod += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        member = _make_lf_member(0, 0x74, 0, "val")
+        data = onemethod + member
+        db = self._make_db([(LF_FIELDLIST, data)])
+        members = db.get_fieldlist(0x1000)
+        assert any(m.name == "val" for m in members)
+
+    def test_lf_onemethod_virtual(self) -> None:
+        """LF_ONEMETHOD (intro virtual, mprop=4) has extra vbaseoff field."""
+        # mprop=4 → attr = 4 << 2 = 16
+        attr = 4 << 2
+        onemethod = struct.pack("<HHI", LF_ONEMETHOD, attr, 0x1001)
+        onemethod += struct.pack("<I", 0)  # vbaseoff
+        onemethod += _cv_cstring("vfunc")
+        pad = (4 - (len(onemethod) % 4)) % 4
+        onemethod += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        member = _make_lf_member(0, 0x74, 0, "data")
+        data = onemethod + member
+        db = self._make_db([(LF_FIELDLIST, data)])
+        members = db.get_fieldlist(0x1000)
+        assert any(m.name == "data" for m in members)
+
+    def test_lf_method(self) -> None:
+        """LF_METHOD should be skipped."""
+        method = struct.pack("<HHI", LF_METHOD, 1, 0x1001) + _cv_cstring("bar")
+        pad = (4 - (len(method) % 4)) % 4
+        method += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        member = _make_lf_member(0, 0x74, 0, "v")
+        data = method + member
+        db = self._make_db([(LF_FIELDLIST, data)])
+        members = db.get_fieldlist(0x1000)
+        assert any(m.name == "v" for m in members)
+
+    def test_lf_vfunctab(self) -> None:
+        """LF_VFUNCTAB should skip 6 bytes."""
+        vfunctab = struct.pack("<HHI", LF_VFUNCTAB, 0, 0x1001)
+        pad = (4 - (len(vfunctab) % 4)) % 4
+        vfunctab += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        member = _make_lf_member(0, 0x74, 0, "w")
+        data = vfunctab + member
+        db = self._make_db([(LF_FIELDLIST, data)])
+        members = db.get_fieldlist(0x1000)
+        assert any(m.name == "w" for m in members)
+
+    def test_lf_bclass(self) -> None:
+        """LF_BCLASS should skip attr(2) + type_ti(4) + numeric leaf."""
+        bclass = struct.pack("<HHI", LF_BCLASS, 0, 0x1001) + _cv_numeric(0)
+        pad = (4 - (len(bclass) % 4)) % 4
+        bclass += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        member = _make_lf_member(0, 0x74, 0, "bval")
+        data = bclass + member
+        db = self._make_db([(LF_FIELDLIST, data)])
+        members = db.get_fieldlist(0x1000)
+        assert any(m.name == "bval" for m in members)
+
+    def test_lf_vbclass(self) -> None:
+        """LF_VBCLASS should skip attr(2)+direct(4)+vbptr(4)+2 numeric leaves."""
+        vbclass = struct.pack("<HHII", LF_VBCLASS, 0, 0x1001, 0x1002)
+        vbclass += _cv_numeric(0)  # vbpoff
+        vbclass += _cv_numeric(0)  # vbtableoff
+        pad = (4 - (len(vbclass) % 4)) % 4
+        vbclass += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        member = _make_lf_member(0, 0x74, 0, "vb")
+        data = vbclass + member
+        db = self._make_db([(LF_FIELDLIST, data)])
+        members = db.get_fieldlist(0x1000)
+        assert any(m.name == "vb" for m in members)
+
+    def test_subrecord_truncated_data(self) -> None:
+        """Truncated sub-record data should return len(d)."""
+        # LF_STMEMBER with only 2 bytes after leaf — needs 6
+        data = struct.pack("<H", LF_STMEMBER) + b"\x00" * 2
+        db = self._make_db([(LF_FIELDLIST, data)])
+        # Should not crash, just stop parsing
+        members = db.get_fieldlist(0x1000)
+        assert members == []
+
+
+class TestDbiParserExtended:
+    def test_dbi_flags(self) -> None:
+        dbi_data = _build_dbi_stream(flags=0x01)
+        dbi = parse_dbi_stream(dbi_data)
+        assert dbi.header.flags == 0x01
