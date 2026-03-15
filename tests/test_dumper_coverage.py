@@ -145,7 +145,7 @@ class TestDumpSymbolFiltering:
         from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolType
 
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
 
         monkeypatch.setattr(
             "abicheck.dumper._pyelftools_exported_symbols",
@@ -176,7 +176,7 @@ class TestDumpSymbolFiltering:
     def test_lang_c_sets_profile(self, tmp_path, monkeypatch):
         """lang='C' sets language_profile to 'c'."""
         so_path = tmp_path / "lib.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
 
         monkeypatch.setattr(
             "abicheck.dumper._pyelftools_exported_symbols",
@@ -195,7 +195,7 @@ class TestDumpSymbolFiltering:
     def test_lang_cpp_sets_profile(self, tmp_path, monkeypatch):
         """lang='C++' sets language_profile to 'cpp'."""
         so_path = tmp_path / "lib.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
 
         monkeypatch.setattr(
             "abicheck.dumper._pyelftools_exported_symbols",

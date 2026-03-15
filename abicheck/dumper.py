@@ -908,7 +908,13 @@ def dump(
             sysroot=sysroot, nostdinc=nostdinc, lang=lang,
         )
 
-    # Default: ELF (original path)
+    if fmt != "elf":
+        raise ValueError(
+            f"Unrecognised binary format for {so_path}: "
+            f"expected ELF, Mach-O, or PE but detected {fmt!r}. "
+            f"Ensure the file is a valid shared library."
+        )
+
     return _dump_elf(
         so_path, headers, extra_includes or [], version, compiler,
         gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
@@ -1059,18 +1065,26 @@ def _dump_macho(
             UserWarning,
             stacklevel=2,
         )
+        # Normalize Mach-O leading underscore: _foo → foo, __Z... → _Z...
+        def _normalize_macho_sym(s: str) -> str:
+            if s.startswith("_"):
+                return s[1:]
+            return s
+
         return AbiSnapshot(
             library=dylib_path.name,
             version=version,
             functions=[
                 Function(
-                    name=sym, mangled=sym, return_type="?",
+                    name=_normalize_macho_sym(sym),
+                    mangled=_normalize_macho_sym(sym),
+                    return_type="?",
                     # ELF_ONLY: marks symbols as export-table-only (no header
                     # confirmation).  This ensures the checker uses
                     # FUNC_REMOVED_ELF_ONLY (compatible) rather than
                     # FUNC_REMOVED (breaking) for visibility-cleanup removals.
                     visibility=Visibility.ELF_ONLY,
-                    is_extern_c=not sym.startswith("_Z"),
+                    is_extern_c=not _normalize_macho_sym(sym).startswith("_Z"),
                 )
                 for sym in sorted(exported_dynamic)
             ],

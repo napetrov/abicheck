@@ -125,7 +125,7 @@ class TestDumpCmdStdout:
     def test_dump_to_stdout(self, tmp_path, monkeypatch):
         """dump command without -o writes JSON to stdout."""
         so = tmp_path / "libfoo.so"
-        so.write_bytes(b"elf")
+        so.write_bytes(b"\x7fELF")
         hdr = tmp_path / "foo.h"
         hdr.write_text("int foo();", encoding="utf-8")
 

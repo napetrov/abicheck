@@ -15,7 +15,7 @@ def _snap(version: str = "1.0") -> AbiSnapshot:
 
 def test_dump_cmd_writes_output_file(tmp_path, monkeypatch):
     so_path = tmp_path / "libfoo.so"
-    so_path.write_bytes(b"elf")
+    so_path.write_bytes(b"\x7fELF")
     header = tmp_path / "foo.h"
     header.write_text("int foo();\n", encoding="utf-8")
     out = tmp_path / "snap.json"
@@ -127,8 +127,8 @@ def test_compat_check_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypat
 
     old_so = tmp_path / "old.so"
     new_so = tmp_path / "new.so"
-    old_so.write_bytes(b"elf")
-    new_so.write_bytes(b"elf")
+    old_so.write_bytes(b"\x7fELF")
+    new_so.write_bytes(b"\x7fELF")
 
     old_d = SimpleNamespace(libs=[old_so], headers=[], version="1.0")
     new_d = SimpleNamespace(libs=[new_so], headers=[], version="2.0")
