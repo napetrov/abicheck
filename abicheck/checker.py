@@ -25,9 +25,9 @@ from .checker_policy import API_BREAK_KINDS as _API_BREAK_KINDS
 from .checker_policy import BREAKING_KINDS as _BREAKING_KINDS
 from .checker_policy import COMPATIBLE_KINDS as _COMPATIBLE_KINDS
 from .checker_policy import RISK_KINDS as _RISK_KINDS
-from .checker_policy import ChangeKind as ChangeKind
-from .checker_policy import Verdict as Verdict
-from .checker_policy import compute_verdict as compute_verdict
+from .checker_policy import ChangeKind
+from .checker_policy import Verdict
+from .checker_policy import compute_verdict
 from .checker_policy import policy_kind_sets as _policy_kind_sets
 from .detectors import DetectorResult
 from .dwarf_advanced import diff_advanced_dwarf
@@ -1127,7 +1127,7 @@ def _is_access_narrowing(old_access: Any, new_access: Any) -> bool:
     Widening (e.g., private→public) is backward-compatible and should NOT be flagged.
     """
     from .model import AccessLevel
-    _RANK = {AccessLevel.PUBLIC: 0, AccessLevel.PROTECTED: 1, AccessLevel.PRIVATE: 2}
+    _RANK = {AccessLevel.PUBLIC: 0, AccessLevel.PROTECTED: 1, AccessLevel.PRIVATE: 2}  # pylint: disable=invalid-name
     return _RANK.get(new_access, 0) > _RANK.get(old_access, 0)
 
 
@@ -1611,8 +1611,8 @@ def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
         # Compute old max PER VERSION-TAG PREFIX (e.g. "GLIBC", "GLIBCXX", "CXXABI")
         # to avoid cross-namespace bleed: GLIBCXX_3.4.32 must not suppress a
         # genuinely newer CXXABI_1.3.14 requirement.
-        def _old_max_for_prefix(prefix: str) -> tuple[int, ...]:
-            matching = [_parse_abi_version_tag(v) for v in old_vers
+        def _old_max_for_prefix(prefix: str, _old_vers: set = old_vers) -> tuple[int, ...]:  # pylint: disable=dangerous-default-value
+            matching = [_parse_abi_version_tag(v) for v in _old_vers
                         if v.startswith(prefix + "_")]
             return max(matching, default=(0,))
 
@@ -1826,7 +1826,7 @@ def _enrich_affected_symbols(
     # Build type→functions mapping from old snapshot
     type_to_funcs: dict[str, list[str]] = {t: [] for t in affected_types}
     old_pub = _public_functions(old)
-    for mangled, func in old_pub.items():
+    for _mangled, func in old_pub.items():
         # Check return type
         func_types_used: set[str] = set()
         if func.return_type:
@@ -1870,7 +1870,7 @@ def _enrich_affected_symbols(
                 type_to_funcs[tname].extend(type_to_funcs[parent])
             else:
                 # Check functions for parent too
-                for mangled, func in old_pub.items():
+                for _mangled, func in old_pub.items():
                     func_types_used = {func.return_type} | {p.type for p in func.params}
                     if any(parent in ft for ft in func_types_used if ft):
                         type_to_funcs[tname].append(func.name)
@@ -2113,7 +2113,7 @@ def _diff_reserved_fields(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """
     import re
 
-    _RESERVED_RE = re.compile(r"^_{0,2}(reserved|pad|padding|spare|unused)\d*$", re.IGNORECASE)
+    _RESERVED_RE = re.compile(r"^_{0,2}(reserved|pad|padding|spare|unused)\d*$", re.IGNORECASE)  # pylint: disable=invalid-name
     changes: list[Change] = []
     old_map = {t.name: t for t in old.types if not t.is_union}
     new_map = {t.name: t for t in new.types if not t.is_union}
@@ -2710,8 +2710,8 @@ def _split_top_level_args(inner: str) -> list[str]:
     Respects nested ``<>``, ``()``, ``[]``, and ``{}`` delimiters so that
     types like ``std::function<void(int, double)>`` are not split incorrectly.
     """
-    _OPEN = {"<": 0, "(": 1, "[": 2, "{": 3}
-    _CLOSE = {">": 0, ")": 1, "]": 2, "}": 3}
+    _OPEN = {"<": 0, "(": 1, "[": 2, "{": 3}  # pylint: disable=invalid-name
+    _CLOSE = {">": 0, ")": 1, "]": 2, "}": 3}  # pylint: disable=invalid-name
 
     args: list[str] = []
     current: list[str] = []

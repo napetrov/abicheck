@@ -712,7 +712,7 @@ def policy_kind_sets(
             frozenset(COMPATIBLE_KINDS | SDK_VENDOR_COMPAT_KINDS),
             frozenset(RISK_KINDS),
         )
-    elif policy == "plugin_abi":
+    if policy == "plugin_abi":
         # plugin_abi is for in-process host/plugin contracts.
         # Deployment-floor increases (e.g. new GLIBC requirement) can prevent
         # plugin loading in the host environment and are treated as BREAKING
@@ -723,13 +723,12 @@ def policy_kind_sets(
             frozenset(COMPATIBLE_KINDS | PLUGIN_ABI_DOWNGRADED_KINDS),
             frozenset(),
         )
-    else:
-        return (
-            frozenset(BREAKING_KINDS),
-            frozenset(API_BREAK_KINDS),
-            frozenset(COMPATIBLE_KINDS),
-            frozenset(RISK_KINDS),
-        )
+    return (
+        frozenset(BREAKING_KINDS),
+        frozenset(API_BREAK_KINDS),
+        frozenset(COMPATIBLE_KINDS),
+        frozenset(RISK_KINDS),
+    )
 
 
 def compute_verdict(

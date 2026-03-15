@@ -46,6 +46,7 @@ the same base type DIE (e.g. `int`) appears in hundreds of struct members.
 - DWARF 4+: DW_AT_data_bit_offset = bit offset from LSB of the container
   Both attributes are read; DW_AT_data_bit_offset takes priority when present.
 """
+# pylint: disable=invalid-name  # CU is the standard DWARF term (Compilation Unit)
 from __future__ import annotations
 
 import collections

@@ -204,8 +204,8 @@ def _select_header(macho: MachO) -> Any:
         return macho.headers[0]
 
     # CPU type constants
-    _CPU_TYPE_X86_64 = 0x01000007
-    _CPU_TYPE_ARM64 = 0x0100000C
+    _CPU_TYPE_X86_64 = 0x01000007  # pylint: disable=invalid-name
+    _CPU_TYPE_ARM64 = 0x0100000C  # pylint: disable=invalid-name
 
     preferred = _CPU_TYPE_ARM64 if platform.machine() in ("arm64", "aarch64") else _CPU_TYPE_X86_64
     fallback_type = _CPU_TYPE_X86_64 if preferred == _CPU_TYPE_ARM64 else _CPU_TYPE_ARM64
@@ -272,7 +272,7 @@ def _parse(dylib_path: Path) -> MachoMetadata:
             n_desc = int(nlist_entry.n_desc)
 
             # Only exported, defined symbols
-            if not (n_type & N_EXT):
+            if not n_type & N_EXT:
                 continue
             if (n_type & N_TYPE) == N_UNDF:
                 continue

@@ -620,7 +620,7 @@ def compare_cmd(
 # NOTE: eagerly loads abicheck.compat.cli at import time — intentional so all
 # consumers get compat commands registered. Private helpers re-exported for
 # backward compatibility with code importing from abicheck.cli directly.
-from .compat.cli import (  # noqa: E402,F401
+from .compat.cli import (  # noqa: E402,F401  # pylint: disable=unused-import
     _API_BREAK_KINDS,
     _BINARY_ONLY_KINDS,
     _NEW_SYMBOL_KINDS,
