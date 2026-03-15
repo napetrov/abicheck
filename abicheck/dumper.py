@@ -836,13 +836,22 @@ class _CastxmlParser:
 
 
 def _detect_format(path: Path) -> str:
-    """Detect binary format from magic bytes. Returns 'elf', 'macho', 'pe', or 'unknown'."""
+    """Detect binary format from magic bytes. Returns 'elf', 'macho', 'pe', or 'unknown'.
+
+    For PE binaries: checks MZ magic at offset 0 AND validates the PE signature
+    (b'PE\\0\\0') at the offset stored in e_lfanew (bytes 0x3C-0x3F), so that
+    plain DOS stubs or truncated MZ files are not mis-classified as PE.
+    """
+    import struct as _struct
     try:
         with open(path, "rb") as f:
-            magic = f.read(4)
+            header = f.read(0x40)  # enough for MZ + e_lfanew
     except OSError:
         return "unknown"
-    if magic == b"\x7fELF":
+    if len(header) < 4:
+        return "unknown"
+    magic4 = header[:4]
+    if magic4 == b"\x7fELF":
         return "elf"
     _macho_magics = {
         b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
@@ -850,10 +859,25 @@ def _detect_format(path: Path) -> str:
         b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
         b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca",
     }
-    if magic in _macho_magics:
+    if magic4 in _macho_magics:
         return "macho"
-    if magic[:2] == b"MZ":
-        return "pe"
+    # PE: MZ magic + valid PE signature at e_lfanew
+    if header[:2] == b"MZ" and len(header) >= 0x40:
+        e_lfanew = _struct.unpack_from("<I", header, 0x3C)[0]
+        # Sanity: e_lfanew must be within a reasonable range
+        if 0x40 <= e_lfanew <= 0x10000:
+            try:
+                with open(path, "rb") as f:
+                    f.seek(e_lfanew)
+                    pe_sig = f.read(4)
+                if pe_sig == b"PE\x00\x00":
+                    return "pe"
+            except OSError:
+                pass
+        elif e_lfanew < 0x40:
+            # e_lfanew within already-read header
+            if header[e_lfanew:e_lfanew + 4] == b"PE\x00\x00":
+                return "pe"
     return "unknown"
 
 

@@ -466,9 +466,16 @@ class TestDetectFormat:
         assert _detect_format(f) == "macho"
 
     def test_pe(self, tmp_path: Path) -> None:
+        """MZ + valid PE\x00\x00 at e_lfanew → 'pe'."""
+        import struct
+
         from abicheck.dumper import _detect_format
+        pe_data = bytearray(0x100)
+        pe_data[0:2] = b"MZ"
+        struct.pack_into("<I", pe_data, 0x3C, 0x40)
+        pe_data[0x40:0x44] = b"PE\x00\x00"
         f = tmp_path / "lib.dll"
-        f.write_bytes(b"MZ\x90\x00")
+        f.write_bytes(bytes(pe_data))
         assert _detect_format(f) == "pe"
 
     def test_unknown(self, tmp_path: Path) -> None:
@@ -480,6 +487,40 @@ class TestDetectFormat:
     def test_oserror(self, tmp_path: Path) -> None:
         from abicheck.dumper import _detect_format
         assert _detect_format(tmp_path / "nonexistent.so") == "unknown"
+
+    def test_pe_valid_e_lfanew(self, tmp_path: Path) -> None:
+        """PE: MZ magic + valid PE\x00\x00 at e_lfanew → 'pe'."""
+        import struct
+
+        from abicheck.dumper import _detect_format
+        pe_data = bytearray(0x200)
+        pe_data[0:2] = b"MZ"
+        e_lfanew = 0x80
+        struct.pack_into("<I", pe_data, 0x3C, e_lfanew)
+        pe_data[e_lfanew : e_lfanew + 4] = b"PE\x00\x00"
+        f = tmp_path / "real.dll"
+        f.write_bytes(bytes(pe_data))
+        assert _detect_format(f) == "pe"
+
+    def test_dos_stub_not_pe(self, tmp_path: Path) -> None:
+        """MZ with NE (not PE) at e_lfanew → 'unknown' (no mis-classification)."""
+        import struct
+
+        from abicheck.dumper import _detect_format
+        dos_data = bytearray(0x200)
+        dos_data[0:2] = b"MZ"
+        struct.pack_into("<I", dos_data, 0x3C, 0x80)
+        dos_data[0x80 : 0x84] = b"NE\x00\x00"
+        f = tmp_path / "stub.exe"
+        f.write_bytes(bytes(dos_data))
+        assert _detect_format(f) == "unknown"
+
+    def test_truncated_file(self, tmp_path: Path) -> None:
+        """File shorter than 4 bytes → 'unknown'."""
+        from abicheck.dumper import _detect_format
+        f = tmp_path / "tiny.bin"
+        f.write_bytes(b"MZ")
+        assert _detect_format(f) == "unknown"
 
 
 # ── _dump_macho / _dump_pe via dump() routing ───────────────────────────────
@@ -521,7 +562,13 @@ class TestDumpRoutingMachoPe:
         from abicheck.model import AbiSnapshot
 
         dll = tmp_path / "foo.dll"
-        dll.write_bytes(b"MZ\x90\x00")  # PE magic
+        # Build a minimal valid PE (MZ + PE\x00\x00 at e_lfanew)
+        import struct as _struct
+        _pe = bytearray(0x100)
+        _pe[0:2] = b"MZ"
+        _struct.pack_into("<I", _pe, 0x3C, 0x40)
+        _pe[0x40:0x44] = b"PE\x00\x00"
+        dll.write_bytes(bytes(_pe))
 
         mock_exp = MagicMock()
         mock_exp.name = "FooFunc"
