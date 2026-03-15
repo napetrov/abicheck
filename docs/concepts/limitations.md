@@ -10,15 +10,16 @@ limitations you should understand before relying on it in production.
 | Platform | Binary format | Binary metadata | Header AST (castxml) | Debug info cross-check |
 |----------|--------------|:---------------:|:--------------------:|:----------------------:|
 | Linux | ELF (`.so`) | Yes (pyelftools) | Yes (GCC, Clang) | Yes (DWARF) |
-| Windows | PE/COFF (`.dll`) | Yes (pefile) | Yes (MSVC, MinGW) | Planned (PDB) |
+| Windows | PE/COFF (`.dll`) | Yes (pefile) | Yes (MSVC, MinGW) | Yes (PDB) |
 | macOS | Mach-O (`.dylib`) | Yes (macholib) | Yes (Clang, GCC) | Yes (DWARF) |
 
 **Header AST analysis** (via castxml) is available on all platforms. castxml is
 maintained by Kitware and available via conda-forge, Homebrew, apt, or direct download.
 
-**Debug info cross-check** currently uses DWARF (Linux and macOS). Windows uses PDB
-(Program Database) files for debug information — PDB cross-check is planned for a
-future release.
+**Debug info cross-check** uses DWARF (Linux and macOS) and PDB (Windows). PDB
+support extracts struct/class/union layouts, enum types, calling conventions, and
+toolchain info from PDB files produced by MSVC (`/Zi` flag). Use `--pdb-path` to
+specify the PDB file location if automatic discovery fails.
 
 ---
 
