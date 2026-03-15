@@ -136,14 +136,76 @@ class Tool:
             self.label = f"{self.col_name:<20}"
 
 
+# ── Platform helpers ──────────────────────────────────────────────────────────
+def _current_platform() -> str:
+    if sys.platform.startswith("linux"):
+        return "linux"
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform == "win32":
+        return "windows"
+    return sys.platform
+
+CURRENT_PLATFORM = _current_platform()
+
+def _shared_lib_suffix() -> str:
+    if sys.platform == "darwin":
+        return ".dylib"
+    if sys.platform == "win32":
+        return ".dll"
+    return ".so"
+
+SHARED_LIB_SUFFIX = _shared_lib_suffix()
+
+# Load platform info from ground_truth.json
+PLATFORMS: dict[str, list[str]] = {
+    k: v.get("platforms", ["linux", "macos", "windows"])
+    for k, v in _gt_data["verdicts"].items()
+}
+
+def _find_cmake_lib(directory: Path, name: str) -> Path | None:
+    """Find a shared library named *name* built by CMake in *directory*."""
+    if not directory.exists():
+        return None
+    for prefix in ("lib", ""):
+        for suffix in (".so", ".dylib", ".dll"):
+            lib = directory / f"{prefix}{name}{suffix}"
+            if lib.exists():
+                return lib
+    return None
+
+
+def _find_compiler(is_cpp: bool = False) -> str | None:
+    if is_cpp:
+        candidates = {"win32": ["cl", "g++", "clang++"],
+                       "darwin": ["clang++", "g++"]}.get(sys.platform, ["g++", "clang++"])
+    else:
+        candidates = {"win32": ["cl", "gcc", "clang"],
+                       "darwin": ["clang", "gcc"]}.get(sys.platform, ["gcc", "clang"])
+    for cc in candidates:
+        if shutil.which(cc):
+            return cc
+    return None
+
+
 # ── Compile ───────────────────────────────────────────────────────────────────
 def compile_so(src: Path, out_so: Path) -> bool:
-    compiler = "g++" if src.suffix == ".cpp" else "gcc"
-    r = subprocess.run(
-        [compiler, "-shared", "-fPIC", "-g", "-Og", "-fvisibility=default",
-         "-o", str(out_so), str(src)],
-        capture_output=True, text=True,
-    )
+    is_cpp = src.suffix == ".cpp"
+    compiler = _find_compiler(is_cpp)
+    if not compiler:
+        print(f"    [compile error] no {'C++' if is_cpp else 'C'} compiler found")
+        return False
+
+    if compiler == "cl":
+        args = [compiler, "/LD", "/Zi", "/Fe:" + str(out_so), str(src)]
+    elif sys.platform == "darwin":
+        args = [compiler, "-dynamiclib", "-g", "-Og", "-fvisibility=default",
+                "-o", str(out_so), str(src)]
+    else:
+        args = [compiler, "-shared", "-fPIC", "-g", "-Og", "-fvisibility=default",
+                "-o", str(out_so), str(src)]
+
+    r = subprocess.run(args, capture_output=True, text=True)
     if r.returncode != 0:
         print(f"    [compile error] {src.name}: {r.stderr[:120]}")
     return r.returncode == 0
@@ -740,6 +802,18 @@ def main() -> None:
             continue
         expected = EXPECTED.get(name, "?")
 
+        # Platform filter
+        case_platforms = PLATFORMS.get(name, ["linux", "macos", "windows"])
+        if CURRENT_PLATFORM not in case_platforms:
+            row = f"  {name:<33} {expected:<12} {'SKIP(platform)':<12}"
+            print(row)
+            results.append({"case": name, "expected": expected, "abicheck": "SKIP",
+                             "abicheck_compat": "SKIP", "abicheck_strict": "SKIP",
+                             "abidiff": "SKIP",
+                             "abidiff_headers": "SKIP", "abicc_dumper": "SKIP",
+                             "abicc_xml": "SKIP"})
+            continue
+
         v1_src, v2_src, v1_h_hint, v2_h_hint = find_sources(case_dir)
         if v1_src is None:
             row = f"  {name:<33} {expected:<12} {'NO_SOURCE':<12}"
@@ -756,16 +830,64 @@ def main() -> None:
         bdir = BUILD_DIR / name
         bdir.mkdir(exist_ok=True)
 
-        v1_so = bdir / "lib_v1.so"
-        v2_so = bdir / "lib_v2.so"
+        v1_so = bdir / f"lib_v1{SHARED_LIB_SUFFIX}"
+        v2_so = bdir / f"lib_v2{SHARED_LIB_SUFFIX}"
         v1_h_gen = bdir / "v1.h"
         v2_h_gen = bdir / "v2.h"
 
-        # Use Makefile when present — preserves SONAME / version-script / extra
-        # linker flags (mirrors the pytest integration suite).
+        # Build strategy: CMake > Makefile > direct compilation
+        cmake_file = case_dir / "CMakeLists.txt"
         makefile = case_dir / "Makefile"
         used_make_artifacts = False
-        if makefile.exists():
+
+        if cmake_file.exists() and shutil.which("cmake"):
+            cmake_build = bdir / "cmake_build"
+            if cmake_build.exists():
+                shutil.rmtree(str(cmake_build))
+            cmake_build.mkdir(parents=True)
+            try:
+                cr = subprocess.run(
+                    ["cmake", "-S", str(case_dir.parent), "-B", str(cmake_build),
+                     "-DCMAKE_BUILD_TYPE=Debug"],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if cr.returncode == 0:
+                    cr = subprocess.run(
+                        ["cmake", "--build", str(cmake_build),
+                         "--target", f"{name}_v1", f"{name}_v2"],
+                        capture_output=True, text=True, timeout=120,
+                    )
+            except subprocess.TimeoutExpired:
+                cr = type("R", (), {"returncode": -1})()
+            cmake_out = cmake_build / name
+            if cr.returncode == 0 and cmake_out.exists():
+                built_v1 = _find_cmake_lib(cmake_out, "v1")
+                built_v2 = _find_cmake_lib(cmake_out, "v2")
+                if built_v1 and built_v2:
+                    v1_so = built_v1
+                    v2_so = built_v2
+                    used_make_artifacts = True
+                else:
+                    if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
+                        print(f"  {name:<35} COMPILE_ERR")
+                        results.append({"case": name, "expected": expected,
+                                         "expected_compat": EXPECTED_COMPAT.get(name, expected),
+                                         "abicheck": "ERROR", "abicheck_compat": "ERROR",
+                                         "abicheck_strict": "ERROR",
+                                         "abidiff": "ERROR", "abidiff_headers": "ERROR",
+                                         "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
+                        continue
+            else:
+                if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
+                    print(f"  {name:<35} COMPILE_ERR")
+                    results.append({"case": name, "expected": expected,
+                                     "expected_compat": EXPECTED_COMPAT.get(name, expected),
+                                     "abicheck": "ERROR", "abicheck_compat": "ERROR",
+                                     "abicheck_strict": "ERROR",
+                                     "abidiff": "ERROR", "abidiff_headers": "ERROR",
+                                     "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
+                    continue
+        elif makefile.exists() and shutil.which("make"):
             build_copy = bdir / "make_build"
             if build_copy.exists():
                 shutil.rmtree(str(build_copy))
@@ -777,7 +899,6 @@ def main() -> None:
                 )
             except subprocess.TimeoutExpired:
                 mr = type("R", (), {"returncode": -1})()
-            # On make failure/timeout or missing artifacts: fall back to compile_so()
             built_v1 = build_copy / "libv1.so"
             built_v2 = build_copy / "libv2.so"
             if mr.returncode == 0 and built_v1.exists() and built_v2.exists():

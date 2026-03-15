@@ -50,9 +50,9 @@ def _actual_digest(so_path: Path, header: Path, compiler: str) -> dict:
 def test_dumper_golden_fixture(fixture_path: Path) -> None:
     """Golden-file regression gate for the dumper pipeline.
 
-    Requires pre-built .so files (run ``make`` in each examples/case*/ dir)
-    and castxml in PATH. Skipped automatically when artifacts are missing
-    so unit-test CI jobs are not broken.
+    Requires pre-built shared libraries (build with ``cmake`` in examples/).
+    Also requires castxml in PATH. Skipped automatically when artifacts
+    are missing so unit-test CI jobs are not broken.
 
     This is the Phase 0 gate: if any of these tests fail after a refactor,
     the dumper output has changed in a way that must be explicitly acknowledged
@@ -65,7 +65,7 @@ def test_dumper_golden_fixture(fixture_path: Path) -> None:
     compiler = fixture.get("compiler", "c++")
 
     if not so_path.exists():
-        pytest.skip(f"pre-built artifact missing: {so_path}  (run: make -C {so_path.parent})")
+        pytest.skip(f"pre-built artifact missing: {so_path}  (build with cmake in examples/)")
     if not header.exists():
         pytest.skip(f"header/source missing: {header}")
 
