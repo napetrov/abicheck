@@ -253,15 +253,20 @@ jobs:
           fail-on-breaking: false
           fail-on-additions: true
 
-      - name: Verify step failed due to additions
+      - name: Verify verdict is ADDITIONS
         shell: bash
         run: |
-          echo "Outcome: ${{ steps.abi.outcome }}"
-          if [[ "${{ steps.abi.outcome }}" != "failure" ]]; then
-            echo "::error::Expected failure on API additions, got ${{ steps.abi.outcome }}"
+          echo "Verdict: ${{ steps.abi.outputs.verdict }}"
+          echo "Exit code: ${{ steps.abi.outputs.exit-code }}"
+          if [[ "${{ steps.abi.outputs.verdict }}" != "ADDITIONS" ]]; then
+            echo "::error::Expected verdict ADDITIONS, got ${{ steps.abi.outputs.verdict }}"
             exit 1
           fi
-          echo "Correctly failed on unexpected API additions"
+          if [[ "${{ steps.abi.outputs.exit-code }}" != "1" ]]; then
+            echo "::error::Expected exit code 1, got ${{ steps.abi.outputs.exit-code }}"
+            exit 1
+          fi
+          echo "Correctly detected API additions (exit code 1, verdict ADDITIONS)"
 
   test-fail-on-additions-allowed:
     name: 'fail-on-additions=false: additions pass through'
