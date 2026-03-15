@@ -1623,7 +1623,7 @@ def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
         # Compute old max PER VERSION-TAG PREFIX (e.g. "GLIBC", "GLIBCXX", "CXXABI")
         # to avoid cross-namespace bleed: GLIBCXX_3.4.32 must not suppress a
         # genuinely newer CXXABI_1.3.14 requirement.
-        def _old_max_for_prefix(prefix: str, _old_vers: set = old_vers) -> tuple[int, ...]:  # pylint: disable=dangerous-default-value
+        def _old_max_for_prefix(prefix: str, _old_vers: set[str] = old_vers) -> tuple[int, ...]:  # pylint: disable=dangerous-default-value
             matching = [_parse_abi_version_tag(v) for v in _old_vers
                         if v.startswith(prefix + "_")]
             return max(matching, default=(0,))
