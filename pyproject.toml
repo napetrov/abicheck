@@ -72,6 +72,9 @@ module = [
     "abicheck.dwarf_advanced",
     "abicheck.dwarf_unified",
     "abicheck.dumper",
+    "abicheck.pdb_parser",
+    "abicheck.pdb_metadata",
+    "abicheck.pdb_utils",
 ]
 disallow_untyped_calls = false
 disable_error_code = ["attr-defined", "unused-ignore"]
@@ -89,6 +92,7 @@ disable_error_code = ["import-untyped"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
     "integration: requires castxml, gcc/g++ installed",
     "libabigail: requires abidiff + gcc/g++ — libabigail parity tests",
