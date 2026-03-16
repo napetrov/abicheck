@@ -3,6 +3,9 @@
 Verifies that parse_dwarf() produces identical results to calling
 parse_dwarf_metadata() + parse_advanced_dwarf() separately, and that
 backward-compatible shims work correctly.
+
+Note: Tests that compile real ELF binaries are Linux-only — macOS/Windows
+compilers produce Mach-O/PE, and DWARF parsing requires ELF.
 """
 from __future__ import annotations
 
@@ -13,6 +16,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
+# Mark all compile-based tests as Linux-only at module level
+pytestmark = pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="ELF DWARF tests require Linux (macOS/Windows compilers produce Mach-O/PE)"
+)
 
 from abicheck.dwarf_advanced import AdvancedDwarfMetadata
 from abicheck.dwarf_metadata import DwarfMetadata
