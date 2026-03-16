@@ -1,0 +1,302 @@
+name: Test GitHub Action
+
+on:
+  pull_request:
+    paths:
+      - 'action.yml'
+      - 'action/**'
+      - 'abicheck/**'
+      - '.github/workflows/test-action.yml'
+      - 'tests/fixtures/action/**'
+  push:
+    branches: [main]
+    paths:
+      - 'action.yml'
+      - 'action/**'
+      - 'abicheck/**'
+      - '.github/workflows/test-action.yml'
+      - 'tests/fixtures/action/**'
+
+jobs:
+  # ── Test B: compare mode with snapshot fixtures (no system deps) ──────────
+  test-compare-breaking:
+    name: 'Compare: detect breaking change'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run abicheck (breaking case)
+        id: abi
+        uses: ./
+        with:
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v2.json
+          old-version: '1.0'
+          new-version: '2.0'
+          format: markdown
+          install-deps: false
+          fail-on-breaking: false  # don't fail the test job
+
+      - name: Verify verdict is BREAKING
+        shell: bash
+        run: |
+          echo "Verdict: ${{ steps.abi.outputs.verdict }}"
+          echo "Exit code: ${{ steps.abi.outputs.exit-code }}"
+          if [[ "${{ steps.abi.outputs.verdict }}" != "BREAKING" ]]; then
+            echo "::error::Expected verdict BREAKING, got ${{ steps.abi.outputs.verdict }}"
+            exit 1
+          fi
+          if [[ "${{ steps.abi.outputs.exit-code }}" != "4" ]]; then
+            echo "::error::Expected exit code 4, got ${{ steps.abi.outputs.exit-code }}"
+            exit 1
+          fi
+
+  test-compare-compatible:
+    name: 'Compare: compatible (no change)'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run abicheck (compatible case)
+        id: abi
+        uses: ./
+        with:
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v1_compat.json
+          old-version: '1.0'
+          new-version: '1.1'
+          install-deps: false
+
+      - name: Verify verdict is COMPATIBLE
+        shell: bash
+        run: |
+          echo "Verdict: ${{ steps.abi.outputs.verdict }}"
+          if [[ "${{ steps.abi.outputs.verdict }}" != "COMPATIBLE" ]]; then
+            echo "::error::Expected verdict COMPATIBLE, got ${{ steps.abi.outputs.verdict }}"
+            exit 1
+          fi
+
+  test-compare-sarif:
+    name: 'Compare: SARIF output'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run abicheck (SARIF format)
+        id: abi
+        uses: ./
+        with:
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v2.json
+          format: sarif
+          output-file: results.sarif
+          install-deps: false
+          fail-on-breaking: false
+
+      - name: Validate SARIF is valid JSON
+        shell: bash
+        run: python -m json.tool results.sarif > /dev/null
+
+      - name: Validate SARIF structure
+        shell: bash
+        run: |
+          python -c "
+          import json, sys
+          with open('results.sarif') as f:
+              sarif = json.load(f)
+          assert sarif['version'] == '2.1.0', 'Bad SARIF version'
+          assert len(sarif['runs']) == 1, 'Expected exactly one run'
+          run = sarif['runs'][0]
+          assert run['tool']['driver']['name'] == 'abicheck', 'Bad tool name'
+          assert len(run['results']) > 0, 'Expected at least one result'
+          print(f'SARIF OK: {len(run[\"results\"])} result(s), {len(run[\"tool\"][\"driver\"][\"rules\"])} rule(s)')
+          "
+
+      - name: Verify report-path output
+        shell: bash
+        run: |
+          if [[ "${{ steps.abi.outputs.report-path }}" != "results.sarif" ]]; then
+            echo "::error::Expected report-path=results.sarif, got ${{ steps.abi.outputs.report-path }}"
+            exit 1
+          fi
+
+  test-compare-json:
+    name: 'Compare: JSON output'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run abicheck (JSON format)
+        id: abi
+        uses: ./
+        with:
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v2.json
+          format: json
+          output-file: results.json
+          install-deps: false
+          fail-on-breaking: false
+
+      - name: Validate JSON output
+        shell: bash
+        run: |
+          python -c "
+          import json
+          with open('results.json') as f:
+              data = json.load(f)
+          assert 'verdict' in data, 'Missing verdict key'
+          assert data['verdict'] == 'BREAKING', f'Expected BREAKING, got {data[\"verdict\"]}'
+          print(f'JSON report OK: verdict={data[\"verdict\"]}')
+          "
+
+  # ── Test C: fail-on-breaking behaviour ──────────────────────────────────
+  test-fail-on-breaking:
+    name: 'Verify fail-on-breaking=true fails the step'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run abicheck (should fail)
+        id: abi
+        uses: ./
+        continue-on-error: true
+        with:
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v2.json
+          install-deps: false
+          fail-on-breaking: true
+
+      - name: Verify step failed
+        shell: bash
+        run: |
+          if [[ "${{ steps.abi.outcome }}" != "failure" ]]; then
+            echo "::error::Expected step to fail, but outcome was ${{ steps.abi.outcome }}"
+            exit 1
+          fi
+          echo "Correctly failed on breaking change"
+
+  # ── Test: action infrastructure (compare mode, no real binary needed) ──────
+  # TODO: add a true dump-mode test when a real binary/header fixture is available.
+  test-action-infrastructure:
+    name: 'Verify: action infrastructure with compare mode'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Test dump mode with a real ELF if castxml is available,
+      # otherwise just verify the action doesn't crash with bad input
+      # and gives a useful error. For now, test the action machinery
+      # with a simple compare since dump needs real binaries.
+      - name: Run abicheck compare (verify action infrastructure)
+        id: abi
+        uses: ./
+        with:
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v2.json
+          old-version: '1.0'
+          new-version: '2.0'
+          format: json
+          output-file: test-output.json
+          policy: strict_abi
+          verbose: true
+          install-deps: false
+          fail-on-breaking: false
+          add-job-summary: true
+
+      - name: Verify output file exists and is valid
+        shell: bash
+        run: |
+          test -f test-output.json
+          python -m json.tool test-output.json > /dev/null
+          echo "Output file is valid JSON"
+
+  # ── Test: multiplatform ─────────────────────────────────────────────────
+  test-multiplatform:
+    name: 'Multiplatform: ${{ matrix.os }}'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run abicheck
+        id: abi
+        uses: ./
+        with:
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v2.json
+          install-deps: false
+          fail-on-breaking: false
+
+      - name: Verify verdict
+        shell: bash
+        run: |
+          echo "Verdict on ${{ matrix.os }}: ${{ steps.abi.outputs.verdict }}"
+          if [[ "${{ steps.abi.outputs.verdict }}" != "BREAKING" ]]; then
+            echo "::error::Expected BREAKING on ${{ matrix.os }}"
+            exit 1
+          fi
+
+  # ── Test: fail-on-additions ────────────────────────────────────────────────
+  test-fail-on-additions:
+    name: 'fail-on-additions: detect unexpected API expansion'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run abicheck (compatible additions, should fail)
+        id: abi
+        uses: ./
+        continue-on-error: true
+        with:
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v1_with_addition.json
+          install-deps: false
+          fail-on-breaking: false
+          fail-on-additions: true
+
+      - name: Verify verdict is ADDITIONS
+        shell: bash
+        run: |
+          if [[ "${{ steps.abi.outcome }}" != "failure" ]]; then
+            echo "::error::Expected step outcome=failure, got ${{ steps.abi.outcome }}"
+            exit 1
+          fi
+          echo "Verdict: ${{ steps.abi.outputs.verdict }}"
+          echo "Exit code: ${{ steps.abi.outputs.exit-code }}"
+          if [[ "${{ steps.abi.outputs.verdict }}" != "ADDITIONS" ]]; then
+            echo "::error::Expected verdict ADDITIONS, got ${{ steps.abi.outputs.verdict }}"
+            exit 1
+          fi
+          if [[ "${{ steps.abi.outputs.exit-code }}" != "1" ]]; then
+            echo "::error::Expected exit code 1, got ${{ steps.abi.outputs.exit-code }}"
+            exit 1
+          fi
+          echo "Correctly detected API additions (exit code 1, verdict ADDITIONS)"
+
+  test-fail-on-additions-allowed:
+    name: 'fail-on-additions=false: additions pass through'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run abicheck (additions allowed explicitly)
+        id: abi
+        uses: ./
+        with:
+          old-library: tests/fixtures/action/action_test_v1.json
+          new-library: tests/fixtures/action/action_test_v1_with_addition.json
+          install-deps: false
+          fail-on-breaking: false
+          fail-on-additions: false
+
+      - name: Verify step succeeded
+        shell: bash
+        run: |
+          if [[ "${{ steps.abi.outcome }}" != "success" ]]; then
+            echo "::error::Expected success when fail-on-additions=false"
+            exit 1
+          fi
+          echo "Correctly passed with additions allowed"
+
