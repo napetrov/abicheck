@@ -52,7 +52,7 @@ class TestCompareVerbose:
 class TestDumpVerbose:
     def test_verbose_flag_accepted(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
         out = tmp_path / "snap.json"
@@ -132,7 +132,7 @@ class TestCompareLang:
 class TestDumpLang:
     def test_lang_c_accepted(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
 
@@ -153,7 +153,7 @@ class TestDumpLang:
 
     def test_lang_cpp_sends_cpp_compiler(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
 
@@ -177,7 +177,7 @@ class TestDumpLang:
 class TestDumpCrossCompilation:
     def test_gcc_path_forwarded(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
 
@@ -198,7 +198,7 @@ class TestDumpCrossCompilation:
 
     def test_gcc_prefix_forwarded(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
 
@@ -219,7 +219,7 @@ class TestDumpCrossCompilation:
 
     def test_gcc_options_forwarded(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
 
@@ -240,7 +240,7 @@ class TestDumpCrossCompilation:
 
     def test_sysroot_forwarded(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
         sysroot_dir = tmp_path / "sysroot"
@@ -263,7 +263,7 @@ class TestDumpCrossCompilation:
 
     def test_nostdinc_forwarded(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
 
@@ -283,7 +283,7 @@ class TestDumpCrossCompilation:
 
     def test_multiple_cross_flags_combined(self, tmp_path, monkeypatch):
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
         header = tmp_path / "foo.h"
         header.write_text("int foo();\n", encoding="utf-8")
 
@@ -457,3 +457,88 @@ class TestDumpClickException:
         assert result.exit_code == 1
         assert "Error:" in result.output
         assert "Traceback" not in result.output
+
+
+# ── elf_only_mode: FUNC_REMOVED_ELF_ONLY path ───────────────────────────────
+
+class TestElfOnlyModeRemoved:
+    """Verify checker uses FUNC_REMOVED_ELF_ONLY when both snapshots are elf_only."""
+
+    def test_removed_func_elf_only_mode(self):
+        """Function removed in elf_only_mode with ELF_ONLY visibility → FUNC_REMOVED_ELF_ONLY."""
+        from abicheck.checker import compare
+        from abicheck.checker_policy import ChangeKind
+
+        old = AbiSnapshot(
+            library="lib.so", version="1.0",
+            functions=[
+                Function(name="foo", mangled="_Z3foov", return_type="void",
+                         visibility=Visibility.ELF_ONLY),
+            ],
+            elf_only_mode=True,
+        )
+        new = AbiSnapshot(
+            library="lib.so", version="2.0",
+            functions=[],
+            elf_only_mode=True,
+        )
+        result = compare(old, new)
+        kinds = [c.kind for c in result.changes]
+        assert ChangeKind.FUNC_REMOVED_ELF_ONLY in kinds
+        assert ChangeKind.FUNC_REMOVED not in kinds
+
+    def test_removed_func_normal_mode(self):
+        """Function removed in normal mode → FUNC_REMOVED (breaking)."""
+        from abicheck.checker import compare
+        from abicheck.checker_policy import ChangeKind
+
+        old = AbiSnapshot(
+            library="lib.so", version="1.0",
+            functions=[
+                Function(name="foo", mangled="_Z3foov", return_type="void",
+                         visibility=Visibility.PUBLIC),
+            ],
+        )
+        new = AbiSnapshot(library="lib.so", version="2.0", functions=[])
+        result = compare(old, new)
+        kinds = [c.kind for c in result.changes]
+        assert ChangeKind.FUNC_REMOVED in kinds
+        assert ChangeKind.FUNC_REMOVED_ELF_ONLY not in kinds
+
+
+class TestElfOnlyModePeMacho:
+    """Cover elf_only_mode branch in _diff_pe and _diff_macho."""
+
+    def test_diff_pe_elf_only_removed(self):
+        """_diff_pe: removed export in elf_only_mode → FUNC_REMOVED_ELF_ONLY."""
+        from abicheck.checker import compare
+        from abicheck.checker_policy import ChangeKind
+        from abicheck.pe_metadata import PeExport, PeMetadata
+
+        old_pe = PeMetadata(machine="x86_64", exports=[PeExport(name="FooExport", ordinal=1)])
+        new_pe = PeMetadata(machine="x86_64", exports=[])
+
+        old = AbiSnapshot(library="foo.dll", version="1.0", pe=old_pe, platform="pe", elf_only_mode=True)
+        new = AbiSnapshot(library="foo.dll", version="2.0", pe=new_pe, platform="pe", elf_only_mode=True)
+
+        result = compare(old, new)
+        kinds = [c.kind for c in result.changes]
+        assert ChangeKind.FUNC_REMOVED_ELF_ONLY in kinds
+        assert ChangeKind.FUNC_REMOVED not in kinds
+
+    def test_diff_macho_elf_only_removed(self):
+        """_diff_macho: removed export in elf_only_mode → FUNC_REMOVED_ELF_ONLY."""
+        from abicheck.checker import compare
+        from abicheck.checker_policy import ChangeKind
+        from abicheck.macho_metadata import MachoExport, MachoMetadata
+
+        old_macho = MachoMetadata(exports=[MachoExport(name="_foo_func")])
+        new_macho = MachoMetadata(exports=[])
+
+        old = AbiSnapshot(library="libfoo.dylib", version="1.0", macho=old_macho, platform="macho", elf_only_mode=True)
+        new = AbiSnapshot(library="libfoo.dylib", version="2.0", macho=new_macho, platform="macho", elf_only_mode=True)
+
+        result = compare(old, new)
+        kinds = [c.kind for c in result.changes]
+        assert ChangeKind.FUNC_REMOVED_ELF_ONLY in kinds
+        assert ChangeKind.FUNC_REMOVED not in kinds

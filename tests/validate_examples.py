@@ -2,7 +2,12 @@
 """validate_examples.py — standalone CLI validation of all abicheck example cases.
 
 Reads expected verdicts from examples/ground_truth.json, compiles each
-example with gcc/g++, runs abicheck dump+compare, and reports results.
+example with the platform's native compiler, runs abicheck dump+compare,
+and reports results.
+
+Cross-platform: respects the ``platforms`` field in ground_truth.json and
+uses CMake when a CMakeLists.txt is present.  Falls back to direct
+compilation for simple cases.
 
 Usage:
     python tests/validate_examples.py                   # all cases
@@ -29,6 +34,52 @@ from typing import NamedTuple
 REPO_DIR = Path(__file__).parent.parent
 EXAMPLES_DIR = REPO_DIR / "examples"
 GROUND_TRUTH = EXAMPLES_DIR / "ground_truth.json"
+
+
+# ---------------------------------------------------------------------------
+# Platform helpers
+# ---------------------------------------------------------------------------
+def _current_platform() -> str:
+    """Return the platform tag used in ground_truth.json."""
+    if sys.platform.startswith("linux"):
+        return "linux"
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform == "win32":
+        return "windows"
+    return sys.platform
+
+
+CURRENT_PLATFORM = _current_platform()
+
+
+def _shared_lib_suffix() -> str:
+    if sys.platform == "darwin":
+        return ".dylib"
+    if sys.platform == "win32":
+        return ".dll"
+    return ".so"
+
+
+SHARED_LIB_SUFFIX = _shared_lib_suffix()
+
+
+def _find_compiler(is_cpp: bool = False) -> str | None:
+    """Find a C/C++ compiler available on this platform."""
+    if is_cpp:
+        candidates = {
+            "win32": ["cl", "g++", "clang++"],
+            "darwin": ["clang++", "g++"],
+        }.get(sys.platform, ["g++", "clang++"])
+    else:
+        candidates = {
+            "win32": ["cl", "gcc", "clang"],
+            "darwin": ["clang", "gcc"],
+        }.get(sys.platform, ["gcc", "clang"])
+    for cc in candidates:
+        if shutil.which(cc):
+            return cc
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -98,21 +149,86 @@ def _find_sources(
 
 def _compile(src: Path, out: Path) -> str | None:
     """Compile src → shared lib. Returns error string on failure, None on success."""
-    compiler = "g++" if src.suffix == ".cpp" else "gcc"
-    r = subprocess.run(
-        [compiler, "-shared", "-fPIC", "-g", "-Og", "-fvisibility=default",
-         "-o", str(out), str(src)],
-        capture_output=True, text=True, timeout=30,
-    )
+    is_cpp = src.suffix == ".cpp"
+    compiler = _find_compiler(is_cpp)
+    if not compiler:
+        return f"no {'C++' if is_cpp else 'C'} compiler found"
+
+    if compiler == "cl":
+        args = [compiler, "/LD", "/Zi", "/Fe:" + str(out), str(src)]
+    elif sys.platform == "darwin":
+        args = [compiler, "-dynamiclib", "-g", "-Og", "-fvisibility=default",
+                "-install_name", "@rpath/lib.dylib",
+                "-o", str(out), str(src)]
+    else:
+        args = [compiler, "-shared", "-fPIC", "-g", "-Og", "-fvisibility=default",
+                "-o", str(out), str(src)]
+
+    r = subprocess.run(args, capture_output=True, text=True, timeout=30)
     return None if r.returncode == 0 else r.stderr[:600]
 
 
-def _normalize_verdict(v: str) -> str:
-    """Normalize verdict for comparison.
+def _find_built_lib(directory: Path, name: str) -> Path | None:
+    """Find a shared library named *name* in *directory* (any platform extension).
 
-    API_BREAK and COMPATIBLE are intentionally kept distinct so that a
-    regression from API_BREAK to COMPATIBLE is caught as a test failure.
+    Also checks common multi-config generator subdirectories (Debug/, Release/)
+    in case the per-config output directory overrides were not applied.
     """
+    if not directory.exists():
+        return None
+    # Directories to search: the directory itself, then config subdirs
+    search_dirs = [directory]
+    for cfg in ("Debug", "Release", "RelWithDebInfo", "MinSizeRel"):
+        sub = directory / cfg
+        if sub.is_dir():
+            search_dirs.append(sub)
+    for search_dir in search_dirs:
+        for prefix in ("lib", ""):
+            for suffix in (".so", ".dylib", ".dll"):
+                lib = search_dir / f"{prefix}{name}{suffix}"
+                if lib.exists():
+                    return lib
+    return None
+
+
+def _build_with_cmake(case_dir: Path, build_dir: Path) -> tuple[Path | None, Path | None, str]:
+    """Build a case using CMake. Returns (v1_lib, v2_lib, error_msg)."""
+    cmake = shutil.which("cmake")
+    if not cmake:
+        return None, None, "cmake not found"
+
+    case_name = case_dir.name
+    case_out = build_dir / case_name
+
+    r = subprocess.run(
+        [cmake, "-S", str(case_dir.parent), "-B", str(build_dir),
+         "-DCMAKE_BUILD_TYPE=Debug"],
+        capture_output=True, text=True, timeout=60,
+    )
+    if r.returncode != 0:
+        return None, None, f"cmake configure failed: {r.stderr[:300]}"
+
+    v1_target = f"{case_name}_v1"
+    v2_target = f"{case_name}_v2"
+    r = subprocess.run(
+        [cmake, "--build", str(build_dir), "--target", v1_target, v2_target,
+         "--config", "Debug"],
+        capture_output=True, text=True, timeout=120,
+    )
+    if r.returncode != 0:
+        return None, None, f"cmake build failed: {r.stderr[:300]}"
+
+    v1_lib = _find_built_lib(case_out, "v1")
+    v2_lib = _find_built_lib(case_out, "v2")
+
+    if not v1_lib or not v2_lib:
+        return None, None, f"CMake did not produce libv1/libv2 in {case_out}"
+
+    return v1_lib, v2_lib, ""
+
+
+def _normalize_verdict(v: str) -> str:
+    """Normalize verdict for comparison."""
     return v
 
 
@@ -132,6 +248,12 @@ def run_case(
     if skip:
         return CaseResult(name, "SKIP", expected_raw, None, entry.get("reason", "skip=true"))
 
+    # Platform filter
+    platforms = entry.get("platforms", ["linux", "macos", "windows"])
+    if CURRENT_PLATFORM not in platforms:
+        return CaseResult(name, "SKIP", expected_raw, None,
+                          f"not supported on {CURRENT_PLATFORM} (requires {platforms})")
+
     case_dir = EXAMPLES_DIR / name
     if not case_dir.is_dir():
         return CaseResult(name, "ERROR", expected_raw, None, "directory not found")
@@ -145,42 +267,40 @@ def run_case(
     tmp = tmp_base / name
     tmp.mkdir(parents=True)
 
-    # Use the Makefile if the case ships one — ensures special build flags
-    # (version scripts, extra link options) are applied as the example intends.
-    if (case_dir / "Makefile").exists():
-        import shutil as _shutil
-        build_dir = tmp / "build"
-        _shutil.copytree(str(case_dir), str(build_dir))
-        r = subprocess.run(["make", "-C", str(build_dir)],
-                           capture_output=True, text=True, timeout=60)
-        if r.returncode != 0:
-            return CaseResult(name, "ERROR", expected_raw, None,
-                              f"make failed: {r.stderr[:300]}")
-        v1_so = build_dir / "libv1.so"
-        v2_so = build_dir / "libv2.so"
-        if not v1_so.exists() or not v2_so.exists():
-            return CaseResult(name, "ERROR", expected_raw, None,
-                              "Makefile did not produce libv1.so / libv2.so")
-        # Remap header path: relative to original case_dir → same relative path under build_dir
-        if v1_hdr:
-            try:
-                rel = v1_hdr.relative_to(case_dir)
-                v1_hdr_path = build_dir / rel
-            except ValueError:
-                v1_hdr_path = build_dir / v1_hdr.name
-        else:
-            v1_hdr_path = None
-        if v2_hdr:
-            try:
-                rel = v2_hdr.relative_to(case_dir)
-                v2_hdr_path = build_dir / rel
-            except ValueError:
-                v2_hdr_path = build_dir / v2_hdr.name
-        else:
-            v2_hdr_path = None
+    # Build strategy: CMake > direct compilation
+    has_cmake_file = (case_dir / "CMakeLists.txt").exists()
+    has_cmake = bool(shutil.which("cmake"))
+
+    if has_cmake_file and has_cmake:
+        cmake_build = tmp / "cmake_build"
+        v1_so, v2_so, err = _build_with_cmake(case_dir, cmake_build)
+        if err:
+            return CaseResult(name, "ERROR", expected_raw, None, err)
+        v1_hdr_path = v1_hdr
+        v2_hdr_path = v2_hdr
+    elif has_cmake_file and not has_cmake:
+        # CMakeLists.txt exists but cmake is not available — check if the case
+        # needs special build flags that direct compilation cannot replicate.
+        cmake_text = (case_dir / "CMakeLists.txt").read_text()
+        _special = ("FORCE_INCLUDE", "LINK_OPTIONS", "COMPILE_OPTIONS",
+                     "fvisibility", "version-script", "soname")
+        if any(tok in cmake_text for tok in _special):
+            return CaseResult(name, "SKIP", expected_raw, None,
+                              "requires cmake (CMakeLists.txt has special build flags)")
+        v1_so = tmp / f"libv1{SHARED_LIB_SUFFIX}"
+        v2_so = tmp / f"libv2{SHARED_LIB_SUFFIX}"
+        err = _compile(v1_src, v1_so)
+        if err:
+            return CaseResult(name, "ERROR", expected_raw, None, f"compile v1 failed: {err[:200]}")
+        err = _compile(v2_src, v2_so)
+        if err:
+            return CaseResult(name, "ERROR", expected_raw, None, f"compile v2 failed: {err[:200]}")
+        v1_hdr_path = v1_hdr
+        v2_hdr_path = v2_hdr
     else:
-        v1_so = tmp / "libv1.so"
-        v2_so = tmp / "libv2.so"
+        # No CMakeLists.txt — compile directly
+        v1_so = tmp / f"libv1{SHARED_LIB_SUFFIX}"
+        v2_so = tmp / f"libv2{SHARED_LIB_SUFFIX}"
         err = _compile(v1_src, v1_so)
         if err:
             return CaseResult(name, "ERROR", expected_raw, None, f"compile v1 failed: {err[:200]}")
@@ -249,11 +369,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="Filter by category: breaking, compatible, bad_practice, api_break")
     args = ap.parse_args(argv)
 
-    # Check required tools
-    for tool in ("gcc", "g++", "castxml"):
-        if not shutil.which(tool):
-            print(f"ERROR: required tool '{tool}' not found in PATH", file=sys.stderr)
-            return 2
+    # Check that at least one compiler is available
+    cc = _find_compiler(False)
+    cxx = _find_compiler(True)
+    if not cc and not cxx:
+        print("ERROR: no C or C++ compiler found in PATH", file=sys.stderr)
+        return 2
+
+    if not shutil.which("castxml"):
+        print("ERROR: required tool 'castxml' not found in PATH", file=sys.stderr)
+        return 2
 
     try:
         __import__("abicheck")

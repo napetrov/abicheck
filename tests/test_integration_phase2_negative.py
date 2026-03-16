@@ -55,7 +55,13 @@ def test_dump_fails_on_non_elf_input(tmp_path: Path) -> None:
     out = _run_abicheck(["dump", str(bad)])
 
     assert out.returncode != 0
-    assert "Failed to parse ELF file" in (out.stderr + out.stdout)
+    combined = out.stderr + out.stdout
+    # Error message varies: old ELF-only builds say "Failed to parse ELF file",
+    # cross-platform builds say "Unrecognised binary format" or similar.
+    assert any(
+        msg in combined
+        for msg in ("Failed to parse ELF file", "Unrecognised binary format", "unknown format", "not a valid")
+    ), f"Unexpected error output: {combined!r}"
 
 
 def test_compare_detects_missing_exported_symbol_end_to_end(tmp_path: Path) -> None:

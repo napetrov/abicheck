@@ -152,7 +152,7 @@ class TestDumpSymbolFiltering:
         from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolType
 
         so_path = tmp_path / "libfoo.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
 
         monkeypatch.setattr(
             "abicheck.dumper._pyelftools_exported_symbols",
@@ -183,7 +183,7 @@ class TestDumpSymbolFiltering:
     def test_lang_c_sets_profile(self, tmp_path, monkeypatch):
         """lang='C' sets language_profile to 'c'."""
         so_path = tmp_path / "lib.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
 
         monkeypatch.setattr(
             "abicheck.dumper._pyelftools_exported_symbols",
@@ -202,7 +202,7 @@ class TestDumpSymbolFiltering:
     def test_lang_cpp_sets_profile(self, tmp_path, monkeypatch):
         """lang='C++' sets language_profile to 'cpp'."""
         so_path = tmp_path / "lib.so"
-        so_path.write_bytes(b"elf")
+        so_path.write_bytes(b"\x7fELF")
 
         monkeypatch.setattr(
             "abicheck.dumper._pyelftools_exported_symbols",
@@ -441,3 +441,120 @@ class TestCastxmlParserAccessLevel:
         types = p.parse_types()
         from abicheck.model import AccessLevel
         assert types[0].fields[0].access == AccessLevel.PRIVATE
+
+
+# ── _detect_format ──────────────────────────────────────────────────────────
+
+class TestDetectFormat:
+    """Test magic-byte format detection."""
+
+    def test_elf(self, tmp_path: Path) -> None:
+        from abicheck.dumper import _detect_format
+        f = tmp_path / "lib.so"
+        f.write_bytes(b"\x7fELF\x00\x00")
+        assert _detect_format(f) == "elf"
+
+    def test_macho_le64(self, tmp_path: Path) -> None:
+        from abicheck.dumper import _detect_format
+        f = tmp_path / "lib.dylib"
+        f.write_bytes(b"\xcf\xfa\xed\xfe")
+        assert _detect_format(f) == "macho"
+
+    def test_macho_be32(self, tmp_path: Path) -> None:
+        from abicheck.dumper import _detect_format
+        f = tmp_path / "lib.dylib"
+        f.write_bytes(b"\xfe\xed\xfa\xce")
+        assert _detect_format(f) == "macho"
+
+    def test_macho_fat(self, tmp_path: Path) -> None:
+        from abicheck.dumper import _detect_format
+        f = tmp_path / "lib.dylib"
+        f.write_bytes(b"\xca\xfe\xba\xbe")
+        assert _detect_format(f) == "macho"
+
+    def test_pe(self, tmp_path: Path) -> None:
+        from abicheck.dumper import _detect_format
+        f = tmp_path / "lib.dll"
+        f.write_bytes(b"MZ\x90\x00")
+        assert _detect_format(f) == "pe"
+
+    def test_unknown(self, tmp_path: Path) -> None:
+        from abicheck.dumper import _detect_format
+        f = tmp_path / "lib.bin"
+        f.write_bytes(b"\x00\x01\x02\x03")
+        assert _detect_format(f) == "unknown"
+
+    def test_oserror(self, tmp_path: Path) -> None:
+        from abicheck.dumper import _detect_format
+        assert _detect_format(tmp_path / "nonexistent.so") == "unknown"
+
+
+# ── _dump_macho / _dump_pe via dump() routing ───────────────────────────────
+
+class TestDumpRoutingMachoPe:
+    """Test that dump() routes to _dump_macho / _dump_pe correctly (mocked)."""
+
+    def test_dump_macho_no_headers(self, tmp_path: Path, monkeypatch) -> None:
+        """_dump_macho: no headers → snapshot from export table only."""
+        from unittest.mock import MagicMock, patch
+
+        from abicheck import dumper
+        from abicheck.model import AbiSnapshot
+
+        dylib = tmp_path / "libfoo.dylib"
+        dylib.write_bytes(b"\xcf\xfa\xed\xfe")  # Mach-O LE64 magic
+
+        mock_exp = MagicMock()
+        mock_exp.name = "_foo_func"
+        mock_meta = MagicMock()
+        mock_meta.exports = [mock_exp]
+        mock_meta.install_name = "libfoo.dylib"
+        mock_meta.dependent_libs = []
+
+        import abicheck.macho_metadata as _macho_mod
+        with patch.object(dumper, "_detect_format", return_value="macho"), \
+             patch.object(_macho_mod, "parse_macho_metadata", return_value=mock_meta), \
+             patch.object(dumper, "_castxml_dump", return_value=([], [], None, [])):
+            snap = dump(dylib, headers=[], version="1.0")
+
+        assert isinstance(snap, AbiSnapshot)
+        assert snap.platform == "macho"
+
+    def test_dump_pe_no_headers(self, tmp_path: Path, monkeypatch) -> None:
+        """_dump_pe: no headers → snapshot from export table only."""
+        from unittest.mock import MagicMock, patch
+
+        from abicheck import dumper
+        from abicheck.model import AbiSnapshot
+
+        dll = tmp_path / "foo.dll"
+        dll.write_bytes(b"MZ\x90\x00")  # PE magic
+
+        mock_exp = MagicMock()
+        mock_exp.name = "FooFunc"
+        mock_exp.ordinal = 1
+        mock_meta = MagicMock()
+        mock_meta.exports = [mock_exp]
+        mock_meta.machine = "x86_64"
+
+        import abicheck.pe_metadata as _pe_mod
+        with patch.object(dumper, "_detect_format", return_value="pe"), \
+             patch.object(_pe_mod, "parse_pe_metadata", return_value=mock_meta), \
+             patch.object(dumper, "_castxml_dump", return_value=([], [], None, [])):
+            snap = dump(dll, headers=[], version="1.0")
+
+        assert isinstance(snap, AbiSnapshot)
+        assert snap.platform == "pe"
+
+    def test_dump_unknown_format_raises(self, tmp_path: Path) -> None:
+        """dump() raises ValueError for unknown binary format."""
+        from unittest.mock import patch
+
+        from abicheck import dumper
+
+        f = tmp_path / "weird.bin"
+        f.write_bytes(b"\x00\x01\x02\x03")
+
+        with patch.object(dumper, "_detect_format", return_value="unknown"):
+            with pytest.raises(ValueError, match="(?i)unknown|unrecogni"):
+                dump(f, headers=[], version="1.0")

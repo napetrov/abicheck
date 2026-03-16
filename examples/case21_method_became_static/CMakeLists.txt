@@ -1,0 +1,7 @@
+abicheck_add_case(case21_method_became_static
+    V1_SOURCES old/lib.cpp
+    V2_SOURCES new/lib.cpp
+    V1_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/old
+    V2_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/new
+    PLATFORMS linux macos windows
+)
