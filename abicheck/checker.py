@@ -1260,6 +1260,31 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     n: PeMetadata = getattr(new, "pe", None) or PeMetadata()
     changes: list[Change] = []
 
+    # Emit export-based FUNC_REMOVED/FUNC_ADDED only when there is no function
+    # model (i.e. snapshot was built from PE metadata alone, without header
+    # analysis). When functions are populated, _diff_functions already covers
+    # these symbols and emitting here would cause double-reporting.
+    if not (old.functions or new.functions):
+        old_ids = {(e.name if e.name else f"ordinal:{e.ordinal}") for e in o.exports}
+        new_ids = {(e.name if e.name else f"ordinal:{e.ordinal}") for e in n.exports}
+        removed_kind = (
+            ChangeKind.FUNC_REMOVED_ELF_ONLY
+            if getattr(old, "elf_only_mode", False) and getattr(new, "elf_only_mode", False)
+            else ChangeKind.FUNC_REMOVED
+        )
+        for eid in sorted(old_ids - new_ids):
+            changes.append(Change(
+                kind=removed_kind,
+                symbol=eid,
+                description=f"export removed from DLL: {eid}",
+            ))
+        for eid in sorted(new_ids - old_ids):
+            changes.append(Change(
+                kind=ChangeKind.FUNC_ADDED,
+                symbol=eid,
+                description=f"new export in DLL: {eid}",
+            ))
+
     # Detect changed import dependencies
     old_deps = set(o.imports.keys())
     new_deps = set(n.imports.keys())
@@ -1286,6 +1311,30 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     o: MachoMetadata = getattr(old, "macho", None) or MachoMetadata()
     n: MachoMetadata = getattr(new, "macho", None) or MachoMetadata()
     changes: list[Change] = []
+
+    # Emit export-based FUNC_REMOVED/FUNC_ADDED only when there is no function
+    # model. When functions are populated, _diff_functions already covers these
+    # symbols; emitting here would cause double-reporting.
+    if not (old.functions or new.functions) and (o.exports or n.exports):
+        old_names = {e.name for e in o.exports if e.name}
+        new_names = {e.name for e in n.exports if e.name}
+        removed_kind = (
+            ChangeKind.FUNC_REMOVED_ELF_ONLY
+            if getattr(old, "elf_only_mode", False) and getattr(new, "elf_only_mode", False)
+            else ChangeKind.FUNC_REMOVED
+        )
+        for name in sorted(old_names - new_names):
+            changes.append(Change(
+                kind=removed_kind,
+                symbol=name,
+                description=f"export removed from dylib: {name}",
+            ))
+        for name in sorted(new_names - old_names):
+            changes.append(Change(
+                kind=ChangeKind.FUNC_ADDED,
+                symbol=name,
+                description=f"new export in dylib: {name}",
+            ))
 
     # Install name change (equivalent of SONAME change)
     if o.install_name and o.install_name != n.install_name:
