@@ -262,12 +262,12 @@ def _resolve_input(
         pe_meta = parse_pe_metadata(path)
         if not pe_meta.machine:
             raise AbicheckError(
-                f"Failed to extract PE metadata from '{path}'. "
+                f"Failed to extract PE metadata from '{path.name}'. "
                 "The file may be corrupt or not a valid PE binary."
             )
         if not pe_meta.exports:
             raise AbicheckError(
-                f"PE file '{path}' has no exports (named or ordinal). "
+                f"PE file '{path.name}' has no exports (named or ordinal). "
                 "Verify the file is a valid DLL."
             )
         funcs = [
@@ -291,7 +291,7 @@ def _resolve_input(
         macho_meta = parse_macho_metadata(path)
         if not macho_meta.exports and not macho_meta.install_name and not macho_meta.dependent_libs:
             raise AbicheckError(
-                f"Mach-O file '{path}' has no exports or load-command metadata. "
+                f"Mach-O file '{path.name}' has no exports or load-command metadata. "
                 "Verify the file is a valid dynamic library."
             )
         funcs = [
