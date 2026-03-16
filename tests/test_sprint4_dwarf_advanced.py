@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """Sprint 4 tests: advanced DWARF detectors (calling convention, packing, toolchain drift)."""
 from __future__ import annotations
 

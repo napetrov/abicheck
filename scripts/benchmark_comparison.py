@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """
 Benchmark: abicheck vs ABICC vs abidiff on abicheck examples.
 

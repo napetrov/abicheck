@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """Extended ABICC parity tests: CLI compatibility, output format parity,
 and strict-mode case-level equivalence.
 
@@ -24,11 +25,8 @@ from pathlib import Path
 import pytest
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
-from abicheck.cli import (
-    _apply_strict,
-    _filter_source_only,
-    main,
-)
+from abicheck.cli import main
+from abicheck.compat.cli import _apply_strict, _filter_source_only
 
 # ---------------------------------------------------------------------------
 # Shared helpers

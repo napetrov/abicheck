@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """Tests for abi_check.checker — pure Python, no external tools required.
 
 All test fixtures are original C++ snippets authored for this project.

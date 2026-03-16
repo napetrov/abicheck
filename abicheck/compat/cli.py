@@ -69,7 +69,7 @@ def _build_skip_suppression(
     from ..suppression import Suppression, SuppressionList  # noqa: PLC0415
 
     rules: list[Suppression] = []
-    for label, fpath in [("symbols", skip_symbols_path), ("types", skip_types_path)]:
+    for _label, fpath in [("symbols", skip_symbols_path), ("types", skip_types_path)]:
         if fpath is None:
             continue
         names = [
@@ -376,7 +376,7 @@ def _detect_compiler_version(gcc_path: str | None = None) -> str:
     if not compiler:
         return ""
     try:
-        r = _sp.run([compiler, "-dumpversion"], capture_output=True, text=True, timeout=5)
+        r = _sp.run([compiler, "-dumpversion"], capture_output=True, text=True, timeout=5, check=False)
         return r.stdout.strip() if r.returncode == 0 else ""
     except (OSError, _sp.TimeoutExpired):
         return ""
@@ -1303,5 +1303,3 @@ def _load_descriptor_or_dump(path: Path, *, relpath: str | None = None) -> Compa
 
     # Otherwise parse as XML descriptor
     return parse_descriptor(path, relpath=relpath)
-
-

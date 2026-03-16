@@ -1,3 +1,4 @@
+# pylint: disable=too-many-branches,too-many-statements,too-many-locals,too-many-arguments,too-many-return-statements
 """Integration tests — auto-discovery of all example cases.
 
 Replaces the hard-coded CASES list in test_abi_examples.py with directory

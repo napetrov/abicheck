@@ -24,6 +24,7 @@ import click
 
 from .checker import DiffResult, LibraryMetadata, compare
 from .compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_dump
+from .compat.cli import compat_group
 from .dumper import dump
 from .errors import AbicheckError
 from .reporter import to_json, to_markdown
@@ -616,39 +617,6 @@ def compare_cmd(
     elif result.verdict.value == "API_BREAK":
         sys.exit(2)
 
-# ── ABICC compat subcommands (implementation in abicheck.compat) ─────────────
-# NOTE: eagerly loads abicheck.compat.cli at import time — intentional so all
-# consumers get compat commands registered. Private helpers re-exported for
-# backward compatibility with code importing from abicheck.cli directly.
-from .compat.cli import (  # noqa: E402,F401
-    _API_BREAK_KINDS,
-    _BINARY_ONLY_KINDS,
-    _NEW_SYMBOL_KINDS,
-    _P2_STUB_FLAGS,
-    _apply_strict,
-    _apply_warn_newsym,
-    _build_internal_suppression,
-    _build_skip_suppression,
-    _build_whitelist_suppression,
-    _classify_compat_error_exit_code,
-    _compat_fail,
-    _detect_compiler_version,
-    _do_echo,
-    _filter_binary_only,
-    _filter_source_only,
-    _limit_affected_changes,
-    _load_descriptor_or_dump,
-    _load_skip_headers,
-    _merge_suppression,
-    _resolve_headers_from_list,
-    _safe_path,
-    _setup_logging,
-    _warn_stub_flags,
-    _write_affected_list,
-    compat_group,
-)
-
-# fmt: on
 
 main.add_command(compat_group)
 
