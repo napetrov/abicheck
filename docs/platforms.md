@@ -21,17 +21,17 @@ However, the depth of analysis depends on the **host platform** and whether head
 
 | Host OS | Symbol diff | Type/param diff | Requires |
 |---------|------------|----------------|---------|
-| Linux | ✅ Yes | ❌ No | `pefile` (auto-installed) |
-| macOS | ✅ Yes | ❌ No | `pefile` (auto-installed) |
-| Windows | ✅ Yes | ⚠️ Experimental | `castxml` + `cl.exe` |
+| Linux | ✅ Yes | ❌ No | `pefile` |
+| macOS | ✅ Yes | ❌ No | `pefile` |
+| Windows | ✅ Yes | ✅ Yes | `castxml` + `cl.exe` |
 
 ### Scanning macOS Mach-O (dylib) binaries
 
 | Host OS | Symbol diff | Type/param diff | Requires |
 |---------|------------|----------------|---------|
-| Linux | ✅ Yes | ❌ No | `macholib` (auto-installed) |
-| macOS | ✅ Yes | ⚠️ Experimental | `castxml` (Xcode clang) |
-| Windows | ✅ Yes | ❌ No | `macholib` (auto-installed) |
+| Linux | ✅ Yes | ❌ No | `macholib` |
+| macOS | ✅ Yes | ✅ Yes | `castxml` (Xcode clang) |
+| Windows | ✅ Yes | ❌ No | `macholib` |
 
 ---
 
@@ -149,9 +149,9 @@ jobs:
 
 | Feature | Dependency | Install |
 |---------|-----------|---------|
-| ELF analysis | `pyelftools` | auto with `pip install abicheck` |
-| PE analysis | `pefile` | auto with `pip install abicheck` |
-| Mach-O analysis | `macholib` | auto with `pip install abicheck` |
+| ELF analysis | `pyelftools` | `pip install abicheck` |
+| PE analysis | `pefile` | `pip install abicheck` |
+| Mach-O analysis | `macholib` | `pip install abicheck` |
 | Type/param analysis (ELF) | `castxml` + `gcc/g++` | system package manager |
 | Type/param analysis (macOS) | `castxml` + Xcode clang | `brew install castxml` |
 | Type/param analysis (Windows) | `castxml` + `cl.exe` | Visual Studio + castxml |
