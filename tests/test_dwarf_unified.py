@@ -23,9 +23,9 @@ pytestmark = pytest.mark.skipif(
     reason="ELF DWARF tests require Linux (macOS/Windows compilers produce Mach-O/PE)"
 )
 
-from abicheck.dwarf_advanced import AdvancedDwarfMetadata
-from abicheck.dwarf_metadata import DwarfMetadata
-from abicheck.dwarf_unified import (
+from abicheck.dwarf_advanced import AdvancedDwarfMetadata  # noqa: E402
+from abicheck.dwarf_metadata import DwarfMetadata  # noqa: E402
+from abicheck.dwarf_unified import (  # noqa: E402
     parse_advanced_dwarf,
     parse_dwarf,
     parse_dwarf_metadata,

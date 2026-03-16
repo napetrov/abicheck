@@ -11,6 +11,7 @@ scaffolded with TODO markers and skip directives.
 from __future__ import annotations
 
 import textwrap
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -25,8 +26,6 @@ from abicheck.model import (
     TypeField,
     Visibility,
 )
-from datetime import date
-
 from abicheck.suppression import SuppressionList
 
 # ---------------------------------------------------------------------------
@@ -529,8 +528,8 @@ class TestAdvancedSuppressionScaffold:
 
     def test_suppression_expired_does_not_suppress(self, tmp_path: Path) -> None:
         """Suppression past its expiry date does not suppress changes."""
-        from abicheck.suppression import Suppression, SuppressionList
         from abicheck.checker import Change, ChangeKind
+        from abicheck.suppression import Suppression, SuppressionList
 
         past = date(2020, 1, 1)
         sup = Suppression(symbol="_Z6helperi", expires=past)
