@@ -109,6 +109,7 @@ def _dump_native_binary(
     version: str, lang: str,
     *,
     pdb_path: Path | None = None,
+    allow_symbols_only: bool = False,
 ) -> AbiSnapshot:
     """Dump ABI snapshot from a native binary (ELF, PE, or Mach-O).
 
@@ -119,11 +120,18 @@ def _dump_native_binary(
     fmt_label = fmt_labels.get(binary_fmt, binary_fmt)
 
     if binary_fmt == "elf":
-        if not headers:
+        if not headers and not allow_symbols_only:
             raise click.UsageError(
                 f"Input '{path}' is an ELF binary — "
                 "at least one header (-H/--header or --old-header/--new-header) "
-                "is required for ABI extraction."
+                "is required for ABI extraction. "
+                "Use --allow-symbols-only for metadata-only fallback."
+            )
+        if not headers and allow_symbols_only:
+            click.echo(
+                f"Warning: '{path}' is analyzed in symbols-only mode (no headers). "
+                "Results are weaker and may miss type/signature ABI breaks.",
+                err=True,
             )
         for hdr in headers:
             if not hdr.exists() or not hdr.is_file():
@@ -242,6 +250,7 @@ def _resolve_input(
     *,
     is_elf: bool | None = None,
     pdb_path: Path | None = None,
+    allow_symbols_only: bool = False,
 ) -> AbiSnapshot:
     """Auto-detect input type and return an AbiSnapshot.
 
@@ -262,13 +271,19 @@ def _resolve_input(
     """
     # Fast path: caller already knows it's ELF
     if is_elf is True:
-        return _dump_native_binary(path, "elf", headers, includes, version, lang)
+        return _dump_native_binary(
+            path, "elf", headers, includes, version, lang,
+            allow_symbols_only=allow_symbols_only,
+        )
 
     # Detect binary format from magic bytes
     binary_fmt = _detect_binary_format(path) if is_elf is None else None
     if binary_fmt is not None:
-        return _dump_native_binary(path, binary_fmt, headers, includes, version, lang,
-                                   pdb_path=pdb_path)
+        return _dump_native_binary(
+            path, binary_fmt, headers, includes, version, lang,
+            pdb_path=pdb_path,
+            allow_symbols_only=allow_symbols_only,
+        )
 
     # Text-based formats: detect by sniffing only a small header chunk
     fmt = _sniff_text_format(path)
@@ -556,6 +571,9 @@ def _render_output(fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnaps
               help="Exit with code 1 if any new public symbols, types, or fields were added "
                    "(COMPATIBLE changes). Useful for detecting unintentional API expansion in PRs. "
                    "Use --no-fail-on-additions (or omit the flag) to allow API growth.")
+@click.option("--allow-symbols-only/--no-allow-symbols-only", "allow_symbols_only", default=False,
+              help="Allow ELF binary-vs-binary compare without headers using symbols-only fallback. "
+                   "Weaker analysis: may miss type/signature ABI breaks.")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def compare_cmd(
@@ -568,6 +586,7 @@ def compare_cmd(
     suppress: Path | None, policy: str, policy_file_path: Path | None,
     pdb_path: Path | None, old_pdb_path: Path | None, new_pdb_path: Path | None,
     fail_on_additions: bool,
+    allow_symbols_only: bool,
     verbose: bool,
 ) -> None:
     """Compare two ABI surfaces and report changes.
@@ -577,7 +596,8 @@ def compare_cmd(
 
     When a .so file is given, headers (-H) are required so that abicheck can
     extract the public ABI. Use --old-header / --new-header when headers differ
-    between versions.
+    between versions. If needed, pass --allow-symbols-only to do ELF
+    metadata-only comparison without headers (weaker analysis).
 
     \b
     Exit codes:
@@ -630,12 +650,18 @@ def compare_cmd(
     resolved_old_pdb = old_pdb_path if old_pdb_path else pdb_path
     resolved_new_pdb = new_pdb_path if new_pdb_path else pdb_path
 
-    old = _resolve_input(old_input, old_h, old_inc, old_version, lang,
-                         is_elf=True if old_fmt == "elf" else None,
-                         pdb_path=resolved_old_pdb)
-    new = _resolve_input(new_input, new_h, new_inc, new_version, lang,
-                         is_elf=True if new_fmt == "elf" else None,
-                         pdb_path=resolved_new_pdb)
+    old = _resolve_input(
+        old_input, old_h, old_inc, old_version, lang,
+        is_elf=True if old_fmt == "elf" else None,
+        pdb_path=resolved_old_pdb,
+        allow_symbols_only=allow_symbols_only,
+    )
+    new = _resolve_input(
+        new_input, new_h, new_inc, new_version, lang,
+        is_elf=True if new_fmt == "elf" else None,
+        pdb_path=resolved_new_pdb,
+        allow_symbols_only=allow_symbols_only,
+    )
 
     suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
 
