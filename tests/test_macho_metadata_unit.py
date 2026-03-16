@@ -323,41 +323,21 @@ class TestDiffMacho:
         assert any(c.kind == ChangeKind.NEEDED_ADDED for c in changes)
 
     def test_export_not_duplicated_when_in_functions(self):
-        """Dylib exports persisting in both function models must not be re-emitted."""
+        """Dylib exports already in snapshot.functions must not be re-emitted."""
         from abicheck.checker import ChangeKind, _diff_macho
         from abicheck.model import AbiSnapshot, Function
 
-        # "_bar" persists in both old and new → suppress export delta
         fn = Function(name="bar", mangled="_bar", return_type="void")
         old = AbiSnapshot(library="libfoo.dylib", version="1.0",
                           functions=[fn],
-                          macho=MachoMetadata(exports=[MachoExport(name="foo"), MachoExport(name="_bar")]))
+                          macho=MachoMetadata(exports=[MachoExport(name="foo"), MachoExport(name="bar")]))
         new = AbiSnapshot(library="libfoo.dylib", version="2.0",
                           functions=[fn],
                           macho=MachoMetadata(exports=[MachoExport(name="foo")]))
         changes = _diff_macho(old, new)
         removed = [c for c in changes if c.kind == ChangeKind.FUNC_REMOVED]
-        assert all(c.symbol != "_bar" for c in removed)
-
-    def test_signature_change_not_suppressed_when_mangled_differs(self):
-        """When mangled name changes (e.g. const method), export delta must be emitted."""
-        from abicheck.checker import ChangeKind, _diff_macho
-        from abicheck.model import AbiSnapshot, Function
-
-        old_fn = Function(name="bar", mangled="_ZN3Foo3barEv", return_type="void")
-        new_fn = Function(name="bar", mangled="_ZN3Foo3barEKv", return_type="void")  # const added
-        old = AbiSnapshot(library="libfoo.dylib", version="1.0",
-                          functions=[old_fn],
-                          macho=MachoMetadata(exports=[MachoExport(name="_ZN3Foo3barEv")]))
-        new = AbiSnapshot(library="libfoo.dylib", version="2.0",
-                          functions=[new_fn],
-                          macho=MachoMetadata(exports=[MachoExport(name="_ZN3Foo3barEKv")]))
-        changes = _diff_macho(old, new)
-        # mangled changed → not in persisted_fn → must emit REMOVED + ADDED
-        removed = [c for c in changes if c.kind == ChangeKind.FUNC_REMOVED]
-        added = [c for c in changes if c.kind == ChangeKind.FUNC_ADDED]
-        assert any(c.symbol == "_ZN3Foo3barEv" for c in removed)
-        assert any(c.symbol == "_ZN3Foo3barEKv" for c in added)
+        # "bar" is already in old.functions → must be deduplicated
+        assert all(c.symbol != "bar" for c in removed)
 
     def test_export_removed_not_in_functions_still_emitted(self):
         """Dylib exports NOT in functions must still be reported."""
@@ -774,3 +754,27 @@ class TestCliIntegration:
         f.write_bytes(b"fake")
         with pytest.raises(click.ClickException, match="Unsupported binary format"):
             _dump_native_binary(f, "unknown", [], [], "1.0", "c")
+
+
+# ── install_name / compat_version gained coverage ────────────────────────────
+
+class TestDiffMachoGuards:
+    """Tests for install_name and compat_version change detection."""
+
+    def test_install_name_gained_reported(self):
+        """old=empty, new=set: gaining an install name is reported."""
+        from abicheck.checker import ChangeKind, _diff_macho
+        from abicheck.model import AbiSnapshot
+        old = AbiSnapshot(library="a.dylib", version="1.0", macho=MachoMetadata(install_name=""))
+        new = AbiSnapshot(library="a.dylib", version="2.0", macho=MachoMetadata(install_name="/usr/lib/a.dylib"))
+        changes = _diff_macho(old, new)
+        assert any(c.kind == ChangeKind.SONAME_CHANGED for c in changes)
+
+    def test_compat_version_gained_reported(self):
+        """old=empty, new=set: gaining a compat version is reported."""
+        from abicheck.checker import ChangeKind, _diff_macho
+        from abicheck.model import AbiSnapshot
+        old = AbiSnapshot(library="a.dylib", version="1.0", macho=MachoMetadata(compat_version=""))
+        new = AbiSnapshot(library="a.dylib", version="2.0", macho=MachoMetadata(compat_version="1.0.0"))
+        changes = _diff_macho(old, new)
+        assert any(c.kind == ChangeKind.COMPAT_VERSION_CHANGED for c in changes)

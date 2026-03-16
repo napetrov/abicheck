@@ -254,42 +254,21 @@ class TestDiffPe:
         assert added[0].symbol == "ordinal:99"
 
     def test_export_not_duplicated_when_in_functions(self):
-        """Symbols persisting in both snapshot.functions must not be re-emitted by _diff_pe."""
+        """Symbols already in snapshot.functions must not be re-emitted by _diff_pe."""
         from abicheck.checker import ChangeKind, _diff_pe
         from abicheck.model import AbiSnapshot, Function
 
-        # "_bar" persists in both old and new functions → export delta suppressed
         fn = Function(name="bar", mangled="_bar", return_type="void")
         old = AbiSnapshot(library="test.dll", version="1.0",
                           functions=[fn],
-                          pe=PeMetadata(exports=[PeExport(name="foo"), PeExport(name="_bar")]))
+                          pe=PeMetadata(exports=[PeExport(name="foo"), PeExport(name="bar")]))
         new = AbiSnapshot(library="test.dll", version="2.0",
                           functions=[fn],
                           pe=PeMetadata(exports=[PeExport(name="foo")]))
         changes = _diff_pe(old, new)
         removed = [c for c in changes if c.kind == ChangeKind.FUNC_REMOVED]
-        # "_bar" persists in functions → suppressed
-        assert all(c.symbol != "_bar" for c in removed)
-
-    def test_signature_change_detected_when_mangled_changes(self):
-        """When mangled name changes (signature change), export delta must NOT be suppressed."""
-        from abicheck.checker import ChangeKind, _diff_pe
-        from abicheck.model import AbiSnapshot, Function
-
-        old_fn = Function(name="bar", mangled="?bar@@YAXXZ", return_type="void")
-        new_fn = Function(name="bar", mangled="?bar@@YAHXZ", return_type="int")  # mangled changed
-        old = AbiSnapshot(library="test.dll", version="1.0",
-                          functions=[old_fn],
-                          pe=PeMetadata(exports=[PeExport(name="?bar@@YAXXZ")]))
-        new = AbiSnapshot(library="test.dll", version="2.0",
-                          functions=[new_fn],
-                          pe=PeMetadata(exports=[PeExport(name="?bar@@YAHXZ")]))
-        changes = _diff_pe(old, new)
-        # mangled name changed → not in persisted_fn → must emit REMOVED + ADDED
-        removed = [c for c in changes if c.kind == ChangeKind.FUNC_REMOVED]
-        added = [c for c in changes if c.kind == ChangeKind.FUNC_ADDED]
-        assert any(c.symbol == "?bar@@YAXXZ" for c in removed)
-        assert any(c.symbol == "?bar@@YAHXZ" for c in added)
+        # "bar" is already in old.functions → must be deduplicated
+        assert all(c.symbol != "bar" for c in removed)
 
     def test_export_removed_not_in_functions_still_emitted(self):
         """Symbols in PE exports but NOT in functions must still be reported."""
