@@ -1,8 +1,0 @@
-MYLIB_1.0 {
-    global:
-        api_init;
-        api_process;
-        api_cleanup;
-    local:
-        *;
-};

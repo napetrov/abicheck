@@ -1,6 +1,0 @@
-{
-    global:
-        core_api;
-    local:
-        *;
-};
