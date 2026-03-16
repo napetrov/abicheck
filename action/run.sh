@@ -7,6 +7,8 @@ set -uo pipefail
 # ---------------------------------------------------------------------------
 # Helper: append a flag with value(s) to the command array.
 # Space-separated values become repeated flags (e.g. -H a.h -H b.h).
+# Note: Paths containing spaces are not supported — word-splitting is
+# intentional here but will break on space-containing values.
 # ---------------------------------------------------------------------------
 add_flag() {
   local flag="$1"
@@ -240,12 +242,13 @@ if [[ "$VERDICT" == "API_BREAK" && "${INPUT_FAIL_ON_API_BREAK:-false}" == "true"
   FINAL_EXIT=1
 fi
 
+if [[ "$VERDICT" == "ADDITIONS" && "${INPUT_FAIL_ON_ADDITIONS:-false}" == "true" ]]; then
+  echo "::error::API additions detected (unintentional API expansion). Set fail-on-additions: false to allow."
+  FINAL_EXIT=1
+fi
+
 if [[ "$VERDICT" == "ERROR" ]]; then
-  if [[ $ABICHECK_EXIT -eq 1 ]]; then
-    echo "::error::API additions detected (unintentional API expansion). Set fail-on-additions: false to allow."
-  else
-    echo "::error::abicheck failed with exit code $ABICHECK_EXIT"
-  fi
+  echo "::error::abicheck failed with exit code $ABICHECK_EXIT"
   FINAL_EXIT=1
 fi
 

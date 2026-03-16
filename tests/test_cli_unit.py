@@ -400,7 +400,7 @@ class TestFailOnAdditions:
             "typedefs": {},
         }
         p = tmp_path / f"{name}.json"
-        p.write_text(json.dumps(snap))
+        p.write_text(json.dumps(snap), encoding="utf-8")
         return p
 
     def test_fail_on_additions_exits_1_when_function_added(self, tmp_path: Path) -> None:

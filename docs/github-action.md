@@ -64,7 +64,7 @@ automatically, then runs ABI comparison and reports results.
 | `suppress` | — | YAML suppression file |
 | `verbose` | `false` | Enable debug output |
 
-### Action behaviour
+### Action behavior
 
 | Input | Default | Description |
 |-------|---------|-------------|
@@ -104,7 +104,7 @@ jobs:
       - name: Check ABI compatibility
         uses: napetrov/abicheck@v1
         with:
-          old-library: abi-baseline.json      # committed to repo
+          old-library: abi-baseline.json  # committed to repo
           new-library: build/libfoo.so
           new-header: include/foo.h
           new-version: pr-${{ github.event.pull_request.number }}

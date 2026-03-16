@@ -8,12 +8,23 @@ echo "::group::Install system dependencies for abicheck"
 OS="$(uname -s)"
 case "$OS" in
   Linux)
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq castxml gcc g++ > /dev/null
+    if ! command -v apt-get &> /dev/null; then
+      echo "::warning::apt-get not found. Skipping automatic dependency installation on Linux."
+      echo "Please ensure castxml and a C++ compiler are installed manually."
+    elif ! command -v sudo &> /dev/null; then
+      echo "::warning::sudo not found. Skipping automatic dependency installation."
+      echo "Please ensure castxml and a C++ compiler are installed manually."
+    else
+      sudo apt-get update -qq
+      sudo apt-get install -y -qq castxml gcc g++ > /dev/null
+    fi
     ;;
   Darwin)
     # macOS: castxml via Homebrew, clang is pre-installed via Xcode
-    if ! command -v castxml &> /dev/null; then
+    if ! command -v brew &> /dev/null; then
+      echo "::warning::Homebrew not found. Skipping automatic castxml installation on macOS."
+      echo "Please install castxml manually: https://github.com/CastXML/CastXML/releases"
+    elif ! command -v castxml &> /dev/null; then
       brew install castxml
     fi
     ;;

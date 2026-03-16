@@ -665,11 +665,13 @@ def compare_cmd(
     elif result.verdict.value == "API_BREAK":
         sys.exit(2)
 
-    # --fail-on-additions: exit 1 if any new public symbols/types were added
+    # --fail-on-additions: exit 1 if any new public symbols/types were added.
+    # Filter result.changes directly (not result.compatible) so the check is
+    # policy-independent: _ADDITION_KINDS covers all known additive change kinds.
     if fail_on_additions:
         from .checker_policy import COMPATIBLE_KINDS
         _ADDITION_KINDS = {k for k in COMPATIBLE_KINDS if k.value.endswith("_added")}
-        additions = [c for c in result.compatible if c.kind in _ADDITION_KINDS]
+        additions = [c for c in result.changes if c.kind in _ADDITION_KINDS]
         if additions:
             click.echo(
                 f"API expansion detected: {len(additions)} addition(s) "
@@ -708,7 +710,6 @@ from .compat.cli import (  # noqa: E402,F401
     _setup_logging,
     _warn_stub_flags,
     _write_affected_list,
-    compat_group,
 )
 
 # fmt: on

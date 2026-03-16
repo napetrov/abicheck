@@ -5,6 +5,7 @@ on:
     paths:
       - 'action.yml'
       - 'action/**'
+      - 'abicheck/**'
       - '.github/workflows/test-action.yml'
       - 'tests/fixtures/action/**'
   push:
@@ -12,6 +13,7 @@ on:
     paths:
       - 'action.yml'
       - 'action/**'
+      - 'abicheck/**'
       - '.github/workflows/test-action.yml'
       - 'tests/fixtures/action/**'
 
@@ -173,9 +175,10 @@ jobs:
           fi
           echo "Correctly failed on breaking change"
 
-  # ── Test: dump mode ─────────────────────────────────────────────────────
-  test-dump-mode:
-    name: 'Dump: snapshot from existing fixture roundtrip'
+  # ── Test: action infrastructure (compare mode, no real binary needed) ──────
+  # TODO: add a true dump-mode test when a real binary/header fixture is available.
+  test-action-infrastructure:
+    name: 'Verify: action infrastructure with compare mode'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -292,3 +295,4 @@ jobs:
             exit 1
           fi
           echo "Correctly passed with additions allowed"
+
