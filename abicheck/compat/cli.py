@@ -566,9 +566,35 @@ def _compat_fail(context: str, exc: BaseException) -> None:
 
 # ── compat group ──────────────────────────────────────────────────────────────
 
-@click.group("compat")
+class _CompatGroup(click.Group):
+    """Click Group that falls back to the 'check' subcommand when no subcommand is given.
+
+    This preserves ABICC drop-in compatibility: ``abicheck compat -lib foo -old ...``
+    behaves identically to ``abicheck compat check -lib foo -old ...``.
+    """
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        # If the first non-option token is NOT a known subcommand name,
+        # prepend 'check' so Click routes to compat_check_cmd.
+        if args and not args[0].startswith("-"):
+            # First token looks like a subcommand; let Click handle normally.
+            return super().parse_args(ctx, args)
+        if args:
+            # No subcommand prefix → inject 'check'
+            args = ["check", *args]
+        return super().parse_args(ctx, args)
+
+    def invoke(self, ctx: click.Context) -> object:
+        return super().invoke(ctx)
+
+
+@click.group("compat", cls=_CompatGroup)
 def compat_group() -> None:
-    """ABICC-compatible commands (drop-in replacement for abi-compliance-checker)."""
+    """ABICC-compatible commands (drop-in replacement for abi-compliance-checker).
+
+    When called without a subcommand (e.g. ``abicheck compat -lib foo -old v1.xml -new v2.xml``),
+    the ``check`` subcommand is invoked automatically for drop-in ABICC compatibility.
+    """
 
 
 # ── compat dump subcommand ────────────────────────────────────────────────────
