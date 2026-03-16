@@ -551,6 +551,62 @@
       "api_break": true,
       "bad_practice": false,
       "description": "Leaf struct gains field; propagates through embedding in Container \u2014 layout breaks (libabigail: Leaf_Type_Change)"
+    },
+    "case49_dependency_symbol_leak": {
+      "expected": "COMPATIBLE",
+      "category": "bad_practice",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": true,
+      "description": "Static archive symbols leak into shared library .dynsym without version script or --exclude-libs (bad practice \u2014 dependency ABI coupling)"
+    },
+    "case50_soname_inconsistent": {
+      "expected": "COMPATIBLE",
+      "category": "bad_practice",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": true,
+      "description": "SONAME present but set to wrong major version \u2014 bakes wrong DT_NEEDED into consumers (bad practice \u2014 packaging/upgrade hazard)"
+    },
+    "case51_protected_visibility": {
+      "expected": "COMPATIBLE",
+      "category": "compatible",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "Symbol visibility changed DEFAULT\u2192PROTECTED \u2014 exported but no longer interposable (compatible, interposition policy concern)"
+    },
+    "case52_export_surface_growth": {
+      "expected": "COMPATIBLE",
+      "category": "bad_practice",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": true,
+      "description": "Internal functions leak into export table without -fvisibility=hidden \u2014 ABI surface creep (bad practice \u2014 accidental public ABI)"
+    },
+    "case53_symbol_versioning_missing": {
+      "expected": "COMPATIBLE",
+      "category": "compatible",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "Library without symbol versioning vs one with MYLIB_1.0 version nodes \u2014 compatible but missing future ABI evolution mechanism"
     }
   }
 }

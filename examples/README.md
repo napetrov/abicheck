@@ -33,7 +33,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 > Authoritative expected verdicts for benchmarking are in [`ground_truth.json`](ground_truth.json).
 > If a per-case README and benchmark expectation differ, treat [`ground_truth.json`](ground_truth.json) as source of truth.
 
-**48 published cases** (case 42 reserved) — 34 BREAKING 🔴 | 10 COMPATIBLE 🟢 | 2 NO_CHANGE ✅ | 2 API_BREAK 🟠
+**53 published cases** (case 42 reserved) — 34 BREAKING 🔴 | 15 COMPATIBLE 🟢 | 2 NO_CHANGE ✅ | 2 API_BREAK 🟠
 
 | # | Case | Category | abicheck verdict |
 |---|------|----------|-----------------|
@@ -86,6 +86,11 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [46](case46_pointer_chain_type_change/README.md) | Pointer Chain Type Change | Function Signature | BREAKING 🔴 |
 | [47](case47_inline_to_outlined/README.md) | Inline to Outlined | C++ Symbol | COMPATIBLE 🟢 |
 | [48](case48_leaf_struct_through_pointer/README.md) | Leaf Struct Change Through Pointer | Struct Layout | BREAKING 🔴 |
+| [49](case49_dependency_symbol_leak/README.md) | Dependency Symbol Leak (Static Archive) | ELF / Policy | COMPATIBLE 🟡 (bad practice) |
+| [50](case50_soname_inconsistent/README.md) | SONAME Inconsistent (Wrong Major) | ELF / Policy | COMPATIBLE 🟡 (bad practice) |
+| [51](case51_protected_visibility/README.md) | Protected Visibility (DEFAULT→PROTECTED) | ELF / Policy | COMPATIBLE 🟢 |
+| [52](case52_export_surface_growth/README.md) | Export Surface Growth | ELF / Policy | COMPATIBLE 🟡 (bad practice) |
+| [53](case53_symbol_versioning_missing/README.md) | Symbol Versioning Missing | ELF / Policy | COMPATIBLE 🟢 |
 
 ---
 
@@ -105,7 +110,7 @@ case's README for copy-paste build instructions.
 
 ---
 
-## Benchmark Snapshot (48 cases, 2026-03-11)
+## Benchmark Snapshot (53 cases, 2026-03-16)
 
 To avoid drift, this README keeps only a compact summary. Full per-case matrix and
 methodology live in docs:

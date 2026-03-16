@@ -1,0 +1,111 @@
+# Case 51: Protected Visibility (DEFAULT to PROTECTED)
+
+**Category:** ELF / Policy | **Verdict:** 🟢 COMPATIBLE
+
+## What changes
+
+| Version | `hook_point` ELF visibility |
+|---------|---------------------------|
+| v1 | `STV_DEFAULT` — interposable via LD_PRELOAD or other .so |
+| v2 | `STV_PROTECTED` — exported but NOT interposable |
+
+## Why this is NOT a binary ABI break
+
+The symbol `hook_point` is still **exported and resolvable** in both versions.
+Existing binaries that call `hook_point` will find it and get correct results.
+No calling convention, type layout, or signature changes.
+
+abicheck classifies this as **COMPATIBLE** because:
+- The symbol remains in `.dynsym` and is resolvable.
+- Function signature and behavior are unchanged.
+- Standard callers (via PLT/GOT) are unaffected.
+
+## What it does affect
+
+- **Interposition is broken**: `LD_PRELOAD`-based tooling (sanitizers, profilers,
+  mock libraries) that overrides `hook_point` will no longer intercept calls
+  **made from within the library itself**. The library's own `compute()` will
+  always call its local `hook_point`, ignoring any preloaded override.
+- **Plugin/hook systems**: if consumers relied on overriding `hook_point` to
+  customize library behavior, that contract is silently broken.
+- **`-Bsymbolic` similarity**: PROTECTED visibility has similar semantics to
+  linking with `-Bsymbolic` — internal references bind directly.
+
+## Code diff
+
+```diff
+ /* v1: DEFAULT — interposable */
+-int hook_point(int x) { return x * 2; }
++__attribute__((visibility("protected")))
++int hook_point(int x) { return x * 2; }
+```
+
+## How to reproduce
+
+```bash
+# Build both versions
+gcc -shared -fPIC -g old/lib.c -Iold -o libv1.so
+gcc -shared -fPIC -g new/lib.c -Inew -o libv2.so
+
+# Check visibility
+readelf --dyn-syms libv1.so | grep hook_point
+# → DEFAULT  hook_point
+readelf --dyn-syms libv2.so | grep hook_point
+# → PROTECTED hook_point
+
+# Run abicheck
+python3 -m abicheck.cli dump libv1.so -o /tmp/v1.json
+python3 -m abicheck.cli dump libv2.so -o /tmp/v2.json
+python3 -m abicheck.cli compare /tmp/v1.json /tmp/v2.json
+# → COMPATIBLE (visibility metadata change noted)
+```
+
+## Real Failure Demo
+
+**Severity: INFORMATIONAL**
+
+**Scenario:** app calls `compute(5)`. Both versions return 11 — no runtime difference
+for normal callers. The difference only surfaces with LD_PRELOAD interposition.
+
+```bash
+# Build old lib + app
+gcc -shared -fPIC -g old/lib.c -Iold -o libfoo.so
+gcc -g app.c -Iold -L. -lfoo -Wl,-rpath,. -o app
+./app
+# → hook_point(5) = 10
+# → compute(5)    = 11
+
+# Swap in new lib (PROTECTED hook_point)
+gcc -shared -fPIC -g new/lib.c -Inew -o libfoo.so
+./app
+# → hook_point(5) = 10  ← same result
+# → compute(5)    = 11  ← same result
+
+# But with LD_PRELOAD override, behavior differs:
+# v1: LD_PRELOAD hook overrides both direct calls AND calls from compute()
+# v2: LD_PRELOAD hook overrides direct calls but NOT calls from within the library
+```
+
+**Why INFORMATIONAL:** Normal operation is identical. The concern is that
+interposition-dependent workflows (profiling, mocking, hot-patching) are
+silently broken for library-internal call paths.
+
+## Why runtime is COMPATIBLE (matches verdict)
+
+PROTECTED symbols are still exported and resolved normally for external callers.
+The only behavioral change is in intra-library call resolution: the library
+always uses its own definition, preventing interposition. For standard consumers
+this is transparent.
+
+## Real-world example
+
+GCC's `-fno-semantic-interposition` flag assumes interposed implementations have
+the same semantics — showing that interposition is part of the ELF semantic model.
+Libraries that change from DEFAULT to PROTECTED visibility should document this
+as an interposition policy change.
+
+## References
+
+- [ELF symbol visibility](https://refspecs.linuxfoundation.org/elf/gabi4+/ch4.symtab.html)
+- [GCC `-fno-semantic-interposition`](https://gcc.gnu.org/onlinedocs/gcc/Code-Gen-Options.html)
+- [GNU ld `-Bsymbolic`](https://sourceware.org/binutils/docs/ld/Options.html)
