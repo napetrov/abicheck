@@ -57,6 +57,7 @@ Save a baseline at release time, compare every new build:
 ## Next steps
 
 - [Getting Started](getting_started.md) — installation, first check, CI setup
+- [Platform Support](platforms.md) — Linux/macOS/Windows host matrix, cross-platform scanning
 - [Verdicts](concepts/verdicts.md) — what each verdict means and how to handle it
 - [Examples & Breakage Guide](examples_breakage_guide.md) — real-world ABI/API break scenarios with code
 - [Change Kind Reference](reference/change_kinds.md) — full list of 100+ detected change types
