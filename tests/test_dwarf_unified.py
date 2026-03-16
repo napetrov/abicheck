@@ -17,12 +17,6 @@ from unittest.mock import patch
 
 import pytest
 
-# Mark all compile-based tests as Linux-only at module level
-pytestmark = pytest.mark.skipif(
-    sys.platform != "linux",
-    reason="ELF DWARF tests require Linux (macOS/Windows compilers produce Mach-O/PE)"
-)
-
 from abicheck.dwarf_advanced import AdvancedDwarfMetadata  # noqa: E402
 from abicheck.dwarf_metadata import DwarfMetadata  # noqa: E402
 from abicheck.dwarf_unified import (  # noqa: E402
@@ -65,6 +59,7 @@ def _compile_so(tmp_path: Path, name: str, src: str, lang: str = "c") -> Path:
 # Core correctness: unified output == separate output
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(sys.platform != "linux", reason="ELF DWARF tests require Linux (macOS/Windows compilers produce Mach-O/PE)")
 class TestUnifiedEqualsSepaRate:
     """parse_dwarf() must produce identical data to calling both parsers separately."""
 
@@ -218,6 +213,7 @@ class TestShims:
 # Performance sanity: single open vs two opens
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(sys.platform != "linux", reason="ELF DWARF tests require Linux (macOS/Windows compilers produce Mach-O/PE)")
 class TestSingleOpen:
     def test_file_opened_once(self, tmp_path: Path) -> None:
         """parse_dwarf opens the file exactly once (not twice)."""

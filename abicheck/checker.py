@@ -2052,6 +2052,11 @@ def compare(
     # an unsuppressed DWARF duplicate).
     changes = _deduplicate_ast_dwarf(changes)
 
+    # Enrich source locations before suppression so source_location-based
+    # suppression rules can match (most changes have source_location=None
+    # until enrichment runs).
+    _enrich_source_locations(changes, old, new)
+
     suppressed: list[Change] = []
     if suppression is not None:
         filtered: list[Change] = []
@@ -2062,8 +2067,7 @@ def compare(
                 filtered.append(c)
         changes = filtered
 
-    # Post-processing: enrich remaining changes with source locations and affected symbols
-    _enrich_source_locations(changes, old, new)
+    # Post-processing: enrich remaining changes with affected symbols
     _enrich_affected_symbols(changes, old)
 
     verdict = policy_file.compute_verdict(changes) if policy_file is not None else compute_verdict(changes, policy=policy)

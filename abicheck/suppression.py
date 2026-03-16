@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import yaml
@@ -151,10 +151,7 @@ class Suppression:
             src = change.source_location or ""
             if not self._compiled_source_pattern.match(src):
                 return False
-            # source_location can be combined with change_kind
-            if self.change_kind is not None and change.kind.value != self.change_kind:
-                return False
-            return True
+            # Fall through to check remaining selectors conjunctively (AND logic)
 
         # type_pattern: only matches type-level changes
         if self._compiled_type_pattern is not None:
@@ -241,7 +238,12 @@ class SuppressionList:
             expires: date | None = None
             if expires_raw is not None:
                 if isinstance(expires_raw, date):
-                    expires = expires_raw
+                    # datetime is a subclass of date; convert to date to avoid
+                    # TypeError when comparing datetime to date in is_expired()
+                    if isinstance(expires_raw, datetime):
+                        expires = expires_raw.date()
+                    else:
+                        expires = expires_raw
                 else:
                     try:
                         expires = date.fromisoformat(str(expires_raw))
