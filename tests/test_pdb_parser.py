@@ -323,7 +323,7 @@ def _make_lf_fieldlist(sub_records: list[bytes]) -> bytes:
         data += rec
         # 4-byte align
         pad = (4 - (len(data) % 4)) % 4
-        data += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        data += bytes([0xF0 + n for n in range(pad, 0, -1)]) if pad else b""
     return data
 
 
@@ -1087,7 +1087,7 @@ class TestFieldlistExtended:
         fl1_data = _make_lf_member(0, 0x74, 0, "a")
         # Pad to 4-byte boundary
         pad = (4 - (len(fl1_data) % 4)) % 4
-        fl1_data += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        fl1_data += bytes([0xF0 + n for n in range(pad, 0, -1)]) if pad else b""
         # Add LF_INDEX sub-record: leaf(2) + pad(2) + cont_ti(4)
         fl1_data += struct.pack("<HHI", LF_INDEX, 0, 0x1001)
 
@@ -1166,7 +1166,7 @@ class TestSkipSubrecord:
         # Build fieldlist with LF_STMEMBER then LF_MEMBER
         stmember = struct.pack("<HHI", LF_STMEMBER, 0, 0x74) + _cv_cstring("sval")
         pad = (4 - (len(stmember) % 4)) % 4
-        stmember += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        stmember += bytes([0xF0 + n for n in range(pad, 0, -1)]) if pad else b""
         member = _make_lf_member(0, 0x74, 0, "x")
         data = stmember + member
         db = self._make_db([(LF_FIELDLIST, data)])
@@ -1177,7 +1177,7 @@ class TestSkipSubrecord:
         """LF_NESTTYPE should be skipped."""
         nesttype = struct.pack("<HHI", LF_NESTTYPE, 0, 0x1001) + _cv_cstring("Inner")
         pad = (4 - (len(nesttype) % 4)) % 4
-        nesttype += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        nesttype += bytes([0xF0 + n for n in range(pad, 0, -1)]) if pad else b""
         member = _make_lf_member(0, 0x74, 0, "val")
         data = nesttype + member
         db = self._make_db([(LF_FIELDLIST, data)])
@@ -1189,7 +1189,7 @@ class TestSkipSubrecord:
         # attr with mprop=0 (not virtual), so no vbaseoff
         onemethod = struct.pack("<HHI", LF_ONEMETHOD, 0, 0x1001) + _cv_cstring("foo")
         pad = (4 - (len(onemethod) % 4)) % 4
-        onemethod += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        onemethod += bytes([0xF0 + n for n in range(pad, 0, -1)]) if pad else b""
         member = _make_lf_member(0, 0x74, 0, "val")
         data = onemethod + member
         db = self._make_db([(LF_FIELDLIST, data)])
@@ -1204,7 +1204,7 @@ class TestSkipSubrecord:
         onemethod += struct.pack("<I", 0)  # vbaseoff
         onemethod += _cv_cstring("vfunc")
         pad = (4 - (len(onemethod) % 4)) % 4
-        onemethod += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        onemethod += bytes([0xF0 + n for n in range(pad, 0, -1)]) if pad else b""
         member = _make_lf_member(0, 0x74, 0, "data")
         data = onemethod + member
         db = self._make_db([(LF_FIELDLIST, data)])
@@ -1215,7 +1215,7 @@ class TestSkipSubrecord:
         """LF_METHOD should be skipped."""
         method = struct.pack("<HHI", LF_METHOD, 1, 0x1001) + _cv_cstring("bar")
         pad = (4 - (len(method) % 4)) % 4
-        method += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        method += bytes([0xF0 + n for n in range(pad, 0, -1)]) if pad else b""
         member = _make_lf_member(0, 0x74, 0, "v")
         data = method + member
         db = self._make_db([(LF_FIELDLIST, data)])
@@ -1226,7 +1226,7 @@ class TestSkipSubrecord:
         """LF_VFUNCTAB should skip 6 bytes."""
         vfunctab = struct.pack("<HHI", LF_VFUNCTAB, 0, 0x1001)
         pad = (4 - (len(vfunctab) % 4)) % 4
-        vfunctab += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        vfunctab += bytes([0xF0 + n for n in range(pad, 0, -1)]) if pad else b""
         member = _make_lf_member(0, 0x74, 0, "w")
         data = vfunctab + member
         db = self._make_db([(LF_FIELDLIST, data)])
@@ -1237,7 +1237,7 @@ class TestSkipSubrecord:
         """LF_BCLASS should skip attr(2) + type_ti(4) + numeric leaf."""
         bclass = struct.pack("<HHI", LF_BCLASS, 0, 0x1001) + _cv_numeric(0)
         pad = (4 - (len(bclass) % 4)) % 4
-        bclass += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        bclass += bytes([0xF0 + n for n in range(pad, 0, -1)]) if pad else b""
         member = _make_lf_member(0, 0x74, 0, "bval")
         data = bclass + member
         db = self._make_db([(LF_FIELDLIST, data)])
@@ -1250,7 +1250,7 @@ class TestSkipSubrecord:
         vbclass += _cv_numeric(0)  # vbpoff
         vbclass += _cv_numeric(0)  # vbtableoff
         pad = (4 - (len(vbclass) % 4)) % 4
-        vbclass += bytes([0xF0 + pad - 1] * pad) if pad else b""
+        vbclass += bytes([0xF0 + n for n in range(pad, 0, -1)]) if pad else b""
         member = _make_lf_member(0, 0x74, 0, "vb")
         data = vbclass + member
         db = self._make_db([(LF_FIELDLIST, data)])

@@ -79,13 +79,17 @@ def _resolve_embedded_pdb(
         return None
     embedded_path = Path(embedded)
 
+    # Use Windows path semantics to extract the basename — on non-Windows hosts
+    # Path(r"C:\build\foo.pdb").name returns the whole string, not "foo.pdb".
+    embedded_name: str = PureWindowsPath(embedded).name or embedded_path.name
+
     # Block network/UNC paths during auto-discovery
     if not allow_network and _is_network_path(embedded_path):
         log.debug(
             "locate_pdb: skipping network path %s (use --pdb-path to override)", embedded
         )
         # Still try the filename-only fallback (always local)
-        local = dll_path.parent / embedded_path.name
+        local = dll_path.parent / embedded_name
         if local.is_file():
             return local
         return None
@@ -110,7 +114,7 @@ def _resolve_embedded_pdb(
         return embedded_path
 
     # Fall back to same filename in the DLL's directory (always local, no traversal)
-    local = dll_path.parent / embedded_path.name
+    local = dll_path.parent / embedded_name
     if local.is_file():
         return local
     return None
@@ -186,9 +190,13 @@ def _extract_pdb_path_from_pe(dll_path: Path) -> str | None:
                 # Reject oversized entries to prevent OOM from crafted PEs.
                 if size and size <= _MAX_CODEVIEW_SIZE and dbg.struct.AddressOfRawData:
                     raw: bytes = pe.get_data(dbg.struct.AddressOfRawData, size)
-                    if raw and len(raw) >= 24 and raw[:4] == _RSDS_SIG:
+                    if raw[:4] == _RSDS_SIG and len(raw) >= 24:
                         # RSDS: 4 (sig) + 16 (GUID) + 4 (age) + filename
                         pdb_name = raw[24:].split(b"\x00", 1)[0]
+                        return pdb_name.decode("utf-8", errors="replace")
+                    if raw[:4] == _NB10_SIG and len(raw) >= 16:
+                        # NB10: 4 (sig) + 4 (offset) + 4 (timestamp) + 4 (age) + filename
+                        pdb_name = raw[16:].split(b"\x00", 1)[0]
                         return pdb_name.decode("utf-8", errors="replace")
                 continue
 

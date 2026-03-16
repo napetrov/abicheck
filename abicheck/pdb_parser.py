@@ -1162,14 +1162,21 @@ def parse_pdb(path: Path) -> PdbFile:
     if msf.stream_count() > _TPI_STREAM:
         tpi_data = msf.stream_data(_TPI_STREAM)
         if tpi_data:
-            pdb.tpi = parse_tpi_stream(tpi_data)
-            pdb.types = TypeDatabase(pdb.tpi)
-            pdb.types.parse_all()
+            try:
+                pdb.tpi = parse_tpi_stream(tpi_data)
+            except (ValueError, struct.error) as exc:
+                log.debug("Failed to parse TPI stream from %s: %s", path, exc)
+            else:
+                pdb.types = TypeDatabase(pdb.tpi)
+                pdb.types.parse_all()
 
-    # Parse DBI stream (stream 3)
+    # Parse DBI stream (stream 3) — failures are non-fatal: TPI data is preserved.
     if msf.stream_count() > _DBI_STREAM:
         dbi_data = msf.stream_data(_DBI_STREAM)
         if dbi_data:
-            pdb.dbi = parse_dbi_stream(dbi_data)
+            try:
+                pdb.dbi = parse_dbi_stream(dbi_data)
+            except (ValueError, struct.error) as exc:
+                log.debug("Failed to parse DBI stream from %s: %s", path, exc)
 
     return pdb
