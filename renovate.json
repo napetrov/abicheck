@@ -1,0 +1,49 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "timezone": "America/Los_Angeles",
+  "schedule": ["before 9am on Monday"],
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "packageRules": [
+    {
+      "description": "Group all GitHub Actions updates into a single PR",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "automerge": false
+    },
+    {
+      "description": "Group all Python dev/test dependency updates",
+      "matchDepTypes": ["devDependencies"],
+      "matchManagers": ["pip_requirements", "pyproject"],
+      "groupName": "Python dev dependencies",
+      "automerge": false
+    },
+    {
+      "description": "Group all Python runtime dependency updates",
+      "matchDepTypes": ["dependencies"],
+      "matchManagers": ["pip_requirements", "pyproject"],
+      "groupName": "Python dependencies",
+      "automerge": false
+    },
+    {
+      "description": "Automerge minor/patch pre-commit hook updates",
+      "matchManagers": ["pre-commit"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "pre-commit hooks",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    }
+  ],
+  "pip_requirements": {
+    "enabled": false
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"]
+  }
+}

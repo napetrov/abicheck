@@ -1,0 +1,37 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement! Please describe the problem and your proposed solution.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What problem does this solve? What use case are you trying to cover?
+      placeholder: "I often need to check ABI across multiple versions at once but..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe the solution you'd like. Include CLI flags, config keys, or output format if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative approaches or workarounds you've considered?
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Links, examples from other tools, or anything else that helps understand the request.

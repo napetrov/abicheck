@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question / Discussion
+    url: https://github.com/napetrov/abicheck/discussions
+    about: Ask questions and discuss ideas in GitHub Discussions.
+  - name: Security Vulnerability
+    url: https://github.com/napetrov/abicheck/security/advisories/new
+    about: Please report security issues via private vulnerability reporting, not public issues.

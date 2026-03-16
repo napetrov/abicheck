@@ -1,0 +1,19 @@
+# CODEOWNERS — auto-assign reviewers on all PRs
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything
+*                   @napetrov
+
+# CI / workflows
+.github/            @napetrov
+
+# Core library
+abicheck/           @napetrov
+
+# Tests
+tests/              @napetrov
+
+# Documentation
+docs/               @napetrov
+*.md                @napetrov
+mkdocs.yml          @napetrov
