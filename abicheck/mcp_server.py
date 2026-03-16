@@ -139,11 +139,26 @@ def _safe_write_path(raw: str, *, label: str = "output_path") -> Path:
                 if "sensitive system path" in str(e):
                     raise
     elif _os == "Windows":
-        _win_sensitive = re.compile(
-            r"^[A-Za-z]:[/\\](?:Windows|System32|Program Files|ProgramData)[/\\]",
-            re.IGNORECASE,
+        p_str = str(p)
+        # Normalize NT extended paths so checks also catch forms like:
+        #   \\?\C:\Windows\...
+        #   \\?\UNC\localhost\c$\Windows\...
+        if p_str.startswith("\\\\?\\"):
+            p_str = p_str[4:]
+            if p_str.upper().startswith("UNC\\"):
+                p_str = "\\\\" + p_str[4:]
+
+        norm = p_str.replace("\\", "/").casefold()
+        sensitive_prefixes = (
+            "c:/windows/",
+            "c:/windows/system32/",
+            "c:/program files/",
+            "c:/program files (x86)/",
+            "c:/programdata/",
+            "//localhost/c$/windows/",
+            "//127.0.0.1/c$/windows/",
         )
-        if _win_sensitive.match(str(p)):
+        if norm.startswith(sensitive_prefixes):
             raise ValueError(
                 f"{label} points to a sensitive system path"
             )

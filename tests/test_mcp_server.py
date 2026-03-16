@@ -815,6 +815,24 @@ class TestSafeWritePath:
         with pytest.raises(ValueError, match="sensitive system path"):
             _safe_write_path("C:\\Windows\\out.json")
 
+    def test_windows_device_prefixed_system_path_blocked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """NT device-prefixed paths (\\\\?\\C:\\...) are blocked."""
+        import platform
+        from abicheck.mcp_server import _safe_write_path
+
+        monkeypatch.setattr(platform, "system", lambda: "Windows")
+        with pytest.raises(ValueError, match="sensitive system path"):
+            _safe_write_path(r"\\?\C:\Windows\out.json")
+
+    def test_windows_unc_admin_share_system_path_blocked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """UNC admin-share paths to system dirs are blocked."""
+        import platform
+        from abicheck.mcp_server import _safe_write_path
+
+        monkeypatch.setattr(platform, "system", lambda: "Windows")
+        with pytest.raises(ValueError, match="sensitive system path"):
+            _safe_write_path(r"\\localhost\c$\Windows\out.json")
+
     def test_ssh_dir_raises(self) -> None:
         from abicheck.mcp_server import _safe_write_path
         home = Path.home()
