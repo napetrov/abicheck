@@ -42,6 +42,45 @@ _SNIFF_BYTES = 256
 
 _logger = logging.getLogger("abicheck")
 
+_HEADER_EXTS = {".h", ".hh", ".hpp", ".hxx", ".ipp", ".tpp", ".inc"}
+
+
+def _expand_header_inputs(inputs: list[Path]) -> list[Path]:
+    """Expand header inputs where each item can be a file or a directory.
+
+    Directories are scanned recursively for known header extensions.
+    """
+    out: list[Path] = []
+    for p in inputs:
+        if not p.exists():
+            raise click.ClickException(f"Header path not found: {p}")
+        if p.is_file():
+            out.append(p)
+            continue
+        if p.is_dir():
+            found = [
+                f for f in p.rglob("*")
+                if f.is_file() and f.suffix.lower() in _HEADER_EXTS
+            ]
+            if not found:
+                raise click.ClickException(
+                    f"Header directory contains no supported header files: {p}"
+                )
+            out.extend(sorted(found))
+            continue
+        raise click.ClickException(f"Header path is neither file nor directory: {p}")
+
+    # Deduplicate while preserving deterministic order
+    seen: set[str] = set()
+    deduped: list[Path] = []
+    for h in out:
+        k = str(h)
+        if k in seen:
+            continue
+        seen.add(k)
+        deduped.append(h)
+    return deduped
+
 
 def _setup_verbosity(verbose: bool) -> None:
     """Configure logging verbosity for native commands."""
@@ -119,15 +158,13 @@ def _dump_native_binary(
     fmt_label = fmt_labels.get(binary_fmt, binary_fmt)
 
     if binary_fmt == "elf":
-        if not headers:
+        resolved_headers = _expand_header_inputs(headers) if headers else []
+        if not resolved_headers:
             click.echo(
                 f"Warning: '{path}' is analyzed in symbols-only mode (no headers). "
                 "Results are weaker and may miss type/signature ABI breaks.",
                 err=True,
             )
-        for hdr in headers:
-            if not hdr.exists() or not hdr.is_file():
-                raise click.ClickException(f"Header file not found or not a file: {hdr}")
         for inc in includes:
             if not inc.exists() or not inc.is_dir():
                 raise click.ClickException(f"Include directory not found or not a directory: {inc}")
@@ -135,7 +172,7 @@ def _dump_native_binary(
         try:
             return dump(
                 so_path=path,
-                headers=headers,
+                headers=resolved_headers,
                 extra_includes=includes,
                 version=version,
                 compiler=compiler,
@@ -318,7 +355,7 @@ def main() -> None:
 @main.command("dump")
 @click.argument("so_path", type=click.Path(exists=True, path_type=Path))
 @click.option("-H", "--header", "headers", multiple=True, type=click.Path(exists=True, path_type=Path),
-              help="Public header file (repeat for multiple).")
+              help="Public header file or directory (repeat for multiple).")
 @click.option("-I", "--include", "includes", multiple=True, type=click.Path(path_type=Path),
               help="Extra include directory for castxml.")
 @click.option("--version", "version", default="unknown", show_default=True,
@@ -507,7 +544,7 @@ def _render_output(fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnaps
 # ── Dump options (used when input is an ELF binary) ──────────────────────────
 @click.option("-H", "--header", "headers", multiple=True,
               type=click.Path(path_type=Path),
-              help="Public header file applied to both sides (repeat for multiple). "
+              help="Public header file or directory applied to both sides (repeat for multiple). "
                    "Recommended for full ELF ABI analysis; without headers, ELF falls back to symbols-only mode. "
                    "Validated when input is ELF; ignored for snapshots.")
 @click.option("-I", "--include", "includes", multiple=True,

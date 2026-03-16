@@ -485,3 +485,36 @@ class TestElfNoHeaderFallback:
         assert result.exit_code == 0, result.output
         out = result.output.lower()
         assert "symbols-only mode" in out or "weaker" in out
+
+
+class TestHeaderDirectoryInput:
+    def test_header_directory_is_expanded_recursively(self, tmp_path, monkeypatch):
+        old_elf = _write_fake_elf(tmp_path / "libv1.so")
+        new_elf = _write_fake_elf(tmp_path / "libv2.so")
+
+        hdr_dir = tmp_path / "include"
+        (hdr_dir / "sub").mkdir(parents=True)
+        h1 = hdr_dir / "api.h"
+        h2 = hdr_dir / "sub" / "detail.hpp"
+        h3 = hdr_dir / "sub" / "x.hh"
+        h1.write_text("int foo(void);", encoding="utf-8")
+        h2.write_text("int bar(void);", encoding="utf-8")
+        h3.write_text("int baz(void);", encoding="utf-8")
+
+        captured: list[list[Path]] = []
+
+        def mock_dump(so_path, headers, extra_includes=None, version="unknown", lang="c++", **kw):
+            captured.append(list(headers))
+            return _make_snapshot(version)
+
+        monkeypatch.setattr("abicheck.cli.dump", mock_dump)
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare", str(old_elf), str(new_elf), "-H", str(hdr_dir)
+        ])
+        assert result.exit_code == 0, result.output
+        assert len(captured) == 2  # old + new side
+        expected = sorted([h1, h2, h3], key=lambda p: str(p))
+        assert captured[0] == expected
+        assert captured[1] == expected
