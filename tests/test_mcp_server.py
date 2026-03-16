@@ -388,7 +388,7 @@ class TestRenderOutput:
         result, old, new = self._make_diff_result()
         output = _render_output("sarif", result, old, new)
         parsed = json.loads(output)
-        assert parsed["$schema"] or parsed.get("version")
+        assert parsed.get("$schema") or parsed.get("version")
 
     def test_render_html(self):
         result, old, new = self._make_diff_result()
@@ -672,17 +672,49 @@ class TestAbiCompareValidation:
         data = json.loads(raw)
         assert data.get("status") == "ok"
 
-    def test_headers_side_specific_empty_list(self, tmp_path: Path):
-        """old_headers=[] should override shared headers (not fall back to them)."""
+    def test_headers_side_specific_empty_list(self, tmp_path: Path, monkeypatch):
+        """old_headers=[] must override shared headers, not fall back to them.
+
+        We verify the override behaviour at the _resolve_input call boundary:
+        when old_headers=[] and new_headers=[] are given alongside a non-empty
+        headers list, _resolve_input must receive empty lists (not the shared
+        list) for each side.
+        """
+        from abicheck import mcp_server
+
+        captured: list[tuple[str, list]] = []
+
+        original_resolve = mcp_server._resolve_input  # noqa: SLF001
+
+        def _spy_resolve(path, headers, includes, version, lang):
+            captured.append((str(path), list(headers)))
+            return original_resolve(path, headers, includes, version, lang)
+
+        monkeypatch.setattr(mcp_server, "_resolve_input", _spy_resolve)
+
+        shared_hdr = tmp_path / "shared.h"
+        shared_hdr.write_text("// shared\n", encoding="utf-8")
+
         old = AbiSnapshot(library="lib.so", version="1.0")
         new = AbiSnapshot(library="lib.so", version="2.0")
         old_p = tmp_path / "old.json"
         new_p = tmp_path / "new.json"
         old_p.write_text(snapshot_to_json(old), encoding="utf-8")
         new_p.write_text(snapshot_to_json(new), encoding="utf-8")
-        raw = abi_compare(str(old_p), str(new_p), old_headers=[], new_headers=[])
+
+        raw = abi_compare(
+            str(old_p), str(new_p),
+            headers=[str(shared_hdr)],
+            old_headers=[],
+            new_headers=[],
+        )
         data = json.loads(raw)
         assert data.get("status") == "ok"
+
+        # Both sides must have received empty header lists, not the shared list
+        assert len(captured) == 2, f"Expected 2 _resolve_input calls, got {len(captured)}"
+        for _path, hdrs in captured:
+            assert hdrs == [], f"Expected empty headers for {_path}, got {hdrs}"
 
 
 class TestMainFunction:
@@ -722,8 +754,9 @@ class TestSafeReadPath:
         from abicheck.mcp_server import _safe_read_path
         sub = tmp_path / "sub"
         sub.mkdir()
-        # ../sub/../sub is valid, just gets resolved
-        result = _safe_read_path(str(sub))
+        # Pass a path with .. — verify it is resolved to the canonical path
+        dotdot_path = str(tmp_path / "sub" / ".." / "sub")
+        result = _safe_read_path(dotdot_path)
         assert result == sub.resolve()
 
 

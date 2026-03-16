@@ -41,6 +41,12 @@ except ImportError as _exc:
         "Install it with: pip install abicheck[mcp]"
     )
     raise ImportError(_msg) from _exc
+except Exception as _exc:  # noqa: BLE001
+    # Guard against partial installs or other init-time failures from mcp internals
+    raise ImportError(
+        f"Failed to initialise MCP support: {_exc}. "
+        "Try: pip install --upgrade 'abicheck[mcp]'"
+    ) from _exc
 
 from .checker import DiffResult, compare
 from .checker_policy import (
@@ -142,9 +148,10 @@ def _safe_write_path(raw: str, *, label: str = "output_path") -> Path:
                 f"{label} points to a sensitive system path"
             )
 
-    # Block writes to SSH/credential directories
-    home = Path.home()
-    for sensitive_dir in [home / ".ssh", home / ".aws", home / ".gnupg"]:
+    # Block writes to SSH/credential directories.
+    # Resolve both sides to handle symlinks (e.g. ~/.ssh → /private/home/user/.ssh).
+    home = Path.home().resolve()
+    for sensitive_dir in [(home / ".ssh").resolve(), (home / ".aws").resolve(), (home / ".gnupg").resolve()]:
         try:
             p.relative_to(sensitive_dir)
             raise ValueError(
@@ -484,8 +491,9 @@ def abi_compare(
             if not p.exists():
                 return json.dumps({"status": "error", "error": f"File not found for {label}"})
 
-        # Validate policy name
-        if policy not in VALID_BASE_POLICIES:
+        # Validate policy name only when no policy_file override is provided.
+        # policy_file takes precedence over the base policy name.
+        if policy_file is None and policy not in VALID_BASE_POLICIES:
             return json.dumps({
                 "error": f"Unknown policy: {policy!r}. "
                 f"Valid policies: {', '.join(sorted(VALID_BASE_POLICIES))}"

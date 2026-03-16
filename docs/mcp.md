@@ -12,7 +12,7 @@ Or with conda (when available on conda-forge):
 
 ```bash
 conda install abicheck
-pip install mcp[cli]>=1.2.0
+pip install "mcp[cli]>=1.2.0"
 ```
 
 > The `mcp` dependency is optional. The base `pip install abicheck` does not pull it in.
@@ -210,7 +210,7 @@ Returns a detailed explanation of what a change kind means, why it's dangerous, 
 
 ### Check a PR for ABI compatibility
 
-```
+```text
 Agent: "Check if this PR breaks ABI"
 
 1. abi_compare(old_input="baseline.json", new_input="build/libfoo.so",
@@ -225,7 +225,7 @@ Agent: "Check if this PR breaks ABI"
 
 ### Developer asks "Is my struct change safe?"
 
-```
+```text
 User: "I added a field to FooConfig — is this ABI safe?"
 
 1. abi_compare(old_input="old.json", new_input="new.json")
@@ -239,7 +239,7 @@ User: "I added a field to FooConfig — is this ABI safe?"
 
 ### Explore what abicheck detects
 
-```
+```text
 Agent: "What kinds of ABI breaks can you detect?"
 
 1. abi_list_changes(impact="breaking")
@@ -254,7 +254,7 @@ The server uses **stdio** transport — the agent spawns `abicheck-mcp` as a loc
 
 ## Architecture
 
-```
+```text
 ┌──────────────────────────────────┐
 │   MCP Client (Agent / IDE)       │
 │   Claude Code, Cursor, VS Code   │
