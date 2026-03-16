@@ -301,9 +301,9 @@ or conda-forge environment), set `install-deps: false`:
 Example (conda-forge pre-step):
 
 ```yaml
-      - name: Prepare ABI toolchain via conda-forge
+      - name: Install abicheck from conda-forge
         run: |
-          conda install -y -c conda-forge castxml cxx-compiler
+          conda install -y -c conda-forge abicheck
 
       - uses: napetrov/abicheck@v1
         with:

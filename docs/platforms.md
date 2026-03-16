@@ -116,8 +116,8 @@ jobs:
           # sudo apt-get install -y castxml   # Ubuntu
           # brew install castxml              # macOS
 
-          # Option 2: conda-forge toolchain
-          conda install -y -c conda-forge castxml cxx-compiler
+          # Option 2: conda-forge package (deps bundled in recipe)
+          conda install -y -c conda-forge abicheck
       - name: ABI check
         run: |
           abicheck compare -lib mylib \
@@ -152,12 +152,12 @@ jobs:
 
 | Feature | Required tools | pip / system install | conda-forge install |
 |---------|----------------|----------------------|---------------------|
-| ELF analysis | `pyelftools` | `pip install abicheck` | included in `abicheck` env |
-| PE analysis | `pefile` | `pip install abicheck` | included in `abicheck` env |
-| Mach-O analysis | `macholib` | `pip install abicheck` | included in `abicheck` env |
-| Type/param analysis (Linux) | `castxml` + C/C++ compiler | `apt/yum` + `gcc/g++` | `conda install -c conda-forge castxml cxx-compiler` |
-| Type/param analysis (macOS) | `castxml` + Apple toolchain | `brew install castxml` (+ Xcode CLT) | `conda install -c conda-forge castxml clangxx_osx-64` *(or arm64 variant)* |
-| Type/param analysis (Windows) | `castxml` + `cl.exe` | Visual Studio Build Tools + castxml | `conda install -c conda-forge castxml` + MSVC Build Tools |
+| ELF analysis | `pyelftools` | `pip install abicheck` | `conda install -c conda-forge abicheck` |
+| PE analysis | `pefile` | `pip install abicheck` | `conda install -c conda-forge abicheck` |
+| Mach-O analysis | `macholib` | `pip install abicheck` | `conda install -c conda-forge abicheck` |
+| Type/param analysis (Linux) | `castxml` + C/C++ compiler | `apt/yum` + `gcc/g++` | `conda install -c conda-forge abicheck` |
+| Type/param analysis (macOS) | `castxml` + Apple toolchain | `brew install castxml` (+ Xcode CLT) | `conda install -c conda-forge abicheck` |
+| Type/param analysis (Windows) | `castxml` + `cl.exe` | Visual Studio Build Tools + castxml | `conda install -c conda-forge abicheck` |
 
-If you use a conda environment with `abicheck` + `castxml` + compiler toolchain,
-you can usually avoid ad-hoc system package installs in CI/local setups.
+For conda-based workflows, install only `abicheck` from conda-forge.
+Recipe dependencies pull required analysis tooling automatically.

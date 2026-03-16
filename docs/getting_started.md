@@ -10,7 +10,7 @@ On all platforms it provides binary metadata analysis (exports, imports, depende
 
 ## 1) Install abicheck
 
-> **Note:** abicheck is not yet published to PyPI or conda-forge. Install from source.
+> **Note:** abicheck is not yet published to PyPI. Use source install (`pip install -e .`) or conda-forge package.
 
 ### Requirements
 
@@ -36,12 +36,12 @@ brew install castxml
 #### Option B: conda-forge (recommended for reproducible envs)
 
 ```bash
-# create env with runtime + analysis deps
-conda create -n abicheck -c conda-forge python=3.12 castxml cxx-compiler
+# create env and install abicheck (recipe includes required analysis deps)
+conda create -n abicheck -c conda-forge python=3.12 abicheck
 conda activate abicheck
 ```
 
-On Windows, install `castxml` via conda-forge and keep MSVC Build Tools (`cl.exe`) available.
+No extra manual dependency installation is required when using the conda-forge package.
 
 ### Install from source
 
