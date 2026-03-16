@@ -1063,7 +1063,6 @@ class TestStrictCompactCaseLevel:
         # whereas ABICC additionally emits a high-level "func_params_changed" by matching
         # demangled names via castxml header analysis (TODO: implement header-based symbol
         # identity matching to produce func_params_changed in this case).
-        param_changes = [c for c in data["changes"] if c["kind"] == "func_params_changed"]
         breaking_changes = [
             c for c in data["changes"]
             if c["kind"] in ("func_params_changed", "func_removed", "func_added")
