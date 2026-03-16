@@ -1291,7 +1291,6 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             symbol=eid,
             description=f"new export in DLL: {eid}",
         ))
-
     # Detect changed import dependencies
     old_deps = set(o.imports.keys())
     new_deps = set(n.imports.keys())
@@ -1350,7 +1349,6 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 symbol=name,
                 description=f"new export in dylib: {name}",
             ))
-
     # Install name change (equivalent of SONAME change)
     if o.install_name and o.install_name != n.install_name:
         changes.append(Change(

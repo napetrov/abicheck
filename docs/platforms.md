@@ -64,12 +64,10 @@ native platform (Linux for ELF, macOS for Mach-O, Windows for PE).
 
 ```bash
 # Symbol-level diff (works cross-platform)
-abicheck compare -lib mylib \
-  -old mylib_v1.dll -new mylib_v2.dll
+abicheck compare mylib_v1.dll mylib_v2.dll
 
 # With headers (only useful if castxml+cl.exe is available)
-abicheck compare -lib mylib \
-  -old mylib_v1.dll -new mylib_v2.dll \
+abicheck compare mylib_v1.dll mylib_v2.dll \
   -H include/
 ```
 
@@ -79,8 +77,7 @@ abicheck compare -lib mylib \
 ### Scan a macOS dylib from Linux
 
 ```bash
-abicheck compare -lib mylib \
-  -old libmylib.1.dylib -new libmylib.2.dylib
+abicheck compare libmylib.1.dylib libmylib.2.dylib
 ```
 
 **What you get:** exported symbol diff.
@@ -89,12 +86,11 @@ abicheck compare -lib mylib \
 ### Scan a Linux .so from macOS
 
 ```bash
-abicheck compare -lib mylib \
-  -old libmylib.so.1 -new libmylib.so.2
+abicheck compare libmylib.so.1 libmylib.so.2
 ```
 
 ELF parsing is pure Python — works on macOS. DWARF walk also works.
-Full type analysis requires a Linux `castxml` + headers on the macOS host.
+Full type analysis requires `castxml` and headers available on the host.
 
 ---
 
