@@ -636,7 +636,7 @@ class TestStrictModeParity:
 
         # ABICC 2.3 keeps pure additions compatible even under -strict (rc=0).
         # Current abicheck may still promote additions under strict-mode=full.
-        if abicc_r.returncode != abicheck_r.returncode:
+        if (abicc_r.returncode, abicheck_r.returncode) == (0, 1):
             pytest.xfail(
                 "Known divergence: strict+addition exit code (ABICC=0 vs abicheck=1). "
                 "Need semantic alignment for strict-mode defaults."
@@ -783,7 +783,7 @@ def test_strict_case_level_parity(
     )
 
     # Known divergence: strict+addition semantics differ today.
-    if name == "strict_addition" and abicc_r.returncode != abicheck_r.returncode:
+    if name == "strict_addition" and (abicc_r.returncode, abicheck_r.returncode) == (0, 1):
         pytest.xfail(
             "Known divergence: strict+addition exit code parity pending "
             "(ABICC=0, abicheck=1 with strict-mode=full)."
@@ -859,7 +859,7 @@ class TestSourceModeParity:
 
         # ABICC 2.3 reports this case as source-compatible (warning-level, rc=0).
         # Current abicheck may classify it as BREAKING in source mode (rc=1).
-        if abicc_r.returncode != abicheck_r.returncode:
+        if (abicc_r.returncode, abicheck_r.returncode) == (0, 1):
             pytest.xfail(
                 "Known divergence: source-mode return-type-change parity pending "
                 "(ABICC=0 warning-level, abicheck=1)."
@@ -1063,11 +1063,9 @@ class TestStrictCompactCaseLevel:
         # whereas ABICC additionally emits a high-level "func_params_changed" by matching
         # demangled names via castxml header analysis (TODO: implement header-based symbol
         # identity matching to produce func_params_changed in this case).
-        breaking_changes = [
-            c for c in data["changes"]
-            if c["kind"] in ("func_params_changed", "func_removed", "func_added")
-        ]
-        assert len(breaking_changes) >= 1, (
+        kinds = {c["kind"] for c in data["changes"]}
+        param_changes = "func_params_changed" in kinds
+        assert param_changes or {"func_removed", "func_added"} <= kinds, (
             "abicheck should detect param type change as breaking "
             "(via func_params_changed or func_removed+func_added mangled-name change)"
         )

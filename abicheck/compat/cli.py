@@ -574,14 +574,14 @@ class _CompatGroup(click.Group):
     """
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
-        # If the first non-option token is NOT a known subcommand name,
-        # prepend 'check' so Click routes to compat_check_cmd.
+        # If first token is a known subcommand, let Click handle normally.
         if args and not args[0].startswith("-"):
-            # First token looks like a subcommand; let Click handle normally.
             return super().parse_args(ctx, args)
-        if args:
-            # No subcommand prefix → inject 'check'
-            args = ["check", *args]
+        # Do NOT inject 'check' for bare --help/-h — show group help instead.
+        if not args or args[0] in ("--help", "-h"):
+            return super().parse_args(ctx, args)
+        # Option-led invocation (e.g. -lib foo -old ...) → inject 'check'
+        args = ["check", *args]
         return super().parse_args(ctx, args)
 
     def invoke(self, ctx: click.Context) -> object:
