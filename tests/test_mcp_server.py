@@ -354,7 +354,7 @@ class TestHelpers:
         f = tmp_path / "weird.xyz"
         f.write_text("not a recognized format", encoding="utf-8")
         from abicheck.errors import AbicheckError
-        with pytest.raises(AbicheckError, match="Cannot detect format"):
+        with pytest.raises(AbicheckError, match="Cannot detect input format"):
             _resolve_input(f, [], [], "1.0", "c++")
 
 

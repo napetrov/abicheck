@@ -312,7 +312,8 @@ def _resolve_input(
         with open(path, "rb") as f:
             head = f.read(256).decode("utf-8", errors="replace").lstrip()
     except OSError as exc:
-        raise AbicheckError(f"Cannot read '{path}': {exc}") from exc
+        _logger.debug("Failed reading input in _resolve_input: %s", exc, exc_info=True)
+        raise AbicheckError("Cannot read input file") from exc
 
     from .compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_dump
     if looks_like_perl_dump(head):
@@ -322,7 +323,7 @@ def _resolve_input(
         return load_snapshot(path)
 
     raise AbicheckError(
-        f"Cannot detect format of '{path}'. "
+        "Cannot detect input format. "
         "Expected: ELF (.so), PE (.dll), Mach-O (.dylib), JSON snapshot, or ABICC Perl dump."
     )
 
