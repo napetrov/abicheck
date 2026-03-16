@@ -1266,14 +1266,13 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     # metadata-only changes that function model may miss.
     old_ids = {(e.name if e.name else f"ordinal:{e.ordinal}") for e in o.exports}
     new_ids = {(e.name if e.name else f"ordinal:{e.ordinal}") for e in n.exports}
-    # Function model may expose either a display name or a raw/decorated symbol.
-    # Match against both to reliably deduplicate PE export deltas.
-    old_fn_symbols = {
-        s for f in old.functions for s in (f.name, f.mangled) if s
-    }
-    new_fn_symbols = {
-        s for f in new.functions for s in (f.name, f.mangled) if s
-    }
+    # Deduplicate export deltas against function model to avoid double-reporting.
+    # Only suppress a removed export if the symbol also exists in new functions
+    # (i.e. it persists — _diff_functions handles the signature change).
+    # If the symbol disappears from both exports AND functions, emit it here.
+    old_fn_mangled = {f.mangled for f in old.functions if f.mangled}
+    new_fn_mangled = {f.mangled for f in new.functions if f.mangled}
+    persisted_fn = old_fn_mangled & new_fn_mangled  # same symbol in both versions
 
     removed_kind = (
         ChangeKind.FUNC_REMOVED_ELF_ONLY
@@ -1281,7 +1280,7 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         else ChangeKind.FUNC_REMOVED
     )
     for eid in sorted(old_ids - new_ids):
-        if eid in old_fn_symbols:
+        if eid in persisted_fn:
             continue
         changes.append(Change(
             kind=removed_kind,
@@ -1290,7 +1289,7 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         ))
 
     for eid in sorted(new_ids - old_ids):
-        if eid in new_fn_symbols:
+        if eid in persisted_fn:
             continue
         changes.append(Change(
             kind=ChangeKind.FUNC_ADDED,
@@ -1331,13 +1330,11 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     if o.exports or n.exports:
         old_names = {e.name for e in o.exports if e.name}
         new_names = {e.name for e in n.exports if e.name}
-        # Match both human-readable and raw symbol fields from function model.
-        old_fn_symbols = {
-            s for f in old.functions for s in (f.name, f.mangled) if s
-        }
-        new_fn_symbols = {
-            s for f in new.functions for s in (f.name, f.mangled) if s
-        }
+        # Deduplicate: suppress export delta only if the symbol persists in both
+        # versions of the function model (meaning _diff_functions owns the change).
+        old_fn_mangled = {f.mangled for f in old.functions if f.mangled}
+        new_fn_mangled = {f.mangled for f in new.functions if f.mangled}
+        persisted_fn = old_fn_mangled & new_fn_mangled
 
         removed_kind = (
             ChangeKind.FUNC_REMOVED_ELF_ONLY
@@ -1345,7 +1342,7 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             else ChangeKind.FUNC_REMOVED
         )
         for name in sorted(old_names - new_names):
-            if name in old_fn_symbols:
+            if name in persisted_fn:
                 continue
             changes.append(Change(
                 kind=removed_kind,
@@ -1354,7 +1351,7 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             ))
 
         for name in sorted(new_names - old_names):
-            if name in new_fn_symbols:
+            if name in persisted_fn:
                 continue
             changes.append(Change(
                 kind=ChangeKind.FUNC_ADDED,
