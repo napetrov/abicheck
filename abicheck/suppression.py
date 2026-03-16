@@ -136,7 +136,8 @@ class Suppression:
         Pattern matching uses fullmatch — the pattern must cover the entire
         mangled symbol name. Use '.*foo.*' for substring matching.
 
-        ``source_location`` uses fnmatch-style glob against change.source_file.
+        ``source_location`` uses fnmatch-style glob against
+        ``change.source_location``.
 
         type_pattern only matches changes whose kind is a type-level change
         (TYPE_*, ENUM_*, TYPEDEF_*, etc.), preventing type whitelists from

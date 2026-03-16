@@ -566,3 +566,54 @@ class TestAdvancedSuppressionScaffold:
                   - symbol: _Z3foov
                     expires: "not-a-date"
             """)
+
+    def test_source_location_combines_with_symbol_selector(self, tmp_path: Path) -> None:
+        """source_location must be conjunctive with symbol/symbol_pattern selectors."""
+        from abicheck.checker import Change, ChangeKind
+        from abicheck.suppression import Suppression, SuppressionList
+
+        sl = SuppressionList(suppressions=[
+            Suppression(
+                symbol="_Z3foov",
+                source_location="*/internal/*",
+                reason="only specific symbol in internal headers",
+            )
+        ])
+
+        # In-scope symbol and file => suppressed
+        c1 = Change(
+            kind=ChangeKind.FUNC_REMOVED,
+            symbol="_Z3foov",
+            description="removed",
+            source_location="/project/internal/a.h:12",
+        )
+        # In-scope file but different symbol => must NOT suppress
+        c2 = Change(
+            kind=ChangeKind.FUNC_REMOVED,
+            symbol="_Z3barv",
+            description="removed",
+            source_location="/project/internal/a.h:13",
+        )
+
+        assert sl.is_suppressed(c1)
+        assert not sl.is_suppressed(c2)
+
+    def test_expires_unquoted_timestamp_normalized_to_date(self, tmp_path: Path) -> None:
+        """YAML datetime values for expires are normalized to date (no TypeError in compare)."""
+        from datetime import datetime as _dt
+
+        sl = _suppression_from_yaml(tmp_path, """
+            version: 1
+            suppressions:
+              - symbol: _Z6helperi
+                expires: 2099-12-31T00:00:00
+        """)
+
+        # Load path should normalize datetime -> date
+        expires = sl._suppressions[0].expires  # noqa: SLF001 - intentional white-box test
+        assert expires is not None
+        assert not isinstance(expires, _dt)
+
+        old, new = _make_removed_func_snaps()
+        result = compare(old, new, suppression=sl)
+        assert result.suppressed_count == 1
