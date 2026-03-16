@@ -16,16 +16,16 @@
       "automerge": false
     },
     {
-      "description": "Group all Python dev/test dependency updates",
-      "matchDepTypes": ["devDependencies"],
-      "matchManagers": ["pip_requirements", "pyproject"],
+      "description": "Group Python dev/test dependency updates (PEP 621 optional-dependencies)",
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["project.optional-dependencies", "dependency-groups"],
       "groupName": "Python dev dependencies",
       "automerge": false
     },
     {
-      "description": "Group all Python runtime dependency updates",
-      "matchDepTypes": ["dependencies"],
-      "matchManagers": ["pip_requirements", "pyproject"],
+      "description": "Group Python runtime dependency updates (PEP 621)",
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["project.dependencies", "build-system.requires"],
       "groupName": "Python dependencies",
       "automerge": false
     },
@@ -39,9 +39,6 @@
       "platformAutomerge": true
     }
   ],
-  "pip_requirements": {
-    "enabled": false
-  },
   "vulnerabilityAlerts": {
     "enabled": true,
     "labels": ["security"]

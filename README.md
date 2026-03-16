@@ -16,7 +16,13 @@ Typical problems it catches: removed or renamed symbols, changed function signat
 
 ## Installation
 
-> **Note:** abicheck is not yet published to PyPI or conda-forge. Install from source for now.
+abicheck is available on [PyPI](https://pypi.org/project/abicheck/) and [conda-forge](https://anaconda.org/conda-forge/abicheck):
+
+```bash
+pip install abicheck
+# or
+conda install -c conda-forge abicheck
+```
 
 ### Prerequisites
 
