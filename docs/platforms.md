@@ -107,17 +107,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install abicheck
-        run: pip install abicheck
+      - name: Install abicheck (source)
+        run: pip install -e .
       - name: Install castxml (Linux/macOS only)
         if: runner.os != 'Windows'
         run: |
-          # Option 1: system packages
           # sudo apt-get install -y castxml   # Ubuntu
           # brew install castxml              # macOS
-
-          # Option 2: conda-forge package (deps bundled in recipe)
-          conda install -y -c conda-forge abicheck
       - name: ABI check
         run: |
           abicheck compare -lib mylib \
@@ -152,12 +148,12 @@ jobs:
 
 | Feature | Required tools | pip / system install | conda-forge install |
 |---------|----------------|----------------------|---------------------|
-| ELF analysis | `pyelftools` | `pip install abicheck` | `conda install -c conda-forge abicheck` |
-| PE analysis | `pefile` | `pip install abicheck` | `conda install -c conda-forge abicheck` |
-| Mach-O analysis | `macholib` | `pip install abicheck` | `conda install -c conda-forge abicheck` |
-| Type/param analysis (Linux) | `castxml` + C/C++ compiler | `apt/yum` + `gcc/g++` | `conda install -c conda-forge abicheck` |
-| Type/param analysis (macOS) | `castxml` + Apple toolchain | `brew install castxml` (+ Xcode CLT) | `conda install -c conda-forge abicheck` |
-| Type/param analysis (Windows) | `castxml` + `cl.exe` | Visual Studio Build Tools + castxml | `conda install -c conda-forge abicheck` |
+| ELF analysis | `pyelftools` | `pip install -e .` | `conda install -c conda-forge abicheck` |
+| PE analysis | `pefile` | `pip install -e .` | `conda install -c conda-forge abicheck` |
+| Mach-O analysis | `macholib` | `pip install -e .` | `conda install -c conda-forge abicheck` |
+| Type/param analysis (Linux) | `castxml` + C/C++ compiler | `pip install -e .` + `apt/yum` (`castxml`, `gcc/g++`) | `conda install -c conda-forge abicheck` |
+| Type/param analysis (macOS) | `castxml` + Apple toolchain | `pip install -e .` + `brew install castxml` (+ Xcode CLT) | `conda install -c conda-forge abicheck` |
+| Type/param analysis (Windows) | `castxml` + `cl.exe` | `pip install -e .` + Visual Studio Build Tools + castxml | `conda install -c conda-forge abicheck` |
 
 For conda-based workflows, install only `abicheck` from conda-forge.
 Recipe dependencies pull required analysis tooling automatically.

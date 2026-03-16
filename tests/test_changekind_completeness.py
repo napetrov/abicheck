@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from abicheck.checker import ChangeKind, DiffResult, Verdict, compare
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
+from abicheck.macho_metadata import MachoMetadata
 from abicheck.model import (
     AbiSnapshot,
     AccessLevel,
@@ -485,3 +486,38 @@ class TestInlineTransitions:
         # No other unexpected changes — only FUNC_LOST_INLINE
         unexpected = kinds - {ChangeKind.FUNC_LOST_INLINE}
         assert not unexpected, f"Unexpected extra changes: {unexpected}"
+
+
+# ===========================================================================
+# COMPAT_VERSION_CHANGED — Mach-O LC_ID_DYLIB compatibility version change
+# ===========================================================================
+
+
+class TestCompatVersionChanged:
+
+    def test_compat_version_changed_detected(self) -> None:
+        """compat_version change in Mach-O metadata emits COMPAT_VERSION_CHANGED."""
+        old = _snap()
+        old.macho = MachoMetadata(compat_version="1.0.0")
+        new = _snap()
+        new.macho = MachoMetadata(compat_version="2.0.0")
+        result = compare(old, new)
+        assert ChangeKind.COMPAT_VERSION_CHANGED in _kinds(result)
+
+    def test_compat_version_unchanged_no_report(self) -> None:
+        """Identical compat_version → no COMPAT_VERSION_CHANGED."""
+        old = _snap()
+        old.macho = MachoMetadata(compat_version="1.0.0")
+        new = _snap()
+        new.macho = MachoMetadata(compat_version="1.0.0")
+        result = compare(old, new)
+        assert ChangeKind.COMPAT_VERSION_CHANGED not in _kinds(result)
+
+    def test_compat_version_gained_reported(self) -> None:
+        """old=None, new=set → reported (library gains a compat contract)."""
+        old = _snap()
+        old.macho = MachoMetadata(compat_version="")
+        new = _snap()
+        new.macho = MachoMetadata(compat_version="1.0.0")
+        result = compare(old, new)
+        assert ChangeKind.COMPAT_VERSION_CHANGED in _kinds(result)

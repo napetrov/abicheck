@@ -1266,8 +1266,14 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     # metadata-only changes that function model may miss.
     old_ids = {(e.name if e.name else f"ordinal:{e.ordinal}") for e in o.exports}
     new_ids = {(e.name if e.name else f"ordinal:{e.ordinal}") for e in n.exports}
-    old_fn_names = {f.name for f in old.functions if f.name}
-    new_fn_names = {f.name for f in new.functions if f.name}
+    # Function model may expose either a display name or a raw/decorated symbol.
+    # Match against both to reliably deduplicate PE export deltas.
+    old_fn_symbols = {
+        s for f in old.functions for s in (f.name, f.mangled) if s
+    }
+    new_fn_symbols = {
+        s for f in new.functions for s in (f.name, f.mangled) if s
+    }
 
     removed_kind = (
         ChangeKind.FUNC_REMOVED_ELF_ONLY
@@ -1275,7 +1281,7 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         else ChangeKind.FUNC_REMOVED
     )
     for eid in sorted(old_ids - new_ids):
-        if eid in old_fn_names:
+        if eid in old_fn_symbols:
             continue
         changes.append(Change(
             kind=removed_kind,
@@ -1284,7 +1290,7 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         ))
 
     for eid in sorted(new_ids - old_ids):
-        if eid in new_fn_names:
+        if eid in new_fn_symbols:
             continue
         changes.append(Change(
             kind=ChangeKind.FUNC_ADDED,
@@ -1325,8 +1331,13 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     if o.exports or n.exports:
         old_names = {e.name for e in o.exports if e.name}
         new_names = {e.name for e in n.exports if e.name}
-        old_fn_names = {f.name for f in old.functions if f.name}
-        new_fn_names = {f.name for f in new.functions if f.name}
+        # Match both human-readable and raw symbol fields from function model.
+        old_fn_symbols = {
+            s for f in old.functions for s in (f.name, f.mangled) if s
+        }
+        new_fn_symbols = {
+            s for f in new.functions for s in (f.name, f.mangled) if s
+        }
 
         removed_kind = (
             ChangeKind.FUNC_REMOVED_ELF_ONLY
@@ -1334,7 +1345,7 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             else ChangeKind.FUNC_REMOVED
         )
         for name in sorted(old_names - new_names):
-            if name in old_fn_names:
+            if name in old_fn_symbols:
                 continue
             changes.append(Change(
                 kind=removed_kind,
@@ -1343,7 +1354,7 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             ))
 
         for name in sorted(new_names - old_names):
-            if name in new_fn_names:
+            if name in new_fn_symbols:
                 continue
             changes.append(Change(
                 kind=ChangeKind.FUNC_ADDED,
@@ -1351,7 +1362,7 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 description=f"new export in dylib: {name}",
             ))
     # Install name change (equivalent of SONAME change)
-    if o.install_name and o.install_name != n.install_name:
+    if o.install_name != n.install_name and (o.install_name or n.install_name):
         changes.append(Change(
             kind=ChangeKind.SONAME_CHANGED,
             symbol="LC_ID_DYLIB",
@@ -1361,7 +1372,7 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         ))
 
     # Compatibility version change (LC_ID_DYLIB compat_version — binary contract)
-    if o.compat_version and o.compat_version != n.compat_version:
+    if o.compat_version != n.compat_version and (o.compat_version or n.compat_version):
         changes.append(Change(
             kind=ChangeKind.COMPAT_VERSION_CHANGED,
             symbol="compat_version",
