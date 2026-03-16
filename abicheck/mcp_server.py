@@ -181,15 +181,21 @@ def _sanitize_error(exc: Exception, *, context: str = "operation") -> str:
     return f"{context} failed: unexpected error"
 
 
-mcp = FastMCP(
-    "abicheck",
-    instructions=(
-        "ABI compatibility checker for C/C++ shared libraries. "
-        "Detects breaking changes in .so/.dll/.dylib files before they reach production. "
-        "Use abi_compare to diff two library versions, abi_dump to extract ABI snapshots, "
-        "abi_list_changes to browse change kinds, and abi_explain_change for detailed explanations."
-    ),
-)
+try:
+    mcp = FastMCP(
+        "abicheck",
+        instructions=(
+            "ABI compatibility checker for C/C++ shared libraries. "
+            "Detects breaking changes in .so/.dll/.dylib files before they reach production. "
+            "Use abi_compare to diff two library versions, abi_dump to extract ABI snapshots, "
+            "abi_list_changes to browse change kinds, and abi_explain_change for detailed explanations."
+        ),
+    )
+except Exception as _exc:  # noqa: BLE001
+    raise ImportError(
+        f"Failed to initialise MCP support: {_exc}. "
+        "Try: pip install --upgrade 'abicheck[mcp]'"
+    ) from _exc
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +241,12 @@ def _resolve_input(
 
     if binary_fmt == "elf":
         from .dumper import dump
-        compiler = "c++" if lang == "c++" else "cc"
+        _SUPPORTED_LANGS = ("c", "c++")
+        if lang not in _SUPPORTED_LANGS:
+            raise ValueError(
+                f"Unsupported lang {lang!r}. Must be one of: {', '.join(_SUPPORTED_LANGS)}"
+            )
+        compiler = "cc" if lang == "c" else "c++"
         return dump(
             so_path=path,
             headers=headers,
@@ -495,6 +506,7 @@ def abi_compare(
         # policy_file takes precedence over the base policy name.
         if policy_file is None and policy not in VALID_BASE_POLICIES:
             return json.dumps({
+                "status": "error",
                 "error": f"Unknown policy: {policy!r}. "
                 f"Valid policies: {', '.join(sorted(VALID_BASE_POLICIES))}"
             })

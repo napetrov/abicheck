@@ -5,7 +5,7 @@ abicheck includes an MCP ([Model Context Protocol](https://modelcontextprotocol.
 ## Install
 
 ```bash
-pip install abicheck[mcp]
+pip install "abicheck[mcp]"
 ```
 
 Or with conda (when available on conda-forge):
@@ -82,7 +82,7 @@ The primary tool. Diffs two library versions and reports breaking changes.
 | `policy` | string | no | `"strict_abi"` (default), `"sdk_vendor"`, or `"plugin_abi"` |
 | `policy_file` | string | no | Path to custom YAML policy file |
 | `suppression_file` | string | no | Path to YAML suppression file |
-| `format` | string | no | Report format: `"json"` (default), `"markdown"`, `"sarif"`, `"html"` |
+| `output_format` | string | no | Report format: `"json"` (default), `"markdown"`, `"sarif"`, `"html"` |
 
 **Response fields:**
 
