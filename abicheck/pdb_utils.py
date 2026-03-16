@@ -77,14 +77,14 @@ def _resolve_embedded_pdb(
     embedded = _extract_pdb_path_from_pe(dll_path)
     if embedded is None:
         return None
-    embedded_path = Path(embedded)
 
-    # Use Windows path semantics to extract the basename — on non-Windows hosts
-    # Path(r"C:\build\foo.pdb").name returns the whole string, not "foo.pdb".
-    embedded_name: str = PureWindowsPath(embedded).name or embedded_path.name
+    # Use PureWindowsPath for Windows-aware path parsing: drive/absolute checks
+    # and basename extraction work correctly on all host platforms.
+    pwin = PureWindowsPath(embedded)
+    embedded_name: str = pwin.name or Path(embedded).name
 
     # Block network/UNC paths during auto-discovery
-    if not allow_network and _is_network_path(embedded_path):
+    if not allow_network and _is_network_path(embedded):
         log.debug(
             "locate_pdb: skipping network path %s (use --pdb-path to override)", embedded
         )
@@ -94,24 +94,39 @@ def _resolve_embedded_pdb(
             return local
         return None
 
-    # Security: only trust absolute embedded paths if they share the same
-    # drive/root as the DLL itself, to prevent traversal to arbitrary locations.
-    if embedded_path.is_absolute():
+    # Security: only trust absolute Windows paths (drive-letter or rooted) if
+    # they share the same drive/root as the DLL itself.  Use PureWindowsPath so
+    # that "C:\build\foo.pdb" is recognised as absolute on POSIX hosts too.
+    if pwin.drive or pwin.is_absolute():
         try:
-            dll_root = Path(dll_path).resolve().anchor
-            emb_root = embedded_path.resolve().anchor
-            if dll_root and emb_root and dll_root.lower() != emb_root.lower():
+            dll_drive = PureWindowsPath(str(Path(dll_path).resolve())).drive
+            emb_drive = pwin.drive
+            if dll_drive and emb_drive and dll_drive.lower() != emb_drive.lower():
                 log.debug(
                     "locate_pdb: skipping embedded path on different drive %s", embedded
                 )
-                embedded_path = embedded_path.with_drive("") if hasattr(embedded_path, "with_drive") else embedded_path
                 # Fall through to filename-only lookup below
-            elif embedded_path.is_file():
-                return embedded_path
+            else:
+                # Construct a host-native Path for the filesystem check.
+                # For relative Windows paths (backslash but no drive), join parts.
+                if pwin.drive:
+                    candidate = Path(*pwin.parts[1:]) if len(pwin.parts) > 1 else Path(embedded_name)
+                    candidate = dll_path.parent / candidate
+                else:
+                    candidate = Path(embedded)
+                if candidate.is_file():
+                    return candidate
         except (ValueError, OSError):
             pass  # drive comparison failed; fall through to filename-only
-    elif embedded_path.is_file():
-        return embedded_path
+    else:
+        # Relative path: resolve against DLL directory and guard against traversal.
+        candidate = dll_path.parent / Path(*pwin.parts) if pwin.parts else dll_path.parent / embedded_name
+        try:
+            candidate.resolve().relative_to(dll_path.parent.resolve())
+            if candidate.is_file():
+                return candidate
+        except (ValueError, OSError):
+            pass  # traversal attempt or resolution error; fall through
 
     # Fall back to same filename in the DLL's directory (always local, no traversal)
     local = dll_path.parent / embedded_name

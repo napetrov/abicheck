@@ -317,13 +317,17 @@ def _make_lf_enumerate(attr: int, value: int, name: str) -> bytes:
 
 
 def _make_lf_fieldlist(sub_records: list[bytes]) -> bytes:
-    """Build LF_FIELDLIST payload from sub-record bytes."""
+    """Build LF_FIELDLIST payload from sub-record bytes.
+
+    Padding bytes follow the CodeView spec: 0xF0 + pad_length (so pad==1 -> 0xF1,
+    pad==2 -> 0xF2, pad==3 -> 0xF3) repeated *pad* times for 4-byte alignment.
+    """
     data = b""
     for rec in sub_records:
         data += rec
-        # 4-byte align
+        # 4-byte align with spec-compliant LF_PADn bytes (0xF0 + n, repeated n times)
         pad = (4 - (len(data) % 4)) % 4
-        data += bytes([0xF0 + n for n in range(pad, 0, -1)]) if pad else b""
+        data += bytes([0xF0 + pad] * pad) if pad else b""
     return data
 
 
@@ -1151,6 +1155,43 @@ class TestFieldlistExtended:
         db = self._make_db([(LF_FIELDLIST, data)])
         members = db.get_fieldlist(0x1000)
         assert len(members) == 0
+
+    def test_truncated_lf_index_4_bytes(self) -> None:
+        """LF_INDEX with only 4 extra bytes (need 6) should break out."""
+        # LF_INDEX sub-record needs 2-byte sub_leaf + 2-byte pad + 4-byte TI = 6 bytes.
+        # Here we have 2 (sub_leaf) + 4 extra = 6 total, but sub_leaf already consumed 2,
+        # so pos + 6 > len(d) check: pos=2, remaining=4 bytes → 2+6=8 > 6 → break.
+        data = struct.pack("<H", LF_INDEX) + b"\x00" * 4  # exactly 4 extra bytes (need 6)
+        db = self._make_db([(LF_FIELDLIST, data)])
+        members = db.get_fieldlist(0x1000)
+        assert len(members) == 0
+
+    def test_truncated_lf_index_5_bytes(self) -> None:
+        """LF_INDEX with 5 extra bytes (need 6) should break out."""
+        data = struct.pack("<H", LF_INDEX) + b"\x00" * 5  # 5 extra bytes (need 6)
+        db = self._make_db([(LF_FIELDLIST, data)])
+        members = db.get_fieldlist(0x1000)
+        assert len(members) == 0
+
+    def test_padding_lf_pad1_between_members(self) -> None:
+        """Single-byte LF_PAD1 (0xF1) between members should be skipped correctly.
+
+        _make_lf_member(0, 0x74, 0, "") produces 11 bytes:
+          2 (LF_MEMBER) + 2 (attr) + 4 (type_ti) + 2 (_cv_numeric(0)) + 1 (empty cstring)
+        11 % 4 == 3 → needs exactly 1 pad byte (LF_PAD1 = 0xF1) to align to 12.
+        """
+        # Empty name gives 11-byte record → 1-byte pad needed
+        first = _make_lf_member(0, 0x74, 0, "")
+        assert len(first) % 4 == 3, f"Expected 3 mod 4, got {len(first) % 4}"
+        # Insert explicit LF_PAD1 byte (0xF1 = 0xF0 + 1)
+        padded = first + bytes([0xF1])
+        assert len(padded) % 4 == 0
+        second = _make_lf_member(0, 0x74, 4, "b")
+        fl_data = padded + second
+        db = self._make_db([(LF_FIELDLIST, fl_data)])
+        members = db.get_fieldlist(0x1000)
+        assert len(members) == 2
+        assert members[1].name == "b"
 
 
 class TestSkipSubrecord:

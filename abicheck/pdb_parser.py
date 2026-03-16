@@ -225,25 +225,34 @@ def parse_msf(data: bytes) -> MsfFile:
     bm_offset = block_map_addr * block_size
     dir_block_indices: list[int] = []
     for i in range(dir_block_count):
+        if bm_offset + i * 4 + 4 > len(data):
+            raise ValueError("PDB block map address out of bounds")
         idx = struct.unpack_from("<I", data, bm_offset + i * 4)[0]
         dir_block_indices.append(idx)
 
-    # Assemble the stream directory
-    dir_data = b""
+    # Assemble the stream directory (use list+join for O(n) rather than O(n²))
+    dir_parts: list[bytes] = []
     remaining = dir_bytes
     for blk in dir_block_indices:
         off = blk * block_size
         chunk = min(remaining, block_size)
-        dir_data += data[off:off + chunk]
+        if off + chunk > len(data):
+            raise ValueError(f"PDB block {blk} out of bounds (file too small)")
+        dir_parts.append(data[off:off + chunk])
         remaining -= chunk
+    dir_data = b"".join(dir_parts)
 
     # Parse the stream directory
     pos = 0
+    if pos + 4 > len(dir_data):
+        raise ValueError("PDB stream directory truncated (no num_streams)")
     (num_streams,) = struct.unpack_from("<I", dir_data, pos)
     pos += 4
 
     stream_sizes: list[int] = []
     for _ in range(num_streams):
+        if pos + 4 > len(dir_data):
+            raise ValueError("PDB stream directory truncated (stream sizes)")
         (sz,) = struct.unpack_from("<i", dir_data, pos)
         pos += 4
         # -1 or 0xFFFFFFFF means "nil stream"
@@ -257,6 +266,8 @@ def parse_msf(data: bytes) -> MsfFile:
         n_blocks = math.ceil(sz / block_size)
         blocks = []
         for _ in range(n_blocks):
+            if pos + 4 > len(dir_data):
+                raise ValueError("PDB stream directory truncated (block indices)")
             (blk,) = struct.unpack_from("<I", dir_data, pos)
             pos += 4
             blocks.append(blk)
@@ -754,6 +765,13 @@ class TypeDatabase:
         members: list[Any] = []
         pos = 0
         while pos + 2 <= len(d):
+            # Detect single-byte padding (LF_PAD1..LF_PADn = 0xF1..0xFF) before
+            # consuming the 2-byte sub_leaf: a byte >= 0xF0 at pos is a pad byte,
+            # not the start of a sub-leaf record.
+            if d[pos] >= 0xF0:
+                skip = d[pos] & 0x0F  # lower nibble = total pad length
+                pos += skip if skip > 0 else 1
+                continue
             (sub_leaf,) = struct.unpack_from("<H", d, pos)
             pos += 2
 
@@ -779,8 +797,9 @@ class TypeDatabase:
                 members.append(CvEnumerator(name=name, value=val))
 
             elif sub_leaf == LF_INDEX:
-                # LF_INDEX — continuation to another LF_FIELDLIST
-                if pos + 4 > len(d):
+                # LF_INDEX — continuation to another LF_FIELDLIST.
+                # Structure: 2-byte sub_leaf (already consumed) + 2-byte padding + 4-byte TI = 6 bytes total.
+                if pos + 6 > len(d):
                     break
                 (cont_ti,) = struct.unpack_from("<I", d, pos + 2)
                 pos += 6
@@ -796,13 +815,6 @@ class TypeDatabase:
                               LF_IVBCLASS, LF_METHOD):
                 # Skip known sub-records we don't need
                 pos = self._skip_subrecord(sub_leaf, d, pos)
-
-            elif sub_leaf >= 0xF0:
-                # Padding bytes — lower nibble is total pad length;
-                # subtract 2 for the two bytes already consumed.
-                skip = sub_leaf & 0x0F
-                pos += max(0, skip - 2)
-                continue
 
             else:
                 # Unknown sub-record — can't safely continue
