@@ -242,8 +242,8 @@ def _parse(dylib_path: Path) -> MachoMetadata:
 
         if cmd_type == LC_ID_DYLIB:
             meta.install_name = _dylib_name_from_cmd(data)
-            meta.current_version = str(cmd.current_version)
-            meta.compat_version = str(cmd.compatibility_version)
+            meta.current_version = _version_str(int(cmd.current_version))
+            meta.compat_version = _version_str(int(cmd.compatibility_version))
 
         elif cmd_type == LC_LOAD_DYLIB:
             name = _dylib_name_from_cmd(data)
