@@ -1,0 +1,53 @@
+# Case 56: Struct Packing Changed (pragma pack)
+
+**Category:** Type Layout / DWARF | **Verdict:** BREAKING
+
+## What this case is about
+
+v1 defines `Record` with natural alignment (sizeof = 12, value at offset 4).
+v2 adds `#pragma pack(1)`, eliminating all padding (sizeof = 6, value at offset 1).
+
+This is a **silent ABI break** because every field (except `tag`) moves to a
+different offset, and the struct size shrinks.
+
+## What breaks at binary level
+
+- **sizeof changes**: 12 → 6. Stack allocations and arrays use wrong size.
+- **Field offsets change**: `value` moves from offset 4 to offset 1.
+- **Alignment changes**: `value` is no longer naturally aligned (may cause
+  unaligned access faults on strict architectures like ARM).
+
+## What abicheck detects
+
+- **`STRUCT_PACKING_CHANGED`**: Detected via DWARF `DW_AT_byte_size` and field
+  `DW_AT_data_member_location` changes. The packing attribute itself is recorded
+  in DWARF as alignment metadata.
+
+**Overall verdict: BREAKING**
+
+## How to reproduce
+
+```bash
+gcc -shared -fPIC -g bad.c  -include bad.h  -o libbad.so
+gcc -shared -fPIC -g good.c -include good.h -o libgood.so
+
+# Verify layout difference
+pahole libbad.so  -C Record  # → size 12, value at offset 4
+pahole libgood.so -C Record  # → size 6,  value at offset 1
+
+python3 -m abicheck.cli dump libbad.so  -o /tmp/v1.json
+python3 -m abicheck.cli dump libgood.so -o /tmp/v2.json
+python3 -m abicheck.cli compare /tmp/v1.json /tmp/v2.json
+# → BREAKING: field offsets changed
+```
+
+## Real-world examples
+
+- Windows API headers use `#pragma pack` extensively. Mixing packed and unpacked
+  struct definitions across DLL boundaries is a common source of crashes.
+- Network protocol libraries (e.g., pcap headers) often accidentally change
+  packing when refactoring header includes.
+
+## References
+
+- [GCC: Structure Packing Pragmas](https://gcc.gnu.org/onlinedocs/gcc/Structure-Layout-Pragmas.html)
