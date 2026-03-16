@@ -518,3 +518,64 @@ class TestHeaderDirectoryInput:
         expected = sorted([h1, h2, h3], key=lambda p: str(p))
         assert captured[0] == expected
         assert captured[1] == expected
+
+    def test_old_new_header_directories(self, tmp_path, monkeypatch):
+        """--old-header/--new-header accept directories and expand recursively."""
+        old_elf = _write_fake_elf(tmp_path / "libv1.so")
+        new_elf = _write_fake_elf(tmp_path / "libv2.so")
+
+        old_dir = tmp_path / "include_v1"
+        new_dir = tmp_path / "include_v2"
+        (old_dir / "sub").mkdir(parents=True)
+        (new_dir / "sub").mkdir(parents=True)
+        old_h = old_dir / "sub" / "foo.h"
+        new_h = new_dir / "sub" / "foo.h"
+        old_h.write_text("int foo(int);", encoding="utf-8")
+        new_h.write_text("int foo(double);", encoding="utf-8")
+
+        captured: list[list[Path]] = []
+
+        def mock_dump(so_path, headers, extra_includes=None, version="unknown", lang="c++", **kw):
+            captured.append(list(headers))
+            return _make_snapshot(version)
+
+        monkeypatch.setattr("abicheck.cli.dump", mock_dump)
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare", str(old_elf), str(new_elf),
+            "--old-header", str(old_dir),
+            "--new-header", str(new_dir),
+        ])
+        assert result.exit_code == 0, result.output
+        assert len(captured) == 2
+        assert captured[0] == [old_h]
+        assert captured[1] == [new_h]
+
+    def test_mixed_header_file_and_directory(self, tmp_path, monkeypatch):
+        """Mixing file and directory inputs in -H should work and deduplicate."""
+        old_elf = _write_fake_elf(tmp_path / "libv1.so")
+        new_elf = _write_fake_elf(tmp_path / "libv2.so")
+
+        hdr_dir = tmp_path / "include"
+        hdr_dir.mkdir()
+        h1 = hdr_dir / "foo.h"
+        h2 = hdr_dir / "bar.hpp"
+        h1.write_text("int foo(void);", encoding="utf-8")
+        h2.write_text("int bar(void);", encoding="utf-8")
+
+        captured: list[list[Path]] = []
+
+        def mock_dump(so_path, headers, extra_includes=None, version="unknown", lang="c++", **kw):
+            captured.append(list(headers))
+            return _make_snapshot(version)
+
+        monkeypatch.setattr("abicheck.cli.dump", mock_dump)
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare", str(old_elf), str(new_elf),
+            "-H", str(hdr_dir), "-H", str(h1),
+        ])
+        assert result.exit_code == 0, result.output
+        expected = sorted([h1, h2], key=lambda p: str(p))
+        assert captured[0] == expected
+        assert captured[1] == expected

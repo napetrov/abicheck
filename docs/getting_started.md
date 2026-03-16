@@ -86,6 +86,15 @@ If the header is the same for both versions:
 abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
 ```
 
+You can also pass a header **directory** (recursive scan for `*.h`, `*.hpp`, ...):
+
+```bash
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/
+```
+
+If no headers are provided for ELF inputs, abicheck falls back to **symbols-only** mode
+and prints a warning (weaker analysis: may miss type/signature ABI breaks).
+
 ---
 
 ## 3) Output formats

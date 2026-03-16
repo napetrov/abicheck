@@ -35,6 +35,9 @@ abicheck compare libfoo.so.1 libfoo.so.2 \
 # (only when the header itself didn't change between versions)
 abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
 
+# Header directory input is supported (recursive)
+abicheck compare libfoo.so.1 libfoo.so.2 -H include/
+
 # Output formats
 abicheck compare libfoo.so.1 libfoo.so.2 \
   --old-header v1/foo.h --new-header v2/foo.h --format sarif -o abi.sarif
@@ -43,6 +46,10 @@ abicheck compare libfoo.so.1 libfoo.so.2 \
 `compare` auto-detects each input: `.so` files are dumped on-the-fly, `.json`
 snapshots and ABICC Perl dumps (Data::Dumper `.dump` files) are loaded directly.
 You can mix them freely (see below).
+
+If ELF headers are not provided, `compare` falls back to symbols-only analysis
+and prints a warning. This mode is useful for quick checks but may miss
+signature/type-level ABI breaks.
 
 ### 2) Dump snapshots and compare later (for CI baselines)
 
