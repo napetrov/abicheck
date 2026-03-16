@@ -466,22 +466,12 @@ class TestCompareHelp:
         assert "baseline.json" in result.output
 
 
-# ── allow-symbols-only for ELF without headers ──────────────────────────────
+# ── ELF compare without headers (default symbols-only fallback) ─────────────
 
-class TestAllowSymbolsOnly:
-    """Tests for --allow-symbols-only flag on ELF inputs."""
+class TestElfNoHeaderFallback:
+    """ELF compare without headers should fallback to symbols-only with warning."""
 
-    def test_elf_no_header_without_flag_raises(self, tmp_path):
-        """Without --allow-symbols-only, ELF without headers → UsageError."""
-        old_elf = _write_fake_elf(tmp_path / "libv1.so")
-        new_elf = _write_fake_elf(tmp_path / "libv2.so")
-        runner = CliRunner()
-        result = runner.invoke(main, ["compare", str(old_elf), str(new_elf)])
-        assert result.exit_code != 0
-        assert "allow-symbols-only" in result.output.lower() or "allow-symbols-only" in (result.exception and str(result.exception) or "")
-
-    def test_elf_no_header_with_flag_shows_warning(self, tmp_path, monkeypatch):
-        """With --allow-symbols-only, a warning is printed and comparison succeeds."""
+    def test_elf_no_header_defaults_to_symbols_only_warning(self, tmp_path, monkeypatch):
         old_elf = _write_fake_elf(tmp_path / "libv1.so")
         new_elf = _write_fake_elf(tmp_path / "libv2.so")
 
@@ -490,9 +480,8 @@ class TestAllowSymbolsOnly:
             return _make_snapshot(version)
 
         monkeypatch.setattr("abicheck.cli.dump", mock_dump)
-        runner = CliRunner(mix_stderr=False)
-        result = runner.invoke(main, [
-            "compare", str(old_elf), str(new_elf), "--allow-symbols-only"
-        ])
+        runner = CliRunner()
+        result = runner.invoke(main, ["compare", str(old_elf), str(new_elf)])
         assert result.exit_code == 0, result.output
-        assert "symbols-only mode" in result.stderr.lower() or "weaker" in result.stderr.lower()
+        out = result.output.lower()
+        assert "symbols-only mode" in out or "weaker" in out
