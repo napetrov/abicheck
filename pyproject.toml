@@ -40,6 +40,7 @@ dependencies = [
 
 [project.scripts]
 abicheck = "abicheck.cli:main"
+abicheck-mcp = "abicheck.mcp_server:main"
 
 [project.urls]
 Repository = "https://github.com/napetrov/abicheck"
@@ -48,6 +49,9 @@ Documentation = "https://napetrov.github.io/abicheck/"
 Changelog = "https://github.com/napetrov/abicheck/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+mcp = [
+    "mcp[cli]>=1.2.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov",
@@ -82,6 +86,11 @@ disable_error_code = ["attr-defined", "unused-ignore"]
 [[tool.mypy.overrides]]
 # Click decorators (@click.command, @click.option, etc.) are untyped.
 module = ["abicheck.cli", "abicheck.compat.cli"]
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+# FastMCP decorators (@mcp.tool, etc.) are untyped.
+module = ["abicheck.mcp_server"]
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
