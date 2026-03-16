@@ -552,9 +552,10 @@ def _render_output(fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnaps
               help="PDB file path for old side only (overrides --pdb-path for old).")
 @click.option("--new-pdb-path", "new_pdb_path", type=click.Path(path_type=Path), default=None,
               help="PDB file path for new side only (overrides --pdb-path for new).")
-@click.option("--fail-on-additions", "fail_on_additions", is_flag=True, default=False,
+@click.option("--fail-on-additions/--no-fail-on-additions", "fail_on_additions", default=False,
               help="Exit with code 1 if any new public symbols, types, or fields were added "
-                   "(COMPATIBLE changes). Useful for detecting unintentional API expansion in PRs.")
+                   "(COMPATIBLE changes). Useful for detecting unintentional API expansion in PRs. "
+                   "Use --no-fail-on-additions (or omit the flag) to allow API growth.")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def compare_cmd(
@@ -676,7 +677,7 @@ def compare_cmd(
             click.echo(
                 f"API expansion detected: {len(additions)} addition(s) "
                 f"({', '.join(sorted({c.kind.value for c in additions}))}). "
-                "Use --fail-on-additions=false to allow API growth.",
+                "Use --no-fail-on-additions (or omit the flag) to allow API growth.",
                 err=True,
             )
             sys.exit(1)

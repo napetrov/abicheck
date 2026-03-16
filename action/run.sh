@@ -158,7 +158,17 @@ if [[ $ABICHECK_EXIT -eq 2 ]] && echo "$STDERR_CONTENT" | grep -qE '(^Usage:|^Er
 else
   case $ABICHECK_EXIT in
     0) VERDICT="COMPATIBLE" ;;
-    1) VERDICT="ADDITIONS" ;;
+    1)
+      # Exit code 1 is produced by --fail-on-additions for genuine API expansion.
+      # Guard against Click CLI/parse errors that also exit 1 (e.g. bad flags).
+      if echo "$STDERR_CONTENT" | grep -qE '(^Usage:|^Error:|^Try |Traceback|click\.)'; then
+        VERDICT="ERROR"
+        echo "::error::abicheck failed due to a CLI argument or configuration error (exit code 1)."
+        echo "::error::Check the command and inputs above."
+      else
+        VERDICT="ADDITIONS"
+      fi
+      ;;
     2) VERDICT="API_BREAK" ;;
     4) VERDICT="BREAKING" ;;
     *) VERDICT="ERROR" ;;

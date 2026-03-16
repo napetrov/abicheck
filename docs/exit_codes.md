@@ -11,14 +11,14 @@
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | `NO_CHANGE`, `COMPATIBLE`, or `COMPATIBLE_WITH_RISK` — no binary ABI break |
-| `1` | `ADDITIONS` — new public symbols/types detected (only with `--fail-on-additions`) |
+| `1` | `ADDITIONS` — new public symbols/types detected (**only with `--fail-on-additions`**; without the flag, additions exit `0`) |
 | `2` | `API_BREAK` — source-level API break — recompilation required |
 | `4` | `BREAKING` — binary ABI break |
 
 > **⚠️ Exit `0` covers `NO_CHANGE`, `COMPATIBLE`, and `COMPATIBLE_WITH_RISK`.** If your pipeline needs
 > to distinguish them (e.g. warn on deployment risk), use `--format json` and
 > read the `verdict` field — exit code alone is not sufficient.
-
+>
 > **ℹ️ Exit `1` (ADDITIONS)** is only produced when `--fail-on-additions` is passed.
 > Without that flag, API additions are reported as `COMPATIBLE` with exit code `0`.
 
@@ -28,15 +28,21 @@
 # Production gate: fail on any break
 abicheck compare old.json new.json
 ret=$?
-[ $ret -eq 1 ] && echo "ERROR — check tool inputs" && exit 1    # tool error
 [ $ret -eq 4 ] && echo "BREAKING — release blocked" && exit 1
 [ $ret -eq 2 ] && echo "API_BREAK — source-level break" && exit 1
 echo "OK (NO_CHANGE or COMPATIBLE)"
 
+# With --fail-on-additions: also block unexpected API expansion
+abicheck compare old.json new.json --fail-on-additions
+ret=$?
+[ $ret -eq 1 ] && echo "ADDITIONS — unexpected API expansion" && exit 1   # only with --fail-on-additions
+[ $ret -eq 4 ] && echo "BREAKING — release blocked" && exit 1
+[ $ret -eq 2 ] && echo "API_BREAK — source-level break" && exit 1
+echo "OK"
+
 # Permissive gate: fail only on binary breaks (allow API_BREAK + COMPATIBLE)
 abicheck compare old.json new.json
 ret=$?
-[ $ret -eq 1 ] && exit 1   # tool error
 [ $ret -eq 4 ] && exit 1   # BREAKING only; API_BREAK (exit 2) allowed
 exit 0
 # note: exit 0 includes both NO_CHANGE and COMPATIBLE
@@ -89,9 +95,12 @@ In `abicheck compat`, non-verdict failures are further classified where possible
 | `NO_CHANGE` | `0` | `0` |
 | `COMPATIBLE` | `0` | `0` |
 | `COMPATIBLE_WITH_RISK` | `0` | `0` |
+| `ADDITIONS` (with `--fail-on-additions`) | `1` | n/a |
 | `API_BREAK` | `2` | `2` |
 | `BREAKING` | `4` | `1` |
-| Tool error | `1` | `3/4/5/6/7/8/10/11` |
+| Tool error | `1`* | `3/4/5/6/7/8/10/11` |
+
+\* Without `--fail-on-additions`, exit `1` from `compare` is always a tool/CLI error. With `--fail-on-additions`, exit `1` means `ADDITIONS`. Use `--format json` + `verdict` field to distinguish programmatically.
 
 ---
 

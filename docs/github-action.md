@@ -168,7 +168,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: abi-baseline.json
-          key: abi-baseline-${{ github.event.repository.default_branch }}
+          key: abi-baseline-${{ github.event.repository.default_branch }}-${{ github.sha }}
+          restore-keys: |
+            abi-baseline-${{ github.event.repository.default_branch }}-
 
       - name: Check ABI
         uses: napetrov/abicheck@v1

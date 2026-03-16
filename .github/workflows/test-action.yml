@@ -259,6 +259,10 @@ jobs:
       - name: Verify verdict is ADDITIONS
         shell: bash
         run: |
+          if [[ "${{ steps.abi.outcome }}" != "failure" ]]; then
+            echo "::error::Expected step outcome=failure, got ${{ steps.abi.outcome }}"
+            exit 1
+          fi
           echo "Verdict: ${{ steps.abi.outputs.verdict }}"
           echo "Exit code: ${{ steps.abi.outputs.exit-code }}"
           if [[ "${{ steps.abi.outputs.verdict }}" != "ADDITIONS" ]]; then
