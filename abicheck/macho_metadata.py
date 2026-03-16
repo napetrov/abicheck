@@ -151,6 +151,19 @@ def _version_str(packed: int) -> str:
     return f"{major}.{minor}.{patch}"
 
 
+def _version_field_to_str(value: Any) -> str:
+    """Decode macholib version field to dotted string.
+
+    Handles either:
+    - raw packed integer-like values, or
+    - ``mach_version_helper`` objects that store packed value in ``_version``.
+    """
+    packed = getattr(value, "_version", None)
+    if packed is not None:
+        return _version_str(int(packed))
+    return _version_str(int(value))
+
+
 def _dylib_name_from_cmd(data: bytes) -> str:
     """Extract the library name string from dylib load command data.
 
@@ -242,8 +255,8 @@ def _parse(dylib_path: Path) -> MachoMetadata:
 
         if cmd_type == LC_ID_DYLIB:
             meta.install_name = _dylib_name_from_cmd(data)
-            meta.current_version = _version_str(int(cmd.current_version))
-            meta.compat_version = _version_str(int(cmd.compatibility_version))
+            meta.current_version = _version_field_to_str(cmd.current_version)
+            meta.compat_version = _version_field_to_str(cmd.compatibility_version)
 
         elif cmd_type == LC_LOAD_DYLIB:
             name = _dylib_name_from_cmd(data)
