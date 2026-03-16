@@ -112,9 +112,12 @@ jobs:
       - name: Install castxml (Linux/macOS only)
         if: runner.os != 'Windows'
         run: |
-          # Linux:
-          sudo apt-get install -y castxml  # Ubuntu
-          # or: brew install castxml       # macOS
+          # Option 1: system packages
+          # sudo apt-get install -y castxml   # Ubuntu
+          # brew install castxml              # macOS
+
+          # Option 2: conda-forge toolchain
+          conda install -y -c conda-forge castxml cxx-compiler
       - name: ABI check
         run: |
           abicheck compare -lib mylib \
@@ -147,11 +150,14 @@ jobs:
 
 ## Dependency Summary
 
-| Feature | Dependency | Install |
-|---------|-----------|---------|
-| ELF analysis | `pyelftools` | `pip install abicheck` |
-| PE analysis | `pefile` | `pip install abicheck` |
-| Mach-O analysis | `macholib` | `pip install abicheck` |
-| Type/param analysis (ELF) | `castxml` + `gcc/g++` | system package manager |
-| Type/param analysis (macOS) | `castxml` + Xcode clang | `brew install castxml` |
-| Type/param analysis (Windows) | `castxml` + `cl.exe` | Visual Studio + castxml |
+| Feature | Required tools | pip / system install | conda-forge install |
+|---------|----------------|----------------------|---------------------|
+| ELF analysis | `pyelftools` | `pip install abicheck` | included in `abicheck` env |
+| PE analysis | `pefile` | `pip install abicheck` | included in `abicheck` env |
+| Mach-O analysis | `macholib` | `pip install abicheck` | included in `abicheck` env |
+| Type/param analysis (Linux) | `castxml` + C/C++ compiler | `apt/yum` + `gcc/g++` | `conda install -c conda-forge castxml cxx-compiler` |
+| Type/param analysis (macOS) | `castxml` + Apple toolchain | `brew install castxml` (+ Xcode CLT) | `conda install -c conda-forge castxml clangxx_osx-64` *(or arm64 variant)* |
+| Type/param analysis (Windows) | `castxml` + `cl.exe` | Visual Studio Build Tools + castxml | `conda install -c conda-forge castxml` + MSVC Build Tools |
+
+If you use a conda environment with `abicheck` + `castxml` + compiler toolchain,
+you can usually avoid ad-hoc system package installs in CI/local setups.

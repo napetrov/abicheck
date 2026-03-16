@@ -17,7 +17,10 @@ On all platforms it provides binary metadata analysis (exports, imports, depende
 - Python 3.10+
 - `castxml` + C/C++ compiler — for header AST analysis (optional but recommended, all platforms)
 
-All Python dependencies (pyelftools, pefile, macholib, etc.) are installed automatically. Without castxml, abicheck still works in binary-only mode.
+All Python dependencies (`pyelftools`, `pefile`, `macholib`) come with `abicheck` install.
+Without `castxml`, abicheck still works in binary-only mode.
+
+#### Option A: system packages
 
 ```bash
 # Ubuntu / Debian
@@ -27,12 +30,18 @@ sudo apt-get update && sudo apt-get install -y castxml gcc g++
 ```bash
 # macOS
 brew install castxml
+# plus Xcode Command Line Tools for clang
 ```
 
+#### Option B: conda-forge (recommended for reproducible envs)
+
 ```bash
-# conda (all platforms)
-conda install -c conda-forge castxml
+# create env with runtime + analysis deps
+conda create -n abicheck -c conda-forge python=3.12 castxml cxx-compiler
+conda activate abicheck
 ```
+
+On Windows, install `castxml` via conda-forge and keep MSVC Build Tools (`cl.exe`) available.
 
 ### Install from source
 

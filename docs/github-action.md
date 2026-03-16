@@ -287,8 +287,8 @@ jobs:
 
 ### Skip system dependency installation
 
-If castxml and gcc are already installed (e.g. in a custom Docker image or
-a previous step), set `install-deps: false`:
+If `castxml` + compiler are already available (custom image, pre-provisioned VM,
+or conda-forge environment), set `install-deps: false`:
 
 ```yaml
       - uses: napetrov/abicheck@v1
@@ -298,7 +298,21 @@ a previous step), set `install-deps: false`:
           install-deps: false
 ```
 
-When comparing two JSON snapshots, no system dependencies are needed at all.
+Example (conda-forge pre-step):
+
+```yaml
+      - name: Prepare ABI toolchain via conda-forge
+        run: |
+          conda install -y -c conda-forge castxml cxx-compiler
+
+      - uses: napetrov/abicheck@v1
+        with:
+          old-library: old.json
+          new-library: new.json
+          install-deps: false
+```
+
+When comparing two JSON snapshots, no header-analysis toolchain is needed.
 
 ### Conditional failure
 
