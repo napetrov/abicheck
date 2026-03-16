@@ -132,7 +132,7 @@ function(abicheck_add_case CASE_NAME)
   # causing spurious soname_changed diffs (same class of issue as NO_SONAME
   # on ELF).  We force both to "@rpath/lib.dylib".
   if(APPLE)
-    target_link_options(${_v1} PRIVATE -install_name @rpath/libv1.dylib)
+    target_link_options(${_v1} PRIVATE -install_name @rpath/lib.dylib)
   endif()
 
   # --- v2 library ---
@@ -177,7 +177,7 @@ function(abicheck_add_case CASE_NAME)
     target_link_options(${_v2} PRIVATE ${ARG_V2_LINK_OPTIONS})
   endif()
   if(APPLE)
-    target_link_options(${_v2} PRIVATE -install_name @rpath/libv2.dylib)
+    target_link_options(${_v2} PRIVATE -install_name @rpath/lib.dylib)
   endif()
 
   # --- Consumer app (optional) ---

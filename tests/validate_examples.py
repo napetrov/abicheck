@@ -279,10 +279,36 @@ def run_case(
         v1_hdr_path = v1_hdr
         v2_hdr_path = v2_hdr
     elif has_cmake_file and not has_cmake:
-        # CMakeLists.txt exists but cmake is not available — require cmake;
-        # do not fall back to direct compilation (results may be wrong).
-        return CaseResult(name, "ERROR", expected_raw, None,
-                          "cmake required (CMakeLists.txt present) but not found in PATH")
+        # CMakeLists.txt exists but cmake is not available — check if the case
+        # needs special build flags that direct compilation cannot replicate.
+        cmake_text = (case_dir / "CMakeLists.txt").read_text()
+        _special = ("FORCE_INCLUDE", "LINK_OPTIONS", "COMPILE_OPTIONS",
+                     "fvisibility", "version-script", "soname")
+        if any(tok in cmake_text for tok in _special):
+            return CaseResult(name, "SKIP", expected_raw, None,
+                              "requires cmake (CMakeLists.txt has special build flags)")
+        v1_so = tmp / f"libv1{SHARED_LIB_SUFFIX}"
+        v2_so = tmp / f"libv2{SHARED_LIB_SUFFIX}"
+        err = _compile(v1_src, v1_so)
+        if err:
+            return CaseResult(name, "ERROR", expected_raw, None, f"compile v1 failed: {err[:200]}")
+        err = _compile(v2_src, v2_so)
+        if err:
+            return CaseResult(name, "ERROR", expected_raw, None, f"compile v2 failed: {err[:200]}")
+        v1_hdr_path = v1_hdr
+        v2_hdr_path = v2_hdr
+    else:
+        # No CMakeLists.txt — compile directly
+        v1_so = tmp / f"libv1{SHARED_LIB_SUFFIX}"
+        v2_so = tmp / f"libv2{SHARED_LIB_SUFFIX}"
+        err = _compile(v1_src, v1_so)
+        if err:
+            return CaseResult(name, "ERROR", expected_raw, None, f"compile v1 failed: {err[:200]}")
+        err = _compile(v2_src, v2_so)
+        if err:
+            return CaseResult(name, "ERROR", expected_raw, None, f"compile v2 failed: {err[:200]}")
+        v1_hdr_path = v1_hdr
+        v2_hdr_path = v2_hdr
 
     # dump v1
     snap1 = tmp / "snap1.json"
