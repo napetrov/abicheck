@@ -7,6 +7,7 @@ backward-compatible shims work correctly.
 from __future__ import annotations
 
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 from unittest.mock import patch
@@ -172,6 +173,7 @@ class TestUnifiedEdgeCases:
 # Backward-compatible shims
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(sys.platform != "linux", reason="ELF DWARF tests require Linux (macOS/Windows compilers produce Mach-O/PE)")
 class TestShims:
     def test_parse_dwarf_metadata_shim_returns_dwarf_metadata(
         self, tmp_path: Path

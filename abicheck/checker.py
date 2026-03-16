@@ -1260,29 +1260,32 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     n: PeMetadata = getattr(new, "pe", None) or PeMetadata()
     changes: list[Change] = []
 
-    # Build identifier sets — use name if present, else ordinal
-    def _export_id(e: Any) -> str:
-        return e.name if e.name else f"ordinal:{e.ordinal}"
+    # Export deltas from PE metadata can overlap with _diff_functions() when
+    # the same symbols are present in snapshot.functions. Keep PE signal, but
+    # deduplicate per symbol so we don't double-report while still preserving
+    # metadata-only changes that function model may miss.
+    old_ids = {(e.name if e.name else f"ordinal:{e.ordinal}") for e in o.exports}
+    new_ids = {(e.name if e.name else f"ordinal:{e.ordinal}") for e in n.exports}
+    old_fn_names = {f.name for f in old.functions if f.name}
+    new_fn_names = {f.name for f in new.functions if f.name}
 
-    old_ids = {_export_id(e) for e in o.exports}
-    new_ids = {_export_id(e) for e in n.exports}
-
-    # Use ELF_ONLY (compatible) when both snapshots lack header analysis
     removed_kind = (
         ChangeKind.FUNC_REMOVED_ELF_ONLY
         if getattr(old, "elf_only_mode", False) and getattr(new, "elf_only_mode", False)
         else ChangeKind.FUNC_REMOVED
     )
-    # Detect removed exports
     for eid in sorted(old_ids - new_ids):
+        if eid in old_fn_names:
+            continue
         changes.append(Change(
             kind=removed_kind,
             symbol=eid,
             description=f"export removed from DLL: {eid}",
         ))
 
-    # Detect new exports (informational)
     for eid in sorted(new_ids - old_ids):
+        if eid in new_fn_names:
+            continue
         changes.append(Change(
             kind=ChangeKind.FUNC_ADDED,
             symbol=eid,
@@ -1316,17 +1319,23 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     n: MachoMetadata = getattr(new, "macho", None) or MachoMetadata()
     changes: list[Change] = []
 
-    # Detect removed/added exports (only when at least one side has exports)
+    # Export deltas from Mach-O metadata can overlap with _diff_functions().
+    # Deduplicate per symbol to avoid double-reporting, but keep metadata-only
+    # changes that function model may miss.
     if o.exports or n.exports:
         old_names = {e.name for e in o.exports if e.name}
         new_names = {e.name for e in n.exports if e.name}
-        # Use ELF_ONLY (compatible) when both snapshots lack header analysis
+        old_fn_names = {f.name for f in old.functions if f.name}
+        new_fn_names = {f.name for f in new.functions if f.name}
+
         removed_kind = (
             ChangeKind.FUNC_REMOVED_ELF_ONLY
             if getattr(old, "elf_only_mode", False) and getattr(new, "elf_only_mode", False)
             else ChangeKind.FUNC_REMOVED
         )
         for name in sorted(old_names - new_names):
+            if name in old_fn_names:
+                continue
             changes.append(Change(
                 kind=removed_kind,
                 symbol=name,
@@ -1334,6 +1343,8 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             ))
 
         for name in sorted(new_names - old_names):
+            if name in new_fn_names:
+                continue
             changes.append(Change(
                 kind=ChangeKind.FUNC_ADDED,
                 symbol=name,
@@ -1341,7 +1352,7 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             ))
 
     # Install name change (equivalent of SONAME change)
-    if o.install_name != n.install_name and (o.install_name or n.install_name):
+    if o.install_name and o.install_name != n.install_name:
         changes.append(Change(
             kind=ChangeKind.SONAME_CHANGED,
             symbol="LC_ID_DYLIB",
@@ -1351,7 +1362,7 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         ))
 
     # Compatibility version change (LC_ID_DYLIB compat_version — binary contract)
-    if o.compat_version != n.compat_version and (o.compat_version or n.compat_version):
+    if o.compat_version and o.compat_version != n.compat_version:
         changes.append(Change(
             kind=ChangeKind.COMPAT_VERSION_CHANGED,
             symbol="compat_version",
