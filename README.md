@@ -316,8 +316,15 @@ cmake --build build --target case01_symbol_removal_v1 case01_symbol_removal_v2 -
 # Linux:   libv1.so / libv2.so
 # macOS:   libv1.dylib / libv2.dylib
 # Windows: libv1.dll / libv2.dll
+# Linux (adapt extension for your platform):
 abicheck compare build/case01_symbol_removal/libv1.so build/case01_symbol_removal/libv2.so \
     --old-header case01_symbol_removal/v1.h --new-header case01_symbol_removal/v2.h
+# macOS:
+#   abicheck compare build/case01_symbol_removal/libv1.dylib build/case01_symbol_removal/libv2.dylib \
+#       --old-header case01_symbol_removal/v1.h --new-header case01_symbol_removal/v2.h
+# Windows:
+#   abicheck compare build/case01_symbol_removal/libv1.dll build/case01_symbol_removal/libv2.dll \
+#       --old-header case01_symbol_removal/v1.h --new-header case01_symbol_removal/v2.h
 # Verdict: BREAKING — symbol 'helper' was removed
 ```
 

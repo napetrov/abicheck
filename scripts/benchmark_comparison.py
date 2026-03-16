@@ -850,6 +850,7 @@ def main() -> None:
         cmake_file = case_dir / "CMakeLists.txt"
         makefile = case_dir / "Makefile"
         used_make_artifacts = False
+        used_cmake_artifacts = False
 
         if cmake_file.exists() and shutil.which("cmake"):
             cmake_build = bdir / "cmake_build"
@@ -878,20 +879,10 @@ def main() -> None:
                 if built_v1 and built_v2:
                     v1_so = built_v1
                     v2_so = built_v2
-                    used_make_artifacts = True
+                    used_cmake_artifacts = True
                 else:
-                    if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
-                        print(f"  {name:<35} COMPILE_ERR")
-                        results.append({"case": name, "expected": expected,
-                                         "expected_compat": EXPECTED_COMPAT.get(name, expected),
-                                         "abicheck": "ERROR", "abicheck_compat": "ERROR",
-                                         "abicheck_strict": "ERROR",
-                                         "abidiff": "ERROR", "abidiff_headers": "ERROR",
-                                         "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
-                        continue
-            else:
-                if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
-                    print(f"  {name:<35} COMPILE_ERR")
+                    # CMake built but libs not found — don't fallback to compile_so
+                    print(f"  {name:<35} CMAKE_NO_LIB")
                     results.append({"case": name, "expected": expected,
                                      "expected_compat": EXPECTED_COMPAT.get(name, expected),
                                      "abicheck": "ERROR", "abicheck_compat": "ERROR",
@@ -899,6 +890,16 @@ def main() -> None:
                                      "abidiff": "ERROR", "abidiff_headers": "ERROR",
                                      "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
                     continue
+            else:
+                # CMake build failed — don't fallback to compile_so
+                print(f"  {name:<35} CMAKE_BUILD_ERR")
+                results.append({"case": name, "expected": expected,
+                                 "expected_compat": EXPECTED_COMPAT.get(name, expected),
+                                 "abicheck": "ERROR", "abicheck_compat": "ERROR",
+                                 "abicheck_strict": "ERROR",
+                                 "abidiff": "ERROR", "abidiff_headers": "ERROR",
+                                 "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
+                continue
         elif makefile.exists() and shutil.which("make"):
             build_copy = bdir / "make_build"
             if build_copy.exists():
@@ -955,7 +956,7 @@ def main() -> None:
         v2_h = v2_h_hint if v2_h_hint else (v2_h_gen if v2_h_gen.exists() else None)
 
         # abicheck-family headers: ELF-only for Makefile cases without hints
-        if used_make_artifacts and not (v1_h_hint or v2_h_hint):
+        if (used_make_artifacts or used_cmake_artifacts) and not (v1_h_hint or v2_h_hint):
             v1_h_abicheck = None
             v2_h_abicheck = None
         else:

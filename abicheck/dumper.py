@@ -1103,7 +1103,7 @@ def _dump_macho(
     # (Mach-O convention). Strip it for matching against castxml names.
     exported_no_underscore: set[str] = set()
     for sym in exported_dynamic:
-        if sym.startswith("_") and not sym.startswith("__Z"):
+        if sym.startswith("_"):
             exported_no_underscore.add(sym[1:])
         else:
             exported_no_underscore.add(sym)

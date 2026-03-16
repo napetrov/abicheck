@@ -485,6 +485,7 @@ class TestElfOnlyModeRemoved:
         result = compare(old, new)
         kinds = [c.kind for c in result.changes]
         assert ChangeKind.FUNC_REMOVED_ELF_ONLY in kinds
+        assert ChangeKind.FUNC_REMOVED not in kinds
 
     def test_removed_func_normal_mode(self):
         """Function removed in normal mode → FUNC_REMOVED (breaking)."""
@@ -502,6 +503,7 @@ class TestElfOnlyModeRemoved:
         result = compare(old, new)
         kinds = [c.kind for c in result.changes]
         assert ChangeKind.FUNC_REMOVED in kinds
+        assert ChangeKind.FUNC_REMOVED_ELF_ONLY not in kinds
 
 
 class TestElfOnlyModePeMacho:
@@ -522,6 +524,7 @@ class TestElfOnlyModePeMacho:
         result = compare(old, new)
         kinds = [c.kind for c in result.changes]
         assert ChangeKind.FUNC_REMOVED_ELF_ONLY in kinds
+        assert ChangeKind.FUNC_REMOVED not in kinds
 
     def test_diff_macho_elf_only_removed(self):
         """_diff_macho: removed export in elf_only_mode → FUNC_REMOVED_ELF_ONLY."""
@@ -538,3 +541,4 @@ class TestElfOnlyModePeMacho:
         result = compare(old, new)
         kinds = [c.kind for c in result.changes]
         assert ChangeKind.FUNC_REMOVED_ELF_ONLY in kinds
+        assert ChangeKind.FUNC_REMOVED not in kinds

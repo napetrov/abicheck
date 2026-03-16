@@ -556,5 +556,5 @@ class TestDumpRoutingMachoPe:
         f.write_bytes(b"\x00\x01\x02\x03")
 
         with patch.object(dumper, "_detect_format", return_value="unknown"):
-            with pytest.raises((ValueError, Exception), match="(?i)unknown|unrecogni"):
+            with pytest.raises(ValueError, match="(?i)unknown|unrecogni"):
                 dump(f, headers=[], version="1.0")
