@@ -253,6 +253,40 @@ class TestDiffPe:
         assert len(added) == 1
         assert added[0].symbol == "ordinal:99"
 
+    def test_export_not_duplicated_when_in_functions(self):
+        """Symbols already in snapshot.functions must not be re-emitted by _diff_pe."""
+        from abicheck.checker import ChangeKind, _diff_pe
+        from abicheck.model import AbiSnapshot, Function
+
+        fn = Function(name="bar", mangled="_bar", return_type="void")
+        old = AbiSnapshot(library="test.dll", version="1.0",
+                          functions=[fn],
+                          pe=PeMetadata(exports=[PeExport(name="foo"), PeExport(name="bar")]))
+        new = AbiSnapshot(library="test.dll", version="2.0",
+                          functions=[fn],
+                          pe=PeMetadata(exports=[PeExport(name="foo")]))
+        changes = _diff_pe(old, new)
+        removed = [c for c in changes if c.kind == ChangeKind.FUNC_REMOVED]
+        # "bar" is already in old.functions → must be deduplicated
+        assert all(c.symbol != "bar" for c in removed)
+
+    def test_export_removed_not_in_functions_still_emitted(self):
+        """Symbols in PE exports but NOT in functions must still be reported."""
+        from abicheck.checker import ChangeKind, _diff_pe
+        from abicheck.model import AbiSnapshot, Function
+
+        fn = Function(name="foo", mangled="_foo", return_type="void")
+        old = AbiSnapshot(library="test.dll", version="1.0",
+                          functions=[fn],
+                          pe=PeMetadata(exports=[PeExport(name="foo"), PeExport(name="baz")]))
+        new = AbiSnapshot(library="test.dll", version="2.0",
+                          functions=[fn],
+                          pe=PeMetadata(exports=[PeExport(name="foo")]))
+        changes = _diff_pe(old, new)
+        removed = [c for c in changes if c.kind == ChangeKind.FUNC_REMOVED]
+        # "baz" is not in functions → must still be emitted
+        assert any(c.symbol == "baz" for c in removed)
+
 
 # ── parse_pe_metadata ───────────────────────────────────────────────────
 

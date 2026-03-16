@@ -22,6 +22,7 @@ from abicheck.macho_metadata import (
     MachoExport,
     MachoMetadata,
     MachoSymbolType,
+    _version_field_to_str,
     _version_str,
     is_macho,
     parse_macho_metadata,
@@ -77,6 +78,16 @@ class TestVersionStr:
     def test_high_major(self):
         packed = (10 << 16) | (0 << 8) | 0
         assert _version_str(packed) == "10.0.0"
+
+    def test_version_field_to_str_from_int(self):
+        packed = (3 << 16) | (4 << 8) | 5
+        assert _version_field_to_str(packed) == "3.4.5"
+
+    def test_version_field_to_str_from_helper_object(self):
+        class _Helper:
+            _version = (7 << 16) | (8 << 8) | 9
+
+        assert _version_field_to_str(_Helper()) == "7.8.9"
 
 
 # ── is_macho magic detection ────────────────────────────────────────────
@@ -310,6 +321,57 @@ class TestDiffMacho:
         changes = _diff_macho(old, new)
         assert any(c.kind == ChangeKind.SONAME_CHANGED for c in changes)
         assert any(c.kind == ChangeKind.NEEDED_ADDED for c in changes)
+
+    def test_export_not_duplicated_when_in_functions(self):
+        """Dylib exports already in snapshot.functions must not be re-emitted."""
+        from abicheck.checker import ChangeKind, _diff_macho
+        from abicheck.model import AbiSnapshot, Function
+
+        fn = Function(name="bar", mangled="_bar", return_type="void")
+        old = AbiSnapshot(library="libfoo.dylib", version="1.0",
+                          functions=[fn],
+                          macho=MachoMetadata(exports=[MachoExport(name="foo"), MachoExport(name="bar")]))
+        new = AbiSnapshot(library="libfoo.dylib", version="2.0",
+                          functions=[fn],
+                          macho=MachoMetadata(exports=[MachoExport(name="foo")]))
+        changes = _diff_macho(old, new)
+        removed = [c for c in changes if c.kind == ChangeKind.FUNC_REMOVED]
+        # "bar" is already in old.functions → must be deduplicated
+        assert all(c.symbol != "bar" for c in removed)
+
+    def test_export_removed_not_in_functions_still_emitted(self):
+        """Dylib exports NOT in functions must still be reported."""
+        from abicheck.checker import ChangeKind, _diff_macho
+        from abicheck.model import AbiSnapshot, Function
+
+        fn = Function(name="foo", mangled="_foo", return_type="void")
+        old = AbiSnapshot(library="libfoo.dylib", version="1.0",
+                          functions=[fn],
+                          macho=MachoMetadata(exports=[MachoExport(name="foo"), MachoExport(name="baz")]))
+        new = AbiSnapshot(library="libfoo.dylib", version="2.0",
+                          functions=[fn],
+                          macho=MachoMetadata(exports=[MachoExport(name="foo")]))
+        changes = _diff_macho(old, new)
+        removed = [c for c in changes if c.kind == ChangeKind.FUNC_REMOVED]
+        # "baz" is not in functions → must still be emitted
+        assert any(c.symbol == "baz" for c in removed)
+
+    def test_reexported_lib_removed_and_added(self):
+        """Re-exported dylib deltas are reported as NEEDED_REMOVED/NEEDED_ADDED."""
+        from abicheck.checker import ChangeKind, _diff_macho
+        from abicheck.model import AbiSnapshot
+
+        old = AbiSnapshot(library="libfoo.dylib", version="1.0", macho=MachoMetadata(
+            reexported_libs=["/usr/lib/libA.dylib", "/usr/lib/libB.dylib"],
+        ))
+        new = AbiSnapshot(library="libfoo.dylib", version="2.0", macho=MachoMetadata(
+            reexported_libs=["/usr/lib/libA.dylib", "/usr/lib/libC.dylib"],
+        ))
+        changes = _diff_macho(old, new)
+        removed = [c for c in changes if c.kind == ChangeKind.NEEDED_REMOVED]
+        added = [c for c in changes if c.kind == ChangeKind.NEEDED_ADDED]
+        assert any("/usr/lib/libB.dylib" in c.symbol for c in removed)
+        assert any("/usr/lib/libC.dylib" in c.symbol for c in added)
 
 
 # ── Synthetic Mach-O binary builder ──────────────────────────────────────
