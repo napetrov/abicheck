@@ -183,7 +183,12 @@ echo "abicheck verdict: $VERDICT (exit code $ABICHECK_EXIT)"
 {
   echo "verdict=$VERDICT"
   echo "exit-code=$ABICHECK_EXIT"
-  echo "report-path=${OUTPUT_FILE:-}"
+  # Only emit report-path when a real report file was produced
+  if [[ -n "${OUTPUT_FILE:-}" && -f "${OUTPUT_FILE}" ]]; then
+    echo "report-path=${OUTPUT_FILE}"
+  else
+    echo "report-path="
+  fi
 } >> "$GITHUB_OUTPUT"
 
 # ---------------------------------------------------------------------------

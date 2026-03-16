@@ -81,8 +81,8 @@ automatically, then runs ABI comparison and reports results.
 | Output | Description |
 |--------|-------------|
 | `verdict` | `COMPATIBLE`, `ADDITIONS`, `API_BREAK`, `BREAKING`, or `ERROR` |
-| `exit-code` | `0` (compatible), `1` (API additions), `2` (API break), `4` (ABI break) |
-| `report-path` | Path to the generated report file |
+| `exit-code` | `0` (compatible/no change), `1` (additions, only with `--fail-on-additions`), `2` (API break), `4` (ABI break). Other non-zero codes may be produced by tool or runtime errors. |
+| `report-path` | Path to the generated report file (empty when no output file was produced) |
 
 ## Usage examples
 
@@ -209,17 +209,23 @@ jobs:
           upload-sarif: true
 ```
 
-### Cross-compilation check
+### Cross-compilation check (dump mode)
+
+Cross-compilation flags (`gcc-prefix`, `sysroot`, `gcc-options`) are only supported
+in `dump` mode. Use `mode: dump` to generate a baseline from a cross-compiled binary,
+then compare with a separate step.
 
 ```yaml
+      # Step 1: dump ABI snapshot from cross-compiled binary
       - uses: napetrov/abicheck@v1
         with:
-          old-library: baseline-arm64.json
+          mode: dump
           new-library: build-arm64/libfoo.so
-          new-header: include/foo.h
+          header: include/foo.h
           gcc-prefix: aarch64-linux-gnu-
           sysroot: /usr/aarch64-linux-gnu
           lang: c
+          output-file: baseline-arm64.json
 ```
 
 ### Matrix: multiple libraries

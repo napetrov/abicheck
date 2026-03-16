@@ -100,7 +100,8 @@ In `abicheck compat`, non-verdict failures are further classified where possible
 | `BREAKING` | `4` | `1` |
 | Tool error | `1`* | `3/4/5/6/7/8/10/11` |
 
-\* Without `--fail-on-additions`, exit `1` from `compare` is always a tool/CLI error. With `--fail-on-additions`, exit `1` means `ADDITIONS`. Use `--format json` + `verdict` field to distinguish programmatically.
+\* Without `--fail-on-additions`, exit `1` from `compare` is treated as a tool/CLI error.
+With `--fail-on-additions`, exit `1` can indicate `ADDITIONS` but may also occur for non-verdict failures; use `--format json` + `verdict` field as the authoritative discriminator.
 
 ---
 
