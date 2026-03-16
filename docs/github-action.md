@@ -285,51 +285,6 @@ jobs:
           path: abi-report-${{ runner.os }}.json
 ```
 
-### Unified ABI gate after multi-platform matrix
-
-Pattern:
-1. Run platform jobs in matrix and upload one JSON report per OS.
-2. Add a final `abi-gate` job that downloads all reports and fails if any platform reports `BREAKING`.
-
-```yaml
-jobs:
-  abi-gate:
-    needs: [abi-scan]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: abi-reports
-
-      - name: Aggregate ABI verdicts
-        shell: bash
-        run: |
-          python - <<'PY'
-          import json, pathlib, sys
-          reports = sorted(pathlib.Path('abi-reports').rglob('*.json'))
-          if not reports:
-            print('No ABI reports found')
-            sys.exit(1)
-
-          bad = []
-          for p in reports:
-            data = json.loads(p.read_text(encoding='utf-8'))
-            verdict = str(data.get('verdict', '')).upper()
-            print(f"{p}: verdict={verdict}")
-            if verdict == 'BREAKING':
-              bad.append(str(p))
-
-          if bad:
-            print('\nABI gate failed. BREAKING reports:')
-            for b in bad:
-              print(' -', b)
-            sys.exit(1)
-          print('\nABI gate passed.')
-          PY
-```
-
-This keeps `napetrov/abicheck@v1` unchanged: no action changes are required for this workflow pattern.
-
 ### Skip system dependency installation
 
 If castxml and gcc are already installed (e.g. in a custom Docker image or
