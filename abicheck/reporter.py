@@ -26,11 +26,9 @@ from .checker import (
     Verdict,
 )
 from .checker_policy import (
-    BREAKING_KINDS,
-    API_BREAK_KINDS,
-    COMPATIBLE_KINDS,
-    RISK_KINDS,
     impact_for,
+)
+from .checker_policy import (
     policy_kind_sets as _policy_kind_sets,
 )
 from .report_summary import build_summary
@@ -260,7 +258,11 @@ def _build_impact_table(result: DiffResult) -> list[str]:
 # Leaf-change mode helpers
 # ---------------------------------------------------------------------------
 
-def _to_markdown_leaf(result: DiffResult, show_impact: bool = False) -> str:
+def _to_markdown_leaf(
+    result: DiffResult,
+    show_impact: bool = False,
+    show_only: str | None = None,
+) -> str:
     """Leaf-change mode: root type changes with affected interface lists."""
     from .checker import _ROOT_TYPE_CHANGE_KINDS
 
@@ -279,9 +281,15 @@ def _to_markdown_leaf(result: DiffResult, show_impact: bool = False) -> str:
         "",
     ]
 
+    changes = list(result.changes)
+    if show_only:
+        changes = apply_show_only(changes, show_only, policy=result.policy)
+        lines.append(f"> Filtered by: `--show-only {show_only}` ({len(changes)} of {len(result.changes)} changes shown)")
+        lines.append("")
+
     # Group root type changes by severity
-    type_changes = [c for c in result.changes if c.kind in _ROOT_TYPE_CHANGE_KINDS]
-    non_type_changes = [c for c in result.changes if c.kind not in _ROOT_TYPE_CHANGE_KINDS]
+    type_changes = [c for c in changes if c.kind in _ROOT_TYPE_CHANGE_KINDS]
+    non_type_changes = [c for c in changes if c.kind not in _ROOT_TYPE_CHANGE_KINDS]
 
     if type_changes:
         breaking_set, api_break_set, _, _ = _policy_kind_sets(result.policy)
@@ -329,13 +337,20 @@ def _to_markdown_leaf(result: DiffResult, show_impact: bool = False) -> str:
     return "\n".join(lines)
 
 
-def _to_json_leaf(result: DiffResult, indent: int = 2) -> str:
+def _to_json_leaf(
+    result: DiffResult,
+    indent: int = 2,
+    show_only: str | None = None,
+) -> str:
     """Leaf-change mode JSON output."""
     from .checker import _ROOT_TYPE_CHANGE_KINDS
 
     summary = build_summary(result)
-    type_changes = [c for c in result.changes if c.kind in _ROOT_TYPE_CHANGE_KINDS]
-    non_type_changes = [c for c in result.changes if c.kind not in _ROOT_TYPE_CHANGE_KINDS]
+    changes = list(result.changes)
+    if show_only:
+        changes = apply_show_only(changes, show_only, policy=result.policy)
+    type_changes = [c for c in changes if c.kind in _ROOT_TYPE_CHANGE_KINDS]
+    non_type_changes = [c for c in changes if c.kind not in _ROOT_TYPE_CHANGE_KINDS]
 
     d: dict[str, object] = {
         "library": result.library,
@@ -394,7 +409,7 @@ def to_json(
         return to_stat_json(result, indent=indent)
 
     if report_mode == "leaf":
-        return _to_json_leaf(result, indent=indent)
+        return _to_json_leaf(result, indent=indent, show_only=show_only)
 
     changes = list(result.changes)
     if show_only:
@@ -552,7 +567,7 @@ def to_markdown(
         return to_stat(result)
 
     if report_mode == "leaf":
-        return _to_markdown_leaf(result, show_impact=show_impact)
+        return _to_markdown_leaf(result, show_impact=show_impact, show_only=show_only)
 
     v = result.verdict
     emoji = _VERDICT_EMOJI[v]

@@ -842,8 +842,8 @@ def generate_html_report(
 
     # Apply show_only filter (display-only, does not affect metrics)
     if show_only:
-        from .reporter import apply_show_only
         from .checker import Change as _Change
+        from .reporter import apply_show_only
         typed_changes = [c for c in all_changes if isinstance(c, _Change)]
         filtered = apply_show_only(typed_changes, show_only, policy=result.policy)
         changes: list[object] = list(filtered)

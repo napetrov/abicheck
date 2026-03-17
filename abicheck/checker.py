@@ -1971,6 +1971,37 @@ _DERIVED_CHANGE_KINDS: frozenset[ChangeKind] = frozenset({
 })
 
 
+# Field-level change kinds where the symbol is "TypeName::fieldName".
+# For these, the root type is the part before the *last* "::".
+_FIELD_LEVEL_KINDS: frozenset[ChangeKind] = frozenset({
+    ChangeKind.TYPE_FIELD_REMOVED, ChangeKind.TYPE_FIELD_ADDED,
+    ChangeKind.TYPE_FIELD_OFFSET_CHANGED, ChangeKind.TYPE_FIELD_TYPE_CHANGED,
+    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
+    ChangeKind.STRUCT_FIELD_OFFSET_CHANGED, ChangeKind.STRUCT_FIELD_REMOVED,
+    ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+    ChangeKind.UNION_FIELD_REMOVED, ChangeKind.UNION_FIELD_TYPE_CHANGED,
+    ChangeKind.UNION_FIELD_ADDED,
+    ChangeKind.FIELD_BITFIELD_CHANGED, ChangeKind.FIELD_RENAMED,
+    ChangeKind.FIELD_BECAME_CONST, ChangeKind.FIELD_LOST_CONST,
+    ChangeKind.FIELD_BECAME_VOLATILE, ChangeKind.FIELD_LOST_VOLATILE,
+    ChangeKind.FIELD_BECAME_MUTABLE, ChangeKind.FIELD_LOST_MUTABLE,
+    ChangeKind.FIELD_ACCESS_CHANGED, ChangeKind.ANON_FIELD_CHANGED,
+})
+
+
+def _root_type_name(c: Change) -> str:
+    """Extract the root type name from a change's symbol.
+
+    For field-level changes (e.g. ``Container::flags``), strip the last
+    ``::field`` component.  For all other changes (including namespaced
+    types like ``ns::MyType``), keep the full symbol to avoid collapsing
+    distinct types in the same namespace.
+    """
+    if "::" in c.symbol and c.kind in _FIELD_LEVEL_KINDS:
+        return c.symbol.rsplit("::", 1)[0]
+    return c.symbol
+
+
 def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]]:
     """Identify changes that are consequences of a root type change.
 
@@ -1981,7 +2012,7 @@ def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]
     root_types: dict[str, Change] = {}
     for c in changes:
         if c.kind in _ROOT_TYPE_CHANGE_KINDS:
-            type_name = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
+            type_name = _root_type_name(c)
             if type_name not in root_types:
                 root_types[type_name] = c
 
@@ -2001,7 +2032,7 @@ def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]
             # A root type change can itself be redundant if it references
             # another root type (nested type propagation). Check for that.
             if c.kind in _DERIVED_CHANGE_KINDS:
-                type_name = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
+                type_name = _root_type_name(c)
                 # Only check against OTHER root types (not itself)
                 other_roots = {k: v for k, v in root_types.items() if k != type_name}
                 matched_root = _match_root_type(c, other_roots)
@@ -2046,16 +2077,22 @@ def _match_root_type(c: Change, root_types: dict[str, Change]) -> str | None:
     """Check if a derived change references a known root type.
 
     Returns the root type name if found, None otherwise.
+    Uses word-boundary matching to avoid false positives where a type
+    name is a prefix of another (e.g. ``Config`` must not match
+    ``Config2``).
+
     Conservative: false negatives (showing too much) are safer than false
     positives (hiding real changes).
     """
     for type_name in root_types:
-        # Check old_value, new_value, or description for the type name
-        if c.old_value and type_name in c.old_value:
+        # Build a word-boundary pattern: the type name must appear as a
+        # whole token, not as a substring of a longer identifier.
+        pattern = r'(?<![A-Za-z0-9_])' + re.escape(type_name) + r'(?![A-Za-z0-9_])'
+        if c.old_value and re.search(pattern, c.old_value):
             return type_name
-        if c.new_value and type_name in c.new_value:
+        if c.new_value and re.search(pattern, c.new_value):
             return type_name
-        if type_name in c.description:
+        if re.search(pattern, c.description):
             return type_name
     return None
 
