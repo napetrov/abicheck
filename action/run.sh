@@ -224,8 +224,22 @@ elif [[ "$MODE" == "deps" ]]; then
     esac
   fi
 
+elif [[ "$MODE" == "dump" ]]; then
+  # dump exit codes: 0=success, anything else=error.
+  # dump never produces ADDITIONS/API_BREAK/BREAKING verdicts.
+  if [[ $ABICHECK_EXIT -eq 0 ]]; then
+    VERDICT="COMPATIBLE"
+  else
+    VERDICT="ERROR"
+    if _is_cli_error; then
+      echo "::error::abicheck dump failed due to a CLI argument or configuration error (exit code $ABICHECK_EXIT)."
+    else
+      echo "::error::abicheck dump failed (exit code $ABICHECK_EXIT)."
+    fi
+  fi
+
 else
-  # compare/dump exit codes: 0=compatible, 1=additions, 2=API_BREAK, 4=BREAKING
+  # compare exit codes: 0=compatible, 1=additions, 2=API_BREAK, 4=BREAKING
   # Click also uses exit code 2 for usage/argument errors — detect via stderr.
   if [[ $ABICHECK_EXIT -eq 2 ]] && echo "$STDERR_CONTENT" | grep -qE '(^Usage:|^Error:|^Try )'; then
     VERDICT="ERROR"
@@ -355,8 +369,12 @@ elif [[ "$MODE" == "stack-check" || "$MODE" == "deps" ]]; then
     FINAL_EXIT=1
   fi
 
+elif [[ "$MODE" == "dump" ]]; then
+  # dump: non-zero is always an error (already mapped to ERROR above)
+  :
+
 else
-  # compare / dump mode
+  # compare mode
   if [[ $ABICHECK_EXIT -eq 4 && "${INPUT_FAIL_ON_BREAKING:-true}" == "true" ]]; then
     echo "::error::ABI break detected. Set fail-on-breaking: false to continue despite breaks."
     FINAL_EXIT=1

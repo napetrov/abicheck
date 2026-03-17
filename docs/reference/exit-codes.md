@@ -136,10 +136,14 @@ In `abicheck compat`, non-verdict failures are further classified where possible
 | `API_BREAK` | `2` | — | — | `2` |
 | `BREAKING` / `FAIL` | `4` | — | `4` | `1` |
 | Load failure | — | `1` | `4` | — |
-| Tool error | `1`* | — | — | `3/4/5/6/7/8/10/11` |
+| Tool error | `1/2`* | — | — | `3/4/5/6/7/8/10/11` |
 
-\* Without `--fail-on-additions`, exit `1` from `compare` is treated as a tool/CLI error.
-With `--fail-on-additions`, exit `1` can indicate `ADDITIONS` but may also occur for non-verdict failures; use `--format json` + `verdict` field as the authoritative discriminator.
+\* For `compare`, exit `1` without `--fail-on-additions` is a tool/CLI error.
+With `--fail-on-additions`, exit `1` can indicate `ADDITIONS` but may also occur
+for non-verdict failures. Exit `2` can also represent a CLI/configuration error
+(Click uses exit code 2 for argument/usage errors), not just `API_BREAK`. To
+reliably distinguish verdicts from tool errors, use `--format json` and read the
+`verdict` field as the authoritative discriminator.
 
 ---
 

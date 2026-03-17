@@ -339,10 +339,12 @@ jobs:
 
       - name: Extract old rootfs
         run: |
+          mkdir -p /tmp/old-root
           docker export $(docker create old-image:latest) | tar -xf - -C /tmp/old-root
 
       - name: Extract new rootfs
         run: |
+          mkdir -p /tmp/new-root
           docker export $(docker create new-image:latest) | tar -xf - -C /tmp/new-root
 
       - name: Full-stack ABI check
