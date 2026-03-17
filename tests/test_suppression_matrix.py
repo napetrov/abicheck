@@ -11,6 +11,7 @@ scaffolded with TODO markers and skip directives.
 from __future__ import annotations
 
 import textwrap
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -432,25 +433,187 @@ class TestNegativeSuppressionScenarios:
 # ===========================================================================
 
 class TestAdvancedSuppressionScaffold:
-    """Scaffold tests for suppression features that may not yet be implemented.
+    """Tests for advanced suppression features: label, source_location, expires."""
 
-    These use pytest.skip with TODO markers. Remove skip when the feature
-    is implemented.
-    """
+    def test_label_based_suppression(self, tmp_path: Path) -> None:
+        """label field is stored and retrievable; label does not affect matching."""
+        sl = _suppression_from_yaml(tmp_path, """
+            version: 1
+            suppressions:
+              - symbol: _Z6helperi
+                reason: tracked internally
+                label: workaround
+        """)
+        # label-based retrieval
+        rules = sl.rules_by_label("workaround")
+        assert len(rules) == 1
+        assert rules[0].label == "workaround"
 
-    @pytest.mark.skip(reason="TODO: label/tag-based suppression not yet implemented")
-    def test_label_based_suppression(self) -> None:
-        """TODO: suppress by label / tag annotation in suppression file."""
-        # Implement when suppression supports label/group fields
-        pass
+        # label doesn't change match behaviour — the rule still suppresses the change
+        old, new = _make_removed_func_snaps()
+        result = compare(old, new, suppression=sl)
+        assert result.suppressed_count == 1
+        assert result.verdict.value in ("COMPATIBLE", "NO_CHANGE")
 
-    @pytest.mark.skip(reason="TODO: file-scoped suppression (by source_location) not yet implemented")
-    def test_file_scoped_suppression(self) -> None:
-        """TODO: suppress all changes in a specific header file."""
-        # Implement when suppression supports source_location pattern
-        pass
+    def test_label_non_matching_does_not_suppress(self, tmp_path: Path) -> None:
+        """A suppression with a label that targets a different symbol doesn't suppress."""
+        sl = _suppression_from_yaml(tmp_path, """
+            version: 1
+            suppressions:
+              - symbol: _Z9otherFuncv
+                label: other_label
+        """)
+        old, new = _make_removed_func_snaps()
+        result = compare(old, new, suppression=sl)
+        assert result.suppressed_count == 0
 
-    @pytest.mark.skip(reason="TODO: suppression expiry date not yet implemented")
-    def test_suppression_with_expiry_date(self) -> None:
-        """TODO: suppression with 'expires' date field."""
-        pass
+    def test_file_scoped_suppression(self, tmp_path: Path) -> None:
+        """source_location glob suppresses changes from matching headers."""
+        from abicheck.checker import Change, ChangeKind
+        from abicheck.suppression import Suppression, SuppressionList
+
+        change_in_scope = Change(
+            kind=ChangeKind.FUNC_REMOVED,
+            symbol="_Z3foov",
+            description="removed",
+            source_location="/project/internal/detail.h:42",
+        )
+        change_out_of_scope = Change(
+            kind=ChangeKind.FUNC_REMOVED,
+            symbol="_Z3barv",
+            description="removed",
+            source_location="/project/public/api.h:10",
+        )
+
+        sl = SuppressionList(suppressions=[
+            Suppression(
+                source_location="*/internal/*",
+                reason="internal headers are not part of public ABI",
+            )
+        ])
+
+        assert sl.is_suppressed(change_in_scope), "internal change should be suppressed"
+        assert not sl.is_suppressed(change_out_of_scope), "public change should not be suppressed"
+
+    def test_file_scoped_suppression_no_source_location(self, tmp_path: Path) -> None:
+        """source_location rule does not suppress changes with no source_location set."""
+        from abicheck.checker import Change, ChangeKind
+        from abicheck.suppression import Suppression, SuppressionList
+
+        change_no_src = Change(
+            kind=ChangeKind.FUNC_REMOVED,
+            symbol="_Z3foov",
+            description="removed",
+            source_location=None,
+        )
+        sl = SuppressionList(suppressions=[
+            Suppression(source_location="*/internal/*")
+        ])
+        assert not sl.is_suppressed(change_no_src)
+
+    def test_suppression_with_expiry_date(self, tmp_path: Path) -> None:
+        """Suppression with future expires date is active; past expires date is inactive."""
+        sl = _suppression_from_yaml(tmp_path, """
+            version: 1
+            suppressions:
+              - symbol: _Z6helperi
+                expires: "2099-12-31"
+                reason: expires far in future
+        """)
+        old, new = _make_removed_func_snaps()
+
+        # Future expiry → still active
+        result = compare(old, new, suppression=sl)
+        assert result.suppressed_count == 1, "future-expiry suppression should be active"
+
+    def test_suppression_expired_does_not_suppress(self, tmp_path: Path) -> None:
+        """Suppression past its expiry date does not suppress changes."""
+        from abicheck.checker import Change, ChangeKind
+        from abicheck.suppression import Suppression, SuppressionList
+
+        past = date(2020, 1, 1)
+        sup = Suppression(symbol="_Z6helperi", expires=past)
+        sl = SuppressionList([sup])
+
+        change = Change(
+            kind=ChangeKind.FUNC_REMOVED,
+            symbol="_Z6helperi",
+            description="removed",
+        )
+        assert not sl.is_suppressed(change), "expired suppression should not suppress"
+
+    def test_suppression_expired_is_reported(self, tmp_path: Path) -> None:
+        """expired_rules() returns rules past their expiry date."""
+        from abicheck.suppression import Suppression, SuppressionList
+
+        past = date(2020, 1, 1)
+        future = date(2099, 1, 1)
+        sl = SuppressionList([
+            Suppression(symbol="_Zfoo", expires=past, reason="old workaround"),
+            Suppression(symbol="_Zbar", expires=future, reason="current workaround"),
+            Suppression(symbol="_Zbaz"),
+        ])
+        expired = sl.expired_rules()
+        assert len(expired) == 1
+        assert expired[0].symbol == "_Zfoo"
+
+    def test_expires_invalid_date_raises(self, tmp_path: Path) -> None:
+        """Invalid expires date in YAML raises ValueError."""
+        with pytest.raises(ValueError, match="invalid 'expires' date"):
+            _suppression_from_yaml(tmp_path, """
+                version: 1
+                suppressions:
+                  - symbol: _Z3foov
+                    expires: "not-a-date"
+            """)
+
+    def test_source_location_combines_with_symbol_selector(self, tmp_path: Path) -> None:
+        """source_location must be conjunctive with symbol/symbol_pattern selectors."""
+        from abicheck.checker import Change, ChangeKind
+        from abicheck.suppression import Suppression, SuppressionList
+
+        sl = SuppressionList(suppressions=[
+            Suppression(
+                symbol="_Z3foov",
+                source_location="*/internal/*",
+                reason="only specific symbol in internal headers",
+            )
+        ])
+
+        # In-scope symbol and file => suppressed
+        c1 = Change(
+            kind=ChangeKind.FUNC_REMOVED,
+            symbol="_Z3foov",
+            description="removed",
+            source_location="/project/internal/a.h:12",
+        )
+        # In-scope file but different symbol => must NOT suppress
+        c2 = Change(
+            kind=ChangeKind.FUNC_REMOVED,
+            symbol="_Z3barv",
+            description="removed",
+            source_location="/project/internal/a.h:13",
+        )
+
+        assert sl.is_suppressed(c1)
+        assert not sl.is_suppressed(c2)
+
+    def test_expires_unquoted_timestamp_normalized_to_date(self, tmp_path: Path) -> None:
+        """YAML datetime values for expires are normalized to date (no TypeError in compare)."""
+        from datetime import datetime as _dt
+
+        sl = _suppression_from_yaml(tmp_path, """
+            version: 1
+            suppressions:
+              - symbol: _Z6helperi
+                expires: 2099-12-31T00:00:00
+        """)
+
+        # Load path should normalize datetime -> date
+        expires = sl._suppressions[0].expires  # noqa: SLF001 - intentional white-box test
+        assert expires is not None
+        assert not isinstance(expires, _dt)
+
+        old, new = _make_removed_func_snaps()
+        result = compare(old, new, suppression=sl)
+        assert result.suppressed_count == 1

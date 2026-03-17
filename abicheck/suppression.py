@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
 
 import yaml
@@ -27,7 +28,10 @@ from .checker import Change, ChangeKind
 _VALID_CHANGE_KINDS: frozenset[str] = frozenset(ck.value for ck in ChangeKind)
 
 # Keys allowed in a suppression entry — unknown keys are rejected
-_KNOWN_ENTRY_KEYS: frozenset[str] = frozenset({"symbol", "symbol_pattern", "type_pattern", "change_kind", "reason"})
+_KNOWN_ENTRY_KEYS: frozenset[str] = frozenset({
+    "symbol", "symbol_pattern", "type_pattern", "change_kind", "reason",
+    "label", "source_location", "expires",
+})
 
 # ChangeKind values that represent type-level changes (matched by type_pattern)
 _TYPE_CHANGE_KINDS: frozenset[str] = frozenset({
@@ -50,18 +54,30 @@ class Suppression:
     type_pattern: str | None = None
     change_kind: str | None = None
     reason: str | None = None
+    # --- Extended fields ---
+    label: str | None = None
+    """Optional tag/label for grouping suppressions (e.g. 'workaround', 'internal')."""
+    source_location: str | None = None
+    """Suppress all changes whose source file path matches this pattern (fnmatch-style).
+    Example: ``source_location: "*/internal/*"`` suppresses changes from internal headers."""
+    expires: date | None = None
+    """Optional expiry date (ISO 8601). After this date, the suppression is inactive
+    and a warning is emitted. Format: ``expires: 2026-06-01``."""
     _compiled_pattern: re.Pattern[str] | None = field(default=None, init=False, repr=False)
     _compiled_type_pattern: re.Pattern[str] | None = field(default=None, init=False, repr=False)
+    _compiled_source_pattern: re.Pattern[str] | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         has_symbol = self.symbol is not None
         has_sym_pattern = self.symbol_pattern is not None
         has_type_pattern = self.type_pattern is not None
+        has_source_location = self.source_location is not None
 
         selector_count = sum([has_symbol, has_sym_pattern, has_type_pattern])
-        if selector_count == 0:
+        if selector_count == 0 and not has_source_location:
             raise ValueError(
-                "Suppression must have 'symbol', 'symbol_pattern', or 'type_pattern'"
+                "Suppression must have at least one of: "
+                "'symbol', 'symbol_pattern', 'type_pattern', or 'source_location'"
             )
         if selector_count > 1:
             raise ValueError(
@@ -85,6 +101,17 @@ class Suppression:
                 raise ValueError(
                     f"Invalid type_pattern {self.type_pattern!r}: {e}"
                 ) from e
+        if self.source_location is not None:
+            # Convert fnmatch-style glob to regex for flexibility
+            import fnmatch
+            try:
+                self._compiled_source_pattern = re.compile(
+                    fnmatch.translate(self.source_location)
+                )
+            except re.error as e:
+                raise ValueError(
+                    f"Invalid source_location {self.source_location!r}: {e}"
+                ) from e
         # Validate change_kind against known enum values
         if self.change_kind is not None:
             if self.change_kind not in _VALID_CHANGE_KINDS:
@@ -94,16 +121,39 @@ class Suppression:
                     f"Valid values: {valid}"
                 )
 
-    def matches(self, change: Change) -> bool:
+    def is_expired(self, today: date | None = None) -> bool:
+        """Return True if this suppression has passed its expiry date."""
+        if self.expires is None:
+            return False
+        check_date = today or date.today()
+        return check_date > self.expires
+
+    def matches(self, change: Change, today: date | None = None) -> bool:
         """Return True if this suppression rule matches the given change.
+
+        Expired suppressions (past ``expires`` date) never match.
 
         Pattern matching uses fullmatch — the pattern must cover the entire
         mangled symbol name. Use '.*foo.*' for substring matching.
+
+        ``source_location`` uses fnmatch-style glob against
+        ``change.source_location``.
 
         type_pattern only matches changes whose kind is a type-level change
         (TYPE_*, ENUM_*, TYPEDEF_*, etc.), preventing type whitelists from
         suppressing symbol-level changes.
         """
+        # Expired suppressions are inactive
+        if self.is_expired(today):
+            return False
+
+        # source_location: match against change.source_location if present
+        if self._compiled_source_pattern is not None:
+            src = change.source_location or ""
+            if not self._compiled_source_pattern.match(src):
+                return False
+            # Fall through to check remaining selectors conjunctively (AND logic)
+
         # type_pattern: only matches type-level changes
         if self._compiled_type_pattern is not None:
             if change.kind.value not in _TYPE_CHANGE_KINDS:
@@ -184,6 +234,25 @@ class SuppressionList:
                     f"Suppression entry {i} has unknown key(s): {sorted(unknown)}. "
                     f"Allowed keys: {sorted(_KNOWN_ENTRY_KEYS)}"
                 )
+            # Parse expires date
+            expires_raw = item.get("expires")
+            expires: date | None = None
+            if expires_raw is not None:
+                if isinstance(expires_raw, date):
+                    # datetime is a subclass of date; convert to date to avoid
+                    # TypeError when comparing datetime to date in is_expired()
+                    if isinstance(expires_raw, datetime):
+                        expires = expires_raw.date()
+                    else:
+                        expires = expires_raw
+                else:
+                    try:
+                        expires = date.fromisoformat(str(expires_raw))
+                    except ValueError as e:
+                        raise ValueError(
+                            f"Suppression entry {i}: invalid 'expires' date {expires_raw!r} "
+                            "(expected ISO 8601 format, e.g. 2026-06-01)"
+                        ) from e
             try:
                 sup = Suppression(
                     symbol=item.get("symbol"),
@@ -191,6 +260,9 @@ class SuppressionList:
                     type_pattern=item.get("type_pattern"),
                     change_kind=item.get("change_kind"),
                     reason=item.get("reason"),
+                    label=item.get("label"),
+                    source_location=item.get("source_location"),
+                    expires=expires,
                 )
             except ValueError as e:
                 raise ValueError(f"Suppression entry {i}: {e}") from e
@@ -198,9 +270,17 @@ class SuppressionList:
 
         return cls(suppressions)
 
-    def is_suppressed(self, change: Change) -> bool:
-        """Return True if any suppression rule matches the given change."""
-        return any(s.matches(change) for s in self._suppressions)
+    def is_suppressed(self, change: Change, today: date | None = None) -> bool:
+        """Return True if any active (non-expired) suppression rule matches the given change."""
+        return any(s.matches(change, today=today) for s in self._suppressions)
+
+    def expired_rules(self, today: date | None = None) -> list[Suppression]:
+        """Return all rules that have passed their expiry date."""
+        return [s for s in self._suppressions if s.is_expired(today)]
+
+    def rules_by_label(self, label: str) -> list[Suppression]:
+        """Return all rules with the given label."""
+        return [s for s in self._suppressions if s.label == label]
 
     def __len__(self) -> int:
         return len(self._suppressions)

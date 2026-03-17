@@ -240,3 +240,64 @@ def test_unknown_yaml_key_raises(tmp_path: Path) -> None:
     """)
     with pytest.raises(ValueError, match="unknown key"):
         SuppressionList.load(bad)
+
+
+def test_type_pattern_non_type_change_not_matched() -> None:
+    """type_pattern must not suppress symbol-level changes."""
+    sup = Suppression(type_pattern="Foo")
+    c = make_change(ChangeKind.FUNC_REMOVED, "Foo")
+    assert not sup.matches(c)
+
+
+def test_type_pattern_with_change_kind_mismatch_not_matched() -> None:
+    sup = Suppression(type_pattern="Err", change_kind="enum_member_removed")
+    c = make_change(ChangeKind.ENUM_MEMBER_ADDED, "Err")
+    assert not sup.matches(c)
+
+
+def test_rules_by_label_and_repr() -> None:
+    sl = SuppressionList([
+        Suppression(symbol="a", label="x"),
+        Suppression(symbol="b", label="x"),
+        Suppression(symbol="c", label="y"),
+    ])
+    assert len(sl.rules_by_label("x")) == 2
+    assert len(sl.rules_by_label("y")) == 1
+    assert "SuppressionList(3 rules)" in repr(sl)
+
+
+def test_merge_combines_lists() -> None:
+    a = SuppressionList([Suppression(symbol="a")])
+    b = SuppressionList([Suppression(symbol="b")])
+    m = SuppressionList.merge(a, b)
+    assert len(m) == 2
+
+
+def test_suppressions_must_be_list(tmp_path: Path) -> None:
+    bad = write_yaml(tmp_path, """
+        version: 1
+        suppressions: {}
+    """)
+    with pytest.raises(ValueError, match="must be a list"):
+        SuppressionList.load(bad)
+
+
+def test_entry_must_be_mapping(tmp_path: Path) -> None:
+    bad = write_yaml(tmp_path, """
+        version: 1
+        suppressions:
+          - not-a-mapping
+    """)
+    with pytest.raises(ValueError, match="must be a mapping"):
+        SuppressionList.load(bad)
+
+
+def test_invalid_expires_date_raises(tmp_path: Path) -> None:
+    bad = write_yaml(tmp_path, """
+        version: 1
+        suppressions:
+          - symbol: foo
+            expires: not-a-date
+    """)
+    with pytest.raises(ValueError, match="invalid 'expires' date"):
+        SuppressionList.load(bad)

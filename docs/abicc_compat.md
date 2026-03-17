@@ -130,7 +130,7 @@ These override what is in the `<version>` element of the XML descriptor.
 | `-skip-internal-types PATTERN` | Regex pattern for internal types to skip |
 | `-keep-cxx` | Include `_ZS*`, `_ZNS*`, `_ZNKS*` (C++ std) mangled symbols (accepted; abicheck includes all exported symbols by default) |
 | `-keep-reserved` | Report changes in reserved fields (accepted; abicheck reports all field changes by default) |
-| `--suppress PATH` | abicheck-native suppression YAML file (merged with all other filters) |
+| `--suppress PATH` | abicheck-native suppression YAML file (merged with all other filters; supports `label`, `source_location`, `expires`) |
 
 `-skip-symbols` / `-skip-types` file format:
 ```text
