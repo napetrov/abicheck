@@ -435,6 +435,8 @@ RISK_KINDS: frozenset[ChangeKind] = frozenset({
     # Sentinel/MAX enum value moved. Existing binaries are unaffected,
     # but source code using it as loop bound/array size may need review.
     ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
+    # Regular enum member value change — source risk, not a guaranteed binary break.
+    ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
     # A symbol exported by this library that originates from a dependency changed.
     # This is a real ABI change but caused by dependency versioning, not the
     # library's own API.  Direct consumers do not link against these symbols

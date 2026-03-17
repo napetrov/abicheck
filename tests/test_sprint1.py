@@ -229,10 +229,11 @@ def test_sprint1_breaking_subset() -> None:
     )
 
 
-def test_regular_enum_member_value_change_remains_breaking() -> None:
+def test_regular_enum_member_value_change_is_risk() -> None:
+    """Non-sentinel enum member value change is COMPATIBLE_WITH_RISK (source risk, not binary break)."""
     old = _snap(enums=[EnumType("Err", [EnumMember("OK", 0), EnumMember("E", 1), EnumMember("LAST", 2)])])
     new = _snap(enums=[EnumType("Err", [EnumMember("OK", 0), EnumMember("E", 99), EnumMember("LAST", 2)])])
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.ENUM_MEMBER_VALUE_CHANGED in kinds
-    assert result.verdict == Verdict.BREAKING
+    assert result.verdict == Verdict.COMPATIBLE_WITH_RISK
