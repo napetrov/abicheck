@@ -20,7 +20,7 @@ from pathlib import Path
 
 from .binder import SymbolBinding
 from .resolver import DependencyGraph
-from .stack_checker import StackCheckResult, StackVerdict
+from .stack_checker import StackChange, StackCheckResult, StackVerdict
 
 _VERDICT_EMOJI = {
     StackVerdict.PASS: "✅",
@@ -108,7 +108,7 @@ def _render_missing_symbols_section(lines: list[str], missing: list[SymbolBindin
     lines.append("")
 
 
-def _render_stack_changes_section(lines: list[str], stack_changes: list) -> None:
+def _render_stack_changes_section(lines: list[str], stack_changes: list[StackChange]) -> None:
     """Append stack changes section if any."""
     if not stack_changes:
         return

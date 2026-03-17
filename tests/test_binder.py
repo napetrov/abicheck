@@ -220,6 +220,48 @@ class TestVisibility:
 
 
 # ---------------------------------------------------------------------------
+# Interposition
+# ---------------------------------------------------------------------------
+
+
+class TestInterposition:
+    def test_version_mismatch_not_treated_as_interposed(self):
+        """If first_provider has the symbol but wrong version, a later provider
+        with the correct version should be RESOLVED_OK, not INTERPOSED."""
+        graph = _make_graph(
+            {
+                "/app": (["libfoo.so", "libbar.so"], [], [_imp("sym", version="V2")]),
+                "/lib/libfoo.so": ([], [_sym("sym", version="V1")], []),
+                "/lib/libbar.so": ([], [_sym("sym", version="V2")], []),
+            },
+            edges=[("/app", "/lib/libfoo.so"), ("/app", "/lib/libbar.so")],
+        )
+        bindings = compute_bindings(graph)
+        b = bindings[0]
+        assert b.status == BindingStatus.RESOLVED_OK
+        assert b.provider == "/lib/libbar.so"
+
+    def test_true_interposition_detected(self):
+        """If an earlier provider has the same version, it's real interposition."""
+        graph = _make_graph(
+            {
+                "/app": (["libinterp.so", "libfoo.so"], [], [_imp("sym", version="V1")]),
+                "/lib/libinterp.so": ([], [_sym("sym", version="V1")], []),
+                "/lib/libfoo.so": ([], [_sym("sym", version="V1")], []),
+            },
+            edges=[("/app", "/lib/libinterp.so"), ("/app", "/lib/libfoo.so")],
+        )
+        bindings = compute_bindings(graph)
+        # The first match is libinterp.so, which is also first_provider,
+        # so it's RESOLVED_OK (not interposed). The symbol from libfoo.so
+        # is the one that would be interposed IF the app imported from
+        # libfoo.so. But app finds it from libinterp.so first → RESOLVED_OK.
+        b = bindings[0]
+        assert b.status == BindingStatus.RESOLVED_OK
+        assert b.provider == "/lib/libinterp.so"
+
+
+# ---------------------------------------------------------------------------
 # Load order
 # ---------------------------------------------------------------------------
 

@@ -203,6 +203,20 @@ def _make_not_found_binding(
     )
 
 
+def _provider_has_version(
+    export_index: dict[str, dict[str, list[tuple[str, bool, str]]]],
+    provider: str,
+    sym_name: str,
+    required_version: str,
+) -> bool:
+    """Check if *provider* exports *sym_name* with *required_version* visibly."""
+    versions = export_index.get(provider, {}).get(sym_name, [])
+    return any(
+        ver == required_version and vis not in ("hidden", "internal")
+        for ver, _, vis in versions
+    )
+
+
 def _resolve_import(
     consumer: str,
     sym_name: str,
@@ -257,15 +271,18 @@ def _resolve_import(
                 if vis in ("hidden", "internal"):
                     continue
                 if ver == required_version:
-                    # Detect interposition: if another provider earlier in
-                    # the load order already had a visible version of this
-                    # symbol, the current match is from the "natural" first
-                    # provider. But if first_provider != provider_path then
-                    # first_provider was skipped (version didn't match) so
-                    # this is NOT interposition — it's just a later match.
-                    # Interposition is when a *different* provider satisfies
-                    # the symbol *before* the natural one in load order.
-                    if first_provider is not None and first_provider != provider_path:
+                    # Detect interposition: only when a *different* provider
+                    # that also exports the *same version* appeared earlier
+                    # in the load order.  If first_provider != provider_path
+                    # but first_provider's version didn't match, that's just
+                    # a version miss — not interposition.
+                    if (
+                        first_provider is not None
+                        and first_provider != provider_path
+                        and _provider_has_version(
+                            export_index, first_provider, sym_name, required_version,
+                        )
+                    ):
                         return SymbolBinding(
                             consumer=consumer,
                             symbol=sym_name,
@@ -275,7 +292,7 @@ def _resolve_import(
                             explanation=(
                                 f"Symbol {sym_name}@{required_version} resolved from "
                                 f"{provider_path} but {first_provider} also exports "
-                                f"{sym_name} (interposition)"
+                                f"{sym_name}@{required_version} (interposition)"
                             ),
                         )
                     return SymbolBinding(

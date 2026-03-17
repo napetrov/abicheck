@@ -645,7 +645,8 @@ def _render_deps_section_md(old: AbiSnapshot, new: AbiSnapshot | None) -> str:
         if info.nodes:
             lines.append(f"**Dependencies**: {len(info.nodes)} resolved DSOs")
             for node in info.nodes:
-                depth = node.get("depth", 0)
+                raw_depth = node.get("depth", 0)
+                depth = raw_depth if isinstance(raw_depth, int) else 0
                 indent = "  " * depth
                 reason = node.get("resolution_reason", "")
                 lines.append(f"  {indent}- `{node.get('soname', '?')}` ({reason})")

@@ -378,7 +378,8 @@ def _expand_rpath(
       - Sysroot prefix (only for non-$ORIGIN absolute paths)
     """
     dirs: list[str] = []
-    origin = str(origin_dir)
+    # Use POSIX-style origin — ELF paths always use forward slashes.
+    origin = origin_dir.as_posix()
     for entry in rpath.split(":"):
         if not entry:
             continue
@@ -392,7 +393,7 @@ def _expand_rpath(
         # sysroot prefix if the DSO was found under the sysroot), so
         # prepending again would produce /sysroot/sysroot/... paths.
         if prefix and not has_origin:
-            expanded = os.path.join(prefix, expanded.lstrip("/"))
+            expanded = prefix.rstrip("/") + "/" + expanded.lstrip("/")
         dirs.append(expanded)
     return dirs
 
