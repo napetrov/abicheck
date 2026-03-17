@@ -584,9 +584,6 @@ class _CompatGroup(click.Group):
         args = ["check", *args]
         return super().parse_args(ctx, args)
 
-    def invoke(self, ctx: click.Context) -> object:
-        return super().invoke(ctx)
-
 
 @click.group("compat", cls=_CompatGroup)
 def compat_group() -> None:

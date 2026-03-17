@@ -754,3 +754,27 @@ class TestCliIntegration:
         f.write_bytes(b"fake")
         with pytest.raises(click.ClickException, match="Unsupported binary format"):
             _dump_native_binary(f, "unknown", [], [], "1.0", "c")
+
+
+# ── install_name / compat_version gained coverage ────────────────────────────
+
+class TestDiffMachoGuards:
+    """Tests for install_name and compat_version change detection."""
+
+    def test_install_name_gained_reported(self):
+        """old=empty, new=set: gaining an install name is reported."""
+        from abicheck.checker import ChangeKind, _diff_macho
+        from abicheck.model import AbiSnapshot
+        old = AbiSnapshot(library="a.dylib", version="1.0", macho=MachoMetadata(install_name=""))
+        new = AbiSnapshot(library="a.dylib", version="2.0", macho=MachoMetadata(install_name="/usr/lib/a.dylib"))
+        changes = _diff_macho(old, new)
+        assert any(c.kind == ChangeKind.SONAME_CHANGED for c in changes)
+
+    def test_compat_version_gained_reported(self):
+        """old=empty, new=set: gaining a compat version is reported."""
+        from abicheck.checker import ChangeKind, _diff_macho
+        from abicheck.model import AbiSnapshot
+        old = AbiSnapshot(library="a.dylib", version="1.0", macho=MachoMetadata(compat_version=""))
+        new = AbiSnapshot(library="a.dylib", version="2.0", macho=MachoMetadata(compat_version="1.0.0"))
+        changes = _diff_macho(old, new)
+        assert any(c.kind == ChangeKind.COMPAT_VERSION_CHANGED for c in changes)

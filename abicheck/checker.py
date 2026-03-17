@@ -1352,7 +1352,7 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             ))
 
     # Install name change (equivalent of SONAME change)
-    if o.install_name and o.install_name != n.install_name:
+    if o.install_name != n.install_name and (o.install_name or n.install_name):
         changes.append(Change(
             kind=ChangeKind.SONAME_CHANGED,
             symbol="LC_ID_DYLIB",
@@ -1362,7 +1362,7 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         ))
 
     # Compatibility version change (LC_ID_DYLIB compat_version — binary contract)
-    if o.compat_version and o.compat_version != n.compat_version:
+    if o.compat_version != n.compat_version and (o.compat_version or n.compat_version):
         changes.append(Change(
             kind=ChangeKind.COMPAT_VERSION_CHANGED,
             symbol="compat_version",
