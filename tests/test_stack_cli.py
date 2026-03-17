@@ -90,3 +90,105 @@ class TestStackCheckCommand:
         assert result.exit_code == 0
         assert "baseline" in result.output.lower()
         assert "candidate" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# --follow-deps flag on dump and compare
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def real_lib():
+    """Find a real shared library for --follow-deps tests."""
+    candidates = [
+        Path("/usr/lib/x86_64-linux-gnu/libz.so.1"),
+        Path("/usr/lib/x86_64-linux-gnu/libexpat.so.1"),
+        Path("/lib/x86_64-linux-gnu/libz.so.1"),
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    pytest.skip("No suitable shared library found")
+
+
+class TestDumpFollowDeps:
+    def test_dump_follow_deps_json(self, runner, real_lib):
+        result = runner.invoke(main, ["dump", str(real_lib), "--follow-deps"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "dependency_info" in data
+        di = data["dependency_info"]
+        assert len(di["nodes"]) >= 1
+        assert "bindings_summary" in di
+        assert di["bindings_summary"].get("resolved_ok", 0) > 0
+
+    def test_dump_follow_deps_has_libc(self, runner, real_lib):
+        result = runner.invoke(main, ["dump", str(real_lib), "--follow-deps"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        sonames = [n["soname"] for n in data["dependency_info"]["nodes"]]
+        assert "libc.so.6" in sonames
+
+    def test_dump_without_follow_deps_no_dep_info(self, runner, real_lib):
+        result = runner.invoke(main, ["dump", str(real_lib)])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data.get("dependency_info") is None
+
+    def test_dump_follow_deps_to_file(self, runner, real_lib, tmp_path):
+        outfile = tmp_path / "snap.json"
+        result = runner.invoke(main, [
+            "dump", str(real_lib), "--follow-deps", "-o", str(outfile),
+        ])
+        assert result.exit_code == 0
+        data = json.loads(outfile.read_text())
+        assert "dependency_info" in data
+
+    def test_dump_follow_deps_roundtrip(self, runner, real_lib, tmp_path):
+        """Dump with --follow-deps, load snapshot, verify dep info survives."""
+        outfile = tmp_path / "snap.json"
+        result = runner.invoke(main, [
+            "dump", str(real_lib), "--follow-deps", "-o", str(outfile),
+        ])
+        assert result.exit_code == 0
+
+        from abicheck.serialization import load_snapshot
+        snap = load_snapshot(outfile)
+        assert snap.dependency_info is not None
+        assert len(snap.dependency_info.nodes) >= 1
+        assert snap.dependency_info.bindings_summary.get("resolved_ok", 0) > 0
+
+
+def _extract_json(output: str) -> dict:
+    """Extract JSON from CLI output that may contain leading warning lines."""
+    # Find the first '{' (start of JSON) in the output.
+    idx = output.find("{")
+    if idx < 0:
+        raise ValueError(f"No JSON found in output: {output[:200]}")
+    return json.loads(output[idx:])
+
+
+class TestCompareFollowDeps:
+    def test_compare_follow_deps_json(self, runner, real_lib):
+        result = runner.invoke(main, [
+            "compare", str(real_lib), str(real_lib), "--follow-deps", "--format", "json",
+        ])
+        assert result.exit_code == 0
+        data = _extract_json(result.output)
+        assert "old_dependency_info" in data
+        assert "new_dependency_info" in data
+        assert data["old_dependency_info"]["bindings_summary"]["resolved_ok"] > 0
+
+    def test_compare_follow_deps_markdown(self, runner, real_lib):
+        result = runner.invoke(main, [
+            "compare", str(real_lib), str(real_lib), "--follow-deps",
+        ])
+        assert result.exit_code == 0
+        assert "Dependency Analysis" in result.output
+        assert "resolved_ok" in result.output
+
+    def test_compare_without_follow_deps_no_dep_section(self, runner, real_lib):
+        result = runner.invoke(main, [
+            "compare", str(real_lib), str(real_lib),
+        ])
+        assert result.exit_code == 0
+        assert "Dependency Analysis" not in result.output

@@ -23,6 +23,7 @@ from typing import Any
 from .model import (
     AbiSnapshot,
     AccessLevel,
+    DependencyInfo,
     EnumMember,
     EnumType,
     Function,
@@ -73,6 +74,9 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
         for sym in elf.get("symbols", []):
             sym["binding"] = sym["binding"] if isinstance(sym["binding"], str) else sym["binding"].value
             sym["sym_type"] = sym["sym_type"] if isinstance(sym["sym_type"], str) else sym["sym_type"].value
+        for imp in elf.get("imports", []):
+            imp["binding"] = imp["binding"] if isinstance(imp["binding"], str) else imp["binding"].value
+            imp["sym_type"] = imp["sym_type"] if isinstance(imp["sym_type"], str) else imp["sym_type"].value
 
     # Serialize PeMetadata enums to strings
     if d.get("pe"):
@@ -110,7 +114,7 @@ def snapshot_to_json(snap: AbiSnapshot, indent: int = 2) -> str:
 
 
 def _elf_from_dict(e: dict[str, Any]) -> Any:
-    from .elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
+    from .elf_metadata import ElfImport, ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
     syms = [
         ElfSymbol(
             name=s["name"],
@@ -123,6 +127,16 @@ def _elf_from_dict(e: dict[str, Any]) -> Any:
         )
         for s in e.get("symbols", [])
     ]
+    imports = [
+        ElfImport(
+            name=i["name"],
+            binding=SymbolBinding(i.get("binding", "global")),
+            sym_type=SymbolType(i.get("sym_type", "notype")),
+            version=i.get("version", ""),
+            is_default=i.get("is_default", True),
+        )
+        for i in e.get("imports", [])
+    ]
     return ElfMetadata(
         soname=e.get("soname", ""),
         needed=e.get("needed", []),
@@ -131,6 +145,8 @@ def _elf_from_dict(e: dict[str, Any]) -> Any:
         versions_defined=e.get("versions_defined", []),
         versions_required=e.get("versions_required", {}),
         symbols=syms,
+        imports=imports,
+        interpreter=e.get("interpreter", ""),
     )
 
 
@@ -342,6 +358,19 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         else None
     )
 
+    dep_data = d.get("dependency_info")
+    dep_info = (
+        DependencyInfo(
+            nodes=dep_data.get("nodes", []),
+            edges=dep_data.get("edges", []),
+            unresolved=dep_data.get("unresolved", []),
+            bindings_summary=dep_data.get("bindings_summary", {}),
+            missing_symbols=dep_data.get("missing_symbols", []),
+        )
+        if isinstance(dep_data, dict)
+        else None
+    )
+
     return AbiSnapshot(
         library=d["library"], version=d["version"],
         functions=funcs, variables=variables, types=types,
@@ -352,6 +381,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         constants=d.get("constants", {}),
         platform=d.get("platform"),
         language_profile=d.get("language_profile"),
+        dependency_info=dep_info,
     )
 
 
