@@ -29,7 +29,7 @@ class TestPeSymbolDiff:
         result = compare(old, new)
         kinds = {c.kind for c in result.changes}
 
-        assert ChangeKind.FUNC_REMOVED in kinds
+        assert kinds == {ChangeKind.FUNC_REMOVED}
 
     def test_pe_symbol_diff_detects_addition(self) -> None:
         old = _snap(functions=[])
@@ -38,7 +38,7 @@ class TestPeSymbolDiff:
         result = compare(old, new)
         kinds = {c.kind for c in result.changes}
 
-        assert ChangeKind.FUNC_ADDED in kinds
+        assert kinds == {ChangeKind.FUNC_ADDED}
 
     def test_pe_symbol_unchanged_no_diff(self) -> None:
         old = _snap(functions=[_func("foo", "foo")])
@@ -61,8 +61,7 @@ class TestCallingConvMangling:
         result = compare(old, new)
         kinds = {c.kind for c in result.changes}
 
-        assert ChangeKind.FUNC_REMOVED in kinds
-        assert ChangeKind.FUNC_ADDED in kinds
+        assert kinds == {ChangeKind.FUNC_REMOVED, ChangeKind.FUNC_ADDED}
 
     def test_same_mangled_name_no_change(self) -> None:
         old = _snap(functions=[_func("foo", "_foo@4")])

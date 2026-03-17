@@ -128,7 +128,8 @@ jobs:
 ### Windows host
 - `castxml` with `cl.exe` backend is **untested in CI** — may work but is not validated
 - MSVC vtable layout differs from Itanium ABI; vtable diff results may be inaccurate
-- `__stdcall`/`__cdecl` calling convention differences not tracked
+- `__stdcall`/`__cdecl` calling-convention changes appear as `func_removed + func_added`
+  (mangled-name churn) — no dedicated change kind; see [#50](#50-calling-conventions) below
 - Tracked: abicc upstream issues #9, #50, #56, #121
 
 ### macOS host
