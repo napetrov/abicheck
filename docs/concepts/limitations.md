@@ -104,7 +104,7 @@ changes that don't affect exported symbols will not be detected.
 
 ## Troubleshooting
 
-See [troubleshooting.md](troubleshooting.md) for a diagnostic decision tree
+See [troubleshooting.md](../troubleshooting.md) for a diagnostic decision tree
 covering common false positives, false negatives, and unexpected verdicts.
 
 ---

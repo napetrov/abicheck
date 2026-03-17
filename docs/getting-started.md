@@ -187,7 +187,7 @@ abicheck compare old.json new.json -v
 | `2` | `API_BREAK` | Source-level API break (binary still works) |
 | `4` | `BREAKING` | Binary ABI break |
 
-Full reference (including `compat` mode): [Exit Codes](exit_codes.md)
+Full reference (including `compat` mode): [Exit Codes](reference/exit-codes.md)
 
 ### GitHub Actions example
 
@@ -225,7 +225,7 @@ steps:
 ## Next steps
 
 - [Verdicts](concepts/verdicts.md) — what each verdict means
-- [Policy Profiles](policies.md) — control how changes are classified
-- [Examples & Breakage Guide](examples_breakage_guide.md) — real-world ABI/API break scenarios
-- [ABICC Compatibility](abicc_compat.md) — migrating from abi-compliance-checker
+- [Policy Profiles](user-guide/policies.md) — control how changes are classified
+- [Examples & Breakage Guide](concepts/abi-breaks-explained.md) — real-world ABI/API break scenarios
+- [ABICC Compatibility](user-guide/from-abicc.md) — migrating from abi-compliance-checker
 - [Limitations](concepts/limitations.md)

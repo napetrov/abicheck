@@ -9,7 +9,7 @@ Typical problems it catches: removed or renamed symbols, changed function signat
 ## Why abicheck
 
 - **Three-layer analysis** — ELF symbol table + Clang AST (via castxml) + DWARF cross-check — catches changes that no single layer detects alone
-- **100+ detection rules** — covers symbol removal, signature changes, struct/class layout drift, vtable reordering, enum value shifts, qualifier changes, and many more (see [Change Kind Reference](reference/change_kinds.md))
+- **100+ detection rules** — covers symbol removal, signature changes, struct/class layout drift, vtable reordering, enum value shifts, qualifier changes, and many more (see [Change Kind Reference](reference/change-kinds.md))
 - **Multiple output formats** — Markdown, JSON, SARIF (GitHub Code Scanning), HTML
 - **Policy profiles** — `strict_abi`, `sdk_vendor`, `plugin_abi`, or custom YAML overrides
 - **ABICC drop-in** — full flag parity for migrating from abi-compliance-checker
@@ -36,7 +36,7 @@ abicheck compare libfoo.so.1 libfoo.so.2 \
 | `2` | `API_BREAK` | Source-level API break (recompile needed, binary still works) |
 | `4` | `BREAKING` | Binary ABI break (old binaries will crash or misbehave) |
 
-> `abicheck compat` uses ABICC-compatible exit codes (1 = BREAKING, 2 = API_BREAK). See [Exit Codes](exit_codes.md) for details.
+> `abicheck compat` uses ABICC-compatible exit codes (1 = BREAKING, 2 = API_BREAK). See [Exit Codes](reference/exit-codes.md) for details.
 
 ## CI integration
 
@@ -56,16 +56,16 @@ Save a baseline at release time, compare every new build:
 
 ## Next steps
 
-- [Getting Started](getting_started.md) — installation, first check, CI setup
-- [Platform Support](platforms.md) — Linux/macOS/Windows host matrix, cross-platform scanning
+- [Getting Started](getting-started.md) — installation, first check, CI setup
+- [Platform Support](reference/platforms.md) — Linux/macOS/Windows host matrix, cross-platform scanning
 - [Verdicts](concepts/verdicts.md) — what each verdict means and how to handle it
-- [Examples & Breakage Guide](examples_breakage_guide.md) — real-world ABI/API break scenarios with code
-- [Change Kind Reference](reference/change_kinds.md) — full list of 100+ detected change types
-- [Policy Profiles](policies.md) — built-in and custom policies
-- [Suppressions](suppressions.md) — YAML schema, matching semantics, and expiry rules
-- [ABICC Compatibility](abicc_compat.md) — drop-in replacement and migration from abi-compliance-checker
-- [MCP Server (Agent Integration)](mcp.md) — use abicheck from AI agents via MCP
-- [Benchmark & Tool Comparison](tool_comparison.md) — abicheck vs abidiff vs ABICC
+- [ABI Breaks Explained](concepts/abi-breaks-explained.md) — real-world ABI/API break scenarios with code
+- [Change Kind Reference](reference/change-kinds.md) — full list of 100+ detected change types
+- [Policy Profiles](user-guide/policies.md) — built-in and custom policies
+- [Suppressions](user-guide/suppressions.md) — YAML schema, matching semantics, and expiry rules
+- [Migrating from ABICC](user-guide/from-abicc.md) — drop-in replacement and migration from abi-compliance-checker
+- [MCP Integration](user-guide/mcp-integration.md) — use abicheck from AI agents via MCP
+- [Tool Comparison](reference/tool-comparison.md) — abicheck vs abidiff vs ABICC
 
 ## Status
 

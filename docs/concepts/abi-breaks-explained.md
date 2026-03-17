@@ -9,7 +9,7 @@ gcc -shared -fPIC -g v2.c -o libv2.so
 abicheck compare libv1.so libv2.so --old-header v1.h --new-header v2.h
 ```
 
-Expected verdicts for all cases are in [`examples/ground_truth.json`](https://github.com/napetrov/abicheck/blob/main/examples/ground_truth.json). For the complete list of detected change types, see [Change Kind Reference](reference/change_kinds.md).
+Expected verdicts for all cases are in [`examples/ground_truth.json`](https://github.com/napetrov/abicheck/blob/main/examples/ground_truth.json). For the complete list of detected change types, see [Change Kind Reference](../reference/change-kinds.md).
 
 ## Categories
 

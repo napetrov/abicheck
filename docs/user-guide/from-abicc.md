@@ -28,7 +28,7 @@ abicheck compat check -lib libfoo -old OLD.xml -new NEW.xml -report-path report.
 | `2` | Error | `API_BREAK` (source-level break) |
 | `3`–`11` | — | Non-verdict failures (missing tool, file access, parse error, etc.) |
 
-> Non-verdict failures use extended error codes (`3`–`11`) instead of overloading exit `2`. See [Exit Codes](exit_codes.md#extended-compat-error-codes-abicc-style) for the full table.
+> Non-verdict failures use extended error codes (`3`–`11`) instead of overloading exit `2`. See [Exit Codes](../reference/exit-codes.md#extended-compat-error-codes-abicc-style) for the full table.
 
 ### Step 3: Validate on historical releases
 
@@ -67,7 +67,7 @@ Exit codes match ABICC:
 | `0` | Compatible or no change |
 | `1` | Breaking ABI change detected |
 | `2` | `API_BREAK` (source-level break) |
-| `3`–`11` | Non-verdict failures (see [Exit Codes](exit_codes.md)) |
+| `3`–`11` | Non-verdict failures (see [Exit Codes](../reference/exit-codes.md)) |
 
 > **Note:** In `-strict` mode, `API_BREAK` is promoted to exit `1` (BREAKING).
 
@@ -397,7 +397,7 @@ blind spots. This means abicheck may report issues that ABICC would miss:
 | C++ templates (timeout) | ⏱️ | ✅ |
 | ELF symbol metadata | ❌ | ✅ |
 
-Full coverage comparison: see [gap_report.md](gap_report.md).
+Full coverage comparison: see [gap_report.md](../development/abicc-parity-status.md).
 
 ## ABICC flag coverage status
 
