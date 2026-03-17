@@ -16,23 +16,16 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
-
-import pytest
 
 from abicheck.appcompat import (
     AppCompatResult,
     AppRequirements,
     _detect_app_format,
     _is_relevant_to_app,
-    check_against,
-    check_appcompat,
-    parse_app_requirements,
 )
 from abicheck.checker import Change, DiffResult
 from abicheck.checker_policy import ChangeKind, Verdict
 from abicheck.reporter import appcompat_to_json, appcompat_to_markdown
-
 
 # ---------------------------------------------------------------------------
 # Unit tests: AppRequirements / AppCompatResult data structures
@@ -144,7 +137,7 @@ class TestIsRelevantToApp:
             kind=ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
             symbol="FOO_1.0",
             description="Symbol version removed",
-            old_value="libfoo.so.1",
+            old_value="FOO_1.0",
         )
         assert _is_relevant_to_app(change, app) is True
 
@@ -156,7 +149,7 @@ class TestIsRelevantToApp:
             kind=ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
             symbol="FOO_2.0",
             description="Symbol version removed",
-            old_value="libfoo.so.1",
+            old_value="FOO_2.0",
         )
         assert _is_relevant_to_app(change, app) is False
 
@@ -205,6 +198,16 @@ class TestAppCompatResultVerdict:
             old_lib_path="old.so",
             new_lib_path="new.so",
             missing_symbols=["foo_init"],
+            verdict=Verdict.BREAKING,
+        )
+        assert result.verdict == Verdict.BREAKING
+
+    def test_missing_versions_means_breaking(self):
+        result = AppCompatResult(
+            app_path="/usr/bin/myapp",
+            old_lib_path="old.so",
+            new_lib_path="new.so",
+            missing_versions=["FOO_1.0"],
             verdict=Verdict.BREAKING,
         )
         assert result.verdict == Verdict.BREAKING
@@ -346,6 +349,7 @@ class TestAppCompatReporters:
 class TestAppcompatCLI:
     def test_appcompat_help(self):
         from click.testing import CliRunner
+
         from abicheck.cli import main
 
         runner = CliRunner()
@@ -355,6 +359,7 @@ class TestAppcompatCLI:
 
     def test_appcompat_missing_args(self):
         from click.testing import CliRunner
+
         from abicheck.cli import main
 
         runner = CliRunner()
@@ -364,6 +369,7 @@ class TestAppcompatCLI:
 
     def test_appcompat_weak_mode_with_positional_fails(self, tmp_path):
         from click.testing import CliRunner
+
         from abicheck.cli import main
 
         app = tmp_path / "app"

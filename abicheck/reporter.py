@@ -804,7 +804,6 @@ def appcompat_to_markdown(result: object, *, show_irrelevant: bool = False) -> s
     missing_ver = getattr(result, "missing_versions", [])
     breaking = getattr(result, "breaking_for_app", [])
     irrelevant = getattr(result, "irrelevant_for_app", [])
-    full_diff = getattr(result, "full_diff", None)
 
     total_changes = len(breaking) + len(irrelevant)
 
@@ -831,15 +830,9 @@ def appcompat_to_markdown(result: object, *, show_irrelevant: bool = False) -> s
 
     # Symbol coverage section
     lines += ["## Symbol Coverage", ""]
-    if full_diff:
-        new_export_count = total_changes  # approximate from changes
-        lines.append(
-            f"App requires **{required_count}** library symbols."
-        )
-    else:
-        lines.append(
-            f"App requires **{required_count}** library symbols."
-        )
+    lines.append(
+        f"App requires **{required_count}** library symbols."
+    )
 
     if missing:
         lines.append(

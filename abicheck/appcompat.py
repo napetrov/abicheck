@@ -122,12 +122,13 @@ def _parse_elf_app_requirements(
 ) -> AppRequirements:
     """Extract app requirements for a specific library from an ELF binary.
 
-    Reads .dynsym for UNDEF symbols and .gnu.version_r for required versions.
+    Reads .dynsym for UNDEF symbols, correlates with .gnu.version and
+    .gnu.version_r to filter symbols to those imported from ``library_soname``.
     """
     from elftools.common.exceptions import ELFError
     from elftools.elf.dynamic import DynamicSection
     from elftools.elf.elffile import ELFFile
-    from elftools.elf.gnuversions import GNUVerNeedSection
+    from elftools.elf.gnuversions import GNUVerNeedSection, GNUVerSymSection
     from elftools.elf.sections import SymbolTableSection
 
     reqs = AppRequirements()
@@ -143,10 +144,33 @@ def _parse_elf_app_requirements(
                         if tag.entry.d_tag == "DT_NEEDED":
                             reqs.needed_libs.append(tag.needed)
 
-            # 2. Read undefined symbols from .dynsym
+            # 2. Build version-index → library SONAME map from .gnu.version_r
+            #    Each vernaux entry has vna_other (the version index used in
+            #    .gnu.version) and the parent verneed names the source library.
+            ver_idx_to_lib: dict[int, str] = {}
+            for section in elf.iter_sections():
+                if isinstance(section, GNUVerNeedSection):
+                    for verneed, vernaux_iter in section.iter_versions():
+                        lib = verneed.name
+                        for vernaux in vernaux_iter:
+                            ver_idx = vernaux.entry.vna_other
+                            ver_idx_to_lib[ver_idx] = lib
+                            ver = vernaux.name
+                            # Collect required version tags for the target library
+                            if ver and library_soname and lib == library_soname:
+                                reqs.required_versions[ver] = lib
+
+            # 3. Read .gnu.version section (per-symbol version indices)
+            versym_section: GNUVerSymSection | None = None
+            for section in elf.iter_sections():
+                if isinstance(section, GNUVerSymSection):
+                    versym_section = section
+                    break
+
+            # 4. Read undefined symbols from .dynsym, filtered by target library
             for section in elf.iter_sections():
                 if isinstance(section, SymbolTableSection) and section.name == ".dynsym":
-                    for sym in section.iter_symbols():
+                    for idx, sym in enumerate(section.iter_symbols()):
                         if sym.entry.st_shndx != "SHN_UNDEF":
                             continue
                         if not sym.name:
@@ -154,23 +178,34 @@ def _parse_elf_app_requirements(
                         binding = sym.entry.st_info.bind
                         if binding not in ("STB_GLOBAL", "STB_WEAK"):
                             continue
-                        reqs.undefined_symbols.add(sym.name)
 
-            # 3. Read required versions from .gnu.version_r
-            for section in elf.iter_sections():
-                if isinstance(section, GNUVerNeedSection):
-                    for verneed, vernaux_iter in section.iter_versions():
-                        lib = verneed.name
-                        # Only collect versions for the target library
-                        if library_soname and lib != library_soname:
-                            continue
-                        for vernaux in vernaux_iter:
-                            ver = vernaux.name
-                            if ver:
-                                # Map: we don't have per-symbol version mapping
-                                # from .gnu.version_r alone (that requires correlating
-                                # .gnu.version with .dynsym indices). Store lib-level versions.
-                                reqs.required_versions[ver] = lib
+                        # Filter by source library using .gnu.version correlation
+                        if library_soname and versym_section is not None:
+                            try:
+                                ver_entry = versym_section.get_symbol(idx)
+                                ver_ndx = ver_entry.entry["ndx"]
+                                # Mask off the hidden bit (bit 15)
+                                ver_ndx = ver_ndx & 0x7FFF
+                            except (IndexError, KeyError):
+                                ver_ndx = 1  # treat as unversioned
+
+                            if ver_ndx >= 2:
+                                # Versioned symbol — check if from target library
+                                source_lib = ver_idx_to_lib.get(ver_ndx, "")
+                                if source_lib != library_soname:
+                                    continue
+                            elif ver_ndx <= 1:
+                                # Unversioned symbol (index 0=local, 1=global).
+                                # Cannot determine source library from version info;
+                                # include only if it doesn't look like a system symbol.
+                                from .elf_metadata import _guess_symbol_origin
+                                origin = _guess_symbol_origin(
+                                    sym.name, reqs.needed_libs,
+                                )
+                                if origin is not None:
+                                    continue
+
+                        reqs.undefined_symbols.add(sym.name)
 
     except (ELFError, OSError, ValueError) as exc:
         log.warning("Failed to parse ELF app requirements from %s: %s", app_path, exc)
@@ -345,11 +380,12 @@ def _is_relevant_to_app(change: Change, app: AppRequirements) -> bool:
     if change.kind == ChangeKind.COMPAT_VERSION_CHANGED:
         return True
 
-    # Symbol version change for a version the app requires
+    # Symbol version removal for a version the app requires.
+    # change.symbol is the version tag (e.g. "FOO_1.0"); app.required_versions
+    # maps version_tag → library_soname.  If the tag is in the map, the app
+    # depends on it and the removal is relevant.
     if change.kind == ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED:
-        sym = change.symbol
-        required_ver = app.required_versions.get(sym)
-        if required_ver and change.old_value and required_ver == change.old_value:
+        if change.symbol in app.required_versions:
             return True
 
     return False
@@ -427,7 +463,6 @@ def check_appcompat(
 
     # 2. Run standard library comparison
     from .dumper import dump
-    from .errors import AbicheckError
 
     old_snap = dump(
         so_path=old_lib_path,
@@ -484,8 +519,8 @@ def check_appcompat(
     else:
         coverage = 0.0 if required_count > 0 else 100.0
 
-    # Verdict: missing symbols → BREAKING, else based on relevant changes
-    if missing_symbols:
+    # Verdict: missing symbols/versions → BREAKING, else based on relevant changes
+    if missing_symbols or missing_versions:
         verdict = Verdict.BREAKING
     elif breaking_for_app:
         verdict = compute_verdict(breaking_for_app, policy=policy)
@@ -548,7 +583,7 @@ def check_against(
     else:
         coverage = 0.0 if required_count > 0 else 100.0
 
-    verdict = Verdict.BREAKING if missing_symbols else Verdict.COMPATIBLE
+    verdict = Verdict.BREAKING if (missing_symbols or missing_versions) else Verdict.COMPATIBLE
 
     return AppCompatResult(
         app_path=str(app_path),
