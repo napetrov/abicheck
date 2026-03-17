@@ -359,17 +359,31 @@ _VALID_FORMATS = frozenset({"json", "sarif", "html", "markdown"})
 
 
 def _render_output(
-    fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnapshot,
+    fmt: str,
+    result: DiffResult,
+    old: AbiSnapshot,
+    new: AbiSnapshot,
+    *,
+    show_only: str | None = None,
+    report_mode: str = "full",
+    show_impact: bool = False,
+    stat: bool = False,
 ) -> str:
     """Render comparison result in the requested output format."""
     if fmt not in _VALID_FORMATS:
         msg = f"Unknown output format {fmt!r}. Valid formats: {sorted(_VALID_FORMATS)}"
         raise ValueError(msg)
+    if stat:
+        if fmt == "json":
+            from .reporter import to_stat_json
+            return to_stat_json(result)
+        from .reporter import to_stat
+        return to_stat(result)
     if fmt == "json":
-        return to_json(result)
+        return to_json(result, show_only=show_only, report_mode=report_mode, show_impact=show_impact)
     if fmt == "sarif":
         from .sarif import to_sarif_str
-        return to_sarif_str(result)
+        return to_sarif_str(result, show_only=show_only)
     if fmt == "html":
         from .html_report import generate_html_report
         old_symbol_count = sum(
@@ -385,8 +399,10 @@ def _render_output(
             old_version=old.version,
             new_version=new.version,
             old_symbol_count=old_symbol_count or None,
+            show_only=show_only,
+            show_impact=show_impact,
         )
-    return to_markdown(result)
+    return to_markdown(result, show_only=show_only, report_mode=report_mode, show_impact=show_impact)
 
 
 

@@ -619,7 +619,7 @@ def _render_output(
         return base
     if fmt == "sarif":
         from .sarif import to_sarif_str
-        return to_sarif_str(result)
+        return to_sarif_str(result, show_only=show_only)
     if fmt == "html":
         from .html_report import generate_html_report
         from .model import Visibility
@@ -636,6 +636,8 @@ def _render_output(
             old_version=old.version,
             new_version=new.version if new else "new",
             old_symbol_count=old_symbol_count or None,
+            show_only=show_only,
+            show_impact=show_impact,
         )
     md = to_markdown(result, show_only=show_only, report_mode=report_mode, show_impact=show_impact)
     if follow_deps and (old.dependency_info or (new and new.dependency_info)):

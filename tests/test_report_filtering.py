@@ -498,3 +498,139 @@ class TestCausedCountInMarkdown:
         result = _make_result(changes=[c])
         text = to_markdown(result)
         assert "12 derived change(s) collapsed" in text
+
+
+# ---------------------------------------------------------------------------
+# SARIF format support
+# ---------------------------------------------------------------------------
+
+class TestSarifRedundancy:
+    def test_sarif_includes_redundant_count(self):
+        from abicheck.sarif import to_sarif
+
+        result = _make_result(
+            changes=[Change(ChangeKind.TYPE_SIZE_CHANGED, "T", "size")],
+            redundant_changes=[Change(ChangeKind.FUNC_PARAMS_CHANGED, "f", "changed")],
+        )
+        sarif = to_sarif(result)
+        props = sarif["runs"][0]["properties"]
+        assert props["redundantCount"] == 1
+
+    def test_sarif_no_redundant_count_when_zero(self):
+        from abicheck.sarif import to_sarif
+
+        result = _make_result(
+            changes=[Change(ChangeKind.FUNC_REMOVED, "foo", "removed")],
+        )
+        sarif = to_sarif(result)
+        props = sarif["runs"][0]["properties"]
+        assert "redundantCount" not in props
+
+    def test_sarif_caused_by_type_in_result(self):
+        from abicheck.sarif import to_sarif
+
+        c = Change(ChangeKind.FUNC_PARAMS_CHANGED, "f", "param changed")
+        c.caused_by_type = "Config"
+        result = _make_result(changes=[c])
+        sarif = to_sarif(result)
+        result_props = sarif["runs"][0]["results"][0]["properties"]
+        assert result_props["causedByType"] == "Config"
+
+    def test_sarif_caused_count_in_result(self):
+        from abicheck.sarif import to_sarif
+
+        c = Change(ChangeKind.TYPE_SIZE_CHANGED, "T", "size")
+        c.caused_count = 5
+        result = _make_result(changes=[c])
+        sarif = to_sarif(result)
+        result_props = sarif["runs"][0]["results"][0]["properties"]
+        assert result_props["causedCount"] == 5
+
+    def test_sarif_show_only_filters(self):
+        from abicheck.sarif import to_sarif
+
+        result = _make_result(
+            changes=[
+                Change(ChangeKind.FUNC_REMOVED, "foo", "removed"),
+                Change(ChangeKind.FUNC_ADDED, "bar", "added"),
+                Change(ChangeKind.TYPE_SIZE_CHANGED, "T", "size"),
+            ],
+        )
+        sarif = to_sarif(result, show_only="functions")
+        # Only func_removed and func_added
+        assert len(sarif["runs"][0]["results"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# HTML format support
+# ---------------------------------------------------------------------------
+
+class TestHtmlRedundancy:
+    def test_html_redundancy_note(self):
+        from abicheck.html_report import generate_html_report
+
+        result = _make_result(
+            changes=[Change(ChangeKind.TYPE_SIZE_CHANGED, "T", "size")],
+            redundant_changes=[Change(ChangeKind.FUNC_PARAMS_CHANGED, "f", "changed")],
+        )
+        html = generate_html_report(result, lib_name="lib.so")
+        assert "1 redundant change(s)" in html
+        assert "--show-redundant" in html
+
+    def test_html_caused_count_displayed(self):
+        from abicheck.html_report import generate_html_report
+
+        c = Change(ChangeKind.TYPE_SIZE_CHANGED, "Config", "size changed")
+        c.caused_count = 7
+        result = _make_result(changes=[c])
+        html = generate_html_report(result, lib_name="lib.so")
+        assert "7 derived change(s) collapsed" in html
+
+    def test_html_show_only_filter(self):
+        from abicheck.html_report import generate_html_report
+
+        result = _make_result(
+            changes=[
+                Change(ChangeKind.FUNC_REMOVED, "foo", "removed"),
+                Change(ChangeKind.TYPE_SIZE_CHANGED, "T", "size"),
+            ],
+        )
+        html = generate_html_report(result, lib_name="lib.so", show_only="functions")
+        assert "Filtered by" in html
+        assert "1 of 2 changes shown" in html
+
+    def test_html_show_impact(self):
+        from abicheck.html_report import generate_html_report
+
+        c = Change(ChangeKind.TYPE_SIZE_CHANGED, "Config", "size changed",
+                    affected_symbols=["f1", "f2"])
+        c.caused_count = 3
+        result = _make_result(changes=[c])
+        html = generate_html_report(result, lib_name="lib.so", show_impact=True)
+        assert "Impact Summary" in html
+        assert "Config" in html
+
+
+# ---------------------------------------------------------------------------
+# XML (ABICC compat) format support
+# ---------------------------------------------------------------------------
+
+class TestXmlRedundancy:
+    def test_xml_redundant_count(self):
+        from abicheck.compat.xml_report import generate_xml_report
+
+        result = _make_result(
+            changes=[Change(ChangeKind.TYPE_SIZE_CHANGED, "T", "size")],
+            redundant_changes=[Change(ChangeKind.FUNC_PARAMS_CHANGED, "f", "changed")],
+        )
+        xml = generate_xml_report(result, lib_name="lib.so")
+        assert "<redundant_changes>1</redundant_changes>" in xml
+
+    def test_xml_caused_by_type(self):
+        from abicheck.compat.xml_report import generate_xml_report
+
+        c = Change(ChangeKind.TYPE_SIZE_CHANGED, "Config", "size changed")
+        c.caused_count = 3
+        result = _make_result(changes=[c])
+        xml = generate_xml_report(result, lib_name="lib.so")
+        assert "<caused_count>3</caused_count>" in xml
