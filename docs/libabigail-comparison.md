@@ -20,7 +20,8 @@
 | **abipkgdiff** | Compare ABIs across RPM/Deb/tar packages | **No equivalent** |
 | **kmidiff** | Compare Kernel Module Interfaces between kernel trees | **No equivalent** |
 | **abilint** | Validate/lint ABIXML files | **No equivalent** (not needed — JSON schema validation is simpler) |
-| **abidb** | ABI database for tracking changes over time | **No equivalent** |
+| **abidb** | Git-based ABI snapshot database (submit + check modes) | **No equivalent** |
+| **fedabipkgdiff** | Fedora Koji integration wrapper for abipkgdiff | **No equivalent** |
 
 ### abicheck-only Tools
 
@@ -139,9 +140,13 @@ libabigail can work with **binaries that have no public headers** — it only ne
 
 ### libabigail suppressions
 - **INI-style suppression specification files** with rich syntax
-- **Suppression types**: `[suppress_function]`, `[suppress_variable]`, `[suppress_type]`, `[suppress_file]`
-- **Matching criteria**: name, name_regexp, name_not_regexp, soname_regexp, return_type_name, parameter, change_kind, has_data_member_inserted_at, etc.
-- **Built-in default suppressions** (shipped with the tool)
+- **Suppression directives**: `[suppress_function]`, `[suppress_variable]`, `[suppress_type]`, `[suppress_file]`, `[allow_type]` (allowlist, since 2.3)
+- **Function matching**: name, name_regexp, name_not_regexp, symbol_name, symbol_name_regexp, symbol_version, symbol_version_regexp, return_type_name, return_type_regexp, `parameter` (format: `'index typename`), change_kind (function-subtype-change/added-function/deleted-function/all)
+- **Type matching**: name, name_regexp, type_kind (struct/class/union/enum/array/typedef/builtin), has_data_member, has_data_member_inserted_at, has_data_member_inserted_between, changed_enumerators, changed_enumerators_regexp, has_size_change, accessed_through (direct/pointer/reference), source_location_not_in, source_location_not_regexp
+- **Variable matching**: name, name_regexp, symbol_name, type_name, type_name_regexp, change_kind
+- **File matching**: file_name_regexp, file_name_not_regexp, soname_regexp, soname_not_regexp
+- **Two suppression modes**: Late (default, post-comparison filtering) and Early (`drop=yes`, removes from memory during construction — critical for large binaries)
+- **Built-in default suppressions**: system-wide (`$libdir/libabigail/libabigail-default.abignore`), user-level (`$HOME/.abignore`)
 - **In-package .abignore files** (abipkgdiff auto-detects)
 - **KMI whitelists** for kernel symbol filtering
 
@@ -153,7 +158,9 @@ libabigail can work with **binaries that have no public headers** — it only ne
 - **ABICC compatibility**: skip-symbols, skip-types, whitelist files
 
 ### Comparison
-- libabigail's suppression syntax is **more granular** (can filter by return type, parameter type, member offset, etc.)
+- libabigail's suppression syntax is **significantly more granular** (can filter by return type, parameter type/index, member offset, type kind, accessed-through semantics, etc.)
+- libabigail has **early suppression mode** (`drop=yes`) that reduces memory for huge binaries — important for kernel/distro-scale analysis
+- libabigail has **allowlist support** (`[allow_type]`) as complement to suppress — abicheck only has suppression
 - abicheck's suppressions have **expiry dates** (unique feature — prevents stale suppressions)
 - abicheck's YAML format is **more readable** than libabigail's INI format
 
@@ -231,6 +238,34 @@ libabigail can work with **binaries that have no public headers** — it only ne
 
 **Recommendation**: **LOW-MEDIUM PRIORITY** — abicheck already detects `symbol_leaked_from_dependency_changed` but doesn't do full dependency comparison.
 
+### 7.11 Git-Based ABI Database (abidb)
+**What it does**: `abidb --submit` generates ABIXML snapshots and stores them in a structured git repo (organized by file path, SONAME, and build-id). `abidb --check` identifies all shared libraries a binary needs (via DT_NEEDED), then compares against stored snapshots.
+
+**Why it matters**: Enables distribution-scale ABI tracking without needing the actual shared library files installed. Provides a historical record of ABI changes over time.
+
+**Recommendation**: **MEDIUM PRIORITY** — abicheck already has JSON snapshots; extending to a git-based database workflow (`abicheck db submit` / `abicheck db check`) would add significant value for organizations tracking ABI across many releases.
+
+### 7.12 C++ ODR Optimization
+**What it does**: `--no-assume-odr-for-cplusplus` controls whether C++ types with the same fully-qualified name are assumed identical per the One Definition Rule. Enabled by default, this significantly speeds up comparison.
+
+**Why it matters**: Performance optimization for large C++ libraries with thousands of types.
+
+**Recommendation**: **LOW PRIORITY** — abicheck uses castxml AST which naturally deduplicates types, but worth considering for DWARF-only mode.
+
+### 7.13 Early Suppression Mode
+**What it does**: `drop=yes` in suppression specs or `--force-early-suppression` removes matched artifacts during ABI construction (before comparison), rather than filtering them from the report afterward.
+
+**Why it matters**: Dramatically reduces memory usage for huge binaries (kernel, large C++ frameworks). Late suppression loads everything into memory first.
+
+**Recommendation**: **MEDIUM PRIORITY** — Important for scaling to very large binaries. Add `--early-suppress` flag.
+
+### 7.14 Richer Filtering Flags
+**What it does**: abidiff provides fine-grained output filtering: `--added-fns`, `--deleted-fns`, `--changed-fns`, `--added-vars`, `--deleted-vars`, `--changed-vars`, `--harmless`, `--no-harmful`, `--stat` (summary only), `--symtabs` (symbol tables only).
+
+**Why it matters**: Users can focus on exactly the changes they care about without post-processing.
+
+**Recommendation**: **LOW-MEDIUM PRIORITY** — Add `--show-only` flag with values like `added`, `removed`, `changed`, `functions`, `variables`, `types`.
+
 ---
 
 ## 8. Unique abicheck Features (Advantages Over libabigail)
@@ -279,15 +314,20 @@ libabigail can work with **binaries that have no public headers** — it only ne
 | 6 | **BTF debug format** | Medium | Medium | Read ABI from BTF. Important for eBPF and kernel ecosystem. |
 | 7 | **ABIXML import** | Low | Medium | Read libabigail's ABIXML format as input, enabling migration from libabigail pipelines. |
 | 8 | **Corpus groups** | Medium | Medium | `abicheck compare --group dir1/ dir2/` for multi-binary library suites. |
+| 9 | **Git-based ABI database** | Medium | Medium | `abicheck db submit/check` — store and compare ABI snapshots in a git repo for distribution-scale tracking. |
+| 10 | **Early suppression mode** | Medium | Medium | `--early-suppress` removes matched artifacts during construction to reduce memory on huge binaries. |
+| 11 | **Richer output filters** | Low | Medium | `--show-only added/removed/changed/functions/variables` for focused reports. |
 
 ### Tier 3 — Lower Priority, Nice-to-Have
 
 | # | Feature | Effort | Impact | Details |
 |---|---------|--------|--------|---------|
-| 9 | **Kernel ABI (kABI) analysis** | High | Low-Med | `abicheck kabi-diff` for kernel module interface comparison. Enterprise Linux niche. |
-| 10 | **CTF debug format** | Medium | Low | Read ABI from CTF. Less common than BTF. |
-| 11 | **Dependency-aware comparison** | Medium | Low-Med | `--follow-dependencies` to compare transitive dependency ABIs. |
-| 12 | **In-package suppression files** | Low | Low | Auto-detect `.abignore`-style files in packages/directories. |
+| 12 | **Kernel ABI (kABI) analysis** | High | Low-Med | `abicheck kabi-diff` for kernel module interface comparison. Enterprise Linux niche. |
+| 13 | **CTF debug format** | Medium | Low | Read ABI from CTF. Less common than BTF. |
+| 14 | **Dependency-aware comparison** | Medium | Low-Med | `--follow-dependencies` to compare transitive dependency ABIs. |
+| 15 | **In-package suppression files** | Low | Low | Auto-detect `.abignore`-style files in packages/directories. |
+| 16 | **Allowlist-based suppressions** | Low | Low | `[allow_type]`-style allowlists as complement to suppressions. |
+| 17 | **C++ ODR optimization** | Low | Low | Assume types with same qualified name are identical for faster comparison. |
 
 ---
 
@@ -329,8 +369,11 @@ ELF binary + DWARF/BTF/CTF
 
 - Written in C++ (~150k LOC)
 - Reads DWARF natively (no external parser)
-- Internal IR is a rich type graph
+- Multi-front-end architecture (since 2.2): common `abigail::fe_iface` with pluggable readers (`dwarf::reader`, `ctf::reader`, `btf::reader`, `abixml::reader`)
+- Internal IR is a rich type graph (`abigail::ir`)
 - Single-platform (ELF/DWARF focus)
+- Type canonicalization for efficient comparison
+- Default fallback chain: DWARF -> CTF -> BTF -> ELF symbols only
 
 ### abicheck
 ```
