@@ -2612,18 +2612,21 @@ def _diff_enum_layouts(o: object, n: object) -> list[Change]:
             ))
 
         # 3. Changed values
-        # Sentinel member = member with the highest old value.
-        # If this member changes, classify as ENUM_LAST_MEMBER_VALUE_CHANGED.
-        old_sentinel_name = None
-        if old_e.members:
-            _max_val = max(old_e.members.values())
-            old_sentinel_name = next((m for m, v in old_e.members.items() if v == _max_val), None)
+        # Sentinel detection: name-pattern based (*_last, *_max, *_count).
+        # This is more reliable than max-value detection for real-world enums
+        # (e.g. dnnl_format_tag_last, VK_FORMAT_MAX_ENUM, D3DFORMAT_COUNT)
+        # where the sentinel may not always have the numerically highest value.
+        _SENTINEL_SUFFIXES = ("_last", "_max", "_count")
+
+        def _is_sentinel_member(member_name: str) -> bool:
+            n = member_name.lower()
+            return n.endswith(_SENTINEL_SUFFIXES) or n in {"last", "max", "count"}
 
         for mname, old_val in old_e.members.items():
             if mname in new_e.members and new_e.members[mname] != old_val:
                 kind = (
                     ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED
-                    if mname == old_sentinel_name
+                    if _is_sentinel_member(mname)
                     else ChangeKind.ENUM_MEMBER_VALUE_CHANGED
                 )
                 changes.append(Change(

@@ -205,7 +205,7 @@
       "bad_practice": false
     },
     "case20_enum_member_value_changed": {
-      "expected": "COMPATIBLE_WITH_RISK",
+      "expected": "BREAKING",
       "category": "breaking",
       "platforms": [
         "linux",
@@ -214,8 +214,7 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false,
-      "reason": "enum member value changes are source risk, not binary ABI break"
+      "bad_practice": false
     },
     "case21_method_became_static": {
       "expected": "BREAKING",
@@ -463,6 +462,19 @@
       "api_break": true,
       "bad_practice": false
     },
+    "case42_type_alignment_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Struct alignment changed via __attribute__((aligned(8))) to aligned(64) \u2014 stack allocation and array stride break (TYPE_ALIGNMENT_CHANGED)",
+      "known_gap": "macOS: Tool returns NO_CHANGE \u2014 without castxml, Mach-O mode captures only exported symbols; type-level alignment changes are invisible"
+    },
     "case26b_union_field_added_compatible": {
       "expected": "COMPATIBLE",
       "category": "compatible",
@@ -552,6 +564,183 @@
       "api_break": true,
       "bad_practice": false,
       "description": "Leaf struct gains field; propagates through embedding in Container \u2014 layout breaks (libabigail: Leaf_Type_Change)"
+    },
+    "case49_executable_stack": {
+      "expected": "COMPATIBLE",
+      "category": "bad_practice",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": true,
+      "description": "Library linked with -Wl,-z,execstack has GNU_STACK RWE \u2014 disables NX protection (bad practice \u2014 security)",
+      "known_gap": "Tool returns NO_CHANGE \u2014 executable stack is a linker flag, not detectable via symbol/type analysis"
+    },
+    "case50_soname_inconsistent": {
+      "expected": "COMPATIBLE",
+      "category": "bad_practice",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": true,
+      "description": "SONAME present but set to wrong major version \u2014 bakes wrong DT_NEEDED into consumers (bad practice \u2014 packaging/upgrade hazard)",
+      "known_gap": "Tool returns BREAKING due to soname_changed detection \u2014 ABI surface is actually identical; SONAME difference is policy, not binary compatibility"
+    },
+    "case51_protected_visibility": {
+      "expected": "COMPATIBLE",
+      "category": "compatible",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "Symbol visibility changed DEFAULT\u2192PROTECTED \u2014 exported but no longer interposable (compatible, interposition policy concern)",
+      "known_gap": "Tool returns NO_CHANGE \u2014 ELF visibility attribute changes are not yet tracked"
+    },
+    "case52_rpath_leak": {
+      "expected": "COMPATIBLE",
+      "category": "bad_practice",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": true,
+      "description": "Library has hardcoded build-directory path in DT_RUNPATH \u2014 non-portable deployment (bad practice \u2014 packaging)",
+      "known_gap": "abicheck compares DT_RPATH/DT_RUNPATH values for equality between versions; it does not inspect whether the path is a non-portable hardcoded build-directory. A library with an unchanged RPATH containing a build-time path will be reported as NO_CHANGE/COMPATIBLE even though the path is non-portable."
+    },
+    "case53_namespace_pollution": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": true,
+      "description": "Library exports generic symbol names (init, process, cleanup) without prefix \u2014 collision risk (bad practice \u2014 API design)",
+      "known_gap": "Tool returns COMPATIBLE \u2014 ELF-only symbol removals (func_removed_elf_only) paired with additions are classified as compatible; semantic breakage from symbol rename not yet elevated to BREAKING"
+    },
+    "case54_used_reserved_field": {
+      "expected": "COMPATIBLE",
+      "category": "compatible",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "Reserved placeholder fields (__reserved1, __reserved2) renamed to meaningful names at same offsets \u2014 layout unchanged (USED_RESERVED_FIELD)",
+      "known_gap": "Tool returns BREAKING \u2014 struct_field_removed fires for __reserved1/__reserved2 renames; tool cannot yet recognise reserved-field-to-real-field transitions as layout-preserving"
+    },
+    "case55_type_kind_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Type changed from struct to union \u2014 fields overlap instead of sequential layout (TYPE_KIND_CHANGED)",
+      "known_gap": "macOS: Tool returns NO_CHANGE \u2014 without castxml, Mach-O mode captures only exported symbols; struct-to-union type kind change is invisible"
+    },
+    "case56_struct_packing_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Struct packing changed via pragma pack(1) \u2014 field offsets and sizeof change (STRUCT_PACKING_CHANGED)",
+      "known_gap": "macOS: Tool returns NO_CHANGE \u2014 without castxml, Mach-O mode captures only exported symbols; packing/layout changes are invisible"
+    },
+    "case57_enum_underlying_size_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Enum underlying type grows from int to long due to large sentinel value \u2014 sizeof changes (ENUM_UNDERLYING_SIZE_CHANGED)",
+      "known_gap": "macOS: Tool returns NO_CHANGE \u2014 without castxml, Mach-O mode captures only exported symbols; enum underlying size changes are invisible"
+    },
+    "case58_var_removed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Global variable lib_debug_level removed from export table (VAR_REMOVED)",
+      "known_gap": "Tool returns NO_CHANGE \u2014 no headers provided; ELF-only mode does not yet track global variable symbol removal"
+    },
+    "case59_func_became_inline": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "Functions moved from outlined to static inline in header \u2014 symbols disappear from .dynsym (FUNC_REMOVED, inverse of case47)",
+      "known_gap": "Tool returns COMPATIBLE \u2014 func_removed_elf_only (symbols gone from ELF but still declared in header) is not yet elevated to BREAKING"
+    },
+    "case60_base_class_position_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Multiple inheritance base class order swapped \u2014 subobject offsets and vtable pointers change (BASE_CLASS_POSITION_CHANGED)",
+      "known_gap": "macOS: Tool returns NO_CHANGE \u2014 no headers provided; Mach-O mode captures only exported symbols; base class layout changes are invisible"
+    },
+    "case61_var_added": {
+      "expected": "COMPATIBLE",
+      "category": "compatible",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "New global variable lib_build_number added \u2014 purely additive (VAR_ADDED)",
+      "known_gap": "Tool returns NO_CHANGE \u2014 no headers provided; ELF-only mode does not yet track global variable symbol addition"
+    },
+    "case62_type_field_added_compatible": {
+      "expected": "COMPATIBLE",
+      "category": "compatible",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "Field added to opaque struct (callers use pointer only) \u2014 layout change invisible to consumers (TYPE_FIELD_ADDED compatible)",
+      "known_gap": "Tool returns BREAKING \u2014 struct_size_changed fires because Session grows from 68 to 72 bytes; tool cannot yet determine that the struct is opaque (pointer-only access)"
     }
   }
 }
