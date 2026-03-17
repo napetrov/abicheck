@@ -15,7 +15,9 @@
 """CLI — abicheck dump | compare | compat (dump | check)."""
 from __future__ import annotations
 
+import json
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -546,6 +548,136 @@ def _render_output(fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnaps
     return to_markdown(result)
 
 
+def _collect_additions(result: DiffResult) -> list[object]:
+    """Collect additive changes in a policy-independent way."""
+    from .checker_policy import COMPATIBLE_KINDS
+    addition_kinds = {k for k in COMPATIBLE_KINDS if k.value.endswith("_added")}
+    return [c for c in result.changes if c.kind in addition_kinds]
+
+
+def _run_compare_pair(
+    old_input: Path,
+    new_input: Path,
+    old_headers: list[Path],
+    new_headers: list[Path],
+    old_includes: list[Path],
+    new_includes: list[Path],
+    old_version: str,
+    new_version: str,
+    lang: str,
+    suppress: Path | None,
+    policy: str,
+    policy_file_path: Path | None,
+    old_pdb_path: Path | None,
+    new_pdb_path: Path | None,
+) -> tuple[DiffResult, AbiSnapshot, AbiSnapshot]:
+    """Run compare for one old/new pair and return result + resolved snapshots."""
+    old_fmt = _detect_binary_format(old_input)
+    new_fmt = _detect_binary_format(new_input)
+
+    old = _resolve_input(
+        old_input,
+        old_headers,
+        old_includes,
+        old_version,
+        lang,
+        is_elf=True if old_fmt == "elf" else None,
+        pdb_path=old_pdb_path,
+    )
+    new = _resolve_input(
+        new_input,
+        new_headers,
+        new_includes,
+        new_version,
+        lang,
+        is_elf=True if new_fmt == "elf" else None,
+        pdb_path=new_pdb_path,
+    )
+
+    suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
+    result = compare(old, new, suppression=suppression, policy=policy, policy_file=pf)
+    result.old_metadata = _collect_metadata(old_input)
+    result.new_metadata = _collect_metadata(new_input)
+    return result, old, new
+
+
+def _canonical_library_key(path: Path) -> str:
+    """Canonical key used to match libraries across releases.
+
+    For ELF versioned names, canonicalize to ``*.so`` (e.g. ``libfoo.so.1.2`` → ``libfoo.so``).
+    """
+    lower = path.name.lower()
+    m = re.search(r"\.so(?:\.|$)", lower)
+    if m:
+        return lower[: m.start() + 3]
+    return lower
+
+
+def _version_sort_key(path: Path, canonical_key: str) -> tuple[list[tuple[int, int | str]], str]:
+    """Build a version-aware sort key for ambiguous library candidates."""
+    lower = path.name.lower()
+    remainder = lower
+    if canonical_key.endswith(".so") and canonical_key in lower:
+        remainder = lower[lower.find(canonical_key) + len(canonical_key):]
+    # strip known wrapper extensions for snapshots/dumps
+    for suffix in (".json", ".pl", ".pm"):
+        if remainder.endswith(suffix):
+            remainder = remainder[: -len(suffix)]
+            break
+    remainder = remainder.lstrip("._-")
+    tokens = re.findall(r"\d+|[a-z]+", remainder)
+    parsed: list[tuple[int, int | str]] = []
+    for tok in tokens:
+        if tok.isdigit():
+            parsed.append((1, int(tok)))
+        else:
+            parsed.append((0, tok))
+    return parsed, lower
+
+
+def _is_supported_compare_input(path: Path) -> bool:
+    """Return True for files accepted by compare/resolve_input."""
+    if not path.is_file():
+        return False
+    lower = path.name.lower()
+    if ".so" in lower or lower.endswith((".dll", ".dylib", ".json", ".pl", ".pm")):
+        return True
+    if _detect_binary_format(path) is not None:
+        return True
+    return _sniff_text_format(path) in {"json", "perl"}
+
+
+def _collect_release_inputs(path: Path) -> list[Path]:
+    """Collect compare-able inputs from a file or directory."""
+    if path.is_file():
+        return [path]
+    if not path.is_dir():
+        raise click.ClickException(f"Input path is neither file nor directory: {path}")
+    files = [p for p in sorted(path.rglob("*")) if _is_supported_compare_input(p)]
+    if not files:
+        raise click.ClickException(f"No supported ABI inputs found in directory: {path}")
+    return files
+
+
+def _build_match_map(paths: list[Path]) -> tuple[dict[str, Path], list[str]]:
+    """Build key->path map with version-aware duplicate resolution."""
+    buckets: dict[str, list[Path]] = {}
+    for p in paths:
+        buckets.setdefault(_canonical_library_key(p), []).append(p)
+
+    mapping: dict[str, Path] = {}
+    warnings: list[str] = []
+    for key, vals in buckets.items():
+        ordered = sorted(vals, key=lambda x: _version_sort_key(x, key))
+        selected = ordered[-1]
+        mapping[key] = selected
+        if len(ordered) > 1:
+            warnings.append(
+                f"Ambiguous match for '{key}': {[v.name for v in ordered]}; using '{selected.name}'"
+            )
+    return mapping, warnings
+
+
 @main.command("compare")
 @click.argument("old_input", type=click.Path(exists=True, path_type=Path))
 @click.argument("new_input", type=click.Path(exists=True, path_type=Path))
@@ -732,6 +864,260 @@ def compare_cmd(
                 err=True,
             )
             sys.exit(1)
+
+@main.command("compare-release")
+@click.argument("old_dir", type=click.Path(exists=True, path_type=Path))
+@click.argument("new_dir", type=click.Path(exists=True, path_type=Path))
+@click.option("-H", "--header", "headers", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Public header file or directory applied to both sides.")
+@click.option("-I", "--include", "includes", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Extra include directory for castxml.")
+@click.option("--old-header", "old_headers_only", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Header for old side only (overrides -H for old).")
+@click.option("--new-header", "new_headers_only", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Header for new side only (overrides -H for new).")
+@click.option("--old-version", "old_version", default="old", show_default=True,
+              help="Version label for old side.")
+@click.option("--new-version", "new_version", default="new", show_default=True,
+              help="Version label for new side.")
+@click.option("--lang", default="c++", show_default=True,
+              type=click.Choice(["c++", "c"], case_sensitive=False))
+@click.option("--format", "fmt",
+              type=click.Choice(["json", "markdown"]),
+              default="markdown", show_default=True)
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=None,
+              help="Output file for summary report (default: stdout).")
+@click.option("--output-dir", "output_dir", type=click.Path(path_type=Path), default=None,
+              help="Directory to write per-library reports.")
+@click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
+              help="Suppression file (YAML).")
+@click.option("--policy", "policy",
+              type=click.Choice(["strict_abi", "sdk_vendor", "plugin_abi"], case_sensitive=True),
+              default="strict_abi", show_default=True)
+@click.option("--policy-file", "policy_file_path",
+              type=click.Path(exists=True, path_type=Path), default=None)
+@click.option("--fail-on-removed-library/--no-fail-on-removed-library",
+              "fail_on_removed", default=False,
+              help="Exit 8 when a library present in old_dir is absent in new_dir.")
+@click.option("--fail-on-additions/--no-fail-on-additions",
+              "fail_on_additions", default=False)
+@click.option("-v", "--verbose", is_flag=True, default=False)
+def compare_release_cmd(
+    old_dir: Path,
+    new_dir: Path,
+    headers: tuple[Path, ...],
+    includes: tuple[Path, ...],
+    old_headers_only: tuple[Path, ...],
+    new_headers_only: tuple[Path, ...],
+    old_version: str,
+    new_version: str,
+    lang: str,
+    fmt: str,
+    output: Path | None,
+    output_dir: Path | None,
+    suppress: Path | None,
+    policy: str,
+    policy_file_path: Path | None,
+    fail_on_removed: bool,
+    fail_on_additions: bool,
+    verbose: bool,
+) -> None:
+    """Compare all libraries in two release directories.
+
+    OLD_DIR and NEW_DIR may each be a file or a directory.
+    When directories are given, libraries are matched by filename stem.
+
+    \b
+    Exit codes:
+      0  All libraries: NO_CHANGE, COMPATIBLE, or COMPATIBLE_WITH_RISK
+      2  At least one library: API_BREAK
+      4  At least one library: BREAKING
+      8  Library removed (only when --fail-on-removed-library)
+
+    \b
+    Examples:
+      abicheck compare-release release-1.0/ release-2.0/ -H include/
+      abicheck compare-release release-1.0/ release-2.0/ \\
+          --old-header include/v1/ --new-header include/v2/ --format json
+    """
+    _setup_verbosity(verbose)
+
+    old_files = _collect_release_inputs(old_dir)
+    new_files = _collect_release_inputs(new_dir)
+
+    old_map, old_warns = _build_match_map(old_files)
+    new_map, new_warns = _build_match_map(new_files)
+    warning_msgs: list[str] = [f"Warning: {w}" for w in (old_warns + new_warns)]
+
+    old_h: list[Path] = list(old_headers_only) if old_headers_only else list(headers)
+    new_h: list[Path] = list(new_headers_only) if new_headers_only else list(headers)
+    old_inc: list[Path] = list(includes)
+    new_inc: list[Path] = list(includes)
+
+    # Special case: file-vs-file should compare directly even when names differ.
+    direct_file_pair = old_dir.is_file() and new_dir.is_file()
+    if direct_file_pair:
+        matched_keys = ["__direct_pair__"]
+        old_map = {"__direct_pair__": old_files[0]}
+        new_map = {"__direct_pair__": new_files[0]}
+        removed_keys = []
+        added_keys = []
+    else:
+        matched_keys = sorted(set(old_map) & set(new_map))
+        removed_keys = sorted(set(old_map) - set(new_map))
+        added_keys = sorted(set(new_map) - set(old_map))
+
+    if removed_keys:
+        for k in removed_keys:
+            warning_msgs.append(f"Warning: library removed: {old_map[k].name}")
+
+    if added_keys:
+        for k in added_keys:
+            warning_msgs.append(f"Info: library added: {new_map[k].name}")
+
+    if not matched_keys:
+        warning_msgs.append(
+            "Warning: no matching library pairs found between OLD and NEW inputs."
+        )
+
+    if fmt != "json":
+        for msg in warning_msgs:
+            click.echo(msg, err=True)
+
+    if output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+    library_results: list[dict[str, object]] = []
+    worst_verdict = "NO_CHANGE"
+    _VERDICT_ORDER = {
+        "NO_CHANGE": 0,
+        "COMPATIBLE": 1,
+        "COMPATIBLE_WITH_RISK": 2,
+        "API_BREAK": 3,
+        "BREAKING": 4,
+        "ERROR": 5,
+    }
+
+    for key in matched_keys:
+        old_path = old_map[key]
+        new_path = new_map[key]
+        try:
+            result, _, _ = _run_compare_pair(
+                old_path, new_path,
+                old_h, new_h, old_inc, new_inc,
+                old_version, new_version,
+                lang, suppress, policy, policy_file_path,
+                old_pdb_path=None, new_pdb_path=None,
+            )
+        except (click.ClickException, click.UsageError) as exc:
+            msg = exc.format_message()
+            click.echo(f"Error comparing {old_path.name}: {msg}", err=True)
+            library_results.append({
+                "library": old_path.name,
+                "verdict": "ERROR",
+                "error": msg,
+            })
+            worst_verdict = "ERROR"
+            continue
+
+        v = result.verdict.value
+        if _VERDICT_ORDER.get(v, 0) > _VERDICT_ORDER.get(worst_verdict, 0):
+            worst_verdict = v
+
+        lib_entry: dict[str, object] = {
+            "library": old_path.name,
+            "verdict": v,
+            "breaking": len(result.breaking),
+            "source_breaks": len(result.source_breaks),
+            "risk_changes": len(result.risk),
+            "compatible_additions": len(result.compatible),
+        }
+        library_results.append(lib_entry)
+
+        if output_dir:
+            lib_report_path = output_dir / f"{old_path.stem}.json"
+            lib_report_path.write_text(to_json(result), encoding="utf-8")
+
+    # Summary output
+    if fmt == "json":
+        summary: dict[str, object] = {
+            "verdict": worst_verdict,
+            "old_dir": str(old_dir),
+            "new_dir": str(new_dir),
+            "libraries": library_results,
+            "unmatched_old": [old_map[k].name for k in removed_keys],
+            "unmatched_new": [new_map[k].name for k in added_keys],
+            "warnings": warning_msgs,
+        }
+        text = json.dumps(summary, indent=2)
+    else:
+        _VERDICT_EMOJI = {
+            "NO_CHANGE": "✅", "COMPATIBLE": "✅", "COMPATIBLE_WITH_RISK": "⚠️",
+            "API_BREAK": "⚠️", "BREAKING": "❌", "ERROR": "💥",
+        }
+        lines: list[str] = [
+            "# ABI Release Comparison",
+            "",
+            "| | |",
+            "|---|---|",
+            f"| **Old** | `{old_dir}` |",
+            f"| **New** | `{new_dir}` |",
+            f"| **Verdict** | {_VERDICT_EMOJI.get(worst_verdict, '?')} `{worst_verdict}` |",
+            "",
+            "## Libraries",
+            "",
+            "| Library | Verdict | Breaking | Source | Risk | Additions |",
+            "|---|---|---|---|---|---|",
+        ]
+        for lib in library_results:
+            em = _VERDICT_EMOJI.get(str(lib["verdict"]), "?")
+            lines.append(
+                f"| `{lib['library']}` | {em} `{lib['verdict']}` "
+                f"| {lib.get('breaking', '—')} | {lib.get('source_breaks', '—')} "
+                f"| {lib.get('risk_changes', '—')} | {lib.get('compatible_additions', '—')} |"
+            )
+        if removed_keys:
+            lines += ["", "## ⚠️ Removed Libraries", ""]
+            for k in removed_keys:
+                lines.append(f"- `{old_map[k].name}`")
+        if added_keys:
+            lines += ["", "## ℹ️ Added Libraries", ""]
+            for k in added_keys:
+                lines.append(f"- `{new_map[k].name}`")
+        text = "\n".join(lines)
+
+    if output:
+        output.write_text(text, encoding="utf-8")
+        click.echo(f"Report written to {output}", err=True)
+    else:
+        click.echo(text)
+
+    if output_dir:
+        summary_path = output_dir / "summary.json"
+        summary_data: dict[str, object] = {
+            "verdict": worst_verdict,
+            "libraries": library_results,
+            "unmatched_old": [old_map[k].name for k in removed_keys],
+            "unmatched_new": [new_map[k].name for k in added_keys],
+        }
+        summary_path.write_text(json.dumps(summary_data, indent=2), encoding="utf-8")
+        click.echo(f"Per-library reports written to {output_dir}/", err=True)
+
+    # Exit codes — ABI severity takes priority over policy flags.
+    # A removed library is a deployment decision; a binary ABI break is more urgent.
+    if worst_verdict in ("BREAKING", "ERROR"):
+        sys.exit(4)
+    elif worst_verdict == "API_BREAK":
+        sys.exit(2)
+    if fail_on_removed and removed_keys:
+        sys.exit(8)
+    if fail_on_additions and any(lib.get("compatible_additions", 0) for lib in library_results):
+        sys.exit(1)
+
 
 # ── ABICC compat subcommands (implementation in abicheck.compat) ─────────────
 # NOTE: eagerly loads abicheck.compat.cli at import time — intentional so all
