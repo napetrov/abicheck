@@ -221,7 +221,7 @@ def _parse_pe_app_requirements(
     app_path: Path, library_name: str,
 ) -> AppRequirements:
     """Extract app requirements for a specific DLL from a PE binary."""
-    import pefile  # type: ignore[import-untyped]
+    import pefile
 
     reqs = AppRequirements()
     library_name_lower = library_name.lower() if library_name else ""
@@ -249,6 +249,8 @@ def _parse_pe_app_requirements(
                             reqs.undefined_symbols.add(
                                 imp.name.decode("utf-8", errors="replace")
                             )
+                        elif getattr(imp, "import_by_ordinal", False):
+                            reqs.undefined_symbols.add(f"ordinal:{imp.ordinal}")
         finally:
             pe.close()
 
@@ -266,14 +268,14 @@ def _parse_macho_app_requirements(
     app_path: Path, library_name: str,
 ) -> AppRequirements:
     """Extract app requirements for a specific dylib from a Mach-O binary."""
-    from macholib.mach_o import (  # type: ignore[import-untyped]
+    from macholib.mach_o import (
         LC_LOAD_DYLIB,
         N_EXT,
         N_TYPE,
         N_UNDF,
     )
-    from macholib.MachO import MachO  # type: ignore[import-untyped]
-    from macholib.SymbolTable import SymbolTable  # type: ignore[import-untyped]
+    from macholib.MachO import MachO
+    from macholib.SymbolTable import SymbolTable
 
     reqs = AppRequirements()
 
@@ -294,7 +296,21 @@ def _parse_macho_app_requirements(
                     name = data[:end].decode("utf-8", errors="replace")
                     reqs.needed_libs.append(name)
 
-        # 2. Read undefined symbols
+        # 2. Determine index of target library in LC_LOAD_DYLIB list (1-based)
+        #    In Mach-O two-level namespace, the library ordinal stored in
+        #    n_desc bits [15:8] is a 1-based index into the load-dylib list.
+        target_ordinal: int | None = None
+        if library_name:
+            lib_lower = library_name.lower()
+            for idx, lib in enumerate(reqs.needed_libs, start=1):
+                # Match by exact path, basename, or install_name
+                if (lib.lower() == lib_lower
+                        or os.path.basename(lib).lower() == lib_lower
+                        or lib_lower in lib.lower()):
+                    target_ordinal = idx
+                    break
+
+        # 3. Read undefined symbols, filtered by target library ordinal
         try:
             symtab = SymbolTable(macho, header=header)
             # Check undefsyms first (available when LC_DYSYMTAB is present)
@@ -307,6 +323,14 @@ def _parse_macho_app_requirements(
                     if not (n_type & N_EXT):
                         continue
                     if (n_type & N_TYPE) != N_UNDF:
+                        continue
+
+                # Filter by library ordinal when target is known
+                if target_ordinal is not None:
+                    n_desc = int(nlist_entry.n_desc)
+                    ordinal = (n_desc >> 8) & 0xFF
+                    # 0 = SELF, 0xFE = EXECUTABLE, 0xFF = DYNAMIC_LOOKUP
+                    if ordinal not in (0, 0xFE, 0xFF) and ordinal != target_ordinal:
                         continue
 
                 name = name_bytes.decode("utf-8", errors="replace") if name_bytes else ""
@@ -400,16 +424,16 @@ def _get_new_lib_exports(new_lib_path: Path) -> set[str]:
     fmt = _detect_app_format(new_lib_path)
     if fmt == "elf":
         from .elf_metadata import parse_elf_metadata
-        meta = parse_elf_metadata(new_lib_path)
-        return {s.name for s in meta.symbols}
+        elf_meta = parse_elf_metadata(new_lib_path)
+        return {s.name for s in elf_meta.symbols}
     if fmt == "pe":
         from .pe_metadata import parse_pe_metadata
-        meta = parse_pe_metadata(new_lib_path)
-        return {e.name for e in meta.exports if e.name}
+        pe_meta = parse_pe_metadata(new_lib_path)
+        return {e.name for e in pe_meta.exports if e.name}
     if fmt == "macho":
         from .macho_metadata import parse_macho_metadata
-        meta = parse_macho_metadata(new_lib_path)
-        return {e.name for e in meta.exports if e.name}
+        macho_meta = parse_macho_metadata(new_lib_path)
+        return {e.name for e in macho_meta.exports if e.name}
     return set()
 
 
@@ -418,14 +442,14 @@ def _get_lib_soname(lib_path: Path) -> str:
     fmt = _detect_app_format(lib_path)
     if fmt == "elf":
         from .elf_metadata import parse_elf_metadata
-        meta = parse_elf_metadata(lib_path)
-        return meta.soname or lib_path.name
+        elf_meta = parse_elf_metadata(lib_path)
+        return elf_meta.soname or lib_path.name
     if fmt == "pe":
         return lib_path.name
     if fmt == "macho":
         from .macho_metadata import parse_macho_metadata
-        meta = parse_macho_metadata(lib_path)
-        return meta.install_name or lib_path.name
+        macho_meta = parse_macho_metadata(lib_path)
+        return macho_meta.install_name or lib_path.name
     return lib_path.name
 
 
@@ -523,7 +547,11 @@ def check_appcompat(
     if missing_symbols or missing_versions:
         verdict = Verdict.BREAKING
     elif breaking_for_app:
-        verdict = compute_verdict(breaking_for_app, policy=policy)
+        verdict = (
+            policy_file.compute_verdict(breaking_for_app)
+            if policy_file is not None
+            else compute_verdict(breaking_for_app, policy=policy)
+        )
     else:
         verdict = Verdict.COMPATIBLE if required_count > 0 else Verdict.NO_CHANGE
 
