@@ -138,6 +138,7 @@ def _sniff_text_format(path: Path) -> str:
 def _dump_elf(
     path: Path, headers: list[Path], includes: list[Path],
     version: str, lang: str, *, dwarf_only: bool = False,
+    debug_format: str | None = None,
 ) -> AbiSnapshot:
     """Dump ABI snapshot from an ELF binary."""
     resolved_headers = _expand_header_inputs(headers) if headers else []
@@ -166,6 +167,7 @@ def _dump_elf(
             compiler=compiler,
             lang=lang if lang == "c" else None,
             dwarf_only=dwarf_only,
+            debug_format=debug_format,
         )
     except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
         raise click.ClickException(f"Failed to dump '{path}': {exc}") from exc
@@ -208,6 +210,7 @@ def _dump_native_binary(
     *,
     pdb_path: Path | None = None,
     dwarf_only: bool = False,
+    debug_format: str | None = None,
 ) -> AbiSnapshot:
     """Dump ABI snapshot from a native binary (ELF, PE, or Mach-O).
 
@@ -216,7 +219,8 @@ def _dump_native_binary(
     For PE/Mach-O, headers are optional — export tables provide the symbol surface.
     """
     if binary_fmt == "elf":
-        return _dump_elf(path, headers, includes, version, lang, dwarf_only=dwarf_only)
+        return _dump_elf(path, headers, includes, version, lang,
+                         dwarf_only=dwarf_only, debug_format=debug_format)
 
     if binary_fmt == "pe":
         from .service import _dump_pe
@@ -242,6 +246,7 @@ def _resolve_input(
     is_elf: bool | None = None,
     pdb_path: Path | None = None,
     dwarf_only: bool = False,
+    debug_format: str | None = None,
 ) -> AbiSnapshot:
     """Auto-detect input type and return an AbiSnapshot.
 
@@ -260,12 +265,14 @@ def _resolve_input(
             performed here (avoids a second ``open()`` when the caller already
             knows the result).
         dwarf_only: If True, force DWARF-only mode (ADR-003).
+        debug_format: Force debug format ("dwarf", "btf", "ctf") or None for auto.
     """
     # Fast path: caller already knows it's ELF
     if is_elf is True:
         return _dump_native_binary(
             path, "elf", headers, includes, version, lang,
             dwarf_only=dwarf_only,
+            debug_format=debug_format,
         )
 
     # Detect binary format from magic bytes
@@ -275,6 +282,7 @@ def _resolve_input(
             path, binary_fmt, headers, includes, version, lang,
             pdb_path=pdb_path,
             dwarf_only=dwarf_only,
+            debug_format=debug_format,
         )
 
     # Text-based formats: detect by sniffing only a small header chunk
@@ -421,6 +429,12 @@ def _populate_dependency_info(
 @click.option("--show-data-sources", is_flag=True, default=False,
               help="Print which data layers (L0/L1/L2) are available for the "
                    "binary and exit.")
+@click.option("--btf", "debug_format", flag_value="btf", default=None,
+              help="Force BTF debug format (ELF only).")
+@click.option("--ctf", "debug_format", flag_value="ctf",
+              help="Force CTF debug format (ELF only).")
+@click.option("--dwarf", "debug_format", flag_value="dwarf",
+              help="Force DWARF debug format (ELF only).")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...],
@@ -429,6 +443,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
              sysroot: Path | None, nostdinc: bool, pdb_path: Path | None,
              follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
              dwarf_only: bool, show_data_sources: bool,
+             debug_format: str | None,
              verbose: bool) -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
@@ -486,6 +501,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             nostdinc=nostdinc,
             lang=lang if lang == "c" else None,
             dwarf_only=dwarf_only,
+            debug_format=debug_format,
         )
     except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -959,6 +975,12 @@ def _exit_with_severity_or_verdict(
 @click.option("--strict-elf-only", is_flag=True, default=False,
               help="Treat ELF-only symbol removals as BREAKING instead of COMPATIBLE. "
                    "Use when headers are unavailable but all exported symbols are public API.")
+@click.option("--btf", "debug_format", flag_value="btf", default=None,
+              help="Force BTF debug format for both sides (ELF only).")
+@click.option("--ctf", "debug_format", flag_value="ctf",
+              help="Force CTF debug format for both sides (ELF only).")
+@click.option("--dwarf", "debug_format", flag_value="dwarf",
+              help="Force DWARF debug format for both sides (ELF only).")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def compare_cmd(
@@ -980,6 +1002,7 @@ def compare_cmd(
     show_redundant: bool, show_only: str | None, stat: bool,
     report_mode: str, show_impact: bool,
     strict_elf_only: bool,
+    debug_format: str | None,
     verbose: bool,
 ) -> None:
     """Compare two ABI surfaces and report changes.
@@ -1058,12 +1081,14 @@ def compare_cmd(
         is_elf=True if old_fmt == "elf" else None,
         pdb_path=resolved_old_pdb,
         dwarf_only=dwarf_only,
+        debug_format=debug_format,
     )
     new = _resolve_input(
         new_input, new_h, new_inc, new_version, lang,
         is_elf=True if new_fmt == "elf" else None,
         pdb_path=resolved_new_pdb,
         dwarf_only=dwarf_only,
+        debug_format=debug_format,
     )
 
     suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
