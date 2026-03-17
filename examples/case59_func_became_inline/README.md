@@ -29,6 +29,7 @@ binaries depend on the symbol being in the library.
 
 ## How to reproduce
 
+**Linux:**
 ```bash
 gcc -shared -fPIC -g bad.c  -o libbad.so
 gcc -shared -fPIC -g good.c -o libgood.so
@@ -44,6 +45,24 @@ gcc -g app.c -L. libbad.so -Wl,-rpath,. -o app
 cp libgood.so libbad.so
 ./app
 # → error: undefined symbol: fast_abs
+```
+
+**macOS:**
+```bash
+cc -shared -fPIC -g bad.c  -o libbad.dylib
+cc -shared -fPIC -g good.c -o libgood.dylib
+
+nm libbad.dylib  | grep fast_  # → T _fast_abs, T _fast_max
+nm libgood.dylib | grep fast_  # → (nothing — inlined away)
+
+# Link app against v1
+cc -g app.c -L. -lbad -Wl,-rpath,@loader_path -o app
+./app  # works
+
+# Swap to v2
+cp libgood.dylib libbad.dylib
+./app
+# → dyld: Symbol not found: _fast_abs
 ```
 
 ## How to fix

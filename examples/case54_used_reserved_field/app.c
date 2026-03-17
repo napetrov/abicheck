@@ -13,6 +13,10 @@ extern int config_get_flags(const Config *c);
 
 int main(void) {
     Config *c = config_create();
+    if (!c) {
+        fprintf(stderr, "config_create failed\n");
+        return 1;
+    }
     printf("flags = %d\n", config_get_flags(c));
     config_destroy(c);
     return 0;

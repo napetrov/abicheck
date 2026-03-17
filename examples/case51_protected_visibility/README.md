@@ -7,7 +7,7 @@
 | Version | `hook_point` ELF visibility |
 |---------|---------------------------|
 | v1 | `STV_DEFAULT` — interposable via LD_PRELOAD or other .so |
-| v2 | `STV_PROTECTED` — exported but NOT interposable |
+| v2 | `STV_PROTECTED` — prevents interposition for references from within the defining shared object; does not affect external symbol resolution |
 
 ## Why this is NOT a binary ABI break
 

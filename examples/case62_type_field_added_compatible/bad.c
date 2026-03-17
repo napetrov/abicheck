@@ -10,7 +10,9 @@ struct Session {
 
 Session* session_open(const char *name) {
     Session *s = calloc(1, sizeof(Session));
-    strncpy(s->name, name, sizeof(s->name) - 1);
+    if (!s) return NULL;
+    if (name)
+        strncpy(s->name, name, sizeof(s->name) - 1);
     s->timeout = 30;
     return s;
 }

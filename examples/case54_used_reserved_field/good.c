@@ -4,6 +4,7 @@
 
 Config* config_create(void) {
     Config *c = calloc(1, sizeof(Config));
+    if (!c) return NULL;
     c->version = 2;
     c->priority = 5;
     c->max_retries = 3;

@@ -13,9 +13,11 @@ crash at runtime with a missing symbol error.
 ## What breaks at binary level
 
 - **Symbol lookup fails**: `lib_debug_level` is no longer in `.dynsym`.
-  The dynamic linker cannot resolve the reference → `SIGBUS` or startup failure.
+  The dynamic linker cannot resolve the reference → `undefined symbol` error
+  or relocation failure at program startup.
 - **Direct access patterns break**: Code that reads/writes the variable
-  (e.g., `lib_debug_level = 3`) accesses invalid memory.
+  (e.g., `lib_debug_level = 3`) will fail due to unresolved symbol/relocation
+  at startup, before the program begins execution.
 
 ## What abicheck detects
 

@@ -4,6 +4,7 @@
 
 Config* config_create(void) {
     Config *c = calloc(1, sizeof(Config));
+    if (!c) return NULL;
     c->version = 1;
     c->flags = 0;
     return c;

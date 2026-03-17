@@ -77,6 +77,7 @@ set_target_properties(foo PROPERTIES
 ```bash
 # Build with wrong SONAME
 gcc -shared -fPIC -g bad.c -o libfoo.so -Wl,-soname,libfoo.so.0
+ln -sf libfoo.so libfoo.so.0   # create SONAME symlink so loader finds it
 gcc -g app.c -L. -lfoo -Wl,-rpath,. -o app
 readelf -d app | grep NEEDED
 # → (NEEDED) Shared library: [libfoo.so.0]  ← wrong major baked in

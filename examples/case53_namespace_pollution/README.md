@@ -1,6 +1,6 @@
 # Case 53: Namespace Pollution (Generic Symbol Names)
 
-**Category:** API Design / Policy | **Verdict:** BAD PRACTICE
+**Category:** API Design / Policy | **Verdict:** BREAKING (bad practice)
 
 ## What this case is about
 
@@ -33,7 +33,7 @@ a process share a single flat namespace. Generic names cause:
 - **`FUNC_ADDED`**: `mylib_init`, `mylib_process`, `mylib_cleanup`, `mylib_status` added
 - **`NAMESPACE_POLLUTION`**: v1 exports symbols without a consistent prefix
 
-**Overall verdict: BREAKING** (symbols renamed — but v1 was the bad practice).
+**Verdict: BREAKING (bad practice)** — symbols renamed; v1 was the bad practice.
 
 ## How to reproduce
 

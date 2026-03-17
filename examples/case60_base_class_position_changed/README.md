@@ -20,7 +20,7 @@ every offset in the class.
 - **Cross-cast corrupts**: `static_cast<Clickable*>(widget)` compiled against
   v1 adjusts by the wrong offset when v2 is loaded.
 
-## What abicheck detects
+## What ABICheck detects
 
 - **`BASE_CLASS_POSITION_CHANGED`**: The base class list order changed,
   detected via DWARF `DW_TAG_inheritance` entries with different offsets.
