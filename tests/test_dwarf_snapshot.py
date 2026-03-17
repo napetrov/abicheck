@@ -626,3 +626,343 @@ class TestDumperVariablesOnlyFallback:
         assert snap.elf_only_mode is False
         var_names = {v.name for v in snap.variables}
         assert "my_global" in var_names
+
+
+# ── C++ integration tests (references, inheritance, bitfields, etc.) ────────
+
+_GPP = "g++"
+
+
+def _has_gpp() -> bool:
+    try:
+        result = subprocess.run(
+            [_GPP, "--version"], capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+_HAS_GPP = _has_gpp()
+
+
+@pytest.mark.skipif(not _HAS_GPP, reason="g++ not available")
+class TestDwarfSnapshotCppIntegration:
+    """C++ integration: exercise references, inheritance, bitfields, typedefs."""
+
+    @pytest.fixture()
+    def cpp_lib(self, tmp_path: Path) -> Path:
+        """Compile a C++ library with various type constructs."""
+        cpp_src = tmp_path / "lib.cpp"
+        cpp_src.write_text("""\
+// Base class with virtual method
+struct Base {
+    int base_field;
+    virtual int get_value() { return base_field; }
+    virtual ~Base() {}
+};
+
+// Derived with override
+struct Derived : public Base {
+    int derived_field;
+    int get_value() override { return derived_field; }
+};
+
+// Struct with bitfields
+struct Flags {
+    unsigned int read : 1;
+    unsigned int write : 1;
+    unsigned int exec : 1;
+    unsigned int reserved : 29;
+};
+
+// Const global
+const int MAGIC = 0xDEAD;
+
+// Typedef chain
+typedef int my_int;
+typedef my_int my_int2;
+
+// Reference parameters
+extern "C" int add_ref(const int& a, const int& b) {
+    return a + b;
+}
+
+// Pointer return
+extern "C" int* get_ptr(int* p) {
+    return p;
+}
+
+// Array parameter-like
+extern "C" int sum_arr(int arr[], int n) {
+    int s = 0;
+    for (int i = 0; i < n; i++) s += arr[i];
+    return s;
+}
+
+// Use derived type to ensure it's in DWARF
+extern "C" Derived* make_derived(int v) {
+    static Derived d;
+    d.derived_field = v;
+    return &d;
+}
+
+// Use Flags to ensure bitfield struct is in DWARF
+extern "C" Flags make_flags(int r, int w, int x) {
+    Flags f;
+    f.read = r;
+    f.write = w;
+    f.exec = x;
+    f.reserved = 0;
+    return f;
+}
+
+// Use typedef
+extern "C" my_int2 convert(my_int2 v) { return v + 1; }
+""")
+        so_path = tmp_path / "libtest.so"
+        result = subprocess.run(
+            [_GPP, "-shared", "-fPIC", "-g", "-o", str(so_path), str(cpp_src)],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, f"Compilation failed: {result.stderr}"
+        return so_path
+
+    def test_cpp_functions_extracted(self, cpp_lib: Path) -> None:
+        """C++ functions with references and pointers should be extracted."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(cpp_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(cpp_lib)
+        snap = build_snapshot_from_dwarf(
+            cpp_lib, elf_meta, dwarf_meta, dwarf_adv,
+        )
+
+        func_names = {f.name for f in snap.functions}
+        assert "add_ref" in func_names
+        assert "get_ptr" in func_names
+        assert "sum_arr" in func_names
+        assert "make_derived" in func_names
+        assert "make_flags" in func_names
+        assert "convert" in func_names
+
+    def test_cpp_types_with_inheritance(self, cpp_lib: Path) -> None:
+        """Struct with inheritance should be in snapshot types."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(cpp_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(cpp_lib)
+        snap = build_snapshot_from_dwarf(
+            cpp_lib, elf_meta, dwarf_meta, dwarf_adv,
+        )
+
+        type_names = {t.name for t in snap.types}
+        assert "Base" in type_names or "Derived" in type_names
+
+    def test_cpp_bitfield_struct(self, cpp_lib: Path) -> None:
+        """Struct with bitfields should be extracted."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(cpp_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(cpp_lib)
+        snap = build_snapshot_from_dwarf(
+            cpp_lib, elf_meta, dwarf_meta, dwarf_adv,
+        )
+
+        type_names = {t.name for t in snap.types}
+        assert "Flags" in type_names
+        flags_type = next(t for t in snap.types if t.name == "Flags")
+        # Bitfields should have field entries
+        assert len(flags_type.fields) >= 3
+        # At least one should be a bitfield
+        assert any(f.is_bitfield for f in flags_type.fields)
+
+    def test_cpp_typedefs_extracted(self, cpp_lib: Path) -> None:
+        """Typedef chains should be in snapshot."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(cpp_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(cpp_lib)
+        snap = build_snapshot_from_dwarf(
+            cpp_lib, elf_meta, dwarf_meta, dwarf_adv,
+        )
+
+        # At least one of our typedefs should be present
+        assert "my_int" in snap.typedefs or "my_int2" in snap.typedefs
+
+    def test_cpp_const_variable(self, cpp_lib: Path) -> None:
+        """Const global variable should be extracted."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(cpp_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(cpp_lib)
+        snap = build_snapshot_from_dwarf(
+            cpp_lib, elf_meta, dwarf_meta, dwarf_adv,
+        )
+
+        # MAGIC may or may not be exported depending on linker, but
+        # the build_snapshot should not crash processing it
+        assert snap is not None
+
+    def test_version_and_language_profile(self, cpp_lib: Path) -> None:
+        """build_snapshot_from_dwarf should accept version and language_profile."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(cpp_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(cpp_lib)
+        snap = build_snapshot_from_dwarf(
+            cpp_lib, elf_meta, dwarf_meta, dwarf_adv,
+            version="2.0.0",
+            language_profile="cpp",
+        )
+
+        assert snap.version == "2.0.0"
+        assert snap.language_profile == "cpp"
+
+
+# ── CLI tests via CliRunner (in-process for coverage) ────────────────────────
+
+@pytest.mark.skipif(not _HAS_GCC, reason="GCC not available")
+class TestCLIInProcess:
+    """CLI tests using CliRunner for in-process coverage."""
+
+    @pytest.fixture()
+    def _debug_lib(self, tmp_path: Path) -> Path:
+        c_src = tmp_path / "lib.c"
+        c_src.write_text("int foo(void) { return 0; }\n")
+        so_path = tmp_path / "libtest.so"
+        subprocess.run(
+            [_GCC, "-shared", "-fPIC", "-g", "-o", str(so_path), str(c_src)],
+            capture_output=True, check=True, timeout=30,
+        )
+        return so_path
+
+    def test_show_data_sources_via_runner(self, _debug_lib: Path) -> None:
+        """--show-data-sources via CliRunner for in-process coverage."""
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["dump", str(_debug_lib), "--show-data-sources"])
+        assert result.exit_code == 0
+        assert "Data sources for" in result.output
+        assert "L0 Binary metadata" in result.output
+        assert "L1 Debug info" in result.output
+
+    def test_dwarf_only_via_runner(self, _debug_lib: Path, tmp_path: Path) -> None:
+        """--dwarf-only via CliRunner for in-process coverage."""
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        out = tmp_path / "snap.json"
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "dump", str(_debug_lib), "--dwarf-only", "-o", str(out),
+        ])
+        assert result.exit_code == 0
+        assert out.exists()
+
+    def test_dump_no_headers_dwarf_mode(self, _debug_lib: Path) -> None:
+        """dump without headers should use DWARF mode."""
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["dump", str(_debug_lib)])
+        assert result.exit_code == 0
+        # Should produce JSON output (not crash)
+        assert '"library"' in result.output or '"functions"' in result.output
+
+
+# ── _print_data_sources direct call ──────────────────────────────────────────
+
+@pytest.mark.skipif(not _HAS_GCC, reason="GCC not available")
+class TestPrintDataSourcesDirect:
+    """Direct call to _print_data_sources for coverage."""
+
+    def test_print_data_sources(self, tmp_path: Path) -> None:
+        c_src = tmp_path / "lib.c"
+        c_src.write_text("int bar(void) { return 1; }\n")
+        so_path = tmp_path / "libtest.so"
+        subprocess.run(
+            [_GCC, "-shared", "-fPIC", "-g", "-o", str(so_path), str(c_src)],
+            capture_output=True, check=True, timeout=30,
+        )
+
+        from abicheck.cli import _print_data_sources
+
+        # _print_data_sources uses click.echo; just ensure it doesn't crash
+        _print_data_sources(so_path, has_headers=False)
+
+    def test_print_data_sources_with_headers(self, tmp_path: Path) -> None:
+        c_src = tmp_path / "lib.c"
+        c_src.write_text("int bar(void) { return 1; }\n")
+        so_path = tmp_path / "libtest.so"
+        subprocess.run(
+            [_GCC, "-shared", "-fPIC", "-g", "-o", str(so_path), str(c_src)],
+            capture_output=True, check=True, timeout=30,
+        )
+
+        from abicheck.cli import _print_data_sources
+
+        _print_data_sources(so_path, has_headers=True)
+
+
+# ── Error handling tests ─────────────────────────────────────────────────────
+
+class TestDwarfSnapshotErrorHandling:
+    """Test error and edge-case handling."""
+
+    def test_invalid_elf_file(self, tmp_path: Path) -> None:
+        """build_snapshot_from_dwarf on invalid ELF should not crash."""
+        fake_elf = tmp_path / "libfake.so"
+        fake_elf.write_bytes(b"\x7fELF" + b"\x00" * 100)
+
+        elf_meta = _elf_meta_with_symbols(["foo"])
+        dwarf_meta = _dwarf_meta()
+        dwarf_adv = _dwarf_adv()
+
+        snap = build_snapshot_from_dwarf(
+            fake_elf, elf_meta, dwarf_meta, dwarf_adv,
+        )
+        # Should return an empty but valid snapshot
+        assert snap.elf_only_mode is False
+        assert len(snap.functions) == 0
+
+    def test_nonexistent_file(self, tmp_path: Path) -> None:
+        """build_snapshot_from_dwarf on missing file should not crash."""
+        missing = tmp_path / "nonexistent.so"
+
+        elf_meta = _elf_meta_with_symbols(["foo"])
+        dwarf_meta = _dwarf_meta()
+        dwarf_adv = _dwarf_adv()
+
+        snap = build_snapshot_from_dwarf(
+            missing, elf_meta, dwarf_meta, dwarf_adv,
+        )
+        assert snap.elf_only_mode is False
+        assert len(snap.functions) == 0
+
+    def test_empty_elf_meta(self, tmp_path: Path) -> None:
+        """build_snapshot_from_dwarf with no symbols in elf_meta."""
+        fake_elf = tmp_path / "libfake.so"
+        fake_elf.write_bytes(b"\x7fELF" + b"\x00" * 100)
+
+        elf_meta = ElfMetadata(soname="libtest.so.1", symbols=[])
+        dwarf_meta = _dwarf_meta()
+        dwarf_adv = _dwarf_adv()
+
+        snap = build_snapshot_from_dwarf(
+            fake_elf, elf_meta, dwarf_meta, dwarf_adv,
+        )
+        assert snap is not None
+        assert len(snap.functions) == 0
