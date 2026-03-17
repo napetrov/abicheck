@@ -573,7 +573,8 @@
       "abi_break": false,
       "api_break": false,
       "bad_practice": true,
-      "description": "Library linked with -Wl,-z,execstack has GNU_STACK RWE \u2014 disables NX protection (bad practice \u2014 security)"
+      "description": "Library linked with -Wl,-z,execstack has GNU_STACK RWE \u2014 disables NX protection (bad practice \u2014 security)",
+      "known_gap": "Tool returns NO_CHANGE \u2014 executable stack is a linker flag, not detectable via symbol/type analysis"
     },
     "case50_soname_inconsistent": {
       "expected": "COMPATIBLE",
@@ -584,7 +585,8 @@
       "abi_break": false,
       "api_break": false,
       "bad_practice": true,
-      "description": "SONAME present but set to wrong major version \u2014 bakes wrong DT_NEEDED into consumers (bad practice \u2014 packaging/upgrade hazard)"
+      "description": "SONAME present but set to wrong major version \u2014 bakes wrong DT_NEEDED into consumers (bad practice \u2014 packaging/upgrade hazard)",
+      "known_gap": "Tool returns BREAKING due to soname_changed detection \u2014 ABI surface is actually identical; SONAME difference is policy, not binary compatibility"
     },
     "case51_protected_visibility": {
       "expected": "COMPATIBLE",
@@ -595,7 +597,8 @@
       "abi_break": false,
       "api_break": false,
       "bad_practice": false,
-      "description": "Symbol visibility changed DEFAULT\u2192PROTECTED \u2014 exported but no longer interposable (compatible, interposition policy concern)"
+      "description": "Symbol visibility changed DEFAULT\u2192PROTECTED \u2014 exported but no longer interposable (compatible, interposition policy concern)",
+      "known_gap": "Tool returns NO_CHANGE \u2014 ELF visibility attribute changes are not yet tracked"
     },
     "case52_rpath_leak": {
       "expected": "COMPATIBLE",
@@ -617,7 +620,8 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": true,
-      "description": "Library exports generic symbol names (init, process, cleanup) without prefix \u2014 collision risk (bad practice \u2014 API design)"
+      "description": "Library exports generic symbol names (init, process, cleanup) without prefix \u2014 collision risk (bad practice \u2014 API design)",
+      "known_gap": "Tool returns COMPATIBLE \u2014 ELF-only symbol removals (func_removed_elf_only) paired with additions are classified as compatible; semantic breakage from symbol rename not yet elevated to BREAKING"
     },
     "case54_used_reserved_field": {
       "expected": "COMPATIBLE",
@@ -629,7 +633,8 @@
       "abi_break": false,
       "api_break": false,
       "bad_practice": false,
-      "description": "Reserved placeholder fields (__reserved1, __reserved2) renamed to meaningful names at same offsets \u2014 layout unchanged (USED_RESERVED_FIELD)"
+      "description": "Reserved placeholder fields (__reserved1, __reserved2) renamed to meaningful names at same offsets \u2014 layout unchanged (USED_RESERVED_FIELD)",
+      "known_gap": "Tool returns BREAKING \u2014 struct_field_removed fires for __reserved1/__reserved2 renames; tool cannot yet recognise reserved-field-to-real-field transitions as layout-preserving"
     },
     "case55_type_kind_changed": {
       "expected": "BREAKING",
@@ -677,7 +682,8 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
-      "description": "Global variable lib_debug_level removed from export table (VAR_REMOVED)"
+      "description": "Global variable lib_debug_level removed from export table (VAR_REMOVED)",
+      "known_gap": "Tool returns NO_CHANGE \u2014 no headers provided; ELF-only mode does not yet track global variable symbol removal"
     },
     "case59_func_became_inline": {
       "expected": "BREAKING",
@@ -689,7 +695,8 @@
       "abi_break": true,
       "api_break": false,
       "bad_practice": false,
-      "description": "Functions moved from outlined to static inline in header \u2014 symbols disappear from .dynsym (FUNC_REMOVED, inverse of case47)"
+      "description": "Functions moved from outlined to static inline in header \u2014 symbols disappear from .dynsym (FUNC_REMOVED, inverse of case47)",
+      "known_gap": "Tool returns COMPATIBLE \u2014 func_removed_elf_only (symbols gone from ELF but still declared in header) is not yet elevated to BREAKING"
     },
     "case60_base_class_position_changed": {
       "expected": "BREAKING",
@@ -713,7 +720,8 @@
       "abi_break": false,
       "api_break": false,
       "bad_practice": false,
-      "description": "New global variable lib_build_number added \u2014 purely additive (VAR_ADDED)"
+      "description": "New global variable lib_build_number added \u2014 purely additive (VAR_ADDED)",
+      "known_gap": "Tool returns NO_CHANGE \u2014 no headers provided; ELF-only mode does not yet track global variable symbol addition"
     },
     "case62_type_field_added_compatible": {
       "expected": "COMPATIBLE",
@@ -725,7 +733,8 @@
       "abi_break": false,
       "api_break": false,
       "bad_practice": false,
-      "description": "Field added to opaque struct (callers use pointer only) \u2014 layout change invisible to consumers (TYPE_FIELD_ADDED compatible)"
+      "description": "Field added to opaque struct (callers use pointer only) \u2014 layout change invisible to consumers (TYPE_FIELD_ADDED compatible)",
+      "known_gap": "Tool returns BREAKING \u2014 struct_size_changed fires because Session grows from 68 to 72 bytes; tool cannot yet determine that the struct is opaque (pointer-only access)"
     }
   }
 }

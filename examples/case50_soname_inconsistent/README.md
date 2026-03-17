@@ -1,6 +1,6 @@
 # Case 50: SONAME Inconsistent (Wrong Major Version)
 
-**Category:** ELF / Policy | **Verdict:** 🟡 BAD PRACTICE
+**Policy verdict:** 🟡 BAD PRACTICE | **ABI compatibility verdict:** COMPATIBLE
 
 ## What this case is about
 
@@ -28,7 +28,8 @@ but does not follow the convention of matching the ABI epoch / major version.
   This is classified as a metadata change. Because the actual symbols and types
   are identical, the functional ABI is compatible.
 
-**Overall verdict: COMPATIBLE** (same ABI surface; SONAME mismatch is policy concern).
+**Policy verdict: 🟡 BAD PRACTICE** (SONAME mismatch is a packaging/upgrade hazard).
+**ABI compatibility verdict: COMPATIBLE** (same ABI surface; symbols and types identical).
 
 ## How to reproduce
 

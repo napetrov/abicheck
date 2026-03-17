@@ -74,7 +74,7 @@ Keep an outlined fallback alongside the inline version:
 static inline int fast_abs(int x) { return x < 0 ? -x : x; }
 
 /* .c file — provide an exported symbol for backward compat */
-extern inline int fast_abs(int x);
+int fast_abs(int x) { return x < 0 ? -x : x; }
 ```
 
 Or use a `__attribute__((weak))` symbol.
