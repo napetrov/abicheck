@@ -1005,7 +1005,7 @@ def _dump_elf(
         )
         # If DWARF produced functions (or was explicitly forced), use it.
         # Otherwise fall through to symbol-only mode.
-        if snap.functions or dwarf_only:
+        if snap.functions or snap.variables or dwarf_only:
             if not headers and not dwarf_only:
                 warnings.warn(
                     "No headers provided — using DWARF debug info as primary data source. "

@@ -3,22 +3,19 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from abicheck.dwarf_metadata import DwarfMetadata, EnumInfo, FieldInfo, StructLayout
 from abicheck.dwarf_advanced import AdvancedDwarfMetadata
+from abicheck.dwarf_metadata import DwarfMetadata, StructLayout
 from abicheck.dwarf_snapshot import (
     _strip_type_decorators,
     build_snapshot_from_dwarf,
     show_data_sources,
 )
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
-from abicheck.model import AbiSnapshot, Visibility
-
+from abicheck.model import Visibility
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -350,9 +347,9 @@ class TestDumperFallbackChain:
 
     def test_no_headers_with_dwarf_uses_dwarf_mode(self, debug_lib: Path) -> None:
         """No headers + DWARF available → DWARF-only mode (elf_only_mode=False)."""
-        from abicheck.dumper import dump
-
         import warnings
+
+        from abicheck.dumper import dump
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             snap = dump(so_path=debug_lib, headers=[])
@@ -365,9 +362,9 @@ class TestDumperFallbackChain:
 
     def test_no_headers_no_dwarf_uses_symbol_mode(self, stripped_lib: Path) -> None:
         """No headers + no DWARF → symbols-only mode (elf_only_mode=True)."""
-        from abicheck.dumper import dump
-
         import warnings
+
+        from abicheck.dumper import dump
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             snap = dump(so_path=stripped_lib, headers=[])
@@ -376,9 +373,9 @@ class TestDumperFallbackChain:
 
     def test_dwarf_only_flag(self, debug_lib: Path) -> None:
         """--dwarf-only flag forces DWARF mode even without headers."""
-        from abicheck.dumper import dump
-
         import warnings
+
+        from abicheck.dumper import dump
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             snap = dump(so_path=debug_lib, headers=[], dwarf_only=True)

@@ -180,11 +180,13 @@ class _DwarfSnapshotBuilder:
         self._elf_path = elf_path
         self._elf_meta = elf_meta
 
-        # Build exported symbol sets from ELF metadata
+        # Build exported symbol sets from ELF metadata, excluding
+        # hidden/internal visibility symbols (not part of the public ABI)
+        _HIDDEN_VIS = {"hidden", "internal"}
         self._exported_names: set[str] = set()
         if elf_meta.symbols:
             for sym in elf_meta.symbols:
-                if sym.name:
+                if sym.name and sym.visibility not in _HIDDEN_VIS:
                     self._exported_names.add(sym.name)
 
         # Results
