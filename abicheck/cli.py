@@ -1063,13 +1063,6 @@ def compare_cmd(
               help="Include private (non-public) shared objects from non-standard paths.")
 @click.option("--keep-extracted", is_flag=True, default=False,
               help="Keep extracted temporary files for debugging.")
-@click.option("--pkg-manager",
-              type=click.Choice(["apt", "yum", "zypper"], case_sensitive=True),
-              default=None,
-              help="When OLD/NEW are package names (not files), download them "
-                   "using this package manager before comparing.")
-@click.option("--arch", "pkg_arch", default=None,
-              help="Target architecture for --pkg-manager downloads (e.g. amd64, x86_64).")
 @click.option("-v", "--verbose", is_flag=True, default=False)
 def compare_release_cmd(
     old_dir: Path,
@@ -1096,8 +1089,6 @@ def compare_release_cmd(
     dso_only: bool,
     include_private_dso: bool,
     keep_extracted: bool,
-    pkg_manager: str | None,
-    pkg_arch: str | None,
     verbose: bool,
 ) -> None:
     """Compare all libraries in two release directories or packages.
@@ -1105,10 +1096,6 @@ def compare_release_cmd(
     OLD_DIR and NEW_DIR may each be a file, directory, or package
     (RPM, Deb, tar, conda, wheel). Package format is auto-detected.
     When directories are given, libraries are matched by filename stem.
-
-    With --pkg-manager, OLD and NEW are treated as package names and
-    downloaded via the specified package manager (apt, yum, zypper)
-    before comparison.
 
     \b
     Exit codes:
@@ -1128,14 +1115,12 @@ def compare_release_cmd(
       abicheck compare-release libfoo-1.0.rpm libfoo-1.1.rpm \\
           --debug-info1 libfoo-debuginfo-1.0.rpm \\
           --debug-info2 libfoo-debuginfo-1.1.rpm
-      abicheck compare-release libfoo=1.0 libfoo=1.1 --pkg-manager apt
     """
     import tempfile
 
     from .package import (
         detect_extractor,
         discover_shared_libraries,
-        download_package,
         is_package,
     )
 
@@ -1143,28 +1128,6 @@ def compare_release_cmd(
 
     # Track temporary directories for cleanup
     _temp_dirs: list[tempfile.TemporaryDirectory[str]] = []
-
-    # If --pkg-manager is set, download packages by name first
-    if pkg_manager is not None:
-        old_td = tempfile.TemporaryDirectory(prefix="abicheck_dl_old_")
-        new_td = tempfile.TemporaryDirectory(prefix="abicheck_dl_new_")
-        _temp_dirs.extend([old_td, new_td])
-        try:
-            old_pkg_name = str(old_dir)
-            new_pkg_name = str(new_dir)
-            click.echo(f"Downloading '{old_pkg_name}' via {pkg_manager}...", err=True)
-            old_dir = download_package(
-                old_pkg_name, Path(old_td.name), manager=pkg_manager, arch=pkg_arch
-            )
-            click.echo(f"Downloading '{new_pkg_name}' via {pkg_manager}...", err=True)
-            new_dir = download_package(
-                new_pkg_name, Path(new_td.name), manager=pkg_manager, arch=pkg_arch
-            )
-            click.echo(
-                f"Downloaded: {old_dir.name}, {new_dir.name}", err=True,
-            )
-        except (RuntimeError, subprocess.CalledProcessError) as exc:
-            raise click.ClickException(f"Package download failed: {exc}") from exc
 
     def _extract_if_package(
         input_path: Path,

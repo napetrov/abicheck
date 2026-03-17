@@ -7,7 +7,6 @@ import struct
 import tarfile
 import zipfile
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -26,7 +25,6 @@ from abicheck.package import (
     _validate_symlink_target,
     detect_extractor,
     discover_shared_libraries,
-    download_package,
     is_package,
 )
 
@@ -703,80 +701,7 @@ class TestSafeZipExtract:
             _safe_zip_extract(z, out)
 
 
-# ── Package manager downloader tests ────────────────────────────────────────
-
-
-class TestDownloadPackage:
-    def test_unsupported_manager(self, tmp_path: Path) -> None:
-        with pytest.raises(ValueError, match="Unsupported package manager"):
-            download_package("libfoo", tmp_path, manager="pacman")
-
-    def test_apt_download_missing_tool(self, tmp_path: Path) -> None:
-        with mock.patch("shutil.which", return_value=None):
-            with pytest.raises(RuntimeError, match="apt.*not found"):
-                download_package("libfoo", tmp_path, manager="apt")
-
-    def test_yum_download_missing_tool(self, tmp_path: Path) -> None:
-        with mock.patch("shutil.which", return_value=None):
-            with pytest.raises(RuntimeError, match="yumdownloader.*not found"):
-                download_package("libfoo", tmp_path, manager="yum")
-
-    def test_zypper_download_missing_tool(self, tmp_path: Path) -> None:
-        with mock.patch("shutil.which", return_value=None):
-            with pytest.raises(RuntimeError, match="zypper not found"):
-                download_package("libfoo", tmp_path, manager="zypper")
-
-    def test_apt_download_success(self, tmp_path: Path) -> None:
-        """Mock apt download — creates a .deb file and verifies detection."""
-        def fake_run(cmd, **kwargs):
-            # Simulate apt creating a .deb file
-            cwd = kwargs.get("cwd", ".")
-            (Path(cwd) / "libfoo_1.0_amd64.deb").write_bytes(b"!<arch>\nfake")
-            return mock.Mock(returncode=0)
-
-        with mock.patch("shutil.which", return_value="/usr/bin/apt-get"):
-            with mock.patch("subprocess.run", side_effect=fake_run):
-                result = download_package("libfoo", tmp_path, manager="apt")
-                assert result.name.endswith(".deb")
-                assert result.exists()
-
-    def test_yum_download_success(self, tmp_path: Path) -> None:
-        """Mock yumdownloader — creates an .rpm file."""
-        def fake_run(cmd, **kwargs):
-            dest = None
-            for i, arg in enumerate(cmd):
-                if arg == "--destdir" and i + 1 < len(cmd):
-                    dest = cmd[i + 1]
-            if dest:
-                (Path(dest) / "libfoo-1.0.x86_64.rpm").write_bytes(
-                    b"\xed\xab\xee\xdbfake"
-                )
-            return mock.Mock(returncode=0)
-
-        with mock.patch("shutil.which", return_value="/usr/bin/yumdownloader"):
-            with mock.patch("subprocess.run", side_effect=fake_run):
-                result = download_package("libfoo", tmp_path, manager="yum")
-                assert result.name.endswith(".rpm")
-
-    def test_apt_with_arch(self, tmp_path: Path) -> None:
-        """Verify architecture is passed to apt."""
-        captured_cmd: list[str] = []
-
-        def fake_run(cmd, **kwargs):
-            captured_cmd.extend(cmd)
-            cwd = kwargs.get("cwd", ".")
-            (Path(cwd) / "libfoo_1.0_arm64.deb").write_bytes(b"!<arch>\nfake")
-            return mock.Mock(returncode=0)
-
-        with mock.patch("shutil.which", return_value="/usr/bin/apt-get"):
-            with mock.patch("subprocess.run", side_effect=fake_run):
-                download_package(
-                    "libfoo", tmp_path, manager="apt", arch="arm64"
-                )
-        assert "libfoo:arm64" in captured_cmd
-
-
-# ── CLI --pkg-manager integration tests ──────────────────────────────────────
+# ── CLI integration tests (wheel) ────────────────────────────────────────────
 
 
 class TestCompareReleaseWheelPackages:
