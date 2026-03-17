@@ -68,7 +68,7 @@ For each break type: what it is, how it appears in the real world, and which too
 - Comparison table: `abicheck` vs `abicc` vs `libabigail` vs `nm`-only
 - Coverage matrix showing evidence tier required (ELF-only / DWARF / Header / Runtime)
 
-**Done:** 48 example cases (01-48) with per-case README.md; gap_report.md with coverage matrix
+**Done:** 63 example cases (01-62 + 26b) with per-case README.md; gap_report.md with coverage matrix
 (abicheck vs ABICC vs libabigail vs nm); abi_breaking_cases_catalog.md in docs.
 **TODO:** libabigail-specific parity cases.
 
@@ -105,5 +105,5 @@ ABICC compat guide, troubleshooting.
 | G2: Known gaps | DWARF layout, toolchain flags, AST-DWARF dedup done; evidence tiers TODO |
 | G3: libabigail tests | ~54 parity test functions; full corpus expansion TODO |
 | G4: Agent-friendly | JSON, SARIF, exit codes, snapshots done; Python API docs TODO |
-| G5: Break encyclopedia | 48 example cases with docs + coverage matrix |
+| G5: Break encyclopedia | 63 example cases with docs + coverage matrix |
 | G6: Distribution & docs | MkDocs + GitHub Pages deployed; conda-forge recipe TODO |

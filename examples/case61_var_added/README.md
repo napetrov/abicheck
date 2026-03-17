@@ -1,0 +1,38 @@
+# Case 61: Global Variable Added
+
+**Category:** Symbol API | **Verdict:** COMPATIBLE
+
+## What this case is about
+
+v1 exports `lib_version`. v2 adds a new global variable `lib_build_number`.
+All existing symbols are unchanged — this is a purely additive change.
+
+## Why this is compatible
+
+- Existing binaries never reference `lib_build_number`, so it doesn't affect them.
+- New consumers can optionally use the new variable.
+- No layout, offset, or size changes.
+
+## What abicheck detects
+
+- **`VAR_ADDED`**: A new global variable symbol appeared in `.dynsym`.
+
+**Overall verdict: COMPATIBLE**
+
+## How to reproduce
+
+```bash
+gcc -shared -fPIC -g bad.c  -o libbad.so
+gcc -shared -fPIC -g good.c -o libgood.so
+
+nm -D libgood.so | grep lib_build_number  # → D lib_build_number
+
+python3 -m abicheck.cli dump libbad.so  -o /tmp/v1.json
+python3 -m abicheck.cli dump libgood.so -o /tmp/v2.json
+python3 -m abicheck.cli compare /tmp/v1.json /tmp/v2.json
+# → COMPATIBLE: VAR_ADDED
+```
+
+## References
+
+- [ELF dynamic symbol table](https://refspecs.linuxfoundation.org/LSB_5.0.0/LSB-Core-generic/LSB-Core-generic/symversion.html)

@@ -33,7 +33,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 > Authoritative expected verdicts for benchmarking are in [`ground_truth.json`](ground_truth.json).
 > If a per-case README and benchmark expectation differ, treat [`ground_truth.json`](ground_truth.json) as source of truth.
 
-**48 published cases** (case 42 reserved) — 34 BREAKING 🔴 | 10 COMPATIBLE 🟢 | 2 NO_CHANGE ✅ | 2 API_BREAK 🟠
+**63 published cases** (01–62 + 26b) — 40 BREAKING 🔴 | 17 COMPATIBLE 🟢 | 2 NO_CHANGE ✅ | 2 API_BREAK 🟠 | 2 BAD PRACTICE 🟡
 
 | # | Case | Category | abicheck verdict |
 |---|------|----------|-----------------|
@@ -79,13 +79,27 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [39](case39_var_const/README.md) | Var Const | Breaking | BREAKING 🔴 |
 | [40](case40_field_layout/README.md) | Field Layout | Breaking | BREAKING 🔴 |
 | [41](case41_type_changes/README.md) | Type Changes | Breaking | BREAKING 🔴 |
-| *(42 — reserved, not yet published)* | — | — | — |
+| [42](case42_type_alignment_changed/README.md) | Type Alignment Changed (alignas) | Type Layout / DWARF | BREAKING 🔴 |
 | [43](case43_base_class_member_added/README.md) | Base Class Member Added | C++ Layout | BREAKING 🔴 |
 | [44](case44_cyclic_type_member_added/README.md) | Cyclic Type Member Added | Struct Layout | BREAKING 🔴 |
 | [45](case45_multi_dim_array_change/README.md) | Multi-Dim Array Element Type Change | Struct Layout | BREAKING 🔴 |
 | [46](case46_pointer_chain_type_change/README.md) | Pointer Chain Type Change | Function Signature | BREAKING 🔴 |
 | [47](case47_inline_to_outlined/README.md) | Inline to Outlined | C++ Symbol | COMPATIBLE 🟢 |
 | [48](case48_leaf_struct_through_pointer/README.md) | Leaf Struct Change Through Pointer | Struct Layout | BREAKING 🔴 |
+| [49](case49_executable_stack/README.md) | Executable Stack (GNU_STACK RWX) | ELF / Security | COMPATIBLE 🟡 (bad practice) |
+| [50](case50_soname_inconsistent/README.md) | SONAME Inconsistent (Wrong Major) | ELF / Policy | COMPATIBLE 🟡 (bad practice) |
+| [51](case51_protected_visibility/README.md) | Protected Visibility (DEFAULT→PROTECTED) | ELF / Policy | COMPATIBLE 🟢 |
+| [52](case52_rpath_leak/README.md) | RPATH Leak (Hardcoded Build Dir) | ELF / Deployment | COMPATIBLE 🟡 (bad practice) |
+| [53](case53_namespace_pollution/README.md) | Namespace Pollution (Generic Names) | API Design | BREAKING 🔴 |
+| [54](case54_used_reserved_field/README.md) | Used Reserved Field | Type Layout | COMPATIBLE 🟢 |
+| [55](case55_type_kind_changed/README.md) | Type Kind Changed (struct→union) | Type Layout | BREAKING 🔴 |
+| [56](case56_struct_packing_changed/README.md) | Struct Packing Changed (pragma pack) | Type Layout / DWARF | BREAKING 🔴 |
+| [57](case57_enum_underlying_size_changed/README.md) | Enum Underlying Size Changed | Type Layout | BREAKING 🔴 |
+| [58](case58_var_removed/README.md) | Global Variable Removed | Symbol API | BREAKING 🔴 |
+| [59](case59_func_became_inline/README.md) | Function Became Inline (outlined→inline) | Symbol API | BREAKING 🔴 |
+| [60](case60_base_class_position_changed/README.md) | Base Class Position Changed (MI reorder) | C++ Layout | BREAKING 🔴 |
+| [61](case61_var_added/README.md) | Global Variable Added | Symbol API | COMPATIBLE 🟢 |
+| [62](case62_type_field_added_compatible/README.md) | Type Field Added (Opaque Struct) | Type Layout | COMPATIBLE 🟢 |
 
 ---
 
@@ -105,7 +119,7 @@ case's README for copy-paste build instructions.
 
 ---
 
-## Benchmark Snapshot (48 cases, 2026-03-11)
+## Benchmark Snapshot (63 cases, 2026-03-17)
 
 To avoid drift, this README keeps only a compact summary. Full per-case matrix and
 methodology live in docs:

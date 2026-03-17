@@ -2,7 +2,7 @@
 
 > Updated: 2026-03-09 (independently verified against raw GitHub sources)
 > Source: ABICC `RulesBin.xml` (196 rules), `RulesSrc.xml` (100 rules + `Removed_Const_Overload`), `RegTests.pm` (~153 C++ + ~102 C named scenarios)
-> Target: abicheck `examples/` (48 cases), `tests/` (690+ tests), `ChangeKind` enum (118 kinds)
+> Target: abicheck `examples/` (63 cases), `tests/` (690+ tests), `ChangeKind` enum (118 kinds)
 >
 > **Analysis modes:** Abicheck uses **both** header comparison (via castxml) **and** binary analysis (ELF/DWARF).
 > The `dump()` function combines castxml header parsing (types, functions, enums, typedefs, constants) with
