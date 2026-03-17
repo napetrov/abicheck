@@ -437,6 +437,46 @@ def _build_verneed_index(
                 ver_index_map[idx] = (lib, name, False)
 
 
+def _is_import_sym(sym: object) -> bool:
+    """Check if a dynsym entry is a counted import symbol."""
+    if sym.entry.st_shndx != "SHN_UNDEF":
+        return False
+    return bool(sym.name and _BINDING_MAP.get(sym.entry.st_info.bind, SymbolBinding.OTHER) != SymbolBinding.LOCAL)
+
+
+def _is_export_sym(sym: object) -> bool:
+    """Check if a dynsym entry is a counted export symbol."""
+    if sym.entry.st_shndx in ("SHN_UNDEF", "SHN_ABS"):
+        return False
+    binding = _BINDING_MAP.get(sym.entry.st_info.bind, SymbolBinding.OTHER)
+    vis_str = sym.entry.st_other.visibility
+    return binding != SymbolBinding.LOCAL and vis_str not in _HIDDEN_VISIBILITIES
+
+
+def _parse_ver_entries(
+    ver_sym_section: object, num_vers: int, so_path: Path,
+) -> list[tuple[int, bool]] | None:
+    """Parse .gnu.version into a list of (version_index, is_hidden) per symbol."""
+    ver_entries: list[tuple[int, bool]] = []
+    try:
+        for i in range(num_vers):
+            entry = ver_sym_section.get_symbol(i)
+            raw = entry.entry["ndx"]
+            if isinstance(raw, str):
+                if raw == "VER_NDX_LOCAL":
+                    ver_entries.append((0, False))
+                else:
+                    ver_entries.append((1, False))
+                continue
+            is_hidden = bool(raw & 0x8000)
+            idx = raw & 0x7FFF
+            ver_entries.append((idx, is_hidden))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("parse_elf_metadata: failed to read .gnu.version from %s: %s", so_path, exc)
+        return None
+    return ver_entries
+
+
 def _correlate_symbol_versions(
     elf: ELFFile,
     meta: ElfMetadata,
@@ -467,29 +507,10 @@ def _correlate_symbol_versions(
     except Exception:  # noqa: BLE001
         return
 
-    # Build a flat list of (version_index, is_hidden) per symbol ordinal.
-    ver_entries: list[tuple[int, bool]] = []
-    try:
-        for i in range(num_vers):
-            entry = ver_sym_section.get_symbol(i)
-            raw = entry.entry["ndx"]
-            # pyelftools may return a string constant ('VER_NDX_LOCAL',
-            # 'VER_NDX_GLOBAL') instead of an integer for special indices.
-            if isinstance(raw, str):
-                if raw == "VER_NDX_LOCAL":
-                    ver_entries.append((0, False))
-                else:  # VER_NDX_GLOBAL or other
-                    ver_entries.append((1, False))
-                continue
-            is_hidden = bool(raw & 0x8000)
-            idx = raw & 0x7FFF
-            ver_entries.append((idx, is_hidden))
-    except Exception as exc:  # noqa: BLE001
-        log.warning("parse_elf_metadata: failed to read .gnu.version from %s: %s", so_path, exc)
+    ver_entries = _parse_ver_entries(ver_sym_section, num_vers, so_path)
+    if ver_entries is None:
         return
 
-    # Map exports and imports by their ordinal in .dynsym.
-    # We need to re-iterate .dynsym to correlate ordinals with our lists.
     dynsym = None
     for section in elf.iter_sections():
         if isinstance(section, SymbolTableSection) and section.name == ".dynsym":
@@ -498,52 +519,36 @@ def _correlate_symbol_versions(
     if dynsym is None:
         return
 
-    export_idx = 0  # index into meta.symbols
-    import_idx = 0  # index into meta.imports
+    export_idx = 0
+    import_idx = 0
     for sym_ordinal, sym in enumerate(dynsym.iter_symbols()):
         if sym_ordinal >= len(ver_entries):
             break
         ver_idx, is_hidden = ver_entries[sym_ordinal]
         if ver_idx < 2:
-            # 0=LOCAL, 1=GLOBAL (unversioned) — no version to assign
-            if sym.entry.st_shndx == "SHN_UNDEF":
-                if sym.name and _BINDING_MAP.get(sym.entry.st_info.bind, SymbolBinding.OTHER) != SymbolBinding.LOCAL:
-                    import_idx += 1
-            elif sym.entry.st_shndx != "SHN_ABS":
-                binding = _BINDING_MAP.get(sym.entry.st_info.bind, SymbolBinding.OTHER)
-                vis_str = sym.entry.st_other.visibility
-                if binding != SymbolBinding.LOCAL and vis_str not in _HIDDEN_VISIBILITIES:
-                    export_idx += 1
+            if _is_import_sym(sym):
+                import_idx += 1
+            elif _is_export_sym(sym):
+                export_idx += 1
             continue
 
         entry = ver_index_map.get(ver_idx)
         if entry is None:
-            # Unknown version index — advance counters
-            if sym.entry.st_shndx == "SHN_UNDEF":
-                if sym.name and _BINDING_MAP.get(sym.entry.st_info.bind, SymbolBinding.OTHER) != SymbolBinding.LOCAL:
-                    import_idx += 1
-            elif sym.entry.st_shndx != "SHN_ABS":
-                binding = _BINDING_MAP.get(sym.entry.st_info.bind, SymbolBinding.OTHER)
-                vis_str = sym.entry.st_other.visibility
-                if binding != SymbolBinding.LOCAL and vis_str not in _HIDDEN_VISIBILITIES:
-                    export_idx += 1
+            if _is_import_sym(sym):
+                import_idx += 1
+            elif _is_export_sym(sym):
+                export_idx += 1
             continue
 
-        lib_name, ver_name, is_defined = entry
+        _lib_name, ver_name, _is_defined = entry
 
-        if sym.entry.st_shndx == "SHN_UNDEF":
-            # Import — assign version from verneed
-            if sym.name and _BINDING_MAP.get(sym.entry.st_info.bind, SymbolBinding.OTHER) != SymbolBinding.LOCAL:
-                if import_idx < len(meta.imports):
-                    meta.imports[import_idx].version = ver_name
-                    meta.imports[import_idx].is_default = not is_hidden
-                import_idx += 1
-        elif sym.entry.st_shndx != "SHN_ABS":
-            # Export — assign version from verdef
-            binding = _BINDING_MAP.get(sym.entry.st_info.bind, SymbolBinding.OTHER)
-            vis_str = sym.entry.st_other.visibility
-            if binding != SymbolBinding.LOCAL and vis_str not in _HIDDEN_VISIBILITIES:
-                if export_idx < len(meta.symbols):
-                    meta.symbols[export_idx].version = ver_name
-                    meta.symbols[export_idx].is_default = not is_hidden
-                export_idx += 1
+        if _is_import_sym(sym):
+            if import_idx < len(meta.imports):
+                meta.imports[import_idx].version = ver_name
+                meta.imports[import_idx].is_default = not is_hidden
+            import_idx += 1
+        elif _is_export_sym(sym):
+            if export_idx < len(meta.symbols):
+                meta.symbols[export_idx].version = ver_name
+                meta.symbols[export_idx].is_default = not is_hidden
+            export_idx += 1

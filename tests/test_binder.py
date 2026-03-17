@@ -21,17 +21,16 @@ import pytest
 
 from abicheck.binder import (
     BindingStatus,
-    SymbolBinding,
     _compute_load_order,
-    _resolve_import,
     compute_bindings,
 )
 from abicheck.elf_metadata import (
     ElfImport,
     ElfMetadata,
     ElfSymbol,
+)
+from abicheck.elf_metadata import (
     SymbolBinding as ElfSymbolBinding,
-    SymbolType,
 )
 from abicheck.resolver import DependencyGraph, ResolvedDSO
 

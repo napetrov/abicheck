@@ -15,12 +15,11 @@
 """Tests for abicheck.resolver — transitive ELF dependency resolution."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from abicheck.elf_metadata import ElfMetadata
 from abicheck.resolver import (
     DependencyGraph,
     ResolvedDSO,
@@ -29,7 +28,6 @@ from abicheck.resolver import (
     _search_library,
     resolve_dependencies,
 )
-
 
 # ---------------------------------------------------------------------------
 # Unit tests: RPATH/RUNPATH expansion
@@ -149,6 +147,8 @@ class TestResolveDependencies:
     @pytest.fixture
     def real_binary(self):
         """Find a real ELF binary on the system for testing."""
+        if sys.platform != "linux":
+            pytest.skip("Dependency resolution tests require Linux")
         candidates = [
             Path("/usr/bin/python3"),
             Path("/usr/bin/ls"),
@@ -169,6 +169,7 @@ class TestResolveDependencies:
     def test_libc_resolved(self, real_binary):
         graph = resolve_dependencies(real_binary)
         sonames = {n.soname for n in graph.nodes.values()}
+        # On Linux the C library is libc.so.6; skip on other platforms.
         assert "libc.so.6" in sonames
 
     def test_no_unresolved_on_standard_binary(self, real_binary):
@@ -202,11 +203,11 @@ class TestResolveDependencies:
         graph = resolve_dependencies(tmp_path / "nonexistent")
         assert graph.node_count == 0
 
-    def test_search_paths(self, real_binary):
+    def test_search_paths(self, real_binary, tmp_path):
         """Extra search paths don't break resolution."""
         graph = resolve_dependencies(
             real_binary,
-            search_paths=[Path("/tmp")],
+            search_paths=[tmp_path],
         )
         assert graph.node_count >= 1
 
@@ -224,7 +225,7 @@ class TestRpathRunpathSemantics:
         of the object that declares it, not for transitive deps."""
         # This is a semantic test — we can't easily create real ELF binaries
         # in a test, but we verify the search order construction logic.
-        from abicheck.resolver import _build_search_order, ResolvedDSO
+        from abicheck.resolver import ResolvedDSO, _build_search_order
 
         # A node with DT_RUNPATH (no DT_RPATH).
         node = ResolvedDSO(
@@ -253,7 +254,7 @@ class TestRpathRunpathSemantics:
 
     def test_rpath_without_runpath_propagates(self):
         """When a DSO has DT_RPATH but no DT_RUNPATH, RPATH propagates."""
-        from abicheck.resolver import _build_search_order, ResolvedDSO
+        from abicheck.resolver import ResolvedDSO, _build_search_order
 
         node = ResolvedDSO(
             path=Path("/app/lib/libfoo.so"),

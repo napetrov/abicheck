@@ -161,6 +161,48 @@ def _compute_load_order(graph: DependencyGraph) -> list[str]:
     return order
 
 
+def _make_not_found_binding(
+    consumer: str,
+    sym_name: str,
+    required_version: str,
+    is_weak: bool,
+    found_name_visible: bool,
+    found_name_hidden_only: bool,
+    first_provider: str | None,
+    first_hidden_provider: str | None,
+) -> SymbolBinding:
+    """Create the appropriate SymbolBinding when no provider matched."""
+    if found_name_hidden_only and not found_name_visible:
+        return SymbolBinding(
+            consumer=consumer, symbol=sym_name, version=required_version,
+            provider=first_hidden_provider, status=BindingStatus.VISIBILITY_BLOCKED,
+            explanation=(
+                f"Symbol {sym_name} found in {first_hidden_provider} but all versions "
+                "have hidden/internal visibility"
+            ),
+        )
+    if found_name_visible:
+        return SymbolBinding(
+            consumer=consumer, symbol=sym_name, version=required_version,
+            provider=first_provider, status=BindingStatus.VERSION_MISMATCH,
+            explanation=(
+                f"Symbol {sym_name} found but version {required_version!r} not matched "
+                f"(first provider: {first_provider})"
+            ),
+        )
+    if is_weak:
+        return SymbolBinding(
+            consumer=consumer, symbol=sym_name, version=required_version,
+            provider=None, status=BindingStatus.WEAK_UNRESOLVED,
+            explanation=f"Weak symbol {sym_name} unresolved (acceptable at runtime)",
+        )
+    return SymbolBinding(
+        consumer=consumer, symbol=sym_name, version=required_version,
+        provider=None, status=BindingStatus.MISSING,
+        explanation=f"Symbol {sym_name} not found in any loaded DSO",
+    )
+
+
 def _resolve_import(
     consumer: str,
     sym_name: str,
@@ -260,48 +302,8 @@ def _resolve_import(
                         explanation=f"Resolved {sym_name} from {provider_path}",
                     )
 
-    # Not found — determine the reason.
-    if found_name_hidden_only and not found_name_visible:
-        return SymbolBinding(
-            consumer=consumer,
-            symbol=sym_name,
-            version=required_version,
-            provider=first_hidden_provider,
-            status=BindingStatus.VISIBILITY_BLOCKED,
-            explanation=(
-                f"Symbol {sym_name} found in {first_hidden_provider} but all versions "
-                "have hidden/internal visibility"
-            ),
-        )
-
-    if found_name_visible:
-        return SymbolBinding(
-            consumer=consumer,
-            symbol=sym_name,
-            version=required_version,
-            provider=first_provider,
-            status=BindingStatus.VERSION_MISMATCH,
-            explanation=(
-                f"Symbol {sym_name} found but version {required_version!r} not matched "
-                f"(first provider: {first_provider})"
-            ),
-        )
-
-    if is_weak:
-        return SymbolBinding(
-            consumer=consumer,
-            symbol=sym_name,
-            version=required_version,
-            provider=None,
-            status=BindingStatus.WEAK_UNRESOLVED,
-            explanation=f"Weak symbol {sym_name} unresolved (acceptable at runtime)",
-        )
-
-    return SymbolBinding(
-        consumer=consumer,
-        symbol=sym_name,
-        version=required_version,
-        provider=None,
-        status=BindingStatus.MISSING,
-        explanation=f"Symbol {sym_name} not found in any loaded DSO",
+    return _make_not_found_binding(
+        consumer, sym_name, required_version, is_weak,
+        found_name_visible, found_name_hidden_only,
+        first_provider, first_hidden_provider,
     )

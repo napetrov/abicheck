@@ -147,23 +147,118 @@ def resolve_dependencies(
     ld_dirs = [d for d in ld_library_path.split(":") if d]
     prefix = str(sysroot) if sysroot else ""
 
-    # Track visited sonames to avoid cycles.
-    visited_sonames: set[str] = set()
+    seed = _seed_root(binary, graph, prefix)
+    if seed is None:
+        return graph
+    root_path, root_key, root_soname, default_dirs, platform_token, lib_token = seed
 
-    # BFS queue: (soname_or_path, requesting_dso_path, depth)
+    visited_sonames: set[str] = {root_soname, root_path.name}
     queue: deque[tuple[str, str | None, int]] = deque()
+    root_node = graph.nodes[root_key]
+    for needed in root_node.needed:
+        queue.append((needed, root_key, 1))
 
-    # Seed with the root binary.
+    # Propagated RPATHs from ancestor DSOs (only when DT_RUNPATH is absent).
+    propagated_rpaths: dict[str, list[str]] = {}
+    if root_node.rpath and not root_node.runpath:
+        propagated_rpaths[root_key] = _expand_rpath(
+            root_node.rpath, root_path.parent, prefix,
+            platform_token=platform_token, lib_token=lib_token,
+        )
+
+    while queue:
+        soname, requester_path, depth = queue.popleft()
+
+        if soname in visited_sonames:
+            resolved_key = _find_resolved_key(graph, soname)
+            if resolved_key and requester_path:
+                graph.edges.append((requester_path, resolved_key))
+            continue
+
+        visited_sonames.add(soname)
+        requester_node = graph.nodes.get(requester_path) if requester_path else None
+        requester_dir = Path(requester_path).parent if requester_path else root_path.parent
+
+        search = _build_search_order(
+            soname=soname, requester_node=requester_node,
+            requester_dir=requester_dir,
+            propagated_rpaths=propagated_rpaths.get(requester_path or "", []),
+            ld_dirs=ld_dirs, extra_dirs=extra_dirs, prefix=prefix,
+            default_dirs=default_dirs,
+            platform_token=platform_token, lib_token=lib_token,
+        )
+
+        resolved = _search_library(soname, search)
+        if resolved is None:
+            graph.unresolved.append((requester_path or root_key, soname))
+            continue
+
+        resolved_path, reason = resolved
+        resolved_key = str(resolved_path)
+
+        if resolved_key in graph.nodes:
+            if requester_path:
+                graph.edges.append((requester_path, resolved_key))
+            continue
+
+        meta = parse_elf_metadata(resolved_path)
+        node = ResolvedDSO(
+            path=resolved_path, soname=meta.soname or soname,
+            needed=list(meta.needed), rpath=meta.rpath,
+            runpath=meta.runpath, resolution_reason=reason,
+            depth=depth, elf_metadata=meta,
+        )
+        graph.nodes[resolved_key] = node
+        if requester_path:
+            graph.edges.append((requester_path, resolved_key))
+
+        # Propagate RPATH: merge with ancestor RPATHs.
+        if meta.rpath and not meta.runpath:
+            own_rpaths = _expand_rpath(
+                meta.rpath, resolved_path.parent, prefix,
+                platform_token=platform_token, lib_token=lib_token,
+            )
+            propagated_rpaths[resolved_key] = _merge_rpaths(
+                own_rpaths, propagated_rpaths.get(requester_path or "", []),
+            )
+        elif requester_path and requester_path in propagated_rpaths:
+            propagated_rpaths[resolved_key] = propagated_rpaths[requester_path]
+
+        for needed_child in meta.needed:
+            if needed_child not in visited_sonames:
+                queue.append((needed_child, resolved_key, depth + 1))
+
+    return graph
+
+
+def _merge_rpaths(own: list[str], ancestor: list[str]) -> list[str]:
+    """Merge own RPATHs with ancestor RPATHs, deduplicating."""
+    seen: set[str] = set()
+    merged: list[str] = []
+    for d in own + ancestor:
+        if d not in seen:
+            seen.add(d)
+            merged.append(d)
+    return merged
+
+
+def _seed_root(
+    binary: Path, graph: DependencyGraph, prefix: str,
+) -> tuple[Path, str, str, list[str], str, str] | None:
+    """Parse the root binary, add it to the graph, and return target config.
+
+    Returns (root_path, root_key, target_triple, default_dirs,
+    platform_token, lib_token) or None if the binary doesn't exist.
+    """
     root_path = binary.resolve()
     if not root_path.exists():
         log.warning("resolve_dependencies: root binary not found: %s", binary)
-        return graph
+        return None
 
     root_meta = parse_elf_metadata(root_path)
     root_key = str(root_path)
     root_soname = root_meta.soname or root_path.name
 
-    # Detect target architecture from PT_INTERP for target-aware defaults.
     target_triple = _detect_target_triple(root_meta.interpreter)
     default_dirs = _default_dirs_for_triple(target_triple)
     platform_token = _platform_token_for_triple(target_triple)
@@ -179,105 +274,7 @@ def resolve_dependencies(
         depth=0,
         elf_metadata=root_meta,
     )
-    visited_sonames.add(root_soname)
-    visited_sonames.add(root_path.name)
-
-    for needed in root_meta.needed:
-        queue.append((needed, root_key, 1))
-
-    # Propagated RPATHs from ancestor DSOs (only when DT_RUNPATH is absent).
-    # Key: requesting DSO path → collected RPATHs (merged from all ancestors).
-    propagated_rpaths: dict[str, list[str]] = {}
-    if root_meta.rpath and not root_meta.runpath:
-        propagated_rpaths[root_key] = _expand_rpath(
-            root_meta.rpath, root_path.parent, prefix,
-            platform_token=platform_token, lib_token=lib_token,
-        )
-
-    while queue:
-        soname, requester_path, depth = queue.popleft()
-
-        if soname in visited_sonames:
-            # Already resolved — just record the edge.
-            resolved_key = _find_resolved_key(graph, soname)
-            if resolved_key and requester_path:
-                graph.edges.append((requester_path, resolved_key))
-            continue
-
-        visited_sonames.add(soname)
-
-        # Build search paths for this resolution.
-        requester_node = graph.nodes.get(requester_path) if requester_path else None
-        requester_dir = Path(requester_path).parent if requester_path else root_path.parent
-
-        search = _build_search_order(
-            soname=soname,
-            requester_node=requester_node,
-            requester_dir=requester_dir,
-            propagated_rpaths=propagated_rpaths.get(requester_path or "", []),
-            ld_dirs=ld_dirs,
-            extra_dirs=extra_dirs,
-            prefix=prefix,
-            default_dirs=default_dirs,
-            platform_token=platform_token,
-            lib_token=lib_token,
-        )
-
-        resolved = _search_library(soname, search)
-        if resolved is None:
-            graph.unresolved.append((requester_path or root_key, soname))
-            continue
-
-        resolved_path = resolved[0]
-        reason = resolved[1]
-        resolved_key = str(resolved_path)
-
-        # Avoid re-processing the same file by resolved path.
-        if resolved_key in graph.nodes:
-            if requester_path:
-                graph.edges.append((requester_path, resolved_key))
-            continue
-
-        meta = parse_elf_metadata(resolved_path)
-        node = ResolvedDSO(
-            path=resolved_path,
-            soname=meta.soname or soname,
-            needed=list(meta.needed),
-            rpath=meta.rpath,
-            runpath=meta.runpath,
-            resolution_reason=reason,
-            depth=depth,
-            elf_metadata=meta,
-        )
-        graph.nodes[resolved_key] = node
-        if requester_path:
-            graph.edges.append((requester_path, resolved_key))
-
-        # Propagate RPATH (only if this DSO has DT_RPATH and no DT_RUNPATH).
-        # Merge with ancestor RPATHs rather than replacing them.
-        if meta.rpath and not meta.runpath:
-            own_rpaths = _expand_rpath(
-                meta.rpath, resolved_path.parent, prefix,
-                platform_token=platform_token, lib_token=lib_token,
-            )
-            ancestor_rpaths = propagated_rpaths.get(requester_path or "", [])
-            # Merge: own RPATHs first, then inherited ancestor RPATHs (deduped).
-            seen: set[str] = set()
-            merged: list[str] = []
-            for d in own_rpaths + ancestor_rpaths:
-                if d not in seen:
-                    seen.add(d)
-                    merged.append(d)
-            propagated_rpaths[resolved_key] = merged
-        elif requester_path and requester_path in propagated_rpaths:
-            # No own RPATH but ancestor had one — pass it through.
-            propagated_rpaths[resolved_key] = propagated_rpaths[requester_path]
-
-        for needed_child in meta.needed:
-            if needed_child not in visited_sonames:
-                queue.append((needed_child, resolved_key, depth + 1))
-
-    return graph
+    return root_path, root_key, root_soname, default_dirs, platform_token, lib_token
 
 
 # ---------------------------------------------------------------------------

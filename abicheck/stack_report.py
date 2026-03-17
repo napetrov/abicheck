@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .binder import BindingStatus, SymbolBinding
+from .binder import SymbolBinding
 from .resolver import DependencyGraph
 from .stack_checker import StackCheckResult, StackVerdict
 
@@ -85,6 +85,49 @@ def stack_to_json(result: StackCheckResult, indent: int = 2) -> str:
     return json.dumps(d, indent=indent, default=str)
 
 
+def _render_unresolved_section(lines: list[str], graph: DependencyGraph) -> None:
+    """Append unresolved libraries section if any."""
+    if not graph.unresolved:
+        return
+    lines += ["## ❌ Unresolved Libraries", ""]
+    for consumer, soname in graph.unresolved:
+        lines.append(f"- `{Path(consumer).name}` needs `{soname}` — **NOT FOUND**")
+    lines.append("")
+
+
+def _render_missing_symbols_section(lines: list[str], missing: list[SymbolBinding]) -> None:
+    """Append missing symbols section if any."""
+    if not missing:
+        return
+    lines += ["## ❌ Missing Symbols", ""]
+    for b in missing[:20]:
+        ver = f"@{b.version}" if b.version else ""
+        lines.append(f"- `{Path(b.consumer).name}` needs `{b.symbol}{ver}` — not found in any loaded DSO")
+    if len(missing) > 20:
+        lines.append(f"- ... +{len(missing) - 20} more")
+    lines.append("")
+
+
+def _render_stack_changes_section(lines: list[str], stack_changes: list) -> None:
+    """Append stack changes section if any."""
+    if not stack_changes:
+        return
+    lines += ["## Stack Changes", ""]
+    for sc in stack_changes:
+        if sc.change_type == "removed":
+            lines.append(f"- ❌ **{sc.library}** — removed from candidate")
+        elif sc.change_type == "added":
+            lines.append(f"- ➕ **{sc.library}** — new in candidate")
+        elif sc.change_type == "content_changed":
+            verdict = sc.abi_diff.verdict.value if sc.abi_diff else "unknown"
+            emoji = "❌" if verdict == "BREAKING" else ("⚠️" if verdict in ("API_BREAK", "COMPATIBLE_WITH_RISK") else "✅")
+            lines.append(f"- {emoji} **{sc.library}** — content changed (ABI: `{verdict}`)")
+            if sc.abi_diff and sc.abi_diff.breaking:
+                for c in sc.abi_diff.breaking[:5]:
+                    lines.append(f"  - `{c.kind.value}`: {c.description}")
+    lines.append("")
+
+
 def stack_to_markdown(result: StackCheckResult) -> str:
     """Render a StackCheckResult as Markdown."""
     lines: list[str] = []
@@ -113,30 +156,14 @@ def stack_to_markdown(result: StackCheckResult) -> str:
             "",
         ]
 
-    # Dependency tree.
     graph = result.candidate_graph
     lines += ["## Dependency Tree", ""]
     _render_tree(lines, graph)
     lines.append("")
 
-    # Unresolved libraries.
-    if graph.unresolved:
-        lines += ["## ❌ Unresolved Libraries", ""]
-        for consumer, soname in graph.unresolved:
-            lines.append(f"- `{Path(consumer).name}` needs `{soname}` — **NOT FOUND**")
-        lines.append("")
+    _render_unresolved_section(lines, graph)
+    _render_missing_symbols_section(lines, result.missing_symbols)
 
-    # Missing symbols.
-    if result.missing_symbols:
-        lines += ["## ❌ Missing Symbols", ""]
-        for b in result.missing_symbols[:20]:
-            ver = f"@{b.version}" if b.version else ""
-            lines.append(f"- `{Path(b.consumer).name}` needs `{b.symbol}{ver}` — not found in any loaded DSO")
-        if len(result.missing_symbols) > 20:
-            lines.append(f"- ... +{len(result.missing_symbols) - 20} more")
-        lines.append("")
-
-    # Binding summary.
     summary = _bindings_summary(result.bindings_candidate)
     lines += [
         "## Symbol Binding Summary",
@@ -148,22 +175,7 @@ def stack_to_markdown(result: StackCheckResult) -> str:
         lines.append(f"| `{status}` | {count} |")
     lines.append("")
 
-    # Stack changes (two-env mode).
-    if result.stack_changes:
-        lines += ["## Stack Changes", ""]
-        for sc in result.stack_changes:
-            if sc.change_type == "removed":
-                lines.append(f"- ❌ **{sc.library}** — removed from candidate")
-            elif sc.change_type == "added":
-                lines.append(f"- ➕ **{sc.library}** — new in candidate")
-            elif sc.change_type == "content_changed":
-                verdict = sc.abi_diff.verdict.value if sc.abi_diff else "unknown"
-                emoji = "❌" if verdict == "BREAKING" else ("⚠️" if verdict in ("API_BREAK", "COMPATIBLE_WITH_RISK") else "✅")
-                lines.append(f"- {emoji} **{sc.library}** — content changed (ABI: `{verdict}`)")
-                if sc.abi_diff and sc.abi_diff.breaking:
-                    for c in sc.abi_diff.breaking[:5]:
-                        lines.append(f"  - `{c.kind.value}`: {c.description}")
-        lines.append("")
+    _render_stack_changes_section(lines, result.stack_changes)
 
     lines += [
         "---",

@@ -114,7 +114,13 @@ def snapshot_to_json(snap: AbiSnapshot, indent: int = 2) -> str:
 
 
 def _elf_from_dict(e: dict[str, Any]) -> Any:
-    from .elf_metadata import ElfImport, ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
+    from .elf_metadata import (
+        ElfImport,
+        ElfMetadata,
+        ElfSymbol,
+        SymbolBinding,
+        SymbolType,
+    )
     syms = [
         ElfSymbol(
             name=s["name"],

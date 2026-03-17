@@ -30,7 +30,6 @@ from pathlib import Path
 
 from .binder import BindingStatus, SymbolBinding, compute_bindings
 from .checker import DiffResult, compare
-from .model import AbiSnapshot
 from .resolver import DependencyGraph, resolve_dependencies
 
 log = logging.getLogger(__name__)
@@ -66,6 +65,54 @@ class StackCheckResult:
     missing_symbols: list[SymbolBinding] = field(default_factory=list)
     stack_changes: list[StackChange] = field(default_factory=list)
     risk_score: str = "low"                    # "high", "medium", "low"
+
+
+def _compute_loadability(
+    graph: DependencyGraph,
+    missing: list[SymbolBinding],
+    version_mismatches: list[SymbolBinding],
+) -> StackVerdict:
+    """Determine the loadability verdict for a candidate environment."""
+    if not graph.nodes:
+        return StackVerdict.FAIL
+    if graph.unresolved or missing:
+        return StackVerdict.FAIL
+    if version_mismatches:
+        return StackVerdict.WARN
+    return StackVerdict.PASS
+
+
+def _compute_abi_risk(stack_changes: list[StackChange]) -> StackVerdict:
+    """Determine ABI risk verdict from stack changes."""
+    has_breaking = False
+    has_risk = False
+
+    for change in stack_changes:
+        if change.change_type == "removed":
+            has_breaking = True
+        elif change.abi_diff is not None and change.impacted_imports:
+            if change.abi_diff.verdict.value == "BREAKING":
+                has_breaking = True
+            elif change.abi_diff.verdict.value in ("API_BREAK", "COMPATIBLE_WITH_RISK"):
+                has_risk = True
+        elif change.abi_diff is not None and not change.impacted_imports:
+            if change.abi_diff.verdict.value == "BREAKING":
+                has_risk = True
+
+    if has_breaking:
+        return StackVerdict.FAIL
+    if has_risk:
+        return StackVerdict.WARN
+    return StackVerdict.PASS
+
+
+def _compute_risk_score(loadability: StackVerdict, abi_risk: StackVerdict) -> str:
+    """Compute risk score from loadability and ABI risk verdicts."""
+    if loadability == StackVerdict.FAIL or abi_risk == StackVerdict.FAIL:
+        return "high"
+    if abi_risk == StackVerdict.WARN:
+        return "medium"
+    return "low"
 
 
 def check_stack(
@@ -108,60 +155,13 @@ def check_stack(
     baseline_bindings = compute_bindings(baseline_graph)
     candidate_bindings = compute_bindings(candidate_graph)
 
-    # Find missing symbols and version mismatches in candidate.
-    missing = [
-        b for b in candidate_bindings
-        if b.status == BindingStatus.MISSING
-    ]
-    version_mismatches = [
-        b for b in candidate_bindings
-        if b.status == BindingStatus.VERSION_MISMATCH
-    ]
+    missing = [b for b in candidate_bindings if b.status == BindingStatus.MISSING]
+    version_mismatches = [b for b in candidate_bindings if b.status == BindingStatus.VERSION_MISMATCH]
 
-    # Determine loadability verdict.
-    # An empty candidate graph means the binary doesn't exist in the candidate.
-    loadability = StackVerdict.PASS
-    if not candidate_graph.nodes:
-        loadability = StackVerdict.FAIL
-    elif candidate_graph.unresolved or missing:
-        loadability = StackVerdict.FAIL
-    elif version_mismatches:
-        loadability = StackVerdict.WARN
-
-    # Identify changed DSOs between baseline and candidate.
+    loadability = _compute_loadability(candidate_graph, missing, version_mismatches)
     stack_changes = _diff_stacks(baseline_graph, candidate_graph, candidate_bindings)
-
-    # Determine ABI risk verdict.
-    abi_risk = StackVerdict.PASS
-    has_breaking = False
-    has_risk = False
-
-    for change in stack_changes:
-        if change.change_type == "removed":
-            has_breaking = True
-        elif change.abi_diff is not None and change.impacted_imports:
-            # Only escalate risk if there are actually impacted imports.
-            if change.abi_diff.verdict.value == "BREAKING":
-                has_breaking = True
-            elif change.abi_diff.verdict.value in ("API_BREAK", "COMPATIBLE_WITH_RISK"):
-                has_risk = True
-        elif change.abi_diff is not None and not change.impacted_imports:
-            # ABI change but no imports affected — still flag as risk if BREAKING.
-            if change.abi_diff.verdict.value == "BREAKING":
-                has_risk = True
-
-    if has_breaking:
-        abi_risk = StackVerdict.FAIL
-    elif has_risk:
-        abi_risk = StackVerdict.WARN
-
-    # Compute risk score.
-    if loadability == StackVerdict.FAIL or abi_risk == StackVerdict.FAIL:
-        risk_score = "high"
-    elif abi_risk == StackVerdict.WARN:
-        risk_score = "medium"
-    else:
-        risk_score = "low"
+    abi_risk = _compute_abi_risk(stack_changes)
+    risk_score = _compute_risk_score(loadability, abi_risk)
 
     return StackCheckResult(
         root_binary=str(binary),
