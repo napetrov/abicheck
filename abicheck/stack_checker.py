@@ -1,0 +1,286 @@
+# Copyright 2026 Nikolay Petrov
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Full-stack ABI compatibility checker.
+
+Compares two resolved runtime environments (baseline vs candidate) for a given
+root binary and produces a stack-level verdict covering:
+  - Loadability: will the binary load in the candidate environment?
+  - ABI risk: are there harmful ABI changes in any dependency?
+  - Impact: which imports are affected by changed dependencies?
+"""
+from __future__ import annotations
+
+import hashlib
+import logging
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+
+from .binder import BindingStatus, SymbolBinding, compute_bindings
+from .checker import DiffResult, compare
+from .model import AbiSnapshot
+from .resolver import DependencyGraph, resolve_dependencies
+
+log = logging.getLogger(__name__)
+
+
+class StackVerdict(str, Enum):
+    PASS = "pass"
+    WARN = "warn"
+    FAIL = "fail"
+
+
+@dataclass
+class StackChange:
+    """A changed DSO between baseline and candidate stacks."""
+    library: str               # SONAME or path
+    change_type: str           # "added", "removed", "content_changed"
+    abi_diff: DiffResult | None = None  # Per-library ABI diff
+    impacted_imports: list[SymbolBinding] = field(default_factory=list)
+
+
+@dataclass
+class StackCheckResult:
+    """Result of a full-stack ABI compatibility check."""
+    root_binary: str
+    baseline_env: str
+    candidate_env: str
+    loadability: StackVerdict       # Will it load?
+    abi_risk: StackVerdict          # Are there harmful ABI changes?
+    baseline_graph: DependencyGraph
+    candidate_graph: DependencyGraph
+    bindings_baseline: list[SymbolBinding] = field(default_factory=list)
+    bindings_candidate: list[SymbolBinding] = field(default_factory=list)
+    missing_symbols: list[SymbolBinding] = field(default_factory=list)
+    stack_changes: list[StackChange] = field(default_factory=list)
+    risk_score: str = "low"                    # "high", "medium", "low"
+
+
+def check_stack(
+    binary: Path,
+    baseline_root: Path,
+    candidate_root: Path,
+    ld_library_path: str = "",
+    search_paths: list[Path] | None = None,
+) -> StackCheckResult:
+    """Compare a binary's full dependency stack across two environments.
+
+    Args:
+        binary: Path to the root ELF binary (relative to both roots).
+        baseline_root: Sysroot for the baseline environment.
+        candidate_root: Sysroot for the candidate environment.
+        ld_library_path: Simulated LD_LIBRARY_PATH (applied to both).
+        search_paths: Additional search directories.
+
+    Returns:
+        A StackCheckResult with loadability/ABI verdicts and per-library changes.
+    """
+    baseline_binary = baseline_root / binary
+    candidate_binary = candidate_root / binary
+
+    # Resolve dependency graphs in both environments.
+    baseline_graph = resolve_dependencies(
+        baseline_binary,
+        search_paths=search_paths,
+        sysroot=baseline_root,
+        ld_library_path=ld_library_path,
+    )
+    candidate_graph = resolve_dependencies(
+        candidate_binary,
+        search_paths=search_paths,
+        sysroot=candidate_root,
+        ld_library_path=ld_library_path,
+    )
+
+    # Compute symbol bindings in both environments.
+    baseline_bindings = compute_bindings(baseline_graph)
+    candidate_bindings = compute_bindings(candidate_graph)
+
+    # Find missing symbols in candidate.
+    missing = [
+        b for b in candidate_bindings
+        if b.status == BindingStatus.MISSING
+    ]
+
+    # Determine loadability verdict.
+    loadability = StackVerdict.PASS
+    if candidate_graph.unresolved:
+        loadability = StackVerdict.FAIL
+    elif missing:
+        loadability = StackVerdict.FAIL
+
+    # Identify changed DSOs between baseline and candidate.
+    stack_changes = _diff_stacks(baseline_graph, candidate_graph)
+
+    # Determine ABI risk verdict.
+    abi_risk = StackVerdict.PASS
+    has_breaking = False
+    has_risk = False
+
+    for change in stack_changes:
+        if change.change_type == "removed":
+            has_breaking = True
+        elif change.abi_diff is not None:
+            if change.abi_diff.verdict.value == "BREAKING":
+                has_breaking = True
+            elif change.abi_diff.verdict.value in ("API_BREAK", "COMPATIBLE_WITH_RISK"):
+                has_risk = True
+
+    if has_breaking:
+        abi_risk = StackVerdict.FAIL
+    elif has_risk:
+        abi_risk = StackVerdict.WARN
+
+    # Compute risk score.
+    if loadability == StackVerdict.FAIL or abi_risk == StackVerdict.FAIL:
+        risk_score = "high"
+    elif abi_risk == StackVerdict.WARN:
+        risk_score = "medium"
+    else:
+        risk_score = "low"
+
+    return StackCheckResult(
+        root_binary=str(binary),
+        baseline_env=str(baseline_root),
+        candidate_env=str(candidate_root),
+        loadability=loadability,
+        abi_risk=abi_risk,
+        baseline_graph=baseline_graph,
+        candidate_graph=candidate_graph,
+        bindings_baseline=baseline_bindings,
+        bindings_candidate=candidate_bindings,
+        missing_symbols=missing,
+        stack_changes=stack_changes,
+        risk_score=risk_score,
+    )
+
+
+def check_single_env(
+    binary: Path,
+    search_paths: list[Path] | None = None,
+    sysroot: Path | None = None,
+    ld_library_path: str = "",
+) -> StackCheckResult:
+    """Check a binary's dependency stack in a single environment.
+
+    Useful for "will this binary load?" analysis without a baseline comparison.
+    """
+    graph = resolve_dependencies(
+        binary,
+        search_paths=search_paths,
+        sysroot=sysroot,
+        ld_library_path=ld_library_path,
+    )
+    bindings = compute_bindings(graph)
+
+    missing = [b for b in bindings if b.status == BindingStatus.MISSING]
+    version_mismatches = [b for b in bindings if b.status == BindingStatus.VERSION_MISMATCH]
+
+    loadability = StackVerdict.PASS
+    if graph.unresolved or missing:
+        loadability = StackVerdict.FAIL
+    elif version_mismatches:
+        loadability = StackVerdict.WARN
+
+    risk_score = "high" if loadability == StackVerdict.FAIL else (
+        "medium" if loadability == StackVerdict.WARN else "low"
+    )
+
+    return StackCheckResult(
+        root_binary=str(binary),
+        baseline_env=str(sysroot or ""),
+        candidate_env=str(sysroot or ""),
+        loadability=loadability,
+        abi_risk=StackVerdict.PASS,
+        baseline_graph=graph,
+        candidate_graph=graph,
+        bindings_baseline=bindings,
+        bindings_candidate=bindings,
+        missing_symbols=missing,
+        stack_changes=[],
+        risk_score=risk_score,
+    )
+
+
+def _diff_stacks(
+    baseline: DependencyGraph,
+    candidate: DependencyGraph,
+) -> list[StackChange]:
+    """Identify changed DSOs between baseline and candidate stacks."""
+    changes: list[StackChange] = []
+
+    # Build soname → node mapping for each stack.
+    baseline_by_soname = {node.soname: (key, node) for key, node in baseline.nodes.items()}
+    candidate_by_soname = {node.soname: (key, node) for key, node in candidate.nodes.items()}
+
+    all_sonames = set(baseline_by_soname.keys()) | set(candidate_by_soname.keys())
+
+    for soname in sorted(all_sonames):
+        base_entry = baseline_by_soname.get(soname)
+        cand_entry = candidate_by_soname.get(soname)
+
+        if base_entry is None and cand_entry is not None:
+            changes.append(StackChange(library=soname, change_type="added"))
+            continue
+
+        if base_entry is not None and cand_entry is None:
+            changes.append(StackChange(library=soname, change_type="removed"))
+            continue
+
+        assert base_entry is not None and cand_entry is not None
+        base_key, base_node = base_entry
+        cand_key, cand_node = cand_entry
+
+        # Check if the file content changed (by file hash).
+        base_hash = _file_hash(base_node.path)
+        cand_hash = _file_hash(cand_node.path)
+
+        if base_hash != cand_hash:
+            # Run per-library ABI diff using the existing checker.
+            abi_diff = _run_abi_diff(base_node.path, cand_node.path, soname)
+            changes.append(StackChange(
+                library=soname,
+                change_type="content_changed",
+                abi_diff=abi_diff,
+            ))
+
+    return changes
+
+
+def _file_hash(path: Path) -> str:
+    """Compute SHA-256 hash of a file."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def _run_abi_diff(old_path: Path, new_path: Path, library_name: str) -> DiffResult | None:
+    """Run the existing abicheck compare on two library files."""
+    from .dumper import dump
+
+    try:
+        old_snap = dump(
+            so_path=old_path, headers=[], extra_includes=[],
+            version="baseline", compiler="c++",
+        )
+        new_snap = dump(
+            so_path=new_path, headers=[], extra_includes=[],
+            version="candidate", compiler="c++",
+        )
+        return compare(old_snap, new_snap)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("_run_abi_diff: failed for %s: %s", library_name, exc)
+        return None

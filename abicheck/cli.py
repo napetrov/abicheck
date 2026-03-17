@@ -1119,6 +1119,132 @@ def compare_release_cmd(
         sys.exit(1)
 
 
+# ── Full-stack dependency commands ────────────────────────────────────────────
+
+@main.command("deps")
+@click.argument("binary", type=click.Path(exists=True, path_type=Path))
+@click.option("--search-path", "search_paths", multiple=True,
+              type=click.Path(exists=True, path_type=Path),
+              help="Additional directory to search for shared libraries.")
+@click.option("--sysroot", type=click.Path(exists=True, path_type=Path), default=None,
+              help="Sysroot prefix for cross/container analysis.")
+@click.option("--ld-library-path", "ld_library_path", default="",
+              help="Simulated LD_LIBRARY_PATH (colon-separated).")
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown"]),
+              default="markdown", show_default=True)
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
+@click.option("-v", "--verbose", is_flag=True, default=False)
+def deps_cmd(
+    binary: Path, search_paths: tuple[Path, ...],
+    sysroot: Path | None, ld_library_path: str,
+    fmt: str, output: Path | None, verbose: bool,
+) -> None:
+    """Show the resolved dependency tree and symbol binding status.
+
+    Resolves the transitive closure of DT_NEEDED dependencies for BINARY
+    using loader-accurate search order (RPATH/RUNPATH, LD_LIBRARY_PATH,
+    default dirs) and reports symbol binding status.
+
+    \b
+    Exit codes:
+      0  All dependencies resolved, all required symbols bound
+      1  Missing dependencies or symbols (load would fail)
+
+    \b
+    Examples:
+      abicheck deps ./build/libfoo.so
+      abicheck deps /usr/bin/myapp --format json -o deps.json
+      abicheck deps ./app --sysroot /path/to/container/rootfs
+    """
+    _setup_verbosity(verbose)
+
+    from .stack_checker import check_single_env
+    from .stack_report import stack_to_json, stack_to_markdown
+
+    result = check_single_env(
+        binary,
+        search_paths=list(search_paths) or None,
+        sysroot=sysroot,
+        ld_library_path=ld_library_path,
+    )
+
+    text = stack_to_json(result) if fmt == "json" else stack_to_markdown(result)
+    if output:
+        output.write_text(text, encoding="utf-8")
+        click.echo(f"Report written to {output}", err=True)
+    else:
+        click.echo(text)
+
+    if result.loadability.value == "fail":
+        sys.exit(1)
+
+
+@main.command("stack-check")
+@click.argument("binary", type=click.Path(path_type=Path))
+@click.option("--baseline", type=click.Path(exists=True, path_type=Path), required=True,
+              help="Sysroot for the baseline environment.")
+@click.option("--candidate", type=click.Path(exists=True, path_type=Path), required=True,
+              help="Sysroot for the candidate environment.")
+@click.option("--search-path", "search_paths", multiple=True,
+              type=click.Path(exists=True, path_type=Path),
+              help="Additional directory to search for shared libraries.")
+@click.option("--ld-library-path", "ld_library_path", default="",
+              help="Simulated LD_LIBRARY_PATH (colon-separated).")
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown"]),
+              default="markdown", show_default=True)
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
+@click.option("-v", "--verbose", is_flag=True, default=False)
+def stack_check_cmd(
+    binary: Path, baseline: Path, candidate: Path,
+    search_paths: tuple[Path, ...], ld_library_path: str,
+    fmt: str, output: Path | None, verbose: bool,
+) -> None:
+    """Compare a binary's full dependency stack across two environments.
+
+    Resolves all transitive dependencies in both BASELINE and CANDIDATE sysroots,
+    computes symbol bindings, detects changed DSOs, runs per-library ABI diffs,
+    and produces a stack-level compatibility verdict.
+
+    BINARY is the path relative to the sysroot (e.g. usr/bin/myapp).
+
+    \b
+    Exit codes:
+      0  PASS — binary loads and no harmful ABI changes
+      1  WARN — loads but ABI risk detected
+      4  FAIL — load failure or binary ABI break
+
+    \b
+    Examples:
+      abicheck stack-check usr/bin/myapp --baseline /old-root --candidate /new-root
+      abicheck stack-check usr/lib/libfoo.so.1 \\
+        --baseline ./image-v1 --candidate ./image-v2 --format json
+    """
+    _setup_verbosity(verbose)
+
+    from .stack_checker import check_stack
+    from .stack_report import stack_to_json, stack_to_markdown
+
+    result = check_stack(
+        binary,
+        baseline_root=baseline,
+        candidate_root=candidate,
+        ld_library_path=ld_library_path,
+        search_paths=list(search_paths) or None,
+    )
+
+    text = stack_to_json(result) if fmt == "json" else stack_to_markdown(result)
+    if output:
+        output.write_text(text, encoding="utf-8")
+        click.echo(f"Report written to {output}", err=True)
+    else:
+        click.echo(text)
+
+    if result.loadability.value == "fail" or result.abi_risk.value == "fail":
+        sys.exit(4)
+    elif result.abi_risk.value == "warn":
+        sys.exit(1)
+
+
 # ── ABICC compat subcommands (implementation in abicheck.compat) ─────────────
 # NOTE: eagerly loads abicheck.compat.cli at import time — intentional so all
 # consumers get compat commands registered. Private helpers re-exported for
