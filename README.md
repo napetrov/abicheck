@@ -96,12 +96,24 @@ For the full CLI reference see the [documentation](https://napetrov.github.io/ab
 
 ## Exit codes
 
+**compare:**
+
 | Exit code | Verdict | Meaning |
 |-----------|---------|---------|
 | `0` | `NO_CHANGE`, `COMPATIBLE`, `COMPATIBLE_WITH_RISK` | Safe — no binary ABI break |
-| `1` | — | Tool/runtime error |
+| `1` | — | Tool/runtime error (or `ADDITIONS` with `--fail-on-additions`) |
 | `2` | `API_BREAK` | Source-level break (recompile needed, binary may work) |
 | `4` | `BREAKING` | Binary ABI break (old binaries will crash or misbehave) |
+
+**stack-check:**
+
+| Exit code | Verdict | Meaning |
+|-----------|---------|---------|
+| `0` | `PASS` | Binary loads and no harmful ABI changes |
+| `1` | `WARN` | Binary loads but ABI risk in dependencies |
+| `4` | `FAIL` | Load failure or ABI break in dependency stack |
+
+See the [full exit code reference](https://napetrov.github.io/abicheck/reference/exit-codes/) for `deps`, `compat`, and CI gate patterns.
 
 ---
 

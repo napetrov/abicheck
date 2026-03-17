@@ -13,7 +13,10 @@ inputs:
   mode:
     description: >
       Operation mode: "compare" (default) compares two ABI surfaces;
-      "dump" generates a JSON baseline snapshot from a single library.
+      "dump" generates a JSON baseline snapshot from a single library;
+      "deps" resolves transitive dependencies and symbol bindings (Linux ELF);
+      "stack-check" compares a binary's full dependency stack across two
+      sysroots (Linux ELF).
     required: false
     default: 'compare'
 
@@ -85,6 +88,32 @@ inputs:
     required: false
     default: 'false'
 
+  # ── Full-stack dependency validation (Linux ELF) ─────────────────────────────
+  follow-deps:
+    description: >
+      Include transitive dependency graph and symbol binding info in dump or
+      compare output. ELF only. Applies to dump and compare modes.
+    required: false
+    default: 'false'
+  baseline:
+    description: >
+      Sysroot for the baseline environment. Required for mode=stack-check.
+    required: false
+  candidate:
+    description: >
+      Sysroot for the candidate environment. Required for mode=stack-check.
+    required: false
+  search-path:
+    description: >
+      Additional directories to search for shared libraries (space-separated).
+      Used by deps, stack-check, and follow-deps modes.
+    required: false
+  ld-library-path:
+    description: >
+      Simulated LD_LIBRARY_PATH (colon-separated). Used by deps, stack-check,
+      and follow-deps modes.
+    required: false
+
   # ── Output & policy ─────────────────────────────────────────────────────────
   format:
     description: 'Output format: markdown (default), json, sarif, html.'
@@ -145,19 +174,15 @@ inputs:
 outputs:
   verdict:
     description: >
-      ABI comparison verdict. One of: COMPATIBLE (no binary break, no
-      additions detected), ADDITIONS (no binary break, but new public
-      symbols/types were added — only set when fail-on-additions is true),
-      API_BREAK (source-level break, recompilation required),
-      BREAKING (binary ABI break, existing binaries will fail at runtime),
-      or ERROR (tool/configuration failure).
+      ABI verdict. For compare/dump: COMPATIBLE, ADDITIONS, API_BREAK,
+      BREAKING, or ERROR. For stack-check: PASS, WARN, FAIL, or ERROR.
+      For deps: PASS (all resolved) or FAIL (missing deps/symbols).
     value: ${{ steps.run-abicheck.outputs.verdict }}
   exit-code:
     description: >
-      abicheck exit code: 0 (compatible/no change), 1 (additions detected,
-      when --fail-on-additions is set), 2 (API break), 4 (ABI break).
-      Note: Click CLI argument errors also use exit code 2 and are mapped
-      to VERDICT=ERROR, not API_BREAK.
+      abicheck exit code. compare: 0 (compatible), 1 (additions), 2 (API break),
+      4 (ABI break). stack-check: 0 (pass), 1 (warn), 4 (fail). deps: 0 (ok),
+      1 (missing). Click CLI errors also exit 2 and are mapped to VERDICT=ERROR.
     value: ${{ steps.run-abicheck.outputs.exit-code }}
   report-path:
     description: >
@@ -213,6 +238,11 @@ runs:
         INPUT_POLICY_FILE: ${{ inputs.policy-file }}
         INPUT_SUPPRESS: ${{ inputs.suppress }}
         INPUT_VERBOSE: ${{ inputs.verbose }}
+        INPUT_FOLLOW_DEPS: ${{ inputs.follow-deps }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_CANDIDATE: ${{ inputs.candidate }}
+        INPUT_SEARCH_PATH: ${{ inputs.search-path }}
+        INPUT_LD_LIBRARY_PATH: ${{ inputs.ld-library-path }}
         INPUT_FAIL_ON_BREAKING: ${{ inputs.fail-on-breaking }}
         INPUT_FAIL_ON_API_BREAK: ${{ inputs.fail-on-api-break }}
         INPUT_FAIL_ON_ADDITIONS: ${{ inputs.fail-on-additions }}
