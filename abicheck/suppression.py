@@ -150,7 +150,9 @@ class Suppression:
         # source_location: match against change.source_location if present
         if self._compiled_source_pattern is not None:
             src = change.source_location or ""
-            if not self._compiled_source_pattern.match(src):
+            # source_location is usually "path:line[:col]"; match glob against path only.
+            src_path = re.sub(r":\d+(?::\d+)?$", "", src)
+            if not self._compiled_source_pattern.match(src_path):
                 return False
             # Fall through to check remaining selectors conjunctively (AND logic)
 

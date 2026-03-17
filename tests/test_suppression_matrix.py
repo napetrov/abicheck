@@ -617,3 +617,17 @@ class TestAdvancedSuppressionScaffold:
         old, new = _make_removed_func_snaps()
         result = compare(old, new, suppression=sl)
         assert result.suppressed_count == 1
+
+    def test_source_location_glob_matches_path_without_line_suffix(self, tmp_path: Path) -> None:
+        """source_location glob should match file path even when change carries :line suffix."""
+        from abicheck.checker import Change, ChangeKind
+        from abicheck.suppression import Suppression, SuppressionList
+
+        c = Change(
+            kind=ChangeKind.FUNC_REMOVED,
+            symbol="_Z3foov",
+            description="removed",
+            source_location="/project/internal/detail.h:42",
+        )
+        sl = SuppressionList([Suppression(source_location="*/internal/*.h")])
+        assert sl.is_suppressed(c)

@@ -28,9 +28,9 @@ automatically, then runs ABI comparison and reports results.
 
 | Input | Required | Description |
 |-------|----------|-------------|
-| `header` | no | Public header(s) for both sides (space-separated) |
-| `old-header` | no | Header(s) for old side only |
-| `new-header` | no | Header(s) for new side only |
+| `header` | no | Public header file(s) or directory(ies) for both sides (space-separated) |
+| `old-header` | no | Header file(s) or directory(ies) for old side only |
+| `new-header` | no | Header file(s) or directory(ies) for new side only |
 | `include` | no | Extra include dirs for castxml (both sides) |
 | `old-include` | no | Include dirs for old side only |
 | `new-include` | no | Include dirs for new side only |

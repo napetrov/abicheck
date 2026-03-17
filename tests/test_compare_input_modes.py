@@ -233,16 +233,21 @@ class TestCompareSoSo:
         assert recorded_headers[0] == [old_hdr]
         assert recorded_headers[1] == [new_hdr]
 
-    def test_so_without_headers_errors(self, tmp_path):
-        """Passing .so files without any -H should fail."""
+    def test_so_without_headers_falls_back_to_symbols_only(self, tmp_path, monkeypatch):
+        """Passing .so files without -H falls back to symbols-only with warning."""
         old_elf = _write_fake_elf(tmp_path / "libv1.so")
         new_elf = _write_fake_elf(tmp_path / "libv2.so")
+
+        def mock_dump(so_path, headers, extra_includes=None, version="unknown",
+                      lang="c++", **kw):
+            return _make_snapshot(version)
+
+        monkeypatch.setattr("abicheck.cli.dump", mock_dump)
         runner = CliRunner()
-        result = runner.invoke(main, [
-            "compare", str(old_elf), str(new_elf),
-        ])
-        assert result.exit_code != 0
-        assert "header" in result.output.lower()
+        result = runner.invoke(main, ["compare", str(old_elf), str(new_elf)])
+        assert result.exit_code == 0, result.output
+        out = result.output.lower()
+        assert "symbols-only mode" in out or "weaker" in out
 
     def test_so_vs_so_with_version_labels(self, tmp_path, monkeypatch):
         """--old-version / --new-version are passed through to dump."""
@@ -464,3 +469,118 @@ class TestCompareHelp:
         result = runner.invoke(main, ["compare", "--help"])
         assert "libfoo.so" in result.output
         assert "baseline.json" in result.output
+
+
+# ── ELF compare without headers (default symbols-only fallback) ─────────────
+
+class TestElfNoHeaderFallback:
+    """ELF compare without headers should fallback to symbols-only with warning."""
+
+    def test_elf_no_header_defaults_to_symbols_only_warning(self, tmp_path, monkeypatch):
+        old_elf = _write_fake_elf(tmp_path / "libv1.so")
+        new_elf = _write_fake_elf(tmp_path / "libv2.so")
+
+        def mock_dump(so_path, headers, extra_includes=None, version="unknown",
+                      lang="c++", **kw):
+            return _make_snapshot(version)
+
+        monkeypatch.setattr("abicheck.cli.dump", mock_dump)
+        runner = CliRunner()
+        result = runner.invoke(main, ["compare", str(old_elf), str(new_elf)])
+        assert result.exit_code == 0, result.output
+        out = result.output.lower()
+        assert "symbols-only mode" in out or "weaker" in out
+
+
+class TestHeaderDirectoryInput:
+    def test_header_directory_is_expanded_recursively(self, tmp_path, monkeypatch):
+        old_elf = _write_fake_elf(tmp_path / "libv1.so")
+        new_elf = _write_fake_elf(tmp_path / "libv2.so")
+
+        hdr_dir = tmp_path / "include"
+        (hdr_dir / "sub").mkdir(parents=True)
+        h1 = hdr_dir / "api.h"
+        h2 = hdr_dir / "sub" / "detail.hpp"
+        h3 = hdr_dir / "sub" / "x.hh"
+        h1.write_text("int foo(void);", encoding="utf-8")
+        h2.write_text("int bar(void);", encoding="utf-8")
+        h3.write_text("int baz(void);", encoding="utf-8")
+
+        captured: list[list[Path]] = []
+
+        def mock_dump(so_path, headers, extra_includes=None, version="unknown", lang="c++", **kw):
+            captured.append(list(headers))
+            return _make_snapshot(version)
+
+        monkeypatch.setattr("abicheck.cli.dump", mock_dump)
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare", str(old_elf), str(new_elf), "-H", str(hdr_dir)
+        ])
+        assert result.exit_code == 0, result.output
+        assert len(captured) == 2  # old + new side
+        expected = sorted([h1, h2, h3], key=lambda p: str(p))
+        assert captured[0] == expected
+        assert captured[1] == expected
+
+    def test_old_new_header_directories(self, tmp_path, monkeypatch):
+        """--old-header/--new-header accept directories and expand recursively."""
+        old_elf = _write_fake_elf(tmp_path / "libv1.so")
+        new_elf = _write_fake_elf(tmp_path / "libv2.so")
+
+        old_dir = tmp_path / "include_v1"
+        new_dir = tmp_path / "include_v2"
+        (old_dir / "sub").mkdir(parents=True)
+        (new_dir / "sub").mkdir(parents=True)
+        old_h = old_dir / "sub" / "foo.h"
+        new_h = new_dir / "sub" / "foo.h"
+        old_h.write_text("int foo(int);", encoding="utf-8")
+        new_h.write_text("int foo(double);", encoding="utf-8")
+
+        captured: list[list[Path]] = []
+
+        def mock_dump(so_path, headers, extra_includes=None, version="unknown", lang="c++", **kw):
+            captured.append(list(headers))
+            return _make_snapshot(version)
+
+        monkeypatch.setattr("abicheck.cli.dump", mock_dump)
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare", str(old_elf), str(new_elf),
+            "--old-header", str(old_dir),
+            "--new-header", str(new_dir),
+        ])
+        assert result.exit_code == 0, result.output
+        assert len(captured) == 2
+        assert captured[0] == [old_h]
+        assert captured[1] == [new_h]
+
+    def test_mixed_header_file_and_directory(self, tmp_path, monkeypatch):
+        """Mixing file and directory inputs in -H should work and deduplicate."""
+        old_elf = _write_fake_elf(tmp_path / "libv1.so")
+        new_elf = _write_fake_elf(tmp_path / "libv2.so")
+
+        hdr_dir = tmp_path / "include"
+        hdr_dir.mkdir()
+        h1 = hdr_dir / "foo.h"
+        h2 = hdr_dir / "bar.hpp"
+        h1.write_text("int foo(void);", encoding="utf-8")
+        h2.write_text("int bar(void);", encoding="utf-8")
+
+        captured: list[list[Path]] = []
+
+        def mock_dump(so_path, headers, extra_includes=None, version="unknown", lang="c++", **kw):
+            captured.append(list(headers))
+            return _make_snapshot(version)
+
+        monkeypatch.setattr("abicheck.cli.dump", mock_dump)
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare", str(old_elf), str(new_elf),
+            "-H", str(hdr_dir), "-H", str(h1),
+        ])
+        assert result.exit_code == 0, result.output
+        expected = sorted([h1, h2], key=lambda p: str(p))
+        assert captured[0] == expected
+        assert captured[1] == expected
