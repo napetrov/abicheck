@@ -1,12 +1,11 @@
-# ADR-002: Multi-binary / release compare UX and architecture
+# Design: Multi-Binary / Release Compare
 
-**Date:** 2026-03-16  
-**Status:** Proposed  
-**Decision maker:** Nikolay Petrov
+> Status: DRAFT  
+> Related backlog: context/INTEL_BACKLOG.md
 
 ---
 
-## Context
+## Problem
 
 Real-world releases contain multiple binaries per package (e.g. `libdnnl.so`, `libdnnl_gpu.so`,
 `libmpi.so`, `libmpi_cxx.so`). Today `abicheck compare` accepts exactly one OLD and one NEW binary.
@@ -24,9 +23,9 @@ abicheck compare old/libfoo.so old/libbar.so \
            new/libfoo.so new/libbar.so \
            -H include/
 
-# Per-pair per-side headers (run separately)
-abicheck compare old/libfoo.so new/libfoo.so --old-header v1/foo.h --new-header v2/foo.h
-abicheck compare old/libbar.so new/libbar.so --old-header v1/bar.h --new-header v2/bar.h
+# Per-pair per-side headers
+abicheck compare old/libfoo.so new/libfoo.so --old-header v1/foo.h --new-header v2/foo.h \
+         compare old/libbar.so new/libbar.so --old-header v1/bar.h --new-header v2/bar.h
 ```
 
 **Problem:** CLI gets ambiguous for 3+ binaries.
@@ -67,7 +66,7 @@ abicheck compare-release --libs-list libs.txt old/ new/ -H include/
 ```
 
 **libs.txt:**
-```text
+```
 libfoo.so
 libbar.so
 libdnnl.so
@@ -89,7 +88,7 @@ libdnnl.so
 
 ### Summary table (markdown/stdout):
 
-```text
+```
 ╔══════════════════════╦══════════════╦══════════════╗
 ║ Library              ║ Verdict      ║ Changes      ║
 ╠══════════════════════╬══════════════╬══════════════╣
