@@ -299,7 +299,6 @@ BREAKING_KINDS = {
     ChangeKind.TYPE_FIELD_ADDED,  # for polymorphic / non-standard-layout types
     ChangeKind.ENUM_MEMBER_REMOVED,
     ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
-    ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
     ChangeKind.FUNC_STATIC_CHANGED,
     ChangeKind.FUNC_CV_CHANGED,
     ChangeKind.FUNC_VISIBILITY_CHANGED,
@@ -433,6 +432,9 @@ RISK_KINDS: frozenset[ChangeKind] = frozenset({
     # Deployment risk: the new library will NOT load on systems with a glibc
     # older than the required version. The user must verify target environments.
     ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+    # Sentinel/MAX enum value moved. Existing binaries are unaffected,
+    # but source code using it as loop bound/array size may need review.
+    ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
     # A symbol exported by this library that originates from a dependency changed.
     # This is a real ABI change but caused by dependency versioning, not the
     # library's own API.  Direct consumers do not link against these symbols

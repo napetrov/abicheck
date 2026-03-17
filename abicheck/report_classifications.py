@@ -69,7 +69,7 @@ CHANGED_BREAKING_KINDS: frozenset[str] = frozenset({
     "type_size_changed", "type_alignment_changed",
     "type_field_removed", "type_field_offset_changed", "type_field_type_changed",
     "type_base_changed", "type_vtable_changed",
-    "enum_member_value_changed", "enum_last_member_value_changed",
+    "enum_member_value_changed",
     "enum_underlying_size_changed",
     "struct_size_changed", "struct_field_offset_changed", "struct_field_removed",
     "struct_field_type_changed", "struct_alignment_changed",
