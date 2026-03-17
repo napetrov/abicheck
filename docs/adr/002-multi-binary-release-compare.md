@@ -24,9 +24,9 @@ abicheck compare old/libfoo.so old/libbar.so \
            new/libfoo.so new/libbar.so \
            -H include/
 
-# Per-pair per-side headers
-abicheck compare old/libfoo.so new/libfoo.so --old-header v1/foo.h --new-header v2/foo.h \
-         compare old/libbar.so new/libbar.so --old-header v1/bar.h --new-header v2/bar.h
+# Per-pair per-side headers (run separately)
+abicheck compare old/libfoo.so new/libfoo.so --old-header v1/foo.h --new-header v2/foo.h
+abicheck compare old/libbar.so new/libbar.so --old-header v1/bar.h --new-header v2/bar.h
 ```
 
 **Problem:** CLI gets ambiguous for 3+ binaries.
@@ -67,7 +67,7 @@ abicheck compare-release --libs-list libs.txt old/ new/ -H include/
 ```
 
 **libs.txt:**
-```
+```text
 libfoo.so
 libbar.so
 libdnnl.so
@@ -89,7 +89,7 @@ libdnnl.so
 
 ### Summary table (markdown/stdout):
 
-```
+```text
 ╔══════════════════════╦══════════════╦══════════════╗
 ║ Library              ║ Verdict      ║ Changes      ║
 ╠══════════════════════╬══════════════╬══════════════╣

@@ -74,7 +74,7 @@ def _expand_header_inputs(inputs: list[Path]) -> list[Path]:
     seen: set[str] = set()
     deduped: list[Path] = []
     for h in out:
-        k = str(h)
+        k = str(h.resolve())
         if k in seen:
             continue
         seen.add(k)
@@ -170,6 +170,11 @@ def _dump_native_binary(
             for inc in includes:
                 if not inc.exists() or not inc.is_dir():
                     raise click.ClickException(f"Include directory not found or not a directory: {inc}")
+        elif includes:
+            click.echo(
+                "Warning: --include paths are ignored in symbols-only mode (no headers).",
+                err=True,
+            )
         compiler = "c++" if lang == "c++" else "cc"
         try:
             return dump(
@@ -403,7 +408,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
     if binary_fmt in ("pe", "macho"):
         try:
             snap = _dump_native_binary(
-                so_path, binary_fmt, _expand_header_inputs(list(headers)), list(includes), version, lang,
+                so_path, binary_fmt, list(headers), list(includes), version, lang,
                 pdb_path=pdb_path,
             )
         except click.ClickException:

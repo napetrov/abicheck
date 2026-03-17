@@ -233,16 +233,21 @@ class TestCompareSoSo:
         assert recorded_headers[0] == [old_hdr]
         assert recorded_headers[1] == [new_hdr]
 
-    def test_so_without_headers_errors(self, tmp_path):
-        """Passing .so files without any -H should fail."""
+    def test_so_without_headers_falls_back_to_symbols_only(self, tmp_path, monkeypatch):
+        """Passing .so files without -H falls back to symbols-only with warning."""
         old_elf = _write_fake_elf(tmp_path / "libv1.so")
         new_elf = _write_fake_elf(tmp_path / "libv2.so")
+
+        def mock_dump(so_path, headers, extra_includes=None, version="unknown",
+                      lang="c++", **kw):
+            return _make_snapshot(version)
+
+        monkeypatch.setattr("abicheck.cli.dump", mock_dump)
         runner = CliRunner()
-        result = runner.invoke(main, [
-            "compare", str(old_elf), str(new_elf),
-        ])
-        assert result.exit_code != 0
-        assert "header" in result.output.lower()
+        result = runner.invoke(main, ["compare", str(old_elf), str(new_elf)])
+        assert result.exit_code == 0, result.output
+        out = result.output.lower()
+        assert "symbols-only mode" in out or "weaker" in out
 
     def test_so_vs_so_with_version_labels(self, tmp_path, monkeypatch):
         """--old-version / --new-version are passed through to dump."""
