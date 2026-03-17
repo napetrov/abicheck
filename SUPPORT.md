@@ -11,11 +11,11 @@
 Full documentation is available at **https://napetrov.github.io/abicheck/**.
 
 Key pages:
-- [Getting Started](https://napetrov.github.io/abicheck/getting_started/)
-- [CLI Usage](https://napetrov.github.io/abicheck/usage_and_coverage/)
-- [Tool Modes](https://napetrov.github.io/abicheck/tool_modes/)
-- [Policy Profiles](https://napetrov.github.io/abicheck/policies/)
-- [Exit Codes](https://napetrov.github.io/abicheck/exit_codes/)
+- [Getting Started](https://napetrov.github.io/abicheck/getting-started/)
+- [CLI Usage](https://napetrov.github.io/abicheck/user-guide/cli-usage/)
+- [Tool Modes](https://napetrov.github.io/abicheck/user-guide/tool-modes/)
+- [Policy Profiles](https://napetrov.github.io/abicheck/user-guide/policies/)
+- [Exit Codes](https://napetrov.github.io/abicheck/reference/exit-codes/)
 
 ## Reporting issues
 

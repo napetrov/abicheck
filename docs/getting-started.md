@@ -10,7 +10,11 @@ On all platforms it provides binary metadata analysis (exports, imports, depende
 
 ## 1) Install abicheck
 
-> **Note:** abicheck is not yet published to PyPI. Use source install (`pip install -e .`) or conda-forge package.
+```bash
+pip install abicheck
+# or
+conda install -c conda-forge abicheck
+```
 
 ### Requirements
 
