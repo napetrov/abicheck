@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.checker_policy import BREAKING_KINDS
+from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import AbiSnapshot, Function, Visibility
 
 
@@ -29,6 +30,14 @@ def _func(name: str, mangled: str, **kwargs: object) -> Function:
     defaults: dict[str, object] = dict(return_type="void", visibility=Visibility.PUBLIC)
     defaults.update(kwargs)
     return Function(name=name, mangled=mangled, **defaults)  # type: ignore[arg-type]
+
+
+def _elf_with_syms(*names: str) -> ElfMetadata:
+    syms = [
+        ElfSymbol(name=n, binding=SymbolBinding.GLOBAL, sym_type=SymbolType.FUNC, size=0)
+        for n in names
+    ]
+    return ElfMetadata(symbols=syms)
 
 
 class TestFuncDeletedModel:
@@ -206,11 +215,11 @@ class TestFuncDeletedEdgeCases:
         ])
 
         result = compare(old, new)
-        deleted_symbols = {
-            c.symbol for c in result.changes if c.kind == ChangeKind.FUNC_DELETED
-        }
+        deleted_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_DELETED]
+        deleted_symbols = {c.symbol for c in deleted_changes}
 
         assert deleted_symbols == {"_Z7processf"}
+        assert len(deleted_changes) == 1  # must not double-report the same symbol
         assert result.verdict == Verdict.BREAKING
 
     def test_destructor_deleted(self) -> None:
@@ -237,9 +246,22 @@ class TestFuncDeletedEdgeCases:
 
 
     def test_elf_fallback_not_double_reported(self) -> None:
-        """Explicit castxml deletion marker must prevent ELF fallback duplicate."""
-        old = _snap(functions=[_func("process", "_Z7processv")])
-        new = _snap(functions=[_func("process", "_Z7processv", is_deleted=True)])
+        """Explicit castxml deletion marker must prevent ELF fallback duplicate.
+
+        ELF metadata is intentionally provided so the fallback detector sees a
+        symbol disappear from dynsym — without is_deleted=True it would fire
+        FUNC_DELETED_ELF_FALLBACK.  With is_deleted=True the checker must take
+        the castxml path (FUNC_DELETED) and skip the ELF path.
+        """
+        mangled = "_Z7processv"
+        old = _snap(
+            functions=[_func("process", mangled)],
+            elf=_elf_with_syms(mangled),
+        )
+        new = _snap(
+            functions=[_func("process", mangled, is_deleted=True)],
+            elf=_elf_with_syms(),  # symbol also gone from dynsym
+        )
 
         result = compare(old, new)
         kinds = {c.kind for c in result.changes}
