@@ -7,11 +7,11 @@ Covers:
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from pathlib import Path
 
-import pytest
-
-from abicheck.checker import ChangeKind, Verdict, compare
+from abicheck.checker import ChangeKind, compare
 from abicheck.model import AbiSnapshot, Function, RecordType, TypeField, Visibility
 
 
@@ -29,7 +29,6 @@ def _func(name: str, mangled: str, **kwargs: object) -> Function:
 
 def _macho(install_name: str = "", compat_version: str = "1.0.0") -> object:
     """Return a minimal MachoMetadata-compatible object without requiring macholib."""
-    from dataclasses import dataclass, field as dc_field
 
     @dataclass
     class _MockMacho:
