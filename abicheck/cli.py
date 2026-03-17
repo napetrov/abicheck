@@ -150,31 +150,33 @@ def _dump_native_binary(
     version: str, lang: str,
     *,
     pdb_path: Path | None = None,
+    dwarf_only: bool = False,
 ) -> AbiSnapshot:
     """Dump ABI snapshot from a native binary (ELF, PE, or Mach-O).
 
-    For ELF, headers are required for full AST analysis. For PE/Mach-O,
-    headers are optional — export tables provide the symbol surface.
+    For ELF, headers are required for full AST analysis unless dwarf_only
+    is set or DWARF debug info is available (ADR-003 fallback chain).
+    For PE/Mach-O, headers are optional — export tables provide the symbol surface.
     """
     fmt_labels = {"elf": "ELF", "pe": "PE (Windows DLL)", "macho": "Mach-O (macOS dylib)"}
     fmt_label = fmt_labels.get(binary_fmt, binary_fmt)
 
     if binary_fmt == "elf":
         resolved_headers = _expand_header_inputs(headers) if headers else []
-        if not resolved_headers:
+        if not resolved_headers and not dwarf_only:
             click.echo(
-                f"Warning: '{path}' is analyzed in symbols-only mode (no headers). "
-                "Results are weaker and may miss type/signature ABI breaks.",
+                f"Warning: '{path}' — no headers provided. "
+                "Will use DWARF debug info if available, else symbols-only mode.",
                 err=True,
             )
         # include dirs are only relevant when headers are parsed via castxml
-        if resolved_headers:
+        if resolved_headers and not dwarf_only:
             for inc in includes:
                 if not inc.exists() or not inc.is_dir():
                     raise click.ClickException(f"Include directory not found or not a directory: {inc}")
-        elif includes:
+        elif includes and not dwarf_only:
             click.echo(
-                "Warning: --include paths are ignored in symbols-only mode (no headers).",
+                "Warning: --include paths are ignored without headers.",
                 err=True,
             )
         compiler = "c++" if lang == "c++" else "cc"
@@ -186,6 +188,7 @@ def _dump_native_binary(
                 version=version,
                 compiler=compiler,
                 lang=lang if lang == "c" else None,
+                dwarf_only=dwarf_only,
             )
         except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
             raise click.ClickException(f"Failed to dump '{path}': {exc}") from exc
@@ -288,6 +291,7 @@ def _resolve_input(
     *,
     is_elf: bool | None = None,
     pdb_path: Path | None = None,
+    dwarf_only: bool = False,
 ) -> AbiSnapshot:
     """Auto-detect input type and return an AbiSnapshot.
 
@@ -305,10 +309,14 @@ def _resolve_input(
         is_elf: Pre-computed ELF detection result; if *None*, detection is
             performed here (avoids a second ``open()`` when the caller already
             knows the result).
+        dwarf_only: If True, force DWARF-only mode (ADR-003).
     """
     # Fast path: caller already knows it's ELF
     if is_elf is True:
-        return _dump_native_binary(path, "elf", headers, includes, version, lang)
+        return _dump_native_binary(
+            path, "elf", headers, includes, version, lang,
+            dwarf_only=dwarf_only,
+        )
 
     # Detect binary format from magic bytes
     binary_fmt = _detect_binary_format(path) if is_elf is None else None
@@ -316,6 +324,7 @@ def _resolve_input(
         return _dump_native_binary(
             path, binary_fmt, headers, includes, version, lang,
             pdb_path=pdb_path,
+            dwarf_only=dwarf_only,
         )
 
     # Text-based formats: detect by sniffing only a small header chunk
@@ -447,6 +456,13 @@ def _populate_dependency_info(
               help="Additional directory to search for shared libraries (with --follow-deps).")
 @click.option("--ld-library-path", "ld_library_path", default="",
               help="Simulated LD_LIBRARY_PATH (with --follow-deps).")
+@click.option("--dwarf-only", is_flag=True, default=False,
+              help="Force DWARF-only mode: use DWARF debug info as the primary "
+                   "data source even when headers are available. Enables 24/30 "
+                   "detectors without requiring castxml.")
+@click.option("--show-data-sources", is_flag=True, default=False,
+              help="Print which data layers (L0/L1/L2) are available for the "
+                   "binary and exit.")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...],
@@ -454,6 +470,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
              gcc_path: str | None, gcc_prefix: str | None, gcc_options: str | None,
              sysroot: Path | None, nostdinc: bool, pdb_path: Path | None,
              follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
+             dwarf_only: bool, show_data_sources: bool,
              verbose: bool) -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
@@ -463,8 +480,15 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
       abicheck dump libfoo.so.1 -H include/foo.h --lang c -o snap.json
       abicheck dump libfoo.so.1 -H include/foo.h --gcc-prefix aarch64-linux-gnu-
       abicheck dump libfoo.so.1 --follow-deps -o snap.json
+      abicheck dump libfoo.so.1 --dwarf-only -o snap.json
+      abicheck dump libfoo.so.1 --show-data-sources
     """
     _setup_verbosity(verbose)
+
+    # --show-data-sources: diagnostic output and exit
+    if show_data_sources:
+        _print_data_sources(so_path, bool(headers))
+        return
 
     # Auto-detect binary format — PE/Mach-O skip the ELF/castxml path
     binary_fmt = _detect_binary_format(so_path)
@@ -503,6 +527,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             sysroot=sysroot,
             nostdinc=nostdinc,
             lang=lang if lang == "c" else None,
+            dwarf_only=dwarf_only,
         )
     except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -516,6 +541,23 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
         click.echo(f"Snapshot written to {output}", err=True)
     else:
         click.echo(result)
+
+
+def _print_data_sources(so_path: Path, has_headers: bool) -> None:
+    """Print data source diagnostic information for a binary."""
+    from .dwarf_snapshot import show_data_sources
+
+    binary_fmt = _detect_binary_format(so_path)
+    elf_meta = None
+    dwarf_meta = None
+
+    if binary_fmt == "elf":
+        from .dwarf_unified import parse_dwarf
+        from .elf_metadata import parse_elf_metadata
+        elf_meta = parse_elf_metadata(so_path)
+        dwarf_meta, _ = parse_dwarf(so_path)
+
+    click.echo(show_data_sources(so_path, elf_meta, dwarf_meta, has_headers))
 
 
 def _resolve_per_side_options(
@@ -859,6 +901,9 @@ def _build_match_map(paths: list[Path]) -> tuple[dict[str, Path], list[str]]:
               help="PDB file path for old side only (overrides --pdb-path for old).")
 @click.option("--new-pdb-path", "new_pdb_path", type=click.Path(path_type=Path), default=None,
               help="PDB file path for new side only (overrides --pdb-path for new).")
+@click.option("--dwarf-only", is_flag=True, default=False,
+              help="Force DWARF-only mode for both sides: use DWARF debug info "
+                   "as primary data source even when headers are available.")
 @click.option("--fail-on-additions/--no-fail-on-additions", "fail_on_additions", default=False,
               help="Exit with code 1 if any new public symbols, types, or fields were added "
                    "(COMPATIBLE changes). Useful for detecting unintentional API expansion in PRs. "
@@ -882,6 +927,7 @@ def compare_cmd(
     fmt: str, output: Path | None,
     suppress: Path | None, policy: str, policy_file_path: Path | None,
     pdb_path: Path | None, old_pdb_path: Path | None, new_pdb_path: Path | None,
+    dwarf_only: bool,
     fail_on_additions: bool,
     follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
     verbose: bool,
@@ -893,7 +939,7 @@ def compare_cmd(
 
     When a .so file is given, headers (-H) are recommended for full ABI
     extraction. If headers are absent for ELF, abicheck falls back to
-    symbols-only analysis with a warning (weaker analysis).
+    DWARF-only mode (if DWARF available) or symbols-only analysis.
 
     \b
     Exit codes:
@@ -950,11 +996,13 @@ def compare_cmd(
         old_input, old_h, old_inc, old_version, lang,
         is_elf=True if old_fmt == "elf" else None,
         pdb_path=resolved_old_pdb,
+        dwarf_only=dwarf_only,
     )
     new = _resolve_input(
         new_input, new_h, new_inc, new_version, lang,
         is_elf=True if new_fmt == "elf" else None,
         pdb_path=resolved_new_pdb,
+        dwarf_only=dwarf_only,
     )
 
     suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
