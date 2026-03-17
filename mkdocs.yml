@@ -69,6 +69,12 @@ nav:
     - ADR:
       - Overview: development/adr/index.md
       - "001: Technology Stack": development/adr/001-technology-stack.md
+      - "002: Multi-Binary Release Compare": development/adr/002-multi-binary-release-compare.md
+      - "003: Data Source Architecture": development/adr/003-data-source-architecture.md
+      - "004: Report Filtering & Dedup": development/adr/004-report-filtering-and-deduplication.md
+      - "005: Application Compat Check": development/adr/005-application-compat-check.md
+      - "006: Package-Level Comparison": development/adr/006-package-level-comparison.md
+      - "007: BTF & CTF Debug Formats": development/adr/007-btf-ctf-debug-formats.md
 
 plugins:
   - search
