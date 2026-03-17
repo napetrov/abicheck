@@ -12,17 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Reporter — DiffResult → JSON / Markdown."""
+"""Reporter — DiffResult → JSON / Markdown / stat output."""
 
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
+from dataclasses import dataclass
 
 from .checker import (
+    Change,
     DiffResult,
     Verdict,
 )
-from .checker_policy import impact_for
+from .checker_policy import (
+    BREAKING_KINDS,
+    API_BREAK_KINDS,
+    COMPATIBLE_KINDS,
+    RISK_KINDS,
+    impact_for,
+    policy_kind_sets as _policy_kind_sets,
+)
 from .report_summary import build_summary
 
 _VERDICT_EMOJI = {
@@ -42,6 +52,325 @@ _VERDICT_LABEL = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Show-only filter
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ShowOnlyFilter:
+    """Parsed --show-only tokens.
+
+    Tokens fall into three dimensions; within each dimension OR logic applies,
+    across dimensions AND logic applies.
+    """
+    severities: frozenset[str]  # breaking, api-break, risk, compatible
+    elements: frozenset[str]    # functions, variables, types, enums, elf
+    actions: frozenset[str]     # added, removed, changed
+
+    @classmethod
+    def parse(cls, raw: str) -> ShowOnlyFilter:
+        """Parse a comma-separated --show-only string into a filter."""
+        severity_tokens = {"breaking", "api-break", "risk", "compatible"}
+        element_tokens = {"functions", "variables", "types", "enums", "elf"}
+        action_tokens = {"added", "removed", "changed"}
+
+        severities: set[str] = set()
+        elements: set[str] = set()
+        actions: set[str] = set()
+
+        for tok in raw.split(","):
+            tok = tok.strip().lower()
+            if not tok:
+                continue
+            if tok in severity_tokens:
+                severities.add(tok)
+            elif tok in element_tokens:
+                elements.add(tok)
+            elif tok in action_tokens:
+                actions.add(tok)
+            else:
+                raise ValueError(f"Unknown --show-only token: {tok!r}")
+
+        return cls(
+            severities=frozenset(severities),
+            elements=frozenset(elements),
+            actions=frozenset(actions),
+        )
+
+    def matches(self, change: Change, policy: str = "strict_abi") -> bool:
+        """Return True if *change* passes this filter."""
+        kind_val = change.kind.value
+
+        # Severity check
+        if self.severities:
+            breaking_set, api_break_set, compat_set, risk_set = _policy_kind_sets(policy)
+            sev_ok = False
+            if "breaking" in self.severities and change.kind in breaking_set:
+                sev_ok = True
+            if "api-break" in self.severities and change.kind in api_break_set:
+                sev_ok = True
+            if "risk" in self.severities and change.kind in risk_set:
+                sev_ok = True
+            if "compatible" in self.severities and change.kind in compat_set:
+                sev_ok = True
+            if not sev_ok:
+                return False
+
+        # Element check
+        if self.elements:
+            elem_ok = False
+            if "functions" in self.elements and kind_val.startswith("func_"):
+                elem_ok = True
+            if "variables" in self.elements and kind_val.startswith("var_"):
+                elem_ok = True
+            if "types" in self.elements and any(kind_val.startswith(p) for p in (
+                "type_", "struct_", "union_", "field_", "typedef_",
+            )):
+                elem_ok = True
+            if "enums" in self.elements and kind_val.startswith("enum_"):
+                elem_ok = True
+            if "elf" in self.elements and any(kind_val.startswith(p) for p in (
+                "soname_", "needed_", "symbol_", "rpath_", "runpath_",
+                "ifunc_", "common_", "dwarf_", "calling_convention_",
+                "compat_version_",
+            )):
+                elem_ok = True
+            if not elem_ok:
+                return False
+
+        # Action check
+        if self.actions:
+            act_ok = False
+            if "added" in self.actions and kind_val.endswith("_added"):
+                act_ok = True
+            if "removed" in self.actions and (
+                kind_val.endswith("_removed") or kind_val.endswith("_deleted")
+            ):
+                act_ok = True
+            if "changed" in self.actions and not (
+                kind_val.endswith("_added") or kind_val.endswith("_removed")
+                or kind_val.endswith("_deleted")
+            ):
+                act_ok = True
+            if not act_ok:
+                return False
+
+        return True
+
+
+def apply_show_only(
+    changes: Sequence[Change],
+    show_only: str,
+    policy: str = "strict_abi",
+) -> list[Change]:
+    """Filter changes according to a --show-only token string."""
+    filt = ShowOnlyFilter.parse(show_only)
+    return [c for c in changes if filt.matches(c, policy=policy)]
+
+
+# ---------------------------------------------------------------------------
+# Stat mode
+# ---------------------------------------------------------------------------
+
+def to_stat(result: DiffResult) -> str:
+    """One-line summary for CI gates."""
+    summary = build_summary(result)
+    label = _VERDICT_LABEL[result.verdict]
+    parts = []
+    if summary.breaking:
+        parts.append(f"{summary.breaking} breaking")
+    if summary.source_breaks:
+        parts.append(f"{summary.source_breaks} source-level breaks")
+    if summary.risk_count:
+        parts.append(f"{summary.risk_count} risk")
+    if summary.compatible_additions:
+        parts.append(f"{summary.compatible_additions} compatible")
+    detail = ", ".join(parts) if parts else "no changes"
+    redundant_note = ""
+    if result.redundant_count > 0:
+        redundant_note = f" [{result.redundant_count} redundant hidden]"
+    return f"{label}: {detail} ({summary.total_changes} total){redundant_note}"
+
+
+def to_stat_json(result: DiffResult, indent: int = 2) -> str:
+    """JSON output for --stat mode: summary only, no changes array."""
+    summary = build_summary(result)
+    d: dict[str, object] = {
+        "library": result.library,
+        "old_version": result.old_version,
+        "new_version": result.new_version,
+        "verdict": result.verdict.value,
+        "summary": {
+            "breaking": summary.breaking,
+            "source_breaks": summary.source_breaks,
+            "risk_changes": summary.risk_count,
+            "compatible_additions": summary.compatible_additions,
+            "total_changes": summary.total_changes,
+            "binary_compatibility_pct": round(summary.binary_compatibility_pct, 1),
+            "affected_pct": round(summary.affected_pct, 1),
+        },
+    }
+    if result.redundant_count > 0:
+        d["redundant_count"] = result.redundant_count
+    return json.dumps(d, indent=indent)
+
+
+# ---------------------------------------------------------------------------
+# Impact summary
+# ---------------------------------------------------------------------------
+
+def _build_impact_table(result: DiffResult) -> list[str]:
+    """Build impact summary table rows."""
+    from .checker import _ROOT_TYPE_CHANGE_KINDS
+
+    # Collect root type changes with their impact
+    root_entries: list[tuple[str, str, int]] = []
+    for c in result.changes:
+        if c.kind in _ROOT_TYPE_CHANGE_KINDS:
+            affected_count = len(c.affected_symbols) if c.affected_symbols else 0
+            total_affected = affected_count + c.caused_count
+            if total_affected > 0 or c.caused_count > 0:
+                root_entries.append((c.symbol, c.kind.value, total_affected))
+
+    # Count non-type direct changes
+    direct_removals = sum(
+        1 for c in result.changes
+        if c.kind.value.endswith("_removed") and c.kind not in _ROOT_TYPE_CHANGE_KINDS
+    )
+
+    if not root_entries and direct_removals == 0:
+        return []
+
+    lines = [
+        "## Impact Summary",
+        "",
+        "| Root Change | Kind | Affected Interfaces |",
+        "|-------------|------|-------------------|",
+    ]
+    for symbol, kind, count in root_entries:
+        count_str = f"{count} functions" if count > 0 else "—"
+        lines.append(f"| {symbol} | {kind} | {count_str} |")
+    if direct_removals > 0:
+        lines.append(f"| — | removals ({direct_removals}) | direct |")
+    lines.append("")
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Leaf-change mode helpers
+# ---------------------------------------------------------------------------
+
+def _to_markdown_leaf(result: DiffResult, show_impact: bool = False) -> str:
+    """Leaf-change mode: root type changes with affected interface lists."""
+    from .checker import _ROOT_TYPE_CHANGE_KINDS
+
+    v = result.verdict
+    emoji = _VERDICT_EMOJI[v]
+    label = _VERDICT_LABEL[v]
+
+    lines: list[str] = [
+        f"# ABI Report: {result.library} (leaf-change view)",
+        "",
+        "| | |",
+        "|---|---|",
+        f"| **Old version** | `{result.old_version}` |",
+        f"| **New version** | `{result.new_version}` |",
+        f"| **Verdict** | {emoji} `{label}` |",
+        "",
+    ]
+
+    # Group root type changes by severity
+    type_changes = [c for c in result.changes if c.kind in _ROOT_TYPE_CHANGE_KINDS]
+    non_type_changes = [c for c in result.changes if c.kind not in _ROOT_TYPE_CHANGE_KINDS]
+
+    if type_changes:
+        breaking_set, api_break_set, _, _ = _policy_kind_sets(result.policy)
+
+        breaking_types = [c for c in type_changes if c.kind in breaking_set]
+        api_break_types = [c for c in type_changes if c.kind in api_break_set]
+        other_types = [c for c in type_changes if c.kind not in breaking_set and c.kind not in api_break_set]
+
+        for section_label, section_changes in [
+            ("## Breaking Type Changes", breaking_types),
+            ("## Source-Level Type Breaks", api_break_types),
+            ("## Other Type Changes", other_types),
+        ]:
+            if not section_changes:
+                continue
+            lines += [section_label, ""]
+            for c in section_changes:
+                lines.append(f"### {c.symbol} — {c.description}")
+                if c.affected_symbols:
+                    lines.append(f"\n**Affected interfaces ({len(c.affected_symbols)}):**")
+                    for sym in c.affected_symbols[:10]:
+                        lines.append(f"- `{sym}`")
+                    if len(c.affected_symbols) > 10:
+                        lines.append(f"- ... ({len(c.affected_symbols) - 10} more)")
+                if c.caused_count > 0:
+                    lines.append(f"\n> {c.caused_count} derived change(s) collapsed")
+                lines.append("")
+
+    if non_type_changes:
+        lines += ["## Non-Type Changes", ""]
+        for c in non_type_changes:
+            lines.append(_format_change_md(c))
+        lines.append("")
+
+    if not result.changes:
+        lines.append("_No ABI changes detected._")
+
+    _append_redundancy_note(lines, result)
+    _append_suppression_note(lines, result)
+
+    if show_impact:
+        lines += _build_impact_table(result)
+
+    lines += _footer_lines()
+    return "\n".join(lines)
+
+
+def _to_json_leaf(result: DiffResult, indent: int = 2) -> str:
+    """Leaf-change mode JSON output."""
+    from .checker import _ROOT_TYPE_CHANGE_KINDS
+
+    summary = build_summary(result)
+    type_changes = [c for c in result.changes if c.kind in _ROOT_TYPE_CHANGE_KINDS]
+    non_type_changes = [c for c in result.changes if c.kind not in _ROOT_TYPE_CHANGE_KINDS]
+
+    d: dict[str, object] = {
+        "library": result.library,
+        "old_version": result.old_version,
+        "new_version": result.new_version,
+        "verdict": result.verdict.value,
+        "summary": {
+            "breaking": summary.breaking,
+            "source_breaks": summary.source_breaks,
+            "risk_changes": summary.risk_count,
+            "compatible_additions": summary.compatible_additions,
+            "total_changes": summary.total_changes,
+        },
+        "leaf_changes": [
+            {
+                "kind": c.kind.value,
+                "symbol": c.symbol,
+                "description": c.description,
+                "affected_count": len(c.affected_symbols) if c.affected_symbols else 0,
+                "affected_symbols": c.affected_symbols or [],
+                "caused_count": c.caused_count,
+            }
+            for c in type_changes
+        ],
+        "non_type_changes": [_change_to_dict(c) for c in non_type_changes],
+    }
+    if result.redundant_count > 0:
+        d["redundant_count"] = result.redundant_count
+    return json.dumps(d, indent=indent)
+
+
+# ---------------------------------------------------------------------------
+# JSON output
+# ---------------------------------------------------------------------------
+
 def _metadata_dict(meta: object | None) -> dict[str, object] | None:
     if meta is None:
         return None
@@ -52,7 +381,25 @@ def _metadata_dict(meta: object | None) -> dict[str, object] | None:
     }
 
 
-def to_json(result: DiffResult, indent: int = 2) -> str:
+def to_json(
+    result: DiffResult,
+    indent: int = 2,
+    *,
+    show_only: str | None = None,
+    report_mode: str = "full",
+    show_impact: bool = False,
+    stat: bool = False,
+) -> str:
+    if stat:
+        return to_stat_json(result, indent=indent)
+
+    if report_mode == "leaf":
+        return _to_json_leaf(result, indent=indent)
+
+    changes = list(result.changes)
+    if show_only:
+        changes = apply_show_only(changes, show_only, policy=result.policy)
+
     summary = build_summary(result)
     d: dict[str, object] = {
         "library": result.library,
@@ -76,7 +423,9 @@ def to_json(result: DiffResult, indent: int = 2) -> str:
         "binary_compatibility_pct": round(summary.binary_compatibility_pct, 1),
         "affected_pct": round(summary.affected_pct, 1),
     }
-    d["changes"] = [_change_to_dict(c) for c in result.changes]
+    d["changes"] = [_change_to_dict(c) for c in changes]
+    if result.redundant_count > 0:
+        d["redundant_count"] = result.redundant_count
     d["suppression"] = {
         "file_provided": result.suppression_file_provided,
         "suppressed_count": result.suppressed_count,
@@ -99,6 +448,8 @@ def to_json(result: DiffResult, indent: int = 2) -> str:
         for det in result.detector_results
         if det.changes_count > 0 or det.coverage_gap is not None
     ]
+    if show_impact:
+        d["show_only_applied"] = show_only is not None
     return json.dumps(d, indent=indent)
 
 
@@ -125,8 +476,19 @@ def _change_to_dict(c: object) -> dict[str, object]:
     affected = getattr(c, "affected_symbols", None)
     if affected:
         d["affected_symbols"] = affected
+    # Redundancy annotation
+    caused_by = getattr(c, "caused_by_type", None)
+    if caused_by:
+        d["caused_by_type"] = caused_by
+    caused_count = getattr(c, "caused_count", 0)
+    if caused_count > 0:
+        d["caused_count"] = caused_count
     return d
 
+
+# ---------------------------------------------------------------------------
+# Markdown output
+# ---------------------------------------------------------------------------
 
 def _fmt_size(size_bytes: int) -> str:
     """Format file size in human-readable form."""
@@ -137,13 +499,79 @@ def _fmt_size(size_bytes: int) -> str:
     return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
-def to_markdown(result: DiffResult) -> str:
+def _append_redundancy_note(lines: list[str], result: DiffResult) -> None:
+    if result.redundant_count > 0:
+        lines.append("")
+        lines.append(
+            f"> ℹ️ {result.redundant_count} redundant change(s) hidden "
+            "(derived from root type changes). Use `--show-redundant` to show all."
+        )
+
+
+def _append_suppression_note(lines: list[str], result: DiffResult) -> None:
+    if result.suppression_file_provided:
+        lines.append("")
+        if result.suppressed_count == 0:
+            lines.append(
+                "> ℹ️ Suppression file active — 0 changes matched (nothing suppressed)"
+            )
+        else:
+            lines.append(
+                f"> ℹ️ {result.suppressed_count} change(s) suppressed via suppression file"
+            )
+            for sc in result.suppressed_changes:
+                lines.append(f">   - `{sc.symbol}` — {sc.description}")
+
+
+def _footer_lines() -> list[str]:
+    return [
+        "---",
+        "## Legend",
+        "",
+        "| Verdict | Meaning |",
+        "|---------|---------|",
+        "| ✅ NO_CHANGE | Identical ABI |",
+        "| ✅ COMPATIBLE | Only additions (backward compatible) |",
+        "| ⚠️ COMPATIBLE_WITH_RISK | Binary-compatible; verify target environment |",
+        "| ⚠️ API_BREAK | Source-level API change — recompilation required |",
+        "| ❌ BREAKING | Binary ABI break — recompilation required |",
+        "",
+        "_Generated by [abicheck](https://github.com/napetrov/abicheck)_",
+    ]
+
+
+def to_markdown(
+    result: DiffResult,
+    *,
+    show_only: str | None = None,
+    report_mode: str = "full",
+    show_impact: bool = False,
+    stat: bool = False,
+) -> str:
+    if stat:
+        return to_stat(result)
+
+    if report_mode == "leaf":
+        return _to_markdown_leaf(result, show_impact=show_impact)
+
     v = result.verdict
     emoji = _VERDICT_EMOJI[v]
     label = _VERDICT_LABEL[v]
 
     old_meta = getattr(result, "old_metadata", None)
     new_meta = getattr(result, "new_metadata", None)
+
+    # Apply show-only filter if provided (display-only, does not affect verdict)
+    changes = list(result.changes)
+    if show_only:
+        changes = apply_show_only(changes, show_only, policy=result.policy)
+
+    # Classify filtered changes by severity
+    breaking_set, api_break_set, compat_set, risk_set = _policy_kind_sets(result.policy)
+    breaking = [c for c in changes if c.kind in breaking_set]
+    source_breaks = [c for c in changes if c.kind in api_break_set]
+    risk = [c for c in changes if c.kind in risk_set]
+    compatible = [c for c in changes if c.kind in compat_set]
 
     lines: list[str] = [
         f"# ABI Report: {result.library}",
@@ -160,6 +588,10 @@ def to_markdown(result: DiffResult) -> str:
         "",
     ]
 
+    if show_only:
+        lines.append(f"> Filtered by: `--show-only {show_only}` ({len(changes)} of {len(result.changes)} changes shown)")
+        lines.append("")
+
     if old_meta or new_meta:
         lines += ["## Library Files", "", "| | Old | New |", "|---|---|---|"]
         old_path = getattr(old_meta, "path", "—") if old_meta else "—"
@@ -175,19 +607,19 @@ def to_markdown(result: DiffResult) -> str:
             "",
         ]
 
-    if result.breaking:
+    if breaking:
         lines += ["## ❌ Breaking Changes", ""]
-        for c in result.breaking:
+        for c in breaking:
             lines.append(_format_change_md(c))
         lines.append("")
 
-    if result.source_breaks:
+    if source_breaks:
         lines += ["## ⚠️ Source-Level Breaks", ""]
-        for c in result.source_breaks:
+        for c in source_breaks:
             lines.append(_format_change_md(c))
         lines.append("")
 
-    if result.risk:
+    if risk:
         lines += ["## ⚠️ Deployment Risk Changes", ""]
         lines += [
             "> These changes are **binary-compatible** but may cause the library to fail",
@@ -195,46 +627,30 @@ def to_markdown(result: DiffResult) -> str:
             "> your target environment before deploying.",
             "",
         ]
-        for c in result.risk:
+        for c in risk:
             lines.append(f"- **{c.kind.value}**: {c.description}")
         lines.append("")
 
-    if result.compatible:
+    if compatible:
         lines += ["## ✅ Compatible Additions", ""]
-        for c in result.compatible:
+        for c in compatible:
             lines.append(f"- {c.description}")
         lines.append("")
 
-    if not result.changes:
-        lines.append("_No ABI changes detected._")
-
-    if result.suppression_file_provided:
-        lines.append("")
-        if result.suppressed_count == 0:
-            lines.append(
-                "> ℹ️ Suppression file active — 0 changes matched (nothing suppressed)"
-            )
+    if not changes:
+        if show_only and result.changes:
+            lines.append("_No changes match the current filter._")
         else:
-            lines.append(
-                f"> ℹ️ {result.suppressed_count} change(s) suppressed via suppression file"
-            )
-            for sc in result.suppressed_changes:
-                lines.append(f">   - `{sc.symbol}` — {sc.description}")
+            lines.append("_No ABI changes detected._")
 
-    lines += [
-        "---",
-        "## Legend",
-        "",
-        "| Verdict | Meaning |",
-        "|---------|---------|",
-        "| ✅ NO_CHANGE | Identical ABI |",
-        "| ✅ COMPATIBLE | Only additions (backward compatible) |",
-        "| ⚠️ COMPATIBLE_WITH_RISK | Binary-compatible; verify target environment |",
-        "| ⚠️ API_BREAK | Source-level API change — recompilation required |",
-        "| ❌ BREAKING | Binary ABI break — recompilation required |",
-        "",
-        "_Generated by [abicheck](https://github.com/napetrov/abicheck)_",
-    ]
+    _append_redundancy_note(lines, result)
+    _append_suppression_note(lines, result)
+
+    if show_impact:
+        lines.append("")
+        lines += _build_impact_table(result)
+
+    lines += _footer_lines()
     return "\n".join(lines)
 
 
@@ -247,6 +663,7 @@ def _format_change_md(c: object) -> str:
     new_val = getattr(c, "new_value", None)
     loc = getattr(c, "source_location", None)
     affected = getattr(c, "affected_symbols", None)
+    caused_count = getattr(c, "caused_count", 0)
 
     # Base line
     old_new = ""
@@ -267,6 +684,10 @@ def _format_change_md(c: object) -> str:
         impact = impact_for(kind)
         if impact:
             line += f"\n  > {impact}"
+
+    # Collapsed derived changes
+    if caused_count > 0:
+        line += f"\n  > {caused_count} derived change(s) collapsed"
 
     # Affected functions
     if affected:

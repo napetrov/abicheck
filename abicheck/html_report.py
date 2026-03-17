@@ -890,6 +890,16 @@ def generate_html_report(
     if old_symbol_count:
         symbol_count_note = f" / {old_symbol_count} exported symbols"
 
+    redundant_count = getattr(result, "redundant_count", 0)
+    redundancy_note = ""
+    if redundant_count > 0:
+        redundancy_note = (
+            f"<div class='section' style='background:#fff3e0; padding:10px; border-left:4px solid #ff9800;'>"
+            f"<strong>ℹ️ {redundant_count} redundant change(s)</strong> hidden "
+            f"(derived from root type changes). Use <code>--show-redundant</code> to show all."
+            f"</div>"
+        )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -927,6 +937,7 @@ def generate_html_report(
 
 {nav_html}
 {summary_html}
+{redundancy_note}
 {sections_html}
 
 <footer>

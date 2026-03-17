@@ -65,7 +65,7 @@ def test_compare_cmd_warns_when_all_changes_suppressed(tmp_path, monkeypatch):
             suppression_file_provided=True,
         ),
     )
-    monkeypatch.setattr("abicheck.cli.to_markdown", lambda _r: "REPORT")
+    monkeypatch.setattr("abicheck.cli.to_markdown", lambda _r, **_kw: "REPORT")
 
     runner = CliRunner()
     result = runner.invoke(main, ["compare", str(old), str(new), "--suppress", str(suppress)])
@@ -92,7 +92,7 @@ def test_compare_cmd_breaking_exits_with_code_4(tmp_path, monkeypatch):
             changes=[Change(ChangeKind.FUNC_REMOVED, "_Z3foov", "removed")],
         ),
     )
-    monkeypatch.setattr("abicheck.cli.to_markdown", lambda _r: "BREAKING REPORT")
+    monkeypatch.setattr("abicheck.cli.to_markdown", lambda _r, **_kw: "BREAKING REPORT")
 
     runner = CliRunner()
     result = runner.invoke(main, ["compare", str(old), str(new)])
