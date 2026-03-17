@@ -1,6 +1,6 @@
 """conftest.py — pytest configuration for abicheck tests."""
-import subprocess
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
