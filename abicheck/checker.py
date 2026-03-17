@@ -2612,10 +2612,22 @@ def _diff_enum_layouts(o: object, n: object) -> list[Change]:
             ))
 
         # 3. Changed values
+        # Sentinel member = member with the highest old value.
+        # If this member changes, classify as ENUM_LAST_MEMBER_VALUE_CHANGED.
+        old_sentinel_name = None
+        if old_e.members:
+            _max_val = max(old_e.members.values())
+            old_sentinel_name = next((m for m, v in old_e.members.items() if v == _max_val), None)
+
         for mname, old_val in old_e.members.items():
             if mname in new_e.members and new_e.members[mname] != old_val:
+                kind = (
+                    ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED
+                    if mname == old_sentinel_name
+                    else ChangeKind.ENUM_MEMBER_VALUE_CHANGED
+                )
                 changes.append(Change(
-                    kind=ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
+                    kind=kind,
                     symbol=f"{name}::{mname}",
                     description=(
                         f"Enum member value changed: {name}::{mname} "
