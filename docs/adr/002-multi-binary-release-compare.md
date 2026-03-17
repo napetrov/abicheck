@@ -78,7 +78,7 @@ libbaz.so
 ## Matching Rules (auto-mode)
 
 1. Match by **filename stem** ignoring version suffix (e.g. `libfoo.so.1.2` → `libfoo.so`).
-2. If ambiguous (multiple versions of same stem): pick latest by sort order, warn.
+2. If ambiguous (multiple versions of same stem): pick latest by **version-aware** sort, warn.
 3. **Unmatched in old (removed):** report as `LIBRARY_REMOVED` (configurable fail/warn/ignore).
 4. **Unmatched in new (added):** report as `LIBRARY_ADDED` (configurable fail/warn/ignore).
 5. **Override:** `--map mappings.yaml` wins over auto-match.
@@ -148,6 +148,7 @@ New inputs needed:
 | `new-library-dir` | Directory of new binaries |
 | `library-map` | YAML mapping file for non-trivial name changes |
 | `fail-on-removed-library` | Fail if a library disappeared |
+| `fail-on-additions` | Fail if compatible additions are detected |
 | `output-dir` | Per-library report output directory |
 
 Example:

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -601,13 +602,37 @@ def _run_compare_pair(
 
 
 def _canonical_library_key(path: Path) -> str:
-    """Canonical key used to match libraries across releases."""
-    name = path.name
-    lower = name.lower()
-    so_idx = lower.find(".so")
-    if so_idx != -1:
-        return lower[: so_idx + 3]
+    """Canonical key used to match libraries across releases.
+
+    For ELF versioned names, canonicalize to ``*.so`` (e.g. ``libfoo.so.1.2`` → ``libfoo.so``).
+    """
+    lower = path.name.lower()
+    m = re.search(r"\.so(?:\.|$)", lower)
+    if m:
+        return lower[: m.start() + 3]
     return lower
+
+
+def _version_sort_key(path: Path, canonical_key: str) -> tuple[list[tuple[int, int | str]], str]:
+    """Build a version-aware sort key for ambiguous library candidates."""
+    lower = path.name.lower()
+    remainder = lower
+    if canonical_key.endswith(".so") and canonical_key in lower:
+        remainder = lower[lower.find(canonical_key) + len(canonical_key):]
+    # strip known wrapper extensions for snapshots/dumps
+    for suffix in (".json", ".pl", ".pm"):
+        if remainder.endswith(suffix):
+            remainder = remainder[: -len(suffix)]
+            break
+    remainder = remainder.lstrip("._-")
+    tokens = re.findall(r"\d+|[a-z]+", remainder)
+    parsed: list[tuple[int, int | str]] = []
+    for tok in tokens:
+        if tok.isdigit():
+            parsed.append((1, int(tok)))
+        else:
+            parsed.append((0, tok))
+    return parsed, lower
 
 
 def _is_supported_compare_input(path: Path) -> bool:
@@ -635,7 +660,7 @@ def _collect_release_inputs(path: Path) -> list[Path]:
 
 
 def _build_match_map(paths: list[Path]) -> tuple[dict[str, Path], list[str]]:
-    """Build key->path map with deterministic duplicate resolution."""
+    """Build key->path map with version-aware duplicate resolution."""
     buckets: dict[str, list[Path]] = {}
     for p in paths:
         buckets.setdefault(_canonical_library_key(p), []).append(p)
@@ -643,11 +668,12 @@ def _build_match_map(paths: list[Path]) -> tuple[dict[str, Path], list[str]]:
     mapping: dict[str, Path] = {}
     warnings: list[str] = []
     for key, vals in buckets.items():
-        ordered = sorted(vals, key=lambda x: x.name)
-        mapping[key] = ordered[-1]
+        ordered = sorted(vals, key=lambda x: _version_sort_key(x, key))
+        selected = ordered[-1]
+        mapping[key] = selected
         if len(ordered) > 1:
             warnings.append(
-                f"Ambiguous match for '{key}': {[v.name for v in ordered]}; using '{ordered[-1].name}'"
+                f"Ambiguous match for '{key}': {[v.name for v in ordered]}; using '{selected.name}'"
             )
     return mapping, warnings
 
@@ -953,12 +979,14 @@ def compare_release_cmd(
         for k in added_keys:
             warning_msgs.append(f"Info: library added: {new_map[k].name}")
 
+    if not matched_keys:
+        warning_msgs.append(
+            "Warning: no matching library pairs found between OLD and NEW inputs."
+        )
+
     if fmt != "json":
         for msg in warning_msgs:
             click.echo(msg, err=True)
-
-    if not matched_keys and not old_files and not new_files:
-        raise click.ClickException("No libraries to compare.")
 
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -966,15 +994,19 @@ def compare_release_cmd(
     library_results: list[dict[str, object]] = []
     worst_verdict = "NO_CHANGE"
     _VERDICT_ORDER = {
-        "NO_CHANGE": 0, "COMPATIBLE": 1, "COMPATIBLE_WITH_RISK": 2,
-        "API_BREAK": 3, "BREAKING": 4,
+        "NO_CHANGE": 0,
+        "COMPATIBLE": 1,
+        "COMPATIBLE_WITH_RISK": 2,
+        "API_BREAK": 3,
+        "BREAKING": 4,
+        "ERROR": 5,
     }
 
     for key in matched_keys:
         old_path = old_map[key]
         new_path = new_map[key]
         try:
-            result, old_snap, new_snap = _run_compare_pair(
+            result, _, _ = _run_compare_pair(
                 old_path, new_path,
                 old_h, new_h, old_inc, new_inc,
                 old_version, new_version,
@@ -982,12 +1014,14 @@ def compare_release_cmd(
                 old_pdb_path=None, new_pdb_path=None,
             )
         except (click.ClickException, click.UsageError) as exc:
-            click.echo(f"Error comparing {old_path.name}: {exc.format_message()}", err=True)
+            msg = exc.format_message()
+            click.echo(f"Error comparing {old_path.name}: {msg}", err=True)
             library_results.append({
                 "library": old_path.name,
                 "verdict": "ERROR",
-                "error": exc.format_message(),
+                "error": msg,
             })
+            worst_verdict = "ERROR"
             continue
 
         v = result.verdict.value
@@ -1017,6 +1051,7 @@ def compare_release_cmd(
             "libraries": library_results,
             "unmatched_old": [old_map[k].name for k in removed_keys],
             "unmatched_new": [new_map[k].name for k in added_keys],
+            "warnings": warning_msgs,
         }
         text = json.dumps(summary, indent=2)
     else:
@@ -1072,17 +1107,16 @@ def compare_release_cmd(
         summary_path.write_text(json.dumps(summary_data, indent=2), encoding="utf-8")
         click.echo(f"Per-library reports written to {output_dir}/", err=True)
 
-    # Exit codes
-    if fail_on_removed and removed_keys:
-        sys.exit(8)
-    if worst_verdict == "BREAKING":
+    # Exit codes — ABI severity takes priority over policy flags.
+    # A removed library is a deployment decision; a binary ABI break is more urgent.
+    if worst_verdict in ("BREAKING", "ERROR"):
         sys.exit(4)
     elif worst_verdict == "API_BREAK":
         sys.exit(2)
-    if fail_on_additions:
-        # check if any library has additions
-        if any(lib.get("compatible_additions", 0) for lib in library_results):
-            sys.exit(1)
+    if fail_on_removed and removed_keys:
+        sys.exit(8)
+    if fail_on_additions and any(lib.get("compatible_additions", 0) for lib in library_results):
+        sys.exit(1)
 
 
 # ── ABICC compat subcommands (implementation in abicheck.compat) ─────────────
