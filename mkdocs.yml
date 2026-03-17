@@ -31,28 +31,50 @@ theme:
 
 nav:
   - Home: index.md
-  - Getting Started: getting_started.md
+  - Getting Started: getting-started.md
+  - User Guide:
+    - CLI Usage: user-guide/cli-usage.md
+    - Tool Modes: user-guide/tool-modes.md
+    - Policy Profiles: user-guide/policies.md
+    - Suppressions: user-guide/suppressions.md
+    - Output Formats: user-guide/output-formats.md
+    - Local Compare: user-guide/local-compare.md
+    - MCP Integration: user-guide/mcp-integration.md
+    - GitHub Action: user-guide/github-action.md
+    - Migrating from ABICC: user-guide/from-abicc.md
+    - Migrating from libabigail: user-guide/from-libabigail.md
   - Concepts:
     - Verdicts: concepts/verdicts.md
+    - Architecture: concepts/architecture.md
+    - ABI Breaks Explained: concepts/abi-breaks-explained.md
+    - Breaking Cases Catalog: concepts/breaking-cases-catalog.md
     - Limitations: concepts/limitations.md
-    - Troubleshooting: concepts/troubleshooting.md
-  - User Guide:
-    - CLI Usage: usage_and_coverage.md
-    - Tool Modes: tool_modes.md
-    - GitHub Action: github-action.md
-    - Policy Profiles: policies.md
-    - SARIF Output: sarif_output.md
-    - Examples & Breakage Guide: examples_breakage_guide.md
-    - Local Compare: local_compare.md
-    - ABICC Compatibility: abicc_compat.md
   - Reference:
-    - Exit Codes: exit_codes.md
-    - Change Kind Reference: reference/change_kinds.md
-    - ABI Break Catalog: abi_breaking_cases_catalog.md
-    - Architecture: reference/architecture.md
-    - Benchmark & Tool Comparison: tool_comparison.md
-    - Format Compliance: abicc_format_compliance.md
-    - libabigail Parity: libabigail_parity.md
+    - Change Kinds: reference/change-kinds.md
+    - Exit Codes: reference/exit-codes.md
+    - Platforms: reference/platforms.md
+    - Tool Comparison: reference/tool-comparison.md
+    - ABICC Format Compliance: reference/abicc-format-compliance.md
+  - Troubleshooting: troubleshooting.md
+  - Development:
+    - Goals: development/goals.md
+    - Codebase Overview: development/codebase-overview.md
+    - Testing: development/testing.md
+    - Coverage Report: development/coverage-report.md
+    - Report Comparison: development/report-comparison.md
+    - ABICC Parity Status: development/abicc-parity-status.md
+    - ABICC Test Coverage Comparison: development/abicc-test-coverage-comparison.md
+    - v2 Roadmap: development/v2-roadmap.md
+    - CLI Review: development/cli-review.md
+    - ADR:
+      - Overview: development/adr/index.md
+      - "001: Technology Stack": development/adr/001-technology-stack.md
+      - "002: Multi-Binary Release Compare": development/adr/002-multi-binary-release-compare.md
+      - "003: Data Source Architecture": development/adr/003-data-source-architecture.md
+      - "004: Report Filtering & Dedup": development/adr/004-report-filtering-and-deduplication.md
+      - "005: Application Compat Check": development/adr/005-application-compat-check.md
+      - "006: Package-Level Comparison": development/adr/006-package-level-comparison.md
+      - "007: BTF & CTF Debug Formats": development/adr/007-btf-ctf-debug-formats.md
 
 plugins:
   - search

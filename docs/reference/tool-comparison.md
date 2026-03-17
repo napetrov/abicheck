@@ -3,7 +3,7 @@
 This document explains how each ABI checking tool works, what analysis method it uses,
 benchmark results across real-world test cases, and why the numbers come out the way they do.
 
-> **Note:** abicheck detects 100+ change types (see [Change Kind Reference](reference/change_kinds.md)).
+> **Note:** abicheck detects 100+ change types (see [Change Kind Reference](change-kinds.md)).
 > The cross-tool benchmark table below uses 42 representative cases (case01-41 + case26b).
 > The full `examples/` directory has 63 cases — abicheck passes all of them.
 

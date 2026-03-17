@@ -272,5 +272,5 @@ jobs:
 
 ## See Also
 
-- [Getting Started](getting_started.md) — Getting started with all commands
-- [Gap Report](gap_report.md) — Coverage analysis vs ABICC/libabigail
+- [Getting Started](../getting-started.md) — Getting started with all commands
+- [Gap Report](../development/abicc-parity-status.md) — Coverage analysis vs ABICC/libabigail
