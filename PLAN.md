@@ -1,5 +1,9 @@
 # Implementation Plan: Full-Stack ABI Compatibility Validation
 
+> **Status: Implemented** — All steps below are complete. See
+> [ADR-008](docs/development/adr/008-full-stack-dependency-validation.md) for
+> the accepted architecture decision record.
+
 ## Overview
 
 Extend abicheck from single-binary comparison to **full-stack (transitive dependency) validation** on Linux ELF. This adds the ability to resolve the complete runtime dependency graph, extract imports/exports across all DSOs, simulate symbol binding, and produce a stack-level ABI compatibility verdict.
