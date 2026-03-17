@@ -14,8 +14,11 @@
 
 """Package extraction layer for compare-release (ADR-006).
 
-Converts RPM, Deb, and tar packages into directories that the existing
-compare-release pipeline can process.  The extraction flow is:
+Converts RPM, Deb, tar, conda, pip wheel packages into directories that
+the existing compare-release pipeline can process.  Also supports
+downloading packages by name via apt, yum, and zypper.
+
+The extraction flow is:
 
     Package → Extract → Directory → [compare-release] → AggregateResult
 
@@ -33,6 +36,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -303,6 +307,267 @@ class DebExtractor:
             shutil.rmtree(staging, ignore_errors=True)
 
 
+# ── Zip-based security helper ────────────────────────────────────────────────
+
+
+def _safe_zip_extract(archive_path: Path, target_dir: Path) -> None:
+    """Extract a zip archive with full security validation on every member."""
+    target_root = target_dir.resolve()
+    with zipfile.ZipFile(archive_path, "r") as zf:
+        for info in zf.infolist():
+            _validate_member_path(info.filename, target_root)
+        zf.extractall(path=target_dir)
+
+
+# ── Conda extractor ─────────────────────────────────────────────────────────
+
+
+class CondaExtractor:
+    """Extract conda packages (.conda v2 format and legacy .tar.bz2).
+
+    .conda format is a zip archive containing:
+      - metadata.json
+      - pkg-<name>-<hash>.tar.zst  (package payload)
+      - info-<name>-<hash>.tar.zst (metadata)
+
+    Legacy .tar.bz2 conda packages are plain bzip2-compressed tarballs.
+    """
+
+    def detect(self, pkg_path: Path) -> bool:
+        name = pkg_path.name.lower()
+        if name.endswith(".conda"):
+            return True
+        # Legacy conda packages end with .tar.bz2 but we need to distinguish
+        # from generic tar.bz2.  Check for conda-style naming:
+        # <name>-<version>-<build>.tar.bz2
+        if name.endswith(".tar.bz2") and name.count("-") >= 2:
+            # Peek inside for info/ directory (conda marker)
+            try:
+                with tarfile.open(pkg_path, "r:bz2") as tf:
+                    names = tf.getnames()
+                    return any(n.startswith("info/") for n in names[:50])
+            except (tarfile.TarError, OSError):
+                return False
+        return False
+
+    def extract(self, pkg_path: Path, target_dir: Path) -> ExtractResult:
+        _log.info("Extracting conda package: %s", pkg_path)
+        name = pkg_path.name.lower()
+
+        if name.endswith(".conda"):
+            self._extract_v2(pkg_path, target_dir)
+        else:
+            # Legacy .tar.bz2 format
+            TarExtractor._safe_extract(pkg_path, target_dir)
+
+        return ExtractResult(lib_dir=target_dir)
+
+    @staticmethod
+    def _extract_v2(conda_path: Path, target_dir: Path) -> None:
+        """Extract .conda v2 format (zip containing tar.zst payloads)."""
+        target_root = target_dir.resolve()
+
+        # First extract the outer zip
+        staging = Path(tempfile.mkdtemp(dir=target_dir, prefix=".conda_staging_"))
+        try:
+            _safe_zip_extract(conda_path, staging)
+
+            # Find and extract pkg-*.tar.zst (the main payload)
+            for member in staging.iterdir():
+                if member.name.startswith("pkg-") and member.name.endswith(".tar.zst"):
+                    CondaExtractor._extract_zst_tar(member, target_dir)
+                elif member.name.startswith("info-") and member.name.endswith(".tar.zst"):
+                    # Also extract info for metadata
+                    info_dir = target_dir / "info"
+                    info_dir.mkdir(exist_ok=True)
+                    CondaExtractor._extract_zst_tar(member, info_dir)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+
+    @staticmethod
+    def _extract_zst_tar(zst_path: Path, target_dir: Path) -> None:
+        """Extract a .tar.zst file using zstd + tar or Python zstandard."""
+        # Try Python zstandard first
+        try:
+            import zstandard
+            dctx = zstandard.ZstdDecompressor()
+            with open(zst_path, "rb") as compressed:
+                with dctx.stream_reader(compressed) as reader:
+                    with tarfile.open(fileobj=reader, mode="r|") as tf:
+                        target_root = target_dir.resolve()
+                        for member in tf:
+                            _validate_member_path(member.name, target_root)
+                            if member.issym() or member.islnk():
+                                _validate_symlink_target(
+                                    member.name, member.linkname, target_root
+                                )
+                        # Re-read for extraction (stream was consumed)
+                with open(zst_path, "rb") as compressed2:
+                    with dctx.stream_reader(compressed2) as reader2:
+                        with tarfile.open(fileobj=reader2, mode="r|") as tf2:
+                            if sys.version_info >= (3, 12):
+                                tf2.extractall(path=target_dir, filter="data")
+                            else:
+                                tf2.extractall(path=target_dir)
+            return
+        except ImportError:
+            pass
+
+        # Fall back to system zstd command
+        zstd = shutil.which("zstd")
+        if zstd is None:
+            raise RuntimeError(
+                "Cannot extract .tar.zst: install 'zstandard' Python package "
+                "or 'zstd' command-line tool."
+            )
+        # Decompress to tar, then extract
+        tar_path = zst_path.with_suffix("")  # strip .zst
+        subprocess.run(
+            [zstd, "-d", str(zst_path), "-o", str(tar_path)],
+            check=True,
+            capture_output=True,
+        )
+        try:
+            TarExtractor._safe_extract(tar_path, target_dir)
+        finally:
+            tar_path.unlink(missing_ok=True)
+
+
+# ── Wheel (pip) extractor ────────────────────────────────────────────────────
+
+
+class WheelExtractor:
+    """Extract Python wheel (.whl) packages.
+
+    Wheels are zip archives containing the package's files plus
+    a .dist-info directory with metadata.
+    """
+
+    def detect(self, pkg_path: Path) -> bool:
+        return pkg_path.name.lower().endswith(".whl")
+
+    def extract(self, pkg_path: Path, target_dir: Path) -> ExtractResult:
+        _log.info("Extracting wheel: %s", pkg_path)
+        _safe_zip_extract(pkg_path, target_dir)
+        return ExtractResult(lib_dir=target_dir)
+
+
+# ── Package manager downloaders ──────────────────────────────────────────────
+
+
+def download_package(
+    package_name: str,
+    target_dir: Path,
+    *,
+    manager: str,
+    arch: str | None = None,
+) -> Path:
+    """Download a package by name using a system package manager.
+
+    Args:
+        package_name: Name of the package to download.
+        target_dir: Directory to download into.
+        manager: Package manager to use ("apt", "yum", "zypper").
+        arch: Target architecture (e.g. "x86_64", "amd64"). Optional.
+
+    Returns:
+        Path to the downloaded package file.
+    """
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    if manager == "apt":
+        return _apt_download(package_name, target_dir, arch)
+    elif manager == "yum":
+        return _yum_download(package_name, target_dir, arch)
+    elif manager == "zypper":
+        return _zypper_download(package_name, target_dir, arch)
+    else:
+        raise ValueError(f"Unsupported package manager: {manager}")
+
+
+def _apt_download(package_name: str, target_dir: Path, arch: str | None) -> Path:
+    """Download a .deb package using apt-get download."""
+    apt = shutil.which("apt-get") or shutil.which("apt")
+    if not apt:
+        raise RuntimeError("apt/apt-get not found. Is this a Debian/Ubuntu system?")
+
+    pkg_spec = f"{package_name}:{arch}" if arch else package_name
+
+    before = set(target_dir.iterdir())
+    subprocess.run(
+        [apt, "download", pkg_spec],
+        cwd=str(target_dir),
+        check=True,
+        capture_output=True,
+    )
+    after = set(target_dir.iterdir())
+    new_files = after - before
+
+    debs = [f for f in new_files if f.name.endswith(".deb")]
+    if not debs:
+        raise RuntimeError(f"apt download did not produce a .deb file for '{package_name}'")
+    return debs[0]
+
+
+def _yum_download(package_name: str, target_dir: Path, arch: str | None) -> Path:
+    """Download an .rpm package using yumdownloader or dnf download."""
+    # Try yumdownloader first, then dnf
+    tool = shutil.which("yumdownloader")
+    if tool:
+        cmd = [tool, "--destdir", str(target_dir)]
+        if arch:
+            cmd += ["--archlist", arch]
+        cmd.append(package_name)
+    else:
+        dnf = shutil.which("dnf")
+        if not dnf:
+            raise RuntimeError(
+                "yumdownloader/dnf not found. Install yum-utils or dnf."
+            )
+        cmd = [dnf, "download", "--destdir", str(target_dir)]
+        if arch:
+            cmd += ["--arch", arch]
+        cmd.append(package_name)
+
+    before = set(target_dir.iterdir())
+    subprocess.run(cmd, check=True, capture_output=True)
+    after = set(target_dir.iterdir())
+    new_files = after - before
+
+    rpms = [f for f in new_files if f.name.endswith(".rpm")]
+    if not rpms:
+        raise RuntimeError(f"Download did not produce an .rpm file for '{package_name}'")
+    return rpms[0]
+
+
+def _zypper_download(package_name: str, target_dir: Path, arch: str | None) -> Path:
+    """Download an .rpm package using zypper."""
+    zypper = shutil.which("zypper")
+    if not zypper:
+        raise RuntimeError("zypper not found. Is this a SUSE/openSUSE system?")
+
+    # zypper doesn't have a simple download command like yumdownloader.
+    # We use: zypper --pkg-cache-dir <dir> download <pkg>
+    pkg_cache = target_dir / ".zypp_cache"
+    pkg_cache.mkdir(exist_ok=True)
+
+    cmd = [zypper, "--non-interactive", "--pkg-cache-dir", str(pkg_cache),
+           "download", package_name]
+    subprocess.run(cmd, check=True, capture_output=True)
+
+    # Zypper puts packages in <cache>/<repo>/<arch>/<file>.rpm
+    rpms: list[Path] = list(pkg_cache.rglob("*.rpm"))
+    if not rpms:
+        raise RuntimeError(f"zypper download did not produce an .rpm file for '{package_name}'")
+
+    # Move the RPM to target_dir
+    chosen = rpms[0]
+    dest = target_dir / chosen.name
+    shutil.move(str(chosen), str(dest))
+    shutil.rmtree(pkg_cache, ignore_errors=True)
+    return dest
+
+
 # ── Directory passthrough ────────────────────────────────────────────────────
 
 
@@ -320,6 +585,8 @@ class DirExtractor:
 
 _EXTRACTORS: list[PackageExtractor] = [
     DirExtractor(),
+    CondaExtractor(),
+    WheelExtractor(),
     TarExtractor(),
     RpmExtractor(),
     DebExtractor(),
@@ -342,9 +609,12 @@ def is_package(path: Path) -> bool:
     if path.is_dir():
         return False
     name = path.name.lower()
-    if name.endswith((".rpm", ".deb", ".tar", ".tar.gz", ".tar.xz", ".tar.bz2", ".tgz")):
+    if name.endswith((
+        ".rpm", ".deb", ".tar", ".tar.gz", ".tar.xz", ".tar.bz2", ".tgz",
+        ".conda", ".whl",
+    )):
         return True
-    # Check magic bytes for RPM
+    # Check magic bytes for RPM / Deb
     try:
         with open(path, "rb") as f:
             magic = f.read(8)
