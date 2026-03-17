@@ -472,7 +472,8 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
-      "description": "Struct alignment changed via __attribute__((aligned(8))) to aligned(64) \u2014 stack allocation and array stride break (TYPE_ALIGNMENT_CHANGED)"
+      "description": "Struct alignment changed via __attribute__((aligned(8))) to aligned(64) \u2014 stack allocation and array stride break (TYPE_ALIGNMENT_CHANGED)",
+      "known_gap": "macOS: Tool returns NO_CHANGE \u2014 without castxml, Mach-O mode captures only exported symbols; type-level alignment changes are invisible"
     },
     "case26b_union_field_added_compatible": {
       "expected": "COMPATIBLE",
@@ -646,7 +647,8 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
-      "description": "Type changed from struct to union \u2014 fields overlap instead of sequential layout (TYPE_KIND_CHANGED)"
+      "description": "Type changed from struct to union \u2014 fields overlap instead of sequential layout (TYPE_KIND_CHANGED)",
+      "known_gap": "macOS: Tool returns NO_CHANGE \u2014 without castxml, Mach-O mode captures only exported symbols; struct-to-union type kind change is invisible"
     },
     "case56_struct_packing_changed": {
       "expected": "BREAKING",
@@ -658,7 +660,8 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
-      "description": "Struct packing changed via pragma pack(1) \u2014 field offsets and sizeof change (STRUCT_PACKING_CHANGED)"
+      "description": "Struct packing changed via pragma pack(1) \u2014 field offsets and sizeof change (STRUCT_PACKING_CHANGED)",
+      "known_gap": "macOS: Tool returns NO_CHANGE \u2014 without castxml, Mach-O mode captures only exported symbols; packing/layout changes are invisible"
     },
     "case57_enum_underlying_size_changed": {
       "expected": "BREAKING",
@@ -670,7 +673,8 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
-      "description": "Enum underlying type grows from int to long due to large sentinel value \u2014 sizeof changes (ENUM_UNDERLYING_SIZE_CHANGED)"
+      "description": "Enum underlying type grows from int to long due to large sentinel value \u2014 sizeof changes (ENUM_UNDERLYING_SIZE_CHANGED)",
+      "known_gap": "macOS: Tool returns NO_CHANGE \u2014 without castxml, Mach-O mode captures only exported symbols; enum underlying size changes are invisible"
     },
     "case58_var_removed": {
       "expected": "BREAKING",
@@ -708,7 +712,8 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
-      "description": "Multiple inheritance base class order swapped \u2014 subobject offsets and vtable pointers change (BASE_CLASS_POSITION_CHANGED)"
+      "description": "Multiple inheritance base class order swapped \u2014 subobject offsets and vtable pointers change (BASE_CLASS_POSITION_CHANGED)",
+      "known_gap": "macOS: Tool returns NO_CHANGE \u2014 no headers provided; Mach-O mode captures only exported symbols; base class layout changes are invisible"
     },
     "case61_var_added": {
       "expected": "COMPATIBLE",
