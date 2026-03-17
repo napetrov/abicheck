@@ -1,6 +1,6 @@
 # ABI Breaking Cases Catalog
 
-This catalog summarizes breakage patterns covered by the `examples/` directory (48 cases).
+This catalog summarizes breakage patterns covered by the `examples/` directory (63 cases).
 For full code walkthroughs, see [Examples & Breakage Guide](examples_breakage_guide.md).
 For the complete list of 100+ detected change types, see [Change Kind Reference](reference/change_kinds.md).
 

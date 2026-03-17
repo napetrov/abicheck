@@ -46,7 +46,7 @@ pip install -e .
 
 ## 2) First check (using repo examples)
 
-The repo includes 48 ABI break examples with paired `v1`/`v2` sources and headers:
+The repo includes 63 ABI scenario examples with paired `v1`/`v2` sources and headers:
 
 ```bash
 cd examples/case01_symbol_removal

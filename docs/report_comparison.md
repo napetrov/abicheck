@@ -4,7 +4,7 @@ Focused comparison of **what information** each tool puts in its reports,
 how useful that information is, and what gaps exist — across all output formats.
 
 **Date:** 2026-03-14
-**Test suite:** 48 ABI break scenarios (examples/case01..case48)
+**Test suite:** 63 ABI scenario cases (examples/case01..case62 + case26b)
 
 ---
 

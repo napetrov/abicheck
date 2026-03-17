@@ -75,7 +75,7 @@ pytest tests/ --cov=abicheck --cov-report=term-missing
 
 ### Example validation
 
-Run the 48 example cases against ground truth:
+Run the 63 example cases against ground truth:
 
 ```bash
 pytest tests/ -v -k "example" --tb=short
