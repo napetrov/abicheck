@@ -462,6 +462,18 @@
       "api_break": true,
       "bad_practice": false
     },
+    "case42_type_alignment_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Struct alignment changed via __attribute__((aligned(8))) to aligned(64) \u2014 stack allocation and array stride break (TYPE_ALIGNMENT_CHANGED)"
+    },
     "case26b_union_field_added_compatible": {
       "expected": "COMPATIBLE",
       "category": "compatible",
@@ -552,7 +564,7 @@
       "bad_practice": false,
       "description": "Leaf struct gains field; propagates through embedding in Container \u2014 layout breaks (libabigail: Leaf_Type_Change)"
     },
-    "case49_dependency_symbol_leak": {
+    "case49_executable_stack": {
       "expected": "COMPATIBLE",
       "category": "bad_practice",
       "platforms": [
@@ -561,7 +573,7 @@
       "abi_break": false,
       "api_break": false,
       "bad_practice": true,
-      "description": "Static archive symbols leak into shared library .dynsym without version script or --exclude-libs (bad practice \u2014 dependency ABI coupling)"
+      "description": "Library linked with -Wl,-z,execstack has GNU_STACK RWE \u2014 disables NX protection (bad practice \u2014 security)"
     },
     "case50_soname_inconsistent": {
       "expected": "COMPATIBLE",
@@ -585,28 +597,135 @@
       "bad_practice": false,
       "description": "Symbol visibility changed DEFAULT\u2192PROTECTED \u2014 exported but no longer interposable (compatible, interposition policy concern)"
     },
-    "case52_export_surface_growth": {
+    "case52_rpath_leak": {
       "expected": "COMPATIBLE",
       "category": "bad_practice",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": true,
+      "description": "Library has hardcoded build-directory path in DT_RUNPATH \u2014 non-portable deployment (bad practice \u2014 packaging)"
+    },
+    "case53_namespace_pollution": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": true,
+      "description": "Library exports generic symbol names (init, process, cleanup) without prefix \u2014 collision risk (bad practice \u2014 API design)"
+    },
+    "case54_used_reserved_field": {
+      "expected": "COMPATIBLE",
+      "category": "compatible",
       "platforms": [
         "linux",
         "macos"
       ],
       "abi_break": false,
       "api_break": false,
-      "bad_practice": true,
-      "description": "Internal functions leak into export table without -fvisibility=hidden \u2014 ABI surface creep (bad practice \u2014 accidental public ABI)"
+      "bad_practice": false,
+      "description": "Reserved placeholder fields (__reserved1, __reserved2) renamed to meaningful names at same offsets \u2014 layout unchanged (USED_RESERVED_FIELD)"
     },
-    "case53_symbol_versioning_missing": {
+    "case55_type_kind_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Type changed from struct to union \u2014 fields overlap instead of sequential layout (TYPE_KIND_CHANGED)"
+    },
+    "case56_struct_packing_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Struct packing changed via pragma pack(1) \u2014 field offsets and sizeof change (STRUCT_PACKING_CHANGED)"
+    },
+    "case57_enum_underlying_size_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Enum underlying type grows from int to long due to large sentinel value \u2014 sizeof changes (ENUM_UNDERLYING_SIZE_CHANGED)"
+    },
+    "case58_var_removed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Global variable lib_debug_level removed from export table (VAR_REMOVED)"
+    },
+    "case59_func_became_inline": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "Functions moved from outlined to static inline in header \u2014 symbols disappear from .dynsym (FUNC_REMOVED, inverse of case47)"
+    },
+    "case60_base_class_position_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Multiple inheritance base class order swapped \u2014 subobject offsets and vtable pointers change (BASE_CLASS_POSITION_CHANGED)"
+    },
+    "case61_var_added": {
       "expected": "COMPATIBLE",
       "category": "compatible",
       "platforms": [
-        "linux"
+        "linux",
+        "macos"
       ],
       "abi_break": false,
       "api_break": false,
       "bad_practice": false,
-      "description": "Library without symbol versioning vs one with MYLIB_1.0 version nodes \u2014 compatible but missing future ABI evolution mechanism"
+      "description": "New global variable lib_build_number added \u2014 purely additive (VAR_ADDED)"
+    },
+    "case62_type_field_added_compatible": {
+      "expected": "COMPATIBLE",
+      "category": "compatible",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "Field added to opaque struct (callers use pointer only) \u2014 layout change invisible to consumers (TYPE_FIELD_ADDED compatible)"
     }
   }
 }
