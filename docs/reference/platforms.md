@@ -134,7 +134,7 @@ jobs:
 
 ### macOS host
 - ARM64 Apple AAPCS differs from Itanium for small structs (≤16 bytes passed in registers)
-- `install_name` (macOS SONAME equivalent) — tracked but not surfaced as `soname_changed` yet
+- `install_name` (`LC_ID_DYLIB`, macOS SONAME equivalent) changes are tracked and emit `SONAME_CHANGED`
 - Two-level namespace (`LC_LOAD_DYLIB`) not fully analyzed
 - Tracked: abicc upstream issues #116, #119
 
@@ -174,3 +174,34 @@ Recipe dependencies pull required analysis tooling automatically.
 - **#50 (calling conventions):** `__stdcall`/`__cdecl` deltas are represented as mangled-name churn (`func_removed + func_added`) instead of a dedicated calling-convention change kind.
 - **#56 (PE visibility semantics):** `__declspec(dllexport/dllimport)` transitions are currently reflected at symbol-level only; no dedicated PE export-visibility change kind.
 - **#121 (MinGW-specific behavior):** MinGW export/import edge-cases (import libs, ordinals, toolchain flags) are only partially covered by current smoke/integration tests.
+
+## macOS ARM64 — Known ABI Differences
+
+ARM64 (Apple Silicon) has a different calling convention from x86-64 that affects how small structs and floating-point aggregates are passed.
+
+| Feature | x86-64 (System V) | ARM64 (Apple AAPCS) | Detected by abicheck? |
+|---------|-------------------|----------------------|-----------------------|
+| Small struct (≤16 B) | Stack or reg pair | Passed in GP registers | ✅ `TYPE_SIZE_CHANGED` catches size delta |
+| HFA (Homogeneous Floating-point Aggregate ≤4 floats) | Stack | SIMD/FP registers | ⚠️ Size same, registers differ — NOT detected |
+| HVA (Homogeneous Vector Aggregate) | Stack | SIMD/FP registers | ⚠️ Size same, registers differ — NOT detected |
+| Return in registers | RDX:RAX (x86-64) | x0:x1 (ARM64) | ⚠️ Not tracked (no calling-convention change kind) |
+
+**Tracked:** abicc issues **#116** (small-struct register passing) · **#119** (install_name).
+
+### install_name tracking (#119)
+
+`install_name` (`LC_ID_DYLIB`) is the macOS equivalent of ELF `SONAME`.
+abicheck **now tracks this** — a change emits `SONAME_CHANGED` with `symbol="LC_ID_DYLIB"`.
+
+| Scenario | Status |
+|----------|--------|
+| install_name changes between versions | ✅ `SONAME_CHANGED` emitted |
+| install_name absent → set | ✅ tracked |
+| No change | ✅ no false positive |
+
+### Support claim
+
+**ARM64/macOS: Experimental**
+- Symbol diff: fully supported (export table via `macholib`)
+- Type/param diff: requires Xcode clang + `castxml` (≥ 0.9.0 with Apple toolchain backend)
+- HFA/HVA calling-convention drift: **not directly detected** — workaround: always check `TYPE_SIZE_CHANGED` on structs
