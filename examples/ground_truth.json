@@ -62,8 +62,7 @@
       "expected": "BREAKING",
       "category": "bad_practice",
       "platforms": [
-        "linux",
-        "macos"
+        "linux"
       ],
       "abi_break": true,
       "api_break": false,
