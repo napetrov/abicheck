@@ -16,12 +16,26 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from abicheck.cli import main
+
+
+def _require_linux_elf(path: Path) -> Path:
+    """Verify we're on Linux and the candidate is an ELF binary."""
+    if sys.platform != "linux":
+        pytest.skip("Full-stack dependency tests require Linux")
+    try:
+        with open(path, "rb") as f:
+            if f.read(4) != b"\x7fELF":
+                pytest.skip(f"{path} is not an ELF binary")
+    except OSError:
+        pytest.skip(f"Cannot read {path}")
+    return path
 
 
 @pytest.fixture
@@ -31,10 +45,12 @@ def runner():
 
 @pytest.fixture
 def real_binary():
+    if sys.platform != "linux":
+        pytest.skip("Full-stack dependency tests require Linux")
     candidates = [Path("/usr/bin/python3"), Path("/usr/bin/ls"), Path("/bin/ls")]
     for p in candidates:
         if p.exists():
-            return p
+            return _require_linux_elf(p)
     pytest.skip("No suitable ELF binary found")
 
 
@@ -99,6 +115,8 @@ class TestStackCheckCommand:
 @pytest.fixture
 def real_lib():
     """Find a real shared library for --follow-deps tests."""
+    if sys.platform != "linux":
+        pytest.skip("Full-stack dependency tests require Linux")
     candidates = [
         Path("/usr/lib/x86_64-linux-gnu/libz.so.1"),
         Path("/usr/lib/x86_64-linux-gnu/libexpat.so.1"),
@@ -106,7 +124,7 @@ def real_lib():
     ]
     for p in candidates:
         if p.exists():
-            return p
+            return _require_linux_elf(p)
     pytest.skip("No suitable shared library found")
 
 

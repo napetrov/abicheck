@@ -626,7 +626,7 @@ def _render_output(
             old_symbol_count=old_symbol_count or None,
         )
     md = to_markdown(result)
-    if follow_deps:
+    if follow_deps and (old.dependency_info or (new and new.dependency_info)):
         md += _render_deps_section_md(old, new)
     return md
 

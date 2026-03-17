@@ -70,17 +70,59 @@ class DependencyGraph:
 
 
 # ---------------------------------------------------------------------------
-# Default search directories (Linux x86_64)
+# Target-aware default search directories
 # ---------------------------------------------------------------------------
 
-_DEFAULT_DIRS: list[str] = [
-    "/lib/x86_64-linux-gnu",
-    "/usr/lib/x86_64-linux-gnu",
-    "/lib64",
-    "/usr/lib64",
-    "/lib",
-    "/usr/lib",
-]
+# Mapping from ELF machine / interpreter hints to multiarch triples.
+_INTERP_ARCH_MAP: dict[str, str] = {
+    "ld-linux-x86-64": "x86_64-linux-gnu",
+    "ld-linux-aarch64": "aarch64-linux-gnu",
+    "ld-linux-armhf": "arm-linux-gnueabihf",
+    "ld-linux": "i386-linux-gnu",           # 32-bit x86
+    "ld-linux-riscv64": "riscv64-linux-gnu",
+    "ld-linux-s390x": "s390x-linux-gnu",
+    "ld-linux-ppc64le": "powerpc64le-linux-gnu",
+}
+
+_FALLBACK_TRIPLE = "x86_64-linux-gnu"
+
+
+def _detect_target_triple(interpreter: str) -> str:
+    """Derive the multiarch triple from the ELF interpreter path."""
+    if not interpreter:
+        return _FALLBACK_TRIPLE
+    base = interpreter.rsplit("/", 1)[-1]  # e.g. "ld-linux-x86-64.so.2"
+    stem = base.split(".so")[0]             # e.g. "ld-linux-x86-64"
+    for prefix, triple in _INTERP_ARCH_MAP.items():
+        if stem.startswith(prefix):
+            return triple
+    return _FALLBACK_TRIPLE
+
+
+def _default_dirs_for_triple(triple: str) -> list[str]:
+    """Return loader default search directories for a given multiarch triple."""
+    lib_qual = "lib64" if "64" in triple or "aarch64" in triple else "lib"
+    return [
+        f"/lib/{triple}",
+        f"/usr/lib/{triple}",
+        f"/{lib_qual}",
+        f"/usr/{lib_qual}",
+        "/lib",
+        "/usr/lib",
+    ]
+
+
+def _platform_token_for_triple(triple: str) -> str:
+    """Return the $PLATFORM token value for a given multiarch triple."""
+    arch = triple.split("-")[0]
+    return arch
+
+
+def _lib_token_for_triple(triple: str) -> str:
+    """Return the $LIB token value for a given multiarch triple."""
+    if "64" in triple or "aarch64" in triple:
+        return "lib64"
+    return "lib"
 
 
 def resolve_dependencies(
@@ -121,6 +163,12 @@ def resolve_dependencies(
     root_key = str(root_path)
     root_soname = root_meta.soname or root_path.name
 
+    # Detect target architecture from PT_INTERP for target-aware defaults.
+    target_triple = _detect_target_triple(root_meta.interpreter)
+    default_dirs = _default_dirs_for_triple(target_triple)
+    platform_token = _platform_token_for_triple(target_triple)
+    lib_token = _lib_token_for_triple(target_triple)
+
     graph.nodes[root_key] = ResolvedDSO(
         path=root_path,
         soname=root_soname,
@@ -138,11 +186,12 @@ def resolve_dependencies(
         queue.append((needed, root_key, 1))
 
     # Propagated RPATHs from ancestor DSOs (only when DT_RUNPATH is absent).
-    # Key: requesting DSO path → collected RPATHs.
+    # Key: requesting DSO path → collected RPATHs (merged from all ancestors).
     propagated_rpaths: dict[str, list[str]] = {}
     if root_meta.rpath and not root_meta.runpath:
         propagated_rpaths[root_key] = _expand_rpath(
             root_meta.rpath, root_path.parent, prefix,
+            platform_token=platform_token, lib_token=lib_token,
         )
 
     while queue:
@@ -169,6 +218,9 @@ def resolve_dependencies(
             ld_dirs=ld_dirs,
             extra_dirs=extra_dirs,
             prefix=prefix,
+            default_dirs=default_dirs,
+            platform_token=platform_token,
+            lib_token=lib_token,
         )
 
         resolved = _search_library(soname, search)
@@ -202,10 +254,24 @@ def resolve_dependencies(
             graph.edges.append((requester_path, resolved_key))
 
         # Propagate RPATH (only if this DSO has DT_RPATH and no DT_RUNPATH).
+        # Merge with ancestor RPATHs rather than replacing them.
         if meta.rpath and not meta.runpath:
-            propagated_rpaths[resolved_key] = _expand_rpath(
+            own_rpaths = _expand_rpath(
                 meta.rpath, resolved_path.parent, prefix,
+                platform_token=platform_token, lib_token=lib_token,
             )
+            ancestor_rpaths = propagated_rpaths.get(requester_path or "", [])
+            # Merge: own RPATHs first, then inherited ancestor RPATHs (deduped).
+            seen: set[str] = set()
+            merged: list[str] = []
+            for d in own_rpaths + ancestor_rpaths:
+                if d not in seen:
+                    seen.add(d)
+                    merged.append(d)
+            propagated_rpaths[resolved_key] = merged
+        elif requester_path and requester_path in propagated_rpaths:
+            # No own RPATH but ancestor had one — pass it through.
+            propagated_rpaths[resolved_key] = propagated_rpaths[requester_path]
 
         for needed_child in meta.needed:
             if needed_child not in visited_sonames:
@@ -226,6 +292,9 @@ def _build_search_order(
     ld_dirs: list[str],
     extra_dirs: list[str],
     prefix: str,
+    default_dirs: list[str] | None = None,
+    platform_token: str = "x86_64",
+    lib_token: str = "lib",
 ) -> list[tuple[str, str]]:
     """Build the ordered list of (directory, reason) to search for *soname*.
 
@@ -240,7 +309,10 @@ def _build_search_order(
     if requester_node is not None:
         # Step 1: DT_RPATH — only if no DT_RUNPATH is present.
         if requester_node.rpath and not requester_node.runpath:
-            for d in _expand_rpath(requester_node.rpath, requester_dir, prefix):
+            for d in _expand_rpath(
+                requester_node.rpath, requester_dir, prefix,
+                platform_token=platform_token, lib_token=lib_token,
+            ):
                 search.append((d, "rpath"))
         # Also propagated RPATHs from ancestors.
         for d in propagated_rpaths:
@@ -253,11 +325,15 @@ def _build_search_order(
 
     # Step 3: DT_RUNPATH — only for direct DT_NEEDED.
     if requester_node is not None and requester_node.runpath:
-        for d in _expand_rpath(requester_node.runpath, requester_dir, prefix):
+        for d in _expand_rpath(
+            requester_node.runpath, requester_dir, prefix,
+            platform_token=platform_token, lib_token=lib_token,
+        ):
             search.append((d, "runpath"))
 
-    # Step 4: Default directories.
-    for d in _DEFAULT_DIRS:
+    # Step 4: Default directories (target-aware).
+    _dirs = default_dirs if default_dirs is not None else _default_dirs_for_triple(_FALLBACK_TRIPLE)
+    for d in _dirs:
         full = os.path.join(prefix, d.lstrip("/")) if prefix else d
         search.append((full, "default"))
 
@@ -287,15 +363,22 @@ def _search_library(
 # RPATH/RUNPATH expansion
 # ---------------------------------------------------------------------------
 
-def _expand_rpath(rpath: str, origin_dir: Path, prefix: str) -> list[str]:
+def _expand_rpath(
+    rpath: str,
+    origin_dir: Path,
+    prefix: str,
+    *,
+    platform_token: str = "x86_64",
+    lib_token: str = "lib",
+) -> list[str]:
     """Expand an RPATH/RUNPATH string into a list of directories.
 
     Handles:
       - Colon-separated paths
       - $ORIGIN / ${ORIGIN} → directory containing the DSO
-      - $LIB / ${LIB} → "lib" or "lib/x86_64-linux-gnu" (best-effort)
-      - $PLATFORM / ${PLATFORM} → "x86_64" (best-effort default)
-      - Sysroot prefix
+      - $LIB / ${LIB} → target-aware lib directory name
+      - $PLATFORM / ${PLATFORM} → target-aware platform string
+      - Sysroot prefix (only for non-$ORIGIN absolute paths)
     """
     dirs: list[str] = []
     origin = str(origin_dir)
@@ -303,10 +386,15 @@ def _expand_rpath(rpath: str, origin_dir: Path, prefix: str) -> list[str]:
         if not entry:
             continue
         expanded = entry
+        has_origin = "$ORIGIN" in expanded or "${ORIGIN}" in expanded
         expanded = expanded.replace("${ORIGIN}", origin).replace("$ORIGIN", origin)
-        expanded = expanded.replace("${LIB}", "lib").replace("$LIB", "lib")
-        expanded = expanded.replace("${PLATFORM}", "x86_64").replace("$PLATFORM", "x86_64")
-        if prefix:
+        expanded = expanded.replace("${LIB}", lib_token).replace("$LIB", lib_token)
+        expanded = expanded.replace("${PLATFORM}", platform_token).replace("$PLATFORM", platform_token)
+        # Only prepend sysroot prefix for non-$ORIGIN paths.
+        # $ORIGIN expands to the actual DSO path (which already includes the
+        # sysroot prefix if the DSO was found under the sysroot), so
+        # prepending again would produce /sysroot/sysroot/... paths.
+        if prefix and not has_origin:
             expanded = os.path.join(prefix, expanded.lstrip("/"))
         dirs.append(expanded)
     return dirs

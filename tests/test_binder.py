@@ -206,7 +206,7 @@ class TestVisibility:
             edges=[("/app", "/lib/libfoo.so")],
         )
         bindings = compute_bindings(graph)
-        assert bindings[0].status == BindingStatus.MISSING
+        assert bindings[0].status == BindingStatus.VISIBILITY_BLOCKED
 
     def test_default_visibility_resolvable(self):
         graph = _make_graph(

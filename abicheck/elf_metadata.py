@@ -184,10 +184,11 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
     except Exception as exc:  # noqa: BLE001
         log.warning("parse_elf_metadata: failed to read PT_INTERP from %s: %s", so_path, exc)
 
-    # Build version index → (library, version_name) mapping from .gnu.version_r
-    # and version index → version_name from .gnu.version_d, used to correlate
-    # per-symbol version info from .gnu.version section.
-    ver_index_map: dict[int, tuple[str, str, bool]] = {}  # idx → (lib, ver, is_defined)
+    # Build separate version-index maps from .gnu.version_d and .gnu.version_r.
+    # Verdef and verneed indices are normally non-overlapping, but separating
+    # them prevents mis-attribution if a malformed ELF reuses an index.
+    verdef_index_map: dict[int, tuple[str, str, bool]] = {}   # idx → ("", ver, True)
+    verneed_index_map: dict[int, tuple[str, str, bool]] = {}  # idx → (lib, ver, False)
 
     for section in elf.iter_sections():
         try:
@@ -195,16 +196,19 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
                 _parse_dynamic(section, meta)
             elif isinstance(section, GNUVerDefSection):
                 _parse_version_def(section, meta)
-                _build_verdef_index(section, ver_index_map)
+                _build_verdef_index(section, verdef_index_map)
             elif isinstance(section, GNUVerNeedSection):
                 _parse_version_need(section, meta)
-                _build_verneed_index(section, ver_index_map)
+                _build_verneed_index(section, verneed_index_map)
             elif isinstance(section, SymbolTableSection) and section.name == ".dynsym":
                 _parse_dynsym(section, meta)
         except Exception as exc:  # noqa: BLE001
             # Partial-success: log malformed section, keep results from other sections.
             log.warning("parse_elf_metadata: skipping malformed section %r in %s: %s",
                         section.name, so_path, exc)
+
+    # Merge: verdef entries take priority over verneed on index collision.
+    ver_index_map: dict[int, tuple[str, str, bool]] = {**verneed_index_map, **verdef_index_map}
 
     # Parse .gnu.version to correlate per-symbol version entries.
     _correlate_symbol_versions(elf, meta, ver_index_map, so_path)

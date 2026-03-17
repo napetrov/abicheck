@@ -227,8 +227,9 @@ def _render_tree(lines: list[str], graph: DependencyGraph) -> None:
         if provider not in adj[consumer]:
             adj[consumer].append(provider)
 
-    visited: set[str] = set()
-    _render_node(lines, graph, adj, root_key, "", True, visited)
+    shown: set[str] = set()
+    on_path: set[str] = set()
+    _render_node(lines, graph, adj, root_key, "", True, shown, on_path)
 
 
 def _render_node(
@@ -238,9 +239,15 @@ def _render_node(
     key: str,
     prefix: str,
     is_last: bool,
-    visited: set[str],
+    shown: set[str],
+    on_path: set[str],
 ) -> None:
-    """Recursively render a tree node."""
+    """Recursively render a tree node.
+
+    Uses *on_path* for true cycle detection (ancestor on the current recursion
+    stack) and *shown* for repeat-render suppression (node already emitted from
+    a different parent).
+    """
     node = graph.nodes.get(key)
     if node is None:
         return
@@ -248,14 +255,22 @@ def _render_node(
     connector = "└── " if is_last else "├── "
     reason = f" ({node.resolution_reason})" if node.depth > 0 else ""
     line = f"{prefix}{connector}`{node.soname}`{reason}"
-    if key in visited:
+
+    if key in on_path:
         lines.append(f"{line} *(cycle)*")
         return
 
+    if key in shown:
+        lines.append(f"{line} *(already shown)*")
+        return
+
     lines.append(line)
-    visited.add(key)
+    shown.add(key)
+    on_path.add(key)
 
     children = adj.get(key, [])
     child_prefix = prefix + ("    " if is_last else "│   ")
     for i, child in enumerate(children):
-        _render_node(lines, graph, adj, child, child_prefix, i == len(children) - 1, visited)
+        _render_node(lines, graph, adj, child, child_prefix, i == len(children) - 1, shown, on_path)
+
+    on_path.discard(key)

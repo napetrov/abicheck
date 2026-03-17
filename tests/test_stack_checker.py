@@ -15,6 +15,7 @@
 """Tests for abicheck.stack_checker — full-stack ABI checking."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -22,13 +23,28 @@ import pytest
 from abicheck.stack_checker import StackVerdict, check_single_env
 
 
+def _require_linux_elf(path: Path) -> Path:
+    """Verify we're on Linux and the candidate is an ELF binary."""
+    if sys.platform != "linux":
+        pytest.skip("Full-stack dependency tests require Linux")
+    try:
+        with open(path, "rb") as f:
+            if f.read(4) != b"\x7fELF":
+                pytest.skip(f"{path} is not an ELF binary")
+    except OSError:
+        pytest.skip(f"Cannot read {path}")
+    return path
+
+
 class TestCheckSingleEnv:
     @pytest.fixture
     def real_binary(self):
+        if sys.platform != "linux":
+            pytest.skip("Full-stack dependency tests require Linux")
         candidates = [Path("/usr/bin/python3"), Path("/usr/bin/ls"), Path("/bin/ls")]
         for p in candidates:
             if p.exists():
-                return p
+                return _require_linux_elf(p)
         pytest.skip("No suitable ELF binary found")
 
     def test_loadability_pass(self, real_binary):
@@ -57,8 +73,10 @@ class TestCheckSingleEnv:
 
     def test_nonexistent_binary(self, tmp_path):
         result = check_single_env(tmp_path / "nonexistent")
-        # Empty graph → no missing symbols but also no bindings.
+        # Empty graph → should report FAIL loadability and high risk.
         assert result.baseline_graph.node_count == 0
+        assert result.loadability == StackVerdict.FAIL
+        assert result.risk_score == "high"
 
 
 class TestStackVerdict:

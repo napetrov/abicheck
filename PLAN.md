@@ -8,7 +8,7 @@ Extend abicheck from single-binary comparison to **full-stack (transitive depend
 
 New modules compose around existing infrastructure:
 
-```
+```text
 CLI (stack-check command)
   │
   ├─ Resolver (new: resolver.py)
@@ -183,7 +183,7 @@ def check_stack(
 
 **What:** Add a new CLI subcommand for full-stack validation.
 
-```
+```bash
 abicheck stack-check <binary> \
     --baseline <rootfs_path> \
     --candidate <rootfs_path> \
@@ -194,7 +194,7 @@ abicheck stack-check <binary> \
 ```
 
 Also add a simpler single-environment mode:
-```
+```bash
 abicheck deps <binary> \
     [--search-path <dir>] \
     [--sysroot <path>] \

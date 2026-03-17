@@ -108,21 +108,28 @@ def check_stack(
     baseline_bindings = compute_bindings(baseline_graph)
     candidate_bindings = compute_bindings(candidate_graph)
 
-    # Find missing symbols in candidate.
+    # Find missing symbols and version mismatches in candidate.
     missing = [
         b for b in candidate_bindings
         if b.status == BindingStatus.MISSING
     ]
+    version_mismatches = [
+        b for b in candidate_bindings
+        if b.status == BindingStatus.VERSION_MISMATCH
+    ]
 
     # Determine loadability verdict.
+    # An empty candidate graph means the binary doesn't exist in the candidate.
     loadability = StackVerdict.PASS
-    if candidate_graph.unresolved:
+    if not candidate_graph.nodes:
         loadability = StackVerdict.FAIL
-    elif missing:
+    elif candidate_graph.unresolved or missing:
         loadability = StackVerdict.FAIL
+    elif version_mismatches:
+        loadability = StackVerdict.WARN
 
     # Identify changed DSOs between baseline and candidate.
-    stack_changes = _diff_stacks(baseline_graph, candidate_graph)
+    stack_changes = _diff_stacks(baseline_graph, candidate_graph, candidate_bindings)
 
     # Determine ABI risk verdict.
     abi_risk = StackVerdict.PASS
@@ -132,10 +139,15 @@ def check_stack(
     for change in stack_changes:
         if change.change_type == "removed":
             has_breaking = True
-        elif change.abi_diff is not None:
+        elif change.abi_diff is not None and change.impacted_imports:
+            # Only escalate risk if there are actually impacted imports.
             if change.abi_diff.verdict.value == "BREAKING":
                 has_breaking = True
             elif change.abi_diff.verdict.value in ("API_BREAK", "COMPATIBLE_WITH_RISK"):
+                has_risk = True
+        elif change.abi_diff is not None and not change.impacted_imports:
+            # ABI change but no imports affected — still flag as risk if BREAKING.
+            if change.abi_diff.verdict.value == "BREAKING":
                 has_risk = True
 
     if has_breaking:
@@ -189,7 +201,10 @@ def check_single_env(
     version_mismatches = [b for b in bindings if b.status == BindingStatus.VERSION_MISMATCH]
 
     loadability = StackVerdict.PASS
-    if graph.unresolved or missing:
+    if not graph.nodes:
+        # Binary not found or unreadable — cannot load.
+        loadability = StackVerdict.FAIL
+    elif graph.unresolved or missing:
         loadability = StackVerdict.FAIL
     elif version_mismatches:
         loadability = StackVerdict.WARN
@@ -217,6 +232,7 @@ def check_single_env(
 def _diff_stacks(
     baseline: DependencyGraph,
     candidate: DependencyGraph,
+    candidate_bindings: list[SymbolBinding] | None = None,
 ) -> list[StackChange]:
     """Identify changed DSOs between baseline and candidate stacks."""
     changes: list[StackChange] = []
@@ -224,6 +240,12 @@ def _diff_stacks(
     # Build soname → node mapping for each stack.
     baseline_by_soname = {node.soname: (key, node) for key, node in baseline.nodes.items()}
     candidate_by_soname = {node.soname: (key, node) for key, node in candidate.nodes.items()}
+
+    # Index candidate bindings by provider path for impacted_imports lookup.
+    bindings_by_provider: dict[str, list[SymbolBinding]] = {}
+    for b in (candidate_bindings or []):
+        if b.provider:
+            bindings_by_provider.setdefault(b.provider, []).append(b)
 
     all_sonames = set(baseline_by_soname.keys()) | set(candidate_by_soname.keys())
 
@@ -247,24 +269,37 @@ def _diff_stacks(
         base_hash = _file_hash(base_node.path)
         cand_hash = _file_hash(cand_node.path)
 
-        if base_hash != cand_hash:
-            # Run per-library ABI diff using the existing checker.
-            abi_diff = _run_abi_diff(base_node.path, cand_node.path, soname)
+        if base_hash is None or cand_hash is None:
+            # Unreadable file — treat as content changed (error).
+            abi_diff = None
+            impacted = bindings_by_provider.get(cand_key, [])
             changes.append(StackChange(
                 library=soname,
                 change_type="content_changed",
                 abi_diff=abi_diff,
+                impacted_imports=impacted,
+            ))
+        elif base_hash != cand_hash:
+            # Run per-library ABI diff using the existing checker.
+            abi_diff = _run_abi_diff(base_node.path, cand_node.path, soname)
+            # Populate impacted_imports: bindings that reference the changed DSO.
+            impacted = bindings_by_provider.get(cand_key, [])
+            changes.append(StackChange(
+                library=soname,
+                change_type="content_changed",
+                abi_diff=abi_diff,
+                impacted_imports=impacted,
             ))
 
     return changes
 
 
-def _file_hash(path: Path) -> str:
-    """Compute SHA-256 hash of a file."""
+def _file_hash(path: Path) -> str | None:
+    """Compute SHA-256 hash of a file. Returns None on read error."""
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
-        return ""
+        return None
 
 
 def _run_abi_diff(old_path: Path, new_path: Path, library_name: str) -> DiffResult | None:

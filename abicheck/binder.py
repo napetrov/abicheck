@@ -175,9 +175,11 @@ def _resolve_import(
     # Search order: preload → global load order (BFS).
     search_order = preload_paths + load_order
 
-    # Track whether we found the symbol name with any visible version (for VERSION_MISMATCH).
-    found_name_visible = False
-    first_provider = None
+    # Track whether we found the symbol name at all, with/without visibility.
+    found_name_visible = False    # found with at least one visible version
+    found_name_hidden_only = False  # found but all versions are hidden/internal
+    first_provider = None         # first provider with a visible matching symbol
+    first_hidden_provider = None  # first provider where symbol exists but is hidden
 
     for provider_path in search_order:
         # Skip self — a DSO doesn't provide its own imports.
@@ -189,10 +191,20 @@ def _resolve_import(
         if versions is None:
             continue
 
-        # Check if any version is visible (not hidden/internal).
+        # Classify visibility of this provider's versions of the symbol.
         has_visible = any(vis not in ("hidden", "internal") for _, _, vis in versions)
+        all_hidden = all(vis in ("hidden", "internal") for _, _, vis in versions)
+
+        if all_hidden:
+            if first_hidden_provider is None:
+                first_hidden_provider = provider_path
+            if not found_name_visible:
+                found_name_hidden_only = True
+            continue  # hidden symbols cannot satisfy external refs
+
         if has_visible:
             found_name_visible = True
+            found_name_hidden_only = False
             if first_provider is None:
                 first_provider = provider_path
 
@@ -203,8 +215,27 @@ def _resolve_import(
                 if vis in ("hidden", "internal"):
                     continue
                 if ver == required_version:
-                    # Check if this is interposition (provider appears before
-                    # the "natural" provider in the chain).
+                    # Detect interposition: if another provider earlier in
+                    # the load order already had a visible version of this
+                    # symbol, the current match is from the "natural" first
+                    # provider. But if first_provider != provider_path then
+                    # first_provider was skipped (version didn't match) so
+                    # this is NOT interposition — it's just a later match.
+                    # Interposition is when a *different* provider satisfies
+                    # the symbol *before* the natural one in load order.
+                    if first_provider is not None and first_provider != provider_path:
+                        return SymbolBinding(
+                            consumer=consumer,
+                            symbol=sym_name,
+                            version=required_version,
+                            provider=provider_path,
+                            status=BindingStatus.INTERPOSED,
+                            explanation=(
+                                f"Symbol {sym_name}@{required_version} resolved from "
+                                f"{provider_path} but {first_provider} also exports "
+                                f"{sym_name} (interposition)"
+                            ),
+                        )
                     return SymbolBinding(
                         consumer=consumer,
                         symbol=sym_name,
@@ -229,7 +260,20 @@ def _resolve_import(
                         explanation=f"Resolved {sym_name} from {provider_path}",
                     )
 
-    # Not found.
+    # Not found — determine the reason.
+    if found_name_hidden_only and not found_name_visible:
+        return SymbolBinding(
+            consumer=consumer,
+            symbol=sym_name,
+            version=required_version,
+            provider=first_hidden_provider,
+            status=BindingStatus.VISIBILITY_BLOCKED,
+            explanation=(
+                f"Symbol {sym_name} found in {first_hidden_provider} but all versions "
+                "have hidden/internal visibility"
+            ),
+        )
+
     if found_name_visible:
         return SymbolBinding(
             consumer=consumer,
