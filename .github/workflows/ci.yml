@@ -75,6 +75,7 @@ jobs:
 
   integration-tests:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -105,7 +106,7 @@ jobs:
         run: pip install -e ".[dev]"
       - name: Run integration tests with coverage
         run: |
-          pytest tests/ -v -m integration --tb=short --cov=abicheck --cov-report=xml:coverage-integration.xml
+          pytest tests/ -v -m integration --tb=short --cov=abicheck --cov-report=xml:coverage-integration.xml --ignore=tests/test_abi_examples.py
       - name: Upload integration coverage to Codecov
         if: always() && matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v5

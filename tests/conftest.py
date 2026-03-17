@@ -1,6 +1,8 @@
 """conftest.py — pytest configuration for abicheck tests."""
+import subprocess
 import shutil
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -74,3 +76,31 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
 def update_goldens(request: pytest.FixtureRequest) -> bool:
     """True when --update-goldens flag is passed."""
     return bool(request.config.getoption("--update-goldens"))
+
+
+@pytest.fixture(scope="session")
+def shared_cmake_build_dir(tmp_path_factory: pytest.TempPathFactory) -> Path | None:
+    """Session-scoped CMake build directory for integration tests.
+
+    Configures the examples/ CMakeLists.txt **once** per session so that
+    individual tests only need to run ``cmake --build`` for their specific
+    targets.  On Windows this avoids ~30 redundant cmake-configure passes
+    (each one re-parses all 63 example CMakeLists).
+    """
+    examples_dir = Path(__file__).parent.parent / "examples"
+    cmake_lists = examples_dir / "CMakeLists.txt"
+    cmake = shutil.which("cmake")
+
+    if not cmake or not cmake_lists.exists():
+        return None
+
+    build_dir = tmp_path_factory.mktemp("cmake_build")
+    r = subprocess.run(
+        [cmake, "-S", str(examples_dir), "-B", str(build_dir),
+         "-DCMAKE_BUILD_TYPE=Debug"],
+        capture_output=True, text=True, timeout=120,
+    )
+    if r.returncode != 0:
+        return None
+
+    return build_dir

@@ -222,8 +222,19 @@ def _compile_shared(src: Path, out: Path) -> None:
         )
 
 
-def _build_with_cmake(case_dir: Path, build_dir: Path) -> tuple[Path, Path]:
-    """Build a case using CMake. Returns (v1_lib, v2_lib) paths."""
+def _build_with_cmake(
+    case_dir: Path,
+    build_dir: Path,
+    *,
+    already_configured: bool = False,
+) -> tuple[Path, Path]:
+    """Build a case using CMake. Returns (v1_lib, v2_lib) paths.
+
+    When *already_configured* is True the expensive ``cmake -S … -B …``
+    configure step is skipped — the caller guarantees that the build tree
+    has already been configured (e.g. via the session-scoped
+    ``shared_cmake_build_dir`` fixture).
+    """
     cmake = shutil.which("cmake")
     if not cmake:
         pytest.skip("cmake not found in PATH")
@@ -231,14 +242,15 @@ def _build_with_cmake(case_dir: Path, build_dir: Path) -> tuple[Path, Path]:
     case_name = case_dir.name
     case_out = build_dir / case_name
 
-    # Configure
-    r = subprocess.run(
-        [cmake, "-S", str(case_dir.parent), "-B", str(build_dir),
-         "-DCMAKE_BUILD_TYPE=Debug"],
-        capture_output=True, text=True, timeout=60,
-    )
-    if r.returncode != 0:
-        pytest.fail(f"cmake configure failed for {case_name}:\n{r.stderr[:600]}")
+    # Configure — only when no pre-configured build tree is provided
+    if not already_configured:
+        r = subprocess.run(
+            [cmake, "-S", str(case_dir.parent), "-B", str(build_dir),
+             "-DCMAKE_BUILD_TYPE=Debug"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode != 0:
+            pytest.fail(f"cmake configure failed for {case_name}:\n{r.stderr[:600]}")
 
     # Build only this case's targets (--config for multi-config generators)
     v1_target = f"{case_name}_v1"
@@ -311,7 +323,12 @@ _ALL_CASES = _collect_cases()
     [(c, e) for c, e in _ALL_CASES if e is not None],
     ids=[c for c, e in _ALL_CASES if e is not None],
 )
-def test_example_pipeline(case_name: str, expected_verdict: str, tmp_path: Path) -> None:
+def test_example_pipeline(
+    case_name: str,
+    expected_verdict: str,
+    tmp_path: Path,
+    shared_cmake_build_dir: Path | None,
+) -> None:
     """Compile → dump → compare for every example case."""
     # --- Platform filter ---
     case_platforms = PLATFORMS.get(case_name, ["linux", "macos", "windows"])
@@ -330,15 +347,23 @@ def test_example_pipeline(case_name: str, expected_verdict: str, tmp_path: Path)
     v1_src, v2_src, v1_hdr, v2_hdr = _find_sources(case_dir)
 
     # Build strategy:
-    # 1. CMake (if CMakeLists.txt exists) — cross-platform, handles special flags
-    # 2. Direct compilation fallback — simple cases without special flags
+    # 1. Shared (session-scoped) CMake build dir — configure once, build per-test
+    # 2. Per-test CMake configure fallback
+    # 3. Direct compilation fallback — simple cases without special flags
     has_cmake_file = (case_dir / "CMakeLists.txt").exists()
     has_cmake = bool(shutil.which("cmake"))
 
-    if has_cmake_file and has_cmake:
+    if has_cmake_file and has_cmake and shared_cmake_build_dir is not None:
+        # Fast path: reuse session-wide cmake configure
+        v1_lib, v2_lib = _build_with_cmake(
+            case_dir, shared_cmake_build_dir, already_configured=True,
+        )
+        headers_v1 = [v1_hdr] if v1_hdr and v1_hdr.exists() else []
+        headers_v2 = [v2_hdr] if v2_hdr and v2_hdr.exists() else []
+    elif has_cmake_file and has_cmake:
+        # Fallback: per-test cmake configure (shared fixture failed)
         build_dir = tmp_path / "cmake_build"
         v1_lib, v2_lib = _build_with_cmake(case_dir, build_dir)
-        # Resolve header paths — headers stay in the source tree
         headers_v1 = [v1_hdr] if v1_hdr and v1_hdr.exists() else []
         headers_v2 = [v2_hdr] if v2_hdr and v2_hdr.exists() else []
     elif has_cmake_file and not has_cmake:
