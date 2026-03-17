@@ -1119,15 +1119,23 @@ def compare_release_cmd(
     import tempfile
 
     from .package import (
+        _is_elf_shared_object,
         detect_extractor,
         discover_shared_libraries,
         is_package,
+        resolve_debug_info,
     )
 
     _setup_verbosity(verbose)
 
-    # Track temporary directories for cleanup
-    _temp_dirs: list[tempfile.TemporaryDirectory[str]] = []
+    # Track temporary directory paths for cleanup
+    _temp_dir_paths: list[str] = []
+
+    def _make_temp_dir(prefix: str) -> Path:
+        """Create a temporary directory, tracking it for later cleanup."""
+        path = tempfile.mkdtemp(prefix=prefix)
+        _temp_dir_paths.append(path)
+        return Path(path)
 
     def _extract_if_package(
         input_path: Path,
@@ -1142,9 +1150,7 @@ def compare_release_cmd(
         if extractor is None:
             raise click.ClickException(f"Unrecognized package format: {input_path}")
 
-        td = tempfile.TemporaryDirectory(prefix="abicheck_pkg_")
-        _temp_dirs.append(td)
-        target = Path(td.name)
+        target = _make_temp_dir("abicheck_pkg_")
 
         result = extractor.extract(input_path, target)
         lib_dir = result.lib_dir
@@ -1156,9 +1162,8 @@ def compare_release_cmd(
             dbg_ext = detect_extractor(debug_pkg)
             if dbg_ext is None:
                 raise click.ClickException(f"Unrecognized debug package format: {debug_pkg}")
-            dbg_td = tempfile.TemporaryDirectory(prefix="abicheck_dbg_")
-            _temp_dirs.append(dbg_td)
-            dbg_result = dbg_ext.extract(debug_pkg, Path(dbg_td.name))
+            dbg_target = _make_temp_dir("abicheck_dbg_")
+            dbg_result = dbg_ext.extract(debug_pkg, dbg_target)
             debug_dir = dbg_result.lib_dir
 
         # Extract devel package if provided
@@ -1166,9 +1171,8 @@ def compare_release_cmd(
             dev_ext = detect_extractor(devel_pkg)
             if dev_ext is None:
                 raise click.ClickException(f"Unrecognized devel package format: {devel_pkg}")
-            dev_td = tempfile.TemporaryDirectory(prefix="abicheck_dev_")
-            _temp_dirs.append(dev_td)
-            dev_result = dev_ext.extract(devel_pkg, Path(dev_td.name))
+            dev_target = _make_temp_dir("abicheck_dev_")
+            dev_result = dev_ext.extract(devel_pkg, dev_target)
             header_dir = dev_result.lib_dir
 
         return lib_dir, debug_dir, header_dir
@@ -1196,6 +1200,11 @@ def compare_release_cmd(
                 new_files = _collect_release_inputs(new_lib_dir)
         else:
             new_files = _collect_release_inputs(new_lib_dir)
+
+        # --dso-only: keep only ELF shared objects (ET_DYN), skip executables
+        if dso_only:
+            old_files = [f for f in old_files if _is_elf_shared_object(f)]
+            new_files = [f for f in new_files if _is_elf_shared_object(f)]
 
         old_map, old_warns = _build_match_map(old_files)
         new_map, new_warns = _build_match_map(new_files)
@@ -1262,13 +1271,22 @@ def compare_release_cmd(
         for key in matched_keys:
             old_path = old_map[key]
             new_path = new_map[key]
+            # Resolve per-binary debug info from extracted debug packages
+            old_dbg = (
+                resolve_debug_info(old_path, old_debug_dir)
+                if old_debug_dir else None
+            )
+            new_dbg = (
+                resolve_debug_info(new_path, new_debug_dir)
+                if new_debug_dir else None
+            )
             try:
                 result, _, _ = _run_compare_pair(
                     old_path, new_path,
                     old_h, new_h, old_inc, new_inc,
                     old_version, new_version,
                     lang, suppress, policy, policy_file_path,
-                    old_pdb_path=None, new_pdb_path=None,
+                    old_pdb_path=old_dbg, new_pdb_path=new_dbg,
                 )
             except (click.ClickException, click.UsageError) as exc:
                 msg = exc.format_message()
@@ -1375,13 +1393,14 @@ def compare_release_cmd(
         if fail_on_additions and any(lib.get("compatible_additions", 0) for lib in library_results):
             sys.exit(1)
     finally:
+        import shutil as _shutil
         if not keep_extracted:
-            for td in _temp_dirs:
-                td.cleanup()
-        elif _temp_dirs:
+            for td_path in _temp_dir_paths:
+                _shutil.rmtree(td_path, ignore_errors=True)
+        elif _temp_dir_paths:
+            kept_paths = ", ".join(_temp_dir_paths)
             click.echo(
-                f"Extracted files kept in: "
-                + ", ".join(td.name for td in _temp_dirs),
+                f"Extracted files kept in: {kept_paths}",
                 err=True,
             )
 

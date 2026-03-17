@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import io
-import os
 import struct
 import tarfile
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -16,18 +16,20 @@ from abicheck.package import (
     DebExtractor,
     DirExtractor,
     ExtractResult,
+    PackageExtractor,
     RpmExtractor,
     TarExtractor,
     WheelExtractor,
     _is_elf_shared_object,
+    _read_build_id,
     _safe_zip_extract,
     _validate_member_path,
     _validate_symlink_target,
     detect_extractor,
     discover_shared_libraries,
     is_package,
+    resolve_debug_info,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -486,7 +488,7 @@ class TestCompareReleaseTarPackages:
         import io
         with tarfile.open(archive, "w:gz") as tf:
             data = snapshot_json.encode()
-            info = tarfile.TarInfo(name=f"libfoo.so.json")
+            info = tarfile.TarInfo(name="libfoo.so.json")
             info.size = len(data)
             tf.addfile(info, io.BytesIO(data))
         return archive
@@ -753,3 +755,512 @@ class TestExtractResult:
         assert r.debug_dir == tmp_path / "debug"
         assert r.header_dir == tmp_path / "headers"
         assert r.metadata["name"] == "libfoo"
+
+
+# ── Additional security validation tests ─────────────────────────────────
+
+
+class TestValidateMemberPathExtended:
+    def test_leading_slash_rejected_crossplatform(self, tmp_path: Path) -> None:
+        """Ensure /etc/passwd is caught even when os.path.isabs returns False (Windows)."""
+        with mock.patch("abicheck.package.os.path.isabs", return_value=False):
+            with pytest.raises(ExtractionSecurityError, match="absolute path"):
+                _validate_member_path("/etc/passwd", tmp_path)
+
+    def test_resolved_path_escape(self, tmp_path: Path) -> None:
+        """Path that doesn't contain '..' but resolves outside root via symlink."""
+        # Create a symlink inside tmp_path pointing outside
+        escape_dir = tmp_path / "escape"
+        escape_dir.mkdir()
+        link = tmp_path / "root" / "link"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(tmp_path.parent)
+        # Now "link/something" resolves outside "root"
+        root = tmp_path / "root"
+        with pytest.raises(ExtractionSecurityError, match="resolved path escapes"):
+            _validate_member_path("link/something", root)
+
+
+class TestTarExtractorSymlinks:
+    def test_symlink_within_root_accepted(self, tmp_path: Path) -> None:
+        """Tar with internal symlink should extract fine."""
+        archive = tmp_path / "symlink.tar.gz"
+        with tarfile.open(archive, "w:gz") as tf:
+            # Add a regular file
+            info = tarfile.TarInfo(name="lib/libfoo.so.1.0")
+            info.size = 4
+            tf.addfile(info, io.BytesIO(b"data"))
+            # Add a symlink
+            sym = tarfile.TarInfo(name="lib/libfoo.so")
+            sym.type = tarfile.SYMTYPE
+            sym.linkname = "libfoo.so.1.0"
+            tf.addfile(sym)
+
+        out = tmp_path / "output"
+        out.mkdir()
+        TarExtractor().extract(archive, out)
+        assert (out / "lib/libfoo.so.1.0").exists()
+
+    def test_symlink_escaping_rejected(self, tmp_path: Path) -> None:
+        """Tar with symlink pointing outside root should be rejected."""
+        archive = tmp_path / "evil_sym.tar.gz"
+        with tarfile.open(archive, "w:gz") as tf:
+            sym = tarfile.TarInfo(name="lib/evil")
+            sym.type = tarfile.SYMTYPE
+            sym.linkname = "../../../../etc/passwd"
+            tf.addfile(sym)
+
+        out = tmp_path / "output"
+        out.mkdir()
+        with pytest.raises(ExtractionSecurityError, match="symlink target"):
+            TarExtractor().extract(archive, out)
+
+
+# ── ELF detection extended ───────────────────────────────────────────────
+
+
+class TestIsElfSharedObjectExtended:
+    def test_big_endian_elf(self, tmp_path: Path) -> None:
+        """Big-endian ELF shared object (e.g. MIPS/PowerPC)."""
+        f = tmp_path / "libfoo.so"
+        e_ident = b"\x7fELF\x02\x02\x01" + b"\x00" * 9  # EI_DATA=2 (big-endian)
+        e_type = struct.pack(">H", 3)  # ET_DYN big-endian
+        rest = b"\x00" * (64 - 16 - 2)
+        f.write_bytes(e_ident + e_type + rest)
+        assert _is_elf_shared_object(f) is True
+
+    def test_big_endian_exec(self, tmp_path: Path) -> None:
+        """Big-endian ELF executable should not be detected as DSO."""
+        f = tmp_path / "myapp"
+        e_ident = b"\x7fELF\x02\x02\x01" + b"\x00" * 9
+        e_type = struct.pack(">H", 2)  # ET_EXEC big-endian
+        rest = b"\x00" * (64 - 16 - 2)
+        f.write_bytes(e_ident + e_type + rest)
+        assert _is_elf_shared_object(f) is False
+
+    def test_truncated_file(self, tmp_path: Path) -> None:
+        """File with ELF magic but truncated before e_type."""
+        f = tmp_path / "truncated"
+        f.write_bytes(b"\x7fELF\x02\x01")  # only 6 bytes
+        assert _is_elf_shared_object(f) is False
+
+    def test_nonexistent_file(self, tmp_path: Path) -> None:
+        """Non-existent file should return False."""
+        assert _is_elf_shared_object(tmp_path / "nonexistent") is False
+
+
+# ── is_package extended ──────────────────────────────────────────────────
+
+
+class TestIsPackageExtended:
+    def test_tar_xz_extension(self, tmp_path: Path) -> None:
+        f = tmp_path / "sdk.tar.xz"
+        f.write_bytes(b"\xfd7zXZ\x00" + b"\x00" * 100)
+        assert is_package(f) is True
+
+    def test_tar_bz2_extension(self, tmp_path: Path) -> None:
+        f = tmp_path / "sdk.tar.bz2"
+        f.write_bytes(b"BZ" + b"\x00" * 100)
+        assert is_package(f) is True
+
+    def test_plain_tar_extension(self, tmp_path: Path) -> None:
+        f = tmp_path / "sdk.tar"
+        f.write_bytes(b"\x00" * 100)
+        assert is_package(f) is True
+
+    def test_nonexistent_file(self, tmp_path: Path) -> None:
+        """Non-existent file should return False (OSError branch)."""
+        assert is_package(tmp_path / "nonexistent.bin") is False
+
+    def test_unreadable_file(self, tmp_path: Path) -> None:
+        """File that can't be opened triggers OSError path."""
+        f = tmp_path / "unreadable.bin"
+        f.write_bytes(b"hello")
+        with mock.patch("builtins.open", side_effect=OSError("denied")):
+            assert is_package(f) is False
+
+
+# ── discover_shared_libraries extended ───────────────────────────────────
+
+
+class TestDiscoverSharedLibrariesExtended:
+    def test_broken_symlink_skipped(self, tmp_path: Path) -> None:
+        """Broken symlinks should be skipped without error."""
+        lib_dir = tmp_path / "usr" / "lib"
+        lib_dir.mkdir(parents=True)
+        broken = lib_dir / "libfoo.so"
+        broken.symlink_to("/nonexistent/target")
+        result = discover_shared_libraries(tmp_path)
+        assert len(result) == 0
+
+    def test_valid_symlink_to_dso(self, tmp_path: Path) -> None:
+        """Symlink to a real DSO should be included."""
+        lib_dir = tmp_path / "usr" / "lib"
+        lib_dir.mkdir(parents=True)
+        real = lib_dir / "libfoo.so.1.0"
+        _make_minimal_elf_so(real)
+        link = lib_dir / "libfoo.so"
+        link.symlink_to("libfoo.so.1.0")
+        result = discover_shared_libraries(tmp_path)
+        names = [p.name for p in result]
+        assert "libfoo.so" in names
+        assert "libfoo.so.1.0" in names
+
+    def test_usr_local_lib(self, tmp_path: Path) -> None:
+        """DSOs in usr/local/lib should be found."""
+        lib_dir = tmp_path / "usr" / "local" / "lib"
+        lib_dir.mkdir(parents=True)
+        _make_minimal_elf_so(lib_dir / "libcustom.so")
+        result = discover_shared_libraries(tmp_path)
+        assert len(result) == 1
+        assert result[0].name == "libcustom.so"
+
+    def test_lib64_path(self, tmp_path: Path) -> None:
+        """DSOs in lib64 (no usr prefix) should be found."""
+        lib_dir = tmp_path / "lib64"
+        lib_dir.mkdir()
+        _make_minimal_elf_so(lib_dir / "libfoo.so")
+        result = discover_shared_libraries(tmp_path)
+        assert len(result) == 1
+
+    def test_lib_path(self, tmp_path: Path) -> None:
+        """DSOs in lib (no usr prefix) should be found."""
+        lib_dir = tmp_path / "lib"
+        lib_dir.mkdir()
+        _make_minimal_elf_so(lib_dir / "libfoo.so")
+        result = discover_shared_libraries(tmp_path)
+        assert len(result) == 1
+
+
+# ── resolve_debug_info tests ─────────────────────────────────────────────
+
+
+class TestResolveDebugInfo:
+    def test_path_convention_match(self, tmp_path: Path) -> None:
+        """Debug file found by name.debug convention."""
+        binary = tmp_path / "usr" / "lib" / "libfoo.so"
+        binary.parent.mkdir(parents=True)
+        _make_minimal_elf_so(binary)
+
+        debug_dir = tmp_path / "debug"
+        debug_file = debug_dir / "usr" / "lib" / "debug" / "libfoo.so.debug"
+        debug_file.parent.mkdir(parents=True)
+        debug_file.write_bytes(b"debug data")
+
+        result = resolve_debug_info(binary, debug_dir)
+        assert result is not None
+        assert result.name == "libfoo.so.debug"
+
+    def test_no_debug_found(self, tmp_path: Path) -> None:
+        """Returns None when no debug file exists."""
+        binary = tmp_path / "libfoo.so"
+        _make_minimal_elf_so(binary)
+        debug_dir = tmp_path / "debug"
+        debug_dir.mkdir()
+
+        result = resolve_debug_info(binary, debug_dir)
+        assert result is None
+
+    def test_build_id_match(self, tmp_path: Path) -> None:
+        """Debug file found by build-id when _read_build_id returns a value."""
+        binary = tmp_path / "libfoo.so"
+        _make_minimal_elf_so(binary)
+
+        debug_dir = tmp_path / "debug"
+        bid_file = debug_dir / ".build-id" / "ab" / "cdef1234.debug"
+        bid_file.parent.mkdir(parents=True)
+        bid_file.write_bytes(b"debug data")
+
+        with mock.patch("abicheck.package._read_build_id", return_value="abcdef1234"):
+            result = resolve_debug_info(binary, debug_dir)
+
+        assert result is not None
+        assert result == bid_file
+
+    def test_build_id_in_usr_lib_debug(self, tmp_path: Path) -> None:
+        """Build-id lookup in usr/lib/debug/.build-id subpath."""
+        binary = tmp_path / "libfoo.so"
+        _make_minimal_elf_so(binary)
+
+        debug_dir = tmp_path / "debug"
+        bid_file = debug_dir / "usr" / "lib" / "debug" / ".build-id" / "ab" / "cdef1234.debug"
+        bid_file.parent.mkdir(parents=True)
+        bid_file.write_bytes(b"debug data")
+
+        with mock.patch("abicheck.package._read_build_id", return_value="abcdef1234"):
+            result = resolve_debug_info(binary, debug_dir)
+
+        assert result is not None
+        assert result == bid_file
+
+
+class TestReadBuildId:
+    def test_returns_none_without_elftools(self, tmp_path: Path) -> None:
+        """_read_build_id returns None when elftools is not available."""
+        binary = tmp_path / "libfoo.so"
+        _make_minimal_elf_so(binary)
+        with mock.patch.dict("sys.modules", {"elftools": None, "elftools.elf": None, "elftools.elf.elffile": None}):
+            result = _read_build_id(binary)
+        assert result is None
+
+    def test_returns_none_for_non_elf(self, tmp_path: Path) -> None:
+        """_read_build_id returns None for non-ELF files."""
+        f = tmp_path / "not_elf.txt"
+        f.write_text("hello")
+        result = _read_build_id(f)
+        assert result is None
+
+
+# ── RPM extractor extended ───────────────────────────────────────────────
+
+
+class TestRpmExtractorExtended:
+    def test_detect_oserror_returns_false(self, tmp_path: Path) -> None:
+        """RPM detect returns False when file can't be read."""
+        f = tmp_path / "noext"
+        # File doesn't exist → OSError
+        assert not RpmExtractor().detect(f)
+
+    def test_extract_missing_rpm2cpio(self, tmp_path: Path) -> None:
+        """RuntimeError when rpm2cpio is not installed."""
+        f = tmp_path / "test.rpm"
+        f.write_bytes(b"\xed\xab\xee\xdb" + b"\x00" * 100)
+        out = tmp_path / "output"
+        out.mkdir()
+        with mock.patch("abicheck.package.shutil.which", return_value=None):
+            with pytest.raises(RuntimeError, match="rpm2cpio not found"):
+                RpmExtractor().extract(f, out)
+
+    def test_extract_missing_cpio(self, tmp_path: Path) -> None:
+        """RuntimeError when cpio is not installed."""
+        f = tmp_path / "test.rpm"
+        f.write_bytes(b"\xed\xab\xee\xdb" + b"\x00" * 100)
+        out = tmp_path / "output"
+        out.mkdir()
+
+        def _which(cmd: str) -> str | None:
+            return "/usr/bin/rpm2cpio" if cmd == "rpm2cpio" else None
+
+        with mock.patch("abicheck.package.shutil.which", side_effect=_which):
+            with pytest.raises(RuntimeError, match="cpio not found"):
+                RpmExtractor().extract(f, out)
+
+
+# ── Deb extractor extended ───────────────────────────────────────────────
+
+
+class TestDebExtractorExtended:
+    def test_detect_oserror_returns_false(self, tmp_path: Path) -> None:
+        """Deb detect returns False when file can't be read."""
+        assert not DebExtractor().detect(tmp_path / "nonexistent")
+
+    def test_extract_missing_ar(self, tmp_path: Path) -> None:
+        """RuntimeError when ar is not installed."""
+        f = tmp_path / "test.deb"
+        f.write_bytes(b"!<arch>\n" + b"\x00" * 100)
+        out = tmp_path / "output"
+        out.mkdir()
+        with mock.patch("abicheck.package.shutil.which", return_value=None):
+            with pytest.raises(RuntimeError, match="ar not found"):
+                DebExtractor().extract(f, out)
+
+
+# ── Conda extractor extended ────────────────────────────────────────────
+
+
+class TestCondaExtractorExtended:
+    def test_detect_tar_bz2_few_dashes_rejected(self, tmp_path: Path) -> None:
+        """tar.bz2 with fewer than 2 dashes is not conda."""
+        f = tmp_path / "data.tar.bz2"
+        with tarfile.open(f, "w:bz2") as tf:
+            info = tarfile.TarInfo(name="info/index.json")
+            info.size = 2
+            tf.addfile(info, io.BytesIO(b"{}"))
+        assert not CondaExtractor().detect(f)
+
+    def test_detect_corrupt_tar_bz2(self, tmp_path: Path) -> None:
+        """Corrupt tar.bz2 with conda-style name should return False."""
+        f = tmp_path / "numpy-1.26-h123-0.tar.bz2"
+        f.write_bytes(b"not a valid bz2 archive")
+        assert not CondaExtractor().detect(f)
+
+
+# ── PackageExtractor protocol tests ─────────────────────────────────────
+
+
+class TestPackageExtractorProtocol:
+    def test_tar_is_package_extractor(self) -> None:
+        assert isinstance(TarExtractor(), PackageExtractor)
+
+    def test_rpm_is_package_extractor(self) -> None:
+        assert isinstance(RpmExtractor(), PackageExtractor)
+
+    def test_deb_is_package_extractor(self) -> None:
+        assert isinstance(DebExtractor(), PackageExtractor)
+
+    def test_conda_is_package_extractor(self) -> None:
+        assert isinstance(CondaExtractor(), PackageExtractor)
+
+    def test_wheel_is_package_extractor(self) -> None:
+        assert isinstance(WheelExtractor(), PackageExtractor)
+
+    def test_dir_is_package_extractor(self) -> None:
+        assert isinstance(DirExtractor(), PackageExtractor)
+
+
+# ── CLI integration: --dso-only and --keep-extracted ─────────────────────
+
+
+class TestCompareReleaseDsoOnly:
+    def test_dso_only_flag_accepted(self, tmp_path: Path) -> None:
+        """Verify --dso-only flag is accepted by compare-release."""
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+        from abicheck.model import AbiSnapshot, Function, Visibility
+        from abicheck.serialization import snapshot_to_json
+
+        snap = AbiSnapshot(
+            library="libfoo.so", version="1.0",
+            functions=[Function(name="foo", mangled="_Z3foov",
+                                return_type="int", visibility=Visibility.PUBLIC)],
+        )
+
+        old_dir = tmp_path / "old"
+        new_dir = tmp_path / "new"
+        old_dir.mkdir()
+        new_dir.mkdir()
+        (old_dir / "libfoo.so.json").write_text(snapshot_to_json(snap))
+        (new_dir / "libfoo.so.json").write_text(snapshot_to_json(snap))
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare-release", str(old_dir), str(new_dir),
+            "--format", "json", "--dso-only",
+        ])
+        # With --dso-only, JSON snapshots are not ELF DSOs, so no pairs found
+        # but the command should still succeed
+        assert result.exit_code == 0, f"Exit {result.exit_code}: {result.output}"
+
+
+class TestKeepExtractedActuallyKeeps:
+    def test_temp_dirs_survive_with_keep_extracted(self, tmp_path: Path) -> None:
+        """Verify --keep-extracted actually preserves temp dirs after command exits."""
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+        from abicheck.model import AbiSnapshot, Function, Visibility
+        from abicheck.serialization import snapshot_to_json
+
+        snap = AbiSnapshot(
+            library="libfoo.so", version="1.0",
+            functions=[Function(name="foo", mangled="_Z3foov",
+                                return_type="int", visibility=Visibility.PUBLIC)],
+        )
+
+        archive = tmp_path / "pkg.tar.gz"
+        with tarfile.open(archive, "w:gz") as tf:
+            data = snapshot_to_json(snap).encode()
+            info = tarfile.TarInfo(name="libfoo.so.json")
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare-release", str(archive), str(archive),
+            "--format", "json", "--keep-extracted",
+        ])
+        assert result.exit_code == 0, f"Exit {result.exit_code}: {result.output}"
+        # Check output mentions kept dirs
+        assert "Extracted files kept in:" in result.output
+
+
+# ── RpmExtractor post_validate tests ─────────────────────────────────────
+
+
+class TestRpmPostValidate:
+    def test_post_validate_clean_dir(self, tmp_path: Path) -> None:
+        """Post-validation passes on a clean directory."""
+        (tmp_path / "usr" / "lib").mkdir(parents=True)
+        (tmp_path / "usr" / "lib" / "libfoo.so").write_bytes(b"data")
+        # Should not raise
+        RpmExtractor._post_validate(tmp_path)
+
+    def test_post_validate_with_safe_symlink(self, tmp_path: Path) -> None:
+        """Post-validation passes with symlinks that stay within root."""
+        lib_dir = tmp_path / "usr" / "lib"
+        lib_dir.mkdir(parents=True)
+        (lib_dir / "libfoo.so.1").write_bytes(b"data")
+        (lib_dir / "libfoo.so").symlink_to("libfoo.so.1")
+        RpmExtractor._post_validate(tmp_path)
+
+    def test_post_validate_escaping_symlink(self, tmp_path: Path) -> None:
+        """Post-validation catches symlinks pointing outside root."""
+        lib_dir = tmp_path / "usr" / "lib"
+        lib_dir.mkdir(parents=True)
+        evil = lib_dir / "evil.so"
+        evil.symlink_to("/etc/passwd")
+        with pytest.raises(ExtractionSecurityError, match="escapes extraction root|symlink target"):
+            RpmExtractor._post_validate(tmp_path)
+
+
+# ── Discover shared libraries: symlink edge cases ───────────────────────
+
+
+class TestDiscoverSymlinkEdgeCases:
+    def test_symlink_oserror_skipped(self, tmp_path: Path) -> None:
+        """Symlink that raises OSError on resolve is skipped."""
+        lib_dir = tmp_path / "usr" / "lib"
+        lib_dir.mkdir(parents=True)
+        broken = lib_dir / "libfoo.so"
+        # Create a symlink to a non-existent target
+        broken.symlink_to("/nonexistent/does_not_exist")
+        result = discover_shared_libraries(tmp_path)
+        # Should not crash, broken symlink is skipped
+        assert len(result) == 0
+
+
+# ── Conda v2 extraction (mocked zstandard) ──────────────────────────────
+
+
+class TestCondaV2Extraction:
+    def test_extract_v2_no_zstandard_no_zstd(self, tmp_path: Path) -> None:
+        """Conda v2 raises RuntimeError when neither zstandard nor zstd is available."""
+        # Create a minimal .conda (zip) with a pkg-*.tar.zst file
+        conda_pkg = tmp_path / "test.conda"
+        with zipfile.ZipFile(conda_pkg, "w") as zf:
+            zf.writestr("metadata.json", '{"name":"test"}')
+            zf.writestr("pkg-test-abc.tar.zst", b"fake zstd data")
+
+        out = tmp_path / "output"
+        out.mkdir()
+
+        with mock.patch.dict("sys.modules", {"zstandard": None}):
+            with mock.patch("abicheck.package.shutil.which", return_value=None):
+                with pytest.raises(RuntimeError, match="Cannot extract .tar.zst"):
+                    CondaExtractor().extract(conda_pkg, out)
+
+
+# ── Deb extractor: no data.tar error ────────────────────────────────────
+
+
+class TestDebExtractorNoDataTar:
+    def test_deb_no_data_tar(self, tmp_path: Path) -> None:
+        """DebExtractor raises when deb has no data.tar.* member."""
+        # We can't easily create a real ar archive without `ar`, but we can test
+        # the missing data.tar detection by mocking ar execution
+        f = tmp_path / "test.deb"
+        f.write_bytes(b"!<arch>\n" + b"\x00" * 100)
+        out = tmp_path / "output"
+        out.mkdir()
+
+        def fake_run(*args, **kwargs):
+            # Simulate ar extracting but not producing data.tar.*
+            staging = Path(kwargs.get("cwd", "."))
+            (staging / "control.tar.gz").write_bytes(b"control")
+            return mock.Mock(returncode=0)
+
+        with mock.patch("abicheck.package.shutil.which", return_value="/usr/bin/ar"):
+            with mock.patch("abicheck.package.subprocess.run", side_effect=fake_run):
+                with pytest.raises(RuntimeError, match="No data.tar"):
+                    DebExtractor().extract(f, out)

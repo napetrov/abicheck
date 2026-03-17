@@ -15,8 +15,7 @@
 """Package extraction layer for compare-release (ADR-006).
 
 Converts RPM, Deb, tar, conda, pip wheel packages into directories that
-the existing compare-release pipeline can process.  Also supports
-downloading packages by name via apt, yum, and zypper.
+the existing compare-release pipeline can process.
 
 The extraction flow is:
 
@@ -67,8 +66,9 @@ def _validate_member_path(member_name: str, target_root: Path) -> Path:
     Raises ExtractionSecurityError if the member contains path traversal,
     absolute paths, or resolves outside the extraction root.
     """
-    # Reject absolute paths
-    if os.path.isabs(member_name):
+    # Reject absolute paths (check both OS-native and POSIX-style leading slash
+    # so that "/etc/passwd" is caught on Windows too, where os.path.isabs("/…") is False)
+    if os.path.isabs(member_name) or member_name.startswith("/"):
         raise ExtractionSecurityError(member_name, "absolute path in archive member")
 
     # Reject path traversal components
@@ -151,9 +151,9 @@ class TarExtractor:
             # All members validated — now extract
             # Use data_filter if available (Python 3.12+), otherwise manual
             if sys.version_info >= (3, 12):
-                tf.extractall(path=target_dir, filter="data")
+                tf.extractall(path=target_dir, filter="data")  # nosec B202 — members validated above
             else:
-                tf.extractall(path=target_dir)
+                tf.extractall(path=target_dir)  # nosec B202 — members validated above
 
 
 # ── RPM extractor ────────────────────────────────────────────────────────────
@@ -316,7 +316,7 @@ def _safe_zip_extract(archive_path: Path, target_dir: Path) -> None:
     with zipfile.ZipFile(archive_path, "r") as zf:
         for info in zf.infolist():
             _validate_member_path(info.filename, target_root)
-        zf.extractall(path=target_dir)
+        zf.extractall(path=target_dir)  # nosec B202 — members validated above
 
 
 # ── Conda extractor ─────────────────────────────────────────────────────────
@@ -365,8 +365,6 @@ class CondaExtractor:
     @staticmethod
     def _extract_v2(conda_path: Path, target_dir: Path) -> None:
         """Extract .conda v2 format (zip containing tar.zst payloads)."""
-        target_root = target_dir.resolve()
-
         # First extract the outer zip
         staging = Path(tempfile.mkdtemp(dir=target_dir, prefix=".conda_staging_"))
         try:
@@ -406,9 +404,9 @@ class CondaExtractor:
                     with dctx.stream_reader(compressed2) as reader2:
                         with tarfile.open(fileobj=reader2, mode="r|") as tf2:
                             if sys.version_info >= (3, 12):
-                                tf2.extractall(path=target_dir, filter="data")
+                                tf2.extractall(path=target_dir, filter="data")  # nosec B202
                             else:
-                                tf2.extractall(path=target_dir)
+                                tf2.extractall(path=target_dir)  # nosec B202
             return
         except ImportError:
             pass
@@ -526,9 +524,9 @@ def _is_elf_shared_object(path: Path) -> bool:
             magic = f.read(4)
             if magic != _ELF_MAGIC:
                 return False
-            # Skip EI_CLASS (byte 4) to determine endianness
-            ei_class = struct.unpack("B", f.read(1))[0]
-            ei_data = struct.unpack("B", f.read(1))[0]  # byte 5
+            # Read EI_CLASS (byte 4), then EI_DATA (byte 5) for endianness
+            f.read(1)  # ei_class — not needed for type detection
+            ei_data = struct.unpack("B", f.read(1))[0]
 
             # Seek to e_type at offset 16
             f.seek(16)
