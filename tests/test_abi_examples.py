@@ -1,8 +1,9 @@
 """Integration tests for ABI check examples (legacy — cases 01-18).
 
 Superseded by test_example_autodiscovery.py which auto-discovers all cases.
-Kept for backward compatibility. Uses CMake when available, falls back to
-direct compilation.
+Kept for backward compatibility on Linux.  Skipped in CI integration runs
+to avoid duplicate cmake-configure overhead (especially costly on Windows
+where each configure adds ~30 s).
 """
 from __future__ import annotations
 
