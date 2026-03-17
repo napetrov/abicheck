@@ -23,6 +23,19 @@ specify the PDB file location if automatic discovery fails.
 
 ---
 
+
+### Windows toolchain distinction
+
+Windows support depends on the compiler/toolchain used for headers and binary production:
+
+| Toolchain | Status | Notes |
+|----------|--------|-------|
+| MinGW (GCC) | **Experimental** | Covered by current CI smoke/integration jobs. |
+| MSVC (`cl.exe`) | **Untested in CI** | Expected to work in many cases, but not yet validated end-to-end in project CI. |
+
+Tracked ABICC compatibility issues for this area: **#9, #50, #56, #121**.
+For detailed matrix + per-issue notes, see [Platform Support](../reference/platforms.md#windows-toolchain-support-matrix).
+
 ## Header / Binary Mismatch Risk
 
 **The most important limitation.** `abicheck` uses `castxml` to parse headers and
