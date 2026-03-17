@@ -55,6 +55,12 @@ if [[ "$MODE" == "dump" ]]; then
     CMD+=(--nostdinc)
   fi
 
+  if [[ "${INPUT_FOLLOW_DEPS:-false}" == "true" ]]; then
+    CMD+=(--follow-deps)
+    add_flag "--search-path" "${INPUT_SEARCH_PATH:-}"
+    add_single_flag "--ld-library-path" "${INPUT_LD_LIBRARY_PATH:-}"
+  fi
+
   # Output file — required for dump in action context (otherwise stdout)
   OUTPUT_FILE="${INPUT_OUTPUT_FILE:-abicheck-baseline.json}"
   CMD+=(-o "$OUTPUT_FILE")
@@ -96,13 +102,54 @@ elif [[ "$MODE" == "compare" ]]; then
     CMD+=(--fail-on-additions)
   fi
 
+  if [[ "${INPUT_FOLLOW_DEPS:-false}" == "true" ]]; then
+    CMD+=(--follow-deps)
+    add_flag "--search-path" "${INPUT_SEARCH_PATH:-}"
+    add_single_flag "--ld-library-path" "${INPUT_LD_LIBRARY_PATH:-}"
+  fi
+
   # Note: --gcc-path, --gcc-prefix, --gcc-options, --sysroot, --nostdinc are
   # dump-only flags. In compare mode abicheck performs the dump internally
   # when an input is a binary, but these cross-compilation flags are not
   # exposed on the compare CLI. They are only passed in dump mode.
 
+elif [[ "$MODE" == "deps" ]]; then
+  # ── Deps mode (Linux ELF) ───────────────────────────────────────────────
+  CMD+=(deps)
+  CMD+=("${INPUT_NEW_LIBRARY:?new-library is required for deps mode}")
+
+  add_single_flag "--sysroot" "${INPUT_SYSROOT:-}"
+  add_flag "--search-path" "${INPUT_SEARCH_PATH:-}"
+  add_single_flag "--ld-library-path" "${INPUT_LD_LIBRARY_PATH:-}"
+
+  FORMAT="${INPUT_FORMAT:-markdown}"
+  CMD+=(--format "$FORMAT")
+
+  OUTPUT_FILE="${INPUT_OUTPUT_FILE:-}"
+  if [[ -n "$OUTPUT_FILE" ]]; then
+    CMD+=(-o "$OUTPUT_FILE")
+  fi
+
+elif [[ "$MODE" == "stack-check" ]]; then
+  # ── Stack-check mode (Linux ELF) ────────────────────────────────────────
+  CMD+=(stack-check)
+  CMD+=("${INPUT_NEW_LIBRARY:?new-library (binary path) is required for stack-check mode}")
+  CMD+=(--baseline "${INPUT_BASELINE:?baseline is required for stack-check mode}")
+  CMD+=(--candidate "${INPUT_CANDIDATE:?candidate is required for stack-check mode}")
+
+  add_flag "--search-path" "${INPUT_SEARCH_PATH:-}"
+  add_single_flag "--ld-library-path" "${INPUT_LD_LIBRARY_PATH:-}"
+
+  FORMAT="${INPUT_FORMAT:-markdown}"
+  CMD+=(--format "$FORMAT")
+
+  OUTPUT_FILE="${INPUT_OUTPUT_FILE:-}"
+  if [[ -n "$OUTPUT_FILE" ]]; then
+    CMD+=(-o "$OUTPUT_FILE")
+  fi
+
 else
-  echo "::error::Unknown mode '$MODE'. Use 'compare' or 'dump'."
+  echo "::error::Unknown mode '$MODE'. Use 'compare', 'dump', 'deps', or 'stack-check'."
   exit 1
 fi
 
@@ -141,38 +188,80 @@ echo "::endgroup::"
 # ---------------------------------------------------------------------------
 # Map exit code to verdict
 # ---------------------------------------------------------------------------
-# abicheck exit codes: 0=compatible, 2=API_BREAK, 4=BREAKING.
-# However, Click (the CLI framework) also uses exit code 2 for usage/argument
-# errors (e.g. invalid option, missing required arg). We distinguish them by
-# checking stderr for Click's "Error:" or "Usage:" markers.
 STDERR_CONTENT=""
 if [[ -s "$STDERR_FILE" ]]; then
   STDERR_CONTENT=$(cat "$STDERR_FILE")
 fi
 
-if [[ $ABICHECK_EXIT -eq 2 ]] && echo "$STDERR_CONTENT" | grep -qE '(^Usage:|^Error:|^Try )'; then
-  # This is a CLI/argument error, not a real API_BREAK verdict
-  VERDICT="ERROR"
-  echo "::error::abicheck failed due to a CLI argument or configuration error (exit code 2)."
-  echo "::error::Check the command and inputs above. This is NOT an API break — the check did not run."
+_is_cli_error() {
+  echo "$STDERR_CONTENT" | grep -qE '(^Usage:|^Error:|^Try |Traceback|click\.)'
+}
+
+if [[ "$MODE" == "stack-check" ]]; then
+  # stack-check exit codes: 0=PASS, 1=WARN, 4=FAIL
+  if _is_cli_error; then
+    VERDICT="ERROR"
+    echo "::error::abicheck stack-check failed due to a CLI error (exit code $ABICHECK_EXIT)."
+  else
+    case $ABICHECK_EXIT in
+      0) VERDICT="PASS" ;;
+      1) VERDICT="WARN" ;;
+      4) VERDICT="FAIL" ;;
+      *) VERDICT="ERROR" ;;
+    esac
+  fi
+
+elif [[ "$MODE" == "deps" ]]; then
+  # deps exit codes: 0=OK, 1=missing deps/symbols
+  if _is_cli_error; then
+    VERDICT="ERROR"
+    echo "::error::abicheck deps failed due to a CLI error (exit code $ABICHECK_EXIT)."
+  else
+    case $ABICHECK_EXIT in
+      0) VERDICT="PASS" ;;
+      1) VERDICT="FAIL" ;;
+      *) VERDICT="ERROR" ;;
+    esac
+  fi
+
+elif [[ "$MODE" == "dump" ]]; then
+  # dump exit codes: 0=success, anything else=error.
+  # dump never produces ADDITIONS/API_BREAK/BREAKING verdicts.
+  if [[ $ABICHECK_EXIT -eq 0 ]]; then
+    VERDICT="COMPATIBLE"
+  else
+    VERDICT="ERROR"
+    if _is_cli_error; then
+      echo "::error::abicheck dump failed due to a CLI argument or configuration error (exit code $ABICHECK_EXIT)."
+    else
+      echo "::error::abicheck dump failed (exit code $ABICHECK_EXIT)."
+    fi
+  fi
+
 else
-  case $ABICHECK_EXIT in
-    0) VERDICT="COMPATIBLE" ;;
-    1)
-      # Exit code 1 is produced by --fail-on-additions for genuine API expansion.
-      # Guard against Click CLI/parse errors that also exit 1 (e.g. bad flags).
-      if echo "$STDERR_CONTENT" | grep -qE '(^Usage:|^Error:|^Try |Traceback|click\.)'; then
-        VERDICT="ERROR"
-        echo "::error::abicheck failed due to a CLI argument or configuration error (exit code 1)."
-        echo "::error::Check the command and inputs above."
-      else
-        VERDICT="ADDITIONS"
-      fi
-      ;;
-    2) VERDICT="API_BREAK" ;;
-    4) VERDICT="BREAKING" ;;
-    *) VERDICT="ERROR" ;;
-  esac
+  # compare exit codes: 0=compatible, 1=additions, 2=API_BREAK, 4=BREAKING
+  # Click also uses exit code 2 for usage/argument errors — detect via stderr.
+  if [[ $ABICHECK_EXIT -eq 2 ]] && echo "$STDERR_CONTENT" | grep -qE '(^Usage:|^Error:|^Try )'; then
+    VERDICT="ERROR"
+    echo "::error::abicheck failed due to a CLI argument or configuration error (exit code 2)."
+    echo "::error::Check the command and inputs above. This is NOT an API break — the check did not run."
+  else
+    case $ABICHECK_EXIT in
+      0) VERDICT="COMPATIBLE" ;;
+      1)
+        if _is_cli_error; then
+          VERDICT="ERROR"
+          echo "::error::abicheck failed due to a CLI argument or configuration error (exit code 1)."
+          echo "::error::Check the command and inputs above."
+        else
+          VERDICT="ADDITIONS"
+        fi
+        ;;
+      2) VERDICT="API_BREAK" ;;
+      4) VERDICT="BREAKING" ;;
+      *) VERDICT="ERROR" ;;
+    esac
+  fi
 fi
 
 echo "abicheck verdict: $VERDICT (exit code $ABICHECK_EXIT)"
@@ -194,7 +283,7 @@ echo "abicheck verdict: $VERDICT (exit code $ABICHECK_EXIT)"
 # ---------------------------------------------------------------------------
 # Job Summary
 # ---------------------------------------------------------------------------
-if [[ "${INPUT_ADD_JOB_SUMMARY:-true}" == "true" && "$MODE" == "compare" ]]; then
+if [[ "${INPUT_ADD_JOB_SUMMARY:-true}" == "true" && "$MODE" != "dump" ]]; then
   {
     echo "## abicheck ABI Compatibility Report"
     echo ""
@@ -212,6 +301,15 @@ if [[ "${INPUT_ADD_JOB_SUMMARY:-true}" == "true" && "$MODE" == "compare" ]]; the
       BREAKING)
         echo "> **Verdict: BREAKING** — Binary ABI break detected. Existing binaries will fail at runtime."
         ;;
+      PASS)
+        echo "> **Verdict: PASS** — Binary loads and no harmful ABI changes detected."
+        ;;
+      WARN)
+        echo "> **Verdict: WARN** ⚠️ — Binary loads but ABI risk detected in dependencies."
+        ;;
+      FAIL)
+        echo "> **Verdict: FAIL** — Load failure or ABI break in dependency stack."
+        ;;
       ERROR)
         echo "> **Verdict: ERROR** — abicheck encountered an error (exit code $ABICHECK_EXIT)."
         ;;
@@ -220,9 +318,18 @@ if [[ "${INPUT_ADD_JOB_SUMMARY:-true}" == "true" && "$MODE" == "compare" ]]; the
     echo ""
     echo "| Property | Value |"
     echo "|----------|-------|"
-    echo "| Old | \`${INPUT_OLD_LIBRARY:-}\` (${INPUT_OLD_VERSION:-old}) |"
-    echo "| New | \`${INPUT_NEW_LIBRARY:-}\` (${INPUT_NEW_VERSION:-new}) |"
-    echo "| Policy | ${INPUT_POLICY:-strict_abi} |"
+    if [[ "$MODE" == "compare" ]]; then
+      echo "| Old | \`${INPUT_OLD_LIBRARY:-}\` (${INPUT_OLD_VERSION:-old}) |"
+      echo "| New | \`${INPUT_NEW_LIBRARY:-}\` (${INPUT_NEW_VERSION:-new}) |"
+      echo "| Policy | ${INPUT_POLICY:-strict_abi} |"
+    elif [[ "$MODE" == "stack-check" ]]; then
+      echo "| Binary | \`${INPUT_NEW_LIBRARY:-}\` |"
+      echo "| Baseline | \`${INPUT_BASELINE:-}\` |"
+      echo "| Candidate | \`${INPUT_CANDIDATE:-}\` |"
+    elif [[ "$MODE" == "deps" ]]; then
+      echo "| Binary | \`${INPUT_NEW_LIBRARY:-}\` |"
+    fi
+    echo "| Mode | $MODE |"
     echo "| Format | ${INPUT_FORMAT:-markdown} |"
     if [[ -n "${OUTPUT_FILE:-}" ]]; then
       echo "| Report | \`${OUTPUT_FILE}\` |"
@@ -247,24 +354,41 @@ fi
 # ---------------------------------------------------------------------------
 FINAL_EXIT=0
 
-if [[ $ABICHECK_EXIT -eq 4 && "${INPUT_FAIL_ON_BREAKING:-true}" == "true" ]]; then
-  echo "::error::ABI break detected. Set fail-on-breaking: false to continue despite breaks."
-  FINAL_EXIT=1
-fi
-
-if [[ "$VERDICT" == "API_BREAK" && "${INPUT_FAIL_ON_API_BREAK:-false}" == "true" ]]; then
-  echo "::error::API break detected. Set fail-on-api-break: false to ignore API-level breaks."
-  FINAL_EXIT=1
-fi
-
-if [[ "$VERDICT" == "ADDITIONS" && "${INPUT_FAIL_ON_ADDITIONS:-false}" == "true" ]]; then
-  echo "::error::API additions detected (unintentional API expansion). Set fail-on-additions: false to allow."
-  FINAL_EXIT=1
-fi
-
 if [[ "$VERDICT" == "ERROR" ]]; then
   echo "::error::abicheck failed with exit code $ABICHECK_EXIT"
   FINAL_EXIT=1
+
+elif [[ "$MODE" == "stack-check" || "$MODE" == "deps" ]]; then
+  # stack-check: FAIL always fails; WARN fails when fail-on-breaking is true
+  # deps: FAIL always fails the step
+  if [[ "$VERDICT" == "FAIL" ]]; then
+    echo "::error::Full-stack check failed (load failure or ABI break)."
+    FINAL_EXIT=1
+  elif [[ "$VERDICT" == "WARN" && "${INPUT_FAIL_ON_BREAKING:-true}" == "true" ]]; then
+    echo "::warning::ABI risk detected in dependency stack. Set fail-on-breaking: false to allow."
+    FINAL_EXIT=1
+  fi
+
+elif [[ "$MODE" == "dump" ]]; then
+  # dump: non-zero is always an error (already mapped to ERROR above)
+  :
+
+else
+  # compare mode
+  if [[ $ABICHECK_EXIT -eq 4 && "${INPUT_FAIL_ON_BREAKING:-true}" == "true" ]]; then
+    echo "::error::ABI break detected. Set fail-on-breaking: false to continue despite breaks."
+    FINAL_EXIT=1
+  fi
+
+  if [[ "$VERDICT" == "API_BREAK" && "${INPUT_FAIL_ON_API_BREAK:-false}" == "true" ]]; then
+    echo "::error::API break detected. Set fail-on-api-break: false to ignore API-level breaks."
+    FINAL_EXIT=1
+  fi
+
+  if [[ "$VERDICT" == "ADDITIONS" && "${INPUT_FAIL_ON_ADDITIONS:-false}" == "true" ]]; then
+    echo "::error::API additions detected (unintentional API expansion). Set fail-on-additions: false to allow."
+    FINAL_EXIT=1
+  fi
 fi
 
 exit $FINAL_EXIT

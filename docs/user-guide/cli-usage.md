@@ -223,16 +223,53 @@ Legend: ✅ strong support, ⚠️ partial/conditional, ❌ generally not covere
 
 ## Architecture and dependencies
 
+### 5) Full-stack dependency validation (Linux ELF)
+
+Resolve the full dependency tree, simulate symbol binding, and produce a
+stack-level ABI compatibility verdict.
+
+```bash
+# Show dependency tree + symbol binding status
+abicheck deps /usr/bin/python3
+abicheck deps /usr/bin/python3 --format json
+
+# Compare a binary's full stack across two sysroots
+abicheck stack-check usr/bin/myapp \
+    --baseline /rootfs/v1 --candidate /rootfs/v2
+
+# Include dependency info in dump/compare
+abicheck dump libfoo.so -H foo.h --follow-deps -o snap.json
+abicheck compare old.so new.so -H foo.h --follow-deps
+```
+
+The `deps` command resolves the transitive dependency closure and displays:
+- Dependency tree with resolution reasons (rpath, runpath, default, etc.)
+- Unresolved libraries
+- Symbol binding summary (resolved, missing, version mismatches)
+
+The `stack-check` command compares two environments and reports:
+- Loadability verdict (will the binary load?)
+- ABI risk verdict (are there breaking changes in dependencies?)
+- Per-library ABI diffs intersected with actual symbol usage
+
+The `--follow-deps` flag on `dump` and `compare` includes dependency graph
+and binding information in the output alongside the regular ABI diff.
+
 ## High-level architecture
 
 ```text
 CLI
   dump                         — dump ABI snapshot to JSON
   compare                      — compare two ABI surfaces
+  deps                         — show dependency tree + binding status (Linux ELF)
+  stack-check                  — full-stack comparison across environments (Linux ELF)
   compat check                 — ABICC drop-in comparison
   compat dump                  — dump from ABICC XML descriptor
     -> dumper (castxml AST + ELF metadata)
     -> checker (rule-based diff + severity)
+    -> resolver (transitive dependency resolution)
+    -> binder (symbol binding simulation)
+    -> stack_checker (stack-level ABI comparison)
     -> reporters (markdown/json/sarif/html)
 ```
 
@@ -241,6 +278,10 @@ CLI
 - `abicheck.cli` — command-line entrypoints.
 - `abicheck.dumper` — snapshot construction from headers + binary metadata.
 - `abicheck.checker` — change detection and breakage classification.
+- `abicheck.resolver` — transitive ELF dependency resolution with loader-accurate search order.
+- `abicheck.binder` — symbol binding simulation across a resolved dependency graph.
+- `abicheck.stack_checker` — stack-level ABI comparison and verdict computation.
+- `abicheck.stack_report` — JSON and Markdown output for stack-level results.
 - `abicheck.compat` — ABICC compatibility layer (`abicheck.compat.descriptor`, `abicheck.compat.xml_report`, `abicheck.compat.cli`, `abicheck.compat.abicc_dump_import`).
 - `abicheck.reporter` / `abicheck.sarif` / `abicheck.html_report` — output generators.
 - `abicheck.elf_metadata`, `abicheck.dwarf_metadata`, `abicheck.dwarf_advanced` — low-level binary metadata extraction.

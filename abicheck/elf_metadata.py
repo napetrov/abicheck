@@ -72,6 +72,16 @@ class ElfSymbol:
 
 
 @dataclass
+class ElfImport:
+    """An undefined (imported) dynamic symbol — what this DSO requires."""
+    name: str
+    binding: SymbolBinding = SymbolBinding.GLOBAL  # GLOBAL or WEAK
+    sym_type: SymbolType = SymbolType.NOTYPE
+    version: str = ""       # required version tag (from .gnu.version + .gnu.version_r)
+    is_default: bool = True  # @@default vs @specific
+
+
+@dataclass
 class ElfMetadata:
     """ELF dynamic-section + symbol metadata for one .so.
 
@@ -91,6 +101,12 @@ class ElfMetadata:
 
     # Exported symbols (.dynsym, GLOBAL/WEAK, not UND, not hidden/internal)
     symbols: list[ElfSymbol] = field(default_factory=list)
+
+    # Imported symbols (.dynsym, SHN_UNDEF, GLOBAL/WEAK)
+    imports: list[ElfImport] = field(default_factory=list)
+
+    # ELF interpreter (PT_INTERP, e.g. /lib64/ld-linux-x86-64.so.2)
+    interpreter: str = ""
 
     @cached_property
     def symbol_map(self) -> dict[str, ElfSymbol]:
@@ -158,20 +174,44 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
     meta = ElfMetadata()
     elf = ELFFile(f)
 
+    # Extract PT_INTERP (ELF interpreter path).
+    try:
+        for seg in elf.iter_segments():
+            if seg.header.p_type == "PT_INTERP":
+                # PT_INTERP contains a null-terminated path string.
+                meta.interpreter = seg.get_interp_name()
+                break
+    except Exception as exc:  # noqa: BLE001
+        log.warning("parse_elf_metadata: failed to read PT_INTERP from %s: %s", so_path, exc)
+
+    # Build separate version-index maps from .gnu.version_d and .gnu.version_r.
+    # Verdef and verneed indices are normally non-overlapping, but separating
+    # them prevents mis-attribution if a malformed ELF reuses an index.
+    verdef_index_map: dict[int, tuple[str, str, bool]] = {}   # idx → ("", ver, True)
+    verneed_index_map: dict[int, tuple[str, str, bool]] = {}  # idx → (lib, ver, False)
+
     for section in elf.iter_sections():
         try:
             if isinstance(section, DynamicSection):
                 _parse_dynamic(section, meta)
             elif isinstance(section, GNUVerDefSection):
                 _parse_version_def(section, meta)
+                _build_verdef_index(section, verdef_index_map)
             elif isinstance(section, GNUVerNeedSection):
                 _parse_version_need(section, meta)
+                _build_verneed_index(section, verneed_index_map)
             elif isinstance(section, SymbolTableSection) and section.name == ".dynsym":
                 _parse_dynsym(section, meta)
         except Exception as exc:  # noqa: BLE001
             # Partial-success: log malformed section, keep results from other sections.
             log.warning("parse_elf_metadata: skipping malformed section %r in %s: %s",
                         section.name, so_path, exc)
+
+    # Merge: verdef entries take priority over verneed on index collision.
+    ver_index_map: dict[int, tuple[str, str, bool]] = {**verneed_index_map, **verdef_index_map}
+
+    # Parse .gnu.version to correlate per-symbol version entries.
+    _correlate_symbol_versions(elf, meta, ver_index_map, so_path)
 
     # Post-loop: filter out version-definition auxiliary symbols.
     # GNU ld emits these as OBJECT/size=0 in .dynsym; lld/gold may use NOTYPE.
@@ -315,17 +355,29 @@ def _guess_symbol_origin(name: str, needed_libs: list[str]) -> str | None:
 
 def _parse_dynsym(section: SymbolTableSection, meta: ElfMetadata) -> None:
     for sym in section.iter_symbols():
-        # Skip undefined (imported) and absolute (version-def markers) symbols.
-        # GNU ld emits version-def aux symbols (e.g. LIBFOO_1.0) as SHN_ABS;
-        # skipping them here is consistent with _pyelftools_exported_symbols.
-        if sym.entry.st_shndx in ("SHN_UNDEF", "SHN_ABS"):
-            continue
-
         binding_str = sym.entry.st_info.bind
         type_str = sym.entry.st_info.type
         vis_str = sym.entry.st_other.visibility
-
         binding = _BINDING_MAP.get(binding_str, SymbolBinding.OTHER)
+        name = sym.name
+
+        # Collect undefined symbols as imports.
+        if sym.entry.st_shndx == "SHN_UNDEF":
+            if not name or binding == SymbolBinding.LOCAL:
+                continue
+            sym_type = _TYPE_MAP.get(type_str, SymbolType.NOTYPE)
+            meta.imports.append(ElfImport(
+                name=name,
+                binding=binding,
+                sym_type=sym_type,
+                version="",  # correlated later via .gnu.version
+                is_default=True,
+            ))
+            continue
+
+        # Skip absolute (version-def markers).
+        if sym.entry.st_shndx == "SHN_ABS":
+            continue
 
         # Skip local symbols — not part of public ABI surface
         if binding == SymbolBinding.LOCAL:
@@ -336,7 +388,6 @@ def _parse_dynsym(section: SymbolTableSection, meta: ElfMetadata) -> None:
             continue
 
         sym_type = _TYPE_MAP.get(type_str, SymbolType.OTHER)
-        name = sym.name
 
         # NOTE: pyelftools does NOT embed version suffixes (@@/@ notation) in
         # sym.name — that's a readelf text-output artifact. Symbol version info
@@ -354,3 +405,150 @@ def _parse_dynsym(section: SymbolTableSection, meta: ElfMetadata) -> None:
             visibility=vis_str.replace("STV_", "").lower(),
             origin_lib=_guess_symbol_origin(name, meta.needed),
         ))
+
+
+def _build_verdef_index(
+    section: GNUVerDefSection,
+    ver_index_map: dict[int, tuple[str, str, bool]],
+) -> None:
+    """Build version-index → (lib="", version_name, is_defined=True) from .gnu.version_d."""
+    VER_FLG_BASE = 0x1  # noqa: N806
+    for verdef, verdaux_iter in section.iter_versions():
+        is_base = bool(verdef.entry.vd_flags & VER_FLG_BASE)
+        idx = verdef.entry.vd_ndx
+        for verdaux in verdaux_iter:
+            name = verdaux.name
+            if name and not is_base:
+                ver_index_map[idx] = ("", name, True)
+            break  # only first verdaux is the version name
+
+
+def _build_verneed_index(
+    section: GNUVerNeedSection,
+    ver_index_map: dict[int, tuple[str, str, bool]],
+) -> None:
+    """Build version-index → (library, version_name, is_defined=False) from .gnu.version_r."""
+    for verneed, vernaux_iter in section.iter_versions():
+        lib = verneed.name
+        for vernaux in vernaux_iter:
+            idx = vernaux.entry.vna_other
+            name = vernaux.name
+            if name:
+                ver_index_map[idx] = (lib, name, False)
+
+
+def _is_import_sym(sym: object) -> bool:
+    """Check if a dynsym entry is a counted import symbol."""
+    if sym.entry.st_shndx != "SHN_UNDEF":
+        return False
+    return bool(sym.name and _BINDING_MAP.get(sym.entry.st_info.bind, SymbolBinding.OTHER) != SymbolBinding.LOCAL)
+
+
+def _is_export_sym(sym: object) -> bool:
+    """Check if a dynsym entry is a counted export symbol."""
+    if sym.entry.st_shndx in ("SHN_UNDEF", "SHN_ABS"):
+        return False
+    binding = _BINDING_MAP.get(sym.entry.st_info.bind, SymbolBinding.OTHER)
+    vis_str = sym.entry.st_other.visibility
+    return binding != SymbolBinding.LOCAL and vis_str not in _HIDDEN_VISIBILITIES
+
+
+def _parse_ver_entries(
+    ver_sym_section: object, num_vers: int, so_path: Path,
+) -> list[tuple[int, bool]] | None:
+    """Parse .gnu.version into a list of (version_index, is_hidden) per symbol."""
+    ver_entries: list[tuple[int, bool]] = []
+    try:
+        for i in range(num_vers):
+            entry = ver_sym_section.get_symbol(i)
+            raw = entry.entry["ndx"]
+            if isinstance(raw, str):
+                if raw == "VER_NDX_LOCAL":
+                    ver_entries.append((0, False))
+                else:
+                    ver_entries.append((1, False))
+                continue
+            is_hidden = bool(raw & 0x8000)
+            idx = raw & 0x7FFF
+            ver_entries.append((idx, is_hidden))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("parse_elf_metadata: failed to read .gnu.version from %s: %s", so_path, exc)
+        return None
+    return ver_entries
+
+
+def _correlate_symbol_versions(
+    elf: ELFFile,
+    meta: ElfMetadata,
+    ver_index_map: dict[int, tuple[str, str, bool]],
+    so_path: Path,
+) -> None:
+    """Correlate .gnu.version entries with exports and imports.
+
+    The .gnu.version section contains one Elf_Half per .dynsym entry,
+    mapping each symbol to a version index. Index 0 = VER_NDX_LOCAL,
+    1 = VER_NDX_GLOBAL (unversioned). Higher indices come from
+    .gnu.version_d (defined) or .gnu.version_r (required).
+    Bit 15 (0x8000) indicates a hidden (non-default) version.
+    """
+    from elftools.elf.gnuversions import GNUVerSymSection
+
+    ver_sym_section = None
+    for section in elf.iter_sections():
+        if isinstance(section, GNUVerSymSection):
+            ver_sym_section = section
+            break
+
+    if ver_sym_section is None or not ver_index_map:
+        return
+
+    try:
+        num_vers = ver_sym_section.num_symbols()
+    except Exception:  # noqa: BLE001
+        return
+
+    ver_entries = _parse_ver_entries(ver_sym_section, num_vers, so_path)
+    if ver_entries is None:
+        return
+
+    dynsym = None
+    for section in elf.iter_sections():
+        if isinstance(section, SymbolTableSection) and section.name == ".dynsym":
+            dynsym = section
+            break
+    if dynsym is None:
+        return
+
+    export_idx = 0
+    import_idx = 0
+    for sym_ordinal, sym in enumerate(dynsym.iter_symbols()):
+        if sym_ordinal >= len(ver_entries):
+            break
+        ver_idx, is_hidden = ver_entries[sym_ordinal]
+        if ver_idx < 2:
+            if _is_import_sym(sym):
+                import_idx += 1
+            elif _is_export_sym(sym):
+                export_idx += 1
+            continue
+
+        entry = ver_index_map.get(ver_idx)
+        if entry is None:
+            if _is_import_sym(sym):
+                import_idx += 1
+            elif _is_export_sym(sym):
+                export_idx += 1
+            continue
+
+        _lib_name, ver_name, _is_defined = entry
+
+        if _is_import_sym(sym):
+            if import_idx < len(meta.imports):
+                meta.imports[import_idx].version = ver_name
+                meta.imports[import_idx].is_default = not is_hidden
+            import_idx += 1
+        elif _is_export_sym(sym):
+            if export_idx < len(meta.symbols):
+                meta.symbols[export_idx].version = ver_name
+                meta.symbols[export_idx].is_default = not is_hidden
+            export_idx += 1

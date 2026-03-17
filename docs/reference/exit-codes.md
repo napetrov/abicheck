@@ -1,6 +1,6 @@
 # Exit Codes
 
-`abicheck` uses different exit codes for `compare` and `compat` commands.
+`abicheck` uses different exit codes for each command family.
 
 **Why they differ:** `compare` is the native interface with a wider exit code range (0/1/2/4) that distinguishes tool errors from API breaks from binary breaks. `compat` mirrors `abi-compliance-checker` exit codes (0/1/2) so existing ABICC CI scripts work without changes.
 
@@ -56,6 +56,42 @@ verdict=$(python3 -c "import json,sys; d=json.load(open('result.json')); print(d
 
 ---
 
+## `abicheck deps`
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | All dependencies resolved, all required symbols bound |
+| `1` | Missing dependencies or unresolved symbols (binary would fail to load) |
+
+---
+
+## `abicheck stack-check`
+
+| Exit code | Verdict | Meaning |
+|-----------|---------|---------|
+| `0` | `PASS` | Binary loads and no harmful ABI changes |
+| `1` | `WARN` | Binary loads but ABI risk detected in dependencies |
+| `4` | `FAIL` | Load failure or binary ABI break in dependencies |
+
+### CI gate patterns
+
+```bash
+# Full-stack check: fail on FAIL, warn on WARN
+abicheck stack-check usr/bin/myapp --baseline /old-root --candidate /new-root
+ret=$?
+[ $ret -eq 4 ] && echo "FAIL — load failure or ABI break" && exit 1
+[ $ret -eq 1 ] && echo "WARN — ABI risk detected" && exit 1
+echo "PASS"
+
+# Permissive: only fail on load failure / ABI break
+abicheck stack-check usr/bin/myapp --baseline /old-root --candidate /new-root
+ret=$?
+[ $ret -eq 4 ] && exit 1   # FAIL only; WARN (exit 1) treated as OK
+exit 0
+```
+
+---
+
 ## `abicheck compat`
 
 Matches `abi-compliance-checker` exit codes (ABICC drop-in):
@@ -90,18 +126,24 @@ In `abicheck compat`, non-verdict failures are further classified where possible
 
 ## Summary table
 
-| Verdict / State | `compare` exit | `compat` exit |
-|-----------------|---------------|---------------|
-| `NO_CHANGE` | `0` | `0` |
-| `COMPATIBLE` | `0` | `0` |
-| `COMPATIBLE_WITH_RISK` | `0` | `0` |
-| `ADDITIONS` (with `--fail-on-additions`) | `1` | n/a |
-| `API_BREAK` | `2` | `2` |
-| `BREAKING` | `4` | `1` |
-| Tool error | `1`* | `3/4/5/6/7/8/10/11` |
+| Verdict / State | `compare` exit | `deps` exit | `stack-check` exit | `compat` exit |
+|-----------------|---------------|-------------|-------------------|---------------|
+| `NO_CHANGE` / `PASS` | `0` | `0` | `0` | `0` |
+| `COMPATIBLE` | `0` | — | — | `0` |
+| `COMPATIBLE_WITH_RISK` | `0` | — | — | `0` |
+| `ADDITIONS` (with `--fail-on-additions`) | `1` | — | — | n/a |
+| `WARN` (ABI risk) | — | — | `1` | — |
+| `API_BREAK` | `2` | — | — | `2` |
+| `BREAKING` / `FAIL` | `4` | — | `4` | `1` |
+| Load failure | — | `1` | `4` | — |
+| Tool error | `1/2`* | — | — | `3/4/5/6/7/8/10/11` |
 
-\* Without `--fail-on-additions`, exit `1` from `compare` is treated as a tool/CLI error.
-With `--fail-on-additions`, exit `1` can indicate `ADDITIONS` but may also occur for non-verdict failures; use `--format json` + `verdict` field as the authoritative discriminator.
+\* For `compare`, exit `1` without `--fail-on-additions` is a tool/CLI error.
+With `--fail-on-additions`, exit `1` can indicate `ADDITIONS` but may also occur
+for non-verdict failures. Exit `2` can also represent a CLI/configuration error
+(Click uses exit code 2 for argument/usage errors), not just `API_BREAK`. To
+reliably distinguish verdicts from tool errors, use `--format json` and read the
+`verdict` field as the authoritative discriminator.
 
 ---
 

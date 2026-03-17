@@ -9,3 +9,4 @@
 | [005](005-application-compat-check.md) | Application Compatibility Checking | Proposed |
 | [006](006-package-level-comparison.md) | Package-Level Comparison | Proposed |
 | [007](007-btf-ctf-debug-formats.md) | BTF and CTF Debug Format Support | Proposed |
+| [008](008-full-stack-dependency-validation.md) | Full-Stack Dependency Validation | Accepted |

@@ -361,6 +361,56 @@ def main() -> None:
     """abicheck — ABI compatibility checker for C/C++ shared libraries."""
 
 
+def _populate_dependency_info(
+    snap: AbiSnapshot, so_path: Path,
+    search_paths: list[Path], sysroot: Path | None, ld_library_path: str,
+) -> None:
+    """Resolve transitive deps and store DependencyInfo in the snapshot."""
+    from .binder import BindingStatus, compute_bindings
+    from .model import DependencyInfo
+    from .resolver import resolve_dependencies
+
+    graph = resolve_dependencies(
+        so_path,
+        search_paths=search_paths or None,
+        sysroot=sysroot,
+        ld_library_path=ld_library_path,
+    )
+    bindings = compute_bindings(graph)
+
+    summary: dict[str, int] = {}
+    for b in bindings:
+        summary[b.status.value] = summary.get(b.status.value, 0) + 1
+
+    missing = [
+        {"consumer": b.consumer, "symbol": b.symbol, "version": b.version}
+        for b in bindings if b.status == BindingStatus.MISSING
+    ]
+
+    snap.dependency_info = DependencyInfo(
+        nodes=[
+            {
+                "path": str(node.path),
+                "soname": node.soname,
+                "needed": node.needed,
+                "depth": node.depth,
+                "resolution_reason": node.resolution_reason,
+            }
+            for node in sorted(graph.nodes.values(), key=lambda n: (n.depth, n.soname))
+        ],
+        edges=[
+            {"consumer": consumer, "provider": provider}
+            for consumer, provider in graph.edges
+        ],
+        unresolved=[
+            {"consumer": consumer, "soname": soname}
+            for consumer, soname in graph.unresolved
+        ],
+        bindings_summary=summary,
+        missing_symbols=missing,
+    )
+
+
 @main.command("dump")
 @click.argument("so_path", type=click.Path(exists=True, path_type=Path))
 @click.option("-H", "--header", "headers", multiple=True, type=click.Path(exists=True, path_type=Path),
@@ -388,12 +438,22 @@ def main() -> None:
 @click.option("--pdb-path", "pdb_path", type=click.Path(path_type=Path), default=None,
               help="Explicit path to PDB file for Windows PE debug info. "
                    "Overrides automatic PDB discovery from the PE debug directory.")
+@click.option("--follow-deps", is_flag=True, default=False,
+              help="Resolve transitive DT_NEEDED dependencies and include the full "
+                   "dependency graph and symbol binding status in the snapshot. "
+                   "ELF only.")
+@click.option("--search-path", "search_paths", multiple=True,
+              type=click.Path(exists=True, path_type=Path),
+              help="Additional directory to search for shared libraries (with --follow-deps).")
+@click.option("--ld-library-path", "ld_library_path", default="",
+              help="Simulated LD_LIBRARY_PATH (with --follow-deps).")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...],
              version: str, lang: str, output: Path | None,
              gcc_path: str | None, gcc_prefix: str | None, gcc_options: str | None,
              sysroot: Path | None, nostdinc: bool, pdb_path: Path | None,
+             follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
              verbose: bool) -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
@@ -402,12 +462,15 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
       abicheck dump libfoo.so.1 -H include/foo.h --version 1.2.3 -o snap.json
       abicheck dump libfoo.so.1 -H include/foo.h --lang c -o snap.json
       abicheck dump libfoo.so.1 -H include/foo.h --gcc-prefix aarch64-linux-gnu-
+      abicheck dump libfoo.so.1 --follow-deps -o snap.json
     """
     _setup_verbosity(verbose)
 
     # Auto-detect binary format — PE/Mach-O skip the ELF/castxml path
     binary_fmt = _detect_binary_format(so_path)
     if binary_fmt in ("pe", "macho"):
+        if follow_deps:
+            click.echo("Warning: --follow-deps is only supported for ELF binaries.", err=True)
         try:
             snap = _dump_native_binary(
                 so_path, binary_fmt, list(headers), list(includes), version, lang,
@@ -443,6 +506,9 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
         )
     except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+    if follow_deps:
+        _populate_dependency_info(snap, so_path, list(search_paths), sysroot, ld_library_path)
 
     result = snapshot_to_json(snap)
     if output:
@@ -521,10 +587,24 @@ def _load_suppression_and_policy(
     return suppression, pf
 
 
-def _render_output(fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnapshot | None = None) -> str:
+def _render_output(
+    fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnapshot | None = None,
+    *, follow_deps: bool = False,
+) -> str:
     """Render comparison result in the requested output format."""
     if fmt == "json":
-        return to_json(result)
+        base = to_json(result)
+        if follow_deps and (old.dependency_info or (new and new.dependency_info)):
+            import json
+            d = json.loads(base)
+            if old.dependency_info:
+                from dataclasses import asdict
+                d["old_dependency_info"] = asdict(old.dependency_info)
+            if new and new.dependency_info:
+                from dataclasses import asdict
+                d["new_dependency_info"] = asdict(new.dependency_info)
+            return json.dumps(d, indent=2)
+        return base
     if fmt == "sarif":
         from .sarif import to_sarif_str
         return to_sarif_str(result)
@@ -545,7 +625,55 @@ def _render_output(fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnaps
             new_version=new.version if new else "new",
             old_symbol_count=old_symbol_count or None,
         )
-    return to_markdown(result)
+    md = to_markdown(result)
+    if follow_deps and (old.dependency_info or (new and new.dependency_info)):
+        md += _render_deps_section_md(old, new)
+    return md
+
+
+def _render_deps_section_md(old: AbiSnapshot, new: AbiSnapshot | None) -> str:
+    """Append dependency summary section to markdown output."""
+    lines: list[str] = ["", "## Dependency Analysis", ""]
+
+    for label, snap in [("Old", old), ("New", new)]:
+        if snap is None or snap.dependency_info is None:
+            continue
+        info = snap.dependency_info
+        lines.append(f"### {label} version (`{snap.version}`)")
+        lines.append("")
+
+        if info.nodes:
+            lines.append(f"**Dependencies**: {len(info.nodes)} resolved DSOs")
+            for node in info.nodes:
+                raw_depth = node.get("depth", 0)
+                depth = raw_depth if isinstance(raw_depth, int) else 0
+                indent = "  " * depth
+                reason = node.get("resolution_reason", "")
+                lines.append(f"  {indent}- `{node.get('soname', '?')}` ({reason})")
+            lines.append("")
+
+        if info.bindings_summary:
+            lines.append("**Bindings**:")
+            for status, count in sorted(info.bindings_summary.items()):
+                lines.append(f"  - `{status}`: {count}")
+            lines.append("")
+
+        if info.unresolved:
+            lines.append("**Unresolved libraries**:")
+            for u in info.unresolved:
+                lines.append(f"  - `{u.get('soname', '?')}` needed by `{u.get('consumer', '?')}`")
+            lines.append("")
+
+        if info.missing_symbols:
+            lines.append(f"**Missing symbols**: {len(info.missing_symbols)}")
+            for ms in info.missing_symbols[:10]:
+                ver = f"@{ms['version']}" if ms.get('version') else ""
+                lines.append(f"  - `{ms['symbol']}{ver}`")
+            if len(info.missing_symbols) > 10:
+                lines.append(f"  - ... +{len(info.missing_symbols) - 10} more")
+            lines.append("")
+
+    return "\n".join(lines)
 
 
 def _collect_additions(result: DiffResult) -> list[object]:
@@ -735,6 +863,14 @@ def _build_match_map(paths: list[Path]) -> tuple[dict[str, Path], list[str]]:
               help="Exit with code 1 if any new public symbols, types, or fields were added "
                    "(COMPATIBLE changes). Useful for detecting unintentional API expansion in PRs. "
                    "Use --no-fail-on-additions (or omit the flag) to allow API growth.")
+@click.option("--follow-deps", is_flag=True, default=False,
+              help="Resolve transitive dependencies for both old and new, compute symbol "
+                   "bindings, and include a dependency-change section in the report. ELF only.")
+@click.option("--search-path", "search_paths", multiple=True,
+              type=click.Path(exists=True, path_type=Path),
+              help="Additional directory to search for shared libraries (with --follow-deps).")
+@click.option("--ld-library-path", "ld_library_path", default="",
+              help="Simulated LD_LIBRARY_PATH (with --follow-deps).")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def compare_cmd(
@@ -747,6 +883,7 @@ def compare_cmd(
     suppress: Path | None, policy: str, policy_file_path: Path | None,
     pdb_path: Path | None, old_pdb_path: Path | None, new_pdb_path: Path | None,
     fail_on_additions: bool,
+    follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
     verbose: bool,
 ) -> None:
     """Compare two ABI surfaces and report changes.
@@ -822,6 +959,13 @@ def compare_cmd(
 
     suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
 
+    # Populate dependency info if --follow-deps is active and inputs are ELF binaries.
+    if follow_deps:
+        if old_fmt == "elf":
+            _populate_dependency_info(old, old_input, list(search_paths), None, ld_library_path)
+        if new_fmt == "elf":
+            _populate_dependency_info(new, new_input, list(search_paths), None, ld_library_path)
+
     result = compare(old, new, suppression=suppression, policy=policy, policy_file=pf)
 
     # Attach file-level metadata (path, SHA-256, size) for report traceability
@@ -837,7 +981,7 @@ def compare_cmd(
             err=True,
         )
 
-    text = _render_output(fmt, result, old, new)
+    text = _render_output(fmt, result, old, new, follow_deps=follow_deps)
     if output:
         output.write_text(text, encoding="utf-8")
         click.echo(f"Report written to {output}", err=True)
@@ -1116,6 +1260,132 @@ def compare_release_cmd(
     if fail_on_removed and removed_keys:
         sys.exit(8)
     if fail_on_additions and any(lib.get("compatible_additions", 0) for lib in library_results):
+        sys.exit(1)
+
+
+# ── Full-stack dependency commands ────────────────────────────────────────────
+
+@main.command("deps")
+@click.argument("binary", type=click.Path(exists=True, path_type=Path))
+@click.option("--search-path", "search_paths", multiple=True,
+              type=click.Path(exists=True, path_type=Path),
+              help="Additional directory to search for shared libraries.")
+@click.option("--sysroot", type=click.Path(exists=True, path_type=Path), default=None,
+              help="Sysroot prefix for cross/container analysis.")
+@click.option("--ld-library-path", "ld_library_path", default="",
+              help="Simulated LD_LIBRARY_PATH (colon-separated).")
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown"]),
+              default="markdown", show_default=True)
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
+@click.option("-v", "--verbose", is_flag=True, default=False)
+def deps_cmd(
+    binary: Path, search_paths: tuple[Path, ...],
+    sysroot: Path | None, ld_library_path: str,
+    fmt: str, output: Path | None, verbose: bool,
+) -> None:
+    """Show the resolved dependency tree and symbol binding status.
+
+    Resolves the transitive closure of DT_NEEDED dependencies for BINARY
+    using loader-accurate search order (RPATH/RUNPATH, LD_LIBRARY_PATH,
+    default dirs) and reports symbol binding status.
+
+    \b
+    Exit codes:
+      0  All dependencies resolved, all required symbols bound
+      1  Missing dependencies or symbols (load would fail)
+
+    \b
+    Examples:
+      abicheck deps ./build/libfoo.so
+      abicheck deps /usr/bin/myapp --format json -o deps.json
+      abicheck deps ./app --sysroot /path/to/container/rootfs
+    """
+    _setup_verbosity(verbose)
+
+    from .stack_checker import check_single_env
+    from .stack_report import stack_to_json, stack_to_markdown
+
+    result = check_single_env(
+        binary,
+        search_paths=list(search_paths) or None,
+        sysroot=sysroot,
+        ld_library_path=ld_library_path,
+    )
+
+    text = stack_to_json(result) if fmt == "json" else stack_to_markdown(result)
+    if output:
+        output.write_text(text, encoding="utf-8")
+        click.echo(f"Report written to {output}", err=True)
+    else:
+        click.echo(text)
+
+    if result.loadability.value == "fail":
+        sys.exit(1)
+
+
+@main.command("stack-check")
+@click.argument("binary", type=click.Path(path_type=Path))
+@click.option("--baseline", type=click.Path(exists=True, path_type=Path), required=True,
+              help="Sysroot for the baseline environment.")
+@click.option("--candidate", type=click.Path(exists=True, path_type=Path), required=True,
+              help="Sysroot for the candidate environment.")
+@click.option("--search-path", "search_paths", multiple=True,
+              type=click.Path(exists=True, path_type=Path),
+              help="Additional directory to search for shared libraries.")
+@click.option("--ld-library-path", "ld_library_path", default="",
+              help="Simulated LD_LIBRARY_PATH (colon-separated).")
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown"]),
+              default="markdown", show_default=True)
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
+@click.option("-v", "--verbose", is_flag=True, default=False)
+def stack_check_cmd(
+    binary: Path, baseline: Path, candidate: Path,
+    search_paths: tuple[Path, ...], ld_library_path: str,
+    fmt: str, output: Path | None, verbose: bool,
+) -> None:
+    """Compare a binary's full dependency stack across two environments.
+
+    Resolves all transitive dependencies in both BASELINE and CANDIDATE sysroots,
+    computes symbol bindings, detects changed DSOs, runs per-library ABI diffs,
+    and produces a stack-level compatibility verdict.
+
+    BINARY is the path relative to the sysroot (e.g. usr/bin/myapp).
+
+    \b
+    Exit codes:
+      0  PASS — binary loads and no harmful ABI changes
+      1  WARN — loads but ABI risk detected
+      4  FAIL — load failure or binary ABI break
+
+    \b
+    Examples:
+      abicheck stack-check usr/bin/myapp --baseline /old-root --candidate /new-root
+      abicheck stack-check usr/lib/libfoo.so.1 \\
+        --baseline ./image-v1 --candidate ./image-v2 --format json
+    """
+    _setup_verbosity(verbose)
+
+    from .stack_checker import check_stack
+    from .stack_report import stack_to_json, stack_to_markdown
+
+    result = check_stack(
+        binary,
+        baseline_root=baseline,
+        candidate_root=candidate,
+        ld_library_path=ld_library_path,
+        search_paths=list(search_paths) or None,
+    )
+
+    text = stack_to_json(result) if fmt == "json" else stack_to_markdown(result)
+    if output:
+        output.write_text(text, encoding="utf-8")
+        click.echo(f"Report written to {output}", err=True)
+    else:
+        click.echo(text)
+
+    if result.loadability.value == "fail" or result.abi_risk.value == "fail":
+        sys.exit(4)
+    elif result.abi_risk.value == "warn" or result.loadability.value == "warn":
         sys.exit(1)
 
 

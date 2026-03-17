@@ -72,18 +72,48 @@ abicheck compare baseline.json ./build/libfoo.so --new-header include/foo.h
 
 Output formats: `markdown` (default), `json`, `sarif`, `html`. Use `--format` and `-o` to select.
 
+### Full-stack dependency validation (Linux ELF)
+
+Check whether a binary will load and run correctly in a given environment by
+resolving its full dependency tree, simulating symbol binding, and detecting
+ABI-breaking changes across all loaded DSOs:
+
+```bash
+# Show dependency tree + symbol binding status for a binary
+abicheck deps /usr/bin/python3
+
+# Compare a binary's full stack across two sysroots
+abicheck stack-check usr/bin/myapp \
+    --baseline /rootfs/v1 --candidate /rootfs/v2
+
+# Include dependency info in a regular compare
+abicheck compare old.so new.so -H foo.h --follow-deps
+```
+
 For the full CLI reference see the [documentation](https://napetrov.github.io/abicheck/getting-started/).
 
 ---
 
 ## Exit codes
 
+**compare:**
+
 | Exit code | Verdict | Meaning |
 |-----------|---------|---------|
 | `0` | `NO_CHANGE`, `COMPATIBLE`, `COMPATIBLE_WITH_RISK` | Safe — no binary ABI break |
-| `1` | — | Tool/runtime error |
+| `1` | — | Tool/runtime error (or `ADDITIONS` with `--fail-on-additions`) |
 | `2` | `API_BREAK` | Source-level break (recompile needed, binary may work) |
 | `4` | `BREAKING` | Binary ABI break (old binaries will crash or misbehave) |
+
+**stack-check:**
+
+| Exit code | Verdict | Meaning |
+|-----------|---------|---------|
+| `0` | `PASS` | Binary loads and no harmful ABI changes |
+| `1` | `WARN` | Binary loads but ABI risk in dependencies |
+| `4` | `FAIL` | Load failure or ABI break in dependency stack |
+
+See the [full exit code reference](https://napetrov.github.io/abicheck/reference/exit-codes/) for `deps`, `compat`, and CI gate patterns.
 
 ---
 

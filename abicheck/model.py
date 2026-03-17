@@ -137,6 +137,19 @@ class EnumType:
 
 
 @dataclass
+class DependencyInfo:
+    """Resolved transitive dependency graph and symbol bindings.
+
+    Populated when a snapshot is created with ``--follow-deps``.
+    """
+    nodes: list[dict[str, object]] = field(default_factory=list)
+    edges: list[dict[str, str]] = field(default_factory=list)
+    unresolved: list[dict[str, str]] = field(default_factory=list)
+    bindings_summary: dict[str, int] = field(default_factory=dict)
+    missing_symbols: list[dict[str, str]] = field(default_factory=list)
+
+
+@dataclass
 class AbiSnapshot:
     """Complete ABI snapshot of one version of a library."""
     library: str                   # e.g. "libfoo.so.1"
@@ -163,6 +176,9 @@ class AbiSnapshot:
     # None = unknown / mixed / not yet detected.
     # Populated by detect_profile() in pipeline or by the dumper.
     language_profile: str | None = None  # "c" | "cpp" | "sycl" | None
+
+    # Full-stack dependency info (populated by --follow-deps)
+    dependency_info: DependencyInfo | None = field(default=None)
 
     # Indexes (built lazily)
     _func_by_mangled: dict[str, Function] | None = field(default=None, repr=False, compare=False)

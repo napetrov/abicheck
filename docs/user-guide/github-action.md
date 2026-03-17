@@ -20,7 +20,7 @@ automatically, then runs ABI comparison and reports results.
 
 | Input | Required | Description |
 |-------|----------|-------------|
-| `mode` | no | `compare` (default) or `dump` |
+| `mode` | no | `compare` (default), `dump`, `deps`, or `stack-check` |
 | `old-library` | yes (compare) | Path to old library, JSON snapshot, or ABICC dump |
 | `new-library` | yes | Path to new library or binary |
 
@@ -53,6 +53,16 @@ automatically, then runs ABI comparison and reports results.
 | `sysroot` | — | Alternative system root (dump mode only) |
 | `nostdinc` | `false` | Skip standard include paths (dump mode only) |
 
+### Full-stack dependency validation (Linux ELF)
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `follow-deps` | `false` | Include transitive dependency graph and symbol bindings in dump/compare output |
+| `baseline` | — | Sysroot for baseline environment (required for `stack-check` mode) |
+| `candidate` | — | Sysroot for candidate environment (required for `stack-check` mode) |
+| `search-path` | — | Additional library search directories (space-separated) |
+| `ld-library-path` | — | Simulated `LD_LIBRARY_PATH` (colon-separated) |
+
 ### Output and policy
 
 | Input | Default | Description |
@@ -80,8 +90,8 @@ automatically, then runs ABI comparison and reports results.
 
 | Output | Description |
 |--------|-------------|
-| `verdict` | `COMPATIBLE`, `ADDITIONS`, `API_BREAK`, `BREAKING`, or `ERROR` |
-| `exit-code` | `0` (compatible/no change), `1` (additions, only with `--fail-on-additions`), `2` (API break), `4` (ABI break). Other non-zero codes may be produced by tool or runtime errors. |
+| `verdict` | **compare/dump:** `COMPATIBLE`, `ADDITIONS`, `API_BREAK`, `BREAKING`, or `ERROR`. **stack-check:** `PASS`, `WARN`, `FAIL`, or `ERROR`. **deps:** `PASS`, `FAIL`, or `ERROR`. |
+| `exit-code` | **compare:** `0` (compatible), `1` (additions), `2` (API break), `4` (ABI break). **stack-check:** `0` (pass), `1` (warn), `4` (fail). **deps:** `0` (ok), `1` (missing). |
 | `report-path` | Path to the generated report file (empty when no output file was produced) |
 
 ## Usage examples
@@ -313,6 +323,72 @@ Example (conda-forge pre-step):
 ```
 
 When comparing two JSON snapshots, no header-analysis toolchain is needed.
+
+### Full-stack dependency check on container image update
+
+Validate that updating a base image doesn't break your application's dependency
+stack. This runs `stack-check` to compare the binary's full transitive
+dependency tree across old and new container root filesystems:
+
+```yaml
+jobs:
+  stack-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract old rootfs
+        run: |
+          mkdir -p /tmp/old-root
+          docker export $(docker create old-image:latest) | tar -xf - -C /tmp/old-root
+
+      - name: Extract new rootfs
+        run: |
+          mkdir -p /tmp/new-root
+          docker export $(docker create new-image:latest) | tar -xf - -C /tmp/new-root
+
+      - name: Full-stack ABI check
+        uses: napetrov/abicheck@v1
+        with:
+          mode: stack-check
+          new-library: usr/bin/myapp
+          baseline: /tmp/old-root
+          candidate: /tmp/new-root
+          format: json
+          output-file: stack-report.json
+```
+
+Exit codes for `stack-check`: `0` = PASS, `1` = WARN (ABI risk), `4` = FAIL (load failure or ABI break).
+
+### Dependency tree audit
+
+Show the resolved dependency tree and symbol binding status for a binary.
+Useful for auditing which libraries a binary actually loads and detecting
+missing dependencies before deployment:
+
+```yaml
+      - name: Audit dependencies
+        uses: napetrov/abicheck@v1
+        with:
+          mode: deps
+          new-library: build/myapp
+          sysroot: /path/to/target/rootfs
+```
+
+### Include dependency info in compare
+
+Add `follow-deps: true` to include the transitive dependency graph and symbol
+binding information alongside the regular ABI diff:
+
+```yaml
+      - name: Compare with dependency context
+        uses: napetrov/abicheck@v1
+        with:
+          old-library: baseline.json
+          new-library: build/libfoo.so
+          new-header: include/foo.h
+          follow-deps: true
+```
 
 ### Conditional failure
 
