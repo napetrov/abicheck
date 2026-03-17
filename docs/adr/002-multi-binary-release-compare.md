@@ -8,8 +8,8 @@
 
 ## Context
 
-Real-world releases contain multiple binaries per package (e.g. `libdnnl.so`, `libdnnl_gpu.so`,
-`libmpi.so`, `libmpi_cxx.so`). Today `abicheck compare` accepts exactly one OLD and one NEW binary.
+Real-world releases contain multiple binaries per package (e.g. `libfoo.so`, `libfoo_gpu.so`,
+`libbar.so`, `libbar_cxx.so`). Today `abicheck compare` accepts exactly one OLD and one NEW binary.
 Users must script their own loops and manually aggregate verdicts.
 
 ---
@@ -70,7 +70,7 @@ abicheck compare-release --libs-list libs.txt old/ new/ -H include/
 ```text
 libfoo.so
 libbar.so
-libdnnl.so
+libbaz.so
 ```
 
 ---
@@ -95,7 +95,7 @@ libdnnl.so
 ╠══════════════════════╬══════════════╬══════════════╣
 ║ libfoo.so            ║ ❌ BREAKING  ║ 3 breaking   ║
 ║ libbar.so            ║ ✅ COMPATIBLE║ 2 additions  ║
-║ libdnnl.so           ║ ✅ NO_CHANGE ║ 0 changes    ║
+║ libbaz.so            ║ ✅ NO_CHANGE ║ 0 changes    ║
 ╚══════════════════════╩══════════════╩══════════════╝
 Overall: BREAKING (worst of 3 libs)
 ```
@@ -108,7 +108,7 @@ Overall: BREAKING (worst of 3 libs)
   "libraries": [
     { "library": "libfoo.so", "verdict": "BREAKING", "changes": [...] },
     { "library": "libbar.so", "verdict": "COMPATIBLE", "changes": [...] },
-    { "library": "libdnnl.so", "verdict": "NO_CHANGE", "changes": [] }
+    { "library": "libbaz.so", "verdict": "NO_CHANGE", "changes": [] }
   ],
   "unmatched_old": [],
   "unmatched_new": []
@@ -171,7 +171,7 @@ Example:
 4. **Output:** extend reporter to handle multi-library summary
 5. **Tests:** all combinations — files, dirs, globs, missing pairs, explicit maps
 6. **Action:** new inputs + updated `action.yml`
-7. **Docs:** `docs/multi-binary-compare.md` + update `docs/github-action.md`
+7. **Docs:** `docs/adr/002-multi-binary-release-compare.md` + update `docs/github-action.md`
 
 ---
 
