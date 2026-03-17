@@ -1086,6 +1086,13 @@ def _dump_macho(
     dwarf_only: bool = False,
 ) -> AbiSnapshot:
     """Mach-O dump: export table from macholib + castxml header analysis."""
+    if dwarf_only:
+        warnings.warn(
+            "dwarf_only=True is not supported for Mach-O; "
+            "falling back to normal extraction.",
+            UserWarning,
+            stacklevel=2,
+        )
     from .macho_metadata import parse_macho_metadata
 
     macho_meta = parse_macho_metadata(dylib_path)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from abicheck.dwarf_advanced import AdvancedDwarfMetadata
 from abicheck.dwarf_metadata import DwarfMetadata, StructLayout
 from abicheck.dwarf_snapshot import (
+    _evaluate_location_expr,
     _strip_type_decorators,
     build_snapshot_from_dwarf,
     show_data_sources,
@@ -86,6 +88,72 @@ class TestStripTypeDecorators:
 
     def test_combined(self) -> None:
         assert _strip_type_decorators("const Foo *") == "Foo"
+
+    def test_const_volatile(self) -> None:
+        """Multiple leading qualifiers should all be stripped."""
+        assert _strip_type_decorators("const volatile int") == "int"
+
+    def test_volatile_const_restrict(self) -> None:
+        """Triple qualifier combination."""
+        assert _strip_type_decorators("volatile const restrict int") == "int"
+
+    def test_const_volatile_pointer(self) -> None:
+        """Qualifiers + pointer suffix."""
+        assert _strip_type_decorators("const volatile int *") == "int"
+
+    def test_restrict_array(self) -> None:
+        """Restrict qualifier + array suffix."""
+        assert _strip_type_decorators("restrict int[]") == "int"
+
+
+# ── _evaluate_location_expr ─────────────────────────────────────────────────
+
+class TestEvaluateLocationExpr:
+    def test_empty_list(self) -> None:
+        assert _evaluate_location_expr([]) == 0
+
+    def test_single_int(self) -> None:
+        """Bare integer treated as constant."""
+        assert _evaluate_location_expr([42]) == 42
+
+    def test_plus_uconst_raw(self) -> None:
+        """DW_OP_plus_uconst (0x23) with raw int operand."""
+        assert _evaluate_location_expr([0x23, 16]) == 16
+
+    def test_constu_raw(self) -> None:
+        """DW_OP_constu (0x10) with raw int operand."""
+        assert _evaluate_location_expr([0x10, 8]) == 8
+
+    def test_consts_raw(self) -> None:
+        """DW_OP_consts (0x11) with raw int operand."""
+        assert _evaluate_location_expr([0x11, 12]) == 12
+
+    def test_lit_opcodes(self) -> None:
+        """DW_OP_lit0..DW_OP_lit31."""
+        # DW_OP_lit5 = 0x35
+        assert _evaluate_location_expr([0x35]) == 5
+
+    def test_plus_op(self) -> None:
+        """DW_OP_plus (0x22) pops and adds two stack values."""
+        # Push 10 via constu, push 20 via constu, then plus
+        assert _evaluate_location_expr([0x10, 10, 0x10, 20, 0x22]) == 30
+
+    def test_tuple_plus_uconst(self) -> None:
+        """Tuple-style (opcode, operand) as emitted by some pyelftools versions."""
+        assert _evaluate_location_expr([(0x23, 24)]) == 24
+
+    def test_tuple_constu(self) -> None:
+        """Tuple-style DW_OP_constu."""
+        assert _evaluate_location_expr([(0x10, 32)]) == 32
+
+    def test_tuple_lit(self) -> None:
+        """Tuple-style DW_OP_lit7."""
+        assert _evaluate_location_expr([(0x37, 0)]) == 7
+
+    def test_tuple_plus(self) -> None:
+        """Tuple-style DW_OP_plus."""
+        result = _evaluate_location_expr([(0x10, 5), (0x10, 3), (0x22, 0)])
+        assert result == 8
 
 
 # ── show_data_sources ───────────────────────────────────────────────────────
@@ -341,15 +409,14 @@ class TestDumperFallbackChain:
         subprocess.run(
             ["strip", "--strip-all", "--remove-section=.debug*",
              "--remove-section=.note.gnu.build-id", str(so_path)],
-            capture_output=True, timeout=10,
+            capture_output=True, check=True, timeout=10,
         )
         return so_path
 
     def test_no_headers_with_dwarf_uses_dwarf_mode(self, debug_lib: Path) -> None:
         """No headers + DWARF available → DWARF-only mode (elf_only_mode=False)."""
-        import warnings
-
         from abicheck.dumper import dump
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             snap = dump(so_path=debug_lib, headers=[])
@@ -362,9 +429,8 @@ class TestDumperFallbackChain:
 
     def test_no_headers_no_dwarf_uses_symbol_mode(self, stripped_lib: Path) -> None:
         """No headers + no DWARF → symbols-only mode (elf_only_mode=True)."""
-        import warnings
-
         from abicheck.dumper import dump
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             snap = dump(so_path=stripped_lib, headers=[])
@@ -373,9 +439,8 @@ class TestDumperFallbackChain:
 
     def test_dwarf_only_flag(self, debug_lib: Path) -> None:
         """--dwarf-only flag forces DWARF mode even without headers."""
-        import warnings
-
         from abicheck.dumper import dump
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             snap = dump(so_path=debug_lib, headers=[], dwarf_only=True)
@@ -430,3 +495,98 @@ class TestCLIDwarfFlags:
         assert result.returncode == 0
         assert "Data sources for" in result.stdout
         assert "L0 Binary metadata" in result.stdout
+
+
+# ── Visibility filtering (hidden/internal symbols) ──────────────────────────
+
+@pytest.mark.skipif(not _HAS_GCC, reason="GCC not available")
+class TestVisibilityFiltering:
+    """Test that hidden/internal ELF symbols are excluded from DWARF snapshot."""
+
+    @pytest.fixture()
+    def _visibility_lib(self, tmp_path: Path) -> Path:
+        """Compile a lib with hidden-visibility symbols."""
+        c_src = tmp_path / "lib.c"
+        c_src.write_text("""\
+__attribute__((visibility("default"))) int public_func(int x) { return x; }
+__attribute__((visibility("hidden"))) int hidden_func(int x) { return x * 2; }
+""")
+        so_path = tmp_path / "libtest.so"
+        subprocess.run(
+            [_GCC, "-shared", "-fPIC", "-g", "-o", str(so_path), str(c_src)],
+            capture_output=True, check=True, timeout=30,
+        )
+        return so_path
+
+    def test_hidden_symbols_excluded(self, _visibility_lib: Path) -> None:
+        """Hidden-visibility functions should not appear in DWARF snapshot."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(_visibility_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(_visibility_lib)
+
+        snap = build_snapshot_from_dwarf(
+            _visibility_lib, elf_meta, dwarf_meta, dwarf_adv,
+        )
+
+        func_names = {f.name for f in snap.functions}
+        assert "public_func" in func_names
+        assert "hidden_func" not in func_names
+
+
+# ── Dumper _dump_macho dwarf_only warning ───────────────────────────────────
+
+class TestDumpMachoDwarfOnlyWarning:
+    """Test that _dump_macho warns when dwarf_only=True."""
+
+    def test_macho_dwarf_only_warns(self, tmp_path: Path) -> None:
+        """_dump_macho should emit a warning when dwarf_only=True."""
+        from abicheck.dumper import _dump_macho
+
+        fake_path = tmp_path / "libtest.dylib"
+        fake_path.write_bytes(b"\xfe\xed\xfa\xce" + b"\x00" * 100)
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            try:
+                _dump_macho(
+                    fake_path, headers=[], extra_includes=[],
+                    version="1.0", compiler="c++", dwarf_only=True,
+                )
+            except Exception:
+                pass  # Expected to fail on fake binary
+
+        dwarf_warnings = [
+            x for x in w
+            if "dwarf_only=True is not supported for Mach-O" in str(x.message)
+        ]
+        assert len(dwarf_warnings) == 1
+
+
+# ── Dumper variables-only fallback ──────────────────────────────────────────
+
+@pytest.mark.skipif(not _HAS_GCC, reason="GCC not available")
+class TestDumperVariablesOnlyFallback:
+    """Test that DWARF mode accepts snapshots with only variables (no functions)."""
+
+    def test_variables_only_uses_dwarf_mode(self, tmp_path: Path) -> None:
+        """Library with only exported variables should use DWARF mode."""
+        c_src = tmp_path / "lib.c"
+        c_src.write_text("int my_global = 42;\n")
+        so_path = tmp_path / "libtest.so"
+        subprocess.run(
+            [_GCC, "-shared", "-fPIC", "-g", "-o", str(so_path), str(c_src)],
+            capture_output=True, check=True, timeout=30,
+        )
+
+        from abicheck.dumper import dump
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            snap = dump(so_path=so_path, headers=[])
+
+        # Should use DWARF mode (not symbol-only) because variables are present
+        assert snap.elf_only_mode is False
+        var_names = {v.name for v in snap.variables}
+        assert "my_global" in var_names
