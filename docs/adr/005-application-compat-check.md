@@ -61,7 +61,7 @@ abicheck appcompat <APP> <OLD_LIB> <NEW_LIB> [options]
 
 ### Architecture
 
-```
+```text
 abicheck appcompat myapp libfoo.so.1 libfoo.so.2
   │
   ├── 1. Read app requirements
@@ -174,9 +174,13 @@ def _is_relevant_to_app(change: Change, app: AppRequirements) -> bool:
     if change.kind == ChangeKind.SONAME_CHANGED:
         return True
 
-    # Symbol version change for a version the app requires
+    # Symbol version change for a version the app requires.
+    # Match by (symbol, version) pair — not just version string — to avoid
+    # false positives when unrelated symbols share the same version tag.
     if change.kind in (ChangeKind.SYMBOL_VERSION_REMOVED,):
-        if change.old_value in app.required_versions.values():
+        sym = change.symbol
+        required_ver = app.required_versions.get(sym)
+        if required_ver and required_ver == change.old_value:
             return True
 
     return False

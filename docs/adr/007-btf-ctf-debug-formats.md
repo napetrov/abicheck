@@ -77,16 +77,30 @@ The checker's detectors accept `TypeMetadataSource` instead of `DwarfMetadata` d
 
 #### Updated fallback chain (extends ADR-003)
 
-```
-L1 debug info resolution:
-  DWARF present? → use DWARF
-  BTF present?   → use BTF
-  CTF present?   → use CTF
-  None?          → skip L1 (proceed with L0/L2 only)
+The default L1 priority depends on the binary type:
+
+```text
+L1 debug info resolution (no CLI override):
+
+  Kernel binary (vmlinux, *.ko)?
+    BTF present?   → use BTF   (preferred: compact, pre-deduplicated)
+    DWARF present? → use DWARF
+    CTF present?   → use CTF
+    None?          → skip L1
+
+  Userspace binary (*.so, executable)?
+    DWARF present? → use DWARF (preferred: richer type info, wider support)
+    BTF present?   → use BTF
+    CTF present?   → use CTF
+    None?          → skip L1
 ```
 
-For kernel binaries, prefer BTF over DWARF (faster, always deduplicated).
-CLI flag `--btf` / `--ctf` / `--dwarf` forces a specific format.
+**Kernel detection heuristic**: binary name is `vmlinux` or has `.ko`/`.ko.xz`/`.ko.zst`
+extension, or ELF contains `.modinfo` section.
+
+CLI flags `--btf` / `--ctf` / `--dwarf` override the auto-detection and force a
+specific format regardless of binary type. If the forced format is not present,
+emit an error rather than silently falling back.
 
 ### BTF parser: `abicheck/btf_metadata.py`
 
@@ -95,7 +109,7 @@ section via pyelftools' section API.
 
 #### BTF format structure
 
-```
+```text
 .BTF section:
 ┌───────────────┐
 │ btf_header    │  magic=0xEB9F, version, hdr_len, type_off/len, str_off/len

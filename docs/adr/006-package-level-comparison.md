@@ -33,7 +33,7 @@ ADR-002 defines the comparison + matching + aggregation logic for multiple binar
 This ADR adds the **extraction** layer that converts packages into directories,
 then delegates to ADR-002's `compare-release` pipeline:
 
-```
+```text
 Package → Extract → Directory → [ADR-002 compare-release] → AggregateResult
 ```
 
@@ -108,11 +108,41 @@ def detect_extractor(path: str) -> PackageExtractor:
 These are optional extras (`pip install abicheck[rpm]`, `abicheck[deb]`) for
 environments without system tools.
 
+### Extraction security
+
+All extractors **must** implement safe-unpacking checks before writing any file:
+
+1. **Path traversal rejection**: Reject archive members containing `../` segments
+   or absolute paths. Every extracted member's destination must satisfy
+   `Path(dest).resolve().is_relative_to(target_root)`.
+
+2. **Symlink validation**: Symlink targets must resolve within the extraction root.
+   Do not follow symlinks during extraction unless the resolved target is within
+   `target_root`. Reject hardlinks pointing outside the extraction root.
+
+3. **Canonicalized destination check**: After joining `target_root` + member path,
+   canonicalize with `Path.resolve()` and verify it remains under `target_root`.
+   This catches edge cases where Unicode normalization or repeated separators
+   could escape the root.
+
+4. **Fail-fast on violations**: If any member fails these checks, abort extraction
+   entirely (do not skip the member silently). Raise `ExtractionSecurityError`
+   with the offending member path.
+
+5. **Per-extractor implementation**:
+   - **TarExtractor**: Use `tarfile.data_filter` (Python 3.12+) or manual member
+     filtering with the checks above. Never use `tar.extractall()` without filtering.
+   - **RpmExtractor** (cpio): Pipe through `cpio -id --no-absolute-filenames` and
+     post-validate extracted paths.
+   - **DebExtractor** (ar + tar): Same tar filtering as TarExtractor for `data.tar.*`.
+
+These checks are mandatory — not optional or configurable.
+
 ### Debug info resolution
 
 When a separate debug info package is provided:
 
-```
+```text
 Main package: libfoo-1.0.rpm
   └── /usr/lib64/libfoo.so.1.0
 
@@ -137,7 +167,7 @@ def discover_shared_libraries(extract_dir: str) -> list[Path]:
 
 ### Integration with ADR-002 compare-release
 
-```
+```text
 compare-release(input1, input2, ...)
   │
   ├── Is input a package?

@@ -27,7 +27,7 @@ prototypes, enum values, inheritance, vtables) that is currently ignored.
 
 ### Current detector → data source mapping
 
-```
+```text
 30 detectors in compare()
 ├── 24 AST detectors (L2)      → old.functions, old.types, old.enums, old.typedefs, old.constants
 │   └── Only fire when elf_only_mode=False (headers were provided)
@@ -62,7 +62,7 @@ the snapshot came from castxml or DWARF.
 
 ### 2. Updated fallback chain in dumper.py
 
-```
+```text
 dump(binary_path, headers=None):
   │
   ├── L0: Binary metadata (always)
@@ -177,7 +177,7 @@ abicheck dump libfoo.so --show-data-sources      # Print which layers are availa
 ```
 
 `--show-data-sources` output example:
-```
+```text
 Data sources for libfoo.so:
   L0 Binary metadata: ELF (x86_64, SONAME=libfoo.so.1, 47 exported symbols)
   L1 Debug info:      DWARF 4 (142 types, 89 functions, 23 enums)

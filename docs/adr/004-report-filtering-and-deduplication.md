@@ -73,7 +73,7 @@ def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]
 
 **Algorithm:**
 
-```
+```text
 1. Collect root changes: all TYPE_CHANGE_KINDS where symbol is a type name
    (TYPE_SIZE_CHANGED, TYPE_FIELD_*, ENUM_MEMBER_*, TYPE_ALIGNMENT_CHANGED, etc.)
 
@@ -184,13 +184,35 @@ abicheck compare old.so new.so --show-only elf
 | `removed` | Changes with `*_REMOVED` / `*_DELETED` kind |
 | `changed` | Changes that are not added/removed |
 
-Tokens are combined with AND within category, OR across categories:
-- `--show-only breaking` → only breaking changes
-- `--show-only functions,removed` → only removed functions
-- `--show-only breaking,functions` → breaking function changes only
+#### Filter evaluation rules
+
+Tokens fall into three **dimensions**:
+
+| Dimension | Tokens |
+|-----------|--------|
+| **Severity** | `breaking`, `api-break`, `risk`, `compatible` |
+| **Element** | `functions`, `variables`, `types`, `enums`, `elf` |
+| **Action** | `added`, `removed`, `changed` |
+
+A change matches the filter if it satisfies **all** specified dimensions (AND
+across dimensions). Within a single dimension, multiple tokens are combined with
+OR (e.g., `breaking,api-break` = severity is BREAKING or API_BREAK).
+
+**Formal rule**: `match = (severity_ok OR no severity token) AND (element_ok OR no element token) AND (action_ok OR no action token)`
+
+**Examples:**
+
+| Flag | Interpretation | Result |
+|------|---------------|--------|
+| `--show-only breaking` | severity=BREAKING | All breaking changes regardless of element/action |
+| `--show-only functions,removed` | element=functions AND action=removed | Only `FUNC_REMOVED` / `FUNC_DELETED` |
+| `--show-only breaking,functions` | severity=BREAKING AND element=functions | Breaking changes that are function-related |
+| `--show-only breaking,api-break` | severity=(BREAKING OR API_BREAK) | Both severity levels, any element |
+| `--show-only types,enums,changed` | element=(types OR enums) AND action=changed | Type/enum modifications only |
 
 Implementation: filter applied in reporter after `compare()` returns, before
 formatting. Verdict is still computed on all changes (filter is display-only).
+The `--show-only` flag does not affect exit codes.
 
 ### 4. Summary mode (`--stat`)
 
@@ -199,7 +221,7 @@ abicheck compare old.so new.so --stat
 ```
 
 Output (text, not markdown):
-```
+```text
 BREAKING: 3 breaking, 2 source-level breaks, 1 risk, 12 compatible (18 total)
 ```
 
@@ -227,21 +249,23 @@ Works in both `full` and `leaf` report modes. Uses existing `affected_symbols` d
 
 Updated flow:
 
-```
+```text
 compare(old, new, suppress, policy, ...)
   → [30 detectors]
   → _deduplicate_ast_dwarf(changes)        # existing
-  → _filter_redundant(changes)             # NEW — produces (kept, redundant)
-  → suppress.filter(kept)                  # existing
+  → suppress.filter(changes)               # existing — applied to ALL changes first
+  → _filter_redundant(unsuppressed)        # NEW — produces (kept, redundant)
   → _enrich_source_locations(kept)         # existing
   → _enrich_affected_symbols(kept)         # existing
-  → compute_verdict(kept + redundant)      # verdict on ALL changes, not just displayed
+  → compute_verdict(kept + redundant)      # verdict on unsuppressed changes only
   → DiffResult(changes=kept, redundant_changes=redundant, ...)
 ```
 
-**Important**: Verdict is computed on the **full** change set (kept + redundant),
-not just the filtered set. This ensures exit codes are correct regardless of
-display mode.
+**Important**: Suppression is applied **before** the redundancy split. This ensures
+that a suppressed change never contributes to the verdict — whether it would have
+been classified as kept or redundant. Verdict is then computed on the full set of
+unsuppressed changes (kept + redundant), so exit codes are correct regardless of
+display mode but respect suppressions.
 
 ### 7. Model changes
 
