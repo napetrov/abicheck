@@ -65,7 +65,7 @@ class ResolvedDSO:
     needed: list[str]             # DT_NEEDED entries
     rpath: str                    # DT_RPATH
     runpath: str                  # DT_RUNPATH
-    resolution_reason: str        # Why resolved here (rpath/runpath/cache/default)
+    resolution_reason: str        # Why resolved here (rpath/runpath/ld_library_path/default/root)
     depth: int                    # Distance from root binary
 
 @dataclass
@@ -80,7 +80,6 @@ def resolve_dependencies(
     search_paths: list[Path] | None = None,
     sysroot: Path | None = None,
     ld_library_path: str = "",
-    use_ld_so_cache: bool = False,
 ) -> DependencyGraph:
 ```
 
@@ -119,7 +118,7 @@ class SymbolBinding:
 
 def compute_bindings(
     graph: DependencyGraph,
-    metadata: dict[str, ElfMetadata],  # per-resolved-path metadata
+    metadata: dict[str, ElfMetadata] | None = None,
     preload: list[str] | None = None,
 ) -> list[SymbolBinding]:
 ```
@@ -146,7 +145,7 @@ class StackVerdict(str, Enum):
 @dataclass
 class StackChange:
     library: str               # Which DSO changed
-    change_type: str           # "added", "removed", "version_changed", "abi_changed"
+    change_type: str           # "added", "removed", "content_changed"
     abi_diff: DiffResult | None  # Per-library ABI diff (reuses existing checker)
     impacted_imports: list[SymbolBinding]  # Which bindings are affected
 

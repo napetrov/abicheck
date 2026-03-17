@@ -1385,7 +1385,7 @@ def stack_check_cmd(
 
     if result.loadability.value == "fail" or result.abi_risk.value == "fail":
         sys.exit(4)
-    elif result.abi_risk.value == "warn":
+    elif result.abi_risk.value == "warn" or result.loadability.value == "warn":
         sys.exit(1)
 
 

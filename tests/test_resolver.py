@@ -69,9 +69,9 @@ class TestExpandRpath:
 
     def test_origin_with_sysroot(self):
         dirs = _expand_rpath("$ORIGIN/../lib", Path("/opt/app/bin"), "/sysroot")
-        # $ORIGIN expands to the DSO's directory, then sysroot prepended.
-        assert len(dirs) == 1
-        assert "/opt/app/bin/../lib" in dirs[0]
+        # $ORIGIN paths do NOT get sysroot prepended — the DSO path already
+        # includes the sysroot if the DSO was found under it.
+        assert dirs == ["/opt/app/bin/../lib"]
 
 
 # ---------------------------------------------------------------------------
@@ -184,15 +184,30 @@ class TestResolveDependencies:
             assert consumer in node_keys, f"Edge consumer {consumer} not in nodes"
             assert provider in node_keys, f"Edge provider {provider} not in nodes"
 
-    def test_depth_monotonic(self, real_binary):
+    def test_graph_is_acyclic(self, real_binary):
         graph = resolve_dependencies(real_binary)
+        # Build adjacency list and verify the dependency graph is a DAG.
+        adj: dict[str, list[str]] = {}
         for consumer, provider in graph.edges:
-            c_depth = graph.nodes[consumer].depth
-            p_depth = graph.nodes[provider].depth
-            assert p_depth >= c_depth, (
-                f"Provider {provider} (depth {p_depth}) should be >= "
-                f"consumer {consumer} (depth {c_depth})"
-            )
+            adj.setdefault(consumer, []).append(provider)
+
+        VISITING, VISITED = 1, 2
+        state: dict[str, int] = {}
+
+        def has_cycle(node: str) -> bool:
+            if state.get(node) == VISITED:
+                return False
+            if state.get(node) == VISITING:
+                return True
+            state[node] = VISITING
+            for neighbor in adj.get(node, []):
+                if has_cycle(neighbor):
+                    return True
+            state[node] = VISITED
+            return False
+
+        for node in graph.nodes:
+            assert not has_cycle(node), f"Cycle detected involving {node}"
 
     def test_elf_metadata_populated(self, real_binary):
         graph = resolve_dependencies(real_binary)

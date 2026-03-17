@@ -90,6 +90,10 @@ def _compute_abi_risk(stack_changes: list[StackChange]) -> StackVerdict:
     for change in stack_changes:
         if change.change_type == "removed":
             has_breaking = True
+        elif change.abi_diff is None and change.change_type == "content_changed":
+            # ABI diff failed (unreadable file or diff error) — treat as risk
+            # since we can't confirm compatibility.
+            has_risk = True
         elif change.abi_diff is not None and change.impacted_imports:
             if change.abi_diff.verdict.value == "BREAKING":
                 has_breaking = True

@@ -247,12 +247,21 @@ def _seed_root(
 ) -> tuple[Path, str, str, list[str], str, str] | None:
     """Parse the root binary, add it to the graph, and return target config.
 
-    Returns (root_path, root_key, target_triple, default_dirs,
+    Returns (root_path, root_key, root_soname, default_dirs,
     platform_token, lib_token) or None if the binary doesn't exist.
+
+    When *prefix* (sysroot) is non-empty and *binary* is an absolute path
+    that doesn't already start with the prefix, the root binary is looked
+    up under the sysroot.
     """
-    root_path = binary.resolve()
+    # When a sysroot is active, resolve the binary under it.
+    if prefix and binary.is_absolute() and not str(binary).startswith(prefix):
+        root_path = Path(prefix) / str(binary).lstrip("/")
+    else:
+        root_path = binary
+    root_path = root_path.resolve()
     if not root_path.exists():
-        log.warning("resolve_dependencies: root binary not found: %s", binary)
+        log.warning("resolve_dependencies: root binary not found: %s", root_path)
         return None
 
     root_meta = parse_elf_metadata(root_path)
