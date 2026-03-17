@@ -606,14 +606,14 @@ def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         e_new = new_map[name]
         old_members = {m.name: m.value for m in e_old.members}
         new_members = {m.name: m.value for m in e_new.members}
-        # "Sentinel" member = member with the highest integer value in old enum.
-        # Detecting its value change is important (e.g. FOO_MAX / FOO_COUNT patterns).
-        # Use max-value comparison, NOT list-position order (castxml order is unreliable).
-        old_max_val = max(old_members.values()) if old_members else None
-        old_sentinel = (
-            next(n for n, v in old_members.items() if v == old_max_val)
-            if old_max_val is not None else None
-        )
+        # Sentinel detection is name-pattern based to avoid accidental
+        # downgrades of ordinary enum members with the maximum numeric value.
+        # Recognized patterns: *_last, *_max, *_count (case-insensitive).
+        _SENTINEL_SUFFIXES = ("_last", "_max", "_count")
+
+        def _is_sentinel_member(member_name: str) -> bool:
+            n = member_name.lower()
+            return n.endswith(_SENTINEL_SUFFIXES) or n in {"last", "max", "count"}
 
         # Build inverse map: new_value → new_name for values that are "new" (not in old names)
         # If a missing old member value still exists under a different new name,
@@ -639,7 +639,7 @@ def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             elif new_members[mname] != mval:
                 kind = (
                     ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED
-                    if mname == old_sentinel
+                    if _is_sentinel_member(mname)
                     else ChangeKind.ENUM_MEMBER_VALUE_CHANGED
                 )
                 changes.append(Change(
@@ -2612,18 +2612,19 @@ def _diff_enum_layouts(o: object, n: object) -> list[Change]:
             ))
 
         # 3. Changed values
-        # Sentinel member = member with the highest old value.
-        # If this member changes, classify as ENUM_LAST_MEMBER_VALUE_CHANGED.
-        old_sentinel_name = None
-        if old_e.members:
-            _max_val = max(old_e.members.values())
-            old_sentinel_name = next((m for m, v in old_e.members.items() if v == _max_val), None)
+        # Sentinel detection: name-pattern based (*_last, *_max, *_count).
+        # More robust than max-value heuristics for evolving enums.
+        _SENTINEL_SUFFIXES = ("_last", "_max", "_count")
+
+        def _is_sentinel_member(member_name: str) -> bool:
+            n = member_name.lower()
+            return n.endswith(_SENTINEL_SUFFIXES) or n in {"last", "max", "count"}
 
         for mname, old_val in old_e.members.items():
             if mname in new_e.members and new_e.members[mname] != old_val:
                 kind = (
                     ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED
-                    if mname == old_sentinel_name
+                    if _is_sentinel_member(mname)
                     else ChangeKind.ENUM_MEMBER_VALUE_CHANGED
                 )
                 changes.append(Change(

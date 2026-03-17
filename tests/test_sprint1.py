@@ -81,6 +81,16 @@ def test_enum_additions_plus_last_change_are_risk_not_breaking() -> None:
     assert result.verdict == Verdict.COMPATIBLE_WITH_RISK
 
 
+def test_enum_named_sentinel_not_max_value_is_risk() -> None:
+    """Named sentinel (*_last/*_max/*_count) should downgrade even if not max value."""
+    old = _snap(enums=[EnumType("Err", [EnumMember("LAST", 1), EnumMember("OTHER", 99)])])
+    new = _snap(enums=[EnumType("Err", [EnumMember("LAST", 2), EnumMember("OTHER", 99)])])
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED in kinds
+    assert result.verdict == Verdict.COMPATIBLE_WITH_RISK
+
+
 # ---------------------------------------------------------------------------
 # Method qualifier tests
 # ---------------------------------------------------------------------------
