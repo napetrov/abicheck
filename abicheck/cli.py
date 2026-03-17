@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1028,8 +1027,8 @@ def compare_release_cmd(
         lines: list[str] = [
             "# ABI Release Comparison",
             "",
-            f"| | |",
-            f"|---|---|",
+            "| | |",
+            "|---|---|",
             f"| **Old** | `{old_dir}` |",
             f"| **New** | `{new_dir}` |",
             f"| **Verdict** | {_VERDICT_EMOJI.get(worst_verdict, '?')} `{worst_verdict}` |",

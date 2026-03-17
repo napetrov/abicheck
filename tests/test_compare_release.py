@@ -4,13 +4,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from abicheck.cli import main
 from abicheck.model import AbiSnapshot, Function, Visibility
 from abicheck.serialization import snapshot_to_json
-
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -77,7 +75,8 @@ class TestDirVsDir:
     def test_matching_by_name_no_change(self, tmp_path):
         old_dir = tmp_path / "old"
         new_dir = tmp_path / "new"
-        old_dir.mkdir(); new_dir.mkdir()
+        old_dir.mkdir()
+        new_dir.mkdir()
 
         snap = _snap()
         _write_snap(old_dir / "libfoo.json", snap)
@@ -88,8 +87,10 @@ class TestDirVsDir:
         assert "NO_CHANGE" in out
 
     def test_matching_multi_library_all_ok(self, tmp_path):
-        old_dir = tmp_path / "old"; old_dir.mkdir()
-        new_dir = tmp_path / "new"; new_dir.mkdir()
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
 
         for name in ("libfoo.json", "libbar.json", "libbaz.json"):
             snap = _snap()
@@ -100,8 +101,10 @@ class TestDirVsDir:
         assert code == 0
 
     def test_breaking_in_one_library(self, tmp_path):
-        old_dir = tmp_path / "old"; old_dir.mkdir()
-        new_dir = tmp_path / "new"; new_dir.mkdir()
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
 
         # libfoo: breaking
         old_foo, new_foo = _breaking_pair("libfoo.so")
@@ -117,8 +120,10 @@ class TestDirVsDir:
         assert "BREAKING" in out
 
     def test_json_output_multi(self, tmp_path):
-        old_dir = tmp_path / "old"; old_dir.mkdir()
-        new_dir = tmp_path / "new"; new_dir.mkdir()
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
 
         for name in ("libfoo.json", "libbar.json"):
             snap = _snap()
@@ -137,8 +142,10 @@ class TestDirVsDir:
 class TestUnmatched:
     def test_removed_library_no_flag(self, tmp_path):
         """Removed library should warn but not fail by default."""
-        old_dir = tmp_path / "old"; old_dir.mkdir()
-        new_dir = tmp_path / "new"; new_dir.mkdir()
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
 
         _write_snap(old_dir / "libfoo.json", _snap())
         _write_snap(old_dir / "libbar.json", _snap())
@@ -152,8 +159,10 @@ class TestUnmatched:
 
     def test_removed_library_with_flag(self, tmp_path):
         """--fail-on-removed-library should exit 8 when library disappears."""
-        old_dir = tmp_path / "old"; old_dir.mkdir()
-        new_dir = tmp_path / "new"; new_dir.mkdir()
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
 
         _write_snap(old_dir / "libfoo.json", _snap())
         _write_snap(old_dir / "libbar.json", _snap())
@@ -167,8 +176,10 @@ class TestUnmatched:
 
     def test_added_library_ok(self, tmp_path):
         """New library in new_dir not in old_dir is fine (no flag needed)."""
-        old_dir = tmp_path / "old"; old_dir.mkdir()
-        new_dir = tmp_path / "new"; new_dir.mkdir()
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
 
         _write_snap(old_dir / "libfoo.json", _snap())
         _write_snap(new_dir / "libfoo.json", _snap())
@@ -178,8 +189,10 @@ class TestUnmatched:
         assert code == 0
 
     def test_unmatched_reported_in_json(self, tmp_path):
-        old_dir = tmp_path / "old"; old_dir.mkdir()
-        new_dir = tmp_path / "new"; new_dir.mkdir()
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
 
         _write_snap(old_dir / "libfoo.json", _snap())
         _write_snap(old_dir / "libremoved.json", _snap())
@@ -197,8 +210,10 @@ class TestUnmatched:
 
 class TestOutputDir:
     def test_per_library_reports_written(self, tmp_path):
-        old_dir = tmp_path / "old"; old_dir.mkdir()
-        new_dir = tmp_path / "new"; new_dir.mkdir()
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
         out_dir = tmp_path / "reports"
 
         _write_snap(old_dir / "libfoo.json", _snap())
@@ -213,8 +228,10 @@ class TestOutputDir:
         assert (out_dir / "summary.json").exists()
 
     def test_summary_json_structure(self, tmp_path):
-        old_dir = tmp_path / "old"; old_dir.mkdir()
-        new_dir = tmp_path / "new"; new_dir.mkdir()
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
         out_dir = tmp_path / "reports"
 
         _write_snap(old_dir / "libfoo.json", _snap())
@@ -231,8 +248,10 @@ class TestOutputDir:
 class TestMixedInputs:
     def test_so_versioned_name_matching(self, tmp_path):
         """libfoo.so.1.2 in old should match libfoo.so.1.3 in new via stem."""
-        old_dir = tmp_path / "old"; old_dir.mkdir()
-        new_dir = tmp_path / "new"; new_dir.mkdir()
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
 
         snap = _snap()
         _write_snap(old_dir / "libfoo.so.1.2.json", snap)
