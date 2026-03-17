@@ -229,8 +229,8 @@ def test_enum_member_removed() -> None:
 # ── enum member value changed ─────────────────────────────────────────────────
 
 def test_enum_member_value_changed() -> None:
-    old = _snap(_meta(enums={"Code": _enum("Code", 4, members={"OK": 0, "FAIL": 1})}))
-    new = _snap(_meta(enums={"Code": _enum("Code", 4, members={"OK": 0, "FAIL": 2})}))
+    old = _snap(_meta(enums={"Code": _enum("Code", 4, members={"OK": 0, "FAIL": 1, "LAST": 2})}))
+    new = _snap(_meta(enums={"Code": _enum("Code", 4, members={"OK": 0, "FAIL": 3, "LAST": 2})}))
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.ENUM_MEMBER_VALUE_CHANGED in kinds

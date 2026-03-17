@@ -49,6 +49,7 @@ def test_enum_last_member_changed() -> None:
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED in kinds
+    assert result.verdict == Verdict.COMPATIBLE_WITH_RISK
 
 
 def test_enum_member_added() -> None:
@@ -58,6 +59,26 @@ def test_enum_member_added() -> None:
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.ENUM_MEMBER_ADDED in kinds
     assert result.verdict == Verdict.COMPATIBLE
+
+
+def test_enum_additions_plus_last_change_are_risk_not_breaking() -> None:
+    """Multiple enum member additions + sentinel move should be COMPATIBLE_WITH_RISK."""
+    from abicheck.elf_metadata import ElfMetadata
+
+    old = _snap(
+        enums=[EnumType("Tag", [EnumMember("A", 0), EnumMember("LAST", 10)])],
+        elf=ElfMetadata(needed=["libc.so.6"]),
+    )
+    new = _snap(
+        enums=[EnumType("Tag", [EnumMember("A", 0), EnumMember("B", 1), EnumMember("LAST", 11)])],
+        elf=ElfMetadata(needed=["libc.so.6", "libsvml.so"]),
+    )
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.ENUM_MEMBER_ADDED in kinds
+    assert ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED in kinds
+    assert ChangeKind.NEEDED_ADDED in kinds
+    assert result.verdict == Verdict.COMPATIBLE_WITH_RISK
 
 
 # ---------------------------------------------------------------------------
@@ -188,13 +209,12 @@ def test_bitfield_changed() -> None:
 # Verdict checks (all sprint1 changes are BREAKING)
 # ---------------------------------------------------------------------------
 
-def test_sprint1_all_breaking() -> None:
-    """All new change kinds must produce BREAKING verdict."""
+def test_sprint1_breaking_subset() -> None:
+    """Sprint1 binary-breaking subset remains in BREAKING bucket."""
     from abicheck.checker import _BREAKING_KINDS
     sprint1_kinds = {
         ChangeKind.ENUM_MEMBER_REMOVED,
         ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
-        ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
         ChangeKind.FUNC_STATIC_CHANGED,
         ChangeKind.FUNC_CV_CHANGED,
         ChangeKind.FUNC_PURE_VIRTUAL_ADDED,
@@ -207,3 +227,13 @@ def test_sprint1_all_breaking() -> None:
     assert sprint1_kinds.issubset(_BREAKING_KINDS), (
         f"Not in _BREAKING_KINDS: {sprint1_kinds - _BREAKING_KINDS}"
     )
+
+
+def test_regular_enum_member_value_change_remains_breaking() -> None:
+    """Non-sentinel enum member value change stays BREAKING."""
+    old = _snap(enums=[EnumType("Err", [EnumMember("OK", 0), EnumMember("E", 1), EnumMember("LAST", 2)])])
+    new = _snap(enums=[EnumType("Err", [EnumMember("OK", 0), EnumMember("E", 99), EnumMember("LAST", 2)])])
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.ENUM_MEMBER_VALUE_CHANGED in kinds
+    assert result.verdict == Verdict.BREAKING

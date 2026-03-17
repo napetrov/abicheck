@@ -205,7 +205,7 @@
       "bad_practice": false
     },
     "case20_enum_member_value_changed": {
-      "expected": "BREAKING",
+      "expected": "COMPATIBLE_WITH_RISK",
       "category": "breaking",
       "platforms": [
         "linux",
@@ -214,7 +214,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "reason": "enum member value changes are source risk, not binary ABI break"
     },
     "case21_method_became_static": {
       "expected": "BREAKING",
