@@ -53,7 +53,7 @@ def _expand_header_inputs(inputs: list[Path]) -> list[Path]:
     out: list[Path] = []
     for p in inputs:
         if not p.exists():
-            raise click.ClickException(f"Header path not found: {p}")
+            raise click.ClickException(f"Header file not found or not a file: {p}")
         if p.is_file():
             out.append(p)
             continue
@@ -165,9 +165,11 @@ def _dump_native_binary(
                 "Results are weaker and may miss type/signature ABI breaks.",
                 err=True,
             )
-        for inc in includes:
-            if not inc.exists() or not inc.is_dir():
-                raise click.ClickException(f"Include directory not found or not a directory: {inc}")
+        # include dirs are only relevant when headers are parsed via castxml
+        if resolved_headers:
+            for inc in includes:
+                if not inc.exists() or not inc.is_dir():
+                    raise click.ClickException(f"Include directory not found or not a directory: {inc}")
         compiler = "c++" if lang == "c++" else "cc"
         try:
             return dump(
@@ -401,7 +403,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
     if binary_fmt in ("pe", "macho"):
         try:
             snap = _dump_native_binary(
-                so_path, binary_fmt, list(headers), list(includes), version, lang,
+                so_path, binary_fmt, _expand_header_inputs(list(headers)), list(includes), version, lang,
                 pdb_path=pdb_path,
             )
         except click.ClickException:
@@ -417,10 +419,11 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
         return
 
     compiler = "c++" if lang == "c++" else "cc"
+    resolved_headers = _expand_header_inputs(list(headers)) if headers else []
     try:
         snap = dump(
             so_path=so_path,
-            headers=list(headers),
+            headers=resolved_headers,
             extra_includes=list(includes),
             version=version,
             compiler=compiler,
