@@ -13,7 +13,7 @@ Unlike `compare` (which reports all library changes), `appcompat` filters the di
 | Library maintainer checking all ABI changes | `abicheck compare` |
 | App developer checking if *their app* is affected | `abicheck appcompat` |
 | Distro packager checking if app X works with new libfoo | `abicheck appcompat` |
-| Quick symbol availability check (no old library) | `abicheck appcompat --check-against` |
+| Quick symbol availability check (no old library) | `abicheck appcompat <app-binary> --check-against <target-lib>` |
 
 ---
 
@@ -141,6 +141,7 @@ abicheck appcompat ./myapp --list-required-symbols --check-against libfoo.so.2 -
 | Exit code | Verdict | Meaning |
 |-----------|---------|---------|
 | `0` | `COMPATIBLE` / `NO_CHANGE` | Application is safe with the new library |
+| `1` | `TOOL_ERROR` | Operational or runtime error (tool failure, invalid input, or unexpected exception) |
 | `2` | `API_BREAK` | Source-level break affecting app's symbols |
 | `4` | `BREAKING` | Binary ABI break or missing symbols |
 
