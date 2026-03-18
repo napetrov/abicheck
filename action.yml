@@ -32,12 +32,8 @@ inputs:
   new-library:
     description: >
       Path to the new (current) library or binary.
-<<<<<<< HEAD
       Required for compare and dump modes. For compare-release: new directory
       or package (RPM, Deb, tar, conda, wheel).
-=======
-      Required for compare and dump modes.
->>>>>>> 8421f4b (fix: appcompat ELF version index parsing and weak symbol filtering)
     required: false
 
   # ── Application compatibility inputs ────────────────────────────────────
