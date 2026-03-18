@@ -55,6 +55,7 @@ mcp = [
 dev = [
     "pytest>=7.0",
     "pytest-cov",
+    "pytest-xdist>=3.0",
     "ruff>=0.3",
     "mypy>=1.0",
     "types-PyYAML",

@@ -1,10 +1,16 @@
 """conftest.py — pytest configuration for abicheck tests."""
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+try:
+    import filelock  # shipped with pytest-xdist
+except ImportError:
+    filelock = None  # type: ignore[assignment]
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -78,6 +84,20 @@ def update_goldens(request: pytest.FixtureRequest) -> bool:
     return bool(request.config.getoption("--update-goldens"))
 
 
+def _cmake_configure_once(build_dir: Path) -> bool:
+    """Run cmake configure into *build_dir*.  Returns True on success."""
+    examples_dir = Path(__file__).parent.parent / "examples"
+    cmake = shutil.which("cmake")
+    if not cmake:
+        return False
+    r = subprocess.run(
+        [cmake, "-S", str(examples_dir), "-B", str(build_dir),
+         "-DCMAKE_BUILD_TYPE=Debug"],
+        capture_output=True, text=True, timeout=120,
+    )
+    return r.returncode == 0
+
+
 @pytest.fixture(scope="session")
 def shared_cmake_build_dir(tmp_path_factory: pytest.TempPathFactory) -> Path | None:
     """Session-scoped CMake build directory for integration tests.
@@ -86,6 +106,10 @@ def shared_cmake_build_dir(tmp_path_factory: pytest.TempPathFactory) -> Path | N
     individual tests only need to run ``cmake --build`` for their specific
     targets.  On Windows this avoids ~30 redundant cmake-configure passes
     (each one re-parses all 63 example CMakeLists).
+
+    When running under pytest-xdist, a file lock ensures only the first
+    worker runs the expensive cmake configure; other workers wait and
+    reuse the same build directory.
     """
     examples_dir = Path(__file__).parent.parent / "examples"
     cmake_lists = examples_dir / "CMakeLists.txt"
@@ -94,6 +118,31 @@ def shared_cmake_build_dir(tmp_path_factory: pytest.TempPathFactory) -> Path | N
     if not cmake or not cmake_lists.exists():
         return None
 
+    # Under pytest-xdist, share a single build dir across all workers
+    is_xdist = os.environ.get("PYTEST_XDIST_WORKER") is not None
+
+    if is_xdist and filelock is not None:
+        # All workers share the same root tmp dir; use a fixed name
+        root_tmp = tmp_path_factory.getbasetemp().parent
+        build_dir = root_tmp / "cmake_shared_build"
+        lock_path = root_tmp / "cmake_shared_build.lock"
+        done_flag = root_tmp / "cmake_shared_build.done"
+        fail_flag = root_tmp / "cmake_shared_build.fail"
+
+        with filelock.FileLock(str(lock_path), timeout=180):
+            if fail_flag.exists():
+                return None
+            if not done_flag.exists():
+                build_dir.mkdir(exist_ok=True)
+                if _cmake_configure_once(build_dir):
+                    done_flag.write_text("ok")
+                else:
+                    fail_flag.write_text("fail")
+                    return None
+
+        return build_dir
+
+    # Sequential execution: one configure per session
     build_dir = tmp_path_factory.mktemp("cmake_build")
     r = subprocess.run(
         [cmake, "-S", str(examples_dir), "-B", str(build_dir),
