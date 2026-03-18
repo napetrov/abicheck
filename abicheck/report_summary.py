@@ -68,7 +68,7 @@ def compatibility_metrics(
 
 
 def build_summary(result: DiffResult) -> ReportSummary:
-    metrics = compatibility_metrics(result.changes)
+    metrics = compatibility_metrics(result.changes, result.old_symbol_count)
     return ReportSummary(
         breaking=len(result.breaking),
         source_breaks=len(result.source_breaks),

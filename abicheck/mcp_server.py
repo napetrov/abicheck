@@ -386,19 +386,12 @@ def _render_output(
         return to_sarif_str(result, show_only=show_only)
     if fmt == "html":
         from .html_report import generate_html_report
-        old_symbol_count = sum(
-            1 for f in old.functions
-            if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
-        ) + sum(
-            1 for v in old.variables
-            if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
-        )
         return generate_html_report(
             result,
             lib_name=old.library,
             old_version=old.version,
             new_version=new.version,
-            old_symbol_count=old_symbol_count or None,
+            old_symbol_count=result.old_symbol_count,
             show_only=show_only,
             show_impact=show_impact,
         )

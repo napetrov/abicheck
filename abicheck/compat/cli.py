@@ -1202,16 +1202,6 @@ def compat_check_cmd(  # noqa: PLR0913
     if component and not effective_title:
         effective_title = f"ABI Compatibility Report — {lib_name} ({component})"
 
-    # ── Compute old symbol count (shared by HTML and XML reports) ────────
-    from ..model import Visibility
-    old_symbol_count = sum(
-        1 for f in old_snap.functions
-        if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
-    ) + sum(
-        1 for v in old_snap.variables
-        if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
-    )
-
     # ── Generate report ──────────────────────────────────────────────────
     def _generate_report(r: DiffResult, path: Path) -> None:
         if fmt == "html":
@@ -1219,7 +1209,7 @@ def compat_check_cmd(  # noqa: PLR0913
                 r, output_path=path,
                 lib_name=lib_name,
                 old_version=old_version, new_version=new_version,
-                old_symbol_count=old_symbol_count or None,
+                old_symbol_count=r.old_symbol_count,
                 title=effective_title,
                 compat_html=compat_html,
             )
@@ -1228,7 +1218,7 @@ def compat_check_cmd(  # noqa: PLR0913
                 r, output_path=path,
                 lib_name=lib_name,
                 old_version=old_version, new_version=new_version,
-                old_symbol_count=old_symbol_count or None,
+                old_symbol_count=r.old_symbol_count,
                 arch=arch or "",
                 compiler=_detect_compiler_version(gcc_path),
             )
@@ -1267,7 +1257,7 @@ def compat_check_cmd(  # noqa: PLR0913
 
     # Compute BC% for console output (matches ABICC console format)
     from ..report_summary import compatibility_metrics  # noqa: PLC0415
-    metrics = compatibility_metrics(result.changes, old_symbol_count)
+    metrics = compatibility_metrics(result.changes, result.old_symbol_count)
     breaking_count = metrics.breaking_count
     _bc_pct = metrics.binary_compatibility_pct
 

@@ -127,6 +127,15 @@ def _detect_binary_format(path: Path) -> str | None:
     return None
 
 
+def _safe_write_output(output: Path, text: str) -> None:
+    """Write *text* to *output*, creating parent directories as needed."""
+    try:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        raise click.ClickException(f"Cannot write to {output}: {exc}") from exc
+
+
 def _sniff_text_format(path: Path) -> str:
     """Read a small header chunk and return 'json', 'perl', or 'unknown'."""
     try:
@@ -352,8 +361,16 @@ def _resolve_input(
     )
 
 
-def _collect_metadata(path: Path) -> LibraryMetadata:
-    """Compute SHA-256 and file size for a library artifact."""
+def _collect_metadata(path: Path) -> LibraryMetadata | None:
+    """Compute SHA-256 and file size for a library artifact.
+
+    Returns *None* when *path* is a text-based snapshot (JSON or Perl dump)
+    so that reports don't display misleading metadata for the serialised file.
+    """
+    text_fmt = _sniff_text_format(path)
+    if text_fmt in ("json", "perl"):
+        return None
+
     import hashlib
 
     data = path.read_bytes()
@@ -506,7 +523,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             raise click.ClickException(str(exc)) from exc
         result = snapshot_to_json(snap)
         if output:
-            output.write_text(result, encoding="utf-8")
+            _safe_write_output(output, result)
             click.echo(f"Snapshot written to {output}", err=True)
         else:
             click.echo(result)
@@ -537,7 +554,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 
     result = snapshot_to_json(snap)
     if output:
-        output.write_text(result, encoding="utf-8")
+        _safe_write_output(output, result)
         click.echo(f"Snapshot written to {output}", err=True)
     else:
         click.echo(result)
@@ -678,20 +695,12 @@ def _render_output(
         return to_sarif_str(result, show_only=show_only)
     if fmt == "html":
         from .html_report import generate_html_report
-        from .model import Visibility
-        old_symbol_count = sum(
-            1 for f in old.functions
-            if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
-        ) + sum(
-            1 for v in old.variables
-            if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)
-        )
         return generate_html_report(
             result,
             lib_name=old.library,
             old_version=old.version,
             new_version=new.version if new else "new",
-            old_symbol_count=old_symbol_count or None,
+            old_symbol_count=result.old_symbol_count,
             show_only=show_only,
             show_impact=show_impact,
         )
@@ -1100,7 +1109,7 @@ def compare_cmd(
         show_impact=show_impact, stat=stat,
     )
     if output:
-        output.write_text(text, encoding="utf-8")
+        _safe_write_output(output, text)
         click.echo(f"Report written to {output}", err=True)
     else:
         click.echo(text)
@@ -1432,7 +1441,7 @@ def compare_release_cmd(
 
             if output_dir:
                 lib_report_path = output_dir / f"{old_path.stem}.json"
-                lib_report_path.write_text(to_json(result), encoding="utf-8")
+                _safe_write_output(lib_report_path, to_json(result))
 
         # Summary output
         if fmt == "json":
@@ -1483,7 +1492,7 @@ def compare_release_cmd(
             text = "\n".join(lines)
 
         if output:
-            output.write_text(text, encoding="utf-8")
+            _safe_write_output(output, text)
             click.echo(f"Report written to {output}", err=True)
         else:
             click.echo(text)
@@ -1496,7 +1505,7 @@ def compare_release_cmd(
                 "unmatched_old": [old_map[k].name for k in removed_keys],
                 "unmatched_new": [new_map[k].name for k in added_keys],
             }
-            summary_path.write_text(json.dumps(summary_data, indent=2), encoding="utf-8")
+            _safe_write_output(summary_path, json.dumps(summary_data, indent=2))
             click.echo(f"Per-library reports written to {output_dir}/", err=True)
 
         # Exit codes — ABI severity takes priority over policy flags.
@@ -1561,6 +1570,12 @@ def deps_cmd(
     """
     _setup_verbosity(verbose)
 
+    fmt_detected = _detect_binary_format(binary)
+    if fmt_detected != "elf":
+        raise click.ClickException(
+            f"deps requires an ELF binary; got {fmt_detected or 'unknown format'}: {binary}"
+        )
+
     from .stack_checker import check_single_env
     from .stack_report import stack_to_json, stack_to_markdown
 
@@ -1573,7 +1588,7 @@ def deps_cmd(
 
     text = stack_to_json(result) if fmt == "json" else stack_to_markdown(result)
     if output:
-        output.write_text(text, encoding="utf-8")
+        _safe_write_output(output, text)
         click.echo(f"Report written to {output}", err=True)
     else:
         click.echo(text)
@@ -1624,6 +1639,18 @@ def stack_check_cmd(
     """
     _setup_verbosity(verbose)
 
+    # Validate that the binary exists and is ELF in at least one sysroot
+    for label, root in [("baseline", baseline), ("candidate", candidate)]:
+        resolved = root / binary
+        if resolved.exists():
+            fmt_detected = _detect_binary_format(resolved)
+            if fmt_detected != "elf":
+                raise click.ClickException(
+                    f"stack-check requires an ELF binary; got "
+                    f"{fmt_detected or 'unknown format'}: {resolved}"
+                )
+            break
+
     from .stack_checker import check_stack
     from .stack_report import stack_to_json, stack_to_markdown
 
@@ -1637,7 +1664,7 @@ def stack_check_cmd(
 
     text = stack_to_json(result) if fmt == "json" else stack_to_markdown(result)
     if output:
-        output.write_text(text, encoding="utf-8")
+        _safe_write_output(output, text)
         click.echo(f"Report written to {output}", err=True)
     else:
         click.echo(text)

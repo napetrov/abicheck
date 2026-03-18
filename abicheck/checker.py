@@ -48,14 +48,17 @@ from .model import (
     AbiSnapshot,
     EnumType,
     Function,
+    Param,
+    ParamKind,
     RecordType,
     TypeField,
     Variable,
     Visibility,
 )
 
+from .policy_file import PolicyFile
+
 if TYPE_CHECKING:
-    from .policy_file import PolicyFile
     from .suppression import SuppressionList
 
 # Visibility levels that constitute the public ABI surface.
@@ -70,6 +73,22 @@ def _public_functions(snap: AbiSnapshot) -> dict[str, Function]:
 def _public_variables(snap: AbiSnapshot) -> dict[str, Variable]:
     """Return public/ELF-only variables from *snap*."""
     return {k: v for k, v in snap.variable_map.items() if v.visibility in _PUBLIC_VIS}
+
+
+_KIND_SUFFIX = {
+    ParamKind.POINTER: "*",
+    ParamKind.REFERENCE: "&",
+    ParamKind.RVALUE_REF: "&&",
+}
+
+
+def _format_params(params: list[Param]) -> str:
+    """Format a parameter list as a human-readable string."""
+    parts: list[str] = []
+    for p in params:
+        suffix = _KIND_SUFFIX.get(p.kind, "")
+        parts.append(f"{p.type}{suffix}")
+    return ", ".join(parts) if parts else "(none)"
 
 
 __all__ = [
@@ -123,33 +142,62 @@ class DiffResult:
     suppression_file_provided: bool = False  # True when --suppress was passed, even if 0 matched
     detector_results: list[DetectorResult] = field(default_factory=list)
     policy: str = "strict_abi"  # active policy profile; drives breaking/source_breaks/compatible
+    policy_file: PolicyFile | None = None  # custom policy with overrides (Bug 4)
     old_metadata: LibraryMetadata | None = None
     new_metadata: LibraryMetadata | None = None
     redundant_changes: list[Change] = field(default_factory=list)  # hidden by redundancy filter
     redundant_count: int = 0
+    old_symbol_count: int | None = None  # public exported symbol count in old library
+
+    def _effective_kind_sets(
+        self,
+    ) -> tuple[frozenset[ChangeKind], frozenset[ChangeKind], frozenset[ChangeKind], frozenset[ChangeKind]]:
+        """Return (breaking, api_break, compatible, risk) kind sets with overrides applied."""
+        breaking, api_break, compatible, risk = _policy_kind_sets(self.policy)
+        if not self.policy_file or not self.policy_file.overrides:
+            return breaking, api_break, compatible, risk
+
+        # Apply overrides: move kinds between sets
+        b, a, c, r = set(breaking), set(api_break), set(compatible), set(risk)
+        _VERDICT_TO_SET_IDX = {
+            Verdict.BREAKING: 0,
+            Verdict.API_BREAK: 1,
+            Verdict.COMPATIBLE: 2,
+            Verdict.COMPATIBLE_WITH_RISK: 3,
+        }
+        sets = [b, a, c, r]
+        for kind, verdict in self.policy_file.overrides.items():
+            # Remove from all sets
+            for s in sets:
+                s.discard(kind)
+            # Add to target set
+            idx = _VERDICT_TO_SET_IDX.get(verdict)
+            if idx is not None:
+                sets[idx].add(kind)
+        return frozenset(b), frozenset(a), frozenset(c), frozenset(r)
 
     @property
     def breaking(self) -> list[Change]:
         """Changes classified as BREAKING under the active policy."""
-        breaking_set, _, _, _ = _policy_kind_sets(self.policy)
+        breaking_set, _, _, _ = self._effective_kind_sets()
         return [c for c in self.changes if c.kind in breaking_set]
 
     @property
     def source_breaks(self) -> list[Change]:
         """Changes classified as API_BREAK under the active policy."""
-        _, api_break_set, _, _ = _policy_kind_sets(self.policy)
+        _, api_break_set, _, _ = self._effective_kind_sets()
         return [c for c in self.changes if c.kind in api_break_set]
 
     @property
     def compatible(self) -> list[Change]:
         """Changes classified as COMPATIBLE under the active policy."""
-        _, _, compatible_set, _ = _policy_kind_sets(self.policy)
+        _, _, compatible_set, _ = self._effective_kind_sets()
         return [c for c in self.changes if c.kind in compatible_set]
 
     @property
     def risk(self) -> list[Change]:
         """Changes classified as COMPATIBLE_WITH_RISK under the active policy."""
-        _, _, _, risk_set = _policy_kind_sets(self.policy)
+        _, _, _, risk_set = self._effective_kind_sets()
         return [c for c in self.changes if c.kind in risk_set]
 
 
@@ -215,8 +263,8 @@ def _check_function_signature(mangled: str, f_old: Function, f_new: Function) ->
             kind=ChangeKind.FUNC_PARAMS_CHANGED,
             symbol=mangled,
             description=f"Parameters changed: {f_old.name}",
-            old_value=str(old_params),
-            new_value=str(new_params),
+            old_value=_format_params(f_old.params),
+            new_value=_format_params(f_new.params),
         ))
 
     if f_old.is_noexcept and not f_new.is_noexcept:
@@ -636,7 +684,7 @@ def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 # Value truly removed
                 changes.append(Change(
                     kind=ChangeKind.ENUM_MEMBER_REMOVED,
-                    symbol=name,
+                    symbol=f"{name}::{mname}",
                     description=f"Enum member removed: {name}::{mname}",
                     old_value=str(mval),
                 ))
@@ -648,7 +696,7 @@ def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 )
                 changes.append(Change(
                     kind=kind,
-                    symbol=name,
+                    symbol=f"{name}::{mname}",
                     description=f"Enum member value changed: {name}::{mname}",
                     old_value=str(mval),
                     new_value=str(new_members[mname]),
@@ -670,7 +718,7 @@ def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                     continue  # same value as a removed old member — rename candidate
                 changes.append(Change(
                     kind=ChangeKind.ENUM_MEMBER_ADDED,
-                    symbol=name,
+                    symbol=f"{name}::{mname}",
                     description=f"Enum member added: {name}::{mname}",
                     new_value=str(mval),
                 ))
@@ -2271,6 +2319,14 @@ def compare(
     all_unsuppressed = kept + redundant
     verdict = policy_file.compute_verdict(all_unsuppressed) if policy_file is not None else compute_verdict(all_unsuppressed, policy=policy)
     effective_policy = policy_file.base_policy if policy_file is not None else policy
+
+    # Compute old_symbol_count once for downstream metrics (Bug 8)
+    old_sym_count = sum(
+        1 for f in old.functions if f.visibility in _PUBLIC_VIS
+    ) + sum(
+        1 for v in old.variables if v.visibility in _PUBLIC_VIS
+    )
+
     return DiffResult(
         old_version=old.version,
         new_version=new.version,
@@ -2282,8 +2338,10 @@ def compare(
         suppression_file_provided=suppression is not None,
         detector_results=detector_results,
         policy=effective_policy,
+        policy_file=policy_file,
         redundant_changes=redundant,
         redundant_count=len(redundant),
+        old_symbol_count=old_sym_count or None,
     )
 
 

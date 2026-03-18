@@ -160,7 +160,10 @@ class Suppression:
         if self._compiled_type_pattern is not None:
             if change.kind.value not in _TYPE_CHANGE_KINDS:
                 return False
-            if not self._compiled_type_pattern.fullmatch(change.symbol):
+            # For member-qualified symbols (e.g. "Color::GREEN"), match the
+            # type name prefix so type_pattern: "Color" still works.
+            match_symbol = change.symbol.split("::", 1)[0] if "::" in change.symbol else change.symbol
+            if not self._compiled_type_pattern.fullmatch(match_symbol):
                 return False
             # Check change_kind filter if specified
             if self.change_kind is not None and change.kind.value != self.change_kind:
