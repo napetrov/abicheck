@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 try:
-    import filelock  # shipped with pytest-xdist
+    import filelock  # explicit dev dependency; used for xdist cmake locking
 except ImportError:
     filelock = None  # type: ignore[assignment]
 
@@ -90,11 +90,14 @@ def _cmake_configure_once(build_dir: Path) -> bool:
     cmake = shutil.which("cmake")
     if not cmake:
         return False
-    r = subprocess.run(
-        [cmake, "-S", str(examples_dir), "-B", str(build_dir),
-         "-DCMAKE_BUILD_TYPE=Debug"],
-        capture_output=True, text=True, timeout=120,
-    )
+    try:
+        r = subprocess.run(
+            [cmake, "-S", str(examples_dir), "-B", str(build_dir),
+             "-DCMAKE_BUILD_TYPE=Debug"],
+            capture_output=True, text=True, timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return False
     return r.returncode == 0
 
 
@@ -129,27 +132,25 @@ def shared_cmake_build_dir(tmp_path_factory: pytest.TempPathFactory) -> Path | N
         done_flag = root_tmp / "cmake_shared_build.done"
         fail_flag = root_tmp / "cmake_shared_build.fail"
 
-        with filelock.FileLock(str(lock_path), timeout=180):
-            if fail_flag.exists():
-                return None
-            if not done_flag.exists():
-                build_dir.mkdir(exist_ok=True)
-                if _cmake_configure_once(build_dir):
-                    done_flag.write_text("ok")
-                else:
-                    fail_flag.write_text("fail")
+        try:
+            with filelock.FileLock(str(lock_path), timeout=180):
+                if fail_flag.exists():
                     return None
+                if not done_flag.exists():
+                    build_dir.mkdir(exist_ok=True)
+                    if _cmake_configure_once(build_dir):
+                        done_flag.write_text("ok")
+                    else:
+                        fail_flag.write_text("fail")
+                        return None
+        except filelock.Timeout:
+            return None
 
         return build_dir
 
     # Sequential execution: one configure per session
     build_dir = tmp_path_factory.mktemp("cmake_build")
-    r = subprocess.run(
-        [cmake, "-S", str(examples_dir), "-B", str(build_dir),
-         "-DCMAKE_BUILD_TYPE=Debug"],
-        capture_output=True, text=True, timeout=120,
-    )
-    if r.returncode != 0:
+    if not _cmake_configure_once(build_dir):
         return None
 
     return build_dir
