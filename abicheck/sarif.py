@@ -34,6 +34,7 @@ from typing import Any
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
 from abicheck.checker_policy import impact_for, policy_for
+from abicheck.reporter import apply_show_only
 
 # ---------------------------------------------------------------------------
 # Severity mapping
@@ -111,6 +112,10 @@ def _result_for(
         properties["newValue"] = change.new_value
     if change.affected_symbols:
         properties["affectedSymbols"] = change.affected_symbols
+    if change.caused_by_type:
+        properties["causedByType"] = change.caused_by_type
+    if change.caused_count > 0:
+        properties["causedCount"] = change.caused_count
 
     return {
         "ruleId": change.kind.value,
@@ -133,15 +138,23 @@ def _result_for(
     }
 
 
-def to_sarif(result: DiffResult) -> dict[str, Any]:
+def to_sarif(
+    result: DiffResult,
+    *,
+    show_only: str | None = None,
+) -> dict[str, Any]:
     """Convert a DiffResult to a SARIF 2.1.0 document (dict)."""
     tool_version = _tool_version()
+
+    changes = list(result.changes)
+    if show_only:
+        changes = apply_show_only(changes, show_only, policy=result.policy)
 
     # Collect unique rules used
     rules_seen: dict[str, dict[str, Any]] = {}
     sarif_results: list[dict[str, Any]] = []
 
-    for change in result.changes:
+    for change in changes:
         rule_id = change.kind.value
         if rule_id not in rules_seen:
             rules_seen[rule_id] = _rule_for(change.kind)
@@ -198,8 +211,9 @@ def to_sarif(result: DiffResult) -> dict[str, Any]:
                     "oldVersion": result.old_version,
                     "newVersion": result.new_version,
                     "library": result.library,
-                    "changeCount": len(result.changes),
+                    "changeCount": len(changes),
                     "suppressedCount": result.suppressed_count,
+                    **({"redundantCount": result.redundant_count} if result.redundant_count > 0 else {}),
                     **({"oldFile": {"path": result.old_metadata.path, "sha256": result.old_metadata.sha256, "sizeBytes": result.old_metadata.size_bytes}} if result.old_metadata is not None else {}),
                     **({"newFile": {"path": result.new_metadata.path, "sha256": result.new_metadata.sha256, "sizeBytes": result.new_metadata.size_bytes}} if result.new_metadata is not None else {}),
                 },
@@ -208,9 +222,14 @@ def to_sarif(result: DiffResult) -> dict[str, Any]:
     }
 
 
-def to_sarif_str(result: DiffResult, indent: int = 2) -> str:
+def to_sarif_str(
+    result: DiffResult,
+    indent: int = 2,
+    *,
+    show_only: str | None = None,
+) -> str:
     """Serialize DiffResult to a SARIF JSON string."""
-    return json.dumps(to_sarif(result), indent=indent)
+    return json.dumps(to_sarif(result, show_only=show_only), indent=indent)
 
 
 def write_sarif(result: DiffResult, path: Path) -> None:

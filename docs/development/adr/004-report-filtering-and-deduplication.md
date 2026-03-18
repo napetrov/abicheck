@@ -1,7 +1,7 @@
 # ADR-004: Report Filtering, Deduplication, and Leaf-Change Mode
 
 **Date:** 2026-03-17
-**Status:** Proposed
+**Status:** Accepted
 **Decision maker:** Nikolay Petrov
 
 ---

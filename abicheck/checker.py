@@ -99,6 +99,8 @@ class Change:
     new_value: str | None = None
     source_location: str | None = None   # "header.h:42" if available
     affected_symbols: list[str] | None = None  # exported functions using this type
+    caused_by_type: str | None = None    # root type that makes this change redundant
+    caused_count: int = 0                # number of derived changes collapsed into this root
 
 
 @dataclass
@@ -123,6 +125,8 @@ class DiffResult:
     policy: str = "strict_abi"  # active policy profile; drives breaking/source_breaks/compatible
     old_metadata: LibraryMetadata | None = None
     new_metadata: LibraryMetadata | None = None
+    redundant_changes: list[Change] = field(default_factory=list)  # hidden by redundancy filter
+    redundant_count: int = 0
 
     @property
     def breaking(self) -> list[Change]:
@@ -1919,6 +1923,194 @@ def _enrich_affected_symbols(
             c.affected_symbols = sorted(set(funcs))
 
 
+# Change kinds that represent root type/enum changes (for redundancy filtering).
+_ROOT_TYPE_CHANGE_KINDS: frozenset[ChangeKind] = frozenset({
+    ChangeKind.TYPE_SIZE_CHANGED, ChangeKind.TYPE_ALIGNMENT_CHANGED,
+    ChangeKind.TYPE_FIELD_REMOVED, ChangeKind.TYPE_FIELD_ADDED,
+    ChangeKind.TYPE_FIELD_OFFSET_CHANGED, ChangeKind.TYPE_FIELD_TYPE_CHANGED,
+    ChangeKind.TYPE_BASE_CHANGED, ChangeKind.TYPE_VTABLE_CHANGED,
+    ChangeKind.TYPE_REMOVED, ChangeKind.TYPE_BECAME_OPAQUE,
+    ChangeKind.ENUM_MEMBER_REMOVED, ChangeKind.ENUM_MEMBER_ADDED,
+    ChangeKind.ENUM_MEMBER_VALUE_CHANGED, ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
+    ChangeKind.ENUM_UNDERLYING_SIZE_CHANGED, ChangeKind.ENUM_MEMBER_RENAMED,
+    ChangeKind.UNION_FIELD_REMOVED, ChangeKind.UNION_FIELD_TYPE_CHANGED,
+    ChangeKind.TYPEDEF_BASE_CHANGED, ChangeKind.TYPE_KIND_CHANGED,
+    ChangeKind.STRUCT_SIZE_CHANGED, ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
+    ChangeKind.STRUCT_FIELD_REMOVED, ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+    ChangeKind.STRUCT_ALIGNMENT_CHANGED, ChangeKind.STRUCT_PACKING_CHANGED,
+})
+
+# Change kinds that are always independent (never considered redundant).
+_ALWAYS_INDEPENDENT_KINDS: frozenset[ChangeKind] = frozenset({
+    ChangeKind.FUNC_REMOVED, ChangeKind.FUNC_ADDED,
+    ChangeKind.FUNC_REMOVED_ELF_ONLY,
+    ChangeKind.VAR_REMOVED, ChangeKind.VAR_ADDED,
+    ChangeKind.SONAME_CHANGED, ChangeKind.SONAME_MISSING,
+    ChangeKind.NEEDED_ADDED, ChangeKind.NEEDED_REMOVED,
+    ChangeKind.RPATH_CHANGED, ChangeKind.RUNPATH_CHANGED,
+    ChangeKind.SYMBOL_BINDING_CHANGED, ChangeKind.SYMBOL_BINDING_STRENGTHENED,
+    ChangeKind.SYMBOL_TYPE_CHANGED, ChangeKind.SYMBOL_SIZE_CHANGED,
+    ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED, ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
+    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED, ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
+    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT,
+    ChangeKind.IFUNC_INTRODUCED, ChangeKind.IFUNC_REMOVED,
+    ChangeKind.COMMON_SYMBOL_RISK, ChangeKind.DWARF_INFO_MISSING,
+    ChangeKind.TOOLCHAIN_FLAG_DRIFT, ChangeKind.COMPAT_VERSION_CHANGED,
+    ChangeKind.VISIBILITY_LEAK,
+    ChangeKind.FUNC_DELETED, ChangeKind.FUNC_DELETED_ELF_FALLBACK,
+    ChangeKind.CONSTANT_CHANGED, ChangeKind.CONSTANT_ADDED, ChangeKind.CONSTANT_REMOVED,
+})
+
+# Derived change kinds that may be caused by a root type change.
+_DERIVED_CHANGE_KINDS: frozenset[ChangeKind] = frozenset({
+    ChangeKind.FUNC_PARAMS_CHANGED, ChangeKind.FUNC_RETURN_CHANGED,
+    ChangeKind.VAR_TYPE_CHANGED, ChangeKind.TYPE_FIELD_TYPE_CHANGED,
+    ChangeKind.STRUCT_FIELD_TYPE_CHANGED, ChangeKind.UNION_FIELD_TYPE_CHANGED,
+    ChangeKind.TEMPLATE_PARAM_TYPE_CHANGED, ChangeKind.TEMPLATE_RETURN_TYPE_CHANGED,
+    ChangeKind.PARAM_POINTER_LEVEL_CHANGED, ChangeKind.RETURN_POINTER_LEVEL_CHANGED,
+})
+
+
+# Field-level change kinds where the symbol is "TypeName::fieldName".
+# For these, the root type is the part before the *last* "::".
+_FIELD_LEVEL_KINDS: frozenset[ChangeKind] = frozenset({
+    ChangeKind.TYPE_FIELD_REMOVED, ChangeKind.TYPE_FIELD_ADDED,
+    ChangeKind.TYPE_FIELD_OFFSET_CHANGED, ChangeKind.TYPE_FIELD_TYPE_CHANGED,
+    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
+    ChangeKind.STRUCT_FIELD_OFFSET_CHANGED, ChangeKind.STRUCT_FIELD_REMOVED,
+    ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+    ChangeKind.UNION_FIELD_REMOVED, ChangeKind.UNION_FIELD_TYPE_CHANGED,
+    ChangeKind.UNION_FIELD_ADDED,
+    ChangeKind.FIELD_BITFIELD_CHANGED, ChangeKind.FIELD_RENAMED,
+    ChangeKind.FIELD_BECAME_CONST, ChangeKind.FIELD_LOST_CONST,
+    ChangeKind.FIELD_BECAME_VOLATILE, ChangeKind.FIELD_LOST_VOLATILE,
+    ChangeKind.FIELD_BECAME_MUTABLE, ChangeKind.FIELD_LOST_MUTABLE,
+    ChangeKind.FIELD_ACCESS_CHANGED, ChangeKind.ANON_FIELD_CHANGED,
+})
+
+
+def _root_type_name(c: Change) -> str:
+    """Extract the root type name from a change's symbol.
+
+    For field-level changes (e.g. ``Container::flags``), strip the last
+    ``::field`` component.  For all other changes (including namespaced
+    types like ``ns::MyType``), keep the full symbol to avoid collapsing
+    distinct types in the same namespace.
+    """
+    if "::" in c.symbol and c.kind in _FIELD_LEVEL_KINDS:
+        return c.symbol.rsplit("::", 1)[0]
+    return c.symbol
+
+
+def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]]:
+    """Identify changes that are consequences of a root type change.
+
+    Returns (kept, redundant) — redundant changes are still available for audit.
+    Root changes are annotated with ``caused_count`` and ``derived_symbols``.
+    """
+    # Step 1: Collect root type changes
+    root_types: dict[str, Change] = {}
+    for c in changes:
+        if c.kind in _ROOT_TYPE_CHANGE_KINDS:
+            type_name = _root_type_name(c)
+            if type_name not in root_types:
+                root_types[type_name] = c
+
+    if not root_types:
+        return changes, []
+
+    # Step 2: Check each non-root change for redundancy
+    kept: list[Change] = []
+    redundant: list[Change] = []
+
+    # Track root types that have been classified as redundant themselves,
+    # so we don't let downstream changes point at removed roots.
+    removed_roots: set[str] = set()
+
+    # First pass: classify root type changes (some may be redundant
+    # if they reference another root type — nested type propagation).
+    for c in changes:
+        if c.kind not in _ROOT_TYPE_CHANGE_KINDS:
+            continue
+        if c.kind in _DERIVED_CHANGE_KINDS:
+            type_name = _root_type_name(c)
+            other_roots = {k: v for k, v in root_types.items() if k != type_name}
+            matched_root = _match_root_type(c, other_roots)
+            if matched_root is not None:
+                c.caused_by_type = matched_root
+                root_change = root_types[matched_root]
+                root_change.caused_count += 1
+                if root_change.affected_symbols is None:
+                    root_change.affected_symbols = []
+                sym = c.symbol
+                if sym and sym not in root_change.affected_symbols:
+                    root_change.affected_symbols.append(sym)
+                redundant.append(c)
+                # Remove this root from root_types so derived changes
+                # won't point at a root that is itself redundant.
+                removed_roots.add(type_name)
+                continue
+        kept.append(c)
+
+    # Remove redundant roots from the lookup dict
+    for name in removed_roots:
+        root_types.pop(name, None)
+
+    # Second pass: classify non-root changes
+    for c in changes:
+        if c.kind in _ROOT_TYPE_CHANGE_KINDS:
+            continue  # already handled above
+
+        if c.kind in _ALWAYS_INDEPENDENT_KINDS:
+            kept.append(c)
+            continue
+
+        if c.kind not in _DERIVED_CHANGE_KINDS:
+            kept.append(c)
+            continue
+
+        # Check if this change references a (kept) root type
+        matched_root = _match_root_type(c, root_types)
+        if matched_root is not None:
+            c.caused_by_type = matched_root
+            root_change = root_types[matched_root]
+            root_change.caused_count += 1
+            if root_change.affected_symbols is None:
+                root_change.affected_symbols = []
+            sym = c.symbol
+            if sym and sym not in root_change.affected_symbols:
+                root_change.affected_symbols.append(sym)
+            redundant.append(c)
+        else:
+            kept.append(c)
+
+    return kept, redundant
+
+
+def _match_root_type(c: Change, root_types: dict[str, Change]) -> str | None:
+    """Check if a derived change references a known root type.
+
+    Returns the root type name if found, None otherwise.
+    Uses word-boundary matching to avoid false positives where a type
+    name is a prefix of another (e.g. ``Config`` must not match
+    ``Config2``).
+
+    Conservative: false negatives (showing too much) are safer than false
+    positives (hiding real changes).
+    """
+    for type_name in root_types:
+        # Build a word-boundary pattern: the type name must appear as a
+        # whole token, not as a substring of a longer identifier.
+        pattern = r'(?<![A-Za-z0-9_])' + re.escape(type_name) + r'(?![A-Za-z0-9_])'
+        if c.old_value and re.search(pattern, c.old_value):
+            return type_name
+        if c.new_value and re.search(pattern, c.new_value):
+            return type_name
+        if re.search(pattern, c.description):
+            return type_name
+    return None
+
+
 def _deduplicate_ast_dwarf(changes: list[Change]) -> list[Change]:
     """Remove DWARF findings that duplicate an AST finding for the same symbol.
 
@@ -2067,22 +2259,31 @@ def compare(
                 filtered.append(c)
         changes = filtered
 
-    # Post-processing: enrich remaining changes with affected symbols
-    _enrich_affected_symbols(changes, old)
+    # Redundancy filtering: split unsuppressed changes into kept + redundant.
+    # Applied after suppression so suppressed changes never contribute to the
+    # verdict. Verdict is computed on kept + redundant (all unsuppressed).
+    kept, redundant = _filter_redundant(changes)
 
-    verdict = policy_file.compute_verdict(changes) if policy_file is not None else compute_verdict(changes, policy=policy)
+    # Post-processing: enrich remaining changes with affected symbols
+    _enrich_affected_symbols(kept, old)
+
+    # Verdict computed on all unsuppressed changes (kept + redundant)
+    all_unsuppressed = kept + redundant
+    verdict = policy_file.compute_verdict(all_unsuppressed) if policy_file is not None else compute_verdict(all_unsuppressed, policy=policy)
     effective_policy = policy_file.base_policy if policy_file is not None else policy
     return DiffResult(
         old_version=old.version,
         new_version=new.version,
         library=old.library,
-        changes=changes,
+        changes=kept,
         verdict=verdict,
         suppressed_count=len(suppressed),
         suppressed_changes=suppressed,
         suppression_file_provided=suppression is not None,
         detector_results=detector_results,
         policy=effective_policy,
+        redundant_changes=redundant,
+        redundant_count=len(redundant),
     )
 
 

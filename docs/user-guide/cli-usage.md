@@ -107,6 +107,82 @@ abicheck dump libfoo.so -H foo.h -v
 abicheck compare old.json new.json -v
 ```
 
+### Report filtering and display options
+
+`compare` provides several flags to control what is shown in the report.
+These flags are **display-only** — they do not affect the verdict or exit codes.
+
+#### Redundancy filtering
+
+By default, abicheck collapses derived changes caused by a root type change.
+For example, if a struct's size changes, the 30 `FUNC_PARAMS_CHANGED` entries
+for functions that take that struct are hidden. The root type change is annotated
+with the count and list of affected interfaces.
+
+```bash
+# Show all changes, including redundant derived ones
+abicheck compare old.json new.json --show-redundant
+```
+
+#### `--show-only`: filter displayed changes
+
+Limit which changes appear in the report using three dimensions (AND across
+dimensions, OR within):
+
+- **Severity**: `breaking`, `api-break`, `risk`, `compatible`
+- **Element**: `functions`, `variables`, `types`, `enums`, `elf`
+- **Action**: `added`, `removed`, `changed`
+
+```bash
+# Only breaking function removals
+abicheck compare old.json new.json --show-only breaking,functions,removed
+
+# All type changes (any action, any severity)
+abicheck compare old.json new.json --show-only types
+
+# Breaking + risk changes only
+abicheck compare old.json new.json --show-only breaking,risk
+```
+
+Invalid tokens are caught immediately with a clear error message.
+
+#### `--stat`: one-line CI summary
+
+```bash
+# Human-readable one-liner
+abicheck compare old.json new.json --stat
+# BREAKING: 3 breaking, 1 risk (42 total) [12 redundant hidden]
+
+# JSON summary (no changes array)
+abicheck compare old.json new.json --stat --format json
+```
+
+#### `--report-mode leaf`: root-type-grouped output
+
+Groups output by root type changes, listing affected interfaces under each:
+
+```bash
+abicheck compare old.json new.json --report-mode leaf
+```
+
+This is useful for large diffs where you want to understand the root causes
+rather than reading hundreds of individual change entries.
+
+#### `--show-impact`: impact summary table
+
+Appends a summary table showing which root type changes affected the most
+interfaces:
+
+```bash
+abicheck compare old.json new.json --show-impact
+```
+
+All filtering flags work with the main `compare` command output formats:
+Markdown, JSON, SARIF, and HTML. The ABICC-compatible XML output (produced via
+`abicheck compat check`) does not support `--show-only` filtering, though it
+does include redundancy annotations (`<redundant_changes>`, `<caused_by>`,
+`<caused_count>`).
+
 ### 3) Mixed mode: snapshot baseline vs live build
 
 ```bash

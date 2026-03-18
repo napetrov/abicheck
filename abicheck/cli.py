@@ -29,7 +29,7 @@ from .compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_du
 from .compat.cli import compat_group
 from .dumper import dump
 from .errors import AbicheckError
-from .reporter import to_json, to_markdown
+from .reporter import to_json, to_markdown, to_stat, to_stat_json
 from .serialization import load_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
@@ -629,13 +629,39 @@ def _load_suppression_and_policy(
     return suppression, pf
 
 
+def _validate_show_only(
+    ctx: click.Context, param: click.Parameter, value: str | None,
+) -> str | None:
+    """Eagerly validate --show-only tokens so invalid ones surface early."""
+    if value is None:
+        return None
+    from .reporter import ShowOnlyFilter
+    try:
+        ShowOnlyFilter.parse(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+    return value
+
+
 def _render_output(
-    fmt: str, result: DiffResult, old: AbiSnapshot, new: AbiSnapshot | None = None,
-    *, follow_deps: bool = False,
+    fmt: str,
+    result: DiffResult,
+    old: AbiSnapshot,
+    new: AbiSnapshot | None = None,
+    *,
+    follow_deps: bool = False,
+    show_only: str | None = None,
+    report_mode: str = "full",
+    show_impact: bool = False,
+    stat: bool = False,
 ) -> str:
     """Render comparison result in the requested output format."""
+    if stat:
+        if fmt == "json":
+            return to_stat_json(result)
+        return to_stat(result)
     if fmt == "json":
-        base = to_json(result)
+        base = to_json(result, show_only=show_only, report_mode=report_mode, show_impact=show_impact)
         if follow_deps and (old.dependency_info or (new and new.dependency_info)):
             import json
             d = json.loads(base)
@@ -649,7 +675,7 @@ def _render_output(
         return base
     if fmt == "sarif":
         from .sarif import to_sarif_str
-        return to_sarif_str(result)
+        return to_sarif_str(result, show_only=show_only)
     if fmt == "html":
         from .html_report import generate_html_report
         from .model import Visibility
@@ -666,8 +692,10 @@ def _render_output(
             old_version=old.version,
             new_version=new.version if new else "new",
             old_symbol_count=old_symbol_count or None,
+            show_only=show_only,
+            show_impact=show_impact,
         )
-    md = to_markdown(result)
+    md = to_markdown(result, show_only=show_only, report_mode=report_mode, show_impact=show_impact)
     if follow_deps and (old.dependency_info or (new and new.dependency_info)):
         md += _render_deps_section_md(old, new)
     return md
@@ -916,6 +944,26 @@ def _build_match_map(paths: list[Path]) -> tuple[dict[str, Path], list[str]]:
               help="Additional directory to search for shared libraries (with --follow-deps).")
 @click.option("--ld-library-path", "ld_library_path", default="",
               help="Simulated LD_LIBRARY_PATH (with --follow-deps).")
+@click.option("--show-redundant", is_flag=True, default=False,
+              help="Disable redundancy filtering and show all changes including those "
+                   "derived from root type changes.")
+@click.option("--show-only", "show_only", default=None,
+              callback=_validate_show_only, expose_value=True, is_eager=False,
+              help="Comma-separated filter tokens to limit displayed changes. "
+                   "Severity: breaking, api-break, risk, compatible. "
+                   "Element: functions, variables, types, enums, elf. "
+                   "Action: added, removed, changed. "
+                   "AND across dimensions, OR within. Does not affect exit codes.")
+@click.option("--stat", is_flag=True, default=False,
+              help="One-line summary output for CI gates. "
+                   "With --format json, emits only the summary object.")
+@click.option("--report-mode", "report_mode",
+              type=click.Choice(["full", "leaf"], case_sensitive=True),
+              default="full", show_default=True,
+              help="Report mode: 'full' lists all changes individually (default), "
+                   "'leaf' groups by root type changes with impact lists.")
+@click.option("--show-impact", is_flag=True, default=False,
+              help="Append an impact summary table showing root changes and affected interfaces.")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def compare_cmd(
@@ -930,6 +978,8 @@ def compare_cmd(
     dwarf_only: bool,
     fail_on_additions: bool,
     follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
+    show_redundant: bool, show_only: str | None, stat: bool,
+    report_mode: str, show_impact: bool,
     verbose: bool,
 ) -> None:
     """Compare two ABI surfaces and report changes.
@@ -1020,6 +1070,20 @@ def compare_cmd(
     result.old_metadata = _collect_metadata(old_input)
     result.new_metadata = _collect_metadata(new_input)
 
+    # --show-redundant: merge redundant changes back into the main list
+    if show_redundant and result.redundant_changes:
+        # Clear collapse annotations: root changes should no longer claim
+        # derived changes were collapsed, and re-merged changes should not
+        # carry caused_by_type references.
+        for c in result.changes:
+            if c.caused_count > 0:
+                c.caused_count = 0
+        for c in result.redundant_changes:
+            c.caused_by_type = None
+        result.changes = result.changes + result.redundant_changes
+        result.redundant_changes = []
+        result.redundant_count = 0
+
     # Warn if suppression file swallowed all changes (potential misconfiguration)
     total_changes = len(result.changes) + result.suppressed_count
     if result.suppression_file_provided and total_changes > 0 and len(result.changes) == 0:
@@ -1029,7 +1093,12 @@ def compare_cmd(
             err=True,
         )
 
-    text = _render_output(fmt, result, old, new, follow_deps=follow_deps)
+    text = _render_output(
+        fmt, result, old, new,
+        follow_deps=follow_deps,
+        show_only=show_only, report_mode=report_mode,
+        show_impact=show_impact, stat=stat,
+    )
     if output:
         output.write_text(text, encoding="utf-8")
         click.echo(f"Report written to {output}", err=True)

@@ -190,6 +190,16 @@ def _add_problem_element(parent: ET.Element, change: object) -> None:
         effect_el = ET.SubElement(prob, "effect")
         effect_el.text = effect_text
 
+    # <caused_by> — redundancy annotation
+    caused_by = getattr(change, "caused_by_type", None)
+    if caused_by:
+        caused_el = ET.SubElement(prob, "caused_by")
+        caused_el.text = str(caused_by)
+    caused_count = getattr(change, "caused_count", 0)
+    if caused_count > 0:
+        count_el = ET.SubElement(prob, "caused_count")
+        count_el.text = str(caused_count)
+
     # <overcome> — remediation hint for removals
     if ks in ("func_removed", "var_removed", "type_removed"):
         overcome_el = ET.SubElement(prob, "overcome")
@@ -306,6 +316,12 @@ def _build_report_element(
         s = ET.SubElement(symbols_problems_el, sev)
         s.text = str(sp[sev])
 
+    # Redundancy info (if available)
+    redundant_count = data.get("redundant_count", 0)
+    if redundant_count > 0:
+        red_el = ET.SubElement(summary, "redundant_changes")
+        red_el.text = str(redundant_count)
+
     # Detail sections
     _build_symbol_list(report, "added_symbols", data["changes"], ADDED_KINDS)
     _build_symbol_list(report, "removed_symbols", data["changes"], REMOVED_KINDS)
@@ -349,8 +365,11 @@ def generate_xml_report(
 
     root = ET.Element("reports")
 
+    redundant_count = getattr(result, "redundant_count", 0)
+
     # Binary compatibility section (all changes)
     binary_data = _compute_section(changes, old_symbol_count, exclude_binary_only=False)
+    binary_data["redundant_count"] = redundant_count
     if verdict_override:
         binary_data["verdict"] = verdict_override
     binary_el = _build_report_element(
@@ -361,6 +380,16 @@ def generate_xml_report(
 
     # Source compatibility section (exclude binary-only kinds)
     source_data = _compute_section(changes, old_symbol_count, exclude_binary_only=True)
+    # Count source-level redundant changes (exclude binary-only kinds)
+    redundant_changes = getattr(result, "redundant_changes", []) or []
+    if redundant_changes and redundant_count > 0:
+        source_redundant = sum(
+            1 for c in redundant_changes
+            if kind_str(c) not in BINARY_ONLY_KINDS
+        )
+        source_data["redundant_count"] = source_redundant
+    else:
+        source_data["redundant_count"] = 0
     if verdict_override:
         source_data["verdict"] = verdict_override
     source_el = _build_report_element(
