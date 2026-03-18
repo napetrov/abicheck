@@ -20,39 +20,88 @@ and **FIX-C** (scope limiting needed).
 
 ## FIX-A Review: Header C++ Mangling
 
-### Concern 1: Heuristic fragility (Part 1)
+### MAJOR: Replace heuristic with simpler default (Part 1)
 
-The `_detect_header_language()` heuristic scans file contents for C++ keywords
-like `class `, `namespace `, `template<`. This will **false-positive** on:
-- C headers with C++ keywords in comments: `/* This class of errors... */`
-- C headers with `#ifdef __cplusplus` guards (very common for C/C++ compat)
-- C headers that `#include` C++ headers transitively
+The `_detect_header_language()` keyword-scanning heuristic has fundamental
+fragility issues:
 
-**Recommendation:** The heuristic is a useful optimization but should NOT be
-the primary fix. Part 2 (extern "C" fallback matching) is the robust fix and
-should work independently of the heuristic. The heuristic can be a "nice to
-have" that avoids unnecessary C++ mangling when clearly not needed.
+- **False positives from comments:** `b"class "` matches `/* storage class */`,
+  `b"virtual "` matches documentation, `b"std::"` matches C headers documenting
+  C++ interop. The heuristic does no comment stripping.
+- **Missing C++ indicators:** `enum class`, `constexpr`, `nullptr`, `auto`,
+  `static_assert`, `using` (type alias), `override`, `noexcept`, `decltype`
+  are all absent from the keyword set. A C++ header using only modern features
+  would be misclassified as C.
+- **`.h` used for C++ too:** Qt, Google style, Chromium all use `.h` for C++.
 
-### Concern 2: Extern "C" name collision risk (Part 2)
+**Much simpler alternative identified by reviewer:**
 
-The fallback `old_by_name` dict (`{f.name: f for f in old_map.values() if
-f.is_extern_c}`) creates a dict keyed by **plain name**. If two extern "C"
-functions have the same plain name in different translation units (unlikely
-but possible with weak symbols or version scripts), the dict silently drops
-one. This is low risk but should be documented.
+The root cause is that `.h` files default to C++ mode (`.hpp` extension). The
+simplest fix is to **invert the default**: assume `.h` means C unless told
+otherwise with `--lang c++`. This is a one-line change:
 
-### Concern 3: Appcompat dual-mismatch (Part 3) — Store both forms
+```python
+# dumper.py line 295 — flip the default for .h files
+agg_ext = ".hpp" if (lang and lang.upper() == "C++") else ".h"
+```
+
+Most `.h` files in the real world are C headers. The current C++ default is
+the backward assumption. This avoids any heuristic entirely.
+
+**If a heuristic is still desired**, the best single-feature check is the
+presence of `extern "C"` wrapping (`#ifdef __cplusplus / extern "C" { /
+#endif`), which is the canonical marker of C headers.
+
+**Accepted with design change:** Replace keyword heuristic with the simpler
+default-flip approach. Keep `--lang c++` as the explicit override.
+
+### IMPORTANT: Part 2 may be ineffective without Part 1
+
+The reviewer identified a critical logic gap: when castxml compiles a `.h`
+file as `.hpp` (the bug scenario), C functions **will** receive mangled names,
+so `raw_mangled` is non-empty (`_Z3addii`). Unless castxml also emits
+`extern="1"` (which it does for `extern "C"` blocks but NOT for plain C
+functions compiled as C++), `is_extern_c` will be **False**. The fallback
+matching in Part 2 is gated on `f_old.is_extern_c`, so **the fallback will
+never activate in the exact scenario the fix targets**.
+
+This means Part 2 is **redundant if Part 1 works, and useless if Part 1 fails**.
+Part 2 is only useful for cross-mode comparisons (e.g., old snapshot compiled
+as C++, new snapshot compiled as C).
+
+**Accepted:** Clarify Part 2's role as defense-in-depth for cross-mode snapshot
+comparisons. The primary fix MUST be Part 1 (correct compilation mode).
+
+### Concern 3: `change.symbol` format inconsistency (Part 2)
+
+The fallback path calls `_check_function_signature(f_old.name, f_old, f_new)`
+using the **plain name** as the symbol, whereas the normal path uses the
+mangled name. This changes the format of `change.symbol` for matched functions,
+which affects downstream consumers (appcompat, suppression files, JSON output).
+
+**Accepted:** Either always use plain name for extern "C" functions (and
+update all consumers) or keep mangled name and add a `plain_name` field.
+
+### Concern 4: Appcompat Part 3 — Fix at the source, not consumption site
 
 The spec's "alternative approach" of storing both `func.name` (demangled) and
-`func.mangled` in `affected_symbols` is **better than the demangling approach**
-for the `affected_symbols` mismatch (Mismatch 2). It avoids the demangling
-dependency for this specific case. The demangling approach is still needed for
-Mismatch 1 (`change.symbol` matching).
+`func.mangled` in `affected_symbols` is **much better than bidirectional
+demangling** at every consumption point. It fixes the mismatch at the source
+(`checker.py:1921`) rather than papering over it in `appcompat.py`.
 
 **Accepted recommendation:** Use the hybrid approach:
-- Store `func.mangled` in a parallel `affected_mangled_symbols` field
-- Match against `app.undefined_symbols` using mangled set
+- Store `func.mangled` in a parallel `affected_mangled_symbols` field on Change
+- Match against `app.undefined_symbols` using the mangled set
 - Display using demangled set in reports
+- Drop the bidirectional demangling from `_is_relevant_to_app()`
+
+### Missing test cases for FIX-A
+
+Reviewer identified 4 gaps:
+1. C header with C++ keywords in comments (heuristic negative test)
+2. C header with `extern "C"` guards (best detection signal)
+3. Cross-mode snapshot comparison (old=C++, new=C)
+4. Part 2 + Part 3 interaction: plain-name `change.symbol` in appcompat
 
 ---
 
@@ -375,35 +424,42 @@ be an explicit Phase 2 prerequisite since both FIX-B and FIX-A depend on it.
 
 Tests to add beyond those already in the spec:
 
+### FIX-A additional tests (from final review)
+1. C header with C++ keywords in comments (heuristic false positive)
+2. C header with `extern "C"` guards detection
+3. Cross-mode snapshot comparison (old=C++ mangled, new=C plain)
+4. Part 2 + Part 3 interaction: plain-name `change.symbol` in appcompat
+5. Default `.h` → C mode: verify C++ `.h` headers can override with `--lang c++`
+
 ### FIX-B additional tests
-1. Template function extraction (`vector<int>::push_back`)
-2. Operator overload extraction (`operator<<`, `operator==`)
-3. D0/D1/D2 virtual destructor variant handling
-4. Missing `DW_AT_linkage_name` entirely (no fallback to DW_AT_MIPS_*)
-5. Namespace-scoped free functions (`ns::foo()`)
-6. Graceful degradation without demangler (log warning, don't crash)
-7. Explicit assert: no "no DWARF" warning for C++ compare-release
+6. Template function extraction (`vector<int>::push_back`)
+7. Operator overload extraction (`operator<<`, `operator==`)
+8. D0/D1/D2 virtual destructor variant handling
+9. Missing `DW_AT_linkage_name` entirely (no fallback to DW_AT_MIPS_*)
+10. Namespace-scoped free functions (`ns::foo()`)
+11. Graceful degradation without demangler (log warning, don't crash)
+12. Explicit assert: no "no DWARF" warning for C++ compare-release
 
 ### FIX-C additional tests
-8. `ENUM_LAST_MEMBER_VALUE_CHANGED` sentinel dedup
-9. `ENUM_MEMBER_REMOVED` lock-in test (exact dedup already works)
-10. Input order independence (DWARF first vs AST first)
+13. `ENUM_LAST_MEMBER_VALUE_CHANGED` sentinel dedup
+14. `ENUM_MEMBER_REMOVED` lock-in test (exact dedup already works)
+15. Input order independence (DWARF first vs AST first)
 
 ### FIX-D additional test
-11. User type starting with `__` behavior (document whether filtered)
+16. User type starting with `__` behavior (document whether filtered)
 
 ### FIX-E additional test
-12. `--strict-elf-only` + contradictory policy file precedence
+17. `--strict-elf-only` + contradictory policy file precedence
 
 ### FIX-F additional test
-13. Nested type `Outer::Inner::field` dedup
+18. Nested type `Outer::Inner::field` dedup
 
 ### FIX-G additional tests
-14. `"unknown"` severity fallback case
-15. Severity in leaf-mode change dicts
+19. `"unknown"` severity fallback case
+20. Severity in leaf-mode change dicts
 
 ### FIX-H additional test
-16. Schema consistency: all entries in `"changes"` have minimum required keys
+21. Schema consistency: all entries in `"changes"` have minimum required keys
 
 ### FIX-I additional test
-17. Variable dedup warning throttle (`model.py:201-208`)
+22. Variable dedup warning throttle (`model.py:201-208`)
