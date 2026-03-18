@@ -532,7 +532,7 @@ def _is_elf_shared_object(path: Path) -> bool:
             f.seek(16)
             byte_order = "<" if ei_data == 1 else ">"
             e_type = struct.unpack(f"{byte_order}H", f.read(2))[0]
-            return e_type == _ET_DYN
+            return bool(e_type == _ET_DYN)
     except (OSError, struct.error):
         return False
 
@@ -640,12 +640,12 @@ def _read_build_id(binary_path: Path) -> str | None:
     try:
         from elftools.elf.elffile import ELFFile
         with open(binary_path, "rb") as f:
-            elf = ELFFile(f)
-            for section in elf.iter_sections():
+            elf = ELFFile(f)  # type: ignore[no-untyped-call]
+            for section in elf.iter_sections():  # type: ignore[no-untyped-call]
                 if section.name == ".note.gnu.build-id":
                     for note in section.iter_notes():
                         if note["n_type"] == "NT_GNU_BUILD_ID":
-                            return note["n_desc"]
+                            return str(note["n_desc"])
     except Exception:
         _log.debug("Failed to read build-id from %s", binary_path, exc_info=True)
     return None
