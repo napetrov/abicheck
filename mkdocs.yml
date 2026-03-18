@@ -35,6 +35,7 @@ nav:
   - User Guide:
     - CLI Usage: user-guide/cli-usage.md
     - Tool Modes: user-guide/tool-modes.md
+    - Application Compatibility: user-guide/appcompat.md
     - Policy Profiles: user-guide/policies.md
     - Suppressions: user-guide/suppressions.md
     - Output Formats: user-guide/output-formats.md

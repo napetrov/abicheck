@@ -56,6 +56,23 @@ verdict=$(python3 -c "import json,sys; d=json.load(open('result.json')); print(d
 
 ---
 
+## `abicheck appcompat`
+
+Uses the same exit codes as `compare`:
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | `COMPATIBLE` or `NO_CHANGE` — application is safe with the new library |
+| `1` | Tool/runtime error (tool failure, invalid input, or unexpected exception) |
+| `2` | `API_BREAK` — source-level break affecting app's symbols |
+| `4` | `BREAKING` — binary ABI break or missing symbols |
+
+> **`BREAKING` (exit 4)** is also returned when the application requires symbols or
+> ELF version tags that are absent from the new library — even if the library
+> diff itself is compatible — because the application would fail to load.
+
+---
+
 ## `abicheck deps`
 
 | Exit code | Meaning |
@@ -126,17 +143,17 @@ In `abicheck compat`, non-verdict failures are further classified where possible
 
 ## Summary table
 
-| Verdict / State | `compare` exit | `deps` exit | `stack-check` exit | `compat` exit |
-|-----------------|---------------|-------------|-------------------|---------------|
-| `NO_CHANGE` / `PASS` | `0` | `0` | `0` | `0` |
-| `COMPATIBLE` | `0` | — | — | `0` |
-| `COMPATIBLE_WITH_RISK` | `0` | — | — | `0` |
-| `ADDITIONS` (with `--fail-on-additions`) | `1` | — | — | n/a |
-| `WARN` (ABI risk) | — | — | `1` | — |
-| `API_BREAK` | `2` | — | — | `2` |
-| `BREAKING` / `FAIL` | `4` | — | `4` | `1` |
-| Load failure | — | `1` | `4` | — |
-| Tool error | `1/2`* | — | — | `3/4/5/6/7/8/10/11` |
+| Verdict / State | `compare` exit | `appcompat` exit | `deps` exit | `stack-check` exit | `compat` exit |
+|-----------------|---------------|-----------------|-------------|-------------------|---------------|
+| `NO_CHANGE` / `PASS` | `0` | `0` | `0` | `0` | `0` |
+| `COMPATIBLE` | `0` | `0` | — | — | `0` |
+| `COMPATIBLE_WITH_RISK` | `0` | `0` | — | — | `0` |
+| `ADDITIONS` (with `--fail-on-additions`) | `1` | n/a | — | — | n/a |
+| `WARN` (ABI risk) | — | — | — | `1` | — |
+| `API_BREAK` | `2` | `2` | — | — | `2` |
+| `BREAKING` / `FAIL` | `4` | `4` | — | `4` | `1` |
+| Load failure | — | — | `1` | `4` | — |
+| Tool error | `1/2`* | `1` | — | — | `3/4/5/6/7/8/10/11` |
 
 \* For `compare`, exit `1` without `--fail-on-additions` is a tool/CLI error.
 With `--fail-on-additions`, exit `1` can indicate `ADDITIONS` but may also occur

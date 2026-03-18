@@ -182,7 +182,27 @@ abicheck compare old.json new.json -v
 
 ---
 
-## 5) Exit codes and CI
+## 5) Application compatibility check
+
+Check whether your **application** is affected by a library update — filtering out irrelevant changes:
+
+```bash
+abicheck appcompat ./myapp libfoo.so.1 libfoo.so.2 -H include/foo.h
+```
+
+This parses your application binary to find which library symbols it actually uses, then shows only the changes that matter. If the library removed a function your app never calls, it won't appear in the report.
+
+Quick symbol availability check (no old library needed):
+
+```bash
+abicheck appcompat ./myapp --check-against libfoo.so.2
+```
+
+See [Application Compatibility](user-guide/appcompat.md) for the full reference.
+
+---
+
+## 6) Exit codes and CI
 
 | Exit code | Verdict | Meaning |
 |-----------|---------|---------|
