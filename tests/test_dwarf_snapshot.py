@@ -228,7 +228,14 @@ _GCC = "gcc"
 
 
 def _can_compile() -> bool:
-    """Check if GCC is available for integration tests."""
+    """Check if GCC is available for ELF integration tests.
+
+    These tests compile .so with -shared -fPIC -g and parse the result
+    as ELF with pyelftools, so they require real GCC on Linux.
+    On macOS ``gcc`` is a clang symlink that produces Mach-O, not ELF.
+    """
+    if sys.platform != "linux":
+        return False
     try:
         result = subprocess.run(
             [_GCC, "--version"],
@@ -701,6 +708,9 @@ _GPP = "g++"
 
 
 def _has_gpp() -> bool:
+    """Check if g++ is available on Linux for ELF C++ integration tests."""
+    if sys.platform != "linux":
+        return False
     try:
         result = subprocess.run(
             [_GPP, "--version"], capture_output=True, timeout=5,
