@@ -128,7 +128,8 @@ jobs:
 ### Windows host
 - `castxml` with `cl.exe` backend is **untested in CI** — may work but is not validated
 - MSVC vtable layout differs from Itanium ABI; vtable diff results may be inaccurate
-- `__stdcall`/`__cdecl` calling convention differences not tracked
+- `__stdcall`/`__cdecl` calling-convention changes appear as `func_removed + func_added`
+  (mangled-name churn) — no dedicated change kind; see [#50](https://github.com/CastXML/CastXML/issues/50) below
 - Tracked: abicc upstream issues #9, #50, #56, #121
 
 ### macOS host
@@ -157,3 +158,19 @@ jobs:
 
 For conda-based workflows, install only `abicheck` from conda-forge.
 Recipe dependencies pull required analysis tooling automatically.
+
+---
+
+## Windows Toolchain Support Matrix
+
+| Toolchain | castxml backend | Type/param diff | Calling-convention tracking | Status | Notes |
+|-----------|------------------|-----------------|-----------------------------|--------|-------|
+| MinGW (GCC) | `--castxml-cc-gnu gcc` | ✅ Yes | ⚠️ Partial (`__cdecl`/`__stdcall` not a dedicated kind, #50) | **Experimental** | Covered by CI smoke tests; full MinGW integration coverage on `windows-latest` is best-effort and not guaranteed on every run. |
+| MSVC (`cl.exe`) | `--castxml-cc-msvc cl.exe` | ✅ Yes | ⚠️ Partial (#9, #50) | **Untested in CI** | May work locally with Visual Studio Build Tools; ABI details differ from Itanium assumptions in several detectors. |
+
+### Known Limitations (Windows)
+
+- **#9 (MSVC headers / Windows SDK edge cases):** castxml+`cl.exe` handles common cases, but complex SDK-specific declarations are not yet validated in project CI.
+- **#50 (calling conventions):** `__stdcall`/`__cdecl` deltas are represented as mangled-name churn (`func_removed + func_added`) instead of a dedicated calling-convention change kind.
+- **#56 (PE visibility semantics):** `__declspec(dllexport/dllimport)` transitions are currently reflected at symbol-level only; no dedicated PE export-visibility change kind.
+- **#121 (MinGW-specific behavior):** MinGW export/import edge-cases (import libs, ordinals, toolchain flags) are only partially covered by current smoke/integration tests.
