@@ -14,3 +14,4 @@ benchmark_reports/
 dist/
 build/
 site/
+.hypothesis/
