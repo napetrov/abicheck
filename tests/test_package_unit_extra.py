@@ -5,21 +5,17 @@ import subprocess
 import tarfile
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from abicheck.package import (
-    RpmExtractor,
-    CondaExtractor,
-    TarExtractor,
-    resolve_debug_info,
-    _read_build_id,
-    _validate_member_path,
-    _validate_symlink_target,
-)
 from abicheck.errors import ExtractionSecurityError
-
+from abicheck.package import (
+    CondaExtractor,
+    RpmExtractor,
+    _read_build_id,
+    resolve_debug_info,
+)
 
 # ---------------------------------------------------------------------------
 # RPM extraction
@@ -252,7 +248,6 @@ class TestZstFallbackToExternalCommand:
         self, mock_which, mock_run, mock_safe_extract, tmp_path
     ):
         import sys
-        import importlib
 
         zst_path = tmp_path / "test.tar.zst"
         zst_path.touch()

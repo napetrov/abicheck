@@ -5,25 +5,22 @@ import hashlib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from abicheck.stack_checker import (
-    StackVerdict,
-    StackChange,
-    StackCheckResult,
-    check_stack,
-    check_single_env,
-    _compute_loadability,
-    _compute_abi_risk,
-    _compute_risk_score,
-    _file_hash,
-    _diff_stacks,
-)
-from abicheck.resolver import DependencyGraph, ResolvedDSO
 from abicheck.binder import BindingStatus, SymbolBinding
 from abicheck.checker import DiffResult
 from abicheck.checker_policy import Verdict
-
+from abicheck.resolver import DependencyGraph, ResolvedDSO
+from abicheck.stack_checker import (
+    StackChange,
+    StackCheckResult,
+    StackVerdict,
+    _compute_abi_risk,
+    _compute_loadability,
+    _compute_risk_score,
+    _diff_stacks,
+    _file_hash,
+    check_single_env,
+    check_stack,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers

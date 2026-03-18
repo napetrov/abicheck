@@ -17,7 +17,6 @@ from abicheck.report_classifications import (
     severity,
 )
 
-
 # ---------------------------------------------------------------------------
 # Frozenset constants are non-empty
 # ---------------------------------------------------------------------------

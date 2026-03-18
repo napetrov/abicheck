@@ -1,8 +1,9 @@
 """Unit tests for abicheck.resolver module — targeting uncovered lines."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -10,17 +11,16 @@ from abicheck.elf_metadata import ElfMetadata
 from abicheck.resolver import (
     DependencyGraph,
     ResolvedDSO,
-    resolve_dependencies,
-    _merge_rpaths,
-    _detect_target_triple,
+    _build_search_order,
     _default_dirs_for_triple,
+    _detect_target_triple,
     _expand_rpath,
     _find_resolved_key,
-    _build_search_order,
-    _platform_token_for_triple,
     _lib_token_for_triple,
+    _merge_rpaths,
+    _platform_token_for_triple,
+    resolve_dependencies,
 )
-
 
 # ---------------------------------------------------------------------------
 # _merge_rpaths
@@ -367,6 +367,7 @@ class TestResolveDependencies:
         assert len(result.unresolved) == 1
         assert result.unresolved[0][1] == "libmissing.so.1"
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="RPATH resolution is POSIX-only")
     def test_binary_with_rpath_propagation(self, tmp_path):
         """RPATH propagation through dependency chain (no RUNPATH)."""
         binary = tmp_path / "app"

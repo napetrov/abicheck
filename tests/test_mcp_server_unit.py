@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -33,25 +33,13 @@ _mock_mcp_instance.tool.return_value = lambda fn: fn
 _mock_fastmcp.return_value = _mock_mcp_instance
 
 # Now it is safe to import
-from abicheck.checker import Change, DiffResult, compare  # noqa: E402
+from abicheck.checker import DiffResult  # noqa: E402
 from abicheck.checker_policy import (  # noqa: E402
     API_BREAK_KINDS,
-    BREAKING_KINDS,
-    COMPATIBLE_KINDS,
-    RISK_KINDS,
     ChangeKind,
     Verdict,
 )
 from abicheck.errors import AbicheckError  # noqa: E402
-from abicheck.model import (  # noqa: E402
-    AbiSnapshot,
-    EnumMember,
-    EnumType,
-    Function,
-    RecordType,
-    Variable,
-    Visibility,
-)
 from abicheck.mcp_server import (  # noqa: E402
     _detect_binary_format,
     _impact_category,
@@ -66,6 +54,15 @@ from abicheck.mcp_server import (  # noqa: E402
     abi_explain_change,
     abi_list_changes,
     main,
+)
+from abicheck.model import (  # noqa: E402
+    AbiSnapshot,
+    EnumMember,
+    EnumType,
+    Function,
+    RecordType,
+    Variable,
+    Visibility,
 )
 from abicheck.serialization import snapshot_to_json  # noqa: E402
 
@@ -1357,7 +1354,7 @@ class TestSafeWritePathTraversalEdgeCases:
         """Path traversal with .. into /etc should be blocked."""
         # Use an absolute path that resolves to /etc/foo.json via traversal
         with pytest.raises(ValueError, match="sensitive system path"):
-            _safe_write_path("/tmp/../etc/foo.json")
+            _safe_write_path("/tmp/../etc/foo.json")  # noqa: S108
 
     @pytest.mark.skipif(
         __import__("platform").system() == "Windows",

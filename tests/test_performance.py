@@ -10,7 +10,6 @@ import time
 import pytest
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict, compare
-from abicheck.checker_policy import POLICY_REGISTRY
 from abicheck.model import (
     AbiSnapshot,
     Function,
@@ -19,7 +18,7 @@ from abicheck.model import (
     Visibility,
 )
 from abicheck.reporter import to_json, to_markdown
-from abicheck.serialization import snapshot_to_json, snapshot_from_dict
+from abicheck.serialization import snapshot_from_dict, snapshot_to_json
 
 pytestmark = pytest.mark.slow
 

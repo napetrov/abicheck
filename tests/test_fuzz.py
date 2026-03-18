@@ -16,15 +16,16 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("hypothesis")
-from hypothesis import given, strategies as st, settings, assume, HealthCheck  # noqa: E402
+import json  # noqa: E402
+
+from hypothesis import given, settings  # noqa: E402
+from hypothesis import strategies as st
 
 # ---------------------------------------------------------------------------
 # 1. AbiSnapshot JSON serialization round-trip
 # ---------------------------------------------------------------------------
 from abicheck.model import AbiSnapshot, Function, Variable, Visibility  # noqa: E402
-from abicheck.serialization import snapshot_to_json, snapshot_from_dict  # noqa: E402
-
-import json  # noqa: E402
+from abicheck.serialization import snapshot_from_dict, snapshot_to_json  # noqa: E402
 
 
 @settings(max_examples=50)
@@ -77,8 +78,8 @@ def test_snapshot_json_roundtrip(name: str, version: str) -> None:
 # ---------------------------------------------------------------------------
 # 2. Path validation fuzzing — _validate_member_path
 # ---------------------------------------------------------------------------
-from abicheck.package import _validate_member_path  # noqa: E402
 from abicheck.errors import ExtractionSecurityError  # noqa: E402
+from abicheck.package import _validate_member_path  # noqa: E402
 
 
 @settings(max_examples=50)
@@ -111,14 +112,13 @@ def test_validate_member_path_fuzz(member: str) -> None:
 # ---------------------------------------------------------------------------
 # 3. ChangeKind classification completeness
 # ---------------------------------------------------------------------------
-from abicheck.checker_policy import ChangeKind  # noqa: E402
-
 # Import the sets that classify each ChangeKind
 from abicheck.checker_policy import (  # noqa: E402
-    BREAKING_KINDS,
     API_BREAK_KINDS,
-    RISK_KINDS,
+    BREAKING_KINDS,
     COMPATIBLE_KINDS,
+    RISK_KINDS,
+    ChangeKind,  # noqa: E402
 )
 
 
@@ -146,7 +146,7 @@ def test_changekind_classification_completeness() -> None:
 # ---------------------------------------------------------------------------
 # 4. Suppression pattern fuzzing
 # ---------------------------------------------------------------------------
-from abicheck.suppression import SuppressionList, Suppression  # noqa: E402
+from abicheck.suppression import Suppression  # noqa: E402
 
 
 @settings(max_examples=50)
@@ -177,9 +177,9 @@ def test_suppression_pattern_fuzz(pattern: str) -> None:
 # ---------------------------------------------------------------------------
 # 5. Reporter handles arbitrary changes gracefully
 # ---------------------------------------------------------------------------
-from abicheck.checker import DiffResult, Change  # noqa: E402
+from abicheck.checker import Change, DiffResult  # noqa: E402
 from abicheck.checker_policy import Verdict  # noqa: E402
-from abicheck.reporter import to_markdown, to_json  # noqa: E402
+from abicheck.reporter import to_json, to_markdown  # noqa: E402
 
 
 @settings(max_examples=50)

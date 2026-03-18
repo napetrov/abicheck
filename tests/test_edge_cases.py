@@ -7,21 +7,31 @@ from __future__ import annotations
 
 import io
 import json
-import os
 import struct
 import subprocess
 import tarfile
-import tempfile
 import zipfile
 from pathlib import Path
 from unittest import mock
 
 import pytest
 
+from abicheck.checker import Change, DiffResult, Verdict, compare
+from abicheck.checker_policy import ChangeKind
+from abicheck.errors import ExtractionSecurityError
+from abicheck.model import AbiSnapshot, Function
+from abicheck.package import (
+    TarExtractor,
+    _is_elf_shared_object,
+    _safe_zip_extract,
+)
+from abicheck.policy_file import PolicyFile
+from abicheck.serialization import snapshot_from_dict, snapshot_to_json
+from abicheck.suppression import Suppression
+
 # ---------------------------------------------------------------------------
 # 1. Corrupt ELF magic — _is_elf_shared_object
 # ---------------------------------------------------------------------------
-from abicheck.package import _is_elf_shared_object
 
 
 class TestCorruptElfMagic:
@@ -57,13 +67,6 @@ class TestCorruptElfMagic:
 # ---------------------------------------------------------------------------
 # 2. Archive extraction security
 # ---------------------------------------------------------------------------
-from abicheck.package import (
-    TarExtractor,
-    _safe_zip_extract,
-    _validate_member_path,
-    _validate_symlink_target,
-)
-from abicheck.errors import ExtractionSecurityError
 
 
 class TestArchiveExtractionSecurity:
@@ -161,8 +164,6 @@ class TestArchiveExtractionSecurity:
 # ---------------------------------------------------------------------------
 # 3. Empty / minimal snapshots
 # ---------------------------------------------------------------------------
-from abicheck.model import AbiSnapshot
-from abicheck.checker import compare, DiffResult, Verdict
 
 
 class TestEmptySnapshots:
@@ -185,8 +186,6 @@ class TestEmptySnapshots:
 # ---------------------------------------------------------------------------
 # 4. Serialization edge cases
 # ---------------------------------------------------------------------------
-from abicheck.serialization import snapshot_to_json, snapshot_from_dict
-from abicheck.model import Function, Variable, Visibility
 
 
 class TestSerializationEdgeCases:
@@ -238,9 +237,6 @@ class TestSerializationEdgeCases:
 # ---------------------------------------------------------------------------
 # 5. Suppression with edge patterns
 # ---------------------------------------------------------------------------
-from abicheck.suppression import SuppressionList, Suppression
-from abicheck.checker import Change
-from abicheck.checker_policy import ChangeKind
 
 
 class TestSuppressionEdgePatterns:
@@ -274,7 +270,6 @@ class TestSuppressionEdgePatterns:
 # ---------------------------------------------------------------------------
 # 6. Policy file edge cases
 # ---------------------------------------------------------------------------
-from abicheck.policy_file import PolicyFile
 
 
 class TestPolicyFileEdgeCases:

@@ -11,9 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from abicheck.checker import compare, Verdict
+from abicheck.checker import Verdict, compare
 from abicheck.model import AbiSnapshot, Function, Visibility
-
 
 # ---------------------------------------------------------------------------
 # Helpers: minimal binary fixture builders
@@ -152,7 +151,7 @@ class TestPeMalformed:
     """Verify the parser does not crash on malformed PE data."""
 
     def test_truncated_pe_returns_empty_metadata(self, tmp_path: Path) -> None:
-        from abicheck.pe_metadata import parse_pe_metadata, PeMetadata
+        from abicheck.pe_metadata import PeMetadata, parse_pe_metadata
 
         # Just MZ header, no PE signature at expected offset
         pe_file = tmp_path / "truncated.dll"
@@ -165,7 +164,7 @@ class TestPeMalformed:
         assert isinstance(meta, PeMetadata)
 
     def test_empty_file_returns_empty_metadata(self, tmp_path: Path) -> None:
-        from abicheck.pe_metadata import parse_pe_metadata, PeMetadata
+        from abicheck.pe_metadata import PeMetadata, parse_pe_metadata
 
         pe_file = tmp_path / "empty.dll"
         pe_file.write_bytes(b"")
@@ -174,7 +173,7 @@ class TestPeMalformed:
         assert isinstance(meta, PeMetadata)
 
     def test_random_bytes_returns_empty_metadata(self, tmp_path: Path) -> None:
-        from abicheck.pe_metadata import parse_pe_metadata, PeMetadata
+        from abicheck.pe_metadata import PeMetadata, parse_pe_metadata
 
         pe_file = tmp_path / "random.dll"
         pe_file.write_bytes(b"\x00" * 256)
@@ -193,7 +192,7 @@ class TestMachoMetadataMinimal:
 
     def test_minimal_macho_le_parses_without_crash(self, tmp_path: Path) -> None:
         """parse_macho_metadata should handle a minimal 64-bit LE Mach-O."""
-        from abicheck.macho_metadata import parse_macho_metadata, MachoMetadata
+        from abicheck.macho_metadata import MachoMetadata, parse_macho_metadata
 
         macho_file = _make_minimal_macho(tmp_path)
         meta = parse_macho_metadata(macho_file)
@@ -201,7 +200,7 @@ class TestMachoMetadataMinimal:
 
     def test_minimal_macho_be_graceful(self, tmp_path: Path) -> None:
         """parse_macho_metadata should handle big-endian Mach-O magic gracefully."""
-        from abicheck.macho_metadata import parse_macho_metadata, MachoMetadata
+        from abicheck.macho_metadata import MachoMetadata, parse_macho_metadata
 
         macho_file = _make_minimal_macho_be(tmp_path)
         # May return empty metadata or parse partially -- should not crash
@@ -227,7 +226,7 @@ class TestElfMetadataMinimal:
 
     def test_minimal_elf_parses_gracefully(self, tmp_path: Path) -> None:
         """parse_elf_metadata should handle a minimal ELF without crashing."""
-        from abicheck.elf_metadata import parse_elf_metadata, ElfMetadata
+        from abicheck.elf_metadata import ElfMetadata, parse_elf_metadata
 
         elf_file = _make_minimal_elf(tmp_path)
         meta = parse_elf_metadata(elf_file)
@@ -243,7 +242,7 @@ class TestElfMetadataMinimal:
 
     def test_empty_file_elf_graceful(self, tmp_path: Path) -> None:
         """parse_elf_metadata should not crash on an empty file."""
-        from abicheck.elf_metadata import parse_elf_metadata, ElfMetadata
+        from abicheck.elf_metadata import ElfMetadata, parse_elf_metadata
 
         elf_file = tmp_path / "empty.so"
         elf_file.write_bytes(b"")
@@ -294,8 +293,8 @@ class TestBinaryFormatDetection:
 
     def test_elf_magic_not_detected_as_pe_or_macho(self, tmp_path: Path) -> None:
         """ELF file should not be detected as PE or Mach-O."""
-        from abicheck.pe_metadata import is_pe
         from abicheck.macho_metadata import is_macho
+        from abicheck.pe_metadata import is_pe
 
         elf_file = _make_minimal_elf(tmp_path)
         assert is_pe(elf_file) is False
@@ -303,8 +302,8 @@ class TestBinaryFormatDetection:
 
     def test_random_bytes_not_detected(self, tmp_path: Path) -> None:
         """Random bytes should not be detected as any known format."""
-        from abicheck.pe_metadata import is_pe
         from abicheck.macho_metadata import is_macho
+        from abicheck.pe_metadata import is_pe
 
         f = tmp_path / "random.bin"
         f.write_bytes(b"\x42\x43\x44\x45" * 16)
@@ -428,7 +427,7 @@ class TestPdbParserEdgeCases:
 
     def test_truncated_msf_raises(self, tmp_path: Path) -> None:
         """parse_pdb with truncated MSF header should raise ValueError."""
-        from abicheck.pdb_parser import parse_pdb, _MSF_MAGIC
+        from abicheck.pdb_parser import _MSF_MAGIC, parse_pdb
 
         pdb_file = tmp_path / "truncated.pdb"
         # Write just the magic, not enough for the full header
@@ -439,7 +438,7 @@ class TestPdbParserEdgeCases:
 
     def test_parse_msf_invalid_block_size(self, tmp_path: Path) -> None:
         """parse_msf with invalid block size should raise ValueError."""
-        from abicheck.pdb_parser import parse_msf, _MSF_MAGIC
+        from abicheck.pdb_parser import _MSF_MAGIC, parse_msf
 
         # Magic + superblock with invalid block size (7)
         data = bytearray(_MSF_MAGIC)
