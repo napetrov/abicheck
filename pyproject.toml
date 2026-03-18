@@ -76,6 +76,7 @@ module = [
     "abicheck.dwarf_advanced",
     "abicheck.dwarf_unified",
     "abicheck.dumper",
+    "abicheck.package",
     "abicheck.pdb_parser",
     "abicheck.pdb_metadata",
     "abicheck.pdb_utils",

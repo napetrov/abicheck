@@ -113,6 +113,58 @@ elif [[ "$MODE" == "compare" ]]; then
   # when an input is a binary, but these cross-compilation flags are not
   # exposed on the compare CLI. They are only passed in dump mode.
 
+elif [[ "$MODE" == "compare-release" ]]; then
+  # ── Compare-release mode (package-level comparison) ──────────────────────
+  CMD+=(compare-release)
+  CMD+=("${INPUT_OLD_LIBRARY:?old-library is required for compare-release mode}")
+  CMD+=("${INPUT_NEW_LIBRARY:?new-library is required}")
+
+  add_flag "-H" "${INPUT_HEADER:-}"
+  add_flag "--old-header" "${INPUT_OLD_HEADER:-}"
+  add_flag "--new-header" "${INPUT_NEW_HEADER:-}"
+  add_flag "-I" "${INPUT_INCLUDE:-}"
+  add_single_flag "--old-version" "${INPUT_OLD_VERSION:-}"
+  add_single_flag "--new-version" "${INPUT_NEW_VERSION:-}"
+  add_single_flag "--lang" "${INPUT_LANG:-}"
+
+  # Format
+  FORMAT="${INPUT_FORMAT:-markdown}"
+  CMD+=(--format "$FORMAT")
+
+  OUTPUT_FILE="${INPUT_OUTPUT_FILE:-}"
+  if [[ "$FORMAT" == "sarif" && -z "$OUTPUT_FILE" ]]; then
+    OUTPUT_FILE="abicheck-results.sarif"
+  fi
+  if [[ -n "$OUTPUT_FILE" ]]; then
+    CMD+=(-o "$OUTPUT_FILE")
+  fi
+
+  add_single_flag "--policy" "${INPUT_POLICY:-}"
+  add_single_flag "--policy-file" "${INPUT_POLICY_FILE:-}"
+  add_single_flag "--suppress" "${INPUT_SUPPRESS:-}"
+
+  # Package-specific options
+  add_single_flag "--debug-info1" "${INPUT_DEBUG_INFO1:-}"
+  add_single_flag "--debug-info2" "${INPUT_DEBUG_INFO2:-}"
+  add_single_flag "--devel-pkg1" "${INPUT_DEVEL_PKG1:-}"
+  add_single_flag "--devel-pkg2" "${INPUT_DEVEL_PKG2:-}"
+
+  if [[ "${INPUT_DSO_ONLY:-false}" == "true" ]]; then
+    CMD+=(--dso-only)
+  fi
+  if [[ "${INPUT_INCLUDE_PRIVATE_DSO:-false}" == "true" ]]; then
+    CMD+=(--include-private-dso)
+  fi
+  if [[ "${INPUT_KEEP_EXTRACTED:-false}" == "true" ]]; then
+    CMD+=(--keep-extracted)
+  fi
+  if [[ "${INPUT_FAIL_ON_REMOVED_LIBRARY:-false}" == "true" ]]; then
+    CMD+=(--fail-on-removed-library)
+  fi
+  if [[ "${INPUT_FAIL_ON_ADDITIONS:-false}" == "true" ]]; then
+    CMD+=(--fail-on-additions)
+  fi
+
 elif [[ "$MODE" == "deps" ]]; then
   # ── Deps mode (Linux ELF) ───────────────────────────────────────────────
   CMD+=(deps)
@@ -149,7 +201,7 @@ elif [[ "$MODE" == "stack-check" ]]; then
   fi
 
 else
-  echo "::error::Unknown mode '$MODE'. Use 'compare', 'dump', 'deps', or 'stack-check'."
+  echo "::error::Unknown mode '$MODE'. Use 'compare', 'compare-release', 'dump', 'deps', or 'stack-check'."
   exit 1
 fi
 
@@ -259,6 +311,7 @@ else
         ;;
       2) VERDICT="API_BREAK" ;;
       4) VERDICT="BREAKING" ;;
+      8) VERDICT="REMOVED_LIBRARY" ;;
       *) VERDICT="ERROR" ;;
     esac
   fi
@@ -301,6 +354,9 @@ if [[ "${INPUT_ADD_JOB_SUMMARY:-true}" == "true" && "$MODE" != "dump" ]]; then
       BREAKING)
         echo "> **Verdict: BREAKING** — Binary ABI break detected. Existing binaries will fail at runtime."
         ;;
+      REMOVED_LIBRARY)
+        echo "> **Verdict: REMOVED_LIBRARY** — A library present in the old package is missing from the new package."
+        ;;
       PASS)
         echo "> **Verdict: PASS** — Binary loads and no harmful ABI changes detected."
         ;;
@@ -318,7 +374,7 @@ if [[ "${INPUT_ADD_JOB_SUMMARY:-true}" == "true" && "$MODE" != "dump" ]]; then
     echo ""
     echo "| Property | Value |"
     echo "|----------|-------|"
-    if [[ "$MODE" == "compare" ]]; then
+    if [[ "$MODE" == "compare" || "$MODE" == "compare-release" ]]; then
       echo "| Old | \`${INPUT_OLD_LIBRARY:-}\` (${INPUT_OLD_VERSION:-old}) |"
       echo "| New | \`${INPUT_NEW_LIBRARY:-}\` (${INPUT_NEW_VERSION:-new}) |"
       echo "| Policy | ${INPUT_POLICY:-strict_abi} |"
@@ -387,6 +443,11 @@ else
 
   if [[ "$VERDICT" == "ADDITIONS" && "${INPUT_FAIL_ON_ADDITIONS:-false}" == "true" ]]; then
     echo "::error::API additions detected (unintentional API expansion). Set fail-on-additions: false to allow."
+    FINAL_EXIT=1
+  fi
+
+  if [[ "$VERDICT" == "REMOVED_LIBRARY" ]]; then
+    echo "::error::Library removed between old and new package. Set fail-on-removed-library: false to allow."
     FINAL_EXIT=1
   fi
 fi

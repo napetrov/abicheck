@@ -20,9 +20,9 @@ automatically, then runs ABI comparison and reports results.
 
 | Input | Required | Description |
 |-------|----------|-------------|
-| `mode` | no | `compare` (default), `dump`, `deps`, or `stack-check` |
-| `old-library` | yes (compare) | Path to old library, JSON snapshot, or ABICC dump |
-| `new-library` | yes | Path to new library or binary |
+| `mode` | no | `compare` (default), `compare-release`, `dump`, `deps`, or `stack-check` |
+| `old-library` | yes (compare, compare-release) | Path to old library, JSON snapshot, ABICC dump, directory, or package |
+| `new-library` | yes | Path to new library, binary, directory, or package |
 
 ### Header inputs
 
@@ -85,6 +85,19 @@ automatically, then runs ABI comparison and reports results.
 | `fail-on-api-break` | `false` | Fail step on source-level API break |
 | `fail-on-additions` | `false` | Fail step when new public symbols/types are added (detects unintentional API expansion) |
 | `add-job-summary` | `true` | Write summary to Job Summary panel |
+
+### Package comparison inputs (compare-release mode)
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `debug-info1` | — | Debug info package for old side (RPM/Deb/tar) |
+| `debug-info2` | — | Debug info package for new side (RPM/Deb/tar) |
+| `devel-pkg1` | — | Development package with headers for old side |
+| `devel-pkg2` | — | Development package with headers for new side |
+| `dso-only` | `false` | Only compare shared objects, skip executables |
+| `include-private-dso` | `false` | Include private (non-public) shared objects |
+| `keep-extracted` | `false` | Keep extracted temp files for debugging |
+| `fail-on-removed-library` | `false` | Exit 8 when a library present in old is absent in new |
 
 ## Outputs
 
@@ -425,6 +438,74 @@ When `fail-on-additions: true`:
 
 This is useful when your library has a stable frozen API and any expansion
 must be a deliberate, reviewed decision rather than an accidental side effect.
+
+### Compare RPM packages
+
+Use `mode: compare-release` to compare all shared libraries inside two packages
+without manual extraction. Supported formats: RPM, Deb, tar (`.tar.gz`,
+`.tar.xz`, `.tar.bz2`, `.tgz`), conda (`.conda`, `.tar.bz2`), wheel (`.whl`),
+and plain directories.
+
+```yaml
+      - name: Compare RPM packages
+        uses: napetrov/abicheck@v1
+        with:
+          mode: compare-release
+          old-library: libfoo-1.0-1.el9.x86_64.rpm
+          new-library: libfoo-1.1-1.el9.x86_64.rpm
+```
+
+### Compare packages with debug info
+
+Provide separate debug info packages for full type-level analysis via
+build-id resolution:
+
+```yaml
+      - name: Compare with debug info
+        uses: napetrov/abicheck@v1
+        with:
+          mode: compare-release
+          old-library: libfoo-1.0.rpm
+          new-library: libfoo-1.1.rpm
+          debug-info1: libfoo-debuginfo-1.0.rpm
+          debug-info2: libfoo-debuginfo-1.1.rpm
+```
+
+### Compare Deb packages with development headers
+
+```yaml
+      - name: Compare Deb packages
+        uses: napetrov/abicheck@v1
+        with:
+          mode: compare-release
+          old-library: libfoo1_1.0-1_amd64.deb
+          new-library: libfoo1_1.1-1_amd64.deb
+          devel-pkg1: libfoo-dev_1.0-1_amd64.deb
+          devel-pkg2: libfoo-dev_1.1-1_amd64.deb
+```
+
+### Compare tar archives (DSOs only)
+
+```yaml
+      - name: Compare SDK tarballs
+        uses: napetrov/abicheck@v1
+        with:
+          mode: compare-release
+          old-library: sdk-2.0.tar.gz
+          new-library: sdk-2.1.tar.gz
+          dso-only: true
+```
+
+### Compare conda packages
+
+```yaml
+      - name: Compare conda packages
+        uses: napetrov/abicheck@v1
+        with:
+          mode: compare-release
+          old-library: pkg-v1.conda
+          new-library: pkg-v2.conda
+```
 
 ## Versioning
 

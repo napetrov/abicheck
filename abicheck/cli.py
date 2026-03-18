@@ -1097,6 +1097,20 @@ def compare_cmd(
               help="Exit 8 when a library present in old_dir is absent in new_dir.")
 @click.option("--fail-on-additions/--no-fail-on-additions",
               "fail_on_additions", default=False)
+@click.option("--debug-info1", type=click.Path(exists=True, path_type=Path), default=None,
+              help="Debug info package for old side (RPM/Deb/tar).")
+@click.option("--debug-info2", type=click.Path(exists=True, path_type=Path), default=None,
+              help="Debug info package for new side (RPM/Deb/tar).")
+@click.option("--devel-pkg1", type=click.Path(exists=True, path_type=Path), default=None,
+              help="Development package with headers for old side.")
+@click.option("--devel-pkg2", type=click.Path(exists=True, path_type=Path), default=None,
+              help="Development package with headers for new side.")
+@click.option("--dso-only", is_flag=True, default=False,
+              help="Only compare shared objects, skip executables.")
+@click.option("--include-private-dso", is_flag=True, default=False,
+              help="Include private (non-public) shared objects from non-standard paths.")
+@click.option("--keep-extracted", is_flag=True, default=False,
+              help="Keep extracted temporary files for debugging.")
 @click.option("-v", "--verbose", is_flag=True, default=False)
 def compare_release_cmd(
     old_dir: Path,
@@ -1116,11 +1130,19 @@ def compare_release_cmd(
     policy_file_path: Path | None,
     fail_on_removed: bool,
     fail_on_additions: bool,
+    debug_info1: Path | None,
+    debug_info2: Path | None,
+    devel_pkg1: Path | None,
+    devel_pkg2: Path | None,
+    dso_only: bool,
+    include_private_dso: bool,
+    keep_extracted: bool,
     verbose: bool,
 ) -> None:
-    """Compare all libraries in two release directories.
+    """Compare all libraries in two release directories or packages.
 
-    OLD_DIR and NEW_DIR may each be a file or a directory.
+    OLD_DIR and NEW_DIR may each be a file, directory, or package
+    (RPM, Deb, tar, conda, wheel). Package format is auto-detected.
     When directories are given, libraries are matched by filename stem.
 
     \b
@@ -1133,182 +1155,302 @@ def compare_release_cmd(
     \b
     Examples:
       abicheck compare-release release-1.0/ release-2.0/ -H include/
-      abicheck compare-release release-1.0/ release-2.0/ \\
-          --old-header include/v1/ --new-header include/v2/ --format json
+      abicheck compare-release libfoo-1.0.rpm libfoo-1.1.rpm
+      abicheck compare-release libfoo_1.0.deb libfoo_1.1.deb
+      abicheck compare-release sdk-2.0.tar.gz sdk-2.1.tar.gz
+      abicheck compare-release pkg-v1.conda pkg-v2.conda
+      abicheck compare-release old.whl new.whl
+      abicheck compare-release libfoo-1.0.rpm libfoo-1.1.rpm \\
+          --debug-info1 libfoo-debuginfo-1.0.rpm \\
+          --debug-info2 libfoo-debuginfo-1.1.rpm
     """
+    import tempfile
+
+    from .package import (
+        _is_elf_shared_object,
+        detect_extractor,
+        discover_shared_libraries,
+        is_package,
+        resolve_debug_info,
+    )
+
     _setup_verbosity(verbose)
 
-    old_files = _collect_release_inputs(old_dir)
-    new_files = _collect_release_inputs(new_dir)
+    # Track temporary directory paths for cleanup
+    _temp_dir_paths: list[str] = []
 
-    old_map, old_warns = _build_match_map(old_files)
-    new_map, new_warns = _build_match_map(new_files)
-    warning_msgs: list[str] = [f"Warning: {w}" for w in (old_warns + new_warns)]
+    def _make_temp_dir(prefix: str) -> Path:
+        """Create a temporary directory, tracking it for later cleanup."""
+        path = tempfile.mkdtemp(prefix=prefix)
+        _temp_dir_paths.append(path)
+        return Path(path)
 
-    old_h: list[Path] = list(old_headers_only) if old_headers_only else list(headers)
-    new_h: list[Path] = list(new_headers_only) if new_headers_only else list(headers)
-    old_inc: list[Path] = list(includes)
-    new_inc: list[Path] = list(includes)
+    def _extract_if_package(
+        input_path: Path,
+        debug_pkg: Path | None,
+        devel_pkg: Path | None,
+    ) -> tuple[Path, Path | None, Path | None]:
+        """Extract package to tempdir if needed, return (lib_dir, debug_dir, header_dir)."""
+        if not is_package(input_path):
+            return input_path, None, None
 
-    # Special case: file-vs-file should compare directly even when names differ.
-    direct_file_pair = old_dir.is_file() and new_dir.is_file()
-    if direct_file_pair:
-        matched_keys = ["__direct_pair__"]
-        old_map = {"__direct_pair__": old_files[0]}
-        new_map = {"__direct_pair__": new_files[0]}
-        removed_keys = []
-        added_keys = []
-    else:
-        matched_keys = sorted(set(old_map) & set(new_map))
-        removed_keys = sorted(set(old_map) - set(new_map))
-        added_keys = sorted(set(new_map) - set(old_map))
+        extractor = detect_extractor(input_path)
+        if extractor is None:
+            raise click.ClickException(f"Unrecognized package format: {input_path}")
 
-    if removed_keys:
-        for k in removed_keys:
-            warning_msgs.append(f"Warning: library removed: {old_map[k].name}")
+        target = _make_temp_dir("abicheck_pkg_")
 
-    if added_keys:
-        for k in added_keys:
-            warning_msgs.append(f"Info: library added: {new_map[k].name}")
+        result = extractor.extract(input_path, target)
+        lib_dir = result.lib_dir
+        debug_dir = result.debug_dir
+        header_dir = result.header_dir
 
-    if not matched_keys:
-        warning_msgs.append(
-            "Warning: no matching library pairs found between OLD and NEW inputs."
+        # Extract debug info package if provided
+        if debug_pkg is not None:
+            dbg_ext = detect_extractor(debug_pkg)
+            if dbg_ext is None:
+                raise click.ClickException(f"Unrecognized debug package format: {debug_pkg}")
+            dbg_target = _make_temp_dir("abicheck_dbg_")
+            dbg_result = dbg_ext.extract(debug_pkg, dbg_target)
+            debug_dir = dbg_result.lib_dir
+
+        # Extract devel package if provided
+        if devel_pkg is not None:
+            dev_ext = detect_extractor(devel_pkg)
+            if dev_ext is None:
+                raise click.ClickException(f"Unrecognized devel package format: {devel_pkg}")
+            dev_target = _make_temp_dir("abicheck_dev_")
+            dev_result = dev_ext.extract(devel_pkg, dev_target)
+            header_dir = dev_result.lib_dir
+
+        return lib_dir, debug_dir, header_dir
+
+    try:
+        old_lib_dir, old_debug_dir, old_header_dir = _extract_if_package(
+            old_dir, debug_info1, devel_pkg1,
+        )
+        new_lib_dir, new_debug_dir, new_header_dir = _extract_if_package(
+            new_dir, debug_info2, devel_pkg2,
         )
 
-    if fmt != "json":
-        for msg in warning_msgs:
-            click.echo(msg, err=True)
+        # When packages were extracted, first try binary discovery (ELF DSOs),
+        # then fall back to _collect_release_inputs (catches JSON snapshots too).
+        if is_package(old_dir):
+            old_files = discover_shared_libraries(old_lib_dir, include_private=include_private_dso)
+            if not old_files:
+                old_files = _collect_release_inputs(old_lib_dir)
+        else:
+            old_files = _collect_release_inputs(old_lib_dir)
 
-    if output_dir:
-        output_dir.mkdir(parents=True, exist_ok=True)
+        if is_package(new_dir):
+            new_files = discover_shared_libraries(new_lib_dir, include_private=include_private_dso)
+            if not new_files:
+                new_files = _collect_release_inputs(new_lib_dir)
+        else:
+            new_files = _collect_release_inputs(new_lib_dir)
 
-    library_results: list[dict[str, object]] = []
-    worst_verdict = "NO_CHANGE"
-    _VERDICT_ORDER = {
-        "NO_CHANGE": 0,
-        "COMPATIBLE": 1,
-        "COMPATIBLE_WITH_RISK": 2,
-        "API_BREAK": 3,
-        "BREAKING": 4,
-        "ERROR": 5,
-    }
+        # --dso-only: keep only ELF shared objects (ET_DYN), skip executables
+        if dso_only:
+            old_files = [f for f in old_files if _is_elf_shared_object(f)]
+            new_files = [f for f in new_files if _is_elf_shared_object(f)]
 
-    for key in matched_keys:
-        old_path = old_map[key]
-        new_path = new_map[key]
-        try:
-            result, _, _ = _run_compare_pair(
-                old_path, new_path,
-                old_h, new_h, old_inc, new_inc,
-                old_version, new_version,
-                lang, suppress, policy, policy_file_path,
-                old_pdb_path=None, new_pdb_path=None,
+        old_map, old_warns = _build_match_map(old_files)
+        new_map, new_warns = _build_match_map(new_files)
+        warning_msgs: list[str] = [f"Warning: {w}" for w in (old_warns + new_warns)]
+
+        # Use headers from devel packages if extracted, otherwise use CLI flags
+        old_h: list[Path] = list(old_headers_only) if old_headers_only else list(headers)
+        new_h: list[Path] = list(new_headers_only) if new_headers_only else list(headers)
+        if old_header_dir and not old_headers_only:
+            old_h = [old_header_dir]
+        if new_header_dir and not new_headers_only:
+            new_h = [new_header_dir]
+        old_inc: list[Path] = list(includes)
+        new_inc: list[Path] = list(includes)
+
+        # Special case: file-vs-file should compare directly even when names differ.
+        # (Does not apply to package inputs — those are always discovered.)
+        direct_file_pair = (
+            old_dir.is_file() and new_dir.is_file()
+            and not is_package(old_dir) and not is_package(new_dir)
+        )
+        if direct_file_pair:
+            matched_keys = ["__direct_pair__"]
+            old_map = {"__direct_pair__": old_files[0]}
+            new_map = {"__direct_pair__": new_files[0]}
+            removed_keys: list[str] = []
+            added_keys: list[str] = []
+        else:
+            matched_keys = sorted(set(old_map) & set(new_map))
+            removed_keys = sorted(set(old_map) - set(new_map))
+            added_keys = sorted(set(new_map) - set(old_map))
+
+        if removed_keys:
+            for k in removed_keys:
+                warning_msgs.append(f"Warning: library removed: {old_map[k].name}")
+
+        if added_keys:
+            for k in added_keys:
+                warning_msgs.append(f"Info: library added: {new_map[k].name}")
+
+        if not matched_keys:
+            warning_msgs.append(
+                "Warning: no matching library pairs found between OLD and NEW inputs."
             )
-        except (click.ClickException, click.UsageError) as exc:
-            msg = exc.format_message()
-            click.echo(f"Error comparing {old_path.name}: {msg}", err=True)
-            library_results.append({
-                "library": old_path.name,
-                "verdict": "ERROR",
-                "error": msg,
-            })
-            worst_verdict = "ERROR"
-            continue
 
-        v = result.verdict.value
-        if _VERDICT_ORDER.get(v, 0) > _VERDICT_ORDER.get(worst_verdict, 0):
-            worst_verdict = v
-
-        lib_entry: dict[str, object] = {
-            "library": old_path.name,
-            "verdict": v,
-            "breaking": len(result.breaking),
-            "source_breaks": len(result.source_breaks),
-            "risk_changes": len(result.risk),
-            "compatible_additions": len(result.compatible),
-        }
-        library_results.append(lib_entry)
+        if fmt != "json":
+            for msg in warning_msgs:
+                click.echo(msg, err=True)
 
         if output_dir:
-            lib_report_path = output_dir / f"{old_path.stem}.json"
-            lib_report_path.write_text(to_json(result), encoding="utf-8")
+            output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Summary output
-    if fmt == "json":
-        summary: dict[str, object] = {
-            "verdict": worst_verdict,
-            "old_dir": str(old_dir),
-            "new_dir": str(new_dir),
-            "libraries": library_results,
-            "unmatched_old": [old_map[k].name for k in removed_keys],
-            "unmatched_new": [new_map[k].name for k in added_keys],
-            "warnings": warning_msgs,
+        library_results: list[dict[str, object]] = []
+        worst_verdict = "NO_CHANGE"
+        _VERDICT_ORDER = {
+            "NO_CHANGE": 0,
+            "COMPATIBLE": 1,
+            "COMPATIBLE_WITH_RISK": 2,
+            "API_BREAK": 3,
+            "BREAKING": 4,
+            "ERROR": 5,
         }
-        text = json.dumps(summary, indent=2)
-    else:
-        _VERDICT_EMOJI = {
-            "NO_CHANGE": "✅", "COMPATIBLE": "✅", "COMPATIBLE_WITH_RISK": "⚠️",
-            "API_BREAK": "⚠️", "BREAKING": "❌", "ERROR": "💥",
-        }
-        lines: list[str] = [
-            "# ABI Release Comparison",
-            "",
-            "| | |",
-            "|---|---|",
-            f"| **Old** | `{old_dir}` |",
-            f"| **New** | `{new_dir}` |",
-            f"| **Verdict** | {_VERDICT_EMOJI.get(worst_verdict, '?')} `{worst_verdict}` |",
-            "",
-            "## Libraries",
-            "",
-            "| Library | Verdict | Breaking | Source | Risk | Additions |",
-            "|---|---|---|---|---|---|",
-        ]
-        for lib in library_results:
-            em = _VERDICT_EMOJI.get(str(lib["verdict"]), "?")
-            lines.append(
-                f"| `{lib['library']}` | {em} `{lib['verdict']}` "
-                f"| {lib.get('breaking', '—')} | {lib.get('source_breaks', '—')} "
-                f"| {lib.get('risk_changes', '—')} | {lib.get('compatible_additions', '—')} |"
+
+        for key in matched_keys:
+            old_path = old_map[key]
+            new_path = new_map[key]
+            # Resolve per-binary debug info from extracted debug packages
+            old_dbg = (
+                resolve_debug_info(old_path, old_debug_dir)
+                if old_debug_dir else None
             )
-        if removed_keys:
-            lines += ["", "## ⚠️ Removed Libraries", ""]
-            for k in removed_keys:
-                lines.append(f"- `{old_map[k].name}`")
-        if added_keys:
-            lines += ["", "## ℹ️ Added Libraries", ""]
-            for k in added_keys:
-                lines.append(f"- `{new_map[k].name}`")
-        text = "\n".join(lines)
+            new_dbg = (
+                resolve_debug_info(new_path, new_debug_dir)
+                if new_debug_dir else None
+            )
+            try:
+                result, _, _ = _run_compare_pair(
+                    old_path, new_path,
+                    old_h, new_h, old_inc, new_inc,
+                    old_version, new_version,
+                    lang, suppress, policy, policy_file_path,
+                    old_pdb_path=old_dbg, new_pdb_path=new_dbg,
+                )
+            except (click.ClickException, click.UsageError) as exc:
+                msg = exc.format_message()
+                click.echo(f"Error comparing {old_path.name}: {msg}", err=True)
+                library_results.append({
+                    "library": old_path.name,
+                    "verdict": "ERROR",
+                    "error": msg,
+                })
+                worst_verdict = "ERROR"
+                continue
 
-    if output:
-        output.write_text(text, encoding="utf-8")
-        click.echo(f"Report written to {output}", err=True)
-    else:
-        click.echo(text)
+            v = result.verdict.value
+            if _VERDICT_ORDER.get(v, 0) > _VERDICT_ORDER.get(worst_verdict, 0):
+                worst_verdict = v
 
-    if output_dir:
-        summary_path = output_dir / "summary.json"
-        summary_data: dict[str, object] = {
-            "verdict": worst_verdict,
-            "libraries": library_results,
-            "unmatched_old": [old_map[k].name for k in removed_keys],
-            "unmatched_new": [new_map[k].name for k in added_keys],
-        }
-        summary_path.write_text(json.dumps(summary_data, indent=2), encoding="utf-8")
-        click.echo(f"Per-library reports written to {output_dir}/", err=True)
+            lib_entry: dict[str, object] = {
+                "library": old_path.name,
+                "verdict": v,
+                "breaking": len(result.breaking),
+                "source_breaks": len(result.source_breaks),
+                "risk_changes": len(result.risk),
+                "compatible_additions": len(result.compatible),
+            }
+            library_results.append(lib_entry)
 
-    # Exit codes — ABI severity takes priority over policy flags.
-    # A removed library is a deployment decision; a binary ABI break is more urgent.
-    if worst_verdict in ("BREAKING", "ERROR"):
-        sys.exit(4)
-    elif worst_verdict == "API_BREAK":
-        sys.exit(2)
-    if fail_on_removed and removed_keys:
-        sys.exit(8)
-    if fail_on_additions and any(lib.get("compatible_additions", 0) for lib in library_results):
-        sys.exit(1)
+            if output_dir:
+                lib_report_path = output_dir / f"{old_path.stem}.json"
+                lib_report_path.write_text(to_json(result), encoding="utf-8")
+
+        # Summary output
+        if fmt == "json":
+            summary: dict[str, object] = {
+                "verdict": worst_verdict,
+                "old_dir": str(old_dir),
+                "new_dir": str(new_dir),
+                "libraries": library_results,
+                "unmatched_old": [old_map[k].name for k in removed_keys],
+                "unmatched_new": [new_map[k].name for k in added_keys],
+                "warnings": warning_msgs,
+            }
+            text = json.dumps(summary, indent=2)
+        else:
+            _VERDICT_EMOJI = {
+                "NO_CHANGE": "✅", "COMPATIBLE": "✅", "COMPATIBLE_WITH_RISK": "⚠️",
+                "API_BREAK": "⚠️", "BREAKING": "❌", "ERROR": "💥",
+            }
+            lines: list[str] = [
+                "# ABI Release Comparison",
+                "",
+                "| | |",
+                "|---|---|",
+                f"| **Old** | `{old_dir}` |",
+                f"| **New** | `{new_dir}` |",
+                f"| **Verdict** | {_VERDICT_EMOJI.get(worst_verdict, '?')} `{worst_verdict}` |",
+                "",
+                "## Libraries",
+                "",
+                "| Library | Verdict | Breaking | Source | Risk | Additions |",
+                "|---|---|---|---|---|---|",
+            ]
+            for lib in library_results:
+                em = _VERDICT_EMOJI.get(str(lib["verdict"]), "?")
+                lines.append(
+                    f"| `{lib['library']}` | {em} `{lib['verdict']}` "
+                    f"| {lib.get('breaking', '—')} | {lib.get('source_breaks', '—')} "
+                    f"| {lib.get('risk_changes', '—')} | {lib.get('compatible_additions', '—')} |"
+                )
+            if removed_keys:
+                lines += ["", "## ⚠️ Removed Libraries", ""]
+                for k in removed_keys:
+                    lines.append(f"- `{old_map[k].name}`")
+            if added_keys:
+                lines += ["", "## ℹ️ Added Libraries", ""]
+                for k in added_keys:
+                    lines.append(f"- `{new_map[k].name}`")
+            text = "\n".join(lines)
+
+        if output:
+            output.write_text(text, encoding="utf-8")
+            click.echo(f"Report written to {output}", err=True)
+        else:
+            click.echo(text)
+
+        if output_dir:
+            summary_path = output_dir / "summary.json"
+            summary_data: dict[str, object] = {
+                "verdict": worst_verdict,
+                "libraries": library_results,
+                "unmatched_old": [old_map[k].name for k in removed_keys],
+                "unmatched_new": [new_map[k].name for k in added_keys],
+            }
+            summary_path.write_text(json.dumps(summary_data, indent=2), encoding="utf-8")
+            click.echo(f"Per-library reports written to {output_dir}/", err=True)
+
+        # Exit codes — ABI severity takes priority over policy flags.
+        # A removed library is a deployment decision; a binary ABI break is more urgent.
+        if worst_verdict in ("BREAKING", "ERROR"):
+            sys.exit(4)
+        elif worst_verdict == "API_BREAK":
+            sys.exit(2)
+        if fail_on_removed and removed_keys:
+            sys.exit(8)
+        if fail_on_additions and any(lib.get("compatible_additions", 0) for lib in library_results):
+            sys.exit(1)
+    finally:
+        import shutil as _shutil
+        if not keep_extracted:
+            for td_path in _temp_dir_paths:
+                _shutil.rmtree(td_path, ignore_errors=True)
+        elif _temp_dir_paths:
+            kept_paths = ", ".join(_temp_dir_paths)
+            click.echo(
+                f"Extracted files kept in: {kept_paths}",
+                err=True,
+            )
 
 
 # ── Full-stack dependency commands ────────────────────────────────────────────

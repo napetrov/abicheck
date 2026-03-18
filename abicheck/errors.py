@@ -41,3 +41,16 @@ class SuppressionError(AbicheckError, ValueError):
     Inherits ValueError for backward compatibility with existing code that
     catches ValueError from SuppressionEngine.
     """
+
+
+class ExtractionSecurityError(AbicheckError):
+    """Raised when archive extraction encounters a security violation.
+
+    Triggered by path traversal attempts, symlinks escaping the extraction
+    root, or other unsafe archive member paths.
+    """
+
+    def __init__(self, member_path: str, reason: str) -> None:
+        self.member_path = member_path
+        self.reason = reason
+        super().__init__(f"Unsafe archive member '{member_path}': {reason}")
