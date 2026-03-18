@@ -10,3 +10,14 @@
 | [006](006-package-level-comparison.md) | Package-Level Comparison | Proposed |
 | [007](007-btf-ctf-debug-formats.md) | BTF and CTF Debug Format Support | Proposed |
 | [008](008-full-stack-dependency-validation.md) | Full-Stack Dependency Validation | Accepted |
+| [009](009-verdict-system-and-exit-codes.md) | Verdict System and Exit Code Contract | Accepted |
+| [010](010-policy-profile-system.md) | Policy Profile System | Accepted |
+| [011](011-change-classification-taxonomy.md) | ABI Change Classification Taxonomy | Accepted |
+| [012](012-abicc-compatibility-layer.md) | ABICC Drop-In Compatibility Layer | Accepted |
+| [013](013-suppression-system.md) | Suppression System Design | Accepted |
+| [014](014-output-format-strategy.md) | Output Format Strategy | Accepted |
+| [015](015-snapshot-serialization.md) | Snapshot Serialization and Schema Versioning | Accepted |
+| [016](016-visibility-model.md) | Three-Tier Visibility Model | Accepted |
+| [017](017-github-action.md) | GitHub Action Design | Accepted |
+| [018](018-cross-platform-support.md) | Cross-Platform Binary Format Support | Accepted |
+| [019](019-testing-strategy.md) | Testing Strategy and Parity Validation | Accepted |
