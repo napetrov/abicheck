@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.checker_policy import BREAKING_KINDS
+from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import AbiSnapshot, Function, Visibility
 
 
@@ -29,6 +30,14 @@ def _func(name: str, mangled: str, **kwargs: object) -> Function:
     defaults: dict[str, object] = dict(return_type="void", visibility=Visibility.PUBLIC)
     defaults.update(kwargs)
     return Function(name=name, mangled=mangled, **defaults)  # type: ignore[arg-type]
+
+
+def _elf_with_syms(*names: str) -> ElfMetadata:
+    syms = [
+        ElfSymbol(name=n, binding=SymbolBinding.GLOBAL, sym_type=SymbolType.FUNC, size=0)
+        for n in names
+    ]
+    return ElfMetadata(symbols=syms)
 
 
 class TestFuncDeletedModel:
@@ -127,8 +136,15 @@ class TestFuncDeletedCastxmlMock:
     Tests the dumper's _CastxmlParser without running castxml binary.
     """
 
-    def _make_xml_root(self, deleted: str = "0") -> object:
-        """Build a minimal castxml XML tree with one function."""
+    def _make_xml_root(
+        self,
+        *,
+        deleted: str = "0",
+        tag: str = "Function",
+        name: str = "doWork",
+        mangled: str = "_Z6doWorkv",
+    ) -> object:
+        """Build a minimal castxml XML tree with one callable element."""
         from xml.etree.ElementTree import Element, SubElement
 
         root = Element("CastXML")
@@ -141,11 +157,11 @@ class TestFuncDeletedCastxmlMock:
         loc_el.set("id", "l1")
         loc_el.set("file", "f1")
         loc_el.set("line", "1")
-        # Function entry
-        func_el = SubElement(root, "Function")
+        # Callable entry
+        func_el = SubElement(root, tag)
         func_el.set("id", "_1")
-        func_el.set("name", "doWork")
-        func_el.set("mangled", "_Z6doWorkv")
+        func_el.set("name", name)
+        func_el.set("mangled", mangled)
         func_el.set("returns", "")
         func_el.set("location", "l1")
         func_el.set("deleted", deleted)
@@ -178,3 +194,135 @@ class TestFuncDeletedCastxmlMock:
         funcs = parser.parse_functions()
         assert len(funcs) == 1
         assert funcs[0].is_deleted is False
+
+    def test_dumper_parses_deleted_constructor_true(self) -> None:
+        """Constructor tag must preserve deleted='1' marker."""
+        from abicheck.dumper import _CastxmlParser
+
+        root = self._make_xml_root(
+            deleted="1",
+            tag="Constructor",
+            name="Foo",
+            mangled="_ZN3FooC1Ev",
+        )
+        parser = _CastxmlParser(
+            root,
+            exported_dynamic={"_ZN3FooC1Ev"},
+            exported_static={"_ZN3FooC1Ev"},
+        )
+        funcs = parser.parse_functions()
+        assert len(funcs) == 1
+        assert funcs[0].name == "Foo"
+        assert funcs[0].is_deleted is True
+
+    def test_dumper_parses_deleted_destructor_true(self) -> None:
+        """Destructor tag must preserve deleted='1' marker."""
+        from abicheck.dumper import _CastxmlParser
+
+        root = self._make_xml_root(
+            deleted="1",
+            tag="Destructor",
+            name="~Foo",
+            mangled="_ZN3FooD1Ev",
+        )
+        parser = _CastxmlParser(
+            root,
+            exported_dynamic={"_ZN3FooD1Ev"},
+            exported_static={"_ZN3FooD1Ev"},
+        )
+        funcs = parser.parse_functions()
+        assert len(funcs) == 1
+        assert funcs[0].name == "~Foo"
+        assert funcs[0].is_deleted is True
+
+
+class TestFuncDeletedEdgeCases:
+    """Edge-case regression coverage for abicc #100."""
+
+    def test_free_function_deleted(self) -> None:
+        """Free function becoming deleted must be BREAKING."""
+        old = _snap(functions=[_func("process", "_Z7processv")])
+        new = _snap(functions=[_func("process", "_Z7processv", is_deleted=True)])
+
+        result = compare(old, new)
+        kinds = {c.kind for c in result.changes}
+
+        assert ChangeKind.FUNC_DELETED in kinds
+        assert result.verdict == Verdict.BREAKING
+
+    def test_one_overload_deleted(self) -> None:
+        """Only the deleted overload should trigger FUNC_DELETED."""
+        old = _snap(functions=[
+            _func("process", "_Z7processi"),
+            _func("process", "_Z7processf"),
+        ])
+        new = _snap(functions=[
+            _func("process", "_Z7processi"),
+            _func("process", "_Z7processf", is_deleted=True),
+        ])
+
+        result = compare(old, new)
+        deleted_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_DELETED]
+        deleted_symbols = {c.symbol for c in deleted_changes}
+
+        assert deleted_symbols == {"_Z7processf"}
+        assert len(deleted_changes) == 1  # must not double-report the same symbol
+        assert result.verdict == Verdict.BREAKING
+
+    def test_destructor_deleted(self) -> None:
+        """Deleted destructor must be treated as BREAKING."""
+        old = _snap(functions=[_func("~Foo", "_ZN3FooD1Ev")])
+        new = _snap(functions=[_func("~Foo", "_ZN3FooD1Ev", is_deleted=True)])
+
+        result = compare(old, new)
+        kinds = {c.kind for c in result.changes}
+
+        assert ChangeKind.FUNC_DELETED in kinds
+        assert result.verdict == Verdict.BREAKING
+
+    def test_template_instantiation_deleted(self) -> None:
+        """Deleted template instantiation must be treated as BREAKING."""
+        old = _snap(functions=[_func("foo<int>", "_Z3fooIiEvT_")])
+        new = _snap(functions=[_func("foo<int>", "_Z3fooIiEvT_", is_deleted=True)])
+
+        result = compare(old, new)
+        kinds = {c.kind for c in result.changes}
+
+        assert ChangeKind.FUNC_DELETED in kinds
+        assert result.verdict == Verdict.BREAKING
+
+    def test_deleted_to_callable_is_not_breaking(self) -> None:
+        """Reverting `= delete` should not emit FUNC_DELETED or BREAKING verdict."""
+        old = _snap(functions=[_func("process", "_Z7processv", is_deleted=True)])
+        new = _snap(functions=[_func("process", "_Z7processv", is_deleted=False)])
+
+        result = compare(old, new)
+        kinds = {c.kind for c in result.changes}
+
+        assert ChangeKind.FUNC_DELETED not in kinds
+        assert ChangeKind.FUNC_DELETED_ELF_FALLBACK not in kinds
+        assert result.verdict != Verdict.BREAKING
+
+    def test_elf_fallback_not_double_reported(self) -> None:
+        """Explicit castxml deletion marker must prevent ELF fallback duplicate.
+
+        ELF metadata is intentionally provided so the fallback detector sees a
+        symbol disappear from dynsym — without is_deleted=True it would fire
+        FUNC_DELETED_ELF_FALLBACK.  With is_deleted=True the checker must take
+        the castxml path (FUNC_DELETED) and skip the ELF path.
+        """
+        mangled = "_Z7processv"
+        old = _snap(
+            functions=[_func("process", mangled)],
+            elf=_elf_with_syms(mangled),
+        )
+        new = _snap(
+            functions=[_func("process", mangled, is_deleted=True)],
+            elf=_elf_with_syms(),  # symbol also gone from dynsym
+        )
+
+        result = compare(old, new)
+        kinds = {c.kind for c in result.changes}
+
+        assert ChangeKind.FUNC_DELETED in kinds
+        assert ChangeKind.FUNC_DELETED_ELF_FALLBACK not in kinds

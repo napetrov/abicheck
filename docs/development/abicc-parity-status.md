@@ -182,3 +182,11 @@ abicheck workflow:         abidiff workflow:
 > - ABICC lacks: anonymous struct field tracking, combined access+qualifier detection
 > - abidiff lacks: enum renames, param defaults, access level changes, field/param renames
 > - Remaining out-of-scope items: cross-architecture ABI diff (32-bit vs 64-bit), BTF/CTF kernel support
+
+---
+
+## Upstream Issue Tracking
+
+| Issue | Topic | Status | Evidence | Notes |
+|------|-------|--------|----------|-------|
+| [#100](https://github.com/lvc/abi-compliance-checker/issues/100) | `= delete` functions | **PARTIAL (checker-covered; e2e parity follow-up)** | `tests/test_func_deleted.py` (`TestFuncDeletedDetection`, `TestFuncDeletedEdgeCases`) | Checker-level behavior is covered (including guarded ELF fallback); keep as partial until full headers+CastXML parity cases are aligned with expected `FUNC_DELETED` outcomes. |
