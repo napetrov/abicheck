@@ -129,7 +129,7 @@ jobs:
 - `castxml` with `cl.exe` backend is **untested in CI** — may work but is not validated
 - MSVC vtable layout differs from Itanium ABI; vtable diff results may be inaccurate
 - `__stdcall`/`__cdecl` calling-convention changes appear as `func_removed + func_added`
-  (mangled-name churn) — no dedicated change kind; see [#50](#50-calling-conventions) below
+  (mangled-name churn) — no dedicated change kind; see [#50](https://github.com/CastXML/CastXML/issues/50) below
 - Tracked: abicc upstream issues #9, #50, #56, #121
 
 ### macOS host
@@ -165,7 +165,7 @@ Recipe dependencies pull required analysis tooling automatically.
 
 | Toolchain | castxml backend | Type/param diff | Calling-convention tracking | Status | Notes |
 |-----------|------------------|-----------------|-----------------------------|--------|-------|
-| MinGW (GCC) | `--castxml-cc-gnu gcc` | ✅ Yes | ⚠️ Partial (`__cdecl`/`__stdcall` not a dedicated kind, #50) | **Experimental** | Covered by CI smoke/integration on `windows-latest` with MinGW-style builds. |
+| MinGW (GCC) | `--castxml-cc-gnu gcc` | ✅ Yes | ⚠️ Partial (`__cdecl`/`__stdcall` not a dedicated kind, #50) | **Experimental** | Covered by CI smoke tests; full MinGW integration coverage on `windows-latest` is best-effort and not guaranteed on every run. |
 | MSVC (`cl.exe`) | `--castxml-cc-msvc cl.exe` | ✅ Yes | ⚠️ Partial (#9, #50) | **Untested in CI** | May work locally with Visual Studio Build Tools; ABI details differ from Itanium assumptions in several detectors. |
 
 ### Known Limitations (Windows)
