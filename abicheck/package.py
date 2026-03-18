@@ -160,9 +160,14 @@ class TarExtractor:
                         "archive contains a device or FIFO entry",
                     )
 
-                if member.issym() or member.islnk():
-                    link_target = member.linkname
-                    _validate_symlink_target(member.name, link_target, target_root)
+                if member.issym():
+                    _validate_symlink_target(
+                        member.name, member.linkname, target_root
+                    )
+                elif member.islnk():
+                    # Hardlink targets are archive member names, not
+                    # filesystem-relative paths — validate as a member path.
+                    _validate_member_path(member.linkname, target_root)
 
             # All members validated — now extract
             # Use data_filter if available (Python 3.12+), otherwise manual
@@ -211,6 +216,8 @@ class RpmExtractor:
                 "cpio not found. Install cpio or use a tar archive instead."
             )
 
+        _EXTRACT_TIMEOUT = 120  # seconds
+
         rpm2cpio_proc = subprocess.Popen(
             [rpm2cpio, str(rpm_path)],
             stdout=subprocess.PIPE,
@@ -226,8 +233,26 @@ class RpmExtractor:
         # Allow rpm2cpio to receive SIGPIPE
         if rpm2cpio_proc.stdout:
             rpm2cpio_proc.stdout.close()
-        cpio_out, cpio_err = cpio_proc.communicate()
-        rpm2cpio_proc.wait()
+
+        try:
+            _cpio_out, cpio_err = cpio_proc.communicate(timeout=_EXTRACT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            cpio_proc.kill()
+            rpm2cpio_proc.kill()
+            cpio_proc.wait()
+            rpm2cpio_proc.wait()
+            raise RuntimeError(
+                f"RPM extraction timed out after {_EXTRACT_TIMEOUT}s"
+            )
+
+        try:
+            rpm2cpio_proc.wait(timeout=_EXTRACT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            rpm2cpio_proc.kill()
+            rpm2cpio_proc.wait()
+            raise RuntimeError(
+                f"rpm2cpio timed out after {_EXTRACT_TIMEOUT}s"
+            )
 
         if rpm2cpio_proc.returncode != 0:
             raise RuntimeError(f"rpm2cpio failed (exit {rpm2cpio_proc.returncode})")
@@ -310,6 +335,7 @@ class DebExtractor:
                 cwd=str(staging),
                 check=True,
                 capture_output=True,
+                timeout=120,
             )
 
             # Find data.tar.* member
@@ -423,9 +449,13 @@ class CondaExtractor:
                                     member.name,
                                     "archive contains a device or FIFO entry",
                                 )
-                            if member.issym() or member.islnk():
+                            if member.issym():
                                 _validate_symlink_target(
                                     member.name, member.linkname, target_root
+                                )
+                            elif member.islnk():
+                                _validate_member_path(
+                                    member.linkname, target_root
                                 )
                         # Re-read for extraction (stream was consumed)
                 with open(zst_path, "rb") as compressed2:
@@ -452,6 +482,7 @@ class CondaExtractor:
             [zstd, "-d", str(zst_path), "-o", str(tar_path)],
             check=True,
             capture_output=True,
+            timeout=120,
         )
         try:
             TarExtractor._safe_extract(tar_path, target_dir)
@@ -725,8 +756,8 @@ def _read_build_id(binary_path: Path) -> str | None:
     try:
         from elftools.elf.elffile import ELFFile
         with open(binary_path, "rb") as f:
-            elf = ELFFile(f)  # type: ignore[no-untyped-call]
-            for section in elf.iter_sections():  # type: ignore[no-untyped-call]
+            elf = ELFFile(f)
+            for section in elf.iter_sections():
                 if section.name == ".note.gnu.build-id":
                     for note in section.iter_notes():
                         if note["n_type"] == "NT_GNU_BUILD_ID":

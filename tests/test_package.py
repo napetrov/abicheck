@@ -1331,9 +1331,11 @@ class TestRpmPostValidateDirectories:
         """Post-validation catches directory symlinks pointing outside root."""
         lib_dir = tmp_path / "usr" / "lib"
         lib_dir.mkdir(parents=True)
-        # Create a directory symlink pointing outside
+        # Create a directory symlink pointing outside the extraction root
+        external_dir = tmp_path.parent / "external_target"
+        external_dir.mkdir(exist_ok=True)
         evil_dir = lib_dir / "evil_dir"
-        evil_dir.symlink_to("/tmp")
+        evil_dir.symlink_to(external_dir)
         with pytest.raises(ExtractionSecurityError, match="escapes extraction root|symlink target"):
             RpmExtractor._post_validate(tmp_path)
 
