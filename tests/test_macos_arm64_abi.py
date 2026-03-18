@@ -90,6 +90,26 @@ class TestInstallNameTracking:
 
         assert ChangeKind.SONAME_CHANGED in kinds
 
+    def test_soname_set_to_none_also_tracked(self) -> None:
+        """install_name going from set to empty must also emit SONAME_CHANGED."""
+        old = _snap(macho=_macho("libfoo.1.dylib"))
+        new = _snap(macho=_macho(""))
+
+        result = compare(old, new)
+        kinds = {c.kind for c in result.changes}
+
+        assert ChangeKind.SONAME_CHANGED in kinds
+
+    def test_compat_version_only_change_does_not_emit_soname(self) -> None:
+        """Changing only compat_version should not produce SONAME_CHANGED."""
+        old = _snap(macho=_macho("libfoo.1.dylib", compat_version="1.0.0"))
+        new = _snap(macho=_macho("libfoo.1.dylib", compat_version="2.0.0"))
+
+        result = compare(old, new)
+        kinds = {c.kind for c in result.changes}
+
+        assert ChangeKind.SONAME_CHANGED not in kinds
+
 
 class TestArm64AbiDocumentedLimits:
     """ARM64 ABI coverage guards (abicc #116)."""
