@@ -597,7 +597,7 @@ class TestAbiCompareTool:
         """Lines 566-568: suppression_file loading."""
         old, new = self._make_inputs(tmp_path)
         supp_file = tmp_path / "suppress.yaml"
-        supp_file.write_text("suppressions: []")
+        supp_file.write_text("version: 1\nsuppressions: []")
 
         fake_snap = _empty_snapshot()
         monkeypatch.setattr(

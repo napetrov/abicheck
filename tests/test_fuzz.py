@@ -104,7 +104,7 @@ def test_validate_member_path_fuzz(member: str) -> None:
             # _validate_member_path via ExtractionSecurityError (handled below).
         except ExtractionSecurityError:
             pass  # expected for unsafe inputs
-        except (ValueError, OSError):
+        except OSError:
             pass  # platform-specific path validation errors are acceptable
 
 

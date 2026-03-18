@@ -145,18 +145,19 @@ class TestMalformedJsonSnapshots:
 
     def test_deeply_nested_json(self, tmp_path: Path) -> None:
         """Very deeply nested JSON -- should either parse or raise, not crash."""
-        # Build a snapshot dict with deeply nested structure in an extra field
-        data = {
-            "library": "libfoo.so",
-            "version": "1.0",
-            "functions": [],
-            "variables": [],
-            "types": [],
-        }
+        # Build a genuinely deeply nested structure inside an extra field
+        nested: dict = {"library": "libfoo.so", "version": "1.0",
+                        "functions": [], "variables": [], "types": []}
+        inner: dict = {}
+        nested["extra"] = inner
+        for _ in range(200):
+            child: dict = {}
+            inner["nested"] = child
+            inner = child
+        inner["leaf"] = True
         p = tmp_path / "deep.json"
-        p.write_text(json.dumps(data), encoding="utf-8")
-        # This should parse fine -- deep nesting only matters if it is
-        # in a field that gets traversed.
+        p.write_text(json.dumps(nested), encoding="utf-8")
+        # Should parse without crashing; deep nesting is in an extra field
         snap = load_snapshot(p)
         assert snap.library == "libfoo.so"
 

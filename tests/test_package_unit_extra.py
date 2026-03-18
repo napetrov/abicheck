@@ -416,7 +416,6 @@ class TestResolveBuildId:
 class TestReadBuildId:
     """_read_build_id with mocked pyelftools."""
 
-    @patch("abicheck.package._read_build_id.__module__", create=True)
     def test_binary_with_build_id(self, tmp_path):
         """Binary with .note.gnu.build-id section returns hex string."""
         binary = tmp_path / "test.so"
@@ -430,6 +429,8 @@ class TestReadBuildId:
         mock_elf = MagicMock()
         mock_elf.iter_sections.return_value = [mock_section]
 
+        # _read_build_id does `from elftools.elf.elffile import ELFFile` at call
+        # time, so we patch the module-level class in elftools.
         with patch("elftools.elf.elffile.ELFFile", return_value=mock_elf, create=True):
             result = _read_build_id(binary)
 
