@@ -98,7 +98,7 @@ class TestDepsCommand:
 
     def test_deps_json(self, tmp_path, monkeypatch):
         binary = tmp_path / "myapp"
-        binary.write_bytes(b"\x00")
+        binary.write_bytes(b"\x7fELF" + b"\x00" * 60)
 
         result_obj = _make_result(str(binary))
 
@@ -116,7 +116,7 @@ class TestDepsCommand:
 
     def test_deps_markdown(self, tmp_path, monkeypatch):
         binary = tmp_path / "myapp"
-        binary.write_bytes(b"\x00")
+        binary.write_bytes(b"\x7fELF" + b"\x00" * 60)
 
         result_obj = _make_result(str(binary))
         monkeypatch.setattr(
@@ -132,7 +132,7 @@ class TestDepsCommand:
 
     def test_deps_output_file(self, tmp_path, monkeypatch):
         binary = tmp_path / "myapp"
-        binary.write_bytes(b"\x00")
+        binary.write_bytes(b"\x7fELF" + b"\x00" * 60)
         outfile = tmp_path / "report.json"
 
         result_obj = _make_result(str(binary))
@@ -152,7 +152,7 @@ class TestDepsCommand:
 
     def test_deps_exit_code_1_on_fail(self, tmp_path, monkeypatch):
         binary = tmp_path / "myapp"
-        binary.write_bytes(b"\x00")
+        binary.write_bytes(b"\x7fELF" + b"\x00" * 60)
 
         result_obj = _make_result(
             str(binary), loadability=StackVerdict.FAIL, risk_score="high",
@@ -168,7 +168,7 @@ class TestDepsCommand:
 
     def test_deps_sysroot_and_search_path(self, tmp_path, monkeypatch):
         binary = tmp_path / "myapp"
-        binary.write_bytes(b"\x00")
+        binary.write_bytes(b"\x7fELF" + b"\x00" * 60)
         sysroot = tmp_path / "sysroot"
         sysroot.mkdir()
         search_dir = tmp_path / "extra_libs"
