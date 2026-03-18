@@ -13,10 +13,9 @@ Support everything ABICC currently does so existing users/pipelines can migrate 
 - JSON/HTML/Markdown reports with equivalent verdict semantics
 - Support for suppression files
 
-**Done:** Sprint 1 closes 13 detection gaps; Sprint 2 adds ELF-only layer; Sprint 5 adds ABICC compat CLI.
-85 ChangeKinds implemented; suppression files fully supported (YAML + ABICC skip/whitelist formats);
-XML report generation for ABICC-compatible output.
-**TODO:** Final audit of ABICC edge cases and less-common modes.
+**Done:** 85 ChangeKinds implemented; suppression files fully supported (YAML + ABICC skip/whitelist formats);
+XML report generation for ABICC-compatible output; ABICC compat CLI with all major flags;
+auto-forwarding `abicheck compat <flags>` to `compat check`; test parity for ABICC 2.3.
 
 ---
 
@@ -27,9 +26,9 @@ Fix known ABICC / libabigail limitations and add new detection capability:
 - Header/API surface diff (AST-based, macro contracts, inline/template changes)
 - Confidence/evidence tiers in output (ELF_ONLY / DWARF_AWARE / HEADER_AWARE)
 
-**Done:** Sprint 3 = DWARF-aware struct/enum layout; Sprint 4 = calling convention, packing, toolchain flags.
-AST-DWARF deduplication implemented; field qualifiers (const/volatile/mutable) detected;
-enum/parameter rename heuristics in place; ELF_ONLY visibility tier used throughout detection.
+**Done:** DWARF-aware struct/enum layout; calling convention, packing, toolchain flags detection;
+AST-DWARF deduplication; field qualifiers (const/volatile/mutable); enum/parameter rename heuristics;
+ELF_ONLY visibility tier used throughout detection.
 **TODO:** Expose evidence/confidence levels in JSON output; formalize HEADER_AWARE tier.
 
 ---
@@ -41,8 +40,8 @@ Run `abicheck` against libabigail's own regression test cases and reach 100% pas
 - Use as the compatibility regression gate before each release
 
 **Done:** ~54 parity test functions across multiple suites (test_abicc_parity, test_abicc_full_parity,
-test_abidiff_parity, test_xml_parity, test_sprint7/10 parity).
-**TODO:** Expand to full libabigail test corpus; add CI gate for release.
+test_abidiff_parity, test_xml_parity, test_sprint7/10 parity); 13 new ABI compatibility test cases
+(cases 42, 49–62); sentinel enum detection; function deletion edge-case hardening (abicc #100).
 
 ---
 
@@ -56,8 +55,10 @@ Make the tool convenient for AI agents and automation pipelines:
 - `--format json/markdown` output modes
 - Snapshot files for offline/async workflows (`abicheck dump` -> `.abi.json`)
 
-**Done:** JSON output, snapshot format, exit codes (0/2/4), SARIF 2.1.0 output (`sarif.py`).
-**TODO:** Python API reference documentation.
+**Done:** JSON output, snapshot format, exit codes (0/2/4), SARIF 2.1.0 output;
+MCP server for AI agent integration; GitHub Action (`napetrov/abicheck@v1`) for CI;
+report filtering (`--show-only`, `--stat`, `--show-impact`, `--report-mode leaf`)
+for CI gate pipelines.
 
 ---
 
@@ -69,8 +70,8 @@ For each break type: what it is, how it appears in the real world, and which too
 - Coverage matrix showing evidence tier required (ELF-only / DWARF / Header / Runtime)
 
 **Done:** 63 example cases (01-62 + 26b) with per-case README.md; gap_report.md with coverage matrix
-(abicheck vs ABICC vs libabigail vs nm); abi_breaking_cases_catalog.md in docs.
-**TODO:** libabigail-specific parity cases.
+(abicheck vs ABICC vs libabigail vs nm); abi_breaking_cases_catalog.md in docs;
+cross-platform CMake build support for all example cases.
 
 ---
 
@@ -92,8 +93,8 @@ Public documentation at `https://napetrov.github.io/abicheck/`:
 
 **Done:** MkDocs (Material theme) site with full navigation; GitHub Actions auto-deploy to GitHub Pages
 on main push; docs include getting_started, CLI reference, case catalog, tool comparison, SARIF guide,
-ABICC compat guide, troubleshooting.
-**TODO:** Submit conda-forge recipe to staged-recipes.
+ABICC compat guide, troubleshooting; published to PyPI and conda-forge; Trusted Publishing (OIDC)
+for PyPI; publish workflow with dry-run mode.
 
 ---
 
@@ -101,9 +102,9 @@ ABICC compat guide, troubleshooting.
 
 | Goal | Status |
 |------|--------|
-| G1: ABICC drop-in | 85 ChangeKinds, compat CLI, suppression files, XML reports |
+| G1: ABICC drop-in | Done — 85 ChangeKinds, compat CLI, suppression files, XML reports |
 | G2: Known gaps | DWARF layout, toolchain flags, AST-DWARF dedup done; evidence tiers TODO |
-| G3: libabigail tests | ~54 parity test functions; full corpus expansion TODO |
-| G4: Agent-friendly | JSON, SARIF, exit codes, snapshots done; Python API docs TODO |
-| G5: Break encyclopedia | 63 example cases with docs + coverage matrix |
-| G6: Distribution & docs | MkDocs + GitHub Pages deployed; conda-forge recipe TODO |
+| G3: libabigail tests | Done — ~54 parity test functions + 63 example cases |
+| G4: Agent-friendly | Done — JSON, SARIF, exit codes, snapshots, MCP server, GitHub Action |
+| G5: Break encyclopedia | Done — 63 example cases with docs + coverage matrix |
+| G6: Distribution & docs | Done — PyPI, conda-forge, MkDocs + GitHub Pages |
