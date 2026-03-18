@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 import click
 
-from .checker import DiffResult, LibraryMetadata, compare
+from .checker import DiffResult, LibraryMetadata, Verdict, compare
 from .compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_dump
 from .compat.cli import compat_group
 from .dumper import dump
@@ -1125,6 +1125,172 @@ def compare_cmd(
                 err=True,
             )
             sys.exit(1)
+
+@main.command("appcompat")
+@click.argument("app_path", type=click.Path(exists=True, path_type=Path))
+@click.argument("old_lib", type=click.Path(exists=True, path_type=Path), required=False, default=None)
+@click.argument("new_lib", type=click.Path(exists=True, path_type=Path), required=False, default=None)
+# ── Weak mode ─────────────────────────────────────────────────────────────────
+@click.option("--check-against", "check_against_lib",
+              type=click.Path(exists=True, path_type=Path), default=None,
+              help="Weak mode: check if a library provides everything the app needs "
+                   "(no old library required).")
+# ── Dump options ──────────────────────────────────────────────────────────────
+@click.option("-H", "--header", "headers", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Public header file or directory for library ABI extraction.")
+@click.option("-I", "--include", "includes", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Extra include directory for castxml.")
+@click.option("--lang", default="c++", show_default=True,
+              type=click.Choice(["c++", "c"], case_sensitive=False),
+              help="Language mode for castxml.")
+@click.option("--old-version", "old_version", default="old", show_default=True)
+@click.option("--new-version", "new_version", default="new", show_default=True)
+# ── Output options ────────────────────────────────────────────────────────────
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown"]),
+              default="markdown", show_default=True)
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
+@click.option("--show-irrelevant", is_flag=True, default=False,
+              help="Include library changes that don't affect the application.")
+@click.option("--list-required-symbols", "list_symbols", is_flag=True, default=False,
+              help="List symbols the application requires and exit.")
+# ── Suppression + policy ─────────────────────────────────────────────────────
+@click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
+              help="Suppression file (YAML).")
+@click.option("--policy", "policy",
+              type=click.Choice(["strict_abi", "sdk_vendor", "plugin_abi"], case_sensitive=True),
+              default="strict_abi", show_default=True)
+@click.option("--policy-file", "policy_file_path",
+              type=click.Path(exists=True, path_type=Path), default=None)
+@click.option("-v", "--verbose", is_flag=True, default=False)
+def appcompat_cmd(
+    app_path: Path,
+    old_lib: Path | None,
+    new_lib: Path | None,
+    check_against_lib: Path | None,
+    headers: tuple[Path, ...],
+    includes: tuple[Path, ...],
+    lang: str,
+    old_version: str,
+    new_version: str,
+    fmt: str,
+    output: Path | None,
+    show_irrelevant: bool,
+    list_symbols: bool,
+    suppress: Path | None,
+    policy: str,
+    policy_file_path: Path | None,
+    verbose: bool,
+) -> None:
+    """Check if an application is compatible with a library update.
+
+    Answers: "Will my application still work with the new library version?"
+    by intersecting the app's required symbols with the library diff.
+
+    \b
+    Full check (with old and new library):
+      abicheck appcompat myapp libfoo.so.1 libfoo.so.2
+      abicheck appcompat myapp libfoo.so.1 libfoo.so.2 -H include/foo.h
+
+    \b
+    Weak mode (only new library — symbol availability check):
+      abicheck appcompat myapp --check-against libfoo.so.2
+
+    \b
+    List required symbols:
+      abicheck appcompat myapp --list-required-symbols --check-against libfoo.so.2
+
+    \b
+    Exit codes:
+      0  COMPATIBLE — application is safe with the new library
+      2  API_BREAK — source-level break affecting app's symbols
+      4  BREAKING — binary ABI break or missing symbols
+    """
+    _setup_verbosity(verbose)
+
+    from .appcompat import _get_lib_soname, check_appcompat, parse_app_requirements
+    from .appcompat import check_against as _check_against
+    from .reporter import appcompat_to_json, appcompat_to_markdown
+
+    # Validate arguments
+    weak_mode = check_against_lib is not None
+    if weak_mode and (old_lib is not None or new_lib is not None):
+        raise click.UsageError(
+            "--check-against cannot be used with positional OLD_LIB/NEW_LIB arguments."
+        )
+    if not weak_mode and (old_lib is None or new_lib is None):
+        raise click.UsageError(
+            "Provide OLD_LIB and NEW_LIB arguments, or use --check-against for weak mode."
+        )
+
+    # --list-required-symbols: just list and exit
+    if list_symbols:
+        target_lib = check_against_lib if weak_mode else (old_lib or new_lib)
+        if target_lib is None:
+            raise click.UsageError(
+                "--list-required-symbols requires a library path "
+                "(via positional args or --check-against)."
+            )
+        lib_name = _get_lib_soname(target_lib)
+        reqs = parse_app_requirements(app_path, lib_name)
+        if fmt == "json":
+            import json as _json
+            click.echo(_json.dumps({
+                "application": str(app_path),
+                "library": lib_name,
+                "needed_libs": reqs.needed_libs,
+                "required_symbols": sorted(reqs.undefined_symbols),
+                "required_versions": reqs.required_versions,
+            }, indent=2))
+        else:
+            click.echo(f"Application: {app_path}")
+            click.echo(f"Library filter: {lib_name}")
+            click.echo(f"Needed libraries: {', '.join(reqs.needed_libs) or '(none)'}")
+            click.echo(f"Required symbols ({len(reqs.undefined_symbols)}):")
+            for sym in sorted(reqs.undefined_symbols):
+                click.echo(f"  {sym}")
+            if reqs.required_versions:
+                click.echo(f"Required versions ({len(reqs.required_versions)}):")
+                for ver, lib in sorted(reqs.required_versions.items()):
+                    click.echo(f"  {ver} (from {lib})")
+        return
+
+    if weak_mode:
+        assert check_against_lib is not None
+        result = _check_against(app_path, check_against_lib)
+    else:
+        assert old_lib is not None and new_lib is not None
+        suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
+        resolved_headers = _expand_header_inputs(list(headers)) if headers else []
+        result = check_appcompat(
+            app_path, old_lib, new_lib,
+            headers=resolved_headers,
+            includes=list(includes),
+            old_version=old_version,
+            new_version=new_version,
+            lang=lang,
+            suppression=suppression,
+            policy=policy,
+            policy_file=pf,
+        )
+
+    if fmt == "json":
+        text = appcompat_to_json(result)
+    else:
+        text = appcompat_to_markdown(result, show_irrelevant=show_irrelevant)
+
+    if output:
+        output.write_text(text, encoding="utf-8")
+        click.echo(f"Report written to {output}", err=True)
+    else:
+        click.echo(text)
+
+    if result.verdict == Verdict.BREAKING:
+        sys.exit(4)
+    elif result.verdict == Verdict.API_BREAK:
+        sys.exit(2)
+
 
 @main.command("compare-release")
 @click.argument("old_dir", type=click.Path(exists=True, path_type=Path))

@@ -92,6 +92,22 @@ abicheck compare old.so new.so -H foo.h --follow-deps
 
 For the full CLI reference see the [documentation](https://napetrov.github.io/abicheck/getting-started/).
 
+### Check application compatibility
+
+Check whether your **application** (not just the library) is affected by a library update:
+
+```bash
+# Full check: does my app break with the new libfoo?
+abicheck appcompat ./myapp libfoo.so.1 libfoo.so.2 -H include/foo.h
+```
+
+```bash
+# Quick check: does this library have all symbols my app needs?
+abicheck appcompat ./myapp --check-against libfoo.so.2
+```
+
+Unlike `compare` (which shows all library changes), `appcompat` filters the diff to show only changes that affect the symbols your application actually uses. See [Application Compatibility](https://napetrov.github.io/abicheck/appcompat/) for full details.
+
 ---
 
 ## Exit codes
@@ -197,6 +213,7 @@ Full documentation is available at **[napetrov.github.io/abicheck](https://napet
 
 **User guide:**
 - [CLI Usage](https://napetrov.github.io/abicheck/user-guide/cli-usage/)
+- [Application compatibility](https://napetrov.github.io/abicheck/user-guide/appcompat/) — check if your app breaks with a library update
 - [Policy profiles](https://napetrov.github.io/abicheck/user-guide/policies/)
 - [Output formats (SARIF, JSON, HTML)](https://napetrov.github.io/abicheck/user-guide/output-formats/)
 - [GitHub Action](https://napetrov.github.io/abicheck/user-guide/github-action/)

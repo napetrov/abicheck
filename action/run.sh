@@ -113,6 +113,48 @@ elif [[ "$MODE" == "compare" ]]; then
   # when an input is a binary, but these cross-compilation flags are not
   # exposed on the compare CLI. They are only passed in dump mode.
 
+elif [[ "$MODE" == "appcompat" ]]; then
+  # ── Appcompat mode ─────────────────────────────────────────────────────
+  CMD+=(appcompat)
+  CMD+=("${INPUT_APP_BINARY:?app-binary is required for appcompat mode}")
+
+  CHECK_AGAINST="${INPUT_CHECK_AGAINST:-}"
+  if [[ -n "$CHECK_AGAINST" ]]; then
+    # Weak mode: symbol availability check only (no old library needed)
+    CMD+=(--check-against "$CHECK_AGAINST")
+  else
+    # Full mode: old + new library comparison
+    CMD+=("${INPUT_OLD_LIBRARY:?old-library is required for appcompat full mode (or use check-against for weak mode)}")
+    CMD+=("${INPUT_NEW_LIBRARY:?new-library is required for appcompat full mode}")
+  fi
+
+  add_flag "-H" "${INPUT_HEADER:-}"
+  add_flag "-I" "${INPUT_INCLUDE:-}"
+  add_single_flag "--old-version" "${INPUT_OLD_VERSION:-}"
+  add_single_flag "--new-version" "${INPUT_NEW_VERSION:-}"
+  add_single_flag "--lang" "${INPUT_LANG:-}"
+
+  # Format
+  FORMAT="${INPUT_FORMAT:-markdown}"
+  CMD+=(--format "$FORMAT")
+
+  OUTPUT_FILE="${INPUT_OUTPUT_FILE:-}"
+  if [[ -n "$OUTPUT_FILE" ]]; then
+    CMD+=(-o "$OUTPUT_FILE")
+  fi
+
+  add_single_flag "--policy" "${INPUT_POLICY:-}"
+  add_single_flag "--policy-file" "${INPUT_POLICY_FILE:-}"
+  add_single_flag "--suppress" "${INPUT_SUPPRESS:-}"
+
+  if [[ "${INPUT_SHOW_IRRELEVANT:-false}" == "true" ]]; then
+    CMD+=(--show-irrelevant)
+  fi
+
+  if [[ "${INPUT_LIST_REQUIRED_SYMBOLS:-false}" == "true" ]]; then
+    CMD+=(--list-required-symbols)
+  fi
+
 elif [[ "$MODE" == "compare-release" ]]; then
   # ── Compare-release mode (package-level comparison) ──────────────────────
   CMD+=(compare-release)
@@ -201,7 +243,7 @@ elif [[ "$MODE" == "stack-check" ]]; then
   fi
 
 else
-  echo "::error::Unknown mode '$MODE'. Use 'compare', 'compare-release', 'dump', 'deps', or 'stack-check'."
+  echo "::error::Unknown mode '$MODE'. Use 'compare', 'compare-release', 'dump', 'appcompat', 'deps', or 'stack-check'."
   exit 1
 fi
 
@@ -338,21 +380,37 @@ echo "abicheck verdict: $VERDICT (exit code $ABICHECK_EXIT)"
 # ---------------------------------------------------------------------------
 if [[ "${INPUT_ADD_JOB_SUMMARY:-true}" == "true" && "$MODE" != "dump" ]]; then
   {
-    echo "## abicheck ABI Compatibility Report"
+    if [[ "$MODE" == "appcompat" ]]; then
+      echo "## abicheck Application Compatibility Report"
+    else
+      echo "## abicheck ABI Compatibility Report"
+    fi
     echo ""
 
     case $VERDICT in
       COMPATIBLE)
-        echo "> **Verdict: COMPATIBLE** — No binary ABI break detected."
+        if [[ "$MODE" == "appcompat" ]]; then
+          echo "> **Verdict: COMPATIBLE** — Application is safe with the new library."
+        else
+          echo "> **Verdict: COMPATIBLE** — No binary ABI break detected."
+        fi
         ;;
       ADDITIONS)
         echo "> **Verdict: ADDITIONS** ⚠️ — No binary ABI break, but new public API was added unexpectedly."
         ;;
       API_BREAK)
-        echo "> **Verdict: API_BREAK** — Source-level API break detected. Recompilation required."
+        if [[ "$MODE" == "appcompat" ]]; then
+          echo "> **Verdict: API_BREAK** — Source-level break affecting application symbols."
+        else
+          echo "> **Verdict: API_BREAK** — Source-level API break detected. Recompilation required."
+        fi
         ;;
       BREAKING)
-        echo "> **Verdict: BREAKING** — Binary ABI break detected. Existing binaries will fail at runtime."
+        if [[ "$MODE" == "appcompat" ]]; then
+          echo "> **Verdict: BREAKING** — Binary ABI break or missing symbols affecting the application."
+        else
+          echo "> **Verdict: BREAKING** — Binary ABI break detected. Existing binaries will fail at runtime."
+        fi
         ;;
       REMOVED_LIBRARY)
         echo "> **Verdict: REMOVED_LIBRARY** — A library present in the old package is missing from the new package."
@@ -374,7 +432,16 @@ if [[ "${INPUT_ADD_JOB_SUMMARY:-true}" == "true" && "$MODE" != "dump" ]]; then
     echo ""
     echo "| Property | Value |"
     echo "|----------|-------|"
-    if [[ "$MODE" == "compare" || "$MODE" == "compare-release" ]]; then
+    if [[ "$MODE" == "appcompat" ]]; then
+      echo "| Application | \`${INPUT_APP_BINARY:-}\` |"
+      if [[ -n "${INPUT_CHECK_AGAINST:-}" ]]; then
+        echo "| Check against | \`${INPUT_CHECK_AGAINST}\` |"
+      else
+        echo "| Old library | \`${INPUT_OLD_LIBRARY:-}\` (${INPUT_OLD_VERSION:-old}) |"
+        echo "| New library | \`${INPUT_NEW_LIBRARY:-}\` (${INPUT_NEW_VERSION:-new}) |"
+      fi
+      echo "| Policy | ${INPUT_POLICY:-strict_abi} |"
+    elif [[ "$MODE" == "compare" || "$MODE" == "compare-release" ]]; then
       echo "| Old | \`${INPUT_OLD_LIBRARY:-}\` (${INPUT_OLD_VERSION:-old}) |"
       echo "| New | \`${INPUT_NEW_LIBRARY:-}\` (${INPUT_NEW_VERSION:-new}) |"
       echo "| Policy | ${INPUT_POLICY:-strict_abi} |"

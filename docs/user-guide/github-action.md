@@ -20,7 +20,7 @@ automatically, then runs ABI comparison and reports results.
 
 | Input | Required | Description |
 |-------|----------|-------------|
-| `mode` | no | `compare` (default), `compare-release`, `dump`, `deps`, or `stack-check` |
+| `mode` | no | `compare` (default), `compare-release`, `dump`, `appcompat`, `deps`, or `stack-check` |
 | `old-library` | yes (compare, compare-release) | Path to old library, JSON snapshot, ABICC dump, directory, or package |
 | `new-library` | yes | Path to new library, binary, directory, or package |
 
@@ -34,6 +34,15 @@ automatically, then runs ABI comparison and reports results.
 | `include` | no | Extra include dirs for castxml (both sides) |
 | `old-include` | no | Include dirs for old side only |
 | `new-include` | no | Include dirs for new side only |
+
+### Application compatibility inputs (appcompat mode)
+
+| Input | Required | Description |
+|-------|----------|-------------|
+| `app-binary` | yes (appcompat) | Path to application binary (ELF, PE, or Mach-O) |
+| `check-against` | no | Library for weak-mode symbol availability check (no old library needed) |
+| `show-irrelevant` | no | Include library changes not affecting the application (default `false`) |
+| `list-required-symbols` | no | List symbols the app requires and exit (default `false`) |
 
 ### Version labels
 
@@ -505,6 +514,33 @@ build-id resolution:
           mode: compare-release
           old-library: pkg-v1.conda
           new-library: pkg-v2.conda
+```
+
+### Application compatibility check
+
+Check whether your application binary is affected by a library update:
+
+```yaml
+      - uses: napetrov/abicheck@v1
+        with:
+          mode: appcompat
+          app-binary: build/myapp
+          old-library: libfoo.so.1
+          new-library: build/libfoo.so.2
+          header: include/foo.h
+```
+
+### Quick symbol availability check (weak mode)
+
+Verify a library provides all symbols an application needs — no old library required:
+
+```yaml
+      - uses: napetrov/abicheck@v1
+        with:
+          mode: appcompat
+          app-binary: build/myapp
+          check-against: build/libfoo.so
+          install-deps: false
 ```
 
 ## Versioning

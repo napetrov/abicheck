@@ -745,3 +745,166 @@ def _format_change_md(c: object) -> str:
         line += f"\n  > Affected symbols: {names}{suffix}"
 
     return line
+
+
+# ---------------------------------------------------------------------------
+# Application compatibility reporters (ADR-005)
+# ---------------------------------------------------------------------------
+
+def appcompat_to_json(result: object, indent: int = 2) -> str:
+    """Render an AppCompatResult as JSON."""
+    import json as _json
+
+    verdict = getattr(result, "verdict", None)
+    full_diff = getattr(result, "full_diff", None)
+
+    d: dict[str, object] = {
+        "application": getattr(result, "app_path", ""),
+        "old_library": getattr(result, "old_lib_path", ""),
+        "new_library": getattr(result, "new_lib_path", ""),
+        "verdict": verdict.value if verdict else "UNKNOWN",
+        "symbol_coverage_pct": round(getattr(result, "symbol_coverage", 0.0), 1),
+        "required_symbol_count": getattr(result, "required_symbol_count", 0),
+    }
+
+    missing = getattr(result, "missing_symbols", [])
+    d["missing_symbols"] = list(missing)
+
+    missing_ver = getattr(result, "missing_versions", [])
+    d["missing_versions"] = list(missing_ver)
+
+    breaking = getattr(result, "breaking_for_app", [])
+    d["relevant_changes"] = [_change_to_dict(c) for c in breaking]
+    d["relevant_change_count"] = len(breaking)
+
+    irrelevant = getattr(result, "irrelevant_for_app", [])
+    d["irrelevant_change_count"] = len(irrelevant)
+
+    total = len(breaking) + len(irrelevant)
+    d["total_library_changes"] = total
+
+    if full_diff:
+        d["full_library_verdict"] = full_diff.verdict.value
+
+    return _json.dumps(d, indent=indent)
+
+
+def appcompat_to_markdown(result: object, *, show_irrelevant: bool = False) -> str:
+    """Render an AppCompatResult as Markdown."""
+    verdict = getattr(result, "verdict", None)
+    v_label = verdict.value if verdict else "UNKNOWN"
+    v_emoji = _VERDICT_EMOJI.get(verdict, "?") if verdict else "?"
+
+    app_path = getattr(result, "app_path", "")
+    old_lib = getattr(result, "old_lib_path", "")
+    new_lib = getattr(result, "new_lib_path", "")
+    required_count = getattr(result, "required_symbol_count", 0)
+    coverage = getattr(result, "symbol_coverage", 0.0)
+    missing = getattr(result, "missing_symbols", [])
+    missing_ver = getattr(result, "missing_versions", [])
+    breaking = getattr(result, "breaking_for_app", [])
+    irrelevant = getattr(result, "irrelevant_for_app", [])
+
+    total_changes = len(breaking) + len(irrelevant)
+
+    lines: list[str] = [
+        "# Application Compatibility Report",
+        "",
+    ]
+
+    if old_lib:
+        lines += [
+            f"**Application:** `{app_path}`",
+            f"**Library:** `{old_lib}` → `{new_lib}`",
+            f"**Verdict:** {v_emoji} `{v_label}`",
+            "",
+        ]
+    else:
+        # Weak mode
+        lines += [
+            f"**Application:** `{app_path}`",
+            f"**Library:** `{new_lib}`",
+            f"**Verdict:** {v_emoji} `{v_label}`",
+            "",
+        ]
+
+    # Symbol coverage section
+    lines += ["## Symbol Coverage", ""]
+    lines.append(
+        f"App requires **{required_count}** library symbols."
+    )
+
+    if missing:
+        lines.append(
+            f"**{len(missing)}** required symbol(s) missing from new version "
+            f"({coverage:.0f}% coverage)."
+        )
+    elif required_count > 0:
+        lines.append(
+            f"All {required_count} required symbols present in new version "
+            f"({coverage:.0f}% coverage)."
+        )
+    lines.append("")
+
+    # Missing symbols
+    if missing:
+        lines += ["## Missing Symbols", ""]
+        lines.append("These symbols are required by the application but absent from the new library:")
+        lines.append("")
+        for sym in missing:
+            lines.append(f"- `{sym}`")
+        lines.append("")
+
+    # Missing versions
+    if missing_ver:
+        lines += ["## Missing Symbol Versions", ""]
+        for ver in missing_ver:
+            lines.append(f"- `{ver}`")
+        lines.append("")
+
+    # Relevant changes
+    if breaking:
+        lines += [
+            f"## Relevant Changes ({len(breaking)} of {total_changes} total)",
+            "",
+            "These library changes affect symbols your application uses:",
+            "",
+            "| Kind | Symbol | Description |",
+            "|------|--------|-------------|",
+        ]
+        for c in breaking:
+            kind_val = c.kind.value if c.kind else ""
+            lines.append(f"| `{kind_val}` | `{c.symbol}` | {c.description} |")
+        lines.append("")
+    elif total_changes > 0:
+        lines += [
+            f"## Relevant Changes (0 of {total_changes} total)",
+            "",
+            "None of the library's ABI changes affect your application.",
+            "",
+        ]
+
+    # Irrelevant changes
+    if irrelevant and not show_irrelevant:
+        lines.append(
+            f"_{len(irrelevant)} library ABI change(s) do NOT affect your application. "
+            "Use `--show-irrelevant` to see them._"
+        )
+        lines.append("")
+    elif irrelevant and show_irrelevant:
+        lines += [
+            f"## Irrelevant Changes ({len(irrelevant)})",
+            "",
+            "These library changes do NOT affect your application:",
+            "",
+        ]
+        for c in irrelevant:
+            kind_val = c.kind.value if c.kind else ""
+            lines.append(f"- **{kind_val}**: {c.description}")
+        lines.append("")
+
+    lines += [
+        "---",
+        "_Generated by [abicheck](https://github.com/napetrov/abicheck)_",
+    ]
+    return "\n".join(lines)
