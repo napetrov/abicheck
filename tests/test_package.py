@@ -1264,3 +1264,136 @@ class TestDebExtractorNoDataTar:
             with mock.patch("abicheck.package.subprocess.run", side_effect=fake_run):
                 with pytest.raises(RuntimeError, match="No data.tar"):
                     DebExtractor().extract(f, out)
+
+
+# ── Device/FIFO rejection in tar extraction ──────────────────────────────
+
+
+class TestTarDeviceFifoRejection:
+    def test_char_device_rejected(self, tmp_path: Path) -> None:
+        """Tar archive containing a character device is rejected."""
+        archive = tmp_path / "evil.tar"
+        with tarfile.open(archive, "w") as tf:
+            info = tarfile.TarInfo(name="dev/evil_chr")
+            info.type = tarfile.CHRTYPE
+            info.devmajor = 1
+            info.devminor = 3
+            tf.addfile(info)
+
+        out = tmp_path / "output"
+        out.mkdir()
+        with pytest.raises(ExtractionSecurityError, match="device or FIFO"):
+            TarExtractor().extract(archive, out)
+
+    def test_block_device_rejected(self, tmp_path: Path) -> None:
+        """Tar archive containing a block device is rejected."""
+        archive = tmp_path / "evil.tar"
+        with tarfile.open(archive, "w") as tf:
+            info = tarfile.TarInfo(name="dev/evil_blk")
+            info.type = tarfile.BLKTYPE
+            info.devmajor = 8
+            info.devminor = 0
+            tf.addfile(info)
+
+        out = tmp_path / "output"
+        out.mkdir()
+        with pytest.raises(ExtractionSecurityError, match="device or FIFO"):
+            TarExtractor().extract(archive, out)
+
+    def test_fifo_rejected(self, tmp_path: Path) -> None:
+        """Tar archive containing a FIFO is rejected."""
+        archive = tmp_path / "evil.tar"
+        with tarfile.open(archive, "w") as tf:
+            info = tarfile.TarInfo(name="tmp/evil_fifo")
+            info.type = tarfile.FIFOTYPE
+            tf.addfile(info)
+
+        out = tmp_path / "output"
+        out.mkdir()
+        with pytest.raises(ExtractionSecurityError, match="device or FIFO"):
+            TarExtractor().extract(archive, out)
+
+    def test_regular_files_accepted(self, tmp_path: Path) -> None:
+        """Normal files in tar should still extract fine (regression check)."""
+        archive = tmp_path / "normal.tar.gz"
+        _make_tar(archive, {"usr/lib/libfoo.so": b"data"})
+        out = tmp_path / "output"
+        out.mkdir()
+        TarExtractor().extract(archive, out)
+        assert (out / "usr/lib/libfoo.so").exists()
+
+
+# ── _post_validate directory entry coverage ──────────────────────────────
+
+
+class TestRpmPostValidateDirectories:
+    def test_directory_symlink_escaping(self, tmp_path: Path) -> None:
+        """Post-validation catches directory symlinks pointing outside root."""
+        lib_dir = tmp_path / "usr" / "lib"
+        lib_dir.mkdir(parents=True)
+        # Create a directory symlink pointing outside
+        evil_dir = lib_dir / "evil_dir"
+        evil_dir.symlink_to("/tmp")
+        with pytest.raises(ExtractionSecurityError, match="escapes extraction root|symlink target"):
+            RpmExtractor._post_validate(tmp_path)
+
+    def test_nested_directory_safe(self, tmp_path: Path) -> None:
+        """Legitimate nested directories pass validation."""
+        (tmp_path / "usr" / "lib" / "subdir").mkdir(parents=True)
+        (tmp_path / "usr" / "lib" / "subdir" / "libfoo.so").write_bytes(b"data")
+        RpmExtractor._post_validate(tmp_path)
+
+
+# ── resolve_debug_info disambiguation ────────────────────────────────────
+
+
+class TestResolveDebugInfoDisambiguation:
+    def test_multiple_candidates_path_similarity(self, tmp_path: Path) -> None:
+        """When multiple .debug files match, prefer the one with better path overlap."""
+        binary = tmp_path / "extract" / "usr" / "lib64" / "libfoo.so"
+        binary.parent.mkdir(parents=True)
+        _make_minimal_elf_so(binary)
+
+        debug_dir = tmp_path / "debug"
+
+        # Create two candidates: one with matching path, one without
+        good = debug_dir / "usr" / "lib64" / "libfoo.so.debug"
+        good.parent.mkdir(parents=True)
+        good.write_bytes(b"good debug")
+
+        bad = debug_dir / "other" / "path" / "libfoo.so.debug"
+        bad.parent.mkdir(parents=True)
+        bad.write_bytes(b"bad debug")
+
+        result = resolve_debug_info(binary, debug_dir)
+        assert result is not None
+        # The good candidate shares more path components (usr, lib64)
+        assert result == good
+
+    def test_single_candidate_returned_directly(self, tmp_path: Path) -> None:
+        """When exactly one .debug file matches, it's returned without disambiguation."""
+        binary = tmp_path / "libbar.so"
+        _make_minimal_elf_so(binary)
+
+        debug_dir = tmp_path / "debug"
+        only = debug_dir / "libbar.so.debug"
+        only.parent.mkdir(parents=True)
+        only.write_bytes(b"debug data")
+
+        result = resolve_debug_info(binary, debug_dir)
+        assert result == only
+
+    def test_path_mirror_strategy(self, tmp_path: Path) -> None:
+        """Debug file found by path mirroring (binary path mirrored under debug_dir)."""
+        binary = tmp_path / "extract" / "usr" / "lib64" / "libfoo.so"
+        binary.parent.mkdir(parents=True)
+        _make_minimal_elf_so(binary)
+
+        debug_dir = tmp_path / "debug"
+        mirrored = debug_dir / "usr" / "lib64" / "libfoo.so.debug"
+        mirrored.parent.mkdir(parents=True)
+        mirrored.write_bytes(b"debug data")
+
+        result = resolve_debug_info(binary, debug_dir)
+        assert result is not None
+        assert result == mirrored

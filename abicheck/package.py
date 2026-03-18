@@ -22,8 +22,9 @@ The extraction flow is:
     Package → Extract → Directory → [compare-release] → AggregateResult
 
 All extractors enforce strict security checks against path traversal,
-symlink escapes, and absolute paths.  See ``_validate_member_path()``
-for the mandatory safety contract.
+symlink escapes, absolute paths, and special file types (character/block
+devices, FIFOs).  See ``_validate_member_path()`` and
+``TarExtractor._safe_extract()`` for the mandatory safety contract.
 """
 from __future__ import annotations
 
@@ -138,11 +139,26 @@ class TarExtractor:
 
     @staticmethod
     def _safe_extract(archive_path: Path, target_dir: Path) -> None:
-        """Extract tar archive with full security validation on every member."""
+        """Extract tar archive with full security validation on every member.
+
+        Validates each member before extraction:
+        - Rejects absolute paths and path traversal (via ``_validate_member_path``)
+        - Rejects symlinks that escape the extraction root
+        - Rejects special file types (character/block devices, FIFOs) that could
+          create dangerous filesystem entries
+        """
         target_root = target_dir.resolve()
         with tarfile.open(archive_path) as tf:
             for member in tf.getmembers():
                 _validate_member_path(member.name, target_root)
+
+                # Reject special device/FIFO types that should never appear
+                # in package archives (security risk on extraction)
+                if member.ischr() or member.isblk() or member.isfifo():
+                    raise ExtractionSecurityError(
+                        member.name,
+                        "archive contains a device or FIFO entry",
+                    )
 
                 if member.issym() or member.islnk():
                     link_target = member.linkname
@@ -221,21 +237,28 @@ class RpmExtractor:
 
     @staticmethod
     def _post_validate(target_dir: Path) -> None:
-        """Post-extraction validation: check no paths escape root."""
+        """Post-extraction validation: check no paths escape root.
+
+        Iterates both directory and file entries to catch directory symlinks
+        or escaped paths that file-only validation would miss.  Uses
+        ``topdown=True`` so directory symlinks are validated before descent.
+        """
         root = target_dir.resolve()
-        for dirpath, _dirnames, filenames in os.walk(target_dir, followlinks=False):
-            for fn in filenames:
-                full = Path(dirpath, fn).resolve()
+        for dirpath, dirnames, filenames in os.walk(
+            target_dir, followlinks=False, topdown=True
+        ):
+            dp = Path(dirpath)
+            # Validate both directory and file entries
+            for name in list(dirnames) + filenames:
+                full = (dp / name).resolve()
                 try:
                     full.relative_to(root)
                 except ValueError:
                     raise ExtractionSecurityError(
                         str(full), "extracted path escapes extraction root"
                     )
-            # Also check symlinks in directory entries
-            dp = Path(dirpath)
-            for fn in filenames:
-                fp = dp / fn
+                # Check symlinks (files and directories)
+                fp = dp / name
                 if fp.is_symlink():
                     link_target = os.readlink(fp)
                     resolved = fp.resolve()
@@ -395,6 +418,11 @@ class CondaExtractor:
                         target_root = target_dir.resolve()
                         for member in tf:
                             _validate_member_path(member.name, target_root)
+                            if member.ischr() or member.isblk() or member.isfifo():
+                                raise ExtractionSecurityError(
+                                    member.name,
+                                    "archive contains a device or FIFO entry",
+                                )
                             if member.issym() or member.islnk():
                                 _validate_symlink_target(
                                     member.name, member.linkname, target_root
@@ -604,11 +632,22 @@ def resolve_debug_info(
 ) -> Path | None:
     """Resolve debug info file for a binary from an extracted debug package.
 
-    Tries two strategies:
-    1. Build-id: read NT_GNU_BUILD_ID from binary, look up in .build-id dir
-    2. Path convention: /usr/lib/debug/<binary-path>.debug
+    Tries three strategies in order:
+
+    1. **Build-id** — read ``NT_GNU_BUILD_ID`` from the binary and look up the
+       canonical ``.build-id/ab/cdef1234.debug`` path.  This is the most
+       reliable method and produces an unambiguous match.
+    2. **Path mirror** — look for a ``.debug`` file whose path under the debug
+       directory mirrors the binary's path (e.g. the binary at
+       ``/usr/lib64/libfoo.so.1`` → ``<debug_dir>/usr/lib/debug/usr/lib64/libfoo.so.1.debug``).
+    3. **Basename rglob with disambiguation** — search for ``<name>.debug``
+       anywhere under the debug directory.  When multiple candidates exist,
+       prefer one whose build-id matches the binary, then one whose path
+       components overlap most with the binary's path.
     """
-    # Strategy 1: build-id
+    name = binary_path.name
+
+    # Strategy 1: build-id (most reliable, unambiguous)
     build_id = _read_build_id(binary_path)
     if build_id:
         # build-id layout: .build-id/ab/cdef1234.debug
@@ -620,16 +659,62 @@ def resolve_debug_info(
                 _log.debug("Debug info resolved via build-id: %s", candidate)
                 return candidate
 
-    # Strategy 2: path convention
-    # The binary at /usr/lib64/libfoo.so.1 has debug at
+    # Strategy 2: path mirror — binary at usr/lib64/libfoo.so.1 has debug at
     # <debug_dir>/usr/lib/debug/usr/lib64/libfoo.so.1.debug
-    name = binary_path.name
+    binary_parts = binary_path.parts
     for search_root in [debug_dir, debug_dir / "usr" / "lib" / "debug"]:
-        for candidate in search_root.rglob(f"{name}.debug"):
-            _log.debug("Debug info resolved via path convention: %s", candidate)
-            return candidate
+        # Try to mirror the binary's absolute path under the search root
+        # e.g. binary /tmp/extract/usr/lib64/libfoo.so → search for
+        #      search_root/usr/lib64/libfoo.so.debug
+        for i, part in enumerate(binary_parts):
+            if part in ("usr", "lib", "lib64"):
+                mirrored = search_root.joinpath(*binary_parts[i:])
+                debug_candidate = mirrored.parent / f"{mirrored.name}.debug"
+                if debug_candidate.exists():
+                    _log.debug("Debug info resolved via path mirror: %s", debug_candidate)
+                    return debug_candidate
 
-    return None
+    # Strategy 3: basename rglob with disambiguation
+    # Collect all candidates and pick the best one
+    candidates: list[Path] = []
+    for search_root in [debug_dir, debug_dir / "usr" / "lib" / "debug"]:
+        candidates.extend(search_root.rglob(f"{name}.debug"))
+
+    if not candidates:
+        return None
+
+    if len(candidates) == 1:
+        _log.debug("Debug info resolved via path convention: %s", candidates[0])
+        return candidates[0]
+
+    # Multiple candidates — disambiguate
+    # Prefer a candidate whose build-id matches the binary
+    if build_id:
+        for candidate in candidates:
+            cand_bid = _read_build_id(candidate)
+            if cand_bid == build_id:
+                _log.debug(
+                    "Debug info resolved via build-id match among %d candidates: %s",
+                    len(candidates), candidate,
+                )
+                return candidate
+
+    # Fall back to path similarity: prefer the candidate whose path
+    # components overlap most with the binary's path
+    binary_part_set = set(binary_path.parts)
+    best: Path | None = None
+    best_overlap = -1
+    for candidate in candidates:
+        overlap = len(set(candidate.parts) & binary_part_set)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best = candidate
+
+    _log.debug(
+        "Debug info resolved via path similarity among %d candidates: %s",
+        len(candidates), best,
+    )
+    return best
 
 
 def _read_build_id(binary_path: Path) -> str | None:
