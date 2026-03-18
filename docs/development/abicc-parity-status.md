@@ -189,4 +189,4 @@ abicheck workflow:         abidiff workflow:
 
 | Issue | Topic | Status | Evidence | Notes |
 |------|-------|--------|----------|-------|
-| [#100](https://github.com/lvc/abi-compliance-checker/issues/100) | `= delete` functions | **DONE / COVERED** | `tests/test_func_deleted.py` (`TestFuncDeletedDetection`, `TestFuncDeletedEdgeCases`) | CastXML path (`deleted="1"` → `FUNC_DELETED`) plus guarded ELF heuristic (`FUNC_DELETED_ELF_FALLBACK`) to avoid duplicate reporting. |
+| [#100](https://github.com/lvc/abi-compliance-checker/issues/100) | `= delete` functions | **PARTIAL (checker-covered; e2e parity follow-up)** | `tests/test_func_deleted.py` (`TestFuncDeletedDetection`, `TestFuncDeletedEdgeCases`) | Checker-level behavior is covered (including guarded ELF fallback); keep as partial until full headers+CastXML parity cases are aligned with expected `FUNC_DELETED` outcomes. |
