@@ -126,11 +126,29 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 "C" functions. Pure C++ functions continue to use exact mangled name matching,
 which is correct for C++ (overloads produce different mangled names by design).
 
-#### Part 3: Fix appcompat symbol matching
+#### Part 3: Fix appcompat symbol matching (TWO mismatches)
 
 **File:** `abicheck/appcompat.py` (~line 399)
 
-Add demangled/plain name fallback to `_is_relevant_to_app()`:
+The appcompat relevance check has **two distinct symbol format mismatches**:
+
+**Mismatch 1 (Bug 2 consequence):** `change.symbol` uses C++-mangled names
+from headers (`_Z3addii`) vs `app.undefined_symbols` which has plain C linker
+names (`add`). This is the header mangling issue and is fixed by Parts 1+2.
+
+**Mismatch 2 (independent issue):** `change.affected_symbols` stores
+**demangled** names (`func.name` via `checker.py:1921,1956`), but
+`app.undefined_symbols` stores **raw mangled** ELF names. So the intersection
+at line 407 (`app.undefined_symbols & set(change.affected_symbols)`) fails
+even for pure C++ apps where no header mangling is involved.
+
+Data flow evidence:
+- `checker.py:1921` — `type_to_funcs[tname].append(func.name)` (demangled)
+- `checker.py:1964` — `c.affected_symbols = sorted(set(funcs))` (demangled)
+- `model.py:65` — `name: str  # demangled`
+- `appcompat.py:219` — `reqs.undefined_symbols.add(sym.name)` (raw ELF mangled)
+
+Fix both mismatches in `_is_relevant_to_app()`:
 
 ```python
 def _is_relevant_to_app(change: Change, app: AppRequirements) -> bool:
@@ -138,17 +156,22 @@ def _is_relevant_to_app(change: Change, app: AppRequirements) -> bool:
     if change.symbol in app.undefined_symbols:
         return True
 
-    # Demangled fallback: strip C++ mangling for comparison
+    # Demangled fallback for change.symbol: strip C++ mangling
     plain = _demangle_symbol(change.symbol)
     if plain and plain != change.symbol and plain in app.undefined_symbols:
         return True
 
-    # affected_symbols enrichment
+    # affected_symbols enrichment — need bidirectional matching
     if change.affected_symbols:
         affected = set(change.affected_symbols)
+        # Direct match (both demangled, or both plain)
         if app.undefined_symbols & affected:
             return True
-        # Also try demangled versions of affected_symbols
+        # Mismatch 2 fix: demangle app's undefined symbols for comparison
+        # (affected_symbols are demangled; app symbols are mangled)
+        if app._demangled_symbols & affected:
+            return True
+        # Also try demangling affected_symbols to match mangled app imports
         demangled_affected = {_demangle_symbol(s) or s for s in affected}
         if app.undefined_symbols & demangled_affected:
             return True
@@ -156,28 +179,45 @@ def _is_relevant_to_app(change: Change, app: AppRequirements) -> bool:
     # ... rest unchanged ...
 ```
 
-For `_demangle_symbol()`, use subprocess `c++filt` or the `cxxfilt` Python
-package if available, with graceful fallback:
+Add a cached demangled index to `AppRequirements`:
 
 ```python
-def _demangle_symbol(sym: str) -> str | None:
-    """Demangle a C++ symbol to its base name. Returns None if not C++."""
-    if not sym.startswith("_Z"):
-        return sym  # Already a C name
-    try:
-        import cxxfilt
-        return cxxfilt.demangle(sym)
-    except (ImportError, Exception):
-        pass
-    # Minimal fallback: extract function name from Itanium mangling
-    # _Z + length + name pattern
-    return None
+@dataclass
+class AppRequirements:
+    undefined_symbols: set[str]
+    required_versions: dict[str, str]
+
+    @functools.cached_property
+    def _demangled_symbols(self) -> set[str]:
+        """Demangled versions of undefined_symbols for cross-format matching."""
+        result = set()
+        for sym in self.undefined_symbols:
+            demangled = demangle(sym)
+            if demangled:
+                result.add(demangled)
+            result.add(sym)  # always include original
+        return result
 ```
 
-**Alternative approach (simpler):** Since we know the app's symbols are C
-linkage names, strip the `_Z...` prefix by extracting just the function name
-portion. But this is fragile for nested C++ names, so the `c++filt` approach
-is more robust.
+For `_demangle_symbol()`, use the shared `abicheck/demangle.py` module
+(defined in the Architectural Notes section below):
+
+```python
+from .demangle import demangle as _demangle_symbol
+```
+
+**Alternative approach (simpler, no demangling dependency):** Use
+`func.mangled` instead of `func.name` when building `affected_symbols`
+in `checker.py:1921`. This normalizes to mangled names everywhere but
+loses human readability in the report. A better hybrid: store both forms.
+
+```python
+# checker.py:1921 — store both mangled and demangled names
+type_to_funcs[tname].append(func.name)        # demangled for display
+type_to_mangled[tname].append(func.mangled)    # mangled for matching
+```
+
+Then in `appcompat.py`, match against mangled set while displaying demangled.
 
 ### Files Changed
 

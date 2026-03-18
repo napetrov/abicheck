@@ -366,8 +366,15 @@ if change.symbol in app.undefined_symbols:
 Without headers, `change.symbol` = plain name (e.g., `"add"`) →
 correctly matches the app's ELF imports.
 
-**Fix:** Will be resolved when Bug 2 is fixed (C functions should use
-plain names regardless of header parsing mode).
+**Additional finding from deep investigation:** There is a **second,
+independent mismatch** in `appcompat.py:407`. The `change.affected_symbols`
+list stores **demangled** names (`func.name` from `checker.py:1921`), but
+`app.undefined_symbols` stores **raw mangled** ELF names. This means the
+`affected_symbols` intersection fails even for pure C++ apps without headers.
+
+**Fix:** Requires both Bug 2 fix (C function name normalization) AND fixing
+the affected_symbols format mismatch (store mangled names or build a
+demangled index for app symbols).
 
 ---
 
