@@ -104,6 +104,29 @@ additional capabilities.
 
 ## [Unreleased]
 
+### Added
+
+#### Report Filtering & Deduplication ([ADR-004](docs/development/adr/004-report-filtering-and-deduplication.md))
+- **Redundancy filtering**: Automatically collapses derived changes caused by root type changes
+  (e.g. a struct size change that propagates to 30 `FUNC_PARAMS_CHANGED` entries). Root type
+  changes are annotated with `caused_count` and `affected_symbols`. Use `--show-redundant` to
+  disable filtering.
+- **`--show-only`**: Comma-separated filter tokens to limit displayed changes by severity
+  (`breaking`, `api-break`, `risk`, `compatible`), element (`functions`, `variables`, `types`,
+  `enums`, `elf`), or action (`added`, `removed`, `changed`). AND across dimensions, OR within.
+  Does not affect verdict or exit codes. Invalid tokens produce a clean CLI error.
+- **`--stat`**: One-line summary mode for CI gates. With `--format json`, emits only the summary
+  object (no changes array).
+- **`--report-mode leaf`**: Root-type-grouped output that lists affected interfaces under each
+  root type change, instead of listing every change individually.
+- **`--show-impact`**: Appends an impact summary table showing root changes and how many
+  interfaces each affects, with separate columns for direct and derived counts.
+- All filtering features work across all output formats: Markdown, JSON, SARIF, HTML, and
+  ABICC-compatible XML.
+- Redundancy annotations in SARIF (`caused_by_type`/`caused_count` in result properties,
+  `redundant_count` in run properties) and XML (`<redundant_changes>`, `<caused_by>`,
+  `<caused_count>` elements in both binary and source sections).
+
 ### Planned
 - Windows PE support
 - Expanded parity test suite
