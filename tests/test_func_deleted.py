@@ -244,6 +244,17 @@ class TestFuncDeletedEdgeCases:
         assert ChangeKind.FUNC_DELETED in kinds
         assert result.verdict == Verdict.BREAKING
 
+    def test_deleted_to_callable_is_not_breaking(self) -> None:
+        """Reverting `= delete` should not emit FUNC_DELETED or BREAKING verdict."""
+        old = _snap(functions=[_func("process", "_Z7processv", is_deleted=True)])
+        new = _snap(functions=[_func("process", "_Z7processv", is_deleted=False)])
+
+        result = compare(old, new)
+        kinds = {c.kind for c in result.changes}
+
+        assert ChangeKind.FUNC_DELETED not in kinds
+        assert ChangeKind.FUNC_DELETED_ELF_FALLBACK not in kinds
+        assert result.verdict != Verdict.BREAKING
 
     def test_elf_fallback_not_double_reported(self) -> None:
         """Explicit castxml deletion marker must prevent ELF fallback duplicate.
