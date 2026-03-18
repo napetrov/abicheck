@@ -121,8 +121,8 @@ additional capabilities.
   root type change, instead of listing every change individually.
 - **`--show-impact`**: Appends an impact summary table showing root changes and how many
   interfaces each affects, with separate columns for direct and derived counts.
-- All filtering features work across all output formats: Markdown, JSON, SARIF, HTML, and
-  ABICC-compatible XML.
+- All filtering features work across Markdown, JSON, SARIF, and HTML output formats.
+  ABICC-compatible XML includes redundancy annotations but does not support `--show-only`.
 - Redundancy annotations in SARIF (`caused_by_type`/`caused_count` in result properties,
   `redundant_count` in run properties) and XML (`<redundant_changes>`, `<caused_by>`,
   `<caused_count>` elements in both binary and source sections).

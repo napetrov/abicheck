@@ -177,8 +177,11 @@ interfaces:
 abicheck compare old.json new.json --show-impact
 ```
 
-All filtering flags work across all output formats (Markdown, JSON, SARIF, HTML,
-XML).
+All filtering flags work with the main `compare` command output formats:
+Markdown, JSON, SARIF, and HTML. The ABICC-compatible XML output (produced via
+`abicheck compat check`) does not support `--show-only` filtering, though it
+does include redundancy annotations (`<redundant_changes>`, `<caused_by>`,
+`<caused_count>`).
 
 ### 3) Mixed mode: snapshot baseline vs live build
 

@@ -9,7 +9,9 @@ abicheck supports multiple output formats for different use cases:
 | SARIF | `--format sarif` | GitHub Code Scanning, SAST platforms |
 | HTML | `--format html` | Standalone reports, ABICC migration |
 
-All formats support the report filtering options described below.
+All four formats support the report filtering options described below.
+The ABICC-compatible XML output (via `abicheck compat check`) includes
+redundancy annotations but does not support `--show-only` filtering.
 
 ## Redundancy filtering
 

@@ -947,11 +947,19 @@ def generate_html_report(
         )
 
     if not sections:
-        sections.append(
-            "<div class='section'><p class='empty'>"
-            "No ABI changes detected between the two versions."
-            "</p></div>"
-        )
+        if show_only and all_changes:
+            sections.append(
+                "<div class='section'><p class='empty'>"
+                f"No changes match the current filter (<code>--show-only {h(show_only)}</code>). "
+                f"{len(all_changes)} change(s) exist but are excluded by the filter."
+                "</p></div>"
+            )
+        else:
+            sections.append(
+                "<div class='section'><p class='empty'>"
+                "No ABI changes detected between the two versions."
+                "</p></div>"
+            )
 
     sections_html = "\n".join(sections)
 

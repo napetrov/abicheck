@@ -1024,6 +1024,14 @@ def compare_cmd(
 
     # --show-redundant: merge redundant changes back into the main list
     if show_redundant and result.redundant_changes:
+        # Clear collapse annotations: root changes should no longer claim
+        # derived changes were collapsed, and re-merged changes should not
+        # carry caused_by_type references.
+        for c in result.changes:
+            if c.caused_count > 0:
+                c.caused_count = 0
+        for c in result.redundant_changes:
+            c.caused_by_type = None
         result.changes = result.changes + result.redundant_changes
         result.redundant_changes = []
         result.redundant_count = 0

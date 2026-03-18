@@ -499,6 +499,10 @@ def abi_compare(
     policy_file: str | None = None,
     suppression_file: str | None = None,
     output_format: str = "json",
+    show_only: str | None = None,
+    report_mode: str = "full",
+    show_impact: bool = False,
+    stat: bool = False,
 ) -> str:
     """Compare two ABI surfaces and report breaking changes.
 
@@ -525,6 +529,12 @@ def abi_compare(
         policy_file: Path to custom YAML policy file (overrides policy parameter).
         suppression_file: Path to YAML suppression file to filter known changes.
         output_format: Output format for the rendered report: "json" (default), "markdown", "sarif", "html".
+        show_only: Comma-separated filter tokens (display-only). Severity: breaking, api-break,
+            risk, compatible. Element: functions, variables, types, enums, elf. Action: added,
+            removed, changed.
+        report_mode: "full" (default) or "leaf" (root-type-grouped view).
+        show_impact: If True, append an impact summary table.
+        stat: If True, emit one-line summary instead of full report.
     """
     try:
         old_path = _safe_read_path(old_input, label="old_input")
@@ -567,6 +577,14 @@ def abi_compare(
         if output_format not in _VALID_FORMATS:
             return json.dumps({"status": "error", "error": f"Unknown output format {output_format!r}. Valid: {sorted(_VALID_FORMATS)}"})
 
+        # Validate show_only tokens early
+        if show_only:
+            from .reporter import ShowOnlyFilter
+            try:
+                ShowOnlyFilter.parse(show_only)
+            except ValueError as exc:
+                return json.dumps({"status": "error", "error": f"Invalid show_only: {exc}"})
+
         result = compare(old_snap, new_snap, suppression=suppression, policy=policy, policy_file=pf)
 
         # Use the active policy from the result (may differ from input when
@@ -608,7 +626,11 @@ def abi_compare(
         }
 
         # Include rendered report
-        rendered = _render_output(output_format, result, old_snap, new_snap)
+        rendered = _render_output(
+            output_format, result, old_snap, new_snap,
+            show_only=show_only, report_mode=report_mode,
+            show_impact=show_impact, stat=stat,
+        )
         # When format is json, embed as nested object (not double-encoded string)
         if output_format == "json":
             response["report"] = json.loads(rendered)

@@ -355,8 +355,11 @@ def _to_markdown_leaf(
             lines.append(_format_change_md(c))
         lines.append("")
 
-    if not result.changes:
-        lines.append("_No ABI changes detected._")
+    if not changes:
+        if show_only and result.changes:
+            lines.append("_No changes match the current filter._")
+        else:
+            lines.append("_No ABI changes detected._")
 
     _append_redundancy_note(lines, result)
     _append_suppression_note(lines, result)
