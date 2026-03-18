@@ -15,6 +15,7 @@ inputs:
       Operation mode: "compare" (default) compares two ABI surfaces;
       "compare-release" compares all libraries in two directories or packages;
       "dump" generates a JSON baseline snapshot from a single library;
+      "appcompat" checks whether an application binary is affected by a library update;
       "deps" resolves transitive dependencies and symbol bindings (Linux ELF);
       "stack-check" compares a binary's full dependency stack across two
       sysroots (Linux ELF).
@@ -33,7 +34,31 @@ inputs:
       Path to the new (current) library or binary.
       Required for compare and dump modes. For compare-release: new directory
       or package (RPM, Deb, tar, conda, wheel).
-    required: true
+    required: false
+
+  # ── Application compatibility inputs ────────────────────────────────────
+  app-binary:
+    description: >
+      Path to the application binary (ELF, PE, or Mach-O).
+      Required when mode=appcompat.
+    required: false
+  check-against:
+    description: >
+      Path to a library for weak-mode symbol availability check (no old library needed).
+      Only used with mode=appcompat.
+    required: false
+  show-irrelevant:
+    description: >
+      Include library changes that do not affect the application.
+      Only used with mode=appcompat.
+    required: false
+    default: 'false'
+  list-required-symbols:
+    description: >
+      List symbols the application requires from the library and exit.
+      Only used with mode=appcompat.
+    required: false
+    default: 'false'
 
   # ── Package inputs (compare-release mode) ────────────────────────────────────
   debug-info1:
@@ -251,6 +276,10 @@ runs:
         INPUT_MODE: ${{ inputs.mode }}
         INPUT_OLD_LIBRARY: ${{ inputs.old-library }}
         INPUT_NEW_LIBRARY: ${{ inputs.new-library }}
+        INPUT_APP_BINARY: ${{ inputs.app-binary }}
+        INPUT_CHECK_AGAINST: ${{ inputs.check-against }}
+        INPUT_SHOW_IRRELEVANT: ${{ inputs.show-irrelevant }}
+        INPUT_LIST_REQUIRED_SYMBOLS: ${{ inputs.list-required-symbols }}
         INPUT_HEADER: ${{ inputs.header }}
         INPUT_OLD_HEADER: ${{ inputs.old-header }}
         INPUT_NEW_HEADER: ${{ inputs.new-header }}

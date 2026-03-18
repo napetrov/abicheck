@@ -194,7 +194,6 @@ abicheck compare build/case01_symbol_removal/libv1.so build/case01_symbol_remova
 ```
 
 Covers: symbol removal, type/signature changes, struct layout, enums, vtables, qualifiers, templates, and more. See [Breaking Cases Catalog](https://napetrov.github.io/abicheck/concepts/breaking-cases-catalog/) and [ABI Breaks Explained](https://napetrov.github.io/abicheck/concepts/abi-breaks-explained/) for the full guide.
->>>>>>> 1ad6748 (docs: add appcompat command documentation)
 
 ---
 
