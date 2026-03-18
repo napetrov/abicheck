@@ -36,6 +36,10 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "golden: golden-output regression test (use --update-goldens to refresh)",
     )
+    config.addinivalue_line(
+        "markers",
+        "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    )
 
 
 def _integration_skip_reason() -> str | None:
