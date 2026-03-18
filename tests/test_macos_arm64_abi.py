@@ -134,13 +134,13 @@ class TestArm64AbiDocumentedLimits:
     def test_arm64_limitation_note_exists(self) -> None:
         """Documentation regression guard: platforms.md must reference #116."""
         p = Path("docs/reference/platforms.md")
-        text = p.read_text()
+        text = p.read_text(encoding="utf-8")
         assert "ARM64" in text, "docs/reference/platforms.md must document ARM64"
         assert "#116" in text, "docs/reference/platforms.md must reference abicc #116"
 
     def test_install_name_limitation_note_exists(self) -> None:
         """Documentation regression guard: platforms.md must reference #119."""
         p = Path("docs/reference/platforms.md")
-        text = p.read_text()
+        text = p.read_text(encoding="utf-8")
         assert "install_name" in text, "docs/reference/platforms.md must mention install_name"
         assert "#119" in text, "docs/reference/platforms.md must reference abicc #119"
