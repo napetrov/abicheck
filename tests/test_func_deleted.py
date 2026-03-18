@@ -136,8 +136,15 @@ class TestFuncDeletedCastxmlMock:
     Tests the dumper's _CastxmlParser without running castxml binary.
     """
 
-    def _make_xml_root(self, deleted: str = "0") -> object:
-        """Build a minimal castxml XML tree with one function."""
+    def _make_xml_root(
+        self,
+        *,
+        deleted: str = "0",
+        tag: str = "Function",
+        name: str = "doWork",
+        mangled: str = "_Z6doWorkv",
+    ) -> object:
+        """Build a minimal castxml XML tree with one callable element."""
         from xml.etree.ElementTree import Element, SubElement
 
         root = Element("CastXML")
@@ -150,11 +157,11 @@ class TestFuncDeletedCastxmlMock:
         loc_el.set("id", "l1")
         loc_el.set("file", "f1")
         loc_el.set("line", "1")
-        # Function entry
-        func_el = SubElement(root, "Function")
+        # Callable entry
+        func_el = SubElement(root, tag)
         func_el.set("id", "_1")
-        func_el.set("name", "doWork")
-        func_el.set("mangled", "_Z6doWorkv")
+        func_el.set("name", name)
+        func_el.set("mangled", mangled)
         func_el.set("returns", "")
         func_el.set("location", "l1")
         func_el.set("deleted", deleted)
@@ -187,6 +194,46 @@ class TestFuncDeletedCastxmlMock:
         funcs = parser.parse_functions()
         assert len(funcs) == 1
         assert funcs[0].is_deleted is False
+
+    def test_dumper_parses_deleted_constructor_true(self) -> None:
+        """Constructor tag must preserve deleted='1' marker."""
+        from abicheck.dumper import _CastxmlParser
+
+        root = self._make_xml_root(
+            deleted="1",
+            tag="Constructor",
+            name="Foo",
+            mangled="_ZN3FooC1Ev",
+        )
+        parser = _CastxmlParser(
+            root,
+            exported_dynamic={"_ZN3FooC1Ev"},
+            exported_static={"_ZN3FooC1Ev"},
+        )
+        funcs = parser.parse_functions()
+        assert len(funcs) == 1
+        assert funcs[0].name == "Foo"
+        assert funcs[0].is_deleted is True
+
+    def test_dumper_parses_deleted_destructor_true(self) -> None:
+        """Destructor tag must preserve deleted='1' marker."""
+        from abicheck.dumper import _CastxmlParser
+
+        root = self._make_xml_root(
+            deleted="1",
+            tag="Destructor",
+            name="~Foo",
+            mangled="_ZN3FooD1Ev",
+        )
+        parser = _CastxmlParser(
+            root,
+            exported_dynamic={"_ZN3FooD1Ev"},
+            exported_static={"_ZN3FooD1Ev"},
+        )
+        funcs = parser.parse_functions()
+        assert len(funcs) == 1
+        assert funcs[0].name == "~Foo"
+        assert funcs[0].is_deleted is True
 
 
 class TestFuncDeletedEdgeCases:
