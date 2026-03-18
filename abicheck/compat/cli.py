@@ -313,6 +313,7 @@ def _apply_warn_newsym(result: DiffResult) -> DiffResult:
             suppressed_changes=result.suppressed_changes,
             suppression_file_provided=result.suppression_file_provided,
             policy=result.policy,
+            old_symbol_count=result.old_symbol_count,
         )
     return result
 
@@ -342,6 +343,7 @@ def _limit_affected_changes(result: DiffResult, limit: int) -> DiffResult:
         suppressed_changes=result.suppressed_changes,
         suppression_file_provided=result.suppression_file_provided,
         policy=result.policy,
+        old_symbol_count=result.old_symbol_count,
     )
 
 
