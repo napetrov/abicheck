@@ -124,6 +124,16 @@ which inspects exception types to match ABICC's conventions.
 The XML schema maps abicheck `ChangeKind` values to ABICC problem types
 (e.g., `func_removed` → `Removed_Symbol`).
 
+### When to use `compare` vs `compat`
+
+- Use **`compare`** for new integrations — it offers richer exit codes (0/2/4),
+  the full 5-tier verdict system, and SARIF output for GitHub Code Scanning.
+- Use **`compat`** only as a drop-in replacement for ABICC in existing CI
+  scripts. Once migrated, consider transitioning to `compare` for better
+  granularity.
+- Mixing both commands in the same pipeline is not recommended — their exit
+  code schemes differ (ADR-009).
+
 ### What is NOT compatible
 
 - ABICC's interactive HTML report format (we generate our own HTML — see
@@ -159,4 +169,6 @@ The XML schema maps abicheck `ChangeKind` values to ABICC problem types
 - `abicheck/compat/cli.py` — ABICC-compatible CLI (1328 lines)
 - `abicheck/compat/xml_report.py` — ABICC XML report generation (398 lines)
 - ADR-009 — Exit code contract (covers both `compare` and `compat` schemes)
+- ADR-011 — ABI change classification taxonomy (all 85+ ChangeKinds used in
+  compat reports)
 - Goal 1 in `GOALS.md` — "Drop-In Replacement for ABICC"

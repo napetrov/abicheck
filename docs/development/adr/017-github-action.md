@@ -35,7 +35,10 @@ action removes the friction of manual tool installation and invocation.
 ### Composite action (Option A)
 
 The action is a composite action defined in `action.yml` that runs directly
-in the GitHub-hosted runner's environment.
+in the GitHub-hosted runner's environment. Composite was chosen over Docker to
+avoid the ~30s container pull overhead that dominates short CI jobs. For users
+requiring reproducible environments, running abicheck in a custom container
+is a supported alternative.
 
 ### Action flow
 
@@ -69,7 +72,7 @@ in the GitHub-hosted runner's environment.
 
 | Output | Description |
 |--------|-------------|
-| `verdict` | COMPATIBLE, ADDITIONS, API_BREAK, BREAKING, ERROR (or PASS/WARN/FAIL for stack-check) |
+| `verdict` | NO_CHANGE, COMPATIBLE, COMPATIBLE_WITH_RISK, API_BREAK, BREAKING, ERROR (see ADR-009 for the 5-tier system). For `stack-check`: PASS, WARN, FAIL. Note: the action maps exit code 1 with `--fail-on-additions` to verdict string `ADDITIONS` for scripting convenience, but this is not a formal verdict tier. |
 | `exit-code` | abicheck numeric exit code |
 | `report-path` | Path to generated report file |
 
@@ -83,7 +86,8 @@ When `install-deps: 'true'` (default), the action installs:
 This limits the action to **Linux runners** for header-based analysis.
 Windows and macOS runners can use the action for binary-only comparison
 (snapshot-to-snapshot or ELF-only mode) but not for castxml-based header
-parsing.
+parsing. On non-Linux runners, set `install-deps: 'false'` and either
+pre-install castxml yourself or use snapshot-based comparison.
 
 ### SARIF integration
 
@@ -133,4 +137,5 @@ migrating to abicheck.
 - `action.yml` — Action definition (260 lines)
 - `action/run.sh` — Action execution script
 - `action/install-deps.sh` — System dependency installation
+- ADR-009 — Verdict system and exit code contract (verdict output values)
 - ADR-014 — Output format strategy (SARIF for Code Scanning)

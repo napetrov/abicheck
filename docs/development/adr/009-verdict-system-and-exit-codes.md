@@ -31,6 +31,14 @@ answered:
 - Different commands may need different exit code schemes for backward
   compatibility
 
+### Options considered
+
+| Option | Description | Trade-off |
+|--------|-------------|-----------|
+| A: Binary model (ABICC-style) | Compatible / incompatible | Cannot distinguish source breaks from binary breaks |
+| B: Three-tier model | Compatible / source-break / binary-break | No deployment risk tier |
+| **C: Five-tier model** | NO_CHANGE / COMPATIBLE / RISK / API_BREAK / BREAKING | Richer but more complex exit code mapping |
+
 ---
 
 ## Decision
@@ -144,9 +152,15 @@ Display filtering is cosmetic; exit codes are authoritative.
 
 - Two exit code schemes (`compare` vs `compat`) add cognitive load
 - `COMPATIBLE_WITH_RISK` at exit code 0 means some risks are invisible to
-  scripts that only check exit codes — users must read reports for risk details
+  scripts that only check exit codes — users must read reports for risk
+  details. Mitigation: use `--fail-on-risk` to exit non-zero on
+  COMPATIBLE_WITH_RISK, or parse JSON output for `risk_count > 0`. The
+  `plugin_abi` policy profile (ADR-010) promotes all RISK_KINDS to BREAKING
+  automatically
 - Exit code 1 is overloaded: `--fail-on-additions` in `compare`, BREAKING in
-  `compat`
+  `compat`. Disambiguation: scripts must know which command they invoked.
+  The `compare` command never returns exit code 1 without `--fail-on-additions`.
+  The `compat` command never returns exit code 4 (uses 1 for BREAKING instead)
 
 ---
 

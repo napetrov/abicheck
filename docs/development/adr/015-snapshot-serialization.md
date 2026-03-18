@@ -133,8 +133,10 @@ abicheck compare dwarf.abi.json ast.abi.json
 ```
 
 Fields that only one source can populate (e.g., `constants` from castxml,
-`dwarf_advanced` from DWARF) are simply `null`/empty in the other source's
-snapshot.
+`dwarf_advanced` from DWARF) are `null` (for single-value fields) or `[]`
+(for list fields) in the other source's snapshot. For example, a DWARF-only
+snapshot has `constants: null` (no header parsing available) and `pe: null`
+(wrong platform). Consumers should handle both `null` and empty cases.
 
 ---
 

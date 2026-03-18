@@ -145,7 +145,8 @@ Suppression is applied at a specific point in the `compare()` pipeline:
 **Critical design choice**: Suppression runs before redundancy filtering.
 This ensures that a suppressed change never contributes to the verdict —
 whether it would have been classified as a root change or a redundant
-derived change.
+derived change. See ADR-004 for the complete pipeline design including
+redundancy filtering and leaf-change mode.
 
 ### Audit trail
 
@@ -182,6 +183,22 @@ files to native `SuppressionRule` objects:
 - Missing required selector (none of symbol/pattern/type_pattern/source_location)
   produces an error at load time
 
+Example error for malformed rules:
+
+```text
+# Invalid: no selector specified
+- change_kind: func_removed
+  reason: "example"
+→ Error: suppression rule 1: must specify exactly one of symbol,
+  symbol_pattern, type_pattern, or source_location
+
+# Invalid: multiple selectors
+- symbol: _ZN3foo
+  symbol_pattern: "_ZN3foo.*"
+→ Error: suppression rule 2: only one of symbol/symbol_pattern/
+  type_pattern/source_location allowed
+```
+
 ---
 
 ## Consequences
@@ -210,3 +227,4 @@ files to native `SuppressionRule` objects:
   logic
 - `abicheck/compat/cli.py` — ABICC skip list conversion
 - `abicheck/checker.py` — Pipeline ordering (suppression before redundancy)
+- ADR-004 — Report filtering and deduplication (redundancy filtering stage)

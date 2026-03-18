@@ -96,7 +96,21 @@ In this mode, all exported functions are treated as PUBLIC because DWARF
 provides type information equivalent to headers. The `ELF_ONLY` tier only
 applies when we have headers but a symbol is not declared in them.
 
+Note: in DWARF-only mode, `elf_only_mode` is set to `True` at the snapshot
+level (no headers were provided), but individual functions get
+`Visibility.PUBLIC` (because DWARF substitutes for headers). This is not a
+contradiction — `elf_only_mode` records the data source used, while
+`Visibility` records the classification outcome.
+
 ### `elf_only_mode` flag
+
+**Distinction**: `Visibility.ELF_ONLY` is a per-symbol visibility tier
+indicating "this symbol is exported but not declared in headers."
+`AbiSnapshot.elf_only_mode` is a snapshot-level boolean indicating "this
+entire snapshot was created without headers, so ALL symbols have ELF-only
+provenance." They are related but distinct concepts — the flag describes
+the snapshot's data source, while the enum describes individual symbol
+classification.
 
 The `AbiSnapshot.elf_only_mode` boolean indicates whether the snapshot was
 created without headers. When `True`:

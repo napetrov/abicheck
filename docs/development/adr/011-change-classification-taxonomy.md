@@ -22,6 +22,14 @@ default `strict_abi` policy (see ADR-010):
 Several classifications diverge from ABICC and libabigail. These divergences
 are intentional and documented here as the authoritative reference.
 
+### Options considered
+
+| Option | Description | Trade-off |
+|--------|-------------|-----------|
+| A: Follow ABICC classifications exactly | 1:1 parity with reference tool | Known misclassifications (e.g., `ENUM_MEMBER_ADDED` as BREAKING) |
+| B: Follow libabigail classifications | Parity with alternative reference | Incomplete coverage (many kinds not detected) |
+| **C: Independent classification with documented divergences** | Each kind classified from first principles | More accurate but requires justification for each divergence |
+
 ---
 
 ## Decision
@@ -57,7 +65,7 @@ When classifying a new `ChangeKind`, apply these rules in order:
 
 | ChangeKind | Our classification | ABICC/libabigail | Rationale |
 |------------|-------------------|-----------------|-----------|
-| `FUNC_NOEXCEPT_ADDED` | COMPATIBLE | Not detected | Itanium ABI mangling does not change; C++17 function-type concern only. Existing binaries resolve the same symbol. |
+| `FUNC_NOEXCEPT_ADDED` | COMPATIBLE | Not detected | Itanium ABI mangling (the encoding of C++ names into linker symbols, e.g., `foo()` → `_ZN3fooEv`) does not change; C++17 function-type concern only. Existing binaries resolve the same symbol. |
 | `FUNC_NOEXCEPT_REMOVED` | COMPATIBLE | Not detected | Same rationale — mangling unchanged. Source-level concern only. |
 | `ENUM_MEMBER_ADDED` | COMPATIBLE | BREAKING (ABICC) | New enumerator does not shift existing values in C/C++. Switch coverage is a source concern. Value shifts are caught separately by `ENUM_MEMBER_VALUE_CHANGED`. |
 | `FUNC_REMOVED_ELF_ONLY` | COMPATIBLE | BREAKING (both) | Symbol present in ELF but not in public headers → likely visibility cleanup, not intentional API removal. |
@@ -87,6 +95,20 @@ When classifying a new `ChangeKind`, apply these rules in order:
 | `SYMBOL_VERSION_REQUIRED_ADDED` | New glibc/version requirement. Existing binaries unaffected (already linked). Risk: library won't load on systems with older glibc. |
 | `ENUM_LAST_MEMBER_VALUE_CHANGED` | Sentinel/MAX value changed. Binary-safe but source code using it as array bound may overflow. |
 | `SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED` | Symbol originates from dependency (libstdc++, libgcc); change is real but root cause is dependency versioning, not library's own API. |
+
+### Migration note for ABICC/libabigail users
+
+Users migrating from ABICC will notice that some classifications are more
+lenient (e.g., `ENUM_MEMBER_ADDED` is COMPATIBLE in abicheck, BREAKING in
+ABICC). This reflects abicheck's stricter binary-vs-source distinction —
+adding an enum member does not shift existing values in C/C++. Value shifts
+are caught separately by `ENUM_MEMBER_VALUE_CHANGED`.
+
+Under the `sdk_vendor` policy profile (ADR-010), the following API_BREAK
+kinds are downgraded to COMPATIBLE: `ENUM_MEMBER_RENAMED`,
+`FIELD_RENAMED`, `PARAM_RENAMED`, `METHOD_ACCESS_CHANGED`,
+`FIELD_ACCESS_CHANGED`, `SOURCE_LEVEL_KIND_CHANGED`,
+`REMOVED_CONST_OVERLOAD`, `PARAM_DEFAULT_VALUE_REMOVED`.
 
 ### Adding new ChangeKinds
 

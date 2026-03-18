@@ -110,10 +110,19 @@ the same `StructLayout`, `FieldInfo`, and `EnumInfo` structures used by the
 DWARF metadata module. This allows the checker's DWARF detectors to operate
 on PDB data without modification.
 
-**Scope**: The PDB parser is intentionally minimal — it extracts type
-information for ABI checking, not full debugging support. DBI (Debug
-Information) stream parsing is limited to what's needed for function
-prototype extraction.
+**Scope**: The PDB parser is intentionally minimal:
+
+- **In scope**: Type information (struct layouts, enum definitions, function
+  signatures) needed for ABI comparison
+- **Out of scope**: Source line info, local variables, optimization flags,
+  PDB-specific debug optimizations, edit-and-continue streams
+- **Rationale**: Minimizing scope reduces maintenance burden while covering
+  the type-level ABI checks that matter for compatibility
+
+PDB (Program Database) is the Windows equivalent of ELF DWARF debug
+sections — it contains type information and function prototypes needed for
+ABI analysis. DBI (Debug Information) stream parsing is limited to what's
+needed for function prototype extraction.
 
 ### Reference specifications
 
@@ -139,6 +148,8 @@ class AbiSnapshot:
 The checker detects which platform metadata is present and runs the
 appropriate platform-specific detectors. Cross-platform comparison (e.g.,
 ELF vs PE) is not supported — both snapshots must be the same format.
+Attempting a cross-platform comparison produces a clear error:
+`"platforms must match (elf vs pe)"`.
 
 ---
 

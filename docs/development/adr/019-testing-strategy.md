@@ -55,9 +55,12 @@ abicheck intentionally diverges from their classifications in some cases
 - Matrix: ubuntu (3.12, 3.13, 3.14), windows (3.13), macos (3.13)
 - Codecov upload (ubuntu + 3.13 only)
 
-The 80% threshold was chosen as a pragmatic balance: high enough to catch
-coverage regressions, low enough to avoid test-writing-for-coverage-sake in
-platform-specific code paths that can't run on all CI platforms.
+The 80% threshold applies to the full test suite aggregate. Core logic
+(checker, policy, model, suppression) targets 90%+ coverage. Platform-specific
+code (elf_metadata, pe_metadata, macho_metadata) is structurally harder to
+cover because each module only runs on its native platform in CI. The 80%
+floor catches regressions without forcing artificial test-writing for
+unreachable platform branches.
 
 ### Tier 3: Integration tests
 
@@ -170,7 +173,9 @@ tests/
 - 80% coverage threshold is arbitrary — some platform-specific code paths
   are inherently hard to cover on all CI platforms
 - Parity tests depend on unmaintained tools (ABICC, libabigail) that may
-  have their own bugs
+  have their own bugs. If these tools become unavailable (repos deleted,
+  dependencies break), parity tests will be skipped with a warning —
+  abicheck's own Tier 2 test suite provides the primary safety net
 - Conditional gating means parity regressions can land if changes don't
   touch gated paths
 - 63 example cases require C/C++ compilation, adding CI complexity
