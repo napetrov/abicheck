@@ -443,8 +443,8 @@ must be a deliberate, reviewed decision rather than an accidental side effect.
 
 Use `mode: compare-release` to compare all shared libraries inside two packages
 without manual extraction. Supported formats: RPM, Deb, tar (`.tar.gz`,
-`.tar.xz`, `.tar.zst`), conda (`.conda`, `.tar.bz2`), wheel (`.whl`), and
-plain directories.
+`.tar.xz`, `.tar.bz2`, `.tgz`), conda (`.conda`, `.tar.bz2`), wheel (`.whl`),
+and plain directories.
 
 ```yaml
       - name: Compare RPM packages

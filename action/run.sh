@@ -311,6 +311,7 @@ else
         ;;
       2) VERDICT="API_BREAK" ;;
       4) VERDICT="BREAKING" ;;
+      8) VERDICT="REMOVED_LIBRARY" ;;
       *) VERDICT="ERROR" ;;
     esac
   fi
@@ -352,6 +353,9 @@ if [[ "${INPUT_ADD_JOB_SUMMARY:-true}" == "true" && "$MODE" != "dump" ]]; then
         ;;
       BREAKING)
         echo "> **Verdict: BREAKING** — Binary ABI break detected. Existing binaries will fail at runtime."
+        ;;
+      REMOVED_LIBRARY)
+        echo "> **Verdict: REMOVED_LIBRARY** — A library present in the old package is missing from the new package."
         ;;
       PASS)
         echo "> **Verdict: PASS** — Binary loads and no harmful ABI changes detected."
@@ -439,6 +443,11 @@ else
 
   if [[ "$VERDICT" == "ADDITIONS" && "${INPUT_FAIL_ON_ADDITIONS:-false}" == "true" ]]; then
     echo "::error::API additions detected (unintentional API expansion). Set fail-on-additions: false to allow."
+    FINAL_EXIT=1
+  fi
+
+  if [[ "$VERDICT" == "REMOVED_LIBRARY" ]]; then
+    echo "::error::Library removed between old and new package. Set fail-on-removed-library: false to allow."
     FINAL_EXIT=1
   fi
 fi
