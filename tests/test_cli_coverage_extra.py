@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import struct
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -61,24 +61,32 @@ class TestDumpNativeBinary:
 
     def test_dump_pe_follow_deps_warning(self, tmp_path: Path) -> None:
         """--follow-deps on PE emits warning and still produces output."""
+        from abicheck.model import AbiSnapshot, Function, Visibility
+
         pe_file = tmp_path / "test.dll"
         pe_file.write_bytes(_make_pe_bytes())
 
-        # Mock pe_metadata to return valid data
-        mock_meta = MagicMock()
-        mock_meta.machine = "AMD64"
-        mock_export = MagicMock()
-        mock_export.name = "TestFunc"
-        mock_export.ordinal = 1
-        mock_meta.exports = [mock_export]
+        mock_snap = AbiSnapshot(
+            library="test.dll", version="1.0",
+            functions=[
+                Function(name="TestFunc", mangled="TestFunc", return_type="?",
+                         visibility=Visibility.PUBLIC, is_extern_c=True),
+            ],
+            platform="pe",
+        )
 
         with patch("abicheck.cli._detect_binary_format", return_value="pe"), \
-             patch("abicheck.pe_metadata.parse_pe_metadata", return_value=mock_meta):
+             patch("abicheck.cli._dump_native_binary", return_value=mock_snap):
             runner = CliRunner()
             result = runner.invoke(main, [
                 "dump", str(pe_file), "--version", "1.0", "--follow-deps",
             ])
-            assert "follow-deps" in (result.output + (result.stderr if hasattr(result, 'stderr') else "")).lower() or result.exit_code == 0
+            assert result.exit_code == 0
+            # Verify the warning about --follow-deps on PE was emitted
+            combined = (result.output + (result.stderr if hasattr(result, 'stderr') else "")).lower()
+            assert "follow-deps" in combined, (
+                "--follow-deps on PE should emit a warning"
+            )
 
     def test_dump_pe_to_file(self, tmp_path: Path) -> None:
         """PE dump with --output writes JSON file."""
@@ -288,8 +296,8 @@ class TestShowRedundant:
         result = runner.invoke(main, [
             "compare", str(old_file), str(new_file), "--show-redundant",
         ])
-        # Should complete (exit 0 or 4 for breaking)
-        assert result.exit_code in (0, 2, 4)
+        # Exit 0 = no changes, exit 4 = breaking changes detected
+        assert result.exit_code in (0, 4)
 
 
 # ---------------------------------------------------------------------------
@@ -308,8 +316,8 @@ class TestStackCheckCommand:
             "--baseline", "/nonexistent/baseline",
             "--candidate", "/nonexistent/candidate",
         ])
-        # Exit code 2 = Click usage error for non-existent paths, also acceptable
-        assert result.exit_code in (0, 1, 2, 4)
+        # Non-existent paths should produce a non-zero exit
+        assert result.exit_code != 0
 
     def test_stack_check_with_mock(self, tmp_path: Path) -> None:
         """stack-check with mocked resolver produces proper output."""

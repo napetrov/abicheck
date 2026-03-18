@@ -167,18 +167,19 @@ class TestArchiveExtractionSecurity:
 
 
 class TestEmptySnapshots:
-    """Edge cases with empty or minimal snapshots."""
+    """Edge cases with empty or minimal snapshots.
 
-    def test_compare_two_empty_snapshots(self) -> None:
-        old = AbiSnapshot(library="libfoo.so", version="1.0")
-        new = AbiSnapshot(library="libfoo.so", version="2.0")
-        result = compare(old, new)
-        assert result.verdict == Verdict.NO_CHANGE
-        assert len(result.changes) == 0
+    Note: basic empty-snapshot comparison is covered in
+    test_adversarial_inputs.py::TestEdgeCaseModelObjects.
+    """
 
-    def test_compare_snapshot_with_zero_functions(self) -> None:
-        old = AbiSnapshot(library="libfoo.so", version="1.0", functions=[])
-        new = AbiSnapshot(library="libfoo.so", version="2.0", functions=[])
+    def test_compare_empty_snapshot_with_types_only(self) -> None:
+        """Snapshots with no functions but types should still yield NO_CHANGE."""
+        from abicheck.model import RecordType
+        old = AbiSnapshot(library="libfoo.so", version="1.0",
+                          types=[RecordType(name="T", kind="struct", size_bits=8)])
+        new = AbiSnapshot(library="libfoo.so", version="2.0",
+                          types=[RecordType(name="T", kind="struct", size_bits=8)])
         result = compare(old, new)
         assert result.verdict == Verdict.NO_CHANGE
 
@@ -273,44 +274,24 @@ class TestSuppressionEdgePatterns:
 
 
 class TestPolicyFileEdgeCases:
-    """Edge cases for policy file loading."""
+    """Edge cases for policy file loading.
 
-    def test_empty_policy_file_uses_defaults(self, tmp_path: Path) -> None:
-        policy_path = tmp_path / "empty.yaml"
-        policy_path.write_text("", encoding="utf-8")
-        pf = PolicyFile.load(policy_path)
-        assert pf.base_policy == "strict_abi"
-        assert len(pf.overrides) == 0
+    Note: basic policy file edge cases (empty, unknown kind, invalid severity,
+    non-mapping) are covered in test_adversarial_inputs.py::TestMalformedPolicyFiles.
+    """
 
-    def test_policy_with_unknown_kind_warns(self, tmp_path: Path) -> None:
-        """Unknown ChangeKind slugs should be skipped (warned), not raise."""
-        policy_path = tmp_path / "unknown.yaml"
+    def test_policy_with_multiple_valid_overrides(self, tmp_path: Path) -> None:
+        """Multiple valid overrides are all loaded."""
+        policy_path = tmp_path / "multi.yaml"
         policy_path.write_text(
             "base_policy: strict_abi\n"
             "overrides:\n"
-            "  totally_bogus_kind: ignore\n",
+            "  func_removed: ignore\n"
+            "  func_added: ignore\n",
             encoding="utf-8",
         )
-        # Should not raise — unknown kinds are warned and skipped
         pf = PolicyFile.load(policy_path)
-        assert len(pf.overrides) == 0
-
-    def test_policy_with_invalid_severity_raises(self, tmp_path: Path) -> None:
-        policy_path = tmp_path / "bad_severity.yaml"
-        policy_path.write_text(
-            "base_policy: strict_abi\n"
-            "overrides:\n"
-            "  func_removed: kaboom\n",
-            encoding="utf-8",
-        )
-        with pytest.raises(ValueError, match="Invalid severity"):
-            PolicyFile.load(policy_path)
-
-    def test_policy_with_non_mapping_raises(self, tmp_path: Path) -> None:
-        policy_path = tmp_path / "list.yaml"
-        policy_path.write_text("- item1\n- item2\n", encoding="utf-8")
-        with pytest.raises(ValueError, match="YAML mapping"):
-            PolicyFile.load(policy_path)
+        assert len(pf.overrides) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -343,9 +324,11 @@ class TestCheckerExtremeInputs:
             ],
         )
         new = AbiSnapshot(library="lib.so", version="2.0", functions=[])
-        # Should not crash
         result = compare(old, new)
         assert isinstance(result, DiffResult)
+        # The empty-named function was removed, so we expect a BREAKING verdict
+        assert result.verdict == Verdict.BREAKING
+        assert len(result.changes) == 1
 
     def test_type_with_size_zero(self) -> None:
         from abicheck.model import RecordType
@@ -366,6 +349,8 @@ class TestCheckerExtremeInputs:
         )
         result = compare(old, new)
         assert isinstance(result, DiffResult)
+        # Size changed from 0 to 8 — should detect a type change
+        assert any(c.symbol == "Empty" or "Empty" in c.description for c in result.changes)
 
     def test_type_with_negative_alignment(self) -> None:
         from abicheck.model import RecordType
@@ -386,6 +371,8 @@ class TestCheckerExtremeInputs:
         )
         result = compare(old, new)
         assert isinstance(result, DiffResult)
+        # Alignment changed from -1 to 32 — should detect a type change
+        assert any(c.symbol == "Weird" or "Weird" in c.description for c in result.changes)
 
 
 # ---------------------------------------------------------------------------

@@ -232,7 +232,7 @@ class TestMemoryEfficiency:
         )
 
         result = compare(old, new)
-        # Changes should be bounded: at most ~2000 (1000 removed + 1000 added)
-        assert len(result.changes) <= 2000 + 100, (
-            f"Expected changes <= ~2000, got {len(result.changes)}"
+        # Changes should be exactly bounded: at most 2000 (1000 removed + 1000 added)
+        assert len(result.changes) <= 2000, (
+            f"Expected changes <= 2000, got {len(result.changes)}"
         )

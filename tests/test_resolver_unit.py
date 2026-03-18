@@ -166,8 +166,19 @@ class TestFindResolvedKey:
         assert _find_resolved_key(graph, "libfoo.so.1") == "/usr/lib/libfoo.so.1"
 
     def test_found_by_basename(self):
-        graph = self._make_graph()
-        # basename of the key path matches
+        """Lookup by basename of the key path (not soname) when soname differs."""
+        graph = DependencyGraph(root="/usr/bin/app")
+        # soname differs from basename of the key path
+        graph.nodes["/usr/lib/libfoo.so.1"] = ResolvedDSO(
+            path=Path("/usr/lib/libfoo.so.1"),
+            soname="libfoo.so.1.0.0",  # soname does NOT match the query
+            needed=[],
+            rpath="",
+            runpath="",
+            resolution_reason="default",
+            depth=1,
+        )
+        # Query matches the key's basename, not the soname
         assert _find_resolved_key(graph, "libfoo.so.1") == "/usr/lib/libfoo.so.1"
 
     def test_not_found(self):
