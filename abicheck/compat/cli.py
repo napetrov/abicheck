@@ -262,6 +262,7 @@ def _filter_source_only(result: DiffResult) -> DiffResult:
         suppressed_changes=result.suppressed_changes,
         suppression_file_provided=result.suppression_file_provided,
         policy=policy,
+        old_symbol_count=result.old_symbol_count,
     )
 
 
@@ -288,6 +289,7 @@ def _filter_binary_only(result: DiffResult) -> DiffResult:
         suppressed_changes=result.suppressed_changes,
         suppression_file_provided=result.suppression_file_provided,
         policy=policy,
+        old_symbol_count=result.old_symbol_count,
     )
 
 

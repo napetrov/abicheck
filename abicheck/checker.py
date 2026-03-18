@@ -49,13 +49,11 @@ from .model import (
     EnumType,
     Function,
     Param,
-    ParamKind,
     RecordType,
     TypeField,
     Variable,
     Visibility,
 )
-
 from .policy_file import PolicyFile
 
 if TYPE_CHECKING:
@@ -75,19 +73,14 @@ def _public_variables(snap: AbiSnapshot) -> dict[str, Variable]:
     return {k: v for k, v in snap.variable_map.items() if v.visibility in _PUBLIC_VIS}
 
 
-_KIND_SUFFIX = {
-    ParamKind.POINTER: "*",
-    ParamKind.REFERENCE: "&",
-    ParamKind.RVALUE_REF: "&&",
-}
-
-
 def _format_params(params: list[Param]) -> str:
-    """Format a parameter list as a human-readable string."""
-    parts: list[str] = []
-    for p in params:
-        suffix = _KIND_SUFFIX.get(p.kind, "")
-        parts.append(f"{p.type}{suffix}")
+    """Format a parameter list as a human-readable string.
+
+    ``Param.type`` already carries pointer/reference sigils (e.g. ``int *``,
+    ``Foo &``), so we use it directly — appending ``_KIND_SUFFIX`` would
+    duplicate them.
+    """
+    parts = [p.type for p in params]
     return ", ".join(parts) if parts else "(none)"
 
 

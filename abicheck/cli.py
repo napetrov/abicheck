@@ -1639,7 +1639,7 @@ def stack_check_cmd(
     """
     _setup_verbosity(verbose)
 
-    # Validate that the binary exists and is ELF in at least one sysroot
+    # Validate that every existing binary is ELF in both sysroots
     for label, root in [("baseline", baseline), ("candidate", candidate)]:
         resolved = root / binary
         if resolved.exists():
@@ -1649,7 +1649,6 @@ def stack_check_cmd(
                     f"stack-check requires an ELF binary; got "
                     f"{fmt_detected or 'unknown format'}: {resolved}"
                 )
-            break
 
     from .stack_checker import check_stack
     from .stack_report import stack_to_json, stack_to_markdown

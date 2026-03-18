@@ -10,7 +10,6 @@ import json
 import tempfile
 import textwrap
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import click
 import pytest
@@ -27,7 +26,6 @@ from abicheck.model import (
     Visibility,
 )
 from abicheck.report_summary import build_summary, compatibility_metrics
-
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -115,20 +113,21 @@ class TestBug2ParamFormat:
         assert change.new_value == "long"
 
     def test_pointer_param_shows_asterisk(self):
-        old_f = _pub_func("f", "_Zf", params=[Param(name="p", type="int", kind=ParamKind.POINTER)])
-        new_f = _pub_func("f", "_Zf", params=[Param(name="p", type="void", kind=ParamKind.POINTER)])
+        # Param.type already carries the sigil (as produced by the DWARF parser)
+        old_f = _pub_func("f", "_Zf", params=[Param(name="p", type="int *", kind=ParamKind.POINTER)])
+        new_f = _pub_func("f", "_Zf", params=[Param(name="p", type="void *", kind=ParamKind.POINTER)])
         result = compare(_snap(funcs=[old_f]), _snap("2.0", funcs=[new_f]))
         change = next(c for c in result.changes if c.kind == ChangeKind.FUNC_PARAMS_CHANGED)
-        assert change.old_value == "int*"
-        assert change.new_value == "void*"
+        assert change.old_value == "int *"
+        assert change.new_value == "void *"
 
     def test_reference_param_shows_ampersand(self):
-        old_f = _pub_func("f", "_Zf", params=[Param(name="r", type="int", kind=ParamKind.REFERENCE)])
-        new_f = _pub_func("f", "_Zf", params=[Param(name="r", type="int", kind=ParamKind.RVALUE_REF)])
+        old_f = _pub_func("f", "_Zf", params=[Param(name="r", type="int &", kind=ParamKind.REFERENCE)])
+        new_f = _pub_func("f", "_Zf", params=[Param(name="r", type="int &&", kind=ParamKind.RVALUE_REF)])
         result = compare(_snap(funcs=[old_f]), _snap("2.0", funcs=[new_f]))
         change = next(c for c in result.changes if c.kind == ChangeKind.FUNC_PARAMS_CHANGED)
-        assert change.old_value == "int&"
-        assert change.new_value == "int&&"
+        assert change.old_value == "int &"
+        assert change.new_value == "int &&"
 
     def test_no_repr_artifacts(self):
         """Ensure no Python repr artifacts like ParamKind.VALUE or tuple syntax."""
@@ -287,8 +286,11 @@ class TestBug5SafeWriteOutput:
 
     def test_bad_path_raises_click_exception(self, tmp_path):
         from abicheck.cli import _safe_write_output
-        # /dev/null/impossible is not writable
-        bad_path = Path("/dev/null/impossible/report.txt")
+        # Create a regular file, then try to write inside it as if it were a
+        # directory — fails on every OS because mkdir will raise OSError.
+        blocker = tmp_path / "blocker"
+        blocker.write_text("I am a file")
+        bad_path = blocker / "subdir" / "report.txt"
         with pytest.raises(click.ClickException, match="Cannot write to"):
             _safe_write_output(bad_path, "data")
 
@@ -300,6 +302,7 @@ class TestBug7ElfValidation:
 
     def test_deps_rejects_json_file(self, tmp_path):
         from click.testing import CliRunner
+
         from abicheck.cli import main
 
         fake = tmp_path / "fake.json"
@@ -311,6 +314,7 @@ class TestBug7ElfValidation:
 
     def test_deps_rejects_text_file(self, tmp_path):
         from click.testing import CliRunner
+
         from abicheck.cli import main
 
         fake = tmp_path / "notes.txt"

@@ -162,7 +162,10 @@ class Suppression:
                 return False
             # For member-qualified symbols (e.g. "Color::GREEN"), match the
             # type name prefix so type_pattern: "Color" still works.
-            match_symbol = change.symbol.split("::", 1)[0] if "::" in change.symbol else change.symbol
+            # For member-qualified symbols like "Color::GREEN", strip the
+            # member suffix.  Use rsplit so namespaced types ("ns::Color::GREEN")
+            # keep everything except the last component → "ns::Color".
+            match_symbol = change.symbol.rsplit("::", 1)[0] if "::" in change.symbol else change.symbol
             if not self._compiled_type_pattern.fullmatch(match_symbol):
                 return False
             # Check change_kind filter if specified
