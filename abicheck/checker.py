@@ -2341,7 +2341,7 @@ def compare(
         policy_file=policy_file,
         redundant_changes=redundant,
         redundant_count=len(redundant),
-        old_symbol_count=old_sym_count or None,
+        old_symbol_count=old_sym_count if old_sym_count > 0 else None,
     )
 
 
