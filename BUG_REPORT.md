@@ -8,15 +8,28 @@
 ## Summary
 
 Systematic testing of `abicheck` with real compiled C and C++ shared libraries
-uncovered **12 bugs** across core comparison logic, output formatting, edge case
-handling, and CLI behavior. Several are high-severity issues that could cause
-CI/CD pipelines to miss genuine ABI breaks.
+uncovered **12 issues** across core comparison logic, output formatting, edge
+case handling, and CLI behavior. After code-level team review, **7 confirmed
+bugs**, **3 design discussions/enhancement requests**, and **2 invalidated**
+findings remain.
 
 ---
 
-## Bug 1 (HIGH): Stripped binary function removal misclassified as COMPATIBLE
+## Team Review Legend
 
-**Severity:** HIGH — CI/CD false negative
+Each bug now includes a **Review Verdict**:
+- **CONFIRMED BUG** — Code-level analysis confirms incorrect behavior
+- **DESIGN DISCUSSION** — Behavior is intentional but consequences may warrant changes
+- **ENHANCEMENT REQUEST** — Not a bug; improvement to consider
+- **INVALIDATED** — Original finding was incorrect or based on tester error
+
+---
+
+## Bug 1: Stripped binary function removal misclassified as COMPATIBLE
+
+**Original Severity:** HIGH — CI/CD false negative
+**Review Verdict:** DESIGN DISCUSSION
+
 **Command:**
 ```bash
 abicheck compare libtest_v1_stripped.so libtest_v2_stripped.so
@@ -26,282 +39,399 @@ abicheck compare libtest_v1_stripped.so libtest_v2_stripped.so
 **Actual:** Verdict is `COMPATIBLE` (exit code 0). The removal is reported as
 `func_removed_elf_only` and listed under "Compatible Additions".
 
-**Impact:** A stripped library that removes a public function is silently
-classified as compatible. Any CI/CD pipeline relying on exit codes will pass
-when it should fail. The dynamic linker will refuse to load old binaries that
-reference the removed symbol.
+### Team Review
 
-**Reproduction:**
-```bash
-gcc -shared -fPIC -o libv1.so v1.c && strip libv1.so
-gcc -shared -fPIC -o libv2.so v2.c && strip libv2.so  # v2 removes process_array
-abicheck compare libv1.so libv2.so --stat
-# Output: COMPATIBLE: 3 compatible (3 total)
-# Exit code: 0
-```
+This is **intentional behavior**, documented in ADR-011
+(`docs/development/adr/011-change-classification-taxonomy.md`). The rationale:
+
+- **`checker_policy.py:28`** defines `FUNC_REMOVED_ELF_ONLY` with comment:
+  "ELF-only symbol removed (visibility cleanup, not hard break)"
+- **`checker_policy.py:361-362`** classifies it as COMPATIBLE:
+  "ELF-only removed: symbol was never declared in headers, may be visibility cleanup"
+- **`checker_policy.py:551`** impact text: "Symbol removed from ELF but was not
+  in public headers; low risk unless dlsym() callers depend on it."
+
+The design intent: without headers, the tool can't confirm the symbol was
+part of the public API surface. Many ELF-exported symbols are internal
+implementation details that get cleaned up between versions.
+
+**However**, this creates a real risk for stripped production binaries where
+headers are genuinely unavailable. The tool silently classifies **all** symbol
+removals as compatible in stripped mode, including genuine public API removals.
+
+**Recommendation:** Consider adding `--strict-elf-only` flag or making the
+`strict_abi` policy treat `func_removed_elf_only` as BREAKING. The ADR itself
+notes ABICC and libabigail both classify this as BREAKING.
 
 ---
 
-## Bug 2 (HIGH): Header-based analysis reports signature changes as removal + addition
+## Bug 2: Header-based analysis reports C function signature changes as removal + addition
 
-**Severity:** HIGH — Incorrect change classification
+**Original Severity:** HIGH — Incorrect change classification
+**Review Verdict:** CONFIRMED BUG
+
 **Command:**
 ```bash
 abicheck compare libv1.so libv2.so -H v1.h --new-header v2.h --format json
 ```
 
-**Expected:** Functions whose signatures changed (e.g. `add(int, int)` →
-`add(int, int, int)`) should be reported as `func_params_changed`.
-**Actual:** They are reported as `func_removed` for the old C++-mangled name
-(`_Z3addii`) AND `func_added` for the new mangled name (`_Z3addiii`).
+### Root Cause (code-level)
 
-This happens because castxml assigns C++ mangled names to C functions. The
-mangled names differ when parameters change, so the checker sees them as
-different symbols.
+**`dumper.py:293-295`** — When `--lang` is not explicitly set to `c`, the
+aggregate header is compiled with `.hpp` extension (C++ mode):
+```python
+force_c = lang and lang.upper() == "C"
+agg_ext = ".h" if force_c else ".hpp"
+```
 
-**Contrast with DWARF-only mode:** DWARF-only correctly reports
-`func_params_changed` for `add` and `param_pointer_level_changed` for
-`compute`, since DWARF uses the linker symbol name `add` (no mangling).
+This causes castxml to apply C++ name mangling to C functions:
+- `add(int, int)` becomes `_Z3addii`
+- `add(int, int, int)` becomes `_Z3addiii`
 
-**Affected functions in test case:**
-- `add` — reported as removed `_Z3addii` + added `_Z3addiii`
-- `compute` — reported as removed `_Z7compute5Pointd` + added `_Z7computeP5Pointd`
-- `log_message` — reported as removed `_Z11log_messagePKcz` + added `_Z11log_messagePKc`
-- `register_callback` — reported as removed/added with different callback types
+**`checker.py:329-372`** — Function matching in `_diff_functions()` uses the
+mangled name as dictionary key. Since `_Z3addii` != `_Z3addiii`, the checker
+reports the old as FUNC_REMOVED and new as FUNC_ADDED instead of detecting
+FUNC_PARAMS_CHANGED.
+
+**`dumper.py:525-530`** — Extern "C" detection exists but only works when
+castxml omits the mangled attribute (C mode):
+```python
+raw_mangled = el.get("mangled", "")
+is_extern_c = (el.get("extern") == "1" or not raw_mangled)
+```
+
+In C++ mode, castxml always provides mangled names, so `is_extern_c` is
+False for C functions.
+
+**Workaround:** Users can pass `--lang c` to force C compilation mode.
+**Fix needed:** Auto-detect C linkage and use plain names for matching,
+or default to `--lang c` when headers have `.h` extension only.
 
 ---
 
-## Bug 3 (MEDIUM): Duplicate enum changes in DWARF-only mode
+## Bug 3: Duplicate enum changes in DWARF-only mode
 
-**Severity:** MEDIUM — Inflated change counts
+**Original Severity:** MEDIUM — Inflated change counts
+**Review Verdict:** CONFIRMED BUG
+
 **Command:**
 ```bash
 abicheck compare libv1.so libv2.so --dwarf-only --format json
 ```
 
-**Expected:** Each enum value change reported once.
-**Actual:** `enum_member_value_changed` reported TWICE per member:
-1. `"Enum member value changed: Color::GREEN"` (no values in description)
-2. `"Enum member value changed: Color::GREEN (1 → 2)"` (values in description)
+### Root Cause (code-level)
 
-Both have identical `kind`, `symbol`, `old_value`, `new_value` but different
-`description` strings. Both are emitted even in DWARF-only mode, suggesting two
-separate analysis paths (DWARF enums vs DWARF advanced) independently detect the
-same change without deduplication.
+Two independent detectors both fire for enum changes:
 
-**Impact:** Change counts are inflated (4 enum changes instead of 2). This
-also inflates the "breaking changes" count shown in summaries and can cause
-suppression rules to match multiple times.
+1. **`checker.py:643` (`_diff_enums()`)** — AST-based enum detection:
+   Description: `"Enum member value changed: Color::GREEN"`
+
+2. **`checker.py:2813` (`_diff_enum_layouts()`)** — DWARF-based enum detection:
+   Description: `"Enum member value changed: Color::GREEN (1 → 2)"`
+
+Deduplication logic exists at **`checker.py:2155-2192`** (`_deduplicate_ast_dwarf()`)
+with a mapping in `_DWARF_TO_AST_EQUIV`. However, the dedup uses **description
+matching** at line 2180 (`(kind, description)` tuple), and since the two
+detectors produce different description strings for the same change, the dedup
+fails to recognize them as duplicates.
+
+**Impact:** Each enum value change is counted as 2 breaking changes. The
+suppression note in our test showed 6 suppressions for 2 actual enum changes.
+
+**Fix needed:** Deduplicate by `(kind, symbol)` tuple instead of or in
+addition to `(kind, description)`.
 
 ---
 
-## Bug 4 (MEDIUM): Duplicate struct field offset changes from different evidence tiers
+## Bug 4: Duplicate struct field offset changes from different evidence tiers
 
-**Severity:** MEDIUM — Redundant output, inflated counts
+**Original Severity:** MEDIUM — Redundant output, inflated counts
+**Review Verdict:** DESIGN DISCUSSION
+
 **Command:**
 ```bash
 abicheck compare libv1.so libv2.so --dwarf-only --format markdown
 ```
 
-**Expected:** Each field offset change reported once.
-**Actual:** Two different change kinds report the same change:
-- `type_field_offset_changed`: "Field offset changed: Point::x (0 → 32 bits)"
-- `struct_field_offset_changed`: "Field offset changed: Point::x (+0 → +4)"
+### Team Review
 
-These come from different evidence tiers (DWARF type analysis vs DWARF layout
-analysis) and use different units (bits vs bytes), but represent the same
-underlying change. Both count toward the breaking changes total.
+This is **partially intentional**. The two change kinds represent different
+evidence tiers:
 
-**Impact:** A single field offset change is counted as 2 breaking changes,
-inflating severity metrics.
+- `type_field_offset_changed` (bits) — from DWARF type info (AST-level)
+- `struct_field_offset_changed` (bytes) — from DWARF layout (binary-level)
+
+**`checker_policy.py`** classifies both as BREAKING with different
+severity rationale:
+- Line 294/567: "Old code reads/writes fields at stale offsets"
+- Line 322/623: "Field moved to different offset; old code accesses wrong memory"
+
+Deduplication mapping exists at **`checker.py:1814-1820`**:
+```python
+ChangeKind.STRUCT_FIELD_OFFSET_CHANGED: {ChangeKind.TYPE_FIELD_OFFSET_CHANGED},
+```
+
+However, the dedup only triggers when there is **BOTH** an AST finding AND
+a DWARF finding for the **same symbol**. In DWARF-only mode, both findings
+come from DWARF (different DWARF analysis layers), and the symbols differ:
+- `type_field_offset_changed` symbol: `"Point"` (root type)
+- `struct_field_offset_changed` symbol: `"Point::x"` (field-qualified)
+
+Since symbols differ, the dedup doesn't match them.
+
+**Recommendation:** Extend dedup to match cross-tier findings even when
+symbol formats differ (e.g., "Point::x" should match changes on "Point" that
+reference field "x").
 
 ---
 
-## Bug 5 (MEDIUM): JSON output lacks per-change severity/verdict
+## Bug 5: JSON output lacks per-change severity/verdict
 
-**Severity:** MEDIUM — JSON consumers cannot classify changes
-**Command:**
-```bash
-abicheck compare libv1.so libv2.so --dwarf-only --format json
-```
+**Original Severity:** MEDIUM
+**Review Verdict:** ENHANCEMENT REQUEST
 
-**Expected:** Each change in the JSON `changes` array should include a
-`severity` or `verdict` field (e.g., `"severity": "breaking"`,
-`"severity": "compatible"`, `"severity": "source_break"`).
-**Actual:** Change objects only have: `kind`, `symbol`, `description`,
-`old_value`, `new_value`, `impact`, `affected_symbols`, `caused_count`.
+### Team Review
 
-The markdown format clearly separates changes into "Breaking Changes",
-"Source-Level Breaks", and "Compatible Additions" sections, but this
-categorization is lost in JSON.
+This is **intentional design**, documented in ADR-014
+(`docs/development/adr/014-output-format-strategy.md`). The rationale:
 
-**Impact:** Programmatic consumers of the JSON output cannot determine which
-changes are breaking vs compatible without hardcoding the
-kind-to-severity mapping from `checker_policy.py`.
+- Severity is **policy-dependent** — the same `kind` can be BREAKING under
+  `strict_abi` but COMPATIBLE under `sdk_vendor`
+- **`reporter.py:505-535`** (`_change_to_dict()`) deliberately omits severity
+  to keep the change representation policy-neutral
+- The `impact` field provides human-readable context instead
+- `docs/development/report-comparison.md` explicitly notes: "severity is
+  implicit via kind (BREAKING/API_BREAK/COMPATIBLE)"
 
----
+**However**, this forces JSON consumers to replicate the policy logic from
+`checker_policy.py`, which is a real usability gap. The markdown format
+separates changes into severity sections, but this information is lost in JSON.
 
-## Bug 6 (MEDIUM): `--report-mode leaf` JSON uses different keys than standard mode
-
-**Severity:** MEDIUM — JSON schema inconsistency
-**Command:**
-```bash
-abicheck compare libv1.so libv2.so --dwarf-only --report-mode leaf --format json
-```
-
-**Expected:** Leaf-mode JSON should populate `changes` list (same key as standard mode).
-**Actual:**
-- `changes` key exists but is empty (`[]`)
-- Data is split across `leaf_changes` (18 items) and `non_type_changes` (11 items)
-
-**Impact:** Any JSON consumer (CI scripts, MCP clients, SARIF converters) that
-reads `data["changes"]` will see 0 changes in leaf mode despite a `BREAKING`
-verdict. This is a breaking schema change between report modes.
+**Recommendation:** Add an optional `"severity"` field that reflects the
+active policy (since the policy IS known at report time). This doesn't
+violate the policy-neutral design — it just materializes the result.
 
 ---
 
-## Bug 7 (MEDIUM): C++ DWARF-only dump extracts 0 functions
+## Bug 6: `--report-mode leaf` JSON uses different keys than standard mode
 
-**Severity:** MEDIUM — Reduced C++ analysis quality
-**Command:**
-```bash
-abicheck dump libcpptest.so --dwarf-only
-```
+**Original Severity:** MEDIUM — JSON schema inconsistency
+**Review Verdict:** ENHANCEMENT REQUEST
 
-**Expected:** DWARF function entries extracted for C++ member functions.
-**Actual:** `"functions": []` in the JSON snapshot. Types (classes, vtables)
-are correctly extracted, but no function signatures.
+### Team Review
 
-**Contrast:** C library DWARF dump correctly extracts 9 functions.
-C++ library with headers correctly extracts 12 functions.
+This is **intentional and documented**. The leaf mode fundamentally changes
+the output structure for root-cause analysis:
 
-**Impact:** C++ DWARF-only analysis only detects type/layout/vtable changes
-but misses function signature changes. The compare-release command (which
-doesn't accept headers) falls back to ELF-only symbol comparison for C++
-libraries, missing type-level breaks entirely.
+- **`reporter.py:374-416`** (`_to_json_leaf()`) outputs `leaf_changes` and
+  `non_type_changes` instead of `changes`
+- **`docs/user-guide/output-formats.md:76-79`** documents this structure
+- **`tests/test_report_filtering.py:353-368`** tests this behavior
 
----
+The `changes` key being empty (`[]`) rather than absent is the only real
+issue — it could mislead naive consumers.
 
-## Bug 8 (MEDIUM): `compare-release` falsely reports "no DWARF" for C++ libraries
-
-**Severity:** MEDIUM — Misleading diagnostic
-**Command:**
-```bash
-abicheck compare-release release_v1/ release_v2/  # dirs with C++ .so files
-```
-
-**Expected:** DWARF debug info is detected and used.
-**Actual:** Warning: "No headers provided and no DWARF debug info — only
-ELF-exported symbols will be captured" for C++ libraries.
-
-`readelf --debug-dump=info` confirms DWARF sections are present. This is a
-consequence of Bug 7 — since 0 functions are extracted from C++ DWARF, the
-dumper falls through to the "no DWARF" warning path.
-
-**Impact:** C++ library comparisons in `compare-release` silently degrade to
-ELF-only mode (5 changes detected instead of 10-11).
+**Recommendation:** Either remove the empty `changes` key in leaf mode
+(so consumers get KeyError and know to look elsewhere) or populate `changes`
+with the union of `leaf_changes` + `non_type_changes` for backwards
+compatibility.
 
 ---
 
-## Bug 9 (LOW): Compiler internal types reported as breaking ABI changes
+## Bug 7: C++ DWARF-only dump extracts 0 functions
 
-**Severity:** LOW — False positives from compiler internals
+**Original Severity:** MEDIUM — Reduced C++ analysis quality
+**Review Verdict:** CONFIRMED BUG
+
 **Command:**
 ```bash
-abicheck compare libv1.so libv2.so --dwarf-only --format markdown
+abicheck dump libcpptest.so --dwarf-only  # → "functions": []
+abicheck dump libtest.so --dwarf-only     # → "functions": [9 items]
 ```
 
-**Observed:** These compiler-internal types are reported as breaking:
-- `type_removed: __va_list_tag` — Breaking
-- `typedef_removed: __gnuc_va_list` — Breaking
-- `typedef_removed: __builtin_va_list` — Breaking
-- `typedef_removed: va_list` — Breaking
+### Root Cause (code-level)
 
-When comparing against an empty library, `size_t` is also reported.
+**`dwarf_snapshot.py:373-375`** — The critical filter:
+```python
+if not self._is_exported(mangled, name):
+    return  # Function rejected
+```
 
-**Impact:** These types are compiler implementation details, not part of the
-library's public ABI. They inflate the breaking change count. `va_list` is
-only present when variadic functions use it; `__va_list_tag` and
-`__builtin_va_list` should never be in the public ABI surface.
+**`dwarf_snapshot.py:757-763`** — `_is_exported()` checks:
+```python
+def _is_exported(self, mangled: str, name: str) -> bool:
+    if mangled and mangled in self._exported_names:
+        return True
+    if name and name in self._exported_names:
+        return True
+    return False
+```
+
+**`dwarf_snapshot.py:259-263`** — `_exported_names` is built from ELF:
+```python
+for sym in elf_meta.symbols:
+    if sym.name and sym.visibility not in _HIDDEN_VIS:
+        self._exported_names.add(sym.name)
+```
+
+**The asymmetry:**
+- **C functions:** ELF stores `"add"`, DWARF DW_AT_name = `"add"` →
+  `_is_exported("add", "add")` = True
+- **C++ functions:** ELF stores `"_ZN6Widget8getValueEv"`, DWARF
+  DW_AT_linkage_name = `"_ZNK6Widget8getValueEv"` (may differ due to const
+  qualification), DW_AT_name = `"getValue"`. If the exact mangled string
+  doesn't match (e.g., const vs non-const), and `"getValue"` is not in
+  ELF exports (it isn't — ELF uses mangled names), the function is rejected.
+
+**Fix needed:** Normalize mangled name comparison or build a demangled name
+index from ELF exports for fallback matching.
 
 ---
 
-## Bug 10 (LOW): Excessive "Duplicate mangled symbol" warnings with headers
+## Bug 8: `compare-release` falsely reports "no DWARF" for C++ libraries
 
-**Severity:** LOW — Noisy output
-**Command:**
-```bash
-abicheck compare libv1.so libv1.so -H v1.h  # self-compare
-```
+**Original Severity:** MEDIUM — Misleading diagnostic
+**Review Verdict:** CONFIRMED BUG (consequence of Bug 7)
 
-**Expected:** Clean output (NO_CHANGE, no warnings).
-**Actual:** 12 warnings emitted:
-```
-WARNING: Duplicate mangled symbol skipped (first-wins): Point in libtest_v1.so@old
-WARNING: Duplicate mangled symbol skipped (first-wins): Point in libtest_v1.so@old
-WARNING: Duplicate mangled symbol skipped (first-wins): Point in libtest_v1.so@old
-WARNING: Duplicate mangled symbol skipped (first-wins): Record in libtest_v1.so@old
-...
-```
+When 0 functions are extracted from C++ DWARF (Bug 7), the dumper falls
+through to the "no DWARF" warning path. `readelf --debug-dump=info` confirms
+DWARF sections are present with full type information.
 
-Each struct name triggers 3 warnings per side (6 per struct, 12 total for
-Point + Record). These appear because castxml generates multiple entries
-for struct/union types that get treated as mangled symbol names.
-
-**Impact:** Noisy output that obscures real issues. In CI logs, these warnings
-could be confused with actual problems.
+**Fix:** Will be resolved when Bug 7 is fixed.
 
 ---
 
-## Bug 11 (HIGH): `appcompat` with headers shows 0 relevant changes despite breaking changes
+## Bug 9: Compiler internal types reported as breaking ABI changes
 
-**Severity:** HIGH — Incorrect appcompat output
-**Command:**
-```bash
-abicheck appcompat app libv1.so libv2.so -H v1.h --format markdown
-```
+**Original Severity:** LOW — False positives
+**Review Verdict:** CONFIRMED BUG (in DWARF path)
 
-**Expected:** Relevant changes shown (struct layout breaks, enum changes, etc.
-affecting app's symbols).
-**Actual:** "Relevant Changes (0 of 11 total) — None of the library's ABI
-changes affect your application."
+### Team Review
 
-**Contrast:** Without `-H`, the same command correctly shows 17 relevant
-changes.
+Filtering EXISTS for the castxml/header path:
+- **`dumper.py:610-621`** — `_is_public_record_type()` rejects types starting
+  with `__` (line 616) and built-in pseudo-file origins (line 619)
 
-The `process_array` missing symbol IS correctly detected in both cases,
-but the type-level changes that affect `add`, `compute`, `create_record`,
-`free_record` are not mapped to the app's symbols when headers are used.
+However, DWARF-extracted types **bypass this filter**. The DWARF path
+(`dwarf_snapshot.py`) independently extracts types and does not apply the
+same `__` prefix filtering. Result: `__va_list_tag`, `__builtin_va_list`,
+`__gnuc_va_list` are included in DWARF snapshots and reported as ABI changes.
 
-**Root cause hypothesis:** Header-based analysis uses C++-mangled symbol
-names (Bug 2), which don't match the ELF import symbols extracted from the
-application binary (which uses C linkage names like `add`, not `_Z3addii`).
+**Fix needed:** Apply the `__` prefix filter to DWARF-extracted types as
+well, or add these specific types to a blocklist.
 
 ---
 
-## Bug 12 (LOW): `--show-only source` changes exit code from 4 to 2
+## Bug 10: Excessive "Duplicate mangled symbol" warnings with headers
 
-**Severity:** LOW — Inconsistent exit code semantics
-**Command:**
-```bash
-abicheck compare libv1.so libv2.so --dwarf-only --show-only source
-# Exit code: 2 (API_BREAK)
+**Original Severity:** LOW — Noisy output
+**Review Verdict:** CONFIRMED BUG (cosmetic)
 
-abicheck compare libv1.so libv2.so --dwarf-only --show-only breaking
-# Exit code: 4 (BREAKING)
+### Root Cause (code-level)
 
-abicheck compare libv1.so libv2.so --dwarf-only
-# Exit code: 4 (BREAKING)
+**`model.py:188-199`** — The `index()` method warns on duplicate mangled names:
+```python
+for f in self.functions:
+    if f.mangled in func_map:
+        _model_log.warning("Duplicate mangled symbol skipped...")
 ```
 
-**Expected:** Exit code reflects the full comparison verdict (4 = BREAKING)
-regardless of display filter, since `--show-only` is a display filter, not
-a verdict modifier.
-**Actual:** `--show-only source` changes exit code to 2 (API_BREAK).
+With castxml headers, struct/union types generate multiple entries (from
+forward declarations, typedef aliases, and the definition itself). Each
+triggers a separate warning. A self-compare with 2 structs produces
+12 warnings (3 duplicates x 2 structs x 2 sides).
 
-**Impact:** CI/CD workflows that use `--show-only source` to focus on
-source-level changes will see a different exit code than the actual verdict.
-The markdown output still shows "Verdict: BREAKING" even when exit code is 2.
+**Fix needed:** Deduplicate before indexing, or suppress warnings for
+known-benign duplicates from castxml.
+
+---
+
+## Bug 11: `appcompat` with headers shows 0 relevant changes
+
+**Original Severity:** HIGH — Incorrect appcompat output
+**Review Verdict:** CONFIRMED BUG (consequence of Bug 2)
+
+### Root Cause (code-level)
+
+**`appcompat.py:399-426`** (`_is_relevant_to_app()`):
+```python
+if change.symbol in app.undefined_symbols:
+    return True
+```
+
+- `change.symbol` with headers = C++ mangled name (e.g., `"_Z3addii"`)
+- `app.undefined_symbols` from ELF = C linkage name (e.g., `"add"`)
+- No match → all changes marked irrelevant
+
+Without headers, `change.symbol` = plain name (e.g., `"add"`) →
+correctly matches the app's ELF imports.
+
+**Fix:** Will be resolved when Bug 2 is fixed (C functions should use
+plain names regardless of header parsing mode).
+
+---
+
+## Bug 12: `--show-only source` changes exit code
+
+**Original Severity:** LOW
+**Review Verdict:** INVALIDATED
+
+### Team Review
+
+The original finding used `--show-only source`, which is **not a valid token**.
+Valid tokens are: `breaking`, `api-break`, `risk`, `compatible`, `functions`,
+`variables`, `types`, `enums`, `elf`, `added`, `removed`, `changed`.
+
+Retesting with valid tokens shows exit codes are **consistent**:
+```
+--show-only breaking:    exit 4 (correct)
+--show-only api-break:   exit 4 (correct)
+--show-only compatible:  exit 4 (correct)
+no filter:               exit 4 (correct)
+```
+
+The `cli.py:965` documentation confirms: "Does not affect exit codes."
+The code at `cli.py:1117-1120` computes exit code from the full verdict,
+not the filtered set.
+
+**Minor issue found:** `--show-only source` (invalid token) exits with
+code 0 instead of non-zero. Click error handling doesn't propagate the
+exit code correctly.
+
+---
+
+## Revised Priority Ranking
+
+| # | Bug | Review Verdict | Severity | Root Cause Location |
+|---|-----|---------------|----------|-------------------|
+| 2 | Header C++ mangling for C functions | **CONFIRMED BUG** | HIGH | `dumper.py:293-295`, `checker.py:329` |
+| 11 | appcompat+headers = 0 relevant | **CONFIRMED BUG** | HIGH | `appcompat.py:399` (consequence of #2) |
+| 7 | C++ DWARF dump 0 functions | **CONFIRMED BUG** | MEDIUM | `dwarf_snapshot.py:373, 757-763` |
+| 3 | Duplicate enum changes | **CONFIRMED BUG** | MEDIUM | `checker.py:643, 2813` (dedup by description fails) |
+| 8 | compare-release false no-DWARF | **CONFIRMED BUG** | MEDIUM | consequence of #7 |
+| 9 | Compiler internals in DWARF path | **CONFIRMED BUG** | LOW | DWARF path skips `__` prefix filter |
+| 10 | Excessive duplicate warnings | **CONFIRMED BUG** | LOW | `model.py:188-199` |
+| 1 | Stripped func removal = COMPATIBLE | **DESIGN DISCUSSION** | — | `checker_policy.py:28, 361` (intentional) |
+| 4 | Duplicate struct offsets (2 tiers) | **DESIGN DISCUSSION** | — | Dedup symbol mismatch in DWARF-only |
+| 5 | JSON no per-change severity | **ENHANCEMENT** | — | `reporter.py:505` (intentional per ADR-014) |
+| 6 | Leaf mode JSON different keys | **ENHANCEMENT** | — | `reporter.py:374` (intentional, documented) |
+| 12 | --show-only source exit code | **INVALIDATED** | — | Tester used invalid token |
+
+### Summary
+
+- **7 confirmed bugs** (2 HIGH, 3 MEDIUM, 2 LOW)
+- **2 design discussions** worth considering
+- **2 enhancement requests** for improved DX
+- **1 invalidated** finding
+
+The most impactful cluster is **Bug 2 + Bug 11**: header-based C function
+analysis uses C++ mangling, breaking both the change detection and
+appcompat symbol matching. This affects any C library analyzed with
+`-H` without explicit `--lang c`.
+
+The second cluster is **Bug 7 + Bug 8**: C++ DWARF function extraction
+fails due to mangled name matching asymmetry in `_is_exported()`,
+degrading C++ analysis in `compare-release` and `--dwarf-only` modes.
 
 ---
 
@@ -315,13 +445,13 @@ The markdown output still shows "Verdict: BREAKING" even when exit code is 2.
 - `app` / `cppapp` — Consumer applications linked against v1
 
 **ABI changes introduced in v2:**
-- Struct field reordering (Point: x↔y)
-- Struct size increase (Point: +z field, Record: name 32→64, id int→long)
-- Enum value reassignment (GREEN: 1→2, BLUE: 2→1)
-- Function parameter addition (add: 2→3 params)
+- Struct field reordering (Point: x<->y)
+- Struct size increase (Point: +z field, Record: name 32->64, id int->long)
+- Enum value reassignment (GREEN: 1->2, BLUE: 2->1)
+- Function parameter addition (add: 2->3 params)
 - Pass-by-value to pointer (compute)
 - Function removal (process_array)
-- Variadic→non-variadic (log_message)
+- Variadic->non-variadic (log_message)
 - Callback signature change (callback_t)
 - New function addition (multiply)
 
@@ -330,20 +460,3 @@ The markdown output still shows "Verdict: BREAKING" even when exit code is 2.
 (markdown/json/sarif/html), `--stat`, `--show-only`, `--report-mode leaf`,
 `--suppress`, `--policy`, `--show-impact`, `--version`, `--check-against`,
 `--list-required-symbols`
-
-## Priority Ranking
-
-| # | Bug | Severity | Impact |
-|---|-----|----------|--------|
-| 1 | Stripped func removal = COMPATIBLE | HIGH | CI/CD false negative |
-| 11 | appcompat+headers = 0 relevant | HIGH | Incorrect app analysis |
-| 2 | Header sig changes = remove+add | HIGH | Wrong change classification |
-| 3 | Duplicate enum changes | MEDIUM | Inflated counts |
-| 4 | Duplicate struct offset changes | MEDIUM | Inflated counts |
-| 5 | JSON no per-change severity | MEDIUM | JSON consumers broken |
-| 6 | Leaf mode JSON wrong keys | MEDIUM | Schema inconsistency |
-| 7 | C++ DWARF dump 0 functions | MEDIUM | Reduced C++ analysis |
-| 8 | compare-release false no-DWARF | MEDIUM | Misleading diagnostic |
-| 9 | Compiler internal types = breaking | LOW | False positives |
-| 10 | Excessive duplicate warnings | LOW | Noisy output |
-| 12 | --show-only source exit code | LOW | Inconsistent exit codes |
