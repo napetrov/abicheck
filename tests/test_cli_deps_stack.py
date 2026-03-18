@@ -222,9 +222,16 @@ class TestStackCheckCommand:
             baseline_env=str(baseline),
             candidate_env=str(candidate),
         )
+        captured: dict = {}
+
+        def fake_check_stack(*args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return result_obj
+
         monkeypatch.setattr(
             "abicheck.stack_checker.check_stack",
-            lambda *a, **kw: result_obj,
+            fake_check_stack,
         )
 
         runner = CliRunner()
@@ -239,6 +246,9 @@ class TestStackCheckCommand:
         assert parsed["root_binary"] == binary_rel
         assert parsed["verdict"]["loadability"] == "pass"
         assert parsed["verdict"]["abi_risk"] == "pass"
+        # Verify CLI forwarded baseline/candidate to check_stack
+        assert captured["kwargs"]["baseline_root"] == baseline
+        assert captured["kwargs"]["candidate_root"] == candidate
 
     def test_stack_check_markdown(self, tmp_path, env_dirs, monkeypatch):
         baseline, candidate = env_dirs
