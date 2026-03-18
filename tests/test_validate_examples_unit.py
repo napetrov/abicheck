@@ -39,7 +39,7 @@ _EXPECTED_CASE_COUNT = 63
 class TestNormalizeVerdict:
     """_normalize_verdict must preserve each canonical verdict string."""
 
-    @pytest.mark.parametrize("verdict", list(_VALID_VERDICTS))
+    @pytest.mark.parametrize("verdict", sorted(_VALID_VERDICTS))
     def test_preserves_canonical_verdict(self, verdict: str) -> None:
         assert _normalize_verdict(verdict) == verdict
 

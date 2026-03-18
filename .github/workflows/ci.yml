@@ -62,8 +62,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,mcp]"
       - name: Run tests with coverage
+        if: runner.os != 'Windows'
         run: |
           pytest tests/ -v --tb=short -m "not integration and not libabigail and not abicc" --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+      - name: Run tests (Windows — parallel, no coverage)
+        if: runner.os == 'Windows'
+        run: |
+          pytest tests/ -v --tb=short -m "not integration and not libabigail and not abicc" -n auto --dist worksteal
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.13' && matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v5
@@ -104,9 +109,14 @@ jobs:
           cache: 'pip'
       - name: Install package
         run: pip install -e ".[dev]"
-      - name: Run integration tests with coverage
+      - name: Run integration tests (Linux/macOS — with coverage)
+        if: runner.os != 'Windows'
         run: |
           pytest tests/ -v -m integration --tb=short --cov=abicheck --cov-report=xml:coverage-integration.xml --ignore=tests/test_abi_examples.py
+      - name: Run integration tests (Windows — parallel, no coverage)
+        if: runner.os == 'Windows'
+        run: |
+          pytest tests/ -v -m integration --tb=short -n auto --dist worksteal --ignore=tests/test_abi_examples.py
       - name: Upload integration coverage to Codecov
         if: always() && matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v5

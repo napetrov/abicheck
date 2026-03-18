@@ -23,12 +23,18 @@ Marked `@pytest.mark.integration` — requires a C/C++ compiler + castxml in PAT
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+try:
+    import filelock as _filelock  # explicit dev dependency; used for xdist build locking
+except ImportError:
+    _filelock = None  # type: ignore[assignment]
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -252,14 +258,26 @@ def _build_with_cmake(
         if r.returncode != 0:
             pytest.fail(f"cmake configure failed for {case_name}:\n{r.stderr[:600]}")
 
-    # Build only this case's targets (--config for multi-config generators)
+    # Build only this case's targets (--config for multi-config generators).
+    # Under pytest-xdist, serialize cmake --build calls on the shared build
+    # tree to avoid concurrent writes to shared CMake internal state (e.g.
+    # .ninja_log, CMakeCache reads) which can be flaky on Windows/NTFS.
     v1_target = f"{case_name}_v1"
     v2_target = f"{case_name}_v2"
-    r = subprocess.run(
-        [cmake, "--build", str(build_dir), "--target", v1_target, v2_target,
-         "--config", "Debug"],
-        capture_output=True, text=True, timeout=120,
-    )
+    build_cmd = [cmake, "--build", str(build_dir), "--target", v1_target,
+                 v2_target, "--config", "Debug"]
+
+    is_xdist = os.environ.get("PYTEST_XDIST_WORKER") is not None
+    if is_xdist and already_configured and _filelock is not None:
+        lock_path = build_dir.parent / "cmake_build.lock"
+        with _filelock.FileLock(str(lock_path), timeout=300):
+            r = subprocess.run(
+                build_cmd, capture_output=True, text=True, timeout=120,
+            )
+    else:
+        r = subprocess.run(
+            build_cmd, capture_output=True, text=True, timeout=120,
+        )
     if r.returncode != 0:
         pytest.fail(f"cmake build failed for {case_name}:\n{r.stderr[:600]}")
 
