@@ -1114,7 +1114,7 @@ class TestAbiCompare:
         snap = _make_snapshot("1.0")
         old_p, new_p = self._make_pair(tmp_path, snap, snap)
         pf = tmp_path / "policy.yaml"
-        pf.write_text("base: strict_abi\noverrides: {}\n", encoding="utf-8")
+        pf.write_text("base_policy: strict_abi\noverrides: {}\n", encoding="utf-8")
         raw = abi_compare(str(old_p), str(new_p), policy_file=str(pf))
         data = json.loads(raw)
         assert data["status"] == "ok"
@@ -1194,7 +1194,7 @@ class TestAbiCompare:
         snap = _make_snapshot("1.0")
         old_p, new_p = self._make_pair(tmp_path, snap, snap)
         pf = tmp_path / "policy.yaml"
-        pf.write_text("base: strict_abi\noverrides: {}\n", encoding="utf-8")
+        pf.write_text("base_policy: strict_abi\noverrides: {}\n", encoding="utf-8")
         # Even with an invalid base policy name, policy_file takes precedence
         raw = abi_compare(
             str(old_p), str(new_p), policy="totally_invalid", policy_file=str(pf)
@@ -1354,7 +1354,7 @@ class TestSafeWritePathTraversalEdgeCases:
         """Path traversal with .. into /etc should be blocked."""
         # Use an absolute path that resolves to /etc/foo.json via traversal
         with pytest.raises(ValueError, match="sensitive system path"):
-            _safe_write_path("/tmp/../etc/foo.json")  # noqa: S108
+            _safe_write_path("/tmp/../etc/foo.json")  # noqa: S108  # nosec B108
 
     @pytest.mark.skipif(
         __import__("platform").system() == "Windows",

@@ -5,6 +5,7 @@ All tests are marked with @pytest.mark.slow so they can be skipped with:
 """
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -107,7 +108,6 @@ class TestSerializationBenchmark:
 
         start = time.monotonic()
         json_str = snapshot_to_json(snap)
-        import json
         d = json.loads(json_str)
         loaded = snapshot_from_dict(d)
         elapsed = time.monotonic() - start

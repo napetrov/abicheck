@@ -8,7 +8,6 @@ it is not installed.
 """
 from __future__ import annotations
 
-import os
 import re
 import tempfile
 from pathlib import Path
@@ -101,8 +100,8 @@ def test_validate_member_path_fuzz(member: str) -> None:
             result = _validate_member_path(member, target_root)
             # If accepted, verify the result is safe
             assert ".." not in result.parts, "'..' must never appear in validated path"
-            assert not os.path.isabs(member) or member.startswith("/"), \
-                "Absolute member names must be rejected"
+            # Absolute member names are expected to be rejected by
+            # _validate_member_path via ExtractionSecurityError (handled below).
         except ExtractionSecurityError:
             pass  # expected for unsafe inputs
         except (ValueError, OSError):
@@ -137,9 +136,9 @@ def test_changekind_classification_completeness() -> None:
         if kind in COMPATIBLE_KINDS:
             categories_found.append("compatible")
 
-        assert len(categories_found) >= 1, (
-            f"ChangeKind.{kind.name} ({kind.value}) is not classified in any "
-            f"impact category. Expected one of: {valid_categories}"
+        assert len(categories_found) == 1, (
+            f"ChangeKind.{kind.name} ({kind.value}) is in {len(categories_found)} "
+            f"categories ({categories_found}), expected exactly one of: {valid_categories}"
         )
 
 
