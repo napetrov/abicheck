@@ -26,17 +26,13 @@ from __future__ import annotations
 import os
 import stat
 import struct
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch, PropertyMock
-
-import pytest
-
+from unittest.mock import MagicMock, patch
 
 # ============================================================================
 # pdb_utils.py — coverage gaps
 # ============================================================================
-
 from abicheck.pdb_utils import (
     _extract_pdb_path_from_pe,
     _is_network_path,
@@ -335,13 +331,10 @@ class TestExtractPdbPathFromPe:
 # ============================================================================
 
 from abicheck.macho_metadata import (
-    MachoExport,
-    MachoMetadata,
     MachoSymbolType,
     _dylib_name_from_cmd,
     _select_header,
     _version_field_to_str,
-    _version_str,
     parse_macho_metadata,
 )
 
@@ -468,7 +461,12 @@ class TestParseMachoSymbolTableFailure:
 
     def test_symtab_failure_still_returns_metadata(self, tmp_path):
         """When SymbolTable constructor raises, we still get header/load-cmd metadata."""
-        from macholib.mach_o import LC_ID_DYLIB, LC_LOAD_DYLIB, LC_REEXPORT_DYLIB, LC_BUILD_VERSION
+        from macholib.mach_o import (
+            LC_BUILD_VERSION,
+            LC_ID_DYLIB,
+            LC_LOAD_DYLIB,
+            LC_REEXPORT_DYLIB,
+        )
 
         dylib_path = tmp_path / "libtest.dylib"
         dylib_path.write_bytes(b"\xcf\xfa\xed\xfe" + b"\x00" * 100)
@@ -524,7 +522,7 @@ class TestParseMachoWeakSymbols:
     """Cover lines 291, 295-298: symbol with N_WEAK_DEF and underscore stripping."""
 
     def test_weak_exported_symbol_and_underscore_strip(self, tmp_path):
-        from macholib.mach_o import N_EXT, N_WEAK_DEF, N_TYPE
+        from macholib.mach_o import N_EXT, N_WEAK_DEF
 
         dylib_path = tmp_path / "libweak.dylib"
         dylib_path.write_bytes(b"\xcf\xfa\xed\xfe" + b"\x00" * 100)
@@ -573,6 +571,8 @@ class TestParseMachoWeakSymbols:
 # pdb_metadata.py — coverage gaps
 # ============================================================================
 
+from abicheck.dwarf_advanced import AdvancedDwarfMetadata
+from abicheck.dwarf_metadata import DwarfMetadata
 from abicheck.pdb_metadata import (
     _extract_calling_conventions,
     _extract_enums,
@@ -580,8 +580,6 @@ from abicheck.pdb_metadata import (
     _extract_toolchain_info,
     parse_pdb_debug_info,
 )
-from abicheck.dwarf_advanced import AdvancedDwarfMetadata, ToolchainInfo
-from abicheck.dwarf_metadata import DwarfMetadata, EnumInfo, FieldInfo, StructLayout
 
 
 class TestPdbMetadataNoTpi:
@@ -916,7 +914,7 @@ class TestPdbMetadataToolchainInfo:
 # pe_metadata.py — coverage gaps
 # ============================================================================
 
-from abicheck.pe_metadata import PeExport, PeMetadata, PeSymbolType, parse_pe_metadata
+from abicheck.pe_metadata import parse_pe_metadata
 
 
 class TestPeMetadataNonRegularFile:

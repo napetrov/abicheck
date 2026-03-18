@@ -29,22 +29,19 @@ _mock_mcp_instance.tool.return_value = lambda fn: fn
 _mock_fastmcp.return_value = _mock_mcp_instance
 
 # Now safe to import
-from abicheck.checker import Change, DiffResult  # noqa: E402
-from abicheck.checker_policy import ChangeKind, Verdict  # noqa: E402
+from abicheck.checker import DiffResult  # noqa: E402
+from abicheck.checker_policy import Verdict  # noqa: E402
 from abicheck.errors import AbicheckError  # noqa: E402
 from abicheck.mcp_server import (  # noqa: E402
-    _detect_binary_format,
     _impact_category,
     _render_output,
     _resolve_input,
     _safe_write_path,
     _sanitize_error,
-    _snapshot_summary,
     abi_compare,
     abi_dump,
 )
-from abicheck.model import AbiSnapshot, Function, Variable, Visibility  # noqa: E402
-
+from abicheck.model import AbiSnapshot, Function, Visibility  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers

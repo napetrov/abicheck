@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from abicheck.checker import Change, DiffResult, compare, _ROOT_TYPE_CHANGE_KINDS
+from abicheck.checker import _ROOT_TYPE_CHANGE_KINDS, Change, DiffResult, compare
 from abicheck.checker_policy import ChangeKind, Verdict
 from abicheck.model import (
     AbiSnapshot,
@@ -24,22 +24,18 @@ from abicheck.model import (
     EnumType,
     Function,
     Param,
-    ParamKind,
     RecordType,
     TypeField,
     Variable,
-    Visibility,
 )
 from abicheck.reporter import (
     ShowOnlyFilter,
     apply_show_only,
-    build_summary,
     to_json,
     to_markdown,
     to_stat,
     to_stat_json,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -335,7 +331,6 @@ class TestEnumEdgeCases:
 
         result = compare(old, new)
         # FLAG_A removed because two new members share value=1 (no unique rename candidate)
-        all_kinds = {c.kind for c in result.changes}
         # Should have some enum changes
         assert len(result.changes) > 0
 
@@ -928,8 +923,8 @@ class TestStackReportStackChangesSection:
     """Exercise _render_stack_changes_section (lines 111-128)."""
 
     def test_removed_change(self):
-        from abicheck.stack_report import _render_stack_changes_section
         from abicheck.stack_checker import StackChange
+        from abicheck.stack_report import _render_stack_changes_section
 
         changes = [StackChange(library="libold.so", change_type="removed")]
         lines: list[str] = []
@@ -939,8 +934,8 @@ class TestStackReportStackChangesSection:
         assert "libold.so" in text
 
     def test_added_change(self):
-        from abicheck.stack_report import _render_stack_changes_section
         from abicheck.stack_checker import StackChange
+        from abicheck.stack_report import _render_stack_changes_section
 
         changes = [StackChange(library="libnew.so", change_type="added")]
         lines: list[str] = []
@@ -949,8 +944,8 @@ class TestStackReportStackChangesSection:
         assert "new in candidate" in text
 
     def test_content_changed_breaking(self):
-        from abicheck.stack_report import _render_stack_changes_section
         from abicheck.stack_checker import StackChange
+        from abicheck.stack_report import _render_stack_changes_section
 
         diff = _make_diff(
             changes=[Change(kind=ChangeKind.FUNC_REMOVED, symbol="f", description="removed")],
@@ -964,8 +959,8 @@ class TestStackReportStackChangesSection:
         assert "BREAKING" in text
 
     def test_content_changed_compatible(self):
-        from abicheck.stack_report import _render_stack_changes_section
         from abicheck.stack_checker import StackChange
+        from abicheck.stack_report import _render_stack_changes_section
 
         diff = _make_diff(verdict=Verdict.COMPATIBLE)
         changes = [StackChange(library="libcompat.so", change_type="content_changed", abi_diff=diff)]
@@ -975,8 +970,8 @@ class TestStackReportStackChangesSection:
         assert "COMPATIBLE" in text
 
     def test_content_changed_no_diff(self):
-        from abicheck.stack_report import _render_stack_changes_section
         from abicheck.stack_checker import StackChange
+        from abicheck.stack_report import _render_stack_changes_section
 
         changes = [StackChange(library="libx.so", change_type="content_changed", abi_diff=None)]
         lines: list[str] = []
@@ -993,8 +988,8 @@ class TestStackReportStackChangesSection:
 
     def test_content_changed_with_breaking_details(self):
         """content_changed with breaking changes shows up to 5 detail lines."""
-        from abicheck.stack_report import _render_stack_changes_section
         from abicheck.stack_checker import StackChange
+        from abicheck.stack_report import _render_stack_changes_section
 
         brk = [
             Change(kind=ChangeKind.FUNC_REMOVED, symbol=f"f{i}", description=f"removed f{i}")
@@ -1013,13 +1008,13 @@ class TestStackReportRenderTree:
 
     def test_empty_graph(self):
         """No root node found -> '_(empty graph)_'."""
-        from abicheck.stack_report import _render_tree
         from abicheck.resolver import DependencyGraph
+        from abicheck.stack_report import _render_tree
 
         graph = DependencyGraph(root="/none", nodes={}, edges=[])
         lines: list[str] = []
         _render_tree(lines, graph)
-        assert any("empty graph" in l for l in lines)
+        assert any("empty graph" in line for line in lines)
 
     def test_diamond_dependency(self):
         """A->B, A->C, B->D, C->D: D shown once, second time as '*(already shown)*'."""

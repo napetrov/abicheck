@@ -12,13 +12,15 @@ from pathlib import Path
 import pytest
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict, compare
-from abicheck.compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_dump
-from abicheck.model import AbiSnapshot, Function, Param, Variable, Visibility
+from abicheck.compat.abicc_dump_import import (
+    import_abicc_perl_dump,
+    looks_like_perl_dump,
+)
+from abicheck.model import AbiSnapshot, Function, Param, Variable
 from abicheck.policy_file import PolicyFile
 from abicheck.reporter import to_json, to_markdown
 from abicheck.serialization import load_snapshot, snapshot_from_dict
 from abicheck.suppression import SuppressionList
-
 
 # ---------------------------------------------------------------------------
 # 1. Malformed ELF files (abicheck/elf_metadata.py)
@@ -133,7 +135,7 @@ class TestMalformedJsonSnapshots:
         }
         p = tmp_path / "wrong_type.json"
         p.write_text(json.dumps(data), encoding="utf-8")
-        with pytest.raises((TypeError, ValueError, AttributeError)):
+        with pytest.raises((TypeError, ValueError)):
             load_snapshot(p)
 
     def test_truncated_json(self, tmp_path: Path) -> None:
@@ -433,7 +435,7 @@ class TestEdgeCaseModelObjects:
             ],
         )
         result = compare(old, new)
-        assert result.verdict in (Verdict.COMPATIBLE, Verdict.NO_CHANGE)
+        assert result.verdict == Verdict.COMPATIBLE
 
     def test_compare_removed_function(self) -> None:
         """Removing a function should yield BREAKING."""

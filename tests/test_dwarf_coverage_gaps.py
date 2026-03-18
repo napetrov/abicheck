@@ -9,13 +9,11 @@ Covers:
 """
 from __future__ import annotations
 
-import os
 import stat
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 from elftools.common.exceptions import ELFError
 
 from abicheck.dwarf_utils import (
@@ -25,7 +23,6 @@ from abicheck.dwarf_utils import (
     resolve_die_ref,
     resolve_type_die,
 )
-
 
 # ---------------------------------------------------------------------------
 # Mock helpers
@@ -231,9 +228,9 @@ class TestParseUnified:
 
     def test_non_regular_file(self, tmp_path):
         """Lines 74-76: non-regular file returns empty tuple."""
-        from abicheck.dwarf_unified import parse_dwarf
-        from abicheck.dwarf_metadata import DwarfMetadata
         from abicheck.dwarf_advanced import AdvancedDwarfMetadata
+        from abicheck.dwarf_metadata import DwarfMetadata
+        from abicheck.dwarf_unified import parse_dwarf
 
         fake_path = tmp_path / "fake.so"
         fake_path.write_bytes(b"\x00")
@@ -321,9 +318,9 @@ class TestParseUnified:
 
     def test_elffile_raises_elferror(self, tmp_path):
         """Lines 105-107: ELFFile raises ELFError => returns empty tuple."""
-        from abicheck.dwarf_unified import parse_dwarf
-        from abicheck.dwarf_metadata import DwarfMetadata
         from abicheck.dwarf_advanced import AdvancedDwarfMetadata
+        from abicheck.dwarf_metadata import DwarfMetadata
+        from abicheck.dwarf_unified import parse_dwarf
 
         fake_path = tmp_path / "fake.so"
         fake_path.write_bytes(b"\x00not-elf")
@@ -346,8 +343,8 @@ class TestParseUnified:
 
     def test_parse_dwarf_metadata_shim(self, tmp_path):
         """parse_dwarf_metadata delegates to parse_dwarf and returns DwarfMetadata."""
-        from abicheck.dwarf_unified import parse_dwarf_metadata
         from abicheck.dwarf_metadata import DwarfMetadata
+        from abicheck.dwarf_unified import parse_dwarf_metadata
 
         fake_path = tmp_path / "fake.so"
         fake_path.write_bytes(b"\x00")
@@ -368,8 +365,8 @@ class TestParseUnified:
 
     def test_parse_advanced_dwarf_shim(self, tmp_path):
         """parse_advanced_dwarf delegates to parse_dwarf and returns AdvancedDwarfMetadata."""
-        from abicheck.dwarf_unified import parse_advanced_dwarf
         from abicheck.dwarf_advanced import AdvancedDwarfMetadata
+        from abicheck.dwarf_unified import parse_advanced_dwarf
 
         fake_path = tmp_path / "fake.so"
         fake_path.write_bytes(b"\x00")
@@ -398,7 +395,7 @@ class TestParseAdvancedDwarf:
 
     def test_no_dwarf_info(self, tmp_path):
         """Line 161-162: ELF with no DWARF info returns empty metadata."""
-        from abicheck.dwarf_advanced import parse_advanced_dwarf, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import AdvancedDwarfMetadata, parse_advanced_dwarf
 
         fake_path = tmp_path / "nodwarf.so"
         fake_path.write_bytes(b"\x00")
@@ -414,7 +411,7 @@ class TestParseAdvancedDwarf:
 
     def test_elf_open_error(self, tmp_path):
         """Lines 173-175: ELFFile raises => returns empty metadata."""
-        from abicheck.dwarf_advanced import parse_advanced_dwarf, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import AdvancedDwarfMetadata, parse_advanced_dwarf
 
         fake_path = tmp_path / "bad.so"
         fake_path.write_bytes(b"\x00")
@@ -427,7 +424,7 @@ class TestParseAdvancedDwarf:
 
     def test_cu_processing_valueerror_skipped(self, tmp_path):
         """Lines 166-169: CU processing that raises ValueError is skipped."""
-        from abicheck.dwarf_advanced import parse_advanced_dwarf, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import AdvancedDwarfMetadata, parse_advanced_dwarf
 
         fake_path = tmp_path / "bad_cu.so"
         fake_path.write_bytes(b"\x00")
@@ -550,7 +547,7 @@ class TestWalkCu:
 
     def test_prune_tags_skipped(self):
         """Line 273: prune tags are skipped and not descended into."""
-        from abicheck.dwarf_advanced import _walk_cu, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import AdvancedDwarfMetadata, _walk_cu
 
         lexical = MockDIE(tag="DW_TAG_lexical_block")
         inlined = MockDIE(tag="DW_TAG_inlined_subroutine")
@@ -571,7 +568,10 @@ class TestExtractCallingConvention:
 
     def test_not_external(self):
         """Line 474: non-external function is skipped."""
-        from abicheck.dwarf_advanced import _extract_calling_convention, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import (
+            AdvancedDwarfMetadata,
+            _extract_calling_convention,
+        )
 
         die = MockDIE(
             tag="DW_TAG_subprogram",
@@ -584,7 +584,10 @@ class TestExtractCallingConvention:
 
     def test_no_name(self):
         """Line 483: function with no name is skipped."""
-        from abicheck.dwarf_advanced import _extract_calling_convention, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import (
+            AdvancedDwarfMetadata,
+            _extract_calling_convention,
+        )
 
         die = MockDIE(
             tag="DW_TAG_subprogram",
@@ -597,7 +600,10 @@ class TestExtractCallingConvention:
 
     def test_explicit_calling_convention(self):
         """Lines 484-489: explicit DW_AT_calling_convention is recorded."""
-        from abicheck.dwarf_advanced import _extract_calling_convention, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import (
+            AdvancedDwarfMetadata,
+            _extract_calling_convention,
+        )
 
         die = MockDIE(
             tag="DW_TAG_subprogram",
@@ -615,7 +621,10 @@ class TestExtractCallingConvention:
 
     def test_default_normal_cc(self):
         """Lines 487-488: no DW_AT_calling_convention defaults to 'normal'."""
-        from abicheck.dwarf_advanced import _extract_calling_convention, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import (
+            AdvancedDwarfMetadata,
+            _extract_calling_convention,
+        )
 
         die = MockDIE(
             tag="DW_TAG_subprogram",
@@ -632,7 +641,10 @@ class TestExtractCallingConvention:
 
     def test_value_abi_trait_recorded(self):
         """Lines 492-505: value-ABI trait is recorded for aggregate return types."""
-        from abicheck.dwarf_advanced import _extract_calling_convention, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import (
+            AdvancedDwarfMetadata,
+            _extract_calling_convention,
+        )
 
         # Create a struct type DIE that is trivial (no children)
         struct_die = MockDIE(
@@ -659,7 +671,10 @@ class TestExtractCallingConvention:
 
     def test_param_value_abi_trait(self):
         """Lines 497-502: parameter value-ABI trait for aggregate param."""
-        from abicheck.dwarf_advanced import _extract_calling_convention, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import (
+            AdvancedDwarfMetadata,
+            _extract_calling_convention,
+        )
 
         struct_die = MockDIE(
             tag="DW_TAG_class_type",
@@ -691,7 +706,7 @@ class TestCheckPackedTypedef:
 
     def test_no_typedef_name(self):
         """Line 520: typedef with no name is skipped."""
-        from abicheck.dwarf_advanced import _check_packed_typedef, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import AdvancedDwarfMetadata, _check_packed_typedef
 
         die = MockDIE(tag="DW_TAG_typedef", attributes={})
         meta = AdvancedDwarfMetadata(has_dwarf=True)
@@ -701,7 +716,7 @@ class TestCheckPackedTypedef:
 
     def test_no_type_attribute(self):
         """Line 520: typedef with name but no DW_AT_type is skipped."""
-        from abicheck.dwarf_advanced import _check_packed_typedef, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import AdvancedDwarfMetadata, _check_packed_typedef
 
         die = MockDIE(
             tag="DW_TAG_typedef",
@@ -714,7 +729,7 @@ class TestCheckPackedTypedef:
 
     def test_resolve_exception(self):
         """Lines 527-528: exception during type resolution => return early."""
-        from abicheck.dwarf_advanced import _check_packed_typedef, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import AdvancedDwarfMetadata, _check_packed_typedef
 
         cu = MockCU(cu_offset=0)
         cu.get_DIE_from_refaddr = MagicMock(side_effect=KeyError("bad ref"))
@@ -731,7 +746,7 @@ class TestCheckPackedTypedef:
 
     def test_named_target_struct(self):
         """Line 535: named struct target => skip (handled under its own name)."""
-        from abicheck.dwarf_advanced import _check_packed_typedef, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import AdvancedDwarfMetadata, _check_packed_typedef
 
         target = MockDIE(
             tag="DW_TAG_structure_type",
@@ -757,7 +772,7 @@ class TestCheckPacked:
 
     def test_no_name(self):
         """Line 554-555: anonymous struct is skipped."""
-        from abicheck.dwarf_advanced import _check_packed, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import AdvancedDwarfMetadata, _check_packed
 
         die = MockDIE(tag="DW_TAG_structure_type", attributes={})
         meta = AdvancedDwarfMetadata(has_dwarf=True)
@@ -767,7 +782,7 @@ class TestCheckPacked:
 
     def test_zero_byte_size(self):
         """Lines 557-558: forward declaration (byte_size == 0) is skipped."""
-        from abicheck.dwarf_advanced import _check_packed, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import AdvancedDwarfMetadata, _check_packed
 
         die = MockDIE(
             tag="DW_TAG_structure_type",
@@ -1039,7 +1054,10 @@ class TestParseFrameRegisters:
 
     def test_no_cfi_source(self):
         """Lines 752-753: no CFI source => return early."""
-        from abicheck.dwarf_advanced import _parse_frame_registers, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import (
+            AdvancedDwarfMetadata,
+            _parse_frame_registers,
+        )
 
         mock_elf = MagicMock()
         mock_elf.get_machine_arch.return_value = "x64"
@@ -1055,7 +1073,10 @@ class TestParseFrameRegisters:
 
     def test_fde_no_symbol(self):
         """Lines 761-762: FDE with no matching symbol is skipped."""
-        from abicheck.dwarf_advanced import _parse_frame_registers, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import (
+            AdvancedDwarfMetadata,
+            _parse_frame_registers,
+        )
 
         mock_elf = MagicMock()
         mock_elf.get_machine_arch.return_value = "x64"
@@ -1075,7 +1096,10 @@ class TestParseFrameRegisters:
 
     def test_outer_exception(self):
         """Lines 769-770: outer exception is caught and logged."""
-        from abicheck.dwarf_advanced import _parse_frame_registers, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import (
+            AdvancedDwarfMetadata,
+            _parse_frame_registers,
+        )
 
         mock_elf = MagicMock()
         mock_elf.get_machine_arch.side_effect = ELFError("arch fail")
@@ -1088,7 +1112,10 @@ class TestParseFrameRegisters:
 
     def test_fde_inner_exception(self):
         """Lines 766-767: inner FDE exception is caught per-entry."""
-        from abicheck.dwarf_advanced import _parse_frame_registers, AdvancedDwarfMetadata
+        from abicheck.dwarf_advanced import (
+            AdvancedDwarfMetadata,
+            _parse_frame_registers,
+        )
 
         mock_elf = MagicMock()
         mock_elf.get_machine_arch.return_value = "x64"

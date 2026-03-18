@@ -1,8 +1,9 @@
-# Test Coverage Analysis — abicheck
+# Baseline Test Coverage Analysis — abicheck
 
-**Date:** 2026-03-18
+**Date:** 2026-03-18 (baseline before coverage improvements)
 **Overall Coverage:** 90.6% line coverage (9,296 statements, 678 missed)
-**Tests:** 2,739 passing, 6 skipped, 189 deselected (integration)
+**Tests (at baseline):** 2,739 passing, 6 skipped, 189 deselected (integration)
+**Tests (current):** 3,114+ passing — includes property-based, adversarial, and platform coverage suites
 
 ## Modules Below 90% Coverage
 
@@ -50,9 +51,9 @@
 
 ## Structural Gaps (Beyond Line Coverage)
 
-1. **No property-based testing** — Hypothesis is in deps but unused; valuable for serialization roundtrips, policy classification, type comparison
-2. **No adversarial input tests** — Malformed binaries, truncated DWARF, corrupted PDB
-3. **No performance benchmarks in CI** — benchmark_comparison.py exists but isn't automated
+1. ~~**No property-based testing**~~ — **Added:** `test_property_based.py` (serialization roundtrips, policy classification, reporter fuzz)
+2. ~~**No adversarial input tests**~~ — **Added:** `test_adversarial_inputs.py` (malformed ELF, JSON, YAML, Perl dumps)
+3. **No performance benchmarks in CI** — `test_performance.py` exists (marked `@pytest.mark.slow`) but isn't automated
 4. **Branch coverage gaps** — 426 partial branches missed, worst in dwarf_snapshot (53), checker (37), cli (34), reporter (26)
 
 ## Priority Plan

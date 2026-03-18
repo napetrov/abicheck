@@ -13,21 +13,32 @@ import json
 import tempfile
 from pathlib import Path
 
-from hypothesis import given, assume, settings
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from abicheck.model import (
-    AbiSnapshot, Function, Variable, RecordType, EnumType, EnumMember,
-    TypeField, Param, Visibility, ParamKind, AccessLevel,
-)
-from abicheck.serialization import load_snapshot, snapshot_to_json, snapshot_from_dict
-from abicheck.checker import compare, DiffResult, Change
+from abicheck.checker import Change
 from abicheck.checker_policy import (
-    ChangeKind, Verdict, BREAKING_KINDS, API_BREAK_KINDS, COMPATIBLE_KINDS, RISK_KINDS,
-    policy_kind_sets, compute_verdict,
+    COMPATIBLE_KINDS,
+    ChangeKind,
+    Verdict,
+    compute_verdict,
+    policy_kind_sets,
+)
+from abicheck.model import (
+    AbiSnapshot,
+    AccessLevel,
+    EnumMember,
+    EnumType,
+    Function,
+    Param,
+    ParamKind,
+    RecordType,
+    TypeField,
+    Variable,
+    Visibility,
 )
 from abicheck.reporter import ShowOnlyFilter
-
+from abicheck.serialization import load_snapshot, snapshot_from_dict, snapshot_to_json
 
 # ---------------------------------------------------------------------------
 # Hypothesis strategies for model objects
@@ -263,10 +274,10 @@ def test_serialization_roundtrip_via_file(snap: AbiSnapshot):
     """snapshot_to_json -> write to file -> load_snapshot should work."""
     json_str = snapshot_to_json(snap)
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        f.write(json_str)
-        f.flush()
-        restored = load_snapshot(f.name)
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "snapshot.json"
+        p.write_text(json_str, encoding="utf-8")
+        restored = load_snapshot(p)
 
     assert restored.library == snap.library
     assert restored.version == snap.version

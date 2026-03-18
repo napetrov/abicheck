@@ -12,7 +12,6 @@ from abicheck.cli import main
 from abicheck.resolver import DependencyGraph, ResolvedDSO
 from abicheck.stack_checker import StackCheckResult, StackVerdict
 
-
 # ---------------------------------------------------------------------------
 # Helpers — build synthetic data
 # ---------------------------------------------------------------------------
