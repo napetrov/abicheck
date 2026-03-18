@@ -13,6 +13,7 @@ inputs:
   mode:
     description: >
       Operation mode: "compare" (default) compares two ABI surfaces;
+      "compare-release" compares all libraries in two directories or packages;
       "dump" generates a JSON baseline snapshot from a single library;
       "deps" resolves transitive dependencies and symbol bindings (Linux ELF);
       "stack-check" compares a binary's full dependency stack across two
@@ -24,13 +25,45 @@ inputs:
   old-library:
     description: >
       Path to the old library, JSON snapshot, or ABICC Perl dump.
-      Required when mode=compare.
+      Required when mode=compare. For compare-release: old directory or package
+      (RPM, Deb, tar, conda, wheel).
     required: false
   new-library:
     description: >
       Path to the new (current) library or binary.
-      Required for both compare and dump modes.
+      Required for compare and dump modes. For compare-release: new directory
+      or package (RPM, Deb, tar, conda, wheel).
     required: true
+
+  # ── Package inputs (compare-release mode) ────────────────────────────────────
+  debug-info1:
+    description: 'Debug info package for old side (RPM/Deb/tar). compare-release mode only.'
+    required: false
+  debug-info2:
+    description: 'Debug info package for new side (RPM/Deb/tar). compare-release mode only.'
+    required: false
+  devel-pkg1:
+    description: 'Development package with headers for old side. compare-release mode only.'
+    required: false
+  devel-pkg2:
+    description: 'Development package with headers for new side. compare-release mode only.'
+    required: false
+  dso-only:
+    description: 'Only compare shared objects, skip executables. compare-release mode only.'
+    required: false
+    default: 'false'
+  include-private-dso:
+    description: 'Include private (non-public) shared objects from non-standard paths. compare-release mode only.'
+    required: false
+    default: 'false'
+  keep-extracted:
+    description: 'Keep extracted temporary files for debugging. compare-release mode only.'
+    required: false
+    default: 'false'
+  fail-on-removed-library:
+    description: 'Exit 8 when a library present in old is absent in new. compare-release mode only.'
+    required: false
+    default: 'false'
 
   # ── Header inputs ───────────────────────────────────────────────────────────
   header:
@@ -247,6 +280,14 @@ runs:
         INPUT_FAIL_ON_API_BREAK: ${{ inputs.fail-on-api-break }}
         INPUT_FAIL_ON_ADDITIONS: ${{ inputs.fail-on-additions }}
         INPUT_ADD_JOB_SUMMARY: ${{ inputs.add-job-summary }}
+        INPUT_DEBUG_INFO1: ${{ inputs.debug-info1 }}
+        INPUT_DEBUG_INFO2: ${{ inputs.debug-info2 }}
+        INPUT_DEVEL_PKG1: ${{ inputs.devel-pkg1 }}
+        INPUT_DEVEL_PKG2: ${{ inputs.devel-pkg2 }}
+        INPUT_DSO_ONLY: ${{ inputs.dso-only }}
+        INPUT_INCLUDE_PRIVATE_DSO: ${{ inputs.include-private-dso }}
+        INPUT_KEEP_EXTRACTED: ${{ inputs.keep-extracted }}
+        INPUT_FAIL_ON_REMOVED_LIBRARY: ${{ inputs.fail-on-removed-library }}
       run: bash "${{ github.action_path }}/action/run.sh"
 
     # ── 5. Upload SARIF ──────────────────────────────────────────────────────
