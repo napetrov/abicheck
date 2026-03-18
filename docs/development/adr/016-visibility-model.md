@@ -107,15 +107,24 @@ contradiction — `elf_only_mode` records the data source used, while
 **Distinction**: `Visibility.ELF_ONLY` is a per-symbol visibility tier
 indicating "this symbol is exported but not declared in headers."
 `AbiSnapshot.elf_only_mode` is a snapshot-level boolean indicating "this
-entire snapshot was created without headers, so ALL symbols have ELF-only
-provenance." They are related but distinct concepts — the flag describes
-the snapshot's data source, while the enum describes individual symbol
-classification.
+snapshot was created without public header files." They are related but
+distinct concepts — the flag describes the snapshot's data source, while
+the enum describes individual symbol classification.
 
-The `AbiSnapshot.elf_only_mode` boolean indicates whether the snapshot was
-created without headers. When `True`:
+The `AbiSnapshot.elf_only_mode` boolean is set to `True` whenever no
+public headers are provided — including both pure ELF-only mode and
+DWARF-only mode. The per-function `Visibility` assignment depends on
+which data sources are available:
 
-- All functions have `Visibility.ELF_ONLY` provenance
+| Mode | Headers | DWARF | `elf_only_mode` | Per-function Visibility |
+|------|---------|-------|-----------------|------------------------|
+| Full (castxml + ELF) | Yes | Optional | `False` | PUBLIC (if in headers), ELF_ONLY (if not) |
+| DWARF-only | No | Yes | `True` | PUBLIC (DWARF-exported functions intersected with ELF exports) |
+| Pure ELF-only | No | No | `True` | ELF_ONLY (all functions) |
+
+When `elf_only_mode` is `True` and no DWARF data is available:
+
+- All functions have `Visibility.ELF_ONLY`
 - AST-based detectors (24 of 30) are skipped
 - Only L0 (binary metadata) detectors run
 - `FUNC_REMOVED_ELF_ONLY` is used instead of `FUNC_REMOVED`

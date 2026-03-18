@@ -83,11 +83,11 @@ The compatibility layer is a **thin adapter** over the native pipeline:
 The `compat` command uses ABICC's exit code scheme for backward compatibility
 (see ADR-009 for the full exit code design):
 
-| Exit code | Meaning |
-|-----------|---------|
-| 0 | Compatible (NO_CHANGE, COMPATIBLE, COMPATIBLE_WITH_RISK) |
-| 1 | Incompatible (BREAKING; with `-strict`, also COMPATIBLE and API_BREAK) |
-| 2 | Source-level break (API_BREAK) |
+| Exit code | Normal mode | With `-strict` |
+|-----------|-------------|----------------|
+| 0 | NO_CHANGE, COMPATIBLE, COMPATIBLE_WITH_RISK | NO_CHANGE only |
+| 1 | BREAKING | BREAKING, COMPATIBLE, COMPATIBLE_WITH_RISK, API_BREAK |
+| 2 | API_BREAK | (promoted to 1) |
 | 3 | Missing external tool (castxml, gcc) |
 | 4 | File access error |
 | 5 | Header compilation/parsing failure |

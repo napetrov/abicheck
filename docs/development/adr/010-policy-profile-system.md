@@ -92,19 +92,27 @@ deployment concern — it's a functional failure. Therefore RISK → BREAKING.
 
 ### 3. Custom policy files (YAML)
 
-Users can override individual ChangeKind severities via `--policy-file`:
+Users can override individual ChangeKind severities via `--policy-file`.
+The file uses a two-key schema: `base_policy` (optional, defaults to
+`strict_abi`) and `overrides` (mapping of lowercase `ChangeKind.value`
+slugs to severity strings):
 
 ```yaml
-policy:
-  FUNC_REMOVED: break          # BREAKING
-  FUNC_ADDED: ignore           # COMPATIBLE
-  TYPE_FIELD_ADDED: warn        # API_BREAK
-  SYMBOL_VERSION_REQUIRED_ADDED: risk  # COMPATIBLE_WITH_RISK
+base_policy: strict_abi          # optional; defaults to strict_abi
+
+overrides:
+  func_removed: break            # BREAKING
+  func_added: ignore             # COMPATIBLE
+  type_field_added: warn         # API_BREAK
+  symbol_version_required_added: risk  # COMPATIBLE_WITH_RISK
 ```
 
-Custom policy files are applied on top of the base profile (specified via
-`--policy`). This allows partial overrides without redefining the entire
-classification.
+Valid severity values: `break` (BREAKING), `warn` (API_BREAK), `risk`
+(COMPATIBLE_WITH_RISK), `ignore` (COMPATIBLE).
+
+The `overrides` map is applied on top of the base profile's kind sets.
+This allows partial overrides without redefining the entire classification.
+Unknown ChangeKind slugs or severity values are rejected at load time.
 
 ### 4. Integrity constraints
 

@@ -39,8 +39,8 @@ class AbiSnapshot:
     variables: list[Variable]
     types: list[RecordType]
     enums: list[EnumType]
-    typedefs: dict[str, str]
-    constants: dict[str, str]
+    typedefs: dict[str, str]        # default: {}
+    constants: dict[str, str]       # default: {} (populated from header #defines)
     elf: ElfMetadata | None
     pe: PeMetadata | None
     macho: MachoMetadata | None
@@ -132,11 +132,18 @@ abicheck dump lib.so -H include/  > ast.abi.json
 abicheck compare dwarf.abi.json ast.abi.json
 ```
 
-Fields that only one source can populate (e.g., `constants` from castxml,
-`dwarf_advanced` from DWARF) are `null` (for single-value fields) or `[]`
-(for list fields) in the other source's snapshot. For example, a DWARF-only
-snapshot has `constants: null` (no header parsing available) and `pe: null`
-(wrong platform). Consumers should handle both `null` and empty cases.
+Fields that only one source can populate differ in their empty
+representation based on their type:
+
+- **Optional fields** (`T | None`, e.g., `elf`, `pe`, `macho`,
+  `dwarf_advanced`): `null` in JSON when the source doesn't provide them
+- **Collection fields** (`dict` / `list`, e.g., `constants`, `typedefs`,
+  `functions`): empty `{}` or `[]` when the source doesn't populate them
+
+For example, a DWARF-only snapshot has `constants: {}` (empty dict — no
+header parsing to extract `#define` values), `pe: null` (wrong platform),
+and `dwarf_advanced` populated with DWARF-specific data. Consumers should
+handle both `null` and empty-collection cases.
 
 ---
 

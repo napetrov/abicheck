@@ -9,7 +9,7 @@
 ## Methodology
 
 This analysis cross-references:
-1. Existing ADRs (001–008) and their coverage
+1. Existing ADRs (001–008, later extended to 001–019) and their coverage
 2. Implemented code in `abicheck/` (85+ ChangeKinds, policy system, output formats, CLI, etc.)
 3. `pyproject.toml`, CI workflows, GitHub Action, and documentation
 4. `GOALS.md` and `CHANGELOG.md` for stated-but-undocumented decisions
@@ -25,7 +25,7 @@ Each candidate is rated by **urgency**:
 
 **Urgency: HIGH**
 
-**What exists:** The 4-tier verdict system (`NO_CHANGE`, `COMPATIBLE`, `COMPATIBLE_WITH_RISK`, `API_BREAK`, `BREAKING`) and the exit code mapping (`0/2/4` for `compare`, `0/1/2` for `compat`) are implemented in `checker_policy.py` and `cli.py` but have no dedicated ADR.
+**What exists:** The 5-tier verdict system (`NO_CHANGE`, `COMPATIBLE`, `COMPATIBLE_WITH_RISK`, `API_BREAK`, `BREAKING`) and the exit code mapping (`0/2/4` for `compare`, `0/1/2` for `compat`) are implemented in `checker_policy.py` and `cli.py`.
 
 **Key decisions embedded in code:**
 - `COMPATIBLE_WITH_RISK` is a distinct tier (not folded into `COMPATIBLE` or `API_BREAK`)
@@ -117,11 +117,11 @@ Each candidate is rated by **urgency**:
 
 **Urgency: MEDIUM**
 
-**What exists:** `suppression.py` (291 lines) implements YAML-based suppression rules with symbol/type/version/platform/scope filters, RE2-based pattern matching, and expiry dates.
+**What exists:** `suppression.py` (291 lines) implements YAML-based suppression rules with symbol/type/version/platform/scope filters, Python `re`-based pattern matching with fullmatch semantics, and expiry dates.
 
 **Key decisions embedded in code:**
 - YAML format (not JSON or TOML) for suppression files
-- RE2-based regex matching (guaranteed O(N), no ReDoS — stated in docs)
+- Python `re` module with `fullmatch()` semantics (see ADR-013 for ReDoS considerations)
 - Suppression applied before redundancy filtering (ordering matters for verdicts)
 - Both abicheck-native YAML and ABICC skip/whitelist formats supported
 - Suppressed changes tracked in `DiffResult.suppressed_changes` for audit trail
@@ -129,7 +129,7 @@ Each candidate is rated by **urgency**:
 
 **Why it needs an ADR:**
 - Suppression ordering relative to other pipeline stages affects correctness
-- RE2 choice is a security decision that should be formally documented
+- Regex engine choice is a security decision that should be formally documented
 - Dual-format support (YAML + ABICC format) adds maintenance burden — needs justification
 - Expiry dates on suppressions is a novel feature not in reference tools
 
@@ -278,26 +278,29 @@ Each candidate is rated by **urgency**:
 
 ## Summary and Prioritization
 
+> **Note:** This gap analysis was created as a point-in-time snapshot. ADRs
+> 009–019 have since been written and accepted, covering candidates 1–6 and
+> 8–12. Only candidate 7 (MCP Server Integration) remains undocumented.
+
 | # | Candidate ADR | Urgency | Status |
 |---|--------------|---------|--------|
-| 1 | Verdict System and Exit Code Contract | **HIGH** | Not documented |
-| 2 | Policy Profile System | **HIGH** | Not documented |
-| 3 | ABI Change Classification Taxonomy | MEDIUM | Partially in ADR-001 |
-| 4 | ABICC Drop-In Compatibility Layer | MEDIUM | Not documented |
-| 5 | Suppression System Design | MEDIUM | Not documented |
-| 6 | Output Format Strategy | MEDIUM | Not documented |
+| 1 | Verdict System and Exit Code Contract | **HIGH** | **Documented → ADR-009** |
+| 2 | Policy Profile System | **HIGH** | **Documented → ADR-010** |
+| 3 | ABI Change Classification Taxonomy | MEDIUM | **Documented → ADR-011** |
+| 4 | ABICC Drop-In Compatibility Layer | MEDIUM | **Documented → ADR-012** |
+| 5 | Suppression System Design | MEDIUM | **Documented → ADR-013** |
+| 6 | Output Format Strategy | MEDIUM | **Documented → ADR-014** |
 | 7 | MCP Server Integration | LOW | Not documented |
-| 8 | Snapshot Serialization and Schema Versioning | MEDIUM | Not documented |
-| 9 | Three-Tier Visibility Model | MEDIUM | Partially in ADR-003 |
-| 10 | GitHub Action Design | LOW | Not documented |
-| 11 | Cross-Platform Binary Format Support | LOW | Partially in ADR-001 |
-| 12 | Testing Strategy and Parity Validation | LOW | Not documented |
+| 8 | Snapshot Serialization and Schema Versioning | MEDIUM | **Documented → ADR-015** |
+| 9 | Three-Tier Visibility Model | MEDIUM | **Documented → ADR-016** |
+| 10 | GitHub Action Design | LOW | **Documented → ADR-017** |
+| 11 | Cross-Platform Binary Format Support | LOW | **Documented → ADR-018** |
+| 12 | Testing Strategy and Parity Validation | LOW | **Documented → ADR-019** |
 
-### Recommended next steps
+### Remaining gap
 
-1. **Immediately** write ADRs for candidates 1 and 2 — these are user-facing contracts that external consumers depend on
-2. **Soon** write ADRs for candidates 3, 4, 5, 6, and 8 — these document non-obvious design decisions that affect contributors
-3. **Eventually** write ADRs for candidates 7, 9, 10, 11, 12 — these are useful but less likely to cause confusion without documentation
+Only candidate 7 (MCP Server Integration) lacks a formal ADR. This is low
+urgency since MCP is an optional feature with a small user surface.
 
 ### Existing ADR status review
 

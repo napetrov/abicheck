@@ -66,7 +66,7 @@ unreachable platform branches.
 
 - Full pipeline tests: castxml → AST parsing → DWARF extraction → comparison
 - System dependencies: castxml, gcc/g++, cmake
-- Matrix: ubuntu, windows, macos
+- Matrix: ubuntu, windows, macOS
 - 30-minute timeout (some tests compile C/C++ examples)
 - Separate coverage report (`coverage-integration.xml`)
 

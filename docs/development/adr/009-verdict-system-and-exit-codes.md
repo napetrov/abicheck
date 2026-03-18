@@ -72,16 +72,12 @@ equivalent. It captures cases like:
 | **4** | BREAKING | Binary ABI break |
 | **1** | (conditional) | Only when `--fail-on-additions` is set and additions are detected |
 
-Exit codes use powers of 2 to enable bitwise OR composition in multi-library
-scenarios (ADR-002):
+Exit codes use powers of 2 for clear separation of severity tiers.
 
-```text
-compare-release result:
-  libfoo.so → BREAKING (4)
-  libbar.so → API_BREAK (2)
-  libbaz.so → COMPATIBLE (0)
-  Aggregate: 4 | 2 = 6  →  "at least one BREAKING + at least one API_BREAK"
-```
+The `compare-release` command aggregates results across multiple libraries
+using **worst-verdict-wins** logic: the single highest-severity verdict
+across all compared libraries determines the exit code. The exit code
+reflects the worst case, not a bitwise composition of per-library results.
 
 Additional exit codes for `compare-release`:
 - **8**: Missing/unmatched libraries (when `--fail-on-removed-library` is set)

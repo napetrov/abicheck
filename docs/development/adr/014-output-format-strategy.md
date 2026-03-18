@@ -92,16 +92,17 @@ reports can be emailed, archived, or opened offline without broken rendering.
 ### Format selection
 
 ```bash
-abicheck compare old.so new.so                    # Markdown (default)
-abicheck compare old.so new.so --format json       # JSON
-abicheck compare old.so new.so --format sarif      # SARIF
-abicheck compare old.so new.so --format html       # HTML
-abicheck compare old.so new.so -o report.html      # HTML (inferred from extension)
+abicheck compare old.so new.so                              # Markdown (default)
+abicheck compare old.so new.so --format json                 # JSON
+abicheck compare old.so new.so --format sarif                # SARIF
+abicheck compare old.so new.so --format html                 # HTML
+abicheck compare old.so new.so --format html -o report.html  # HTML written to file
 ```
 
-When `--output` / `-o` is specified, format can be inferred from the file
-extension (`.json`, `.sarif`, `.html`). Explicit `--format` overrides
-extension inference.
+The format must be explicitly selected via `--format`. The `-o` / `--output`
+flag only controls where output is written — it does not infer format from
+the file extension. If `--format` is omitted, the default is `markdown`
+regardless of the output filename.
 
 ### Information preservation
 
