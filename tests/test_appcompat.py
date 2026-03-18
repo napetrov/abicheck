@@ -959,6 +959,72 @@ class TestParseElfAppRequirements:
         # Falls back to ver_ndx=1 (unversioned), then _guess_symbol_origin=None → include
         assert "some_func" in reqs.undefined_symbols
 
+    def test_elf_versym_string_ndx(self, tmp_path):
+        """pyelftools returns string ndx like 'VER_NDX_GLOBAL' for special indices."""
+        from elftools.elf.gnuversions import GNUVerSymSection
+        from elftools.elf.sections import SymbolTableSection
+
+        f = tmp_path / "app.elf"
+        f.write_bytes(b"\x7fELF" + b"\x00" * 100)
+
+        mock_versym = MagicMock(spec=GNUVerSymSection)
+        mock_ver_entry = MagicMock()
+        mock_ver_entry.entry = {"ndx": "VER_NDX_GLOBAL"}  # string, not int
+        mock_versym.get_symbol.return_value = mock_ver_entry
+
+        mock_sym = MagicMock()
+        mock_sym.entry.st_shndx = "SHN_UNDEF"
+        mock_sym.name = "my_func"
+        mock_sym.entry.st_info.bind = "STB_GLOBAL"
+
+        mock_dynsym = MagicMock(spec=SymbolTableSection)
+        mock_dynsym.name = ".dynsym"
+        mock_dynsym.iter_symbols.return_value = [mock_sym]
+
+        sections = [mock_versym, mock_dynsym]
+        mock_elf = MagicMock()
+        mock_elf.iter_sections.return_value = sections
+
+        with patch("elftools.elf.elffile.ELFFile", return_value=mock_elf):
+            with patch("abicheck.elf_metadata._guess_symbol_origin", return_value=None):
+                reqs = _parse_elf_app_requirements(f, "libfoo.so.1")
+
+        # String ndx mapped to 1 (unversioned), unknown origin, STB_GLOBAL → included
+        assert "my_func" in reqs.undefined_symbols
+
+    def test_elf_weak_unversioned_excluded(self, tmp_path):
+        """Weak undefined symbols with unknown origin are excluded (optional linker refs)."""
+        from elftools.elf.gnuversions import GNUVerSymSection
+        from elftools.elf.sections import SymbolTableSection
+
+        f = tmp_path / "app.elf"
+        f.write_bytes(b"\x7fELF" + b"\x00" * 100)
+
+        mock_versym = MagicMock(spec=GNUVerSymSection)
+        mock_ver_entry = MagicMock()
+        mock_ver_entry.entry = {"ndx": "VER_NDX_GLOBAL"}
+        mock_versym.get_symbol.return_value = mock_ver_entry
+
+        mock_sym = MagicMock()
+        mock_sym.entry.st_shndx = "SHN_UNDEF"
+        mock_sym.name = "__gmon_start__"
+        mock_sym.entry.st_info.bind = "STB_WEAK"
+
+        mock_dynsym = MagicMock(spec=SymbolTableSection)
+        mock_dynsym.name = ".dynsym"
+        mock_dynsym.iter_symbols.return_value = [mock_sym]
+
+        sections = [mock_versym, mock_dynsym]
+        mock_elf = MagicMock()
+        mock_elf.iter_sections.return_value = sections
+
+        with patch("elftools.elf.elffile.ELFFile", return_value=mock_elf):
+            with patch("abicheck.elf_metadata._guess_symbol_origin", return_value=None):
+                reqs = _parse_elf_app_requirements(f, "libfoo.so.1")
+
+        # STB_WEAK + unknown origin → excluded (optional linker symbol)
+        assert "__gmon_start__" not in reqs.undefined_symbols
+
     def test_elf_no_library_filter(self, tmp_path):
         """When library_soname is empty, all UNDEF symbols are included."""
         from elftools.elf.sections import SymbolTableSection

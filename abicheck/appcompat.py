@@ -184,8 +184,14 @@ def _parse_elf_app_requirements(
                             try:
                                 ver_entry = versym_section.get_symbol(idx)
                                 ver_ndx = ver_entry.entry["ndx"]
-                                # Mask off the hidden bit (bit 15)
-                                ver_ndx = ver_ndx & 0x7FFF
+                                # pyelftools returns str for special indices
+                                # (VER_NDX_LOCAL, VER_NDX_GLOBAL) and int for
+                                # regular version indices.
+                                if isinstance(ver_ndx, str):
+                                    ver_ndx = 0 if ver_ndx == "VER_NDX_LOCAL" else 1
+                                else:
+                                    # Mask off the hidden bit (bit 15)
+                                    ver_ndx = ver_ndx & 0x7FFF
                             except (IndexError, KeyError):
                                 ver_ndx = 1  # treat as unversioned
 
@@ -203,6 +209,11 @@ def _parse_elf_app_requirements(
                                     sym.name, reqs.needed_libs,
                                 )
                                 if origin is not None:
+                                    continue
+                                # Weak undefined symbols with unknown origin are
+                                # typically optional linker/runtime refs (e.g.
+                                # _ITM_*, __gmon_start__) — skip them.
+                                if binding == "STB_WEAK":
                                     continue
 
                         reqs.undefined_symbols.add(sym.name)

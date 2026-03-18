@@ -298,7 +298,6 @@ jobs:
           app-binary: examples/case01_symbol_removal/myapp
           old-library: examples/case01_symbol_removal/libv1.so
           new-library: examples/case01_symbol_removal/libv2.so
-          header: examples/case01_symbol_removal/v1.h
           format: json
           output-file: appcompat-result.json
           install-deps: false
