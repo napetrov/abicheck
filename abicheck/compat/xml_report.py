@@ -380,6 +380,16 @@ def generate_xml_report(
 
     # Source compatibility section (exclude binary-only kinds)
     source_data = _compute_section(changes, old_symbol_count, exclude_binary_only=True)
+    # Count source-level redundant changes (exclude binary-only kinds)
+    redundant_changes = getattr(result, "redundant_changes", []) or []
+    if redundant_changes and redundant_count > 0:
+        source_redundant = sum(
+            1 for c in redundant_changes
+            if kind_str(c) not in BINARY_ONLY_KINDS
+        )
+        source_data["redundant_count"] = source_redundant
+    else:
+        source_data["redundant_count"] = 0
     if verdict_override:
         source_data["verdict"] = verdict_override
     source_el = _build_report_element(

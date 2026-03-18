@@ -117,9 +117,19 @@ class ShowOnlyFilter:
         # Element check
         if self.elements:
             elem_ok = False
-            if "functions" in self.elements and kind_val.startswith("func_"):
+            if "functions" in self.elements and any(
+                kind_val.startswith(p) for p in (
+                    "func_", "param_", "method_", "base_class_",
+                    "template_", "return_pointer_level_",
+                )
+            ) or "functions" in self.elements and kind_val in (
+                "removed_const_overload", "anon_field_changed",
+                "used_reserved_field", "frame_register_changed",
+            ):
                 elem_ok = True
-            if "variables" in self.elements and kind_val.startswith("var_"):
+            if "variables" in self.elements and any(
+                kind_val.startswith(p) for p in ("var_", "constant_")
+            ):
                 elem_ok = True
             if "types" in self.elements and any(kind_val.startswith(p) for p in (
                 "type_", "struct_", "union_", "field_", "typedef_",
@@ -130,8 +140,11 @@ class ShowOnlyFilter:
             if "elf" in self.elements and any(kind_val.startswith(p) for p in (
                 "soname_", "needed_", "symbol_", "rpath_", "runpath_",
                 "ifunc_", "common_", "dwarf_", "calling_convention_",
-                "compat_version_",
-            )):
+                "compat_version_", "visibility_",
+            )) or "elf" in self.elements and kind_val in (
+                "toolchain_flag_drift", "source_level_kind_changed",
+                "value_abi_trait_changed",
+            ):
                 elem_ok = True
             if not elem_ok:
                 return False
@@ -139,15 +152,22 @@ class ShowOnlyFilter:
         # Action check
         if self.actions:
             act_ok = False
-            if "added" in self.actions and kind_val.endswith("_added"):
+            if "added" in self.actions and (
+                kind_val.endswith("_added")
+                or kind_val.endswith("_added_compatible")
+            ):
                 act_ok = True
             if "removed" in self.actions and (
-                kind_val.endswith("_removed") or kind_val.endswith("_deleted")
+                kind_val.endswith("_removed")
+                or kind_val.endswith("_deleted")
+                or kind_val.endswith("_elf_only")
+                or kind_val.endswith("_elf_fallback")
             ):
                 act_ok = True
             if "changed" in self.actions and not (
-                kind_val.endswith("_added") or kind_val.endswith("_removed")
-                or kind_val.endswith("_deleted")
+                kind_val.endswith("_added") or kind_val.endswith("_added_compatible")
+                or kind_val.endswith("_removed") or kind_val.endswith("_deleted")
+                or kind_val.endswith("_elf_only") or kind_val.endswith("_elf_fallback")
             ):
                 act_ok = True
             if not act_ok:
@@ -217,22 +237,32 @@ def to_stat_json(result: DiffResult, indent: int = 2) -> str:
 # Impact summary
 # ---------------------------------------------------------------------------
 
-def _build_impact_table(result: DiffResult) -> list[str]:
-    """Build impact summary table rows."""
+def _build_impact_table(
+    result: DiffResult,
+    displayed_changes: list[Change] | None = None,
+) -> list[str]:
+    """Build impact summary table rows.
+
+    When *displayed_changes* is given (e.g. after ``--show-only`` filtering),
+    only those changes are considered.  Interface counts use unique
+    ``affected_symbols`` names; ``caused_count`` is shown separately to
+    avoid double-counting.
+    """
     from .checker import _ROOT_TYPE_CHANGE_KINDS
 
+    changes = displayed_changes if displayed_changes is not None else list(result.changes)
+
     # Collect root type changes with their impact
-    root_entries: list[tuple[str, str, int]] = []
-    for c in result.changes:
+    root_entries: list[tuple[str, str, int, int]] = []
+    for c in changes:
         if c.kind in _ROOT_TYPE_CHANGE_KINDS:
             affected_count = len(c.affected_symbols) if c.affected_symbols else 0
-            total_affected = affected_count + c.caused_count
-            if total_affected > 0 or c.caused_count > 0:
-                root_entries.append((c.symbol, c.kind.value, total_affected))
+            if affected_count > 0 or c.caused_count > 0:
+                root_entries.append((c.symbol, c.kind.value, affected_count, c.caused_count))
 
     # Count non-type direct changes
     direct_removals = sum(
-        1 for c in result.changes
+        1 for c in changes
         if c.kind.value.endswith("_removed") and c.kind not in _ROOT_TYPE_CHANGE_KINDS
     )
 
@@ -242,14 +272,15 @@ def _build_impact_table(result: DiffResult) -> list[str]:
     lines = [
         "## Impact Summary",
         "",
-        "| Root Change | Kind | Affected Interfaces |",
-        "|-------------|------|-------------------|",
+        "| Root Change | Kind | Affected Interfaces | Derived |",
+        "|-------------|------|---------------------|---------|",
     ]
-    for symbol, kind, count in root_entries:
-        count_str = f"{count} functions" if count > 0 else "—"
-        lines.append(f"| {symbol} | {kind} | {count_str} |")
+    for symbol, kind, iface_count, caused in root_entries:
+        iface_str = f"{iface_count} functions" if iface_count > 0 else "—"
+        caused_str = f"+{caused} collapsed" if caused > 0 else "—"
+        lines.append(f"| {symbol} | {kind} | {iface_str} | {caused_str} |")
     if direct_removals > 0:
-        lines.append(f"| — | removals ({direct_removals}) | direct |")
+        lines.append(f"| — | removals ({direct_removals}) | direct | — |")
     lines.append("")
     return lines
 
@@ -331,7 +362,7 @@ def _to_markdown_leaf(
     _append_suppression_note(lines, result)
 
     if show_impact:
-        lines += _build_impact_table(result)
+        lines += _build_impact_table(result, displayed_changes=changes)
 
     lines += _footer_lines()
     return "\n".join(lines)
@@ -663,7 +694,7 @@ def to_markdown(
 
     if show_impact:
         lines.append("")
-        lines += _build_impact_table(result)
+        lines += _build_impact_table(result, displayed_changes=changes)
 
     lines += _footer_lines()
     return "\n".join(lines)

@@ -2023,30 +2023,45 @@ def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]
     kept: list[Change] = []
     redundant: list[Change] = []
 
-    for c in changes:
-        if c.kind in _ALWAYS_INDEPENDENT_KINDS:
-            kept.append(c)
-            continue
+    # Track root types that have been classified as redundant themselves,
+    # so we don't let downstream changes point at removed roots.
+    removed_roots: set[str] = set()
 
+    # First pass: classify root type changes (some may be redundant
+    # if they reference another root type — nested type propagation).
+    for c in changes:
+        if c.kind not in _ROOT_TYPE_CHANGE_KINDS:
+            continue
+        if c.kind in _DERIVED_CHANGE_KINDS:
+            type_name = _root_type_name(c)
+            other_roots = {k: v for k, v in root_types.items() if k != type_name}
+            matched_root = _match_root_type(c, other_roots)
+            if matched_root is not None:
+                c.caused_by_type = matched_root
+                root_change = root_types[matched_root]
+                root_change.caused_count += 1
+                if root_change.affected_symbols is None:
+                    root_change.affected_symbols = []
+                sym = c.symbol
+                if sym and sym not in root_change.affected_symbols:
+                    root_change.affected_symbols.append(sym)
+                redundant.append(c)
+                # Remove this root from root_types so derived changes
+                # won't point at a root that is itself redundant.
+                removed_roots.add(type_name)
+                continue
+        kept.append(c)
+
+    # Remove redundant roots from the lookup dict
+    for name in removed_roots:
+        root_types.pop(name, None)
+
+    # Second pass: classify non-root changes
+    for c in changes:
         if c.kind in _ROOT_TYPE_CHANGE_KINDS:
-            # A root type change can itself be redundant if it references
-            # another root type (nested type propagation). Check for that.
-            if c.kind in _DERIVED_CHANGE_KINDS:
-                type_name = _root_type_name(c)
-                # Only check against OTHER root types (not itself)
-                other_roots = {k: v for k, v in root_types.items() if k != type_name}
-                matched_root = _match_root_type(c, other_roots)
-                if matched_root is not None:
-                    c.caused_by_type = matched_root
-                    root_change = root_types[matched_root]
-                    root_change.caused_count += 1
-                    if root_change.affected_symbols is None:
-                        root_change.affected_symbols = []
-                    sym = c.symbol
-                    if sym and sym not in root_change.affected_symbols:
-                        root_change.affected_symbols.append(sym)
-                    redundant.append(c)
-                    continue
+            continue  # already handled above
+
+        if c.kind in _ALWAYS_INDEPENDENT_KINDS:
             kept.append(c)
             continue
 
@@ -2054,7 +2069,7 @@ def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]
             kept.append(c)
             continue
 
-        # Check if this change references a root type
+        # Check if this change references a (kept) root type
         matched_root = _match_root_type(c, root_types)
         if matched_root is not None:
             c.caused_by_type = matched_root
@@ -2062,7 +2077,6 @@ def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]
             root_change.caused_count += 1
             if root_change.affected_symbols is None:
                 root_change.affected_symbols = []
-            # Track the derived symbol (use demangled form if possible)
             sym = c.symbol
             if sym and sym not in root_change.affected_symbols:
                 root_change.affected_symbols.append(sym)

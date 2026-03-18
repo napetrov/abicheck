@@ -587,6 +587,20 @@ def _load_suppression_and_policy(
     return suppression, pf
 
 
+def _validate_show_only(
+    ctx: click.Context, param: click.Parameter, value: str | None,
+) -> str | None:
+    """Eagerly validate --show-only tokens so invalid ones surface early."""
+    if value is None:
+        return None
+    from .reporter import ShowOnlyFilter
+    try:
+        ShowOnlyFilter.parse(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+    return value
+
+
 def _render_output(
     fmt: str,
     result: DiffResult,
@@ -889,6 +903,7 @@ def _build_match_map(paths: list[Path]) -> tuple[dict[str, Path], list[str]]:
               help="Disable redundancy filtering and show all changes including those "
                    "derived from root type changes.")
 @click.option("--show-only", "show_only", default=None,
+              callback=_validate_show_only, expose_value=True, is_eager=False,
               help="Comma-separated filter tokens to limit displayed changes. "
                    "Severity: breaking, api-break, risk, compatible. "
                    "Element: functions, variables, types, enums, elf. "
