@@ -628,6 +628,73 @@ class TestDumperVariablesOnlyFallback:
         assert "my_global" in var_names
 
 
+@pytest.mark.skipif(not _HAS_GCC, reason="GCC not available")
+class TestDumperDwarfOnlyExplicit:
+    """Test dump() with dwarf_only=True explicitly."""
+
+    def test_dwarf_only_flag(self, tmp_path: Path) -> None:
+        """dump(dwarf_only=True) forces DWARF mode."""
+        c_src = tmp_path / "lib.c"
+        c_src.write_text("int func_a(int x) { return x + 1; }\n")
+        so_path = tmp_path / "libtest.so"
+        subprocess.run(
+            [_GCC, "-shared", "-fPIC", "-g", "-o", str(so_path), str(c_src)],
+            capture_output=True, check=True, timeout=30,
+        )
+
+        from abicheck.dumper import dump
+
+        snap = dump(so_path=so_path, headers=[], dwarf_only=True)
+        assert snap.elf_only_mode is False
+        func_names = {f.name for f in snap.functions}
+        assert "func_a" in func_names
+
+    def test_dwarf_only_with_headers_warns(self, tmp_path: Path) -> None:
+        """dump(dwarf_only=True, headers=[...]) warns about ignored headers."""
+        c_src = tmp_path / "lib.c"
+        c_src.write_text("int func_b(int x) { return x; }\n")
+        hdr = tmp_path / "lib.h"
+        hdr.write_text("int func_b(int x);\n")
+        so_path = tmp_path / "libtest.so"
+        subprocess.run(
+            [_GCC, "-shared", "-fPIC", "-g", "-o", str(so_path), str(c_src)],
+            capture_output=True, check=True, timeout=30,
+        )
+
+        from abicheck.dumper import dump
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            snap = dump(so_path=so_path, headers=[hdr], dwarf_only=True)
+
+        assert snap.elf_only_mode is False
+        dwarf_only_warnings = [
+            x for x in w
+            if "ignoring provided headers" in str(x.message)
+        ]
+        assert len(dwarf_only_warnings) == 1
+
+    def test_no_dwarf_falls_through(self, tmp_path: Path) -> None:
+        """ELF without DWARF and no headers falls to symbol-only mode."""
+        c_src = tmp_path / "lib.c"
+        c_src.write_text("int func_c(int x) { return x; }\n")
+        so_path = tmp_path / "libtest.so"
+        # Compile WITHOUT -g (no debug info)
+        subprocess.run(
+            [_GCC, "-shared", "-fPIC", "-o", str(so_path), str(c_src)],
+            capture_output=True, check=True, timeout=30,
+        )
+
+        from abicheck.dumper import dump
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            snap = dump(so_path=so_path, headers=[])
+
+        # Should fall back to symbol-only mode
+        assert snap.elf_only_mode is True
+
+
 # ── C++ integration tests (references, inheritance, bitfields, etc.) ────────
 
 _GPP = "g++"
@@ -676,6 +743,13 @@ struct Flags {
     unsigned int reserved : 29;
 };
 
+// Struct with const and volatile fields
+struct SensorData {
+    const int config;
+    volatile int status;
+    int normal;
+};
+
 // Const global
 const int MAGIC = 0xDEAD;
 
@@ -683,13 +757,35 @@ const int MAGIC = 0xDEAD;
 typedef int my_int;
 typedef my_int my_int2;
 
+// Anonymous struct typedef (C-style pattern)
+typedef struct {
+    int x;
+    int y;
+} Point;
+
+// Enum with explicit values
+enum Color { RED = 0, GREEN = 1, BLUE = 2 };
+
+// Anonymous enum typedef
+typedef enum { SMALL = 1, MEDIUM = 2, LARGE = 3 } SizeEnum;
+
 // Reference parameters
 extern "C" int add_ref(const int& a, const int& b) {
     return a + b;
 }
 
+// Rvalue reference parameter
+extern "C" int consume_rval(int&& val) {
+    return val;
+}
+
 // Pointer return
 extern "C" int* get_ptr(int* p) {
+    return p;
+}
+
+// Double pointer
+extern "C" int** get_dptr(int** p) {
     return p;
 }
 
@@ -698,6 +794,11 @@ extern "C" int sum_arr(int arr[], int n) {
     int s = 0;
     for (int i = 0; i < n; i++) s += arr[i];
     return s;
+}
+
+// Function pointer parameter
+extern "C" int apply_fn(int (*fn)(int), int v) {
+    return fn(v);
 }
 
 // Use derived type to ensure it's in DWARF
@@ -719,6 +820,26 @@ extern "C" Flags make_flags(int r, int w, int x) {
 
 // Use typedef
 extern "C" my_int2 convert(my_int2 v) { return v + 1; }
+
+// Use Point (anonymous struct typedef)
+extern "C" Point make_point(int x, int y) {
+    Point p;
+    p.x = x;
+    p.y = y;
+    return p;
+}
+
+// Use enum in signature
+extern "C" Color get_color(int idx) { return (Color)idx; }
+
+// Use SizeEnum
+extern "C" SizeEnum get_size(int s) { return (SizeEnum)s; }
+
+// Use SensorData
+extern "C" SensorData make_sensor(int c, int s) {
+    SensorData d = {c, s, 0};
+    return d;
+}
 """)
         so_path = tmp_path / "libtest.so"
         result = subprocess.run(
@@ -825,8 +946,233 @@ extern "C" my_int2 convert(my_int2 v) { return v + 1; }
         assert snap.version == "2.0.0"
         assert snap.language_profile == "cpp"
 
+    def test_rvalue_reference_param(self, cpp_lib: Path) -> None:
+        """Rvalue reference parameters should be detected."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(cpp_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(cpp_lib)
+        snap = build_snapshot_from_dwarf(
+            cpp_lib, elf_meta, dwarf_meta, dwarf_adv,
+        )
+
+        func_names = {f.name for f in snap.functions}
+        assert "consume_rval" in func_names
+
+    def test_double_pointer_function(self, cpp_lib: Path) -> None:
+        """Functions with double pointer params/return should be extracted."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(cpp_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(cpp_lib)
+        snap = build_snapshot_from_dwarf(
+            cpp_lib, elf_meta, dwarf_meta, dwarf_adv,
+        )
+
+        func_names = {f.name for f in snap.functions}
+        assert "get_dptr" in func_names
+
+    def test_function_pointer_param(self, cpp_lib: Path) -> None:
+        """Functions with function pointer params should be extracted."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(cpp_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(cpp_lib)
+        snap = build_snapshot_from_dwarf(
+            cpp_lib, elf_meta, dwarf_meta, dwarf_adv,
+        )
+
+        func_names = {f.name for f in snap.functions}
+        assert "apply_fn" in func_names
+
+    def test_enum_extracted(self, cpp_lib: Path) -> None:
+        """Enums used in function signatures should be in the snapshot."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(cpp_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(cpp_lib)
+        snap = build_snapshot_from_dwarf(
+            cpp_lib, elf_meta, dwarf_meta, dwarf_adv,
+        )
+
+        enum_names = {e.name for e in snap.enums}
+        assert "Color" in enum_names
+        color_enum = next(e for e in snap.enums if e.name == "Color")
+        member_names = {m.name for m in color_enum.members}
+        assert "RED" in member_names
+        assert "GREEN" in member_names
+        assert "BLUE" in member_names
+
+    def test_anonymous_typedef_struct(self, cpp_lib: Path) -> None:
+        """typedef struct { ... } Point should register under typedef name."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(cpp_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(cpp_lib)
+        snap = build_snapshot_from_dwarf(
+            cpp_lib, elf_meta, dwarf_meta, dwarf_adv,
+        )
+
+        type_names = {t.name for t in snap.types}
+        # Point should be registered as a type (from anonymous struct typedef)
+        assert "Point" in type_names
+
+    def test_anonymous_typedef_enum(self, cpp_lib: Path) -> None:
+        """typedef enum { ... } SizeEnum should register under typedef name."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(cpp_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(cpp_lib)
+        snap = build_snapshot_from_dwarf(
+            cpp_lib, elf_meta, dwarf_meta, dwarf_adv,
+        )
+
+        enum_names = {e.name for e in snap.enums}
+        assert "SizeEnum" in enum_names
+        size_enum = next(e for e in snap.enums if e.name == "SizeEnum")
+        member_names = {m.name for m in size_enum.members}
+        assert "SMALL" in member_names
+        assert "LARGE" in member_names
+
+    def test_volatile_const_fields(self, cpp_lib: Path) -> None:
+        """Fields with const/volatile qualifiers should be extracted."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(cpp_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(cpp_lib)
+        snap = build_snapshot_from_dwarf(
+            cpp_lib, elf_meta, dwarf_meta, dwarf_adv,
+        )
+
+        type_names = {t.name for t in snap.types}
+        assert "SensorData" in type_names
+        sensor = next(t for t in snap.types if t.name == "SensorData")
+        field_map = {f.name: f for f in sensor.fields}
+        assert "config" in field_map
+        assert "status" in field_map
+        assert field_map["config"].is_const is True
+        assert field_map["status"].is_volatile is True
+
 
 # ── CLI tests via CliRunner (in-process for coverage) ────────────────────────
+
+@pytest.mark.skipif(not _HAS_GCC, reason="GCC not available")
+class TestDwarfSnapshotCEnumsTypedefs:
+    """C integration: enums, anonymous typedefs, const vars in pure C."""
+
+    @pytest.fixture()
+    def c_lib(self, tmp_path: Path) -> Path:
+        c_src = tmp_path / "lib.c"
+        c_src.write_text("""\
+/* Anonymous struct typedef */
+typedef struct {
+    int x;
+    int y;
+} CPoint;
+
+/* Named enum */
+enum Direction { NORTH = 0, SOUTH = 1, EAST = 2, WEST = 3 };
+
+/* Anonymous enum typedef */
+typedef enum { OFF = 0, ON = 1 } Switch;
+
+/* Typedef chain */
+typedef int my_int_t;
+typedef my_int_t my_int2_t;
+
+/* Const exported variable */
+const int VERSION_NUM = 42;
+
+/* Exported variable */
+int global_counter = 0;
+
+CPoint make_cpoint(int x, int y) {
+    CPoint p;
+    p.x = x;
+    p.y = y;
+    return p;
+}
+
+enum Direction get_dir(int d) { return (enum Direction)d; }
+Switch get_switch(int s) { return (Switch)s; }
+my_int2_t add_typed(my_int2_t a, my_int2_t b) { return a + b; }
+""")
+        so_path = tmp_path / "libtest.so"
+        subprocess.run(
+            [_GCC, "-shared", "-fPIC", "-g", "-o", str(so_path), str(c_src)],
+            capture_output=True, check=True, timeout=30,
+        )
+        return so_path
+
+    def test_c_enum_extraction(self, c_lib: Path) -> None:
+        """Named C enums should be extracted with members."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(c_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(c_lib)
+        snap = build_snapshot_from_dwarf(c_lib, elf_meta, dwarf_meta, dwarf_adv)
+
+        enum_names = {e.name for e in snap.enums}
+        assert "Direction" in enum_names
+        direction = next(e for e in snap.enums if e.name == "Direction")
+        member_names = {m.name for m in direction.members}
+        assert member_names == {"NORTH", "SOUTH", "EAST", "WEST"}
+
+    def test_c_anonymous_typedef_struct(self, c_lib: Path) -> None:
+        """C anonymous struct typedef should register type as CPoint."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(c_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(c_lib)
+        snap = build_snapshot_from_dwarf(c_lib, elf_meta, dwarf_meta, dwarf_adv)
+
+        type_names = {t.name for t in snap.types}
+        assert "CPoint" in type_names
+
+    def test_c_anonymous_typedef_enum(self, c_lib: Path) -> None:
+        """C anonymous enum typedef should register as Switch."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(c_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(c_lib)
+        snap = build_snapshot_from_dwarf(c_lib, elf_meta, dwarf_meta, dwarf_adv)
+
+        enum_names = {e.name for e in snap.enums}
+        assert "Switch" in enum_names
+
+    def test_c_typedef_chains(self, c_lib: Path) -> None:
+        """Typedef chains should be resolved."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(c_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(c_lib)
+        snap = build_snapshot_from_dwarf(c_lib, elf_meta, dwarf_meta, dwarf_adv)
+
+        assert "my_int_t" in snap.typedefs or "my_int2_t" in snap.typedefs
+
+    def test_c_exported_variable(self, c_lib: Path) -> None:
+        """Exported C variables should appear in snapshot."""
+        from abicheck.dwarf_unified import parse_dwarf
+        from abicheck.elf_metadata import parse_elf_metadata
+
+        elf_meta = parse_elf_metadata(c_lib)
+        dwarf_meta, dwarf_adv = parse_dwarf(c_lib)
+        snap = build_snapshot_from_dwarf(c_lib, elf_meta, dwarf_meta, dwarf_adv)
+
+        var_names = {v.name for v in snap.variables}
+        assert "global_counter" in var_names
+
 
 @pytest.mark.skipif(not _HAS_GCC, reason="GCC not available")
 class TestCLIInProcess:
@@ -881,6 +1227,19 @@ class TestCLIInProcess:
         assert result.exit_code == 0
         # Should produce JSON output (not crash)
         assert '"library"' in result.output or '"functions"' in result.output
+
+    def test_compare_dwarf_only(self, _debug_lib: Path) -> None:
+        """compare --dwarf-only should work via CliRunner."""
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare", str(_debug_lib), str(_debug_lib), "--dwarf-only",
+        ])
+        # Should succeed (comparing same lib to itself)
+        assert result.exit_code == 0
 
 
 # ── _print_data_sources direct call ──────────────────────────────────────────
