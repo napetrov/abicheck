@@ -152,15 +152,17 @@ class TestArm64AbiDocumentedLimits:
         assert not result.changes
 
     def test_arm64_limitation_note_exists(self) -> None:
-        """Documentation regression guard: platforms.md must reference #116."""
+        """Documentation regression guard: platforms.md must keep the ARM64 section."""
         p = Path("docs/reference/platforms.md")
         text = p.read_text(encoding="utf-8")
-        assert "ARM64" in text, "docs/reference/platforms.md must document ARM64"
+        assert "## macOS ARM64 — Known ABI Differences" in text
+        assert "HFA (Homogeneous Floating-point Aggregate" in text
         assert "#116" in text, "docs/reference/platforms.md must reference abicc #116"
 
     def test_install_name_limitation_note_exists(self) -> None:
-        """Documentation regression guard: platforms.md must reference #119."""
+        """Documentation regression guard: #119 text must stay consistent."""
         p = Path("docs/reference/platforms.md")
         text = p.read_text(encoding="utf-8")
-        assert "install_name" in text, "docs/reference/platforms.md must mention install_name"
-        assert "#119" in text, "docs/reference/platforms.md must reference abicc #119"
+        assert "### install_name tracking (#119)" in text
+        assert "emits `SONAME_CHANGED`" in text
+        assert "not surfaced as `soname_changed` yet" not in text
