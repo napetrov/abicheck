@@ -870,6 +870,7 @@ def dump(
     sysroot: Path | None = None,
     nostdinc: bool = False,
     lang: str | None = None,
+    dwarf_only: bool = False,
 ) -> AbiSnapshot:
     """Create an AbiSnapshot from a shared library + headers.
 
@@ -889,6 +890,8 @@ def dump(
         sysroot: Alternative system root directory.
         nostdinc: If True, do not search standard system include paths.
         lang: Force language ("C" or "C++").
+        dwarf_only: If True, force DWARF-only mode even when headers
+            are available (ADR-003).
 
     Returns:
         AbiSnapshot with functions, variables, and types populated.
@@ -900,6 +903,7 @@ def dump(
             so_path, headers, extra_includes or [], version, compiler,
             gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
             sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+            dwarf_only=dwarf_only,
         )
     if fmt == "pe":
         return _dump_pe(
@@ -919,6 +923,7 @@ def dump(
         so_path, headers, extra_includes or [], version, compiler,
         gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
         sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+        dwarf_only=dwarf_only,
     )
 
 
@@ -935,6 +940,7 @@ def _dump_elf(
     sysroot: Path | None = None,
     nostdinc: bool = False,
     lang: str | None = None,
+    dwarf_only: bool = False,
 ) -> AbiSnapshot:
     """ELF-specific dump: pyelftools + DWARF + castxml."""
     exported_dynamic, exported_static = _pyelftools_exported_symbols(so_path)
@@ -972,10 +978,48 @@ def _dump_elf(
         elif lu in ("C++", "CPP"):
             profile_hint = "cpp"
 
+    # ADR-003: Updated fallback chain
+    # --dwarf-only → force DWARF mode regardless of headers
+    # no headers + DWARF available → DWARF-only mode (24/30 detectors)
+    # no headers + no DWARF → symbols-only mode (6/30 detectors)
+    #
+    # Strategy: if DWARF is present, attempt the DWARF build. If it
+    # produces at least one function, use it. Otherwise fall through
+    # to symbol-only mode (the DWARF may contain only CRT stubs).
+    if dwarf_only or (not headers and dwarf_meta.has_dwarf):
+        if dwarf_only and headers:
+            warnings.warn(
+                "--dwarf-only: ignoring provided headers; using DWARF as primary data source.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        from .dwarf_snapshot import build_snapshot_from_dwarf
+        snap = build_snapshot_from_dwarf(
+            so_path,
+            elf_meta,
+            dwarf_meta,
+            dwarf_adv,
+            version=version,
+            language_profile=profile_hint,
+        )
+        # If DWARF produced functions (or was explicitly forced), use it.
+        # Otherwise fall through to symbol-only mode.
+        if snap.functions or snap.variables or dwarf_only:
+            if not headers and not dwarf_only:
+                warnings.warn(
+                    "No headers provided — using DWARF debug info as primary data source. "
+                    "#define constants and default parameter values will be unavailable.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            return snap
+
     if not headers:
+        # No headers, no DWARF → symbol-only fallback (L0 only)
         warnings.warn(
-            "No headers provided — only ELF-exported symbols will be captured; "
-            "type information will be missing.",
+            "No headers provided and no DWARF debug info — only ELF-exported "
+            "symbols will be captured; type information will be missing.",
             UserWarning,
             stacklevel=2,
         )
@@ -1039,8 +1083,16 @@ def _dump_macho(
     sysroot: Path | None = None,
     nostdinc: bool = False,
     lang: str | None = None,
+    dwarf_only: bool = False,
 ) -> AbiSnapshot:
     """Mach-O dump: export table from macholib + castxml header analysis."""
+    if dwarf_only:
+        warnings.warn(
+            "dwarf_only=True is not supported for Mach-O; "
+            "falling back to normal extraction.",
+            UserWarning,
+            stacklevel=2,
+        )
     from .macho_metadata import parse_macho_metadata
 
     macho_meta = parse_macho_metadata(dylib_path)

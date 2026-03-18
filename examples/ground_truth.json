@@ -59,13 +59,12 @@
       "bad_practice": true
     },
     "case06_visibility": {
-      "expected": "COMPATIBLE",
+      "expected": "BREAKING",
       "category": "bad_practice",
       "platforms": [
-        "linux",
-        "macos"
+        "linux"
       ],
-      "abi_break": false,
+      "abi_break": true,
       "api_break": false,
       "bad_practice": true
     },
