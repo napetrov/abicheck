@@ -69,3 +69,13 @@ class TestCallingConvMangling:
 
         result = compare(old, new)
         assert not result.changes
+
+    def test_calling_conv_change_is_symmetric(self) -> None:
+        """Reverse cdecl->stdcall drift should produce the same churn pattern."""
+        old = _snap(functions=[_func("foo", "foo")])
+        new = _snap(functions=[_func("foo", "_foo@4")])
+
+        result = compare(old, new)
+        kinds = {c.kind for c in result.changes}
+
+        assert kinds == {ChangeKind.FUNC_REMOVED, ChangeKind.FUNC_ADDED}
