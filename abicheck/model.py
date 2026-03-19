@@ -110,6 +110,14 @@ class Visibility(str, Enum):
     ELF_ONLY = "elf_only"   # present in ELF symbol table, not in headers
 
 
+class ElfVisibility(str, Enum):
+    """ELF st_other visibility from .dynsym — separate from API-level Visibility."""
+    DEFAULT = "default"       # STV_DEFAULT
+    PROTECTED = "protected"   # STV_PROTECTED
+    HIDDEN = "hidden"         # STV_HIDDEN
+    INTERNAL = "internal"     # STV_INTERNAL
+
+
 class AccessLevel(str, Enum):
     PUBLIC = "public"
     PROTECTED = "protected"
@@ -154,6 +162,7 @@ class Function:
     is_inline: bool = False       # inline keyword / attribute in header
     access: AccessLevel = AccessLevel.PUBLIC  # public/protected/private
     return_pointer_depth: int = 0  # T=0, T*=1, T**=2
+    elf_visibility: ElfVisibility | None = None  # ELF st_other (populated from .dynsym)
 
 
 @dataclass
@@ -166,6 +175,7 @@ class Variable:
     is_const: bool = False         # const-qualified type (write → SIGSEGV)
     value: str | None = None       # initial value (compile-time constant, if known)
     access: AccessLevel = AccessLevel.PUBLIC  # public/protected/private
+    elf_visibility: ElfVisibility | None = None  # ELF st_other (populated from .dynsym)
 
 
 @dataclass

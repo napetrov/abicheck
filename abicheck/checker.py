@@ -529,14 +529,65 @@ def _append_type_size_and_alignment_changes(
         ))
 
 
+_RESERVED_FIELD_RE = re.compile(
+    r"^_{0,2}(reserved|pad|padding|spare|unused|mbz|fill|filler)\d*$",
+    re.IGNORECASE,
+)
+
+
 def _diff_type_fields(name: str, t_old: RecordType, t_new: RecordType) -> list[Change]:
     changes: list[Change] = []
     old_fields = {f.name: f for f in t_old.fields}
     new_fields = {f.name: f for f in t_new.fields}
 
+    # Build index of added fields by offset for reserved-field matching.
+    added_names = {fname for fname in new_fields if fname not in old_fields}
+    added_by_offset: dict[int, TypeField] = {}
+    # Also build an ordered list of added non-reserved fields for fallback
+    # when offset_bits is unavailable (e.g. DWARF-only mode).
+    added_by_type: dict[str, list[TypeField]] = {}
+    for fname in added_names:
+        f = new_fields[fname]
+        if f.offset_bits is not None:
+            added_by_offset[f.offset_bits] = f
+        if not _RESERVED_FIELD_RE.match(fname):
+            added_by_type.setdefault(f.type, []).append(f)
+    # Track which added fields were matched as reserved-field activations
+    # so we skip emitting TYPE_FIELD_ADDED for them.
+    reserved_matched_added: set[str] = set()
+
     for fname, f_old in old_fields.items():
         f_new = new_fields.get(fname)
         if f_new is None:
+            # Check if this is a reserved field put into use
+            if _RESERVED_FIELD_RE.match(fname):
+                candidate: TypeField | None = None
+                # Primary: match by offset + type (when available)
+                if f_old.offset_bits is not None:
+                    c = added_by_offset.get(f_old.offset_bits)
+                    if c is not None and f_old.type == c.type:
+                        candidate = c
+                # Fallback: match by type when offsets unavailable (DWARF-only)
+                if candidate is None and f_old.offset_bits is None:
+                    candidates = added_by_type.get(f_old.type, [])
+                    for c in candidates:
+                        if c.name not in reserved_matched_added:
+                            candidate = c
+                            break
+                if (
+                    candidate is not None
+                    and not _RESERVED_FIELD_RE.match(candidate.name)
+                ):
+                    # Reserved field → real field at same offset/type → COMPATIBLE
+                    changes.append(Change(
+                        kind=ChangeKind.USED_RESERVED_FIELD,
+                        symbol=name,
+                        description=f"Reserved field put into use: {name}::{fname} → {candidate.name}",
+                        old_value=fname,
+                        new_value=candidate.name,
+                    ))
+                    reserved_matched_added.add(candidate.name)
+                    continue
             changes.append(Change(
                 kind=ChangeKind.TYPE_FIELD_REMOVED,
                 symbol=name,
@@ -546,7 +597,7 @@ def _diff_type_fields(name: str, t_old: RecordType, t_new: RecordType) -> list[C
         changes.extend(_diff_type_field_pair(name, fname, f_old, f_new))
 
     for fname in new_fields:
-        if fname not in old_fields:
+        if fname not in old_fields and fname not in reserved_matched_added:
             changes.append(Change(
                 kind=_new_field_change_kind(t_new),
                 symbol=name,
@@ -1104,6 +1155,9 @@ def _diff_field_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         added_by_sig = {(f.offset_bits, f.type): f for f in added if f.offset_bits is not None}
         for f_old in removed:
             if f_old.offset_bits is None:
+                continue
+            # Skip reserved-field renames — handled by USED_RESERVED_FIELD
+            if _RESERVED_FIELD_RE.match(f_old.name):
                 continue
             sig = (f_old.offset_bits, f_old.type)
             f_new = added_by_sig.get(sig)
@@ -1827,6 +1881,22 @@ def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]
             old_value=s_old.binding.value,
             new_value=s_new.binding.value,
         ))
+
+    # ELF st_other visibility transition (DEFAULT↔PROTECTED↔HIDDEN↔INTERNAL)
+    if s_old.visibility != s_new.visibility:
+        old_vis = s_old.visibility
+        new_vis = s_new.visibility
+        # HIDDEN/INTERNAL transitions are already caught by FUNC_VISIBILITY_CHANGED
+        # or FUNC_REMOVED (symbol disappears from exported set). Only emit for
+        # transitions among exported visibilities (DEFAULT↔PROTECTED).
+        if old_vis not in ("hidden", "internal") and new_vis not in ("hidden", "internal"):
+            changes.append(Change(
+                kind=ChangeKind.SYMBOL_ELF_VISIBILITY_CHANGED,
+                symbol=sym_name,
+                description=f"ELF visibility changed: {sym_name} ({old_vis} → {new_vis})",
+                old_value=old_vis,
+                new_value=new_vis,
+            ))
 
     if (
         s_old.size > 0
@@ -2642,6 +2712,86 @@ def _compute_confidence(
     return tiers, confidence, warnings
 
 
+# ChangeKinds that should be downgraded when the type is opaque in both snapshots.
+_OPAQUE_DOWNGRADEABLE: frozenset[ChangeKind] = frozenset({
+    ChangeKind.TYPE_SIZE_CHANGED,
+    ChangeKind.TYPE_FIELD_ADDED,
+    ChangeKind.TYPE_FIELD_REMOVED,
+    ChangeKind.TYPE_FIELD_OFFSET_CHANGED,
+    ChangeKind.TYPE_FIELD_TYPE_CHANGED,
+    ChangeKind.TYPE_ALIGNMENT_CHANGED,
+    ChangeKind.STRUCT_SIZE_CHANGED,
+    ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
+    ChangeKind.STRUCT_FIELD_REMOVED,
+    ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+    ChangeKind.STRUCT_ALIGNMENT_CHANGED,
+})
+
+
+def _downgrade_opaque_struct_changes(
+    changes: list[Change],
+    old: AbiSnapshot,
+    new: AbiSnapshot,
+) -> list[Change]:
+    """Downgrade BREAKING changes for types that are opaque in both snapshots.
+
+    If a type is forward-declared only (is_opaque=True) in both old and new
+    snapshots, consumers cannot allocate, embed, or sizeof the type — they
+    only hold pointers. Layout changes detected via DWARF are invisible to
+    consumers and should be classified as compatible field additions.
+    """
+    # Build set of types that are opaque in both snapshots.
+    old_opaque = {t.name for t in old.types if t.is_opaque}
+    new_opaque = {t.name for t in new.types if t.is_opaque}
+    # Also check: type exists in one but not the other (forward-decl only in header,
+    # full definition only in DWARF) — treat as opaque if the header-level type
+    # doesn't exist OR is opaque.
+    old_type_names = {t.name for t in old.types}
+    new_type_names = {t.name for t in new.types}
+
+    # A type is "opaque to consumers" if:
+    # - It's opaque in both old and new, OR
+    # - It doesn't appear in the header-level type list at all (DWARF-only)
+    #   AND it's not embedded by-value in any non-opaque exported struct
+    opaque_types = (old_opaque & new_opaque) | (
+        (old_opaque - new_type_names) | (new_opaque - old_type_names)
+    )
+
+    if not opaque_types:
+        return changes
+
+    # Check that opaque types are not embedded by-value in non-opaque structs
+    non_opaque_old = {t.name: t for t in old.types if not t.is_opaque}
+    non_opaque_new = {t.name: t for t in new.types if not t.is_opaque}
+    embedded_types: set[str] = set()
+    for type_map in (non_opaque_old, non_opaque_new):
+        for t in type_map.values():
+            for f in t.fields:
+                # If a field type matches an opaque type name (not as pointer),
+                # the type is embedded by-value and layout changes matter
+                ftype = f.type.rstrip(" *&")
+                if ftype in opaque_types and "*" not in f.type:
+                    embedded_types.add(ftype)
+
+    truly_opaque = opaque_types - embedded_types
+    if not truly_opaque:
+        return changes
+
+    result: list[Change] = []
+    for c in changes:
+        if c.kind in _OPAQUE_DOWNGRADEABLE and c.symbol in truly_opaque:
+            # Downgrade: replace with TYPE_FIELD_ADDED_COMPATIBLE
+            result.append(Change(
+                kind=ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
+                symbol=c.symbol,
+                description=f"(opaque struct) {c.description}",
+                old_value=c.old_value,
+                new_value=c.new_value,
+                source_location=c.source_location,
+            ))
+        else:
+            result.append(c)
+    return result
 def compare(
     old: AbiSnapshot,
     new: AbiSnapshot,
@@ -2875,13 +3025,11 @@ def _diff_type_kind_changes(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 def _diff_reserved_fields(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect reserved fields put into use (ABICC: Used_Reserved_Field).
 
-    Heuristic: a field whose name matches common reserved patterns
-    (e.g. __reserved, _reserved, reserved, __pad, _pad) in old version
-    is renamed to a non-reserved name in new version at the same offset.
+    NOTE: Primary detection is now integrated into _diff_type_fields() which
+    suppresses TYPE_FIELD_REMOVED + TYPE_FIELD_ADDED for reserved-field renames.
+    This standalone detector is kept for backward compatibility but now requires
+    both offset AND type match to avoid false positives (M5 fix).
     """
-    import re
-
-    _RESERVED_RE = re.compile(r"^_{0,2}(reserved|pad|padding|spare|unused)\d*$", re.IGNORECASE)  # pylint: disable=invalid-name
     changes: list[Change] = []
     old_map = {t.name: t for t in old.types if not t.is_union}
     new_map = {t.name: t for t in new.types if not t.is_union}
@@ -2894,21 +3042,36 @@ def _diff_reserved_fields(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         old_names = {f.name for f in t_old.fields}
         new_names = {f.name for f in t_new.fields}
 
-        removed = [f for f in t_old.fields if f.name not in new_names and _RESERVED_RE.match(f.name)]
-        added = [f for f in t_new.fields if f.name not in old_names and not _RESERVED_RE.match(f.name)]
+        removed = [f for f in t_old.fields if f.name not in new_names and _RESERVED_FIELD_RE.match(f.name)]
+        added = [f for f in t_new.fields if f.name not in old_names and not _RESERVED_FIELD_RE.match(f.name)]
 
         added_by_offset = {f.offset_bits: f for f in added if f.offset_bits is not None}
+        # Fallback index by type for DWARF-only mode (no offsets)
+        added_by_type: dict[str, list[TypeField]] = {}
+        for f in added:
+            added_by_type.setdefault(f.type, []).append(f)
+        matched: set[str] = set()
         for f_old in removed:
-            if f_old.offset_bits is None:
-                continue
-            f_new = added_by_offset.get(f_old.offset_bits)
-            if f_new is not None:
+            candidate = None
+            # Primary: match by offset + type
+            if f_old.offset_bits is not None:
+                c = added_by_offset.get(f_old.offset_bits)
+                if c is not None and f_old.type == c.type:
+                    candidate = c
+            # Fallback: match by type when offsets unavailable (DWARF-only)
+            if candidate is None and f_old.offset_bits is None:
+                for c in added_by_type.get(f_old.type, []):
+                    if c.name not in matched:
+                        candidate = c
+                        break
+            if candidate is not None:
+                matched.add(candidate.name)
                 changes.append(Change(
                     kind=ChangeKind.USED_RESERVED_FIELD,
                     symbol=name,
-                    description=f"Reserved field put into use: {name}::{f_old.name} → {f_new.name}",
+                    description=f"Reserved field put into use: {name}::{f_old.name} → {candidate.name}",
                     old_value=f_old.name,
-                    new_value=f_new.name,
+                    new_value=candidate.name,
                 ))
     return changes
 

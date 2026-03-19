@@ -24,6 +24,7 @@ from .model import (
     AbiSnapshot,
     AccessLevel,
     DependencyInfo,
+    ElfVisibility,
     EnumMember,
     EnumType,
     Function,
@@ -306,6 +307,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             is_extern_c=f.get("is_extern_c", False),
             access=AccessLevel(f.get("access", "public")),
             return_pointer_depth=f.get("return_pointer_depth", 0),
+            elf_visibility=ElfVisibility(f["elf_visibility"]) if f.get("elf_visibility") else None,
         )
         for f in d.get("functions", [])
     ]
@@ -317,6 +319,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             is_const=v.get("is_const", False),
             value=v.get("value"),
             access=AccessLevel(v.get("access", "public")),
+            elf_visibility=ElfVisibility(v["elf_visibility"]) if v.get("elf_visibility") else None,
         )
         for v in d.get("variables", [])
     ]

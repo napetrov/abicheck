@@ -32,6 +32,7 @@ from defusedxml import ElementTree as DefusedET
 from .model import (
     AbiSnapshot,
     AccessLevel,
+    ElfVisibility,
     EnumMember,
     EnumType,
     Function,
@@ -990,6 +991,29 @@ def dump(
     )
 
 
+_ELF_VIS_MAP: dict[str, ElfVisibility] = {
+    "default": ElfVisibility.DEFAULT,
+    "protected": ElfVisibility.PROTECTED,
+    "hidden": ElfVisibility.HIDDEN,
+    "internal": ElfVisibility.INTERNAL,
+}
+
+
+def _populate_elf_visibility(snap: AbiSnapshot) -> None:
+    """Populate elf_visibility on Function/Variable from ELF metadata symbols."""
+    if snap.elf is None:
+        return
+    sym_map = snap.elf.symbol_map
+    for func in snap.functions:
+        elf_sym = sym_map.get(func.mangled)
+        if elf_sym is not None:
+            func.elf_visibility = _ELF_VIS_MAP.get(elf_sym.visibility)
+    for var in snap.variables:
+        elf_sym = sym_map.get(var.mangled)
+        if elf_sym is not None:
+            var.elf_visibility = _ELF_VIS_MAP.get(elf_sym.visibility)
+
+
 def _dump_elf(
     so_path: Path,
     headers: list[Path],
@@ -1020,6 +1044,7 @@ def _dump_elf(
     # Fall back to pyelftools set when elf_meta is unavailable.
     exported_dynamic_funcs: set[str] = exported_dynamic  # fallback
     exported_dynamic_objects: set[str] = set()
+    exported_dynamic_tls: set[str] = set()
     if elf_meta is not None and elf_meta.symbols:
         exported_dynamic_funcs = {
             sym.name for sym in elf_meta.symbols
@@ -1029,8 +1054,12 @@ def _dump_elf(
             sym.name for sym in elf_meta.symbols
             if sym.sym_type == SymbolType.OBJECT
         }
+        exported_dynamic_tls = {
+            sym.name for sym in elf_meta.symbols
+            if sym.sym_type == SymbolType.TLS
+        }
         # Full set for CastxmlParser: determines PUBLIC vs ELF_ONLY visibility
-        exported_dynamic = exported_dynamic_funcs | exported_dynamic_objects
+        exported_dynamic = exported_dynamic_funcs | exported_dynamic_objects | exported_dynamic_tls
     dwarf_meta, dwarf_adv = parse_dwarf(so_path)
 
     profile_hint: str | None = None
@@ -1076,6 +1105,7 @@ def _dump_elf(
                     UserWarning,
                     stacklevel=2,
                 )
+            _populate_elf_visibility(snap)
             return snap
 
     if not headers:
@@ -1100,6 +1130,15 @@ def _dump_elf(
                 )
                 for sym in sorted(exported_dynamic_funcs)
             ],
+            variables=[
+                Variable(
+                    name=sym,
+                    mangled=sym,
+                    type="?",
+                    visibility=Visibility.ELF_ONLY,
+                )
+                for sym in sorted(exported_dynamic_objects | exported_dynamic_tls)
+            ],
             elf=elf_meta,
             dwarf=dwarf_meta,
             dwarf_advanced=dwarf_adv,
@@ -1107,6 +1146,7 @@ def _dump_elf(
             platform="elf",
             language_profile=profile_hint,
         )
+        _populate_elf_visibility(snapshot)
         return snapshot
 
     xml_root = _castxml_dump(
@@ -1130,6 +1170,7 @@ def _dump_elf(
         platform="elf",
         language_profile=profile_hint,
     )
+    _populate_elf_visibility(snapshot)
     return snapshot
 
 

@@ -42,6 +42,7 @@ class ChangeKind(str, Enum):
     # Function / variable changes
     FUNC_REMOVED = "func_removed"  # public symbol removed → BREAKING
     FUNC_REMOVED_ELF_ONLY = "func_removed_elf_only"  # ELF-only symbol removed (visibility cleanup, not hard break)
+    FUNC_REMOVED_FROM_BINARY = "func_removed_from_binary"  # header-declared function disappeared from .dynsym → BREAKING
     FUNC_ADDED = "func_added"  # new public symbol → COMPATIBLE
     FUNC_RETURN_CHANGED = "func_return_changed"  # return type changed → BREAKING
     FUNC_PARAMS_CHANGED = "func_params_changed"  # parameter types changed → BREAKING
@@ -271,6 +272,9 @@ class ChangeKind(str, Enum):
     # sentinels only and are never exported as ELF symbols — NOT an ABI break.
     TYPEDEF_VERSION_SENTINEL = "typedef_version_sentinel"
 
+    # ── ELF st_other visibility transitions ────────────────────────────────────
+    SYMBOL_ELF_VISIBILITY_CHANGED = "symbol_elf_visibility_changed"  # DEFAULT→PROTECTED etc.
+
     # ── Symbol origin detection ────────────────────────────────────────────────
     # Emitted when a symbol that changed (removed, type-changed, etc.) is detected
     # as likely originating from a dependency library (libstdc++, libgcc, libc, …)
@@ -308,6 +312,7 @@ BREAKING_KINDS = {
     # ELF-only function removed in no-header mode is treated as
     # potential visibility cleanup, not hard ABI break.
     # (see checker._diff_functions + AbiSnapshot.elf_only_mode provenance)
+    ChangeKind.FUNC_REMOVED_FROM_BINARY,  # mixed-mode: header-declared but gone from .dynsym
     ChangeKind.FUNC_RETURN_CHANGED,
     ChangeKind.FUNC_PARAMS_CHANGED,
     ChangeKind.FUNC_VIRTUAL_ADDED,
@@ -455,6 +460,7 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
 
     # Version-stamped typedef sentinels: compile-time only, never exported as ELF symbols
     ChangeKind.TYPEDEF_VERSION_SENTINEL,
+
 
     # ELF symbol visibility changed default→protected.
     # Symbol is still exported from DSO; existing binaries link and resolve
@@ -669,6 +675,7 @@ IMPACT_TEXT: dict[ChangeKind, str] = {
     # Function/variable
     ChangeKind.FUNC_REMOVED: "Old binaries call a symbol that no longer exists; dynamic linker will refuse to load or crash at call site.",
     ChangeKind.FUNC_REMOVED_ELF_ONLY: "Symbol removed from ELF but was not in public headers; low risk unless dlsym() callers depend on it.",
+    ChangeKind.FUNC_REMOVED_FROM_BINARY: "Header-declared function disappeared from .dynsym; consumers' PLT entries will fail to resolve at load time.",
     ChangeKind.FUNC_ADDED: "New function available; existing binaries are unaffected.",
     ChangeKind.FUNC_RETURN_CHANGED: "Callers expect the old return type layout in registers/stack; misinterpretation causes data corruption.",
     ChangeKind.FUNC_PARAMS_CHANGED: "Callers push arguments with the old layout; callee reads wrong data from stack/registers.",
@@ -743,6 +750,10 @@ IMPACT_TEXT: dict[ChangeKind, str] = {
     ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED: "Requires a newer symbol version than old system provides; may fail to load on older systems.",
     ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT: "New version requirement added but older than existing max; safe on current systems.",
     ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED: "Version requirement dropped; broadens compatibility.",
+    ChangeKind.SYMBOL_ELF_VISIBILITY_CHANGED: (
+        "ELF symbol visibility (st_other) changed (e.g. DEFAULT→PROTECTED). "
+        "Symbol is still exported but interposition via LD_PRELOAD may stop working."
+    ),
     ChangeKind.SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED: (
         "Symbol originates from a dependency library (e.g. libstdc++, libgcc) that leaked "
         "into this library's public ABI surface. The symbol changed between versions — "
