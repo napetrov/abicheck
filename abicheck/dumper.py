@@ -220,22 +220,33 @@ def _cache_path(key: str) -> Path:
     return cache_dir / f"{key}.xml"
 
 
-import re as _re
-
 # C++ file extensions that unambiguously indicate C++ content.
 _CPP_EXTENSIONS = frozenset({".hpp", ".hxx", ".hh", ".h++", ".tpp"})
 
 # Structural C++ patterns — match actual declarations, not keywords in comments.
 # These are compiled regexes applied line-by-line to non-comment lines.
 _CPP_PATTERNS = [
-    _re.compile(rb"^\s*class\s+\w+\s*[:{]"),        # class Foo { / class Foo :
-    _re.compile(rb"^\s*namespace\s+\w+"),             # namespace ns
-    _re.compile(rb"^\s*template\s*<"),                # template<...>
-    _re.compile(rb"^\s*using\s+\w+\s*="),             # using alias = ...
-    _re.compile(rb'^\s*extern\s+"C"'),                # extern "C" — actually C, but needs C++ compiler
-    _re.compile(rb"^\s*public\s*:"),                   # public:
-    _re.compile(rb"^\s*private\s*:"),                  # private:
-    _re.compile(rb"^\s*protected\s*:"),                # protected:
+    re.compile(rb"^\s*class\s+\w+\s*[:{]"),          # class Foo { / class Foo :
+    re.compile(rb"^\s*namespace\s+\w+"),               # namespace ns
+    re.compile(rb"^\s*template\s*<"),                  # template<...>
+    re.compile(rb"^\s*using\s+\w+\s*="),               # using alias = ...
+    re.compile(rb'^\s*extern\s+"C"'),                  # extern "C" — needs C++ compiler
+    re.compile(rb"^\s*public\s*:"),                     # public:
+    re.compile(rb"^\s*private\s*:"),                    # private:
+    re.compile(rb"^\s*protected\s*:"),                  # protected:
+    # C++ keywords that can appear anywhere in a line (not just at start)
+    re.compile(rb"\bvirtual\s+"),                       # virtual member functions
+    re.compile(rb"(?<!\w)~\w+\s*\("),                     # destructor ~Foo()
+    re.compile(rb":\s*public\s+\w+"),                   # struct Derived : public Base
+    re.compile(rb":\s*private\s+\w+"),                  # : private Base
+    re.compile(rb":\s*protected\s+\w+"),                # : protected Base
+    re.compile(rb"\bclass\s+\w+\s*[{;]"),              # class anywhere (forward decl or def)
+    re.compile(rb"\bconst\s*&"),                        # const reference (C++ idiom)
+    re.compile(rb"\bstatic_cast\b"),                    # C++ cast
+    re.compile(rb"\bconstexpr\b"),                      # C++ constexpr
+    re.compile(rb"\bnullptr\b"),                        # C++ nullptr
+    re.compile(rb"\bnoexcept\b"),                       # C++ noexcept
+    re.compile(rb"\boverride\b"),                           # C++ override specifier
 ]
 
 
@@ -253,7 +264,7 @@ def _detect_cpp_headers(header_paths: list[Path]) -> bool:
         except OSError:
             continue
         # Strip C-style block comments to reduce false positives
-        content = _re.sub(rb"/\*.*?\*/", b"", content, flags=_re.DOTALL)
+        content = re.sub(rb"/\*.*?\*/", b"", content, flags=re.DOTALL)
         for line in content.split(b"\n"):
             # Skip C++ line comments
             stripped = line.split(b"//")[0]
@@ -337,8 +348,7 @@ def _castxml_dump(
     # - .hpp/.hxx/.hh extensions → C++
     # - Structural C++ syntax (class/namespace/template declarations) → C++
     # - Otherwise → C (prevents castxml from applying C++ mangling to C functions)
-    force_cpp = lang and lang.upper() == "C++"
-    force_c = lang and lang.upper() == "C"
+    force_cpp = lang and lang.upper() in ("C++", "CPP")
     if not lang:
         force_cpp = _detect_cpp_headers(headers)
     agg_ext = ".hpp" if force_cpp else ".h"

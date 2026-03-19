@@ -1074,8 +1074,10 @@ def compare_cmd(
     # --strict-elf-only: inject a PolicyFile override that upgrades
     # FUNC_REMOVED_ELF_ONLY from COMPATIBLE to BREAKING (FIX-E).
     if strict_elf_only:
-        from .checker_policy import ChangeKind as _CK, Verdict as _V
+        from .checker_policy import ChangeKind as _CK
+        from .checker_policy import Verdict as _V
         from .policy_file import PolicyFile as _PF
+
         strict_override = _PF(overrides={_CK.FUNC_REMOVED_ELF_ONLY: _V.BREAKING})
         if pf is not None:
             # Merge: user policy file overrides take precedence, but we inject
