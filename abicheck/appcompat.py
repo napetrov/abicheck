@@ -475,6 +475,10 @@ def check_appcompat(
     *,
     headers: list[Path] | None = None,
     includes: list[Path] | None = None,
+    old_headers: list[Path] | None = None,
+    new_headers: list[Path] | None = None,
+    old_includes: list[Path] | None = None,
+    new_includes: list[Path] | None = None,
     old_version: str = "old",
     new_version: str = "new",
     lang: str = "c++",
@@ -499,18 +503,24 @@ def check_appcompat(
     # 2. Run standard library comparison
     from .dumper import dump
 
+    # Resolve per-side headers: old_headers/new_headers override shared headers
+    _old_h = old_headers if old_headers is not None else (headers or [])
+    _new_h = new_headers if new_headers is not None else (headers or [])
+    _old_inc = old_includes if old_includes is not None else (includes or [])
+    _new_inc = new_includes if new_includes is not None else (includes or [])
+
     old_snap = dump(
         so_path=old_lib_path,
-        headers=headers or [],
-        extra_includes=includes or [],
+        headers=_old_h,
+        extra_includes=_old_inc,
         version=old_version,
         compiler="c++" if lang == "c++" else "cc",
         lang="c" if lang == "c" else None,
     )
     new_snap = dump(
         so_path=new_lib_path,
-        headers=headers or [],
-        extra_includes=includes or [],
+        headers=_new_h,
+        extra_includes=_new_inc,
         version=new_version,
         compiler="c++" if lang == "c++" else "cc",
         lang="c" if lang == "c" else None,

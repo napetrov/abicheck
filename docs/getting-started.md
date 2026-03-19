@@ -207,7 +207,7 @@ See [Application Compatibility](user-guide/appcompat.md) for the full reference.
 
 | Exit code | Verdict | Meaning |
 |-----------|---------|---------|
-| `0` | `NO_CHANGE` / `COMPATIBLE` | Safe — no breaking changes |
+| `0` | `NO_CHANGE` / `COMPATIBLE` / `COMPATIBLE_WITH_RISK` | Safe — no binary ABI break |
 | `1` | — | Tool/runtime error |
 | `2` | `API_BREAK` | Source-level API break (binary still works) |
 | `4` | `BREAKING` | Binary ABI break |

@@ -1009,24 +1009,25 @@ def compare_cmd(
 
     \b
     Examples:
+    \b
       # One-liner: each version has its own header (primary flow)
       abicheck compare libfoo.so.1 libfoo.so.2 \\
         --old-header include/v1/foo.h --new-header include/v2/foo.h
-
+    \b
       # Shorthand: -H when the same header applies to both versions
       abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
-
+    \b
       # With version labels and SARIF output
       abicheck compare libfoo.so.1 libfoo.so.2 \\
         --old-header v1/foo.h --new-header v2/foo.h \\
         --old-version 1.0 --new-version 2.0 --format sarif -o abi.sarif
-
+    \b
       # Compare saved snapshot vs current build (mixed mode)
       abicheck compare baseline.json ./build/libfoo.so --new-header include/foo.h
-
+    \b
       # Compare two pre-dumped snapshots (existing workflow)
       abicheck compare libfoo-1.0.json libfoo-2.0.json
-
+    \b
       # Policy and suppression
       abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h --policy sdk_vendor
       abicheck compare old.json new.json --suppress suppressions.yaml
@@ -1147,13 +1148,26 @@ def compare_cmd(
 # ── Dump options ──────────────────────────────────────────────────────────────
 @click.option("-H", "--header", "headers", multiple=True,
               type=click.Path(path_type=Path),
-              help="Public header file or directory for library ABI extraction.")
+              help="Public header file or directory for library ABI extraction "
+                   "(applied to both sides).")
 @click.option("-I", "--include", "includes", multiple=True,
               type=click.Path(path_type=Path),
-              help="Extra include directory for castxml.")
+              help="Extra include directory for castxml (applied to both sides).")
 @click.option("--lang", default="c++", show_default=True,
               type=click.Choice(["c++", "c"], case_sensitive=False),
               help="Language mode for castxml.")
+@click.option("--old-header", "old_headers_only", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Public header for old library only (overrides -H for old).")
+@click.option("--new-header", "new_headers_only", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Public header for new library only (overrides -H for new).")
+@click.option("--old-include", "old_includes_only", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Include dir for old library only (overrides -I for old).")
+@click.option("--new-include", "new_includes_only", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Include dir for new library only (overrides -I for new).")
 @click.option("--old-version", "old_version", default="old", show_default=True)
 @click.option("--new-version", "new_version", default="new", show_default=True)
 # ── Output options ────────────────────────────────────────────────────────────
@@ -1181,6 +1195,10 @@ def appcompat_cmd(
     headers: tuple[Path, ...],
     includes: tuple[Path, ...],
     lang: str,
+    old_headers_only: tuple[Path, ...],
+    new_headers_only: tuple[Path, ...],
+    old_includes_only: tuple[Path, ...],
+    new_includes_only: tuple[Path, ...],
     old_version: str,
     new_version: str,
     fmt: str,
@@ -1233,6 +1251,25 @@ def appcompat_cmd(
             "Provide OLD_LIB and NEW_LIB arguments, or use --check-against for weak mode."
         )
 
+    # Reject per-side flags that only apply to full comparison mode
+    if weak_mode or list_symbols:
+        _rejected: list[str] = []
+        if old_headers_only:
+            _rejected.append("--old-header")
+        if new_headers_only:
+            _rejected.append("--new-header")
+        if old_includes_only:
+            _rejected.append("--old-include")
+        if new_includes_only:
+            _rejected.append("--new-include")
+        if _rejected:
+            mode_label = "--check-against" if weak_mode else "--list-required-symbols"
+            raise click.UsageError(
+                f"{', '.join(_rejected)} cannot be used with {mode_label}. "
+                f"Per-side header/include flags are only supported in full "
+                f"comparison mode (OLD_LIB NEW_LIB)."
+            )
+
     # --list-required-symbols: just list and exit
     if list_symbols:
         target_lib = check_against_lib if weak_mode else (old_lib or new_lib)
@@ -1271,11 +1308,19 @@ def appcompat_cmd(
     else:
         assert old_lib is not None and new_lib is not None
         suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
-        resolved_headers = _expand_header_inputs(list(headers)) if headers else []
+        old_h, new_h, old_inc, new_inc = _resolve_per_side_options(
+            headers, includes,
+            old_headers_only, new_headers_only,
+            old_includes_only, new_includes_only,
+        )
+        resolved_old_h = _expand_header_inputs(old_h) if old_h else []
+        resolved_new_h = _expand_header_inputs(new_h) if new_h else []
         result = check_appcompat(
             app_path, old_lib, new_lib,
-            headers=resolved_headers,
-            includes=list(includes),
+            old_headers=resolved_old_h,
+            new_headers=resolved_new_h,
+            old_includes=old_inc,
+            new_includes=new_inc,
             old_version=old_version,
             new_version=new_version,
             lang=lang,
