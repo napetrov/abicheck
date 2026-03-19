@@ -54,7 +54,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .checker_policy import VALID_BASE_POLICIES, BREAKING_KINDS, ChangeKind, Verdict, compute_verdict
+from .checker_policy import (
+    BREAKING_KINDS,
+    VALID_BASE_POLICIES,
+    ChangeKind,
+    Verdict,
+    compute_verdict,
+)
 
 log = logging.getLogger(__name__)
 

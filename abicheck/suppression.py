@@ -356,7 +356,7 @@ class SuppressionAudit:
     """Result of auditing suppression rules against detected changes."""
     stale_rules: list[Suppression]
     """Rules that matched zero changes (likely stale or misconfigured)."""
-    high_risk_matches: list[tuple[Suppression, "Change"]]
+    high_risk_matches: list[tuple[Suppression, Change]]
     """Suppressions that matched BREAKING changes (high risk — should require reason)."""
     expired_rules: list[Suppression]
     """Rules past their expiry date."""

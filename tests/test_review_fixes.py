@@ -11,15 +11,10 @@ Covers:
 from __future__ import annotations
 
 import copy
-import textwrap
 from datetime import date, timedelta
-from pathlib import Path
-from unittest.mock import MagicMock
 
-import pytest
-
-from abicheck.checker import Change, ChangeKind, Verdict, compare
-from abicheck.checker_policy import Confidence
+from abicheck.checker import Change, ChangeKind, compare
+from abicheck.checker_policy import Confidence, Verdict
 from abicheck.model import (
     AbiSnapshot,
     Function,
@@ -30,7 +25,6 @@ from abicheck.model import (
     canonicalize_type_name,
 )
 from abicheck.policy_file import PolicyFile
-
 
 # ─── canonicalize_type_name ──────────────────────────────────────────────────
 
@@ -272,6 +266,72 @@ class TestSuppressionAudit:
         summary = audit.summary()
         assert "stale" in summary.lower() or "matched nothing" in summary.lower()
 
+    def test_audit_summary_no_issues(self):
+        from abicheck.suppression import Suppression, SuppressionList
+
+        slist = SuppressionList([
+            Suppression(symbol="_Z3foov", reason="test"),
+        ])
+        change = Change(
+            kind=ChangeKind.FUNC_ADDED,
+            symbol="_Z3foov",
+            description="added",
+        )
+        audit = slist.audit([change])
+        summary = audit.summary()
+        assert "No issues found" in summary
+
+    def test_audit_summary_high_risk(self):
+        from abicheck.suppression import Suppression, SuppressionList
+
+        slist = SuppressionList([
+            Suppression(symbol="_Z3foov", reason="test"),
+        ])
+        change = Change(
+            kind=ChangeKind.FUNC_REMOVED,
+            symbol="_Z3foov",
+            description="removed",
+        )
+        audit = slist.audit([change])
+        summary = audit.summary()
+        assert "BREAKING" in summary
+
+    def test_audit_summary_expired(self):
+        from abicheck.suppression import Suppression, SuppressionList
+
+        past = date.today() - timedelta(days=10)
+        slist = SuppressionList([
+            Suppression(symbol="_Z3foov", reason="old", expires=past),
+        ])
+        audit = slist.audit([])
+        summary = audit.summary()
+        assert "expired" in summary.lower()
+
+    def test_audit_summary_near_expiry(self):
+        from abicheck.suppression import Suppression, SuppressionList
+
+        soon = date.today() + timedelta(days=5)
+        slist = SuppressionList([
+            Suppression(symbol="_Z3foov", reason="soon", expires=soon),
+        ])
+        audit = slist.audit([], near_expiry_days=30)
+        summary = audit.summary()
+        assert "expiring soon" in summary.lower()
+
+    def test_audit_match_counts(self):
+        from abicheck.suppression import Suppression, SuppressionList
+
+        slist = SuppressionList([
+            Suppression(symbol="_Z3foov", reason="test"),
+            Suppression(symbol="_Z3barv", reason="test2"),
+        ])
+        c1 = Change(kind=ChangeKind.FUNC_ADDED, symbol="_Z3foov", description="added")
+        c2 = Change(kind=ChangeKind.FUNC_ADDED, symbol="_Z3foov", description="added2")
+        audit = slist.audit([c1, c2])
+        assert audit.match_counts[0] == 2  # first rule matched twice
+        assert audit.match_counts[1] == 0  # second rule matched nothing
+        assert audit.total_rules == 2
+
 
 # ─── PolicyFile.validate_overrides() ─────────────────────────────────────────
 
@@ -284,40 +344,39 @@ class TestPolicyFileValidateOverrides:
         assert pf.validate_overrides() == []
 
     def test_critical_kind_to_ignore_warns(self):
-        from abicheck.checker_policy import Verdict
-
         pf = PolicyFile(overrides={ChangeKind.FUNC_REMOVED: Verdict.COMPATIBLE})
         warnings = pf.validate_overrides()
         assert len(warnings) == 1
         assert "HIGH RISK" in warnings[0]
 
     def test_critical_kind_to_risk_warns(self):
-        from abicheck.checker_policy import Verdict
-
         pf = PolicyFile(overrides={ChangeKind.TYPE_SIZE_CHANGED: Verdict.COMPATIBLE_WITH_RISK})
         warnings = pf.validate_overrides()
         assert len(warnings) == 1
         assert "RISK" in warnings[0]
 
     def test_breaking_kind_to_ignore_warns(self):
-        from abicheck.checker_policy import Verdict
-
         pf = PolicyFile(overrides={ChangeKind.FUNC_VIRTUAL_ADDED: Verdict.COMPATIBLE})
         warnings = pf.validate_overrides()
         assert len(warnings) == 1
         assert "BREAKING" in warnings[0]
 
     def test_safe_override_no_warning(self):
-        from abicheck.checker_policy import Verdict
-
         pf = PolicyFile(overrides={ChangeKind.ENUM_MEMBER_RENAMED: Verdict.COMPATIBLE})
         warnings = pf.validate_overrides()
         assert len(warnings) == 0
 
     def test_critical_kind_to_warn_no_warning(self):
         """Downgrading critical BREAKING to API_BREAK (warn) should not warn."""
-        from abicheck.checker_policy import Verdict
-
         pf = PolicyFile(overrides={ChangeKind.FUNC_REMOVED: Verdict.API_BREAK})
         warnings = pf.validate_overrides()
         assert len(warnings) == 0
+
+    def test_multiple_overrides_multiple_warnings(self):
+        pf = PolicyFile(overrides={
+            ChangeKind.FUNC_REMOVED: Verdict.COMPATIBLE,
+            ChangeKind.VAR_REMOVED: Verdict.COMPATIBLE,
+            ChangeKind.SONAME_CHANGED: Verdict.COMPATIBLE_WITH_RISK,
+        })
+        warnings = pf.validate_overrides()
+        assert len(warnings) == 3
