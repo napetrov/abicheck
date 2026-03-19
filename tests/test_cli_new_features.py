@@ -440,7 +440,7 @@ class TestCompareExitCodeDocs:
         runner = CliRunner()
         result = runner.invoke(main, ["compare", "--help"])
         assert result.exit_code == 0
-        assert "Exit codes:" in result.output
+        assert "Exit codes" in result.output
         assert "0" in result.output
         assert "BREAKING" in result.output
 

@@ -98,18 +98,21 @@ class TestSeverityMarkdown:
     """Tests for to_markdown with severity_config parameter."""
 
     def test_severity_badges_shown_when_config_provided(self):
-        """Section headers include severity badges when severity_config is set."""
+        """Section header for breaking changes includes ERROR badge."""
         from abicheck.severity import PRESET_DEFAULT
         c = Change(ChangeKind.FUNC_REMOVED, "_Z3foov", "Public function removed: foo",
                    old_value="foo")
         md = to_markdown(_result(Verdict.BREAKING, [c]), severity_config=PRESET_DEFAULT)
-        assert "`ERROR`" in md
+        # Exact section header produced by the reporter
+        assert "## \u274c Breaking Changes \u274c `ERROR`" in md
 
     def test_severity_badges_absent_without_config(self):
         """Section headers do NOT include severity badges without severity_config."""
         c = Change(ChangeKind.FUNC_REMOVED, "_Z3foov", "Public function removed: foo",
                    old_value="foo")
         md = to_markdown(_result(Verdict.BREAKING, [c]))
+        # Without severity_config, the header has no badge suffix
+        assert "## \u274c Breaking Changes\n" in md
         assert "`ERROR`" not in md
         assert "`WARNING`" not in md
         assert "`INFO`" not in md
@@ -119,9 +122,10 @@ class TestSeverityMarkdown:
         from abicheck.severity import PRESET_STRICT
         c = Change(ChangeKind.FUNC_ADDED, "_Z6newapiv", "New public function: new_api")
         md = to_markdown(_result(Verdict.COMPATIBLE, [c]), severity_config=PRESET_STRICT)
-        assert "Severity Configuration" in md
-        assert "ABI/API Incompatibilities" in md
-        assert "Additions" in md
+        assert "## Severity Configuration" in md
+        # Exact table rows
+        assert "| ABI/API Incompatibilities |" in md
+        assert "| Additions |" in md
 
     def test_severity_summary_absent_without_config(self):
         """Markdown does NOT include severity table without config."""
@@ -130,21 +134,21 @@ class TestSeverityMarkdown:
         assert "Severity Configuration" not in md
 
     def test_quality_section_with_severity_label(self):
-        """Quality section shows severity badge when config is provided."""
+        """Quality section header includes WARNING badge."""
         from abicheck.severity import PRESET_DEFAULT
         c = Change(ChangeKind.FUNC_NOEXCEPT_ADDED, "_Z4swapv",
                    "noexcept specifier added: swap")
         md = to_markdown(_result(Verdict.COMPATIBLE, [c]), severity_config=PRESET_DEFAULT)
-        assert "Quality Issues" in md
-        assert "`WARNING`" in md
+        # Exact section header
+        assert "## \U0001f50d Quality Issues \u26a0\ufe0f `WARNING`" in md
 
     def test_additions_section_with_severity_label(self):
-        """Additions section shows severity badge when config is provided."""
+        """Additions section header includes INFO badge."""
         from abicheck.severity import PRESET_DEFAULT
         c = Change(ChangeKind.FUNC_ADDED, "_Z6newapiv", "New public function: new_api")
         md = to_markdown(_result(Verdict.COMPATIBLE, [c]), severity_config=PRESET_DEFAULT)
-        assert "Additions" in md
-        assert "`INFO`" in md
+        # Exact section header
+        assert "## \u2705 Additions \u2139\ufe0f `INFO`" in md
 
 
 class TestSeverityJson:

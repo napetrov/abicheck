@@ -511,7 +511,11 @@ def to_json(
 
     # Severity-categorized summary when severity config is provided
     if severity_config is not None:
-        d["severity"] = _build_severity_json(changes, severity_config)
+        d["severity"] = _build_severity_json(
+            changes, severity_config,
+            all_changes=list(result.changes),
+            policy=effective_policy,
+        )
 
     d["changes"] = [_change_to_dict(c, policy=effective_policy) for c in changes]
     if result.redundant_count > 0:
@@ -647,11 +651,13 @@ def _section_severity_label(severity_config: SeverityConfig | None, category_att
 def _build_severity_summary_md(
     changes: list[Change],
     severity_config: SeverityConfig,
+    *,
+    policy: str | None = None,
 ) -> list[str]:
     """Build a severity configuration summary table for markdown output."""
     from .severity import SeverityLevel, categorize_changes
 
-    categorized = categorize_changes(changes)
+    categorized = categorize_changes(changes, policy=policy)
     lines = [
         "## Severity Configuration",
         "",
@@ -683,11 +689,19 @@ def _build_severity_summary_md(
 def _build_severity_json(
     changes: list[Change],
     severity_config: SeverityConfig,
+    *,
+    all_changes: list[Change] | None = None,
+    policy: str | None = None,
 ) -> dict[str, object]:
-    """Build severity information for JSON output."""
+    """Build severity information for JSON output.
+
+    *changes* are the (possibly filtered) changes for display counts.
+    *all_changes*, when provided, is the unfiltered set used to compute
+    the exit code so that ``--show-only`` does not affect the exit code.
+    """
     from .severity import SeverityLevel, categorize_changes, compute_exit_code
 
-    categorized = categorize_changes(changes)
+    categorized = categorize_changes(changes, policy=policy)
 
     config_dict: dict[str, str] = {}
     for attr in ("abi_breaking", "potential_breaking", "quality_issues", "addition"):
@@ -713,7 +727,10 @@ def _build_severity_json(
         },
     }
 
-    exit_code = compute_exit_code(changes, severity_config)
+    # Exit code uses the full unfiltered change set so --show-only
+    # does not affect it.
+    exit_changes = all_changes if all_changes is not None else changes
+    exit_code = compute_exit_code(exit_changes, severity_config, policy=policy)
 
     return {
         "config": config_dict,
@@ -790,7 +807,9 @@ def to_markdown(
 
     # Severity configuration summary when provided
     if severity_config is not None:
-        lines += _build_severity_summary_md(changes, severity_config)
+        lines += _build_severity_summary_md(
+            changes, severity_config, policy=result.policy,
+        )
 
     if show_only:
         lines.append(f"> Filtered by: `--show-only {show_only}` ({len(changes)} of {len(result.changes)} changes shown)")

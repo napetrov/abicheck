@@ -451,10 +451,9 @@ RISK_KINDS: frozenset[ChangeKind] = frozenset({
 #: Explicitly enumerated to avoid false positives (e.g. FUNC_NOEXCEPT_ADDED
 #: is a qualifier change, not a new API addition).
 #:
-#: Note: This set includes ELF-level additions (SYMBOL_VERSION_DEFINED_ADDED,
-#: SYMBOL_VERSION_REQUIRED_ADDED_COMPAT) alongside public-API additions.
-#: Users who want to distinguish "new user-facing API" from "new ELF metadata"
-#: should inspect the kind values directly.
+#: ELF versioning metadata (SYMBOL_VERSION_DEFINED_ADDED,
+#: SYMBOL_VERSION_REQUIRED_ADDED_COMPAT) is intentionally excluded — those
+#: are internal VERNEED/VERDEF churn, not user-facing API additions.
 ADDITION_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.FUNC_ADDED,
     ChangeKind.VAR_ADDED,
@@ -463,10 +462,6 @@ ADDITION_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.ENUM_MEMBER_ADDED,
     ChangeKind.UNION_FIELD_ADDED,
     ChangeKind.CONSTANT_ADDED,
-    # ELF metadata additions — not user-facing API, but binary-compatible
-    # structural additions that merit reporting.
-    ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
-    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT,
 })
 
 #: Quality / behavioral issues — COMPATIBLE_KINDS that are NOT additions.

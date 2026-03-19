@@ -1035,11 +1035,17 @@ def compare_cmd(
     DWARF-only mode (if DWARF available) or symbols-only analysis.
 
     \b
-    Exit codes:
+    Exit codes (legacy, without --severity-* flags):
       0  NO_CHANGE, COMPATIBLE, or COMPATIBLE_WITH_RISK — no binary ABI break
          (COMPATIBLE_WITH_RISK: deployment risk present; check the report)
       2  API_BREAK — source-level API break — recompilation required
       4  BREAKING — binary ABI break detected
+    \b
+    Exit codes (severity-aware, with any --severity-* flag):
+      0  No error-level findings
+      1  Error-level findings in addition or quality_issues only
+      2  Error-level findings in potential_breaking (but not abi_breaking)
+      4  Error-level findings in abi_breaking
 
     \b
     Examples:
@@ -1193,7 +1199,7 @@ def compare_cmd(
     # based exit codes for full backward compatibility.
     from .severity import compute_exit_code
     if severity_explicitly_set:
-        exit_code = compute_exit_code(result.changes, sev_config)
+        exit_code = compute_exit_code(result.changes, sev_config, policy=policy)
         if exit_code != 0:
             sys.exit(exit_code)
     else:

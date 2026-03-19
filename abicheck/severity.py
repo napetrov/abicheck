@@ -65,10 +65,11 @@ from .checker_policy import (
     ADDITION_KINDS,
     API_BREAK_KINDS,
     BREAKING_KINDS,
-    QUALITY_KINDS,
+    COMPATIBLE_KINDS,
     RISK_KINDS,
     ChangeKind,
     HasKind,
+    policy_kind_sets,
 )
 
 
@@ -93,26 +94,60 @@ class IssueCategory(str, Enum):
 # Change-kind -> IssueCategory classification
 # ---------------------------------------------------------------------------
 # Delegates entirely to the canonical kind sets in checker_policy.py.
-# No duplicate frozensets here — single source of truth.
+# When a *policy* is provided, uses the policy-adjusted sets so that
+# kinds downgraded/upgraded by the policy (e.g. sdk_vendor, plugin_abi)
+# are classified correctly.
 
 
-def classify_change(kind: ChangeKind) -> IssueCategory:
+def _effective_sets(
+    policy: str | None,
+) -> tuple[
+    frozenset[ChangeKind],
+    frozenset[ChangeKind],
+    frozenset[ChangeKind],
+    frozenset[ChangeKind],
+]:
+    """Return (breaking, api_break, compatible, risk) for the given policy.
+
+    Returns the canonical sets when *policy* is None or ``"strict_abi"``.
+    """
+    if policy is None or policy == "strict_abi":
+        return (
+            frozenset(BREAKING_KINDS),
+            frozenset(API_BREAK_KINDS),
+            frozenset(COMPATIBLE_KINDS),
+            RISK_KINDS,
+        )
+    return policy_kind_sets(policy)
+
+
+def classify_change(
+    kind: ChangeKind,
+    *,
+    policy: str | None = None,
+) -> IssueCategory:
     """Classify a ChangeKind into one of the four issue categories.
 
-    Uses the canonical kind sets from ``checker_policy`` directly.
+    Uses the canonical kind sets from ``checker_policy`` by default.
+    When *policy* is provided, uses the policy-adjusted sets so that
+    kinds moved between categories by a non-default policy are handled
+    correctly.
+
     Unknown kinds default to ``ABI_BREAKING`` (fail-safe).
 
     Note: ``ADDITION_KINDS`` and ``QUALITY_KINDS`` are disjoint by
     construction (``QUALITY_KINDS = COMPATIBLE_KINDS - ADDITION_KINDS``),
     so the check order between them does not matter.
     """
-    if kind in BREAKING_KINDS:
+    breaking, api_break, compatible, risk = _effective_sets(policy)
+    if kind in breaking:
         return IssueCategory.ABI_BREAKING
-    if kind in API_BREAK_KINDS or kind in RISK_KINDS:
+    if kind in api_break or kind in risk:
         return IssueCategory.POTENTIAL_BREAKING
+    # Within compatible, split into additions vs quality issues.
     if kind in ADDITION_KINDS:
         return IssueCategory.ADDITION
-    if kind in QUALITY_KINDS:
+    if kind in compatible:
         return IssueCategory.QUALITY_ISSUES
     # Fail-safe: unclassified kinds are treated as breaking.
     return IssueCategory.ABI_BREAKING
@@ -147,14 +182,19 @@ class SeverityConfig:
         result: SeverityLevel = getattr(self, category.value)
         return result
 
-    def level_for_kind(self, kind: ChangeKind) -> SeverityLevel:
+    def level_for_kind(
+        self, kind: ChangeKind, *, policy: str | None = None,
+    ) -> SeverityLevel:
         """Return the configured severity level for a specific ChangeKind."""
-        return self.level_for(classify_change(kind))
+        return self.level_for(classify_change(kind, policy=policy))
 
-    def has_errors(self, changes: Sequence[HasKind]) -> bool:
+    def has_errors(
+        self, changes: Sequence[HasKind], *, policy: str | None = None,
+    ) -> bool:
         """Return True if any change falls into a category configured as error."""
         return any(
-            self.level_for_kind(c.kind) == SeverityLevel.ERROR for c in changes
+            self.level_for_kind(c.kind, policy=policy) == SeverityLevel.ERROR
+            for c in changes
         )
 
     def describe(self, *, prefix: str = "", title: str | None = None) -> str:
@@ -296,6 +336,8 @@ _CATEGORY_EXIT_CODES: dict[IssueCategory, int] = {
 def compute_exit_code(
     changes: Sequence[HasKind],
     config: SeverityConfig,
+    *,
+    policy: str | None = None,
 ) -> int:
     """Compute the process exit code based on severity configuration.
 
@@ -303,11 +345,14 @@ def compute_exit_code(
     - at least one finding, AND
     - severity configured as ``error``.
 
+    When *policy* is provided, uses the policy-adjusted kind sets
+    so that kinds moved between categories are classified correctly.
+
     Returns 0 if no category at error level has findings.
     """
     worst = 0
     for change in changes:
-        cat = classify_change(change.kind)
+        cat = classify_change(change.kind, policy=policy)
         if config.level_for(cat) == SeverityLevel.ERROR:
             code = _CATEGORY_EXIT_CODES[cat]
             if code > worst:
@@ -331,7 +376,11 @@ class CategorizedChanges:
     addition: list[HasKind]
 
 
-def categorize_changes(changes: Sequence[HasKind]) -> CategorizedChanges:
+def categorize_changes(
+    changes: Sequence[HasKind],
+    *,
+    policy: str | None = None,
+) -> CategorizedChanges:
     """Partition changes into the four issue categories."""
     abi: list[HasKind] = []
     potential: list[HasKind] = []
@@ -339,7 +388,7 @@ def categorize_changes(changes: Sequence[HasKind]) -> CategorizedChanges:
     adds: list[HasKind] = []
 
     for c in changes:
-        cat = classify_change(c.kind)
+        cat = classify_change(c.kind, policy=policy)
         if cat == IssueCategory.ABI_BREAKING:
             abi.append(c)
         elif cat == IssueCategory.POTENTIAL_BREAKING:
