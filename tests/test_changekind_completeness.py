@@ -146,6 +146,8 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED,
     # Version-stamped typedef sentinels (libpng-style compile-time version checks)
     ChangeKind.TYPEDEF_VERSION_SENTINEL,
+    # case51: ELF visibility default↔protected
+    ChangeKind.FUNC_VISIBILITY_PROTECTED_CHANGED,
 }
 
 

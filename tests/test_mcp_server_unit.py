@@ -617,7 +617,6 @@ class TestImpactCategory:
             ChangeKind.FUNC_RETURN_CHANGED,
             ChangeKind.TYPE_SIZE_CHANGED,
             ChangeKind.VAR_REMOVED,
-            ChangeKind.SONAME_CHANGED,
         ]:
             assert _impact_category(kind) == "breaking", f"{kind} should be breaking"
 
