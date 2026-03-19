@@ -306,6 +306,8 @@ class SuppressionList:
         - ``near_expiry_rules``: rules expiring within *near_expiry_days*
         - ``match_counts``: per-rule match count
         """
+        if near_expiry_days < 0:
+            raise ValueError("near_expiry_days must be non-negative")
         from .checker_policy import BREAKING_KINDS
         check_date = today or date.today()
         near_expiry_cutoff = check_date + timedelta(days=near_expiry_days)
