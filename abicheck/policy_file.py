@@ -54,7 +54,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .checker_policy import VALID_BASE_POLICIES, ChangeKind, Verdict, compute_verdict
+from .checker_policy import (
+    VALID_BASE_POLICIES,
+    ChangeKind,
+    Verdict,
+    compute_verdict,
+    policy_kind_sets,
+)
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +73,19 @@ _SEVERITY_MAP: dict[str, Verdict] = {
 }
 
 _VALID_BASE_POLICIES = VALID_BASE_POLICIES  # re-export alias for backward compat
+
+# Kinds that are especially dangerous to downgrade — removing a function
+# or changing its signature always causes hard crashes.
+_CRITICAL_BREAKING_KINDS: frozenset[ChangeKind] = frozenset({
+    ChangeKind.FUNC_REMOVED,
+    ChangeKind.FUNC_RETURN_CHANGED,
+    ChangeKind.FUNC_PARAMS_CHANGED,
+    ChangeKind.TYPE_SIZE_CHANGED,
+    ChangeKind.TYPE_VTABLE_CHANGED,
+    ChangeKind.VAR_REMOVED,
+    ChangeKind.VAR_TYPE_CHANGED,
+    ChangeKind.SONAME_CHANGED,
+})
 
 
 @dataclass
@@ -206,3 +225,39 @@ class PolicyFile:
         else:
             lines.append("overrides: (none)")
         return "\n".join(lines)
+
+    def validate_overrides(self) -> list[str]:
+        """Check for high-risk or suspicious overrides and return warnings.
+
+        Returns a list of human-readable warning strings.  Empty list = no issues.
+
+        Checks:
+        - Downgrading known-dangerous BREAKING kinds to COMPATIBLE
+          (e.g., func_removed → ignore).  These almost certainly mask real breaks.
+        - Downgrading BREAKING to COMPATIBLE_WITH_RISK for critical kinds.
+        """
+        # Derive breaking kinds from the configured base policy so that
+        # policy-specific sets (e.g. plugin_abi) are correctly flagged.
+        base_breaking, _, _, _ = policy_kind_sets(self.base_policy)
+
+        warnings: list[str] = []
+        for kind, verdict in self.overrides.items():
+            if kind in _CRITICAL_BREAKING_KINDS:
+                if verdict == Verdict.COMPATIBLE:
+                    warnings.append(
+                        f"HIGH RISK: '{kind.value}' downgraded to 'ignore' — "
+                        f"this is almost certainly a mistake. "
+                        f"This kind causes hard crashes when the ABI changes."
+                    )
+                elif verdict == Verdict.COMPATIBLE_WITH_RISK:
+                    warnings.append(
+                        f"RISK: '{kind.value}' downgraded to 'risk' — "
+                        f"this kind usually causes binary incompatibility. "
+                        f"Consider keeping it as 'break'."
+                    )
+            elif kind in base_breaking and verdict == Verdict.COMPATIBLE:
+                warnings.append(
+                    f"'{kind.value}' (BREAKING) downgraded to 'ignore' — "
+                    f"verify this is intentional."
+                )
+        return warnings
