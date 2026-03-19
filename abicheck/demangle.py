@@ -76,40 +76,41 @@ def demangle_batch(symbols: list[str]) -> dict[str, str]:
     if not cpp_syms:
         return {}
 
+    result: dict[str, str] = {}
+    remaining_syms: list[str] = []
+
     # Try cxxfilt first (in-process, fastest)
     try:
         import cxxfilt
-        result = {}
         for s in cpp_syms:
             try:
                 d = cxxfilt.demangle(s)
                 if d and d != s:
                     result[s] = d
+                else:
+                    remaining_syms.append(s)
             except Exception:  # noqa: BLE001
-                pass
-        if result:
-            return result
+                remaining_syms.append(s)
     except ImportError:
-        pass
+        remaining_syms = list(cpp_syms)
 
-    # Fallback: batch c++filt call
-    try:
-        proc = subprocess.run(
-            ["c++filt"],
-            input="\n".join(cpp_syms),
-            capture_output=True, text=True, timeout=30,
-        )
-        if proc.returncode == 0:
-            lines = proc.stdout.strip().split("\n")
-            result = {}
-            for mangled, demangled in zip(cpp_syms, lines):
-                if demangled and demangled != mangled:
-                    result[mangled] = demangled
-            return result
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    # Fallback: batch c++filt call for symbols cxxfilt couldn't handle
+    if remaining_syms:
+        try:
+            proc = subprocess.run(
+                ["c++filt"],
+                input="\n".join(remaining_syms),
+                capture_output=True, text=True, timeout=30,
+            )
+            if proc.returncode == 0:
+                lines = proc.stdout.strip().split("\n")
+                for mangled, demangled in zip(remaining_syms, lines):
+                    if demangled and demangled != mangled:
+                        result[mangled] = demangled
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
 
-    return {}
+    return result
 
 
 def base_name(symbol: str) -> str:
@@ -125,10 +126,8 @@ def base_name(symbol: str) -> str:
         "Widget::getValue() const" → "getValue"
         "add" → "add"
     """
-    demangled = demangle(symbol)
-    if demangled:
-        paren = demangled.find("(")
-        prefix = demangled[:paren] if paren != -1 else demangled
-        parts = prefix.rsplit("::", 1)
-        return parts[-1].strip()
-    return symbol
+    demangled = demangle(symbol) or symbol
+    paren = demangled.find("(")
+    prefix = demangled[:paren] if paren != -1 else demangled
+    parts = prefix.rsplit("::", 1)
+    return parts[-1].strip()

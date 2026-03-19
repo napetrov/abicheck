@@ -1078,11 +1078,11 @@ def compare_cmd(
         from .checker_policy import Verdict as _V
         from .policy_file import PolicyFile as _PF
 
-        strict_override = _PF(overrides={_CK.FUNC_REMOVED_ELF_ONLY: _V.BREAKING})
+        strict_overrides = {_CK.FUNC_REMOVED_ELF_ONLY: _V.BREAKING}
         if pf is not None:
             # Merge: user policy file overrides take precedence, but we inject
             # the strict-elf-only override for kinds not already overridden.
-            merged_overrides = dict(strict_override.overrides)
+            merged_overrides = dict(strict_overrides)
             merged_overrides.update(pf.overrides)
             pf = _PF(
                 base_policy=pf.base_policy,
@@ -1090,7 +1090,10 @@ def compare_cmd(
                 source_path=pf.source_path,
             )
         else:
-            pf = strict_override
+            pf = _PF(
+                base_policy=policy,
+                overrides=strict_overrides,
+            )
 
     # Populate dependency info if --follow-deps is active and inputs are ELF binaries.
     if follow_deps:

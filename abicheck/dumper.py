@@ -230,7 +230,6 @@ _CPP_PATTERNS = [
     re.compile(rb"^\s*namespace\s+\w+"),               # namespace ns
     re.compile(rb"^\s*template\s*<"),                  # template<...>
     re.compile(rb"^\s*using\s+\w+\s*="),               # using alias = ...
-    re.compile(rb'^\s*extern\s+"C"'),                  # extern "C" — needs C++ compiler
     re.compile(rb"^\s*public\s*:"),                     # public:
     re.compile(rb"^\s*private\s*:"),                    # private:
     re.compile(rb"^\s*protected\s*:"),                  # protected:

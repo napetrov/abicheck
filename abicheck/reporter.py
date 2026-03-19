@@ -228,11 +228,13 @@ def to_stat(result: DiffResult) -> str:
 def to_stat_json(result: DiffResult, indent: int = 2) -> str:
     """JSON output for --stat mode: summary only, no changes array."""
     summary = build_summary(result)
+    effective_policy = result.policy or "strict_abi"
     d: dict[str, object] = {
         "library": result.library,
         "old_version": result.old_version,
         "new_version": result.new_version,
         "verdict": result.verdict.value,
+        "policy": effective_policy,
         "summary": {
             "breaking": summary.breaking,
             "source_breaks": summary.source_breaks,

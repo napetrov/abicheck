@@ -53,6 +53,8 @@ from .model import (
     TypeField,
     Variable,
     Visibility,
+)
+from .model import (
     is_compiler_internal_type as _is_compiler_internal_type,
 )
 from .policy_file import PolicyFile
@@ -337,11 +339,12 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     # Build a lookup of ALL functions in new snapshot (including hidden).
     new_all = new.function_map
 
-    # FIX-A Part 2: Build secondary index by plain name for extern "C" functions.
-    # This enables fallback matching when mangled names differ due to compilation
-    # mode mismatch (e.g. old snapshot compiled as C++, new as C).
+    # FIX-A Part 2: Build secondary index by plain name for fallback matching
+    # when mangled names differ due to C/C++ compilation mode mismatch.
+    # new_by_name includes all functions so new-side extern "C" functions
+    # (which may lack the flag when compiled as C) can still be matched.
     new_by_name: dict[str, Function] = {
-        f.name: f for f in new_map.values() if f.is_extern_c
+        f.name: f for f in new_map.values()
     }
     matched_by_name: set[str] = set()
 
@@ -360,7 +363,7 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         changes.append(_check_removed_function(mangled, f_old, new_all, elf_only_mode))
 
     for mangled, f_new in new_map.items():
-        if mangled not in old_map and not (f_new.is_extern_c and f_new.name in matched_by_name):
+        if mangled not in old_map and f_new.name not in matched_by_name:
             changes.append(Change(
                 kind=ChangeKind.FUNC_ADDED,
                 symbol=mangled,

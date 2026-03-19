@@ -52,6 +52,8 @@ from .model import (
     TypeField,
     Variable,
     Visibility,
+)
+from .model import (
     is_compiler_internal_type as _is_compiler_internal,
 )
 
