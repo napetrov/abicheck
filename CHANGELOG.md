@@ -12,8 +12,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ### Planned
 - `--policy-file` schema validation improvements
 - Version-stamped typedef suppression (libpng `png_libpng_version_X_Y_Z` pattern)
-- Evidence/confidence tiers in JSON output (ELF_ONLY / DWARF_AWARE / HEADER_AWARE)
-- Expanded parity test suite coverage
+- Formalize evidence/confidence tiers in JSON output (DWARF_AWARE / HEADER_AWARE;
+  ELF_ONLY tier already used throughout detection)
 
 ---
 

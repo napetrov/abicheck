@@ -2,6 +2,11 @@
 
 _Generated: 2026-03-08_
 
+> **Note:** This is a point-in-time snapshot from 2026-03-08 when the project had
+> 62 ChangeKinds. The current project has 114 ChangeKinds and 120+ test files.
+> Module coverage percentages (especially 0% for cli.py/dumper.py) reflect unit-only
+> runs — these modules are covered by integration tests that require castxml + gcc.
+
 ## ChangeKind Coverage: 62/62 (100%)
 
 All 62 `ChangeKind` values now have explicit `assert c.kind == ChangeKind.X`

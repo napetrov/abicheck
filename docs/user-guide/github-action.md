@@ -114,7 +114,7 @@ automatically, then runs ABI comparison and reports results.
 
 | Output | Description |
 |--------|-------------|
-| `verdict` | **compare/dump:** `COMPATIBLE`, `SEVERITY_ERROR`, `API_BREAK`, `BREAKING`, or `ERROR`. **stack-check:** `PASS`, `WARN`, `FAIL`, or `ERROR`. **deps:** `PASS`, `FAIL`, or `ERROR`. |
+| `verdict` | **compare/dump:** `COMPATIBLE`, `COMPATIBLE_WITH_RISK`, `SEVERITY_ERROR`, `API_BREAK`, `BREAKING`, or `ERROR`. `SEVERITY_ERROR` is produced when `severity-addition: error` detects new public API. **stack-check:** `PASS`, `WARN`, `FAIL`, or `ERROR`. **deps:** `PASS`, `FAIL`, or `ERROR`. |
 | `exit-code` | **compare:** `0` (compatible), `1` (severity error), `2` (API break), `4` (ABI break). **stack-check:** `0` (pass), `1` (warn), `4` (fail). **deps:** `0` (ok), `1` (missing). |
 | `report-path` | Path to the generated report file (empty when no output file was produced) |
 

@@ -1,6 +1,6 @@
 # ABICC vs Abicheck: Test Coverage Comparison
 
-> Updated: 2026-03-09 (independently verified against raw GitHub sources)
+> Updated: 2026-03-09 (independently verified against raw GitHub sources; ChangeKind count was 118 at time of writing, now 114 after taxonomy refactoring)
 > Source: ABICC `RulesBin.xml` (196 rules), `RulesSrc.xml` (100 rules + `Removed_Const_Overload`), `RegTests.pm` (~153 C++ + ~102 C named scenarios)
 > Target: abicheck `examples/` (63 cases), `tests/` (690+ tests), `ChangeKind` enum (118 kinds)
 >

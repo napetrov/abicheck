@@ -119,7 +119,7 @@ test: add coverage for PolicyFile.compute_verdict
 ## Adding a new ChangeKind
 
 1. Add the kind to `ChangeKind` enum in `abicheck/checker_policy.py`
-2. Place it in one of `BREAKING_KINDS`, `API_BREAK_KINDS`, or `COMPATIBLE_KINDS`
+2. Place it in exactly one of `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, or `RISK_KINDS`
 3. Implement detection in the relevant detector in `abicheck/`
 4. Add a unit test in `tests/`
 5. Document in `docs/` if user-visible

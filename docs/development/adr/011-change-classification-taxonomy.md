@@ -8,7 +8,7 @@
 
 ## Context
 
-abicheck detects 85+ distinct types of ABI/API changes via the `ChangeKind`
+abicheck detects 114 distinct types of ABI/API changes via the `ChangeKind`
 enum. Each kind must be classified into exactly one severity tier under the
 default `strict_abi` policy (see ADR-010):
 

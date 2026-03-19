@@ -1,5 +1,10 @@
 # v2 Coverage Plan — Next Milestones
 
+> **Note (2026-03-19):** Most items in Tiers 1-2 and Milestone A/B have been
+> implemented in v0.2.0. This document is retained as historical context for
+> the design decisions. See [CHANGELOG.md](https://github.com/napetrov/abicheck/blob/main/CHANGELOG.md)
+> for current status.
+
 Source: "Beyond v1: Practical C/C++ API & ABI Break Mechanisms"
 
 ## Evidence Tiers (Detection Priority)

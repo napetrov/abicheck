@@ -1,7 +1,7 @@
 # CLI Review: Commands, Naming, Logic, and Ease of Use
 
 Reviewed: 2026-03-13
-Status: All issues addressed (see changes below).
+Status: **CLOSED** — All issues addressed and merged (see changes below).
 
 ## Changes Applied
 

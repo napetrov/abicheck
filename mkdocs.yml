@@ -38,6 +38,7 @@ nav:
     - Application Compatibility: user-guide/appcompat.md
     - Policy Profiles: user-guide/policies.md
     - Suppressions: user-guide/suppressions.md
+    - Severity Configuration: user-guide/severity.md
     - Output Formats: user-guide/output-formats.md
     - Local Compare: user-guide/local-compare.md
     - MCP Integration: user-guide/mcp-integration.md
@@ -76,6 +77,19 @@ nav:
       - "005: Application Compat Check": development/adr/005-application-compat-check.md
       - "006: Package-Level Comparison": development/adr/006-package-level-comparison.md
       - "007: BTF & CTF Debug Formats": development/adr/007-btf-ctf-debug-formats.md
+      - "008: Full-Stack Dependency Validation": development/adr/008-full-stack-dependency-validation.md
+      - "009: Verdict System and Exit Codes": development/adr/009-verdict-system-and-exit-codes.md
+      - "010: Policy Profile System": development/adr/010-policy-profile-system.md
+      - "011: Change Classification Taxonomy": development/adr/011-change-classification-taxonomy.md
+      - "012: ABICC Compatibility Layer": development/adr/012-abicc-compatibility-layer.md
+      - "013: Suppression System": development/adr/013-suppression-system.md
+      - "014: Output Format Strategy": development/adr/014-output-format-strategy.md
+      - "015: Snapshot Serialization": development/adr/015-snapshot-serialization.md
+      - "016: Visibility Model": development/adr/016-visibility-model.md
+      - "017: GitHub Action": development/adr/017-github-action.md
+      - "018: Cross-Platform Support": development/adr/018-cross-platform-support.md
+      - "019: Testing Strategy": development/adr/019-testing-strategy.md
+      - Gap Analysis: development/adr/adr-gap-analysis.md
 
 plugins:
   - search
