@@ -162,8 +162,8 @@ def _evaluate_location_expr(expr: list[object]) -> int:
         if isinstance(item, tuple):
             # pyelftools DWARFExprOp: hasattr(item, 'args')
             if hasattr(item, "args"):
-                op = item.op
-                args = item.args
+                op = getattr(item, "op", 0)
+                args = getattr(item, "args", [])
                 operand = args[0] if args else 0
             else:
                 # Plain (opcode, operand, ...) tuple

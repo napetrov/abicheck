@@ -61,7 +61,7 @@ def _machine_name(machine_code: int) -> str:
     """
     try:
         import pefile
-        full_name = pefile.MACHINE_TYPE.get(machine_code)
+        full_name: str | None = pefile.MACHINE_TYPE.get(machine_code)
         if full_name:
             return full_name.replace("IMAGE_FILE_MACHINE_", "")
     except ImportError:
