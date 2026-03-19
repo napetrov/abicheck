@@ -11,11 +11,11 @@ import pytest
 from abicheck.dwarf_advanced import AdvancedDwarfMetadata
 from abicheck.dwarf_metadata import DwarfMetadata, StructLayout
 from abicheck.dwarf_snapshot import (
-    _evaluate_location_expr,
     _strip_type_decorators,
     build_snapshot_from_dwarf,
     show_data_sources,
 )
+from abicheck.dwarf_utils import _evaluate_location_expr
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import Visibility
 

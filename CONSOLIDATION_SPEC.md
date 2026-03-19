@@ -321,3 +321,52 @@ These items were identified but deemed not worth immediate action:
 | **Total** | **21** | **~510** | **8-12 hours** |
 
 Note: Line removal estimate is lower than the analysis report (~620) because some consolidation adds shared code while removing duplicates. Net reduction accounts for the new shared implementations.
+
+---
+
+## Implementation Status
+
+**All 4 phases implemented** on branch `claude/analyze-code-duplication-PFRe1`.
+
+### Phase 1: Completed
+- Deleted dead `_CHANGED_BREAKING_KINDS` from `html_report.py`
+- Replaced all 6 duplicated constants with imports from `report_classifications.py`
+- Replaced all 6 duplicated helper functions with imports (`category`, `severity`, `kind_str`, `is_breaking`, `is_type_problem`, `is_symbol_problem`)
+- `_change_bucket` retained (no counterpart in `report_classifications.py`)
+
+### Phase 2: Completed
+- Added `BASE_PRUNE_TAGS` constant to `dwarf_utils.py`
+- Moved `_evaluate_location_expr` from `dwarf_snapshot.py` to `dwarf_utils.py`
+- Added `decode_member_location()` wrapper in `dwarf_utils.py`
+- Updated 3 callers: `dwarf_metadata.py` (fixed naive `val[-1]`), `dwarf_advanced.py`, `dwarf_snapshot.py`
+- Updated `_SKIP_TAGS` / `_PRUNE_TAGS` to compose from `BASE_PRUNE_TAGS`
+- Replaced inline ref resolution in `dwarf_advanced._get_type_align` with `resolve_die_ref` + `_unwrap_qualifiers`
+- Replaced inline ref resolution in `dwarf_advanced._check_packed_typedef` with `resolve_die_ref`
+- **Step 2.3 (shared type resolver) deferred** — requires deeper refactoring of class-based vs module-level APIs
+
+### Phase 3: Completed
+- Created `binary_utils.py` with shared `detect_binary_format()` (most complete Mach-O magic set)
+- Updated `cli.py`, `appcompat.py`, `mcp_server.py` to delegate to shared function
+- Removed `_is_elf`, `_is_pe`, `_is_macho` from `cli.py`
+- Fixed `_MACHO_MAGICS` gap in `mcp_server.py` (was missing 2 fat-archive variants)
+- Replaced duplicated loadability logic in `stack_checker.check_single_env` with `_compute_loadability()`
+
+### Phase 4: Completed
+- Extracted `_is_user_visible()` predicate in `pdb_metadata.py` (replaces 3 inline guard blocks)
+- Folded `_extract_calling_conventions` into `_extract_struct_layouts` (single pass)
+- Consolidated `_parse_struct`/`_parse_union` into unified `_parse_struct(is_union=...)` in `pdb_parser.py`
+- Added `TypeDatabase.get_bitfield()` public API (replaces private `._bitfields` access)
+- Replaced `_MACHINE_NAMES` dict with `_machine_name()` function using `pefile.MACHINE_TYPE`
+- Organized forward-ref resolution with clearer 2-pass structure
+
+### Test Results
+- **3144 passed**, 195 skipped, 0 failures
+- All existing tests updated for moved/renamed functions
+- New test coverage for `detect_binary_format` (PE and Mach-O format detection)
+
+### Review Feedback Applied
+- **Naming**: `detect_binary_format` kept as public (not private) — it's a shared utility
+- **Module placement**: Created `binary_utils.py` (parallels `dwarf_utils.py`, `pdb_utils.py`)
+- **Type annotations**: `decode_member_location(val: int | list[object] | None) -> int`
+- **Rollback**: Each phase is independently revertible via git revert
+- **Backwards compatibility**: All consolidated functions are internal; no public API changes

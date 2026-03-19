@@ -38,6 +38,7 @@ from elftools.elf.elffile import ELFFile
 from .dwarf_utils import attr_bool as _attr_bool
 from .dwarf_utils import attr_int as _attr_int
 from .dwarf_utils import attr_str as _attr_str
+from .dwarf_utils import decode_member_location as _decode_member_location
 from .dwarf_utils import resolve_die_ref as _resolve_ref
 from .dwarf_utils import resolve_type_die as _resolve_type_die
 from .model import (
@@ -165,79 +166,6 @@ def show_data_sources(
         lines.append("Missing: type information, function signatures")
 
     return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# DWARF location expression evaluator
-# ---------------------------------------------------------------------------
-
-def _evaluate_location_expr(expr: list[object]) -> int:
-    """Evaluate a DWARF location expression list to a byte offset.
-
-    DWARF ``DW_AT_data_member_location`` can be a list of opcodes/operands
-    rather than a plain integer.  Common patterns:
-    - ``[DW_OP_plus_uconst, N]`` — offset is N
-    - ``[DW_OP_constu, N]`` or ``[DW_OP_consts, N]`` — push N
-    - ``[DW_OP_lit0..DW_OP_lit31]`` — push literal 0–31
-
-    We use a minimal stack machine to handle these; fall back to 0 on failure.
-    """
-    stack: list[int] = [0]  # implicit base address
-    i = 0
-    items = list(expr)
-    while i < len(items):
-        item = items[i]
-        # pyelftools may emit tuples (opcode, operand, ...)
-        if isinstance(item, tuple):
-            op = item[0] if len(item) > 0 else 0
-            operand = item[1] if len(item) > 1 else 0
-            if isinstance(op, int) and isinstance(operand, int):
-                # DW_OP_plus_uconst = 0x23
-                if op == 0x23:
-                    stack[-1] = stack[-1] + operand if stack else operand
-                # DW_OP_constu = 0x10, DW_OP_consts = 0x11
-                elif op in (0x10, 0x11):
-                    stack.append(operand)
-                # DW_OP_lit0..DW_OP_lit31 = 0x30..0x4f
-                elif 0x30 <= op <= 0x4F:
-                    stack.append(op - 0x30)
-                # DW_OP_plus = 0x22
-                elif op == 0x22 and len(stack) >= 2:
-                    b = stack.pop()
-                    stack[-1] += b
-            i += 1
-            continue
-
-        if isinstance(item, int):
-            # Raw byte stream: interpret as opcodes
-            next_item = items[i + 1] if i + 1 < len(items) else None
-            next_int = next_item if isinstance(next_item, int) else None
-            # DW_OP_plus_uconst = 0x23
-            if item == 0x23 and next_int is not None:
-                stack[-1] = stack[-1] + next_int if stack else next_int
-                i += 2
-                continue
-            # DW_OP_constu = 0x10, DW_OP_consts = 0x11
-            if item in (0x10, 0x11) and next_int is not None:
-                stack.append(next_int)
-                i += 2
-                continue
-            # DW_OP_lit0..DW_OP_lit31 (0x30..0x4f)
-            if 0x30 <= item <= 0x4F:
-                stack.append(item - 0x30)
-                i += 1
-                continue
-            # DW_OP_plus = 0x22
-            if item == 0x22 and len(stack) >= 2:
-                b = stack.pop()
-                stack[-1] += b
-                i += 1
-                continue
-            # Unknown opcode or bare integer — treat as constant
-            stack.append(item)
-        i += 1
-
-    return stack[-1] if stack else 0
 
 
 # ---------------------------------------------------------------------------
@@ -612,12 +540,9 @@ class _DwarfSnapshotBuilder:
         # Byte offset
         byte_offset = 0
         if "DW_AT_data_member_location" in die.attributes:
-            attr = die.attributes["DW_AT_data_member_location"]
-            val = attr.value
-            if isinstance(val, int):
-                byte_offset = val
-            elif isinstance(val, list):
-                byte_offset = _evaluate_location_expr(val)
+            byte_offset = _decode_member_location(
+                die.attributes["DW_AT_data_member_location"].value
+            )
 
         offset_bits = byte_offset * 8
 

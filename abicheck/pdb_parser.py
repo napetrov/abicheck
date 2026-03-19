@@ -657,7 +657,8 @@ class TypeDatabase:
                 log.debug("Failed to parse TPI record ti=0x%x leaf=0x%x: %s",
                           rec.type_index, rec.leaf, exc)
 
-        # Build forward-ref → definition mapping
+        # Build forward-ref → definition mapping in 2 passes:
+        # Pass 1: collect all definitions (structs + enums) by name
         name_to_def: dict[str, int] = {}
         for ti, s in self._structs.items():
             if not s.is_forward_ref:
@@ -665,6 +666,7 @@ class TypeDatabase:
         for ti, e in self._enums.items():
             if not e.is_forward_ref:
                 name_to_def[e.name] = ti
+        # Pass 2: link forward refs to definitions (structs + enums)
         for ti, s in self._structs.items():
             if s.is_forward_ref and s.name in name_to_def:
                 self._fwd_to_def[ti] = name_to_def[s.name]
@@ -680,7 +682,7 @@ class TypeDatabase:
         if leaf in (LF_STRUCTURE, LF_CLASS):
             self._parse_struct(ti, d, is_union=False)
         elif leaf == LF_UNION:
-            self._parse_union(ti, d)
+            self._parse_struct(ti, d, is_union=True)
         elif leaf == LF_ENUM:
             self._parse_enum(ti, d)
         elif leaf == LF_FIELDLIST:
@@ -701,11 +703,23 @@ class TypeDatabase:
             self._parse_arglist(ti, d)
 
     def _parse_struct(self, ti: int, d: bytes, *, is_union: bool) -> None:
-        if len(d) < 16:
-            return
-        (count, prop, field_ti, derived_ti, vshape_ti) = struct.unpack_from(
-            "<HHIII", d, 0)
-        pos = 16
+        """Parse LF_STRUCTURE, LF_CLASS, or LF_UNION into a CvStruct.
+
+        LF_STRUCTURE/LF_CLASS have a 16-byte header (count, prop, field_ti,
+        derived_ti, vshape_ti); LF_UNION has an 8-byte header (count, prop,
+        field_ti).  The ``is_union`` flag selects the appropriate layout.
+        """
+        if is_union:
+            if len(d) < 8:
+                return
+            (count, prop, field_ti) = struct.unpack_from("<HHI", d, 0)
+            pos = 8
+        else:
+            if len(d) < 16:
+                return
+            (count, prop, field_ti, _derived_ti, _vshape_ti) = struct.unpack_from(
+                "<HHIII", d, 0)
+            pos = 16
         byte_size, pos = _read_numeric_leaf(d, pos)
         name, _pos = _read_cstring(d, pos)
         self._structs[ti] = CvStruct(
@@ -716,24 +730,6 @@ class TypeDatabase:
             is_forward_ref=bool(prop & _PROP_FORWARD_REF),
             is_packed=bool(prop & _PROP_PACKED),
             is_union=is_union,
-            count=count,
-        )
-
-    def _parse_union(self, ti: int, d: bytes) -> None:
-        if len(d) < 8:
-            return
-        (count, prop, field_ti) = struct.unpack_from("<HHI", d, 0)
-        pos = 8
-        byte_size, pos = _read_numeric_leaf(d, pos)
-        name, _pos = _read_cstring(d, pos)
-        self._structs[ti] = CvStruct(
-            type_index=ti,
-            name=name,
-            field_list_ti=field_ti,
-            byte_size=byte_size,
-            is_forward_ref=bool(prop & _PROP_FORWARD_REF),
-            is_packed=bool(prop & _PROP_PACKED),
-            is_union=True,
             count=count,
         )
 
@@ -1011,6 +1007,10 @@ class TypeDatabase:
 
     def all_enums(self) -> dict[int, CvEnum]:
         return self._enums
+
+    def get_bitfield(self, ti: int) -> CvBitfield | None:
+        """Return the CvBitfield for type index *ti*, or None."""
+        return self._bitfields.get(ti)
 
     def all_procedures(self) -> dict[int, CvProcedure]:
         return self._procedures

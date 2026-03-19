@@ -84,33 +84,22 @@ class AppCompatResult:
 # Binary format detection
 # ---------------------------------------------------------------------------
 
-_ELF_MAGIC = b"\x7fELF"
-_MZ_MAGIC = b"MZ"
-_MACHO_MAGICS = {
-    b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
-    b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
-    b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
-    b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca",
-}
-
 
 def _detect_app_format(app_path: Path) -> str | None:
-    """Detect binary format of an application: 'elf', 'pe', or 'macho'."""
+    """Detect binary format of an application: 'elf', 'pe', or 'macho'.
+
+    Delegates to the shared detector with an extra S_ISREG check for
+    application paths (which may be symlinks or pipes).
+    """
     try:
         with open(app_path, "rb") as f:
             st = os.fstat(f.fileno())
             if not stat.S_ISREG(st.st_mode):
                 return None
-            magic = f.read(4)
-            if magic == _ELF_MAGIC:
-                return "elf"
-            if magic[:2] == _MZ_MAGIC:
-                return "pe"
-            if magic in _MACHO_MAGICS:
-                return "macho"
     except OSError:
-        pass
-    return None
+        return None
+    from .binary_utils import detect_binary_format
+    return detect_binary_format(app_path)
 
 
 # ---------------------------------------------------------------------------

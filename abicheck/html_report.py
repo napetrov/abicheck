@@ -33,8 +33,21 @@ import html
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from .checker import _BREAKING_KINDS as _CHECKER_BREAKING_KINDS_ENUM
 from .checker_policy import HasKind
+from .report_classifications import (
+    ADDED_KINDS,
+    BREAKING_KINDS,
+    CATEGORY_PREFIXES,
+    HIGH_SEVERITY_KINDS,
+    MEDIUM_SEVERITY_KINDS,
+    REMOVED_KINDS,
+    category,
+    is_breaking,
+    is_symbol_problem,
+    is_type_problem,
+    kind_str,
+    severity,
+)
 from .report_summary import compatibility_metrics
 
 if TYPE_CHECKING:
@@ -52,130 +65,13 @@ _VERDICT_STYLE: dict[str, tuple[str, str]] = {
     "API_BREAK": ("#e65100", "#ffe0b2"),
 }
 
-# ---------------------------------------------------------------------------
-# Change-kind classification helpers
-# ---------------------------------------------------------------------------
-
-#: Kinds that count as "removed" in the ABICC sense (symbol no longer available).
-_REMOVED_KINDS: frozenset[str] = frozenset(
-    {
-        "func_removed",
-        "var_removed",
-        "type_removed",
-        "typedef_removed",
-        "union_field_removed",
-        "enum_member_removed",  # removing an enum member is ABI-breaking (callers rely on value)
-    }
-)
-
-#: Kinds that count as "added" (new API surface — compatible).
-_ADDED_KINDS: frozenset[str] = frozenset(
-    {
-        "func_added",
-        "var_added",
-        "type_added",
-        "func_virtual_added",
-        "enum_member_added",
-        "union_field_added",
-        "type_field_added",
-        "type_field_added_compatible",
-    }
-)
-
-#: Kinds that are breaking but neither a simple removal nor addition.
-_CHANGED_BREAKING_KINDS: frozenset[str] = frozenset(
-    {
-        "func_params_changed",
-        "func_return_changed",
-        "func_virtual_removed",
-        "func_virtual_became_pure",
-        "func_pure_virtual_added",
-        "func_static_changed",
-        "func_cv_changed",
-        "var_type_changed",
-        "type_size_changed",
-        "type_alignment_changed",
-        "type_field_removed",
-        "type_field_offset_changed",
-        "type_field_type_changed",
-        "type_base_changed",
-        "type_vtable_changed",
-        "enum_member_value_changed",
-        "enum_last_member_value_changed",
-        "enum_underlying_size_changed",
-        "struct_size_changed",
-        "struct_field_offset_changed",
-        "struct_field_removed",
-        "struct_field_type_changed",
-        "struct_alignment_changed",
-        "field_bitfield_changed",
-        "calling_convention_changed",
-        "struct_packing_changed",
-        "func_visibility_changed",  # public→hidden: symbol removed from ABI
-        "typedef_base_changed",
-        "union_field_type_changed",
-        "type_visibility_changed",
-        # ELF-layer
-        "soname_changed",
-        "symbol_type_changed",
-        "symbol_size_changed",
-        "symbol_version_defined_removed",
-    }
-)
-
-#: Canonical breaking kinds imported from checker — single source of truth.
-#: Converted to frozenset[str] (kind.value) so kind_str lookups work without
-#: importing ChangeKind enum in this module.
-_BREAKING_KINDS: frozenset[str] = frozenset(
-    k.value for k in _CHECKER_BREAKING_KINDS_ENUM
-)
-
-#: Category buckets for the summary table — mirrors ABICC section headers.
-_CATEGORY_PREFIXES: list[tuple[str, tuple[str, ...]]] = [
-    ("Functions", ("func_",)),
-    ("Variables", ("var_",)),
-    ("Types", ("type_", "struct_", "union_", "field_", "typedef_")),
-    ("Enums", ("enum_",)),
-    (
-        "ELF / DWARF",
-        (
-            "soname_",
-            "symbol_",
-            "needed_",
-            "rpath_",
-            "runpath_",
-            "ifunc_",
-            "common_",
-            "dwarf_",
-        ),
-    ),
-]
-
-
-def _category(kind_str: str) -> str:
-    for label, prefixes in _CATEGORY_PREFIXES:
-        if any(kind_str.startswith(p) for p in prefixes):
-            return label
-    return "Other"
-
-
-def _is_breaking(change: object) -> bool:
-    kind = getattr(change, "kind", None)
-    kind_str = kind.value if kind is not None and hasattr(kind, "value") else str(kind)
-    return kind_str in _BREAKING_KINDS
-
-
-def _kind_str(change: object) -> str:
-    kind = getattr(change, "kind", None)
-    return kind.value if kind is not None and hasattr(kind, "value") else str(kind)
-
 
 def _change_bucket(change: object) -> str:
     """Classify a change into 'removed', 'added', or 'changed'."""
-    ks = _kind_str(change)
-    if ks in _REMOVED_KINDS:
+    ks = kind_str(change)
+    if ks in REMOVED_KINDS:
         return "removed"
-    if ks in _ADDED_KINDS:
+    if ks in ADDED_KINDS:
         return "added"
     return "changed"
 
@@ -307,8 +203,8 @@ def _changes_table(changes: list[object]) -> str:
 
     rows = []
     for ch in changes:
-        ks = _kind_str(ch)
-        cat = _category(ks)
+        ks = kind_str(ch)
+        cat = category(ks)
         desc = html.escape(getattr(ch, "description", "") or "")
         old_val = html.escape(str(getattr(ch, "old_value", "") or ""))
         new_val = html.escape(str(getattr(ch, "new_value", "") or ""))
@@ -381,19 +277,19 @@ def _summary_table(
 
     # Count by category
     cats: dict[str, dict[str, int]] = {}
-    for label, _ in _CATEGORY_PREFIXES:
+    for label, _ in CATEGORY_PREFIXES:
         cats[label] = {"removed": 0, "changed": 0, "added": 0}
     cats["Other"] = {"removed": 0, "changed": 0, "added": 0}
 
     for ch in removed:
-        cats[_category(_kind_str(ch))]["removed"] += 1
+        cats[category(kind_str(ch))]["removed"] += 1
     for ch in changed:
-        cats[_category(_kind_str(ch))]["changed"] += 1
+        cats[category(kind_str(ch))]["changed"] += 1
     for ch in added:
-        cats[_category(_kind_str(ch))]["added"] += 1
+        cats[category(kind_str(ch))]["added"] += 1
 
     rows = []
-    for label in [lbl for lbl, _ in _CATEGORY_PREFIXES] + ["Other"]:
+    for label in [lbl for lbl, _ in CATEGORY_PREFIXES] + ["Other"]:
         c = cats[label]
         if c["removed"] == 0 and c["changed"] == 0 and c["added"] == 0:
             continue
@@ -459,84 +355,6 @@ def _nav_bar(
 
 
 # ---------------------------------------------------------------------------
-# ABICC severity classification (imported from xml_report for consistency)
-# ---------------------------------------------------------------------------
-
-_HIGH_SEVERITY_KINDS: frozenset[str] = frozenset(
-    {
-        "func_removed",
-        "var_removed",
-        "type_removed",
-        "typedef_removed",
-        "type_size_changed",
-        "type_vtable_changed",
-        "type_base_changed",
-        "struct_size_changed",
-        "func_virtual_removed",
-        "func_pure_virtual_added",
-        "func_virtual_became_pure",
-        "base_class_position_changed",
-        "base_class_virtual_changed",
-        "type_kind_changed",
-        "func_deleted",
-    }
-)
-
-_MEDIUM_SEVERITY_KINDS: frozenset[str] = frozenset(
-    {
-        "func_return_changed",
-        "func_params_changed",
-        "type_field_offset_changed",
-        "type_field_type_changed",
-        "type_field_removed",
-        "type_alignment_changed",
-        "struct_field_offset_changed",
-        "struct_field_removed",
-        "struct_field_type_changed",
-        "struct_alignment_changed",
-        "var_type_changed",
-        "calling_convention_changed",
-        "soname_changed",
-        "symbol_type_changed",
-        "symbol_version_defined_removed",
-        "return_pointer_level_changed",
-        "param_pointer_level_changed",
-        "union_field_removed",
-        "union_field_type_changed",
-        "typedef_base_changed",
-        "struct_packing_changed",
-    }
-)
-
-
-def _severity(kind_str: str) -> str:
-    if kind_str in _HIGH_SEVERITY_KINDS:
-        return "High"
-    if kind_str in _MEDIUM_SEVERITY_KINDS:
-        return "Medium"
-    return "Low"
-
-
-def _is_type_problem(kind_str: str) -> bool:
-    return any(
-        kind_str.startswith(p)
-        for p in (
-            "type_",
-            "struct_",
-            "union_",
-            "field_",
-            "typedef_",
-            "enum_",
-            "base_class_",
-        )
-    )
-
-
-def _is_symbol_problem(kind_str: str) -> bool:
-    return any(kind_str.startswith(p) for p in ("func_", "var_"))
-
-
-# ---------------------------------------------------------------------------
 # ABICC-compatible HTML (compat_html mode)
 # ---------------------------------------------------------------------------
 
@@ -564,12 +382,12 @@ def _compat_changes_table(items: list[object], show_severity: bool = False) -> s
     h = html.escape
     rows = []
     for ch in items:
-        ks = _kind_str(ch)
+        ks = kind_str(ch)
         sym = h(getattr(ch, "symbol", "") or "")
         desc = h(getattr(ch, "description", "") or "")
         old_val = h(str(getattr(ch, "old_value", "") or ""))
         new_val = h(str(getattr(ch, "new_value", "") or ""))
-        sev_cell = f"<td>{_severity(ks)}</td>" if show_severity else ""
+        sev_cell = f"<td>{severity(ks)}</td>" if show_severity else ""
         rows.append(
             f"<tr><td class='sym'>{sym}</td><td>{h(ks)}</td>"
             f"{sev_cell}<td>{desc}</td><td>{old_val}</td><td>{new_val}</td></tr>"
@@ -620,9 +438,9 @@ def _generate_compat_html(
     type_problems: dict[str, list[object]] = {"High": [], "Medium": [], "Low": []}
     symbol_problems: dict[str, list[object]] = {"High": [], "Medium": [], "Low": []}
     for ch in changed:
-        ks = _kind_str(ch)
-        sev = _severity(ks)
-        if _is_type_problem(ks):
+        ks = kind_str(ch)
+        sev = severity(ks)
+        if is_type_problem(ks):
             type_problems[sev].append(ch)
         else:
             symbol_problems[sev].append(ch)

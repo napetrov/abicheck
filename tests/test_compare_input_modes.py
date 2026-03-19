@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from abicheck.cli import _is_elf, _resolve_input, main
+from abicheck.binary_utils import detect_binary_format
+from abicheck.cli import _resolve_input, main
 from abicheck.model import AbiSnapshot, Function, Visibility
 from abicheck.serialization import snapshot_to_json
 
@@ -60,31 +61,41 @@ def _breaking_snapshots(tmp_path: Path) -> tuple[AbiSnapshot, AbiSnapshot]:
     return old, new
 
 
-# ── _is_elf tests ────────────────────────────────────────────────────────
+# ── detect_binary_format tests ─────────────────────────────────────────
 
 
-class TestIsElf:
+class TestDetectBinaryFormat:
     def test_elf_file_detected(self, tmp_path):
         p = _write_fake_elf(tmp_path / "lib.so")
-        assert _is_elf(p) is True
+        assert detect_binary_format(p) == "elf"
 
     def test_json_file_not_elf(self, tmp_path):
         p = tmp_path / "snap.json"
         p.write_text('{"library": "test"}', encoding="utf-8")
-        assert _is_elf(p) is False
+        assert detect_binary_format(p) is None
 
     def test_nonexistent_file(self, tmp_path):
-        assert _is_elf(tmp_path / "missing") is False
+        assert detect_binary_format(tmp_path / "missing") is None
 
     def test_empty_file(self, tmp_path):
         p = tmp_path / "empty"
         p.write_bytes(b"")
-        assert _is_elf(p) is False
+        assert detect_binary_format(p) is None
 
     def test_short_file(self, tmp_path):
         p = tmp_path / "short"
         p.write_bytes(b"\x7f")
-        assert _is_elf(p) is False
+        assert detect_binary_format(p) is None
+
+    def test_pe_file_detected(self, tmp_path):
+        p = tmp_path / "lib.dll"
+        p.write_bytes(b"MZ" + b"\x00" * 64)
+        assert detect_binary_format(p) == "pe"
+
+    def test_macho_file_detected(self, tmp_path):
+        p = tmp_path / "lib.dylib"
+        p.write_bytes(b"\xfe\xed\xfa\xce" + b"\x00" * 64)
+        assert detect_binary_format(p) == "macho"
 
 
 # ── _resolve_input tests ────────────────────────────────────────────────

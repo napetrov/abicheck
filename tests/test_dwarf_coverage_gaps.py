@@ -818,47 +818,38 @@ class TestDecodeMemberLocation:
         assert _decode_member_location(die) == 16
 
     def test_loc_expr_plus_uconst(self):
-        """Lines 606-611: DW_OP_plus_uconst location expression."""
+        """DW_OP_plus_uconst location expression via shared decoder."""
         from abicheck.dwarf_advanced import _decode_member_location
 
-        op = MagicMock()
-        op.op = 0x23  # DW_OP_plus_uconst
-        op.args = [24]
+        # Shared decoder handles tuples: (opcode, operand)
         die = MockDIE(
             tag="DW_TAG_member",
-            attributes={"DW_AT_data_member_location": MockAttr([op])},
+            attributes={"DW_AT_data_member_location": MockAttr([(0x23, 24)])},
         )
         assert _decode_member_location(die) == 24
 
-    def test_loc_expr_type_error(self):
-        """Lines 612-613: TypeError in location expression args."""
+    def test_loc_expr_raw_ints(self):
+        """DW_OP_plus_uconst as raw integers via shared decoder."""
         from abicheck.dwarf_advanced import _decode_member_location
 
-        op = MagicMock()
-        op.op = 0x23
-        op.args = ["not_a_number"]
         die = MockDIE(
             tag="DW_TAG_member",
-            attributes={"DW_AT_data_member_location": MockAttr([op])},
+            attributes={"DW_AT_data_member_location": MockAttr([0x23, 32])},
         )
-        # Should return 0 on TypeError/ValueError
-        assert _decode_member_location(die) == 0
+        assert _decode_member_location(die) == 32
 
     def test_multi_op_expression(self):
-        """Line 615: multi-op expression returns 0."""
+        """Multi-op expression handled by shared stack machine."""
         from abicheck.dwarf_advanced import _decode_member_location
 
-        op1 = MagicMock()
-        op1.op = 0x10
-        op1.args = [8]
-        op2 = MagicMock()
-        op2.op = 0x22
-        op2.args = []
+        # DW_OP_constu 8 + DW_OP_constu 4 + DW_OP_plus => 12
         die = MockDIE(
             tag="DW_TAG_member",
-            attributes={"DW_AT_data_member_location": MockAttr([op1, op2])},
+            attributes={"DW_AT_data_member_location": MockAttr(
+                [(0x10, 8), (0x10, 4), (0x22, 0)]
+            )},
         )
-        assert _decode_member_location(die) == 0
+        assert _decode_member_location(die) == 12
 
 
 class TestUnwrapQualifiers:
@@ -1238,7 +1229,7 @@ class TestDwarfSnapshotFallbacks:
 
     def test_evaluate_location_expr_tuple(self):
         """_evaluate_location_expr with tuple operands."""
-        from abicheck.dwarf_snapshot import _evaluate_location_expr
+        from abicheck.dwarf_utils import _evaluate_location_expr
 
         # DW_OP_plus_uconst as tuple
         result = _evaluate_location_expr([(0x23, 16)])
@@ -1246,21 +1237,21 @@ class TestDwarfSnapshotFallbacks:
 
     def test_evaluate_location_expr_constu(self):
         """_evaluate_location_expr with DW_OP_constu."""
-        from abicheck.dwarf_snapshot import _evaluate_location_expr
+        from abicheck.dwarf_utils import _evaluate_location_expr
 
         result = _evaluate_location_expr([(0x10, 42)])
         assert result == 42
 
     def test_evaluate_location_expr_lit(self):
         """_evaluate_location_expr with DW_OP_lit0..31."""
-        from abicheck.dwarf_snapshot import _evaluate_location_expr
+        from abicheck.dwarf_utils import _evaluate_location_expr
 
         result = _evaluate_location_expr([(0x35, 0)])  # DW_OP_lit5
         assert result == 5
 
     def test_evaluate_location_expr_plus(self):
         """_evaluate_location_expr with DW_OP_plus."""
-        from abicheck.dwarf_snapshot import _evaluate_location_expr
+        from abicheck.dwarf_utils import _evaluate_location_expr
 
         # Push 10, then plus (adds to base 0)
         result = _evaluate_location_expr([(0x10, 10), (0x22, 0)])
@@ -1268,27 +1259,27 @@ class TestDwarfSnapshotFallbacks:
 
     def test_evaluate_location_expr_raw_ints(self):
         """_evaluate_location_expr with raw integer opcodes."""
-        from abicheck.dwarf_snapshot import _evaluate_location_expr
+        from abicheck.dwarf_utils import _evaluate_location_expr
 
         # DW_OP_plus_uconst(0x23), 8
         result = _evaluate_location_expr([0x23, 8])
         assert result == 8
 
     def test_evaluate_location_expr_raw_constu(self):
-        from abicheck.dwarf_snapshot import _evaluate_location_expr
+        from abicheck.dwarf_utils import _evaluate_location_expr
 
         result = _evaluate_location_expr([0x10, 5])
         assert result == 5
 
     def test_evaluate_location_expr_raw_lit(self):
-        from abicheck.dwarf_snapshot import _evaluate_location_expr
+        from abicheck.dwarf_utils import _evaluate_location_expr
 
         # DW_OP_lit3 = 0x33
         result = _evaluate_location_expr([0x33])
         assert result == 3
 
     def test_evaluate_location_expr_empty(self):
-        from abicheck.dwarf_snapshot import _evaluate_location_expr
+        from abicheck.dwarf_utils import _evaluate_location_expr
 
         result = _evaluate_location_expr([])
         assert result == 0
