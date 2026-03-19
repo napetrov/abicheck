@@ -443,6 +443,30 @@ RISK_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED,
 })
 
+# ---------------------------------------------------------------------------
+# Compatible sub-categories: additions vs quality/behavioral issues
+# ---------------------------------------------------------------------------
+
+#: Additive kinds — new public API surface (subset of COMPATIBLE_KINDS).
+#: Explicitly enumerated to avoid false positives (e.g. FUNC_NOEXCEPT_ADDED
+#: is a qualifier change, not a new API addition).
+ADDITION_KINDS: frozenset[ChangeKind] = frozenset({
+    ChangeKind.FUNC_ADDED,
+    ChangeKind.VAR_ADDED,
+    ChangeKind.TYPE_ADDED,
+    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
+    ChangeKind.ENUM_MEMBER_ADDED,
+    ChangeKind.UNION_FIELD_ADDED,
+    ChangeKind.CONSTANT_ADDED,
+    ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
+    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT,
+})
+
+#: Quality / behavioral issues — COMPATIBLE_KINDS that are NOT additions.
+#: Examples: VISIBILITY_LEAK, SONAME_MISSING, DWARF_INFO_MISSING, noexcept changes.
+QUALITY_KINDS: frozenset[ChangeKind] = frozenset(COMPATIBLE_KINDS - ADDITION_KINDS)
+
+
 API_BREAK_KINDS: set[ChangeKind] = {
     ChangeKind.ENUM_MEMBER_RENAMED,
     ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,
@@ -519,6 +543,18 @@ assert PLUGIN_ABI_DOWNGRADED_KINDS <= BREAKING_KINDS, (
 )
 # Safety-critical invariants: RISK_KINDS must be disjoint from all other kind sets.
 # Use explicit raises (not assert) so these are never stripped by python -O.
+# ADDITION_KINDS must be a subset of COMPATIBLE_KINDS; their union with
+# QUALITY_KINDS must cover all COMPATIBLE_KINDS exactly.
+assert ADDITION_KINDS <= COMPATIBLE_KINDS, (
+    "ADDITION_KINDS must be a subset of COMPATIBLE_KINDS; "
+    f"offending kinds: {ADDITION_KINDS - COMPATIBLE_KINDS}"
+)
+assert ADDITION_KINDS | QUALITY_KINDS == COMPATIBLE_KINDS, (
+    "ADDITION_KINDS | QUALITY_KINDS must equal COMPATIBLE_KINDS; "
+    f"missing: {COMPATIBLE_KINDS - (ADDITION_KINDS | QUALITY_KINDS)}, "
+    f"extra: {(ADDITION_KINDS | QUALITY_KINDS) - COMPATIBLE_KINDS}"
+)
+
 if not RISK_KINDS.isdisjoint(BREAKING_KINDS):
     raise AssertionError(
         "RISK_KINDS must not overlap with BREAKING_KINDS; "

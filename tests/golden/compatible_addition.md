@@ -10,7 +10,7 @@
 | Deployment risk changes | 0 |
 | Compatible additions | 1 |
 
-## ✅ Compatible Changes
+## ✅ Additions
 
 - New public function: helper
 

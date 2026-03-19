@@ -785,7 +785,7 @@ class TestToMarkdownBranches:
         c = Change(kind=ChangeKind.FUNC_ADDED, symbol="new_fn", description="new_fn added")
         result = _make_diff(changes=[c], verdict=Verdict.COMPATIBLE)
         out = to_markdown(result)
-        assert "Compatible Changes" in out
+        assert "Additions" in out
 
     def test_to_markdown_source_breaks_section(self):
         """Exercise source-level breaks section."""

@@ -14,15 +14,32 @@
 
 """Severity configuration for issue categories.
 
-Provides configurable criticality levels for four categories of ABI/API findings:
+Builds on top of the existing policy/verdict system in ``checker_policy``
+to provide user-facing severity presets that control exit codes and report
+presentation.
 
-1. **abi_breaking** — clear ABI/API incompatibilities (symbol removed, type layout
-   changed, etc.).  Default: ``error``.
-2. **potential_breaking** — potential incompatibilities that need manual review
-   (source-level API breaks, deployment risk).  Default: ``warning``.
-3. **quality_issues** — problematic behaviors such as exposing std symbols,
-   missing SONAME, toolchain flag drift.  Default: ``warning``.
-4. **additions** — new public symbols, types, enum members.  Default: ``info``.
+The canonical kind-set classification lives in ``checker_policy`` (single
+source of truth).  This module provides:
+
+- **SeverityLevel** — ``error`` / ``warning`` / ``info``.
+- **IssueCategory** — the four high-level categories users interact with.
+- **SeverityConfig** — maps each category to a severity level.
+- **Presets** — ``default``, ``strict``, ``info-only``.
+- **classify_change** / **categorize_changes** — thin wrappers over the
+  canonical kind sets.
+- **compute_exit_code** — severity-aware exit-code computation.
+
+The four categories map to the canonical kind sets as follows:
+
+1. **abi_breaking** → ``BREAKING_KINDS`` — clear ABI/API incompatibilities.
+   Default: ``error``.
+2. **potential_breaking** → ``API_BREAK_KINDS ∪ RISK_KINDS`` — potential
+   incompatibilities that need manual review.  Default: ``warning``.
+3. **quality_issues** → ``QUALITY_KINDS`` (= ``COMPATIBLE_KINDS − ADDITION_KINDS``)
+   — problematic behaviors such as exposing std symbols, missing SONAME,
+   toolchain flag drift.  Default: ``warning``.
+4. **additions** → ``ADDITION_KINDS`` — new public symbols, types, enum
+   members.  Default: ``info``.
 
 Each category can be set to ``error``, ``warning``, or ``info``:
 
@@ -45,9 +62,10 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .checker_policy import (
+    ADDITION_KINDS,
     API_BREAK_KINDS,
     BREAKING_KINDS,
-    COMPATIBLE_KINDS,
+    QUALITY_KINDS,
     RISK_KINDS,
     ChangeKind,
     HasKind,
@@ -74,50 +92,23 @@ class IssueCategory(str, Enum):
 # ---------------------------------------------------------------------------
 # Change-kind -> IssueCategory classification
 # ---------------------------------------------------------------------------
-
-#: Kinds that are clear binary ABI / API incompatibilities.
-_ABI_BREAKING_KINDS: frozenset[ChangeKind] = frozenset(BREAKING_KINDS)
-
-#: Kinds that are potential incompatibilities requiring review
-#: (source-level breaks + deployment risk).
-_POTENTIAL_BREAKING_KINDS: frozenset[ChangeKind] = frozenset(
-    API_BREAK_KINDS | RISK_KINDS
-)
-
-#: Additive kinds — new API surface (subset of COMPATIBLE_KINDS).
-#: Explicitly enumerated to avoid false positives (e.g. FUNC_NOEXCEPT_ADDED
-#: is a qualifier change, not a new API addition).
-_ADDITION_KINDS: frozenset[ChangeKind] = frozenset({
-    ChangeKind.FUNC_ADDED,
-    ChangeKind.VAR_ADDED,
-    ChangeKind.TYPE_ADDED,
-    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
-    ChangeKind.ENUM_MEMBER_ADDED,
-    ChangeKind.UNION_FIELD_ADDED,
-    ChangeKind.CONSTANT_ADDED,
-    ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
-    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT,
-})
-
-#: Quality / behavioral issues — COMPATIBLE_KINDS that are NOT additions.
-_QUALITY_ISSUE_KINDS: frozenset[ChangeKind] = frozenset(
-    COMPATIBLE_KINDS - _ADDITION_KINDS
-)
+# Delegates entirely to the canonical kind sets in checker_policy.py.
+# No duplicate frozensets here — single source of truth.
 
 
 def classify_change(kind: ChangeKind) -> IssueCategory:
     """Classify a ChangeKind into one of the four issue categories.
 
-    Classification is deterministic and uses the canonical kind sets from
-    ``checker_policy``.  Unknown kinds default to ``ABI_BREAKING`` (fail-safe).
+    Uses the canonical kind sets from ``checker_policy`` directly.
+    Unknown kinds default to ``ABI_BREAKING`` (fail-safe).
     """
-    if kind in _ABI_BREAKING_KINDS:
+    if kind in BREAKING_KINDS:
         return IssueCategory.ABI_BREAKING
-    if kind in _POTENTIAL_BREAKING_KINDS:
+    if kind in API_BREAK_KINDS or kind in RISK_KINDS:
         return IssueCategory.POTENTIAL_BREAKING
-    if kind in _ADDITION_KINDS:
+    if kind in ADDITION_KINDS:
         return IssueCategory.ADDITIONS
-    if kind in _QUALITY_ISSUE_KINDS:
+    if kind in QUALITY_KINDS:
         return IssueCategory.QUALITY_ISSUES
     # Fail-safe: unclassified kinds are treated as breaking.
     return IssueCategory.ABI_BREAKING
