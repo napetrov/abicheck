@@ -1251,23 +1251,23 @@ def appcompat_cmd(
             "Provide OLD_LIB and NEW_LIB arguments, or use --check-against for weak mode."
         )
 
-    # Warn about per-side flags that are silently ignored outside the full compare path
+    # Reject per-side flags that only apply to full comparison mode
     if weak_mode or list_symbols:
-        _ignored: list[str] = []
+        _rejected: list[str] = []
         if old_headers_only:
-            _ignored.append("--old-header")
+            _rejected.append("--old-header")
         if new_headers_only:
-            _ignored.append("--new-header")
+            _rejected.append("--new-header")
         if old_includes_only:
-            _ignored.append("--old-include")
+            _rejected.append("--old-include")
         if new_includes_only:
-            _ignored.append("--new-include")
-        if _ignored:
+            _rejected.append("--new-include")
+        if _rejected:
             mode_label = "--check-against" if weak_mode else "--list-required-symbols"
             raise click.UsageError(
-                f"{', '.join(_ignored)} {'is' if len(_ignored) == 1 else 'are'} only used "
-                f"in full comparison mode (OLD_LIB NEW_LIB) and "
-                f"{'is' if len(_ignored) == 1 else 'are'} ignored with {mode_label}."
+                f"{', '.join(_rejected)} cannot be used with {mode_label}. "
+                f"Per-side header/include flags are only supported in full "
+                f"comparison mode (OLD_LIB NEW_LIB)."
             )
 
     # --list-required-symbols: just list and exit
