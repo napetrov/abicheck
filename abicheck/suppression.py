@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import yaml
@@ -308,7 +308,7 @@ class SuppressionList:
         """
         from .checker_policy import BREAKING_KINDS
         check_date = today or date.today()
-        near_expiry_cutoff = check_date + __import__("datetime").timedelta(days=near_expiry_days)
+        near_expiry_cutoff = check_date + timedelta(days=near_expiry_days)
 
         match_counts: dict[int, int] = {i: 0 for i in range(len(self._suppressions))}
         high_risk: list[tuple[Suppression, Change]] = []

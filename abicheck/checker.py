@@ -35,6 +35,7 @@ from .checker_policy import (
 )
 from .checker_policy import (
     ChangeKind,
+    Confidence,
     Verdict,
     compute_verdict,
 )
@@ -149,7 +150,7 @@ class DiffResult:
     # Evidence tier and confidence — helps users assess how much trust to
     # place in the verdict.  "high" means multiple evidence sources agree;
     # "low" means key detectors were disabled (e.g., DWARF stripped).
-    confidence: str = "high"  # "high" | "medium" | "low"
+    confidence: Confidence = Confidence.HIGH
     evidence_tiers: list[str] = field(default_factory=list)  # e.g. ["elf", "dwarf", "header"]
     coverage_warnings: list[str] = field(default_factory=list)  # human-readable coverage gaps
 
@@ -260,8 +261,8 @@ def _check_function_signature(mangled: str, f_old: Function, f_new: Function) ->
             new_value=f_new.return_type,
         ))
 
-    old_params = [(p.type, p.kind) for p in f_old.params]
-    new_params = [(p.type, p.kind) for p in f_new.params]
+    old_params = [(canonicalize_type_name(p.type), p.kind) for p in f_old.params]
+    new_params = [(canonicalize_type_name(p.type), p.kind) for p in f_new.params]
     if old_params != new_params:
         changes.append(Change(
             kind=ChangeKind.FUNC_PARAMS_CHANGED,
@@ -2333,7 +2334,7 @@ def _compute_confidence(
     detector_results: list[DetectorResult],
     old: AbiSnapshot,
     new: AbiSnapshot,
-) -> tuple[list[str], str, list[str]]:
+) -> tuple[list[str], Confidence, list[str]]:
     """Compute evidence tiers, confidence level, and coverage warnings.
 
     Returns (evidence_tiers, confidence, coverage_warnings).
@@ -2358,8 +2359,10 @@ def _compute_confidence(
     has_dwarf_advanced = old.dwarf_advanced is not None or new.dwarf_advanced is not None
     has_pe = getattr(old, "pe", None) is not None or getattr(new, "pe", None) is not None
     has_macho = getattr(old, "macho", None) is not None or getattr(new, "macho", None) is not None
-    has_headers = bool(old.functions or old.types or old.enums or old.typedefs)
-    is_elf_only = getattr(old, "elf_only_mode", False)
+    has_headers = bool(
+        old.functions or old.types or old.enums or old.typedefs or old.variables
+        or new.functions or new.types or new.enums or new.typedefs or new.variables
+    )
 
     if has_elf:
         tiers.append("elf")
@@ -2381,27 +2384,27 @@ def _compute_confidence(
 
     # Compute confidence level.
     if has_headers and (has_elf or has_dwarf or has_pe or has_macho):
-        confidence = "high"
+        confidence = Confidence.HIGH
     elif has_headers:
-        confidence = "medium"
+        confidence = Confidence.MEDIUM
         if not has_elf and not has_pe and not has_macho:
             warnings.append(
                 "No binary metadata available; verdict is based on header analysis only"
             )
     elif has_elf and has_dwarf:
-        confidence = "medium"
+        confidence = Confidence.MEDIUM
         if not has_headers:
             warnings.append(
                 "No header/AST data; type-level changes may be missed"
             )
     elif has_elf or has_pe or has_macho:
-        confidence = "low"
+        confidence = Confidence.LOW
         warnings.append(
             "Binary-only analysis without debug info; many ABI changes "
             "cannot be detected (struct layout, enum values, type changes)"
         )
     else:
-        confidence = "low"
+        confidence = Confidence.LOW
         warnings.append("Very limited data available; results may be incomplete")
 
     # DWARF-specific warning: if DWARF is expected but stripped.
@@ -2409,8 +2412,8 @@ def _compute_confidence(
         (dr for dr in detector_results if dr.name == "dwarf"), None,
     )
     if dwarf_detector and not dwarf_detector.enabled:
-        if confidence == "high":
-            confidence = "medium"
+        if confidence == Confidence.HIGH:
+            confidence = Confidence.MEDIUM
 
     return tiers, confidence, warnings
 

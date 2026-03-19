@@ -54,7 +54,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .checker_policy import VALID_BASE_POLICIES, ChangeKind, Verdict, compute_verdict
+from .checker_policy import VALID_BASE_POLICIES, BREAKING_KINDS, ChangeKind, Verdict, compute_verdict
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +67,19 @@ _SEVERITY_MAP: dict[str, Verdict] = {
 }
 
 _VALID_BASE_POLICIES = VALID_BASE_POLICIES  # re-export alias for backward compat
+
+# Kinds that are especially dangerous to downgrade — removing a function
+# or changing its signature always causes hard crashes.
+_CRITICAL_BREAKING_KINDS: frozenset[ChangeKind] = frozenset({
+    ChangeKind.FUNC_REMOVED,
+    ChangeKind.FUNC_RETURN_CHANGED,
+    ChangeKind.FUNC_PARAMS_CHANGED,
+    ChangeKind.TYPE_SIZE_CHANGED,
+    ChangeKind.TYPE_VTABLE_CHANGED,
+    ChangeKind.VAR_REMOVED,
+    ChangeKind.VAR_TYPE_CHANGED,
+    ChangeKind.SONAME_CHANGED,
+})
 
 
 @dataclass
@@ -217,21 +230,6 @@ class PolicyFile:
           (e.g., func_removed → ignore).  These almost certainly mask real breaks.
         - Downgrading BREAKING to COMPATIBLE_WITH_RISK for critical kinds.
         """
-        from .checker_policy import BREAKING_KINDS
-
-        # Kinds that are especially dangerous to downgrade — removing a function
-        # or changing its signature always causes hard crashes.
-        _CRITICAL_BREAKING_KINDS: frozenset[ChangeKind] = frozenset({
-            ChangeKind.FUNC_REMOVED,
-            ChangeKind.FUNC_RETURN_CHANGED,
-            ChangeKind.FUNC_PARAMS_CHANGED,
-            ChangeKind.TYPE_SIZE_CHANGED,
-            ChangeKind.TYPE_VTABLE_CHANGED,
-            ChangeKind.VAR_REMOVED,
-            ChangeKind.VAR_TYPE_CHANGED,
-            ChangeKind.SONAME_CHANGED,
-        })
-
         warnings: list[str] = []
         for kind, verdict in self.overrides.items():
             if kind in _CRITICAL_BREAKING_KINDS:

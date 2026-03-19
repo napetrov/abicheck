@@ -292,6 +292,13 @@ class Verdict(str, Enum):
     BREAKING = "BREAKING"  # binary ABI break
 
 
+class Confidence(str, Enum):
+    """Evidence confidence level for a comparison result."""
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 # Which ChangeKinds are immediately BREAKING (binary ABI incompatibility)
 BREAKING_KINDS = {
     ChangeKind.FUNC_REMOVED,

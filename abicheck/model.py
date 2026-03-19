@@ -51,7 +51,7 @@ def is_compiler_internal_type(name: str) -> bool:
 
 # Patterns for type-name canonicalization.
 _STRUCT_PREFIX_RE = _re.compile(r"^(struct|class|union|enum)\s+")
-_CONST_REORDER_RE = _re.compile(r"\bconst\s+(\w+)")
+_LEADING_CONST_RE = _re.compile(r"^const\s+([\w\s]+?)(\s*[*&].*)?$")
 _MULTI_SPACE_RE = _re.compile(r"\s{2,}")
 
 
@@ -60,7 +60,8 @@ def canonicalize_type_name(name: str) -> str:
 
     Transformations (in order):
     1. Strip leading ``struct ``/``class ``/``union ``/``enum `` elaborated-type-specifier.
-    2. Normalise ``const int`` → ``int const`` (east-const canonical form).
+    2. Normalise leading ``const T`` → ``T const`` (east-const canonical form),
+       but only when the base type is simple words (no templates).
     3. Collapse multiple spaces.
     4. Strip leading/trailing whitespace.
 
@@ -73,12 +74,21 @@ def canonicalize_type_name(name: str) -> str:
     'int const *'
     >>> canonicalize_type_name("  class   Bar  ")
     'Bar'
+    >>> canonicalize_type_name("const unsigned long long")
+    'unsigned long long const'
     """
     result = name
     # 1. Strip elaborated type specifier prefix.
     result = _STRUCT_PREFIX_RE.sub("", result)
-    # 2. East-const normalisation: "const T" → "T const" (only for simple types).
-    result = _CONST_REORDER_RE.sub(r"\1 const", result)
+    # 2. East-const normalisation: move leading "const" after the full base
+    #    type (all words before any pointer/reference sigil).  Only applies
+    #    when the base portion contains no angle brackets (templates).
+    m = _LEADING_CONST_RE.match(result)
+    if m:
+        base = m.group(1).strip()
+        suffix = m.group(2) or ""
+        if "<" not in base:
+            result = base + " const" + suffix
     # 3. Collapse whitespace.
     result = _MULTI_SPACE_RE.sub(" ", result)
     return result.strip()
