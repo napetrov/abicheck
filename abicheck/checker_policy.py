@@ -87,6 +87,9 @@ class ChangeKind(str, Enum):
     FUNC_VISIBILITY_CHANGED = (
         "func_visibility_changed"  # default→hidden: symbol gone from ABI
     )
+    FUNC_VISIBILITY_PROTECTED_CHANGED = (
+        "func_visibility_protected_changed"  # default↔protected: interposition semantics changed, symbol still exported
+    )
 
     # Virtual changes
     FUNC_PURE_VIRTUAL_ADDED = "func_pure_virtual_added"
@@ -333,7 +336,9 @@ BREAKING_KINDS = {
     ChangeKind.TYPEDEF_REMOVED,
     ChangeKind.FIELD_BITFIELD_CHANGED,
     # ELF Sprint 2
-    ChangeKind.SONAME_CHANGED,
+    # NOTE: SONAME_CHANGED moved to COMPATIBLE_KINDS — SONAME is a packaging/policy
+    # attribute, not a binary compatibility signal. The binary ABI surface (symbols,
+    # types, calling conventions) is unchanged when only SONAME differs.
     ChangeKind.COMPAT_VERSION_CHANGED,  # Mach-O compat_version → BREAKING
     ChangeKind.SYMBOL_TYPE_CHANGED,
     ChangeKind.SYMBOL_SIZE_CHANGED,  # in ELF-only mode (no headers/DWARF) this may be
@@ -383,7 +388,13 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
     ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
     # ELF-only removed: symbol was never declared in headers, may be visibility cleanup
     ChangeKind.FUNC_REMOVED_ELF_ONLY,
-    # ELF quality improvements
+    # ELF quality / packaging attributes
+    # SONAME_CHANGED: SONAME is a linker/packaging convention. The actual binary
+    # ABI surface (exported symbols, types, calling conventions) is determined by
+    # the symbol table and debug info — not by the SONAME string. A SONAME change
+    # typically requires a distro symlink update but does not break already-compiled
+    # consumers whose loader resolves the library by full path or runpath.
+    ChangeKind.SONAME_CHANGED,
     ChangeKind.SONAME_MISSING,
     ChangeKind.VISIBILITY_LEAK,
     ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
@@ -444,6 +455,13 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
 
     # Version-stamped typedef sentinels: compile-time only, never exported as ELF symbols
     ChangeKind.TYPEDEF_VERSION_SENTINEL,
+
+    # ELF symbol visibility changed default→protected.
+    # Symbol is still exported from DSO; existing binaries link and resolve
+    # normally. Only interposition (LD_PRELOAD override) stops working for
+    # references originating inside the library itself. That is an intentional
+    # policy decision by the library author, not a binary ABI break for consumers.
+    ChangeKind.FUNC_VISIBILITY_PROTECTED_CHANGED,
 }
 
 # Changes that are binary-compatible for already-compiled consumers but represent
@@ -683,6 +701,12 @@ IMPACT_TEXT: dict[ChangeKind, str] = {
     ChangeKind.FUNC_STATIC_CHANGED: "Static/non-static transition changes calling convention (implicit this pointer); ABI mismatch.",
     ChangeKind.FUNC_CV_CHANGED: "const/volatile on 'this' changes the mangled name; old binaries link to the wrong symbol.",
     ChangeKind.FUNC_VISIBILITY_CHANGED: "Symbol hidden from dynamic linking; old binaries can't find it at load time.",
+    ChangeKind.FUNC_VISIBILITY_PROTECTED_CHANGED: (
+        "Symbol visibility changed to STV_PROTECTED. The symbol remains exported and "
+        "is still resolvable by external consumers. Interposition via LD_PRELOAD no "
+        "longer works for calls originating inside the library itself — intentional "
+        "by the library author. Existing compiled consumers are unaffected."
+    ),
     # Virtual
     ChangeKind.FUNC_PURE_VIRTUAL_ADDED: "Old subclasses don't implement the pure virtual; instantiation causes linker error or UB.",
     ChangeKind.FUNC_VIRTUAL_BECAME_PURE: "Concrete virtual became pure; old binaries calling it get unresolved dispatch.",

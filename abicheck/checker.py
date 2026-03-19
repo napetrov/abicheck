@@ -1838,6 +1838,25 @@ def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]
             old_value=str(s_old.size),
             new_value=str(s_new.size),
         ))
+
+    # case51: ELF visibility default→protected (or vice-versa).
+    # Symbol is still exported — interposition semantics changed but binary compat intact.
+    old_vis = getattr(s_old, "visibility", "default") or "default"
+    new_vis = getattr(s_new, "visibility", "default") or "default"
+    _PROTECTED_PAIR = frozenset({"default", "protected"})
+    if old_vis != new_vis and {old_vis, new_vis} == _PROTECTED_PAIR:
+        changes.append(Change(
+            kind=ChangeKind.FUNC_VISIBILITY_PROTECTED_CHANGED,
+            symbol=sym_name,
+            description=(
+                f"ELF symbol visibility changed: {sym_name} "
+                f"({old_vis} → {new_vis}); symbol still exported, "
+                f"interposition semantics changed"
+            ),
+            old_value=old_vis,
+            new_value=new_vis,
+        ))
+
     return changes
 
 
