@@ -492,7 +492,8 @@ class TestCrossValidationHelpers:
         result = _filter_source_only(result)
         assert result.verdict == Verdict.COMPATIBLE  # only FUNC_ADDED left
         result = _apply_strict(result)
-        assert result.verdict == Verdict.BREAKING  # strict promotes it
+        # Pure additions stay COMPATIBLE even under strict (ABICC parity)
+        assert result.verdict == Verdict.COMPATIBLE
 
     def test_whitelist_plus_skip_composition(self, tmp_path: Path) -> None:
         """Whitelist and skip can be combined: whitelist first, then skip further."""

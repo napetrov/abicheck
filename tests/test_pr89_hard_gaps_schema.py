@@ -141,8 +141,13 @@ class TestFuncDeletedElfFallbackDetection:
         # ELF fallback must NOT double-report
         assert ChangeKind.FUNC_DELETED_ELF_FALLBACK not in kinds
 
-    def test_became_inline_uses_func_became_inline_not_fallback(self) -> None:
-        """is_inline transition is handled by FUNC_BECAME_INLINE, not fallback."""
+    def test_became_inline_symbol_vanished_is_breaking(self) -> None:
+        """is_inline transition where symbol vanishes from .dynsym is a binary break.
+
+        FUNC_BECAME_INLINE (API_BREAK) fires for the inline transition, AND
+        FUNC_DELETED_ELF_FALLBACK (BREAKING) fires because the symbol actually
+        disappeared from .dynsym — old binaries linked against it will fail.
+        """
         mangled = "_Z7processv"
         old = _snap(
             functions=[_func("process", mangled, is_inline=False)],
@@ -155,7 +160,8 @@ class TestFuncDeletedElfFallbackDetection:
         result = compare(old, new)
         kinds = _kinds(result)
         assert ChangeKind.FUNC_BECAME_INLINE in kinds
-        assert ChangeKind.FUNC_DELETED_ELF_FALLBACK not in kinds
+        # Symbol vanished from .dynsym → binary break for pre-compiled consumers
+        assert ChangeKind.FUNC_DELETED_ELF_FALLBACK in kinds
 
     def test_func_removed_not_in_new_header_no_fallback(self) -> None:
         """Symbol removed from both header AND ELF → FUNC_REMOVED (not fallback)."""

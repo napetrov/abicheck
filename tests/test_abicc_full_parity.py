@@ -630,3 +630,57 @@ class TestCrossDetectorIntegration:
         all_classified = _BREAKING_KINDS | _COMPATIBLE_KINDS | _API_BREAK_KINDS
         for kind in new_kinds:
             assert kind in all_classified, f"{kind} not in any classification set"
+
+
+# ===========================================================================
+# 9. SYMBOL_RENAMED_BATCH — batch symbol rename (namespace refactoring)
+#
+# Heuristic: 2+ removed symbols each have a matching added symbol where
+# the added name ends with the removed name (common prefix pattern).
+# ===========================================================================
+
+
+class TestSymbolRenamedBatch:
+    """Detect batch symbol renames (namespace refactoring)."""
+
+    def test_batch_rename_detected(self) -> None:
+        """3 symbols renamed with common prefix → SYMBOL_RENAMED_BATCH."""
+        old = _snap(functions=[
+            _func("init", "init"),
+            _func("process", "process"),
+            _func("cleanup", "cleanup"),
+        ])
+        new = _snap(functions=[
+            _func("mylib_init", "mylib_init"),
+            _func("mylib_process", "mylib_process"),
+            _func("mylib_cleanup", "mylib_cleanup"),
+        ])
+        result = compare(old, new)
+        assert ChangeKind.SYMBOL_RENAMED_BATCH in _kinds(result)
+
+    def test_single_rename_not_batch(self) -> None:
+        """Renaming only 1 function must NOT trigger batch detection."""
+        old = _snap(functions=[
+            _func("init", "init"),
+            _func("process", "process"),
+        ])
+        new = _snap(functions=[
+            _func("mylib_init", "mylib_init"),
+            _func("process", "process"),
+        ])
+        result = compare(old, new)
+        assert ChangeKind.SYMBOL_RENAMED_BATCH not in _kinds(result)
+
+    def test_batch_rename_is_breaking(self) -> None:
+        """Batch rename breaks all existing consumers (undefined symbols)."""
+        old = _snap(functions=[
+            _func("open", "open"),
+            _func("close", "close"),
+        ])
+        new = _snap(functions=[
+            _func("mylib_open", "mylib_open"),
+            _func("mylib_close", "mylib_close"),
+        ])
+        result = compare(old, new)
+        assert ChangeKind.SYMBOL_RENAMED_BATCH in _kinds(result)
+        assert result.verdict == Verdict.BREAKING

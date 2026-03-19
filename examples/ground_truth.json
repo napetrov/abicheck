@@ -607,20 +607,18 @@
       "abi_break": false,
       "api_break": false,
       "bad_practice": true,
-      "description": "Library linked with -Wl,-z,execstack has GNU_STACK RWE \u2014 disables NX protection (bad practice \u2014 security)",
-      "known_gap": "Tool returns NO_CHANGE \u2014 executable stack is a linker flag, not detectable via symbol/type analysis"
+      "description": "Library linked with -Wl,-z,execstack has GNU_STACK RWE \u2014 disables NX protection (bad practice \u2014 security)"
     },
     "case50_soname_inconsistent": {
-      "expected": "COMPATIBLE",
-      "category": "quality",
+      "expected": "COMPATIBLE_WITH_RISK",
+      "category": "risk",
       "platforms": [
         "linux"
       ],
       "abi_break": false,
       "api_break": false,
       "bad_practice": true,
-      "description": "SONAME present but set to wrong major version \u2014 bakes wrong DT_NEEDED into consumers (bad practice \u2014 packaging/upgrade hazard)",
-      "known_gap": "Tool returns BREAKING due to soname_changed detection \u2014 ABI surface is actually identical; SONAME difference is policy, not binary compatibility"
+      "description": "SONAME present but set to wrong major version \u2014 bakes wrong DT_NEEDED into consumers (bad practice \u2014 packaging/upgrade hazard)"
     },
     "case51_protected_visibility": {
       "expected": "COMPATIBLE",
@@ -653,8 +651,7 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": true,
-      "description": "Library exports generic symbol names (init, process, cleanup) without prefix \u2014 collision risk (bad practice \u2014 API design)",
-      "known_gap": "Tool returns COMPATIBLE \u2014 ELF-only symbol removals (func_removed_elf_only) paired with additions are classified as compatible; semantic breakage from symbol rename not yet elevated to BREAKING"
+      "description": "Library exports generic symbol names (init, process, cleanup) without prefix \u2014 collision risk (bad practice \u2014 API design)"
     },
     "case54_used_reserved_field": {
       "expected": "COMPATIBLE",

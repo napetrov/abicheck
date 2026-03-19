@@ -120,6 +120,12 @@ class ChangeKind(str, Enum):
     # ── Mach-O specific ──────────────────────────────────────────────────
     COMPAT_VERSION_CHANGED = "compat_version_changed"  # LC_ID_DYLIB compat_version changed → BREAKING
 
+    # ELF security / bad practice
+    EXECUTABLE_STACK = "executable_stack"  # PT_GNU_STACK has PF_X — NX protection disabled (bad practice)
+
+    # ELF symbol visibility drift (.dynsym STV_*)
+    ELF_VISIBILITY_CHANGED = "elf_visibility_changed"  # DEFAULT→PROTECTED (interposition semantics change)
+
     # Symbol metadata drift (ELF .dynsym)
     SYMBOL_BINDING_CHANGED = "symbol_binding_changed"  # GLOBAL→WEAK (breaking)
     SYMBOL_BINDING_STRENGTHENED = (
@@ -275,6 +281,12 @@ class ChangeKind(str, Enum):
     # ── ELF st_other visibility transitions ────────────────────────────────────
     SYMBOL_ELF_VISIBILITY_CHANGED = "symbol_elf_visibility_changed"  # DEFAULT→PROTECTED etc.
 
+    # ── Symbol rename detection ────────────────────────────────────────────────
+    # Emitted when multiple symbols are removed and corresponding prefixed/suffixed
+    # versions are added, indicating a namespace refactoring. Old consumers linked
+    # against the unprefixed symbols will get undefined symbol errors.
+    SYMBOL_RENAMED_BATCH = "symbol_renamed_batch"
+
     # ── Symbol origin detection ────────────────────────────────────────────────
     # Emitted when a symbol that changed (removed, type-changed, etc.) is detected
     # as likely originating from a dependency library (libstdc++, libgcc, libc, …)
@@ -381,6 +393,7 @@ BREAKING_KINDS = {
     ChangeKind.TEMPLATE_PARAM_TYPE_CHANGED,
     ChangeKind.TEMPLATE_RETURN_TYPE_CHANGED,
     ChangeKind.FUNC_DELETED_ELF_FALLBACK,  # ELF heuristic — symbol absent from dynsym is binary-incompatible
+    ChangeKind.SYMBOL_RENAMED_BATCH,  # batch symbol rename — old consumers get undefined symbols
 }
 
 COMPATIBLE_KINDS: set[ChangeKind] = {
@@ -401,6 +414,7 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
     # consumers whose loader resolves the library by full path or runpath.
     ChangeKind.SONAME_CHANGED,
     ChangeKind.SONAME_MISSING,
+    ChangeKind.EXECUTABLE_STACK,  # bad practice — security concern, not ABI break
     ChangeKind.VISIBILITY_LEAK,
     ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
     # noexcept changes: Itanium ABI mangling does not change in practice;
@@ -428,6 +442,9 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
     # satisfy this one.  No new runtime constraint imposed.
     ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT,
     ChangeKind.SYMBOL_BINDING_STRENGTHENED,  # WEAK→GLOBAL: backward-compatible for most consumers
+    # ELF visibility change (e.g. DEFAULT→PROTECTED): symbol still exported
+    # and resolvable; interposition semantics change but callers are unaffected.
+    ChangeKind.ELF_VISIBILITY_CHANGED,
     # GLOBAL→WEAK: symbol still exported and resolvable by the dynamic
     # linker; interposition semantics change but existing binaries work.
     ChangeKind.SYMBOL_BINDING_CHANGED,
@@ -478,6 +495,11 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
 # a DEPLOYMENT RISK the user should verify manually.
 # Verdict: COMPATIBLE_WITH_RISK — not BREAKING, not silently COMPATIBLE.
 RISK_KINDS: frozenset[ChangeKind] = frozenset({
+    # SONAME changed: the ABI surface may be identical, but the dynamic linker
+    # looks for the old SONAME. Without a compatibility symlink the new library
+    # will not be found. This is a packaging/deployment concern, not a binary
+    # ABI break — existing binaries still work if the SONAME is resolved.
+    ChangeKind.SONAME_CHANGED,
     # A new symbol version requirement (e.g. GLIBC_2.17) is added to VERNEED.
     # Existing compiled binaries are unaffected (already linked at build time).
     # Deployment risk: the new library will NOT load on systems with a glibc
@@ -739,9 +761,11 @@ IMPACT_TEXT: dict[ChangeKind, str] = {
     ),
     ChangeKind.COMPAT_VERSION_CHANGED: "Mach-O compatibility version changed; dylibs linked against old version may fail to load.",
     ChangeKind.SONAME_MISSING: "Library has no SONAME; package managers and ldconfig cannot track versions.",
+    ChangeKind.EXECUTABLE_STACK: "Library has executable stack (PT_GNU_STACK RWE); NX protection disabled — security risk.",
     ChangeKind.VISIBILITY_LEAK: "Internal symbols exported without -fvisibility=hidden; namespace pollution risk.",
     ChangeKind.NEEDED_ADDED: "New shared library dependency; may not be available on target systems.",
     ChangeKind.NEEDED_REMOVED: "Dependency removed; should be transparent to consumers.",
+    ChangeKind.ELF_VISIBILITY_CHANGED: "ELF symbol visibility changed (e.g. DEFAULT→PROTECTED); symbol still exported but interposition semantics differ.",
     ChangeKind.SYMBOL_BINDING_CHANGED: "GLOBAL→WEAK binding lets interposers override unexpectedly; old code may get wrong implementation.",
     ChangeKind.SYMBOL_BINDING_STRENGTHENED: "WEAK→GLOBAL binding; safe upgrade, interposition still possible via LD_PRELOAD.",
     ChangeKind.SYMBOL_TYPE_CHANGED: "Symbol type changed (e.g. FUNC→OBJECT); callers using wrong calling convention.",
@@ -787,6 +811,10 @@ IMPACT_TEXT: dict[ChangeKind, str] = {
     ChangeKind.METHOD_ACCESS_CHANGED: "Method access level narrowed (e.g. public→private); old code calling it won't compile.",
     ChangeKind.FIELD_ACCESS_CHANGED: "Field access level narrowed; old code accessing it won't compile.",
     # Version-stamped typedef sentinels
+    ChangeKind.SYMBOL_RENAMED_BATCH: (
+        "Multiple symbols renamed (e.g. namespace prefix added/removed); "
+        "old binaries reference the old names and will get undefined symbol errors at load time."
+    ),
     ChangeKind.TYPEDEF_VERSION_SENTINEL: (
         "Typedef name encodes a version number (e.g. png_libpng_version_1_6_46) — "
         "this is a compile-time sentinel that changes every release by design; "

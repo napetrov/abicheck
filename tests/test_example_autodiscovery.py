@@ -133,7 +133,7 @@ def _find_sources(
                 v2h = _hdr(new_dir, "lib")
                 return v1, v2, v1h, v2h
 
-    # good/bad layout (cases 05, 06, 13)
+    # good/bad layout (cases 05, 06, 13, 62)
     # Convention: bad=v1 (before, problematic state), good=v2 (after, fixed state).
     # Comparing bad→good reveals symbol removals = BREAKING for callers.
     for ext in (".c", ".cpp"):

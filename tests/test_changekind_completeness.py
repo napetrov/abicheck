@@ -152,6 +152,10 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.SYMBOL_ELF_VISIBILITY_CHANGED,
     # WS-4c: mixed-mode function removed from binary (header-declared but gone from .dynsym)
     ChangeKind.FUNC_REMOVED_FROM_BINARY,
+    # ELF visibility, executable stack, symbol rename batch
+    ChangeKind.ELF_VISIBILITY_CHANGED,
+    ChangeKind.EXECUTABLE_STACK,
+    ChangeKind.SYMBOL_RENAMED_BATCH,
 }
 
 

@@ -108,6 +108,10 @@ class ElfMetadata:
     # ELF interpreter (PT_INTERP, e.g. /lib64/ld-linux-x86-64.so.2)
     interpreter: str = ""
 
+    # PT_GNU_STACK: True when the ELF has an executable stack (RWE flags).
+    # This is a security bad practice (disables NX protection).
+    has_executable_stack: bool = False
+
     @cached_property
     def symbol_map(self) -> dict[str, ElfSymbol]:
         """Name → ElfSymbol mapping (built once, cached on first access).
@@ -180,9 +184,12 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
             if seg.header.p_type == "PT_INTERP":
                 # PT_INTERP contains a null-terminated path string.
                 meta.interpreter = seg.get_interp_name()
-                break
+            elif seg.header.p_type == "PT_GNU_STACK":
+                # PF_X (0x1) = executable. Executable stack is a security risk.
+                if seg.header.p_flags & 0x1:
+                    meta.has_executable_stack = True
     except Exception as exc:  # noqa: BLE001
-        log.warning("parse_elf_metadata: failed to read PT_INTERP from %s: %s", so_path, exc)
+        log.warning("parse_elf_metadata: failed to read PT_INTERP/PT_GNU_STACK from %s: %s", so_path, exc)
 
     # Build separate version-index maps from .gnu.version_d and .gnu.version_r.
     # Verdef and verneed indices are normally non-overlapping, but separating
