@@ -10,10 +10,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ## [Unreleased]
 
 ### Planned
-- Expanded parity test suite
 - `--policy-file` schema validation improvements
 - Version-stamped typedef suppression (libpng `png_libpng_version_X_Y_Z` pattern)
 - Evidence/confidence tiers in JSON output (ELF_ONLY / DWARF_AWARE / HEADER_AWARE)
+- Expanded parity test suite coverage
 
 ---
 

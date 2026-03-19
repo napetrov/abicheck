@@ -8,7 +8,7 @@ abicheck includes an MCP ([Model Context Protocol](https://modelcontextprotocol.
 pip install "abicheck[mcp]"
 ```
 
-Or with conda (when available on conda-forge):
+Or with conda:
 
 ```bash
 conda install abicheck
@@ -157,7 +157,7 @@ Extracts the public ABI surface from a shared library and its headers into a JSO
 
 ### `abi_list_changes` — List detectable change kinds
 
-Enumerates all 85+ `ChangeKind` values with their impact classification.
+Enumerates all 113 `ChangeKind` values with their impact classification.
 
 **Parameters:**
 
@@ -169,7 +169,7 @@ Enumerates all 85+ `ChangeKind` values with their impact classification.
 
 ```json
 {
-  "count": 85,
+  "count": 113,
   "change_kinds": [
     {
       "kind": "func_removed",
