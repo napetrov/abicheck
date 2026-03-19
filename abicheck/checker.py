@@ -859,7 +859,7 @@ def _diff_unions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                     description=f"Union field removed: {name}::{fname}",
                     old_value=f_old.type,
                 ))
-            elif f_old.type != new_fields[fname].type:
+            elif canonicalize_type_name(f_old.type) != canonicalize_type_name(new_fields[fname].type):
                 changes.append(Change(
                     kind=ChangeKind.UNION_FIELD_TYPE_CHANGED,
                     symbol=name,

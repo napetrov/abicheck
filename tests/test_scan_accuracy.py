@@ -12,7 +12,8 @@ import copy
 
 import pytest
 
-from abicheck.checker import Change, ChangeKind, DiffResult, Verdict, compare
+from abicheck.checker import ChangeKind, Verdict, compare
+from abicheck.checker_policy import Confidence
 from abicheck.model import (
     AbiSnapshot,
     EnumMember,
@@ -268,7 +269,7 @@ class TestConfidenceAndEvidenceTiers:
         snap = _base_snap()
         result = compare(snap, copy.deepcopy(snap))
         # Has header data (functions, types, enums) but no binary metadata
-        assert result.confidence in ("medium", "low")
+        assert result.confidence in (Confidence.MEDIUM, Confidence.LOW)
         assert "header" in result.evidence_tiers
 
     def test_empty_snapshot_low_confidence(self):
@@ -278,7 +279,7 @@ class TestConfidenceAndEvidenceTiers:
             typedefs={},
         )
         result = compare(snap, snap)
-        assert result.confidence == "low"
+        assert result.confidence == Confidence.LOW
 
 
 class TestGroundTruthExpectedKinds:

@@ -50,8 +50,11 @@ def is_compiler_internal_type(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 # Patterns for type-name canonicalization.
-_STRUCT_PREFIX_RE = _re.compile(r"^(struct|class|union|enum)\s+")
-_LEADING_CONST_RE = _re.compile(r"^const\s+([\w\s]+?)(\s*[*&].*)?$")
+_STRUCT_PREFIX_RE = _re.compile(r"^\s*(struct|class|union|enum)\s+")
+# Match leading "const" followed by a base type (words, ::, spaces) and optional
+# pointer/reference suffix.  The base-type group accepts scope operators (::)
+# so that namespace-qualified types like "const ns::Type &" are handled.
+_LEADING_CONST_RE = _re.compile(r"^const\s+([\w\s:]+?)(\s*[*&].*)?$")
 _MULTI_SPACE_RE = _re.compile(r"\s{2,}")
 
 
@@ -59,11 +62,11 @@ def canonicalize_type_name(name: str) -> str:
     """Normalise a C/C++ type name for comparison.
 
     Transformations (in order):
+    0. Strip leading/trailing whitespace and collapse internal whitespace.
     1. Strip leading ``struct ``/``class ``/``union ``/``enum `` elaborated-type-specifier.
     2. Normalise leading ``const T`` → ``T const`` (east-const canonical form),
-       but only when the base type is simple words (no templates).
-    3. Collapse multiple spaces.
-    4. Strip leading/trailing whitespace.
+       but only when the base type contains no angle brackets (templates).
+    3. Final whitespace cleanup.
 
     This prevents false positives from dumpers that emit different
     elaborated-type-specifier forms for the same type.
@@ -76,20 +79,26 @@ def canonicalize_type_name(name: str) -> str:
     'Bar'
     >>> canonicalize_type_name("const unsigned long long")
     'unsigned long long const'
+    >>> canonicalize_type_name("const ns::Type &")
+    'ns::Type const &'
     """
-    result = name
-    # 1. Strip elaborated type specifier prefix.
+    # 0. Normalise whitespace early so anchored regexes work consistently.
+    result = _MULTI_SPACE_RE.sub(" ", name.strip())
+    # 1. Strip elaborated type specifier prefix (handles leading whitespace).
     result = _STRUCT_PREFIX_RE.sub("", result)
     # 2. East-const normalisation: move leading "const" after the full base
-    #    type (all words before any pointer/reference sigil).  Only applies
+    #    type (all words/:: before any pointer/reference sigil).  Only applies
     #    when the base portion contains no angle brackets (templates).
     m = _LEADING_CONST_RE.match(result)
     if m:
         base = m.group(1).strip()
         suffix = m.group(2) or ""
         if "<" not in base:
+            # Strip elaborated prefix from the base too, handling
+            # "const struct Foo" → base="struct Foo" → "Foo"
+            base = _STRUCT_PREFIX_RE.sub("", base)
             result = base + " const" + suffix
-    # 3. Collapse whitespace.
+    # 3. Final cleanup.
     result = _MULTI_SPACE_RE.sub(" ", result)
     return result.strip()
 

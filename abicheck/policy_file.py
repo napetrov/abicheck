@@ -55,11 +55,11 @@ from pathlib import Path
 from typing import Any
 
 from .checker_policy import (
-    BREAKING_KINDS,
     VALID_BASE_POLICIES,
     ChangeKind,
     Verdict,
     compute_verdict,
+    policy_kind_sets,
 )
 
 log = logging.getLogger(__name__)
@@ -236,6 +236,10 @@ class PolicyFile:
           (e.g., func_removed → ignore).  These almost certainly mask real breaks.
         - Downgrading BREAKING to COMPATIBLE_WITH_RISK for critical kinds.
         """
+        # Derive breaking kinds from the configured base policy so that
+        # policy-specific sets (e.g. plugin_abi) are correctly flagged.
+        base_breaking, _, _, _ = policy_kind_sets(self.base_policy)
+
         warnings: list[str] = []
         for kind, verdict in self.overrides.items():
             if kind in _CRITICAL_BREAKING_KINDS:
@@ -251,7 +255,7 @@ class PolicyFile:
                         f"this kind usually causes binary incompatibility. "
                         f"Consider keeping it as 'break'."
                     )
-            elif kind in BREAKING_KINDS and verdict == Verdict.COMPATIBLE:
+            elif kind in base_breaking and verdict == Verdict.COMPATIBLE:
                 warnings.append(
                     f"'{kind.value}' (BREAKING) downgraded to 'ignore' — "
                     f"verify this is intentional."

@@ -20,6 +20,8 @@ from abicheck.model import (
     Function,
     Param,
     ParamKind,
+    RecordType,
+    TypeField,
     Variable,
     Visibility,
     canonicalize_type_name,
@@ -380,3 +382,68 @@ class TestPolicyFileValidateOverrides:
         })
         warnings = pf.validate_overrides()
         assert len(warnings) == 3
+
+    def test_validate_uses_base_policy_breaking_kinds(self):
+        """validate_overrides should use the base policy's breaking set."""
+        # Under plugin_abi, CALLING_CONVENTION_CHANGED is downgraded to COMPATIBLE.
+        # Under strict_abi, it's BREAKING. So overriding it to 'ignore' under
+        # strict_abi should warn, but the kind itself is still in BREAKING_KINDS
+        # for strict_abi.
+        pf = PolicyFile(
+            base_policy="strict_abi",
+            overrides={ChangeKind.CALLING_CONVENTION_CHANGED: Verdict.COMPATIBLE},
+        )
+        warnings = pf.validate_overrides()
+        assert len(warnings) == 1
+        assert "BREAKING" in warnings[0]
+
+
+# ─── Namespace-qualified canonicalization ─────────────────────────────────────
+
+
+class TestCanonicalizeNamespaceTypes:
+    """Verify canonicalize_type_name handles scoped/qualified identifiers."""
+
+    def test_const_namespace_type_pointer(self):
+        assert canonicalize_type_name("const ns::Type *") == "ns::Type const *"
+
+    def test_const_namespace_type_reference(self):
+        assert canonicalize_type_name("const ns::Type &") == "ns::Type const &"
+
+    def test_const_nested_namespace(self):
+        assert canonicalize_type_name("const a::b::C") == "a::b::C const"
+
+    def test_leading_whitespace_struct(self):
+        """Leading whitespace should not prevent struct-prefix stripping."""
+        assert canonicalize_type_name("  struct Foo") == "Foo"
+
+    def test_const_struct_combined(self):
+        """const struct Foo * should canonicalize to Foo const *."""
+        assert canonicalize_type_name("const struct Foo *") == "Foo const *"
+
+
+# ─── Union field type canonicalization ────────────────────────────────────────
+
+
+class TestUnionFieldCanonicalization:
+    """Verify union field type comparison uses canonicalize_type_name."""
+
+    def test_union_field_struct_prefix_no_false_positive(self):
+        """'struct X' vs 'X' in union field types should NOT trigger UNION_FIELD_TYPE_CHANGED."""
+        old = AbiSnapshot(
+            library="libtest.so", version="1.0",
+            types=[RecordType(
+                name="MyUnion", kind="union", is_union=True,
+                fields=[TypeField(name="data", type="struct Inner")],
+            )],
+        )
+        new = AbiSnapshot(
+            library="libtest.so", version="2.0",
+            types=[RecordType(
+                name="MyUnion", kind="union", is_union=True,
+                fields=[TypeField(name="data", type="Inner")],
+            )],
+        )
+        result = compare(old, new)
+        union_changes = [c for c in result.changes if c.kind == ChangeKind.UNION_FIELD_TYPE_CHANGED]
+        assert len(union_changes) == 0, "struct prefix difference should not be a union field type change"

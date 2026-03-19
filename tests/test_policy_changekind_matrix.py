@@ -15,11 +15,11 @@ from abicheck.checker_policy import (
     COMPATIBLE_KINDS,
     RISK_KINDS,
     ChangeKind,
+    Confidence,
     Verdict,
     compute_verdict,
     policy_kind_sets,
 )
-
 
 # All known policies.
 ALL_POLICIES = ("strict_abi", "sdk_vendor", "plugin_abi")
@@ -161,7 +161,7 @@ class TestConfidenceComputation:
         )
         result = compare(snap, snap)
         assert hasattr(result, "confidence")
-        assert result.confidence in ("high", "medium", "low")
+        assert result.confidence in (Confidence.HIGH, Confidence.MEDIUM, Confidence.LOW)
         assert isinstance(result.evidence_tiers, list)
         assert isinstance(result.coverage_warnings, list)
 
@@ -176,4 +176,4 @@ class TestConfidenceComputation:
         )
         result = compare(snap, snap)
         # No data at all → low confidence
-        assert result.confidence == "low"
+        assert result.confidence == Confidence.LOW
