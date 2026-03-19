@@ -72,6 +72,14 @@ from .checker_policy import (
     policy_kind_sets,
 )
 
+#: Pre-computed (breaking, api_break, compatible, risk) kind sets.
+KindSets = tuple[
+    frozenset[ChangeKind],
+    frozenset[ChangeKind],
+    frozenset[ChangeKind],
+    frozenset[ChangeKind],
+]
+
 
 class SeverityLevel(str, Enum):
     """Criticality level for an issue category."""
@@ -99,18 +107,18 @@ class IssueCategory(str, Enum):
 # are classified correctly.
 
 
-def _effective_sets(
-    policy: str | None,
-) -> tuple[
-    frozenset[ChangeKind],
-    frozenset[ChangeKind],
-    frozenset[ChangeKind],
-    frozenset[ChangeKind],
-]:
-    """Return (breaking, api_break, compatible, risk) for the given policy.
+def _resolve_kind_sets(
+    policy: str | None = None,
+    kind_sets: KindSets | None = None,
+) -> KindSets:
+    """Return (breaking, api_break, compatible, risk) kind sets.
 
-    Returns the canonical sets when *policy* is None or ``"strict_abi"``.
+    *kind_sets* takes precedence when provided (e.g. from
+    ``DiffResult._effective_kind_sets()`` which includes PolicyFile overrides).
+    Falls back to ``policy_kind_sets(policy)`` or canonical sets.
     """
+    if kind_sets is not None:
+        return kind_sets
     if policy is None or policy == "strict_abi":
         return (
             frozenset(BREAKING_KINDS),
@@ -125,13 +133,17 @@ def classify_change(
     kind: ChangeKind,
     *,
     policy: str | None = None,
+    kind_sets: KindSets | None = None,
 ) -> IssueCategory:
     """Classify a ChangeKind into one of the four issue categories.
 
     Uses the canonical kind sets from ``checker_policy`` by default.
-    When *policy* is provided, uses the policy-adjusted sets so that
-    kinds moved between categories by a non-default policy are handled
-    correctly.
+
+    When *kind_sets* is provided (e.g. from ``DiffResult._effective_kind_sets()``),
+    those sets are used directly, which includes PolicyFile overrides and
+    ``--strict-elf-only`` reclassifications.
+
+    When only *policy* is provided, uses the built-in policy-adjusted sets.
 
     Unknown kinds default to ``ABI_BREAKING`` (fail-safe).
 
@@ -139,7 +151,7 @@ def classify_change(
     construction (``QUALITY_KINDS = COMPATIBLE_KINDS - ADDITION_KINDS``),
     so the check order between them does not matter.
     """
-    breaking, api_break, compatible, risk = _effective_sets(policy)
+    breaking, api_break, compatible, risk = _resolve_kind_sets(policy, kind_sets)
     if kind in breaking:
         return IssueCategory.ABI_BREAKING
     if kind in api_break or kind in risk:
@@ -183,17 +195,26 @@ class SeverityConfig:
         return result
 
     def level_for_kind(
-        self, kind: ChangeKind, *, policy: str | None = None,
+        self,
+        kind: ChangeKind,
+        *,
+        policy: str | None = None,
+        kind_sets: KindSets | None = None,
     ) -> SeverityLevel:
         """Return the configured severity level for a specific ChangeKind."""
-        return self.level_for(classify_change(kind, policy=policy))
+        return self.level_for(classify_change(kind, policy=policy, kind_sets=kind_sets))
 
     def has_errors(
-        self, changes: Sequence[HasKind], *, policy: str | None = None,
+        self,
+        changes: Sequence[HasKind],
+        *,
+        policy: str | None = None,
+        kind_sets: KindSets | None = None,
     ) -> bool:
         """Return True if any change falls into a category configured as error."""
         return any(
-            self.level_for_kind(c.kind, policy=policy) == SeverityLevel.ERROR
+            self.level_for_kind(c.kind, policy=policy, kind_sets=kind_sets)
+            == SeverityLevel.ERROR
             for c in changes
         )
 
@@ -338,6 +359,7 @@ def compute_exit_code(
     config: SeverityConfig,
     *,
     policy: str | None = None,
+    kind_sets: KindSets | None = None,
 ) -> int:
     """Compute the process exit code based on severity configuration.
 
@@ -345,14 +367,14 @@ def compute_exit_code(
     - at least one finding, AND
     - severity configured as ``error``.
 
-    When *policy* is provided, uses the policy-adjusted kind sets
-    so that kinds moved between categories are classified correctly.
+    *kind_sets* (from ``DiffResult._effective_kind_sets()``) includes
+    PolicyFile overrides and takes precedence over *policy*.
 
     Returns 0 if no category at error level has findings.
     """
     worst = 0
     for change in changes:
-        cat = classify_change(change.kind, policy=policy)
+        cat = classify_change(change.kind, policy=policy, kind_sets=kind_sets)
         if config.level_for(cat) == SeverityLevel.ERROR:
             code = _CATEGORY_EXIT_CODES[cat]
             if code > worst:
@@ -380,6 +402,7 @@ def categorize_changes(
     changes: Sequence[HasKind],
     *,
     policy: str | None = None,
+    kind_sets: KindSets | None = None,
 ) -> CategorizedChanges:
     """Partition changes into the four issue categories."""
     abi: list[HasKind] = []
@@ -388,7 +411,7 @@ def categorize_changes(
     adds: list[HasKind] = []
 
     for c in changes:
-        cat = classify_change(c.kind, policy=policy)
+        cat = classify_change(c.kind, policy=policy, kind_sets=kind_sets)
         if cat == IssueCategory.ABI_BREAKING:
             abi.append(c)
         elif cat == IssueCategory.POTENTIAL_BREAKING:

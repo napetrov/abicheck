@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .checker_policy import HasKind
-    from .severity import SeverityConfig
+    from .severity import KindSets, SeverityConfig
 
 from .checker import (
     Change,
@@ -511,10 +511,11 @@ def to_json(
 
     # Severity-categorized summary when severity config is provided
     if severity_config is not None:
+        eff_sets = result._effective_kind_sets()
         d["severity"] = _build_severity_json(
             changes, severity_config,
             all_changes=list(result.changes),
-            policy=effective_policy,
+            kind_sets=eff_sets,
         )
 
     d["changes"] = [_change_to_dict(c, policy=effective_policy) for c in changes]
@@ -652,12 +653,12 @@ def _build_severity_summary_md(
     changes: list[Change],
     severity_config: SeverityConfig,
     *,
-    policy: str | None = None,
+    kind_sets: KindSets | None = None,
 ) -> list[str]:
     """Build a severity configuration summary table for markdown output."""
     from .severity import SeverityLevel, categorize_changes
 
-    categorized = categorize_changes(changes, policy=policy)
+    categorized = categorize_changes(changes, kind_sets=kind_sets)
     lines = [
         "## Severity Configuration",
         "",
@@ -691,17 +692,19 @@ def _build_severity_json(
     severity_config: SeverityConfig,
     *,
     all_changes: list[Change] | None = None,
-    policy: str | None = None,
+    kind_sets: KindSets | None = None,
 ) -> dict[str, object]:
     """Build severity information for JSON output.
 
     *changes* are the (possibly filtered) changes for display counts.
     *all_changes*, when provided, is the unfiltered set used to compute
     the exit code so that ``--show-only`` does not affect the exit code.
+    *kind_sets* from ``DiffResult._effective_kind_sets()`` includes
+    PolicyFile overrides.
     """
     from .severity import SeverityLevel, categorize_changes, compute_exit_code
 
-    categorized = categorize_changes(changes, policy=policy)
+    categorized = categorize_changes(changes, kind_sets=kind_sets)
 
     config_dict: dict[str, str] = {}
     for attr in ("abi_breaking", "potential_breaking", "quality_issues", "addition"):
@@ -730,7 +733,7 @@ def _build_severity_json(
     # Exit code uses the full unfiltered change set so --show-only
     # does not affect it.
     exit_changes = all_changes if all_changes is not None else changes
-    exit_code = compute_exit_code(exit_changes, severity_config, policy=policy)
+    exit_code = compute_exit_code(exit_changes, severity_config, kind_sets=kind_sets)
 
     return {
         "config": config_dict,
@@ -808,7 +811,7 @@ def to_markdown(
     # Severity configuration summary when provided
     if severity_config is not None:
         lines += _build_severity_summary_md(
-            changes, severity_config, policy=result.policy,
+            changes, severity_config, kind_sets=result._effective_kind_sets(),
         )
 
     if show_only:

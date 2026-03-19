@@ -1199,7 +1199,10 @@ def compare_cmd(
     # based exit codes for full backward compatibility.
     from .severity import compute_exit_code
     if severity_explicitly_set:
-        exit_code = compute_exit_code(result.changes, sev_config, policy=policy)
+        # Use effective kind sets which include PolicyFile and --strict-elf-only
+        # overrides, not just the built-in policy name.
+        eff_sets = result._effective_kind_sets()
+        exit_code = compute_exit_code(result.changes, sev_config, kind_sets=eff_sets)
         if exit_code != 0:
             sys.exit(exit_code)
     else:
