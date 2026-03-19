@@ -74,7 +74,7 @@ is a supported alternative.
 
 | Output | Description |
 |--------|-------------|
-| `verdict` | NO_CHANGE, COMPATIBLE, COMPATIBLE_WITH_RISK, API_BREAK, BREAKING, SEVERITY_ERROR, ERROR (see ADR-009 for the 5-tier system). For `stack-check`: PASS, WARN, FAIL. SEVERITY_ERROR is emitted when the severity system (via `--severity-*` flags) causes a non-zero exit code 1. |
+| `verdict` | COMPATIBLE, API_BREAK, BREAKING, SEVERITY_ERROR, REMOVED_LIBRARY, ERROR (see ADR-009 for the 5-tier system). For `stack-check`: PASS, WARN, FAIL. SEVERITY_ERROR is emitted when the severity system (via `--severity-*` flags) causes a non-zero exit code 1. |
 | `exit-code` | abicheck numeric exit code |
 | `report-path` | Path to generated report file |
 

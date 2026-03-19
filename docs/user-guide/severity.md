@@ -132,8 +132,13 @@ under `sdk_vendor`, kinds that are downgraded from `API_BREAK` to `COMPATIBLE`
 are reclassified from `potential_breaking` to `quality_issues` or `addition`
 accordingly.
 
-This means `--policy sdk_vendor --severity-preset strict` will **not** exit
-non-zero for changes that the `sdk_vendor` policy explicitly accepts.
+This means `--policy sdk_vendor --severity-preset default` will **not** exit
+non-zero for changes that the `sdk_vendor` policy downgrades — for example,
+kinds moved from `potential_breaking` to `quality_issues` or `addition` are
+demoted to `warning` or `info` under the `default` preset. However, the
+`strict` preset maps **all** categories (including `quality_issues` and
+`addition`) to `error`, so `--policy sdk_vendor --severity-preset strict` will
+still exit non-zero for any detected changes, even those the policy downgrades.
 
 ## GitHub Action
 
