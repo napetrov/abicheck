@@ -2792,6 +2792,8 @@ def _downgrade_opaque_struct_changes(
         else:
             result.append(c)
     return result
+
+
 def compare(
     old: AbiSnapshot,
     new: AbiSnapshot,
@@ -2889,6 +2891,12 @@ def compare(
     # Filtered-out changes are collected for the redundant list so they appear
     # in the audit trail (report JSON) rather than being silently discarded.
     changes, opaque_filtered = _filter_opaque_size_changes(changes, old, new)
+
+    # Downgrade opaque struct changes: if a type is opaque (forward-decl only)
+    # in BOTH old and new snapshots, size/field changes from DWARF are invisible
+    # to consumers who only use pointer-to-type.  This complements the filter
+    # above for cases where AST never sees the struct definition (pure opaque).
+    changes = _downgrade_opaque_struct_changes(changes, old, new)
 
     # Deduplicate AST/DWARF before suppression so a single canonical change
     # remains for suppression matching (avoids suppressed AST entry leaving

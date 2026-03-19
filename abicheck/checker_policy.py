@@ -468,6 +468,10 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
     # references originating inside the library itself. That is an intentional
     # policy decision by the library author, not a binary ABI break for consumers.
     ChangeKind.FUNC_VISIBILITY_PROTECTED_CHANGED,
+
+    # Generic ELF st_other visibility transitions (DEFAULT→PROTECTED etc.)
+    # Same rationale as FUNC_VISIBILITY_PROTECTED_CHANGED above.
+    ChangeKind.SYMBOL_ELF_VISIBILITY_CHANGED,
 }
 
 # Changes that are binary-compatible for already-compiled consumers but represent
