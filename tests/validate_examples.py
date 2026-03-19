@@ -134,7 +134,7 @@ def _find_sources(
         if bad.exists():
             good = case_dir / f"good{ext}"
             if good.exists():
-                return bad, good, None, None
+                return bad, good, _hdr(case_dir, "bad"), _hdr(case_dir, "good")
 
     # libfoo_v1/v2 layout
     for ext in (".c", ".cpp"):
