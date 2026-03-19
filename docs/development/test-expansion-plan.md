@@ -447,3 +447,169 @@ Heavy parity jobs add ~5 min but run conditionally.
 | Real-world library pairs tested | 0 | ≥3 |
 | Code coverage | 93% | ≥93% (no regression) |
 | Unit test count | 690+ | 720+ |
+
+---
+
+## Appendix A: Review Panel Findings
+
+> Reviewed 2026-03-19 by four specialist reviewers: Test Architecture, ABI Domain
+> Expert, CI/DevOps, and Implementation Feasibility. Findings below are
+> consolidated and cross-referenced.
+
+### A.1 BLOCKERS (must resolve before implementation)
+
+**B1. CI marker exclusion gap** *(Test Architecture)*
+New markers (`libabigail_corpus`, `abicc_replay`, `realworld`) are NOT excluded
+from the unit-test `-m` filter in `ci.yml`. Tests will collect and fail in the
+fast gate unless the filter is updated to:
+`not integration and not libabigail and not libabigail_corpus and not abicc and not abicc_replay and not realworld`
+Also add `conftest.py` skip-if-unavailable hooks for all three markers.
+
+**B2. WS-4c approach infeasible in pure ELF-only mode** *(Feasibility)*
+The plan proposes distinguishing "header-declared but ELF-removed" from "ELF-only
+internal symbol removed." But in ELF-only mode, ALL functions are marked
+`ELF_ONLY` because there are no headers — the distinction is impossible.
+**Resolution options:**
+(a) Elevate ALL `func_removed_elf_only` to BREAKING (simple but noisy),
+(b) Use a heuristic for "looks like public API" (no leading underscore, no
+compiler-internal prefix, exported in `.dynsym`),
+(c) Only apply the elevation when headers ARE available (mixed mode), keeping
+ELF-only mode as-is.
+Recommend option (c) as safest; option (b) as stretch.
+
+**B3. Network fallback undefined for WS-3** *(CI/DevOps)*
+No retry logic, no mirror strategy, no first-run bootstrapping for snapshot mode.
+**Resolution:** Commit initial snapshot JSONs from day one. Use
+`ABICHECK_REALWORLD_DOWNLOAD=1` env var to refresh. Add 3-attempt retry with
+exponential backoff. Use `snapshot.ubuntu.com` as secondary mirror.
+
+**B4. Symbol version removal not validated** *(ABI Domain)*
+Removing a symbol version (e.g., `foo@@LIBFOO_1.0` → only `foo@@LIBFOO_2.0`) is
+a hard binary break (consumers get "version not found" at load time).
+`SYMBOL_VERSION_DEFINED_REMOVED` ChangeKind exists but is not validated in the
+gap-closure plan or ground truth matrix. Must be explicitly tested in WS-3
+real-world tests (glibc, libstdc++ use heavy versioning).
+
+### A.2 MAJOR Issues (significant rework needed)
+
+**M1. Git-LFS required from the start** *(Test Architecture + CI/DevOps)*
+Binary `.so` fixtures will permanently bloat repo history. Add `.gitattributes`
+rule before committing any binary:
+`tests/fixtures/libabigail/*.so filter=lfs diff=lfs merge=lfs -text`
+Stripping DWARF from fixtures contradicts WS-1's goal of testing DWARF reader.
+**Resolution:** Keep DWARF in fixtures that test DWARF paths; strip only for
+symbol-level-only tests. Budget realistically for 15-20 MB with LFS.
+
+**M2. Marker naming inconsistency** *(Test Architecture + CI/DevOps)*
+WS-2 spec says `@pytest.mark.abicc` but Section 6 says `abicc_replay`. These are
+different markers. The existing `abicc` marker runs in the existing `abicc-parity`
+CI job. If WS-2 reuses `abicc`, those tests join the existing job (may be
+desired). If WS-2 uses `abicc_replay`, it needs its own CI job and the unit-test
+filter must exclude it separately.
+**Resolution:** Use `@pytest.mark.abicc` for WS-2 (extend existing parity job).
+Document the decision.
+
+**M3. WS-5a: Reserved field detector already exists** *(Feasibility)*
+`_diff_reserved_fields()` already exists at `checker.py:2398-2436` with regex
+`^_{0,2}(reserved|pad|padding|spare|unused)\d*$`. The real bug is that
+`_diff_type_fields()` ALSO fires `TYPE_FIELD_REMOVED` + `TYPE_FIELD_ADDED` for
+the same rename, and those BREAKING verdicts override the COMPATIBLE
+`USED_RESERVED_FIELD`.
+**Resolution:** Rewrite WS-5a as: "Integrate reserved-field check INTO
+`_diff_type_fields()` so it emits `USED_RESERVED_FIELD` INSTEAD OF (not in
+addition to) `TYPE_FIELD_REMOVED` + `TYPE_FIELD_ADDED`." Effort: Minimal.
+
+**M4. WS-5a pattern list too narrow** *(ABI Domain)*
+Real-world reserved fields also use: `pad` (no digit), `spare`, `mbz`/`_mbz`
+("must be zero"), `__pad\d*`, `_reserved` (no trailing digit), `__fill`,
+`filler`. The plan's pattern will miss many real libraries (kernel UAPI, perf,
+io_uring, KVM, DRM headers).
+**Resolution:** Broaden to case-insensitive substring match for `reserved`,
+`pad`, `spare`, `unused`, `mbz`, `fill` AND require same offset + same size.
+
+**M5. WS-5a: Reserved field size change not addressed** *(ABI Domain)*
+If `uint32_t __reserved` → `uint64_t real_field` at same offset but different
+size, this is BREAKING (shifts subsequent fields). Plan must explicitly require
+offset AND size match; if only offset matches but size differs, remain
+`TYPE_FIELD_REMOVED` + `TYPE_FIELD_ADDED`.
+
+**M6. WS-5b: Opaque struct analysis harder than described** *(Feasibility + ABI Domain)*
+- String-based type matching (`"const Foo*"`) is fragile — no structured type
+  references in the model. Must handle qualifiers, typedefs, namespaces.
+- `TYPE_SIZE_CHANGED` has no compatible variant; a new ChangeKind needed.
+- `sizeof()` in macros is undetectable by pointer-only analysis (castxml doesn't
+  surface macro-level sizeof usage).
+- Transitive by-value embedding MUST block the downgrade: if `struct Session` is
+  embedded by-value in `struct Context` which is in public APIs, then `Session`
+  growing is BREAKING even if `Session*` is pointer-only in direct API functions.
+**Resolution:** Start with simpler heuristic: if type has `is_opaque=True` in old
+version and gains fields in new version, it was always opaque to consumers →
+COMPATIBLE. This avoids cross-reference analysis entirely. Add transitive check
+as a later enhancement.
+
+**M7. WS-4b: TLS variables omitted** *(ABI Domain)*
+Plan only mentions `STT_OBJECT` but `STT_TLS` symbols (thread-local storage) are
+also ABI-relevant. Removing a TLS variable is a binary break. Also consider COPY
+relocation implications for variables with changed `st_size`.
+
+**M8. WS-4c: LTO and -fvisibility=hidden false positives** *(ABI Domain)*
+LTO can eliminate symbols that were in `.dynsym` of individual `.o` files.
+`-fvisibility=hidden` with `__attribute__((visibility("default")))` on select
+symbols means many functions legitimately disappear between builds. Elevating all
+removals to BREAKING will produce false positives.
+**Resolution:** Only elevate when the symbol was in `.dynsym` of BOTH old and new
+libraries' *dynamic* symbol table (not static). If it was in old `.dynsym` but
+absent from new `.dynsym`, that IS a break regardless of LTO.
+
+**M9. CI cache strategy** *(CI/DevOps)*
+`tests/.cache/realworld/` is useless in ephemeral CI runners. Need
+`actions/cache` keyed on library version manifest hash. Add `tests/.cache/` to
+root `.gitignore`.
+
+**M10. WS-4a: Visibility verdict needs nuance** *(ABI Domain)*
+- DEFAULT→PROTECTED: should be `COMPATIBLE_WITH_RISK` (breaks interposition;
+  e.g., `LD_PRELOAD` overrides stop working, which some tools depend on)
+- PROTECTED→HIDDEN or DEFAULT→HIDDEN: BREAKING (symbol no longer resolvable)
+- HIDDEN→DEFAULT: COMPATIBLE (more visible)
+Need a full visibility transition matrix, not a blanket COMPATIBLE verdict.
+
+### A.3 MINOR Issues
+
+**m1.** License file needed for redistributed libabigail fixtures (LGPL-3.0+).
+**m2.** `realworld` tests should carry BOTH `@pytest.mark.realworld` and
+`@pytest.mark.slow` so `-m "not slow"` continues to exclude all expensive tests.
+**m3.** CI job runtime estimates (+2/+3 min) undercount `apt-get install` setup.
+**m4.** `Visibility` enum in `model.py` (PUBLIC/HIDDEN/ELF_ONLY) is API-level,
+not ELF `st_other`-level. Use separate `elf_visibility: str` field instead.
+**m5.** WS-4b: Same `STT_OBJECT` omission exists in Mach-O and PE fallback paths
+(dumper.py ~lines 1126-1147 and 1219-1234). Plan only addresses ELF.
+**m6.** `testing.md` says `--cov-fail-under=52` but CI enforces `80` — stale.
+**m7.** AArch64 `STO_AARCH64_VARIANT_PCS` in `st_other` is architecture-specific
+and ignored. Low priority but worth noting.
+**m8.** Flexible array members: struct with trailing `char data[]` is always
+pointer-accessed but `sizeof` is meaningful for fixed portion. Opaque struct
+heuristic should not downgrade such types.
+
+### A.4 SUGGESTIONS
+
+**S1.** Add manifest schema validation test for early error detection.
+**S2.** Use `xfail(strict=True)` for `known_divergence` cases — auto-detects fixes.
+**S3.** Combine WS-1/WS-2 into existing parity CI jobs to avoid duplicate setup.
+**S4.** Register all markers canonically in `pyproject.toml`; remove redundant
+`config.addinivalue_line` calls from `conftest.py`.
+**S5.** Better real-world library choices: replace libpng patch-level pair (boring
+diff) with **libsystemd** (opaque struct patterns — perfect for WS-5b validation)
+or **Qt 5→6** (massive C++ vtable/MI stress test).
+**S6.** Add **libicu** (73→74) to test symbol-suffix renaming convention.
+**S7.** Coverage metric: 93% is local measurement, CI enforces 80%. Clarify which
+is the target in Section 10.
+
+### A.5 Effort Estimate Corrections
+
+| Work Stream | Plan Estimate | Reviewer Consensus | Notes |
+|-------------|---------------|--------------------|-------|
+| WS-4a | Small | **Small** | Plumbing exists; add visibility transition matrix |
+| WS-4b | Small | **Small** | ~10 lines; also fix Mach-O/PE paths + add STT_TLS |
+| WS-4c | Medium | **Needs redesign** | Use option (c): only elevate in mixed mode |
+| WS-5a | Small | **Minimal** | Detector exists; fix is suppressing duplicate emissions |
+| WS-5b | Medium-Large | **Large** | Start with is_opaque heuristic instead |
