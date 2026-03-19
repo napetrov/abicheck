@@ -598,17 +598,17 @@ def test_elf_visibility_changed_default_to_protected() -> None:
     new = _snap(_elf(symbols=[_sym("foo", visibility="protected")]))
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
-    assert ChangeKind.ELF_VISIBILITY_CHANGED in kinds
+    assert ChangeKind.FUNC_VISIBILITY_PROTECTED_CHANGED in kinds
     assert result.verdict == Verdict.COMPATIBLE
 
 
 def test_elf_visibility_unchanged_no_change() -> None:
-    """Same visibility → no ELF_VISIBILITY_CHANGED."""
+    """Same visibility → no visibility change."""
     old = _snap(_elf(symbols=[_sym("foo", visibility="default")]))
     new = _snap(_elf(symbols=[_sym("foo", visibility="default")]))
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
-    assert ChangeKind.ELF_VISIBILITY_CHANGED not in kinds
+    assert ChangeKind.FUNC_VISIBILITY_PROTECTED_CHANGED not in kinds
 
 
 # ---------------------------------------------------------------------------

@@ -495,11 +495,7 @@ COMPATIBLE_KINDS: set[ChangeKind] = {
 # a DEPLOYMENT RISK the user should verify manually.
 # Verdict: COMPATIBLE_WITH_RISK — not BREAKING, not silently COMPATIBLE.
 RISK_KINDS: frozenset[ChangeKind] = frozenset({
-    # SONAME changed: the ABI surface may be identical, but the dynamic linker
-    # looks for the old SONAME. Without a compatibility symlink the new library
-    # will not be found. This is a packaging/deployment concern, not a binary
-    # ABI break — existing binaries still work if the SONAME is resolved.
-    ChangeKind.SONAME_CHANGED,
+    # NOTE: SONAME_CHANGED moved to COMPATIBLE_KINDS — see comment there.
     # A new symbol version requirement (e.g. GLIBC_2.17) is added to VERNEED.
     # Existing compiled binaries are unaffected (already linked at build time).
     # Deployment risk: the new library will NOT load on systems with a glibc

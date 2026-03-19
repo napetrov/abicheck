@@ -1156,7 +1156,8 @@ def _diff_field_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         for f_old in removed:
             if f_old.offset_bits is None:
                 continue
-            # Skip reserved-field renames — handled by USED_RESERVED_FIELD
+            # Skip reserved→real transitions — handled by _diff_reserved_fields
+            # as USED_RESERVED_FIELD (compatible), not FIELD_RENAMED (API break).
             if _RESERVED_FIELD_RE.match(f_old.name):
                 continue
             sig = (f_old.offset_bits, f_old.type)

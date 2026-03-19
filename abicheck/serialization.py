@@ -154,6 +154,7 @@ def _elf_from_dict(e: dict[str, Any]) -> Any:
         symbols=syms,
         imports=imports,
         interpreter=e.get("interpreter", ""),
+        has_executable_stack=e.get("has_executable_stack", False),
     )
 
 
