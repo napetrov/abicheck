@@ -973,6 +973,9 @@ def _build_match_map(paths: list[Path]) -> tuple[dict[str, Path], list[str]]:
                    "'leaf' groups by root type changes with impact lists.")
 @click.option("--show-impact", is_flag=True, default=False,
               help="Append an impact summary table showing root changes and affected interfaces.")
+@click.option("--strict-elf-only", is_flag=True, default=False,
+              help="Treat ELF-only symbol removals as BREAKING instead of COMPATIBLE. "
+                   "Use when headers are unavailable but all exported symbols are public API.")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def compare_cmd(
@@ -989,6 +992,7 @@ def compare_cmd(
     follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
     show_redundant: bool, show_only: str | None, stat: bool,
     report_mode: str, show_impact: bool,
+    strict_elf_only: bool,
     verbose: bool,
 ) -> None:
     """Compare two ABI surfaces and report changes.
@@ -1066,6 +1070,30 @@ def compare_cmd(
     )
 
     suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
+
+    # --strict-elf-only: inject a PolicyFile override that upgrades
+    # FUNC_REMOVED_ELF_ONLY from COMPATIBLE to BREAKING (FIX-E).
+    if strict_elf_only:
+        from .checker_policy import ChangeKind as _CK
+        from .checker_policy import Verdict as _V
+        from .policy_file import PolicyFile as _PF
+
+        strict_overrides = {_CK.FUNC_REMOVED_ELF_ONLY: _V.BREAKING}
+        if pf is not None:
+            # Merge: user policy file overrides take precedence, but we inject
+            # the strict-elf-only override for kinds not already overridden.
+            merged_overrides = dict(strict_overrides)
+            merged_overrides.update(pf.overrides)
+            pf = _PF(
+                base_policy=pf.base_policy,
+                overrides=merged_overrides,
+                source_path=pf.source_path,
+            )
+        else:
+            pf = _PF(
+                base_policy=policy,
+                overrides=strict_overrides,
+            )
 
     # Populate dependency info if --follow-deps is active and inputs are ELF binaries.
     if follow_deps:

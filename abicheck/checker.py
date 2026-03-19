@@ -54,6 +54,9 @@ from .model import (
     Variable,
     Visibility,
 )
+from .model import (
+    is_compiler_internal_type as _is_compiler_internal_type,
+)
 from .policy_file import PolicyFile
 
 if TYPE_CHECKING:
@@ -71,6 +74,7 @@ def _public_functions(snap: AbiSnapshot) -> dict[str, Function]:
 def _public_variables(snap: AbiSnapshot) -> dict[str, Variable]:
     """Return public/ELF-only variables from *snap*."""
     return {k: v for k, v in snap.variable_map.items() if v.visibility in _PUBLIC_VIS}
+
 
 
 def _format_params(params: list[Param]) -> str:
@@ -335,14 +339,31 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     # Build a lookup of ALL functions in new snapshot (including hidden).
     new_all = new.function_map
 
+    # FIX-A Part 2: Build secondary index by plain name for fallback matching
+    # when mangled names differ due to C/C++ compilation mode mismatch.
+    # new_by_name includes all functions so new-side extern "C" functions
+    # (which may lack the flag when compiled as C) can still be matched.
+    new_by_name: dict[str, Function] = {
+        f.name: f for f in new_map.values()
+    }
+    matched_by_name: set[str] = set()
+
     for mangled, f_old in old_map.items():
-        if mangled not in new_map:
-            changes.append(_check_removed_function(mangled, f_old, new_all, elf_only_mode))
+        if mangled in new_map:
+            changes.extend(_check_function_signature(mangled, f_old, new_map[mangled]))
             continue
-        changes.extend(_check_function_signature(mangled, f_old, new_map[mangled]))
+
+        # Fallback: match extern "C" functions by plain name (FIX-A Part 2)
+        if f_old.is_extern_c and f_old.name in new_by_name:
+            f_new = new_by_name[f_old.name]
+            changes.extend(_check_function_signature(f_old.name, f_old, f_new))
+            matched_by_name.add(f_old.name)
+            continue
+
+        changes.append(_check_removed_function(mangled, f_old, new_all, elf_only_mode))
 
     for mangled, f_new in new_map.items():
-        if mangled not in old_map:
+        if mangled not in old_map and f_new.name not in matched_by_name:
             changes.append(Change(
                 kind=ChangeKind.FUNC_ADDED,
                 symbol=mangled,
@@ -424,8 +445,8 @@ def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
     # Include ALL types (including unions) for size/alignment/base/vtable checks.
     # TYPE_FIELD_* for unions is skipped below — handled by _diff_unions() instead.
-    old_map = {t.name: t for t in old.types}
-    new_map = {t.name: t for t in new.types}
+    old_map = {t.name: t for t in old.types if not _is_compiler_internal_type(t.name)}
+    new_map = {t.name: t for t in new.types if not _is_compiler_internal_type(t.name)}
 
     for name, t_old in old_map.items():
         t_new = new_map.get(name)
@@ -892,6 +913,8 @@ def _has_version_family_successor(name: str, new_typedefs: dict[str, str]) -> bo
 def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
     for alias, old_type in old.typedefs.items():
+        if _is_compiler_internal_type(alias):
+            continue
         new_type = new.typedefs.get(alias)
         if new_type is None:
             # Version-stamped typedefs (e.g. png_libpng_version_1_6_46) are
@@ -1903,8 +1926,10 @@ def _enrich_affected_symbols(
     if not affected_types:
         return
 
-    # Build type→functions mapping from old snapshot
+    # Build type→functions mapping from old snapshot (FIX-A Part 3).
+    # Store both demangled names (for display) and mangled names (for appcompat matching).
     type_to_funcs: dict[str, list[str]] = {t: [] for t in affected_types}
+    type_to_mangled: dict[str, list[str]] = {t: [] for t in affected_types}
     old_pub = _public_functions(old)
     for _mangled, func in old_pub.items():
         # Check return type
@@ -1919,6 +1944,7 @@ def _enrich_affected_symbols(
             # Check if the type name appears in any parameter or return type
             if any(tname in ft for ft in func_types_used):
                 type_to_funcs[tname].append(func.name)
+                type_to_mangled[tname].append(func.mangled)
 
     # Also check if types are embedded in struct fields used by functions
     # (e.g., Container has a Leaf field → functions taking Container* are affected by Leaf changes)
@@ -1948,20 +1974,25 @@ def _enrich_affected_symbols(
         for parent in ancestors:
             if parent in type_to_funcs:
                 type_to_funcs[tname].extend(type_to_funcs[parent])
+                type_to_mangled[tname].extend(type_to_mangled.get(parent, []))
             else:
                 # Check functions for parent too
                 for _mangled, func in old_pub.items():
                     func_types_used = {func.return_type} | {p.type for p in func.params}
                     if any(parent in ft for ft in func_types_used if ft):
                         type_to_funcs[tname].append(func.name)
+                        type_to_mangled[tname].append(func.mangled)
 
-    # Assign to changes
+    # Assign to changes — include both demangled names (display) and
+    # mangled names (appcompat matching, FIX-A Part 3).
     for c in type_changes:
         type_name = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
         funcs = type_to_funcs.get(type_name, [])
+        mangled_funcs = type_to_mangled.get(type_name, [])
         if funcs:
-            # Deduplicate and sort
-            c.affected_symbols = sorted(set(funcs))
+            # Store both demangled and mangled names for cross-format matching
+            all_symbols = sorted(set(funcs) | set(mangled_funcs))
+            c.affected_symbols = all_symbols
 
 
 # Change kinds that represent root type/enum changes (for redundancy filtering).
@@ -2152,42 +2183,103 @@ def _match_root_type(c: Change, root_types: dict[str, Change]) -> str | None:
     return None
 
 
+# Enum change kinds eligible for same-kind symbol-based dedup (FIX-C).
+# Scoped to enum kinds only to avoid incorrectly merging legitimately
+# different changes that share the same kind+symbol.
+_ENUM_DEDUP_KINDS = frozenset({
+    ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
+    ChangeKind.ENUM_MEMBER_REMOVED,
+    ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
+})
+
+
 def _deduplicate_ast_dwarf(changes: list[Change]) -> list[Change]:
     """Remove DWARF findings that duplicate an AST finding for the same symbol.
 
-    Two dedup passes:
+    Three dedup passes:
 
     1. **Exact dedup** — collapses entries with the same ``(kind, description)``.
-       Using description (not symbol) handles cases where the same logical
-       finding is reported under different symbol granularities (e.g. ``Status``
-       vs ``Status::FOO``).
 
-    2. **Cross-kind dedup** — drops a DWARF finding when an equivalent AST
+    2. **Same-kind symbol dedup** (FIX-C) — for enum change kinds only,
+       collapses entries with the same ``(kind, symbol)`` but different
+       descriptions (e.g. AST says "Color::GREEN" while DWARF says
+       "Color::GREEN (1 → 2)"). Keeps the entry with populated
+       ``old_value``/``new_value`` fields, or the longer description as
+       tiebreaker.
+
+    3. **Cross-kind dedup** — drops a DWARF finding when an equivalent AST
        finding exists for the *same full symbol* (e.g. STRUCT_SIZE_CHANGED for
        ``S`` is dropped when TYPE_SIZE_CHANGED for ``S`` is already present).
-       Full-symbol matching prevents collapsing different fields of the same
-       type (``S::a`` vs ``S::b``).
+       Also handles parent-type matching for field-qualified symbols (FIX-F):
+       ``STRUCT_FIELD_OFFSET_CHANGED`` for ``Point::x`` is dropped when
+       ``TYPE_FIELD_OFFSET_CHANGED`` for ``Point`` is already present.
     """
-    # First pass: index all findings by (kind, symbol) for cross-kind dedup
-    ast_findings: set[tuple[str, str]] = set()
-    for c in changes:
-        ast_findings.add((c.kind.value, c.symbol))
-
-    # Second pass: filter out DWARF duplicates
-    result: list[Change] = []
-    seen: set[tuple[str, str]] = set()  # exact dedup by (kind, description)
+    # Pass 1: Exact dedup by (kind, description)
+    stage1: list[Change] = []
+    seen_exact: set[tuple[str, str]] = set()
     for c in changes:
         key = (c.kind.value, c.description)
-        # Exact dedup: same kind + same description = same finding
-        if key in seen:
+        if key in seen_exact:
             continue
-        seen.add(key)
+        seen_exact.add(key)
+        stage1.append(c)
 
-        # Check if this DWARF finding has an AST equivalent already present
+    # Pass 2: Same-kind symbol dedup for enum kinds (FIX-C)
+    # Use a two-pass approach: pick the best entry per (kind, symbol) key,
+    # then filter stage1 to keep only the winners.
+    best_enum: dict[tuple[str, str], Change] = {}
+    for c in stage1:
+        if c.kind not in _ENUM_DEDUP_KINDS:
+            continue
+        key = (c.kind.value, c.symbol)
+        if key not in best_enum:
+            best_enum[key] = c
+        else:
+            existing = best_enum[key]
+            # Prefer the entry with populated old_value/new_value
+            c_has_vals = bool(c.old_value) or bool(c.new_value)
+            e_has_vals = bool(existing.old_value) or bool(existing.new_value)
+            if c_has_vals and not e_has_vals:
+                best_enum[key] = c
+            elif not c_has_vals and e_has_vals:
+                pass  # keep existing
+            elif len(c.description) > len(existing.description):
+                best_enum[key] = c
+
+    stage2: list[Change] = []
+    for c in stage1:
+        if c.kind in _ENUM_DEDUP_KINDS:
+            key = (c.kind.value, c.symbol)
+            if best_enum.get(key) is not c:
+                continue  # not the winner — drop
+        stage2.append(c)
+
+    # Pass 3: Cross-kind dedup — index AST findings then drop DWARF duplicates
+    ast_findings: set[tuple[str, str]] = set()
+    for c in stage2:
+        ast_findings.add((c.kind.value, c.symbol))
+
+    result: list[Change] = []
+    for c in stage2:
         equiv_ast_kinds = _DWARF_TO_AST_EQUIV.get(c.kind)
         if equiv_ast_kinds:
+            # Exact symbol match
             if any((ak.value, c.symbol) in ast_findings for ak in equiv_ast_kinds):
-                continue  # skip DWARF duplicate
+                continue
+
+            # Parent-type match (FIX-F): "Point::x" → check "Point"
+            # Only for field-level changes; type-level changes (size, alignment)
+            # must not match parent — "Outer::Inner" is a nested type, not a field.
+            _FIELD_LEVEL_KINDS = {
+                ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
+                ChangeKind.STRUCT_FIELD_REMOVED,
+                ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+            }
+            if c.kind in _FIELD_LEVEL_KINDS and "::" in c.symbol:
+                parent = c.symbol.rsplit("::", 1)[0]
+                if any((ak.value, parent) in ast_findings for ak in equiv_ast_kinds):
+                    continue
+
         result.append(c)
     return result
 

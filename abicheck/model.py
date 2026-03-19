@@ -29,6 +29,21 @@ if TYPE_CHECKING:
 
 _model_log = _logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Compiler internal type filtering (FIX-D) — single source of truth
+# ---------------------------------------------------------------------------
+
+COMPILER_INTERNAL_TYPES: frozenset[str] = frozenset({
+    "__va_list_tag", "__builtin_va_list", "__gnuc_va_list",
+    "__int128", "__int128_t", "__uint128_t",
+    "__NSConstantString_tag", "__NSConstantString",
+})
+
+
+def is_compiler_internal_type(name: str) -> bool:
+    """Return True if *name* is a compiler internal type that should be excluded."""
+    return bool(name) and name in COMPILER_INTERNAL_TYPES
+
 
 class Visibility(str, Enum):
     PUBLIC = "public"       # default visibility / exported

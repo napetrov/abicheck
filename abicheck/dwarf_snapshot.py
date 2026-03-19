@@ -53,6 +53,9 @@ from .model import (
     Variable,
     Visibility,
 )
+from .model import (
+    is_compiler_internal_type as _is_compiler_internal,
+)
 
 if TYPE_CHECKING:
     from .dwarf_advanced import AdvancedDwarfMetadata
@@ -61,7 +64,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -262,6 +265,16 @@ class _DwarfSnapshotBuilder:
                 if sym.name and sym.visibility not in _HIDDEN_VIS:
                     self._exported_names.add(sym.name)
 
+        # Build demangled export index for C++ fallback matching (FIX-B).
+        # This allows matching DWARF functions against ELF exports even when
+        # the mangled names differ slightly (e.g. const qualifier variance).
+        self._demangled_exports: set[str] = set()
+        from .demangle import demangle_batch
+        cpp_names = [s for s in self._exported_names if s.startswith("_Z")]
+        if cpp_names:
+            demangled_map = demangle_batch(cpp_names)
+            self._demangled_exports = set(demangled_map.values())
+
         # Results
         self.functions: list[Function] = []
         self.variables: list[Variable] = []
@@ -370,12 +383,12 @@ class _DwarfSnapshotBuilder:
             linkage_name = _attr_str(die, "DW_AT_MIPS_linkage_name")
         mangled = linkage_name or name
 
-        # Visibility: must be in ELF exported symbols
-        if not self._is_exported(mangled, name):
-            return
-
         # Skip declarations without definitions (DW_AT_declaration=True)
         if _attr_bool(die, "DW_AT_declaration"):
+            return
+
+        # Visibility: must be in ELF exported symbols.
+        if not self._is_exported(mangled, name):
             return
 
         # Dedup
@@ -518,6 +531,8 @@ class _DwarfSnapshotBuilder:
         name = _attr_str(die, "DW_AT_name")
         if not name:
             return  # anonymous — handled via typedef
+        if _is_compiler_internal(name):
+            return
 
         qualified = f"{scope}::{name}" if scope else name
         self._process_record_type_named(die, CU, qualified)
@@ -661,6 +676,8 @@ class _DwarfSnapshotBuilder:
         name = _attr_str(die, "DW_AT_name")
         if not name:
             return
+        if _is_compiler_internal(name):
+            return
 
         qualified = f"{scope}::{name}" if scope else name
         self._process_enum_named(die, CU, qualified)
@@ -706,6 +723,8 @@ class _DwarfSnapshotBuilder:
         """
         name = _attr_str(die, "DW_AT_name")
         if not name:
+            return
+        if _is_compiler_internal(name):
             return
 
         # Check if this typedef points to an anonymous struct/enum
@@ -755,11 +774,25 @@ class _DwarfSnapshotBuilder:
     # -------------------------------------------------------------------
 
     def _is_exported(self, mangled: str, name: str) -> bool:
-        """Check if a symbol is in the ELF exported symbol set."""
+        """Check if a symbol is in the ELF exported symbol set.
+
+        Three-tier matching (FIX-B):
+        1. Exact mangled name match (fast path)
+        2. Plain name match (C functions)
+        3. Demangled fallback (C++ with mangling variance)
+        """
+        # Tier 1: exact mangled match
         if mangled and mangled in self._exported_names:
             return True
+        # Tier 2: plain name match (C functions)
         if name and name in self._exported_names:
             return True
+        # Tier 3: demangled fallback for C++ (FIX-B)
+        if mangled and mangled.startswith("_Z") and self._demangled_exports:
+            from .demangle import demangle as _demangle
+            demangled = _demangle(mangled)
+            if demangled and demangled in self._demangled_exports:
+                return True
         return False
 
     def _filter_types_by_reachability(self) -> None:

@@ -220,6 +220,63 @@ def _cache_path(key: str) -> Path:
     return cache_dir / f"{key}.xml"
 
 
+# C++ file extensions that unambiguously indicate C++ content.
+_CPP_EXTENSIONS = frozenset({".hpp", ".hxx", ".hh", ".h++", ".tpp"})
+
+# Structural C++ patterns — match actual declarations, not keywords in comments.
+# These are compiled regexes applied line-by-line to non-comment lines.
+_CPP_PATTERNS = [
+    re.compile(rb"^\s*class\s+\w+\s*[:{]"),          # class Foo { / class Foo :
+    re.compile(rb"^\s*namespace\s+\w+"),               # namespace ns
+    re.compile(rb"^\s*template\s*<"),                  # template<...>
+    re.compile(rb"^\s*using\s+\w+\s*="),               # using alias = ...
+    re.compile(rb'^\s*extern\s+"C"'),                  # extern "C" — castxml always uses C++ mode
+    re.compile(rb"^\s*public\s*:"),                     # public:
+    re.compile(rb"^\s*private\s*:"),                    # private:
+    re.compile(rb"^\s*protected\s*:"),                  # protected:
+    # C++ keywords that can appear anywhere in a line (not just at start)
+    re.compile(rb"\bvirtual\s+"),                       # virtual member functions
+    re.compile(rb"(?<!\w)~\w+\s*\("),                     # destructor ~Foo()
+    re.compile(rb":\s*public\s+\w+"),                   # struct Derived : public Base
+    re.compile(rb":\s*private\s+\w+"),                  # : private Base
+    re.compile(rb":\s*protected\s+\w+"),                # : protected Base
+    re.compile(rb"\bclass\s+\w+\s*[{;]"),              # class anywhere (forward decl or def)
+    re.compile(rb"\bconst\s+\w[\w:]*\s*&"),               # const Type& reference (C++ idiom)
+    re.compile(rb"\bstatic_cast\b"),                    # C++ cast
+    re.compile(rb"\bconstexpr\b"),                      # C++ constexpr
+    re.compile(rb"\bnullptr\b"),                        # C++ nullptr
+    re.compile(rb"\bnoexcept\b"),                       # C++ noexcept
+    re.compile(rb"\boverride\b"),                           # C++ override specifier
+]
+
+
+def _detect_cpp_headers(header_paths: list[Path]) -> bool:
+    """Auto-detect whether headers require C++ compilation mode (FIX-A).
+
+    Returns True if any header has a C++ extension or contains structural
+    C++ syntax (class/namespace/template declarations on non-comment lines).
+
+    Note: ``extern "C"`` (even inside ``#ifdef __cplusplus`` guards) is treated
+    as a C++ indicator because castxml always parses in C++ mode — passing
+    ``-x c`` would conflict with ``__cplusplus`` being defined internally.
+    """
+    for p in header_paths:
+        if p.suffix.lower() in _CPP_EXTENSIONS:
+            return True
+        try:
+            content = p.read_bytes()
+        except OSError:
+            continue
+        # Strip C-style block comments to reduce false positives
+        content = re.sub(rb"/\*.*?\*/", b"", content, flags=re.DOTALL)
+        for line in content.split(b"\n"):
+            # Skip C++ line comments
+            stripped = line.split(b"//")[0]
+            if any(pat.search(stripped) for pat in _CPP_PATTERNS):
+                return True
+    return False
+
+
 def _castxml_dump(
     headers: list[Path],
     extra_includes: list[Path],
@@ -290,9 +347,15 @@ def _castxml_dump(
     with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
         out_xml = Path(tmp.name)
 
-    # Determine aggregate header extension: .h for C-only, .hpp for C++
-    force_c = lang and lang.upper() == "C"
-    agg_ext = ".h" if force_c else ".hpp"
+    # Determine aggregate header extension: .h for C-only, .hpp for C++ (FIX-A).
+    # When --lang is not explicitly set, auto-detect from header content:
+    # - .hpp/.hxx/.hh extensions → C++
+    # - Structural C++ syntax (class/namespace/template declarations) → C++
+    # - Otherwise → C (prevents castxml from applying C++ mangling to C functions)
+    force_cpp = lang and lang.upper() in ("C++", "CPP")
+    if not lang:
+        force_cpp = _detect_cpp_headers(headers)
+    agg_ext = ".hpp" if force_cpp else ".h"
 
     with tempfile.NamedTemporaryFile(suffix=agg_ext, mode="w", delete=False) as agg:
         for h in headers:
@@ -316,7 +379,7 @@ def _castxml_dump(
     # Workaround: castxml with --castxml-cc-gnu gcc auto-injects -std=gnu++17
     # which is rejected when parsing a .h file in C mode. Force explicit C
     # language and standard so castxml passes these to the compiler instead.
-    if force_c and cc_id == "gnu":
+    if not force_cpp and cc_id == "gnu":
         cmd += ["-x", "c", "-std=gnu11"]
 
     cmd += ["-o", str(out_xml), str(agg_path)]
