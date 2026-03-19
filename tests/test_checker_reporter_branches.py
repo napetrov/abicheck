@@ -437,16 +437,21 @@ class TestShowOnlyFilter:
 
     def test_severity_api_break(self):
         f = ShowOnlyFilter.parse("api-break")
-        # API breaks are source-level breaks, e.g. func_noexcept_removed
-        api_change = Change(kind=ChangeKind.FUNC_NOEXCEPT_REMOVED, symbol="x", description="test")
-        # This may or may not be api-break depending on policy. Exercise the path.
-        f.matches(api_change)
+        # ENUM_MEMBER_RENAMED is in API_BREAK_KINDS → should match
+        api_change = Change(kind=ChangeKind.ENUM_MEMBER_RENAMED, symbol="E::V", description="renamed")
+        assert f.matches(api_change) is True
+        # FUNC_REMOVED is in BREAKING_KINDS, not API_BREAK_KINDS → should not match
+        assert f.matches(self._brk_change()) is False
 
     def test_severity_risk(self):
         f = ShowOnlyFilter.parse("risk")
-        risk_change = Change(kind=ChangeKind.NEEDED_ADDED, symbol="lib", description="needed added")
-        # Exercise the risk path
-        f.matches(risk_change)
+        # SYMBOL_VERSION_REQUIRED_ADDED is in RISK_KINDS → should match
+        risk_change = Change(kind=ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+                             symbol="GLIBC_2.34", description="new version requirement")
+        assert f.matches(risk_change) is True
+        # NEEDED_ADDED is in COMPATIBLE_KINDS, not RISK_KINDS → should not match
+        compat_change = Change(kind=ChangeKind.NEEDED_ADDED, symbol="lib", description="needed added")
+        assert f.matches(compat_change) is False
 
     # Element filters
     def test_element_functions(self):

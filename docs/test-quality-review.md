@@ -253,21 +253,23 @@ verdict, not just that something was printed.
 
 **Problem:** Calls `f.matches(api_change)` but never asserts the return
 value. The ShowOnlyFilter severity classification uses policy sets from
-`checker_policy.py`. `FUNC_NOEXCEPT_REMOVED` is in `API_BREAK_KINDS` under
-`strict_abi` policy, so the api-break filter should match it.
+`checker_policy.py`.
 
-**Fix:**
+**Fix:** Use `ENUM_MEMBER_RENAMED` which is confirmed in `API_BREAK_KINDS`
+(checker_policy.py:447). The original plan incorrectly proposed
+`FUNC_NOEXCEPT_REMOVED` which is actually in `COMPATIBLE_KINDS`.
 
 ```python
 def test_severity_api_break(self):
     f = ShowOnlyFilter.parse("api-break")
-    api_change = Change(kind=ChangeKind.FUNC_NOEXCEPT_REMOVED, symbol="x", description="test")
+    # ENUM_MEMBER_RENAMED is in API_BREAK_KINDS → should match
+    api_change = Change(kind=ChangeKind.ENUM_MEMBER_RENAMED, symbol="E::V", description="renamed")
     assert f.matches(api_change) is True
-    # Non-api-break changes should NOT match
-    assert f.matches(self._brk_change()) is False  # FUNC_REMOVED is breaking, not api-break
+    # FUNC_REMOVED is in BREAKING_KINDS, not API_BREAK_KINDS → should not match
+    assert f.matches(self._brk_change()) is False
 ```
 
-**Why:** `FUNC_NOEXCEPT_REMOVED` is in `API_BREAK_KINDS`. The filter should
+**Why:** `ENUM_MEMBER_RENAMED` is in `API_BREAK_KINDS`. The filter should
 return `True` for it and `False` for plain breaking kinds.
 
 #### 2b. `test_severity_risk` (line 445)
@@ -298,7 +300,7 @@ it would be testing the wrong thing.
 
 ---
 
-### Fix 3: Replace 7 artificial error-injection tests in `test_cli_unit.py`
+### Fix 3: Improve 6 error-injection tests in `test_cli_unit.py`
 
 **File:** `tests/test_cli_unit.py`
 
@@ -382,12 +384,14 @@ def test_suppression_load_error_exits_6(self, tmp_path, monkeypatch):
 
 #### 3e. `test_skip_symbols_missing_file_exits_4` → add message assertion
 
-Keep as-is but add: `assert "not found" in result.output.lower() or "no such
-file" in result.output.lower()`.
+Keep as-is but add: `assert "no such file" in result.output.lower() or
+"skip-symbols" in result.output.lower()`. Note: Python's FileNotFoundError
+says "No such file or directory", not "not found".
 
 #### 3f. `test_symbols_list_missing_file_exits_4` → same improvement
 
-Add error message assertion.
+Add error message assertion using `"no such file"` (matching Python's actual
+FileNotFoundError message).
 
 #### 3g. `test_report_write_error_exits_7` → keep with message assertion
 
@@ -593,13 +597,17 @@ test would still pass as long as any one member remained.
 
 **Current:** `assert result.exit_code != 0`
 **Fix:** `assert result.exit_code != 0` and
-`assert "unknown" in result.output.lower() or "invalid" in result.output.lower()`
+`assert "Unknown --show-only token" in result.output or "Invalid value" in result.output`
+
+Click's `BadParameter` wraps the `ValueError` from `ShowOnlyFilter.parse()`.
 
 #### 6b. `test_nonexistent_old_input` (line 246)
 
 **Current:** `assert result.exit_code != 0`
 **Fix:** `assert result.exit_code != 0` and
-`assert "not found" in result.output.lower() or "no such" in result.output.lower() or "cannot" in result.output.lower()`
+`assert "does not exist" in result.output or "Invalid value" in result.output`
+
+Click's `Path(exists=True)` produces `"does not exist"` messages.
 
 #### 6c. `test_nonexistent_new_input` (line 254)
 
@@ -619,7 +627,9 @@ assert "BREAKING" in result.output or "foo" in result.output
 
 **Current:** `assert result.exit_code != 0`
 **Fix:** `assert result.exit_code != 0` and
-`assert "not found" in result.output.lower() or "error" in result.output.lower() or "no such" in result.output.lower()`
+`assert "does not exist" in result.output or "Invalid value" in result.output`
+
+Click's `Path(exists=True)` produces `"does not exist"` messages.
 
 ---
 
