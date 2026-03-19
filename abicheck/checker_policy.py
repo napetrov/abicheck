@@ -14,11 +14,14 @@
 
 """Central change policy registry and verdict computation.
 
-Single source of truth for verdict classification:
-    BREAKING_KINDS      → binary ABI incompatibilities
-    API_BREAK_KINDS     → source-level breaks (recompilation required)
-    RISK_KINDS          → binary-compatible but deployment risk present
-    COMPATIBLE_KINDS    → safe changes (additions, informational)
+Single source of truth for verdict classification (5-tier hierarchy):
+    BREAKING_KINDS      → category 1: binary ABI incompatibilities
+    API_BREAK_KINDS     → category 2a: source-level breaks (recompilation required)
+    RISK_KINDS          → category 2b: binary-compatible but deployment risk present
+    QUALITY_KINDS       → category 3: problematic behaviors (COMPATIBLE minus additions)
+    ADDITION_KINDS      → category 4: new API surface (subset of COMPATIBLE_KINDS)
+
+    COMPATIBLE_KINDS    = ADDITION_KINDS ∪ QUALITY_KINDS
 
 Cross-references:
     examples/ground_truth.json  — expected verdicts per example case
