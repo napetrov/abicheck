@@ -1,6 +1,9 @@
 # Case 06: Symbol Visibility Leak
 
-**Category:** Visibility | **Verdict:** 🟡 BAD PRACTICE
+**Category:** Visibility | **Verdict:** 🔴 BREAKING (bad practice)
+
+> **ground_truth.json:** `expected: BREAKING`, `category: bad_practice`
+> **checker_policy.py:** `FUNC_VISIBILITY_CHANGED` ∈ `BREAKING_KINDS`
 
 ## What this case is about
 
@@ -29,20 +32,22 @@ Running `abicheck dump libv1.so` (without headers) + comparing to `libv2.so`:
 - **`VISIBILITY_LEAK`** (BAD PRACTICE / COMPATIBLE): `libv1.so` exports
   internal-looking symbols (`internal_helper`, `another_impl`) without
   `-fvisibility=hidden`. Reported on the **old library**, not the transition.
-- **`FUNC_REMOVED_ELF_ONLY`** (COMPATIBLE): ELF-only symbols disappear in `libv2.so`.
-  Classified as compatible because — without header information — we cannot tell
-  whether a disappearing ELF-only symbol was a real public function or an internal
-  symbol being correctly hidden.
+- **`FUNC_VISIBILITY_CHANGED`** (BREAKING): symbols that were previously visible
+  in `.dynsym` are hidden in `libv2.so`. Any consumer that linked against
+  `internal_helper` or `another_impl` in v1 will get a runtime `symbol lookup error`
+  when v2 is loaded.
 
-**Overall verdict: COMPATIBLE** (the library still works; the bad practice was in v1).
+**Overall verdict: BREAKING** — hiding previously-exported symbols is an ABI break
+for any consumer that depended on them, even if the symbols were only exported by
+accident. The bad practice (visibility leak) was in v1, but the *transition* to v2
+is what breaks existing binaries.
 
-## What this case does NOT cover
+## Dual nature of this case
 
-If actual consumers were linked against `libv1.so` and called `internal_helper`
-directly, and `libv2.so` hides it → those consumers will get a runtime
-`symbol lookup error`. **But that is a different case** — it is covered by
-`case01_symbol_removal` (FUNC_REMOVED / BREAKING). The root cause there is the
-visibility leak in v1; case06 detects that root cause.
+This case is both a **bad practice** (v1 leaked internal symbols) and a **breaking
+change** (v2 removes those symbols from the dynamic table). The root cause is the
+visibility leak in v1; fixing it in v2 is the right thing to do, but it requires
+a SONAME bump or a transition plan.
 
 ## How to reproduce
 
@@ -62,7 +67,7 @@ nm --dynamic --defined-only examples/case06_visibility/libv2.so
 python3 -m abicheck.cli dump examples/case06_visibility/libv1.so -o /tmp/v1.json
 python3 -m abicheck.cli dump examples/case06_visibility/libv2.so -o /tmp/v2.json
 python3 -m abicheck.cli compare /tmp/v1.json /tmp/v2.json
-# → COMPATIBLE + VISIBILITY_LEAK warning on libv1.so
+# → BREAKING (FUNC_VISIBILITY_CHANGED) + VISIBILITY_LEAK warning on libv1.so
 ```
 
 ## How to fix

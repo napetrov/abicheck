@@ -1,48 +1,70 @@
 # Case 15 — `noexcept` Changed
 
+**Category:** Risk | **Verdict:** 🟡 COMPATIBLE_WITH_RISK
 
-**Verdict:** 🔴 BREAKING
-**abicheck verdict: BREAKING** (removing `noexcept` breaks caller exception-handling contract)
+> **ground_truth.json:** `expected: COMPATIBLE_WITH_RISK`, `category: risk`
+> **checker_policy.py:** `FUNC_NOEXCEPT_REMOVED` ∈ `COMPATIBLE_KINDS`;
+> `SYMBOL_VERSION_REQUIRED_ADDED` ∈ `RISK_KINDS`
 
 ## What changes
 
-| Version | Signature |
-|---------|-----------|
-| v1 | `void reset() noexcept;` |
-| v2 | `void reset();` |
+| Version | Signature | Implementation |
+|---------|-----------|----------------|
+| v1 | `void reset() noexcept;` | no-throw implementation |
+| v2 | `void reset();` | throws `std::runtime_error` |
 
-## Why this is NOT a binary ABI break
+## Why this is COMPATIBLE_WITH_RISK (not BREAKING)
 
-In the Itanium C++ ABI (GCC/Clang on Linux/macOS), `noexcept` does **not** change
-the mangled name for function symbols. The **symbol name is identical** in the `.so`,
-so existing binaries resolve the same symbol and calls proceed normally.
+The verdict has **two independent components**:
 
-**abicheck detects this as BREAKING** via an indirect signal:
+1. **`FUNC_NOEXCEPT_REMOVED` → COMPATIBLE**: In the Itanium C++ ABI (GCC/Clang),
+   `noexcept` does **not** change the mangled symbol name. The symbol is identical
+   in both `.so` files. Existing binaries resolve the same symbol — no linkage
+   failure occurs. This is a source-level contract concern (C++17 function type
+   system), not a binary ABI break.
 
-When `noexcept` is removed and the function body introduces `throw`, the
-compiler links against a newer C++ exception runtime symbol (`GLIBCXX_3.4.21`).
-abicheck detects `symbol_version_required_added: GLIBCXX_3.4.21` = BREAKING.
+2. **`SYMBOL_VERSION_REQUIRED_ADDED` → COMPATIBLE_WITH_RISK**: When v2's
+   implementation uses `throw` (linking `__cxa_throw` / `std::runtime_error`),
+   the compiled `.so` acquires a newer GLIBCXX symbol version requirement
+   (e.g. `GLIBCXX_3.4.21`). This is a **deployment risk**: the new library
+   won't load on systems with an older libstdc++. But it is not a binary ABI
+   break for the library's own symbols.
 
-Note: castxml does not expose `noexcept` in its XML output, so `FUNC_NOEXCEPT_REMOVED`
-is NOT directly detected. The GLIBCXX symbol version bump is the observable signal.
+**Combined verdict: COMPATIBLE_WITH_RISK** — binary-compatible, but deployment
+risk present from the new GLIBCXX requirement.
 
-Old note (no longer accurate):
-- No symbol resolution failure occurs at load time or call time.
-- No type layout, vtable, or calling convention change is involved.
-- The change is a **source-level contract concern**, not a binary linkage break.
+## What abicheck detects
 
-## What it does affect (source-level concerns)
+- **`FUNC_NOEXCEPT_REMOVED`** — not detected directly. castxml does not expose
+  `noexcept` in its XML output, so this change kind is invisible to the tool.
+- **`SYMBOL_VERSION_REQUIRED_ADDED: GLIBCXX_3.4.21`** — detected via ELF VERNEED
+  comparison. This is the observable signal that triggers the COMPATIBLE_WITH_RISK
+  verdict.
 
-- **C++17 function-pointer types**: `noexcept` is part of the function type in C++17
-  (P0012R1), so `void(*)() noexcept` and `void(*)()` are distinct types. This can
-  cause template instantiation mismatches in source code — but not in already-compiled
-  binaries.
-- **Exception-handling behavior**: code compiled against v1 may omit landing pads,
-  assuming no unwinding is needed. If v2's `reset()` throws, `std::terminate` is
-  called. This is a behavioral contract concern, not a linkage failure.
+## Behavioral risk (runtime)
 
-The **symbol name itself is identical** in the `.so` (no mangling difference for
-member functions in GCC), so `abidiff` sees no change.
+While the binary linkage is fine, there is a **critical behavioral risk**:
+
+Code compiled against v1 may omit exception landing pads, assuming `reset()` never
+throws. If v2's `reset()` throws at runtime, the exception propagates through the
+`noexcept` frame and `std::terminate` is called — no recovery possible.
+
+This is a **contract violation**, not a linkage failure. The app terminates because
+the caller trusted the `noexcept` guarantee, not because symbols are missing.
+
+## Important distinction
+
+This case demonstrates the difference between **ABI verdict** and **runtime safety**:
+
+| Aspect | Assessment |
+|--------|------------|
+| Binary ABI (symbol linkage) | COMPATIBLE — same mangled name |
+| Deployment risk (GLIBCXX) | COMPATIBLE_WITH_RISK — new version requirement |
+| Runtime safety (behavioral) | CRITICAL — `std::terminate` if v2 throws |
+
+The tool reports COMPATIBLE_WITH_RISK because it analyzes binary compatibility.
+The behavioral risk (noexcept contract violation) is a separate concern that
+requires source-level analysis or runtime testing to detect.
 
 ## Why abidiff misses it
 
@@ -52,17 +74,8 @@ detect the change.
 
 ## Why ABICC catches it
 
-ABICC (ABI Compliance Checker) parses **C++ headers** using GCC's compiler internals
-and its own header analysis infrastructure. It sees the `noexcept` specifier on the
-function declaration and records it as part of the function's ABI profile. When v1 and
-v2 headers differ in `noexcept`, ABICC flags it.
-
-## Real-world example
-
-In **Folly** (Facebook's C++ library), several internal `reset()` and `destroy()`
-methods had `noexcept` removed during a refactor. Downstream projects compiled with
-old headers started hitting silent `std::terminate` crashes when running with the
-new `.so`. The breakage was caught by ABICC in CI before the release.
+ABICC parses C++ headers using GCC internals and sees the `noexcept` specifier.
+When v1 and v2 headers differ in `noexcept`, ABICC flags it as a source-level break.
 
 ## Code diff
 
@@ -80,32 +93,32 @@ cd examples/case15_noexcept_change
 g++ -shared -fPIC -std=c++17 -g v1.cpp -o libv1.so
 g++ -shared -fPIC -std=c++17 -g v2.cpp -o libv2.so
 
-# abidiff: expects no output (misses the change)
+# abidiff: misses the change (noexcept not in DWARF)
 abidw --out-file v1.xml libv1.so
 abidw --out-file v2.xml libv2.so
 abidiff v1.xml v2.xml || true   # exits 0 — misses it!
 
-# ABICC: catches it via header diff
-abi-compliance-checker -lib Buffer -v1 1.0 -v2 2.0 \
-  -header v1.h -header v2.h \
-  -gcc-options "-std=c++17"
+# abicheck: detects GLIBCXX version requirement change
+python3 -m abicheck.cli dump libv1.so -o /tmp/v1.json
+python3 -m abicheck.cli dump libv2.so -o /tmp/v2.json
+python3 -m abicheck.cli compare /tmp/v1.json /tmp/v2.json
+# → COMPATIBLE_WITH_RISK (symbol_version_required_added: GLIBCXX_3.4.21)
 ```
 
 ## Real Failure Demo
 
 **Severity: CRITICAL (behavioral, not linkage)**
 
-**Scenario:** app compiled against v1 (`reset()` noexcept) calls v2 which throws — exception propagates through a noexcept frame → `std::terminate`.
+**Scenario:** app compiled against v1 (`reset()` noexcept) calls v2 which throws —
+exception propagates through a noexcept frame → `std::terminate`.
 
 > **Important:** This demo combines two changes: (1) removing `noexcept` from the
 > declaration, and (2) adding `throw` to the implementation.
 >
-> Per C++17/Itanium ABI, `noexcept` is part of the function type — removing it is a
-> **source-level ABI break** (`FUNC_NOEXCEPT_REMOVED`). However, castxml does not expose
-> `noexcept` in its XML output, so abicheck detects the break indirectly via the
-> GLIBCXX runtime version bump (`SYMBOL_VERSION_REQUIRED_ADDED`). The binary verdict is
-> therefore **BREAKING** when the implementation also throws; without the throw,
-> binary linkage is unaffected but the source contract is violated.
+> The `noexcept` removal itself is COMPATIBLE (same mangled symbol). The deployment
+> risk comes from the GLIBCXX version requirement added by the `throw` in v2.
+> The **runtime crash** is a behavioral contract violation — the caller omitted
+> landing pads because v1 declared `noexcept`.
 
 ```bash
 # Build v1 + app (app includes v1.h which declares reset() noexcept)
@@ -123,30 +136,21 @@ g++ -shared -fPIC -std=c++17 -g v2.cpp -o libbuf.so
 # → Aborted (core dumped)
 ```
 
-**Why CRITICAL (behavioral):** The caller was compiled with the assumption that `reset()`
-is `noexcept`, so no try/catch or landing pad was generated. When v2 throws, the exception
-propagates through the noexcept frame and `std::terminate` is called unconditionally — no
-recovery possible. Note: the binary linkage is fine (COMPATIBLE); the crash is a behavioral
-contract violation, not a symbol resolution failure.
+**Why CRITICAL (behavioral):** The caller was compiled with the assumption that
+`reset()` is `noexcept`, so no try/catch or landing pad was generated. When v2
+throws, `std::terminate` is called unconditionally — no recovery possible.
+Note: the binary linkage is fine (COMPATIBLE); the crash is a behavioral contract
+violation, not a symbol resolution failure.
 
-## Note on test expectations
+## Real-world example
 
-The integration tests expect **BREAKING** for this case. This is because `v2.cpp`
-compiles a throwing implementation (`throw std::runtime_error(...)`) that
-introduces a new `GLIBCXX_*` or `CXXABI_*` version requirement
-(`SYMBOL_VERSION_REQUIRED_ADDED`). Both `v1.cpp` and `v2.cpp` include
-`<stdexcept>` — the header inclusion alone does not cause the break. The added
-versioned symbol comes from the compiled artifact (the `__cxa_throw` and
-`std::runtime_error` symbols emitted in v2's `.so`), as reflected in the CI
-symbol report. The break detected by the tool is from this new symbol version
-dependency, **not** from the `noexcept` removal itself. The ABI verdict for the
-`noexcept` change in isolation remains **COMPATIBLE** — the mangled symbol is
-identical.
-
-## Why runtime result may differ from verdict
-noexcept mismatch — std::terminate() called at runtime
+In **Folly** (Facebook's C++ library), several internal `reset()` and `destroy()`
+methods had `noexcept` removed during a refactor. Downstream projects compiled with
+old headers started hitting silent `std::terminate` crashes when running with the
+new `.so`.
 
 ## References
 
 - [C++ noexcept specifier](https://en.cppreference.com/w/cpp/language/noexcept_spec)
-- [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)
+- [P0012R1: noexcept as part of function type](https://wg21.link/P0012R1)
+- [`checker_policy.py` — FUNC_NOEXCEPT_REMOVED](../abicheck/checker_policy.py)

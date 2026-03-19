@@ -1,6 +1,12 @@
 {
   "version": "2",
   "description": "Ground-truth expected verdicts for all abicheck example cases. Single source of truth \u2014 kept in sync with tests/test_example_autodiscovery.py::EXPECTED.",
+  "cross_references": {
+    "verdict_classification": "abicheck/checker_policy.py — BREAKING_KINDS, API_BREAK_KINDS, RISK_KINDS, COMPATIBLE_KINDS",
+    "test_autodiscovery": "tests/test_example_autodiscovery.py — reads EXPECTED from this file",
+    "test_manual": "tests/test_abi_examples.py — hardcoded expectations for cases 01-18 (must stay in sync)",
+    "examples_readme": "examples/README.md — case index table (must stay in sync)"
+  },
   "verdicts": {
     "case01_symbol_removal": {
       "expected": "BREAKING",

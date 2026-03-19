@@ -12,7 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Central change policy registry and verdict computation."""
+"""Central change policy registry and verdict computation.
+
+Single source of truth for verdict classification:
+    BREAKING_KINDS      → binary ABI incompatibilities
+    API_BREAK_KINDS     → source-level breaks (recompilation required)
+    RISK_KINDS          → binary-compatible but deployment risk present
+    COMPATIBLE_KINDS    → safe changes (additions, informational)
+
+Cross-references:
+    examples/ground_truth.json  — expected verdicts per example case
+    tests/test_example_autodiscovery.py — reads from ground_truth.json
+    tests/test_abi_examples.py  — hardcoded expectations (cases 01-18)
+    examples/README.md          — case index table
+"""
 
 from __future__ import annotations
 

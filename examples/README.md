@@ -33,7 +33,11 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 > Authoritative expected verdicts for benchmarking are in [`ground_truth.json`](ground_truth.json).
 > If a per-case README and benchmark expectation differ, treat [`ground_truth.json`](ground_truth.json) as source of truth.
 
-**63 published cases** (01–62 + 26b) — 40 BREAKING 🔴 | 17 COMPATIBLE 🟢 | 2 NO_CHANGE ✅ | 2 API_BREAK 🟠 | 2 BAD PRACTICE 🟡
+**63 published cases** (01–62 + 26b) — 42 BREAKING 🔴 | 16 COMPATIBLE 🟢 | 2 NO_CHANGE ✅ | 2 API_BREAK 🟠 | 1 COMPATIBLE_WITH_RISK 🟡
+
+> **Verdict source of truth:** [`ground_truth.json`](ground_truth.json), which aligns with
+> the classification sets in [`abicheck/checker_policy.py`](../abicheck/checker_policy.py):
+> `BREAKING_KINDS`, `API_BREAK_KINDS`, `RISK_KINDS`, `COMPATIBLE_KINDS`.
 
 | # | Case | Category | abicheck verdict |
 |---|------|----------|-----------------|
@@ -42,7 +46,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [03](case03_compat_addition/README.md) | Compat Addition | Compatible | COMPATIBLE 🟢 |
 | [04](case04_no_change/README.md) | No Change | Compatible | NO_CHANGE ✅ |
 | [05](case05_soname/README.md) | Soname | ELF / Policy | COMPATIBLE 🟡 (bad practice) |
-| [06](case06_visibility/README.md) | Visibility | ELF / Policy | COMPATIBLE 🟡 (bad practice) |
+| [06](case06_visibility/README.md) | Visibility | ELF / Policy | BREAKING 🔴 (bad practice) |
 | [07](case07_struct_layout/README.md) | Struct Layout | Breaking | BREAKING 🔴 |
 | [08](case08_enum_value_change/README.md) | Enum Value Change | Breaking | BREAKING 🔴 |
 | [09](case09_cpp_vtable/README.md) | Cpp Vtable | Breaking | BREAKING 🔴 |
@@ -51,7 +55,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [12](case12_function_removed/README.md) | Function Removed | Breaking | BREAKING 🔴 |
 | [13](case13_symbol_versioning/README.md) | Symbol Versioning | Compatible | COMPATIBLE 🟢 |
 | [14](case14_cpp_class_size/README.md) | Cpp Class Size | Breaking | BREAKING 🔴 |
-| [15](case15_noexcept_change/README.md) | Noexcept Change | Breaking | BREAKING 🔴 |
+| [15](case15_noexcept_change/README.md) | Noexcept Change | Risk | COMPATIBLE_WITH_RISK 🟡 |
 | [16](case16_inline_to_non_inline/README.md) | Inline To Non Inline | Compatible | COMPATIBLE 🟢 |
 | [17](case17_template_abi/README.md) | Template Abi | Breaking | BREAKING 🔴 |
 | [18](case18_dependency_leak/README.md) | Dependency Leak | ELF / Policy | BREAKING 🔴 (bad practice) |
