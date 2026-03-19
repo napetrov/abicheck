@@ -222,7 +222,14 @@ class TestRenderOutputFormats:
 
     def test_show_impact_flag(self, tmp_path: Path) -> None:
         """--show-impact includes impact summary when type changes have affected symbols."""
-        from abicheck.model import AbiSnapshot, Function, Param, RecordType, TypeField, Visibility
+        from abicheck.model import (
+            AbiSnapshot,
+            Function,
+            Param,
+            RecordType,
+            TypeField,
+            Visibility,
+        )
         from abicheck.serialization import snapshot_to_json
 
         rec = RecordType(name="Pt", kind="struct", size_bits=32, fields=[
@@ -250,7 +257,14 @@ class TestRenderOutputFormats:
 
     def test_leaf_report_mode(self, tmp_path: Path) -> None:
         """--report-mode leaf produces leaf-change view with type root changes."""
-        from abicheck.model import AbiSnapshot, Function, Param, RecordType, TypeField, Visibility
+        from abicheck.model import (
+            AbiSnapshot,
+            Function,
+            Param,
+            RecordType,
+            TypeField,
+            Visibility,
+        )
         from abicheck.serialization import snapshot_to_json
 
         rec = RecordType(name="Cfg", kind="struct", size_bits=32, fields=[
@@ -315,33 +329,55 @@ class TestShowRedundant:
 
     def test_show_redundant_flag(self, tmp_path: Path) -> None:
         """--show-redundant merges redundant changes back into main list."""
-        from abicheck.model import AbiSnapshot, Function, Visibility
+        from abicheck.model import (
+            AbiSnapshot,
+            Function,
+            Param,
+            RecordType,
+            TypeField,
+            Visibility,
+        )
         from abicheck.serialization import snapshot_to_json
 
-        # Create snapshots with a removed function to produce changes
-        old_snap = AbiSnapshot(
-            library="libtest.so", version="1.0",
-            functions=[
-                Function(name="foo", mangled="foo", return_type="int",
-                         visibility=Visibility.PUBLIC),
-            ],
-        )
-        new_snap = AbiSnapshot(
-            library="libtest.so", version="2.0",
-            functions=[],
-        )
+        # A struct that changes size between versions
+        rec = RecordType(name="Cfg", kind="struct", size_bits=32, fields=[
+            TypeField(name="x", type="int", offset_bits=0),
+        ])
+        rec_v2 = RecordType(name="Cfg", kind="struct", size_bits=64, fields=[
+            TypeField(name="x", type="int", offset_bits=0),
+            TypeField(name="y", type="int", offset_bits=32),
+        ])
+        # Function whose param type references Cfg — changing from Cfg* to Cfg
+        # produces FUNC_PARAMS_CHANGED which the redundancy filter hides because
+        # it is caused by the root TYPE_SIZE_CHANGED on Cfg.
+        func_old = Function(name="init", mangled="_Z4initP3Cfg", return_type="void",
+                            params=[Param(name="c", type="Cfg*")],
+                            visibility=Visibility.PUBLIC)
+        func_new = Function(name="init", mangled="_Z4initP3Cfg", return_type="void",
+                            params=[Param(name="c", type="Cfg")],
+                            visibility=Visibility.PUBLIC)
+
+        old_snap = AbiSnapshot(library="libtest.so", version="1.0",
+                               functions=[func_old], types=[rec])
+        new_snap = AbiSnapshot(library="libtest.so", version="2.0",
+                               functions=[func_new], types=[rec_v2])
 
         old_file = tmp_path / "old.json"
         new_file = tmp_path / "new.json"
         old_file.write_text(snapshot_to_json(old_snap), encoding="utf-8")
         new_file.write_text(snapshot_to_json(new_snap), encoding="utf-8")
 
+        # Without --show-redundant the derived FUNC_PARAMS_CHANGED is hidden
         runner = CliRunner()
+        hidden = runner.invoke(main, ["compare", str(old_file), str(new_file)])
+        assert hidden.exit_code == 4
+
+        # With --show-redundant the hidden derived change is restored
         result = runner.invoke(main, [
             "compare", str(old_file), str(new_file), "--show-redundant",
         ])
-        assert result.exit_code == 4  # func removed → BREAKING
-        assert "BREAKING" in result.output or "foo" in result.output
+        assert result.exit_code == 4
+        assert "init" in result.output  # derived change now visible
 
 
 # ---------------------------------------------------------------------------
