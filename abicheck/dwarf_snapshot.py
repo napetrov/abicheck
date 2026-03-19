@@ -61,6 +61,23 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Compiler internal type filtering (FIX-D)
+# ---------------------------------------------------------------------------
+
+_COMPILER_INTERNAL_TYPES = frozenset({
+    "__va_list_tag", "__builtin_va_list", "__gnuc_va_list",
+    "__int128", "__int128_t", "__uint128_t",
+    "__NSConstantString_tag", "__NSConstantString",
+})
+
+
+def _is_compiler_internal(name: str) -> bool:
+    """Return True if *name* is a compiler internal type that should be excluded."""
+    if not name:
+        return False
+    return name in _COMPILER_INTERNAL_TYPES
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -262,6 +279,16 @@ class _DwarfSnapshotBuilder:
                 if sym.name and sym.visibility not in _HIDDEN_VIS:
                     self._exported_names.add(sym.name)
 
+        # Build demangled export index for C++ fallback matching (FIX-B).
+        # This allows matching DWARF functions against ELF exports even when
+        # the mangled names differ slightly (e.g. const qualifier variance).
+        self._demangled_exports: set[str] = set()
+        from .demangle import demangle_batch
+        cpp_names = [s for s in self._exported_names if s.startswith("_Z")]
+        if cpp_names:
+            demangled_map = demangle_batch(cpp_names)
+            self._demangled_exports = set(demangled_map.values())
+
         # Results
         self.functions: list[Function] = []
         self.variables: list[Variable] = []
@@ -370,12 +397,16 @@ class _DwarfSnapshotBuilder:
             linkage_name = _attr_str(die, "DW_AT_MIPS_linkage_name")
         mangled = linkage_name or name
 
-        # Visibility: must be in ELF exported symbols
-        if not self._is_exported(mangled, name):
-            return
-
         # Skip declarations without definitions (DW_AT_declaration=True)
         if _attr_bool(die, "DW_AT_declaration"):
+            return
+
+        # DW_AT_external means "visible outside the compilation unit" (FIX-B).
+        is_dwarf_external = _attr_bool(die, "DW_AT_external")
+
+        # Visibility: must be in ELF exported symbols.
+        # Pass is_dwarf_external so the three-tier check can use it for C++ fallback.
+        if not self._is_exported(mangled, name, is_dwarf_external=is_dwarf_external):
             return
 
         # Dedup
@@ -518,6 +549,8 @@ class _DwarfSnapshotBuilder:
         name = _attr_str(die, "DW_AT_name")
         if not name:
             return  # anonymous — handled via typedef
+        if _is_compiler_internal(name):
+            return
 
         qualified = f"{scope}::{name}" if scope else name
         self._process_record_type_named(die, CU, qualified)
@@ -661,6 +694,8 @@ class _DwarfSnapshotBuilder:
         name = _attr_str(die, "DW_AT_name")
         if not name:
             return
+        if _is_compiler_internal(name):
+            return
 
         qualified = f"{scope}::{name}" if scope else name
         self._process_enum_named(die, CU, qualified)
@@ -706,6 +741,8 @@ class _DwarfSnapshotBuilder:
         """
         name = _attr_str(die, "DW_AT_name")
         if not name:
+            return
+        if _is_compiler_internal(name):
             return
 
         # Check if this typedef points to an anonymous struct/enum
@@ -754,12 +791,30 @@ class _DwarfSnapshotBuilder:
     # Visibility filtering
     # -------------------------------------------------------------------
 
-    def _is_exported(self, mangled: str, name: str) -> bool:
-        """Check if a symbol is in the ELF exported symbol set."""
+    def _is_exported(self, mangled: str, name: str, *, is_dwarf_external: bool = False) -> bool:
+        """Check if a symbol is in the ELF exported symbol set.
+
+        Three-tier matching (FIX-B):
+        1. Exact mangled name match (fast path)
+        2. Plain name match (C functions)
+        3. Demangled fallback (C++ with mangling variance)
+
+        If *is_dwarf_external* is True (DW_AT_external=true in DWARF), the
+        function is known to be non-static. Combined with a demangled match,
+        this is sufficient evidence of export.
+        """
+        # Tier 1: exact mangled match
         if mangled and mangled in self._exported_names:
             return True
+        # Tier 2: plain name match (C functions)
         if name and name in self._exported_names:
             return True
+        # Tier 3: demangled fallback for C++ (FIX-B)
+        if mangled and mangled.startswith("_Z") and self._demangled_exports:
+            from .demangle import demangle as _demangle
+            demangled = _demangle(mangled)
+            if demangled and demangled in self._demangled_exports:
+                return True
         return False
 
     def _filter_types_by_reachability(self) -> None:

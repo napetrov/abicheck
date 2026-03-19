@@ -397,12 +397,26 @@ def parse_app_requirements(
 # ---------------------------------------------------------------------------
 
 def _is_relevant_to_app(change: Change, app: AppRequirements) -> bool:
-    """Does this change affect a symbol the application uses?"""
+    """Does this change affect a symbol the application uses?
+
+    FIX-A Part 3: handles two symbol format mismatches:
+    1. change.symbol may be C++-mangled while app uses plain C names
+    2. change.affected_symbols now includes both mangled and demangled names
+    """
     # Direct symbol match
     if change.symbol in app.undefined_symbols:
         return True
 
-    # Type change affecting app's symbols (via affected_symbols enrichment)
+    # Demangled fallback for change.symbol (FIX-A Part 3, Mismatch 1):
+    # change.symbol may be C++-mangled (e.g. "_Z3addii") while app uses
+    # the plain C linker name (e.g. "add").
+    from .demangle import demangle as _demangle_symbol
+    plain = _demangle_symbol(change.symbol)
+    if plain and plain != change.symbol and plain in app.undefined_symbols:
+        return True
+
+    # Type change affecting app's symbols (via affected_symbols enrichment).
+    # affected_symbols now contains both demangled and mangled names (FIX-A Part 3).
     if change.affected_symbols:
         if app.undefined_symbols & set(change.affected_symbols):
             return True

@@ -26,12 +26,27 @@ from .checker import (
     Verdict,
 )
 from .checker_policy import (
+    ChangeKind,
     impact_for,
 )
 from .checker_policy import (
     policy_kind_sets as _policy_kind_sets,
 )
 from .report_summary import build_summary
+
+
+def _kind_to_severity(kind: ChangeKind, policy: str) -> str:
+    """Map a ChangeKind to its severity label under the given policy (FIX-G)."""
+    breaking, api_break, compatible, risk = _policy_kind_sets(policy)
+    if kind in breaking:
+        return "breaking"
+    if kind in api_break:
+        return "api_break"
+    if kind in risk:
+        return "risk"
+    if kind in compatible:
+        return "compatible"
+    return "unknown"
 
 _VERDICT_EMOJI = {
     Verdict.NO_CHANGE: "✅",
@@ -386,11 +401,30 @@ def _to_json_leaf(
     type_changes = [c for c in changes if c.kind in _ROOT_TYPE_CHANGE_KINDS]
     non_type_changes = [c for c in changes if c.kind not in _ROOT_TYPE_CHANGE_KINDS]
 
+    effective_policy = result.policy or "strict_abi"
+
+    leaf_changes_list = [
+        {
+            "kind": c.kind.value,
+            "symbol": c.symbol,
+            "description": c.description,
+            "severity": _kind_to_severity(c.kind, effective_policy),
+            "affected_count": len(c.affected_symbols) if c.affected_symbols else 0,
+            "affected_symbols": c.affected_symbols or [],
+            "caused_count": c.caused_count,
+            "old_value": getattr(c, "old_value", None),
+            "new_value": getattr(c, "new_value", None),
+        }
+        for c in type_changes
+    ]
+    non_type_list = [_change_to_dict(c, policy=effective_policy) for c in non_type_changes]
+
     d: dict[str, object] = {
         "library": result.library,
         "old_version": result.old_version,
         "new_version": result.new_version,
         "verdict": result.verdict.value,
+        "policy": effective_policy,
         "summary": {
             "breaking": summary.breaking,
             "source_breaks": summary.source_breaks,
@@ -398,18 +432,10 @@ def _to_json_leaf(
             "compatible_additions": summary.compatible_additions,
             "total_changes": summary.total_changes,
         },
-        "leaf_changes": [
-            {
-                "kind": c.kind.value,
-                "symbol": c.symbol,
-                "description": c.description,
-                "affected_count": len(c.affected_symbols) if c.affected_symbols else 0,
-                "affected_symbols": c.affected_symbols or [],
-                "caused_count": c.caused_count,
-            }
-            for c in type_changes
-        ],
-        "non_type_changes": [_change_to_dict(c) for c in non_type_changes],
+        "leaf_changes": leaf_changes_list,
+        "non_type_changes": non_type_list,
+        # FIX-H: populate changes with union for backward-compat consumers
+        "changes": leaf_changes_list + non_type_list,
     }
     if result.redundant_count > 0:
         d["redundant_count"] = result.redundant_count
@@ -472,7 +498,9 @@ def to_json(
         "binary_compatibility_pct": round(summary.binary_compatibility_pct, 1),
         "affected_pct": round(summary.affected_pct, 1),
     }
-    d["changes"] = [_change_to_dict(c) for c in changes]
+    effective_policy = result.policy or "strict_abi"
+    d["policy"] = effective_policy
+    d["changes"] = [_change_to_dict(c, policy=effective_policy) for c in changes]
     if result.redundant_count > 0:
         d["redundant_count"] = result.redundant_count
     d["suppression"] = {
@@ -502,7 +530,7 @@ def to_json(
     return json.dumps(d, indent=indent)
 
 
-def _change_to_dict(c: object) -> dict[str, object]:
+def _change_to_dict(c: object, *, policy: str = "strict_abi") -> dict[str, object]:
     """Convert a Change to a JSON-serializable dict with impact and metadata."""
     kind = getattr(c, "kind", None)
     d: dict[str, object] = {
@@ -511,6 +539,8 @@ def _change_to_dict(c: object) -> dict[str, object]:
         "description": getattr(c, "description", ""),
         "old_value": getattr(c, "old_value", None),
         "new_value": getattr(c, "new_value", None),
+        # FIX-G: materialize severity from active policy
+        "severity": _kind_to_severity(kind, policy) if kind else "unknown",
     }
     # Impact explanation
     if kind:
@@ -774,7 +804,8 @@ def appcompat_to_json(result: object, indent: int = 2) -> str:
     d["missing_versions"] = list(missing_ver)
 
     breaking = getattr(result, "breaking_for_app", [])
-    d["relevant_changes"] = [_change_to_dict(c) for c in breaking]
+    appcompat_policy = getattr(getattr(result, "full_diff", None), "policy", "strict_abi") or "strict_abi"
+    d["relevant_changes"] = [_change_to_dict(c, policy=appcompat_policy) for c in breaking]
     d["relevant_change_count"] = len(breaking)
 
     irrelevant = getattr(result, "irrelevant_for_app", [])
