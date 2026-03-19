@@ -1,13 +1,16 @@
 # Code Duplication & Inefficiency Analysis
 
 **Date:** 2026-03-19
+**Revised:** 2026-03-19 (post-review)
 **Scope:** All 41 source modules in `abicheck/`
 
 ---
 
 ## Executive Summary
 
-Analysis identified **28 distinct duplication/inefficiency issues** across the codebase, categorized by severity. The most impactful are: (1) classification constants duplicated between `html_report.py` and `report_classifications.py` (~130 lines), (2) DWARF type resolution logic duplicated across three modules (~200 lines), and (3) binary format detection implemented three separate times.
+Analysis identified **28 distinct duplication/inefficiency issues** across the codebase. After critical review, **3 items were reclassified** (DIE traversal downgraded from High to Low due to intentional differences; DiffResult recomputation downgraded from Medium to Low as a negligible real-world impact; graph-to-dict corrected as partial overlap, not full duplication). The review also confirmed **`_CHANGED_BREAKING_KINDS` in html_report.py is dead code** — never referenced by any function.
+
+The most impactful consolidation targets are: (1) classification constants between `html_report.py` and `report_classifications.py` (~130 lines, zero-risk), (2) DWARF type resolution across modules (~120 lines), and (3) binary format detection in three files.
 
 ---
 
@@ -15,189 +18,208 @@ Analysis identified **28 distinct duplication/inefficiency issues** across the c
 
 ### 1. Classification Constants Duplicated Between html_report.py and report_classifications.py
 
-`report_classifications.py` was explicitly created (line 17-18) to "avoid maintaining duplicate definitions," yet `html_report.py` redefines **every single constant** as a private copy:
+**Confidence: CONFIRMED — zero-risk consolidation.**
 
-| html_report.py | report_classifications.py |
-|---|---|
-| `_REMOVED_KINDS` (L60-69) | `REMOVED_KINDS` (L29-33) |
-| `_ADDED_KINDS` (L72-83) | `ADDED_KINDS` (L36-40) |
-| `_CHANGED_BREAKING_KINDS` (L86-124) | `CHANGED_BREAKING_KINDS` (L64-84) |
-| `_CATEGORY_PREFIXES` (L134-152) | `CATEGORY_PREFIXES` (L128-135) |
-| `_HIGH_SEVERITY_KINDS` (L465-483) | `HIGH_SEVERITY_KINDS` (L90-97) |
-| `_MEDIUM_SEVERITY_KINDS` (L485-509) | `MEDIUM_SEVERITY_KINDS` (L99-111) |
-| `_BREAKING_KINDS` (L129-131) | `BREAKING_KINDS` (L61) |
+`report_classifications.py` was explicitly created (line 17-18) to "avoid maintaining duplicate definitions," yet `html_report.py` redefines **every single constant** as a private copy. `compat/xml_report.py` already imports from `report_classifications.py` correctly — `html_report.py` was never migrated.
 
-Additionally, **6 helper functions** are duplicated between the two files:
-- `_category()` / `category()` — prefix-match to category label
-- `_severity()` / `severity()` — High/Medium/Low from kind string
-- `_is_breaking()` / `is_breaking()` — kind in BREAKING_KINDS
-- `_kind_str()` / `kind_str()` — extract .value from change kind
-- `_is_type_problem()` / `is_type_problem()` — prefix match
-- `_is_symbol_problem()` / `is_symbol_problem()` — prefix match
+| html_report.py | report_classifications.py | Identical? |
+|---|---|---|
+| `_REMOVED_KINDS` (L60-69) | `REMOVED_KINDS` (L29-33) | Yes |
+| `_ADDED_KINDS` (L72-83) | `ADDED_KINDS` (L36-40) | Yes |
+| `_CHANGED_BREAKING_KINDS` (L86-124) | `CHANGED_BREAKING_KINDS` (L64-84) | **No** — html_report includes `enum_last_member_value_changed` |
+| `_CATEGORY_PREFIXES` (L134-152) | `CATEGORY_PREFIXES` (L128-135) | Yes |
+| `_HIGH_SEVERITY_KINDS` (L465-483) | `HIGH_SEVERITY_KINDS` (L90-97) | Yes |
+| `_MEDIUM_SEVERITY_KINDS` (L485-509) | `MEDIUM_SEVERITY_KINDS` (L99-111) | Yes |
+| `_BREAKING_KINDS` (L129-131) | `BREAKING_KINDS` (L61) | Yes |
 
-**Fix:** `html_report.py` should import from `report_classifications.py` (as `compat/xml_report.py` already does). ~130 lines of pure duplication.
+**Review finding:** `_CHANGED_BREAKING_KINDS` in `html_report.py` is **dead code** — no function in the file references it. The one difference between the constants is therefore irrelevant. All 6 duplicated helper functions (`_category`, `_severity`, `_is_breaking`, `_kind_str`, `_is_type_problem`, `_is_symbol_problem`) are **behaviorally identical** to their `report_classifications.py` counterparts.
+
+**Fix:** Replace all private constants/helpers in `html_report.py` with imports from `report_classifications.py`. Delete the dead `_CHANGED_BREAKING_KINDS`. ~130 lines removed, zero behavioral risk.
 
 ### 2. DWARF Type Resolution Logic Duplicated Across Modules
 
-The type-resolution machinery is implemented **twice** with nearly identical logic:
+**Confidence: CONFIRMED — accidental duplication with identical return types.**
 
-- **`dwarf_metadata.py`**: `_resolve_type` (L481-493), `_die_to_type_info` (L496-517), `_compute_type_info` (L520-558)
-- **`dwarf_snapshot.py`**: `_resolve_type` (L806-814), `_die_to_type_name` (L816-829), `_compute_type_name` (L831-895)
+- **`dwarf_metadata.py`**: `_compute_type_info` (L520-558) returns `tuple[str, int]`
+- **`dwarf_snapshot.py`**: `_compute_type_name` (L831-895) returns `tuple[str, int]`
 
-Both use the same caching strategy `(CU.cu_offset, die.offset)`, same depth limit of 8, same tag-by-tag dispatch for all DWARF type tags. ~120 lines duplicated.
+Both use the same caching strategy `(CU.cu_offset, die.offset)`, same depth limit of 8, same tag-by-tag dispatch. The review confirmed these return **identical data structures** — the duplication arose from incremental sprint development (Sprint 3 vs later), not intentional design.
 
-**Fix:** Extract a shared `DwarfTypeResolver` into `dwarf_utils.py`.
+**Fix:** Extract a shared `resolve_dwarf_type()` into `dwarf_utils.py`. ~120 lines saved.
 
-### 3. DIE Traversal Pattern Duplicated 3 Times
+### 3. Binary Format Detection Implemented 3 Times
 
-Three files implement nearly identical iterative depth-first DIE traversal with a `deque`-based stack, scope tracking, and the same skip-tag filtering:
+**Confidence: CONFIRMED with nuances.**
 
-- `dwarf_metadata.py` `_walk_die_iter` (L190-235)
-- `dwarf_advanced.py` `_walk_cu` (L257-297)
-- `dwarf_snapshot.py` `_process_cu` (L314-355)
+| Location | File opens | Mach-O magics | Extra checks |
+|---|---|---|---|
+| `appcompat.py:87-113` | 1 | 8 (most complete) | `stat.S_ISREG` |
+| `cli.py:95-127` | Up to 3 (least efficient) | Delegates to `macho_metadata` | None |
+| `mcp_server.py:220-240` | 1 | 6 (missing 2 fat-archive variants) | None |
 
-**Fix:** Extract shared `walk_dies()` generator into `dwarf_utils.py`.
+**Review finding:** The implementations are **not identical** — they differ in Mach-O magic coverage and file-open patterns. `mcp_server.py` is missing two fat-archive magic variants. `cli.py` opens the file up to 3 times unnecessarily.
 
-### 4. Binary Format Detection Implemented 3 Times
+**Fix:** Create `detect_binary_format()` in a shared module, using `appcompat.py`'s implementation as the base (most complete). All three callers import it. ~60 lines saved.
 
-- `appcompat.py:87-113` — `_detect_app_format()`: single file open, checks ELF/PE/Mach-O magic
-- `cli.py:95-127` — `_detect_binary_format()`: three separate file opens (least efficient)
-- `mcp_server.py:220-240` — `_detect_binary_format()`: single file open (most efficient)
+### 4. DW_AT_data_member_location Decoding Duplicated 3 Times
 
-**Fix:** Create a single `detect_binary_format()` function in a shared utility module.
+**Confidence: CONFIRMED — different quality levels are NOT intentional.**
 
-### 5. DW_AT_data_member_location Decoding Duplicated 3 Times
+The three implementations exist at different quality levels that correlate with when they were written (sprint order), not intentional design:
+- `dwarf_metadata.py`: naive `val[-1]` shortcut (Sprint 3, earliest)
+- `dwarf_advanced.py`: partial DW_OP decoding (Sprint 4)
+- `dwarf_snapshot.py`: full stack machine — `_evaluate_location_expr` (L171-237, most complete)
 
-- `dwarf_metadata.py` `_process_member` (L389-397) — naive `val[-1]` shortcut
-- `dwarf_advanced.py` `_decode_member_location` (L587-615) — partial DW_OP decoding
-- `dwarf_snapshot.py` `_process_field` (L598-605) + `_evaluate_location_expr` (L171-237) — full stack machine
-
-**Fix:** Single `decode_member_location()` in `dwarf_utils.py`.
+**Fix:** Move `_evaluate_location_expr` to `dwarf_utils.py` as `decode_member_location()`. All three callers use it. ~80 lines saved, correctness improved for `dwarf_metadata.py`.
 
 ---
 
 ## Medium Severity
 
-### 6. DiffResult Property Recomputation
+### 5. Struct/Record and Enum Processing Duplicated Between DWARF Modules
 
-`checker.py` `DiffResult` (L145-194): four properties (`breaking`, `source_breaks`, `compatible`, `risk`) each independently call `_effective_kind_sets()`, which rebuilds frozensets and linearly scans `self.changes`. When `reporter.to_markdown()` and `report_summary.build_summary()` access all four, it triggers **8 separate** recomputations + O(n) scans.
+- Struct: `dwarf_metadata.py` `_process_struct` (L270-336) vs `dwarf_snapshot.py` `_process_record_type` (L516-585)
+- Enum: `dwarf_metadata.py` `_process_enum` (L429-467) vs `dwarf_snapshot.py` `_process_enum` (L659-695)
 
-**Fix:** Memoize `_effective_kind_sets()` or compute all four lists in a single pass.
+Both follow the same ODR dedup pattern, same child iteration, same field extraction. The data models differ slightly (`FieldInfo` vs `TypeField`), so consolidation requires a shared extraction function that returns a common intermediate representation.
 
-### 7. Struct/Record and Enum Processing Duplicated Between DWARF Modules
-
-- Struct processing: `dwarf_metadata.py` `_process_struct` (L270-336) vs `dwarf_snapshot.py` `_process_record_type` (L516-585) — same ODR dedup, same child iteration, same field extraction pattern
-- Enum processing: `dwarf_metadata.py` `_process_enum` (L429-467) vs `dwarf_snapshot.py` `_process_enum` (L659-695) — same DW_TAG_enumerator iteration
-
-### 8. Qualifier Unwrapping Duplicated Within dwarf_advanced.py
+### 6. Qualifier Unwrapping Duplicated Within dwarf_advanced.py
 
 - `_unwrap_qualifiers` (L395-424) — standalone function with depth limit 12 and caching
 - `_get_type_align` (L217-232) — inline loop with depth limit 4 doing the same unwrapping
 
-### 9. Inline Reference Resolution Ignores Existing Utility
+**Fix:** `_get_type_align` should call `_unwrap_qualifiers` instead of reimplementing the loop.
 
-`dwarf_advanced.py` reimplements `dwarf_utils.resolve_die_ref` logic inline at lines 210-213 and 523-526, despite importing the utility.
+### 7. Inline Reference Resolution Ignores Existing Utility
 
-### 10. Forward-Ref/Anonymous Filtering Repeated 3 Times in pdb_metadata.py
+`dwarf_advanced.py` reimplements `dwarf_utils.resolve_die_ref` logic inline at lines 210-213 and 523-526, despite the utility being available.
 
-Lines 123-129, 198-202, and 243-246 all repeat:
-```python
-if cv_struct.is_forward_ref: continue
-if not cv_struct.name: continue
-if cv_struct.name.startswith("<") or cv_struct.name.startswith("__"): continue
-```
+**Fix:** Replace inline code with calls to `dwarf_utils.resolve_die_ref`.
+
+### 8. Forward-Ref/Anonymous Filtering Repeated 3 Times in pdb_metadata.py
+
+Lines 123-129, 198-202, and 243-246 all repeat the same guard pattern.
 
 **Fix:** Extract `_is_user_visible(name, is_forward_ref)` predicate.
 
-### 11. Redundant Double Iteration Over all_structs() in pdb_metadata.py
+### 9. Redundant Double Iteration Over all_structs() in pdb_metadata.py
 
-`_extract_struct_layouts` (L122) and `_extract_calling_conventions` (L243) both iterate `types.all_structs().items()`. The second pass could be folded into the first.
+`_extract_struct_layouts` (L122) and `_extract_calling_conventions` (L243) both iterate all structs. The second pass could be folded into the first.
 
-### 12. PE Open/Parse/Close Ceremony Duplicated
+### 10. PE Open/Parse/Close Ceremony Duplicated
 
 `pdb_utils.py` (L182-240) and `pe_metadata.py` (L126-201) both open/parse/close PE files independently. When processing a DLL, the same PE is parsed twice from disk.
 
-### 13. Loadability Logic Duplicated Inline in stack_checker.py
+### 11. Loadability Logic Duplicated Inline in stack_checker.py
 
-`check_single_env()` (L207-214) re-implements the cascade of checks already in `_compute_loadability()` (L70-82) in the same file instead of calling it.
+**Confidence: CONFIRMED.** `check_single_env()` (L207-214) reimplements the exact same if/elif cascade as `_compute_loadability()` (L70-82) in the same file.
 
-### 14. Graph-to-Dict Serialization Duplicated
+**Fix:** Replace lines 207-214 with `loadability = _compute_loadability(graph, missing, version_mismatches)`. Drop-in replacement.
 
-`stack_report.py` (L192-200) and `cli.py` (L417-425) build identical node dicts. `cli.py` should call the `stack_report` function.
-
-### 15. Missing-Symbol/Version-Mismatch Collection Duplicated in appcompat.py
+### 12. Missing-Symbol/Version-Mismatch Collection Duplicated in appcompat.py
 
 `check_appcompat()` (L521-536) and `check_against()` (L600-614) share ~20 lines of nearly verbatim symbol/version checking logic within the same file.
 
-### 16. `_find_resolved_key` Linear Scan in resolver.py
+### 13. Forward-Ref Resolution Uses 4 Passes in pdb_parser.py
 
-`resolver.py` L410-415: linear scan of all graph nodes on every revisited soname in BFS. Should use an O(1) `soname -> key` dict.
-
-### 17. Forward-Ref Resolution Uses 4 Passes in pdb_parser.py
-
-`pdb_parser.py` L661-673: iterates structs twice and enums twice (collection + linking). Can be done in 2 passes or even 1 combined pass.
+`pdb_parser.py` L661-673: iterates structs twice and enums twice. Can be done in 2 passes.
 
 ---
 
 ## Low Severity
 
-### 18. Skip/Prune Tag Sets Defined 3 Times
+### 14. DIE Traversal Pattern — 3 Implementations (Intentional Differences)
 
-- `dwarf_metadata.py` L123-128: `_SKIP_TAGS`
-- `dwarf_advanced.py` L101-105: `_PRUNE_TAGS`
-- `dwarf_snapshot.py` L327-329: inline tuple
+**Reclassified from High to Low after review.**
 
-**Fix:** Single `PRUNE_TAGS` constant in `dwarf_utils.py`.
+The three DIE walkers have **intentionally different** skip-tag sets and subprogram handling:
 
-### 19. ELF Open/DWARF Check Boilerplate Appears 4 Times
+| Module | `DW_TAG_subprogram` handling | Scope tracking |
+|---|---|---|
+| `dwarf_metadata.py` | Skips entirely (types only) | Full namespace chain |
+| `dwarf_snapshot.py` | Processes at top level, no body descent | Full namespace chain |
+| `dwarf_advanced.py` | Processes for calling convention, skips children | No scope tracking |
 
-`dwarf_metadata.py`, `dwarf_advanced.py`, `dwarf_snapshot.py`, and `dwarf_unified.py` each independently open ELF files and check for DWARF info.
+**Recommendation:** Do NOT consolidate into a shared `walk_dies()`. The differences are load-bearing. At most, share the skip-tag constants.
 
-### 20. Typedef-to-Anonymous-Type Resolution Duplicated
+### 15. Skip/Prune Tag Sets Defined 3 Times
+
+The base set `{DW_TAG_inlined_subroutine, DW_TAG_lexical_block, DW_TAG_GNU_call_site}` is common. Each module adds module-specific entries.
+
+**Fix:** Define `_BASE_PRUNE_TAGS` in `dwarf_utils.py`; modules compose with their additions.
+
+### 16. ELF Open/DWARF Check Boilerplate Appears 4 Times
+
+`dwarf_unified.py` was created as an I/O optimization wrapper (NOT a replacement). The old modules are the actual implementations it delegates to. The boilerplate is somewhat unavoidable given the architecture.
+
+### 17. DiffResult Property Recomputation
+
+**Reclassified from Medium to Low after review.**
+
+The `_effective_kind_sets()` computation is cheap (simple frozenset construction with early exit). The O(N) list scans are the real cost, but with typical change counts in the hundreds and at most 4-8 accesses per report, the practical impact is negligible. Additionally, `DiffResult` is mutated post-construction in `cli.py` (line 1092: `--show-redundant` path), making `@cached_property` fragile.
+
+**Recommendation:** If addressed, use a single-pass partition method rather than caching. Low priority.
+
+### 18. Graph-to-Dict Serialization — Partial Overlap
+
+**Corrected from original analysis.** The per-node and per-edge dicts are identical between `stack_report.py` and `cli.py`, but the top-level structures differ (`stack_report` includes `root`/`node_count`; `cli.py` uses a `DependencyInfo` dataclass with `bindings_summary`/`missing_symbols`).
+
+**Fix:** Extract shared `_node_to_dict()`/`_edge_to_dict()` helpers. Modest value.
+
+### 19. Typedef-to-Anonymous-Type Resolution Duplicated
 
 `dwarf_metadata.py` `_process_typedef` (L238-263) and `dwarf_snapshot.py` `_process_typedef` (L701-737) — nearly identical logic.
 
-### 21. `_parse_struct` / `_parse_union` Near-Identical in pdb_parser.py
+### 20. `_parse_struct` / `_parse_union` Near-Identical in pdb_parser.py
 
-Lines 703-720 and 722-738 are near-duplicates differing only in struct format string and `is_union` flag. Could be a single method with a parameter.
+Lines 703-720 and 722-738 differ only in format string and `is_union` flag.
 
-### 22. PdbFileName Extraction Repeated Verbatim in pdb_utils.py
+### 21. PdbFileName Extraction Repeated Verbatim in pdb_utils.py
 
-Lines 221-226 (RSDS branch) and 229-232 (NB10 branch) contain identical 5-line blocks for decoding `PdbFileName`.
+Lines 221-226 and 229-232 contain identical 5-line blocks.
 
-### 23. Machine Type Constants Defined in Two Places
+### 22. Machine Type Constants Defined in Two Places
 
-`pdb_metadata.py` L56-63 defines `_MACHINE_NAMES` dict; `pe_metadata.py` L140-142 uses `pefile.MACHINE_TYPE`. Should share one approach.
+`pdb_metadata.py` L56-63 defines `_MACHINE_NAMES`; `pe_metadata.py` L140-142 uses `pefile.MACHINE_TYPE`.
 
-### 24. Element-Kind Classification Logic in 3 Places
+### 23. Element-Kind Classification Logic in 3 Places
 
-`reporter.py` `ShowOnlyFilter.matches()` (L120-148), `html_report.py` `_CATEGORY_PREFIXES`, and `report_classifications.py` `CATEGORY_PREFIXES` — three independent prefix-to-category mappings that can diverge.
+`reporter.py` `ShowOnlyFilter.matches()`, `html_report.py`, and `report_classifications.py` each have independent prefix-to-category mappings.
 
-### 25. `_VERDICT_LABEL` Dict is Redundant
+### 24. `_VERDICT_LABEL` Dict is Redundant
 
-`reporter.py` L36-50: `_VERDICT_LABEL` maps Verdict enum members to strings, but `Verdict` is a `str` Enum where `.value` already gives the label.
+`reporter.py` L36-50: `_VERDICT_LABEL` is redundant since `Verdict` is a `str` Enum where `.value` gives the label.
 
-### 26. Bindings Summary Counting Duplicated
+### 25. Bindings Summary Counting Duplicated
 
-`stack_report.py` (L213-219) and `cli.py` (L407-409) both count bindings by status identically.
+`stack_report.py` (L213-219) and `cli.py` (L407-409) count bindings by status identically.
 
-### 27. Adjacency-List Construction Duplicated
+### 26. Adjacency-List Construction Duplicated
 
-`binder.py` (L142-146) and `stack_report.py` (L235-240) both build `adj: dict[str, list[str]]` from `graph.edges`.
+`binder.py` (L142-146) and `stack_report.py` (L235-240) both build adjacency lists from `graph.edges`.
+
+### 27. `_find_resolved_key` Linear Scan in resolver.py
+
+**Reclassified from Medium to Low.** The O(V) scan is technically correct but `graph.nodes` is typically small (tens to low hundreds). The I/O cost of `parse_elf_metadata()` dominates. Trivially fixable with a `soname_to_key` dict but practically insignificant.
 
 ### 28. Private `_bitfields` Access from Outside pdb_parser.py
 
-`pdb_metadata.py` L171 accesses `types._bitfields.get(member.type_ti)` directly, breaking encapsulation. A public `get_bitfield(ti)` method should be added.
+`pdb_metadata.py` L171 accesses `types._bitfields.get(member.type_ti)` directly. A public `get_bitfield(ti)` method should be added.
 
 ---
 
 ## Estimated Impact of Fixes
 
-| Priority | Issues | Est. Lines Saved | Effort |
-|----------|--------|------------------|--------|
-| High | #1-5 | ~400 lines | Medium |
-| Medium | #6-17 | ~200 lines | Medium |
-| Low | #18-28 | ~100 lines | Low |
-| **Total** | **28** | **~700 lines** | |
+| Priority | Issues | Est. Lines Saved | Risk | Effort |
+|----------|--------|------------------|------|--------|
+| High | #1-4 | ~390 lines | Low | Medium |
+| Medium | #5-13 | ~150 lines | Medium | Medium |
+| Low | #14-28 | ~80 lines | Low | Low |
+| **Total** | **28** | **~620 lines** | | |
 
-The high-priority items (#1-5) represent the most impactful consolidation opportunities, reducing maintenance burden and risk of divergence between duplicated definitions.
+### Key Review Corrections Applied
+1. **DIE traversal (#14)**: Downgraded High→Low. The 3 implementations have intentionally different skip-tag sets and subprogram handling. Do NOT consolidate.
+2. **DiffResult recomputation (#17)**: Downgraded Medium→Low. Computation is cheap; mutation hazard makes caching fragile.
+3. **Graph-to-dict (#18)**: Corrected to partial overlap — top-level structures differ.
+4. **Binary format detection (#3)**: Noted that implementations differ in Mach-O magic coverage; consolidation should use the most complete version.
+5. **`_CHANGED_BREAKING_KINDS`**: Confirmed as dead code in `html_report.py`.
