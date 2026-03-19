@@ -9,7 +9,7 @@ Typical problems it catches: removed or renamed symbols, changed function signat
 ## Why abicheck
 
 - **Three-layer analysis** — ELF symbol table + Clang AST (via castxml) + DWARF cross-check — catches changes that no single layer detects alone
-- **100+ detection rules** — covers symbol removal, signature changes, struct/class layout drift, vtable reordering, enum value shifts, qualifier changes, and many more (see [Change Kind Reference](reference/change-kinds.md))
+- **110+ detection rules** — covers symbol removal, signature changes, struct/class layout drift, vtable reordering, enum value shifts, qualifier changes, and many more (see [Change Kind Reference](reference/change-kinds.md))
 - **Multiple output formats** — Markdown, JSON, SARIF (GitHub Code Scanning), HTML
 - **Policy profiles** — `strict_abi`, `sdk_vendor`, `plugin_abi`, or custom YAML overrides
 - **ABICC drop-in** — full flag parity for migrating from abi-compliance-checker
@@ -60,7 +60,7 @@ Save a baseline at release time, compare every new build:
 - [Platform Support](reference/platforms.md) — Linux/macOS/Windows host matrix, cross-platform scanning
 - [Verdicts](concepts/verdicts.md) — what each verdict means and how to handle it
 - [ABI Breaks Explained](concepts/abi-breaks-explained.md) — real-world ABI/API break scenarios with code
-- [Change Kind Reference](reference/change-kinds.md) — full list of 100+ detected change types
+- [Change Kind Reference](reference/change-kinds.md) — full list of 110+ detected change types
 - [Policy Profiles](user-guide/policies.md) — built-in and custom policies
 - [Suppressions](user-guide/suppressions.md) — YAML schema, matching semantics, and expiry rules
 - [Migrating from ABICC](user-guide/from-abicc.md) — drop-in replacement and migration from abi-compliance-checker

@@ -2,7 +2,7 @@ name: 'abicheck — ABI Compatibility Checker'
 description: >
   Detect breaking ABI/API changes in C/C++ shared libraries before they reach production.
   Compares two library versions and reports removed symbols, changed signatures,
-  struct layout drift, vtable reordering, and 80+ other incompatibility types.
+  struct layout drift, vtable reordering, and 110+ other incompatibility types.
 
 branding:
   icon: 'shield'

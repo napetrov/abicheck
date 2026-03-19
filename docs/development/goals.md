@@ -21,6 +21,21 @@
 5. **Cross-platform** — Linux (ELF), macOS (Mach-O), and Windows (PE/COFF) are all first-class
    targets.
 
+## Status summary
+
+| Goal | Status |
+|------|--------|
+| G1: ABICC drop-in | Done — 113 ChangeKinds, compat CLI, suppression files, XML reports |
+| G2: Known gaps | DWARF layout, toolchain flags, AST-DWARF dedup done; evidence tiers TODO |
+| G3: libabigail tests | Done — ~54 parity test functions + 63 example cases |
+| G4: Agent-friendly | Done — JSON, SARIF, exit codes, snapshots, MCP server, GitHub Action |
+| G5: Break encyclopedia | Done — 63 example cases with docs + coverage matrix |
+| G6: Distribution & docs | Done — PyPI, conda-forge, MkDocs + GitHub Pages |
+
+For detailed goal descriptions, milestones, and progress notes, see
+[GOALS.md](https://github.com/napetrov/abicheck/blob/main/GOALS.md) in the
+repository root.
+
 ## Non-goals
 
 - Runtime instrumentation or dynamic analysis — abicheck is a static offline tool.

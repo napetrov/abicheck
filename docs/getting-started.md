@@ -41,6 +41,7 @@ brew install castxml
 
 ```bash
 # create env and install abicheck (recipe includes required analysis deps)
+# Python >= 3.10 is required; any supported version works
 conda create -n abicheck -c conda-forge python=3.12 abicheck
 conda activate abicheck
 ```

@@ -1,6 +1,6 @@
 # ABI Tool Modes Reference
 
-This document explains the three modes used for ABI analysis in `abi-scanner`,
+This document explains the three modes used for ABI analysis in `abicheck`,
 their correct names (as used in ABICC official documentation), requirements,
 and limitations.
 
@@ -241,7 +241,7 @@ abi-compliance-checker -lib libfoo -old ABI-1.dump -new ABI-2.dump
 
 ## Our Pipeline (Production Default)
 
-`abi-scanner` runs **abidiff+headers + ABICC+headers (ABICC Usage #2)** by default:
+`abicheck` runs **abidiff+headers + ABICC+headers (ABICC Usage #2)** by default:
 
 ```
 abidiff+headers  ──────────────────────────────────────────► ELF-level report
