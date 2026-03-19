@@ -11,7 +11,7 @@
 Comprehensive testing was performed across 63 example cases, edge cases, all output formats, dump/snapshot roundtrip, appcompat, compare-release, deps, policy files, suppression files, and various CLI option combinations.
 
 - **63 example cases**: 61 correct, 2 known-gap mismatches (case49, case62)
-- **8 bugs found** (detailed below)
+- **9 bugs found** (detailed below)
 
 ---
 
@@ -198,6 +198,30 @@ abicheck compare examples/build/case09_cpp_vtable/libv1.so \
   --new-header examples/case09_cpp_vtable/v2.h --lang c
 # Result: "castxml failed (exit 1): error: use of undeclared identifier 'class'"
 ```
+
+---
+
+## Bug 9: Invalid header causes unhandled castxml timeout (120s hang + stack trace)
+
+**Severity**: High
+**Command**:
+```bash
+echo "struct {{{ invalid C" > /tmp/bad_header.h
+abicheck compare libv1.so libv2.so --old-header /tmp/bad_header.h --new-header /tmp/bad_header.h
+```
+
+**Expected**: castxml should fail quickly on a syntactically invalid header, and abicheck should catch the error and display a user-friendly message like "Header file failed to parse".
+
+**Actual**: castxml hangs for the full 120-second timeout, then abicheck crashes with an unhandled `subprocess.TimeoutExpired` exception, printing a full Python stack trace to the user. The error is not caught or handled gracefully.
+
+**Stack trace**:
+```
+File "/home/user/abicheck/abicheck/dumper.py", line 388, in _castxml_dump
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+subprocess.TimeoutExpired: Command '['castxml', ...]' timed out after 120 seconds
+```
+
+**Impact**: Users with malformed headers experience a 2-minute hang followed by a confusing stack trace instead of an immediate, actionable error message.
 
 ---
 
