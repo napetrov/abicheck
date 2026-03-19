@@ -34,6 +34,8 @@ ALLOWED_TO_CHANGE = {
 
 def _baseline_verdict(case_dir: Path) -> str:
     report = case_dir / f"{case_dir.name}_abicheck.txt"
+    if not report.exists():
+        pytest.skip(f"baseline report missing: {report}")
     raw = report.read_text(encoding="utf-8")
 
     # Some stored reports contain trailing warning lines after the JSON payload.
@@ -44,8 +46,13 @@ def _baseline_verdict(case_dir: Path) -> str:
 
 
 def _current_verdict(case_name: str) -> str:
-    old = load_snapshot(BUILD_DIR / case_name / "snap_v1.json")
-    new = load_snapshot(BUILD_DIR / case_name / "snap_v2.json")
+    snap_old = BUILD_DIR / case_name / "snap_v1.json"
+    snap_new = BUILD_DIR / case_name / "snap_v2.json"
+    if not snap_old.exists() or not snap_new.exists():
+        pytest.skip(f"snapshot artifacts missing: {snap_old} / {snap_new}")
+
+    old = load_snapshot(snap_old)
+    new = load_snapshot(snap_new)
     result = compare(old, new)
     return result.verdict.value.upper()
 

@@ -79,8 +79,8 @@ CHANGED_BREAKING_KINDS: frozenset[str] = frozenset({
     "typedef_base_changed",
     "union_field_type_changed",
     "type_visibility_changed",
-    "soname_changed", "symbol_type_changed",
-    "symbol_size_changed", "symbol_version_defined_removed",
+    "symbol_type_changed", "symbol_size_changed",
+    "symbol_version_defined_removed",
 })
 
 # ---------------------------------------------------------------------------
