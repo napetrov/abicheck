@@ -450,6 +450,11 @@ RISK_KINDS: frozenset[ChangeKind] = frozenset({
 #: Additive kinds — new public API surface (subset of COMPATIBLE_KINDS).
 #: Explicitly enumerated to avoid false positives (e.g. FUNC_NOEXCEPT_ADDED
 #: is a qualifier change, not a new API addition).
+#:
+#: Note: This set includes ELF-level additions (SYMBOL_VERSION_DEFINED_ADDED,
+#: SYMBOL_VERSION_REQUIRED_ADDED_COMPAT) alongside public-API additions.
+#: Users who want to distinguish "new user-facing API" from "new ELF metadata"
+#: should inspect the kind values directly.
 ADDITION_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.FUNC_ADDED,
     ChangeKind.VAR_ADDED,
@@ -458,6 +463,8 @@ ADDITION_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.ENUM_MEMBER_ADDED,
     ChangeKind.UNION_FIELD_ADDED,
     ChangeKind.CONSTANT_ADDED,
+    # ELF metadata additions — not user-facing API, but binary-compatible
+    # structural additions that merit reporting.
     ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
     ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT,
 })
@@ -534,6 +541,8 @@ PLUGIN_ABI_DOWNGRADED_KINDS: frozenset[ChangeKind] = frozenset(
 
 # Integrity assertions: catch miscategorisation at import time.
 # Use explicit raises (not assert) so these are never stripped by python -O.
+# All checks below use ``if not …: raise`` instead of ``assert`` so that
+# running under ``python -O`` does not silently disable them.
 if not SDK_VENDOR_COMPAT_KINDS <= API_BREAK_KINDS:
     raise AssertionError(
         "SDK_VENDOR_COMPAT_KINDS must be a strict subset of API_BREAK_KINDS; "

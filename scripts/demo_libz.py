@@ -91,7 +91,7 @@ def main() -> None:
         result = compare(snap_v1, snap_v2)
         print(f"  Verdict : {result.verdict.value}")
         print(f"  Breaking: {len(result.breaking)}")
-        print(f"  Compatible additions: {len(result.compatible)}")
+        print(f"  Compatible changes: {len(result.compatible)}")
         for c in result.changes:
             print(f"  [{c.kind.value}] {c.description}")
 

@@ -34,6 +34,7 @@ from .serialization import load_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
     from .policy_file import PolicyFile
+    from .severity import SeverityConfig
     from .suppression import SuppressionList
 
 from . import __version__ as _abicheck_version
@@ -671,7 +672,7 @@ def _render_output(
     report_mode: str = "full",
     show_impact: bool = False,
     stat: bool = False,
-    severity_config: object | None = None,
+    severity_config: SeverityConfig | None = None,
 ) -> str:
     """Render comparison result in the requested output format."""
     if stat:
@@ -955,11 +956,9 @@ def _build_match_map(paths: list[Path]) -> tuple[dict[str, Path], list[str]]:
 @click.option("--severity-preset", "severity_preset",
               type=click.Choice(["default", "strict", "info-only"], case_sensitive=True),
               default=None,
-              help="Severity preset controlling exit codes and report labels for four issue "
-                   "categories: abi-breaking, potential-breaking, quality-issues, additions. "
-                   "Presets: 'default' (breaks=error, potential/quality=warning, additions=info), "
-                   "'strict' (all=error), 'info-only' (all=info, exit 0 always). "
-                   "Per-category --severity-* options override the preset.")
+              help="Severity preset: 'default', 'strict', or 'info-only'. "
+                   "Controls exit codes and report labels. Per-category "
+                   "--severity-* options override the chosen preset.")
 @click.option("--severity-abi-breaking", "severity_abi_breaking",
               type=click.Choice(["error", "warning", "info"], case_sensitive=True),
               default=None,

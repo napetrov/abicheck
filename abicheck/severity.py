@@ -101,6 +101,10 @@ def classify_change(kind: ChangeKind) -> IssueCategory:
 
     Uses the canonical kind sets from ``checker_policy`` directly.
     Unknown kinds default to ``ABI_BREAKING`` (fail-safe).
+
+    Note: ``ADDITION_KINDS`` and ``QUALITY_KINDS`` are disjoint by
+    construction (``QUALITY_KINDS = COMPATIBLE_KINDS - ADDITION_KINDS``),
+    so the check order between them does not matter.
     """
     if kind in BREAKING_KINDS:
         return IssueCategory.ABI_BREAKING
@@ -153,11 +157,18 @@ class SeverityConfig:
             self.level_for_kind(c.kind) == SeverityLevel.ERROR for c in changes
         )
 
-    def describe(self) -> str:
-        """Human-readable summary of this configuration."""
-        lines = []
+    def describe(self, *, prefix: str = "", title: str | None = None) -> str:
+        """Human-readable summary of this configuration.
+
+        Args:
+            prefix: String prepended to each line (e.g. indentation).
+            title: Optional title line printed before the category listing.
+        """
+        lines: list[str] = []
+        if title is not None:
+            lines.append(f"{prefix}{title}")
         for cat in IssueCategory:
-            lines.append(f"  {cat.value}: {self.level_for(cat).value}")
+            lines.append(f"{prefix}  {cat.value}: {self.level_for(cat).value}")
         return "\n".join(lines)
 
 
@@ -189,6 +200,7 @@ SEVERITY_PRESETS: dict[str, SeverityConfig] = {
     "default": PRESET_DEFAULT,
     "strict": PRESET_STRICT,
     "info-only": PRESET_INFO_ONLY,
+    "info_only": PRESET_INFO_ONLY,  # underscore alias for programmatic use
 }
 
 
@@ -253,11 +265,25 @@ def resolve_severity_config(
 # Exit code computation
 # ---------------------------------------------------------------------------
 
-# Severity-aware exit codes:
+# Severity-aware exit codes (used when any --severity-* flag is set):
+#
 #   0 — no error-level findings
 #   1 — error-level findings in additions or quality_issues only
 #   2 — error-level findings in potential_breaking (but not abi_breaking)
 #   4 — error-level findings in abi_breaking
+#
+# The highest applicable code wins (e.g. both abi_breaking=error and
+# quality_issues=error → exit 4).
+#
+# Note: exit codes 1 and 2 intentionally share a code between two
+# categories each (additions/quality_issues → 1, potential_breaking → 2).
+# Callers that need per-category granularity should inspect the JSON
+# ``severity.categories`` output instead of the exit code.
+#
+# These codes align with the legacy verdict-based exits (BREAKING → 4,
+# API_BREAK → 2) but are independent: the legacy path runs when no
+# --severity-* flag is provided.  The two paths are mutually exclusive
+# in cli.py.
 
 _CATEGORY_EXIT_CODES: dict[IssueCategory, int] = {
     IssueCategory.ABI_BREAKING: 4,
@@ -291,7 +317,13 @@ def compute_exit_code(
 
 @dataclass(frozen=True)
 class CategorizedChanges:
-    """Changes partitioned into the four issue categories."""
+    """Changes partitioned into the four issue categories.
+
+    Fields use ``list[HasKind]`` intentionally so that any object with a
+    ``.kind`` attribute can be categorized (e.g. ``Change``, ``AbiChange``,
+    or lightweight stubs in tests).  Callers that need full change objects
+    should cast the elements to the concrete type.
+    """
 
     abi_breaking: list[HasKind]
     potential_breaking: list[HasKind]

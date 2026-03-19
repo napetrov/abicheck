@@ -306,3 +306,58 @@ class TestCategorizeChanges:
         result = categorize_changes(changes)
         assert len(result.potential_breaking) == 1
         assert len(result.abi_breaking) == 0
+
+
+# ---------------------------------------------------------------------------
+# Additional exit-code and config edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestComputeExitCodeEdgeCases:
+    """Additional coverage for exit-code edge cases flagged during review."""
+
+    def test_quality_default_exits_0(self) -> None:
+        """Quality issues are WARNING under default preset → exit 0."""
+        changes = [_FakeChange(ChangeKind.VISIBILITY_LEAK)]
+        assert compute_exit_code(changes, PRESET_DEFAULT) == 0
+
+    def test_quality_and_additions_only_exits_0_default(self) -> None:
+        """Quality + additions under default preset → exit 0 (both below error)."""
+        changes = [
+            _FakeChange(ChangeKind.VISIBILITY_LEAK),
+            _FakeChange(ChangeKind.FUNC_ADDED),
+        ]
+        assert compute_exit_code(changes, PRESET_DEFAULT) == 0
+
+
+class TestSeverityConfigDescribe:
+    """Tests for SeverityConfig.describe() method."""
+
+    def test_describe_default(self) -> None:
+        out = PRESET_DEFAULT.describe()
+        assert "abi_breaking: error" in out
+        assert "additions: info" in out
+
+    def test_describe_with_title(self) -> None:
+        out = PRESET_STRICT.describe(title="Strict preset:")
+        assert out.startswith("Strict preset:")
+        assert "abi_breaking: error" in out
+
+    def test_describe_with_prefix(self) -> None:
+        out = PRESET_DEFAULT.describe(prefix=">> ")
+        for line in out.splitlines():
+            assert line.startswith(">> ")
+
+    def test_describe_with_title_and_prefix(self) -> None:
+        out = PRESET_INFO_ONLY.describe(prefix="  ", title="Info-only:")
+        lines = out.splitlines()
+        assert lines[0] == "  Info-only:"
+        assert "info" in lines[1]
+
+
+class TestInfoOnlyAlias:
+    """The info_only alias resolves to the same preset as info-only."""
+
+    def test_alias_resolves(self) -> None:
+        from abicheck.severity import SEVERITY_PRESETS
+        assert SEVERITY_PRESETS["info_only"] is SEVERITY_PRESETS["info-only"]

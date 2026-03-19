@@ -784,7 +784,7 @@ def to_markdown(
         f"| Breaking changes | {len(result.breaking)} |",
         f"| Source-level breaks | {len(result.source_breaks)} |",
         f"| Deployment risk changes | {len(result.risk)} |",
-        f"| Compatible additions | {len(result.compatible)} |",
+        f"| Compatible changes | {len(result.compatible)} |",
         "",
     ]
 
@@ -826,6 +826,9 @@ def to_markdown(
         lines.append("")
 
     if risk:
+        # Risk changes share the "potential_breaking" severity category with
+        # source-level breaks (both are potential incompatibilities), so they
+        # show the same severity badge in the report.
         sev_label = _section_severity_label(severity_config, "potential_breaking")
         lines += [f"## {_RISK_ICON} Deployment Risk Changes{sev_label}", ""]
         lines += [

@@ -8,7 +8,7 @@
 | Breaking changes | 1 |
 | Source-level breaks | 0 |
 | Deployment risk changes | 0 |
-| Compatible additions | 1 |
+| Compatible changes | 1 |
 
 ## ❌ Breaking Changes
 
