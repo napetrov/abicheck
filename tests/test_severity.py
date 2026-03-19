@@ -81,6 +81,30 @@ class TestClassifyChange:
     def test_dwarf_info_missing_is_quality(self) -> None:
         assert classify_change(ChangeKind.DWARF_INFO_MISSING) == IssueCategory.QUALITY_ISSUES
 
+    @pytest.mark.parametrize("kind", list(ChangeKind), ids=lambda k: k.value)
+    def test_exhaustive_all_kinds_classified(self, kind: ChangeKind) -> None:
+        """Every ChangeKind must map to a real category, never the fail-safe default."""
+        from abicheck.checker_policy import (
+            ADDITION_KINDS,
+            API_BREAK_KINDS,
+            BREAKING_KINDS,
+            QUALITY_KINDS,
+            RISK_KINDS,
+        )
+        cat = classify_change(kind)
+        assert cat in set(IssueCategory), f"{kind} classified as unknown category {cat}"
+        # Verify classify_change agrees with the canonical kind sets
+        if kind in BREAKING_KINDS:
+            assert cat == IssueCategory.ABI_BREAKING
+        elif kind in API_BREAK_KINDS or kind in RISK_KINDS:
+            assert cat == IssueCategory.POTENTIAL_BREAKING
+        elif kind in ADDITION_KINDS:
+            assert cat == IssueCategory.ADDITIONS
+        elif kind in QUALITY_KINDS:
+            assert cat == IssueCategory.QUALITY_ISSUES
+        else:
+            pytest.fail(f"{kind} not in any canonical kind set — update checker_policy.py")
+
 
 # ---------------------------------------------------------------------------
 # SeverityConfig

@@ -1076,6 +1076,10 @@ def compare_cmd(
 
     # Resolve severity configuration (preset + per-category overrides)
     from .severity import resolve_severity_config
+    severity_explicitly_set = any(v is not None for v in (
+        severity_preset, severity_abi_breaking, severity_potential_breaking,
+        severity_quality_issues, severity_additions,
+    ))
     sev_config = resolve_severity_config(
         preset=severity_preset,
         abi_breaking=severity_abi_breaking,
@@ -1182,7 +1186,7 @@ def compare_cmd(
         follow_deps=follow_deps,
         show_only=show_only, report_mode=report_mode,
         show_impact=show_impact, stat=stat,
-        severity_config=sev_config,
+        severity_config=sev_config if severity_explicitly_set else None,
     )
     if output:
         _safe_write_output(output, text)
@@ -1190,10 +1194,11 @@ def compare_cmd(
     else:
         click.echo(text)
 
-    # Severity-aware exit code: use severity config when a non-default preset
-    # or any per-category override was specified.
-    from .severity import PRESET_DEFAULT, compute_exit_code
-    if sev_config != PRESET_DEFAULT:
+    # Severity-aware exit code: use severity config when any --severity-*
+    # flag was explicitly provided.  Otherwise fall back to legacy verdict-
+    # based exit codes for full backward compatibility.
+    from .severity import compute_exit_code
+    if severity_explicitly_set:
         exit_code = compute_exit_code(result.changes, sev_config)
         if exit_code != 0:
             sys.exit(exit_code)
@@ -1205,12 +1210,11 @@ def compare_cmd(
             sys.exit(2)
 
     # --fail-on-additions: exit 1 if any new public symbols/types were added.
-    # Filter result.changes directly (not result.compatible) so the check is
-    # policy-independent: _ADDITION_KINDS covers all known additive change kinds.
+    # Uses the canonical ADDITION_KINDS set from checker_policy (single source
+    # of truth) rather than a heuristic string match.
     if fail_on_additions:
-        from .checker_policy import COMPATIBLE_KINDS
-        _ADDITION_KINDS = {k for k in COMPATIBLE_KINDS if k.value.endswith("_added")}
-        additions = [c for c in result.changes if c.kind in _ADDITION_KINDS]
+        from .checker_policy import ADDITION_KINDS
+        additions = [c for c in result.changes if c.kind in ADDITION_KINDS]
         if additions:
             click.echo(
                 f"API expansion detected: {len(additions)} addition(s) "

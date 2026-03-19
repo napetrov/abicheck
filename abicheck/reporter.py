@@ -19,6 +19,11 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .checker_policy import HasKind
+    from .severity import SeverityConfig
 
 from .checker import (
     Change,
@@ -466,7 +471,7 @@ def to_json(
     report_mode: str = "full",
     show_impact: bool = False,
     stat: bool = False,
-    severity_config: object | None = None,
+    severity_config: SeverityConfig | None = None,
 ) -> str:
     if stat:
         return to_stat_json(result, indent=indent)
@@ -627,7 +632,7 @@ _SEVERITY_EMOJI = {
 }
 
 
-def _section_severity_label(severity_config: object | None, category_attr: str) -> str:
+def _section_severity_label(severity_config: SeverityConfig | None, category_attr: str) -> str:
     """Return a severity label suffix like ' [ERROR]' for a report section header."""
     if severity_config is None:
         return ""
@@ -641,7 +646,7 @@ def _section_severity_label(severity_config: object | None, category_attr: str) 
 
 def _build_severity_summary_md(
     changes: list[Change],
-    severity_config: object,
+    severity_config: SeverityConfig,
 ) -> list[str]:
     """Build a severity configuration summary table for markdown output."""
     from .severity import SeverityLevel, categorize_changes
@@ -654,7 +659,7 @@ def _build_severity_summary_md(
         "|----------|----------|-------|-------------|",
     ]
 
-    _CATEGORY_INFO: list[tuple[str, str, list[object]]] = [
+    _CATEGORY_INFO: list[tuple[str, str, list[HasKind]]] = [
         ("ABI/API Incompatibilities", "abi_breaking", categorized.abi_breaking),
         ("Potential Incompatibilities", "potential_breaking", categorized.potential_breaking),
         ("Quality Issues", "quality_issues", categorized.quality_issues),
@@ -677,7 +682,7 @@ def _build_severity_summary_md(
 
 def _build_severity_json(
     changes: list[Change],
-    severity_config: object,
+    severity_config: SeverityConfig,
 ) -> dict[str, object]:
     """Build severity information for JSON output."""
     from .severity import SeverityLevel, categorize_changes, compute_exit_code
@@ -708,7 +713,7 @@ def _build_severity_json(
         },
     }
 
-    exit_code = compute_exit_code(changes, severity_config)  # type: ignore[arg-type]
+    exit_code = compute_exit_code(changes, severity_config)
 
     return {
         "config": config_dict,
@@ -741,7 +746,7 @@ def to_markdown(
     report_mode: str = "full",
     show_impact: bool = False,
     stat: bool = False,
-    severity_config: object | None = None,
+    severity_config: SeverityConfig | None = None,
 ) -> str:
     if stat:
         return to_stat(result)

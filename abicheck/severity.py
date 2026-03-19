@@ -136,13 +136,12 @@ class SeverityConfig:
     additions: SeverityLevel = SeverityLevel.INFO
 
     def level_for(self, category: IssueCategory) -> SeverityLevel:
-        """Return the configured severity level for *category*."""
-        return {
-            IssueCategory.ABI_BREAKING: self.abi_breaking,
-            IssueCategory.POTENTIAL_BREAKING: self.potential_breaking,
-            IssueCategory.QUALITY_ISSUES: self.quality_issues,
-            IssueCategory.ADDITIONS: self.additions,
-        }[category]
+        """Return the configured severity level for *category*.
+
+        Works because SeverityConfig field names match IssueCategory values.
+        """
+        result: SeverityLevel = getattr(self, category.value)
+        return result
 
     def level_for_kind(self, kind: ChangeKind) -> SeverityLevel:
         """Return the configured severity level for a specific ChangeKind."""

@@ -533,27 +533,28 @@ PLUGIN_ABI_DOWNGRADED_KINDS: frozenset[ChangeKind] = frozenset(
 )
 
 # Integrity assertions: catch miscategorisation at import time.
-assert SDK_VENDOR_COMPAT_KINDS <= API_BREAK_KINDS, (
-    "SDK_VENDOR_COMPAT_KINDS must be a strict subset of API_BREAK_KINDS; "
-    f"offending kinds: {SDK_VENDOR_COMPAT_KINDS - API_BREAK_KINDS}"
-)
-assert PLUGIN_ABI_DOWNGRADED_KINDS <= BREAKING_KINDS, (
-    "PLUGIN_ABI_DOWNGRADED_KINDS must be a strict subset of BREAKING_KINDS; "
-    f"offending kinds: {PLUGIN_ABI_DOWNGRADED_KINDS - BREAKING_KINDS}"
-)
-# Safety-critical invariants: RISK_KINDS must be disjoint from all other kind sets.
 # Use explicit raises (not assert) so these are never stripped by python -O.
-# ADDITION_KINDS must be a subset of COMPATIBLE_KINDS; their union with
-# QUALITY_KINDS must cover all COMPATIBLE_KINDS exactly.
-assert ADDITION_KINDS <= COMPATIBLE_KINDS, (
-    "ADDITION_KINDS must be a subset of COMPATIBLE_KINDS; "
-    f"offending kinds: {ADDITION_KINDS - COMPATIBLE_KINDS}"
-)
-assert ADDITION_KINDS | QUALITY_KINDS == COMPATIBLE_KINDS, (
-    "ADDITION_KINDS | QUALITY_KINDS must equal COMPATIBLE_KINDS; "
-    f"missing: {COMPATIBLE_KINDS - (ADDITION_KINDS | QUALITY_KINDS)}, "
-    f"extra: {(ADDITION_KINDS | QUALITY_KINDS) - COMPATIBLE_KINDS}"
-)
+if not SDK_VENDOR_COMPAT_KINDS <= API_BREAK_KINDS:
+    raise AssertionError(
+        "SDK_VENDOR_COMPAT_KINDS must be a strict subset of API_BREAK_KINDS; "
+        f"offending kinds: {SDK_VENDOR_COMPAT_KINDS - API_BREAK_KINDS}"
+    )
+if not PLUGIN_ABI_DOWNGRADED_KINDS <= BREAKING_KINDS:
+    raise AssertionError(
+        "PLUGIN_ABI_DOWNGRADED_KINDS must be a strict subset of BREAKING_KINDS; "
+        f"offending kinds: {PLUGIN_ABI_DOWNGRADED_KINDS - BREAKING_KINDS}"
+    )
+if not ADDITION_KINDS <= COMPATIBLE_KINDS:
+    raise AssertionError(
+        "ADDITION_KINDS must be a subset of COMPATIBLE_KINDS; "
+        f"offending kinds: {ADDITION_KINDS - COMPATIBLE_KINDS}"
+    )
+if ADDITION_KINDS | QUALITY_KINDS != COMPATIBLE_KINDS:
+    raise AssertionError(
+        "ADDITION_KINDS | QUALITY_KINDS must equal COMPATIBLE_KINDS; "
+        f"missing: {COMPATIBLE_KINDS - (ADDITION_KINDS | QUALITY_KINDS)}, "
+        f"extra: {(ADDITION_KINDS | QUALITY_KINDS) - COMPATIBLE_KINDS}"
+    )
 
 if not RISK_KINDS.isdisjoint(BREAKING_KINDS):
     raise AssertionError(
