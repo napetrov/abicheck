@@ -664,11 +664,34 @@ class _CastxmlParser:
         return variables
 
     def parse_types(self) -> list[RecordType]:
+        # Build reverse mapping: struct/union ID → typedef name for anonymous types.
+        # This allows us to include `typedef struct { ... } Foo;` where the struct
+        # itself is anonymous (name="") but reachable via the typedef.
+        typedef_name_for: dict[str, str] = {}
+        for el in self._root:
+            if el.tag != "Typedef":
+                continue
+            td_name = el.get("name", "")
+            if not td_name:
+                continue
+            target_id = el.get("type", "")
+            target_el = self._resolve(target_id)
+            if target_el is not None and target_el.tag in ("Struct", "Class", "Union"):
+                target_name = target_el.get("name", "")
+                if not target_name:
+                    # Anonymous struct/union with a typedef alias — record it.
+                    typedef_name_for[target_id] = td_name
+
         types = []
         for el in self._root:
-            if not self._is_public_record_type(el):
-                continue
-            types.append(self._build_record_type(el))
+            if self._is_public_record_type(el):
+                types.append(self._build_record_type(el))
+            elif el.tag in ("Struct", "Class", "Union"):
+                # Check if this is an anonymous struct reachable via typedef
+                eid = el.get("id", "")
+                td_name = typedef_name_for.get(eid)
+                if td_name and not self._is_builtin_element(el):
+                    types.append(self._build_record_type(el, override_name=td_name))
         return types
 
     def _is_public_record_type(self, el: Any) -> bool:
@@ -684,8 +707,8 @@ class _CastxmlParser:
             return False
         return True
 
-    def _build_record_type(self, el: Any) -> RecordType:
-        name = el.get("name", "")
+    def _build_record_type(self, el: Any, override_name: str | None = None) -> RecordType:
+        name = override_name or el.get("name", "")
         is_opaque = el.get("incomplete") == "1"
         return RecordType(
             name=name,
