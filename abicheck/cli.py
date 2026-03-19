@@ -671,6 +671,7 @@ def _render_output(
     report_mode: str = "full",
     show_impact: bool = False,
     stat: bool = False,
+    severity_config: object | None = None,
 ) -> str:
     """Render comparison result in the requested output format."""
     if stat:
@@ -678,7 +679,10 @@ def _render_output(
             return to_stat_json(result)
         return to_stat(result)
     if fmt == "json":
-        base = to_json(result, show_only=show_only, report_mode=report_mode, show_impact=show_impact)
+        base = to_json(
+            result, show_only=show_only, report_mode=report_mode,
+            show_impact=show_impact, severity_config=severity_config,
+        )
         if follow_deps and (old.dependency_info or (new and new.dependency_info)):
             import json
             d = json.loads(base)
@@ -704,7 +708,10 @@ def _render_output(
             show_only=show_only,
             show_impact=show_impact,
         )
-    md = to_markdown(result, show_only=show_only, report_mode=report_mode, show_impact=show_impact)
+    md = to_markdown(
+        result, show_only=show_only, report_mode=report_mode,
+        show_impact=show_impact, severity_config=severity_config,
+    )
     if follow_deps and (old.dependency_info or (new and new.dependency_info)):
         md += _render_deps_section_md(old, new)
     return md
@@ -945,6 +952,30 @@ def _build_match_map(paths: list[Path]) -> tuple[dict[str, Path], list[str]]:
               help="Exit with code 1 if any new public symbols, types, or fields were added "
                    "(COMPATIBLE changes). Useful for detecting unintentional API expansion in PRs. "
                    "Use --no-fail-on-additions (or omit the flag) to allow API growth.")
+@click.option("--severity-preset", "severity_preset",
+              type=click.Choice(["default", "strict", "info-only"], case_sensitive=True),
+              default=None,
+              help="Severity preset controlling exit codes and report labels for four issue "
+                   "categories: abi-breaking, potential-breaking, quality-issues, additions. "
+                   "Presets: 'default' (breaks=error, potential/quality=warning, additions=info), "
+                   "'strict' (all=error), 'info-only' (all=info, exit 0 always). "
+                   "Per-category --severity-* options override the preset.")
+@click.option("--severity-abi-breaking", "severity_abi_breaking",
+              type=click.Choice(["error", "warning", "info"], case_sensitive=True),
+              default=None,
+              help="Severity for clear ABI/API incompatibilities (overrides preset).")
+@click.option("--severity-potential-breaking", "severity_potential_breaking",
+              type=click.Choice(["error", "warning", "info"], case_sensitive=True),
+              default=None,
+              help="Severity for potential incompatibilities needing review (overrides preset).")
+@click.option("--severity-quality-issues", "severity_quality_issues",
+              type=click.Choice(["error", "warning", "info"], case_sensitive=True),
+              default=None,
+              help="Severity for problematic behaviors like std symbol leaks (overrides preset).")
+@click.option("--severity-additions", "severity_additions",
+              type=click.Choice(["error", "warning", "info"], case_sensitive=True),
+              default=None,
+              help="Severity for new public API additions (overrides preset).")
 @click.option("--follow-deps", is_flag=True, default=False,
               help="Resolve transitive dependencies for both old and new, compute symbol "
                    "bindings, and include a dependency-change section in the report. ELF only.")
@@ -989,6 +1020,11 @@ def compare_cmd(
     pdb_path: Path | None, old_pdb_path: Path | None, new_pdb_path: Path | None,
     dwarf_only: bool,
     fail_on_additions: bool,
+    severity_preset: str | None,
+    severity_abi_breaking: str | None,
+    severity_potential_breaking: str | None,
+    severity_quality_issues: str | None,
+    severity_additions: str | None,
     follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
     show_redundant: bool, show_only: str | None, stat: bool,
     report_mode: str, show_impact: bool,
@@ -1037,6 +1073,16 @@ def compare_cmd(
       abicheck compare old.json new.json --suppress suppressions.yaml
     """
     _setup_verbosity(verbose)
+
+    # Resolve severity configuration (preset + per-category overrides)
+    from .severity import resolve_severity_config
+    sev_config = resolve_severity_config(
+        preset=severity_preset,
+        abi_breaking=severity_abi_breaking,
+        potential_breaking=severity_potential_breaking,
+        quality_issues=severity_quality_issues,
+        additions=severity_additions,
+    )
 
     old_h, new_h, old_inc, new_inc = _resolve_per_side_options(
         headers, includes, old_headers_only, new_headers_only,
@@ -1136,6 +1182,7 @@ def compare_cmd(
         follow_deps=follow_deps,
         show_only=show_only, report_mode=report_mode,
         show_impact=show_impact, stat=stat,
+        severity_config=sev_config,
     )
     if output:
         _safe_write_output(output, text)
@@ -1143,10 +1190,19 @@ def compare_cmd(
     else:
         click.echo(text)
 
-    if result.verdict.value == "BREAKING":
-        sys.exit(4)
-    elif result.verdict.value == "API_BREAK":
-        sys.exit(2)
+    # Severity-aware exit code: use severity config when a non-default preset
+    # or any per-category override was specified.
+    from .severity import PRESET_DEFAULT, compute_exit_code
+    if sev_config != PRESET_DEFAULT:
+        exit_code = compute_exit_code(result.changes, sev_config)
+        if exit_code != 0:
+            sys.exit(exit_code)
+    else:
+        # Legacy exit-code behaviour (preserves backward compatibility)
+        if result.verdict.value == "BREAKING":
+            sys.exit(4)
+        elif result.verdict.value == "API_BREAK":
+            sys.exit(2)
 
     # --fail-on-additions: exit 1 if any new public symbols/types were added.
     # Filter result.changes directly (not result.compatible) so the check is

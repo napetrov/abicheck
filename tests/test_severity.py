@@ -1,0 +1,284 @@
+# Copyright 2026 Nikolay Petrov
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Tests for the severity configuration module."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import pytest
+
+from abicheck.checker_policy import ChangeKind
+from abicheck.severity import (
+    PRESET_DEFAULT,
+    PRESET_INFO_ONLY,
+    PRESET_STRICT,
+    CategorizedChanges,
+    IssueCategory,
+    SeverityConfig,
+    SeverityLevel,
+    categorize_changes,
+    classify_change,
+    compute_exit_code,
+    resolve_severity_config,
+)
+
+
+@dataclass
+class _FakeChange:
+    kind: ChangeKind
+
+
+# ---------------------------------------------------------------------------
+# classify_change
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyChange:
+    def test_breaking_kind(self) -> None:
+        assert classify_change(ChangeKind.FUNC_REMOVED) == IssueCategory.ABI_BREAKING
+
+    def test_api_break_kind(self) -> None:
+        assert classify_change(ChangeKind.ENUM_MEMBER_RENAMED) == IssueCategory.POTENTIAL_BREAKING
+
+    def test_risk_kind(self) -> None:
+        assert classify_change(ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED) == IssueCategory.POTENTIAL_BREAKING
+
+    def test_addition_kind(self) -> None:
+        assert classify_change(ChangeKind.FUNC_ADDED) == IssueCategory.ADDITIONS
+
+    def test_quality_issue_kind(self) -> None:
+        assert classify_change(ChangeKind.VISIBILITY_LEAK) == IssueCategory.QUALITY_ISSUES
+
+    def test_compatible_noexcept_is_quality(self) -> None:
+        # noexcept changes are COMPATIBLE but not additions → quality issues
+        assert classify_change(ChangeKind.FUNC_NOEXCEPT_ADDED) == IssueCategory.QUALITY_ISSUES
+
+    def test_type_added_is_addition(self) -> None:
+        assert classify_change(ChangeKind.TYPE_ADDED) == IssueCategory.ADDITIONS
+
+    def test_var_added_is_addition(self) -> None:
+        assert classify_change(ChangeKind.VAR_ADDED) == IssueCategory.ADDITIONS
+
+    def test_enum_member_added_is_addition(self) -> None:
+        assert classify_change(ChangeKind.ENUM_MEMBER_ADDED) == IssueCategory.ADDITIONS
+
+    def test_soname_missing_is_quality(self) -> None:
+        assert classify_change(ChangeKind.SONAME_MISSING) == IssueCategory.QUALITY_ISSUES
+
+    def test_dwarf_info_missing_is_quality(self) -> None:
+        assert classify_change(ChangeKind.DWARF_INFO_MISSING) == IssueCategory.QUALITY_ISSUES
+
+
+# ---------------------------------------------------------------------------
+# SeverityConfig
+# ---------------------------------------------------------------------------
+
+
+class TestSeverityConfig:
+    def test_default_preset_values(self) -> None:
+        cfg = PRESET_DEFAULT
+        assert cfg.abi_breaking == SeverityLevel.ERROR
+        assert cfg.potential_breaking == SeverityLevel.WARNING
+        assert cfg.quality_issues == SeverityLevel.WARNING
+        assert cfg.additions == SeverityLevel.INFO
+
+    def test_strict_preset_all_error(self) -> None:
+        cfg = PRESET_STRICT
+        for cat in IssueCategory:
+            assert cfg.level_for(cat) == SeverityLevel.ERROR
+
+    def test_info_only_preset_all_info(self) -> None:
+        cfg = PRESET_INFO_ONLY
+        for cat in IssueCategory:
+            assert cfg.level_for(cat) == SeverityLevel.INFO
+
+    def test_level_for_kind(self) -> None:
+        cfg = PRESET_DEFAULT
+        assert cfg.level_for_kind(ChangeKind.FUNC_REMOVED) == SeverityLevel.ERROR
+        assert cfg.level_for_kind(ChangeKind.ENUM_MEMBER_RENAMED) == SeverityLevel.WARNING
+        assert cfg.level_for_kind(ChangeKind.VISIBILITY_LEAK) == SeverityLevel.WARNING
+        assert cfg.level_for_kind(ChangeKind.FUNC_ADDED) == SeverityLevel.INFO
+
+    def test_has_errors_true(self) -> None:
+        cfg = PRESET_DEFAULT
+        changes = [_FakeChange(ChangeKind.FUNC_REMOVED)]
+        assert cfg.has_errors(changes) is True
+
+    def test_has_errors_false_no_breaking(self) -> None:
+        cfg = PRESET_DEFAULT
+        changes = [_FakeChange(ChangeKind.FUNC_ADDED)]
+        assert cfg.has_errors(changes) is False
+
+    def test_has_errors_strict_additions(self) -> None:
+        cfg = PRESET_STRICT
+        changes = [_FakeChange(ChangeKind.FUNC_ADDED)]
+        assert cfg.has_errors(changes) is True
+
+    def test_describe(self) -> None:
+        desc = PRESET_DEFAULT.describe()
+        assert "abi_breaking: error" in desc
+        assert "additions: info" in desc
+
+
+# ---------------------------------------------------------------------------
+# resolve_severity_config
+# ---------------------------------------------------------------------------
+
+
+class TestResolveSeverityConfig:
+    def test_no_args_returns_default(self) -> None:
+        cfg = resolve_severity_config()
+        assert cfg == PRESET_DEFAULT
+
+    def test_preset_strict(self) -> None:
+        cfg = resolve_severity_config(preset="strict")
+        assert cfg == PRESET_STRICT
+
+    def test_preset_info_only(self) -> None:
+        cfg = resolve_severity_config(preset="info-only")
+        assert cfg == PRESET_INFO_ONLY
+
+    def test_invalid_preset_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown severity preset"):
+            resolve_severity_config(preset="nonexistent")
+
+    def test_per_category_override(self) -> None:
+        cfg = resolve_severity_config(additions="error")
+        assert cfg.abi_breaking == SeverityLevel.ERROR  # from default
+        assert cfg.additions == SeverityLevel.ERROR  # overridden
+
+    def test_override_on_preset(self) -> None:
+        cfg = resolve_severity_config(
+            preset="info-only",
+            abi_breaking="error",
+        )
+        assert cfg.abi_breaking == SeverityLevel.ERROR
+        assert cfg.potential_breaking == SeverityLevel.INFO  # from info-only
+
+    def test_invalid_override_value_raises(self) -> None:
+        with pytest.raises(ValueError, match="Invalid severity level"):
+            resolve_severity_config(abi_breaking="critical")
+
+    def test_all_overrides(self) -> None:
+        cfg = resolve_severity_config(
+            abi_breaking="warning",
+            potential_breaking="error",
+            quality_issues="info",
+            additions="error",
+        )
+        assert cfg.abi_breaking == SeverityLevel.WARNING
+        assert cfg.potential_breaking == SeverityLevel.ERROR
+        assert cfg.quality_issues == SeverityLevel.INFO
+        assert cfg.additions == SeverityLevel.ERROR
+
+
+# ---------------------------------------------------------------------------
+# compute_exit_code
+# ---------------------------------------------------------------------------
+
+
+class TestComputeExitCode:
+    def test_no_changes(self) -> None:
+        assert compute_exit_code([], PRESET_DEFAULT) == 0
+
+    def test_breaking_default_exits_4(self) -> None:
+        changes = [_FakeChange(ChangeKind.FUNC_REMOVED)]
+        assert compute_exit_code(changes, PRESET_DEFAULT) == 4
+
+    def test_api_break_default_exits_0(self) -> None:
+        # API breaks are WARNING by default, so exit 0
+        changes = [_FakeChange(ChangeKind.ENUM_MEMBER_RENAMED)]
+        assert compute_exit_code(changes, PRESET_DEFAULT) == 0
+
+    def test_api_break_strict_exits_2(self) -> None:
+        changes = [_FakeChange(ChangeKind.ENUM_MEMBER_RENAMED)]
+        assert compute_exit_code(changes, PRESET_STRICT) == 2
+
+    def test_additions_default_exits_0(self) -> None:
+        changes = [_FakeChange(ChangeKind.FUNC_ADDED)]
+        assert compute_exit_code(changes, PRESET_DEFAULT) == 0
+
+    def test_additions_strict_exits_1(self) -> None:
+        changes = [_FakeChange(ChangeKind.FUNC_ADDED)]
+        assert compute_exit_code(changes, PRESET_STRICT) == 1
+
+    def test_quality_strict_exits_1(self) -> None:
+        changes = [_FakeChange(ChangeKind.VISIBILITY_LEAK)]
+        assert compute_exit_code(changes, PRESET_STRICT) == 1
+
+    def test_info_only_always_0(self) -> None:
+        changes = [
+            _FakeChange(ChangeKind.FUNC_REMOVED),
+            _FakeChange(ChangeKind.ENUM_MEMBER_RENAMED),
+            _FakeChange(ChangeKind.FUNC_ADDED),
+        ]
+        assert compute_exit_code(changes, PRESET_INFO_ONLY) == 0
+
+    def test_worst_exit_code_wins(self) -> None:
+        changes = [
+            _FakeChange(ChangeKind.FUNC_REMOVED),  # abi_breaking → exit 4
+            _FakeChange(ChangeKind.ENUM_MEMBER_RENAMED),  # potential → exit 2
+            _FakeChange(ChangeKind.FUNC_ADDED),  # additions → exit 1
+        ]
+        assert compute_exit_code(changes, PRESET_STRICT) == 4
+
+    def test_mixed_severity_custom(self) -> None:
+        # Only potential_breaking is error, rest is info
+        cfg = SeverityConfig(
+            abi_breaking=SeverityLevel.INFO,
+            potential_breaking=SeverityLevel.ERROR,
+            quality_issues=SeverityLevel.INFO,
+            additions=SeverityLevel.INFO,
+        )
+        changes = [
+            _FakeChange(ChangeKind.FUNC_REMOVED),  # abi_breaking → info → exit 0
+            _FakeChange(ChangeKind.ENUM_MEMBER_RENAMED),  # potential → error → exit 2
+        ]
+        assert compute_exit_code(changes, cfg) == 2
+
+
+# ---------------------------------------------------------------------------
+# categorize_changes
+# ---------------------------------------------------------------------------
+
+
+class TestCategorizeChanges:
+    def test_empty(self) -> None:
+        result = categorize_changes([])
+        assert result == CategorizedChanges([], [], [], [])
+
+    def test_all_categories(self) -> None:
+        changes = [
+            _FakeChange(ChangeKind.FUNC_REMOVED),
+            _FakeChange(ChangeKind.ENUM_MEMBER_RENAMED),
+            _FakeChange(ChangeKind.VISIBILITY_LEAK),
+            _FakeChange(ChangeKind.FUNC_ADDED),
+        ]
+        result = categorize_changes(changes)
+        assert len(result.abi_breaking) == 1
+        assert result.abi_breaking[0].kind == ChangeKind.FUNC_REMOVED
+        assert len(result.potential_breaking) == 1
+        assert result.potential_breaking[0].kind == ChangeKind.ENUM_MEMBER_RENAMED
+        assert len(result.quality_issues) == 1
+        assert result.quality_issues[0].kind == ChangeKind.VISIBILITY_LEAK
+        assert len(result.additions) == 1
+        assert result.additions[0].kind == ChangeKind.FUNC_ADDED
+
+    def test_risk_kinds_go_to_potential(self) -> None:
+        changes = [_FakeChange(ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED)]
+        result = categorize_changes(changes)
+        assert len(result.potential_breaking) == 1
+        assert len(result.abi_breaking) == 0
