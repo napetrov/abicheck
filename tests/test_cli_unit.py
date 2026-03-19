@@ -351,62 +351,18 @@ class TestCompatClassifiedErrorPaths:
         assert "write" in result.output.lower() or "report" in result.output.lower()
 
 
-class TestFailOnAdditions:
-    """Tests for --fail-on-additions flag in compare command."""
+class TestNoFailOnAdditionsFlag:
+    """Verify --fail-on-additions was removed (use --severity-addition error instead)."""
 
-    def _make_snapshot(self, tmp_path: Path, name: str, funcs: list[str]) -> Path:
-        """Create a minimal JSON snapshot with the given function names."""
+    def test_fail_on_additions_flag_rejected(self, tmp_path: Path) -> None:
+        """--fail-on-additions should no longer be recognized by the CLI."""
         snap = {
-            "library": "libtest.so",
-            "version": "1.0",
-            "platform": "elf",
-            "functions": [
-                {
-                    "name": fn,
-                    "mangled": f"_Z{len(fn)}{fn}v",
-                    "return_type": "void",
-                    "visibility": "public",
-                    "is_extern_c": False,
-                    "params": [],
-                }
-                for fn in funcs
-            ],
-            "variables": [],
-            "types": [],
-            "enums": [],
-            "typedefs": {},
+            "library": "libtest.so", "version": "1.0", "platform": "elf",
+            "functions": [], "variables": [], "types": [], "enums": [], "typedefs": {},
         }
-        p = tmp_path / f"{name}.json"
+        p = tmp_path / "snap.json"
         p.write_text(json.dumps(snap), encoding="utf-8")
-        return p
-
-    def test_fail_on_additions_exits_1_when_function_added(self, tmp_path: Path) -> None:
-        """--fail-on-additions: new public function → exit code 1."""
-
-        old = self._make_snapshot(tmp_path, "old", ["foo"])
-        new = self._make_snapshot(tmp_path, "new", ["foo", "bar"])
 
         runner = CliRunner()
-        result = runner.invoke(main, ["compare", str(old), str(new), "--fail-on-additions"])
-        assert result.exit_code == 1, f"Expected exit 1, got {result.exit_code}"
-        assert "addition" in result.output.lower() or "addition" in (result.stderr or "").lower()
-
-    def test_fail_on_additions_exits_0_when_no_additions(self, tmp_path: Path) -> None:
-        """--fail-on-additions: no additions → exit code 0."""
-
-        snap = self._make_snapshot(tmp_path, "snap", ["foo", "bar"])
-
-        runner = CliRunner()
-        result = runner.invoke(main, ["compare", str(snap), str(snap), "--fail-on-additions"])
-        assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}"
-
-    def test_no_fail_on_additions_by_default(self, tmp_path: Path) -> None:
-        """Without --fail-on-additions: new function → exit code 0 (COMPATIBLE)."""
-
-        old = self._make_snapshot(tmp_path, "old", ["foo"])
-        new = self._make_snapshot(tmp_path, "new", ["foo", "bar"])
-
-        runner = CliRunner()
-        result = runner.invoke(main, ["compare", str(old), str(new)])
-        assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}"
-        assert "COMPATIBLE" in result.output
+        result = runner.invoke(main, ["compare", str(p), str(p), "--fail-on-additions"])
+        assert result.exit_code == 2  # Click returns 2 for unrecognised options

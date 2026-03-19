@@ -949,10 +949,6 @@ def _build_match_map(paths: list[Path]) -> tuple[dict[str, Path], list[str]]:
 @click.option("--dwarf-only", is_flag=True, default=False,
               help="Force DWARF-only mode for both sides: use DWARF debug info "
                    "as primary data source even when headers are available.")
-@click.option("--fail-on-additions/--no-fail-on-additions", "fail_on_additions", default=False,
-              help="Exit with code 1 if any new public symbols, types, or fields were added "
-                   "(COMPATIBLE changes). Useful for detecting unintentional API expansion in PRs. "
-                   "Use --no-fail-on-additions (or omit the flag) to allow API growth.")
 @click.option("--severity-preset", "severity_preset",
               type=click.Choice(["default", "strict", "info-only"], case_sensitive=True),
               default=None,
@@ -971,7 +967,7 @@ def _build_match_map(paths: list[Path]) -> tuple[dict[str, Path], list[str]]:
               type=click.Choice(["error", "warning", "info"], case_sensitive=True),
               default=None,
               help="Severity for problematic behaviors like std symbol leaks (overrides preset).")
-@click.option("--severity-additions", "severity_additions",
+@click.option("--severity-addition", "severity_addition",
               type=click.Choice(["error", "warning", "info"], case_sensitive=True),
               default=None,
               help="Severity for new public API additions (overrides preset).")
@@ -1018,12 +1014,11 @@ def compare_cmd(
     suppress: Path | None, policy: str, policy_file_path: Path | None,
     pdb_path: Path | None, old_pdb_path: Path | None, new_pdb_path: Path | None,
     dwarf_only: bool,
-    fail_on_additions: bool,
     severity_preset: str | None,
     severity_abi_breaking: str | None,
     severity_potential_breaking: str | None,
     severity_quality_issues: str | None,
-    severity_additions: str | None,
+    severity_addition: str | None,
     follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
     show_redundant: bool, show_only: str | None, stat: bool,
     report_mode: str, show_impact: bool,
@@ -1077,14 +1072,14 @@ def compare_cmd(
     from .severity import resolve_severity_config
     severity_explicitly_set = any(v is not None for v in (
         severity_preset, severity_abi_breaking, severity_potential_breaking,
-        severity_quality_issues, severity_additions,
+        severity_quality_issues, severity_addition,
     ))
     sev_config = resolve_severity_config(
         preset=severity_preset,
         abi_breaking=severity_abi_breaking,
         potential_breaking=severity_potential_breaking,
         quality_issues=severity_quality_issues,
-        additions=severity_additions,
+        addition=severity_addition,
     )
 
     old_h, new_h, old_inc, new_inc = _resolve_per_side_options(
@@ -1208,20 +1203,6 @@ def compare_cmd(
         elif result.verdict.value == "API_BREAK":
             sys.exit(2)
 
-    # --fail-on-additions: exit 1 if any new public symbols/types were added.
-    # Uses the canonical ADDITION_KINDS set from checker_policy (single source
-    # of truth) rather than a heuristic string match.
-    if fail_on_additions:
-        from .checker_policy import ADDITION_KINDS
-        additions = [c for c in result.changes if c.kind in ADDITION_KINDS]
-        if additions:
-            click.echo(
-                f"API expansion detected: {len(additions)} addition(s) "
-                f"({', '.join(sorted({c.kind.value for c in additions}))}). "
-                "Use --no-fail-on-additions (or omit the flag) to allow API growth.",
-                err=True,
-            )
-            sys.exit(1)
 
 @main.command("appcompat")
 @click.argument("app_path", type=click.Path(exists=True, path_type=Path))
@@ -1471,8 +1452,6 @@ def appcompat_cmd(
 @click.option("--fail-on-removed-library/--no-fail-on-removed-library",
               "fail_on_removed", default=False,
               help="Exit 8 when a library present in old_dir is absent in new_dir.")
-@click.option("--fail-on-additions/--no-fail-on-additions",
-              "fail_on_additions", default=False)
 @click.option("--debug-info1", type=click.Path(exists=True, path_type=Path), default=None,
               help="Debug info package for old side (RPM/Deb/tar).")
 @click.option("--debug-info2", type=click.Path(exists=True, path_type=Path), default=None,
@@ -1505,7 +1484,6 @@ def compare_release_cmd(
     policy: str,
     policy_file_path: Path | None,
     fail_on_removed: bool,
-    fail_on_additions: bool,
     debug_info1: Path | None,
     debug_info2: Path | None,
     devel_pkg1: Path | None,
@@ -1814,8 +1792,6 @@ def compare_release_cmd(
             sys.exit(2)
         if fail_on_removed and removed_keys:
             sys.exit(8)
-        if fail_on_additions and any(lib.get("compatible_additions", 0) for lib in library_results):
-            sys.exit(1)
     finally:
         import shutil as _shutil
         if not keep_extracted:

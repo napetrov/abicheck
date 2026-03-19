@@ -57,7 +57,7 @@ class TestClassifyChange:
         assert classify_change(ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED) == IssueCategory.POTENTIAL_BREAKING
 
     def test_addition_kind(self) -> None:
-        assert classify_change(ChangeKind.FUNC_ADDED) == IssueCategory.ADDITIONS
+        assert classify_change(ChangeKind.FUNC_ADDED) == IssueCategory.ADDITION
 
     def test_quality_issue_kind(self) -> None:
         assert classify_change(ChangeKind.VISIBILITY_LEAK) == IssueCategory.QUALITY_ISSUES
@@ -67,13 +67,13 @@ class TestClassifyChange:
         assert classify_change(ChangeKind.FUNC_NOEXCEPT_ADDED) == IssueCategory.QUALITY_ISSUES
 
     def test_type_added_is_addition(self) -> None:
-        assert classify_change(ChangeKind.TYPE_ADDED) == IssueCategory.ADDITIONS
+        assert classify_change(ChangeKind.TYPE_ADDED) == IssueCategory.ADDITION
 
     def test_var_added_is_addition(self) -> None:
-        assert classify_change(ChangeKind.VAR_ADDED) == IssueCategory.ADDITIONS
+        assert classify_change(ChangeKind.VAR_ADDED) == IssueCategory.ADDITION
 
     def test_enum_member_added_is_addition(self) -> None:
-        assert classify_change(ChangeKind.ENUM_MEMBER_ADDED) == IssueCategory.ADDITIONS
+        assert classify_change(ChangeKind.ENUM_MEMBER_ADDED) == IssueCategory.ADDITION
 
     def test_soname_missing_is_quality(self) -> None:
         assert classify_change(ChangeKind.SONAME_MISSING) == IssueCategory.QUALITY_ISSUES
@@ -99,7 +99,7 @@ class TestClassifyChange:
         elif kind in API_BREAK_KINDS or kind in RISK_KINDS:
             assert cat == IssueCategory.POTENTIAL_BREAKING
         elif kind in ADDITION_KINDS:
-            assert cat == IssueCategory.ADDITIONS
+            assert cat == IssueCategory.ADDITION
         elif kind in QUALITY_KINDS:
             assert cat == IssueCategory.QUALITY_ISSUES
         else:
@@ -117,7 +117,7 @@ class TestSeverityConfig:
         assert cfg.abi_breaking == SeverityLevel.ERROR
         assert cfg.potential_breaking == SeverityLevel.WARNING
         assert cfg.quality_issues == SeverityLevel.WARNING
-        assert cfg.additions == SeverityLevel.INFO
+        assert cfg.addition == SeverityLevel.INFO
 
     def test_strict_preset_all_error(self) -> None:
         cfg = PRESET_STRICT
@@ -154,7 +154,7 @@ class TestSeverityConfig:
     def test_describe(self) -> None:
         desc = PRESET_DEFAULT.describe()
         assert "abi_breaking: error" in desc
-        assert "additions: info" in desc
+        assert "addition: info" in desc
 
 
 # ---------------------------------------------------------------------------
@@ -180,9 +180,9 @@ class TestResolveSeverityConfig:
             resolve_severity_config(preset="nonexistent")
 
     def test_per_category_override(self) -> None:
-        cfg = resolve_severity_config(additions="error")
+        cfg = resolve_severity_config(addition="error")
         assert cfg.abi_breaking == SeverityLevel.ERROR  # from default
-        assert cfg.additions == SeverityLevel.ERROR  # overridden
+        assert cfg.addition == SeverityLevel.ERROR  # overridden
 
     def test_override_on_preset(self) -> None:
         cfg = resolve_severity_config(
@@ -201,12 +201,12 @@ class TestResolveSeverityConfig:
             abi_breaking="warning",
             potential_breaking="error",
             quality_issues="info",
-            additions="error",
+            addition="error",
         )
         assert cfg.abi_breaking == SeverityLevel.WARNING
         assert cfg.potential_breaking == SeverityLevel.ERROR
         assert cfg.quality_issues == SeverityLevel.INFO
-        assert cfg.additions == SeverityLevel.ERROR
+        assert cfg.addition == SeverityLevel.ERROR
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +265,7 @@ class TestComputeExitCode:
             abi_breaking=SeverityLevel.INFO,
             potential_breaking=SeverityLevel.ERROR,
             quality_issues=SeverityLevel.INFO,
-            additions=SeverityLevel.INFO,
+            addition=SeverityLevel.INFO,
         )
         changes = [
             _FakeChange(ChangeKind.FUNC_REMOVED),  # abi_breaking → info → exit 0
@@ -298,8 +298,8 @@ class TestCategorizeChanges:
         assert result.potential_breaking[0].kind == ChangeKind.ENUM_MEMBER_RENAMED
         assert len(result.quality_issues) == 1
         assert result.quality_issues[0].kind == ChangeKind.VISIBILITY_LEAK
-        assert len(result.additions) == 1
-        assert result.additions[0].kind == ChangeKind.FUNC_ADDED
+        assert len(result.addition) == 1
+        assert result.addition[0].kind == ChangeKind.FUNC_ADDED
 
     def test_risk_kinds_go_to_potential(self) -> None:
         changes = [_FakeChange(ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED)]
@@ -336,7 +336,7 @@ class TestSeverityConfigDescribe:
     def test_describe_default(self) -> None:
         out = PRESET_DEFAULT.describe()
         assert "abi_breaking: error" in out
-        assert "additions: info" in out
+        assert "addition: info" in out
 
     def test_describe_with_title(self) -> None:
         out = PRESET_STRICT.describe(title="Strict preset:")

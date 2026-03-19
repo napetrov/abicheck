@@ -160,7 +160,7 @@ class TestSeverityJson:
         sev = d["severity"]
         assert "config" in sev
         assert sev["config"]["abi_breaking"] == "error"
-        assert sev["config"]["additions"] == "info"
+        assert sev["config"]["addition"] == "info"
         assert "categories" in sev
         assert sev["categories"]["abi_breaking"]["count"] == 1
 
@@ -191,6 +191,6 @@ class TestSeverityJson:
         d = json.loads(to_json(r, severity_config=PRESET_DEFAULT))
         cats = d["severity"]["categories"]
         assert cats["abi_breaking"]["count"] == 1
-        assert cats["additions"]["count"] == 1
+        assert cats["addition"]["count"] == 1
         assert cats["quality_issues"]["count"] == 1
         assert cats["potential_breaking"]["count"] == 0

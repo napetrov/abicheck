@@ -38,7 +38,7 @@ The four categories map to the canonical kind sets as follows:
 3. **quality_issues** → ``QUALITY_KINDS`` (= ``COMPATIBLE_KINDS − ADDITION_KINDS``)
    — problematic behaviors such as exposing std symbols, missing SONAME,
    toolchain flag drift.  Default: ``warning``.
-4. **additions** → ``ADDITION_KINDS`` — new public symbols, types, enum
+4. **addition** → ``ADDITION_KINDS`` — new public symbols, types, enum
    members.  Default: ``info``.
 
 Each category can be set to ``error``, ``warning``, or ``info``:
@@ -50,7 +50,7 @@ Each category can be set to ``error``, ``warning``, or ``info``:
 Built-in presets:
 
 - ``default`` — abi_breaking=error, potential_breaking=warning,
-  quality_issues=warning, additions=info.
+  quality_issues=warning, addition=info.
 - ``strict`` — all categories set to error.
 - ``info-only`` — all categories set to info (purely informational report).
 """
@@ -86,7 +86,7 @@ class IssueCategory(str, Enum):
     ABI_BREAKING = "abi_breaking"
     POTENTIAL_BREAKING = "potential_breaking"
     QUALITY_ISSUES = "quality_issues"
-    ADDITIONS = "additions"
+    ADDITION = "addition"
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ def classify_change(kind: ChangeKind) -> IssueCategory:
     if kind in API_BREAK_KINDS or kind in RISK_KINDS:
         return IssueCategory.POTENTIAL_BREAKING
     if kind in ADDITION_KINDS:
-        return IssueCategory.ADDITIONS
+        return IssueCategory.ADDITION
     if kind in QUALITY_KINDS:
         return IssueCategory.QUALITY_ISSUES
     # Fail-safe: unclassified kinds are treated as breaking.
@@ -131,13 +131,13 @@ class SeverityConfig:
         abi_breaking: Severity for clear ABI/API incompatibilities.
         potential_breaking: Severity for potential incompatibilities needing review.
         quality_issues: Severity for problematic behaviors (e.g., std symbol leaks).
-        additions: Severity for additive changes (new public API surface).
+        addition: Severity for additive changes (new public API surface).
     """
 
     abi_breaking: SeverityLevel = SeverityLevel.ERROR
     potential_breaking: SeverityLevel = SeverityLevel.WARNING
     quality_issues: SeverityLevel = SeverityLevel.WARNING
-    additions: SeverityLevel = SeverityLevel.INFO
+    addition: SeverityLevel = SeverityLevel.INFO
 
     def level_for(self, category: IssueCategory) -> SeverityLevel:
         """Return the configured severity level for *category*.
@@ -185,7 +185,7 @@ PRESET_STRICT = SeverityConfig(
     abi_breaking=SeverityLevel.ERROR,
     potential_breaking=SeverityLevel.ERROR,
     quality_issues=SeverityLevel.ERROR,
-    additions=SeverityLevel.ERROR,
+    addition=SeverityLevel.ERROR,
 )
 
 #: Info-only preset: everything is informational (no exit-code impact).
@@ -193,7 +193,7 @@ PRESET_INFO_ONLY = SeverityConfig(
     abi_breaking=SeverityLevel.INFO,
     potential_breaking=SeverityLevel.INFO,
     quality_issues=SeverityLevel.INFO,
-    additions=SeverityLevel.INFO,
+    addition=SeverityLevel.INFO,
 )
 
 SEVERITY_PRESETS: dict[str, SeverityConfig] = {
@@ -210,7 +210,7 @@ def resolve_severity_config(
     abi_breaking: str | None = None,
     potential_breaking: str | None = None,
     quality_issues: str | None = None,
-    additions: str | None = None,
+    addition: str | None = None,
 ) -> SeverityConfig:
     """Build a SeverityConfig from a preset name and optional per-category overrides.
 
@@ -221,7 +221,7 @@ def resolve_severity_config(
         abi_breaking: Override for the abi_breaking category (``error``, ``warning``, ``info``).
         potential_breaking: Override for potential_breaking.
         quality_issues: Override for quality_issues.
-        additions: Override for additions.
+        addition: Override for addition.
 
     Returns:
         A fully resolved SeverityConfig.
@@ -257,7 +257,7 @@ def resolve_severity_config(
             "potential_breaking", potential_breaking, base.potential_breaking
         ),
         quality_issues=_parse("quality_issues", quality_issues, base.quality_issues),
-        additions=_parse("additions", additions, base.additions),
+        addition=_parse("addition", addition, base.addition),
     )
 
 
@@ -289,7 +289,7 @@ _CATEGORY_EXIT_CODES: dict[IssueCategory, int] = {
     IssueCategory.ABI_BREAKING: 4,
     IssueCategory.POTENTIAL_BREAKING: 2,
     IssueCategory.QUALITY_ISSUES: 1,
-    IssueCategory.ADDITIONS: 1,
+    IssueCategory.ADDITION: 1,
 }
 
 
@@ -328,7 +328,7 @@ class CategorizedChanges:
     abi_breaking: list[HasKind]
     potential_breaking: list[HasKind]
     quality_issues: list[HasKind]
-    additions: list[HasKind]
+    addition: list[HasKind]
 
 
 def categorize_changes(changes: Sequence[HasKind]) -> CategorizedChanges:
@@ -353,5 +353,5 @@ def categorize_changes(changes: Sequence[HasKind]) -> CategorizedChanges:
         abi_breaking=abi,
         potential_breaking=potential,
         quality_issues=quality,
-        additions=adds,
+        addition=adds,
     )

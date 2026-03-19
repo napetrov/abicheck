@@ -97,9 +97,9 @@ elif [[ "$MODE" == "compare" ]]; then
   add_single_flag "--policy-file" "${INPUT_POLICY_FILE:-}"
   add_single_flag "--suppress" "${INPUT_SUPPRESS:-}"
 
-  # API addition detection
+  # API addition detection (legacy fail-on-additions → severity-addition error)
   if [[ "${INPUT_FAIL_ON_ADDITIONS:-false}" == "true" ]]; then
-    CMD+=(--fail-on-additions)
+    CMD+=(--severity-addition error)
   fi
 
   if [[ "${INPUT_FOLLOW_DEPS:-false}" == "true" ]]; then
@@ -204,7 +204,7 @@ elif [[ "$MODE" == "compare-release" ]]; then
     CMD+=(--fail-on-removed-library)
   fi
   if [[ "${INPUT_FAIL_ON_ADDITIONS:-false}" == "true" ]]; then
-    CMD+=(--fail-on-additions)
+    CMD+=(--severity-addition error)
   fi
 
 elif [[ "$MODE" == "deps" ]]; then
@@ -508,10 +508,8 @@ else
     FINAL_EXIT=1
   fi
 
-  if [[ "$VERDICT" == "ADDITIONS" && "${INPUT_FAIL_ON_ADDITIONS:-false}" == "true" ]]; then
-    echo "::error::API additions detected (unintentional API expansion). Set fail-on-additions: false to allow."
-    FINAL_EXIT=1
-  fi
+  # fail-on-additions is now handled by --severity-addition error at the CLI
+  # level, so no separate check is needed here.
 
   if [[ "$VERDICT" == "REMOVED_LIBRARY" ]]; then
     echo "::error::Library removed between old and new package. Set fail-on-removed-library: false to allow."

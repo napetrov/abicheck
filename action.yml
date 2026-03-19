@@ -220,8 +220,8 @@ inputs:
     default: 'false'
   fail-on-additions:
     description: >
-      Fail the step (exit code 1) when any new public symbols, types, or fields were added.
-      Useful for detecting unintentional API expansion in PRs.
+      DEPRECATED: use severity-addition: error instead.
+      Translated to --severity-addition error internally.
     required: false
     default: 'false'
   add-job-summary:

@@ -663,7 +663,7 @@ def _build_severity_summary_md(
         ("ABI/API Incompatibilities", "abi_breaking", categorized.abi_breaking),
         ("Potential Incompatibilities", "potential_breaking", categorized.potential_breaking),
         ("Quality Issues", "quality_issues", categorized.quality_issues),
-        ("Additions", "additions", categorized.additions),
+        ("Additions", "addition", categorized.addition),
     ]
 
     for label, attr, cat_changes in _CATEGORY_INFO:
@@ -690,7 +690,7 @@ def _build_severity_json(
     categorized = categorize_changes(changes)
 
     config_dict: dict[str, str] = {}
-    for attr in ("abi_breaking", "potential_breaking", "quality_issues", "additions"):
+    for attr in ("abi_breaking", "potential_breaking", "quality_issues", "addition"):
         level = getattr(severity_config, attr, SeverityLevel.INFO)
         config_dict[attr] = level.value if hasattr(level, "value") else str(level)
 
@@ -707,9 +707,9 @@ def _build_severity_json(
             "severity": config_dict["quality_issues"],
             "count": len(categorized.quality_issues),
         },
-        "additions": {
-            "severity": config_dict["additions"],
-            "count": len(categorized.additions),
+        "addition": {
+            "severity": config_dict["addition"],
+            "count": len(categorized.addition),
         },
     }
 
@@ -854,7 +854,7 @@ def to_markdown(
                 lines.append(f"- **{c.kind.value}**: {c.description}")
             lines.append("")
         if additions_list:
-            sev_label = _section_severity_label(severity_config, "additions")
+            sev_label = _section_severity_label(severity_config, "addition")
             lines += [f"## {_ADDITION_ICON} Additions{sev_label}", ""]
             for c in additions_list:
                 lines.append(f"- {c.description}")
