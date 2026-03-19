@@ -37,6 +37,8 @@ from macholib.mach_o import (  # type: ignore[import-untyped]
     LC_ID_DYLIB,
     LC_LOAD_DYLIB,
     LC_REEXPORT_DYLIB,
+    LC_SEGMENT,
+    LC_SEGMENT_64,
     LC_VERSION_MIN_MACOSX,
     N_EXT,
     N_TYPE,
@@ -77,6 +79,7 @@ class MachoExport:
     name: str
     sym_type: MachoSymbolType = MachoSymbolType.EXPORTED
     is_weak: bool = False
+    is_data: bool = False  # True when symbol lives in __DATA segment (global variable)
 
 
 @dataclass
@@ -274,6 +277,19 @@ def _parse(dylib_path: Path) -> MachoMetadata:
         elif cmd_type == LC_BUILD_VERSION:
             meta.min_os_version = _version_str(int(cmd.minos))  # p_uint32
 
+    # Build section ordinal → segment name mapping so we can distinguish
+    # __TEXT (function) from __DATA (variable) symbols via nlist n_sect.
+    _section_segment: dict[int, str] = {}  # 1-based ordinal → segment name
+    _sect_ordinal = 1
+    for lc, cmd, data in header.commands:
+        if lc.cmd in (LC_SEGMENT, LC_SEGMENT_64) and isinstance(data, list):
+            seg_name = getattr(cmd, "segname", b"")
+            if isinstance(seg_name, bytes):
+                seg_name = seg_name.rstrip(b"\x00").decode("utf-8", errors="replace")
+            for _sect in data:
+                _section_segment[_sect_ordinal] = seg_name
+                _sect_ordinal += 1
+
     # Parse exported symbols via SymbolTable
     try:
         symtab = SymbolTable(macho, header=header)
@@ -297,7 +313,13 @@ def _parse(dylib_path: Path) -> MachoMetadata:
 
             is_weak = bool(n_desc & N_WEAK_DEF)
             sym_type = MachoSymbolType.WEAK if is_weak else MachoSymbolType.EXPORTED
-            meta.exports.append(MachoExport(name=name, sym_type=sym_type, is_weak=is_weak))
+            # Classify as data (variable) when the symbol lives in __DATA segment.
+            n_sect = int(nlist_entry.n_sect)
+            seg = _section_segment.get(n_sect, "")
+            is_data = seg == "__DATA"
+            meta.exports.append(MachoExport(
+                name=name, sym_type=sym_type, is_weak=is_weak, is_data=is_data,
+            ))
     except Exception as exc:  # noqa: BLE001
         # SymbolTable may fail on binaries without LC_SYMTAB (stripped, .tbd stubs, etc.)
         log.debug("parse_macho_metadata: SymbolTable failed for %s: %s", dylib_path, exc)

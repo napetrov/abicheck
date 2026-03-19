@@ -676,11 +676,22 @@ class _CastxmlParser:
                 continue
             target_id = el.get("type", "")
             target_el = self._resolve(target_id)
+            # Follow through ElaboratedType / CvQualifiedType wrappers
+            # that castxml may insert between Typedef and the actual Struct.
+            while target_el is not None and target_el.tag in (
+                "ElaboratedType", "CvQualifiedType",
+            ):
+                target_id = target_el.get("type", "")
+                target_el = self._resolve(target_id)
             if target_el is not None and target_el.tag in ("Struct", "Class", "Union"):
                 target_name = target_el.get("name", "")
                 if not target_name:
                     # Anonymous struct/union with a typedef alias — record it.
-                    typedef_name_for[target_id] = td_name
+                    # Use the struct's own id as key (may differ from the
+                    # Typedef's type attr when ElaboratedType is involved).
+                    struct_id = target_el.get("id", "")
+                    if struct_id:
+                        typedef_name_for[struct_id] = td_name
 
         types = []
         for el in self._root:
@@ -689,9 +700,9 @@ class _CastxmlParser:
             elif el.tag in ("Struct", "Class", "Union"):
                 # Check if this is an anonymous struct reachable via typedef
                 eid = el.get("id", "")
-                td_name = typedef_name_for.get(eid)
-                if td_name and not self._is_builtin_element(el):
-                    types.append(self._build_record_type(el, override_name=td_name))
+                override_name = typedef_name_for.get(eid)
+                if override_name and not self._is_builtin_element(el):
+                    types.append(self._build_record_type(el, override_name=override_name))
         return types
 
     def _is_public_record_type(self, el: Any) -> bool:
@@ -1250,22 +1261,40 @@ def _dump_macho(
                 return s[1:]
             return s
 
+        # Split exports into functions (__TEXT) and variables (__DATA)
+        # using section classification from Mach-O nlist entries.
+        _relevant = [
+            exp for exp in macho_meta.exports
+            if exp.name and _is_abi_relevant_symbol(exp.name)
+        ]
+        macho_funcs = [exp for exp in _relevant if not exp.is_data]
+        macho_vars = [exp for exp in _relevant if exp.is_data]
+
         return AbiSnapshot(
             library=dylib_path.name,
             version=version,
             functions=[
                 Function(
-                    name=_normalize_macho_sym(sym),
-                    mangled=_normalize_macho_sym(sym),
+                    name=_normalize_macho_sym(exp.name),
+                    mangled=_normalize_macho_sym(exp.name),
                     return_type="?",
                     # ELF_ONLY: marks symbols as export-table-only (no header
                     # confirmation).  This ensures the checker uses
                     # FUNC_REMOVED_ELF_ONLY (compatible) rather than
                     # FUNC_REMOVED (breaking) for visibility-cleanup removals.
                     visibility=Visibility.ELF_ONLY,
-                    is_extern_c=not _normalize_macho_sym(sym).startswith("_Z"),
+                    is_extern_c=not _normalize_macho_sym(exp.name).startswith("_Z"),
                 )
-                for sym in sorted(exported_dynamic)
+                for exp in sorted(macho_funcs, key=lambda e: e.name)
+            ],
+            variables=[
+                Variable(
+                    name=_normalize_macho_sym(exp.name),
+                    mangled=_normalize_macho_sym(exp.name),
+                    type="?",
+                    visibility=Visibility.ELF_ONLY,
+                )
+                for exp in sorted(macho_vars, key=lambda e: e.name)
             ],
             macho=macho_meta,
             elf_only_mode=True,
