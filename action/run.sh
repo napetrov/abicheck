@@ -508,8 +508,12 @@ else
     FINAL_EXIT=1
   fi
 
-  # fail-on-additions is now handled by --severity-addition error at the CLI
-  # level, so no separate check is needed here.
+  # fail-on-additions is handled by --severity-addition error at the CLI level.
+  # When the CLI exits 1 (severity-driven), propagate it as a step failure.
+  if [[ "$VERDICT" == "ADDITIONS" && "${INPUT_FAIL_ON_ADDITIONS:-false}" == "true" ]]; then
+    echo "::error::API additions detected (unintentional API expansion). Set fail-on-additions: false to allow."
+    FINAL_EXIT=1
+  fi
 
   if [[ "$VERDICT" == "REMOVED_LIBRARY" ]]; then
     echo "::error::Library removed between old and new package. Set fail-on-removed-library: false to allow."
