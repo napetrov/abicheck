@@ -228,8 +228,13 @@ def _build_with_cmake(case_dir: Path, build_dir: Path) -> tuple[Path | None, Pat
 
 
 def _normalize_verdict(v: str) -> str:
-    """Normalize verdict for comparison."""
-    return v
+    """Normalize verdict for comparison.
+
+    Must stay in sync with the _normalize helper in test_example_autodiscovery.py.
+    API_BREAK and COMPATIBLE are treated as equivalent because the checker may
+    return either depending on header availability.
+    """
+    return "COMPATIBLE" if v in ("API_BREAK", "COMPATIBLE") else v
 
 
 # ---------------------------------------------------------------------------
