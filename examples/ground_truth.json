@@ -666,7 +666,8 @@
       "abi_break": false,
       "api_break": false,
       "bad_practice": false,
-      "description": "Reserved placeholder fields (__reserved1, __reserved2) renamed to meaningful names at same offsets \u2014 layout unchanged (USED_RESERVED_FIELD)"
+      "description": "Reserved placeholder fields (__reserved1, __reserved2) renamed to meaningful names at same offsets \u2014 layout unchanged (USED_RESERVED_FIELD)",
+      "known_gap": "macOS: Tool returns NO_CHANGE \u2014 without castxml, Mach-O mode captures only exported symbols; struct field renames are invisible"
     },
     "case55_type_kind_changed": {
       "expected": "BREAKING",
@@ -717,7 +718,8 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
-      "description": "Global variable lib_debug_level removed from export table (VAR_REMOVED)"
+      "description": "Global variable lib_debug_level removed from export table (VAR_REMOVED)",
+      "known_gap": "macOS: Tool returns COMPATIBLE \u2014 Mach-O export table does not distinguish functions from variables; lib_debug_level detected as func_removed_elf_only instead of var_removed"
     },
     "case59_func_became_inline": {
       "expected": "BREAKING",
