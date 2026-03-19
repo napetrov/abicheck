@@ -36,14 +36,9 @@ from typing import TYPE_CHECKING, cast
 from .checker_policy import HasKind
 from .report_classifications import (
     ADDED_KINDS,
-    BREAKING_KINDS,
     CATEGORY_PREFIXES,
-    HIGH_SEVERITY_KINDS,
-    MEDIUM_SEVERITY_KINDS,
     REMOVED_KINDS,
     category,
-    is_breaking,
-    is_symbol_problem,
     is_type_problem,
     kind_str,
     severity,

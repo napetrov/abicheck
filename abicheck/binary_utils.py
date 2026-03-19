@@ -32,6 +32,20 @@ _MACHO_MAGICS: frozenset[bytes] = frozenset({
 })
 
 
+def classify_magic(magic: bytes) -> str | None:
+    """Classify binary format from the first 4 (or more) magic bytes.
+
+    Returns ``'elf'``, ``'pe'``, ``'macho'``, or ``None``.
+    """
+    if len(magic) >= 4 and magic[:4] == b"\x7fELF":
+        return "elf"
+    if len(magic) >= 2 and magic[:2] == b"MZ":
+        return "pe"
+    if len(magic) >= 4 and magic[:4] in _MACHO_MAGICS:
+        return "macho"
+    return None
+
+
 def detect_binary_format(path: str | Path) -> str | None:
     """Detect binary format from file magic bytes.
 
@@ -41,12 +55,6 @@ def detect_binary_format(path: str | Path) -> str | None:
     try:
         with open(path, "rb") as f:
             magic = f.read(4)
-    except (OSError, IOError):
+    except OSError:
         return None
-    if magic[:4] == b"\x7fELF":
-        return "elf"
-    if magic[:2] == b"MZ":
-        return "pe"
-    if magic[:4] in _MACHO_MAGICS:
-        return "macho"
-    return None
+    return classify_magic(magic)

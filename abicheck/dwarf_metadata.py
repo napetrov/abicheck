@@ -60,10 +60,8 @@ from typing import Any
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
-from .dwarf_utils import (
-    BASE_PRUNE_TAGS,
-    attr_bool as _attr_bool,  # noqa: F401 — available for future use
-)
+from .dwarf_utils import BASE_PRUNE_TAGS
+from .dwarf_utils import attr_bool as _attr_bool  # noqa: F401
 from .dwarf_utils import attr_int as _attr_int
 from .dwarf_utils import attr_str as _attr_str
 from .dwarf_utils import decode_member_location as _decode_member_location

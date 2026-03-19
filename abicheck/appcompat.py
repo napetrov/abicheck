@@ -88,18 +88,21 @@ class AppCompatResult:
 def _detect_app_format(app_path: Path) -> str | None:
     """Detect binary format of an application: 'elf', 'pe', or 'macho'.
 
-    Delegates to the shared detector with an extra S_ISREG check for
-    application paths (which may be symlinks or pipes).
+    Includes an ``S_ISREG`` guard (application paths may be symlinks or
+    pipes) and reads the magic bytes from the same open file descriptor
+    to avoid a TOCTOU race.
     """
+    from .binary_utils import classify_magic
+
     try:
         with open(app_path, "rb") as f:
             st = os.fstat(f.fileno())
             if not stat.S_ISREG(st.st_mode):
                 return None
+            magic = f.read(4)
     except OSError:
         return None
-    from .binary_utils import detect_binary_format
-    return detect_binary_format(app_path)
+    return classify_magic(magic)
 
 
 # ---------------------------------------------------------------------------

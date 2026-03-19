@@ -148,17 +148,29 @@ def _extract_struct_layouts(
     single pass (previously done in a separate ``_extract_calling_conventions``).
     """
     for ti, cv_struct in types.all_structs().items():
-        # Always track struct names in advanced metadata (even forward refs
-        # are skipped for layout extraction but complete types are tracked)
-        if adv is not None and cv_struct.name and not cv_struct.is_forward_ref:
-            adv.all_struct_names.add(cv_struct.name)
-            if cv_struct.is_packed:
-                adv.packed_structs.add(cv_struct.name)
-
         if not _is_user_visible(cv_struct.name, cv_struct.is_forward_ref):
             continue
 
-        fields = _extract_fields(types, cv_struct)
+        # ODR: first complete definition wins for all outputs
+        is_first_def = cv_struct.name not in meta.structs
+
+        # Track struct names and packed status in advanced metadata.
+        # Only mark packed for the canonical first definition so a
+        # later non-packed duplicate doesn't conflict.
+        if adv is not None:
+            adv.all_struct_names.add(cv_struct.name)
+            if is_first_def and cv_struct.is_packed:
+                adv.packed_structs.add(cv_struct.name)
+
+        if not is_first_def:
+            continue
+
+        try:
+            fields = _extract_fields(types, cv_struct)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("_extract_struct_layouts: bad fields for %s: %s",
+                      cv_struct.name, exc)
+            fields = []
 
         layout = StructLayout(
             name=cv_struct.name,
@@ -168,9 +180,7 @@ def _extract_struct_layouts(
             is_union=cv_struct.is_union,
         )
 
-        # ODR: keep first complete definition
-        if cv_struct.name not in meta.structs:
-            meta.structs[cv_struct.name] = layout
+        meta.structs[cv_struct.name] = layout
 
 
 def _extract_fields(types: TypeDatabase, cv_struct: CvStruct) -> list[FieldInfo]:
