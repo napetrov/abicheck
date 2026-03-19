@@ -241,7 +241,7 @@ _CPP_PATTERNS = [
     re.compile(rb":\s*private\s+\w+"),                  # : private Base
     re.compile(rb":\s*protected\s+\w+"),                # : protected Base
     re.compile(rb"\bclass\s+\w+\s*[{;]"),              # class anywhere (forward decl or def)
-    re.compile(rb"\bconst\s*&"),                        # const reference (C++ idiom)
+    re.compile(rb"\bconst\s+\w[\w:]*\s*&"),               # const Type& reference (C++ idiom)
     re.compile(rb"\bstatic_cast\b"),                    # C++ cast
     re.compile(rb"\bconstexpr\b"),                      # C++ constexpr
     re.compile(rb"\bnullptr\b"),                        # C++ nullptr

@@ -30,7 +30,7 @@ _log = logging.getLogger(__name__)
 _warned_no_demangler = False
 
 
-@functools.lru_cache(maxsize=4096)
+@functools.lru_cache(maxsize=16384)
 def demangle(symbol: str) -> str | None:
     """Demangle a single Itanium C++ symbol. Returns *None* if not C++.
 

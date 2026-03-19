@@ -53,6 +53,7 @@ from .model import (
     TypeField,
     Variable,
     Visibility,
+    is_compiler_internal_type as _is_compiler_internal_type,
 )
 from .policy_file import PolicyFile
 
@@ -72,17 +73,6 @@ def _public_variables(snap: AbiSnapshot) -> dict[str, Variable]:
     """Return public/ELF-only variables from *snap*."""
     return {k: v for k, v in snap.variable_map.items() if v.visibility in _PUBLIC_VIS}
 
-
-_COMPILER_INTERNAL_TYPES = frozenset({
-    "__va_list_tag", "__builtin_va_list", "__gnuc_va_list",
-    "__int128", "__int128_t", "__uint128_t",
-    "__NSConstantString_tag", "__NSConstantString",
-})
-
-
-def _is_compiler_internal_type(name: str) -> bool:
-    """Return True if *name* is a compiler internal type (FIX-D)."""
-    return bool(name) and name in _COMPILER_INTERNAL_TYPES
 
 
 def _format_params(params: list[Param]) -> str:
@@ -2275,7 +2265,14 @@ def _deduplicate_ast_dwarf(changes: list[Change]) -> list[Change]:
                 continue
 
             # Parent-type match (FIX-F): "Point::x" → check "Point"
-            if "::" in c.symbol:
+            # Only for field-level changes; type-level changes (size, alignment)
+            # must not match parent — "Outer::Inner" is a nested type, not a field.
+            _FIELD_LEVEL_KINDS = {
+                ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
+                ChangeKind.STRUCT_FIELD_REMOVED,
+                ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+            }
+            if c.kind in _FIELD_LEVEL_KINDS and "::" in c.symbol:
                 parent = c.symbol.rsplit("::", 1)[0]
                 if any((ak.value, parent) in ast_findings for ak in equiv_ast_kinds):
                     continue

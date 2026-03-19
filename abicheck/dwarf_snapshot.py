@@ -52,6 +52,7 @@ from .model import (
     TypeField,
     Variable,
     Visibility,
+    is_compiler_internal_type as _is_compiler_internal,
 )
 
 if TYPE_CHECKING:
@@ -62,23 +63,6 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Compiler internal type filtering (FIX-D)
-# ---------------------------------------------------------------------------
-
-_COMPILER_INTERNAL_TYPES = frozenset({
-    "__va_list_tag", "__builtin_va_list", "__gnuc_va_list",
-    "__int128", "__int128_t", "__uint128_t",
-    "__NSConstantString_tag", "__NSConstantString",
-})
-
-
-def _is_compiler_internal(name: str) -> bool:
-    """Return True if *name* is a compiler internal type that should be excluded."""
-    if not name:
-        return False
-    return name in _COMPILER_INTERNAL_TYPES
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -401,12 +385,8 @@ class _DwarfSnapshotBuilder:
         if _attr_bool(die, "DW_AT_declaration"):
             return
 
-        # DW_AT_external means "visible outside the compilation unit" (FIX-B).
-        is_dwarf_external = _attr_bool(die, "DW_AT_external")
-
         # Visibility: must be in ELF exported symbols.
-        # Pass is_dwarf_external so the three-tier check can use it for C++ fallback.
-        if not self._is_exported(mangled, name, is_dwarf_external=is_dwarf_external):
+        if not self._is_exported(mangled, name):
             return
 
         # Dedup
@@ -791,17 +771,13 @@ class _DwarfSnapshotBuilder:
     # Visibility filtering
     # -------------------------------------------------------------------
 
-    def _is_exported(self, mangled: str, name: str, *, is_dwarf_external: bool = False) -> bool:
+    def _is_exported(self, mangled: str, name: str) -> bool:
         """Check if a symbol is in the ELF exported symbol set.
 
         Three-tier matching (FIX-B):
         1. Exact mangled name match (fast path)
         2. Plain name match (C functions)
         3. Demangled fallback (C++ with mangling variance)
-
-        If *is_dwarf_external* is True (DW_AT_external=true in DWARF), the
-        function is known to be non-static. Combined with a demangled match,
-        this is sufficient evidence of export.
         """
         # Tier 1: exact mangled match
         if mangled and mangled in self._exported_names:
