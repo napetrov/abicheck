@@ -153,10 +153,14 @@ Display filtering is cosmetic; exit codes are authoritative.
   COMPATIBLE_WITH_RISK, or parse JSON output for `risk_count > 0`. The
   `plugin_abi` policy profile (ADR-010) promotes all RISK_KINDS to BREAKING
   automatically
-- Exit code 1 is overloaded: `--fail-on-additions` in `compare`, BREAKING in
-  `compat`. Disambiguation: scripts must know which command they invoked.
-  The `compare` command never returns exit code 1 without `--fail-on-additions`.
-  The `compat` command never returns exit code 4 (uses 1 for BREAKING instead)
+- Exit code 1 is overloaded: severity-driven errors in `compare` (with
+  `--severity-*` flags), BREAKING in `compat`. Disambiguation: scripts must
+  know which command they invoked. The `compare` command returns exit code 1
+  only when the severity system is active and `addition` or `quality_issues`
+  are at error level. The `compat` command never returns exit code 4 (uses 1
+  for BREAKING instead).
+  See [severity guide](../../user-guide/severity.md) for the four-category
+  severity model that supersedes `--fail-on-additions`
 
 ---
 

@@ -92,7 +92,7 @@ automatically, then runs ABI comparison and reports results.
 | `upload-sarif` | `false` | Upload SARIF to GitHub Code Scanning |
 | `fail-on-breaking` | `true` | Fail step on binary ABI break |
 | `fail-on-api-break` | `false` | Fail step on source-level API break |
-| `fail-on-additions` | `false` | Fail step when new public symbols/types are added (detects unintentional API expansion) |
+| `fail-on-additions` | `false` | **Deprecated**: translated to `--severity-addition error` internally. Use the severity system instead. |
 | `add-job-summary` | `true` | Write summary to Job Summary panel |
 
 ### Package comparison inputs (compare-release mode)
