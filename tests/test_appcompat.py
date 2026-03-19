@@ -121,7 +121,9 @@ class TestIsRelevantToApp:
         )
         assert _is_relevant_to_app(change, app) is False
 
-    def test_soname_changed_always_relevant(self):
+    def test_soname_changed_not_relevant_to_app(self):
+        # SONAME_CHANGED is classified as COMPATIBLE (packaging/policy signal);
+        # appcompat must agree — it should not mark this as affecting app consumers.
         app = self._make_app()
         change = Change(
             kind=ChangeKind.SONAME_CHANGED,
@@ -130,7 +132,7 @@ class TestIsRelevantToApp:
             old_value="libfoo.so.1",
             new_value="libfoo.so.2",
         )
-        assert _is_relevant_to_app(change, app) is True
+        assert _is_relevant_to_app(change, app) is False
 
     def test_compat_version_changed_always_relevant(self):
         app = self._make_app()

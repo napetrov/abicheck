@@ -67,6 +67,9 @@ if TYPE_CHECKING:
 # Visibility levels that constitute the public ABI surface.
 _PUBLIC_VIS = (Visibility.PUBLIC, Visibility.ELF_ONLY)
 
+# Module-level constant: ELF visibility values that form the default↔protected pair (case51).
+_ELF_VIS_PROTECTED_PAIR: frozenset[str] = frozenset({"default", "protected"})
+
 
 def _public_functions(snap: AbiSnapshot) -> dict[str, Function]:
     """Return public/ELF-only functions from *snap*."""
@@ -1839,12 +1842,16 @@ def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]
             new_value=str(s_new.size),
         ))
 
-    # case51: ELF visibility default→protected (or vice-versa).
-    # Symbol is still exported — interposition semantics changed but binary compat intact.
+    # case51: ELF visibility default→protected (or vice-versa) — function symbols only.
+    # Data symbols with default→protected break copy relocations (real ABI break).
+    # Only for functions is this safely compatible (interposition semantics change only).
     old_vis = getattr(s_old, "visibility", "default") or "default"
     new_vis = getattr(s_new, "visibility", "default") or "default"
-    _PROTECTED_PAIR = frozenset({"default", "protected"})
-    if old_vis != new_vis and {old_vis, new_vis} == _PROTECTED_PAIR:
+    if (
+        old_vis != new_vis
+        and {old_vis, new_vis} == _ELF_VIS_PROTECTED_PAIR
+        and getattr(s_old, "sym_type", None) == SymbolType.FUNC
+    ):
         changes.append(Change(
             kind=ChangeKind.FUNC_VISIBILITY_PROTECTED_CHANGED,
             symbol=sym_name,
@@ -2223,27 +2230,28 @@ _ENUM_DEDUP_KINDS = frozenset({
 
 
 def _is_pointer_only_type(type_name: str, snap: AbiSnapshot) -> bool:
-    """Return True if all API functions use this type by pointer only (never by value).
+    """Return True if all PUBLIC API functions/variables use this type via pointer only.
 
-    A type is pointer-only (opaque handle pattern) when every function param/return
-    that references it uses a pointer/reference — never a bare by-value occurrence.
+    A type is pointer-only (opaque-handle pattern) when every function param/return
+    that references it uses a raw pointer (`T*`) — never a bare by-value or reference
+    (`T`, `T&`) occurrence.  References are treated as non-opaque usage because a
+    caller could still hold the referent by value.
+
+    Uses pre-compiled word-boundary regex to avoid substring false-positives.
     """
-    # Quick name-based check: strip pointer/const decoration to find bare type name
-    import re as _re
-    _bare_re = _re.compile(r'\b' + _re.escape(type_name) + r'\b')
+    bare_re = re.compile(r'\b' + re.escape(type_name) + r'\b')
 
     def _is_by_value(type_str: str) -> bool:
-        """True if the type string contains the type name without * or &."""
-        if not _bare_re.search(type_str):
+        """True if ``type_str`` names the type without a trailing ``*``."""
+        if not bare_re.search(type_str):
             return False
-        # Remove the type name and see if * or & follows — crude but effective
         stripped = type_str.replace("const", "").replace("volatile", "").strip()
-        # If the only mention of type_name has no *, it's by value
         for token in stripped.split(","):
             token = token.strip()
-            # Opaque-handle pattern requires raw pointers only.
-            # References (`&`) are treated as non-opaque API usage.
-            if _bare_re.search(token) and "*" not in token:
+            if bare_re.search(token) and "*" not in token:
+                # Token contains the bare type name without a pointer dereference.
+                # This covers both by-value (T) and reference (T&) semantics —
+                # both allow the caller to hold/inspect the type's size.
                 return True
         return False
 
@@ -2266,19 +2274,25 @@ def _is_pointer_only_type(type_name: str, snap: AbiSnapshot) -> bool:
 
 
 def _has_public_pointer_factory(type_name: str, snap: AbiSnapshot) -> bool:
-    """True if snapshot has at least one PUBLIC function returning ``type_name*``."""
+    """True if snapshot has at least one PUBLIC function returning exactly ``type_name*``.
+
+    Uses word-boundary regex to avoid substring false-positives such as
+    ``type_name="Context"`` matching ``SSLContext*``.
+    """
+    # Match: optional const/volatile, then word-boundary type name, then `*`
+    factory_re = re.compile(r'\b' + re.escape(type_name) + r'\s*\*')
     for f in snap.functions:
         if f.visibility not in _PUBLIC_VIS:
             continue
-        rt = (f.return_type or "").replace(" ", "")
-        if type_name in rt and "*" in rt and "&" not in rt:
+        rt = f.return_type or ""
+        if factory_re.search(rt) and "&" not in rt:
             return True
     return False
 
 
 def _filter_opaque_size_changes(
     changes: list[Change], old: AbiSnapshot, new: AbiSnapshot
-) -> list[Change]:
+) -> tuple[list[Change], list[Change]]:
     """Suppress size-only growth for pointer-only opaque-handle patterns.
 
     Narrow rule (case62):
@@ -2289,16 +2303,16 @@ def _filter_opaque_size_changes(
       drift changes for that type.
     """
     size_change_types: set[str] = {
-        c.symbol.split("::")[0]
+        _root_type_name(c)
         for c in changes
         if c.kind in (ChangeKind.TYPE_SIZE_CHANGED, ChangeKind.STRUCT_SIZE_CHANGED)
     }
     if not size_change_types:
-        return changes
+        return changes, []
 
     by_type: dict[str, set[ChangeKind]] = {t: set() for t in size_change_types}
     for c in changes:
-        t = c.symbol.split("::")[0]
+        t = _root_type_name(c)
         if t in by_type:
             by_type[t].add(c.kind)
 
@@ -2330,15 +2344,22 @@ def _filter_opaque_size_changes(
         opaque_types.add(t)
 
     if not opaque_types:
-        return changes
+        return changes, []
 
-    return [
-        c for c in changes
-        if not (
+    # Only SIZE changes are moved to the filtered list; TYPE_FIELD_ADDED_COMPATIBLE
+    # for the same type intentionally passes through — it is informational and helps
+    # reviewers understand *why* the size grew, while not affecting the verdict.
+    kept = []
+    filtered = []
+    for c in changes:
+        if (
             c.kind in (ChangeKind.TYPE_SIZE_CHANGED, ChangeKind.STRUCT_SIZE_CHANGED)
-            and c.symbol.split("::")[0] in opaque_types
-        )
-    ]
+            and _root_type_name(c) in opaque_types
+        ):
+            filtered.append(c)
+        else:
+            kept.append(c)
+    return kept, filtered
 
 
 def _filter_reserved_field_renames(changes: list[Change]) -> list[Change]:
@@ -2361,7 +2382,13 @@ def _filter_reserved_field_renames(changes: list[Change]) -> list[Change]:
         ChangeKind.TYPE_FIELD_REMOVED,
         ChangeKind.STRUCT_FIELD_REMOVED,
         ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
-        ChangeKind.FIELD_RENAMED,  # already captured by USED_RESERVED_FIELD
+        # TYPE_FIELD_ADDED: class types and polymorphic records emit this instead of
+        # TYPE_FIELD_ADDED_COMPATIBLE; must suppress here too.
+        ChangeKind.TYPE_FIELD_ADDED,
+        # FIELD_RENAMED: suppressed only when the exact old_value matches the reserved
+        # field name (see == check below — not substring). Safe for structs with both
+        # reserved and non-reserved renames in the same diff.
+        ChangeKind.FIELD_RENAMED,
     })
 
     # Collect (struct_name, old_field_name, new_field_name) for each USED_RESERVED_FIELD
@@ -2383,10 +2410,12 @@ def _filter_reserved_field_renames(changes: list[Change]) -> list[Change]:
         for struct_name, old_field, new_field in reserved_renames:
             if c.symbol != struct_name and not c.symbol.startswith(f"{struct_name}::"):
                 continue
-            if old_field and (old_field in c.description or old_field in (c.old_value or "")):
+            # Use == for old_value to avoid substring false-positives
+            # (e.g. "__reserved" matching inside "__reserved_extra").
+            if old_field and (old_field in c.description or old_field == (c.old_value or "")):
                 suppressed = True
                 break
-            if new_field and c.kind == ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE and (
+            if new_field and c.kind in (ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE, ChangeKind.TYPE_FIELD_ADDED) and (
                 new_field in c.description or new_field in (c.new_value or "")
             ):
                 suppressed = True
@@ -2707,7 +2736,9 @@ def compare(
     changes = _filter_reserved_field_renames(changes)
 
     # Suppress size-only growth for opaque pointer-handle types (case62).
-    changes = _filter_opaque_size_changes(changes, old, new)
+    # Filtered-out changes are collected for the redundant list so they appear
+    # in the audit trail (report JSON) rather than being silently discarded.
+    changes, opaque_filtered = _filter_opaque_size_changes(changes, old, new)
 
     # Deduplicate AST/DWARF before suppression so a single canonical change
     # remains for suppression matching (avoids suppressed AST entry leaving
@@ -2738,6 +2769,10 @@ def compare(
     # Applied after suppression so suppressed changes never contribute to the
     # verdict. Verdict is computed on kept + redundant (all unsuppressed).
     kept, redundant = _filter_redundant(changes)
+
+    # Opaque-handle size-change findings are moved to the redundant list so
+    # they appear in the report's audit trail without affecting the verdict.
+    redundant.extend(opaque_filtered)
 
     # Post-processing: enrich remaining changes with affected symbols
     _enrich_affected_symbols(kept, old)

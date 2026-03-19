@@ -719,7 +719,13 @@ IMPACT_TEXT: dict[ChangeKind, str] = {
     # Bitfield
     ChangeKind.FIELD_BITFIELD_CHANGED: "Bit-field width or offset changed; old code reads/writes wrong bits.",
     # ELF / Mach-O
-    ChangeKind.SONAME_CHANGED: "Dynamic linker looks for old SONAME; library won't be found without symlink.",
+    ChangeKind.SONAME_CHANGED: (
+        "SONAME changed. This is a packaging/policy signal, not a binary ABI break: "
+        "the symbol table, types, and calling conventions are unchanged. "
+        "Deployment action may be required: update ldconfig symlinks or the "
+        "linker flag (-lfoo) in dependent packages. Already-compiled consumers "
+        "whose loader resolves the library by full path or DT_RPATH are unaffected."
+    ),
     ChangeKind.COMPAT_VERSION_CHANGED: "Mach-O compatibility version changed; dylibs linked against old version may fail to load.",
     ChangeKind.SONAME_MISSING: "Library has no SONAME; package managers and ldconfig cannot track versions.",
     ChangeKind.VISIBILITY_LEAK: "Internal symbols exported without -fvisibility=hidden; namespace pollution risk.",

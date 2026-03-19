@@ -413,10 +413,6 @@ def _is_relevant_to_app(change: Change, app: AppRequirements) -> bool:
         if app.undefined_symbols & set(change.affected_symbols):
             return True
 
-    # ELF-level: SONAME change affects all consumers
-    if change.kind == ChangeKind.SONAME_CHANGED:
-        return True
-
     # Mach-O compat version change affects all consumers
     if change.kind == ChangeKind.COMPAT_VERSION_CHANGED:
         return True
