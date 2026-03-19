@@ -62,12 +62,12 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [10](case10_return_type/README.md) | Return Type | Breaking | BREAKING 🔴 |
 | [11](case11_global_var_type/README.md) | Global Var Type | Breaking | BREAKING 🔴 |
 | [12](case12_function_removed/README.md) | Function Removed | Breaking | BREAKING 🔴 |
-| [13](case13_symbol_versioning/README.md) | Symbol Versioning | Quality | COMPATIBLE 🟢 |
+| [13](case13_symbol_versioning/README.md) | Symbol Versioning | Quality | COMPATIBLE 🟡 |
 | [14](case14_cpp_class_size/README.md) | Cpp Class Size | Breaking | BREAKING 🔴 |
 | [15](case15_noexcept_change/README.md) | Noexcept Change | Risk | COMPATIBLE_WITH_RISK 🟡 |
 | [16](case16_inline_to_non_inline/README.md) | Inline To Non Inline | Addition | COMPATIBLE 🟢 |
 | [17](case17_template_abi/README.md) | Template Abi | Breaking | BREAKING 🔴 |
-| [18](case18_dependency_leak/README.md) | Dependency Leak | ELF / Policy | BREAKING 🔴 (bad practice) |
+| [18](case18_dependency_leak/README.md) | Dependency Leak | Breaking | BREAKING 🔴 (bad practice) |
 | [19](case19_enum_member_removed/README.md) | Enum Member Removed | Breaking | BREAKING 🔴 |
 | [20](case20_enum_member_value_changed/README.md) | Enum Member Value Changed | Breaking | BREAKING 🔴 |
 | [21](case21_method_became_static/README.md) | Method Became Static | Breaking | BREAKING 🔴 |
@@ -77,14 +77,14 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [25](case25_enum_member_added/README.md) | Enum Member Added | Addition | COMPATIBLE 🟢 |
 | [26](case26_union_field_added/README.md) | Union Field Added | Breaking | BREAKING 🔴 |
 | [26b](case26b_union_field_added_compatible/README.md) | Union Field Added Compatible | Addition | COMPATIBLE 🟢 |
-| [27](case27_symbol_binding_weakened/README.md) | Symbol Binding Weakened | Quality | COMPATIBLE 🟢 |
+| [27](case27_symbol_binding_weakened/README.md) | Symbol Binding Weakened | Quality | COMPATIBLE 🟡 |
 | [28](case28_typedef_opaque/README.md) | Typedef Opaque | Breaking | BREAKING 🔴 |
-| [29](case29_ifunc_transition/README.md) | Ifunc Transition | Quality | COMPATIBLE 🟢 |
+| [29](case29_ifunc_transition/README.md) | Ifunc Transition | Quality | COMPATIBLE 🟡 |
 | [30](case30_field_qualifiers/README.md) | Field Qualifiers | Breaking | BREAKING 🔴 |
-| [31](case31_enum_rename/README.md) | Enum Rename | API / Source | API_BREAK 🟠 |
+| [31](case31_enum_rename/README.md) | Enum Rename | API Break | API_BREAK 🟠 |
 | [32](case32_param_defaults/README.md) | Param Defaults | No Change | NO_CHANGE ✅ |
 | [33](case33_pointer_level/README.md) | Pointer Level | Breaking | BREAKING 🔴 |
-| [34](case34_access_level/README.md) | Access Level | API / Source | API_BREAK 🟠 |
+| [34](case34_access_level/README.md) | Access Level | API Break | API_BREAK 🟠 |
 | [35](case35_field_rename/README.md) | Field Rename | Breaking | BREAKING 🔴 |
 | [36](case36_anon_struct/README.md) | Anon Struct | Breaking | BREAKING 🔴 |
 | [37](case37_base_class/README.md) | Base Class | Breaking | BREAKING 🔴 |
@@ -92,25 +92,25 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [39](case39_var_const/README.md) | Var Const | Breaking | BREAKING 🔴 |
 | [40](case40_field_layout/README.md) | Field Layout | Breaking | BREAKING 🔴 |
 | [41](case41_type_changes/README.md) | Type Changes | Breaking | BREAKING 🔴 |
-| [42](case42_type_alignment_changed/README.md) | Type Alignment Changed (alignas) | Type Layout / DWARF | BREAKING 🔴 |
-| [43](case43_base_class_member_added/README.md) | Base Class Member Added | C++ Layout | BREAKING 🔴 |
-| [44](case44_cyclic_type_member_added/README.md) | Cyclic Type Member Added | Struct Layout | BREAKING 🔴 |
-| [45](case45_multi_dim_array_change/README.md) | Multi-Dim Array Element Type Change | Struct Layout | BREAKING 🔴 |
-| [46](case46_pointer_chain_type_change/README.md) | Pointer Chain Type Change | Function Signature | BREAKING 🔴 |
+| [42](case42_type_alignment_changed/README.md) | Type Alignment Changed (alignas) | Breaking | BREAKING 🔴 |
+| [43](case43_base_class_member_added/README.md) | Base Class Member Added | Breaking | BREAKING 🔴 |
+| [44](case44_cyclic_type_member_added/README.md) | Cyclic Type Member Added | Breaking | BREAKING 🔴 |
+| [45](case45_multi_dim_array_change/README.md) | Multi-Dim Array Element Type Change | Breaking | BREAKING 🔴 |
+| [46](case46_pointer_chain_type_change/README.md) | Pointer Chain Type Change | Breaking | BREAKING 🔴 |
 | [47](case47_inline_to_outlined/README.md) | Inline to Outlined | Addition | COMPATIBLE 🟢 |
-| [48](case48_leaf_struct_through_pointer/README.md) | Leaf Struct Change Through Pointer | Struct Layout | BREAKING 🔴 |
+| [48](case48_leaf_struct_through_pointer/README.md) | Leaf Struct Change Through Pointer | Breaking | BREAKING 🔴 |
 | [49](case49_executable_stack/README.md) | Executable Stack (GNU_STACK RWX) | Quality | COMPATIBLE 🟡 (bad practice) |
 | [50](case50_soname_inconsistent/README.md) | SONAME Inconsistent (Wrong Major) | Quality | COMPATIBLE 🟡 (bad practice) |
-| [51](case51_protected_visibility/README.md) | Protected Visibility (DEFAULT→PROTECTED) | Quality | COMPATIBLE 🟢 |
+| [51](case51_protected_visibility/README.md) | Protected Visibility (DEFAULT→PROTECTED) | Quality | COMPATIBLE 🟡 |
 | [52](case52_rpath_leak/README.md) | RPATH Leak (Hardcoded Build Dir) | Quality | COMPATIBLE 🟡 (bad practice) |
-| [53](case53_namespace_pollution/README.md) | Namespace Pollution (Generic Names) | API Design | BREAKING 🔴 |
-| [54](case54_used_reserved_field/README.md) | Used Reserved Field | Quality | COMPATIBLE 🟢 |
-| [55](case55_type_kind_changed/README.md) | Type Kind Changed (struct→union) | Type Layout | BREAKING 🔴 |
-| [56](case56_struct_packing_changed/README.md) | Struct Packing Changed (pragma pack) | Type Layout / DWARF | BREAKING 🔴 |
-| [57](case57_enum_underlying_size_changed/README.md) | Enum Underlying Size Changed | Type Layout | BREAKING 🔴 |
-| [58](case58_var_removed/README.md) | Global Variable Removed | Symbol API | BREAKING 🔴 |
-| [59](case59_func_became_inline/README.md) | Function Became Inline (outlined→inline) | Symbol API | BREAKING 🔴 |
-| [60](case60_base_class_position_changed/README.md) | Base Class Position Changed (MI reorder) | C++ Layout | BREAKING 🔴 |
+| [53](case53_namespace_pollution/README.md) | Namespace Pollution (Generic Names) | Breaking | BREAKING 🔴 |
+| [54](case54_used_reserved_field/README.md) | Used Reserved Field | Quality | COMPATIBLE 🟡 |
+| [55](case55_type_kind_changed/README.md) | Type Kind Changed (struct→union) | Breaking | BREAKING 🔴 |
+| [56](case56_struct_packing_changed/README.md) | Struct Packing Changed (pragma pack) | Breaking | BREAKING 🔴 |
+| [57](case57_enum_underlying_size_changed/README.md) | Enum Underlying Size Changed | Breaking | BREAKING 🔴 |
+| [58](case58_var_removed/README.md) | Global Variable Removed | Breaking | BREAKING 🔴 |
+| [59](case59_func_became_inline/README.md) | Function Became Inline (outlined→inline) | Breaking | BREAKING 🔴 |
+| [60](case60_base_class_position_changed/README.md) | Base Class Position Changed (MI reorder) | Breaking | BREAKING 🔴 |
 | [61](case61_var_added/README.md) | Global Variable Added | Addition | COMPATIBLE 🟢 |
 | [62](case62_type_field_added_compatible/README.md) | Type Field Added (Opaque Struct) | Addition | COMPATIBLE 🟢 |
 

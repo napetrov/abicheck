@@ -35,11 +35,18 @@ risk present from the new GLIBCXX requirement.
 
 ## What abicheck detects
 
-- **`FUNC_NOEXCEPT_REMOVED`** — not detected directly. castxml does not expose
-  `noexcept` in its XML output, so this change kind is invisible to the tool.
-- **`SYMBOL_VERSION_REQUIRED_ADDED: GLIBCXX_3.4.21`** — detected via ELF VERNEED
-  comparison. This is the observable signal that triggers the COMPATIBLE_WITH_RISK
-  verdict.
+- **`FUNC_NOEXCEPT_REMOVED`** (COMPATIBLE) — detected in header mode (`-H`).
+  The dumper reads the `noexcept` attribute from castxml output and stores it as
+  `is_noexcept` on each function; the checker emits `FUNC_NOEXCEPT_REMOVED` when
+  the flag changes between versions. This kind is classified as COMPATIBLE because
+  it does not change the mangled symbol name (Itanium ABI).
+- **`SYMBOL_VERSION_REQUIRED_ADDED: GLIBCXX_3.4.21`** (COMPATIBLE_WITH_RISK) —
+  detected via ELF VERNEED comparison. When v2's implementation uses `throw`,
+  the compiled `.so` acquires a newer GLIBCXX symbol version requirement.
+
+Both kinds are detected. The combined verdict is **COMPATIBLE_WITH_RISK** because
+`FUNC_NOEXCEPT_REMOVED` ∈ `COMPATIBLE_KINDS` and `SYMBOL_VERSION_REQUIRED_ADDED`
+∈ `RISK_KINDS`, and RISK trumps COMPATIBLE in the verdict hierarchy.
 
 ## Behavioral risk (runtime)
 
@@ -98,11 +105,13 @@ abidw --out-file v1.xml libv1.so
 abidw --out-file v2.xml libv2.so
 abidiff v1.xml v2.xml || true   # exits 0 — misses it!
 
-# abicheck: detects GLIBCXX version requirement change
-python3 -m abicheck.cli dump libv1.so -o /tmp/v1.json
-python3 -m abicheck.cli dump libv2.so -o /tmp/v2.json
+# abicheck with headers: detects both noexcept removal and GLIBCXX bump
+python3 -m abicheck.cli dump libv1.so -H v1.h -o /tmp/v1.json
+python3 -m abicheck.cli dump libv2.so -H v2.h -o /tmp/v2.json
 python3 -m abicheck.cli compare /tmp/v1.json /tmp/v2.json
-# → COMPATIBLE_WITH_RISK (symbol_version_required_added: GLIBCXX_3.4.21)
+# → COMPATIBLE_WITH_RISK
+#   - func_noexcept_removed: Buffer::reset (COMPATIBLE)
+#   - symbol_version_required_added: GLIBCXX_3.4.21 (RISK)
 ```
 
 ## Real Failure Demo
