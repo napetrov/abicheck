@@ -3355,7 +3355,7 @@ def _normalize_type_name(name: str) -> str:
 
 
 def _diff_struct_layouts(o: object, n: object) -> list[Change]:
-    from .dwarf_metadata import StructLayout
+    from .dwarf_metadata import FieldInfo, StructLayout
 
     old_structs: dict[str, StructLayout] = getattr(o, "structs", {})
     new_structs: dict[str, StructLayout] = getattr(n, "structs", {})
@@ -3397,8 +3397,31 @@ def _diff_struct_layouts(o: object, n: object) -> list[Change]:
         old_fields = {f.name: f for f in old_s.fields}
         new_fields = {f.name: f for f in new_s.fields}
 
-        # 3. Removed fields
-        for fname in sorted(old_fields.keys() - new_fields.keys()):
+        # 3. Removed fields — check for reserved-field activations first
+        removed_names = sorted(old_fields.keys() - new_fields.keys())
+        added_names = new_fields.keys() - old_fields.keys()
+        # Build added-field index by byte_offset for reserved-field matching
+        added_by_offset: dict[int, FieldInfo] = {
+            new_fields[fn].byte_offset: new_fields[fn]
+            for fn in added_names
+            if not _RESERVED_FIELD_RE.match(fn)
+        }
+        reserved_matched: set[str] = set()
+
+        for fname in removed_names:
+            if _RESERVED_FIELD_RE.match(fname):
+                old_f = old_fields[fname]
+                candidate = added_by_offset.get(old_f.byte_offset)
+                if candidate is not None and not _RESERVED_FIELD_RE.match(candidate.name):
+                    changes.append(Change(
+                        kind=ChangeKind.USED_RESERVED_FIELD,
+                        symbol=name,
+                        description=f"Reserved field put into use: {name}::{fname} → {candidate.name}",
+                        old_value=fname,
+                        new_value=candidate.name,
+                    ))
+                    reserved_matched.add(candidate.name)
+                    continue
             changes.append(Change(
                 kind=ChangeKind.STRUCT_FIELD_REMOVED,
                 symbol=f"{name}::{fname}",
