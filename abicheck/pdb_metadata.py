@@ -151,26 +151,26 @@ def _extract_struct_layouts(
         if not _is_user_visible(cv_struct.name, cv_struct.is_forward_ref):
             continue
 
-        # ODR: first complete definition wins for all outputs
-        is_first_def = cv_struct.name not in meta.structs
-
-        # Track struct names and packed status in advanced metadata.
-        # Only mark packed for the canonical first definition so a
-        # later non-packed duplicate doesn't conflict.
-        if adv is not None:
-            adv.all_struct_names.add(cv_struct.name)
-            if is_first_def and cv_struct.is_packed:
-                adv.packed_structs.add(cv_struct.name)
-
-        if not is_first_def:
+        # ODR: first complete definition wins for all outputs.
+        # Skip if we already have a canonical definition for this name.
+        if cv_struct.name in meta.structs:
             continue
 
         try:
             fields = _extract_fields(types, cv_struct)
         except Exception as exc:  # noqa: BLE001
+            # Don't record an empty layout — a later duplicate with the
+            # same name may succeed and should become the canonical def.
             log.debug("_extract_struct_layouts: bad fields for %s: %s",
                       cv_struct.name, exc)
-            fields = []
+            continue
+
+        # Track struct names and packed status in advanced metadata
+        # only after successful field extraction.
+        if adv is not None:
+            adv.all_struct_names.add(cv_struct.name)
+            if cv_struct.is_packed:
+                adv.packed_structs.add(cv_struct.name)
 
         layout = StructLayout(
             name=cv_struct.name,
