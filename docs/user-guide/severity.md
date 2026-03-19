@@ -135,17 +135,25 @@ accordingly.
 This means `--policy sdk_vendor --severity-preset strict` will **not** exit
 non-zero for changes that the `sdk_vendor` policy explicitly accepts.
 
-## Migrating from `--fail-on-additions`
+## GitHub Action
 
-The `--fail-on-additions` flag has been removed. Use the severity system instead:
+The GitHub Action supports severity configuration via inputs:
 
-```bash
-# Old (removed)
-abicheck compare old.json new.json --fail-on-additions
-
-# New (equivalent)
-abicheck compare old.json new.json --severity-addition error
+```yaml
+- uses: napetrov/abicheck@v1
+  with:
+    old-library: libfoo-v1.json
+    new-library: libfoo-v2.json
+    severity-addition: error        # fail on new API additions
+    # severity-preset: strict       # or use a preset
 ```
 
-The GitHub Action's `fail-on-additions: true` input is automatically translated
-to `--severity-addition error` for backward compatibility.
+For arbitrary `--severity-*` overrides not exposed as inputs, use `extra-args`:
+
+```yaml
+- uses: napetrov/abicheck@v1
+  with:
+    old-library: libfoo-v1.json
+    new-library: libfoo-v2.json
+    extra-args: '--severity-quality-issues error --severity-potential-breaking info'
+```

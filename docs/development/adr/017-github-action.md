@@ -65,14 +65,16 @@ is a supported alternative.
 | `format` | Output: markdown, json, sarif, html | `markdown` |
 | `policy` / `policy-file` | Built-in or custom policy | `strict_abi` |
 | `suppress` | YAML suppression file | — |
-| `fail-on-breaking` / `fail-on-api-break` / `fail-on-additions` | Exit code flags | — |
+| `fail-on-breaking` / `fail-on-api-break` | Exit code flags | — |
+| `severity-preset` / `severity-addition` | Severity configuration | — |
+| `extra-args` | Additional CLI arguments | `''` |
 | `install-deps` | Install castxml + gcc automatically | `true` |
 
 ### Output variables
 
 | Output | Description |
 |--------|-------------|
-| `verdict` | NO_CHANGE, COMPATIBLE, COMPATIBLE_WITH_RISK, API_BREAK, BREAKING, ERROR (see ADR-009 for the 5-tier system). For `stack-check`: PASS, WARN, FAIL. Note: the action maps exit code 1 with `--fail-on-additions` to verdict string `ADDITIONS` for scripting convenience, but this is not a formal verdict tier. |
+| `verdict` | NO_CHANGE, COMPATIBLE, COMPATIBLE_WITH_RISK, API_BREAK, BREAKING, SEVERITY_ERROR, ERROR (see ADR-009 for the 5-tier system). For `stack-check`: PASS, WARN, FAIL. SEVERITY_ERROR is emitted when the severity system (via `--severity-*` flags) causes a non-zero exit code 1. |
 | `exit-code` | abicheck numeric exit code |
 | `report-path` | Path to generated report file |
 

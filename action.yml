@@ -218,12 +218,20 @@ inputs:
     description: 'Fail the step when a source-level API break is detected (exit code 2).'
     required: false
     default: 'false'
-  fail-on-additions:
+  severity-preset:
     description: >
-      DEPRECATED: use severity-addition: error instead.
-      Translated to --severity-addition error internally.
+      Severity preset: 'default', 'strict', or 'info-only'.
+      Controls exit codes and report labels.
     required: false
-    default: 'false'
+  severity-addition:
+    description: >
+      Severity for new public API additions: 'error', 'warning', or 'info'.
+      Set to 'error' to fail the step when additions are detected.
+    required: false
+  extra-args:
+    description: 'Additional CLI arguments passed directly to the abicheck command.'
+    required: false
+    default: ''
   add-job-summary:
     description: 'Write a markdown summary to the GitHub Actions Job Summary.'
     required: false
@@ -307,7 +315,9 @@ runs:
         INPUT_LD_LIBRARY_PATH: ${{ inputs.ld-library-path }}
         INPUT_FAIL_ON_BREAKING: ${{ inputs.fail-on-breaking }}
         INPUT_FAIL_ON_API_BREAK: ${{ inputs.fail-on-api-break }}
-        INPUT_FAIL_ON_ADDITIONS: ${{ inputs.fail-on-additions }}
+        INPUT_SEVERITY_PRESET: ${{ inputs.severity-preset }}
+        INPUT_SEVERITY_ADDITION: ${{ inputs.severity-addition }}
+        INPUT_EXTRA_ARGS: ${{ inputs.extra-args }}
         INPUT_ADD_JOB_SUMMARY: ${{ inputs.add-job-summary }}
         INPUT_DEBUG_INFO1: ${{ inputs.debug-info1 }}
         INPUT_DEBUG_INFO2: ${{ inputs.debug-info2 }}

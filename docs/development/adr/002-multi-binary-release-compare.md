@@ -148,7 +148,7 @@ New inputs needed:
 | `new-library-dir` | Directory of new binaries |
 | `library-map` | YAML mapping file for non-trivial name changes |
 | `fail-on-removed-library` | Fail if a library disappeared |
-| `fail-on-additions` | **Deprecated** — translated to `--severity-addition error` |
+| `severity-preset` / `severity-addition` | Severity configuration for exit codes |
 | `output-dir` | Per-library report output directory |
 
 Example:

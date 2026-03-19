@@ -70,7 +70,7 @@ equivalent. It captures cases like:
 | **0** | NO_CHANGE, COMPATIBLE, COMPATIBLE_WITH_RISK | Binary-compatible — safe to deploy |
 | **2** | API_BREAK | Source-level break only |
 | **4** | BREAKING | Binary ABI break |
-| **1** | (conditional) | Only when `--fail-on-additions` is set and additions are detected |
+| **1** | (severity-driven) | When `--severity-*` flags cause error-level findings in `addition` or `quality_issues` |
 
 Exit codes use powers of 2 for clear separation of severity tiers.
 
