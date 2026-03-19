@@ -206,3 +206,50 @@ class PolicyFile:
         else:
             lines.append("overrides: (none)")
         return "\n".join(lines)
+
+    def validate_overrides(self) -> list[str]:
+        """Check for high-risk or suspicious overrides and return warnings.
+
+        Returns a list of human-readable warning strings.  Empty list = no issues.
+
+        Checks:
+        - Downgrading known-dangerous BREAKING kinds to COMPATIBLE
+          (e.g., func_removed → ignore).  These almost certainly mask real breaks.
+        - Downgrading BREAKING to COMPATIBLE_WITH_RISK for critical kinds.
+        """
+        from .checker_policy import BREAKING_KINDS
+
+        # Kinds that are especially dangerous to downgrade — removing a function
+        # or changing its signature always causes hard crashes.
+        _CRITICAL_BREAKING_KINDS: frozenset[ChangeKind] = frozenset({
+            ChangeKind.FUNC_REMOVED,
+            ChangeKind.FUNC_RETURN_CHANGED,
+            ChangeKind.FUNC_PARAMS_CHANGED,
+            ChangeKind.TYPE_SIZE_CHANGED,
+            ChangeKind.TYPE_VTABLE_CHANGED,
+            ChangeKind.VAR_REMOVED,
+            ChangeKind.VAR_TYPE_CHANGED,
+            ChangeKind.SONAME_CHANGED,
+        })
+
+        warnings: list[str] = []
+        for kind, verdict in self.overrides.items():
+            if kind in _CRITICAL_BREAKING_KINDS:
+                if verdict == Verdict.COMPATIBLE:
+                    warnings.append(
+                        f"HIGH RISK: '{kind.value}' downgraded to 'ignore' — "
+                        f"this is almost certainly a mistake. "
+                        f"This kind causes hard crashes when the ABI changes."
+                    )
+                elif verdict == Verdict.COMPATIBLE_WITH_RISK:
+                    warnings.append(
+                        f"RISK: '{kind.value}' downgraded to 'risk' — "
+                        f"this kind usually causes binary incompatibility. "
+                        f"Consider keeping it as 'break'."
+                    )
+            elif kind in BREAKING_KINDS and verdict == Verdict.COMPATIBLE:
+                warnings.append(
+                    f"'{kind.value}' (BREAKING) downgraded to 'ignore' — "
+                    f"verify this is intentional."
+                )
+        return warnings

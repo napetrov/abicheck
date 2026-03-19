@@ -1,6 +1,6 @@
 {
-  "version": "2",
-  "description": "Ground-truth expected verdicts for all abicheck example cases. Single source of truth \u2014 kept in sync with tests/test_example_autodiscovery.py::EXPECTED.",
+  "version": "3",
+  "description": "Ground-truth expected verdicts and change kinds for all abicheck example cases. Single source of truth \u2014 kept in sync with tests/test_example_autodiscovery.py::EXPECTED. expected_kinds lists the ChangeKind values that MUST appear in the diff result (subset check). expected_absent_kinds lists kinds that MUST NOT appear (false positive guard).",
   "cross_references": {
     "verdict_classification": "abicheck/checker_policy.py — BREAKING_KINDS, API_BREAK_KINDS, RISK_KINDS, COMPATIBLE_KINDS (= ADDITION_KINDS ∪ QUALITY_KINDS)",
     "category_mapping": "breaking → BREAKING_KINDS | api_break → API_BREAK_KINDS | risk → RISK_KINDS | addition → ADDITION_KINDS | quality → QUALITY_KINDS | no_change → (empty)",
@@ -19,7 +19,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["func_removed"]
     },
     "case02_param_type_change": {
       "expected": "BREAKING",
@@ -29,7 +30,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["func_params_changed"]
     },
     "case03_compat_addition": {
       "expected": "COMPATIBLE",
@@ -41,7 +43,8 @@
       ],
       "abi_break": false,
       "api_break": false,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["func_added"]
     },
     "case04_no_change": {
       "expected": "NO_CHANGE",
@@ -53,7 +56,9 @@
       ],
       "abi_break": false,
       "api_break": false,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": [],
+      "expected_absent_kinds": ["func_removed", "func_params_changed", "type_size_changed"]
     },
     "case05_soname": {
       "expected": "COMPATIBLE",
@@ -63,7 +68,8 @@
       ],
       "abi_break": false,
       "api_break": false,
-      "bad_practice": true
+      "bad_practice": true,
+      "expected_kinds": ["soname_missing"]
     },
     "case06_visibility": {
       "expected": "BREAKING",
@@ -73,7 +79,8 @@
       ],
       "abi_break": true,
       "api_break": false,
-      "bad_practice": true
+      "bad_practice": true,
+      "expected_kinds": ["func_visibility_changed"]
     },
     "case07_struct_layout": {
       "expected": "BREAKING",
@@ -83,7 +90,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["type_size_changed"]
     },
     "case08_enum_value_change": {
       "expected": "BREAKING",
@@ -93,7 +101,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["enum_member_value_changed"]
     },
     "case09_cpp_vtable": {
       "expected": "BREAKING",
@@ -103,7 +112,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["type_vtable_changed"]
     },
     "case10_return_type": {
       "expected": "BREAKING",
@@ -113,7 +123,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["func_return_changed"]
     },
     "case11_global_var_type": {
       "expected": "BREAKING",
@@ -123,7 +134,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["var_type_changed"]
     },
     "case12_function_removed": {
       "expected": "BREAKING",
@@ -135,7 +147,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["func_removed"]
     },
     "case13_symbol_versioning": {
       "expected": "COMPATIBLE",
@@ -208,7 +221,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["enum_member_removed"]
     },
     "case20_enum_member_value_changed": {
       "expected": "BREAKING",
@@ -221,7 +235,8 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
-      "reason": "regular enum member value changes remain breaking; only named sentinel patterns are downgraded"
+      "reason": "regular enum member value changes remain breaking; only named sentinel patterns are downgraded",
+      "expected_kinds": ["enum_member_value_changed"]
     },
     "case21_method_became_static": {
       "expected": "BREAKING",
@@ -231,7 +246,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["func_static_changed"]
     },
     "case22_method_const_changed": {
       "expected": "BREAKING",
@@ -243,7 +259,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["func_cv_changed"]
     },
     "case23_pure_virtual_added": {
       "expected": "BREAKING",
@@ -255,7 +272,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["func_pure_virtual_added"]
     },
     "case24_union_field_removed": {
       "expected": "BREAKING",
@@ -267,7 +285,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["union_field_removed"]
     },
     "case25_enum_member_added": {
       "expected": "COMPATIBLE",
@@ -279,7 +298,8 @@
       ],
       "abi_break": false,
       "api_break": false,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["enum_member_added"]
     },
     "case26_union_field_added": {
       "expected": "BREAKING",
@@ -313,7 +333,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["type_became_opaque"]
     },
     "case29_ifunc_transition": {
       "expected": "COMPATIBLE",
@@ -348,7 +369,8 @@
       ],
       "abi_break": false,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["enum_member_renamed"]
     },
     "case32_param_defaults": {
       "expected": "NO_CHANGE",
@@ -372,7 +394,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["param_pointer_level_changed"]
     },
     "case34_access_level": {
       "expected": "API_BREAK",
@@ -396,7 +419,8 @@
       ],
       "abi_break": false,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["field_renamed"]
     },
     "case36_anon_struct": {
       "expected": "BREAKING",
@@ -420,7 +444,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["type_base_changed"]
     },
     "case38_virtual_methods": {
       "expected": "BREAKING",
@@ -444,7 +469,8 @@
       ],
       "abi_break": true,
       "api_break": true,
-      "bad_practice": false
+      "bad_practice": false,
+      "expected_kinds": ["var_became_const"]
     },
     "case40_field_layout": {
       "expected": "BREAKING",

@@ -592,6 +592,44 @@ if not RISK_KINDS.isdisjoint(API_BREAK_KINDS):
         f"offending kinds: {RISK_KINDS & API_BREAK_KINDS}"
     )
 
+# Completeness check: every ChangeKind must be classified in exactly one set.
+# Unclassified kinds silently default to BREAKING at runtime (fail-safe), but
+# this makes the *intent* invisible and risks false negatives if a new kind is
+# added but forgotten here.  Use explicit raise (not assert) so this is never
+# stripped by python -O.
+_ALL_CLASSIFIED: frozenset[ChangeKind] = (
+    frozenset(BREAKING_KINDS) | frozenset(COMPATIBLE_KINDS)
+    | frozenset(API_BREAK_KINDS) | RISK_KINDS
+)
+_UNCLASSIFIED = set(ChangeKind) - _ALL_CLASSIFIED
+if _UNCLASSIFIED:
+    raise AssertionError(
+        "Every ChangeKind must appear in exactly one of BREAKING_KINDS, "
+        "COMPATIBLE_KINDS, API_BREAK_KINDS, or RISK_KINDS. "
+        f"Unclassified kinds (will default to BREAKING at runtime): {_UNCLASSIFIED}"
+    )
+
+# No kind should appear in more than one primary set (BREAKING, COMPATIBLE,
+# API_BREAK).  RISK_KINDS disjointness is already checked above.
+_BREAKING_COMPAT_OVERLAP = frozenset(BREAKING_KINDS) & frozenset(COMPATIBLE_KINDS)
+if _BREAKING_COMPAT_OVERLAP:
+    raise AssertionError(
+        "BREAKING_KINDS and COMPATIBLE_KINDS must be disjoint; "
+        f"offending kinds: {_BREAKING_COMPAT_OVERLAP}"
+    )
+_BREAKING_API_OVERLAP = frozenset(BREAKING_KINDS) & frozenset(API_BREAK_KINDS)
+if _BREAKING_API_OVERLAP:
+    raise AssertionError(
+        "BREAKING_KINDS and API_BREAK_KINDS must be disjoint; "
+        f"offending kinds: {_BREAKING_API_OVERLAP}"
+    )
+_COMPAT_API_OVERLAP = frozenset(COMPATIBLE_KINDS) & frozenset(API_BREAK_KINDS)
+if _COMPAT_API_OVERLAP:
+    raise AssertionError(
+        "COMPATIBLE_KINDS and API_BREAK_KINDS must be disjoint; "
+        f"offending kinds: {_COMPAT_API_OVERLAP}"
+    )
+
 
 @dataclass(frozen=True)
 class PolicyEntry:

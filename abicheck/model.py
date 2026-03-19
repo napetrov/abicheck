@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging as _logging
+import re as _re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -43,6 +44,44 @@ COMPILER_INTERNAL_TYPES: frozenset[str] = frozenset({
 def is_compiler_internal_type(name: str) -> bool:
     """Return True if *name* is a compiler internal type that should be excluded."""
     return bool(name) and name in COMPILER_INTERNAL_TYPES
+
+# ---------------------------------------------------------------------------
+# Type name canonicalization — normalise type names for reliable matching.
+# ---------------------------------------------------------------------------
+
+# Patterns for type-name canonicalization.
+_STRUCT_PREFIX_RE = _re.compile(r"^(struct|class|union|enum)\s+")
+_CONST_REORDER_RE = _re.compile(r"\bconst\s+(\w+)")
+_MULTI_SPACE_RE = _re.compile(r"\s{2,}")
+
+
+def canonicalize_type_name(name: str) -> str:
+    """Normalise a C/C++ type name for comparison.
+
+    Transformations (in order):
+    1. Strip leading ``struct ``/``class ``/``union ``/``enum `` elaborated-type-specifier.
+    2. Normalise ``const int`` → ``int const`` (east-const canonical form).
+    3. Collapse multiple spaces.
+    4. Strip leading/trailing whitespace.
+
+    This prevents false positives from dumpers that emit different
+    elaborated-type-specifier forms for the same type.
+
+    >>> canonicalize_type_name("struct Foo")
+    'Foo'
+    >>> canonicalize_type_name("const int *")
+    'int const *'
+    >>> canonicalize_type_name("  class   Bar  ")
+    'Bar'
+    """
+    result = name
+    # 1. Strip elaborated type specifier prefix.
+    result = _STRUCT_PREFIX_RE.sub("", result)
+    # 2. East-const normalisation: "const T" → "T const" (only for simple types).
+    result = _CONST_REORDER_RE.sub(r"\1 const", result)
+    # 3. Collapse whitespace.
+    result = _MULTI_SPACE_RE.sub(" ", result)
+    return result.strip()
 
 
 class Visibility(str, Enum):

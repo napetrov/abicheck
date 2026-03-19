@@ -290,8 +290,109 @@ class SuppressionList:
         """Return all rules with the given label."""
         return [s for s in self._suppressions if s.label == label]
 
+    def audit(
+        self,
+        changes: list[Change],
+        today: date | None = None,
+        *,
+        near_expiry_days: int = 30,
+    ) -> SuppressionAudit:
+        """Audit suppression rules against a set of changes.
+
+        Returns a :class:`SuppressionAudit` with:
+        - ``stale_rules``: suppressions that matched zero changes (misconfigured?)
+        - ``high_risk_matches``: suppressions that matched BREAKING changes
+        - ``expired_rules``: rules past their expiry date
+        - ``near_expiry_rules``: rules expiring within *near_expiry_days*
+        - ``match_counts``: per-rule match count
+        """
+        from .checker_policy import BREAKING_KINDS
+        check_date = today or date.today()
+        near_expiry_cutoff = check_date + __import__("datetime").timedelta(days=near_expiry_days)
+
+        match_counts: dict[int, int] = {i: 0 for i in range(len(self._suppressions))}
+        high_risk: list[tuple[Suppression, Change]] = []
+
+        for c in changes:
+            for i, s in enumerate(self._suppressions):
+                if s.matches(c, today=today):
+                    match_counts[i] += 1
+                    if c.kind in BREAKING_KINDS:
+                        high_risk.append((s, c))
+
+        stale = [
+            self._suppressions[i]
+            for i, count in match_counts.items()
+            if count == 0 and not self._suppressions[i].is_expired(today)
+        ]
+
+        expired = self.expired_rules(today)
+
+        near_expiry = [
+            s for s in self._suppressions
+            if s.expires is not None
+            and not s.is_expired(today)
+            and s.expires <= near_expiry_cutoff
+        ]
+
+        return SuppressionAudit(
+            stale_rules=stale,
+            high_risk_matches=high_risk,
+            expired_rules=expired,
+            near_expiry_rules=near_expiry,
+            match_counts={i: match_counts[i] for i in match_counts},
+            total_rules=len(self._suppressions),
+        )
+
     def __len__(self) -> int:
         return len(self._suppressions)
 
     def __repr__(self) -> str:
         return f"SuppressionList({len(self._suppressions)} rules)"
+
+
+@dataclass
+class SuppressionAudit:
+    """Result of auditing suppression rules against detected changes."""
+    stale_rules: list[Suppression]
+    """Rules that matched zero changes (likely stale or misconfigured)."""
+    high_risk_matches: list[tuple[Suppression, "Change"]]
+    """Suppressions that matched BREAKING changes (high risk — should require reason)."""
+    expired_rules: list[Suppression]
+    """Rules past their expiry date."""
+    near_expiry_rules: list[Suppression]
+    """Rules expiring within the near-expiry window."""
+    match_counts: dict[int, int]
+    """Per-rule match count (rule index → number of matched changes)."""
+    total_rules: int
+    """Total number of suppression rules."""
+
+    @property
+    def has_issues(self) -> bool:
+        """True if the audit found any issues worth reporting."""
+        return bool(
+            self.stale_rules
+            or self.high_risk_matches
+            or self.expired_rules
+            or self.near_expiry_rules
+        )
+
+    def summary(self) -> str:
+        """Human-readable audit summary."""
+        lines = [f"Suppression audit: {self.total_rules} rules"]
+        if self.stale_rules:
+            lines.append(f"  ⚠ {len(self.stale_rules)} stale rule(s) matched nothing")
+            for s in self.stale_rules[:5]:
+                target = s.symbol or s.symbol_pattern or s.type_pattern or s.source_location or "?"
+                lines.append(f"    - {target} ({s.reason or 'no reason'})")
+        if self.high_risk_matches:
+            lines.append(f"  ⚠ {len(self.high_risk_matches)} suppression(s) matched BREAKING changes")
+            for sup, change in self.high_risk_matches[:5]:
+                lines.append(f"    - {change.kind.value}: {change.symbol}")
+        if self.expired_rules:
+            lines.append(f"  ⚠ {len(self.expired_rules)} expired rule(s)")
+        if self.near_expiry_rules:
+            lines.append(f"  ℹ {len(self.near_expiry_rules)} rule(s) expiring soon")
+        if not self.has_issues:
+            lines.append("  ✓ No issues found")
+        return "\n".join(lines)

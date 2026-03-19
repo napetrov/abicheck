@@ -53,6 +53,7 @@ from .model import (
     TypeField,
     Variable,
     Visibility,
+    canonicalize_type_name,
 )
 from .model import (
     is_compiler_internal_type as _is_compiler_internal_type,
@@ -145,6 +146,12 @@ class DiffResult:
     redundant_changes: list[Change] = field(default_factory=list)  # hidden by redundancy filter
     redundant_count: int = 0
     old_symbol_count: int | None = None  # public exported symbol count in old library
+    # Evidence tier and confidence — helps users assess how much trust to
+    # place in the verdict.  "high" means multiple evidence sources agree;
+    # "low" means key detectors were disabled (e.g., DWARF stripped).
+    confidence: str = "high"  # "high" | "medium" | "low"
+    evidence_tiers: list[str] = field(default_factory=list)  # e.g. ["elf", "dwarf", "header"]
+    coverage_warnings: list[str] = field(default_factory=list)  # human-readable coverage gaps
 
     def _effective_kind_sets(
         self,
@@ -244,7 +251,7 @@ def _check_function_signature(mangled: str, f_old: Function, f_new: Function) ->
     """Compare signatures and qualifiers of two matched functions."""
     changes: list[Change] = []
 
-    if f_old.return_type != f_new.return_type:
+    if canonicalize_type_name(f_old.return_type) != canonicalize_type_name(f_new.return_type):
         changes.append(Change(
             kind=ChangeKind.FUNC_RETURN_CHANGED,
             symbol=mangled,
@@ -405,7 +412,7 @@ def _diff_variables(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 symbol=mangled,
                 description=f"Public variable removed: {v_old.name}",
             ))
-        elif old_map[mangled].type != new_map[mangled].type:
+        elif canonicalize_type_name(old_map[mangled].type) != canonicalize_type_name(new_map[mangled].type):
             changes.append(Change(
                 kind=ChangeKind.VAR_TYPE_CHANGED,
                 symbol=mangled,
@@ -546,7 +553,9 @@ def _diff_type_fields(name: str, t_old: RecordType, t_new: RecordType) -> list[C
 
 def _diff_type_field_pair(name: str, fname: str, f_old: TypeField, f_new: TypeField) -> list[Change]:
     changes: list[Change] = []
-    if f_old.type != f_new.type:
+    # Use canonical form for type comparison to avoid false positives from
+    # "struct Foo" vs "Foo" or "const int" vs "int const" differences.
+    if canonicalize_type_name(f_old.type) != canonicalize_type_name(f_new.type):
         changes.append(Change(
             kind=ChangeKind.TYPE_FIELD_TYPE_CHANGED,
             symbol=name,
@@ -2284,6 +2293,128 @@ def _deduplicate_ast_dwarf(changes: list[Change]) -> list[Change]:
     return result
 
 
+def _deduplicate_cross_detector(changes: list[Change]) -> list[Change]:
+    """Remove cross-detector duplicates that the per-detector guards may miss.
+
+    Centralised dedup applied after all detectors have run.  Uses
+    (change_category, symbol) as the dedup key to collapse overlapping
+    reports from different detectors for the same logical event.
+
+    Categories:
+    - "func_removal": FUNC_REMOVED, FUNC_REMOVED_ELF_ONLY
+    - "func_addition": FUNC_ADDED
+    - "var_removal": VAR_REMOVED
+    - "var_addition": VAR_ADDED
+
+    Within each category, the first occurrence wins (preserving detector
+    priority order from the ``compare()`` spec list).
+    """
+    _DEDUP_CATEGORIES: dict[ChangeKind, str] = {
+        ChangeKind.FUNC_REMOVED: "func_removal",
+        ChangeKind.FUNC_REMOVED_ELF_ONLY: "func_removal",
+        ChangeKind.FUNC_ADDED: "func_addition",
+        ChangeKind.VAR_REMOVED: "var_removal",
+        ChangeKind.VAR_ADDED: "var_addition",
+    }
+    seen: set[tuple[str, str]] = set()
+    result: list[Change] = []
+    for c in changes:
+        cat = _DEDUP_CATEGORIES.get(c.kind)
+        if cat is not None:
+            key = (cat, c.symbol)
+            if key in seen:
+                continue
+            seen.add(key)
+        result.append(c)
+    return result
+
+
+def _compute_confidence(
+    detector_results: list[DetectorResult],
+    old: AbiSnapshot,
+    new: AbiSnapshot,
+) -> tuple[list[str], str, list[str]]:
+    """Compute evidence tiers, confidence level, and coverage warnings.
+
+    Returns (evidence_tiers, confidence, coverage_warnings).
+
+    Evidence tiers:
+    - "elf": ELF metadata present and analyzed
+    - "dwarf": DWARF debug info present
+    - "header": Header/AST information (functions/types/enums)
+    - "pe": PE metadata present
+    - "macho": Mach-O metadata present
+
+    Confidence:
+    - "high": headers + at least one binary metadata source (ELF/DWARF/PE/Mach-O)
+    - "medium": headers only, or binary-only with ELF+DWARF
+    - "low": binary-only without DWARF, or very limited data
+    """
+    tiers: list[str] = []
+    warnings: list[str] = []
+
+    has_elf = old.elf is not None or new.elf is not None
+    has_dwarf = old.dwarf is not None or new.dwarf is not None
+    has_dwarf_advanced = old.dwarf_advanced is not None or new.dwarf_advanced is not None
+    has_pe = getattr(old, "pe", None) is not None or getattr(new, "pe", None) is not None
+    has_macho = getattr(old, "macho", None) is not None or getattr(new, "macho", None) is not None
+    has_headers = bool(old.functions or old.types or old.enums or old.typedefs)
+    is_elf_only = getattr(old, "elf_only_mode", False)
+
+    if has_elf:
+        tiers.append("elf")
+    if has_dwarf:
+        tiers.append("dwarf")
+    if has_dwarf_advanced:
+        tiers.append("dwarf_advanced")
+    if has_headers:
+        tiers.append("header")
+    if has_pe:
+        tiers.append("pe")
+    if has_macho:
+        tiers.append("macho")
+
+    # Check for disabled detectors and generate warnings.
+    for dr in detector_results:
+        if not dr.enabled and dr.coverage_gap:
+            warnings.append(f"Detector '{dr.name}' disabled: {dr.coverage_gap}")
+
+    # Compute confidence level.
+    if has_headers and (has_elf or has_dwarf or has_pe or has_macho):
+        confidence = "high"
+    elif has_headers:
+        confidence = "medium"
+        if not has_elf and not has_pe and not has_macho:
+            warnings.append(
+                "No binary metadata available; verdict is based on header analysis only"
+            )
+    elif has_elf and has_dwarf:
+        confidence = "medium"
+        if not has_headers:
+            warnings.append(
+                "No header/AST data; type-level changes may be missed"
+            )
+    elif has_elf or has_pe or has_macho:
+        confidence = "low"
+        warnings.append(
+            "Binary-only analysis without debug info; many ABI changes "
+            "cannot be detected (struct layout, enum values, type changes)"
+        )
+    else:
+        confidence = "low"
+        warnings.append("Very limited data available; results may be incomplete")
+
+    # DWARF-specific warning: if DWARF is expected but stripped.
+    dwarf_detector = next(
+        (dr for dr in detector_results if dr.name == "dwarf"), None,
+    )
+    if dwarf_detector and not dwarf_detector.enabled:
+        if confidence == "high":
+            confidence = "medium"
+
+    return tiers, confidence, warnings
+
+
 def compare(
     old: AbiSnapshot,
     new: AbiSnapshot,
@@ -2377,6 +2508,11 @@ def compare(
     # an unsuppressed DWARF duplicate).
     changes = _deduplicate_ast_dwarf(changes)
 
+    # Cross-detector dedup: collapse overlapping reports from different
+    # detectors (e.g., function detector + PE/Mach-O detector both emitting
+    # FUNC_REMOVED for the same symbol).
+    changes = _deduplicate_cross_detector(changes)
+
     # Enrich source locations before suppression so source_location-based
     # suppression rules can match (most changes have source_location=None
     # until enrichment runs).
@@ -2412,6 +2548,11 @@ def compare(
         1 for v in old.variables if v.visibility in _PUBLIC_VIS
     )
 
+    # Compute evidence tiers and confidence from detector results.
+    evidence_tiers, confidence, coverage_warnings = _compute_confidence(
+        detector_results, old, new,
+    )
+
     return DiffResult(
         old_version=old.version,
         new_version=new.version,
@@ -2427,6 +2568,9 @@ def compare(
         redundant_changes=redundant,
         redundant_count=len(redundant),
         old_symbol_count=old_sym_count if old_sym_count > 0 else None,
+        confidence=confidence,
+        evidence_tiers=evidence_tiers,
+        coverage_warnings=coverage_warnings,
     )
 
 
