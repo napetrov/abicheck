@@ -39,6 +39,7 @@ from .report_classifications import (
     CATEGORY_PREFIXES,
     REMOVED_KINDS,
     category,
+    is_symbol_problem,
     is_type_problem,
     kind_str,
     severity,
@@ -429,16 +430,21 @@ def _generate_compat_html(
     """
     h = html.escape
 
-    # Classify type vs symbol problems by severity
+    # Classify type vs symbol vs other problems by severity.
+    # "other" catches ELF-layer kinds (soname_, symbol_, needed_, rpath_, …)
+    # that are neither type-scoped nor symbol/interface-scoped.
     type_problems: dict[str, list[object]] = {"High": [], "Medium": [], "Low": []}
     symbol_problems: dict[str, list[object]] = {"High": [], "Medium": [], "Low": []}
+    other_problems: dict[str, list[object]] = {"High": [], "Medium": [], "Low": []}
     for ch in changed:
         ks = kind_str(ch)
         sev = severity(ks)
         if is_type_problem(ks):
             type_problems[sev].append(ch)
-        else:
+        elif is_symbol_problem(ks):
             symbol_problems[sev].append(ch)
+        else:
+            other_problems[sev].append(ch)
 
     # Counts for META_DATA
     tp_high = len(type_problems["High"])
@@ -546,6 +552,15 @@ def _generate_compat_html(
 <div id='InterfaceProblems_{sev}'>
 <h2>Problems with Symbols — {sev} Severity ({len(items)})</h2>
 {_compat_changes_table(items, show_severity=True)}
+</div>""")
+
+    # Other problems (ELF-layer: soname, symbol versioning, calling convention, etc.)
+    other_all = other_problems["High"] + other_problems["Medium"] + other_problems["Low"]
+    if other_all:
+        sections_html.append(f"""
+<div id='OtherProblems'>
+<h2>Other Problems ({len(other_all)})</h2>
+{_compat_changes_table(other_all, show_severity=True)}
 </div>""")
 
     body_html = "\n".join(sections_html)
