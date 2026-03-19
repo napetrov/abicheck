@@ -2265,6 +2265,17 @@ def _is_pointer_only_type(type_name: str, snap: AbiSnapshot) -> bool:
     return True
 
 
+def _has_public_pointer_factory(type_name: str, snap: AbiSnapshot) -> bool:
+    """True if snapshot has at least one PUBLIC function returning ``type_name*``."""
+    for f in snap.functions:
+        if f.visibility not in _PUBLIC_VIS:
+            continue
+        rt = (f.return_type or "").replace(" ", "")
+        if type_name in rt and "*" in rt and "&" not in rt:
+            return True
+    return False
+
+
 def _filter_opaque_size_changes(
     changes: list[Change], old: AbiSnapshot, new: AbiSnapshot
 ) -> list[Change]:
@@ -2311,6 +2322,10 @@ def _filter_opaque_size_changes(
         if kinds & forbidden:
             continue
         if not (_is_pointer_only_type(t, old) and _is_pointer_only_type(t, new)):
+            continue
+        # Narrow guard to avoid case07-style regressions:
+        # opaque handles are typically created by factory APIs returning T*.
+        if not (_has_public_pointer_factory(t, old) and _has_public_pointer_factory(t, new)):
             continue
         opaque_types.add(t)
 
@@ -2690,6 +2705,9 @@ def compare(
     # Must run before AST/DWARF dedup so that DWARF duplicates of the suppressed
     # findings are also removed.
     changes = _filter_reserved_field_renames(changes)
+
+    # Suppress size-only growth for opaque pointer-handle types (case62).
+    changes = _filter_opaque_size_changes(changes, old, new)
 
     # Deduplicate AST/DWARF before suppression so a single canonical change
     # remains for suppression matching (avoids suppressed AST entry leaving
