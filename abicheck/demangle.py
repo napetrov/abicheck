@@ -41,7 +41,7 @@ def demangle(symbol: str) -> str | None:
         return None
     try:
         import cxxfilt
-        return cxxfilt.demangle(symbol)
+        return str(cxxfilt.demangle(symbol))
     except Exception:  # noqa: BLE001
         pass
     try:

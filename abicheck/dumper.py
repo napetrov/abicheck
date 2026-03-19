@@ -249,6 +249,11 @@ _CPP_PATTERNS = [
 ]
 
 
+_EXTERN_C_RE = re.compile(rb'^\s*extern\s+"C"')
+_IFDEF_CPLUSPLUS_RE = re.compile(rb"^\s*#\s*ifdef\s+__cplusplus\b")
+_ENDIF_RE = re.compile(rb"^\s*#\s*endif\b")
+
+
 def _detect_cpp_headers(header_paths: list[Path]) -> bool:
     """Auto-detect whether headers require C++ compilation mode (FIX-A).
 
@@ -264,9 +269,21 @@ def _detect_cpp_headers(header_paths: list[Path]) -> bool:
             continue
         # Strip C-style block comments to reduce false positives
         content = re.sub(rb"/\*.*?\*/", b"", content, flags=re.DOTALL)
+        # Track #ifdef __cplusplus depth to ignore guarded extern "C"
+        cplusplus_guard_depth = 0
         for line in content.split(b"\n"):
             # Skip C++ line comments
             stripped = line.split(b"//")[0]
+            # Track preprocessor guards
+            if _IFDEF_CPLUSPLUS_RE.search(stripped):
+                cplusplus_guard_depth += 1
+                continue
+            if cplusplus_guard_depth > 0 and _ENDIF_RE.search(stripped):
+                cplusplus_guard_depth -= 1
+                continue
+            # extern "C" outside __cplusplus guard is a genuine C++ indicator
+            if cplusplus_guard_depth == 0 and _EXTERN_C_RE.search(stripped):
+                return True
             if any(pat.search(stripped) for pat in _CPP_PATTERNS):
                 return True
     return False
