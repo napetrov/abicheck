@@ -228,9 +228,11 @@ addressed in the checker/dumper code.
 **Root cause:** `elf_metadata.py` reads `st_other` but `checker.py` doesn't diff
 visibility attributes beyond DEFAULT/HIDDEN.
 **Fix:**
-1. Add `visibility` field to `Function`/`Variable` model (values: DEFAULT,
-   PROTECTED, HIDDEN, INTERNAL)
-2. Extend `elf_metadata.py` to populate visibility from `st_other` byte
+1. Add `elf_visibility` field to `Function`/`Variable` model (values: DEFAULT,
+   PROTECTED, HIDDEN, INTERNAL) — kept separate from the existing `visibility`
+   field which tracks API-level provenance (PUBLIC/HIDDEN/ELF_ONLY) and drives
+   symbol filtering in `checker.py` (see m4 in Appendix A.3)
+2. Extend `elf_metadata.py` to populate `elf_visibility` from `st_other` byte
 3. Add detector in `checker.py`: `SYMBOL_VISIBILITY_CHANGED` (new ChangeKind if
    needed, or extend `FUNC_VISIBILITY_CHANGED`)
 4. Verdict: COMPATIBLE (interposition policy concern, not binary break)
@@ -255,16 +257,33 @@ symbols are filtered out without headers.
 **Gap:** When a function disappears from `.dynsym` but remains declared in headers
 (moved to `static inline`), verdict is COMPATIBLE instead of BREAKING.
 **Root cause:** `func_removed_elf_only` ChangeKind has COMPATIBLE default verdict.
-**Fix:**
-1. Split detection: if function is in old ELF `.dynsym` and missing from new
-   `.dynsym`, this is a binary-level break regardless of header presence
-2. Rename or add: `FUNC_REMOVED_FROM_BINARY` with BREAKING verdict
-3. Keep `func_removed_elf_only` for the case where function was never in headers
-   (truly ELF-only symbol that may be internal)
-4. Policy: `strict_abi` → BREAKING, `plugin_abi` → COMPATIBLE_WITH_RISK
-**Test:** Update case59 ground truth, add unit test with both scenarios
-**Effort:** Medium (requires careful distinction between "header-declared but
-ELF-removed" vs "ELF-only internal symbol removed")
+**Fix (mixed-mode only — see B2 in Appendix A.1):**
+
+In pure ELF-only mode, all functions carry `Visibility.ELF_ONLY` (`model.py:36`,
+`dumper.py:1134-1138`) and the checker selects `FUNC_REMOVED_ELF_ONLY` vs
+`FUNC_REMOVED` from that single provenance bit (`checker.py:226-230`). There is
+no persisted signal for "still declared in headers but removed from `.dynsym`",
+so the header-vs-ELF distinction is **not implementable in pure ELF-only mode**.
+
+Therefore:
+1. **Mixed-mode (headers available):** Add `FUNC_REMOVED_FROM_BINARY` ChangeKind
+   with BREAKING default. Emit it when a function is present in old `.dynsym` and
+   absent from new `.dynsym`, **and** the function was header-declared (i.e.,
+   `visibility != ELF_ONLY`). This is a binary break: consumers' PLT entries will
+   fail to resolve at load time even though headers still declare the function.
+2. **Pure ELF-only mode:** Retain `func_removed_elf_only` as-is (COMPATIBLE
+   default). Without headers, we cannot distinguish intentionally-public from
+   accidentally-leaked symbols, so a blanket elevation would produce excessive
+   false positives (see M8: LTO and `-fvisibility=hidden` rebuilds).
+3. **Policy overrides:**
+   - `strict_abi` → elevates `func_removed_elf_only` to BREAKING even in
+     ELF-only mode (user opts into strictness)
+   - `plugin_abi` → keeps COMPATIBLE_WITH_RISK for both modes
+**Test:** Update case59 ground truth (mixed-mode scenario), add unit tests for:
+  (a) mixed-mode removal → FUNC_REMOVED_FROM_BINARY (BREAKING),
+  (b) ELF-only removal → func_removed_elf_only (COMPATIBLE),
+  (c) ELF-only removal + strict_abi policy → BREAKING
+**Effort:** Medium
 
 #### WS-4d: Visibility change detection enhancement
 
@@ -385,7 +404,7 @@ and can start in parallel if resources allow.
 | Marker | Purpose | CI Job |
 |--------|---------|--------|
 | `libabigail_corpus` | libabigail binary fixture tests | Gated (heavy-parity-gate) |
-| `abicc_replay` | ABICC RegTests replay | Gated (heavy-parity-gate) |
+| `abicc` | ABICC RegTests replay (extends existing abicc-parity job) | Gated (heavy-parity-gate) |
 | `realworld` | Real-world library pairs | Weekly scheduled |
 
 Register in `conftest.py` and `pyproject.toml`.
@@ -459,10 +478,10 @@ Heavy parity jobs add ~5 min but run conditionally.
 ### A.1 BLOCKERS (must resolve before implementation)
 
 **B1. CI marker exclusion gap** *(Test Architecture)*
-New markers (`libabigail_corpus`, `abicc_replay`, `realworld`) are NOT excluded
+New markers (`libabigail_corpus`, `realworld`) are NOT excluded
 from the unit-test `-m` filter in `ci.yml`. Tests will collect and fail in the
 fast gate unless the filter is updated to:
-`not integration and not libabigail and not libabigail_corpus and not abicc and not abicc_replay and not realworld`
+`not integration and not libabigail and not libabigail_corpus and not abicc and not realworld`
 Also add `conftest.py` skip-if-unavailable hooks for all three markers.
 
 **B2. WS-4c approach infeasible in pure ELF-only mode** *(Feasibility)*
@@ -501,13 +520,9 @@ Stripping DWARF from fixtures contradicts WS-1's goal of testing DWARF reader.
 symbol-level-only tests. Budget realistically for 15-20 MB with LFS.
 
 **M2. Marker naming inconsistency** *(Test Architecture + CI/DevOps)*
-WS-2 spec says `@pytest.mark.abicc` but Section 6 says `abicc_replay`. These are
-different markers. The existing `abicc` marker runs in the existing `abicc-parity`
-CI job. If WS-2 reuses `abicc`, those tests join the existing job (may be
-desired). If WS-2 uses `abicc_replay`, it needs its own CI job and the unit-test
-filter must exclude it separately.
-**Resolution:** Use `@pytest.mark.abicc` for WS-2 (extend existing parity job).
-Document the decision.
+**Resolved:** WS-2 and Section 6 now both use `@pytest.mark.abicc`, extending the
+existing `abicc-parity` CI job (`ci.yml:200-217`). The previously conflicting
+`abicc_replay` name has been removed from the marker table.
 
 **M3. WS-5a: Reserved field detector already exists** *(Feasibility)*
 `_diff_reserved_fields()` already exists at `checker.py:2398-2436` with regex
