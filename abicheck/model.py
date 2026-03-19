@@ -49,6 +49,7 @@ def is_compiler_internal_type(name: str) -> bool:
 # Type name canonicalization — normalise type names for reliable matching.
 # ---------------------------------------------------------------------------
 
+
 # Patterns for type-name canonicalization.
 _STRUCT_PREFIX_RE = _re.compile(r"^\s*(struct|class|union|enum)\s+")
 # Match leading "const" followed by a base type (words, ::, spaces) and optional
