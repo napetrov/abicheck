@@ -1148,13 +1148,26 @@ def compare_cmd(
 # ── Dump options ──────────────────────────────────────────────────────────────
 @click.option("-H", "--header", "headers", multiple=True,
               type=click.Path(path_type=Path),
-              help="Public header file or directory for library ABI extraction.")
+              help="Public header file or directory for library ABI extraction "
+                   "(applied to both sides).")
 @click.option("-I", "--include", "includes", multiple=True,
               type=click.Path(path_type=Path),
-              help="Extra include directory for castxml.")
+              help="Extra include directory for castxml (applied to both sides).")
 @click.option("--lang", default="c++", show_default=True,
               type=click.Choice(["c++", "c"], case_sensitive=False),
               help="Language mode for castxml.")
+@click.option("--old-header", "old_headers_only", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Public header for old library only (overrides -H for old).")
+@click.option("--new-header", "new_headers_only", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Public header for new library only (overrides -H for new).")
+@click.option("--old-include", "old_includes_only", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Include dir for old library only (overrides -I for old).")
+@click.option("--new-include", "new_includes_only", multiple=True,
+              type=click.Path(path_type=Path),
+              help="Include dir for new library only (overrides -I for new).")
 @click.option("--old-version", "old_version", default="old", show_default=True)
 @click.option("--new-version", "new_version", default="new", show_default=True)
 # ── Output options ────────────────────────────────────────────────────────────
@@ -1182,6 +1195,10 @@ def appcompat_cmd(
     headers: tuple[Path, ...],
     includes: tuple[Path, ...],
     lang: str,
+    old_headers_only: tuple[Path, ...],
+    new_headers_only: tuple[Path, ...],
+    old_includes_only: tuple[Path, ...],
+    new_includes_only: tuple[Path, ...],
     old_version: str,
     new_version: str,
     fmt: str,
@@ -1272,11 +1289,19 @@ def appcompat_cmd(
     else:
         assert old_lib is not None and new_lib is not None
         suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
-        resolved_headers = _expand_header_inputs(list(headers)) if headers else []
+        old_h, new_h, old_inc, new_inc = _resolve_per_side_options(
+            headers, includes,
+            old_headers_only, new_headers_only,
+            old_includes_only, new_includes_only,
+        )
+        resolved_old_h = _expand_header_inputs(old_h) if old_h else []
+        resolved_new_h = _expand_header_inputs(new_h) if new_h else []
         result = check_appcompat(
             app_path, old_lib, new_lib,
-            headers=resolved_headers,
-            includes=list(includes),
+            old_headers=resolved_old_h,
+            new_headers=resolved_new_h,
+            old_includes=old_inc,
+            new_includes=new_inc,
             old_version=old_version,
             new_version=new_version,
             lang=lang,

@@ -188,36 +188,48 @@ class AbiSnapshot:
     def index(self) -> None:
         """Build lookup indexes. Uses first-wins for duplicate mangled names."""
         func_map: dict[str, Function] = {}
+        dup_funcs: dict[str, int] = {}
         for f in self.functions:
             if f.mangled in func_map:
-                _model_log.warning(
-                    "Duplicate mangled symbol skipped (first-wins): %s in %s@%s",
-                    f.mangled, self.library, self.version,
-                )
+                dup_funcs[f.mangled] = dup_funcs.get(f.mangled, 0) + 1
             else:
                 func_map[f.mangled] = f
+        if dup_funcs:
+            _model_log.warning(
+                "Duplicate mangled symbols skipped (first-wins) in %s@%s: %s",
+                self.library, self.version,
+                ", ".join(f"{k} (×{v + 1})" for k, v in dup_funcs.items()),
+            )
         self._func_by_mangled = func_map
 
         var_map: dict[str, Variable] = {}
+        dup_vars: dict[str, int] = {}
         for v in self.variables:
             if v.mangled in var_map:
-                _model_log.warning(
-                    "Duplicate mangled variable skipped (first-wins): %s in %s@%s",
-                    v.mangled, self.library, self.version,
-                )
+                dup_vars[v.mangled] = dup_vars.get(v.mangled, 0) + 1
             else:
                 var_map[v.mangled] = v
+        if dup_vars:
+            _model_log.warning(
+                "Duplicate mangled variables skipped (first-wins) in %s@%s: %s",
+                self.library, self.version,
+                ", ".join(f"{k} (×{v + 1})" for k, v in dup_vars.items()),
+            )
         self._var_by_mangled = var_map
 
         type_map: dict[str, RecordType] = {}
+        dup_types: dict[str, int] = {}
         for t in self.types:
             if t.name in type_map:
-                _model_log.warning(
-                    "Duplicate type name skipped (first-wins): %s in %s@%s",
-                    t.name, self.library, self.version,
-                )
+                dup_types[t.name] = dup_types.get(t.name, 0) + 1
             else:
                 type_map[t.name] = t
+        if dup_types:
+            _model_log.warning(
+                "Duplicate type names skipped (first-wins) in %s@%s: %s",
+                self.library, self.version,
+                ", ".join(f"{k} (×{v + 1})" for k, v in dup_types.items()),
+            )
         self._type_by_name = type_map
 
     @property

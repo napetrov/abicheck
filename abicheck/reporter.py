@@ -681,7 +681,7 @@ def to_markdown(
         lines.append("")
 
     if compatible:
-        lines += ["## ✅ Compatible Additions", ""]
+        lines += ["## ✅ Compatible Changes", ""]
         for c in compatible:
             lines.append(f"- {c.description}")
         lines.append("")

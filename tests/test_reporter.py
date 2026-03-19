@@ -48,14 +48,14 @@ class TestMarkdownReporter:
                    new_value="new_api")
         md = to_markdown(_result(Verdict.COMPATIBLE, [c]))
         assert "COMPATIBLE" in md
-        assert "Compatible Additions" in md
+        assert "Compatible Changes" in md
 
     def test_noexcept_added_in_compatible_section(self):
         c = Change(ChangeKind.FUNC_NOEXCEPT_ADDED, "_Z4swapv",
                    "noexcept specifier added: swap")
         md = to_markdown(_result(Verdict.COMPATIBLE, [c]))
         assert "COMPATIBLE" in md
-        assert "Compatible Additions" in md
+        assert "Compatible Changes" in md
 
     def test_legend_always_present(self):
         md = to_markdown(_result(Verdict.NO_CHANGE))
