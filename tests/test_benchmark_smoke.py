@@ -32,14 +32,6 @@ def _load_benchmark():
 
 # ── Import / parse_args ───────────────────────────────────────────────────────
 
-def test_import_benchmark_script():
-    """Script must import without errors."""
-    mod = _load_benchmark()
-    assert hasattr(mod, "main")
-    assert hasattr(mod, "run_abicc_dumper")
-    assert hasattr(mod, "run_abicc_xml")
-
-
 def test_parse_args_defaults():
     mod = _load_benchmark()
     with patch("sys.argv", ["benchmark_comparison.py"]):

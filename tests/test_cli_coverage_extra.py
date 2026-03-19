@@ -128,7 +128,7 @@ class TestShowOnlyValidation:
     """Test --show-only parameter validation."""
 
     def test_invalid_show_only_token(self, tmp_path: Path) -> None:
-        """Invalid --show-only token produces error."""
+        """Invalid --show-only token produces error with descriptive message."""
         old = _make_json_snapshot(tmp_path, name="libold", version="1.0")
         new = _make_json_snapshot(tmp_path, name="libnew", version="2.0")
 
@@ -137,8 +137,8 @@ class TestShowOnlyValidation:
             "compare", str(old), str(new),
             "--show-only", "invalid_token_xyz",
         ])
-        # Should fail with bad parameter
         assert result.exit_code != 0
+        assert "Unknown --show-only token" in result.output or "Invalid value" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +163,7 @@ class TestStatOutput:
         assert "verdict" in data
 
     def test_stat_text_output(self, tmp_path: Path) -> None:
-        """--stat produces one-line summary."""
+        """--stat produces one-line summary containing verdict."""
         old = _make_json_snapshot(tmp_path, name="libold", version="1.0")
         new = _make_json_snapshot(tmp_path, name="libnew", version="2.0")
 
@@ -172,7 +172,9 @@ class TestStatOutput:
             "compare", str(old), str(new), "--stat",
         ])
         assert result.exit_code == 0
-        assert result.output.strip()  # non-empty output
+        output = result.output.strip()
+        assert output  # non-empty
+        assert "NO_CHANGE" in output  # verdict should appear in stat output
 
 
 # ---------------------------------------------------------------------------
@@ -218,21 +220,75 @@ class TestRenderOutputFormats:
         data = json.loads(result.output)
         assert "verdict" in data
 
-    def test_show_impact_flag(self, snapshot_pair: tuple[Path, Path]) -> None:
-        old, new = snapshot_pair
-        runner = CliRunner()
-        result = runner.invoke(main, [
-            "compare", str(old), str(new), "--show-impact",
-        ])
-        assert result.exit_code == 0
+    def test_show_impact_flag(self, tmp_path: Path) -> None:
+        """--show-impact includes impact summary when type changes have affected symbols."""
+        from abicheck.model import (
+            AbiSnapshot,
+            Function,
+            Param,
+            RecordType,
+            TypeField,
+            Visibility,
+        )
+        from abicheck.serialization import snapshot_to_json
 
-    def test_leaf_report_mode(self, snapshot_pair: tuple[Path, Path]) -> None:
-        old, new = snapshot_pair
-        runner = CliRunner()
-        result = runner.invoke(main, [
-            "compare", str(old), str(new), "--report-mode", "leaf",
+        rec = RecordType(name="Pt", kind="struct", size_bits=32, fields=[
+            TypeField(name="x", type="int", offset_bits=0),
         ])
-        assert result.exit_code == 0
+        rec_v2 = RecordType(name="Pt", kind="struct", size_bits=64, fields=[
+            TypeField(name="x", type="int", offset_bits=0),
+            TypeField(name="y", type="int", offset_bits=32),
+        ])
+        func = Function(name="draw", mangled="_Z4draw2Pt", return_type="void",
+                        params=[Param(name="p", type="Pt")], visibility=Visibility.PUBLIC)
+
+        old_snap = AbiSnapshot(library="lib.so", version="1.0", functions=[func], types=[rec])
+        new_snap = AbiSnapshot(library="lib.so", version="2.0", functions=[func], types=[rec_v2])
+
+        old_f = tmp_path / "old.json"
+        new_f = tmp_path / "new.json"
+        old_f.write_text(snapshot_to_json(old_snap), encoding="utf-8")
+        new_f.write_text(snapshot_to_json(new_snap), encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["compare", str(old_f), str(new_f), "--show-impact"])
+        assert result.exit_code == 4  # breaking (struct size changed)
+        assert "Impact Summary" in result.output or "impact" in result.output.lower()
+
+    def test_leaf_report_mode(self, tmp_path: Path) -> None:
+        """--report-mode leaf produces leaf-change view with type root changes."""
+        from abicheck.model import (
+            AbiSnapshot,
+            Function,
+            Param,
+            RecordType,
+            TypeField,
+            Visibility,
+        )
+        from abicheck.serialization import snapshot_to_json
+
+        rec = RecordType(name="Cfg", kind="struct", size_bits=32, fields=[
+            TypeField(name="x", type="int", offset_bits=0),
+        ])
+        rec_v2 = RecordType(name="Cfg", kind="struct", size_bits=64, fields=[
+            TypeField(name="x", type="int", offset_bits=0),
+            TypeField(name="y", type="int", offset_bits=32),
+        ])
+        func = Function(name="init", mangled="_Z4init3Cfg", return_type="void",
+                        params=[Param(name="c", type="Cfg")], visibility=Visibility.PUBLIC)
+
+        old_snap = AbiSnapshot(library="lib.so", version="1.0", functions=[func], types=[rec])
+        new_snap = AbiSnapshot(library="lib.so", version="2.0", functions=[func], types=[rec_v2])
+
+        old_f = tmp_path / "old.json"
+        new_f = tmp_path / "new.json"
+        old_f.write_text(snapshot_to_json(old_snap), encoding="utf-8")
+        new_f.write_text(snapshot_to_json(new_snap), encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["compare", str(old_f), str(new_f), "--report-mode", "leaf"])
+        assert result.exit_code == 4
+        assert "leaf-change view" in result.output or "Cfg" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -244,21 +300,23 @@ class TestCompareErrorDisplay:
     """Test compare command error handling paths."""
 
     def test_nonexistent_old_input(self) -> None:
-        """Non-existent old input produces clean error."""
+        """Non-existent old input produces clean error with path message."""
         runner = CliRunner()
         result = runner.invoke(main, [
             "compare", "/nonexistent/old.so", "/nonexistent/new.so",
         ])
         assert result.exit_code != 0
+        assert "does not exist" in result.output or "Invalid value" in result.output
 
     def test_nonexistent_new_input(self, tmp_path: Path) -> None:
-        """Non-existent new input produces clean error."""
+        """Non-existent new input produces clean error with path message."""
         old = _make_json_snapshot(tmp_path, name="libold", version="1.0")
         runner = CliRunner()
         result = runner.invoke(main, [
             "compare", str(old), "/nonexistent/new.so",
         ])
         assert result.exit_code != 0
+        assert "does not exist" in result.output or "Invalid value" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -271,33 +329,55 @@ class TestShowRedundant:
 
     def test_show_redundant_flag(self, tmp_path: Path) -> None:
         """--show-redundant merges redundant changes back into main list."""
-        from abicheck.model import AbiSnapshot, Function, Visibility
+        from abicheck.model import (
+            AbiSnapshot,
+            Function,
+            Param,
+            RecordType,
+            TypeField,
+            Visibility,
+        )
         from abicheck.serialization import snapshot_to_json
 
-        # Create snapshots with a removed function to produce changes
-        old_snap = AbiSnapshot(
-            library="libtest.so", version="1.0",
-            functions=[
-                Function(name="foo", mangled="foo", return_type="int",
-                         visibility=Visibility.PUBLIC),
-            ],
-        )
-        new_snap = AbiSnapshot(
-            library="libtest.so", version="2.0",
-            functions=[],
-        )
+        # A struct that changes size between versions
+        rec = RecordType(name="Cfg", kind="struct", size_bits=32, fields=[
+            TypeField(name="x", type="int", offset_bits=0),
+        ])
+        rec_v2 = RecordType(name="Cfg", kind="struct", size_bits=64, fields=[
+            TypeField(name="x", type="int", offset_bits=0),
+            TypeField(name="y", type="int", offset_bits=32),
+        ])
+        # Function whose param type references Cfg — changing from Cfg* to Cfg
+        # produces FUNC_PARAMS_CHANGED which the redundancy filter hides because
+        # it is caused by the root TYPE_SIZE_CHANGED on Cfg.
+        func_old = Function(name="init", mangled="_Z4initP3Cfg", return_type="void",
+                            params=[Param(name="c", type="Cfg*")],
+                            visibility=Visibility.PUBLIC)
+        func_new = Function(name="init", mangled="_Z4initP3Cfg", return_type="void",
+                            params=[Param(name="c", type="Cfg")],
+                            visibility=Visibility.PUBLIC)
+
+        old_snap = AbiSnapshot(library="libtest.so", version="1.0",
+                               functions=[func_old], types=[rec])
+        new_snap = AbiSnapshot(library="libtest.so", version="2.0",
+                               functions=[func_new], types=[rec_v2])
 
         old_file = tmp_path / "old.json"
         new_file = tmp_path / "new.json"
         old_file.write_text(snapshot_to_json(old_snap), encoding="utf-8")
         new_file.write_text(snapshot_to_json(new_snap), encoding="utf-8")
 
+        # Without --show-redundant the derived FUNC_PARAMS_CHANGED is hidden
         runner = CliRunner()
+        hidden = runner.invoke(main, ["compare", str(old_file), str(new_file)])
+        assert hidden.exit_code == 4
+
+        # With --show-redundant the hidden derived change is restored
         result = runner.invoke(main, [
             "compare", str(old_file), str(new_file), "--show-redundant",
         ])
-        # Exit 0 = no changes, exit 4 = breaking changes detected
-        assert result.exit_code in (0, 4)
+        assert result.exit_code == 4
+        assert "init" in result.output  # derived change now visible
 
 
 # ---------------------------------------------------------------------------
@@ -309,15 +389,15 @@ class TestStackCheckCommand:
     """Test the stack-check CLI command."""
 
     def test_stack_check_nonexistent_dirs(self) -> None:
-        """stack-check with non-existent directories handles gracefully."""
+        """stack-check with non-existent directories produces descriptive error."""
         runner = CliRunner()
         result = runner.invoke(main, [
             "stack-check", "usr/bin/test",
             "--baseline", "/nonexistent/baseline",
             "--candidate", "/nonexistent/candidate",
         ])
-        # Non-existent paths should produce a non-zero exit
         assert result.exit_code != 0
+        assert "does not exist" in result.output or "Invalid value" in result.output
 
     def test_stack_check_with_mock(self, tmp_path: Path) -> None:
         """stack-check with mocked resolver produces proper output."""

@@ -22,25 +22,35 @@ from abicheck.report_classifications import (
 # ---------------------------------------------------------------------------
 
 class TestConstants:
-    def test_removed_kinds_non_empty(self):
-        assert len(REMOVED_KINDS) > 0
+    def test_removed_kinds_contains_expected_members(self):
         assert isinstance(REMOVED_KINDS, frozenset)
+        assert "func_removed" in REMOVED_KINDS
+        assert "var_removed" in REMOVED_KINDS
+        assert "type_removed" in REMOVED_KINDS
 
-    def test_added_kinds_non_empty(self):
-        assert len(ADDED_KINDS) > 0
+    def test_added_kinds_contains_expected_members(self):
         assert isinstance(ADDED_KINDS, frozenset)
+        assert "func_added" in ADDED_KINDS
+        assert "var_added" in ADDED_KINDS
+        assert "type_added" in ADDED_KINDS
 
-    def test_binary_only_kinds_non_empty(self):
-        assert len(BINARY_ONLY_KINDS) > 0
+    def test_binary_only_kinds_contains_expected_members(self):
         assert isinstance(BINARY_ONLY_KINDS, frozenset)
+        assert "soname_changed" in BINARY_ONLY_KINDS
+        assert "symbol_type_changed" in BINARY_ONLY_KINDS
+        assert "calling_convention_changed" in BINARY_ONLY_KINDS
 
-    def test_breaking_kinds_non_empty(self):
-        assert len(BREAKING_KINDS) > 0
+    def test_breaking_kinds_contains_expected_members(self):
         assert isinstance(BREAKING_KINDS, frozenset)
+        assert "func_removed" in BREAKING_KINDS
+        assert "type_size_changed" in BREAKING_KINDS
+        assert "var_removed" in BREAKING_KINDS
 
-    def test_changed_breaking_kinds_non_empty(self):
-        assert len(CHANGED_BREAKING_KINDS) > 0
+    def test_changed_breaking_kinds_contains_expected_members(self):
         assert isinstance(CHANGED_BREAKING_KINDS, frozenset)
+        assert "func_params_changed" in CHANGED_BREAKING_KINDS
+        assert "func_return_changed" in CHANGED_BREAKING_KINDS
+        assert "type_field_offset_changed" in CHANGED_BREAKING_KINDS
 
 
 # ---------------------------------------------------------------------------

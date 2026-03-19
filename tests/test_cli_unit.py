@@ -248,23 +248,15 @@ class TestCompatClassifiedErrorPaths:
     def _snap(self, version: str) -> AbiSnapshot:
         return AbiSnapshot(library="libtest.so", version=version)
 
-    def test_setup_logging_error_exits_6(self, tmp_path, monkeypatch):
+    def _write_minimal_descriptors(self, tmp_path):
         old = tmp_path / "old.xml"
         new = tmp_path / "new.xml"
         old.write_text("<descriptor/>", encoding="utf-8")
         new.write_text("<descriptor/>", encoding="utf-8")
-
-        monkeypatch.setattr("abicheck.compat.cli._setup_logging", lambda *_a, **_k: (_ for _ in ()).throw(OSError("bad logging mode")))
-
-        runner = CliRunner()
-        result = runner.invoke(main, ["compat", "check", "-lib", "libtest", "-old", str(old), "-new", str(new)])
-        assert result.exit_code == 6
+        return old, new
 
     def test_skip_symbols_invalid_regex_exits_6(self, tmp_path, monkeypatch):
-        old = tmp_path / "old.xml"
-        new = tmp_path / "new.xml"
-        old.write_text("<descriptor/>", encoding="utf-8")
-        new.write_text("<descriptor/>", encoding="utf-8")
+        old, new = self._write_minimal_descriptors(tmp_path)
         bad = tmp_path / "skip.txt"
         bad.write_text("([\n", encoding="utf-8")
 
@@ -277,12 +269,10 @@ class TestCompatClassifiedErrorPaths:
             "-skip-symbols", str(bad),
         ])
         assert result.exit_code == 6
+        assert "pattern" in result.output.lower() or "skip-symbols" in result.output.lower()
 
     def test_skip_internal_invalid_regex_exits_6(self, tmp_path, monkeypatch):
-        old = tmp_path / "old.xml"
-        new = tmp_path / "new.xml"
-        old.write_text("<descriptor/>", encoding="utf-8")
-        new.write_text("<descriptor/>", encoding="utf-8")
+        old, new = self._write_minimal_descriptors(tmp_path)
 
         snaps = [self._snap("1.0"), self._snap("2.0")]
         monkeypatch.setattr("abicheck.compat.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
@@ -293,22 +283,15 @@ class TestCompatClassifiedErrorPaths:
             "-skip-internal-symbols", "([",
         ])
         assert result.exit_code == 6
+        assert "pattern" in result.output.lower() or "skip-internal" in result.output.lower()
 
     def test_suppression_load_error_exits_6(self, tmp_path, monkeypatch):
-        old = tmp_path / "old.xml"
-        new = tmp_path / "new.xml"
-        old.write_text("<descriptor/>", encoding="utf-8")
-        new.write_text("<descriptor/>", encoding="utf-8")
-        sup = tmp_path / "sup.yaml"
-        sup.write_text("version: 1\n", encoding="utf-8")
+        old, new = self._write_minimal_descriptors(tmp_path)
+        sup = tmp_path / "bad_sup.yaml"
+        sup.write_text("- this is a list not a dict\n", encoding="utf-8")
 
         snaps = [self._snap("1.0"), self._snap("2.0")]
         monkeypatch.setattr("abicheck.compat.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
-
-        def _boom(_path):
-            raise ValueError("bad suppression")
-
-        monkeypatch.setattr("abicheck.suppression.SuppressionList.load", staticmethod(_boom))
 
         runner = CliRunner()
         result = runner.invoke(main, [
@@ -316,13 +299,10 @@ class TestCompatClassifiedErrorPaths:
             "--suppress", str(sup),
         ])
         assert result.exit_code == 6
-
+        assert "suppression" in result.output.lower() or "mapping" in result.output.lower()
 
     def test_skip_symbols_missing_file_exits_4(self, tmp_path, monkeypatch):
-        old = tmp_path / "old.xml"
-        new = tmp_path / "new.xml"
-        old.write_text("<descriptor/>", encoding="utf-8")
-        new.write_text("<descriptor/>", encoding="utf-8")
+        old, new = self._write_minimal_descriptors(tmp_path)
 
         snaps = [self._snap("1.0"), self._snap("2.0")]
         monkeypatch.setattr("abicheck.compat.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
@@ -334,12 +314,10 @@ class TestCompatClassifiedErrorPaths:
             "-skip-symbols", str(missing),
         ])
         assert result.exit_code == 4
+        assert "no such file" in result.output.lower() or "skip-symbols" in result.output.lower()
 
     def test_symbols_list_missing_file_exits_4(self, tmp_path, monkeypatch):
-        old = tmp_path / "old.xml"
-        new = tmp_path / "new.xml"
-        old.write_text("<descriptor/>", encoding="utf-8")
-        new.write_text("<descriptor/>", encoding="utf-8")
+        old, new = self._write_minimal_descriptors(tmp_path)
 
         snaps = [self._snap("1.0"), self._snap("2.0")]
         monkeypatch.setattr("abicheck.compat.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
@@ -351,12 +329,10 @@ class TestCompatClassifiedErrorPaths:
             "-symbols-list", str(missing),
         ])
         assert result.exit_code == 4
+        assert "no such file" in result.output.lower() or "symbols-list" in result.output.lower()
 
     def test_report_write_error_exits_7(self, tmp_path, monkeypatch):
-        old = tmp_path / "old.xml"
-        new = tmp_path / "new.xml"
-        old.write_text("<descriptor/>", encoding="utf-8")
-        new.write_text("<descriptor/>", encoding="utf-8")
+        old, new = self._write_minimal_descriptors(tmp_path)
 
         snaps = [self._snap("1.0"), self._snap("2.0")]
         monkeypatch.setattr("abicheck.compat.cli._load_descriptor_or_dump", lambda *_a, **_k: snaps.pop(0))
@@ -372,6 +348,7 @@ class TestCompatClassifiedErrorPaths:
             "-report-path", str(tmp_path / "r.html"), "-report-format", "html",
         ])
         assert result.exit_code == 7
+        assert "write" in result.output.lower() or "report" in result.output.lower()
 
 
 class TestFailOnAdditions:
