@@ -1,6 +1,9 @@
 # Case 06: Symbol Visibility Leak
 
-**Category:** Visibility | **Verdict:** 🟡 BAD PRACTICE
+**Category:** Visibility | **Verdict:** 🔴 BREAKING (bad practice)
+
+> **ground_truth.json:** `expected: BREAKING`, `category: breaking`
+> **checker_policy.py:** `FUNC_REMOVED` ∈ `BREAKING_KINDS`
 
 ## What this case is about
 
@@ -24,25 +27,32 @@ it shows how the library *should* look.
 
 ## What abicheck detects
 
-Running `abicheck dump libv1.so` (without headers) + comparing to `libv2.so`:
+Running `abicheck dump -H bad.c libv1.so` + comparing to `abicheck dump -H good.c libv2.so`:
 
 - **`VISIBILITY_LEAK`** (BAD PRACTICE / COMPATIBLE): `libv1.so` exports
   internal-looking symbols (`internal_helper`, `another_impl`) without
   `-fvisibility=hidden`. Reported on the **old library**, not the transition.
-- **`FUNC_REMOVED_ELF_ONLY`** (COMPATIBLE): ELF-only symbols disappear in `libv2.so`.
-  Classified as compatible because — without header information — we cannot tell
-  whether a disappearing ELF-only symbol was a real public function or an internal
-  symbol being correctly hidden.
+- **`FUNC_REMOVED`** (BREAKING): `another_impl()` is declared in `bad.c` but
+  absent from `good.c` entirely — the function was removed from both the header
+  and the library. Any consumer that called `another_impl` will fail to load.
+- **`FUNC_VISIBILITY_CHANGED`** (BREAKING): `internal_helper()` changes from
+  default to hidden visibility — it disappears from `.dynsym`.
 
-**Overall verdict: COMPATIBLE** (the library still works; the bad practice was in v1).
+**Overall verdict: BREAKING** — removing or hiding previously-exported symbols
+is an ABI break for any consumer that depended on them, even if the symbols
+were only exported by accident.
 
-## What this case does NOT cover
+> **Note:** In ELF-only mode (without `-H`), both removals are classified as
+> `FUNC_REMOVED_ELF_ONLY` (COMPATIBLE) because the tool cannot distinguish
+> intentional public API from accidentally-leaked internals. Use `-H` to get
+> the accurate BREAKING verdict.
 
-If actual consumers were linked against `libv1.so` and called `internal_helper`
-directly, and `libv2.so` hides it → those consumers will get a runtime
-`symbol lookup error`. **But that is a different case** — it is covered by
-`case01_symbol_removal` (FUNC_REMOVED / BREAKING). The root cause there is the
-visibility leak in v1; case06 detects that root cause.
+## Dual nature of this case
+
+This case is both a **bad practice** (v1 leaked internal symbols) and a **breaking
+change** (v2 removes those symbols from the dynamic table). The root cause is the
+visibility leak in v1; fixing it in v2 is the right thing to do, but it requires
+a SONAME bump or a transition plan.
 
 ## How to reproduce
 
@@ -58,11 +68,13 @@ nm --dynamic --defined-only examples/case06_visibility/libv1.so
 nm --dynamic --defined-only examples/case06_visibility/libv2.so
 # → public_api only  ← correct
 
-# Run abicheck (no headers — ELF-only mode)
-python3 -m abicheck.cli dump examples/case06_visibility/libv1.so -o /tmp/v1.json
-python3 -m abicheck.cli dump examples/case06_visibility/libv2.so -o /tmp/v2.json
+# Run abicheck (with headers for accurate detection)
+python3 -m abicheck.cli dump examples/case06_visibility/libv1.so \
+    -H examples/case06_visibility/bad.c -o /tmp/v1.json
+python3 -m abicheck.cli dump examples/case06_visibility/libv2.so \
+    -H examples/case06_visibility/good.c -o /tmp/v2.json
 python3 -m abicheck.cli compare /tmp/v1.json /tmp/v2.json
-# → COMPATIBLE + VISIBILITY_LEAK warning on libv1.so
+# → BREAKING (FUNC_REMOVED: another_impl) + VISIBILITY_LEAK warning on libv1.so
 ```
 
 ## How to fix

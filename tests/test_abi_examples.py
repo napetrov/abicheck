@@ -53,8 +53,9 @@ CASES = [
     ("case13_symbol_versioning", "COMPATIBLE", "bad.c", "good.c"),
     # Class size change (private member added) → TYPE_SIZE_CHANGED → BREAKING
     ("case14_cpp_class_size", "BREAKING", "v1.cpp", "v2.cpp"),
-    # noexcept removed → FUNC_NOEXCEPT_REMOVED → BREAKING
-    ("case15_noexcept_change", "BREAKING", "v1.cpp", "v2.cpp"),
+    # noexcept removed → FUNC_NOEXCEPT_REMOVED (COMPATIBLE) + SYMBOL_VERSION_REQUIRED_ADDED
+    # (GLIBCXX bump from throw in v2) → COMPATIBLE_WITH_RISK
+    ("case15_noexcept_change", "COMPATIBLE_WITH_RISK", "v1.cpp", "v2.cpp"),
     # Symbol appears in v2 that was inline in v1 → FUNC_ADDED → COMPATIBLE
     ("case16_inline_to_non_inline", "COMPATIBLE", "v1.hpp", "v2.hpp"),
     # Explicit-instantiated template size grows → TYPE_SIZE_CHANGED → BREAKING
