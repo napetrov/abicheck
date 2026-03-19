@@ -2222,6 +2222,167 @@ _ENUM_DEDUP_KINDS = frozenset({
 })
 
 
+def _is_pointer_only_type(type_name: str, snap: AbiSnapshot) -> bool:
+    """Return True if all API functions use this type by pointer only (never by value).
+
+    A type is pointer-only (opaque handle pattern) when every function param/return
+    that references it uses a pointer/reference — never a bare by-value occurrence.
+    """
+    # Quick name-based check: strip pointer/const decoration to find bare type name
+    import re as _re
+    _bare_re = _re.compile(r'\b' + _re.escape(type_name) + r'\b')
+
+    def _is_by_value(type_str: str) -> bool:
+        """True if the type string contains the type name without * or &."""
+        if not _bare_re.search(type_str):
+            return False
+        # Remove the type name and see if * or & follows — crude but effective
+        stripped = type_str.replace("const", "").replace("volatile", "").strip()
+        # If the only mention of type_name has no *, it's by value
+        for token in stripped.split(","):
+            token = token.strip()
+            # Opaque-handle pattern requires raw pointers only.
+            # References (`&`) are treated as non-opaque API usage.
+            if _bare_re.search(token) and "*" not in token:
+                return True
+        return False
+
+    for f in snap.functions:
+        if f.visibility not in _PUBLIC_VIS:
+            continue
+        if _is_by_value(f.return_type):
+            return False
+        for p in f.params:
+            if _is_by_value(p.type):
+                return False
+
+    for v in snap.variables:
+        if v.visibility not in _PUBLIC_VIS:
+            continue
+        if _is_by_value(v.type):
+            return False
+
+    return True
+
+
+def _filter_opaque_size_changes(
+    changes: list[Change], old: AbiSnapshot, new: AbiSnapshot
+) -> list[Change]:
+    """Suppress size-only growth for pointer-only opaque-handle patterns.
+
+    Narrow rule (case62):
+    - type has TYPE_SIZE_CHANGED/STRUCT_SIZE_CHANGED
+    - API usage is pointer-only in both old/new snapshots
+    - and change set for that type indicates *compatible append* pattern only:
+      at least one TYPE_FIELD_ADDED_COMPATIBLE, and no remove/offset/type/base
+      drift changes for that type.
+    """
+    size_change_types: set[str] = {
+        c.symbol.split("::")[0]
+        for c in changes
+        if c.kind in (ChangeKind.TYPE_SIZE_CHANGED, ChangeKind.STRUCT_SIZE_CHANGED)
+    }
+    if not size_change_types:
+        return changes
+
+    by_type: dict[str, set[ChangeKind]] = {t: set() for t in size_change_types}
+    for c in changes:
+        t = c.symbol.split("::")[0]
+        if t in by_type:
+            by_type[t].add(c.kind)
+
+    forbidden = {
+        ChangeKind.TYPE_FIELD_REMOVED,
+        ChangeKind.TYPE_FIELD_OFFSET_CHANGED,
+        ChangeKind.TYPE_FIELD_TYPE_CHANGED,
+        ChangeKind.TYPE_BASE_CHANGED,
+        ChangeKind.TYPE_VTABLE_CHANGED,
+        ChangeKind.STRUCT_FIELD_REMOVED,
+        ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
+        ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+        ChangeKind.STRUCT_ALIGNMENT_CHANGED,
+    }
+
+    opaque_types: set[str] = set()
+    for t in size_change_types:
+        kinds = by_type[t]
+        if ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE not in kinds:
+            continue
+        if kinds & forbidden:
+            continue
+        if not (_is_pointer_only_type(t, old) and _is_pointer_only_type(t, new)):
+            continue
+        opaque_types.add(t)
+
+    if not opaque_types:
+        return changes
+
+    return [
+        c for c in changes
+        if not (
+            c.kind in (ChangeKind.TYPE_SIZE_CHANGED, ChangeKind.STRUCT_SIZE_CHANGED)
+            and c.symbol.split("::")[0] in opaque_types
+        )
+    ]
+
+
+def _filter_reserved_field_renames(changes: list[Change]) -> list[Change]:
+    """Suppress TYPE_FIELD_REMOVED / STRUCT_FIELD_REMOVED for reserved-field renames.
+
+    When _diff_reserved_fields emits USED_RESERVED_FIELD for a struct field
+    that was renamed (e.g. __reserved1 -> priority), the _diff_types and
+    _diff_dwarf detectors also emit TYPE_FIELD_REMOVED / STRUCT_FIELD_REMOVED
+    for the old name.  These are false positives: the layout is unchanged
+    (same offset, same size — enforced by _diff_reserved_fields).
+
+    Suppression rule (narrow, per plan v2):
+      For each USED_RESERVED_FIELD(symbol=S, old_value=F_old):
+        remove TYPE_FIELD_REMOVED(symbol=S) with description containing F_old
+        remove STRUCT_FIELD_REMOVED(symbol="S::F_old") or similar
+      Also remove the redundant TYPE_FIELD_ADDED_COMPATIBLE that fires because
+      the field was detected as "added" with the new name.
+    """
+    _SUPPRESS_ON_RESERVED = frozenset({
+        ChangeKind.TYPE_FIELD_REMOVED,
+        ChangeKind.STRUCT_FIELD_REMOVED,
+        ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
+        ChangeKind.FIELD_RENAMED,  # already captured by USED_RESERVED_FIELD
+    })
+
+    # Collect (struct_name, old_field_name, new_field_name) for each USED_RESERVED_FIELD
+    reserved_renames: list[tuple[str, str, str]] = []
+    for c in changes:
+        if c.kind == ChangeKind.USED_RESERVED_FIELD:
+            reserved_renames.append((c.symbol, c.old_value or "", c.new_value or ""))
+
+    if not reserved_renames:
+        return changes
+
+    result: list[Change] = []
+    for c in changes:
+        if c.kind not in _SUPPRESS_ON_RESERVED:
+            result.append(c)
+            continue
+
+        suppressed = False
+        for struct_name, old_field, new_field in reserved_renames:
+            if c.symbol != struct_name and not c.symbol.startswith(f"{struct_name}::"):
+                continue
+            if old_field and (old_field in c.description or old_field in (c.old_value or "")):
+                suppressed = True
+                break
+            if new_field and c.kind == ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE and (
+                new_field in c.description or new_field in (c.new_value or "")
+            ):
+                suppressed = True
+                break
+        if not suppressed:
+            result.append(c)
+
+    return result
+
+
+
 def _deduplicate_ast_dwarf(changes: list[Change]) -> list[Change]:
     """Remove DWARF findings that duplicate an AST finding for the same symbol.
 
@@ -2524,6 +2685,11 @@ def compare(
         detected = spec.run(old, new)
         changes.extend(detected)
         detector_results.append(DetectorResult(name=spec.name, changes_count=len(detected), enabled=True))
+
+    # Suppress TYPE_FIELD_REMOVED false positives caused by reserved-field renames.
+    # Must run before AST/DWARF dedup so that DWARF duplicates of the suppressed
+    # findings are also removed.
+    changes = _filter_reserved_field_renames(changes)
 
     # Deduplicate AST/DWARF before suppression so a single canonical change
     # remains for suppression matching (avoids suppressed AST entry leaving
