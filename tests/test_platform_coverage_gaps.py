@@ -574,7 +574,6 @@ class TestParseMachoWeakSymbols:
 from abicheck.dwarf_advanced import AdvancedDwarfMetadata
 from abicheck.dwarf_metadata import DwarfMetadata
 from abicheck.pdb_metadata import (
-    _extract_calling_conventions,
     _extract_enums,
     _extract_struct_layouts,
     _extract_toolchain_info,
@@ -618,7 +617,6 @@ class TestPdbMetadataPhaseExceptions:
         with patch("abicheck.pdb_metadata.parse_pdb", return_value=mock_pdb), \
              patch("abicheck.pdb_metadata._extract_struct_layouts", side_effect=RuntimeError("boom")), \
              patch("abicheck.pdb_metadata._extract_enums"), \
-             patch("abicheck.pdb_metadata._extract_calling_conventions"), \
              patch("abicheck.pdb_metadata._extract_toolchain_info"):
             meta, adv = parse_pdb_debug_info(pdb_path)
         assert meta.has_dwarf
@@ -632,21 +630,6 @@ class TestPdbMetadataPhaseExceptions:
         with patch("abicheck.pdb_metadata.parse_pdb", return_value=mock_pdb), \
              patch("abicheck.pdb_metadata._extract_struct_layouts"), \
              patch("abicheck.pdb_metadata._extract_enums", side_effect=RuntimeError("boom")), \
-             patch("abicheck.pdb_metadata._extract_calling_conventions"), \
-             patch("abicheck.pdb_metadata._extract_toolchain_info"):
-            meta, adv = parse_pdb_debug_info(pdb_path)
-        assert meta.has_dwarf
-
-    def test_calling_convention_extraction_fails(self, tmp_path):
-        """Lines 105-106: _extract_calling_conventions raises."""
-        pdb_path = tmp_path / "test.pdb"
-        pdb_path.write_bytes(b"fake")
-        mock_pdb = self._make_mock_pdb()
-
-        with patch("abicheck.pdb_metadata.parse_pdb", return_value=mock_pdb), \
-             patch("abicheck.pdb_metadata._extract_struct_layouts"), \
-             patch("abicheck.pdb_metadata._extract_enums"), \
-             patch("abicheck.pdb_metadata._extract_calling_conventions", side_effect=RuntimeError("boom")), \
              patch("abicheck.pdb_metadata._extract_toolchain_info"):
             meta, adv = parse_pdb_debug_info(pdb_path)
         assert meta.has_dwarf
@@ -660,7 +643,6 @@ class TestPdbMetadataPhaseExceptions:
         with patch("abicheck.pdb_metadata.parse_pdb", return_value=mock_pdb), \
              patch("abicheck.pdb_metadata._extract_struct_layouts"), \
              patch("abicheck.pdb_metadata._extract_enums"), \
-             patch("abicheck.pdb_metadata._extract_calling_conventions"), \
              patch("abicheck.pdb_metadata._extract_toolchain_info", side_effect=RuntimeError("boom")):
             meta, adv = parse_pdb_debug_info(pdb_path)
         assert meta.has_dwarf
@@ -837,8 +819,8 @@ class TestPdbMetadataEnums:
         assert meta.enums["DupEnum"].underlying_byte_size == 4
 
 
-class TestPdbMetadataCallingConventions:
-    """Cover line 269 (packed_structs) in _extract_calling_conventions."""
+class TestPdbMetadataPackedStructs:
+    """Cover packed struct detection in _extract_struct_layouts."""
 
     def test_packed_structs_collected(self):
         mock_types = MagicMock()
@@ -846,16 +828,24 @@ class TestPdbMetadataCallingConventions:
         s1.is_forward_ref = False
         s1.name = "PackedStruct"
         s1.is_packed = True
+        s1.byte_size = 8
+        s1.is_union = False
+        s1.field_list_ti = 0
 
         s2 = MagicMock()
         s2.is_forward_ref = False
         s2.name = "NormalStruct"
         s2.is_packed = False
+        s2.byte_size = 16
+        s2.is_union = False
+        s2.field_list_ti = 0
 
         mock_types.all_structs.return_value = {0x1000: s1, 0x1001: s2}
+        mock_types.get_fieldlist.return_value = []
 
+        meta = DwarfMetadata(has_dwarf=True)
         adv = AdvancedDwarfMetadata(has_dwarf=True)
-        _extract_calling_conventions(mock_types, adv)
+        _extract_struct_layouts(mock_types, meta, adv)
         assert "PackedStruct" in adv.packed_structs
         assert "NormalStruct" not in adv.packed_structs
         assert "PackedStruct" in adv.all_struct_names

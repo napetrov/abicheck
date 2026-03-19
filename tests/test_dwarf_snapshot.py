@@ -11,11 +11,11 @@ import pytest
 from abicheck.dwarf_advanced import AdvancedDwarfMetadata
 from abicheck.dwarf_metadata import DwarfMetadata, StructLayout
 from abicheck.dwarf_snapshot import (
-    _evaluate_location_expr,
     _strip_type_decorators,
     build_snapshot_from_dwarf,
     show_data_sources,
 )
+from abicheck.dwarf_utils import _evaluate_location_expr
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import Visibility
 
@@ -183,6 +183,39 @@ class TestEvaluateLocationExpr:
         """Unknown raw int opcode treated as constant."""
         # 0x01 (DW_OP_addr-ish) is not handled, treated as constant
         assert _evaluate_location_expr([0x01]) == 0x01
+
+    def test_dwarf_expr_op_namedtuple(self) -> None:
+        """pyelftools DWARFExprOp (namedtuple with .op/.args) must be decoded."""
+        from elftools.dwarf.dwarf_expr import DWARFExprOp
+
+        op = DWARFExprOp(op=0x23, op_name="DW_OP_plus_uconst", args=[48], offset=0)
+        assert _evaluate_location_expr([op]) == 48
+
+    def test_dwarf_expr_op_constu(self) -> None:
+        """DWARFExprOp DW_OP_constu decoded correctly."""
+        from elftools.dwarf.dwarf_expr import DWARFExprOp
+
+        op = DWARFExprOp(op=0x10, op_name="DW_OP_constu", args=[64], offset=0)
+        assert _evaluate_location_expr([op]) == 64
+
+    def test_dwarf_expr_op_multi(self) -> None:
+        """Multiple DWARFExprOp entries: constu + plus."""
+        from elftools.dwarf.dwarf_expr import DWARFExprOp
+
+        ops = [
+            DWARFExprOp(op=0x10, op_name="DW_OP_constu", args=[10], offset=0),
+            DWARFExprOp(op=0x10, op_name="DW_OP_constu", args=[20], offset=2),
+            DWARFExprOp(op=0x22, op_name="DW_OP_plus", args=[], offset=4),
+        ]
+        assert _evaluate_location_expr(ops) == 30
+
+    def test_raw_leb128_plus_uconst(self) -> None:
+        """DW_OP_plus_uconst with multi-byte ULEB128 operand: 130 = 0x82 0x01."""
+        assert _evaluate_location_expr([0x23, 0x82, 0x01]) == 130
+
+    def test_raw_leb128_constu(self) -> None:
+        """DW_OP_constu with ULEB128 operand: 300 = 0xAC 0x02."""
+        assert _evaluate_location_expr([0x10, 0xAC, 0x02]) == 300
 
 
 # ── show_data_sources ───────────────────────────────────────────────────────

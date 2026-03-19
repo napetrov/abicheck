@@ -67,13 +67,14 @@ def test_dwarf_metadata_compute_type_info_pointer_fallback_on_resolution_error(m
 
 def test_dwarf_advanced_decode_member_location_forms():
     int_member = _Die("DW_TAG_member", {"DW_AT_data_member_location": _Attr(12)})
+    # Shared decoder uses tuples (opcode, operand) instead of DWARFExprOp objects
     expr_member = _Die(
         "DW_TAG_member",
-        {"DW_AT_data_member_location": _Attr([SimpleNamespace(op=0x23, args=[16])])},
+        {"DW_AT_data_member_location": _Attr([(0x23, 16)])},
     )
     bad_member = _Die(
         "DW_TAG_member",
-        {"DW_AT_data_member_location": _Attr([SimpleNamespace(op=0x99, args=[])])},
+        {"DW_AT_data_member_location": _Attr([(0x99, 0)])},
     )
 
     assert da._decode_member_location(int_member) == 12

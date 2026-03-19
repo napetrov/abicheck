@@ -52,15 +52,40 @@ from .pdb_parser import (
 
 log = logging.getLogger(__name__)
 
-# Machine type values from PE/COFF spec (DBI header.machine field)
-_MACHINE_NAMES: dict[int, str] = {
-    0x014C: "x86",
-    0x0200: "IA64",
-    0x8664: "AMD64",
-    0xAA64: "ARM64",
-    0x01C0: "ARM",
-    0x01C4: "ARMNT",
-}
+
+def _machine_name(machine_code: int) -> str:
+    """Convert a PE machine type code to a short human-readable name.
+
+    Uses ``pefile.MACHINE_TYPE`` when available, stripping the
+    ``IMAGE_FILE_MACHINE_`` prefix.  Falls back to hex representation.
+    """
+    try:
+        import pefile
+        full_name: str | None = pefile.MACHINE_TYPE.get(machine_code)
+        if full_name:
+            return full_name.replace("IMAGE_FILE_MACHINE_", "")
+    except ImportError:
+        pass
+    # Fallback for common machine types when pefile is not available
+    _FALLBACK: dict[int, str] = {
+        0x014C: "I386", 0x0200: "IA64", 0x8664: "AMD64",
+        0xAA64: "ARM64", 0x01C0: "ARM", 0x01C4: "ARMNT",
+    }
+    return _FALLBACK.get(machine_code, f"0x{machine_code:04x}")
+
+
+def _is_user_visible(name: str | None, is_forward_ref: bool) -> bool:
+    """Return True if a PDB type should be included in metadata.
+
+    Filters out forward references, unnamed types, and compiler-internal names.
+    """
+    if is_forward_ref:
+        return False
+    if not name:
+        return False
+    if name.startswith("<") or name.startswith("__"):
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +116,7 @@ def parse_pdb_debug_info(
     adv = AdvancedDwarfMetadata(has_dwarf=True)
 
     try:
-        _extract_struct_layouts(pdb.types, meta)
+        _extract_struct_layouts(pdb.types, meta, adv)
     except Exception as exc:  # noqa: BLE001
         log.warning("parse_pdb_debug_info: struct extraction failed: %s", exc)
 
@@ -99,11 +124,6 @@ def parse_pdb_debug_info(
         _extract_enums(pdb.types, meta)
     except Exception as exc:  # noqa: BLE001
         log.warning("parse_pdb_debug_info: enum extraction failed: %s", exc)
-
-    try:
-        _extract_calling_conventions(pdb.types, adv)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("parse_pdb_debug_info: calling convention extraction failed: %s", exc)
 
     try:
         _extract_toolchain_info(pdb, adv)
@@ -117,18 +137,40 @@ def parse_pdb_debug_info(
 # Phase 1: Struct/class/union layouts
 # ---------------------------------------------------------------------------
 
-def _extract_struct_layouts(types: TypeDatabase, meta: DwarfMetadata) -> None:
-    """Extract struct/class/union layouts from TPI into DwarfMetadata.structs."""
+def _extract_struct_layouts(
+    types: TypeDatabase,
+    meta: DwarfMetadata,
+    adv: AdvancedDwarfMetadata | None = None,
+) -> None:
+    """Extract struct/class/union layouts from TPI into DwarfMetadata.structs.
+
+    Also populates ``adv.all_struct_names`` and ``adv.packed_structs`` in a
+    single pass (previously done in a separate ``_extract_calling_conventions``).
+    """
     for ti, cv_struct in types.all_structs().items():
-        if cv_struct.is_forward_ref:
-            continue
-        if not cv_struct.name:
-            continue
-        # Skip anonymous/unnamed types and compiler-internal names
-        if cv_struct.name.startswith("<") or cv_struct.name.startswith("__"):
+        if not _is_user_visible(cv_struct.name, cv_struct.is_forward_ref):
             continue
 
-        fields = _extract_fields(types, cv_struct)
+        # ODR: first complete definition wins for all outputs.
+        # Skip if we already have a canonical definition for this name.
+        if cv_struct.name in meta.structs:
+            continue
+
+        try:
+            fields = _extract_fields(types, cv_struct)
+        except Exception as exc:  # noqa: BLE001
+            # Don't record an empty layout — a later duplicate with the
+            # same name may succeed and should become the canonical def.
+            log.debug("_extract_struct_layouts: bad fields for %s: %s",
+                      cv_struct.name, exc)
+            continue
+
+        # Track struct names and packed status in advanced metadata
+        # only after successful field extraction.
+        if adv is not None:
+            adv.all_struct_names.add(cv_struct.name)
+            if cv_struct.is_packed:
+                adv.packed_structs.add(cv_struct.name)
 
         layout = StructLayout(
             name=cv_struct.name,
@@ -138,14 +180,7 @@ def _extract_struct_layouts(types: TypeDatabase, meta: DwarfMetadata) -> None:
             is_union=cv_struct.is_union,
         )
 
-        # Track packed structs for advanced metadata
-        if cv_struct.is_packed:
-            # Will be picked up later in _extract_calling_conventions
-            pass
-
-        # ODR: keep first complete definition
-        if cv_struct.name not in meta.structs:
-            meta.structs[cv_struct.name] = layout
+        meta.structs[cv_struct.name] = layout
 
 
 def _extract_fields(types: TypeDatabase, cv_struct: CvStruct) -> list[FieldInfo]:
@@ -168,7 +203,7 @@ def _extract_fields(types: TypeDatabase, cv_struct: CvStruct) -> list[FieldInfo]
         bit_size = 0
 
         # Check if the member type is a bitfield
-        bf = types._bitfields.get(member.type_ti)
+        bf = types.get_bitfield(member.type_ti)
         if bf is not None:
             bit_size = bf.length
             bit_offset = bf.position
@@ -195,11 +230,7 @@ def _extract_fields(types: TypeDatabase, cv_struct: CvStruct) -> list[FieldInfo]
 def _extract_enums(types: TypeDatabase, meta: DwarfMetadata) -> None:
     """Extract enum types from TPI into DwarfMetadata.enums."""
     for ti, cv_enum in types.all_enums().items():
-        if cv_enum.is_forward_ref:
-            continue
-        if not cv_enum.name:
-            continue
-        if cv_enum.name.startswith("<") or cv_enum.name.startswith("__"):
+        if not _is_user_visible(cv_enum.name, cv_enum.is_forward_ref):
             continue
 
         underlying_size = types.type_size(cv_enum.underlying_type_ti)
@@ -221,35 +252,6 @@ def _extract_enums(types: TypeDatabase, meta: DwarfMetadata) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: Calling conventions
-# ---------------------------------------------------------------------------
-
-def _extract_calling_conventions(
-    types: TypeDatabase, adv: AdvancedDwarfMetadata,
-) -> None:
-    """Extract calling conventions from LF_PROCEDURE and LF_MFUNCTION.
-
-    Populates ``adv.packed_structs``.
-
-    Note: ``adv.calling_conventions`` is NOT populated because TPI type
-    indices are not stable across builds — unrelated type insertions shift
-    all indices.  ``diff_advanced_dwarf()`` compares calling conventions by
-    key intersection, so using TPI indices as keys would cause false
-    ``calling_convention_changed`` reports.  Populating this dict requires
-    stable function identities (linkage names) from the PDB symbol stream,
-    which is not yet implemented.
-    """
-    # Collect packed structs
-    for ti, cv_struct in types.all_structs().items():
-        if cv_struct.is_forward_ref:
-            continue
-        if cv_struct.name:
-            adv.all_struct_names.add(cv_struct.name)
-            if cv_struct.is_packed:
-                adv.packed_structs.add(cv_struct.name)
-
-
-# ---------------------------------------------------------------------------
 # Phase 4: Toolchain / compiler info from DBI
 # ---------------------------------------------------------------------------
 
@@ -259,7 +261,7 @@ def _extract_toolchain_info(pdb: PdbFile, adv: AdvancedDwarfMetadata) -> None:
         return
 
     h = pdb.dbi.header
-    machine = _MACHINE_NAMES.get(h.machine, f"0x{h.machine:04x}")
+    machine = _machine_name(h.machine)
 
     # BuildNumber: bits 0-7 = minor, bits 8-14 = major, bit 15 = new format
     major = (h.build_number >> 8) & 0x7F

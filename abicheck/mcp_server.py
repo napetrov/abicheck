@@ -216,28 +216,10 @@ except Exception as _exc:  # noqa: BLE001
 # Helpers — reuse CLI logic without Click dependency
 # ---------------------------------------------------------------------------
 
-# Mach-O magic bytes (fat/BE32/LE32/BE64/LE64)
-_MACHO_MAGICS = frozenset({
-    b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
-    b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
-    b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
-})
-
-
 def _detect_binary_format(path: Path) -> str | None:
     """Detect binary format from magic bytes — single file open."""
-    try:
-        with open(path, "rb") as f:
-            magic = f.read(4)
-    except OSError:
-        return None
-    if magic == b"\x7fELF":
-        return "elf"
-    if magic[:2] == b"MZ":
-        return "pe"
-    if magic in _MACHO_MAGICS:
-        return "macho"
-    return None
+    from .binary_utils import detect_binary_format
+    return detect_binary_format(path)
 
 
 def _resolve_input(

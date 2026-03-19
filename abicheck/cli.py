@@ -93,39 +93,13 @@ def _setup_verbosity(verbose: bool) -> None:
     _logger.setLevel(logging.DEBUG if verbose else logging.WARNING)
 
 
-def _is_elf(path: Path) -> bool:
-    """Check if file starts with ELF magic bytes."""
-    try:
-        with open(path, "rb") as f:
-            return f.read(4) == b"\x7fELF"
-    except OSError:
-        return False
-
-
-def _is_pe(path: Path) -> bool:
-    """Check if file is a PE binary (Windows DLL/EXE)."""
-    from .pe_metadata import is_pe
-    return is_pe(path)
-
-
-def _is_macho(path: Path) -> bool:
-    """Check if file is a Mach-O binary (macOS dylib/framework)."""
-    from .macho_metadata import is_macho
-    return is_macho(path)
-
-
 def _detect_binary_format(path: Path) -> str | None:
     """Detect binary format from magic bytes.
 
     Returns 'elf', 'pe', 'macho', or None for non-binary / unknown.
     """
-    if _is_elf(path):
-        return "elf"
-    if _is_pe(path):
-        return "pe"
-    if _is_macho(path):
-        return "macho"
-    return None
+    from .binary_utils import detect_binary_format
+    return detect_binary_format(path)
 
 
 def _safe_write_output(output: Path, text: str) -> None:

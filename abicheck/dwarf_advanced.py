@@ -49,9 +49,12 @@ from typing import Any
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
+from .dwarf_utils import BASE_PRUNE_TAGS
 from .dwarf_utils import attr_bool as _attr_bool
 from .dwarf_utils import attr_int as _attr_int
 from .dwarf_utils import attr_str as _attr_str
+from .dwarf_utils import decode_member_location as _shared_decode_member_location
+from .dwarf_utils import resolve_die_ref as _resolve_die_ref
 from .dwarf_utils import resolve_type_die as _resolve_type_die
 
 log = logging.getLogger(__name__)
@@ -98,11 +101,7 @@ _ABI_FLAGS_RE = re.compile(
 _NATURAL_ALIGN: dict[int, int] = {1: 1, 2: 2, 4: 4, 8: 8, 16: 16}
 
 # Tags to prune: don't descend into function bodies or inlined frames
-_PRUNE_TAGS: frozenset[str] = frozenset({
-    "DW_TAG_lexical_block",
-    "DW_TAG_inlined_subroutine",
-    "DW_TAG_GNU_call_site",
-})
+_PRUNE_TAGS: frozenset[str] = BASE_PRUNE_TAGS
 
 
 # ---------------------------------------------------------------------------
@@ -207,29 +206,10 @@ def _get_type_align(member_die: Any, CU: Any) -> int:
     if "DW_AT_type" not in member_die.attributes:
         return 0
     try:
-        attr = member_die.attributes["DW_AT_type"]
-        form = attr.form
-        raw: int = attr.value
-        abs_offset = raw if form == "DW_FORM_ref_addr" else raw + CU.cu_offset
-        type_die = CU.get_DIE_from_refaddr(abs_offset)
+        type_die = _resolve_die_ref(member_die, "DW_AT_type", CU)
 
-        # Follow transparent wrapper tags (typedef / const / volatile / restrict)
-        for _ in range(4):
-            tag = type_die.tag
-            if tag in (
-                "DW_TAG_typedef",
-                "DW_TAG_const_type",
-                "DW_TAG_volatile_type",
-                "DW_TAG_restrict_type",
-            ):
-                if "DW_AT_type" not in type_die.attributes:
-                    return 0
-                a = type_die.attributes["DW_AT_type"]
-                r: int = a.value
-                abs_off = r if a.form == "DW_FORM_ref_addr" else r + CU.cu_offset
-                type_die = CU.get_DIE_from_refaddr(abs_off)
-            else:
-                break
+        # Follow transparent wrapper tags via _unwrap_qualifiers
+        type_die = _unwrap_qualifiers(type_die, CU)
 
         # 1. DW_AT_alignment present on the resolved type (DWARF 5)
         if "DW_AT_alignment" in type_die.attributes:
@@ -520,10 +500,7 @@ def _check_packed_typedef(die: Any, meta: AdvancedDwarfMetadata, CU: Any) -> Non
     if not typedef_name or "DW_AT_type" not in die.attributes:
         return
     try:
-        attr = die.attributes["DW_AT_type"]
-        raw: int = attr.value
-        abs_off = raw if attr.form == "DW_FORM_ref_addr" else raw + CU.cu_offset
-        target = CU.get_DIE_from_refaddr(abs_off)
+        target = _resolve_die_ref(die, "DW_AT_type", CU)
     except Exception:  # noqa: BLE001
         return
 
@@ -587,32 +564,13 @@ def _check_packed(
 def _decode_member_location(member_die: Any) -> int:
     """Decode DW_AT_data_member_location to a byte offset.
 
-    Handles both forms produced by different DWARF versions:
-    - Constant integer (DWARF 3+, most common): value is the offset directly.
-    - Location expression (DWARF 2/3): a list of DWARFExprOp objects.
-      The canonical expression for a struct member is a single
-      DW_OP_plus_uconst (op=0x23) with the offset in args[0].
-      We decode this case explicitly; anything else returns 0 (skip).
-
-    Returns 0 for unknown/unsupported forms (conservative — avoids false
-    'packed' detection rather than producing wrong offsets).
+    Delegates to the shared implementation in dwarf_utils.
     """
     if "DW_AT_data_member_location" not in member_die.attributes:
         return 0
-    v = member_die.attributes["DW_AT_data_member_location"].value
-    if isinstance(v, int):
-        return v
-    # Location expression: list of DWARFExprOp
-    if isinstance(v, list) and len(v) == 1:
-        op = v[0]
-        # DW_OP_plus_uconst (0x23) or DW_OP_constu (0x10) carry offset in args[0]
-        if hasattr(op, "op") and op.op in (0x23, 0x10) and op.args:
-            try:
-                return int(op.args[0])
-            except (TypeError, ValueError):
-                pass
-    # Multi-op expressions or unknown forms: cannot determine offset reliably
-    return 0
+    return _shared_decode_member_location(
+        member_die.attributes["DW_AT_data_member_location"].value
+    )
 
 
 # ---------------------------------------------------------------------------

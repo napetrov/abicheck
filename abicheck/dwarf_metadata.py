@@ -60,11 +60,11 @@ from typing import Any
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
-from .dwarf_utils import (
-    attr_bool as _attr_bool,  # noqa: F401 — available for future use
-)
+from .dwarf_utils import BASE_PRUNE_TAGS
+from .dwarf_utils import attr_bool as _attr_bool  # noqa: F401
 from .dwarf_utils import attr_int as _attr_int
 from .dwarf_utils import attr_str as _attr_str
+from .dwarf_utils import decode_member_location as _decode_member_location
 from .dwarf_utils import resolve_die_ref as _resolve_ref
 
 log = logging.getLogger(__name__)
@@ -120,11 +120,8 @@ class DwarfMetadata:
 # Deduplicate unknown DWARF-tag warnings per process to avoid log flooding
 _SEEN_UNKNOWN_DWARF_TAGS: set[str] = set()
 
-_SKIP_TAGS: frozenset[str] = frozenset({
+_SKIP_TAGS: frozenset[str] = BASE_PRUNE_TAGS | frozenset({
     "DW_TAG_subprogram",
-    "DW_TAG_inlined_subroutine",
-    "DW_TAG_lexical_block",
-    "DW_TAG_GNU_call_site",
 })
 
 
@@ -314,8 +311,9 @@ def _process_struct_named(
             # Anonymous member — may be an anonymous struct/union; inline its fields
             anon_offset = 0
             if "DW_AT_data_member_location" in child.attributes:
-                v = child.attributes["DW_AT_data_member_location"].value
-                anon_offset = v if isinstance(v, int) else (int(v[-1]) if v else 0)
+                anon_offset = _decode_member_location(
+                    child.attributes["DW_AT_data_member_location"].value
+                )
             layout.fields.extend(
                 _expand_anonymous_member(child, CU, type_cache, anon_offset)
             )
@@ -388,13 +386,9 @@ def _process_member(
     # Byte offset — DW_AT_data_member_location can be a simple int or a DW_OP block
     byte_offset = 0
     if "DW_AT_data_member_location" in die.attributes:
-        attr = die.attributes["DW_AT_data_member_location"]
-        val = attr.value
-        if isinstance(val, int):
-            byte_offset = val
-        elif isinstance(val, list):
-            # DW_OP_plus_uconst expression: last element is the offset value
-            byte_offset = int(val[-1]) if val else 0
+        byte_offset = _decode_member_location(
+            die.attributes["DW_AT_data_member_location"].value
+        )
 
     # Bitfield offsets:
     # DWARF 4+: DW_AT_data_bit_offset = offset from LSB of the container (preferred)

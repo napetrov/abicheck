@@ -204,14 +204,7 @@ def check_single_env(
     missing = [b for b in bindings if b.status == BindingStatus.MISSING]
     version_mismatches = [b for b in bindings if b.status == BindingStatus.VERSION_MISMATCH]
 
-    loadability = StackVerdict.PASS
-    if not graph.nodes:
-        # Binary not found or unreadable — cannot load.
-        loadability = StackVerdict.FAIL
-    elif graph.unresolved or missing:
-        loadability = StackVerdict.FAIL
-    elif version_mismatches:
-        loadability = StackVerdict.WARN
+    loadability = _compute_loadability(graph, missing, version_mismatches)
 
     risk_score = "high" if loadability == StackVerdict.FAIL else (
         "medium" if loadability == StackVerdict.WARN else "low"
