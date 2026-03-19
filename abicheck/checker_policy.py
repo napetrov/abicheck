@@ -443,6 +443,32 @@ RISK_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED,
 })
 
+# ---------------------------------------------------------------------------
+# Compatible sub-categories: additions vs quality/behavioral issues
+# ---------------------------------------------------------------------------
+
+#: Additive kinds — new public API surface (subset of COMPATIBLE_KINDS).
+#: Explicitly enumerated to avoid false positives (e.g. FUNC_NOEXCEPT_ADDED
+#: is a qualifier change, not a new API addition).
+#:
+#: ELF versioning metadata (SYMBOL_VERSION_DEFINED_ADDED,
+#: SYMBOL_VERSION_REQUIRED_ADDED_COMPAT) is intentionally excluded — those
+#: are internal VERNEED/VERDEF churn, not user-facing API additions.
+ADDITION_KINDS: frozenset[ChangeKind] = frozenset({
+    ChangeKind.FUNC_ADDED,
+    ChangeKind.VAR_ADDED,
+    ChangeKind.TYPE_ADDED,
+    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
+    ChangeKind.ENUM_MEMBER_ADDED,
+    ChangeKind.UNION_FIELD_ADDED,
+    ChangeKind.CONSTANT_ADDED,
+})
+
+#: Quality / behavioral issues — COMPATIBLE_KINDS that are NOT additions.
+#: Examples: VISIBILITY_LEAK, SONAME_MISSING, DWARF_INFO_MISSING, noexcept changes.
+QUALITY_KINDS: frozenset[ChangeKind] = frozenset(COMPATIBLE_KINDS - ADDITION_KINDS)
+
+
 API_BREAK_KINDS: set[ChangeKind] = {
     ChangeKind.ENUM_MEMBER_RENAMED,
     ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,
@@ -509,16 +535,31 @@ PLUGIN_ABI_DOWNGRADED_KINDS: frozenset[ChangeKind] = frozenset(
 )
 
 # Integrity assertions: catch miscategorisation at import time.
-assert SDK_VENDOR_COMPAT_KINDS <= API_BREAK_KINDS, (
-    "SDK_VENDOR_COMPAT_KINDS must be a strict subset of API_BREAK_KINDS; "
-    f"offending kinds: {SDK_VENDOR_COMPAT_KINDS - API_BREAK_KINDS}"
-)
-assert PLUGIN_ABI_DOWNGRADED_KINDS <= BREAKING_KINDS, (
-    "PLUGIN_ABI_DOWNGRADED_KINDS must be a strict subset of BREAKING_KINDS; "
-    f"offending kinds: {PLUGIN_ABI_DOWNGRADED_KINDS - BREAKING_KINDS}"
-)
-# Safety-critical invariants: RISK_KINDS must be disjoint from all other kind sets.
 # Use explicit raises (not assert) so these are never stripped by python -O.
+# All checks below use ``if not …: raise`` instead of ``assert`` so that
+# running under ``python -O`` does not silently disable them.
+if not SDK_VENDOR_COMPAT_KINDS <= API_BREAK_KINDS:
+    raise AssertionError(
+        "SDK_VENDOR_COMPAT_KINDS must be a strict subset of API_BREAK_KINDS; "
+        f"offending kinds: {SDK_VENDOR_COMPAT_KINDS - API_BREAK_KINDS}"
+    )
+if not PLUGIN_ABI_DOWNGRADED_KINDS <= BREAKING_KINDS:
+    raise AssertionError(
+        "PLUGIN_ABI_DOWNGRADED_KINDS must be a strict subset of BREAKING_KINDS; "
+        f"offending kinds: {PLUGIN_ABI_DOWNGRADED_KINDS - BREAKING_KINDS}"
+    )
+if not ADDITION_KINDS <= COMPATIBLE_KINDS:
+    raise AssertionError(
+        "ADDITION_KINDS must be a subset of COMPATIBLE_KINDS; "
+        f"offending kinds: {ADDITION_KINDS - COMPATIBLE_KINDS}"
+    )
+if ADDITION_KINDS | QUALITY_KINDS != COMPATIBLE_KINDS:
+    raise AssertionError(
+        "ADDITION_KINDS | QUALITY_KINDS must equal COMPATIBLE_KINDS; "
+        f"missing: {COMPATIBLE_KINDS - (ADDITION_KINDS | QUALITY_KINDS)}, "
+        f"extra: {(ADDITION_KINDS | QUALITY_KINDS) - COMPATIBLE_KINDS}"
+    )
+
 if not RISK_KINDS.isdisjoint(BREAKING_KINDS):
     raise AssertionError(
         "RISK_KINDS must not overlap with BREAKING_KINDS; "

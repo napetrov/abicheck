@@ -8,9 +8,9 @@
 | Breaking changes | 0 |
 | Source-level breaks | 0 |
 | Deployment risk changes | 0 |
-| Compatible additions | 1 |
+| Compatible changes | 1 |
 
-## ✅ Compatible Changes
+## ✅ Additions
 
 - New public function: helper
 

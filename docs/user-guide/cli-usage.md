@@ -146,6 +146,28 @@ abicheck compare old.json new.json --show-only breaking,risk
 
 Invalid tokens are caught immediately with a clear error message.
 
+#### Severity configuration (`--severity-*`)
+
+Control exit codes and report labels by assigning severity levels to four issue
+categories:
+
+```bash
+# Block on API additions
+abicheck compare old.json new.json --severity-addition error
+
+# Everything is an error (strict)
+abicheck compare old.json new.json --severity-preset strict
+
+# Custom: breaks are errors, additions are warnings, rest is info
+abicheck compare old.json new.json \
+  --severity-abi-breaking error \
+  --severity-potential-breaking info \
+  --severity-quality-issues info \
+  --severity-addition warning
+```
+
+See the [severity guide](severity.md) for the full reference.
+
 #### `--stat`: one-line CI summary
 
 ```bash

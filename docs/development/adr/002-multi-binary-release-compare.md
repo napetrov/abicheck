@@ -131,7 +131,7 @@ abicheck compare-release release-1.0/ release-2.0/ -H include/ \
 | Code | Meaning |
 |------|---------|
 | 0 | All libraries: NO_CHANGE or COMPATIBLE |
-| 1 | ADDITIONS (only when --fail-on-additions) |
+| 1 | Severity-driven error (with `--severity-*` flags) |
 | 2 | At least one: API_BREAK |
 | 4 | At least one: BREAKING |
 | 8 | Missing/unmatched libraries (only when --fail-on-removed-library) |
@@ -148,7 +148,7 @@ New inputs needed:
 | `new-library-dir` | Directory of new binaries |
 | `library-map` | YAML mapping file for non-trivial name changes |
 | `fail-on-removed-library` | Fail if a library disappeared |
-| `fail-on-additions` | Fail if compatible additions are detected |
+| `severity-preset` / `severity-addition` | Severity configuration for exit codes |
 | `output-dir` | Per-library report output directory |
 
 Example:

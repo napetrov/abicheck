@@ -8,47 +8,77 @@
 
 ## `abicheck compare`
 
+### Legacy exit codes (default, no `--severity-*` flags)
+
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | `NO_CHANGE`, `COMPATIBLE`, or `COMPATIBLE_WITH_RISK` — no binary ABI break |
-| `1` | `ADDITIONS` — new public symbols/types detected (**only with `--fail-on-additions`**; without the flag, additions exit `0`) |
 | `2` | `API_BREAK` — source-level API break — recompilation required |
 | `4` | `BREAKING` — binary ABI break |
 
 > **⚠️ Exit `0` covers `NO_CHANGE`, `COMPATIBLE`, and `COMPATIBLE_WITH_RISK`.** If your pipeline needs
 > to distinguish them (e.g. warn on deployment risk), use `--format json` and
 > read the `verdict` field — exit code alone is not sufficient.
->
-> **ℹ️ Exit `1` (ADDITIONS)** is only produced when `--fail-on-additions` is passed.
-> Without that flag, API additions are reported as `COMPATIBLE` with exit code `0`.
+
+### Severity-aware exit codes (with any `--severity-*` flag)
+
+When any `--severity-preset` or `--severity-*` option is provided, the exit code
+is computed from the severity configuration rather than the verdict:
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | No error-level findings |
+| `1` | Error-level findings in `addition` or `quality_issues` only |
+| `2` | Error-level findings in `potential_breaking` (but not `abi_breaking`) |
+| `4` | Error-level findings in `abi_breaking` |
+
+The highest applicable code wins. For example, if both `abi_breaking=error` and
+`quality_issues=error` have findings, the exit code is `4`.
+
+> **ℹ️ The two exit code paths are mutually exclusive.** Without `--severity-*`
+> flags, the legacy verdict-based path runs. With any `--severity-*` flag, the
+> severity-aware path runs. They never both execute.
+
+### Severity presets
+
+| Preset | `abi_breaking` | `potential_breaking` | `quality_issues` | `addition` |
+|--------|---------------|---------------------|------------------|-----------|
+| `default` | error | warning | warning | info |
+| `strict` | error | error | error | error |
+| `info-only` | info | info | info | info |
+
+Per-category overrides (`--severity-abi-breaking`, `--severity-potential-breaking`,
+`--severity-quality-issues`, `--severity-addition`) take precedence over the preset.
 
 ### CI gate patterns
 
 ```bash
-# Production gate: fail on any break
+# Production gate: fail on any break (legacy exit codes)
 abicheck compare old.json new.json
 ret=$?
 [ $ret -eq 4 ] && echo "BREAKING — release blocked" && exit 1
 [ $ret -eq 2 ] && echo "API_BREAK — source-level break" && exit 1
 echo "OK (NO_CHANGE or COMPATIBLE)"
 
-# With --fail-on-additions: also block unexpected API expansion
-abicheck compare old.json new.json --fail-on-additions
+# Block unexpected API expansion (severity-aware)
+abicheck compare old.json new.json --severity-addition error
 ret=$?
-[ $ret -eq 1 ] && echo "ADDITIONS — unexpected API expansion" && exit 1   # only with --fail-on-additions
+[ $ret -eq 1 ] && echo "ADDITIONS — unexpected API expansion" && exit 1
 [ $ret -eq 4 ] && echo "BREAKING — release blocked" && exit 1
 [ $ret -eq 2 ] && echo "API_BREAK — source-level break" && exit 1
 echo "OK"
 
-# Permissive gate: fail only on binary breaks (allow API_BREAK + COMPATIBLE)
+# Strict mode: all categories at error level
+abicheck compare old.json new.json --severity-preset strict
+
+# Permissive gate: fail only on binary breaks
 abicheck compare old.json new.json
 ret=$?
 [ $ret -eq 4 ] && exit 1   # BREAKING only; API_BREAK (exit 2) allowed
 exit 0
-# note: exit 0 includes both NO_CHANGE and COMPATIBLE
 
-# Parse exact verdict from JSON
-abicheck compare old.json new.json --format json -o result.json
+# Parse exact verdict from JSON (with severity info)
+abicheck compare old.json new.json --format json --severity-preset default -o result.json
 verdict=$(python3 -c "import json,sys; d=json.load(open('result.json')); print(d['verdict'])" \
   || { echo "ERROR parsing result.json"; exit 1; })
 [ "$verdict" = "BREAKING" ] && exit 1
@@ -143,24 +173,25 @@ In `abicheck compat`, non-verdict failures are further classified where possible
 
 ## Summary table
 
-| Verdict / State | `compare` exit | `appcompat` exit | `deps` exit | `stack-check` exit | `compat` exit |
-|-----------------|---------------|-----------------|-------------|-------------------|---------------|
-| `NO_CHANGE` / `PASS` | `0` | `0` | `0` | `0` | `0` |
-| `COMPATIBLE` | `0` | `0` | — | — | `0` |
-| `COMPATIBLE_WITH_RISK` | `0` | `0` | — | — | `0` |
-| `ADDITIONS` (with `--fail-on-additions`) | `1` | n/a | — | — | n/a |
-| `WARN` (ABI risk) | — | — | — | `1` | — |
-| `API_BREAK` | `2` | `2` | — | — | `2` |
-| `BREAKING` / `FAIL` | `4` | `4` | — | `4` | `1` |
-| Load failure | — | — | `1` | `4` | — |
-| Tool error | `1/2`* | `1` | — | — | `3/4/5/6/7/8/10/11` |
+| Verdict / State | `compare` exit (legacy) | `compare` exit (severity) | `appcompat` exit | `deps` exit | `stack-check` exit | `compat` exit |
+|-----------------|------------------------|--------------------------|-----------------|-------------|-------------------|---------------|
+| `NO_CHANGE` / `PASS` | `0` | `0` | `0` | `0` | `0` | `0` |
+| `COMPATIBLE` | `0` | `0` | `0` | — | — | `0` |
+| `COMPATIBLE_WITH_RISK` | `0` | `0`–`2`* | `0` | — | — | `0` |
+| Additions only | `0` | `0`–`1`* | n/a | — | — | n/a |
+| Quality issues only | `0` | `0`–`1`* | n/a | — | — | n/a |
+| `WARN` (ABI risk) | — | — | — | — | `1` | — |
+| `API_BREAK` | `2` | `0`–`2`* | `2` | — | — | `2` |
+| `BREAKING` / `FAIL` | `4` | `4` | `4` | — | `4` | `1` |
+| Load failure | — | — | — | `1` | `4` | — |
+| Tool error | `2`† | `2`† | `1` | — | — | `3/4/5/6/7/8/10/11` |
 
-\* For `compare`, exit `1` without `--fail-on-additions` is a tool/CLI error.
-With `--fail-on-additions`, exit `1` can indicate `ADDITIONS` but may also occur
-for non-verdict failures. Exit `2` can also represent a CLI/configuration error
-(Click uses exit code 2 for argument/usage errors), not just `API_BREAK`. To
-reliably distinguish verdicts from tool errors, use `--format json` and read the
-`verdict` field as the authoritative discriminator.
+\* Severity exit codes depend on the configuration. For example, with
+`--severity-addition error`, additions exit `1`; with `--severity-preset
+info-only`, everything exits `0`.
+
+† Click uses exit code `2` for argument/usage errors. To reliably distinguish
+verdicts from tool errors, use `--format json` and read the `verdict` field.
 
 ---
 

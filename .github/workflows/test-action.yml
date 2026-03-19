@@ -238,14 +238,14 @@ jobs:
             exit 1
           fi
 
-  # ── Test: fail-on-additions ────────────────────────────────────────────────
-  test-fail-on-additions:
-    name: 'fail-on-additions: detect unexpected API expansion'
+  # ── Test: severity-addition error ─────────────────────────────────────────
+  test-severity-addition-error:
+    name: 'severity-addition error: detect unexpected API expansion'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run abicheck (compatible additions, should fail)
+      - name: Run abicheck (compatible additions, should fail with severity)
         id: abi
         uses: ./
         continue-on-error: true
@@ -254,9 +254,9 @@ jobs:
           new-library: tests/fixtures/action/action_test_v1_with_addition.json
           install-deps: false
           fail-on-breaking: false
-          fail-on-additions: true
+          extra-args: '--severity-addition error'
 
-      - name: Verify verdict is ADDITIONS
+      - name: Verify severity-driven failure
         shell: bash
         run: |
           if [[ "${{ steps.abi.outcome }}" != "failure" ]]; then
@@ -265,15 +265,15 @@ jobs:
           fi
           echo "Verdict: ${{ steps.abi.outputs.verdict }}"
           echo "Exit code: ${{ steps.abi.outputs.exit-code }}"
-          if [[ "${{ steps.abi.outputs.verdict }}" != "ADDITIONS" ]]; then
-            echo "::error::Expected verdict ADDITIONS, got ${{ steps.abi.outputs.verdict }}"
+          if [[ "${{ steps.abi.outputs.verdict }}" != "SEVERITY_ERROR" ]]; then
+            echo "::error::Expected verdict SEVERITY_ERROR, got ${{ steps.abi.outputs.verdict }}"
             exit 1
           fi
           if [[ "${{ steps.abi.outputs.exit-code }}" != "1" ]]; then
             echo "::error::Expected exit code 1, got ${{ steps.abi.outputs.exit-code }}"
             exit 1
           fi
-          echo "Correctly detected API additions (exit code 1, verdict ADDITIONS)"
+          echo "Correctly detected API additions via severity (exit code 1)"
 
   # ── Test: appcompat full mode ─────────────────────────────────────────────
   test-appcompat-full:
@@ -345,13 +345,13 @@ jobs:
             exit 1
           fi
 
-  test-fail-on-additions-allowed:
-    name: 'fail-on-additions=false: additions pass through'
+  test-additions-pass-by-default:
+    name: 'additions pass through without severity-addition error'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run abicheck (additions allowed explicitly)
+      - name: Run abicheck (additions allowed by default)
         id: abi
         uses: ./
         with:
@@ -359,14 +359,13 @@ jobs:
           new-library: tests/fixtures/action/action_test_v1_with_addition.json
           install-deps: false
           fail-on-breaking: false
-          fail-on-additions: false
 
       - name: Verify step succeeded
         shell: bash
         run: |
           if [[ "${{ steps.abi.outcome }}" != "success" ]]; then
-            echo "::error::Expected success when fail-on-additions=false"
+            echo "::error::Expected success when additions are at default severity"
             exit 1
           fi
-          echo "Correctly passed with additions allowed"
+          echo "Correctly passed with additions at default severity (info)"
 

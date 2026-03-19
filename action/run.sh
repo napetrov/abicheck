@@ -97,10 +97,9 @@ elif [[ "$MODE" == "compare" ]]; then
   add_single_flag "--policy-file" "${INPUT_POLICY_FILE:-}"
   add_single_flag "--suppress" "${INPUT_SUPPRESS:-}"
 
-  # API addition detection
-  if [[ "${INPUT_FAIL_ON_ADDITIONS:-false}" == "true" ]]; then
-    CMD+=(--fail-on-additions)
-  fi
+  # Severity configuration
+  add_single_flag "--severity-preset" "${INPUT_SEVERITY_PRESET:-}"
+  add_single_flag "--severity-addition" "${INPUT_SEVERITY_ADDITION:-}"
 
   if [[ "${INPUT_FOLLOW_DEPS:-false}" == "true" ]]; then
     CMD+=(--follow-deps)
@@ -203,9 +202,6 @@ elif [[ "$MODE" == "compare-release" ]]; then
   if [[ "${INPUT_FAIL_ON_REMOVED_LIBRARY:-false}" == "true" ]]; then
     CMD+=(--fail-on-removed-library)
   fi
-  if [[ "${INPUT_FAIL_ON_ADDITIONS:-false}" == "true" ]]; then
-    CMD+=(--fail-on-additions)
-  fi
 
 elif [[ "$MODE" == "deps" ]]; then
   # ── Deps mode (Linux ELF) ───────────────────────────────────────────────
@@ -254,6 +250,12 @@ fi
 # ---------------------------------------------------------------------------
 # Run abicheck
 # ---------------------------------------------------------------------------
+# Append extra-args (pass-through CLI arguments)
+if [[ -n "${INPUT_EXTRA_ARGS:-}" ]]; then
+  # shellcheck disable=SC2206
+  CMD+=($INPUT_EXTRA_ARGS)
+fi
+
 echo "::group::abicheck $MODE"
 echo "Command: ${CMD[*]}"
 echo ""
@@ -320,7 +322,7 @@ elif [[ "$MODE" == "deps" ]]; then
 
 elif [[ "$MODE" == "dump" ]]; then
   # dump exit codes: 0=success, anything else=error.
-  # dump never produces ADDITIONS/API_BREAK/BREAKING verdicts.
+  # dump never produces API_BREAK/BREAKING/SEVERITY_ERROR verdicts.
   if [[ $ABICHECK_EXIT -eq 0 ]]; then
     VERDICT="COMPATIBLE"
   else
@@ -348,7 +350,7 @@ else
           echo "::error::abicheck failed due to a CLI argument or configuration error (exit code 1)."
           echo "::error::Check the command and inputs above."
         else
-          VERDICT="ADDITIONS"
+          VERDICT="SEVERITY_ERROR"
         fi
         ;;
       2) VERDICT="API_BREAK" ;;
@@ -395,8 +397,8 @@ if [[ "${INPUT_ADD_JOB_SUMMARY:-true}" == "true" && "$MODE" != "dump" ]]; then
           echo "> **Verdict: COMPATIBLE** — No binary ABI break detected."
         fi
         ;;
-      ADDITIONS)
-        echo "> **Verdict: ADDITIONS** ⚠️ — No binary ABI break, but new public API was added unexpectedly."
+      SEVERITY_ERROR)
+        echo "> **Verdict: SEVERITY_ERROR** ⚠️ — Severity-level issue detected (see severity configuration)."
         ;;
       API_BREAK)
         if [[ "$MODE" == "appcompat" ]]; then
@@ -508,8 +510,9 @@ else
     FINAL_EXIT=1
   fi
 
-  if [[ "$VERDICT" == "ADDITIONS" && "${INPUT_FAIL_ON_ADDITIONS:-false}" == "true" ]]; then
-    echo "::error::API additions detected (unintentional API expansion). Set fail-on-additions: false to allow."
+  # Severity-driven exit code 1 (from --severity-* flags)
+  if [[ "$VERDICT" == "SEVERITY_ERROR" ]]; then
+    echo "::error::Severity-level error detected by abicheck."
     FINAL_EXIT=1
   fi
 

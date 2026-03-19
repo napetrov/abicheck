@@ -8,14 +8,14 @@
 | Breaking changes | 1 |
 | Source-level breaks | 0 |
 | Deployment risk changes | 0 |
-| Compatible additions | 1 |
+| Compatible changes | 1 |
 
 ## ❌ Breaking Changes
 
 - **type_size_changed**: Size changed: Point (64 → 96 bits) (`64` → `96`)
   > Old code allocates or copies the type with the old size; heap/stack corruption, out-of-bounds access.
 
-## ✅ Compatible Changes
+## ✅ Additions
 
 - Field added: Point::z
 

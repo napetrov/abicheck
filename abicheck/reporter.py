@@ -19,6 +19,11 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .checker_policy import HasKind
+    from .severity import KindSets, SeverityConfig
 
 from .checker import (
     Change,
@@ -466,6 +471,7 @@ def to_json(
     report_mode: str = "full",
     show_impact: bool = False,
     stat: bool = False,
+    severity_config: SeverityConfig | None = None,
 ) -> str:
     if stat:
         return to_stat_json(result, indent=indent)
@@ -502,6 +508,16 @@ def to_json(
     }
     effective_policy = result.policy or "strict_abi"
     d["policy"] = effective_policy
+
+    # Severity-categorized summary when severity config is provided
+    if severity_config is not None:
+        eff_sets = result._effective_kind_sets()
+        d["severity"] = _build_severity_json(
+            changes, severity_config,
+            all_changes=list(result.changes),
+            kind_sets=eff_sets,
+        )
+
     d["changes"] = [_change_to_dict(c, policy=effective_policy) for c in changes]
     if result.redundant_count > 0:
         d["redundant_count"] = result.redundant_count
@@ -604,6 +620,128 @@ def _append_suppression_note(lines: list[str], result: DiffResult) -> None:
                 lines.append(f">   - `{sc.symbol}` — {sc.description}")
 
 
+# ---------------------------------------------------------------------------
+# Severity section helpers
+# ---------------------------------------------------------------------------
+
+_BREAKING_ICON = "\u274c"  # ❌
+_SOURCE_BREAK_ICON = "\u26a0\ufe0f"  # ⚠️
+_RISK_ICON = "\u26a0\ufe0f"  # ⚠️
+_QUALITY_ICON = "\U0001f50d"  # 🔍
+_ADDITION_ICON = "\u2705"  # ✅
+
+_SEVERITY_EMOJI = {
+    "error": "\u274c",  # ❌
+    "warning": "\u26a0\ufe0f",  # ⚠️
+    "info": "\u2139\ufe0f",  # ℹ️
+}
+
+
+def _section_severity_label(severity_config: SeverityConfig | None, category_attr: str) -> str:
+    """Return a severity label suffix like ' [ERROR]' for a report section header."""
+    if severity_config is None:
+        return ""
+    level = getattr(severity_config, category_attr, None)
+    if level is None:
+        return ""
+    level_val = level.value if hasattr(level, "value") else str(level)
+    emoji = _SEVERITY_EMOJI.get(level_val, "")
+    return f" {emoji} `{level_val.upper()}`"
+
+
+def _build_severity_summary_md(
+    changes: list[Change],
+    severity_config: SeverityConfig,
+    *,
+    kind_sets: KindSets | None = None,
+) -> list[str]:
+    """Build a severity configuration summary table for markdown output."""
+    from .severity import SeverityLevel, categorize_changes
+
+    categorized = categorize_changes(changes, kind_sets=kind_sets)
+    lines = [
+        "## Severity Configuration",
+        "",
+        "| Category | Severity | Count | Exit Impact |",
+        "|----------|----------|-------|-------------|",
+    ]
+
+    _CATEGORY_INFO: list[tuple[str, str, list[HasKind]]] = [
+        ("ABI/API Incompatibilities", "abi_breaking", categorized.abi_breaking),
+        ("Potential Incompatibilities", "potential_breaking", categorized.potential_breaking),
+        ("Quality Issues", "quality_issues", categorized.quality_issues),
+        ("Additions", "addition", categorized.addition),
+    ]
+
+    for label, attr, cat_changes in _CATEGORY_INFO:
+        level = getattr(severity_config, attr, SeverityLevel.INFO)
+        level_val = level.value if hasattr(level, "value") else str(level)
+        emoji = _SEVERITY_EMOJI.get(level_val, "")
+        count = len(cat_changes)
+        impact = "causes non-zero exit" if level_val == "error" and count > 0 else "no exit impact"
+        lines.append(
+            f"| {label} | {emoji} `{level_val.upper()}` | {count} | {impact} |"
+        )
+
+    lines.append("")
+    return lines
+
+
+def _build_severity_json(
+    changes: list[Change],
+    severity_config: SeverityConfig,
+    *,
+    all_changes: list[Change] | None = None,
+    kind_sets: KindSets | None = None,
+) -> dict[str, object]:
+    """Build severity information for JSON output.
+
+    *changes* are the (possibly filtered) changes for display counts.
+    *all_changes*, when provided, is the unfiltered set used to compute
+    the exit code so that ``--show-only`` does not affect the exit code.
+    *kind_sets* from ``DiffResult._effective_kind_sets()`` includes
+    PolicyFile overrides.
+    """
+    from .severity import SeverityLevel, categorize_changes, compute_exit_code
+
+    categorized = categorize_changes(changes, kind_sets=kind_sets)
+
+    config_dict: dict[str, str] = {}
+    for attr in ("abi_breaking", "potential_breaking", "quality_issues", "addition"):
+        level = getattr(severity_config, attr, SeverityLevel.INFO)
+        config_dict[attr] = level.value if hasattr(level, "value") else str(level)
+
+    categories: dict[str, object] = {
+        "abi_breaking": {
+            "severity": config_dict["abi_breaking"],
+            "count": len(categorized.abi_breaking),
+        },
+        "potential_breaking": {
+            "severity": config_dict["potential_breaking"],
+            "count": len(categorized.potential_breaking),
+        },
+        "quality_issues": {
+            "severity": config_dict["quality_issues"],
+            "count": len(categorized.quality_issues),
+        },
+        "addition": {
+            "severity": config_dict["addition"],
+            "count": len(categorized.addition),
+        },
+    }
+
+    # Exit code uses the full unfiltered change set so --show-only
+    # does not affect it.
+    exit_changes = all_changes if all_changes is not None else changes
+    exit_code = compute_exit_code(exit_changes, severity_config, kind_sets=kind_sets)
+
+    return {
+        "config": config_dict,
+        "categories": categories,
+        "exit_code": exit_code,
+    }
+
+
 def _footer_lines() -> list[str]:
     return [
         "---",
@@ -628,6 +766,7 @@ def to_markdown(
     report_mode: str = "full",
     show_impact: bool = False,
     stat: bool = False,
+    severity_config: SeverityConfig | None = None,
 ) -> str:
     if stat:
         return to_stat(result)
@@ -665,9 +804,15 @@ def to_markdown(
         f"| Breaking changes | {len(result.breaking)} |",
         f"| Source-level breaks | {len(result.source_breaks)} |",
         f"| Deployment risk changes | {len(result.risk)} |",
-        f"| Compatible additions | {len(result.compatible)} |",
+        f"| Compatible changes | {len(result.compatible)} |",
         "",
     ]
+
+    # Severity configuration summary when provided
+    if severity_config is not None:
+        lines += _build_severity_summary_md(
+            changes, severity_config, kind_sets=result._effective_kind_sets(),
+        )
 
     if show_only:
         lines.append(f"> Filtered by: `--show-only {show_only}` ({len(changes)} of {len(result.changes)} changes shown)")
@@ -689,19 +834,25 @@ def to_markdown(
         ]
 
     if breaking:
-        lines += ["## ❌ Breaking Changes", ""]
+        sev_label = _section_severity_label(severity_config, "abi_breaking")
+        lines += [f"## {_BREAKING_ICON} Breaking Changes{sev_label}", ""]
         for c in breaking:
             lines.append(_format_change_md(c))
         lines.append("")
 
     if source_breaks:
-        lines += ["## ⚠️ Source-Level Breaks", ""]
+        sev_label = _section_severity_label(severity_config, "potential_breaking")
+        lines += [f"## {_SOURCE_BREAK_ICON} Source-Level Breaks{sev_label}", ""]
         for c in source_breaks:
             lines.append(_format_change_md(c))
         lines.append("")
 
     if risk:
-        lines += ["## ⚠️ Deployment Risk Changes", ""]
+        # Risk changes share the "potential_breaking" severity category with
+        # source-level breaks (both are potential incompatibilities), so they
+        # show the same severity badge in the report.
+        sev_label = _section_severity_label(severity_config, "potential_breaking")
+        lines += [f"## {_RISK_ICON} Deployment Risk Changes{sev_label}", ""]
         lines += [
             "> These changes are **binary-compatible** but may cause the library to fail",
             "> loading on older systems (e.g. a new GLIBC version requirement). Verify",
@@ -712,11 +863,24 @@ def to_markdown(
             lines.append(f"- **{c.kind.value}**: {c.description}")
         lines.append("")
 
+    # Split compatible changes into quality/behavioral issues vs additions
+    # using the canonical kind sets from checker_policy (single source of truth).
     if compatible:
-        lines += ["## ✅ Compatible Changes", ""]
-        for c in compatible:
-            lines.append(f"- {c.description}")
-        lines.append("")
+        from .checker_policy import ADDITION_KINDS as _ADDITION_KINDS
+        quality = [c for c in compatible if c.kind not in _ADDITION_KINDS]
+        additions_list = [c for c in compatible if c.kind in _ADDITION_KINDS]
+        if quality:
+            sev_label = _section_severity_label(severity_config, "quality_issues")
+            lines += [f"## {_QUALITY_ICON} Quality Issues{sev_label}", ""]
+            for c in quality:
+                lines.append(f"- **{c.kind.value}**: {c.description}")
+            lines.append("")
+        if additions_list:
+            sev_label = _section_severity_label(severity_config, "addition")
+            lines += [f"## {_ADDITION_ICON} Additions{sev_label}", ""]
+            for c in additions_list:
+                lines.append(f"- {c.description}")
+            lines.append("")
 
     if not changes:
         if show_only and result.changes:

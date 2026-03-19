@@ -92,7 +92,9 @@ automatically, then runs ABI comparison and reports results.
 | `upload-sarif` | `false` | Upload SARIF to GitHub Code Scanning |
 | `fail-on-breaking` | `true` | Fail step on binary ABI break |
 | `fail-on-api-break` | `false` | Fail step on source-level API break |
-| `fail-on-additions` | `false` | Fail step when new public symbols/types are added (detects unintentional API expansion) |
+| `severity-preset` | — | Severity preset: `default`, `strict`, or `info-only` |
+| `severity-addition` | — | Severity for additions: `error`, `warning`, or `info` |
+| `extra-args` | `''` | Additional CLI arguments passed to abicheck |
 | `add-job-summary` | `true` | Write summary to Job Summary panel |
 
 ### Package comparison inputs (compare-release mode)
@@ -112,8 +114,8 @@ automatically, then runs ABI comparison and reports results.
 
 | Output | Description |
 |--------|-------------|
-| `verdict` | **compare/dump:** `COMPATIBLE`, `ADDITIONS`, `API_BREAK`, `BREAKING`, or `ERROR`. **stack-check:** `PASS`, `WARN`, `FAIL`, or `ERROR`. **deps:** `PASS`, `FAIL`, or `ERROR`. |
-| `exit-code` | **compare:** `0` (compatible), `1` (additions), `2` (API break), `4` (ABI break). **stack-check:** `0` (pass), `1` (warn), `4` (fail). **deps:** `0` (ok), `1` (missing). |
+| `verdict` | **compare/dump:** `COMPATIBLE`, `SEVERITY_ERROR`, `API_BREAK`, `BREAKING`, or `ERROR`. **stack-check:** `PASS`, `WARN`, `FAIL`, or `ERROR`. **deps:** `PASS`, `FAIL`, or `ERROR`. |
+| `exit-code` | **compare:** `0` (compatible), `1` (severity error), `2` (API break), `4` (ABI break). **stack-check:** `0` (pass), `1` (warn), `4` (fail). **deps:** `0` (ok), `1` (missing). |
 | `report-path` | Path to the generated report file (empty when no output file was produced) |
 
 ## Usage examples
@@ -437,11 +439,11 @@ Block PRs that accidentally add new public symbols or types:
           new-library: build/libfoo.so
           new-header: include/foo.h
           fail-on-breaking: true
-          fail-on-additions: true   # exit code 1 if any new public API appears
+          severity-addition: error   # exit code 1 if any new public API appears
 ```
 
-When `fail-on-additions: true`:
-- Exit code `1` → new public symbol/type added (`verdict: ADDITIONS`)
+When `severity-addition: error`:
+- Exit code `1` → new public symbol/type added (`verdict: SEVERITY_ERROR`)
 - Exit code `0` → no additions, no breaks (`verdict: COMPATIBLE`)
 - Exit code `4` → binary ABI break (`verdict: BREAKING`)
 

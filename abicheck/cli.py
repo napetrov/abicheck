@@ -34,6 +34,7 @@ from .serialization import load_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
     from .policy_file import PolicyFile
+    from .severity import SeverityConfig
     from .suppression import SuppressionList
 
 from . import __version__ as _abicheck_version
@@ -671,6 +672,7 @@ def _render_output(
     report_mode: str = "full",
     show_impact: bool = False,
     stat: bool = False,
+    severity_config: SeverityConfig | None = None,
 ) -> str:
     """Render comparison result in the requested output format."""
     if stat:
@@ -678,7 +680,10 @@ def _render_output(
             return to_stat_json(result)
         return to_stat(result)
     if fmt == "json":
-        base = to_json(result, show_only=show_only, report_mode=report_mode, show_impact=show_impact)
+        base = to_json(
+            result, show_only=show_only, report_mode=report_mode,
+            show_impact=show_impact, severity_config=severity_config,
+        )
         if follow_deps and (old.dependency_info or (new and new.dependency_info)):
             import json
             d = json.loads(base)
@@ -704,7 +709,10 @@ def _render_output(
             show_only=show_only,
             show_impact=show_impact,
         )
-    md = to_markdown(result, show_only=show_only, report_mode=report_mode, show_impact=show_impact)
+    md = to_markdown(
+        result, show_only=show_only, report_mode=report_mode,
+        show_impact=show_impact, severity_config=severity_config,
+    )
     if follow_deps and (old.dependency_info or (new and new.dependency_info)):
         md += _render_deps_section_md(old, new)
     return md
@@ -941,10 +949,28 @@ def _build_match_map(paths: list[Path]) -> tuple[dict[str, Path], list[str]]:
 @click.option("--dwarf-only", is_flag=True, default=False,
               help="Force DWARF-only mode for both sides: use DWARF debug info "
                    "as primary data source even when headers are available.")
-@click.option("--fail-on-additions/--no-fail-on-additions", "fail_on_additions", default=False,
-              help="Exit with code 1 if any new public symbols, types, or fields were added "
-                   "(COMPATIBLE changes). Useful for detecting unintentional API expansion in PRs. "
-                   "Use --no-fail-on-additions (or omit the flag) to allow API growth.")
+@click.option("--severity-preset", "severity_preset",
+              type=click.Choice(["default", "strict", "info-only"], case_sensitive=True),
+              default=None,
+              help="Severity preset: 'default', 'strict', or 'info-only'. "
+                   "Controls exit codes and report labels. Per-category "
+                   "--severity-* options override the chosen preset.")
+@click.option("--severity-abi-breaking", "severity_abi_breaking",
+              type=click.Choice(["error", "warning", "info"], case_sensitive=True),
+              default=None,
+              help="Severity for clear ABI/API incompatibilities (overrides preset).")
+@click.option("--severity-potential-breaking", "severity_potential_breaking",
+              type=click.Choice(["error", "warning", "info"], case_sensitive=True),
+              default=None,
+              help="Severity for potential incompatibilities needing review (overrides preset).")
+@click.option("--severity-quality-issues", "severity_quality_issues",
+              type=click.Choice(["error", "warning", "info"], case_sensitive=True),
+              default=None,
+              help="Severity for problematic behaviors like std symbol leaks (overrides preset).")
+@click.option("--severity-addition", "severity_addition",
+              type=click.Choice(["error", "warning", "info"], case_sensitive=True),
+              default=None,
+              help="Severity for new public API additions (overrides preset).")
 @click.option("--follow-deps", is_flag=True, default=False,
               help="Resolve transitive dependencies for both old and new, compute symbol "
                    "bindings, and include a dependency-change section in the report. ELF only.")
@@ -988,7 +1014,11 @@ def compare_cmd(
     suppress: Path | None, policy: str, policy_file_path: Path | None,
     pdb_path: Path | None, old_pdb_path: Path | None, new_pdb_path: Path | None,
     dwarf_only: bool,
-    fail_on_additions: bool,
+    severity_preset: str | None,
+    severity_abi_breaking: str | None,
+    severity_potential_breaking: str | None,
+    severity_quality_issues: str | None,
+    severity_addition: str | None,
     follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
     show_redundant: bool, show_only: str | None, stat: bool,
     report_mode: str, show_impact: bool,
@@ -1005,11 +1035,17 @@ def compare_cmd(
     DWARF-only mode (if DWARF available) or symbols-only analysis.
 
     \b
-    Exit codes:
+    Exit codes (legacy, without --severity-* flags):
       0  NO_CHANGE, COMPATIBLE, or COMPATIBLE_WITH_RISK — no binary ABI break
          (COMPATIBLE_WITH_RISK: deployment risk present; check the report)
       2  API_BREAK — source-level API break — recompilation required
       4  BREAKING — binary ABI break detected
+    \b
+    Exit codes (severity-aware, with any --severity-* flag):
+      0  No error-level findings
+      1  Error-level findings in addition or quality_issues only
+      2  Error-level findings in potential_breaking (but not abi_breaking)
+      4  Error-level findings in abi_breaking
 
     \b
     Examples:
@@ -1037,6 +1073,20 @@ def compare_cmd(
       abicheck compare old.json new.json --suppress suppressions.yaml
     """
     _setup_verbosity(verbose)
+
+    # Resolve severity configuration (preset + per-category overrides)
+    from .severity import resolve_severity_config
+    severity_explicitly_set = any(v is not None for v in (
+        severity_preset, severity_abi_breaking, severity_potential_breaking,
+        severity_quality_issues, severity_addition,
+    ))
+    sev_config = resolve_severity_config(
+        preset=severity_preset,
+        abi_breaking=severity_abi_breaking,
+        potential_breaking=severity_potential_breaking,
+        quality_issues=severity_quality_issues,
+        addition=severity_addition,
+    )
 
     old_h, new_h, old_inc, new_inc = _resolve_per_side_options(
         headers, includes, old_headers_only, new_headers_only,
@@ -1136,6 +1186,7 @@ def compare_cmd(
         follow_deps=follow_deps,
         show_only=show_only, report_mode=report_mode,
         show_impact=show_impact, stat=stat,
+        severity_config=sev_config if severity_explicitly_set else None,
     )
     if output:
         _safe_write_output(output, text)
@@ -1143,26 +1194,24 @@ def compare_cmd(
     else:
         click.echo(text)
 
-    if result.verdict.value == "BREAKING":
-        sys.exit(4)
-    elif result.verdict.value == "API_BREAK":
-        sys.exit(2)
+    # Severity-aware exit code: use severity config when any --severity-*
+    # flag was explicitly provided.  Otherwise fall back to legacy verdict-
+    # based exit codes for full backward compatibility.
+    from .severity import compute_exit_code
+    if severity_explicitly_set:
+        # Use effective kind sets which include PolicyFile and --strict-elf-only
+        # overrides, not just the built-in policy name.
+        eff_sets = result._effective_kind_sets()
+        exit_code = compute_exit_code(result.changes, sev_config, kind_sets=eff_sets)
+        if exit_code != 0:
+            sys.exit(exit_code)
+    else:
+        # Legacy exit-code behaviour (preserves backward compatibility)
+        if result.verdict.value == "BREAKING":
+            sys.exit(4)
+        elif result.verdict.value == "API_BREAK":
+            sys.exit(2)
 
-    # --fail-on-additions: exit 1 if any new public symbols/types were added.
-    # Filter result.changes directly (not result.compatible) so the check is
-    # policy-independent: _ADDITION_KINDS covers all known additive change kinds.
-    if fail_on_additions:
-        from .checker_policy import COMPATIBLE_KINDS
-        _ADDITION_KINDS = {k for k in COMPATIBLE_KINDS if k.value.endswith("_added")}
-        additions = [c for c in result.changes if c.kind in _ADDITION_KINDS]
-        if additions:
-            click.echo(
-                f"API expansion detected: {len(additions)} addition(s) "
-                f"({', '.join(sorted({c.kind.value for c in additions}))}). "
-                "Use --no-fail-on-additions (or omit the flag) to allow API growth.",
-                err=True,
-            )
-            sys.exit(1)
 
 @main.command("appcompat")
 @click.argument("app_path", type=click.Path(exists=True, path_type=Path))
@@ -1412,8 +1461,6 @@ def appcompat_cmd(
 @click.option("--fail-on-removed-library/--no-fail-on-removed-library",
               "fail_on_removed", default=False,
               help="Exit 8 when a library present in old_dir is absent in new_dir.")
-@click.option("--fail-on-additions/--no-fail-on-additions",
-              "fail_on_additions", default=False)
 @click.option("--debug-info1", type=click.Path(exists=True, path_type=Path), default=None,
               help="Debug info package for old side (RPM/Deb/tar).")
 @click.option("--debug-info2", type=click.Path(exists=True, path_type=Path), default=None,
@@ -1446,7 +1493,6 @@ def compare_release_cmd(
     policy: str,
     policy_file_path: Path | None,
     fail_on_removed: bool,
-    fail_on_additions: bool,
     debug_info1: Path | None,
     debug_info2: Path | None,
     devel_pkg1: Path | None,
@@ -1755,8 +1801,6 @@ def compare_release_cmd(
             sys.exit(2)
         if fail_on_removed and removed_keys:
             sys.exit(8)
-        if fail_on_additions and any(lib.get("compatible_additions", 0) for lib in library_results):
-            sys.exit(1)
     finally:
         import shutil as _shutil
         if not keep_extracted:

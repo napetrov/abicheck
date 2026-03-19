@@ -117,7 +117,7 @@ Unlike `compare` (which shows all library changes), `appcompat` filters the diff
 | Exit code | Verdict | Meaning |
 |-----------|---------|---------|
 | `0` | `NO_CHANGE`, `COMPATIBLE`, `COMPATIBLE_WITH_RISK` | Safe — no binary ABI break |
-| `1` | — | Tool/runtime error (or `ADDITIONS` with `--fail-on-additions`) |
+| `1` | — | Severity-driven error in additions/quality (with `--severity-*` flags) |
 | `2` | `API_BREAK` | Source-level break (recompile needed, binary may work) |
 | `4` | `BREAKING` | Binary ABI break (old binaries will crash or misbehave) |
 
