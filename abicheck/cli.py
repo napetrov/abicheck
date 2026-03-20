@@ -1856,9 +1856,11 @@ def deps_cmd(
 
 @main.command("stack-check")
 @click.argument("binary", type=click.Path(path_type=Path))
-@click.option("--baseline", type=click.Path(exists=True, path_type=Path), required=True,
+@click.option("--baseline", type=click.Path(exists=True, path_type=Path),
+              default=Path("/"), show_default=True,
               help="Sysroot for the baseline environment.")
-@click.option("--candidate", type=click.Path(exists=True, path_type=Path), required=True,
+@click.option("--candidate", type=click.Path(exists=True, path_type=Path),
+              default=Path("/"), show_default=True,
               help="Sysroot for the candidate environment.")
 @click.option("--search-path", "search_paths", multiple=True,
               type=click.Path(exists=True, path_type=Path),

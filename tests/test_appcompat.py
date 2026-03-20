@@ -27,6 +27,7 @@ from abicheck.appcompat import (
     _detect_app_format,
     _get_lib_soname,
     _get_new_lib_exports,
+    _get_old_lib_exports_for_scoping,
     _is_relevant_to_app,
     _parse_elf_app_requirements,
     _parse_macho_app_requirements,
@@ -1069,6 +1070,23 @@ class TestGetNewLibExports:
 
         assert exports == {"foo", "bar"}
 
+    def test_old_exports_for_scoping_elf(self, tmp_path):
+        from abicheck.elf_metadata import ElfMetadata, ElfSymbol
+
+        f = tmp_path / "libold.so"
+        f.write_bytes(b"\x7fELF" + b"\x00" * 100)
+
+        meta = ElfMetadata(symbols=[ElfSymbol(name="foo"), ElfSymbol(name="bar")])
+        with patch("abicheck.elf_metadata.parse_elf_metadata", return_value=meta):
+            exports = _get_old_lib_exports_for_scoping(f)
+
+        assert exports == {"foo", "bar"}
+
+    def test_old_exports_for_scoping_non_elf(self, tmp_path):
+        f = tmp_path / "lib.dll"
+        f.write_bytes(b"MZ" + b"\x00" * 100)
+        assert _get_old_lib_exports_for_scoping(f) == set()
+
     def test_pe_exports(self, tmp_path):
         from abicheck.pe_metadata import PeExport, PeMetadata
 
@@ -1374,6 +1392,33 @@ class TestCheckAppcompat:
             for call in mock_dump.call_args_list:
                 assert call.kwargs.get("compiler") == "cc"
                 assert call.kwargs.get("lang") == "c"
+
+    def test_elf_scopes_symbols_to_old_lib_exports(self, tmp_path):
+        """Symbols not exported by target old DSO must be ignored (no false positives)."""
+        app = tmp_path / "app"
+        old_lib = tmp_path / "old.so"
+        new_lib = tmp_path / "new.so"
+
+        app_reqs = AppRequirements(
+            undefined_symbols={"inflate", "XML_Parse"},
+        )
+        diff = DiffResult(old_version="1", new_version="2", library="libz")
+
+        with (
+            patch("abicheck.appcompat._get_lib_soname", return_value="libz.so.1"),
+            patch("abicheck.appcompat.parse_app_requirements", return_value=app_reqs),
+            patch("abicheck.appcompat._detect_app_format", return_value="elf"),
+            patch("abicheck.appcompat._get_old_lib_exports_for_scoping", return_value={"inflate"}),
+            patch("abicheck.dumper.dump", return_value=MagicMock()),
+            patch("abicheck.appcompat.compare", return_value=diff),
+            patch("abicheck.appcompat._get_new_lib_exports", return_value={"inflate"}),
+            patch("abicheck.elf_metadata.parse_elf_metadata", return_value=SimpleNamespace(versions_defined=[])),
+        ):
+            result = check_appcompat(app, old_lib, new_lib)
+
+        assert result.required_symbols == {"inflate"}
+        assert result.missing_symbols == []
+        assert result.verdict == Verdict.COMPATIBLE
 
 
 # ---------------------------------------------------------------------------

@@ -450,6 +450,24 @@ def _get_new_lib_exports(new_lib_path: Path) -> set[str]:
     return set()
 
 
+def _get_old_lib_exports_for_scoping(old_lib_path: Path) -> set[str]:
+    """Best-effort export set for the old library (ELF-only).
+
+    Used to scope app-required symbols to the target DSO and avoid false
+    positives from unrelated dependencies in large consumer binaries.
+    """
+    if _detect_app_format(old_lib_path) != "elf":
+        return set()
+    try:
+        from .elf_metadata import parse_elf_metadata
+
+        old_meta = parse_elf_metadata(old_lib_path)
+        return {s.name for s in old_meta.symbols}
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Failed to read old-lib exports for appcompat scoping: %s", exc)
+        return set()
+
+
 def _get_lib_soname(lib_path: Path) -> str:
     """Get the SONAME/install_name/DLL name from a library."""
     fmt = _detect_app_format(lib_path)
@@ -501,6 +519,25 @@ def check_appcompat(
 
     # 1. Parse app requirements
     app_reqs = parse_app_requirements(app_path, library_soname)
+
+    # Guard against over-collection in ELF consumers with many dependencies:
+    # keep only symbols that are actually exported by the target old library.
+    # This prevents unrelated DSO imports from being attributed to the checked
+    # library (false BREAKING in appcompat).
+    if _detect_app_format(app_path) == "elf" and _detect_app_format(old_lib_path) == "elf":
+        old_exports = _get_old_lib_exports_for_scoping(old_lib_path)
+        if old_exports:
+            before = len(app_reqs.undefined_symbols)
+            app_reqs.undefined_symbols = {
+                s for s in app_reqs.undefined_symbols if s in old_exports
+            }
+            dropped = before - len(app_reqs.undefined_symbols)
+            if dropped > 0:
+                log.debug(
+                    "appcompat scoped %d symbols to target library exports (%s)",
+                    dropped,
+                    old_lib_path,
+                )
 
     # 2. Run standard library comparison
     from .dumper import dump
