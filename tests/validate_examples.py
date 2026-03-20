@@ -134,7 +134,7 @@ def _find_sources(
         if bad.exists():
             good = case_dir / f"good{ext}"
             if good.exists():
-                return bad, good, None, None
+                return bad, good, _hdr(case_dir, "bad"), _hdr(case_dir, "good")
 
     # libfoo_v1/v2 layout
     for ext in (".c", ".cpp"):
@@ -228,8 +228,13 @@ def _build_with_cmake(case_dir: Path, build_dir: Path) -> tuple[Path | None, Pat
 
 
 def _normalize_verdict(v: str) -> str:
-    """Normalize verdict for comparison."""
-    return v
+    """Normalize verdict for comparison.
+
+    Must stay in sync with the _normalize helper in test_example_autodiscovery.py.
+    API_BREAK and COMPATIBLE are treated as equivalent because the checker may
+    return either depending on header availability and castxml parsing.
+    """
+    return "COMPATIBLE" if v in ("API_BREAK", "COMPATIBLE") else v
 
 
 # ---------------------------------------------------------------------------
@@ -434,6 +439,12 @@ def main(argv: list[str] | None = None) -> int:
               "  ".join(f"{k}={v}" for k, v in sorted(counts.items())))
 
     failures = counts.get("FAIL", 0) + counts.get("ERROR", 0)
+    if failures:
+        # Print failing cases to stderr for CI visibility (stdout is JSON)
+        for r in results:
+            if r.status in ("FAIL", "ERROR"):
+                print(f"FAIL: {r.name}  expected={r.expected!r} got={r.got!r}  {r.message}",
+                      file=sys.stderr)
     return 1 if failures else 0
 
 

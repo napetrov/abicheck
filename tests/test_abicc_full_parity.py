@@ -595,7 +595,10 @@ class TestCrossDetectorIntegration:
         assert ChangeKind.TYPE_SIZE_CHANGED in kinds
 
     def test_reserved_field_with_type_change(self) -> None:
-        """Reserved field put into use with a type change."""
+        """Reserved field put into use with a type change → NOT matched as
+        USED_RESERVED_FIELD because the type differs (M5 fix: require offset
+        AND type match to avoid silent data truncation with COPY relocations).
+        Falls through to TYPE_FIELD_REMOVED + TYPE_FIELD_ADDED."""
         old = _snap(types=[RecordType(name="S", kind="struct", fields=[
             TypeField(name="__reserved", type="int", offset_bits=0),
         ])])
@@ -603,7 +606,9 @@ class TestCrossDetectorIntegration:
             TypeField(name="flags", type="unsigned int", offset_bits=0),
         ])])
         result = compare(old, new)
-        assert ChangeKind.USED_RESERVED_FIELD in _kinds(result)
+        kinds = _kinds(result)
+        assert ChangeKind.USED_RESERVED_FIELD not in kinds
+        assert ChangeKind.TYPE_FIELD_REMOVED in kinds
 
     def test_all_new_kinds_in_classification_sets(self) -> None:
         """Verify all new ChangeKinds are properly classified."""

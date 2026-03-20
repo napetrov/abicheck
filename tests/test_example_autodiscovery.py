@@ -142,7 +142,7 @@ def _find_sources(
             good = case_dir / f"good{ext}"
             if not good.exists():
                 pytest.fail(f"{case_dir.name}: good{ext} missing — broken fixture")
-            return bad, good, None, None
+            return bad, good, _hdr(case_dir, "bad"), _hdr(case_dir, "good")
 
     # libfoo_v1/v2 layout (case18)
     for ext in (".c", ".cpp"):

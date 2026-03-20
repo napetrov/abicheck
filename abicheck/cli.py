@@ -163,7 +163,7 @@ def _dump_native_binary(
                 "Warning: --include paths are ignored without headers.",
                 err=True,
             )
-        compiler = "c++" if lang == "c++" else "cc"
+        compiler = "cc" if lang == "c" else "c++"
         try:
             return dump(
                 so_path=path,
@@ -504,7 +504,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             click.echo(result)
         return
 
-    compiler = "c++" if lang == "c++" else "cc"
+    compiler = "cc" if lang == "c" else "c++"
     resolved_headers = _expand_header_inputs(list(headers)) if headers else []
     try:
         snap = dump(

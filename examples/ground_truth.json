@@ -631,8 +631,7 @@
       "abi_break": false,
       "api_break": false,
       "bad_practice": false,
-      "description": "Symbol visibility changed DEFAULT\u2192PROTECTED \u2014 exported but no longer interposable (compatible, interposition policy concern)",
-      "known_gap": "Tool returns NO_CHANGE \u2014 ELF visibility attribute changes are not yet tracked"
+      "description": "Symbol visibility changed DEFAULT\u2192PROTECTED \u2014 exported but no longer interposable (compatible, interposition policy concern)"
     },
     "case52_rpath_leak": {
       "expected": "COMPATIBLE",
@@ -668,7 +667,7 @@
       "api_break": false,
       "bad_practice": false,
       "description": "Reserved placeholder fields (__reserved1, __reserved2) renamed to meaningful names at same offsets \u2014 layout unchanged (USED_RESERVED_FIELD)",
-      "known_gap": "Tool returns BREAKING \u2014 struct_field_removed fires for __reserved1/__reserved2 renames; tool cannot yet recognise reserved-field-to-real-field transitions as layout-preserving"
+      "known_gap": "macOS: Tool returns NO_CHANGE \u2014 without castxml, Mach-O mode captures only exported symbols; struct field renames are invisible"
     },
     "case55_type_kind_changed": {
       "expected": "BREAKING",
@@ -720,7 +719,7 @@
       "api_break": true,
       "bad_practice": false,
       "description": "Global variable lib_debug_level removed from export table (VAR_REMOVED)",
-      "known_gap": "Tool returns NO_CHANGE \u2014 no headers provided; ELF-only mode does not yet track global variable symbol removal"
+      "known_gap": "macOS: Tool returns COMPATIBLE \u2014 Mach-O export table does not distinguish functions from variables; lib_debug_level detected as func_removed_elf_only instead of var_removed"
     },
     "case59_func_became_inline": {
       "expected": "BREAKING",
@@ -732,8 +731,7 @@
       "abi_break": true,
       "api_break": false,
       "bad_practice": false,
-      "description": "Functions moved from outlined to static inline in header \u2014 symbols disappear from .dynsym (FUNC_REMOVED, inverse of case47)",
-      "known_gap": "Tool returns COMPATIBLE \u2014 func_removed_elf_only (symbols gone from ELF but still declared in header) is not yet elevated to BREAKING"
+      "description": "Functions moved from outlined to static inline in header \u2014 symbols disappear from .dynsym (FUNC_REMOVED, inverse of case47)"
     },
     "case60_base_class_position_changed": {
       "expected": "BREAKING",
@@ -758,8 +756,7 @@
       "abi_break": false,
       "api_break": false,
       "bad_practice": false,
-      "description": "New global variable lib_build_number added \u2014 purely additive (VAR_ADDED)",
-      "known_gap": "Tool returns NO_CHANGE \u2014 no headers provided; ELF-only mode does not yet track global variable symbol addition"
+      "description": "New global variable lib_build_number added \u2014 purely additive (VAR_ADDED)"
     },
     "case62_type_field_added_compatible": {
       "expected": "COMPATIBLE",
@@ -771,8 +768,7 @@
       "abi_break": false,
       "api_break": false,
       "bad_practice": false,
-      "description": "Field added to opaque struct (callers use pointer only) \u2014 layout change invisible to consumers (TYPE_FIELD_ADDED compatible)",
-      "known_gap": "Tool returns BREAKING \u2014 struct_size_changed fires because Session grows from 68 to 72 bytes; tool cannot yet determine that the struct is opaque (pointer-only access)"
+      "description": "Field added to opaque struct (callers use pointer only) \u2014 layout change invisible to consumers (TYPE_FIELD_ADDED compatible)"
     }
   }
 }
