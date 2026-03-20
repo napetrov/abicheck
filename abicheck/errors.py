@@ -27,12 +27,20 @@ class AbicheckError(Exception):
     """Base exception for all abicheck-specific errors."""
 
 
-class ValidationError(AbicheckError):
-    """Raised when input data fails validation (schema, format, length limits)."""
+class ValidationError(AbicheckError, ValueError):
+    """Raised when input data fails validation (schema, format, length limits).
+
+    Inherits ValueError for backward compatibility with existing code that
+    catches ValueError.
+    """
 
 
-class SnapshotError(AbicheckError):
-    """Raised when an ABI snapshot cannot be loaded or parsed."""
+class SnapshotError(AbicheckError, RuntimeError):
+    """Raised when an ABI snapshot cannot be loaded or parsed.
+
+    Inherits RuntimeError for backward compatibility with existing code that
+    catches RuntimeError from snapshot extraction.
+    """
 
 
 class SuppressionError(AbicheckError, ValueError):
@@ -41,6 +49,18 @@ class SuppressionError(AbicheckError, ValueError):
     Inherits ValueError for backward compatibility with existing code that
     catches ValueError from SuppressionEngine.
     """
+
+
+class PolicyError(AbicheckError, ValueError):
+    """Invalid policy configuration.
+
+    Inherits ValueError for backward compatibility with existing code that
+    catches ValueError from policy validation.
+    """
+
+
+class ReportError(AbicheckError):
+    """Error during report generation."""
 
 
 class ExtractionSecurityError(AbicheckError):

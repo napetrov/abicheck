@@ -25,10 +25,13 @@ import tempfile
 import warnings
 from pathlib import Path
 from typing import Any, cast
-from xml.etree.ElementTree import Element
+from xml.etree.ElementTree import (
+    Element,  # type annotation only; parsing uses defusedxml
+)
 
 from defusedxml import ElementTree as DefusedET
 
+from .errors import SnapshotError, ValidationError
 from .model import (
     AbiSnapshot,
     AccessLevel,
@@ -162,7 +165,7 @@ def _pyelftools_exported_symbols(so_path: Path) -> tuple[set[str], set[str]]:
                 exported_static = set(exported_dynamic)
             return exported_dynamic, exported_static
     except (ELFError, OSError) as exc:
-        raise RuntimeError(f"Failed to parse ELF file {so_path}: {exc}") from exc
+        raise SnapshotError(f"Failed to parse ELF file {so_path}: {exc}") from exc
 
 
 def _cache_key(
@@ -302,7 +305,7 @@ def _castxml_dump(
         lang: Force language ("C" or "C++").  If "C", aggregated header uses .h extension.
     """
     if not _castxml_available():
-        raise RuntimeError(
+        raise SnapshotError(
             "castxml not found in PATH. Install with: apt install castxml, "
             "brew install castxml, conda install -c conda-forge castxml, "
             "or choco install castxml (Windows); then ensure castxml is in PATH."
@@ -393,7 +396,7 @@ def _castxml_dump(
             if exc.stderr:
                 text = exc.stderr if isinstance(exc.stderr, str) else exc.stderr.decode("utf-8", errors="replace")
                 stderr_snippet = f"\nPartial stderr: {text[:1000].strip()}"
-            raise RuntimeError(
+            raise SnapshotError(
                 f"castxml timed out after 120 seconds. The header file may contain "
                 f"syntax that causes the compiler to hang. Check that the header "
                 f"is valid and can be compiled with gcc/g++.{stderr_snippet}"
@@ -406,7 +409,7 @@ def _castxml_dump(
                     "(class, namespace, template) but --lang c was specified. "
                     "Try removing --lang or using --lang c++."
                 )
-            raise RuntimeError(
+            raise SnapshotError(
                 f"castxml failed (exit {result.returncode}):\n{result.stderr[:2000]}{hint}"
             )
         # Guard against castxml exiting 0 but not writing an output file,
@@ -414,7 +417,7 @@ def _castxml_dump(
         if not out_xml.exists() or out_xml.stat().st_size == 0:
             stderr_snippet = result.stderr[:1000].strip()
             detail = f"\ncastxml stderr: {stderr_snippet}" if stderr_snippet else ""
-            raise RuntimeError(
+            raise SnapshotError(
                 f"castxml exited 0 but produced no output file (or empty file).{detail}"
             )
         # Parse the XML; propagate parse errors as RuntimeError with context.
@@ -423,7 +426,7 @@ def _castxml_dump(
         except Exception as xml_exc:
             stderr_snippet = result.stderr[:1000].strip()
             detail = f"\ncastxml stderr: {stderr_snippet}" if stderr_snippet else ""
-            raise RuntimeError(
+            raise SnapshotError(
                 f"castxml produced invalid XML: {xml_exc}{detail}"
             ) from xml_exc
         # castxml may exit 0 but emit an empty root element when the header
@@ -432,7 +435,7 @@ def _castxml_dump(
         if len(root) == 0:
             stderr_snippet = result.stderr[:1000].strip()
             detail = f"\ncastxml stderr: {stderr_snippet}" if stderr_snippet else ""
-            raise RuntimeError(
+            raise SnapshotError(
                 f"castxml produced an empty XML document (no declarations found). "
                 f"Check that the header paths are correct and the compiler can "
                 f"parse them.{detail}"
@@ -1029,7 +1032,7 @@ def dump(
         )
 
     if fmt != "elf":
-        raise ValueError(
+        raise ValidationError(
             f"Unrecognised binary format for {so_path}: "
             f"expected ELF, Mach-O, or PE but detected {fmt!r}. "
             f"Ensure the file is a valid shared library."

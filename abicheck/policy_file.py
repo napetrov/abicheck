@@ -61,6 +61,7 @@ from .checker_policy import (
     compute_verdict,
     policy_kind_sets,
 )
+from .errors import PolicyError
 
 log = logging.getLogger(__name__)
 
@@ -129,24 +130,24 @@ class PolicyFile:
         if raw is None:
             return cls(source_path=path)
         if not isinstance(raw, dict):
-            raise ValueError(
+            raise PolicyError(
                 f"Policy file must be a YAML mapping, got {type(raw).__name__}"
             )
 
         base_policy = raw.get("base_policy", "strict_abi")
         if not isinstance(base_policy, str):
-            raise ValueError(
+            raise PolicyError(
                 "'base_policy' must be a string, got " + type(base_policy).__name__
             )
         if base_policy not in _VALID_BASE_POLICIES:
-            raise ValueError(
+            raise PolicyError(
                 f"Unknown base_policy {base_policy!r}. "
                 f"Valid values: {sorted(_VALID_BASE_POLICIES)}"
             )
 
         overrides_raw = raw.get("overrides", {})
         if not isinstance(overrides_raw, dict):
-            raise ValueError("'overrides' must be a YAML mapping of kind -> severity")
+            raise PolicyError("'overrides' must be a YAML mapping of kind -> severity")
 
         overrides: dict[ChangeKind, Verdict] = {}
         unknown_kinds: list[str] = []
@@ -172,7 +173,7 @@ class PolicyFile:
                 ", ".join(sorted(unknown_kinds)),
             )
         if unknown_severities:
-            raise ValueError(
+            raise PolicyError(
                 f"Invalid severity values in {path}: {unknown_severities}. "
                 "Valid values: break, warn, risk, ignore"
             )

@@ -71,6 +71,7 @@ from .checker_policy import (
     HasKind,
     policy_kind_sets,
 )
+from .errors import PolicyError
 
 #: Pre-computed (breaking, api_break, compatible, risk) kind sets.
 KindSets = tuple[
@@ -295,7 +296,7 @@ def resolve_severity_config(
     else:
         looked_up = SEVERITY_PRESETS.get(preset)
         if looked_up is None:
-            raise ValueError(
+            raise PolicyError(
                 f"Unknown severity preset {preset!r}. "
                 f"Valid presets: {sorted(SEVERITY_PRESETS)}"
             )
@@ -307,7 +308,7 @@ def resolve_severity_config(
         try:
             return SeverityLevel(raw.lower())
         except ValueError:
-            raise ValueError(
+            raise PolicyError(
                 f"Invalid severity level {raw!r} for {name}. "
                 f"Valid values: error, warning, info"
             ) from None

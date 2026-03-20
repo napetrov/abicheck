@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Protocol, runtime_checkable
 
-from .errors import ExtractionSecurityError
+from .errors import ExtractionSecurityError, SnapshotError
 
 _log = logging.getLogger(__name__)
 
@@ -208,11 +208,11 @@ class RpmExtractor:
         rpm2cpio = shutil.which("rpm2cpio")
         cpio = shutil.which("cpio")
         if not rpm2cpio:
-            raise RuntimeError(
+            raise SnapshotError(
                 "rpm2cpio not found. Install rpm-tools or use a tar archive instead."
             )
         if not cpio:
-            raise RuntimeError(
+            raise SnapshotError(
                 "cpio not found. Install cpio or use a tar archive instead."
             )
 
@@ -241,7 +241,7 @@ class RpmExtractor:
             rpm2cpio_proc.kill()
             cpio_proc.wait()
             rpm2cpio_proc.wait()
-            raise RuntimeError(
+            raise SnapshotError(
                 f"RPM extraction timed out after {_EXTRACT_TIMEOUT}s"
             )
 
@@ -250,15 +250,15 @@ class RpmExtractor:
         except subprocess.TimeoutExpired:
             rpm2cpio_proc.kill()
             rpm2cpio_proc.wait()
-            raise RuntimeError(
+            raise SnapshotError(
                 f"rpm2cpio timed out after {_EXTRACT_TIMEOUT}s"
             )
 
         if rpm2cpio_proc.returncode != 0:
-            raise RuntimeError(f"rpm2cpio failed (exit {rpm2cpio_proc.returncode})")
+            raise SnapshotError(f"rpm2cpio failed (exit {rpm2cpio_proc.returncode})")
         if cpio_proc.returncode != 0:
             err_msg = cpio_err.decode("utf-8", errors="replace").strip()
-            raise RuntimeError(f"cpio extraction failed: {err_msg}")
+            raise SnapshotError(f"cpio extraction failed: {err_msg}")
 
     @staticmethod
     def _post_validate(target_dir: Path) -> None:
@@ -323,7 +323,7 @@ class DebExtractor:
         """Extract Debian package: ar x to get data.tar.*, then tar extract."""
         ar = shutil.which("ar")
         if not ar:
-            raise RuntimeError(
+            raise SnapshotError(
                 "ar not found. Install binutils or use a tar archive instead."
             )
 
@@ -346,7 +346,7 @@ class DebExtractor:
                     break
 
             if data_tar is None:
-                raise RuntimeError(
+                raise SnapshotError(
                     f"No data.tar.* found in Deb package: {deb_path}"
                 )
 
@@ -472,7 +472,7 @@ class CondaExtractor:
         # Fall back to system zstd command
         zstd = shutil.which("zstd")
         if zstd is None:
-            raise RuntimeError(
+            raise SnapshotError(
                 "Cannot extract .tar.zst: install 'zstandard' Python package "
                 "or 'zstd' command-line tool."
             )

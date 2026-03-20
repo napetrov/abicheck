@@ -23,6 +23,7 @@ import ast
 import json
 from pathlib import Path
 
+from ..errors import SnapshotError, ValidationError
 from ..model import AbiSnapshot, Function, Param, RecordType, Variable, Visibility
 
 
@@ -43,15 +44,15 @@ def import_abicc_perl_dump(path: Path) -> AbiSnapshot:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
-        raise ValueError(f"Failed to read ABICC Perl dump: {exc}") from exc
+        raise SnapshotError(f"Failed to read ABICC Perl dump: {exc}") from exc
 
     if not looks_like_perl_dump(text):
-        raise ValueError("Invalid ABICC Perl dump: expected Data::Dumper content starting with $VAR1")
+        raise ValidationError("Invalid ABICC Perl dump: expected Data::Dumper content starting with $VAR1")
 
     data = _parse_perl_dumper_subset(text)
 
     if not isinstance(data, dict):
-        raise ValueError("Invalid ABICC Perl dump: top-level structure is not a hash/dict")
+        raise ValidationError("Invalid ABICC Perl dump: top-level structure is not a hash/dict")
 
     return _snapshot_from_abicc_dict(data, path)
 
@@ -65,10 +66,10 @@ def _parse_perl_dumper_subset(text: str) -> object:
     """
     stripped = text.lstrip()
     if not stripped.startswith("$VAR1"):
-        raise ValueError("Invalid ABICC Perl dump: missing $VAR1 assignment")
+        raise ValidationError("Invalid ABICC Perl dump: missing $VAR1 assignment")
 
     if "=" not in stripped:
-        raise ValueError("Invalid ABICC Perl dump: malformed assignment")
+        raise ValidationError("Invalid ABICC Perl dump: malformed assignment")
 
     _, rhs = stripped.split("=", 1)
     rhs = rhs.strip()
@@ -80,13 +81,13 @@ def _parse_perl_dumper_subset(text: str) -> object:
     try:
         obj = ast.literal_eval(py_expr)
     except (SyntaxError, ValueError) as exc:
-        raise ValueError(f"Failed to parse ABICC Perl dump safely: {exc}") from exc
+        raise ValidationError(f"Failed to parse ABICC Perl dump safely: {exc}") from exc
 
     # Round-trip through JSON-compatible form for predictable primitive types.
     try:
         return json.loads(json.dumps(obj))
     except (TypeError, json.JSONDecodeError) as exc:
-        raise ValueError(f"Failed to normalize ABICC Perl dump structure: {exc}") from exc
+        raise ValidationError(f"Failed to normalize ABICC Perl dump structure: {exc}") from exc
 
 
 def _perl_expr_to_python_literal(expr: str) -> str:
