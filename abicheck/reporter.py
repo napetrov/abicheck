@@ -571,7 +571,7 @@ def _change_to_dict(
     c: object,
     *,
     policy: str = "strict_abi",
-    kind_sets: tuple[frozenset, frozenset, frozenset, frozenset] | None = None,
+    kind_sets: tuple[frozenset[ChangeKind], frozenset[ChangeKind], frozenset[ChangeKind], frozenset[ChangeKind]] | None = None,
 ) -> dict[str, object]:
     """Convert a Change to a JSON-serializable dict with impact and metadata."""
     kind = getattr(c, "kind", None)

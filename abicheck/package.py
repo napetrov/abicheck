@@ -39,7 +39,7 @@ import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import IO, Protocol, runtime_checkable
 
 from .errors import ExtractionSecurityError
 
@@ -578,7 +578,7 @@ _ET_DYN = 3
 _PT_INTERP = 3
 
 
-def _has_interp_segment(f, ei_class: int, byte_order: str) -> bool:  # type: ignore[type-arg]
+def _has_interp_segment(f: IO[bytes], ei_class: int, byte_order: str) -> bool:
     """Check if an ELF file has a PT_INTERP program header (i.e. is an executable)."""
     try:
         if ei_class == 1:  # 32-bit
