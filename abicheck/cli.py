@@ -105,7 +105,10 @@ def _detect_binary_format(path: Path) -> str | None:
 def _safe_write_output(output: Path, text: str) -> None:
     """Write *text* to *output*, creating parent directories as needed."""
     try:
-        output.parent.mkdir(parents=True, exist_ok=True)
+        parent = output.parent
+        if not parent.exists():
+            _logger.info("Creating output directory: %s", parent)
+            parent.mkdir(parents=True, exist_ok=True)
         output.write_text(text, encoding="utf-8")
     except OSError as exc:
         raise click.ClickException(f"Cannot write to {output}: {exc}") from exc
@@ -1701,6 +1704,10 @@ def compare_release_cmd(
             if output_dir:
                 lib_report_path = output_dir / f"{old_path.stem}.json"
                 _safe_write_output(lib_report_path, to_json(result))
+
+        # Removed libraries should not leave verdict as NO_CHANGE
+        if removed_keys and _VERDICT_ORDER.get(worst_verdict, 0) < _VERDICT_ORDER.get("COMPATIBLE_WITH_RISK", 0):
+            worst_verdict = "COMPATIBLE_WITH_RISK"
 
         # Summary output
         if fmt == "json":

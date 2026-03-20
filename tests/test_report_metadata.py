@@ -66,10 +66,10 @@ class TestLibraryMetadata:
 # ---------------------------------------------------------------------------
 
 class TestJsonMetadata:
-    def test_no_metadata_no_keys(self):
+    def test_no_metadata_null_values(self):
         d = json.loads(to_json(_result()))
-        assert "old_file" not in d
-        assert "new_file" not in d
+        assert d["old_file"] is None
+        assert d["new_file"] is None
 
     def test_metadata_present(self):
         r = _result(
@@ -87,8 +87,8 @@ class TestJsonMetadata:
     def test_only_old_metadata(self):
         r = _result(old_meta=_meta())
         d = json.loads(to_json(r))
-        assert "old_file" in d
-        assert "new_file" not in d
+        assert d["old_file"] is not None
+        assert d["new_file"] is None
 
     def test_metadata_position_in_json(self):
         """old_file/new_file appear before summary in key order."""

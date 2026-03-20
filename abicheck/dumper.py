@@ -386,10 +386,28 @@ def _castxml_dump(
     cmd += ["-o", str(out_xml), str(agg_path)]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
-        if result.returncode != 0:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+        except subprocess.TimeoutExpired as exc:
+            stderr_snippet = ""
+            if exc.stderr:
+                text = exc.stderr if isinstance(exc.stderr, str) else exc.stderr.decode("utf-8", errors="replace")
+                stderr_snippet = f"\nPartial stderr: {text[:1000].strip()}"
             raise RuntimeError(
-                f"castxml failed (exit {result.returncode}):\n{result.stderr[:2000]}"
+                f"castxml timed out after 120 seconds. The header file may contain "
+                f"syntax that causes the compiler to hang. Check that the header "
+                f"is valid and can be compiled with gcc/g++.{stderr_snippet}"
+            ) from exc
+        if result.returncode != 0:
+            hint = ""
+            if not force_cpp and _detect_cpp_headers(headers):
+                hint = (
+                    "\n\nHint: The header files appear to contain C++ syntax "
+                    "(class, namespace, template) but --lang c was specified. "
+                    "Try removing --lang or using --lang c++."
+                )
+            raise RuntimeError(
+                f"castxml failed (exit {result.returncode}):\n{result.stderr[:2000]}{hint}"
             )
         # Guard against castxml exiting 0 but not writing an output file,
         # or writing an empty/truncated file (happens with some header errors).

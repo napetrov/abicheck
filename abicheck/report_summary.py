@@ -56,7 +56,7 @@ def compatibility_metrics(
         bc_pct = max(0.0, (total - breaking_count) / total * 100) if total > 0 else 0.0
 
     if old_symbol_count and old_symbol_count > 0:
-        affected_pct = breaking_count / old_symbol_count * 100
+        affected_pct = min(100.0, breaking_count / old_symbol_count * 100)
     else:
         affected_pct = 0.0
 
