@@ -43,62 +43,8 @@ def test_dump_cmd_writes_output_file(tmp_path, monkeypatch):
     assert '"version": "2.0"' in out.read_text(encoding="utf-8")
 
 
-def test_compare_cmd_warns_when_all_changes_suppressed(tmp_path, monkeypatch):
-    old = tmp_path / "old.json"
-    new = tmp_path / "new.json"
-    suppress = tmp_path / "suppress.yaml"
-    old.write_text("{}", encoding="utf-8")
-    new.write_text("{}", encoding="utf-8")
-    suppress.write_text("version: 1\nsuppressions: []\n", encoding="utf-8")
-
-    monkeypatch.setattr("abicheck.cli.load_snapshot", lambda _: _snap())
-    monkeypatch.setattr("abicheck.suppression.SuppressionList.load", lambda _: object())
-    monkeypatch.setattr(
-        "abicheck.cli.compare",
-        lambda *_args, **_kwargs: DiffResult(
-            old_version="1",
-            new_version="2",
-            library="libfoo.so",
-            verdict=Verdict.COMPATIBLE,
-            changes=[],
-            suppressed_count=1,
-            suppression_file_provided=True,
-        ),
-    )
-    monkeypatch.setattr("abicheck.cli.to_markdown", lambda _r, **_kw: "REPORT")
-
-    runner = CliRunner()
-    result = runner.invoke(main, ["compare", str(old), str(new), "--suppress", str(suppress)])
-
-    assert result.exit_code == 0
-    assert "all ABI changes were suppressed" in result.output
-    assert "REPORT" in result.stdout
-
-
-def test_compare_cmd_breaking_exits_with_code_4(tmp_path, monkeypatch):
-    old = tmp_path / "old.json"
-    new = tmp_path / "new.json"
-    old.write_text("{}", encoding="utf-8")
-    new.write_text("{}", encoding="utf-8")
-
-    monkeypatch.setattr("abicheck.cli.load_snapshot", lambda _: _snap())
-    monkeypatch.setattr(
-        "abicheck.cli.compare",
-        lambda *_args, **_kwargs: DiffResult(
-            old_version="1",
-            new_version="2",
-            library="libfoo.so",
-            verdict=Verdict.BREAKING,
-            changes=[Change(ChangeKind.FUNC_REMOVED, "_Z3foov", "removed")],
-        ),
-    )
-    monkeypatch.setattr("abicheck.cli.to_markdown", lambda _r, **_kw: "BREAKING REPORT")
-
-    runner = CliRunner()
-    result = runner.invoke(main, ["compare", str(old), str(new)])
-
-    assert result.exit_code == 4
-    assert "BREAKING REPORT" in result.stdout
+# test_compare_cmd_warns_when_all_changes_suppressed: moved to test_cli_unit.py
+# test_compare_cmd_breaking_exits_with_code_4: moved to test_cli_unit.py
 
 
 def test_compat_check_cmd_descriptor_parse_error_exits_6(tmp_path, monkeypatch):
@@ -172,18 +118,7 @@ def test_compat_check_cmd_breaking_exits_1_and_writes_report(tmp_path, monkeypat
     assert "Verdict: BREAKING" in result.output
 
 
-def test_dump_cmd_non_elf_input_clean_error(tmp_path):
-    """abicheck dump on empty file must print clean Error: ... and exit 1 (not raw traceback)."""
-    # Create an empty file (not a valid ELF) — cross-platform alternative to /dev/null
-    empty = tmp_path / "empty.so"
-    empty.write_bytes(b"")
-    runner = CliRunner()
-    result = runner.invoke(main, ["dump", str(empty)])
-    assert result.exit_code == 1
-    assert "Error:" in result.output
-    # Must NOT expose a raw Python traceback
-    assert "Traceback" not in result.output
-    assert "elftools" not in result.output
+# test_dump_cmd_non_elf_input_clean_error: moved to test_cli_new_features.py::TestDumpClickException
 
 
 def test_dump_cmd_missing_file_clean_error(tmp_path):

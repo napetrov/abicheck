@@ -201,24 +201,8 @@ class TestRenderOutputFormats:
         data = json.loads(result.output)
         assert "$schema" in data
 
-    def test_html_output(self, snapshot_pair: tuple[Path, Path]) -> None:
-        old, new = snapshot_pair
-        runner = CliRunner()
-        result = runner.invoke(main, [
-            "compare", str(old), str(new), "--format", "html",
-        ])
-        assert result.exit_code == 0
-        assert "<html" in result.output.lower() or "<!doctype" in result.output.lower()
-
-    def test_json_output(self, snapshot_pair: tuple[Path, Path]) -> None:
-        old, new = snapshot_pair
-        runner = CliRunner()
-        result = runner.invoke(main, [
-            "compare", str(old), str(new), "--format", "json",
-        ])
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert "verdict" in data
+    # test_html_output: covered by test_cli_unit.py::TestCompareHtml
+    # test_json_output: covered by test_cli_unit.py::TestCompareJson
 
     def test_show_impact_flag(self, tmp_path: Path) -> None:
         """--show-impact includes impact summary when type changes have affected symbols."""

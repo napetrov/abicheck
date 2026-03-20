@@ -184,88 +184,30 @@ class TestSafeWritePath:
         __import__("platform").system() == "Windows",
         reason="POSIX-only sensitive paths",
     )
-    def test_etc_path_blocked(self):
+    @pytest.mark.parametrize("path", [
+        "/etc/foo.json",
+        "/bin/foo.json",
+        "/sbin/foo.json",
+        "/usr/bin/foo.json",
+        "/usr/sbin/foo.json",
+        "/boot/foo.json",
+        "/sys/foo.json",
+        "/proc/foo.json",
+        "/dev/foo.json",
+    ])
+    def test_posix_sensitive_path_blocked(self, path):
         with pytest.raises(ValueError, match="sensitive system path"):
-            _safe_write_path("/etc/foo.json")
+            _safe_write_path(path)
 
-    @pytest.mark.skipif(
-        __import__("platform").system() == "Windows",
-        reason="POSIX-only sensitive paths",
-    )
-    def test_bin_path_blocked(self):
-        with pytest.raises(ValueError, match="sensitive system path"):
-            _safe_write_path("/bin/foo.json")
-
-    @pytest.mark.skipif(
-        __import__("platform").system() == "Windows",
-        reason="POSIX-only sensitive paths",
-    )
-    def test_sbin_path_blocked(self):
-        with pytest.raises(ValueError, match="sensitive system path"):
-            _safe_write_path("/sbin/foo.json")
-
-    @pytest.mark.skipif(
-        __import__("platform").system() == "Windows",
-        reason="POSIX-only sensitive paths",
-    )
-    def test_usr_bin_path_blocked(self):
-        with pytest.raises(ValueError, match="sensitive system path"):
-            _safe_write_path("/usr/bin/foo.json")
-
-    @pytest.mark.skipif(
-        __import__("platform").system() == "Windows",
-        reason="POSIX-only sensitive paths",
-    )
-    def test_usr_sbin_path_blocked(self):
-        with pytest.raises(ValueError, match="sensitive system path"):
-            _safe_write_path("/usr/sbin/foo.json")
-
-    @pytest.mark.skipif(
-        __import__("platform").system() == "Windows",
-        reason="POSIX-only sensitive paths",
-    )
-    def test_boot_path_blocked(self):
-        with pytest.raises(ValueError, match="sensitive system path"):
-            _safe_write_path("/boot/foo.json")
-
-    @pytest.mark.skipif(
-        __import__("platform").system() == "Windows",
-        reason="POSIX-only sensitive paths",
-    )
-    def test_sys_path_blocked(self):
-        with pytest.raises(ValueError, match="sensitive system path"):
-            _safe_write_path("/sys/foo.json")
-
-    @pytest.mark.skipif(
-        __import__("platform").system() == "Windows",
-        reason="POSIX-only sensitive paths",
-    )
-    def test_proc_path_blocked(self):
-        with pytest.raises(ValueError, match="sensitive system path"):
-            _safe_write_path("/proc/foo.json")
-
-    @pytest.mark.skipif(
-        __import__("platform").system() == "Windows",
-        reason="POSIX-only sensitive paths",
-    )
-    def test_dev_path_blocked(self):
-        with pytest.raises(ValueError, match="sensitive system path"):
-            _safe_write_path("/dev/foo.json")
-
-    def test_ssh_dir_blocked(self):
+    @pytest.mark.parametrize("dotdir,filename", [
+        (".ssh", "keys.json"),
+        (".aws", "config.json"),
+        (".gnupg", "ring.json"),
+    ])
+    def test_credential_dir_blocked(self, dotdir, filename):
         home = Path.home()
         with pytest.raises(ValueError, match="credential directory"):
-            _safe_write_path(str(home / ".ssh" / "keys.json"))
-
-    def test_aws_dir_blocked(self):
-        home = Path.home()
-        with pytest.raises(ValueError, match="credential directory"):
-            _safe_write_path(str(home / ".aws" / "config.json"))
-
-    def test_gnupg_dir_blocked(self):
-        home = Path.home()
-        with pytest.raises(ValueError, match="credential directory"):
-            _safe_write_path(str(home / ".gnupg" / "ring.json"))
+            _safe_write_path(str(home / dotdir / filename))
 
     def test_custom_label_in_error(self):
         with pytest.raises(ValueError, match="Empty my_output"):
@@ -677,33 +619,13 @@ class TestAbiListChanges:
         assert data["count"] > 50
         assert data["count"] == len(data["change_kinds"])
 
-    def test_filter_breaking(self):
-        raw = abi_list_changes(impact="breaking")
+    @pytest.mark.parametrize("impact", ["breaking", "api_break", "risk", "compatible"])
+    def test_filter_by_impact(self, impact):
+        raw = abi_list_changes(impact=impact)
         data = json.loads(raw)
         assert data["count"] > 0
         for entry in data["change_kinds"]:
-            assert entry["impact"] == "breaking"
-
-    def test_filter_api_break(self):
-        raw = abi_list_changes(impact="api_break")
-        data = json.loads(raw)
-        assert data["count"] > 0
-        for entry in data["change_kinds"]:
-            assert entry["impact"] == "api_break"
-
-    def test_filter_risk(self):
-        raw = abi_list_changes(impact="risk")
-        data = json.loads(raw)
-        assert data["count"] > 0
-        for entry in data["change_kinds"]:
-            assert entry["impact"] == "risk"
-
-    def test_filter_compatible(self):
-        raw = abi_list_changes(impact="compatible")
-        data = json.loads(raw)
-        assert data["count"] > 0
-        for entry in data["change_kinds"]:
-            assert entry["impact"] == "compatible"
+            assert entry["impact"] == impact
 
     def test_unknown_impact_returns_error(self):
         raw = abi_list_changes(impact="bogus")

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from abicheck.cli import _resolve_input, _sniff_text_format, main
@@ -152,65 +153,28 @@ def _make_snapshots(tmp_path: Path) -> tuple[Path, Path]:
 
 
 class TestCompareIgnoredFlagsWarnings:
-    def test_shared_include_ignored_warning(self, tmp_path):
-        """-I/--include is warned when both inputs are snapshots."""
+    @pytest.mark.parametrize("flag,arg_maker,expected_warning", [
+        ("-I", "dir", "-I/--include"),
+        ("--old-header", "file", "--old-header"),
+        ("--new-header", "file", "--new-header"),
+        ("--old-include", "dir", "--old-include"),
+        ("--new-include", "dir", "--new-include"),
+    ])
+    def test_ignored_flag_warning(self, tmp_path, flag, arg_maker, expected_warning):
+        """Header/include flags are warned when both inputs are snapshots."""
         old_p, new_p = _make_snapshots(tmp_path)
-        inc = tmp_path / "inc"
-        inc.mkdir()
+        if arg_maker == "dir":
+            arg = tmp_path / "inc"
+            arg.mkdir(exist_ok=True)
+        else:
+            arg = tmp_path / "h.h"
+            arg.write_text("int f();", encoding="utf-8")
         runner = CliRunner()
         result = runner.invoke(main, [
-            "compare", str(old_p), str(new_p), "-I", str(inc),
+            "compare", str(old_p), str(new_p), flag, str(arg),
         ])
         assert result.exit_code == 0
-        assert "-I/--include" in result.output
-
-    def test_old_header_ignored_warning(self, tmp_path):
-        """--old-header is warned when both inputs are snapshots."""
-        old_p, new_p = _make_snapshots(tmp_path)
-        hdr = tmp_path / "h.h"
-        hdr.write_text("int f();", encoding="utf-8")
-        runner = CliRunner()
-        result = runner.invoke(main, [
-            "compare", str(old_p), str(new_p), "--old-header", str(hdr),
-        ])
-        assert result.exit_code == 0
-        assert "--old-header" in result.output
-
-    def test_new_header_ignored_warning(self, tmp_path):
-        """--new-header is warned when both inputs are snapshots."""
-        old_p, new_p = _make_snapshots(tmp_path)
-        hdr = tmp_path / "h.h"
-        hdr.write_text("int f();", encoding="utf-8")
-        runner = CliRunner()
-        result = runner.invoke(main, [
-            "compare", str(old_p), str(new_p), "--new-header", str(hdr),
-        ])
-        assert result.exit_code == 0
-        assert "--new-header" in result.output
-
-    def test_old_include_ignored_warning(self, tmp_path):
-        """--old-include is warned when both inputs are snapshots."""
-        old_p, new_p = _make_snapshots(tmp_path)
-        inc = tmp_path / "inc"
-        inc.mkdir()
-        runner = CliRunner()
-        result = runner.invoke(main, [
-            "compare", str(old_p), str(new_p), "--old-include", str(inc),
-        ])
-        assert result.exit_code == 0
-        assert "--old-include" in result.output
-
-    def test_new_include_ignored_warning(self, tmp_path):
-        """--new-include is warned when both inputs are snapshots."""
-        old_p, new_p = _make_snapshots(tmp_path)
-        inc = tmp_path / "inc"
-        inc.mkdir()
-        runner = CliRunner()
-        result = runner.invoke(main, [
-            "compare", str(old_p), str(new_p), "--new-include", str(inc),
-        ])
-        assert result.exit_code == 0
-        assert "--new-include" in result.output
+        assert expected_warning in result.output
 
 
 # ── compare_cmd policy-file warning ────────────────────────────────────

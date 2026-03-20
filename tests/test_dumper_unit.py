@@ -39,23 +39,16 @@ class TestCastxmlAvailable:
 # ── _parse_vtable_index ─────────────────────────────────────────────────
 
 class TestParseVtableIndex:
-    def test_none_returns_none(self):
-        assert _parse_vtable_index(None) is None
-
-    def test_valid_int(self):
-        assert _parse_vtable_index("3") == 3
-
-    def test_negative_int(self):
-        assert _parse_vtable_index("-1") == -1
-
-    def test_non_numeric_returns_none(self):
-        assert _parse_vtable_index("abc") is None
-
-    def test_empty_returns_none(self):
-        assert _parse_vtable_index("") is None
-
-    def test_zero(self):
-        assert _parse_vtable_index("0") == 0
+    @pytest.mark.parametrize("input_val,expected", [
+        (None, None),
+        ("3", 3),
+        ("-1", -1),
+        ("abc", None),
+        ("", None),
+        ("0", 0),
+    ])
+    def test_parse_vtable_index(self, input_val, expected):
+        assert _parse_vtable_index(input_val) == expected
 
 
 # ── _vt_sort_key ────────────────────────────────────────────────────────
