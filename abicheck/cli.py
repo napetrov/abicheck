@@ -107,7 +107,7 @@ def _safe_write_output(output: Path, text: str) -> None:
     try:
         parent = output.parent
         if not parent.exists():
-            _logger.info("Creating output directory: %s", parent)
+            click.echo(f"Creating output directory: {parent}", err=True)
             parent.mkdir(parents=True, exist_ok=True)
         output.write_text(text, encoding="utf-8")
     except OSError as exc:

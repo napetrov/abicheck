@@ -521,7 +521,7 @@ def to_json(
 
     if show_only:
         eff_breaking, eff_api_break, _, eff_risk = eff_sets
-        d["show_only_applied"] = show_only
+        d["show_only_filter"] = show_only
         d["filtered_summary"] = {
             "breaking": sum(1 for c in changes if c.kind in eff_breaking),
             "source_breaks": sum(1 for c in changes if c.kind in eff_api_break),

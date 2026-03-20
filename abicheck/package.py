@@ -588,7 +588,6 @@ def _has_interp_segment(f, ei_class: int, byte_order: str) -> bool:  # type: ign
             f.seek(42)
             e_phentsize = struct.unpack(f"{byte_order}H", f.read(2))[0]
             e_phnum = struct.unpack(f"{byte_order}H", f.read(2))[0]
-            p_type_fmt = f"{byte_order}I"
         else:  # 64-bit
             # e_phoff at offset 32 (8 bytes), e_phentsize at 54 (2 bytes), e_phnum at 56 (2 bytes)
             f.seek(32)
