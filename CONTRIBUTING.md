@@ -72,6 +72,7 @@ pytest tests/ --cov=abicheck --cov-report=term-missing
 | `integration` | castxml, gcc/g++ | Real toolchain interactions, ELF/DWARF parsing |
 | `libabigail` | abidiff, gcc/g++ | libabigail parity tests |
 | `abicc` | abi-compliance-checker, gcc/g++ | ABICC compatibility parity tests |
+| `slow` | varies | Performance and large-input tests (excluded from fast CI gate) |
 
 ### Example validation
 
@@ -119,8 +120,12 @@ test: add coverage for PolicyFile.compute_verdict
 ## Adding a new ChangeKind
 
 1. Add the kind to `ChangeKind` enum in `abicheck/checker_policy.py`
-2. Place it in exactly one of `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, or `RISK_KINDS`
-3. Implement detection in the relevant detector in `abicheck/`
+2. Place it in exactly one of `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, or `RISK_KINDS` (an import-time assertion enforces completeness)
+3. Implement detection in the appropriate diff module:
+   - `abicheck/diff_symbols.py` — function/variable/parameter changes
+   - `abicheck/diff_types.py` — struct/enum/union/typedef/field changes
+   - `abicheck/diff_platform.py` — ELF/PE/Mach-O/DWARF-specific changes
+   - `abicheck/detectors.py` — individual detection rules
 4. Add a unit test in `tests/`
 5. Document in `docs/` if user-visible
 

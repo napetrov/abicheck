@@ -106,7 +106,7 @@ abicheck appcompat ./myapp libfoo.so.1 libfoo.so.2 -H include/foo.h
 abicheck appcompat ./myapp --check-against libfoo.so.2
 ```
 
-Unlike `compare` (which shows all library changes), `appcompat` filters the diff to show only changes that affect the symbols your application actually uses. See [Application Compatibility](https://napetrov.github.io/abicheck/appcompat/) for full details.
+Unlike `compare` (which shows all library changes), `appcompat` filters the diff to show only changes that affect the symbols your application actually uses. See [Application Compatibility](https://napetrov.github.io/abicheck/user-guide/appcompat/) for full details.
 
 ---
 

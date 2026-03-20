@@ -12,17 +12,37 @@ The project is a Python-based ABI compatibility checker for C/C++ shared librari
 | Module | Role |
 |--------|------|
 | `model.py` | Data model (AbiSnapshot, Function, RecordType, EnumType, etc.) |
-| `dumper.py` | Headers + .so -> AbiSnapshot via castxml + readelf |
-| `checker.py` | Diff two AbiSnapshots, classify changes, produce verdict |
-| `reporter.py` | DiffResult -> JSON / Markdown output |
+| `checker_types.py` | Core result types (Change, DiffResult, DetectorSpec) — extracted from checker.py |
+| `dumper.py` | Headers + binary → AbiSnapshot via castxml + pyelftools/pefile/macholib |
+| `checker.py` | Diff orchestration: delegates to sub-modules, collects changes |
+| `diff_symbols.py` | Symbol-level ABI diff detectors (functions, variables, parameters) |
+| `diff_types.py` | Type-level ABI diff detectors (structs, enums, unions, typedefs) |
+| `diff_platform.py` | Platform-specific ABI diff detectors (ELF, PE, Mach-O, DWARF) |
+| `diff_filtering.py` | Post-processing: enrichment, redundancy filtering, AST-DWARF dedup |
+| `checker_policy.py` | ChangeKind enum, built-in policy profiles, verdict computation |
+| `detectors.py` | Individual ABI change detection rules |
+| `service.py` | Service layer — shared orchestration for CLI and MCP server |
+| `reporter.py` | DiffResult → JSON / Markdown output |
 | `html_report.py` | Self-contained HTML report generator |
-| `serialization.py` | AbiSnapshot <-> JSON round-trip |
+| `sarif.py` | SARIF output for GitHub Code Scanning |
+| `serialization.py` | AbiSnapshot ↔ JSON round-trip |
 | `suppression.py` | YAML-based suppression rules for known changes |
+| `severity.py` | Severity classification for changes |
 | `elf_metadata.py` | ELF dynamic section + symbol table via pyelftools |
+| `pe_metadata.py` | PE/COFF reader — Windows `.dll` binaries (via pefile) |
+| `macho_metadata.py` | Mach-O reader — macOS `.dylib` binaries (via macholib) |
 | `dwarf_metadata.py` | DWARF type layout extraction via pyelftools |
 | `dwarf_advanced.py` | Calling convention, packing, toolchain flag drift |
-| `compat/` | ABICC compatibility layer: descriptor parsing, XML report generation, CLI commands, Perl dump import |
-| `cli.py` | Click-based CLI (dump, compare, compat) |
+| `dwarf_unified.py` | Unified DWARF handling (Linux/macOS) |
+| `pdb_parser.py` | Minimal PDB parser (MSF container, TPI, DBI streams) |
+| `pdb_metadata.py` | PDB debug info → DwarfMetadata/AdvancedDwarfMetadata |
+| `resolver.py` | Dependency tree resolution |
+| `binder.py` | Symbol binding simulation across loaded DSOs |
+| `stack_checker.py` | Full-stack ABI validation across dependency trees |
+| `appcompat.py` | Application compatibility checking |
+| `mcp_server.py` | MCP server for AI agent integration |
+| `compat/` | ABICC compatibility layer: descriptor parsing, XML report generation, CLI commands |
+| `cli.py` | Click-based CLI (dump, compare, compat, deps, stack-check, appcompat) |
 
 ---
 
@@ -74,57 +94,25 @@ from defusedxml import ElementTree as DefusedET   # safe
 
 The module imports BOTH the unsafe stdlib `xml.etree.ElementTree` and `defusedxml`. The castxml cache read path (`_castxml_dump` line 120) correctly uses `DefusedET.parse()`, but the type annotations and element creation use the stdlib `ET.Element` type. This is not a vulnerability (castxml output is trusted local data), but the dual import is confusing and violates the project's own security posture. **Recommendation:** Use `defusedxml` consistently throughout.
 
-### 3.2 `dumper.py` Uses subprocess `readelf` Despite pyelftools Migration
+### 3.2 ~~`dumper.py` Uses subprocess `readelf` Despite pyelftools Migration~~ (FIXED)
 
-**File:** `dumper.py:35-71` (`_readelf_exported_symbols`)
+The `_readelf_exported_symbols()` subprocess call has been removed. Symbol extraction
+now uses pyelftools exclusively via `parse_elf_metadata()`, consistent with ADR-001.
 
-The `dump()` function still calls `readelf` via `subprocess.run()` to get exported symbols, even though `elf_metadata.py` already provides full pyelftools-based symbol parsing. This contradicts ADR-001 which states:
+### 3.3 ~~`_compute_verdict` Has Redundant Branch~~ (FIXED)
 
-> "readelf is NOT used as a runtime dependency... production parse path goes through pyelftools only"
+Verdict computation has been moved to `compute_verdict()` in `checker_policy.py` and now
+uses `policy_kind_sets()` which returns policy-specific kind sets. A compile-time
+completeness assertion ensures every `ChangeKind` is classified in exactly one of
+`BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, or `RISK_KINDS` — unclassified
+kinds cause an `AssertionError` at import time (fail-safe).
 
-The `_readelf_exported_symbols()` function:
-- Shells out to `readelf --dyn-syms` and `readelf --syms`
-- Parses text output with fragile column-position parsing
-- Requires `readelf` to be installed (extra dependency)
+### 3.4 ~~`_API_BREAK_KINDS` Is Empty and Unused~~ (FIXED)
 
-**Recommendation:** Replace with pyelftools-based extraction, reusing `parse_elf_metadata()` which already parses `.dynsym`.
-
-### 3.3 `_compute_verdict` Has Redundant Branch
-
-**File:** `checker.py:851-862`
-```python
-def _compute_verdict(changes: list[Change]) -> Verdict:
-    if not changes:
-        return Verdict.NO_CHANGE
-    kinds = {c.kind for c in changes}
-    if kinds & _BREAKING_KINDS:
-        return Verdict.BREAKING
-    if kinds & _API_BREAK_KINDS:
-        return Verdict.API_BREAK
-    if kinds - _COMPATIBLE_KINDS == set():
-        return Verdict.COMPATIBLE
-    return Verdict.COMPATIBLE  # <-- duplicate of the line above
-```
-
-The last two lines are identical -- if the set difference check fails (i.e., there are unknown kinds), the function still returns `COMPATIBLE`. This means any new `ChangeKind` added without being classified into `_BREAKING_KINDS`, `_API_BREAK_KINDS`, or `_COMPATIBLE_KINDS` would silently be treated as COMPATIBLE. This is a potential logic bug.
-
-**Recommendation:** The fallback should either raise a warning or default to `BREAKING` for unclassified kinds (fail-safe).
-
-### 3.4 `_API_BREAK_KINDS` Is Empty and Unused
-
-**File:** `checker.py:196`
-```python
-_API_BREAK_KINDS: set[ChangeKind] = set()  # reserved for future source-only breaks
-```
-
-`FUNC_NOEXCEPT_ADDED` is classified as BREAKING (in `_BREAKING_KINDS`, line 134), but the comment on `ChangeKind.FUNC_NOEXCEPT_ADDED` says:
-```python
-FUNC_NOEXCEPT_ADDED = "func_noexcept_added"  # noexcept added -> API_BREAK
-```
-
-This is contradictory. Adding `noexcept` is ABI-safe in the Itanium ABI (no mangling change pre-C++17), but is a source-level break. However, in C++17 noexcept IS part of the function type (P0012R1), making it a genuine ABI break. The code treats it as BREAKING, which is correct for C++17+, but the enum comment is misleading.
-
-**Recommendation:** Update the enum comment to reflect the C++17 rationale for BREAKING classification.
+`API_BREAK_KINDS` in `checker_policy.py` is now populated with source-level-only break
+kinds (e.g. `ENUM_MEMBER_RENAMED`, `PARAM_DEFAULT_VALUE_REMOVED`, `FIELD_RENAMED`,
+`PARAM_RENAMED`, `METHOD_ACCESS_CHANGED`). These produce the `API_BREAK` verdict
+(exit code 2).
 
 ### 3.5 `RecordType.kind` Redundancy with `is_union`
 
@@ -154,108 +142,49 @@ This calculates "Binary Compatibility %" as `(total_changes - breaking_changes) 
 
 **Recommendation:** Either compute BC% against total exported symbol count, or remove the percentage and just report counts.
 
-### 3.7 Missing `is_extern_c` Deserialization
+### 3.7 ~~Missing `is_extern_c` Deserialization~~ (FIXED)
 
-**File:** `serialization.py:156-170`
-
-The `snapshot_from_dict` function reconstructs `Function` objects but doesn't deserialize `is_extern_c`:
-```python
-Function(
-    name=f["name"], mangled=f["mangled"], return_type=f["return_type"],
-    ...
-    is_volatile=f.get("is_volatile", False),
-    is_pure_virtual=f.get("is_pure_virtual", False),
-    # is_extern_c is missing!
-)
-```
-
-This means `is_extern_c` is always `False` when loading from JSON, losing information from the dump phase.
+`is_extern_c` is now correctly deserialized in `serialization.py` via `f.get("is_extern_c", False)`.
 
 ### 3.8 ~~Inconsistent `_public()` Helper~~ (FIXED)
 
 The unused `_public()` helper has been removed from `checker.py`. Filtering is handled inline in `_diff_functions` and `_diff_variables`.
 
-### 3.9 `_vt_sort_key` Returns Inconsistent Types
+### 3.9 ~~`_vt_sort_key` Returns Inconsistent Types~~ (FIXED)
 
-**File:** `dumper.py:166-168`
-```python
-def _vt_sort_key(item: tuple[int | None, str]) -> tuple[int, int | str]:
-    vi, _ = item
-    return (0, vi) if vi is not None else (1, 0)
-```
+The return type annotation has been corrected to `tuple[int, int]`.
 
-The return type annotation says `tuple[int, int | str]`, but the actual returned values are always `tuple[int, int]` (never str). The type annotation is misleading.
+### 3.10 ~~`RecordType` Missing `alignment_bits` Deserialization~~ (FIXED)
 
-### 3.10 `RecordType` Missing `alignment_bits` Deserialization
-
-**File:** `serialization.py:181-199`
-
-`RecordType` has an `alignment_bits` field, but `snapshot_from_dict` doesn't deserialize it:
-```python
-RecordType(
-    name=t["name"], kind=t["kind"],
-    size_bits=t.get("size_bits"),
-    # alignment_bits is missing!
-    fields=[...],
-)
-```
+`alignment_bits` is now correctly deserialized in `serialization.py` via `t.get("alignment_bits")`.
 
 ---
 
 ## 4. Documentation Issues
 
-### 4.1 README Claims `re.search` but Code Uses `re.fullmatch`
+### 4.1 ~~README Claims `re.search` but Code Uses `re.fullmatch`~~ (FIXED)
 
-**File:** `README.md:152`
-```
-| `symbol_pattern` | one of | Python `re.search` pattern |
-```
+The README no longer references `re.search` for suppression patterns.
 
-**Code:** `suppression.py:68`
-```python
-if not self._compiled_pattern.fullmatch(change.symbol):
-```
+### 4.2 ~~README Uses Old CLI Name `abi-check`~~ (FIXED)
 
-The README says `re.search` but the code uses `re.fullmatch`. This is a significant behavioral difference -- `re.search` matches substrings while `re.fullmatch` requires the entire string to match.
+The README now consistently uses `abicheck` as the CLI command name.
 
-### 4.2 README Uses Old CLI Name `abi-check`
+### 4.3 ~~GOALS.md Exit Code Documentation is Wrong~~ (FIXED)
 
-**File:** `README.md:43, 89, 199-203`
-
-The README references `abi-check` as the CLI command, but `pyproject.toml:19` defines the entry point as `abicheck`:
-```toml
-[project.scripts]
-abicheck = "abicheck.cli:main"
-```
-
-Quick Start section shows `abi-check dump` and `abi-check compare` which would fail.
-
-### 4.3 GOALS.md Exit Code Documentation is Wrong
-
-**File:** `GOALS.md:44`
-```
-- Clear exit codes (0=no change, 1=breaking, 2=compatible additions, 3=error)
-```
-
-**Actual exit codes in `cli.py`:**
-- `compare` command: 0=compatible/no_change, 4=BREAKING, 2=API_BREAK
-- `compat` command: 0=compatible/no_change, 1=breaking, 2=error
-
-Two different exit code schemes exist, and neither matches the documented one.
+GOALS.md now documents the correct exit codes:
+- `compare` command: 0 = compatible/no_change, 2 = source break, 4 = breaking ABI change
+- `compat` command: 0 = compatible/no_change, 1 = breaking, 2 = error
 
 ### 4.4 ~~GOALS.md Claims ABICC and libabigail Are Unmaintained~~ (FIXED)
 
 GOALS.md has been updated. It now correctly states that ABICC is no longer actively
 maintained while libabigail is maintained by Red Hat but focuses on DWARF-only analysis.
 
-### 4.5 `pyproject.toml` Description Says "castxml-based" but Tool Is Multi-Layered
+### 4.5 ~~`pyproject.toml` Description Says "castxml-based"~~ (FIXED)
 
-**File:** `pyproject.toml:8`
-```
-description = "ABI compatibility checker: castxml-based header dumper + Python checker"
-```
-
-The tool now has ELF-only and DWARF-based detection tiers that don't require castxml at all. The description undersells the tool's capabilities.
+The description has been updated to "ABI compatibility checker for C/C++ shared libraries",
+reflecting the multi-tier detection approach (binary metadata, header AST, debug info).
 
 ### 4.6 `gap_report.md` Phase Status Is Stale
 
@@ -265,31 +194,24 @@ The gap report listed roadmap/TODO items that have now been implemented:
 -  DWARF layout -- implemented
 -  Advanced DWARF -- implemented
 
-### 4.7 `__init__.py` Module Docstring Uses Old Name
+### 4.7 ~~`__init__.py` Module Docstring Uses Old Name~~ (FIXED)
 
-**File:** `abicheck/__init__.py:1`
-```python
-"""abi_check -- ABI compatibility checker."""
-```
-
-Should be `abicheck` (no underscore), matching the package name.
+The docstring now reads `"""abicheck — ABI compatibility checker."""`.
 
 ---
 
 ## 5. Testing Gaps
 
-### 5.1 No Error/Edge Case Tests
-- No tests for corrupted ELF binaries
-- No tests for castxml failure modes
-- No tests for malformed DWARF info
-- No tests for circular typedef chains
-- No tests for very large symbol counts
+### 5.1 ~~No Error/Edge Case Tests~~ (PARTIALLY ADDRESSED)
+- `test_adversarial_inputs.py` and `test_error_handling.py` now cover corrupted inputs and failure paths
+- `test_castxml_errors.py` covers castxml failure modes
+- Remaining gaps: malformed DWARF info, circular typedef chains, very large symbol counts
 
-### 5.2 Missing Negative Tests
-Few tests verify that benign changes are NOT flagged as breaking. This is important for false-positive prevention.
+### 5.2 ~~Missing Negative Tests~~ (ADDRESSED)
+`test_negative.py` now verifies that benign changes are NOT flagged as breaking.
 
-### 5.3 No Backward Compatibility Tests for Serialization
-No test verifies that snapshots saved by older versions can be loaded by newer code.
+### 5.3 ~~No Backward Compatibility Tests for Serialization~~ (ADDRESSED)
+`test_serialization_roundtrip.py` and `test_snapshot_roundtrip.py` now verify round-trip fidelity.
 
 ### 5.4 `test_abi_examples.py` Silently Skips
 Integration tests skip silently when castxml/gcc aren't installed, which could mask real failures in CI.
@@ -297,34 +219,36 @@ Integration tests skip silently when castxml/gcc aren't installed, which could m
 ### 5.5 HTML Report Not Tested for XSS
 `html_report.py` uses `html.escape()` correctly, but no test verifies that malicious symbol names (containing `<script>` tags) are properly escaped in the output.
 
-### 5.6 Only 10 of 49 Gap Report Scenarios Have Parity Tests
-`test_abidiff_parity.py` covers 10 cases but the gap report lists 49 scenarios.
+### 5.6 Parity Test Coverage Expanding
+`test_abidiff_parity.py` covers 10 cases; additional parity suites (`test_abicc_parity.py`,
+`test_abicc_full_parity.py`, `test_sprint7_full_parity.py`, `test_sprint10_abicc_parity.py`)
+bring total parity coverage to ~54 test functions.
 
 ---
 
 ## 6. Suggested Priority Improvements
 
-### P0 -- Correctness
-1. **Fix `is_extern_c` deserialization** in `serialization.py` -- data loss on round-trip
-2. **Fix `alignment_bits` deserialization** in `serialization.py` -- data loss on round-trip
-3. **Fix README `re.search` vs `re.fullmatch` documentation** -- users will write wrong patterns
-4. **Fix README CLI name** `abi-check` -> `abicheck`
-5. **Fix `_compute_verdict` fallback** -- unclassified changes should not silently be COMPATIBLE
+### P0 -- Correctness (all resolved)
+1. ~~**Fix `is_extern_c` deserialization**~~ — done
+2. ~~**Fix `alignment_bits` deserialization**~~ — done
+3. ~~**Fix README `re.search` vs `re.fullmatch` documentation**~~ — done
+4. ~~**Fix README CLI name** `abi-check` → `abicheck`~~ — done
+5. ~~**Fix `_compute_verdict` fallback**~~ — done (import-time assertion + policy-aware verdict)
 
-### P1 -- Technical Debt
-6. **Remove `_readelf_exported_symbols`** and use pyelftools, per ADR-001
-7. **Remove unused `_public()` helper** in checker.py
-8. **Unify `RecordType.kind` and `is_union`** to prevent inconsistency
-9. **Update `__init__.py` docstring** to `abicheck`
-10. **Update `GOALS.md` exit codes** to match actual behavior
+### P1 -- Technical Debt (mostly resolved)
+6. ~~**Remove `_readelf_exported_symbols`**~~ — done (pyelftools only)
+7. ~~**Remove unused `_public()` helper**~~ — done
+8. **Unify `RecordType.kind` and `is_union`** to prevent inconsistency — open
+9. ~~**Update `__init__.py` docstring**~~ — done
+10. ~~**Update `GOALS.md` exit codes**~~ — done
 
 ### P2 -- Test Coverage
-11. Add negative tests (benign changes should not be flagged)
-12. Add error handling tests (corrupted inputs)
-13. Add serialization backward-compatibility tests
-14. Expand parity test suite to match gap report scope
+11. Add negative tests (benign changes should not be flagged) — `test_negative.py` added
+12. Add error handling tests (corrupted inputs) — `test_adversarial_inputs.py`, `test_error_handling.py` added
+13. Add serialization backward-compatibility tests — `test_serialization_roundtrip.py` added
+14. Expand parity test suite to match gap report scope — ongoing
 
-### P3 -- Documentation
-15. Update `gap_report.md` status text to reflect completed work
-16. Fix `GOALS.md` claim about libabigail maintenance status
-17. Update `pyproject.toml` description to reflect multi-tier detection
+### P3 -- Documentation (mostly resolved)
+15. ~~**Update `gap_report.md` status text**~~ — done
+16. ~~**Fix `GOALS.md` claim about libabigail**~~ — done
+17. ~~**Update `pyproject.toml` description**~~ — done

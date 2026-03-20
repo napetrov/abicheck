@@ -10,7 +10,7 @@ and where coverage expansion should go next.
 `abicheck` uses a **layered testing strategy**:
 
 1. **Fast deterministic gate (unit/component)**
-   - Marker selection: `not integration and not libabigail`
+   - Marker selection: `not integration and not libabigail and not abicc and not slow`
    - Purpose: protect core logic and user-facing behavior on every PR with low runtime cost.
    - Includes checker logic, report serialization, suppression rules, CLI command behavior,
      dumper orchestration via mocks, and DWARF helper edge cases.
@@ -23,9 +23,9 @@ and where coverage expansion should go next.
      tests (bad ELF, broken headers, missing symbols).
 
 3. **External parity layer**
-   - Marker selection: `libabigail`
-   - Purpose: compare selected behavior against `abidiff` to reduce semantic drift and
-     catch interpretation mismatches in ABI diagnostics.
+   - Marker selection: `libabigail` and `abicc`
+   - Purpose: compare selected behavior against `abidiff` and `abi-compliance-checker`
+     to reduce semantic drift and catch interpretation mismatches in ABI diagnostics.
 
 This split keeps PR feedback fast while retaining deeper compatibility checks in dedicated jobs.
 
@@ -37,8 +37,10 @@ The fast CI gate enforces a threshold and publishes `coverage.xml` for inspectio
 Current CI command:
 
 ```bash
-pytest tests/ -v --tb=short -m "not integration and not libabigail" \
-  --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=52
+pytest tests/ -v --tb=short \
+  -m "not integration and not libabigail and not abicc and not slow" \
+  -n auto --dist worksteal \
+  --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=80
 ```
 
 ### Why this gate shape
@@ -50,15 +52,15 @@ pytest tests/ -v --tb=short -m "not integration and not libabigail" \
 ## Test components by responsibility
 
 ### 1) Core ABI diff semantics
-- Files like `tests/test_checker.py`, `tests/test_negative.py`.
-- Validates change classification and verdict priority (`BREAKING`, `COMPATIBLE`, etc.).
+- Files like `tests/test_checker.py`, `tests/test_negative.py`, `tests/test_detector_contracts.py`.
+- Validates change classification and verdict priority (`BREAKING`, `COMPATIBLE`, `COMPATIBLE_WITH_RISK`, `API_BREAK`, etc.).
 
 ### 2) Data model/reporting/serialization
 - Files like `tests/test_reporter.py`, `tests/test_sarif.py`, `tests/test_serialization.py`.
 - Ensures machine and human outputs remain stable and parseable.
 
 ### 3) CLI behavior and UX contracts
-- `tests/test_cli_phase1.py`.
+- `tests/test_cli_phase1.py`, `tests/test_cli_unit.py`, `tests/test_cli_new_features.py`.
 - Covers command success/failure flows, warning messages, output writing, and exit codes.
 
 ### 4) Dumper orchestration contracts
@@ -73,8 +75,16 @@ pytest tests/ -v --tb=short -m "not integration and not libabigail" \
 
 ### 6) Real-world integration and parity
 - `tests/test_abi_examples.py`, `tests/test_elf_parse_integration.py`,
-  `tests/test_integration_phase2_negative.py`, `tests/test_abidiff_parity.py`.
+  `tests/test_integration_phase2_negative.py`, `tests/test_abidiff_parity.py`,
+  `tests/test_abicc_parity.py`, `tests/test_abicc_full_parity.py`,
+  `tests/test_sprint7_full_parity.py`, `tests/test_sprint10_abicc_parity.py`.
 - Exercises realistic binaries, toolchain outputs, and compatibility expectations.
+
+### 7) Architecture conformance
+- `tests/test_architecture_conformance.py`, `tests/test_changekind_completeness.py`,
+  `tests/test_changekind_coverage.py`.
+- Validates structural invariants: module boundaries, ChangeKind classification completeness,
+  and policy set consistency.
 
 ## Extension roadmap (next improvements)
 
