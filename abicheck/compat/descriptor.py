@@ -40,6 +40,8 @@ from pathlib import Path
 
 import defusedxml.ElementTree as ET
 
+from ..errors import ValidationError
+
 log = logging.getLogger(__name__)
 
 
@@ -71,12 +73,12 @@ def parse_descriptor(path: Path, *, relpath: str | None = None) -> CompatDescrip
     if not path.exists():
         raise FileNotFoundError(f"Descriptor not found: {path}")
     if not path.is_file():
-        raise ValueError(f"Descriptor path is not a regular file: {path}")
+        raise ValidationError(f"Descriptor path is not a regular file: {path}")
 
     try:
         tree = ET.parse(str(path))  # defusedxml.ElementTree.parse
     except ET.ParseError as exc:
-        raise ValueError(f"Invalid XML in descriptor {path}: {exc}") from exc
+        raise ValidationError(f"Invalid XML in descriptor {path}: {exc}") from exc
 
     root = tree.getroot()
     base = path.parent
@@ -93,7 +95,7 @@ def parse_descriptor(path: Path, *, relpath: str | None = None) -> CompatDescrip
 
     version_vals = _get_all("version")
     if not version_vals:
-        raise ValueError(f"Descriptor {path}: missing <version> element")
+        raise ValidationError(f"Descriptor {path}: missing <version> element")
     version = version_vals[0]
 
     # When relpath is provided, use it as the base for resolving relative paths
@@ -103,7 +105,7 @@ def parse_descriptor(path: Path, *, relpath: str | None = None) -> CompatDescrip
 
     lib_strs = _get_all("libs")
     if not lib_strs:
-        raise ValueError(f"Descriptor {path}: missing <libs> element")
+        raise ValidationError(f"Descriptor {path}: missing <libs> element")
     libs = [_resolve(s, resolve_base) for s in lib_strs]
 
     header_strs = _get_all("headers")
@@ -139,7 +141,7 @@ def _resolve(p: str, base: Path) -> Path:
         try:
             resolved.relative_to(base.resolve())
         except ValueError:
-            raise ValueError(
+            raise ValidationError(
                 f"Path '{p}' in descriptor escapes the base directory '{base}'. "
                 "Use absolute paths for libraries outside the descriptor directory."
             ) from None

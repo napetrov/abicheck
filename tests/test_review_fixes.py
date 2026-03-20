@@ -447,3 +447,83 @@ class TestUnionFieldCanonicalization:
         result = compare(old, new)
         union_changes = [c for c in result.changes if c.kind == ChangeKind.UNION_FIELD_TYPE_CHANGED]
         assert len(union_changes) == 0, "struct prefix difference should not be a union field type change"
+
+
+# ---------------------------------------------------------------------------
+# render_output: ValidationError for unsupported format (review fix #6)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderOutputValidation:
+    """render_output must raise ValidationError for unknown format strings."""
+
+    def _make_result(self) -> object:
+        from abicheck.checker import DiffResult, Verdict
+
+        return DiffResult(
+            old_version="1.0", new_version="2.0", library="libtest.so",
+            changes=[], verdict=Verdict.NO_CHANGE, policy="strict_abi",
+        )
+
+    def _make_snap(self) -> AbiSnapshot:
+        return AbiSnapshot(library="libtest.so", version="1.0")
+
+    def test_unsupported_format_raises(self):
+        import pytest
+
+        from abicheck.errors import ValidationError
+        from abicheck.service import render_output
+
+        with pytest.raises(ValidationError, match="Unsupported output format"):
+            render_output("xml", self._make_result(), self._make_snap())
+
+    def test_unsupported_format_csv_raises(self):
+        import pytest
+
+        from abicheck.errors import ValidationError
+        from abicheck.service import render_output
+
+        with pytest.raises(ValidationError, match="Unsupported output format"):
+            render_output("csv", self._make_result(), self._make_snap())
+
+    def test_supported_formats_do_not_raise(self):
+        from abicheck.service import render_output
+
+        for fmt in ("json", "markdown", "md"):
+            output = render_output(fmt, self._make_result(), self._make_snap())
+            assert isinstance(output, str)
+
+
+# ---------------------------------------------------------------------------
+# service.py imports from .compat.abicc_dump_import (review fix #7)
+# ---------------------------------------------------------------------------
+
+
+class TestServiceImportPaths:
+    """Verify that service.py correctly imports from compat subpackage."""
+
+    def test_looks_like_perl_dump_importable(self):
+        from abicheck.compat.abicc_dump_import import looks_like_perl_dump
+
+        assert callable(looks_like_perl_dump)
+
+    def test_import_abicc_perl_dump_importable(self):
+        from abicheck.compat.abicc_dump_import import import_abicc_perl_dump
+
+        assert callable(import_abicc_perl_dump)
+
+    def test_service_sniff_does_not_trigger_deprecation(self):
+        """Verify service module doesn't trigger the deprecation warning."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            from abicheck import service  # noqa: F811
+
+            _ = service.sniff_text_format
+            deprecation_warnings = [
+                x for x in w
+                if issubclass(x.category, DeprecationWarning)
+                and "abicc_dump_import" in str(x.message)
+            ]
+            assert len(deprecation_warnings) == 0

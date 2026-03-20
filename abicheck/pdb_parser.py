@@ -37,6 +37,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .errors import ValidationError
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -208,15 +210,15 @@ def parse_msf(data: bytes) -> MsfFile:
     Raises ``ValueError`` on invalid format.
     """
     if len(data) < _MSF_MAGIC_LEN + 24:
-        raise ValueError("File too small to be a PDB")
+        raise ValidationError("File too small to be a PDB")
     if data[:_MSF_MAGIC_LEN] != _MSF_MAGIC:
-        raise ValueError("Not a PDB 7.0 file (bad magic)")
+        raise ValidationError("Not a PDB 7.0 file (bad magic)")
 
     (block_size, _fpm_block, num_blocks, dir_bytes, _unknown,
      block_map_addr) = struct.unpack_from("<IIIIII", data, _MSF_MAGIC_LEN)
 
     if block_size not in (512, 1024, 2048, 4096):
-        raise ValueError(f"Unsupported PDB block size: {block_size}")
+        raise ValidationError(f"Unsupported PDB block size: {block_size}")
 
     # Number of blocks the stream directory occupies
     dir_block_count = math.ceil(dir_bytes / block_size)
@@ -226,7 +228,7 @@ def parse_msf(data: bytes) -> MsfFile:
     dir_block_indices: list[int] = []
     for i in range(dir_block_count):
         if bm_offset + i * 4 + 4 > len(data):
-            raise ValueError("PDB block map address out of bounds")
+            raise ValidationError("PDB block map address out of bounds")
         idx = struct.unpack_from("<I", data, bm_offset + i * 4)[0]
         dir_block_indices.append(idx)
 
@@ -237,7 +239,7 @@ def parse_msf(data: bytes) -> MsfFile:
         off = blk * block_size
         chunk = min(remaining, block_size)
         if off + chunk > len(data):
-            raise ValueError(f"PDB block {blk} out of bounds (file too small)")
+            raise ValidationError(f"PDB block {blk} out of bounds (file too small)")
         dir_parts.append(data[off:off + chunk])
         remaining -= chunk
     dir_data = b"".join(dir_parts)
@@ -245,14 +247,14 @@ def parse_msf(data: bytes) -> MsfFile:
     # Parse the stream directory
     pos = 0
     if pos + 4 > len(dir_data):
-        raise ValueError("PDB stream directory truncated (no num_streams)")
+        raise ValidationError("PDB stream directory truncated (no num_streams)")
     (num_streams,) = struct.unpack_from("<I", dir_data, pos)
     pos += 4
 
     stream_sizes: list[int] = []
     for _ in range(num_streams):
         if pos + 4 > len(dir_data):
-            raise ValueError("PDB stream directory truncated (stream sizes)")
+            raise ValidationError("PDB stream directory truncated (stream sizes)")
         (sz,) = struct.unpack_from("<i", dir_data, pos)
         pos += 4
         # -1 or 0xFFFFFFFF means "nil stream"
@@ -267,7 +269,7 @@ def parse_msf(data: bytes) -> MsfFile:
         blocks = []
         for _ in range(n_blocks):
             if pos + 4 > len(dir_data):
-                raise ValueError("PDB stream directory truncated (block indices)")
+                raise ValidationError("PDB stream directory truncated (block indices)")
             (blk,) = struct.unpack_from("<I", dir_data, pos)
             pos += 4
             blocks.append(blk)
@@ -369,7 +371,7 @@ class TpiStream:
 def parse_tpi_stream(data: bytes) -> TpiStream:
     """Parse TPI stream header + all type records."""
     if len(data) < 56:
-        raise ValueError("TPI stream too small")
+        raise ValidationError("TPI stream too small")
 
     (version, header_size, ti_begin, ti_end, type_bytes,
      ) = struct.unpack_from("<IIIII", data, 0)
@@ -454,7 +456,7 @@ class DbiStream:
 def parse_dbi_stream(data: bytes) -> DbiStream:
     """Parse DBI stream header and module info substream."""
     if len(data) < 64:
-        raise ValueError("DBI stream too small")
+        raise ValidationError("DBI stream too small")
 
     fields = struct.unpack_from("<iIIHHHHHHiiiiiIiiHHI", data, 0)
     header = DbiHeader(

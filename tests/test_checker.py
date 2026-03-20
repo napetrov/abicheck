@@ -6,9 +6,12 @@ No code or test data is derived from abi-compliance-checker (LGPL-2.1).
 """
 
 from abicheck.checker import ChangeKind, Verdict, compare
+from abicheck.diff_types import _diff_enum_renames, _diff_enums
 from abicheck.model import (
     AbiSnapshot,
     ElfVisibility,
+    EnumMember,
+    EnumType,
     Function,
     Param,
     RecordType,
@@ -469,3 +472,110 @@ class TestOpaqueStructDowngrade:
         ])
         r = compare(old, new)
         assert r.verdict == Verdict.BREAKING
+
+
+# ---------------------------------------------------------------------------
+# Enum alias one-to-one guard (architecture review fix #5)
+# ---------------------------------------------------------------------------
+
+
+class TestEnumAliasOneToOneGuard:
+    """Enum aliases (multiple names with same value) must not suppress changes."""
+
+    def test_alias_removal_not_suppressed(self):
+        """If two new names share a value, the removed old name should emit REMOVED."""
+        old = _snap("1.0")
+        old.enums = [EnumType(
+            name="Color",
+            members=[EnumMember(name="RED", value=0), EnumMember(name="GREEN", value=1)],
+        )]
+        new = _snap("2.0")
+        new.enums = [EnumType(
+            name="Color",
+            members=[
+                EnumMember(name="CRIMSON", value=0),
+                EnumMember(name="SCARLET", value=0),  # alias — ambiguous
+                EnumMember(name="GREEN", value=1),
+            ],
+        )]
+        changes = _diff_enums(old, new)
+        removed = [c for c in changes if c.kind == ChangeKind.ENUM_MEMBER_REMOVED]
+        assert len(removed) == 1
+        assert removed[0].symbol == "Color::RED"
+
+    def test_ambiguous_new_aliases_not_suppress_removal(self):
+        """When two new aliases share a value, the removed old name must NOT
+        be suppressed (new-side ambiguity → not a clear rename)."""
+        old = _snap("1.0")
+        old.enums = [EnumType(
+            name="Color",
+            members=[
+                EnumMember(name="RED", value=0),
+                EnumMember(name="GREEN", value=1),
+            ],
+        )]
+        new = _snap("2.0")
+        new.enums = [EnumType(
+            name="Color",
+            members=[
+                EnumMember(name="CRIMSON", value=0),
+                EnumMember(name="SCARLET", value=0),  # alias — ambiguous
+                EnumMember(name="GREEN", value=1),
+            ],
+        )]
+        changes = _diff_enums(old, new)
+        # RED removal must NOT be suppressed — two new aliases make it ambiguous
+        removed = [c for c in changes if c.kind == ChangeKind.ENUM_MEMBER_REMOVED]
+        assert len(removed) == 1
+        assert removed[0].symbol == "Color::RED"
+
+    def test_unique_value_rename_suppresses_removal(self):
+        """A true 1:1 rename (unique value) should suppress ENUM_MEMBER_REMOVED."""
+        old = _snap("1.0")
+        old.enums = [EnumType(
+            name="Color",
+            members=[EnumMember(name="RED", value=0), EnumMember(name="GREEN", value=1)],
+        )]
+        new = _snap("2.0")
+        new.enums = [EnumType(
+            name="Color",
+            members=[EnumMember(name="CRIMSON", value=0), EnumMember(name="GREEN", value=1)],
+        )]
+        changes = _diff_enums(old, new)
+        removed = [c for c in changes if c.kind == ChangeKind.ENUM_MEMBER_REMOVED]
+        assert len(removed) == 0
+
+
+class TestEnumRenamesOneToOneGuard:
+    """_diff_enum_renames must not produce false renames for aliases."""
+
+    def test_alias_not_treated_as_rename(self):
+        """When two new names share a value, no rename should be emitted."""
+        old = _snap("1.0")
+        old.enums = [EnumType(name="E", members=[EnumMember(name="A", value=0)])]
+        new = _snap("2.0")
+        new.enums = [EnumType(
+            name="E",
+            members=[EnumMember(name="B", value=0), EnumMember(name="C", value=0)],
+        )]
+        changes = _diff_enum_renames(old, new)
+        renamed = [c for c in changes if c.kind == ChangeKind.ENUM_MEMBER_RENAMED]
+        assert len(renamed) == 0
+
+    def test_unique_rename_detected(self):
+        """A true 1:1 rename is detected correctly."""
+        old = _snap("1.0")
+        old.enums = [EnumType(
+            name="E",
+            members=[EnumMember(name="A", value=0), EnumMember(name="B", value=1)],
+        )]
+        new = _snap("2.0")
+        new.enums = [EnumType(
+            name="E",
+            members=[EnumMember(name="X", value=0), EnumMember(name="B", value=1)],
+        )]
+        changes = _diff_enum_renames(old, new)
+        renamed = [c for c in changes if c.kind == ChangeKind.ENUM_MEMBER_RENAMED]
+        assert len(renamed) == 1
+        assert renamed[0].old_value == "A"
+        assert renamed[0].new_value == "X"

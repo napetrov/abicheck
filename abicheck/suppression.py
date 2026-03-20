@@ -22,7 +22,8 @@ from pathlib import Path
 
 import yaml
 
-from .checker import Change, ChangeKind
+from .checker_policy import ChangeKind
+from .checker_types import Change
 
 # Pre-build valid change_kind values for fast validation
 _VALID_CHANGE_KINDS: frozenset[str] = frozenset(ck.value for ck in ChangeKind)

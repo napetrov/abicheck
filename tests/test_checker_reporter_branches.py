@@ -18,6 +18,13 @@ import pytest
 
 from abicheck.checker import _ROOT_TYPE_CHANGE_KINDS, Change, DiffResult, compare
 from abicheck.checker_policy import ChangeKind, Verdict
+from abicheck.diff_filtering import (
+    _compute_confidence,
+    _enrich_affected_symbols,
+    _enrich_source_locations,
+)
+from abicheck.dwarf_advanced import AdvancedDwarfMetadata
+from abicheck.dwarf_metadata import DwarfMetadata
 from abicheck.model import (
     AbiSnapshot,
     EnumMember,
@@ -27,6 +34,7 @@ from abicheck.model import (
     RecordType,
     TypeField,
     Variable,
+    Visibility,
 )
 from abicheck.reporter import (
     ShowOnlyFilter,
@@ -1199,3 +1207,113 @@ class TestCompareIntegration:
             if tc.affected_symbols:
                 affected.update(tc.affected_symbols)
         assert "get_result" in affected
+
+
+# ---------------------------------------------------------------------------
+# Namespace-qualified source location enrichment (architecture review fix #1)
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichSourceLocationsNamespace:
+    """_enrich_source_locations must resolve ns::Type::field via root type name."""
+
+    def test_namespaced_field_gets_location(self):
+        old = _make_snap(types=[
+            RecordType(name="ns::MyStruct", kind="struct", source_location="file.h:10"),
+        ])
+        new = _make_snap()
+        changes = [
+            Change(ChangeKind.TYPE_FIELD_REMOVED, "ns::MyStruct::flags", "removed"),
+        ]
+        _enrich_source_locations(changes, old, new)
+        assert changes[0].source_location == "file.h:10"
+
+    def test_simple_field_still_works(self):
+        old = _make_snap(types=[
+            RecordType(name="MyStruct", kind="struct", source_location="file.h:20"),
+        ])
+        new = _make_snap()
+        changes = [
+            Change(ChangeKind.TYPE_FIELD_REMOVED, "MyStruct::flags", "removed"),
+        ]
+        _enrich_source_locations(changes, old, new)
+        assert changes[0].source_location == "file.h:20"
+
+
+class TestEnrichAffectedSymbolsNamespace:
+    """_enrich_affected_symbols must group ns::Type::field under ns::Type."""
+
+    def test_namespaced_type_field_finds_affected_functions(self):
+        from abicheck.model import Visibility
+
+        old = _make_snap(
+            types=[RecordType(name="ns::Config", kind="struct")],
+            functions=[
+                Function(
+                    name="init_config",
+                    mangled="_Z11init_configPN2ns6ConfigE",
+                    return_type="void",
+                    visibility=Visibility.PUBLIC,
+                    params=[Param(name="cfg", type="ns::Config")],
+                ),
+            ],
+        )
+        changes = [
+            Change(ChangeKind.TYPE_FIELD_REMOVED, "ns::Config::timeout", "removed"),
+        ]
+        _enrich_affected_symbols(changes, old)
+        assert changes[0].affected_symbols is not None
+        assert "init_config" in changes[0].affected_symbols
+
+
+# ---------------------------------------------------------------------------
+# _compute_confidence: dwarf.has_dwarf flag check (architecture review fix #3)
+# ---------------------------------------------------------------------------
+
+
+class TestComputeConfidenceDwarfFlag:
+    """Placeholder DWARF objects (has_dwarf=False) must not add 'dwarf' tier."""
+
+    def test_placeholder_dwarf_not_counted(self):
+        old = _make_snap(functions=[
+            Function(name="f", mangled="_f", return_type="void", visibility=Visibility.PUBLIC),
+        ])
+        old.dwarf = DwarfMetadata(has_dwarf=False)
+        new = _make_snap(functions=[
+            Function(name="f", mangled="_f", return_type="void", visibility=Visibility.PUBLIC),
+        ])
+        new.dwarf = DwarfMetadata(has_dwarf=False)
+        tiers, _conf, _warns = _compute_confidence([], old, new)
+        assert "dwarf" not in tiers
+
+    def test_real_dwarf_counted(self):
+        old = _make_snap()
+        old.dwarf = DwarfMetadata(has_dwarf=True)
+        new = _make_snap()
+        new.dwarf = DwarfMetadata(has_dwarf=True)
+        tiers, _conf, _warns = _compute_confidence([], old, new)
+        assert "dwarf" in tiers
+
+    def test_placeholder_dwarf_advanced_not_counted(self):
+        old = _make_snap()
+        old.dwarf_advanced = AdvancedDwarfMetadata(has_dwarf=False)
+        new = _make_snap()
+        new.dwarf_advanced = AdvancedDwarfMetadata(has_dwarf=False)
+        tiers, _conf, _warns = _compute_confidence([], old, new)
+        assert "dwarf_advanced" not in tiers
+
+    def test_real_dwarf_advanced_counted(self):
+        old = _make_snap()
+        old.dwarf_advanced = AdvancedDwarfMetadata(has_dwarf=True)
+        new = _make_snap()
+        new.dwarf_advanced = AdvancedDwarfMetadata(has_dwarf=True)
+        tiers, _conf, _warns = _compute_confidence([], old, new)
+        assert "dwarf_advanced" in tiers
+
+    def test_one_side_real_dwarf_counted(self):
+        old = _make_snap()
+        old.dwarf = DwarfMetadata(has_dwarf=True)
+        new = _make_snap()
+        new.dwarf = DwarfMetadata(has_dwarf=False)
+        tiers, _conf, _warns = _compute_confidence([], old, new)
+        assert "dwarf" in tiers

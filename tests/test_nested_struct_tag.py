@@ -127,3 +127,58 @@ class TestNestedStructTagNormalization:
         changes = _diff_struct_layouts(old_meta, new_meta)
         kinds = {c.kind for c in changes}
         assert ChangeKind.STRUCT_FIELD_TYPE_CHANGED not in kinds
+
+
+# ---------------------------------------------------------------------------
+# Reserved-field reuse: type matching (architecture review fix #4)
+# ---------------------------------------------------------------------------
+
+
+class TestReservedFieldTypeMatch:
+    """_diff_struct_layouts must verify type_name match for reserved-field reuse."""
+
+    def _make_dwarf(self, struct_name: str, fields: list[FieldInfo]) -> DwarfMetadata:
+        return DwarfMetadata(
+            structs={
+                struct_name: StructLayout(
+                    name=struct_name,
+                    byte_size=16,
+                    fields=fields,
+                ),
+            },
+            has_dwarf=True,
+        )
+
+    def test_same_type_matches_reserved(self):
+        """Reserved field with same type at same offset → USED_RESERVED_FIELD."""
+        from abicheck.checker import ChangeKind, _diff_struct_layouts
+
+        old = self._make_dwarf("S", [
+            FieldInfo(name="__reserved0", type_name="uint32_t", byte_offset=0, byte_size=4),
+            FieldInfo(name="x", type_name="int", byte_offset=4, byte_size=4),
+        ])
+        new = self._make_dwarf("S", [
+            FieldInfo(name="active", type_name="uint32_t", byte_offset=0, byte_size=4),
+            FieldInfo(name="x", type_name="int", byte_offset=4, byte_size=4),
+        ])
+        changes = _diff_struct_layouts(old, new)
+        kinds = [c.kind for c in changes]
+        assert ChangeKind.USED_RESERVED_FIELD in kinds
+        assert ChangeKind.STRUCT_FIELD_REMOVED not in kinds
+
+    def test_different_type_no_reserved_match(self):
+        """Reserved field with different type at same offset → STRUCT_FIELD_REMOVED."""
+        from abicheck.checker import ChangeKind, _diff_struct_layouts
+
+        old = self._make_dwarf("S", [
+            FieldInfo(name="__reserved0", type_name="uint32_t", byte_offset=0, byte_size=4),
+            FieldInfo(name="x", type_name="int", byte_offset=4, byte_size=4),
+        ])
+        new = self._make_dwarf("S", [
+            FieldInfo(name="active", type_name="float", byte_offset=0, byte_size=4),
+            FieldInfo(name="x", type_name="int", byte_offset=4, byte_size=4),
+        ])
+        changes = _diff_struct_layouts(old, new)
+        kinds = [c.kind for c in changes]
+        assert ChangeKind.USED_RESERVED_FIELD not in kinds
+        assert ChangeKind.STRUCT_FIELD_REMOVED in kinds
