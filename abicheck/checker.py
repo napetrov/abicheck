@@ -101,7 +101,7 @@ from .diff_types import (  # noqa: F401
 from .dwarf_advanced import (
     diff_advanced_dwarf,  # noqa: F401 — re-export for monkeypatching
 )
-from .model import AbiSnapshot, Visibility
+from .model import AbiSnapshot
 from .policy_file import PolicyFile
 
 if TYPE_CHECKING:

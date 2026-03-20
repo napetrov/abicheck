@@ -16,13 +16,12 @@
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from .checker_policy import ChangeKind, Confidence
 from .checker_types import Change
 from .detectors import DetectorResult
 from .diff_symbols import _PUBLIC_VIS, _public_functions
-from .model import AbiSnapshot, Visibility
+from .model import AbiSnapshot
 
 # ── Post-processing: enrich and deduplicate ────────────────────────────────
 

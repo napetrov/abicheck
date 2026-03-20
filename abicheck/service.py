@@ -36,7 +36,9 @@ from .reporter import to_json, to_markdown, to_stat, to_stat_json
 from .serialization import load_snapshot
 
 if TYPE_CHECKING:
-    from .abicc_dump_import import import_abicc_perl_dump as _import_perl  # noqa: F401
+    from .compat.abicc_dump_import import (
+        import_abicc_perl_dump as _import_perl,  # noqa: F401
+    )
     from .policy_file import PolicyFile
     from .severity import SeverityConfig
     from .suppression import SuppressionList
@@ -67,7 +69,7 @@ def detect_binary_format(path: Path) -> str | None:
 
 def sniff_text_format(path: Path) -> str:
     """Read a small header chunk and return ``'json'``, ``'perl'``, or ``'unknown'``."""
-    from .abicc_dump_import import looks_like_perl_dump
+    from .compat.abicc_dump_import import looks_like_perl_dump
 
     try:
         with open(path, "rb") as f:
@@ -164,7 +166,7 @@ def resolve_input(
     fmt = sniff_text_format(path)
 
     if fmt == "perl":
-        from .abicc_dump_import import import_abicc_perl_dump
+        from .compat.abicc_dump_import import import_abicc_perl_dump
         try:
             return import_abicc_perl_dump(path)
         except (ValueError, KeyError, UnicodeDecodeError, OSError, AbicheckError) as exc:

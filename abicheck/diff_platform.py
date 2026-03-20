@@ -15,18 +15,16 @@
 "Platform-specific ABI diff detectors (ELF, PE, Mach-O, DWARF)."
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from .checker_policy import ChangeKind
 from .checker_types import Change
-from .diff_symbols import _PUBLIC_VIS, _public_functions
+from .diff_symbols import _public_functions
 from .diff_types import _RESERVED_FIELD_RE
 from .dwarf_advanced import diff_advanced_dwarf
 from .elf_metadata import SymbolBinding, SymbolType
 from .model import (
     AbiSnapshot,
-    Function,
     Visibility,
 )
 

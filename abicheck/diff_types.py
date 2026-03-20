@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 
 from .checker_policy import ChangeKind
 from .checker_types import Change
@@ -27,7 +27,6 @@ from .model import (
     Function,
     RecordType,
     TypeField,
-    Visibility,
     canonicalize_type_name,
 )
 from .model import is_compiler_internal_type as _is_compiler_internal_type
