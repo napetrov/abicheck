@@ -139,7 +139,7 @@ inputs:
     description: 'Extra compiler flags passed through to castxml (dump mode only).'
     required: false
   sysroot:
-    description: 'Alternative system root directory for cross-compilation (dump mode only).'
+    description: 'Alternative system root directory for cross-compilation (dump and deps modes).'
     required: false
   nostdinc:
     description: 'Do not search standard system include paths (dump mode only).'
@@ -221,36 +221,41 @@ inputs:
   severity-preset:
     description: >
       Severity preset: 'default', 'strict', or 'info-only'.
-      Controls exit codes and report labels.
+      Controls exit codes and report labels. Only applies to compare mode.
     required: false
   severity-addition:
     description: >
       Severity for new public API additions: 'error', 'warning', or 'info'.
       Set to 'error' to fail the step when additions are detected.
+      Only applies to compare mode.
     required: false
   extra-args:
     description: 'Additional CLI arguments passed directly to the abicheck command.'
     required: false
     default: ''
   add-job-summary:
-    description: 'Write a markdown summary to the GitHub Actions Job Summary.'
+    description: 'Write a markdown summary to the GitHub Actions Job Summary. Ignored for dump mode.'
     required: false
     default: 'true'
 
 outputs:
   verdict:
     description: >
-      ABI verdict. For compare/dump: COMPATIBLE, COMPATIBLE_WITH_RISK,
-      SEVERITY_ERROR, API_BREAK, BREAKING, or ERROR.
+      ABI verdict. For compare: COMPATIBLE, SEVERITY_ERROR, API_BREAK,
+      BREAKING, or ERROR.
+      For compare-release: COMPATIBLE, API_BREAK, BREAKING,
+      REMOVED_LIBRARY (when fail-on-removed-library is set), or ERROR.
       SEVERITY_ERROR is produced when --severity-addition=error detects
-      new public API additions.
+      new public API additions (compare mode only).
+      For dump: COMPATIBLE or ERROR.
       For stack-check: PASS, WARN, FAIL, or ERROR.
       For deps: PASS (all resolved) or FAIL (missing deps/symbols).
     value: ${{ steps.run-abicheck.outputs.verdict }}
   exit-code:
     description: >
       abicheck exit code. compare: 0 (compatible), 1 (severity-addition error),
-      2 (API break), 4 (ABI break). stack-check: 0 (pass), 1 (warn), 4 (fail).
+      2 (API break), 4 (ABI break). compare-release: 0 (compatible), 2 (API break),
+      4 (ABI break), 8 (library removed). stack-check: 0 (pass), 1 (warn), 4 (fail).
       deps: 0 (ok), 1 (missing). Click CLI errors also exit 2 and are mapped
       to VERDICT=ERROR.
     value: ${{ steps.run-abicheck.outputs.exit-code }}

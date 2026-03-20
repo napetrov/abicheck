@@ -128,13 +128,21 @@ elif [[ "$MODE" == "appcompat" ]]; then
   fi
 
   add_flag "-H" "${INPUT_HEADER:-}"
+  add_flag "--old-header" "${INPUT_OLD_HEADER:-}"
+  add_flag "--new-header" "${INPUT_NEW_HEADER:-}"
   add_flag "-I" "${INPUT_INCLUDE:-}"
+  add_flag "--old-include" "${INPUT_OLD_INCLUDE:-}"
+  add_flag "--new-include" "${INPUT_NEW_INCLUDE:-}"
   add_single_flag "--old-version" "${INPUT_OLD_VERSION:-}"
   add_single_flag "--new-version" "${INPUT_NEW_VERSION:-}"
   add_single_flag "--lang" "${INPUT_LANG:-}"
 
-  # Format
+  # Format — appcompat only supports markdown and json
   FORMAT="${INPUT_FORMAT:-markdown}"
+  if [[ "$FORMAT" != "markdown" && "$FORMAT" != "json" ]]; then
+    echo "::warning::appcompat mode only supports 'markdown' and 'json' formats. Falling back to 'markdown'."
+    FORMAT="markdown"
+  fi
   CMD+=(--format "$FORMAT")
 
   OUTPUT_FILE="${INPUT_OUTPUT_FILE:-}"
@@ -168,14 +176,15 @@ elif [[ "$MODE" == "compare-release" ]]; then
   add_single_flag "--new-version" "${INPUT_NEW_VERSION:-}"
   add_single_flag "--lang" "${INPUT_LANG:-}"
 
-  # Format
+  # Format — compare-release only supports markdown and json
   FORMAT="${INPUT_FORMAT:-markdown}"
+  if [[ "$FORMAT" != "markdown" && "$FORMAT" != "json" ]]; then
+    echo "::warning::compare-release mode only supports 'markdown' and 'json' formats. Falling back to 'markdown'."
+    FORMAT="markdown"
+  fi
   CMD+=(--format "$FORMAT")
 
   OUTPUT_FILE="${INPUT_OUTPUT_FILE:-}"
-  if [[ "$FORMAT" == "sarif" && -z "$OUTPUT_FILE" ]]; then
-    OUTPUT_FILE="abicheck-results.sarif"
-  fi
   if [[ -n "$OUTPUT_FILE" ]]; then
     CMD+=(-o "$OUTPUT_FILE")
   fi
@@ -212,7 +221,12 @@ elif [[ "$MODE" == "deps" ]]; then
   add_flag "--search-path" "${INPUT_SEARCH_PATH:-}"
   add_single_flag "--ld-library-path" "${INPUT_LD_LIBRARY_PATH:-}"
 
+  # Format — deps only supports markdown and json
   FORMAT="${INPUT_FORMAT:-markdown}"
+  if [[ "$FORMAT" != "markdown" && "$FORMAT" != "json" ]]; then
+    echo "::warning::deps mode only supports 'markdown' and 'json' formats. Falling back to 'markdown'."
+    FORMAT="markdown"
+  fi
   CMD+=(--format "$FORMAT")
 
   OUTPUT_FILE="${INPUT_OUTPUT_FILE:-}"
@@ -230,7 +244,12 @@ elif [[ "$MODE" == "stack-check" ]]; then
   add_flag "--search-path" "${INPUT_SEARCH_PATH:-}"
   add_single_flag "--ld-library-path" "${INPUT_LD_LIBRARY_PATH:-}"
 
+  # Format — stack-check only supports markdown and json
   FORMAT="${INPUT_FORMAT:-markdown}"
+  if [[ "$FORMAT" != "markdown" && "$FORMAT" != "json" ]]; then
+    echo "::warning::stack-check mode only supports 'markdown' and 'json' formats. Falling back to 'markdown'."
+    FORMAT="markdown"
+  fi
   CMD+=(--format "$FORMAT")
 
   OUTPUT_FILE="${INPUT_OUTPUT_FILE:-}"
