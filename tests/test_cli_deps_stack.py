@@ -406,3 +406,16 @@ class TestStackCheckCommand:
             "--format", "json",
         ])
         assert result.exit_code == 0
+
+    def test_stack_check_rejects_same_sysroot(self, tmp_path):
+        same = tmp_path / "root"
+        same.mkdir()
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "stack-check", "usr/bin/myapp",
+            "--baseline", str(same),
+            "--candidate", str(same),
+        ])
+        assert result.exit_code != 0
+        assert "same sysroot" in result.output

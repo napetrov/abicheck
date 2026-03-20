@@ -1856,9 +1856,11 @@ def deps_cmd(
 
 @main.command("stack-check")
 @click.argument("binary", type=click.Path(path_type=Path))
-@click.option("--baseline", type=click.Path(exists=True, path_type=Path), required=True,
+@click.option("--baseline", type=click.Path(exists=True, path_type=Path),
+              default=Path("/"), show_default=True,
               help="Sysroot for the baseline environment.")
-@click.option("--candidate", type=click.Path(exists=True, path_type=Path), required=True,
+@click.option("--candidate", type=click.Path(exists=True, path_type=Path),
+              default=Path("/"), show_default=True,
               help="Sysroot for the candidate environment.")
 @click.option("--search-path", "search_paths", multiple=True,
               type=click.Path(exists=True, path_type=Path),
@@ -1895,6 +1897,13 @@ def stack_check_cmd(
         --baseline ./image-v1 --candidate ./image-v2 --format json
     """
     _setup_verbosity(verbose)
+
+    # Guard against accidental no-op comparisons.
+    if baseline == candidate:
+        raise click.UsageError(
+            "--baseline and --candidate resolve to the same sysroot; "
+            "provide two different roots for stack comparison."
+        )
 
     # Validate that every existing binary is ELF in both sysroots
     for label, root in [("baseline", baseline), ("candidate", candidate)]:
