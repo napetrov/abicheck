@@ -17,6 +17,10 @@ from abicheck.checker import (
     _filter_redundant,
     _match_root_type,
 )
+from abicheck.diff_filtering import (
+    _filter_reserved_field_renames,
+    _root_type_name,
+)
 from abicheck.reporter import (
     ShowOnlyFilter,
     apply_show_only,
@@ -633,3 +637,125 @@ class TestXmlRedundancy:
         result = _make_result(changes=[c])
         xml = generate_xml_report(result, lib_name="lib.so")
         assert "<caused_count>3</caused_count>" in xml
+
+
+# ---------------------------------------------------------------------------
+# _root_type_name: namespace preservation (architecture review fix #1)
+# ---------------------------------------------------------------------------
+
+
+class TestRootTypeNameNamespace:
+    """Verify _root_type_name uses rsplit (not split) to preserve namespaces."""
+
+    def test_simple_field(self):
+        c = Change(ChangeKind.TYPE_FIELD_REMOVED, "Container::flags", "removed")
+        assert _root_type_name(c) == "Container"
+
+    def test_namespaced_field(self):
+        """ns::Container::flags → ns::Container (not just 'ns')."""
+        c = Change(ChangeKind.TYPE_FIELD_REMOVED, "ns::Container::flags", "removed")
+        assert _root_type_name(c) == "ns::Container"
+
+    def test_deeply_nested_namespace_field(self):
+        c = Change(ChangeKind.STRUCT_FIELD_REMOVED, "a::b::Container::flags", "removed")
+        assert _root_type_name(c) == "a::b::Container"
+
+    def test_non_field_kind_preserves_full_symbol(self):
+        c = Change(ChangeKind.TYPE_SIZE_CHANGED, "ns::Container", "size changed")
+        assert _root_type_name(c) == "ns::Container"
+
+    def test_no_namespace(self):
+        c = Change(ChangeKind.TYPE_SIZE_CHANGED, "Container", "size changed")
+        assert _root_type_name(c) == "Container"
+
+
+# ---------------------------------------------------------------------------
+# Reserved-field suppression: exact field-name match (review fix #2)
+# ---------------------------------------------------------------------------
+
+
+class TestReservedFieldExactMatch:
+    """_filter_reserved_field_renames must not substring-match field names."""
+
+    def test_exact_old_field_suppresses(self):
+        changes = [
+            Change(
+                ChangeKind.USED_RESERVED_FIELD, "S",
+                "Reserved field put into use: S::__reserved0 → active",
+                old_value="__reserved0", new_value="active",
+            ),
+            Change(
+                ChangeKind.STRUCT_FIELD_REMOVED, "S::__reserved0",
+                "Struct field removed: S::__reserved0", old_value="uint32_t",
+            ),
+        ]
+        result = _filter_reserved_field_renames(changes)
+        kinds = [c.kind for c in result]
+        assert ChangeKind.STRUCT_FIELD_REMOVED not in kinds
+
+    def test_substring_old_field_not_suppressed(self):
+        """'__reserved0_extra' must NOT be suppressed for '__reserved0'."""
+        changes = [
+            Change(
+                ChangeKind.USED_RESERVED_FIELD, "S",
+                "Reserved field put into use: S::__reserved0 → active",
+                old_value="__reserved0", new_value="active",
+            ),
+            Change(
+                ChangeKind.STRUCT_FIELD_REMOVED, "S::__reserved0_extra",
+                "Struct field removed: S::__reserved0_extra", old_value="uint32_t",
+            ),
+        ]
+        result = _filter_reserved_field_renames(changes)
+        kinds = [c.kind for c in result]
+        assert ChangeKind.STRUCT_FIELD_REMOVED in kinds
+
+    def test_exact_new_field_suppresses_added(self):
+        changes = [
+            Change(
+                ChangeKind.USED_RESERVED_FIELD, "S",
+                "Reserved: S::__pad → active",
+                old_value="__pad", new_value="active",
+            ),
+            Change(
+                ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE, "S::active",
+                "Struct field added: S::active", new_value="uint32_t",
+            ),
+        ]
+        result = _filter_reserved_field_renames(changes)
+        kinds = [c.kind for c in result]
+        assert ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE not in kinds
+
+    def test_substring_new_field_not_suppressed(self):
+        """'active_flags' must NOT be suppressed when new_field is 'active'."""
+        changes = [
+            Change(
+                ChangeKind.USED_RESERVED_FIELD, "S",
+                "Reserved: S::__pad → active",
+                old_value="__pad", new_value="active",
+            ),
+            Change(
+                ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE, "S::active_flags",
+                "Struct field added: S::active_flags", new_value="uint32_t",
+            ),
+        ]
+        result = _filter_reserved_field_renames(changes)
+        kinds = [c.kind for c in result]
+        assert ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE in kinds
+
+    def test_flag_does_not_match_flags(self):
+        """Regression: 'flag' must not match 'flags'."""
+        changes = [
+            Change(
+                ChangeKind.USED_RESERVED_FIELD, "S",
+                "Reserved: S::__pad → flag",
+                old_value="__pad", new_value="flag",
+            ),
+            Change(
+                ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE, "S::flags",
+                "Struct field added: S::flags", new_value="uint32_t",
+            ),
+        ]
+        result = _filter_reserved_field_renames(changes)
+        kinds = [c.kind for c in result]
+        assert ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE in kinds
