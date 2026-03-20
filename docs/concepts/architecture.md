@@ -161,31 +161,94 @@ When debug info is available in the binary:
 
 ## Key modules
 
+### CLI & service layer
+
 | Module | Responsibility |
 |--------|---------------|
-| `cli.py` | CLI entrypoint — `dump`, `compare`, `compat check`, `compat dump` commands |
+| `cli.py` | CLI entrypoint — `dump`, `compare`, `compat check`, `compat dump`, `deps`, `stack-check`, `appcompat` commands |
+| `service.py` | Service layer — shared orchestration for CLI and MCP server (`resolve_input`, `run_dump`, `run_compare`, `render_output`) |
+| `mcp_server.py` | MCP (Model Context Protocol) server for AI agent integration |
+
+### Data model & serialization
+
+| Module | Responsibility |
+|--------|---------------|
+| `model.py` | Data models for snapshots (AbiSnapshot, Function, RecordType, EnumType, etc.) |
+| `checker_types.py` | Core result types (`Change`, `DiffResult`, `DetectorSpec`, `LibraryMetadata`) — extracted from `checker.py` to break circular dependencies |
+| `serialization.py` | JSON snapshot serialization/deserialization |
+| `errors.py` | Custom exception definitions |
+
+### Snapshot generation (dumper)
+
+| Module | Responsibility |
+|--------|---------------|
 | `dumper.py` | Snapshot generation: reads binary + headers → JSON snapshot |
 | `elf_metadata.py` | ELF reader — Linux `.so` binaries (via `pyelftools`) |
 | `pe_metadata.py` | PE/COFF reader — Windows `.dll` binaries (via `pefile`) |
 | `macho_metadata.py` | Mach-O reader — macOS `.dylib` binaries (via `macholib`) |
-| `checker.py` | Diff orchestration: compares two snapshots, collects changes |
-| `checker_policy.py` | `ChangeKind` enum, built-in policy profiles, verdict computation |
+| `binary_utils.py` | Shared binary format utilities |
+
+### Diff engine (checker)
+
+| Module | Responsibility |
+|--------|---------------|
+| `checker.py` | Diff orchestration: compares two snapshots, delegates to sub-modules, collects changes |
+| `checker_policy.py` | `ChangeKind` enum, built-in policy profiles (`strict_abi`, `sdk_vendor`, `plugin_abi`), verdict computation |
+| `diff_symbols.py` | Symbol-level ABI diff detectors (functions, variables, parameters) |
+| `diff_types.py` | Type-level ABI diff detectors (structs, enums, unions, typedefs, fields) |
+| `diff_platform.py` | Platform-specific ABI diff detectors (ELF, PE, Mach-O, DWARF) |
+| `diff_filtering.py` | Post-processing: enrichment, redundancy filtering, AST-DWARF deduplication |
 | `detectors.py` | Individual ABI change detection rules |
+
+### Policy & suppression
+
+| Module | Responsibility |
+|--------|---------------|
 | `policy_file.py` | Custom YAML policy file parsing (`--policy-file`) |
+| `suppression.py` | Suppression rules, symbol/type filtering |
+| `severity.py` | Severity classification for changes |
+
+### Report output
+
+| Module | Responsibility |
+|--------|---------------|
 | `reporter.py` | Markdown and JSON output formatting |
 | `html_report.py` | HTML report generation |
 | `sarif.py` | SARIF output for GitHub Code Scanning |
-| `suppression.py` | Suppression rules, symbol/type filtering |
-| `serialization.py` | JSON snapshot serialization/deserialization |
+| `report_classifications.py` | Change classification helpers for reports |
+| `report_summary.py` | Report summary generation |
+
+### Debug info (DWARF & PDB)
+
+| Module | Responsibility |
+|--------|---------------|
 | `dwarf_unified.py` | Unified DWARF handling (layer 3, Linux/macOS) |
-| `dwarf_advanced.py` | Advanced DWARF analysis (Linux/macOS) |
+| `dwarf_advanced.py` | Advanced DWARF analysis (calling convention, packing, toolchain flags) |
 | `dwarf_metadata.py` | DWARF metadata extraction (Linux/macOS) |
+| `dwarf_snapshot.py` | DWARF-based snapshot enrichment |
+| `dwarf_utils.py` | DWARF parsing utility functions |
 | `pdb_parser.py` | Minimal PDB parser (MSF container, TPI, DBI streams) |
 | `pdb_metadata.py` | PDB debug info → DwarfMetadata/AdvancedDwarfMetadata |
 | `pdb_utils.py` | PDB file location from PE debug directory |
-| `model.py` | Data models for snapshots and changes |
-| `errors.py` | Custom exception definitions |
+
+### Dependency & stack analysis
+
+| Module | Responsibility |
+|--------|---------------|
+| `resolver.py` | Dependency tree resolution (ELF `DT_NEEDED` / Mach-O `LC_LOAD_DYLIB`) |
+| `binder.py` | Symbol binding simulation across loaded DSOs |
+| `stack_checker.py` | Full-stack ABI validation across dependency trees |
+| `stack_report.py` | Stack-check report formatting |
+| `appcompat.py` | Application compatibility checking (filters diff to app-used symbols) |
+| `package.py` | Package-level comparison (RPM, DEB, conda) |
+
+### ABICC compatibility
+
+| Module | Responsibility |
+|--------|---------------|
 | `compat/` | ABICC compatibility layer (compat check, compat dump, XML parsing) |
+| `abicc_dump_import.py` | Import Perl-format ABICC dump files |
+| `demangle.py` | C++ symbol demangling utilities |
 
 ---
 
@@ -203,7 +266,7 @@ Policies control how detected changes are classified (BREAKING, API_BREAK, COMPA
 
 **Custom policies:** YAML files with per-kind `break|warn|ignore` overrides.
 
-Source of truth: `policy_kind_sets()` in `checker_policy.py`.
+Source of truth: `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, and `RISK_KINDS` sets in `checker_policy.py`.
 
 ---
 
@@ -213,6 +276,7 @@ Source of truth: `policy_kind_sets()` in `checker_policy.py`.
 |---------|-----------|---------|
 | `NO_CHANGE` | 0 | Identical snapshots |
 | `COMPATIBLE` | 0 | Safe changes (new symbols, weak binding) |
+| `COMPATIBLE_WITH_RISK` | 0 | Binary-compatible but deployment risk present |
 | `API_BREAK` | 2 | Source-level break, binary-safe (rename, access change) |
 | `BREAKING` | 4 | Binary ABI break — old binaries will fail |
 
