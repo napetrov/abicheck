@@ -39,7 +39,7 @@ import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import IO, Protocol, runtime_checkable
 
 from .errors import ExtractionSecurityError
 
@@ -574,24 +574,62 @@ def is_package(path: Path) -> bool:
 _ELF_MAGIC = b"\x7fELF"
 # ELF type ET_DYN (shared object)
 _ET_DYN = 3
+# Program header type PT_INTERP (interpreter segment — present in executables, absent in DSOs)
+_PT_INTERP = 3
+
+
+def _has_interp_segment(f: IO[bytes], ei_class: int, byte_order: str) -> bool:
+    """Check if an ELF file has a PT_INTERP program header (i.e. is an executable)."""
+    try:
+        if ei_class == 1:  # 32-bit
+            # e_phoff at offset 28 (4 bytes), e_phentsize at 42 (2 bytes), e_phnum at 44 (2 bytes)
+            f.seek(28)
+            e_phoff = struct.unpack(f"{byte_order}I", f.read(4))[0]
+            f.seek(42)
+            e_phentsize = struct.unpack(f"{byte_order}H", f.read(2))[0]
+            e_phnum = struct.unpack(f"{byte_order}H", f.read(2))[0]
+        else:  # 64-bit
+            # e_phoff at offset 32 (8 bytes), e_phentsize at 54 (2 bytes), e_phnum at 56 (2 bytes)
+            f.seek(32)
+            e_phoff = struct.unpack(f"{byte_order}Q", f.read(8))[0]
+            f.seek(54)
+            e_phentsize = struct.unpack(f"{byte_order}H", f.read(2))[0]
+            e_phnum = struct.unpack(f"{byte_order}H", f.read(2))[0]
+
+        if e_phoff == 0 or e_phnum == 0:
+            return False
+
+        for i in range(e_phnum):
+            f.seek(e_phoff + i * e_phentsize)
+            p_type = struct.unpack(f"{byte_order}I", f.read(4))[0]
+            if p_type == _PT_INTERP:
+                return True
+        return False
+    except (OSError, struct.error):
+        return False
 
 
 def _is_elf_shared_object(path: Path) -> bool:
-    """Check if a file is an ELF shared object (ET_DYN)."""
+    """Check if a file is an ELF shared object (ET_DYN) and not a PIE executable."""
     try:
         with open(path, "rb") as f:
             magic = f.read(4)
             if magic != _ELF_MAGIC:
                 return False
             # Read EI_CLASS (byte 4), then EI_DATA (byte 5) for endianness
-            f.read(1)  # ei_class — not needed for type detection
+            ei_class = struct.unpack("B", f.read(1))[0]
             ei_data = struct.unpack("B", f.read(1))[0]
 
             # Seek to e_type at offset 16
             f.seek(16)
             byte_order = "<" if ei_data == 1 else ">"
             e_type = struct.unpack(f"{byte_order}H", f.read(2))[0]
-            return bool(e_type == _ET_DYN)
+            if e_type != _ET_DYN:
+                return False
+
+            # Distinguish PIE executables from true shared objects:
+            # executables have a PT_INTERP segment, shared objects don't.
+            return not _has_interp_segment(f, ei_class, byte_order)
     except (OSError, struct.error):
         return False
 

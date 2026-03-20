@@ -409,13 +409,26 @@ def _to_json_leaf(
     non_type_changes = [c for c in changes if c.kind not in _ROOT_TYPE_CHANGE_KINDS]
 
     effective_policy = result.policy or "strict_abi"
+    eff_sets = result._effective_kind_sets()
+
+    def _severity_from_sets(kind: object) -> str:
+        breaking, api_break, compatible, risk = eff_sets
+        if kind in breaking:
+            return "breaking"
+        if kind in api_break:
+            return "api_break"
+        if kind in risk:
+            return "risk"
+        if kind in compatible:
+            return "compatible"
+        return "unknown"
 
     leaf_changes_list = [
         {
             "kind": c.kind.value,
             "symbol": c.symbol,
             "description": c.description,
-            "severity": _kind_to_severity(c.kind, effective_policy),
+            "severity": _severity_from_sets(c.kind),
             "affected_count": len(c.affected_symbols) if c.affected_symbols else 0,
             "affected_symbols": c.affected_symbols or [],
             "caused_count": c.caused_count,
@@ -424,7 +437,7 @@ def _to_json_leaf(
         }
         for c in type_changes
     ]
-    non_type_list = [_change_to_dict(c, policy=effective_policy) for c in non_type_changes]
+    non_type_list = [_change_to_dict(c, policy=effective_policy, kind_sets=eff_sets) for c in non_type_changes]
 
     d: dict[str, object] = {
         "library": result.library,
@@ -490,13 +503,9 @@ def to_json(
         "new_version": result.new_version,
         "verdict": result.verdict.value,
     }
-    # Library file metadata (path, SHA-256, size) when available
-    old_meta = _metadata_dict(getattr(result, "old_metadata", None))
-    new_meta = _metadata_dict(getattr(result, "new_metadata", None))
-    if old_meta:
-        d["old_file"] = old_meta
-    if new_meta:
-        d["new_file"] = new_meta
+    # Library file metadata (path, SHA-256, size) — always present for schema consistency
+    d["old_file"] = _metadata_dict(getattr(result, "old_metadata", None))
+    d["new_file"] = _metadata_dict(getattr(result, "new_metadata", None))
     d["summary"] = {
         "breaking": summary.breaking,
         "source_breaks": summary.source_breaks,
@@ -508,17 +517,27 @@ def to_json(
     }
     effective_policy = result.policy or "strict_abi"
     d["policy"] = effective_policy
+    eff_sets = result._effective_kind_sets()
+
+    if show_only:
+        eff_breaking, eff_api_break, _, eff_risk = eff_sets
+        d["show_only_filter"] = show_only
+        d["filtered_summary"] = {
+            "breaking": sum(1 for c in changes if c.kind in eff_breaking),
+            "source_breaks": sum(1 for c in changes if c.kind in eff_api_break),
+            "risk_changes": sum(1 for c in changes if c.kind in eff_risk),
+            "total_changes": len(changes),
+        }
 
     # Severity-categorized summary when severity config is provided
     if severity_config is not None:
-        eff_sets = result._effective_kind_sets()
         d["severity"] = _build_severity_json(
             changes, severity_config,
             all_changes=list(result.changes),
             kind_sets=eff_sets,
         )
 
-    d["changes"] = [_change_to_dict(c, policy=effective_policy) for c in changes]
+    d["changes"] = [_change_to_dict(c, policy=effective_policy, kind_sets=eff_sets) for c in changes]
     if result.redundant_count > 0:
         d["redundant_count"] = result.redundant_count
     d["suppression"] = {
@@ -548,17 +567,37 @@ def to_json(
     return json.dumps(d, indent=indent)
 
 
-def _change_to_dict(c: object, *, policy: str = "strict_abi") -> dict[str, object]:
+def _change_to_dict(
+    c: object,
+    *,
+    policy: str = "strict_abi",
+    kind_sets: tuple[frozenset[ChangeKind], frozenset[ChangeKind], frozenset[ChangeKind], frozenset[ChangeKind]] | None = None,
+) -> dict[str, object]:
     """Convert a Change to a JSON-serializable dict with impact and metadata."""
     kind = getattr(c, "kind", None)
+    if kind and kind_sets:
+        breaking, api_break, compatible, risk = kind_sets
+        if kind in breaking:
+            severity = "breaking"
+        elif kind in api_break:
+            severity = "api_break"
+        elif kind in risk:
+            severity = "risk"
+        elif kind in compatible:
+            severity = "compatible"
+        else:
+            severity = "unknown"
+    elif kind:
+        severity = _kind_to_severity(kind, policy)
+    else:
+        severity = "unknown"
     d: dict[str, object] = {
         "kind": kind.value if kind else "",
         "symbol": getattr(c, "symbol", ""),
         "description": getattr(c, "description", ""),
         "old_value": getattr(c, "old_value", None),
         "new_value": getattr(c, "new_value", None),
-        # FIX-G: materialize severity from active policy
-        "severity": _kind_to_severity(kind, policy) if kind else "unknown",
+        "severity": severity,
     }
     # Impact explanation
     if kind:
