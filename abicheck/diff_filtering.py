@@ -160,19 +160,31 @@ def _enrich_affected_symbols(
             queue.extend(type_embeds.get(parent, set()))
         return visited
 
+    # Cache: ancestor type → list of (func_name, mangled) so each ancestor
+    # is scanned at most once across all affected types.
+    _ancestor_func_cache: dict[str, list[tuple[str, str]]] = {}
+
     for tname in affected_types:
         ancestors = _all_ancestors(tname)
         for parent in ancestors:
             if parent in type_to_funcs:
                 type_to_funcs[tname].extend(type_to_funcs[parent])
                 type_to_mangled[tname].extend(type_to_mangled.get(parent, []))
+            elif parent in _ancestor_func_cache:
+                for fname, mname in _ancestor_func_cache[parent]:
+                    type_to_funcs[tname].append(fname)
+                    type_to_mangled[tname].append(mname)
             else:
-                # Check functions for parent too
+                # Parent type not in affected_types — scan functions once, cache result.
+                parent_funcs: list[tuple[str, str]] = []
                 for _mangled, func in old_pub.items():
                     func_types_used = {func.return_type} | {p.type for p in func.params}
                     if any(parent in ft for ft in func_types_used if ft):
-                        type_to_funcs[tname].append(func.name)
-                        type_to_mangled[tname].append(func.mangled)
+                        parent_funcs.append((func.name, func.mangled))
+                _ancestor_func_cache[parent] = parent_funcs
+                for fname, mname in parent_funcs:
+                    type_to_funcs[tname].append(fname)
+                    type_to_mangled[tname].append(mname)
 
     # Assign to changes — include both demangled names (display) and
     # mangled names (appcompat matching, FIX-A Part 3).
@@ -284,6 +296,13 @@ def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]
     if not root_types:
         return changes, []
 
+    # Pre-compile word-boundary regex patterns for all root type names once,
+    # instead of recompiling per (_match_root_type call * root type) pair.
+    compiled_patterns: dict[str, re.Pattern[str]] = {
+        name: re.compile(r'(?<![A-Za-z0-9_])' + re.escape(name) + r'(?![A-Za-z0-9_])')
+        for name in root_types
+    }
+
     # Step 2: Check each non-root change for redundancy
     kept: list[Change] = []
     redundant: list[Change] = []
@@ -300,7 +319,7 @@ def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]
         if c.kind in _DERIVED_CHANGE_KINDS:
             type_name = _root_type_name(c)
             other_roots = {k: v for k, v in root_types.items() if k != type_name}
-            matched_root = _match_root_type(c, other_roots)
+            matched_root = _match_root_type(c, other_roots, compiled_patterns)
             if matched_root is not None:
                 c.caused_by_type = matched_root
                 root_change = root_types[matched_root]
@@ -335,7 +354,7 @@ def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]
             continue
 
         # Check if this change references a (kept) root type
-        matched_root = _match_root_type(c, root_types)
+        matched_root = _match_root_type(c, root_types, compiled_patterns)
         if matched_root is not None:
             c.caused_by_type = matched_root
             root_change = root_types[matched_root]
@@ -352,7 +371,11 @@ def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]
     return kept, redundant
 
 
-def _match_root_type(c: Change, root_types: dict[str, Change]) -> str | None:
+def _match_root_type(
+    c: Change,
+    root_types: dict[str, Change],
+    compiled_patterns: dict[str, re.Pattern[str]] | None = None,
+) -> str | None:
     """Check if a derived change references a known root type.
 
     Returns the root type name if found, None otherwise.
@@ -362,16 +385,22 @@ def _match_root_type(c: Change, root_types: dict[str, Change]) -> str | None:
 
     Conservative: false negatives (showing too much) are safer than false
     positives (hiding real changes).
+
+    When *compiled_patterns* is provided, uses pre-compiled regex objects
+    instead of recompiling per call (performance optimisation).
     """
     for type_name in root_types:
-        # Build a word-boundary pattern: the type name must appear as a
-        # whole token, not as a substring of a longer identifier.
-        pattern = r'(?<![A-Za-z0-9_])' + re.escape(type_name) + r'(?![A-Za-z0-9_])'
-        if c.old_value and re.search(pattern, c.old_value):
+        if compiled_patterns is not None and type_name in compiled_patterns:
+            pat = compiled_patterns[type_name]
+        else:
+            pat = re.compile(
+                r'(?<![A-Za-z0-9_])' + re.escape(type_name) + r'(?![A-Za-z0-9_])'
+            )
+        if c.old_value and pat.search(c.old_value):
             return type_name
-        if c.new_value and re.search(pattern, c.new_value):
+        if c.new_value and pat.search(c.new_value):
             return type_name
-        if re.search(pattern, c.description):
+        if pat.search(c.description):
             return type_name
     return None
 
@@ -386,7 +415,10 @@ _ENUM_DEDUP_KINDS = frozenset({
 })
 
 
-def _is_pointer_only_type(type_name: str, snap: AbiSnapshot) -> bool:
+def _is_pointer_only_type(
+    type_name: str, snap: AbiSnapshot,
+    _re_cache: dict[str, re.Pattern[str]] | None = None,
+) -> bool:
     """Return True if all PUBLIC API functions/variables use this type via pointer only.
 
     A type is pointer-only (opaque-handle pattern) when every function param/return
@@ -395,8 +427,14 @@ def _is_pointer_only_type(type_name: str, snap: AbiSnapshot) -> bool:
     caller could still hold the referent by value.
 
     Uses pre-compiled word-boundary regex to avoid substring false-positives.
+    *_re_cache* can supply a shared regex cache to avoid recompilation across calls.
     """
-    bare_re = re.compile(r'\b' + re.escape(type_name) + r'\b')
+    if _re_cache is not None and type_name in _re_cache:
+        bare_re = _re_cache[type_name]
+    else:
+        bare_re = re.compile(r'\b' + re.escape(type_name) + r'\b')
+        if _re_cache is not None:
+            _re_cache[type_name] = bare_re
 
     def _is_by_value(type_str: str) -> bool:
         """True if ``type_str`` names the type without a trailing ``*``."""
@@ -430,14 +468,22 @@ def _is_pointer_only_type(type_name: str, snap: AbiSnapshot) -> bool:
     return True
 
 
-def _has_public_pointer_factory(type_name: str, snap: AbiSnapshot) -> bool:
+def _has_public_pointer_factory(
+    type_name: str, snap: AbiSnapshot,
+    _factory_re_cache: dict[str, re.Pattern[str]] | None = None,
+) -> bool:
     """True if snapshot has at least one PUBLIC function returning exactly ``type_name*``.
 
     Uses word-boundary regex to avoid substring false-positives such as
     ``type_name="Context"`` matching ``SSLContext*``.
     """
     # Match: optional const/volatile, then word-boundary type name, then `*`
-    factory_re = re.compile(r'\b' + re.escape(type_name) + r'\s*\*')
+    if _factory_re_cache is not None and type_name in _factory_re_cache:
+        factory_re = _factory_re_cache[type_name]
+    else:
+        factory_re = re.compile(r'\b' + re.escape(type_name) + r'\s*\*')
+        if _factory_re_cache is not None:
+            _factory_re_cache[type_name] = factory_re
     for f in snap.functions:
         if f.visibility not in _PUBLIC_VIS:
             continue
@@ -486,17 +532,26 @@ def _filter_opaque_size_changes(
     }
 
     opaque_types: set[str] = set()
+    # Shared regex caches so patterns are compiled once across all candidate types.
+    _bare_re_cache: dict[str, re.Pattern[str]] = {}
+    _factory_re_cache: dict[str, re.Pattern[str]] = {}
     for t in size_change_types:
         kinds = by_type[t]
         if ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE not in kinds:
             continue
         if kinds & forbidden:
             continue
-        if not (_is_pointer_only_type(t, old) and _is_pointer_only_type(t, new)):
+        if not (
+            _is_pointer_only_type(t, old, _bare_re_cache)
+            and _is_pointer_only_type(t, new, _bare_re_cache)
+        ):
             continue
         # Narrow guard to avoid case07-style regressions:
         # opaque handles are typically created by factory APIs returning T*.
-        if not (_has_public_pointer_factory(t, old) and _has_public_pointer_factory(t, new)):
+        if not (
+            _has_public_pointer_factory(t, old, _factory_re_cache)
+            and _has_public_pointer_factory(t, new, _factory_re_cache)
+        ):
             continue
         opaque_types.add(t)
 
