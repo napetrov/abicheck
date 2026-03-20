@@ -201,6 +201,28 @@ class TestMatchRootType:
         c = Change(ChangeKind.FUNC_PARAMS_CHANGED, "foo", "param count changed", old_value="int")
         assert _match_root_type(c, {"Config": Change(ChangeKind.TYPE_SIZE_CHANGED, "Config", "")}) is None
 
+    def test_with_precompiled_patterns(self):
+        """Pre-compiled patterns dict produces same results as without."""
+        import re
+        root_types = {"Config": Change(ChangeKind.TYPE_SIZE_CHANGED, "Config", "")}
+        compiled = {
+            name: re.compile(r'(?<![A-Za-z0-9_])' + re.escape(name) + r'(?![A-Za-z0-9_])')
+            for name in root_types
+        }
+        c = Change(ChangeKind.FUNC_PARAMS_CHANGED, "foo", "desc", old_value="Config*")
+        assert _match_root_type(c, root_types, compiled) == "Config"
+
+    def test_without_compiled_patterns_fallback(self):
+        """When compiled_patterns is None, function still works (fallback)."""
+        c = Change(ChangeKind.FUNC_PARAMS_CHANGED, "foo", "desc", new_value="Config*")
+        assert _match_root_type(c, {"Config": Change(ChangeKind.TYPE_SIZE_CHANGED, "Config", "")}, None) == "Config"
+
+    def test_compiled_patterns_empty_dict(self):
+        """Empty compiled_patterns dict triggers fallback compilation per type."""
+        c = Change(ChangeKind.FUNC_RETURN_CHANGED, "bar", "return type changed: Config")
+        # Empty dict — type_name not in compiled_patterns, should compile on the fly
+        assert _match_root_type(c, {"Config": Change(ChangeKind.TYPE_SIZE_CHANGED, "Config", "")}, {}) == "Config"
+
 
 # ---------------------------------------------------------------------------
 # ShowOnlyFilter tests

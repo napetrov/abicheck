@@ -36,6 +36,7 @@ from elftools.elf.elffile import ELFFile
 from elftools.elf.gnuversions import (
     GNUVerDefSection,
     GNUVerNeedSection,
+    GNUVerSymSection,
 )
 from elftools.elf.sections import SymbolTableSection
 
@@ -197,6 +198,11 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
     verdef_index_map: dict[int, tuple[str, str, bool]] = {}   # idx → ("", ver, True)
     verneed_index_map: dict[int, tuple[str, str, bool]] = {}  # idx → (lib, ver, False)
 
+    # Capture .gnu.version and .dynsym sections during the main loop so that
+    # _correlate_symbol_versions does not need to re-iterate all sections.
+    ver_sym_section: GNUVerSymSection | None = None
+    dynsym_section: SymbolTableSection | None = None
+
     for section in elf.iter_sections():
         try:
             if isinstance(section, DynamicSection):
@@ -207,8 +213,11 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
             elif isinstance(section, GNUVerNeedSection):
                 _parse_version_need(section, meta)
                 _build_verneed_index(section, verneed_index_map)
+            elif isinstance(section, GNUVerSymSection):
+                ver_sym_section = section
             elif isinstance(section, SymbolTableSection) and section.name == ".dynsym":
                 _parse_dynsym(section, meta)
+                dynsym_section = section
         except Exception as exc:  # noqa: BLE001
             # Partial-success: log malformed section, keep results from other sections.
             log.warning("parse_elf_metadata: skipping malformed section %r in %s: %s",
@@ -217,8 +226,8 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
     # Merge: verdef entries take priority over verneed on index collision.
     ver_index_map: dict[int, tuple[str, str, bool]] = {**verneed_index_map, **verdef_index_map}
 
-    # Parse .gnu.version to correlate per-symbol version entries.
-    _correlate_symbol_versions(elf, meta, ver_index_map, so_path)
+    # Correlate per-symbol version entries using sections captured above.
+    _correlate_symbol_versions(ver_sym_section, dynsym_section, meta, ver_index_map, so_path)
 
     # Post-loop: filter out version-definition auxiliary symbols.
     # GNU ld emits these as OBJECT/size=0 in .dynsym; lld/gold may use NOTYPE.
@@ -485,7 +494,8 @@ def _parse_ver_entries(
 
 
 def _correlate_symbol_versions(
-    elf: ELFFile,
+    ver_sym_section: GNUVerSymSection | None,
+    dynsym: SymbolTableSection | None,
     meta: ElfMetadata,
     ver_index_map: dict[int, tuple[str, str, bool]],
     so_path: Path,
@@ -497,15 +507,10 @@ def _correlate_symbol_versions(
     1 = VER_NDX_GLOBAL (unversioned). Higher indices come from
     .gnu.version_d (defined) or .gnu.version_r (required).
     Bit 15 (0x8000) indicates a hidden (non-default) version.
+
+    Accepts pre-captured sections from the main iteration loop to avoid
+    redundant ``elf.iter_sections()`` calls.
     """
-    from elftools.elf.gnuversions import GNUVerSymSection
-
-    ver_sym_section = None
-    for section in elf.iter_sections():
-        if isinstance(section, GNUVerSymSection):
-            ver_sym_section = section
-            break
-
     if ver_sym_section is None or not ver_index_map:
         return
 
@@ -518,11 +523,6 @@ def _correlate_symbol_versions(
     if ver_entries is None:
         return
 
-    dynsym = None
-    for section in elf.iter_sections():
-        if isinstance(section, SymbolTableSection) and section.name == ".dynsym":
-            dynsym = section
-            break
     if dynsym is None:
         return
 
