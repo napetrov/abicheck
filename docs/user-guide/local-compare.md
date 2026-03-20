@@ -27,7 +27,7 @@ abicheck compare baseline.json build/libfoo.so \
 ```
 
 Expected output:
-```
+```text
 Verdict: NO_CHANGE
 ```
 

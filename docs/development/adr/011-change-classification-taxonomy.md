@@ -138,7 +138,7 @@ When adding a new `ChangeKind`:
 
 ### Negative
 
-- 85+ kinds require maintenance as ABI standards evolve
+- 114 kinds require maintenance as ABI standards evolve
 - Divergences from reference tools may surprise users migrating from ABICC
 - Some classifications are judgment calls (e.g., `noexcept`) that may need
   revisiting as C++ standards evolve
