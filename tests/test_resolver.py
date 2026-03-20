@@ -21,57 +21,13 @@ from pathlib import Path
 import pytest
 
 from abicheck.resolver import (
-    DependencyGraph,
-    ResolvedDSO,
-    _expand_rpath,
-    _find_resolved_key,
     _search_library,
     resolve_dependencies,
 )
 
 # ---------------------------------------------------------------------------
-# Unit tests: RPATH/RUNPATH expansion
+# Unit tests: _expand_rpath and _find_resolved_key are in test_resolver_unit.py
 # ---------------------------------------------------------------------------
-
-
-class TestExpandRpath:
-    def test_origin_expansion(self):
-        dirs = _expand_rpath("$ORIGIN/../lib", Path("/usr/bin"), "")
-        assert dirs == ["/usr/bin/../lib"]
-
-    def test_origin_braces_expansion(self):
-        dirs = _expand_rpath("${ORIGIN}/libs", Path("/opt/app"), "")
-        assert dirs == ["/opt/app/libs"]
-
-    def test_lib_expansion(self):
-        dirs = _expand_rpath("$LIB/custom", Path("/usr/bin"), "")
-        assert dirs == ["lib/custom"]
-
-    def test_platform_expansion(self):
-        dirs = _expand_rpath("$PLATFORM/opt", Path("/usr/bin"), "")
-        assert dirs == ["x86_64/opt"]
-
-    def test_colon_separated(self):
-        dirs = _expand_rpath("/lib:/usr/lib:/opt/lib", Path("/usr/bin"), "")
-        assert dirs == ["/lib", "/usr/lib", "/opt/lib"]
-
-    def test_sysroot_prefix(self):
-        dirs = _expand_rpath("/lib:/usr/lib", Path("/usr/bin"), "/sysroot")
-        assert dirs == ["/sysroot/lib", "/sysroot/usr/lib"]
-
-    def test_empty_entries_skipped(self):
-        dirs = _expand_rpath("/lib::/usr/lib", Path("/usr/bin"), "")
-        assert dirs == ["/lib", "/usr/lib"]
-
-    def test_empty_rpath(self):
-        dirs = _expand_rpath("", Path("/usr/bin"), "")
-        assert dirs == []
-
-    def test_origin_with_sysroot(self):
-        dirs = _expand_rpath("$ORIGIN/../lib", Path("/opt/app/bin"), "/sysroot")
-        # $ORIGIN paths do NOT get sysroot prepended — the DSO path already
-        # includes the sysroot if the DSO was found under it.
-        assert dirs == ["/opt/app/bin/../lib"]
 
 
 # ---------------------------------------------------------------------------
@@ -111,29 +67,8 @@ class TestSearchLibrary:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: graph helpers
+# _find_resolved_key tests are in test_resolver_unit.py::TestFindResolvedKey
 # ---------------------------------------------------------------------------
-
-
-class TestFindResolvedKey:
-    def test_find_by_soname(self):
-        graph = DependencyGraph(root="/app")
-        graph.nodes["/lib/libfoo.so.1.2.3"] = ResolvedDSO(
-            path=Path("/lib/libfoo.so.1.2.3"),
-            soname="libfoo.so.1",
-            needed=[],
-            rpath="",
-            runpath="",
-            resolution_reason="default",
-            depth=1,
-        )
-        key = _find_resolved_key(graph, "libfoo.so.1")
-        assert key == "/lib/libfoo.so.1.2.3"
-
-    def test_not_found(self):
-        graph = DependencyGraph(root="/app")
-        key = _find_resolved_key(graph, "libmissing.so")
-        assert key is None
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +76,7 @@ class TestFindResolvedKey:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 class TestResolveDependencies:
     """Integration tests using actual system binaries (if available)."""
 
