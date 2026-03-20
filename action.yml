@@ -2,7 +2,7 @@ name: 'abicheck — ABI Compatibility Checker'
 description: >
   Detect breaking ABI/API changes in C/C++ shared libraries before they reach production.
   Compares two library versions and reports removed symbols, changed signatures,
-  struct layout drift, vtable reordering, and 110+ other incompatibility types.
+  struct layout drift, vtable reordering, among 114 total incompatibility types.
 
 branding:
   icon: 'shield'
@@ -240,15 +240,19 @@ inputs:
 outputs:
   verdict:
     description: >
-      ABI verdict. For compare/dump: COMPATIBLE, ADDITIONS, API_BREAK,
-      BREAKING, or ERROR. For stack-check: PASS, WARN, FAIL, or ERROR.
+      ABI verdict. For compare/dump: COMPATIBLE, COMPATIBLE_WITH_RISK,
+      SEVERITY_ERROR, API_BREAK, BREAKING, or ERROR.
+      SEVERITY_ERROR is produced when --severity-addition=error detects
+      new public API additions.
+      For stack-check: PASS, WARN, FAIL, or ERROR.
       For deps: PASS (all resolved) or FAIL (missing deps/symbols).
     value: ${{ steps.run-abicheck.outputs.verdict }}
   exit-code:
     description: >
-      abicheck exit code. compare: 0 (compatible), 1 (additions), 2 (API break),
-      4 (ABI break). stack-check: 0 (pass), 1 (warn), 4 (fail). deps: 0 (ok),
-      1 (missing). Click CLI errors also exit 2 and are mapped to VERDICT=ERROR.
+      abicheck exit code. compare: 0 (compatible), 1 (severity-addition error),
+      2 (API break), 4 (ABI break). stack-check: 0 (pass), 1 (warn), 4 (fail).
+      deps: 0 (ok), 1 (missing). Click CLI errors also exit 2 and are mapped
+      to VERDICT=ERROR.
     value: ${{ steps.run-abicheck.outputs.exit-code }}
   report-path:
     description: >

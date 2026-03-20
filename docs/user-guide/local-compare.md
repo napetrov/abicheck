@@ -1,58 +1,48 @@
 # Local Build Comparison & Snapshot Workflow
 
-This guide covers how to compare locally built libraries against published releases
-using `abi-scanner`, and how to pre-snapshot public baselines for fast offline CI.
+This guide covers how to compare locally built libraries against baselines
+using `abicheck`, and how to use snapshots for fast offline CI.
 
 ---
 
 ## Overview
 
-`abi-scanner` supports three spec types for the `compare` command:
+abicheck supports comparing libraries using three input types:
 
-| Spec format | Example | Description |
-|-------------|---------|-------------|
-| `apt:pkg=version` | `apt:libfoo-dev=2.0.0` | Download from APT repo |
-| `local:/path` | `local:./libfoo.so` or `local:./my.deb` | Local file (.so, .deb, directory) |
-| `dump:/path/to/file.abi` | `dump:~/.abi-snapshots/libfoo.so-2.0.abi` | Pre-saved abidw XML dump |
+| Input type | Example | Description |
+|------------|---------|-------------|
+| Binary (`.so` / `.dll` / `.dylib`) | `build/libfoo.so` | Direct library comparison |
+| JSON snapshot | `baseline.json` | Pre-saved ABI snapshot (from `abicheck dump`) |
+| ABICC Perl dump | `old_dump.abi.tar.gz` | Legacy ABICC dump (auto-detected) |
 
 ---
 
-## Workflow 1: One-off — Compare Local Build vs Published Release
+## Workflow 1: One-off — Compare Local Build vs Baseline
 
-The simplest CI pattern: you build a `.deb`, pass it as the `new` side, and compare
-against the last public release.
+The simplest pattern: compare your new build against a saved baseline.
 
 ```bash
-abi-scanner compare \
-  apt:libfoo-dev=2.0.0 \
-  local:/path/to/libfoo-dev-2.1.0-custom.deb \
-  --library-name libfoo.so \
-  --apt-index-url https://apt.example.com/repo/dists/stable/main/binary-amd64/Packages.gz \
-  --fail-on breaking
+abicheck compare baseline.json build/libfoo.so \
+  --new-header include/foo.h
 ```
 
 Expected output:
-```
-Comparing apt:libfoo-dev=2.0.0 → local:/path/to/libfoo-dev-2.1.0-custom.deb
-Status: ✅ NO_CHANGE
+```text
+Verdict: NO_CHANGE
 ```
 
 **Exit codes:**
 
 | Code | Meaning | CI action |
 |------|---------|-----------|
-| `0` | No ABI changes | ✅ Pass |
-| `4` | Additions only (compatible) | ✅ Pass |
-| `8` | Incompatible changes | ❌ Fail (with `--fail-on breaking`) |
-| `12` | Breaking changes (removals) | ❌ Fail |
+| `0` | Compatible / no change | Pass |
+| `2` | API break (source-level) | Pass or fail (configurable) |
+| `4` | Binary ABI break | Fail |
 
-**Also works with a bare `.so` file:**
+**Also works with two binaries directly:**
 ```bash
-abi-scanner compare \
-  apt:libfoo-dev=2.0.0 \
-  local:/path/to/build/libfoo.so \
-  --library-name libfoo.so \
-  --apt-index-url https://apt.example.com/repo/dists/stable/main/binary-amd64/Packages.gz
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header include/v1/foo.h --new-header include/v2/foo.h
 ```
 
 ---
@@ -60,181 +50,100 @@ abi-scanner compare \
 ## Workflow 2: Pre-snapshot + Compare (Offline / Fast CI)
 
 For teams that want **reproducible baselines** stored in git or an artifact registry,
-and don't want CI to download packages on every PR build.
+and don't want CI to rebuild or re-dump on every PR.
 
-### Step 1: Snapshot the current public release (do this once, e.g. nightly)
+### Step 1: Create a baseline snapshot (do this at release time)
 
 ```bash
-mkdir -p ~/.abi-snapshots/foo
-
-abi-scanner snapshot \
-  apt:libfoo-dev=2.0.0 \
-  --output-dir ~/.abi-snapshots/foo \
-  --apt-index-url https://apt.example.com/repo/dists/stable/main/binary-amd64/Packages.gz \
-  --library-name libfoo.so \
-  -v
+abicheck dump libfoo.so -H include/foo.h --version 2.0.0 -o baseline.json
 ```
 
 Output:
 ```
-Saved: /home/user/.abi-snapshots/foo/libfoo.so-2.0.0.abi
-Saved: /home/user/.abi-snapshots/foo/snapshot.json
-```
-
-If `--library-name` is omitted, **all** `.so` files in the package are dumped:
-```
-Saved: /home/user/.abi-snapshots/foo/libfoo.so-2.0.0.abi
-Saved: /home/user/.abi-snapshots/foo/libfoo_extra.so-2.0.0.abi
-Saved: /home/user/.abi-snapshots/foo/snapshot.json
+Snapshot saved: baseline.json
 ```
 
 ### Step 2: Compare local build against snapshot (fast, no network)
 
 ```bash
-abi-scanner compare \
-  dump:~/.abi-snapshots/foo/libfoo.so-2.0.0.abi \
-  local:/path/to/my-build/libfoo.so \
-  --fail-on breaking
+abicheck compare baseline.json build/libfoo.so \
+  --new-header include/foo.h
 ```
 
-This is **instant** — no download, no abidw on the baseline side. Only the new
-`.so` is processed.
+This is **instant** — no re-dump of the baseline side. Only the new binary is processed.
 
 ---
 
 ## Workflow 3: Compare Two Snapshots
 
 ```bash
-abi-scanner compare \
-  dump:~/.abi-snapshots/foo/libfoo.so-2.0.0.abi \
-  dump:~/.abi-snapshots/foo/libfoo.so-2.1.0.abi
+abicheck compare old-baseline.json new-baseline.json
 ```
 
-Both sides use pre-saved dumps. No packages downloaded, no `abidw` invocations.
+Both sides use pre-saved snapshots. No headers or compilation toolchain needed.
 
 ---
 
-## Manifest File Format
+## Snapshot File Format
 
-Every `snapshot` run writes a `snapshot.json` manifest alongside the `.abi` files:
+`abicheck dump` produces a JSON file containing the full ABI surface:
 
 ```json
 {
-  "spec": "apt:libfoo-dev=2.0.0",
-  "timestamp": "2025-03-05T12:00:00Z",
-  "dumps": [
-    {
-      "library": "libfoo.so",
-      "path": "/home/user/.abi-snapshots/foo/libfoo.so-2.0.0.abi",
-      "size_bytes": 48291
-    }
-  ]
+  "schema_version": 3,
+  "library": "libfoo.so.1",
+  "version": "2.0.0",
+  "platform": "elf",
+  "functions": [...],
+  "variables": [...],
+  "types": [...],
+  "enums": [...]
 }
 ```
 
-Fields:
-
-| Field | Description |
-|-------|-------------|
-| `spec` | Original package spec used for the snapshot |
-| `timestamp` | UTC ISO-8601 timestamp when snapshot was created |
-| `dumps[].library` | Base `.so` name (e.g. `libfoo.so`) |
-| `dumps[].path` | Absolute path to the `.abi` file |
-| `dumps[].size_bytes` | File size of the dump |
-
----
-
-## Finding `--apt-index-url` and `--apt-pkg-pattern`
-
-### APT Repository Index
-
-Most APT repositories publish a `Packages.gz` index. For example:
-
-```
-https://apt.example.com/repo/dists/stable/main/binary-amd64/Packages.gz
-```
-
-This index covers all packages in the repository across distributions (Ubuntu, Debian).
-
-### Listing available packages and versions
-
-```bash
-# List all versions of libfoo-dev from APT
-abi-scanner list apt:libfoo-dev \
-  --apt-index-url https://apt.example.com/repo/dists/stable/main/binary-amd64/Packages.gz \
-  --apt-pkg-pattern '^libfoo-dev='
-```
-
-### Package naming patterns
-
-| Library | Package name pattern | Library file |
-|---------|---------------------|--------------|
-| libfoo | `libfoo-dev=<ver>` | `libfoo.so` |
-| libbar | `libbar-dev=<ver>` | `libbar.so` |
-| libcrypto | `libssl-dev=<ver>` | `libcrypto.so` |
-| zlib | `zlib1g-dev=<ver>` | `libz.so` |
-
----
-
-## Snapshotting Multiple Libraries
-
-### Option A: Specify `--library-name` per invocation
-
-```bash
-abi-scanner snapshot apt:libfoo-dev=2.0.0 \
-  --output-dir ~/.abi-snapshots/foo \
-  --library-name libfoo.so
-
-abi-scanner snapshot apt:libfoo-dev=2.0.0 \
-  --output-dir ~/.abi-snapshots/foo \
-  --library-name libfoo_extra.so
-```
-
-### Option B: Omit `--library-name` to capture all `.so` files
-
-```bash
-abi-scanner snapshot apt:libfoo-dev=2.0.0 \
-  --output-dir ~/.abi-snapshots/foo
-# → saves libfoo.so-2.0.0.abi, libfoo_extra.so-2.0.0.abi, snapshot.json
-```
+Key properties:
+- **Self-contained**: includes all type, function, and variable information
+- **Platform-agnostic**: snapshots from ELF, PE, and Mach-O binaries use the same schema
+- **Deterministic**: sets are serialized as sorted lists for reproducible output
 
 ---
 
 ## Recommended CI Integration Pattern
 
-### Nightly job: update snapshots
+### Release job: save baseline
 
 ```yaml
-# .github/workflows/abi-snapshot.yml
-name: ABI Snapshot (nightly)
+# .github/workflows/abi-baseline.yml
+name: ABI Baseline
 on:
-  schedule:
-    - cron: '0 2 * * *'   # 2am UTC daily
+  release:
+    types: [published]
 
 jobs:
-  snapshot:
+  save-baseline:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get install -y abigail-tools
-      - run: pip install abi-scanner
 
-      - name: Snapshot baseline
-        run: |
-          abi-scanner snapshot apt:libfoo-dev=2.0.0 \
-            --output-dir abi-baselines/foo \
-            --apt-index-url https://apt.example.com/repo/dists/stable/main/binary-amd64/Packages.gz
+      - name: Build library
+        run: mkdir build && cd build && cmake .. && make
 
-      - name: Commit updated snapshots
-        run: |
-          git config user.email "ci@example.com"
-          git config user.name "CI Bot"
-          git add abi-baselines/
-          git diff --cached --quiet || git commit -m "chore: update ABI snapshots"
-          git push
+      - name: Dump ABI baseline
+        uses: napetrov/abicheck@v1
+        with:
+          mode: dump
+          new-library: build/libfoo.so
+          header: include/foo.h
+          new-version: ${{ github.ref_name }}
+          output-file: abi-baseline.json
+
+      - name: Upload baseline as release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: abi-baseline.json
 ```
 
-### PR job: compare against snapshot
+### PR job: compare against baseline
 
 ```yaml
 # .github/workflows/abi-check.yml
@@ -246,31 +155,49 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get install -y abigail-tools
-      - run: pip install abi-scanner
+
+      - name: Download baseline from latest release
+        run: gh release download --pattern 'abi-baseline.json' --dir .
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build library
-        run: cmake --build build --target foo
+        run: mkdir build && cd build && cmake .. && make
 
-      - name: ABI check vs snapshot
-        run: |
-          abi-scanner compare \
-            dump:abi-baselines/foo/libfoo.so-2.0.0.abi \
-            local:build/src/libfoo.so \
-            --fail-on breaking
+      - name: ABI check vs baseline
+        uses: napetrov/abicheck@v1
+        with:
+          old-library: abi-baseline.json
+          new-library: build/libfoo.so
+          new-header: include/foo.h
 ```
 
-**Why this pattern is superior to downloading on every PR:**
+**Why this pattern works well:**
 
-- ✅ No network dependency in PR jobs
-- ✅ Snapshot is versioned and reproducible (committed to git)
-- ✅ Baseline can be audited (`.abi` XML is human-readable)
-- ✅ Teams can store snapshots in artifact registries (S3, GitHub Releases, etc.)
-- ✅ Works in air-gapped environments after initial snapshot
+- No network dependency in PR jobs (baseline is a release asset)
+- Snapshot is versioned and reproducible
+- Baseline can be audited (JSON is human-readable)
+- Teams can store snapshots in artifact registries (S3, GitHub Releases, etc.)
+- Works in air-gapped environments after initial snapshot
+
+---
+
+## Compare Packages Directly
+
+For RPM, Deb, tar, conda, or wheel packages, use `compare-release` mode
+to compare all shared libraries inside two packages without manual extraction:
+
+```bash
+abicheck compare-release libfoo-1.0.rpm libfoo-1.1.rpm
+```
+
+See the [GitHub Action](github-action.md) guide for CI examples with packages.
 
 ---
 
 ## See Also
 
-- [Getting Started](../getting-started.md) — Getting started with all commands
-- [Gap Report](../development/abicc-parity-status.md) — Coverage analysis vs ABICC/libabigail
+- [Getting Started](../getting-started.md) — Installation and first check
+- [CLI Usage](cli-usage.md) — Full CLI reference
+- [GitHub Action](github-action.md) — CI integration with the GitHub Action
+- [ABICC Parity Status](../development/abicc-parity-status.md) — Coverage analysis vs ABICC/libabigail

@@ -8,7 +8,7 @@
 
 ## Context
 
-abicheck detects 85+ distinct types of ABI/API changes via the `ChangeKind`
+abicheck detects 114 distinct types of ABI/API changes via the `ChangeKind`
 enum. Each kind must be classified into exactly one severity tier under the
 default `strict_abi` policy (see ADR-010):
 
@@ -138,7 +138,7 @@ When adding a new `ChangeKind`:
 
 ### Negative
 
-- 85+ kinds require maintenance as ABI standards evolve
+- 114 kinds require maintenance as ABI standards evolve
 - Divergences from reference tools may surprise users migrating from ABICC
 - Some classifications are judgment calls (e.g., `noexcept`) that may need
   revisiting as C++ standards evolve

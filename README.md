@@ -9,7 +9,7 @@
 
 **abicheck** is a command-line tool that detects breaking changes in C/C++ shared libraries before they reach production. It compares two versions of a shared library — along with their public headers — and reports whether existing binaries will continue to work or break at runtime.
 
-Typical problems it catches: removed or renamed symbols, changed function signatures, struct layout drift, vtable reordering, enum value reassignment, and 110+ other ABI/API incompatibilities that cause crashes, silent data corruption, or linker failures after a library upgrade.
+Typical problems it catches: removed or renamed symbols, changed function signatures, struct layout drift, vtable reordering, enum value reassignment, and 114 other ABI/API incompatibilities that cause crashes, silent data corruption, or linker failures after a library upgrade.
 
 > **Platforms:** Linux (ELF), Windows (PE/COFF), macOS (Mach-O). Binary metadata and header AST analysis on all platforms; debug info cross-check uses DWARF (Linux, macOS) and PDB (Windows).
 

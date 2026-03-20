@@ -10,7 +10,7 @@
 
 This analysis cross-references:
 1. Existing ADRs (001–008, later extended to 001–019) and their coverage
-2. Implemented code in `abicheck/` (85+ ChangeKinds, policy system, output formats, CLI, etc.)
+2. Implemented code in `abicheck/` (114 ChangeKinds, policy system, output formats, CLI, etc.)
 3. `pyproject.toml`, CI workflows, GitHub Action, and documentation
 4. `GOALS.md` and `CHANGELOG.md` for stated-but-undocumented decisions
 
@@ -64,7 +64,7 @@ Each candidate is rated by **urgency**:
 
 ---
 
-## Candidate ADR 3: ABI Change Classification Taxonomy (85+ ChangeKinds)
+## Candidate ADR 3: ABI Change Classification Taxonomy (114 ChangeKinds)
 
 **Urgency: MEDIUM**
 
@@ -306,11 +306,11 @@ urgency since MCP is an optional feature with a small user surface.
 
 | ADR | Title | Status | Assessment |
 |-----|-------|--------|------------|
-| 001 | Technology Stack | Accepted | Good but overloaded — contains classification decisions that belong in a separate ADR |
-| 002 | Multi-binary Release Compare | Proposed | Future work — appropriate as proposed |
-| 003 | Data Source Architecture | Proposed | Actively being implemented — should move to Accepted once DwarfSnapshotBuilder lands |
-| 004 | Report Filtering and Deduplication | Proposed | Future work — well-specified |
-| 005 | Application Compatibility Checking | Proposed | Future work — well-specified |
-| 006 | Package-Level Comparison | Proposed | Future work — well-specified |
+| 001 | Technology Stack | Accepted | Good but overloaded — contains classification decisions that belong in ADR-011 |
+| 002 | Multi-binary Release Compare | Accepted | Implemented in v0.2.0 (`compare-release` command) |
+| 003 | Data Source Architecture | Accepted | Implemented — DwarfSnapshotBuilder landed in v0.2.0 |
+| 004 | Report Filtering and Deduplication | Accepted | Implemented in v0.2.0 (`--show-only`, `--stat`, `--report-mode leaf`) |
+| 005 | Application Compatibility Checking | Accepted | Implemented in v0.2.0 (`appcompat` command) |
+| 006 | Package-Level Comparison | Accepted | Implemented in v0.2.0 (RPM/Deb/tar/conda/wheel extraction) |
 | 007 | BTF and CTF Debug Format Support | Proposed | Future work — well-specified |
-| 008 | Full-Stack Dependency Validation | Accepted | Complete and well-documented |
+| 008 | Full-Stack Dependency Validation | Accepted | Implemented in v0.2.0 (`deps`, `stack-check` commands) |

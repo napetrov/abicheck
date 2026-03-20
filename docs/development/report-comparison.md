@@ -1,5 +1,9 @@
 # Report Content & Quality Comparison: abicheck vs ABICC vs abidiff
 
+> **Note:** Last verified 2026-03-14. Output formats may have changed since then.
+> See [CHANGELOG.md](https://github.com/napetrov/abicheck/blob/main/CHANGELOG.md)
+> for recent changes to report filtering and deduplication.
+
 Focused comparison of **what information** each tool puts in its reports,
 how useful that information is, and what gaps exist — across all output formats.
 

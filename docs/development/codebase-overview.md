@@ -243,14 +243,10 @@ Quick Start section shows `abi-check dump` and `abi-check compare` which would f
 
 Two different exit code schemes exist, and neither matches the documented one.
 
-### 4.4 GOALS.md Claims ABICC and libabigail Are Unmaintained
+### 4.4 ~~GOALS.md Claims ABICC and libabigail Are Unmaintained~~ (FIXED)
 
-**File:** `GOALS.md:3`
-```
-> abi-compliance-checker (ABICC) and libabigail are no longer actively maintained.
-```
-
-This is inaccurate for libabigail, which is actively maintained by Red Hat (last release in 2024, regular commits). ABICC is indeed less active. This claim weakens credibility.
+GOALS.md has been updated. It now correctly states that ABICC is no longer actively
+maintained while libabigail is maintained by Red Hat but focuses on DWARF-only analysis.
 
 ### 4.5 `pyproject.toml` Description Says "castxml-based" but Tool Is Multi-Layered
 

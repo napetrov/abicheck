@@ -13,7 +13,7 @@ Support everything ABICC currently does so existing users/pipelines can migrate 
 - JSON/HTML/Markdown reports with equivalent verdict semantics
 - Support for suppression files
 
-**Done:** 113 ChangeKinds implemented; suppression files fully supported (YAML + ABICC skip/whitelist formats);
+**Done:** 114 ChangeKinds implemented; suppression files fully supported (YAML + ABICC skip/whitelist formats);
 XML report generation for ABICC-compatible output; ABICC compat CLI with all major flags;
 auto-forwarding `abicheck compat <flags>` to `compat check`; test parity for ABICC 2.3.
 
@@ -102,7 +102,7 @@ for PyPI; publish workflow with dry-run mode.
 
 | Goal | Status |
 |------|--------|
-| G1: ABICC drop-in | Done — 113 ChangeKinds, compat CLI, suppression files, XML reports |
+| G1: ABICC drop-in | Done — 114 ChangeKinds, compat CLI, suppression files, XML reports |
 | G2: Known gaps | DWARF layout, toolchain flags, AST-DWARF dedup done; evidence tiers TODO |
 | G3: libabigail tests | Done — ~54 parity test functions + 63 example cases |
 | G4: Agent-friendly | Done — JSON, SARIF, exit codes, snapshots, MCP server, GitHub Action |
