@@ -109,7 +109,6 @@ def compute_bindings(
                 preload_paths=preload_paths,
                 load_order=load_order,
                 export_index=export_index,
-                consumer_node_path=node_path,
             )
             bindings.append(binding)
 
@@ -225,7 +224,6 @@ def _resolve_import(
     preload_paths: list[str],
     load_order: list[str],
     export_index: dict[str, dict[str, list[tuple[str, bool, str]]]],
-    consumer_node_path: str,
 ) -> SymbolBinding:
     """Resolve a single imported symbol against the loaded DSO set."""
     # Search order: preload → global load order (BFS).
