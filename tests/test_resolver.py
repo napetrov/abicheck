@@ -76,6 +76,7 @@ class TestSearchLibrary:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 class TestResolveDependencies:
     """Integration tests using actual system binaries (if available)."""
 

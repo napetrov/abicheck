@@ -66,11 +66,15 @@ jobs:
       - name: Run tests with coverage
         if: runner.os != 'Windows'
         run: |
-          pytest tests/ -v --tb=short -m "not integration and not libabigail and not abicc" -n auto --dist worksteal --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+          pytest tests/ -v --tb=short -m "not integration and not libabigail and not abicc and not slow" -n auto --dist worksteal --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=80
       - name: Run tests (Windows — parallel, no coverage)
         if: runner.os == 'Windows'
         run: |
-          pytest tests/ -v --tb=short -m "not integration and not libabigail and not abicc" -n auto --dist worksteal
+          pytest tests/ -v --tb=short -m "not integration and not libabigail and not abicc and not slow" -n auto --dist worksteal
+      - name: Run slow tests (hypothesis / property-based)
+        if: matrix.python-version == '3.13' && matrix.os == 'ubuntu-latest'
+        run: |
+          pytest tests/ -v --tb=short -m "slow" --cov=abicheck --cov-report=xml:coverage-slow.xml --cov-append
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.13' && matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v5
