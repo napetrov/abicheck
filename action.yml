@@ -174,7 +174,11 @@ inputs:
 
   # ── Output & policy ─────────────────────────────────────────────────────────
   format:
-    description: 'Output format: markdown (default), json, sarif, html.'
+    description: >
+      Output format: markdown (default), json, sarif, html.
+      sarif and html are only supported in compare mode; other modes
+      support markdown and json only (unsupported formats fall back
+      to markdown with a warning).
     required: false
     default: 'markdown'
   output-file:
@@ -242,22 +246,25 @@ outputs:
   verdict:
     description: >
       ABI verdict. For compare: COMPATIBLE, SEVERITY_ERROR, API_BREAK,
-      BREAKING, or ERROR.
+      BREAKING, or ERROR. SEVERITY_ERROR is produced when
+      --severity-addition=error detects new public API additions
+      (compare mode only).
       For compare-release: COMPATIBLE, API_BREAK, BREAKING,
       REMOVED_LIBRARY (when fail-on-removed-library is set), or ERROR.
-      SEVERITY_ERROR is produced when --severity-addition=error detects
-      new public API additions (compare mode only).
+      For appcompat: COMPATIBLE, API_BREAK, BREAKING, or ERROR.
       For dump: COMPATIBLE or ERROR.
       For stack-check: PASS, WARN, FAIL, or ERROR.
-      For deps: PASS (all resolved) or FAIL (missing deps/symbols).
+      For deps: PASS, FAIL, or ERROR.
     value: ${{ steps.run-abicheck.outputs.verdict }}
   exit-code:
     description: >
-      abicheck exit code. compare: 0 (compatible), 1 (severity-addition error),
-      2 (API break), 4 (ABI break). compare-release: 0 (compatible), 2 (API break),
-      4 (ABI break), 8 (library removed). stack-check: 0 (pass), 1 (warn), 4 (fail).
-      deps: 0 (ok), 1 (missing). Click CLI errors also exit 2 and are mapped
-      to VERDICT=ERROR.
+      abicheck exit code. compare: 0 (compatible), 1 (severity error),
+      2 (API break), 4 (ABI break). compare-release: 0 (compatible),
+      2 (API break), 4 (ABI break), 8 (library removed).
+      appcompat: 0 (compatible), 2 (API break), 4 (ABI break).
+      stack-check: 0 (pass), 1 (warn), 4 (fail).
+      deps: 0 (ok), 1 (missing). Click CLI errors are mapped to
+      VERDICT=ERROR.
     value: ${{ steps.run-abicheck.outputs.exit-code }}
   report-path:
     description: >

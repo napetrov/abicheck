@@ -76,7 +76,7 @@ automatically, then runs ABI comparison and reports results.
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `format` | `markdown` | Output format: `markdown`, `json`, `sarif`, `html` |
+| `format` | `markdown` | Output format: `markdown`, `json`, `sarif`, `html`. `sarif`/`html` only supported in compare mode; other modes fall back to `markdown` |
 | `output-file` | — | Path to write report (auto-set for SARIF) |
 | `policy` | `strict_abi` | Built-in policy: `strict_abi`, `sdk_vendor`, `plugin_abi` |
 | `policy-file` | — | Custom YAML policy file |
@@ -114,8 +114,8 @@ automatically, then runs ABI comparison and reports results.
 
 | Output | Description |
 |--------|-------------|
-| `verdict` | **compare:** `COMPATIBLE`, `SEVERITY_ERROR`, `API_BREAK`, `BREAKING`, or `ERROR`. `SEVERITY_ERROR` is produced when `severity-addition: error` detects new public API. **compare-release:** `COMPATIBLE`, `API_BREAK`, `BREAKING`, `REMOVED_LIBRARY`, or `ERROR`. **dump:** `COMPATIBLE` or `ERROR`. **stack-check:** `PASS`, `WARN`, `FAIL`, or `ERROR`. **deps:** `PASS`, `FAIL`, or `ERROR`. |
-| `exit-code` | **compare:** `0` (compatible), `1` (severity error), `2` (API break), `4` (ABI break). **compare-release:** `0` (compatible), `2` (API break), `4` (ABI break), `8` (library removed). **stack-check:** `0` (pass), `1` (warn), `4` (fail). **deps:** `0` (ok), `1` (missing). |
+| `verdict` | **compare:** `COMPATIBLE`, `SEVERITY_ERROR`, `API_BREAK`, `BREAKING`, or `ERROR`. **compare-release:** `COMPATIBLE`, `API_BREAK`, `BREAKING`, `REMOVED_LIBRARY`, or `ERROR`. **appcompat:** `COMPATIBLE`, `API_BREAK`, `BREAKING`, or `ERROR`. **dump:** `COMPATIBLE` or `ERROR`. **stack-check:** `PASS`, `WARN`, `FAIL`, or `ERROR`. **deps:** `PASS`, `FAIL`, or `ERROR`. |
+| `exit-code` | **compare:** `0` (compatible), `1` (severity error), `2` (API break), `4` (ABI break). **compare-release:** `0` (compatible), `2` (API break), `4` (ABI break), `8` (library removed). **appcompat:** `0` (compatible), `2` (API break), `4` (ABI break). **stack-check:** `0` (pass), `1` (warn), `4` (fail). **deps:** `0` (ok), `1` (missing). |
 | `report-path` | Path to the generated report file (empty when no output file was produced) |
 
 ## Usage examples
