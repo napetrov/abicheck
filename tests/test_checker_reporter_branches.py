@@ -1240,6 +1240,154 @@ class TestEnrichSourceLocationsNamespace:
         assert changes[0].source_location == "file.h:20"
 
 
+class TestEnrichAffectedSymbolsAncestorCache:
+    """Test ancestor caching in _enrich_affected_symbols."""
+
+    def test_shared_ancestor_scanned_once(self):
+        """Two affected types sharing the same ancestor should reuse cached results."""
+        # Inner is embedded in both Wrapper1 and Wrapper2.
+        # Changing Inner should find functions using Wrapper1 and Wrapper2
+        # via the ancestor cache (Wrapper1/Wrapper2 are not in affected_types).
+        inner = RecordType(name="Inner", kind="struct", size_bits=32, fields=[
+            TypeField(name="val", type="int", offset_bits=0),
+        ])
+        wrapper1 = RecordType(name="Wrapper1", kind="struct", size_bits=64, fields=[
+            TypeField(name="inner", type="Inner", offset_bits=0),
+            TypeField(name="x", type="int", offset_bits=32),
+        ])
+        wrapper2 = RecordType(name="Wrapper2", kind="struct", size_bits=64, fields=[
+            TypeField(name="inner", type="Inner", offset_bits=0),
+            TypeField(name="y", type="int", offset_bits=32),
+        ])
+        # Also create SecondInner to ensure both hit the ancestor cache for Wrapper1
+        second_inner = RecordType(name="SecondInner", kind="struct", size_bits=32, fields=[
+            TypeField(name="val", type="int", offset_bits=0),
+        ])
+        wrapper_with_both = RecordType(name="WrapperBoth", kind="struct", size_bits=96, fields=[
+            TypeField(name="a", type="Inner", offset_bits=0),
+            TypeField(name="b", type="SecondInner", offset_bits=32),
+            TypeField(name="c", type="int", offset_bits=64),
+        ])
+
+        func1 = Function(
+            name="use_wrapper1", mangled="_Z12use_wrapper19Wrapper1",
+            return_type="void", visibility=Visibility.PUBLIC,
+            params=[Param(name="w", type="Wrapper1")],
+        )
+        func_both = Function(
+            name="use_both", mangled="_Z8use_both10WrapperBoth",
+            return_type="void", visibility=Visibility.PUBLIC,
+            params=[Param(name="w", type="WrapperBoth")],
+        )
+
+        old = _make_snap(
+            types=[inner, second_inner, wrapper1, wrapper2, wrapper_with_both],
+            functions=[func1, func_both],
+        )
+        # Both Inner and SecondInner are affected; WrapperBoth embeds both,
+        # so the second affected type should hit the ancestor cache for WrapperBoth.
+        changes = [
+            Change(ChangeKind.TYPE_SIZE_CHANGED, "Inner", "size changed"),
+            Change(ChangeKind.TYPE_SIZE_CHANGED, "SecondInner", "size changed"),
+        ]
+        _enrich_affected_symbols(changes, old)
+        # Both changes should find use_both through WrapperBoth
+        for c in changes:
+            assert c.affected_symbols is not None
+            assert "use_both" in c.affected_symbols
+
+    def test_ancestor_with_empty_function_list(self):
+        """An affected type that is also an ancestor of another affected type
+        but has no matching functions should not break the lookup."""
+        # Parent is an affected type with no functions using it directly.
+        # Child embeds Parent. Functions use Child.
+        parent = RecordType(name="Parent", kind="struct", size_bits=32, fields=[
+            TypeField(name="x", type="int", offset_bits=0),
+        ])
+        child = RecordType(name="Child", kind="struct", size_bits=64, fields=[
+            TypeField(name="p", type="Parent", offset_bits=0),
+            TypeField(name="y", type="int", offset_bits=32),
+        ])
+        func = Function(
+            name="use_child", mangled="_Z9use_child5Child",
+            return_type="void", visibility=Visibility.PUBLIC,
+            params=[Param(name="c", type="Child")],
+        )
+        old = _make_snap(types=[parent, child], functions=[func])
+        changes = [
+            Change(ChangeKind.TYPE_SIZE_CHANGED, "Parent", "size changed"),
+            Change(ChangeKind.TYPE_SIZE_CHANGED, "Child", "size changed"),
+        ]
+        _enrich_affected_symbols(changes, old)
+        # Parent should find use_child via Child embedding
+        parent_change = changes[0]
+        assert parent_change.affected_symbols is not None
+        assert "use_child" in parent_change.affected_symbols
+
+
+class TestRegexCacheInOpaqueChecks:
+    """Test regex caching in _is_pointer_only_type and _has_public_pointer_factory."""
+
+    def test_is_pointer_only_type_with_shared_cache(self):
+        from abicheck.diff_filtering import _is_pointer_only_type
+
+        func = Function(
+            name="create_ctx", mangled="_Z10create_ctx",
+            return_type="Context*", visibility=Visibility.PUBLIC,
+            params=[],
+        )
+        snap = _make_snap(functions=[func])
+        cache: dict = {}
+        result1 = _is_pointer_only_type("Context", snap, cache)
+        assert result1 is True
+        assert "Context" in cache  # cache populated
+
+        # Second call with same cache should use cached pattern
+        result2 = _is_pointer_only_type("Context", snap, cache)
+        assert result2 is True
+
+    def test_is_pointer_only_type_without_cache(self):
+        from abicheck.diff_filtering import _is_pointer_only_type
+
+        func = Function(
+            name="get_val", mangled="_Z7get_val",
+            return_type="MyType", visibility=Visibility.PUBLIC,
+            params=[],
+        )
+        snap = _make_snap(functions=[func])
+        # No cache — should still work
+        assert _is_pointer_only_type("MyType", snap, None) is False
+        assert _is_pointer_only_type("MyType", snap) is False
+
+    def test_has_public_pointer_factory_with_shared_cache(self):
+        from abicheck.diff_filtering import _has_public_pointer_factory
+
+        func = Function(
+            name="create_handle", mangled="_Z13create_handle",
+            return_type="Handle*", visibility=Visibility.PUBLIC,
+            params=[],
+        )
+        snap = _make_snap(functions=[func])
+        cache: dict = {}
+        assert _has_public_pointer_factory("Handle", snap, cache) is True
+        assert "Handle" in cache
+
+        # Cache hit path
+        assert _has_public_pointer_factory("Handle", snap, cache) is True
+
+    def test_has_public_pointer_factory_without_cache(self):
+        from abicheck.diff_filtering import _has_public_pointer_factory
+
+        func = Function(
+            name="create_handle", mangled="_Z13create_handle",
+            return_type="Handle*", visibility=Visibility.PUBLIC,
+            params=[],
+        )
+        snap = _make_snap(functions=[func])
+        assert _has_public_pointer_factory("Handle", snap, None) is True
+        assert _has_public_pointer_factory("Handle", snap) is True
+
+
 class TestEnrichAffectedSymbolsNamespace:
     """_enrich_affected_symbols must group ns::Type::field under ns::Type."""
 
