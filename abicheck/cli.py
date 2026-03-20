@@ -1898,6 +1898,13 @@ def stack_check_cmd(
     """
     _setup_verbosity(verbose)
 
+    # Guard against accidental no-op comparisons.
+    if baseline == candidate:
+        raise click.UsageError(
+            "--baseline and --candidate resolve to the same sysroot; "
+            "provide two different roots for stack comparison."
+        )
+
     # Validate that every existing binary is ELF in both sysroots
     for label, root in [("baseline", baseline), ("candidate", candidate)]:
         resolved = root / binary

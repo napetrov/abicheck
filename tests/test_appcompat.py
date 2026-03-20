@@ -29,6 +29,7 @@ from abicheck.appcompat import (
     _get_new_lib_exports,
     _get_old_lib_exports_for_scoping,
     _is_relevant_to_app,
+    _normalize_elf_symbol_name,
     _parse_elf_app_requirements,
     _parse_macho_app_requirements,
     _parse_pe_app_requirements,
@@ -1087,6 +1088,11 @@ class TestGetNewLibExports:
         f.write_bytes(b"MZ" + b"\x00" * 100)
         assert _get_old_lib_exports_for_scoping(f) == set()
 
+    def test_normalize_elf_symbol_name(self):
+        assert _normalize_elf_symbol_name("inflate") == "inflate"
+        assert _normalize_elf_symbol_name("inflate@ZLIB_1.2.0") == "inflate"
+        assert _normalize_elf_symbol_name("inflate@@ZLIB_1.2.0") == "inflate"
+
     def test_pe_exports(self, tmp_path):
         from abicheck.pe_metadata import PeExport, PeMetadata
 
@@ -1402,6 +1408,31 @@ class TestCheckAppcompat:
         app_reqs = AppRequirements(
             undefined_symbols={"inflate", "XML_Parse"},
         )
+        diff = DiffResult(old_version="1", new_version="2", library="libz")
+
+        with (
+            patch("abicheck.appcompat._get_lib_soname", return_value="libz.so.1"),
+            patch("abicheck.appcompat.parse_app_requirements", return_value=app_reqs),
+            patch("abicheck.appcompat._detect_app_format", return_value="elf"),
+            patch("abicheck.appcompat._get_old_lib_exports_for_scoping", return_value={"inflate"}),
+            patch("abicheck.dumper.dump", return_value=MagicMock()),
+            patch("abicheck.appcompat.compare", return_value=diff),
+            patch("abicheck.appcompat._get_new_lib_exports", return_value={"inflate"}),
+            patch("abicheck.elf_metadata.parse_elf_metadata", return_value=SimpleNamespace(versions_defined=[])),
+        ):
+            result = check_appcompat(app, old_lib, new_lib)
+
+        assert result.required_symbols == {"inflate"}
+        assert result.missing_symbols == []
+        assert result.verdict == Verdict.COMPATIBLE
+
+    def test_elf_versioned_symbol_names_are_normalized_for_scoping(self, tmp_path):
+        """Version suffixes (@@VER/@VER) should not cause missed symbol matches."""
+        app = tmp_path / "app"
+        old_lib = tmp_path / "old.so"
+        new_lib = tmp_path / "new.so"
+
+        app_reqs = AppRequirements(undefined_symbols={"inflate@@ZLIB_1.2.0"})
         diff = DiffResult(old_version="1", new_version="2", library="libz")
 
         with (

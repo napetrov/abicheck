@@ -450,6 +450,16 @@ def _get_new_lib_exports(new_lib_path: Path) -> set[str]:
     return set()
 
 
+def _normalize_elf_symbol_name(name: str) -> str:
+    """Normalize ELF symbol name for cross-source matching.
+
+    Strips GNU version suffixes (``@VER`` / ``@@VER``) when present.
+    pyelftools usually returns plain names, but runtime/linker sources may
+    include suffixes, so this keeps matching robust.
+    """
+    return name.split("@", 1)[0]
+
+
 def _get_old_lib_exports_for_scoping(old_lib_path: Path) -> set[str]:
     """Best-effort export set for the old library (ELF-only).
 
@@ -462,7 +472,7 @@ def _get_old_lib_exports_for_scoping(old_lib_path: Path) -> set[str]:
         from .elf_metadata import parse_elf_metadata
 
         old_meta = parse_elf_metadata(old_lib_path)
-        return {s.name for s in old_meta.symbols}
+        return {_normalize_elf_symbol_name(s.name) for s in old_meta.symbols}
     except Exception as exc:  # noqa: BLE001
         log.debug("Failed to read old-lib exports for appcompat scoping: %s", exc)
         return set()
@@ -525,6 +535,12 @@ def check_appcompat(
     # This prevents unrelated DSO imports from being attributed to the checked
     # library (false BREAKING in appcompat).
     if _detect_app_format(app_path) == "elf" and _detect_app_format(old_lib_path) == "elf":
+        # Normalize app symbols to keep matching robust when version suffixes
+        # appear in one data source but not the other.
+        app_reqs.undefined_symbols = {
+            _normalize_elf_symbol_name(s) for s in app_reqs.undefined_symbols
+        }
+
         old_exports = _get_old_lib_exports_for_scoping(old_lib_path)
         if old_exports:
             before = len(app_reqs.undefined_symbols)
@@ -538,6 +554,11 @@ def check_appcompat(
                     dropped,
                     old_lib_path,
                 )
+        else:
+            log.debug(
+                "appcompat scoping skipped: no exports parsed for target library (%s)",
+                old_lib_path,
+            )
 
     # 2. Run standard library comparison
     from .dumper import dump
