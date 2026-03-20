@@ -13,6 +13,7 @@ permissions:
 jobs:
   lint-and-types:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,6 +35,7 @@ jobs:
 
   unit-tests:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
@@ -64,7 +66,7 @@ jobs:
       - name: Run tests with coverage
         if: runner.os != 'Windows'
         run: |
-          pytest tests/ -v --tb=short -m "not integration and not libabigail and not abicc" --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+          pytest tests/ -v --tb=short -m "not integration and not libabigail and not abicc" -n auto --dist worksteal --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=80
       - name: Run tests (Windows — parallel, no coverage)
         if: runner.os == 'Windows'
         run: |
@@ -128,6 +130,7 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Install system deps
@@ -181,6 +184,7 @@ jobs:
     needs: [heavy-parity-gate]
     if: needs.heavy-parity-gate.outputs.run-heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Install system deps
@@ -201,6 +205,7 @@ jobs:
     needs: [heavy-parity-gate]
     if: needs.heavy-parity-gate.outputs.run-heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Install system deps
@@ -220,6 +225,7 @@ jobs:
 
   packaging:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:

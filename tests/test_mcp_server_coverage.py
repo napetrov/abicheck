@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -37,7 +36,6 @@ from abicheck.mcp_server import (  # noqa: E402
     _render_output,
     _resolve_input,
     _safe_write_path,
-    _sanitize_error,
     abi_compare,
     abi_dump,
 )
@@ -124,38 +122,8 @@ class TestSafeWritePathWindows:
 
 
 # ---------------------------------------------------------------------------
-# _safe_write_path — SSH/credential directory blocking (lines 165-176)
-# ---------------------------------------------------------------------------
-
-class TestSafeWritePathCredentialDirs:
-    def test_ssh_dir_blocked(self, tmp_path, monkeypatch):
-        """Lines 165-176: writing to ~/.ssh is blocked."""
-        ssh_dir = tmp_path / ".ssh"
-        ssh_dir.mkdir()
-        out_file = ssh_dir / "evil.json"
-        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-        with pytest.raises(ValueError, match="sensitive credential directory"):
-            _safe_write_path(str(out_file))
-
-    def test_aws_dir_blocked(self, tmp_path, monkeypatch):
-        aws_dir = tmp_path / ".aws"
-        aws_dir.mkdir()
-        out_file = aws_dir / "evil.json"
-        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-        with pytest.raises(ValueError, match="sensitive credential directory"):
-            _safe_write_path(str(out_file))
-
-    def test_gnupg_dir_blocked(self, tmp_path, monkeypatch):
-        gnupg_dir = tmp_path / ".gnupg"
-        gnupg_dir.mkdir()
-        out_file = gnupg_dir / "evil.json"
-        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-        with pytest.raises(ValueError, match="sensitive credential directory"):
-            _safe_write_path(str(out_file))
-
-
-# ---------------------------------------------------------------------------
 # _safe_write_path — resolve errors (lines 112-113)
+# (credential dir tests moved to test_mcp_server_unit.py::TestSafeWritePath)
 # ---------------------------------------------------------------------------
 
 class TestSafeWritePathResolveError:
@@ -168,33 +136,7 @@ class TestSafeWritePathResolveError:
 
 
 # ---------------------------------------------------------------------------
-# _sanitize_error — OSError and generic Exception (lines 190-195)
-# ---------------------------------------------------------------------------
-
-class TestSanitizeError:
-    def test_oserror_returns_generic_message(self):
-        """Lines 190-192: OSError produces generic message."""
-        exc = OSError("secret path /etc/shadow")
-        result = _sanitize_error(exc, context="test_op")
-        assert "file system error" in result
-        assert "/etc/shadow" not in result
-
-    def test_generic_exception_returns_unexpected(self):
-        """Lines 194-195: unknown exception type produces 'unexpected error'."""
-        exc = RuntimeError("something broke internally")
-        result = _sanitize_error(exc, context="test_op")
-        assert "unexpected error" in result
-        assert "something broke" not in result
-
-    def test_abicheckError_passes_through(self):
-        exc = AbicheckError("domain error msg")
-        assert _sanitize_error(exc) == "domain error msg"
-
-    def test_valueerror_passes_through(self):
-        exc = ValueError("bad value")
-        assert _sanitize_error(exc) == "bad value"
-
-
+# (_sanitize_error tests moved to test_mcp_server_unit.py::TestSanitizeError)
 # ---------------------------------------------------------------------------
 # _impact_category — unknown ChangeKind fallback (lines 426-427)
 # ---------------------------------------------------------------------------

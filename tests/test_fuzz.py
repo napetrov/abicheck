@@ -14,11 +14,13 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.slow
+
 pytest.importorskip("hypothesis")
 import json  # noqa: E402
 
 from hypothesis import given, settings  # noqa: E402
-from hypothesis import strategies as st
+from hypothesis import strategies as st  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # 1. AbiSnapshot JSON serialization round-trip

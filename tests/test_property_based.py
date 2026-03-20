@@ -13,6 +13,7 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -39,6 +40,8 @@ from abicheck.model import (
 )
 from abicheck.reporter import ShowOnlyFilter
 from abicheck.serialization import load_snapshot, snapshot_from_dict, snapshot_to_json
+
+pytestmark = pytest.mark.slow
 
 # ---------------------------------------------------------------------------
 # Hypothesis strategies for model objects

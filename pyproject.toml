@@ -111,6 +111,8 @@ markers = [
     "integration: requires castxml, gcc/g++ installed",
     "libabigail: requires abidiff + gcc/g++ — libabigail parity tests",
     "abicc: requires abi-compliance-checker + gcc/g++ — ABICC parity tests",
+    "slow: marks tests as slow (hypothesis / performance benchmarks)",
+    "golden: golden-output snapshot tests",
 ]
 
 [tool.setuptools.packages.find]
