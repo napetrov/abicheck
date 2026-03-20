@@ -790,7 +790,7 @@ def _diff_struct_layouts(o: object, n: object) -> list[Change]:
             if _RESERVED_FIELD_RE.match(fname):
                 old_f = old_fields[fname]
                 candidate = added_by_offset.get(old_f.byte_offset)
-                if candidate is not None and not _RESERVED_FIELD_RE.match(candidate.name):
+                if candidate is not None and not _RESERVED_FIELD_RE.match(candidate.name) and old_f.type_name == candidate.type_name:
                     changes.append(Change(
                         kind=ChangeKind.USED_RESERVED_FIELD,
                         symbol=name,

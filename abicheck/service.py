@@ -529,6 +529,10 @@ def render_output(
             show_impact=show_impact,
         )
 
+    _SUPPORTED_FORMATS = {"json", "sarif", "html", "markdown", "md"}
+    if fmt not in _SUPPORTED_FORMATS:
+        raise ValidationError(f"Unsupported output format: {fmt!r} (expected one of {sorted(_SUPPORTED_FORMATS)})")
+
     # Default: markdown
     md = to_markdown(
         result, show_only=show_only, report_mode=report_mode,

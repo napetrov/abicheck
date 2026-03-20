@@ -326,13 +326,16 @@ def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             n = member_name.lower()
             return n.endswith(_SENTINEL_SUFFIXES) or n in {"last", "max", "count"}
 
-        # Build inverse map: new_value → new_name for values that are "new" (not in old names)
-        # If a missing old member value still exists under a different new name,
-        # it is a rename, not a true removal. The separate rename detector emits
-        # ENUM_MEMBER_RENAMED; we should not emit ENUM_MEMBER_REMOVED here.
+        # Build inverse map: new_value → new_name for values that are "new" (not in old names).
+        # Only keep entries where the value maps to exactly one new name —
+        # aliases (multiple names with same value) must not suppress true removals.
+        _new_val_candidates: dict[int, list[str]] = {}
+        for nname, nval in new_members.items():
+            if nname not in old_members:
+                _new_val_candidates.setdefault(nval, []).append(nname)
         new_val_to_newname = {
-            nval: nname for nname, nval in new_members.items()
-            if nname not in old_members
+            nval: nnames[0] for nval, nnames in _new_val_candidates.items()
+            if len(nnames) == 1
         }
 
         for mname, mval in old_members.items():
@@ -367,9 +370,15 @@ def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         # Use only *removed* old member values — if the old member still exists under
         # the same name, the new member is a genuine addition (alias/duplicate), not
         # a rename, and must be reported. (CodeRabbit P1: one-to-one guard)
+        # One-to-one guard: only suppress additions when the removed old value
+        # maps to exactly one removed member (aliases must not suppress).
+        _removed_val_candidates: dict[int, list[str]] = {}
+        for mname_r, v in old_members.items():
+            if mname_r not in new_members:
+                _removed_val_candidates.setdefault(v, []).append(mname_r)
         removed_old_values = {
-            str(v) for mname, v in old_members.items()
-            if mname not in new_members
+            str(v) for v, names in _removed_val_candidates.items()
+            if len(names) == 1
         }
         for mname, mval in new_members.items():
             if mname not in old_members:
@@ -614,12 +623,21 @@ def _diff_enum_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         e_new = new_map[name]
         old_by_name = {m.name: m.value for m in e_old.members}
         new_by_name = {m.name: m.value for m in e_new.members}
-        new_by_val: dict[int, str] = {m.value: m.name for m in e_new.members}
+        # One-to-one guard: only treat as rename when the value maps to
+        # exactly one new name (aliases must not collapse into renames).
+        _new_val_groups: dict[int, list[str]] = {}
+        for m in e_new.members:
+            if m.name not in old_by_name:
+                _new_val_groups.setdefault(m.value, []).append(m.name)
+        new_by_val: dict[int, str] = {
+            v: names[0] for v, names in _new_val_groups.items()
+            if len(names) == 1
+        }
 
         for old_mname, old_mval in old_by_name.items():
             if old_mname in new_by_name:
                 continue  # still present by name
-            # Name gone — check if the value still exists under a new name
+            # Name gone — check if the value still exists under exactly one new name
             if old_mval in new_by_val:
                 new_mname = new_by_val[old_mval]
                 if new_mname not in old_by_name:

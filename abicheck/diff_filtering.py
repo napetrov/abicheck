@@ -90,10 +90,9 @@ def _enrich_source_locations(
             continue
         # Try function/variable first (symbol is mangled name), then type name
         loc = func_loc.get(c.symbol) or var_loc.get(c.symbol) or type_loc.get(c.symbol)
-        # For qualified symbols like "MyStruct::field", fall back to base type name
+        # For qualified symbols like "ns::MyStruct::field", fall back to root type name
         if not loc and "::" in c.symbol:
-            base_type = c.symbol.split("::")[0]
-            loc = type_loc.get(base_type)
+            loc = type_loc.get(_root_type_name(c))
         if loc:
             c.source_location = loc
 
@@ -110,9 +109,9 @@ def _enrich_affected_symbols(
     # Collect affected type names
     affected_types: set[str] = set()
     for c in type_changes:
-        # symbol is the type name (e.g. "Point", "Container", "Status")
-        # Strip field qualifiers like "Container::flags" → "Container"
-        type_name = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
+        # symbol is the type name (e.g. "Point", "ns::Container", "Status")
+        # Strip field qualifiers like "ns::Container::flags" → "ns::Container"
+        type_name = _root_type_name(c)
         affected_types.add(type_name)
 
     if not affected_types:
@@ -178,7 +177,7 @@ def _enrich_affected_symbols(
     # Assign to changes — include both demangled names (display) and
     # mangled names (appcompat matching, FIX-A Part 3).
     for c in type_changes:
-        type_name = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
+        type_name = _root_type_name(c)
         funcs = type_to_funcs.get(type_name, [])
         mangled_funcs = type_to_mangled.get(type_name, [])
         if funcs:
@@ -568,13 +567,13 @@ def _filter_reserved_field_renames(changes: list[Change]) -> list[Change]:
         for struct_name, old_field, new_field in reserved_renames:
             if c.symbol != struct_name and not c.symbol.startswith(f"{struct_name}::"):
                 continue
-            # Use == for old_value to avoid substring false-positives
-            # (e.g. "__reserved" matching inside "__reserved_extra").
-            if old_field and (old_field in c.description or old_field == (c.old_value or "")):
+            # Exact field-name match via symbol suffix to avoid substring
+            # false-positives (e.g. "flag" matching inside "flags").
+            if old_field and c.symbol == f"{struct_name}::{old_field}":
                 suppressed = True
                 break
             if new_field and c.kind in (ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE, ChangeKind.TYPE_FIELD_ADDED) and (
-                new_field in c.description or new_field in (c.new_value or "")
+                c.symbol == f"{struct_name}::{new_field}"
             ):
                 suppressed = True
                 break
@@ -819,8 +818,8 @@ def _downgrade_opaque_type_changes(
     result: list[Change] = []
     for c in changes:
         if c.kind in _STRUCTURAL_TYPE_CHANGE_KINDS:
-            # Extract type name from symbol (may be "TypeName" or "TypeName::field")
-            type_name = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
+            # Extract type name from symbol (may be "TypeName" or "ns::TypeName::field")
+            type_name = _root_type_name(c)
             if type_name in opaque:
                 # Suppress entirely: the type is opaque (forward-declared only)
                 # so layout changes are invisible to consumers.
@@ -854,8 +853,8 @@ def _compute_confidence(
     warnings: list[str] = []
 
     has_elf = old.elf is not None or new.elf is not None
-    has_dwarf = old.dwarf is not None or new.dwarf is not None
-    has_dwarf_advanced = old.dwarf_advanced is not None or new.dwarf_advanced is not None
+    has_dwarf = (old.dwarf is not None and old.dwarf.has_dwarf) or (new.dwarf is not None and new.dwarf.has_dwarf)
+    has_dwarf_advanced = (old.dwarf_advanced is not None and old.dwarf_advanced.has_dwarf) or (new.dwarf_advanced is not None and new.dwarf_advanced.has_dwarf)
     has_pe = getattr(old, "pe", None) is not None or getattr(new, "pe", None) is not None
     has_macho = getattr(old, "macho", None) is not None or getattr(new, "macho", None) is not None
     has_headers = bool(
