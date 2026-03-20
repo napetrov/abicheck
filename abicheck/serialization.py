@@ -346,6 +346,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             vtable=t.get("vtable", []),
             source_location=t.get("source_location"),
             is_union=t.get("is_union", t.get("kind") == "union"),
+            is_opaque=t.get("is_opaque", False),
         )
         for t in d.get("types", [])
     ]
