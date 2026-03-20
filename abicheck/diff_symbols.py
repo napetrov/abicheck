@@ -549,3 +549,122 @@ def _diff_symbol_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             ))
 
     return changes
+
+
+def _diff_param_restrict(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect restrict qualifier changes on parameters (ABICC: Parameter_Became_Restrict)."""
+    changes: list[Change] = []
+    old_map = _public_functions(old)
+    new_map = _public_functions(new)
+
+    for mangled, f_old in old_map.items():
+        f_new = new_map.get(mangled)
+        if f_new is None:
+            continue
+        for i, (p_old, p_new) in enumerate(zip(f_old.params, f_new.params)):
+            if p_old.is_restrict != p_new.is_restrict:
+                direction = "added" if p_new.is_restrict else "removed"
+                changes.append(Change(
+                    kind=ChangeKind.PARAM_RESTRICT_CHANGED,
+                    symbol=mangled,
+                    description=f"Parameter restrict qualifier {direction}: {f_old.name} param {p_old.name or i}",
+                    old_value=f"restrict={p_old.is_restrict}",
+                    new_value=f"restrict={p_new.is_restrict}",
+                ))
+    return changes
+
+
+def _diff_param_va_list(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect va_list parameter changes (ABICC: Parameter_Became_VaList/Non_VaList)."""
+    changes: list[Change] = []
+    old_map = _public_functions(old)
+    new_map = _public_functions(new)
+
+    for mangled, f_old in old_map.items():
+        f_new = new_map.get(mangled)
+        if f_new is None:
+            continue
+        for i, (p_old, p_new) in enumerate(zip(f_old.params, f_new.params)):
+            if not p_old.is_va_list and p_new.is_va_list:
+                changes.append(Change(
+                    kind=ChangeKind.PARAM_BECAME_VA_LIST,
+                    symbol=mangled,
+                    description=f"Parameter became va_list: {f_old.name} param {p_old.name or i}",
+                    old_value=p_old.type,
+                    new_value="va_list",
+                ))
+            elif p_old.is_va_list and not p_new.is_va_list:
+                changes.append(Change(
+                    kind=ChangeKind.PARAM_LOST_VA_LIST,
+                    symbol=mangled,
+                    description=f"Parameter was va_list, now fixed: {f_old.name} param {p_old.name or i}",
+                    old_value="va_list",
+                    new_value=p_new.type,
+                ))
+    return changes
+
+
+def _diff_constants(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect preprocessor constant (#define) changes (ABICC: Changed/Added/Removed_Constant)."""
+    changes: list[Change] = []
+    old_consts = old.constants
+    new_consts = new.constants
+
+    for name, old_val in old_consts.items():
+        new_val = new_consts.get(name)
+        if new_val is None:
+            changes.append(Change(
+                kind=ChangeKind.CONSTANT_REMOVED,
+                symbol=name,
+                description=f"Preprocessor constant removed: {name}",
+                old_value=old_val,
+            ))
+        elif new_val != old_val:
+            changes.append(Change(
+                kind=ChangeKind.CONSTANT_CHANGED,
+                symbol=name,
+                description=f"Preprocessor constant value changed: {name} ({old_val!r} → {new_val!r})",
+                old_value=old_val,
+                new_value=new_val,
+            ))
+
+    for name, new_val in new_consts.items():
+        if name not in old_consts:
+            changes.append(Change(
+                kind=ChangeKind.CONSTANT_ADDED,
+                symbol=name,
+                description=f"New preprocessor constant: {name}",
+                new_value=new_val,
+            ))
+    return changes
+
+
+def _diff_var_access(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect global data access level changes (ABICC: Global_Data_Became_Private/Protected/Public)."""
+    changes: list[Change] = []
+    old_map = _public_variables(old)
+    new_map = _public_variables(new)
+
+    for mangled, v_old in old_map.items():
+        v_new = new_map.get(mangled)
+        if v_new is None:
+            continue
+        if v_old.access != v_new.access:
+            if _is_access_narrowing(v_old.access, v_new.access):
+                changes.append(Change(
+                    kind=ChangeKind.VAR_ACCESS_CHANGED,
+                    symbol=mangled,
+                    description=f"Variable access level narrowed: {v_old.name} ({v_old.access.value} → {v_new.access.value})",
+                    old_value=v_old.access.value,
+                    new_value=v_new.access.value,
+                ))
+            else:
+                changes.append(Change(
+                    kind=ChangeKind.VAR_ACCESS_WIDENED,
+                    symbol=mangled,
+                    description=f"Variable access level widened: {v_old.name} ({v_old.access.value} → {v_new.access.value})",
+                    old_value=v_old.access.value,
+                    new_value=v_new.access.value,
+                ))
+    return changes
+

@@ -23,36 +23,44 @@ needs a TYPE_CHECKING import from `checker`. This unblocks the Phase 2 split.
 - **`checker.py`:** Imports and re-exports from `checker_types` for backward
   compatibility; `_DetectorSpec` aliased to `DetectorSpec`
 
-## Phase 2: Split checker.py Into Focused Modules 🔄
+## Phase 2: Split checker.py Into Focused Modules ✅
 
 **Goal:** Reduce `checker.py` from ~3,830 lines to ~500 lines by extracting
 detection and filtering logic into dedicated modules.
 
 **Issue addressed:** checker.py monolith (6.2)
 
-### Planned Modules
+### Extracted Modules
 
-| Module | Contents | ~Lines |
-|--------|----------|--------|
-| `diff_symbols.py` | Function/variable/parameter detectors | ~600 |
-| `diff_types.py` | Type/struct/enum/union detectors | ~1,200 |
-| `diff_platform.py` | ELF/PE/Mach-O/DWARF platform detectors | ~800 |
-| `diff_filtering.py` | Redundancy filtering, deduplication | ~600 |
-| `checker.py` (remaining) | Orchestration + detector registry | ~500 |
+| Module | Contents | Lines |
+|--------|----------|-------|
+| `diff_symbols.py` | Function/variable/parameter detectors | ~670 |
+| `diff_types.py` | Type/struct/enum/union/typedef detectors | ~915 |
+| `diff_platform.py` | ELF/PE/Mach-O/DWARF platform detectors | ~1,205 |
+| `diff_filtering.py` | Redundancy filtering, deduplication | ~1,002 |
+| `checker.py` (remaining) | Orchestration + detector registry | ~340 |
 
-## Phase 3: Extract Service Layer
+## Phase 3: Extract Service Layer ✅
 
 **Goal:** Create `service.py` as the shared orchestration layer consumed by
 both `cli.py` and `mcp_server.py`, eliminating duplicated business logic.
 
 **Issue addressed:** Missing service layer (6.1)
 
-### Planned API
+### Implemented API
 
 - `resolve_input()` — Load an ABI snapshot from any supported input format
 - `run_dump()` — Extract ABI snapshot from a binary + optional headers
 - `run_compare()` — Compare two ABI snapshots and return classified changes
 - `render_output()` — Render a DiffResult to the specified output format
+
+### Additional Functions
+
+- `detect_binary_format()` — Detect ELF/PE/Mach-O from magic bytes
+- `sniff_text_format()` — Detect JSON/Perl dump from header bytes
+- `expand_header_inputs()` — Recursively expand header file/directory inputs
+- `collect_metadata()` — Compute SHA-256 and file size for traceability
+- `load_suppression_and_policy()` — Load suppression and policy YAML files
 
 ## Phase 4: Error Handling Standardization ✅
 
