@@ -3502,11 +3502,17 @@ def _diff_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         # Match by full name or by unqualified name (last component after ::)
         return name in allowed or name.split("::")[-1] in allowed
 
-    allowed_structs: set[str] = {
-        t.name for t in old.types
-    } | {
-        t.name for t in new.types
-    }
+    # Collect opaque (forward-declared only) struct names from each side.
+    # If a struct is opaque in *both* snapshots, its layout is not part of
+    # the public ABI — callers never see the fields — so DWARF layout
+    # changes should be suppressed.
+    old_opaque = {t.name for t in old.types if getattr(t, "is_opaque", False)}
+    new_opaque = {t.name for t in new.types if getattr(t, "is_opaque", False)}
+    both_opaque = old_opaque & new_opaque
+
+    allowed_structs: set[str] = (
+        {t.name for t in old.types} | {t.name for t in new.types}
+    ) - both_opaque
     allowed_enums: set[str] = {
         e.name for e in old.enums
     } | {
