@@ -20,5 +20,7 @@ Python package dependencies (not distributed, installed separately):
   - defusedxml    (PSF-2.0)
   - pyelftools    (Public Domain)
   - packaging     (Apache-2.0 / BSD-2-Clause)
+  - pefile        (MIT)
+  - macholib      (MIT)
 
 For third-party attribution details see NOTICE.md.

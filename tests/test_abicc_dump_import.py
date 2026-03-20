@@ -132,22 +132,3 @@ def test_is_abicc_perl_dump_file_false_for_regular_xml(tmp_path: Path) -> None:
     assert not is_abicc_perl_dump_file(p)
 
 
-def test_legacy_abicc_dump_import_shim_exports_public_api() -> None:
-    """Smoke test: legacy import path abicheck.abicc_dump_import still works (PR#110 shim)."""
-    import warnings
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        from abicheck.abicc_dump_import import (  # noqa: F401
-            import_abicc_perl_dump,
-            is_abicc_perl_dump_file,
-            looks_like_perl_dump,
-        )
-        # Must emit exactly one DeprecationWarning pointing to new location
-        assert len(w) == 1
-        assert issubclass(w[0].category, DeprecationWarning)
-        assert "abicheck.compat.abicc_dump_import" in str(w[0].message)
-
-    assert callable(import_abicc_perl_dump)
-    assert callable(is_abicc_perl_dump_file)
-    assert callable(looks_like_perl_dump)

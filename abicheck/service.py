@@ -36,9 +36,6 @@ from .reporter import to_json, to_markdown, to_stat, to_stat_json
 from .serialization import load_snapshot
 
 if TYPE_CHECKING:
-    from .compat.abicc_dump_import import (
-        import_abicc_perl_dump as _import_perl,  # noqa: F401
-    )
     from .policy_file import PolicyFile
     from .severity import SeverityConfig
     from .suppression import SuppressionList

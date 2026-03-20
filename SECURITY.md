@@ -4,6 +4,7 @@
 
 | Version | Supported |
 |---------|-----------|
+| 0.2.x   | ✅ Yes     |
 | 0.1.x   | ✅ Yes     |
 
 ## Reporting a Vulnerability
@@ -29,5 +30,5 @@ We aim to respond within 72 hours and release a fix within 14 days for confirmed
   bugs in the underlying `pyelftools` library. When analyzing third-party or untrusted
   binaries, run abicheck in a sandboxed/isolated environment.
 - ABICC XML descriptors are parsed with `defusedxml` to prevent XML entity expansion attacks.
-- Suppression patterns use RE2 (no ReDoS) via `google-re2`.
+- Suppression patterns use Python `re` with `re.fullmatch` to limit matching scope.
 - Policy files (YAML) are loaded with `yaml.safe_load` — no arbitrary code execution.
