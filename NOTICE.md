@@ -36,7 +36,8 @@ These tools are invoked as external processes and are **not** distributed with t
 | `pyyaml` | MIT | YAML parsing (policy files, suppressions) |
 | `defusedxml` | PSF-2.0 | Safe XML parsing (ABICC descriptor mode) |
 | `pyelftools` | Public Domain | ELF/DWARF binary metadata extraction |
-| `google-re2` | BSD-3-Clause | RE2 suppression engine (O(N) guaranteed) |
 | `packaging` | Apache-2.0 / BSD-2-Clause | Version comparison for suppressions |
+| `pefile` | MIT | Windows PE/COFF binary parsing |
+| `macholib` | MIT | macOS Mach-O binary parsing |
 
 See `pyproject.toml` for the full dependency list.

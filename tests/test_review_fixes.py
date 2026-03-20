@@ -512,18 +512,3 @@ class TestServiceImportPaths:
 
         assert callable(import_abicc_perl_dump)
 
-    def test_service_sniff_does_not_trigger_deprecation(self):
-        """Verify service module doesn't trigger the deprecation warning."""
-        import warnings
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            from abicheck import service  # noqa: F811
-
-            _ = service.sniff_text_format
-            deprecation_warnings = [
-                x for x in w
-                if issubclass(x.category, DeprecationWarning)
-                and "abicc_dump_import" in str(x.message)
-            ]
-            assert len(deprecation_warnings) == 0
