@@ -635,12 +635,8 @@ class TestStrictModeParity:
         )
 
         # ABICC 2.3 keeps pure additions compatible even under -strict (rc=0).
-        # Current abicheck may still promote additions under strict-mode=full.
-        if (abicc_r.returncode, abicheck_r.returncode) == (0, 1):
-            pytest.xfail(
-                "Known divergence: strict+addition exit code (ABICC=0 vs abicheck=1). "
-                "Need semantic alignment for strict-mode defaults."
-            )
+        # abicheck now matches this behaviour: pure additions stay COMPATIBLE
+        # even in strict-mode=full.
         assert abicc_r.returncode == abicheck_r.returncode
 
     def test_strict_breaking_exit_1_both(self, tmp_path):
@@ -783,12 +779,6 @@ def test_strict_case_level_parity(
     )
 
     # Known divergence: strict+addition semantics differ today.
-    if name == "strict_addition" and (abicc_r.returncode, abicheck_r.returncode) == (0, 1):
-        pytest.xfail(
-            "Known divergence: strict+addition exit code parity pending "
-            "(ABICC=0, abicheck=1 with strict-mode=full)."
-        )
-
     # Both tools should return the expected exit code
     assert abicc_r.returncode == expected_exit, (
         f"[{name}] ABICC strict: rc={abicc_r.returncode}, expected {expected_exit}"
@@ -858,12 +848,8 @@ class TestSourceModeParity:
         )
 
         # ABICC 2.3 reports this case as source-compatible (warning-level, rc=0).
-        # Current abicheck may classify it as BREAKING in source mode (rc=1).
-        if (abicc_r.returncode, abicheck_r.returncode) == (0, 1):
-            pytest.xfail(
-                "Known divergence: source-mode return-type-change parity pending "
-                "(ABICC=0 warning-level, abicheck=1)."
-            )
+        # abicheck now matches: widening return-type changes (int→long) are
+        # source-compatible in -source mode.
         assert abicc_r.returncode == abicheck_r.returncode
 
     def test_source_mode_no_change_both_pass(self, tmp_path):
@@ -1202,9 +1188,15 @@ class TestStrictVerdictPromotion:
             verdict=verdict,
         )
 
-    def test_strict_promotes_compatible_to_breaking(self):
-        """COMPATIBLE → BREAKING in strict mode."""
+    def test_strict_pure_addition_stays_compatible(self):
+        """Pure additions stay COMPATIBLE even under strict (ABICC parity)."""
         result = self._result(Verdict.COMPATIBLE, [ChangeKind.FUNC_ADDED])
+        promoted = _apply_strict(result)
+        assert promoted.verdict == Verdict.COMPATIBLE
+
+    def test_strict_promotes_non_addition_compatible_to_breaking(self):
+        """Non-addition COMPATIBLE → BREAKING in strict mode."""
+        result = self._result(Verdict.COMPATIBLE, [ChangeKind.FUNC_REMOVED_ELF_ONLY])
         promoted = _apply_strict(result)
         assert promoted.verdict == Verdict.BREAKING
 

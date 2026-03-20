@@ -514,6 +514,9 @@ class _DwarfSnapshotBuilder:
         alignment = _attr_int(die, "DW_AT_alignment")
         is_opaque = byte_size == 0 and not fields
 
+        # Extract source location from DW_AT_decl_file / DW_AT_decl_line
+        source_loc = self._resolve_decl_file(die, CU)
+
         self.types.append(RecordType(
             name=qualified,
             kind=kind,
@@ -525,7 +528,38 @@ class _DwarfSnapshotBuilder:
             vtable=vtable,
             is_union=is_union,
             is_opaque=is_opaque,
+            source_location=source_loc,
         ))
+
+    def _resolve_decl_file(self, die: Any, CU: Any) -> str | None:
+        """Resolve DW_AT_decl_file to a source file path.
+
+        Returns a string like ``"foo.c:42"`` or ``"foo.h"`` (without line if
+        unavailable), or ``None`` if the attribute is absent.
+        """
+        if "DW_AT_decl_file" not in die.attributes:
+            return None
+        file_idx = die.attributes["DW_AT_decl_file"].value
+        if file_idx == 0:
+            return None  # no file
+        try:
+            line_prog = CU.dwarfinfo.line_program_for_CU(CU)
+            if line_prog is None:
+                return None
+            # DWARF 4: file_entry is 1-indexed into line_prog['file_entry']
+            # DWARF 5: file_entry is 0-indexed into line_prog.header['file_names']
+            file_entries = line_prog.header.get("file_names") or []
+            # pyelftools uses 1-based indexing for DWARF 4
+            ver = CU.header.get("version", 4) if hasattr(CU, "header") else 4
+            idx = file_idx - 1 if ver < 5 else file_idx
+            if 0 <= idx < len(file_entries):
+                entry = file_entries[idx]
+                fname = entry.name if isinstance(entry.name, str) else entry.name.decode("utf-8", errors="replace")
+                line = _attr_int(die, "DW_AT_decl_line")
+                return f"{fname}:{line}" if line else fname
+        except Exception:  # noqa: BLE001
+            pass
+        return None
 
     def _process_field(self, die: Any, CU: Any) -> TypeField | None:
         """Extract a struct/class/union field."""

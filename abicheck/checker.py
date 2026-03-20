@@ -1156,7 +1156,8 @@ def _diff_field_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         for f_old in removed:
             if f_old.offset_bits is None:
                 continue
-            # Skip reserved-field renames — handled by USED_RESERVED_FIELD
+            # Skip reserved→real transitions — handled by _diff_reserved_fields
+            # as USED_RESERVED_FIELD (compatible), not FIELD_RENAMED (API break).
             if _RESERVED_FIELD_RE.match(f_old.name):
                 continue
             sig = (f_old.offset_bits, f_old.type)
@@ -1701,6 +1702,23 @@ def _diff_elf_dynamic_section(old_elf: Any, new_elf: Any) -> list[Change]:
             old_value=old_elf.runpath,
             new_value=new_elf.runpath,
         ))
+
+    # PT_GNU_STACK executable stack detection (security bad practice)
+    old_exec = getattr(old_elf, "has_executable_stack", False)
+    new_exec = getattr(new_elf, "has_executable_stack", False)
+    if old_exec != new_exec:
+        changes.append(Change(
+            kind=ChangeKind.EXECUTABLE_STACK,
+            symbol="PT_GNU_STACK",
+            description=(
+                "Executable stack detected: library linked with -Wl,-z,execstack — NX protection disabled (security risk)"
+                if new_exec
+                else "Executable stack removed: library now uses non-executable stack (good practice)"
+            ),
+            old_value="RWE" if old_exec else "RW",
+            new_value="RWE" if new_exec else "RW",
+        ))
+
     return changes
 
 
@@ -2624,6 +2642,188 @@ def _deduplicate_cross_detector(changes: list[Change]) -> list[Change]:
     return result
 
 
+def _diff_symbol_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect batch symbol renames (namespace refactoring).
+
+    When multiple symbols are removed and corresponding prefixed versions are
+    added (e.g. ``init`` → ``mylib_init``), this indicates a namespace
+    refactoring that breaks all existing consumers.
+
+    Heuristic: if 2+ removed symbols each have a matching added symbol where
+    the added name ends with the removed name (common prefix pattern), emit
+    a SYMBOL_RENAMED_BATCH change.
+    """
+    changes: list[Change] = []
+
+    old_map = _public_functions(old)
+    new_map = _public_functions(new)
+
+    removed = set(old_map.keys()) - set(new_map.keys())
+    added = set(new_map.keys()) - set(old_map.keys())
+
+    if len(removed) < 2 or not added:
+        return changes
+
+    # Find rename pairs: removed symbol "X" matches added symbol "prefix_X"
+    # or "prefixX" (where prefix is a common prefix among all added symbols).
+    rename_pairs: list[tuple[str, str]] = []
+    for r_sym in removed:
+        r_name = old_map[r_sym].name
+        for a_sym in added:
+            a_name = new_map[a_sym].name
+            # Check if added name ends with removed name (prefix pattern)
+            if a_name.endswith(r_name) and len(a_name) > len(r_name):
+                rename_pairs.append((r_name, a_name))
+                break
+            # Also check underscore-separated: "init" → "mylib_init"
+            if a_name.endswith("_" + r_name) and len(a_name) > len(r_name) + 1:
+                rename_pairs.append((r_name, a_name))
+                break
+
+    # Require at least 2 rename pairs to be considered a batch rename
+    if len(rename_pairs) >= 2:
+        # Verify common prefix among the renamed symbols
+        prefixes = set()
+        for old_name, new_name in rename_pairs:
+            prefix = new_name[: new_name.rfind(old_name)]
+            prefixes.add(prefix)
+
+        # If there's a single common prefix, this is a deliberate namespace refactoring
+        if len(prefixes) == 1:
+            prefix = prefixes.pop()
+            pair_desc = ", ".join(f"{o} → {n}" for o, n in rename_pairs[:5])
+            if len(rename_pairs) > 5:
+                pair_desc += f", ... ({len(rename_pairs)} total)"
+            changes.append(Change(
+                kind=ChangeKind.SYMBOL_RENAMED_BATCH,
+                symbol=f"batch_rename:{prefix}*",
+                description=(
+                    f"Batch symbol rename detected (namespace refactoring): "
+                    f"prefix '{prefix}' added to {len(rename_pairs)} symbols ({pair_desc})"
+                ),
+                old_value=", ".join(o for o, _ in rename_pairs),
+                new_value=", ".join(n for _, n in rename_pairs),
+            ))
+
+    return changes
+
+
+_STRUCTURAL_TYPE_CHANGE_KINDS: frozenset[ChangeKind] = frozenset({
+    ChangeKind.TYPE_SIZE_CHANGED,
+    ChangeKind.TYPE_ALIGNMENT_CHANGED,
+    ChangeKind.TYPE_FIELD_REMOVED,
+    ChangeKind.TYPE_FIELD_ADDED,
+    ChangeKind.TYPE_FIELD_OFFSET_CHANGED,
+    ChangeKind.TYPE_FIELD_TYPE_CHANGED,
+    ChangeKind.STRUCT_SIZE_CHANGED,
+    ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
+    ChangeKind.STRUCT_FIELD_REMOVED,
+    ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+    ChangeKind.STRUCT_ALIGNMENT_CHANGED,
+})
+
+
+# Source file extensions that indicate an implementation (non-header) file.
+_IMPL_EXTENSIONS = frozenset({".c", ".cc", ".cpp", ".cxx", ".c++", ".m", ".mm"})
+
+
+def _is_impl_source(source_location: str | None) -> bool:
+    """Check if a source_location path refers to an implementation file."""
+    if not source_location:
+        return False
+    # source_location may be "foo.c:42" — strip line number
+    path = source_location.split(":")[0] if ":" in source_location else source_location
+    # Get file extension
+    dot = path.rfind(".")
+    if dot < 0:
+        return False
+    ext = path[dot:].lower()
+    return ext in _IMPL_EXTENSIONS
+
+
+def _find_opaque_types(snap: AbiSnapshot) -> set[str]:
+    """Find types that are opaque to consumers.
+
+    A type is opaque when:
+
+    1. castxml marks it as ``incomplete`` (``is_opaque=True``) — the public
+       header has only a forward declaration, OR
+    2. The type definition is in an implementation file (.c/.cpp) AND all
+       public-API references use pointers (never by value).  This handles
+       DWARF mode where castxml is not used but DWARF's ``DW_AT_decl_file``
+       reveals the type is implementation-private.
+    """
+    opaque: set[str] = set()
+
+    for t in snap.types:
+        if t.is_opaque:
+            opaque.add(t.name)
+        elif _is_impl_source(t.source_location):
+            # Type is defined in an implementation file — only consider it
+            # opaque if all API references are through pointers.
+            opaque.add(t.name)
+
+    if not opaque:
+        return set()
+
+    # For types flagged via source_location (not castxml is_opaque), verify
+    # that no public function uses them by value.
+    by_value_types: set[str] = set()
+    for func in snap.functions:
+        if func.visibility not in _PUBLIC_VIS:
+            continue
+        rt = func.return_type.strip()
+        for tname in opaque:
+            if tname in rt and not (rt.endswith("*") or "* " in rt):
+                by_value_types.add(tname)
+        for param in func.params:
+            pt = param.type.strip()
+            for tname in opaque:
+                if tname in pt and param.pointer_depth == 0 and not pt.endswith("*"):
+                    by_value_types.add(tname)
+    # Also check variables — a public variable of this type means it's by-value
+    for var in snap.variables:
+        if var.visibility not in _PUBLIC_VIS:
+            continue
+        vt = var.type.strip()
+        for tname in opaque:
+            if tname in vt and not (vt.endswith("*") or "* " in vt):
+                by_value_types.add(tname)
+
+    return opaque - by_value_types
+
+
+def _downgrade_opaque_type_changes(
+    changes: list[Change], old: AbiSnapshot, new: AbiSnapshot,
+) -> list[Change]:
+    """Suppress structural type changes for opaque types.
+
+    When a type is opaque in both old and new snapshots (forward-declared only
+    in headers, or defined in an implementation file with pointer-only API),
+    consumers never see its layout.  Size/field changes are invisible and
+    should not be classified as BREAKING.
+    """
+    opaque_old = _find_opaque_types(old)
+    opaque_new = _find_opaque_types(new)
+    # Type must be opaque in BOTH snapshots to suppress changes
+    opaque = opaque_old & opaque_new
+
+    if not opaque:
+        return changes
+
+    result: list[Change] = []
+    for c in changes:
+        if c.kind in _STRUCTURAL_TYPE_CHANGE_KINDS:
+            # Extract type name from symbol (may be "TypeName" or "TypeName::field")
+            type_name = c.symbol.split("::")[0] if "::" in c.symbol else c.symbol
+            if type_name in opaque:
+                # Suppress entirely: the type is opaque (forward-declared only)
+                # so layout changes are invisible to consumers.
+                continue
+        result.append(c)
+    return result
+
+
 def _compute_confidence(
     detector_results: list[DetectorResult],
     old: AbiSnapshot,
@@ -2866,6 +3066,7 @@ def compare(
         _DetectorSpec("var_access", _diff_var_access),
         _DetectorSpec("elf_deleted_fallback", _diff_elf_deleted_fallback),
         _DetectorSpec("template_inner_types", _diff_template_inner_types),
+        _DetectorSpec("symbol_renames", _diff_symbol_renames),
     ]
 
     changes: list[Change] = []
@@ -2907,6 +3108,10 @@ def compare(
     # detectors (e.g., function detector + PE/Mach-O detector both emitting
     # FUNC_REMOVED for the same symbol).
     changes = _deduplicate_cross_detector(changes)
+
+    # Suppress structural changes for opaque types (forward-declared only
+    # in the public header, is_opaque=True).  Consumers never see the layout.
+    changes = _downgrade_opaque_type_changes(changes, old, new)
 
     # Enrich source locations before suppression so source_location-based
     # suppression rules can match (most changes have source_location=None
@@ -3297,11 +3502,17 @@ def _diff_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         # Match by full name or by unqualified name (last component after ::)
         return name in allowed or name.split("::")[-1] in allowed
 
-    allowed_structs: set[str] = {
-        t.name for t in old.types
-    } | {
-        t.name for t in new.types
-    }
+    # Collect opaque (forward-declared only) struct names from each side.
+    # If a struct is opaque in *both* snapshots, its layout is not part of
+    # the public ABI — callers never see the fields — so DWARF layout
+    # changes should be suppressed.
+    old_opaque = {t.name for t in old.types if getattr(t, "is_opaque", False)}
+    new_opaque = {t.name for t in new.types if getattr(t, "is_opaque", False)}
+    both_opaque = old_opaque & new_opaque
+
+    allowed_structs: set[str] = (
+        {t.name for t in old.types} | {t.name for t in new.types}
+    ) - both_opaque
     allowed_enums: set[str] = {
         e.name for e in old.enums
     } | {
@@ -3653,9 +3864,12 @@ def _diff_elf_deleted_fallback(old: AbiSnapshot, new: AbiSnapshot) -> list[Chang
         if f_new.is_deleted:
             continue
 
-        # Skip if became inline (FUNC_BECAME_INLINE handles it)
-        if not f_old.is_inline and f_new.is_inline:
-            continue
+        # NOTE: We intentionally do NOT skip inline transitions here.
+        # When a function becomes inline AND its symbol vanishes from .dynsym,
+        # this is a binary break for pre-compiled consumers. The
+        # FUNC_BECAME_INLINE detector (API_BREAK) fires separately for the
+        # source-level concern; this detector adds FUNC_DELETED_ELF_FALLBACK
+        # (BREAKING) for the binary-level concern.
 
         # Skip if function moved to hidden visibility — FUNC_VISIBILITY_CHANGED handles it
         if getattr(f_new, "visibility", None) == Visibility.HIDDEN:

@@ -585,3 +585,51 @@ def test_symbol_version_required_cross_namespace_no_bleed() -> None:
         "Adding newer CXXABI_1.3.14 must be BREAKING regardless of GLIBCXX version"
     )
     assert result.verdict == Verdict.COMPATIBLE_WITH_RISK
+
+
+# ---------------------------------------------------------------------------
+# ELF visibility change tests
+# ---------------------------------------------------------------------------
+
+
+def test_elf_visibility_changed_default_to_protected() -> None:
+    """DEFAULT → PROTECTED visibility change is detected and COMPATIBLE."""
+    old = _snap(_elf(symbols=[_sym("foo", visibility="default")]))
+    new = _snap(_elf(symbols=[_sym("foo", visibility="protected")]))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.FUNC_VISIBILITY_PROTECTED_CHANGED in kinds
+    assert result.verdict == Verdict.COMPATIBLE
+
+
+def test_elf_visibility_unchanged_no_change() -> None:
+    """Same visibility → no visibility change."""
+    old = _snap(_elf(symbols=[_sym("foo", visibility="default")]))
+    new = _snap(_elf(symbols=[_sym("foo", visibility="default")]))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.FUNC_VISIBILITY_PROTECTED_CHANGED not in kinds
+
+
+# ---------------------------------------------------------------------------
+# Executable stack tests
+# ---------------------------------------------------------------------------
+
+
+def test_executable_stack_detected() -> None:
+    """has_executable_stack False → True is detected and COMPATIBLE."""
+    old = _snap(_elf(has_executable_stack=False))
+    new = _snap(_elf(has_executable_stack=True))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.EXECUTABLE_STACK in kinds
+    assert result.verdict == Verdict.COMPATIBLE
+
+
+def test_executable_stack_no_change() -> None:
+    """Same has_executable_stack value → no EXECUTABLE_STACK."""
+    old = _snap(_elf(has_executable_stack=False))
+    new = _snap(_elf(has_executable_stack=False))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.EXECUTABLE_STACK not in kinds

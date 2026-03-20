@@ -43,8 +43,15 @@ def _result(verdict: Verdict, kinds: list[ChangeKind]) -> DiffResult:
 # ── _apply_strict ────────────────────────────────────────────────────────────
 
 class TestApplyStrict:
-    def test_promotes_compatible_to_breaking(self):
+    def test_pure_addition_stays_compatible_in_strict(self):
+        # ABICC 2.3 semantics: pure additions stay COMPATIBLE even under -strict.
         r = _result(Verdict.COMPATIBLE, [ChangeKind.FUNC_ADDED])
+        promoted = _apply_strict(r)
+        assert promoted.verdict == Verdict.COMPATIBLE
+
+    def test_promotes_compatible_non_addition_to_breaking(self):
+        # Non-addition compatible changes ARE promoted under strict mode.
+        r = _result(Verdict.COMPATIBLE, [ChangeKind.FUNC_REMOVED_ELF_ONLY])
         promoted = _apply_strict(r)
         assert promoted.verdict == Verdict.BREAKING
 
@@ -77,9 +84,15 @@ class TestApplyStrict:
         result = _apply_strict(r, mode="api")
         assert result.verdict == Verdict.BREAKING
 
-    def test_full_mode_promotes_compatible(self):
-        # mode='full' (explicit): COMPATIBLE is promoted to BREAKING
+    def test_full_mode_pure_addition_stays_compatible(self):
+        # mode='full' (explicit): pure additions stay COMPATIBLE (ABICC parity)
         r = _result(Verdict.COMPATIBLE, [ChangeKind.FUNC_ADDED])
+        result = _apply_strict(r, mode="full")
+        assert result.verdict == Verdict.COMPATIBLE
+
+    def test_full_mode_promotes_non_addition_compatible(self):
+        # mode='full': non-addition compatible changes ARE promoted
+        r = _result(Verdict.COMPATIBLE, [ChangeKind.FUNC_REMOVED_ELF_ONLY])
         result = _apply_strict(r, mode="full")
         assert result.verdict == Verdict.BREAKING
 

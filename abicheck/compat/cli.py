@@ -219,6 +219,8 @@ def _apply_strict(result: DiffResult, *, mode: str = "full") -> DiffResult:
     """Apply strict-mode verdict promotion.
 
     mode='full': COMPATIBLE and API_BREAK → BREAKING (matches ABICC -strict behaviour).
+                 Exception: pure additions (FUNC_ADDED, VAR_ADDED, TYPE_ADDED, etc.)
+                 stay COMPATIBLE even in full mode, matching ABICC 2.3 semantics.
     mode='api':  only API_BREAK → BREAKING; COMPATIBLE stays COMPATIBLE.
                  Use when you want strict enforcement of API contract changes
                  but still allow purely additive changes.
@@ -226,6 +228,21 @@ def _apply_strict(result: DiffResult, *, mode: str = "full") -> DiffResult:
     from dataclasses import replace  # noqa: PLC0415
 
     from ..checker import Verdict  # noqa: PLC0415
+    from ..checker_policy import ChangeKind  # noqa: PLC0415
+
+    # ABICC semantics: pure additions remain COMPATIBLE even under -strict.
+    # Only incompatible changes (removals, type changes, etc.) are promoted.
+    _ADDITION_ONLY_KINDS: frozenset[ChangeKind] = frozenset({
+        ChangeKind.FUNC_ADDED,
+        ChangeKind.VAR_ADDED,
+        ChangeKind.TYPE_ADDED,
+        ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
+        ChangeKind.ENUM_MEMBER_ADDED,
+        ChangeKind.UNION_FIELD_ADDED,
+        ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
+        ChangeKind.CONSTANT_ADDED,
+        ChangeKind.NEEDED_ADDED,
+    })
 
     # COMPATIBLE_WITH_RISK is promoted to BREAKING in full strict mode:
     # it indicates a deployment-environment risk that the caller has opted-in
@@ -235,8 +252,51 @@ def _apply_strict(result: DiffResult, *, mode: str = "full") -> DiffResult:
         {"COMPATIBLE", "COMPATIBLE_WITH_RISK", "API_BREAK"} if mode == "full" else {"API_BREAK"}
     )
     if result.verdict.value in verdicts_to_promote:
+        # In full mode, don't promote COMPATIBLE if the only changes are
+        # pure additions — matches ABICC 2.3 behaviour where -strict keeps
+        # additive-only changes as compatible (rc=0).
+        if mode == "full" and result.verdict.value == "COMPATIBLE":
+            all_kinds = {c.kind for c in result.changes}
+            if all_kinds and all_kinds <= _ADDITION_ONLY_KINDS:
+                return result  # pure additions stay COMPATIBLE
         return replace(result, verdict=Verdict.BREAKING)
     return result
+
+
+def _is_widening_return_type_change(change: object) -> bool:
+    """Check if a FUNC_RETURN_CHANGED is a widening conversion.
+
+    Widening conversions (int→long, short→int, float→double, etc.) are
+    source-compatible — callers can accept a wider return type without
+    code changes.
+    """
+    from ..checker_policy import ChangeKind  # noqa: PLC0415
+
+    if getattr(change, "kind", None) != ChangeKind.FUNC_RETURN_CHANGED:
+        return False
+    old_val = (getattr(change, "old_value", "") or "").strip()
+    new_val = (getattr(change, "new_value", "") or "").strip()
+    _WIDENING_PAIRS: set[tuple[str, str]] = {
+        ("int", "long"),
+        ("int", "long int"),
+        ("int", "long long"),
+        ("int", "long long int"),
+        ("short", "int"),
+        ("short", "long"),
+        ("short int", "int"),
+        ("short int", "long"),
+        ("char", "short"),
+        ("char", "int"),
+        ("float", "double"),
+        ("float", "long double"),
+        ("double", "long double"),
+        ("unsigned int", "unsigned long"),
+        ("unsigned int", "unsigned long int"),
+        ("unsigned short", "unsigned int"),
+        ("unsigned char", "unsigned int"),
+        ("unsigned char", "unsigned short"),
+    }
+    return (old_val, new_val) in _WIDENING_PAIRS
 
 
 def _filter_source_only(result: DiffResult) -> DiffResult:
@@ -249,7 +309,14 @@ def _filter_source_only(result: DiffResult) -> DiffResult:
     from ..checker import DiffResult  # noqa: PLC0415
 
     policy = result.policy
-    filtered = [c for c in result.changes if c.kind not in _BINARY_ONLY_KINDS]
+    filtered = [
+        c for c in result.changes
+        if c.kind not in _BINARY_ONLY_KINDS
+        # In source mode, widening return-type changes (int→long, etc.) are
+        # source-compatible.  ABICC 2.3 treats them as warning-level (rc=0).
+        # Exclude them entirely so verdict and change list stay consistent.
+        and not _is_widening_return_type_change(c)
+    ]
     verdict = _compute_verdict(filtered, policy=policy)
 
     return DiffResult(
