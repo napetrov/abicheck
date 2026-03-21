@@ -155,7 +155,7 @@ def stack_to_html(result: StackCheckResult) -> str:
                 icon_sc = "\u274c" if abi_verdict == "BREAKING" else (
                     "\u26a0\ufe0f" if abi_verdict in ("API_BREAK", "COMPATIBLE_WITH_RISK") else "\u2705"
                 )
-                detail = f"Content changed"
+                detail = "Content changed"
                 abi_info = f"{h(abi_verdict)} ({abi_breaking} breaking / {abi_total} total)"
             rows.append(
                 f"<tr><td>{icon_sc}</td>"

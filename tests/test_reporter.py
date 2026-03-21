@@ -288,6 +288,7 @@ class TestAppCompatTraceability:
 
     def _appcompat_result(self):
         from types import SimpleNamespace
+
         from abicheck.checker_policy import Confidence
         diff = _result(Verdict.COMPATIBLE)
         diff.old_metadata = SimpleNamespace(path="/old/lib.so", sha256="aabb" * 8, size_bytes=4096)

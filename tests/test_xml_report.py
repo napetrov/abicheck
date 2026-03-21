@@ -490,3 +490,74 @@ class TestXmlEscaping:
         lib_el = binary.find("test_info/library")
         assert lib_el is not None
         assert lib_el.text == "lib&special"
+
+
+# ---------------------------------------------------------------------------
+# File metadata in XML report (traceability)
+# ---------------------------------------------------------------------------
+
+class TestXmlFileMetadata:
+    """XML report includes file metadata inside <test_info>."""
+
+    def test_file_info_present_in_test_info(self):
+        from abicheck.checker_types import LibraryMetadata
+
+        result = _make_result()
+        result.old_metadata = LibraryMetadata(
+            path="/old/lib.so", sha256="aa" * 32, size_bytes=4096,
+        )
+        result.new_metadata = LibraryMetadata(
+            path="/new/lib.so", sha256="bb" * 32, size_bytes=8192,
+        )
+        xml_str = generate_xml_report(result, lib_name="libtest")
+        root = xml_fromstring(xml_str)
+        binary = root.find("report[@kind='binary']")
+        file_info = binary.find("test_info/file_info")
+        assert file_info is not None
+        old_file = file_info.find("old_file")
+        assert old_file is not None
+        assert old_file.find("path").text == "/old/lib.so"
+        assert old_file.find("sha256").text == "aa" * 32
+        assert old_file.find("size_bytes").text == "4096"
+        new_file = file_info.find("new_file")
+        assert new_file is not None
+        assert new_file.find("path").text == "/new/lib.so"
+        assert new_file.find("size_bytes").text == "8192"
+
+    def test_file_info_absent_when_no_metadata(self):
+        result = _make_result()
+        xml_str = generate_xml_report(result, lib_name="libtest")
+        root = xml_fromstring(xml_str)
+        binary = root.find("report[@kind='binary']")
+        file_info = binary.find("test_info/file_info")
+        assert file_info is None
+
+    def test_file_info_in_source_section_too(self):
+        from abicheck.checker_types import LibraryMetadata
+
+        result = _make_result()
+        result.old_metadata = LibraryMetadata(
+            path="/old/lib.so", sha256="cc" * 32, size_bytes=1024,
+        )
+        result.new_metadata = LibraryMetadata(
+            path="/new/lib.so", sha256="dd" * 32, size_bytes=2048,
+        )
+        xml_str = generate_xml_report(result, lib_name="libtest")
+        root = xml_fromstring(xml_str)
+        source = root.find("report[@kind='source']")
+        file_info = source.find("test_info/file_info")
+        assert file_info is not None
+
+    def test_no_file_info_as_reports_child(self):
+        """file_info must NOT appear as direct child of <reports>."""
+        from abicheck.checker_types import LibraryMetadata
+
+        result = _make_result()
+        result.old_metadata = LibraryMetadata(
+            path="/old/lib.so", sha256="ee" * 32, size_bytes=512,
+        )
+        xml_str = generate_xml_report(result, lib_name="libtest")
+        root = xml_fromstring(xml_str)
+        # file_info should NOT be a direct child of <reports>
+        direct_file_info = root.find("file_info")
+        assert direct_file_info is None
