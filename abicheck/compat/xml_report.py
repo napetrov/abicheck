@@ -287,6 +287,22 @@ def _build_report_element(
     _build_version_element(test_info, "version1", old_version, arch, compiler)
     _build_version_element(test_info, "version2", new_version, arch, compiler)
 
+    # File metadata for traceability (inside <test_info> to stay schema-compatible)
+    old_meta = data.get("old_metadata")
+    new_meta = data.get("new_metadata")
+    if old_meta or new_meta:
+        file_info = ET.SubElement(test_info, "file_info")
+        if old_meta:
+            old_el = ET.SubElement(file_info, "old_file")
+            ET.SubElement(old_el, "path").text = getattr(old_meta, "path", "")
+            ET.SubElement(old_el, "sha256").text = getattr(old_meta, "sha256", "")
+            ET.SubElement(old_el, "size_bytes").text = str(getattr(old_meta, "size_bytes", 0))
+        if new_meta:
+            new_el = ET.SubElement(file_info, "new_file")
+            ET.SubElement(new_el, "path").text = getattr(new_meta, "path", "")
+            ET.SubElement(new_el, "sha256").text = getattr(new_meta, "sha256", "")
+            ET.SubElement(new_el, "size_bytes").text = str(getattr(new_meta, "size_bytes", 0))
+
     # <test_results>
     test_results = ET.SubElement(report, "test_results")
     verdict_el = ET.SubElement(test_results, "verdict")
@@ -365,27 +381,18 @@ def generate_xml_report(
 
     root = ET.Element("reports")
 
-    # File metadata for traceability
+    # File metadata — passed into each <report> via the data dict so it
+    # appears inside <test_info>, not as a sibling of <report>.
     old_meta = getattr(result, "old_metadata", None)
     new_meta = getattr(result, "new_metadata", None)
-    if old_meta or new_meta:
-        file_info = ET.SubElement(root, "file_info")
-        if old_meta:
-            old_el = ET.SubElement(file_info, "old_file")
-            ET.SubElement(old_el, "path").text = getattr(old_meta, "path", "")
-            ET.SubElement(old_el, "sha256").text = getattr(old_meta, "sha256", "")
-            ET.SubElement(old_el, "size_bytes").text = str(getattr(old_meta, "size_bytes", 0))
-        if new_meta:
-            new_el = ET.SubElement(file_info, "new_file")
-            ET.SubElement(new_el, "path").text = getattr(new_meta, "path", "")
-            ET.SubElement(new_el, "sha256").text = getattr(new_meta, "sha256", "")
-            ET.SubElement(new_el, "size_bytes").text = str(getattr(new_meta, "size_bytes", 0))
 
     redundant_count = getattr(result, "redundant_count", 0)
 
     # Binary compatibility section (all changes)
     binary_data = _compute_section(changes, old_symbol_count, exclude_binary_only=False)
     binary_data["redundant_count"] = redundant_count
+    binary_data["old_metadata"] = old_meta
+    binary_data["new_metadata"] = new_meta
     if verdict_override:
         binary_data["verdict"] = verdict_override
     binary_el = _build_report_element(
@@ -406,6 +413,8 @@ def generate_xml_report(
         source_data["redundant_count"] = source_redundant
     else:
         source_data["redundant_count"] = 0
+    source_data["old_metadata"] = old_meta
+    source_data["new_metadata"] = new_meta
     if verdict_override:
         source_data["verdict"] = verdict_override
     source_el = _build_report_element(
