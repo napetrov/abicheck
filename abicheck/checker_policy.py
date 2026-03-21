@@ -43,7 +43,7 @@ from enum import Enum
 from typing import Protocol
 
 from .change_registry import REGISTRY as _REGISTRY
-from .change_registry import Verdict as _RegistryVerdict
+from .change_registry import Verdict
 
 
 class ChangeKind(str, Enum):
@@ -309,14 +309,7 @@ class HasKind(Protocol):
     kind: ChangeKind
 
 
-class Verdict(str, Enum):
-    NO_CHANGE = "NO_CHANGE"  # identical ABI
-    COMPATIBLE = "COMPATIBLE"  # only additions / safe changes
-    COMPATIBLE_WITH_RISK = (
-        "COMPATIBLE_WITH_RISK"  # binary-compatible but deployment risk present
-    )
-    API_BREAK = "API_BREAK"  # source-level break — recompilation required
-    BREAKING = "BREAKING"  # binary ABI break
+# Verdict is imported from change_registry (single source of truth).
 
 
 class Confidence(str, Enum):
@@ -334,7 +327,7 @@ class Confidence(str, Enum):
 
 def _kinds_for(verdict_val: str) -> set[ChangeKind]:
     """Map registry verdict string values back to ChangeKind enum members."""
-    raw = _REGISTRY.kinds_for_verdict(getattr(_RegistryVerdict, verdict_val))
+    raw = _REGISTRY.kinds_for_verdict(getattr(Verdict, verdict_val))
     return {ChangeKind(v) for v in raw}
 
 

@@ -545,23 +545,33 @@ class TestTypeDedupThrottling:
         elf_meta.symbols = []
         return _DwarfSnapshotBuilder(elf_path="/dev/null", elf_meta=elf_meta)
 
+    def _make_die(self, tag="DW_TAG_structure_type", byte_size=8):
+        """Create a minimal mock DIE for builder methods."""
+        from unittest.mock import MagicMock
+
+        die = MagicMock()
+        die.tag = tag
+        # attr_int / attr_bool read die.attributes[attr].value
+        size_attr = MagicMock()
+        size_attr.value = byte_size
+        die.attributes = {"DW_AT_byte_size": size_attr}
+        die.iter_children.return_value = []
+        return die
+
     def test_type_dup_logged_once(self, caplog):
         """First duplicate logs debug message; subsequent duplicates are silent."""
         import logging
 
         builder = self._make_builder()
-        # Simulate first registration
+        die = self._make_die(tag="DW_TAG_structure_type", byte_size=8)
+        cu = None  # CU is unused for the duplicate-check path
+
+        # Seed "MyStruct" as already seen so subsequent calls are duplicates.
         builder._seen_type_names.add("MyStruct")
 
-        # Simulate three encounters of the same duplicate type
         with caplog.at_level(logging.DEBUG, logger="abicheck.dwarf_snapshot"):
             for _ in range(3):
-                if "MyStruct" in builder._seen_type_names:
-                    if "MyStruct" not in builder._logged_type_dups:
-                        builder._logged_type_dups.add("MyStruct")
-                        logging.getLogger("abicheck.dwarf_snapshot").debug(
-                            "Duplicate type skipped (first-wins): %s", "MyStruct"
-                        )
+                builder._process_record_type_named(die, cu, "MyStruct")
 
         dup_msgs = [r for r in caplog.records if "Duplicate type" in r.message]
         assert len(dup_msgs) == 1
@@ -572,16 +582,15 @@ class TestTypeDedupThrottling:
         import logging
 
         builder = self._make_builder()
+        die = self._make_die(tag="DW_TAG_enumeration_type", byte_size=4)
+        cu = None
+
+        # Seed "Color" as already seen so subsequent calls are duplicates.
         builder._seen_enum_names.add("Color")
 
         with caplog.at_level(logging.DEBUG, logger="abicheck.dwarf_snapshot"):
             for _ in range(3):
-                if "Color" in builder._seen_enum_names:
-                    if "Color" not in builder._logged_enum_dups:
-                        builder._logged_enum_dups.add("Color")
-                        logging.getLogger("abicheck.dwarf_snapshot").debug(
-                            "Duplicate enum skipped (first-wins): %s", "Color"
-                        )
+                builder._process_enum_named(die, cu, "Color")
 
         dup_msgs = [r for r in caplog.records if "Duplicate enum" in r.message]
         assert len(dup_msgs) == 1
@@ -593,9 +602,10 @@ class TestTypeDedupThrottling:
 
         builder = self._make_builder()
         # _seen_type_names is empty, so "NewType" is not a duplicate
+        die = self._make_die(tag="DW_TAG_structure_type", byte_size=8)
+        cu = None
         with caplog.at_level(logging.DEBUG, logger="abicheck.dwarf_snapshot"):
-            if "NewType" not in builder._seen_type_names:
-                builder._seen_type_names.add("NewType")
+            builder._process_record_type_named(die, cu, "NewType")
 
         dup_msgs = [r for r in caplog.records if "Duplicate" in r.message]
         assert len(dup_msgs) == 0
