@@ -264,53 +264,74 @@ def _resolve_headers_dir(case_dir: Path, v1_h: Path | None, v2_h: Path | None) -
 
 
 # ── Case layout detection ─────────────────────────────────────────────────────
-def find_sources(case_dir: Path) -> tuple[Path | None, Path | None, Path | None, Path | None]:
-    """Return (v1_src, v2_src, v1_h_hint, v2_h_hint) or (None, None, None, None) if unsupported."""
-    # v1/v2 layout
+_SourceResult = tuple[Path | None, Path | None, Path | None, Path | None]
+_NO_SOURCES: _SourceResult = (None, None, None, None)
+
+
+def _header_ext(ext: str) -> str:
+    """Map source extension to header extension."""
+    return ".h" if ext == ".c" else ".hpp"
+
+
+def _find_header(directory: Path, stem: str) -> Path | None:
+    """Find a header file by stem, preferring .hpp over .h."""
+    for hext in (".hpp", ".h"):
+        p = directory / f"{stem}{hext}"
+        if p.exists():
+            return p
+    return None
+
+
+def _try_v1v2_layout(case_dir: Path) -> _SourceResult:
+    """Try v1/v2 source layout."""
     for ext in (".c", ".cpp"):
         v1 = case_dir / f"v1{ext}"
         if v1.exists():
             v2 = case_dir / f"v2{ext}"
             if not v2.exists():
-                v2 = v1  # case04: identical
-            v1h = case_dir / f"v1{'.h' if ext == '.c' else '.hpp'}"
-            v2h = case_dir / f"v2{'.h' if ext == '.c' else '.hpp'}"
+                v2 = v1
+            hext = _header_ext(ext)
+            v1h = case_dir / f"v1{hext}"
+            v2h = case_dir / f"v2{hext}"
             return v1, v2, v1h if v1h.exists() else None, v2h if v2h.exists() else None
+    return _NO_SOURCES
 
-    # old/new layout (cases 19+)
+
+def _try_old_new_layout(case_dir: Path) -> _SourceResult:
+    """Try old/new directory layout (cases 19+)."""
     old_dir = case_dir / "old"
     new_dir = case_dir / "new"
-    if old_dir.is_dir() and new_dir.is_dir():
-        for ext in (".c", ".cpp"):
-            v1 = old_dir / f"lib{ext}"
-            if v1.exists():
-                v2 = new_dir / f"lib{ext}"
-                if not v2.exists():
-                    v2 = v1
-                # Resolve headers independently for each side so that a
-                # missing .hpp on one side doesn't block finding .h on the other.
-                def _find_h(d: Path, stem: str) -> Path | None:
-                    for hext in (".hpp", ".h"):
-                        p = d / f"{stem}{hext}"
-                        if p.exists():
-                            return p
-                    return None
-                v1h = _find_h(old_dir, "lib")
-                v2h = _find_h(new_dir, "lib")
-                return v1, v2, v1h, v2h
+    if not (old_dir.is_dir() and new_dir.is_dir()):
+        return _NO_SOURCES
+    for ext in (".c", ".cpp"):
+        v1 = old_dir / f"lib{ext}"
+        if v1.exists():
+            v2 = new_dir / f"lib{ext}"
+            if not v2.exists():
+                v2 = v1
+            v1h = _find_header(old_dir, "lib")
+            v2h = _find_header(new_dir, "lib")
+            return v1, v2, v1h, v2h
+    return _NO_SOURCES
 
-    # case18: libfoo_v1.c / libfoo_v2.c
+
+def _try_libfoo_layout(case_dir: Path) -> _SourceResult:
+    """Try libfoo_v1/v2 layout (case18)."""
     for ext in (".c", ".cpp"):
         v1 = case_dir / f"libfoo_v1{ext}"
         if v1.exists():
             v2 = case_dir / f"libfoo_v2{ext}"
             if not v2.exists():
                 v2 = v1
-            v1h = case_dir / f"foo_v1{'.h' if ext == '.c' else '.hpp'}"
-            v2h = case_dir / f"foo_v2{'.h' if ext == '.c' else '.hpp'}"
+            hext = _header_ext(ext)
+            v1h = case_dir / f"foo_v1{hext}"
+            v2h = case_dir / f"foo_v2{hext}"
             return v1, v2, v1h if v1h.exists() else None, v2h if v2h.exists() else None
+    return _NO_SOURCES
 
-    # good/bad layout (cases 05/06/13)
+
+def _try_good_bad_layout(case_dir: Path) -> _SourceResult:
+    """Try good/bad layout (cases 05/06/13)."""
     for ext in (".c", ".cpp"):
         v1 = case_dir / f"good{ext}"
         if v1.exists():
@@ -318,8 +339,16 @@ def find_sources(case_dir: Path) -> tuple[Path | None, Path | None, Path | None,
             if not v2.exists():
                 v2 = v1
             return v1, v2, None, None
+    return _NO_SOURCES
 
-    return None, None, None, None
+
+def find_sources(case_dir: Path) -> _SourceResult:
+    """Return (v1_src, v2_src, v1_h_hint, v2_h_hint) or (None, None, None, None) if unsupported."""
+    for finder in (_try_v1v2_layout, _try_old_new_layout, _try_libfoo_layout, _try_good_bad_layout):
+        result = finder(case_dir)
+        if result != _NO_SOURCES:
+            return result
+    return _NO_SOURCES
 
 
 # ── abicheck compare (dump + compare pipeline) ────────────────────────────────

@@ -224,7 +224,7 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
     # class of change. Both tools return NO_CHANGE (parity — but incorrectly so).
     # The "correct" behavior would be BREAKING, but neither tool achieves it here.
     # See: https://github.com/lvc/abi-compliance-checker/issues/100
-    # TODO: detect = delete via a different mechanism (e.g. DWARF or ELF mangled names)
+    # Future: detect = delete via a different mechanism (e.g. DWARF or ELF mangled names)
     (
         "func_deleted_marker",
         "class Foo { public: Foo(); Foo(const Foo&); };\n"

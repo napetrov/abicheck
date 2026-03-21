@@ -131,6 +131,72 @@ def _sniff_text_format(path: Path) -> str:
     return "unknown"
 
 
+def _dump_elf(
+    path: Path, headers: list[Path], includes: list[Path],
+    version: str, lang: str, *, dwarf_only: bool = False,
+) -> AbiSnapshot:
+    """Dump ABI snapshot from an ELF binary."""
+    resolved_headers = _expand_header_inputs(headers) if headers else []
+    if not resolved_headers and not dwarf_only:
+        click.echo(
+            f"Warning: '{path}' — no headers provided. "
+            "Will use DWARF debug info if available, else symbols-only mode.",
+            err=True,
+        )
+    if resolved_headers and not dwarf_only:
+        for inc in includes:
+            if not inc.exists() or not inc.is_dir():
+                raise click.ClickException(f"Include directory not found or not a directory: {inc}")
+    elif includes and not dwarf_only:
+        click.echo(
+            "Warning: --include paths are ignored without headers.",
+            err=True,
+        )
+    compiler = "cc" if lang == "c" else "c++"
+    try:
+        return dump(
+            so_path=path,
+            headers=resolved_headers,
+            extra_includes=includes,
+            version=version,
+            compiler=compiler,
+            lang=lang if lang == "c" else None,
+            dwarf_only=dwarf_only,
+        )
+    except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
+        raise click.ClickException(f"Failed to dump '{path}': {exc}") from exc
+
+
+def _dump_macho(path: Path, version: str) -> AbiSnapshot:
+    """Dump ABI snapshot from a Mach-O binary."""
+    from .macho_metadata import parse_macho_metadata
+    try:
+        macho_meta = parse_macho_metadata(path)
+    except (RuntimeError, OSError, ValueError) as exc:
+        raise click.ClickException(
+            f"Failed to parse Mach-O '{path}': {exc}"
+        ) from exc
+    if not macho_meta.exports and not macho_meta.install_name and not macho_meta.dependent_libs:
+        raise click.ClickException(
+            f"Mach-O file '{path}' has no exports or load-command metadata. "
+            "Verify the file is a valid dynamic library."
+        )
+    from .model import Function, Visibility
+    funcs = [
+        Function(
+            name=exp.name, mangled=exp.name, return_type="?",
+            visibility=Visibility.PUBLIC,
+            is_extern_c=not exp.name.startswith("_Z"),
+        )
+        for exp in macho_meta.exports if exp.name
+    ]
+    return AbiSnapshot(
+        library=path.name, version=version,
+        functions=funcs, macho=macho_meta,
+        platform="macho",
+    )
+
+
 def _dump_native_binary(
     path: Path, binary_fmt: str,
     headers: list[Path], includes: list[Path],
@@ -145,40 +211,8 @@ def _dump_native_binary(
     is set or DWARF debug info is available (ADR-003 fallback chain).
     For PE/Mach-O, headers are optional — export tables provide the symbol surface.
     """
-    fmt_labels = {"elf": "ELF", "pe": "PE (Windows DLL)", "macho": "Mach-O (macOS dylib)"}
-    fmt_label = fmt_labels.get(binary_fmt, binary_fmt)
-
     if binary_fmt == "elf":
-        resolved_headers = _expand_header_inputs(headers) if headers else []
-        if not resolved_headers and not dwarf_only:
-            click.echo(
-                f"Warning: '{path}' — no headers provided. "
-                "Will use DWARF debug info if available, else symbols-only mode.",
-                err=True,
-            )
-        # include dirs are only relevant when headers are parsed via castxml
-        if resolved_headers and not dwarf_only:
-            for inc in includes:
-                if not inc.exists() or not inc.is_dir():
-                    raise click.ClickException(f"Include directory not found or not a directory: {inc}")
-        elif includes and not dwarf_only:
-            click.echo(
-                "Warning: --include paths are ignored without headers.",
-                err=True,
-            )
-        compiler = "cc" if lang == "c" else "c++"
-        try:
-            return dump(
-                so_path=path,
-                headers=resolved_headers,
-                extra_includes=includes,
-                version=version,
-                compiler=compiler,
-                lang=lang if lang == "c" else None,
-                dwarf_only=dwarf_only,
-            )
-        except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
-            raise click.ClickException(f"Failed to dump '{path}': {exc}") from exc
+        return _dump_elf(path, headers, includes, version, lang, dwarf_only=dwarf_only)
 
     if binary_fmt == "pe":
         from .service import _dump_pe
@@ -188,35 +222,10 @@ def _dump_native_binary(
             raise click.ClickException(str(exc)) from exc
 
     if binary_fmt == "macho":
-        from .macho_metadata import parse_macho_metadata
-        try:
-            macho_meta = parse_macho_metadata(path)
-        except (RuntimeError, OSError, ValueError) as exc:
-            raise click.ClickException(
-                f"Failed to parse Mach-O '{path}': {exc}"
-            ) from exc
-        if not macho_meta.exports and not macho_meta.install_name and not macho_meta.dependent_libs:
-            raise click.ClickException(
-                f"Mach-O file '{path}' has no exports or load-command metadata. "
-                "Verify the file is a valid dynamic library."
-            )
-        # Build snapshot from Mach-O export table
-        from .model import Function, Visibility
-        funcs = [
-            Function(
-                name=exp.name, mangled=exp.name, return_type="?",
-                visibility=Visibility.PUBLIC,
-                is_extern_c=not exp.name.startswith("_Z"),
-            )
-            for exp in macho_meta.exports if exp.name
-        ]
-        return AbiSnapshot(
-            library=path.name, version=version,
-            functions=funcs, macho=macho_meta,
-            platform="macho",
-        )
+        return _dump_macho(path, version)
 
-    raise click.ClickException(f"Unsupported binary format: {fmt_label}")
+    fmt_labels = {"elf": "ELF", "pe": "PE (Windows DLL)", "macho": "Mach-O (macOS dylib)"}
+    raise click.ClickException(f"Unsupported binary format: {fmt_labels.get(binary_fmt, binary_fmt)}")
 
 
 def _resolve_input(

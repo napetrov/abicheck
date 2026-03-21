@@ -115,85 +115,84 @@ class ShowOnlyFilter:
             actions=frozenset(actions),
         )
 
-    def matches(self, change: Change, policy: str = "strict_abi") -> bool:
-        """Return True if *change* passes this filter."""
-        kind_val = change.kind.value
+    def _check_severity(self, change: Change, policy: str) -> bool:
+        """Return True if *change* matches the severity filter."""
+        if not self.severities:
+            return True
+        breaking_set, api_break_set, compat_set, risk_set = _policy_kind_sets(policy)
+        severity_map = {
+            "breaking": breaking_set,
+            "api-break": api_break_set,
+            "risk": risk_set,
+            "compatible": compat_set,
+        }
+        return any(
+            sev in self.severities and change.kind in kind_set
+            for sev, kind_set in severity_map.items()
+        )
 
-        # Severity check
-        if self.severities:
-            breaking_set, api_break_set, compat_set, risk_set = _policy_kind_sets(policy)
-            sev_ok = False
-            if "breaking" in self.severities and change.kind in breaking_set:
-                sev_ok = True
-            if "api-break" in self.severities and change.kind in api_break_set:
-                sev_ok = True
-            if "risk" in self.severities and change.kind in risk_set:
-                sev_ok = True
-            if "compatible" in self.severities and change.kind in compat_set:
-                sev_ok = True
-            if not sev_ok:
-                return False
-
-        # Element check
-        if self.elements:
-            elem_ok = False
-            if "functions" in self.elements and any(
-                kind_val.startswith(p) for p in (
-                    "func_", "param_", "method_", "base_class_",
-                    "template_", "return_pointer_level_",
-                )
-            ) or "functions" in self.elements and kind_val in (
-                "removed_const_overload", "anon_field_changed",
-                "used_reserved_field", "frame_register_changed",
-            ):
-                elem_ok = True
-            if "variables" in self.elements and any(
-                kind_val.startswith(p) for p in ("var_", "constant_")
-            ):
-                elem_ok = True
-            if "types" in self.elements and any(kind_val.startswith(p) for p in (
-                "type_", "struct_", "union_", "field_", "typedef_",
-            )):
-                elem_ok = True
-            if "enums" in self.elements and kind_val.startswith("enum_"):
-                elem_ok = True
-            if "elf" in self.elements and any(kind_val.startswith(p) for p in (
+    def _check_element(self, kind_val: str) -> bool:
+        """Return True if *kind_val* matches the element filter."""
+        if not self.elements:
+            return True
+        _ELEMENT_PREFIXES: dict[str, tuple[str, ...]] = {
+            "functions": (
+                "func_", "param_", "method_", "base_class_",
+                "template_", "return_pointer_level_",
+            ),
+            "variables": ("var_", "constant_"),
+            "types": ("type_", "struct_", "union_", "field_", "typedef_"),
+            "enums": ("enum_",),
+            "elf": (
                 "soname_", "needed_", "symbol_", "rpath_", "runpath_",
                 "ifunc_", "common_", "dwarf_", "calling_convention_",
                 "compat_version_", "visibility_",
-            )) or "elf" in self.elements and kind_val in (
+            ),
+        }
+        _ELEMENT_EXACT: dict[str, tuple[str, ...]] = {
+            "functions": (
+                "removed_const_overload", "anon_field_changed",
+                "used_reserved_field", "frame_register_changed",
+            ),
+            "elf": (
                 "toolchain_flag_drift", "source_level_kind_changed",
                 "value_abi_trait_changed",
-            ):
-                elem_ok = True
-            if not elem_ok:
-                return False
+            ),
+        }
+        for elem in self.elements:
+            prefixes = _ELEMENT_PREFIXES.get(elem, ())
+            if prefixes and any(kind_val.startswith(p) for p in prefixes):
+                return True
+            exact = _ELEMENT_EXACT.get(elem, ())
+            if exact and kind_val in exact:
+                return True
+        return False
 
-        # Action check
-        if self.actions:
-            act_ok = False
-            if "added" in self.actions and (
-                kind_val.endswith("_added")
-                or kind_val.endswith("_added_compatible")
-            ):
-                act_ok = True
-            if "removed" in self.actions and (
-                kind_val.endswith("_removed")
-                or kind_val.endswith("_deleted")
-                or kind_val.endswith("_elf_only")
-                or kind_val.endswith("_elf_fallback")
-            ):
-                act_ok = True
-            if "changed" in self.actions and not (
-                kind_val.endswith("_added") or kind_val.endswith("_added_compatible")
-                or kind_val.endswith("_removed") or kind_val.endswith("_deleted")
-                or kind_val.endswith("_elf_only") or kind_val.endswith("_elf_fallback")
-            ):
-                act_ok = True
-            if not act_ok:
-                return False
+    @staticmethod
+    def _check_action(kind_val: str, actions: frozenset[str]) -> bool:
+        """Return True if *kind_val* matches the action filter."""
+        if not actions:
+            return True
+        _ADDED_SUFFIXES = ("_added", "_added_compatible")
+        _REMOVED_SUFFIXES = ("_removed", "_deleted", "_elf_only", "_elf_fallback")
+        if "added" in actions and any(kind_val.endswith(s) for s in _ADDED_SUFFIXES):
+            return True
+        if "removed" in actions and any(kind_val.endswith(s) for s in _REMOVED_SUFFIXES):
+            return True
+        if "changed" in actions and not (
+            any(kind_val.endswith(s) for s in _ADDED_SUFFIXES)
+            or any(kind_val.endswith(s) for s in _REMOVED_SUFFIXES)
+        ):
+            return True
+        return False
 
-        return True
+    def matches(self, change: Change, policy: str = "strict_abi") -> bool:
+        """Return True if *change* passes this filter."""
+        if not self._check_severity(change, policy):
+            return False
+        if not self._check_element(change.kind.value):
+            return False
+        return self._check_action(change.kind.value, self.actions)
 
 
 def apply_show_only(
@@ -311,6 +310,43 @@ def _build_impact_table(
 # Leaf-change mode helpers
 # ---------------------------------------------------------------------------
 
+
+def _format_leaf_type_change(c: Change) -> list[str]:
+    """Format a single leaf-mode type change entry."""
+    lines = [f"### {c.symbol} — {c.description}"]
+    if c.affected_symbols:
+        lines.append(f"\n**Affected interfaces ({len(c.affected_symbols)}):**")
+        for sym in c.affected_symbols[:10]:
+            lines.append(f"- `{sym}`")
+        if len(c.affected_symbols) > 10:
+            lines.append(f"- ... ({len(c.affected_symbols) - 10} more)")
+    if c.caused_count > 0:
+        lines.append(f"\n> {c.caused_count} derived change(s) collapsed")
+    lines.append("")
+    return lines
+
+
+def _build_leaf_type_sections(type_changes: list[Change], policy: str) -> list[str]:
+    """Build severity-grouped type-change sections for leaf-change view."""
+    breaking_set, api_break_set, _, _ = _policy_kind_sets(policy)
+    breaking_types = [c for c in type_changes if c.kind in breaking_set]
+    api_break_types = [c for c in type_changes if c.kind in api_break_set]
+    other_types = [c for c in type_changes if c.kind not in breaking_set and c.kind not in api_break_set]
+
+    lines: list[str] = []
+    for section_label, section_changes in [
+        ("## Breaking Type Changes", breaking_types),
+        ("## Source-Level Type Breaks", api_break_types),
+        ("## Other Type Changes", other_types),
+    ]:
+        if not section_changes:
+            continue
+        lines += [section_label, ""]
+        for c in section_changes:
+            lines += _format_leaf_type_change(c)
+    return lines
+
+
 def _to_markdown_leaf(
     result: DiffResult,
     show_impact: bool = False,
@@ -345,31 +381,7 @@ def _to_markdown_leaf(
     non_type_changes = [c for c in changes if c.kind not in _ROOT_TYPE_CHANGE_KINDS]
 
     if type_changes:
-        breaking_set, api_break_set, _, _ = _policy_kind_sets(result.policy)
-
-        breaking_types = [c for c in type_changes if c.kind in breaking_set]
-        api_break_types = [c for c in type_changes if c.kind in api_break_set]
-        other_types = [c for c in type_changes if c.kind not in breaking_set and c.kind not in api_break_set]
-
-        for section_label, section_changes in [
-            ("## Breaking Type Changes", breaking_types),
-            ("## Source-Level Type Breaks", api_break_types),
-            ("## Other Type Changes", other_types),
-        ]:
-            if not section_changes:
-                continue
-            lines += [section_label, ""]
-            for c in section_changes:
-                lines.append(f"### {c.symbol} — {c.description}")
-                if c.affected_symbols:
-                    lines.append(f"\n**Affected interfaces ({len(c.affected_symbols)}):**")
-                    for sym in c.affected_symbols[:10]:
-                        lines.append(f"- `{sym}`")
-                    if len(c.affected_symbols) > 10:
-                        lines.append(f"- ... ({len(c.affected_symbols) - 10} more)")
-                if c.caused_count > 0:
-                    lines.append(f"\n> {c.caused_count} derived change(s) collapsed")
-                lines.append("")
+        lines += _build_leaf_type_sections(type_changes, result.policy)
 
     if non_type_changes:
         lines += ["## Non-Type Changes", ""]
@@ -798,6 +810,82 @@ def _footer_lines() -> list[str]:
     ]
 
 
+def _build_library_files_section(old_meta: object, new_meta: object) -> list[str]:
+    """Build the '## Library Files' markdown section."""
+    lines = ["## Library Files", "", "| | Old | New |", "|---|---|---|"]
+    old_path = getattr(old_meta, "path", "—") if old_meta else "—"
+    new_path = getattr(new_meta, "path", "—") if new_meta else "—"
+    old_sha = getattr(old_meta, "sha256", "—")[:12] if old_meta else "—"
+    new_sha = getattr(new_meta, "sha256", "—")[:12] if new_meta else "—"
+    old_size = _fmt_size(old_meta.size_bytes) if old_meta else "—"
+    new_size = _fmt_size(new_meta.size_bytes) if new_meta else "—"
+    lines += [
+        f"| **Path** | `{old_path}` | `{new_path}` |",
+        f"| **SHA-256** | `{old_sha}…` | `{new_sha}…` |",
+        f"| **Size** | {old_size} | {new_size} |",
+        "",
+    ]
+    return lines
+
+
+def _build_severity_sections(
+    breaking: list[Change],
+    source_breaks: list[Change],
+    risk: list[Change],
+    compatible: list[Change],
+    *,
+    severity_config: SeverityConfig | None = None,
+) -> list[str]:
+    """Build all severity-grouped markdown sections."""
+    lines: list[str] = []
+
+    if breaking:
+        sev_label = _section_severity_label(severity_config, "abi_breaking")
+        lines += [f"## {_BREAKING_ICON} Breaking Changes{sev_label}", ""]
+        for c in breaking:
+            lines.append(_format_change_md(c))
+        lines.append("")
+
+    if source_breaks:
+        sev_label = _section_severity_label(severity_config, "potential_breaking")
+        lines += [f"## {_SOURCE_BREAK_ICON} Source-Level Breaks{sev_label}", ""]
+        for c in source_breaks:
+            lines.append(_format_change_md(c))
+        lines.append("")
+
+    if risk:
+        sev_label = _section_severity_label(severity_config, "potential_breaking")
+        lines += [f"## {_RISK_ICON} Deployment Risk Changes{sev_label}", ""]
+        lines += [
+            "> These changes are **binary-compatible** but may cause the library to fail",
+            "> loading on older systems (e.g. a new GLIBC version requirement). Verify",
+            "> your target environment before deploying.",
+            "",
+        ]
+        for c in risk:
+            lines.append(f"- **{c.kind.value}**: {c.description}")
+        lines.append("")
+
+    if compatible:
+        from .checker_policy import ADDITION_KINDS as _ADDITION_KINDS
+        quality = [c for c in compatible if c.kind not in _ADDITION_KINDS]
+        additions_list = [c for c in compatible if c.kind in _ADDITION_KINDS]
+        if quality:
+            sev_label = _section_severity_label(severity_config, "quality_issues")
+            lines += [f"## {_QUALITY_ICON} Quality Issues{sev_label}", ""]
+            for c in quality:
+                lines.append(f"- **{c.kind.value}**: {c.description}")
+            lines.append("")
+        if additions_list:
+            sev_label = _section_severity_label(severity_config, "addition")
+            lines += [f"## {_ADDITION_ICON} Additions{sev_label}", ""]
+            for c in additions_list:
+                lines.append(f"- {c.description}")
+            lines.append("")
+
+    return lines
+
+
 def to_markdown(
     result: DiffResult,
     *,
@@ -858,68 +946,12 @@ def to_markdown(
         lines.append("")
 
     if old_meta or new_meta:
-        lines += ["## Library Files", "", "| | Old | New |", "|---|---|---|"]
-        old_path = getattr(old_meta, "path", "—") if old_meta else "—"
-        new_path = getattr(new_meta, "path", "—") if new_meta else "—"
-        old_sha = getattr(old_meta, "sha256", "—")[:12] if old_meta else "—"
-        new_sha = getattr(new_meta, "sha256", "—")[:12] if new_meta else "—"
-        old_size = _fmt_size(old_meta.size_bytes) if old_meta else "—"
-        new_size = _fmt_size(new_meta.size_bytes) if new_meta else "—"
-        lines += [
-            f"| **Path** | `{old_path}` | `{new_path}` |",
-            f"| **SHA-256** | `{old_sha}…` | `{new_sha}…` |",
-            f"| **Size** | {old_size} | {new_size} |",
-            "",
-        ]
+        lines += _build_library_files_section(old_meta, new_meta)
 
-    if breaking:
-        sev_label = _section_severity_label(severity_config, "abi_breaking")
-        lines += [f"## {_BREAKING_ICON} Breaking Changes{sev_label}", ""]
-        for c in breaking:
-            lines.append(_format_change_md(c))
-        lines.append("")
-
-    if source_breaks:
-        sev_label = _section_severity_label(severity_config, "potential_breaking")
-        lines += [f"## {_SOURCE_BREAK_ICON} Source-Level Breaks{sev_label}", ""]
-        for c in source_breaks:
-            lines.append(_format_change_md(c))
-        lines.append("")
-
-    if risk:
-        # Risk changes share the "potential_breaking" severity category with
-        # source-level breaks (both are potential incompatibilities), so they
-        # show the same severity badge in the report.
-        sev_label = _section_severity_label(severity_config, "potential_breaking")
-        lines += [f"## {_RISK_ICON} Deployment Risk Changes{sev_label}", ""]
-        lines += [
-            "> These changes are **binary-compatible** but may cause the library to fail",
-            "> loading on older systems (e.g. a new GLIBC version requirement). Verify",
-            "> your target environment before deploying.",
-            "",
-        ]
-        for c in risk:
-            lines.append(f"- **{c.kind.value}**: {c.description}")
-        lines.append("")
-
-    # Split compatible changes into quality/behavioral issues vs additions
-    # using the canonical kind sets from checker_policy (single source of truth).
-    if compatible:
-        from .checker_policy import ADDITION_KINDS as _ADDITION_KINDS
-        quality = [c for c in compatible if c.kind not in _ADDITION_KINDS]
-        additions_list = [c for c in compatible if c.kind in _ADDITION_KINDS]
-        if quality:
-            sev_label = _section_severity_label(severity_config, "quality_issues")
-            lines += [f"## {_QUALITY_ICON} Quality Issues{sev_label}", ""]
-            for c in quality:
-                lines.append(f"- **{c.kind.value}**: {c.description}")
-            lines.append("")
-        if additions_list:
-            sev_label = _section_severity_label(severity_config, "addition")
-            lines += [f"## {_ADDITION_ICON} Additions{sev_label}", ""]
-            for c in additions_list:
-                lines.append(f"- {c.description}")
-            lines.append("")
+    lines += _build_severity_sections(
+        breaking, source_breaks, risk, compatible,
+        severity_config=severity_config,
+    )
 
     if not changes:
         if show_only and result.changes:

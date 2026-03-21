@@ -39,7 +39,7 @@ def _compile_so(tmp_path: Path, name: str, src: str, lang: str = "c") -> Path:
     ext = ".c" if lang == "c" else ".cpp"
     compiler = "gcc" if lang == "c" else "g++"
     src_file = tmp_path / f"{name}{ext}"
-    so_file  = tmp_path / f"{name}.so"
+    so_file = tmp_path / f"{name}.so"
     src_file.write_text(textwrap.dedent(src).strip(), encoding="utf-8")
     r = subprocess.run(
         [compiler, "-shared", "-fPIC", "-g", "-fvisibility=default",
@@ -68,9 +68,9 @@ class TestUnifiedEqualsSepaRate:
         so = _compile_so(tmp_path, "libtest", "int add(int a, int b) { return a+b; }")
         meta, adv = parse_dwarf(so)
         meta2 = parse_dwarf_metadata(so)
-        adv2  = parse_advanced_dwarf(so)
-        assert meta.has_dwarf  == meta2.has_dwarf
-        assert adv.has_dwarf   == adv2.has_dwarf
+        adv2 = parse_advanced_dwarf(so)
+        assert meta.has_dwarf == meta2.has_dwarf
+        assert adv.has_dwarf == adv2.has_dwarf
 
     def test_structs_identical(self, tmp_path: Path) -> None:
         _require_tool("gcc")
@@ -78,7 +78,7 @@ class TestUnifiedEqualsSepaRate:
             "typedef struct { int x; int y; } Point;\n"
             "Point make(int x, int y) { Point p = {x,y}; return p; }")
         meta, _ = parse_dwarf(so)
-        meta2   = parse_dwarf_metadata(so)
+        meta2 = parse_dwarf_metadata(so)
         assert meta.structs == meta2.structs
 
     def test_enums_identical(self, tmp_path: Path) -> None:
@@ -87,24 +87,24 @@ class TestUnifiedEqualsSepaRate:
             "typedef enum { RED=0, GREEN=1, BLUE=2 } Color;\n"
             "Color get(void) { return RED; }")
         meta, _ = parse_dwarf(so)
-        meta2   = parse_dwarf_metadata(so)
+        meta2 = parse_dwarf_metadata(so)
         assert meta.enums == meta2.enums
 
     def test_toolchain_identical(self, tmp_path: Path) -> None:
         _require_tool("gcc")
         so = _compile_so(tmp_path, "libtc",
             "int fn(void) { return 1; }")
-        _, adv  = parse_dwarf(so)
-        adv2    = parse_advanced_dwarf(so)
+        _, adv = parse_dwarf(so)
+        adv2 = parse_advanced_dwarf(so)
         assert adv.toolchain.compiler == adv2.toolchain.compiler
-        assert adv.toolchain.version  == adv2.toolchain.version
+        assert adv.toolchain.version == adv2.toolchain.version
 
     def test_calling_conventions_identical(self, tmp_path: Path) -> None:
         _require_tool("gcc")
         so = _compile_so(tmp_path, "libcc",
             "int __attribute__((cdecl)) fn(int x) { return x; }")
         _, adv = parse_dwarf(so)
-        adv2   = parse_advanced_dwarf(so)
+        adv2 = parse_advanced_dwarf(so)
         assert adv.calling_conventions == adv2.calling_conventions
 
     def test_packed_structs_identical(self, tmp_path: Path) -> None:
@@ -113,7 +113,7 @@ class TestUnifiedEqualsSepaRate:
             "struct __attribute__((packed)) Hdr { char a; int b; };\n"
             "struct Hdr make(void) { struct Hdr h = {'x', 1}; return h; }")
         _, adv = parse_dwarf(so)
-        adv2   = parse_advanced_dwarf(so)
+        adv2 = parse_advanced_dwarf(so)
         assert adv.packed_structs == adv2.packed_structs
 
 

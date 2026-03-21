@@ -630,8 +630,8 @@ class TestDumpMachoDwarfOnlyWarning:
                     fake_path, headers=[], extra_includes=[],
                     version="1.0", compiler="c++", dwarf_only=True,
                 )
-            except Exception:
-                pass  # Expected to fail on fake binary
+            except Exception:  # noqa: B110 - Expected to fail on fake binary
+                pass
 
         dwarf_warnings = [
             x for x in w

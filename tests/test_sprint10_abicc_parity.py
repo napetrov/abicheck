@@ -119,9 +119,9 @@ class TestFuncVisibilityChanged:
 
     def test_multiple_functions_only_changed_one_reported(self) -> None:
         """Only the visibility-changed function emits FUNC_VISIBILITY_CHANGED."""
-        stable  = _func("stable", "_Z6stablev", visibility=Visibility.PUBLIC)
-        old_api = _func("api",    "_Z3apiv",    visibility=Visibility.PUBLIC)
-        new_api = _func("api",    "_Z3apiv",    visibility=Visibility.HIDDEN)
+        stable = _func("stable", "_Z6stablev", visibility=Visibility.PUBLIC)
+        old_api = _func("api", "_Z3apiv", visibility=Visibility.PUBLIC)
+        new_api = _func("api", "_Z3apiv", visibility=Visibility.HIDDEN)
         r = compare(
             _snap(functions=[stable, old_api]),
             _snap("2.0", functions=[stable, new_api]),
@@ -185,7 +185,7 @@ class TestTypeFieldAddedBreaking:
             size_bits=96,
             vtable=["_ZN6Widget6renderEv"],
             fields=[
-                TypeField("id",    "int", offset_bits=0),
+                TypeField("id", "int", offset_bits=0),
                 TypeField("flags", "int", offset_bits=32),
             ],
         )
@@ -265,7 +265,7 @@ class TestTypeFieldAddedBreaking:
             kind="class",
             vtable=["_ZN12EventHandler6handleEv"],
             fields=[
-                TypeField("id",   "int", offset_bits=0),
+                TypeField("id", "int", offset_bits=0),
                 TypeField("data", "int", offset_bits=32),
             ],
         )
