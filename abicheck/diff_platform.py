@@ -19,6 +19,7 @@ from typing import Any
 
 from .checker_policy import ChangeKind
 from .checker_types import Change
+from .detector_registry import registry
 from .diff_symbols import _public_functions
 from .diff_types import _RESERVED_FIELD_RE
 from .dwarf_advanced import diff_advanced_dwarf
@@ -31,6 +32,7 @@ from .model import (
 # Module-level constant: ELF visibility values that form the default<->protected pair (case51).
 _ELF_VIS_PROTECTED_PAIR: frozenset[str] = frozenset({"default", "protected"})
 
+@registry.detector("elf")
 def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """ELF-only detectors (Sprint 2): no debug info required."""
     from .elf_metadata import ElfMetadata
@@ -46,6 +48,13 @@ def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector(
+    "pe",
+    requires_support=lambda o, n: (
+        o.pe is not None and n.pe is not None,
+        "missing PE metadata",
+    ),
+)
 def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """PE-specific detectors for Windows DLL ABI changes."""
     from .pe_metadata import PeMetadata
@@ -105,6 +114,13 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector(
+    "macho",
+    requires_support=lambda o, n: (
+        o.macho is not None and n.macho is not None,
+        "missing Mach-O metadata",
+    ),
+)
 def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Mach-O-specific detectors for macOS dylib ABI changes."""
     from .macho_metadata import MachoMetadata
@@ -616,6 +632,7 @@ def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]
 
 # ── Sprint 3: DWARF-aware layout diff ────────────────────────────────────────
 
+@registry.detector("dwarf")
 def _diff_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """DWARF-aware struct/enum layout detectors (Sprint 3).
 
@@ -969,6 +986,7 @@ def _diff_advanced_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 # ── PR #89: ELF fallback for = delete (issue #100) ───────────────────────────
 
+@registry.detector("elf_deleted_fallback")
 def _diff_elf_deleted_fallback(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """ELF fallback for detecting implicitly-deleted / disappeared symbols.
 
@@ -1123,6 +1141,7 @@ def _template_outer(type_str: str) -> str:
     return type_str[:lt].rstrip() if lt != -1 else type_str
 
 
+@registry.detector("template_inner_types")
 def _diff_template_inner_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect ABI-relevant template inner-type changes in function signatures.
 

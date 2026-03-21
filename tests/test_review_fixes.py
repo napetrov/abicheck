@@ -512,3 +512,100 @@ class TestServiceImportPaths:
 
         assert callable(import_abicc_perl_dump)
 
+    def test_service_sniff_does_not_trigger_deprecation(self):
+        """Verify service module doesn't trigger the deprecation warning."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            from abicheck import service  # noqa: F811
+
+            _ = service.sniff_text_format
+            deprecation_warnings = [
+                x for x in w
+                if issubclass(x.category, DeprecationWarning)
+                and "abicc_dump_import" in str(x.message)
+            ]
+            assert len(deprecation_warnings) == 0
+
+
+# ─── FIX-I: type/enum dedup debug logging throttling ─────────────────────────
+
+
+class TestTypeDedupThrottling:
+    """FIX-I: _DwarfSnapshotBuilder logs duplicate types/enums once per name."""
+
+    def _make_builder(self):
+        """Create a minimal _DwarfSnapshotBuilder with empty ELF metadata."""
+        from unittest.mock import MagicMock
+
+        from abicheck.dwarf_snapshot import _DwarfSnapshotBuilder
+
+        elf_meta = MagicMock()
+        elf_meta.symbols = []
+        return _DwarfSnapshotBuilder(elf_path="/dev/null", elf_meta=elf_meta)
+
+    def _make_die(self, tag="DW_TAG_structure_type", byte_size=8):
+        """Create a minimal mock DIE for builder methods."""
+        from unittest.mock import MagicMock
+
+        die = MagicMock()
+        die.tag = tag
+        # attr_int / attr_bool read die.attributes[attr].value
+        size_attr = MagicMock()
+        size_attr.value = byte_size
+        die.attributes = {"DW_AT_byte_size": size_attr}
+        die.iter_children.return_value = []
+        return die
+
+    def test_type_dup_logged_once(self, caplog):
+        """First duplicate logs debug message; subsequent duplicates are silent."""
+        import logging
+
+        builder = self._make_builder()
+        die = self._make_die(tag="DW_TAG_structure_type", byte_size=8)
+        cu = None  # CU is unused for the duplicate-check path
+
+        # Seed "MyStruct" as already seen so subsequent calls are duplicates.
+        builder._seen_type_names.add("MyStruct")
+
+        with caplog.at_level(logging.DEBUG, logger="abicheck.dwarf_snapshot"):
+            for _ in range(3):
+                builder._process_record_type_named(die, cu, "MyStruct")
+
+        dup_msgs = [r for r in caplog.records if "Duplicate type" in r.message]
+        assert len(dup_msgs) == 1
+        assert "MyStruct" in dup_msgs[0].message
+
+    def test_enum_dup_logged_once(self, caplog):
+        """First duplicate enum logs debug message; repeats are throttled."""
+        import logging
+
+        builder = self._make_builder()
+        die = self._make_die(tag="DW_TAG_enumeration_type", byte_size=4)
+        cu = None
+
+        # Seed "Color" as already seen so subsequent calls are duplicates.
+        builder._seen_enum_names.add("Color")
+
+        with caplog.at_level(logging.DEBUG, logger="abicheck.dwarf_snapshot"):
+            for _ in range(3):
+                builder._process_enum_named(die, cu, "Color")
+
+        dup_msgs = [r for r in caplog.records if "Duplicate enum" in r.message]
+        assert len(dup_msgs) == 1
+        assert "Color" in dup_msgs[0].message
+
+    def test_no_dup_no_log(self, caplog):
+        """No duplicate encountered → no debug log emitted."""
+        import logging
+
+        builder = self._make_builder()
+        # _seen_type_names is empty, so "NewType" is not a duplicate
+        die = self._make_die(tag="DW_TAG_structure_type", byte_size=8)
+        cu = None
+        with caplog.at_level(logging.DEBUG, logger="abicheck.dwarf_snapshot"):
+            builder._process_record_type_named(die, cu, "NewType")
+
+        dup_msgs = [r for r in caplog.records if "Duplicate" in r.message]
+        assert len(dup_msgs) == 0

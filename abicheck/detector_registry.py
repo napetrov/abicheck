@@ -1,0 +1,167 @@
+# Copyright 2026 Nikolay Petrov
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Self-registering detector registry.
+
+Detectors register themselves via the ``@registry.detector`` decorator,
+eliminating the manual detector list in ``compare()``.
+
+Architecture review: Problem B — decouples detector definition from orchestration.
+
+Usage in detector modules::
+
+    from .detector_registry import registry
+
+    @registry.detector("functions")
+    def _diff_functions(old, new):
+        ...
+
+    @registry.detector("pe", requires_support=lambda o, n: (
+        o.pe is not None and n.pe is not None,
+        "missing PE metadata",
+    ))
+    def _diff_pe(old, new):
+        ...
+
+Usage in checker::
+
+    from .detector_registry import registry
+
+    def compare(old, new, ...):
+        changes, detector_results = registry.run_all(old, new)
+        # ... post-processing
+"""
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+from .detectors import DetectorResult
+
+if TYPE_CHECKING:
+    from .checker_types import Change
+    from .model import AbiSnapshot
+
+    DetectorFn = Callable[[AbiSnapshot, AbiSnapshot], list[Change]]
+    SupportFn = Callable[[AbiSnapshot, AbiSnapshot], tuple[bool, str | None]]
+
+
+class _DetectorEntry:
+    """Internal representation of a registered detector."""
+
+    __slots__ = ("name", "fn", "support_fn", "order")
+
+    def __init__(
+        self,
+        name: str,
+        fn: DetectorFn,
+        support_fn: SupportFn | None,
+        order: int,
+    ) -> None:
+        self.name = name
+        self.fn = fn
+        self.support_fn = support_fn
+        self.order = order
+
+
+class DetectorRegistry:
+    """Registry for self-registering ABI change detectors.
+
+    Detectors are stored in registration order and executed sequentially
+    by ``run_all()``.
+    """
+
+    def __init__(self) -> None:
+        self._detectors: list[_DetectorEntry] = []
+        self._names: set[str] = set()
+        self._counter: int = 0
+
+    def detector(
+        self,
+        name: str,
+        *,
+        requires_support: SupportFn | None = None,
+    ) -> Callable[[DetectorFn], DetectorFn]:
+        """Decorator to register a detector function.
+
+        Args:
+            name: Unique detector name (used in DetectorResult and reporting).
+            requires_support: Optional callable ``(old, new) -> (bool, reason)``
+                that gates whether this detector runs.
+
+        Returns:
+            The original function, unmodified.
+        """
+        def decorator(fn: DetectorFn) -> DetectorFn:
+            if name in self._names:
+                raise ValueError(f"Duplicate detector name: {name!r}")
+            self._names.add(name)
+            entry = _DetectorEntry(name, fn, requires_support, self._counter)
+            self._counter += 1
+            self._detectors.append(entry)
+            return fn
+        return decorator
+
+    def run_all(
+        self,
+        old: AbiSnapshot,
+        new: AbiSnapshot,
+    ) -> tuple[list[Change], list[DetectorResult]]:
+        """Execute all registered detectors in registration order.
+
+        Returns:
+            (changes, detector_results) — aggregated changes and per-detector metadata.
+        """
+        changes: list[Change] = []
+        detector_results: list[DetectorResult] = []
+
+        for entry in sorted(self._detectors, key=lambda e: e.order):
+            # Check support gate
+            if entry.support_fn is not None:
+                enabled, reason = entry.support_fn(old, new)
+                if not enabled:
+                    detector_results.append(
+                        DetectorResult(
+                            name=entry.name,
+                            changes_count=0,
+                            enabled=False,
+                            coverage_gap=reason,
+                        )
+                    )
+                    continue
+
+            # Run detector
+            detected = entry.fn(old, new)
+            changes.extend(detected)
+            detector_results.append(
+                DetectorResult(
+                    name=entry.name,
+                    changes_count=len(detected),
+                    enabled=True,
+                )
+            )
+
+        return changes, detector_results
+
+    @property
+    def detector_names(self) -> list[str]:
+        """Registered detector names in registration order."""
+        return [e.name for e in sorted(self._detectors, key=lambda e: e.order)]
+
+    def __len__(self) -> int:
+        return len(self._detectors)
+
+
+# Module-level singleton — all detector modules import and register on this.
+registry = DetectorRegistry()

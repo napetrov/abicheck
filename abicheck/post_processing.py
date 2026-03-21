@@ -1,0 +1,237 @@
+# Copyright 2026 Nikolay Petrov
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Post-processing pipeline for ABI change lists.
+
+Each step is independently testable, reorderable, and self-documenting.
+The pipeline transforms the raw detector output into the final change list
+through filtering, deduplication, enrichment, and suppression.
+
+Architecture review: Problem C — explicit pipeline replaces imperative chain.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from .checker_types import Change
+    from .model import AbiSnapshot
+    from .suppression import SuppressionList
+
+
+@dataclass
+class PipelineContext:
+    """Shared state passed through the pipeline."""
+
+    old: AbiSnapshot
+    new: AbiSnapshot
+    suppression: SuppressionList | None = None
+    # Accumulated side-outputs
+    opaque_filtered: list[Change] = field(default_factory=list)
+    suppressed: list[Change] = field(default_factory=list)
+    redundant: list[Change] = field(default_factory=list)
+    kept: list[Change] = field(default_factory=list)
+
+
+class PipelineStep(Protocol):
+    """Protocol for a single post-processing step."""
+
+    name: str
+
+    def run(
+        self, changes: list[Change], ctx: PipelineContext
+    ) -> list[Change]:
+        """Transform the change list, returning the updated list."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Concrete pipeline steps
+# ---------------------------------------------------------------------------
+
+
+class FilterReservedFieldRenames:
+    """Suppress TYPE_FIELD_REMOVED false positives from reserved-field renames."""
+
+    name = "filter_reserved_field_renames"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .diff_filtering import _filter_reserved_field_renames
+
+        return _filter_reserved_field_renames(changes)
+
+
+class FilterOpaqueSizeChanges:
+    """Suppress size-only growth for opaque pointer-handle types."""
+
+    name = "filter_opaque_size_changes"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .diff_filtering import _filter_opaque_size_changes
+
+        changes, filtered = _filter_opaque_size_changes(changes, ctx.old, ctx.new)
+        ctx.opaque_filtered.extend(filtered)
+        return changes
+
+
+class DowngradeOpaqueStructChanges:
+    """Downgrade changes for types opaque in both snapshots."""
+
+    name = "downgrade_opaque_struct_changes"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .diff_filtering import _downgrade_opaque_struct_changes
+
+        return _downgrade_opaque_struct_changes(changes, ctx.old, ctx.new)
+
+
+class DeduplicateAstDwarf:
+    """Collapse AST/DWARF duplicate findings."""
+
+    name = "deduplicate_ast_dwarf"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .diff_filtering import _deduplicate_ast_dwarf
+
+        return _deduplicate_ast_dwarf(changes)
+
+
+class DeduplicateCrossDetector:
+    """Collapse overlapping reports from different detectors."""
+
+    name = "deduplicate_cross_detector"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .diff_filtering import _deduplicate_cross_detector
+
+        return _deduplicate_cross_detector(changes)
+
+
+class DowngradeOpaqueTypeChanges:
+    """Suppress structural changes for opaque types."""
+
+    name = "downgrade_opaque_type_changes"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .diff_filtering import _downgrade_opaque_type_changes
+
+        return _downgrade_opaque_type_changes(changes, ctx.old, ctx.new)
+
+
+class EnrichSourceLocations:
+    """Add source location metadata for suppression matching."""
+
+    name = "enrich_source_locations"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .diff_filtering import _enrich_source_locations
+
+        _enrich_source_locations(changes, ctx.old, ctx.new)
+        return changes
+
+
+class ApplySuppression:
+    """Apply user-provided suppression rules."""
+
+    name = "apply_suppression"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        if ctx.suppression is None:
+            return changes
+        filtered: list[Change] = []
+        for c in changes:
+            if ctx.suppression.is_suppressed(c):
+                ctx.suppressed.append(c)
+            else:
+                filtered.append(c)
+        return filtered
+
+
+class FilterRedundant:
+    """Split changes into kept + redundant (derived from root type changes)."""
+
+    name = "filter_redundant"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .diff_filtering import _filter_redundant
+
+        kept, redundant = _filter_redundant(changes)
+        ctx.redundant.extend(redundant)
+        ctx.redundant.extend(ctx.opaque_filtered)
+        ctx.kept = kept
+        return kept
+
+
+class EnrichAffectedSymbols:
+    """For type changes, find functions that use the affected type."""
+
+    name = "enrich_affected_symbols"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .diff_filtering import _enrich_affected_symbols
+
+        _enrich_affected_symbols(changes, ctx.old)
+        return changes
+
+
+# ---------------------------------------------------------------------------
+# Pipeline orchestrator
+# ---------------------------------------------------------------------------
+
+
+class PostProcessingPipeline:
+    """Execute a sequence of post-processing steps on a change list.
+
+    Each step receives the current change list and a shared context,
+    and returns the (possibly modified) change list for the next step.
+    """
+
+    def __init__(self, steps: list[PipelineStep]) -> None:
+        self.steps = list(steps)
+
+    def run(
+        self,
+        changes: list[Change],
+        old: AbiSnapshot,
+        new: AbiSnapshot,
+        suppression: SuppressionList | None = None,
+    ) -> PipelineContext:
+        """Run all steps, returning the final PipelineContext."""
+        ctx = PipelineContext(old=old, new=new, suppression=suppression)
+        for step in self.steps:
+            changes = step.run(changes, ctx)
+        # Ensure ctx.kept is set even if FilterRedundant didn't run
+        if not ctx.kept and changes:
+            ctx.kept = changes
+        return ctx
+
+    @property
+    def step_names(self) -> list[str]:
+        return [s.name for s in self.steps]
+
+
+# Default pipeline matching the current compare() post-processing order.
+DEFAULT_PIPELINE = PostProcessingPipeline([
+    FilterReservedFieldRenames(),
+    FilterOpaqueSizeChanges(),
+    DowngradeOpaqueStructChanges(),
+    DeduplicateAstDwarf(),
+    DeduplicateCrossDetector(),
+    DowngradeOpaqueTypeChanges(),
+    EnrichSourceLocations(),
+    ApplySuppression(),
+    FilterRedundant(),
+    EnrichAffectedSymbols(),
+])

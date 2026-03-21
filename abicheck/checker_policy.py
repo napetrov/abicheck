@@ -14,7 +14,11 @@
 
 """Central change policy registry and verdict computation.
 
-Single source of truth for verdict classification (5-tier hierarchy):
+Classification sets (BREAKING_KINDS, COMPATIBLE_KINDS, etc.) and IMPACT_TEXT
+are now DERIVED from the single-declaration registry in ``change_registry.py``.
+Adding a new ChangeKind requires only one entry there — no shotgun surgery.
+
+Hierarchy (5-tier):
     BREAKING_KINDS      → category 1: binary ABI incompatibilities
     API_BREAK_KINDS     → category 2a: source-level breaks (recompilation required)
     RISK_KINDS          → category 2b: binary-compatible but deployment risk present
@@ -24,6 +28,7 @@ Single source of truth for verdict classification (5-tier hierarchy):
     COMPATIBLE_KINDS    = ADDITION_KINDS ∪ QUALITY_KINDS
 
 Cross-references:
+    abicheck/change_registry.py — single-declaration metadata registry
     examples/ground_truth.json  — expected verdicts per example case
     tests/test_example_autodiscovery.py — reads from ground_truth.json
     tests/test_abi_examples.py  — hardcoded expectations (cases 01-18)
@@ -36,6 +41,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
+
+from .change_registry import REGISTRY as _REGISTRY
+from .change_registry import Verdict as Verdict
 
 
 class ChangeKind(str, Enum):
@@ -301,14 +309,7 @@ class HasKind(Protocol):
     kind: ChangeKind
 
 
-class Verdict(str, Enum):
-    NO_CHANGE = "NO_CHANGE"  # identical ABI
-    COMPATIBLE = "COMPATIBLE"  # only additions / safe changes
-    COMPATIBLE_WITH_RISK = (
-        "COMPATIBLE_WITH_RISK"  # binary-compatible but deployment risk present
-    )
-    API_BREAK = "API_BREAK"  # source-level break — recompilation required
-    BREAKING = "BREAKING"  # binary ABI break
+# Verdict is imported from change_registry (single source of truth).
 
 
 class Confidence(str, Enum):
@@ -318,290 +319,54 @@ class Confidence(str, Enum):
     LOW = "low"
 
 
-# Which ChangeKinds are immediately BREAKING (binary ABI incompatibility)
-BREAKING_KINDS = {
-    ChangeKind.FUNC_REMOVED,
-    # ELF-only function removed in no-header mode is treated as
-    # potential visibility cleanup, not hard ABI break.
-    # (see checker._diff_functions + AbiSnapshot.elf_only_mode provenance)
-    ChangeKind.FUNC_REMOVED_FROM_BINARY,  # mixed-mode: header-declared but gone from .dynsym
-    ChangeKind.FUNC_RETURN_CHANGED,
-    ChangeKind.FUNC_PARAMS_CHANGED,
-    ChangeKind.FUNC_VIRTUAL_ADDED,
-    ChangeKind.FUNC_VIRTUAL_REMOVED,
-    ChangeKind.VAR_REMOVED,
-    ChangeKind.VAR_TYPE_CHANGED,
-    ChangeKind.TYPE_SIZE_CHANGED,
-    ChangeKind.TYPE_ALIGNMENT_CHANGED,
-    ChangeKind.TYPE_FIELD_REMOVED,
-    ChangeKind.TYPE_FIELD_OFFSET_CHANGED,
-    ChangeKind.TYPE_FIELD_TYPE_CHANGED,
-    ChangeKind.TYPE_BASE_CHANGED,
-    ChangeKind.TYPE_VTABLE_CHANGED,
-    ChangeKind.TYPE_REMOVED,
-    ChangeKind.TYPE_FIELD_ADDED,  # for polymorphic / non-standard-layout types
-    ChangeKind.ENUM_MEMBER_REMOVED,
-    ChangeKind.ENUM_MEMBER_VALUE_CHANGED,
-    ChangeKind.FUNC_STATIC_CHANGED,
-    ChangeKind.FUNC_CV_CHANGED,
-    ChangeKind.FUNC_VISIBILITY_CHANGED,
-    ChangeKind.FUNC_PURE_VIRTUAL_ADDED,
-    ChangeKind.FUNC_VIRTUAL_BECAME_PURE,
-    ChangeKind.UNION_FIELD_REMOVED,
-    ChangeKind.UNION_FIELD_TYPE_CHANGED,
-    ChangeKind.TYPEDEF_BASE_CHANGED,
-    ChangeKind.TYPEDEF_REMOVED,
-    ChangeKind.FIELD_BITFIELD_CHANGED,
-    # ELF Sprint 2
-    # NOTE: SONAME_CHANGED moved to COMPATIBLE_KINDS — SONAME is a packaging/policy
-    # attribute, not a binary compatibility signal. The binary ABI surface (symbols,
-    # types, calling conventions) is unchanged when only SONAME differs.
-    ChangeKind.COMPAT_VERSION_CHANGED,  # Mach-O compat_version → BREAKING
-    ChangeKind.SYMBOL_TYPE_CHANGED,
-    ChangeKind.SYMBOL_SIZE_CHANGED,  # in ELF-only mode (no headers/DWARF) this may be
-    # the sole signal for vtable/variable layout changes
-    ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
-    # NOTE: SYMBOL_VERSION_REQUIRED_ADDED moved to RISK_KINDS (produces COMPATIBLE_WITH_RISK verdict)
-    # DWARF Sprint 3 + 4
-    ChangeKind.STRUCT_SIZE_CHANGED,
-    ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
-    ChangeKind.STRUCT_FIELD_REMOVED,
-    ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
-    ChangeKind.STRUCT_ALIGNMENT_CHANGED,
-    ChangeKind.ENUM_UNDERLYING_SIZE_CHANGED,
-    ChangeKind.CALLING_CONVENTION_CHANGED,
-    ChangeKind.VALUE_ABI_TRAIT_CHANGED,
-    ChangeKind.STRUCT_PACKING_CHANGED,
-    ChangeKind.FRAME_REGISTER_CHANGED,  # CFA/frame-pointer convention changed (#117)
-    # Sprint 2 — gap detectors
-    ChangeKind.FUNC_DELETED,
-    ChangeKind.VAR_BECAME_CONST,  # writes → SIGSEGV when variable moves to .rodata
-    ChangeKind.VAR_LOST_CONST,  # ODR / inlining break; callers may have cached const value
-    ChangeKind.TYPE_BECAME_OPAQUE,
-    ChangeKind.BASE_CLASS_POSITION_CHANGED,
-    ChangeKind.BASE_CLASS_VIRTUAL_CHANGED,
-    # DWARF Sprint 4
-    ChangeKind.TYPE_VISIBILITY_CHANGED,  # cross-DSO dynamic_cast / exception matching can fail
-    # Sprint 7 — pointer level changes are binary ABI breaks
-    ChangeKind.PARAM_POINTER_LEVEL_CHANGED,
-    ChangeKind.RETURN_POINTER_LEVEL_CHANGED,
-    ChangeKind.ANON_FIELD_CHANGED,
-    # ABICC full parity
-    ChangeKind.TYPE_KIND_CHANGED,  # struct→union: layout completely changes
-    # PR #89: ELF fallback for = delete (binary break — symbol disappeared from DSO)
-    # PR #89: Template inner-type changes are binary ABI breaks (different instantiation layout)
-    ChangeKind.TEMPLATE_PARAM_TYPE_CHANGED,
-    ChangeKind.TEMPLATE_RETURN_TYPE_CHANGED,
-    ChangeKind.FUNC_DELETED_ELF_FALLBACK,  # ELF heuristic — symbol absent from dynsym is binary-incompatible
-    ChangeKind.SYMBOL_RENAMED_BATCH,  # batch symbol rename — old consumers get undefined symbols
-}
+# ---------------------------------------------------------------------------
+# Classification sets — DERIVED from change_registry.py (single source of truth)
+# ---------------------------------------------------------------------------
+# These sets are computed from the registry entries. To add a new ChangeKind,
+# add ONE entry in change_registry.py — these sets update automatically.
 
-COMPATIBLE_KINDS: set[ChangeKind] = {
-    # Header/API additions
-    ChangeKind.FUNC_ADDED,
-    ChangeKind.VAR_ADDED,
-    ChangeKind.TYPE_ADDED,
-    # TYPE_FIELD_ADDED intentionally omitted: compatible only for standard-layout
-    # non-polymorphic types; context-aware verdict set in _diff_types()
-    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
-    # ELF-only removed: symbol was never declared in headers, may be visibility cleanup
-    ChangeKind.FUNC_REMOVED_ELF_ONLY,
-    # ELF quality / packaging attributes
-    # SONAME_CHANGED: SONAME is a linker/packaging convention. The actual binary
-    # ABI surface (exported symbols, types, calling conventions) is determined by
-    # the symbol table and debug info — not by the SONAME string. A SONAME change
-    # typically requires a distro symlink update but does not break already-compiled
-    # consumers whose loader resolves the library by full path or runpath.
-    ChangeKind.SONAME_CHANGED,
-    ChangeKind.SONAME_MISSING,
-    ChangeKind.EXECUTABLE_STACK,  # bad practice — security concern, not ABI break
-    ChangeKind.VISIBILITY_LEAK,
-    ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
-    # noexcept changes: Itanium ABI mangling does not change in practice;
-    # existing binaries resolve the same symbol.  Source-level concern only
-    # (C++17 function-pointer type system), not a binary ABI break.
-    ChangeKind.FUNC_NOEXCEPT_ADDED,
-    ChangeKind.FUNC_NOEXCEPT_REMOVED,
-    # Enum member addition: existing compiled enum values are unchanged;
-    # new enumerator does not shift others.  Source-level switch coverage
-    # concern, not binary ABI.  Value shifts are caught separately by
-    # ENUM_MEMBER_VALUE_CHANGED.
-    ChangeKind.ENUM_MEMBER_ADDED,
-    # Union field addition: all fields start at offset 0; existing fields
-    # are unaffected.  Size increase (if any) is caught by TYPE_SIZE_CHANGED.
-    ChangeKind.UNION_FIELD_ADDED,
-    # ELF-only warning/compatible drift
-    ChangeKind.NEEDED_ADDED,  # new dep: may not exist on older systems — warn, not hard-break
-    ChangeKind.NEEDED_REMOVED,  # removing a dep is compatible (but deployment risk)
-    ChangeKind.RUNPATH_CHANGED,  # search path drift — warn only
-    ChangeKind.RPATH_CHANGED,
-    ChangeKind.COMMON_SYMBOL_RISK,  # STT_COMMON — risk, not proven break
-    ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
-    # Added version tag that is OLDER than the library's previous maximum
-    # requirement — callers already satisfying the old requirement trivially
-    # satisfy this one.  No new runtime constraint imposed.
-    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT,
-    ChangeKind.SYMBOL_BINDING_STRENGTHENED,  # WEAK→GLOBAL: backward-compatible for most consumers
-    # ELF visibility change (e.g. DEFAULT→PROTECTED): symbol still exported
-    # and resolvable; interposition semantics change but callers are unaffected.
-    ChangeKind.ELF_VISIBILITY_CHANGED,
-    # GLOBAL→WEAK: symbol still exported and resolvable by the dynamic
-    # linker; interposition semantics change but existing binaries work.
-    ChangeKind.SYMBOL_BINDING_CHANGED,
-    # GNU IFUNC ↔ regular function: transparent to callers; the PLT/GOT
-    # mechanism handles resolution.  This is an implementation optimization.
-    ChangeKind.IFUNC_INTRODUCED,
-    ChangeKind.IFUNC_REMOVED,
-    # DWARF diagnostics (comparison coverage gap warning)
-    ChangeKind.DWARF_INFO_MISSING,
-    ChangeKind.TOOLCHAIN_FLAG_DRIFT,  # informational — not a proven binary break
-    # Sprint 7 — field qualifier changes are informational (compatible)
-    ChangeKind.FIELD_BECAME_CONST,
-    ChangeKind.FIELD_LOST_CONST,
-    ChangeKind.FIELD_BECAME_VOLATILE,
-    ChangeKind.FIELD_LOST_VOLATILE,
-    ChangeKind.FIELD_BECAME_MUTABLE,
-    ChangeKind.FIELD_LOST_MUTABLE,
-    ChangeKind.PARAM_DEFAULT_VALUE_CHANGED,  # informational, not binary break
-    # ABICC full parity — informational/compatible changes
-    ChangeKind.PARAM_RESTRICT_CHANGED,  # restrict is an optimization hint, not ABI-breaking
-    ChangeKind.PARAM_BECAME_VA_LIST,  # va_list transition: informational
-    ChangeKind.PARAM_LOST_VA_LIST,  # va_list transition: informational
-    ChangeKind.CONSTANT_ADDED,  # new constant: compatible addition
-    ChangeKind.USED_RESERVED_FIELD,  # reserved field put into use: compatible (was unused)
-    ChangeKind.VAR_VALUE_CHANGED,  # global data value change: compatible (compile-time risk only)
-    ChangeKind.VAR_ACCESS_WIDENED,  # private/protected→public: widening is compatible
-    # Inline attribute changes
-    ChangeKind.FUNC_LOST_INLINE,  # losing inline gives the function external linkage — existing
-    # binaries with baked-in inline copies still work correctly
-
-    # Version-stamped typedef sentinels: compile-time only, never exported as ELF symbols
-    ChangeKind.TYPEDEF_VERSION_SENTINEL,
+def _kinds_for(verdict_val: str) -> set[ChangeKind]:
+    """Map registry verdict string values back to ChangeKind enum members."""
+    raw = _REGISTRY.kinds_for_verdict(getattr(Verdict, verdict_val))
+    return {ChangeKind(v) for v in raw}
 
 
-    # ELF symbol visibility changed default→protected.
-    # Symbol is still exported from DSO; existing binaries link and resolve
-    # normally. Only interposition (LD_PRELOAD override) stops working for
-    # references originating inside the library itself. That is an intentional
-    # policy decision by the library author, not a binary ABI break for consumers.
-    ChangeKind.FUNC_VISIBILITY_PROTECTED_CHANGED,
+BREAKING_KINDS: set[ChangeKind] = _kinds_for("BREAKING")
 
-    # Generic ELF st_other visibility transitions (DEFAULT→PROTECTED etc.)
-    # Same rationale as FUNC_VISIBILITY_PROTECTED_CHANGED above.
-    ChangeKind.SYMBOL_ELF_VISIBILITY_CHANGED,
-}
+COMPATIBLE_KINDS: set[ChangeKind] = _kinds_for("COMPATIBLE")
 
-# Changes that are binary-compatible for already-compiled consumers but represent
-# a DEPLOYMENT RISK the user should verify manually.
-# Verdict: COMPATIBLE_WITH_RISK — not BREAKING, not silently COMPATIBLE.
-RISK_KINDS: frozenset[ChangeKind] = frozenset({
-    # NOTE: SONAME_CHANGED moved to COMPATIBLE_KINDS — see comment there.
-    # A new symbol version requirement (e.g. GLIBC_2.17) is added to VERNEED.
-    # Existing compiled binaries are unaffected (already linked at build time).
-    # Deployment risk: the new library will NOT load on systems with a glibc
-    # older than the required version. The user must verify target environments.
-    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
-    # Sentinel/MAX enum value moved. Existing binaries are unaffected,
-    # but source code using it as loop bound/array size may need review.
-    ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED,
-    # A symbol exported by this library that originates from a dependency changed.
-    # This is a real ABI change but caused by dependency versioning, not the
-    # library's own API.  Direct consumers do not link against these symbols
-    # directly — they go through the dependency itself.  Risk: on other systems
-    # with a different version of the dependency this may break.
-    ChangeKind.SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED,
-})
+RISK_KINDS: frozenset[ChangeKind] = frozenset(_kinds_for("COMPATIBLE_WITH_RISK"))
+
+API_BREAK_KINDS: set[ChangeKind] = _kinds_for("API_BREAK")
 
 # ---------------------------------------------------------------------------
 # Compatible sub-categories: additions vs quality/behavioral issues
 # ---------------------------------------------------------------------------
 
-#: Additive kinds — new public API surface (subset of COMPATIBLE_KINDS).
-#: Explicitly enumerated to avoid false positives (e.g. FUNC_NOEXCEPT_ADDED
-#: is a qualifier change, not a new API addition).
-#:
-#: ELF versioning metadata (SYMBOL_VERSION_DEFINED_ADDED,
-#: SYMBOL_VERSION_REQUIRED_ADDED_COMPAT) is intentionally excluded — those
-#: are internal VERNEED/VERDEF churn, not user-facing API additions.
-ADDITION_KINDS: frozenset[ChangeKind] = frozenset({
-    ChangeKind.FUNC_ADDED,
-    ChangeKind.VAR_ADDED,
-    ChangeKind.TYPE_ADDED,
-    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE,
-    ChangeKind.ENUM_MEMBER_ADDED,
-    ChangeKind.UNION_FIELD_ADDED,
-    ChangeKind.CONSTANT_ADDED,
-})
+ADDITION_KINDS: frozenset[ChangeKind] = frozenset(
+    ChangeKind(v) for v in _REGISTRY.addition_kinds()
+)
 
 #: Quality / behavioral issues — COMPATIBLE_KINDS that are NOT additions.
-#: Examples: VISIBILITY_LEAK, SONAME_MISSING, DWARF_INFO_MISSING, noexcept changes.
 QUALITY_KINDS: frozenset[ChangeKind] = frozenset(COMPATIBLE_KINDS - ADDITION_KINDS)
 
-
-API_BREAK_KINDS: set[ChangeKind] = {
-    ChangeKind.ENUM_MEMBER_RENAMED,
-    ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,
-    ChangeKind.FIELD_RENAMED,
-    ChangeKind.PARAM_RENAMED,
-    ChangeKind.METHOD_ACCESS_CHANGED,
-    ChangeKind.FIELD_ACCESS_CHANGED,
-    # ABICC full parity — source breaks
-    ChangeKind.REMOVED_CONST_OVERLOAD,  # const overload removed: source code calling const version breaks
-    ChangeKind.CONSTANT_CHANGED,  # #define value changed: source-level semantic change
-    ChangeKind.CONSTANT_REMOVED,  # #define removed: source code referencing it breaks
-    ChangeKind.VAR_ACCESS_CHANGED,  # variable access narrowed: source-level break
-    ChangeKind.SOURCE_LEVEL_KIND_CHANGED,  # struct↔class: source-level keyword change, binary identical
-    # Inline attribute changes (potentially breaking: symbol may vanish from DSO)
-    ChangeKind.FUNC_BECAME_INLINE,  # function became inline — callers compiled against old header
-    # may get UNDEFINED when linking against new DSO if the symbol
-    # is now emitted only inline; needs manual review
-}
-
 # ---------------------------------------------------------------------------
-# Policy-specific downgrade sets
+# Policy-specific downgrade sets — DERIVED from change_registry policy_overrides
 # ---------------------------------------------------------------------------
 
-# sdk_vendor: source-level-only kinds that are in API_BREAK_KINDS but do not
-# affect already-compiled binary consumers. Under sdk_vendor policy they are
-# downgraded from API_BREAK → COMPATIBLE (no warning emitted).
-# All members MUST be in API_BREAK_KINDS — enforced by the assertion below.
-SDK_VENDOR_COMPAT_KINDS: frozenset[ChangeKind] = frozenset(
-    {
-        ChangeKind.ENUM_MEMBER_RENAMED,
-        ChangeKind.FIELD_RENAMED,
-        ChangeKind.PARAM_RENAMED,
-        ChangeKind.METHOD_ACCESS_CHANGED,
-        ChangeKind.FIELD_ACCESS_CHANGED,
-        ChangeKind.SOURCE_LEVEL_KIND_CHANGED,  # struct↔class: binary-identical
-        ChangeKind.REMOVED_CONST_OVERLOAD,
-        ChangeKind.PARAM_DEFAULT_VALUE_REMOVED,
-        # NOTE: PARAM_DEFAULT_VALUE_CHANGED is intentionally omitted — it already
-        # lives in COMPATIBLE_KINDS, so including it here would be a no-op.
-    }
-)
+def _policy_override_kinds(policy: str) -> frozenset[ChangeKind]:
+    """Return kinds that have a policy override for the given policy name."""
+    return frozenset(ChangeKind(v) for v in _REGISTRY.policy_overrides_for(policy))
+
+
+# sdk_vendor: source-level-only kinds downgraded API_BREAK → COMPATIBLE.
+SDK_VENDOR_COMPAT_KINDS: frozenset[ChangeKind] = _policy_override_kinds("sdk_vendor")
 
 # Deprecated alias kept for external consumers; will be removed in v2.0.
 SDK_VENDOR_DOWNGRADED_KINDS: frozenset[ChangeKind] = SDK_VENDOR_COMPAT_KINDS
 
-# plugin_abi: kinds that are acceptable when the plugin and host are built from
-# the same toolchain at the same time (single-process boundary).
-# These are all in BREAKING_KINDS and are downgraded from BREAKING → COMPATIBLE.
-# All members MUST be in BREAKING_KINDS — enforced by the assertion below.
-PLUGIN_ABI_DOWNGRADED_KINDS: frozenset[ChangeKind] = frozenset(
-    {
-        # NOTE: TOOLCHAIN_FLAG_DRIFT is intentionally omitted — it already lives in
-        # COMPATIBLE_KINDS (informational), so it is not in BREAKING_KINDS and
-        # including it here would be a silent no-op in the subtraction logic.
-        ChangeKind.CALLING_CONVENTION_CHANGED,
-        ChangeKind.FRAME_REGISTER_CHANGED,  # CFA register = physical calling convention
-        # VALUE_ABI_TRAIT_CHANGED: DWARF trivially-copyable heuristic controls
-        # pass-by-register vs pass-by-pointer in the Itanium C++ ABI. Under
-        # plugin_abi this is safe to downgrade ONLY because the plugin and host
-        # are always rebuilt together from the same toolchain — ensuring ABI
-        # triviality decisions are in sync. Do NOT include this in sdk_vendor.
-        ChangeKind.VALUE_ABI_TRAIT_CHANGED,
-    }
-)
+# plugin_abi: calling-convention kinds downgraded BREAKING → COMPATIBLE.
+PLUGIN_ABI_DOWNGRADED_KINDS: frozenset[ChangeKind] = _policy_override_kinds("plugin_abi")
 
 # Integrity assertions: catch miscategorisation at import time.
 # Use explicit raises (not assert) so these are never stripped by python -O.
@@ -692,130 +457,9 @@ class PolicyEntry:
     impact: str = ""  # human-readable impact explanation
 
 
-# Impact explanations per ChangeKind — describes *what goes wrong* for the user.
+# Impact explanations — DERIVED from change_registry.py
 IMPACT_TEXT: dict[ChangeKind, str] = {
-    # Function/variable
-    ChangeKind.FUNC_REMOVED: "Old binaries call a symbol that no longer exists; dynamic linker will refuse to load or crash at call site.",
-    ChangeKind.FUNC_REMOVED_ELF_ONLY: "Symbol removed from ELF but was not in public headers; low risk unless dlsym() callers depend on it.",
-    ChangeKind.FUNC_REMOVED_FROM_BINARY: "Header-declared function disappeared from .dynsym; consumers' PLT entries will fail to resolve at load time.",
-    ChangeKind.FUNC_ADDED: "New function available; existing binaries are unaffected.",
-    ChangeKind.FUNC_RETURN_CHANGED: "Callers expect the old return type layout in registers/stack; misinterpretation causes data corruption.",
-    ChangeKind.FUNC_PARAMS_CHANGED: "Callers push arguments with the old layout; callee reads wrong data from stack/registers.",
-    ChangeKind.FUNC_NOEXCEPT_ADDED: "In C++17 noexcept is part of the function type; old callers compiled against non-noexcept signature get a different mangled name.",
-    ChangeKind.FUNC_NOEXCEPT_REMOVED: "Old callers may rely on noexcept guarantee for optimizations; removing it can cause unexpected std::terminate.",
-    ChangeKind.FUNC_VIRTUAL_ADDED: "Vtable layout changes; old binaries call wrong virtual function slot, leading to crashes or wrong behavior.",
-    ChangeKind.FUNC_VIRTUAL_REMOVED: "Vtable entry removed; old binaries that dispatch through the vtable call the wrong slot.",
-    ChangeKind.VAR_REMOVED: "Old binaries reference a global variable that no longer exists; link or load failure.",
-    ChangeKind.VAR_ADDED: "New variable available; existing binaries are unaffected.",
-    ChangeKind.VAR_TYPE_CHANGED: "Old binaries read/write the variable with wrong size or layout; data corruption or segfault.",
-    # Type changes
-    ChangeKind.TYPE_SIZE_CHANGED: "Old code allocates or copies the type with the old size; heap/stack corruption, out-of-bounds access.",
-    ChangeKind.TYPE_ALIGNMENT_CHANGED: "Misaligned access can cause bus errors on strict architectures or silent data corruption with SIMD.",
-    ChangeKind.TYPE_FIELD_REMOVED: "Old code accesses a field that no longer exists at the expected offset; reads garbage or writes out of bounds.",
-    ChangeKind.TYPE_FIELD_ADDED: "New field shifts subsequent fields; old code reads wrong offsets for all fields after insertion point.",
-    ChangeKind.TYPE_FIELD_OFFSET_CHANGED: "Old code reads/writes fields at stale offsets; silent data corruption.",
-    ChangeKind.TYPE_FIELD_TYPE_CHANGED: "Field has different size or representation; old code misinterprets the data.",
-    ChangeKind.TYPE_BASE_CHANGED: "Base class layout change shifts derived member offsets and vtable pointers; this-pointer arithmetic breaks.",
-    ChangeKind.TYPE_VTABLE_CHANGED: "Vtable slot reordering; virtual dispatch calls wrong method.",
-    ChangeKind.TYPE_ADDED: "New type available; existing binaries are unaffected.",
-    ChangeKind.TYPE_REMOVED: "Old code references a type that no longer exists; compilation or link failure.",
-    ChangeKind.TYPE_FIELD_ADDED_COMPATIBLE: "Field appended without changing existing offsets; old code works but won't initialize the new field.",
-    # Enum changes
-    ChangeKind.ENUM_MEMBER_REMOVED: "Old code uses a constant that no longer exists; compile error for source, stale value for binaries.",
-    ChangeKind.ENUM_MEMBER_ADDED: "New enumerator may shift subsequent values in non-fixed enums; switch defaults may miss the new case.",
-    ChangeKind.ENUM_MEMBER_VALUE_CHANGED: "Old binaries use stale numeric values; logic comparisons and switch statements silently break.",
-    ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED: "Sentinel/MAX value changed; old code using it for array sizes allocates wrong amount.",
-    ChangeKind.TYPEDEF_REMOVED: "Old code using the typedef name won't compile; binary impact depends on usage.",
-    # Method qualifiers
-    ChangeKind.FUNC_STATIC_CHANGED: "Static/non-static transition changes calling convention (implicit this pointer); ABI mismatch.",
-    ChangeKind.FUNC_CV_CHANGED: "const/volatile on 'this' changes the mangled name; old binaries link to the wrong symbol.",
-    ChangeKind.FUNC_VISIBILITY_CHANGED: "Symbol hidden from dynamic linking; old binaries can't find it at load time.",
-    ChangeKind.FUNC_VISIBILITY_PROTECTED_CHANGED: (
-        "Symbol visibility changed to STV_PROTECTED. The symbol remains exported and "
-        "is still resolvable by external consumers. Interposition via LD_PRELOAD no "
-        "longer works for calls originating inside the library itself — intentional "
-        "by the library author. Existing compiled consumers are unaffected."
-    ),
-    # Virtual
-    ChangeKind.FUNC_PURE_VIRTUAL_ADDED: "Old subclasses don't implement the pure virtual; instantiation causes linker error or UB.",
-    ChangeKind.FUNC_VIRTUAL_BECAME_PURE: "Concrete virtual became pure; old binaries calling it get unresolved dispatch.",
-    # Union
-    ChangeKind.UNION_FIELD_ADDED: "Union size may grow; old code allocating with old sizeof gets truncated data.",
-    ChangeKind.UNION_FIELD_REMOVED: "Old code accessing removed alternative reads uninitialized memory.",
-    ChangeKind.UNION_FIELD_TYPE_CHANGED: "Old code interprets the union member with wrong type layout.",
-    # Typedef
-    ChangeKind.TYPEDEF_BASE_CHANGED: "Underlying type changed; old code using the typedef operates on wrong representation.",
-    # Bitfield
-    ChangeKind.FIELD_BITFIELD_CHANGED: "Bit-field width or offset changed; old code reads/writes wrong bits.",
-    # ELF / Mach-O
-    ChangeKind.SONAME_CHANGED: (
-        "SONAME changed. This is a packaging/policy signal, not a binary ABI break: "
-        "the symbol table, types, and calling conventions are unchanged. "
-        "Deployment action may be required: update ldconfig symlinks or the "
-        "linker flag (-lfoo) in dependent packages. Already-compiled consumers "
-        "whose loader resolves the library by full path or DT_RPATH are unaffected."
-    ),
-    ChangeKind.COMPAT_VERSION_CHANGED: "Mach-O compatibility version changed; dylibs linked against old version may fail to load.",
-    ChangeKind.SONAME_MISSING: "Library has no SONAME; package managers and ldconfig cannot track versions.",
-    ChangeKind.EXECUTABLE_STACK: "Library has executable stack (PT_GNU_STACK RWE); NX protection disabled — security risk.",
-    ChangeKind.VISIBILITY_LEAK: "Internal symbols exported without -fvisibility=hidden; namespace pollution risk.",
-    ChangeKind.NEEDED_ADDED: "New shared library dependency; may not be available on target systems.",
-    ChangeKind.NEEDED_REMOVED: "Dependency removed; should be transparent to consumers.",
-    ChangeKind.ELF_VISIBILITY_CHANGED: "ELF symbol visibility changed (e.g. DEFAULT→PROTECTED); symbol still exported but interposition semantics differ.",
-    ChangeKind.SYMBOL_BINDING_CHANGED: "GLOBAL→WEAK binding lets interposers override unexpectedly; old code may get wrong implementation.",
-    ChangeKind.SYMBOL_BINDING_STRENGTHENED: "WEAK→GLOBAL binding; safe upgrade, interposition still possible via LD_PRELOAD.",
-    ChangeKind.SYMBOL_TYPE_CHANGED: "Symbol type changed (e.g. FUNC→OBJECT); callers using wrong calling convention.",
-    ChangeKind.SYMBOL_SIZE_CHANGED: "ELF symbol size changed; copy relocations or memcpy-based consumers get truncated/oversized data.",
-    ChangeKind.IFUNC_INTRODUCED: "IFUNC resolver indirection added; transparent to well-behaved callers.",
-    ChangeKind.IFUNC_REMOVED: "IFUNC removed; transparent to callers.",
-    # Symbol versioning
-    ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED: "Defined symbol version removed; old binaries requesting that version get link error.",
-    ChangeKind.SYMBOL_VERSION_DEFINED_ADDED: "New symbol version defined; transparent to existing consumers.",
-    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED: "Requires a newer symbol version than old system provides; may fail to load on older systems.",
-    ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT: "New version requirement added but older than existing max; safe on current systems.",
-    ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED: "Version requirement dropped; broadens compatibility.",
-    ChangeKind.SYMBOL_ELF_VISIBILITY_CHANGED: (
-        "ELF symbol visibility (st_other) changed (e.g. DEFAULT→PROTECTED). "
-        "Symbol is still exported but interposition via LD_PRELOAD may stop working."
-    ),
-    ChangeKind.SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED: (
-        "Symbol originates from a dependency library (e.g. libstdc++, libgcc) that leaked "
-        "into this library's public ABI surface. The symbol changed between versions — "
-        "existing consumers are unlikely to be affected directly, but the leak itself is a "
-        "library quality issue. Apply -fvisibility=hidden to prevent accidental ABI surface "
-        "enlargement from dependencies."
-    ),
-    # DWARF
-    ChangeKind.STRUCT_SIZE_CHANGED: "sizeof(T) changed in debug info; confirms layout break visible at binary level.",
-    ChangeKind.STRUCT_FIELD_OFFSET_CHANGED: "Field moved to different offset; old code accesses wrong memory.",
-    ChangeKind.STRUCT_FIELD_REMOVED: "Field removed from struct; old code accessing it reads/writes garbage.",
-    ChangeKind.STRUCT_FIELD_TYPE_CHANGED: "Field type changed in binary; old code misinterprets the field data.",
-    ChangeKind.STRUCT_ALIGNMENT_CHANGED: "Struct alignment changed; may cause misaligned access in embedded structs.",
-    ChangeKind.ENUM_UNDERLYING_SIZE_CHANGED: "Enum underlying type changed (e.g. int→long); affects ABI of functions passing enums by value.",
-    # DWARF advanced
-    ChangeKind.CALLING_CONVENTION_CHANGED: "Function calling convention changed; registers/stack usage differs, call crashes.",
-    ChangeKind.STRUCT_PACKING_CHANGED: "Packing attribute changed; field offsets differ from what old code expects.",
-    ChangeKind.TOOLCHAIN_FLAG_DRIFT: "Compiler flags differ between versions; may cause subtle ABI mismatches.",
-    # Gap detectors
-    ChangeKind.FUNC_DELETED: "Function marked = delete; old binaries still call it, getting link error or UB.",
-    ChangeKind.VAR_BECAME_CONST: "Variable moved to read-only section; old code writing to it gets SIGSEGV.",
-    ChangeKind.VAR_LOST_CONST: "Variable no longer const; ODR violations possible if old code inlined the value.",
-    ChangeKind.TYPE_BECAME_OPAQUE: "Type became forward-declaration only; old code using sizeof or accessing fields fails.",
-    # Source-level
-    ChangeKind.ENUM_MEMBER_RENAMED: "Enumerator name changed but value is the same; source code using old name won't compile.",
-    ChangeKind.FIELD_RENAMED: "Field name changed but offset is the same; source code using old name won't compile.",
-    ChangeKind.METHOD_ACCESS_CHANGED: "Method access level narrowed (e.g. public→private); old code calling it won't compile.",
-    ChangeKind.FIELD_ACCESS_CHANGED: "Field access level narrowed; old code accessing it won't compile.",
-    # Version-stamped typedef sentinels
-    ChangeKind.SYMBOL_RENAMED_BATCH: (
-        "Multiple symbols renamed (e.g. namespace prefix added/removed); "
-        "old binaries reference the old names and will get undefined symbol errors at load time."
-    ),
-    ChangeKind.TYPEDEF_VERSION_SENTINEL: (
-        "Typedef name encodes a version number (e.g. png_libpng_version_1_6_46) — "
-        "this is a compile-time sentinel that changes every release by design; "
-        "it is never exported as an ELF symbol and does not affect binary ABI."
-    ),
+    ChangeKind(k): v for k, v in _REGISTRY.impact_text().items()
 }
 
 

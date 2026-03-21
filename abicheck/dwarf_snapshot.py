@@ -223,6 +223,10 @@ class _DwarfSnapshotBuilder:
         self._seen_func_mangles: set[str] = set()
         self._seen_var_mangles: set[str] = set()
 
+        # FIX-I: throttle duplicate-type/enum debug messages to first occurrence
+        self._logged_type_dups: set[str] = set()
+        self._logged_enum_dups: set[str] = set()
+
     def extract(self) -> None:
         """Open the ELF, walk DWARF, and populate result lists."""
         try:
@@ -474,6 +478,9 @@ class _DwarfSnapshotBuilder:
             return  # forward declaration only
 
         if qualified in self._seen_type_names:
+            if qualified not in self._logged_type_dups:
+                self._logged_type_dups.add(qualified)
+                log.debug("Duplicate type skipped (first-wins): %s", qualified)
             return  # ODR: first definition wins
         self._seen_type_names.add(qualified)
 
@@ -644,6 +651,9 @@ class _DwarfSnapshotBuilder:
     def _process_enum_named(self, die: Any, CU: Any, qualified: str) -> None:
         """Extract an enum using a given qualified name."""
         if qualified in self._seen_enum_names:
+            if qualified not in self._logged_enum_dups:
+                self._logged_enum_dups.add(qualified)
+                log.debug("Duplicate enum skipped (first-wins): %s", qualified)
             return
         self._seen_enum_names.add(qualified)
 
