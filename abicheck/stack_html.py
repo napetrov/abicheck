@@ -63,7 +63,7 @@ def stack_to_html(result: StackCheckResult) -> str:
         f"<strong>{h(load_val.upper())}</strong></td></tr>",
         f"<tr><th>ABI Risk</th><td>{_STACK_VERDICT_ICON.get(abi_val, '')} "
         f"<strong>{h(abi_val.upper())}</strong></td></tr>",
-        f"<tr><th>Risk score</th><td><code>{h(result.risk_score)}</code></td></tr>",
+        f"<tr><th>Risk score</th><td><code>{h(str(result.risk_score))}</code></td></tr>",
     ]
 
     if result.baseline_env and result.candidate_env and result.baseline_env != result.candidate_env:
