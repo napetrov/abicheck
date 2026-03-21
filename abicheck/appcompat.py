@@ -109,6 +109,104 @@ def _detect_app_format(app_path: Path) -> str | None:
 # ELF: parse app requirements
 # ---------------------------------------------------------------------------
 
+def _collect_needed_libs(elf: object, reqs: AppRequirements) -> None:
+    """Read DT_NEEDED entries from the ELF dynamic section."""
+    from elftools.elf.dynamic import DynamicSection
+
+    for section in elf.iter_sections():
+        if isinstance(section, DynamicSection):
+            for tag in section.iter_tags():
+                if tag.entry.d_tag == "DT_NEEDED":
+                    reqs.needed_libs.append(tag.needed)
+
+
+def _build_version_index(
+    elf: object, reqs: AppRequirements, library_soname: str,
+) -> dict[int, str]:
+    """Build version-index -> library SONAME map from .gnu.version_r.
+
+    Each vernaux entry has vna_other (the version index used in
+    .gnu.version) and the parent verneed names the source library.
+    Also populates ``reqs.required_versions`` for the target library.
+    """
+    from elftools.elf.gnuversions import GNUVerNeedSection
+
+    ver_idx_to_lib: dict[int, str] = {}
+    for section in elf.iter_sections():
+        if isinstance(section, GNUVerNeedSection):
+            for verneed, vernaux_iter in section.iter_versions():
+                lib = verneed.name
+                for vernaux in vernaux_iter:
+                    ver_idx = vernaux.entry.vna_other
+                    ver_idx_to_lib[ver_idx] = lib
+                    ver = vernaux.name
+                    # Collect required version tags for the target library
+                    if ver and library_soname and lib == library_soname:
+                        reqs.required_versions[ver] = lib
+    return ver_idx_to_lib
+
+
+def _collect_undefined_symbols(
+    elf: object,
+    reqs: AppRequirements,
+    library_soname: str,
+    ver_idx_to_lib: dict[int, str],
+    versym_section: object | None,
+) -> None:
+    """Read undefined symbols from .dynsym, filtered by target library."""
+    from elftools.elf.sections import SymbolTableSection
+
+    for section in elf.iter_sections():
+        if isinstance(section, SymbolTableSection) and section.name == ".dynsym":
+            for idx, sym in enumerate(section.iter_symbols()):
+                if sym.entry.st_shndx != "SHN_UNDEF":
+                    continue
+                if not sym.name:
+                    continue
+                binding = sym.entry.st_info.bind
+                if binding not in ("STB_GLOBAL", "STB_WEAK"):
+                    continue
+
+                # Filter by source library using .gnu.version correlation
+                if library_soname and versym_section is not None:
+                    try:
+                        ver_entry = versym_section.get_symbol(idx)
+                        ver_ndx = ver_entry.entry["ndx"]
+                        # pyelftools returns str for special indices
+                        # (VER_NDX_LOCAL, VER_NDX_GLOBAL) and int for
+                        # regular version indices.
+                        if isinstance(ver_ndx, str):
+                            ver_ndx = 0 if ver_ndx == "VER_NDX_LOCAL" else 1
+                        else:
+                            # Mask off the hidden bit (bit 15)
+                            ver_ndx = ver_ndx & 0x7FFF
+                    except (IndexError, KeyError):
+                        ver_ndx = 1  # treat as unversioned
+
+                    if ver_ndx >= 2:
+                        # Versioned symbol — check if from target library
+                        source_lib = ver_idx_to_lib.get(ver_ndx, "")
+                        if source_lib != library_soname:
+                            continue
+                    elif ver_ndx <= 1:
+                        # Unversioned symbol (index 0=local, 1=global).
+                        # Cannot determine source library from version info;
+                        # include only if it doesn't look like a system symbol.
+                        from .elf_metadata import _guess_symbol_origin
+                        origin = _guess_symbol_origin(
+                            sym.name, reqs.needed_libs,
+                        )
+                        if origin is not None:
+                            continue
+                        # Weak undefined symbols with unknown origin are
+                        # typically optional linker/runtime refs (e.g.
+                        # _ITM_*, __gmon_start__) — skip them.
+                        if binding == "STB_WEAK":
+                            continue
+
+                reqs.undefined_symbols.add(sym.name)
+
+
 def _parse_elf_app_requirements(
     app_path: Path, library_soname: str,
 ) -> AppRequirements:
@@ -118,10 +216,8 @@ def _parse_elf_app_requirements(
     .gnu.version_r to filter symbols to those imported from ``library_soname``.
     """
     from elftools.common.exceptions import ELFError
-    from elftools.elf.dynamic import DynamicSection
     from elftools.elf.elffile import ELFFile
-    from elftools.elf.gnuversions import GNUVerNeedSection, GNUVerSymSection
-    from elftools.elf.sections import SymbolTableSection
+    from elftools.elf.gnuversions import GNUVerSymSection
 
     reqs = AppRequirements()
 
@@ -130,27 +226,10 @@ def _parse_elf_app_requirements(
             elf = ELFFile(f)
 
             # 1. Read DT_NEEDED entries
-            for section in elf.iter_sections():
-                if isinstance(section, DynamicSection):
-                    for tag in section.iter_tags():
-                        if tag.entry.d_tag == "DT_NEEDED":
-                            reqs.needed_libs.append(tag.needed)
+            _collect_needed_libs(elf, reqs)
 
             # 2. Build version-index → library SONAME map from .gnu.version_r
-            #    Each vernaux entry has vna_other (the version index used in
-            #    .gnu.version) and the parent verneed names the source library.
-            ver_idx_to_lib: dict[int, str] = {}
-            for section in elf.iter_sections():
-                if isinstance(section, GNUVerNeedSection):
-                    for verneed, vernaux_iter in section.iter_versions():
-                        lib = verneed.name
-                        for vernaux in vernaux_iter:
-                            ver_idx = vernaux.entry.vna_other
-                            ver_idx_to_lib[ver_idx] = lib
-                            ver = vernaux.name
-                            # Collect required version tags for the target library
-                            if ver and library_soname and lib == library_soname:
-                                reqs.required_versions[ver] = lib
+            ver_idx_to_lib = _build_version_index(elf, reqs, library_soname)
 
             # 3. Read .gnu.version section (per-symbol version indices)
             versym_section: GNUVerSymSection | None = None
@@ -160,55 +239,7 @@ def _parse_elf_app_requirements(
                     break
 
             # 4. Read undefined symbols from .dynsym, filtered by target library
-            for section in elf.iter_sections():
-                if isinstance(section, SymbolTableSection) and section.name == ".dynsym":
-                    for idx, sym in enumerate(section.iter_symbols()):
-                        if sym.entry.st_shndx != "SHN_UNDEF":
-                            continue
-                        if not sym.name:
-                            continue
-                        binding = sym.entry.st_info.bind
-                        if binding not in ("STB_GLOBAL", "STB_WEAK"):
-                            continue
-
-                        # Filter by source library using .gnu.version correlation
-                        if library_soname and versym_section is not None:
-                            try:
-                                ver_entry = versym_section.get_symbol(idx)
-                                ver_ndx = ver_entry.entry["ndx"]
-                                # pyelftools returns str for special indices
-                                # (VER_NDX_LOCAL, VER_NDX_GLOBAL) and int for
-                                # regular version indices.
-                                if isinstance(ver_ndx, str):
-                                    ver_ndx = 0 if ver_ndx == "VER_NDX_LOCAL" else 1
-                                else:
-                                    # Mask off the hidden bit (bit 15)
-                                    ver_ndx = ver_ndx & 0x7FFF
-                            except (IndexError, KeyError):
-                                ver_ndx = 1  # treat as unversioned
-
-                            if ver_ndx >= 2:
-                                # Versioned symbol — check if from target library
-                                source_lib = ver_idx_to_lib.get(ver_ndx, "")
-                                if source_lib != library_soname:
-                                    continue
-                            elif ver_ndx <= 1:
-                                # Unversioned symbol (index 0=local, 1=global).
-                                # Cannot determine source library from version info;
-                                # include only if it doesn't look like a system symbol.
-                                from .elf_metadata import _guess_symbol_origin
-                                origin = _guess_symbol_origin(
-                                    sym.name, reqs.needed_libs,
-                                )
-                                if origin is not None:
-                                    continue
-                                # Weak undefined symbols with unknown origin are
-                                # typically optional linker/runtime refs (e.g.
-                                # _ITM_*, __gmon_start__) — skip them.
-                                if binding == "STB_WEAK":
-                                    continue
-
-                        reqs.undefined_symbols.add(sym.name)
+            _collect_undefined_symbols(elf, reqs, library_soname, ver_idx_to_lib, versym_section)
 
     except (ELFError, OSError, ValueError) as exc:
         log.warning("Failed to parse ELF app requirements from %s: %s", app_path, exc)
@@ -267,18 +298,66 @@ def _parse_pe_app_requirements(
 # Mach-O: parse app requirements
 # ---------------------------------------------------------------------------
 
+def _find_target_ordinal(reqs: AppRequirements, library_name: str) -> int | None:
+    """Determine 1-based index of target library in LC_LOAD_DYLIB list.
+
+    In Mach-O two-level namespace, the library ordinal stored in
+    n_desc bits [15:8] is a 1-based index into the load-dylib list.
+    """
+    if not library_name:
+        return None
+    lib_lower = library_name.lower()
+    for idx, lib in enumerate(reqs.needed_libs, start=1):
+        # Match by exact path, basename, or install_name
+        if (lib.lower() == lib_lower
+                or os.path.basename(lib).lower() == lib_lower
+                or lib_lower in lib.lower()):
+            return idx
+    return None
+
+
+def _collect_macho_undefined_symbols(
+    macho: object, header: object, reqs: AppRequirements, target_ordinal: int | None,
+) -> None:
+    """Read undefined symbols from a Mach-O header, filtered by target library ordinal."""
+    from macholib.mach_o import N_EXT, N_TYPE, N_UNDF
+    from macholib.SymbolTable import SymbolTable
+
+    symtab = SymbolTable(macho, header=header)
+    # Check undefsyms first (available when LC_DYSYMTAB is present)
+    symbols = getattr(symtab, "undefsyms", None) or symtab.nlists
+    for nlist_entry, name_bytes in symbols:
+        n_type = int(nlist_entry.n_type)
+
+        # For undefsyms, they're already filtered. For nlists, filter manually.
+        if symbols is symtab.nlists:
+            if not (n_type & N_EXT):
+                continue
+            if (n_type & N_TYPE) != N_UNDF:
+                continue
+
+        # Filter by library ordinal when target is known
+        if target_ordinal is not None:
+            n_desc = int(nlist_entry.n_desc)
+            ordinal = (n_desc >> 8) & 0xFF
+            # Reject special ordinals: 0 = SELF, 0xFE = EXECUTABLE, 0xFF = DYNAMIC_LOOKUP
+            if ordinal in (0, 0xFE, 0xFF) or ordinal != target_ordinal:
+                continue
+
+        name = name_bytes.decode("utf-8", errors="replace") if name_bytes else ""
+        # Strip leading underscore (Mach-O C symbol convention)
+        if name.startswith("_"):
+            name = name[1:]
+        if name:
+            reqs.undefined_symbols.add(name)
+
+
 def _parse_macho_app_requirements(
     app_path: Path, library_name: str,
 ) -> AppRequirements:
     """Extract app requirements for a specific dylib from a Mach-O binary."""
-    from macholib.mach_o import (
-        LC_LOAD_DYLIB,
-        N_EXT,
-        N_TYPE,
-        N_UNDF,
-    )
+    from macholib.mach_o import LC_LOAD_DYLIB
     from macholib.MachO import MachO
-    from macholib.SymbolTable import SymbolTable
 
     reqs = AppRequirements()
 
@@ -299,49 +378,12 @@ def _parse_macho_app_requirements(
                     name = data[:end].decode("utf-8", errors="replace")
                     reqs.needed_libs.append(name)
 
-        # 2. Determine index of target library in LC_LOAD_DYLIB list (1-based)
-        #    In Mach-O two-level namespace, the library ordinal stored in
-        #    n_desc bits [15:8] is a 1-based index into the load-dylib list.
-        target_ordinal: int | None = None
-        if library_name:
-            lib_lower = library_name.lower()
-            for idx, lib in enumerate(reqs.needed_libs, start=1):
-                # Match by exact path, basename, or install_name
-                if (lib.lower() == lib_lower
-                        or os.path.basename(lib).lower() == lib_lower
-                        or lib_lower in lib.lower()):
-                    target_ordinal = idx
-                    break
+        # 2. Determine index of target library
+        target_ordinal = _find_target_ordinal(reqs, library_name)
 
         # 3. Read undefined symbols, filtered by target library ordinal
         try:
-            symtab = SymbolTable(macho, header=header)
-            # Check undefsyms first (available when LC_DYSYMTAB is present)
-            symbols = getattr(symtab, "undefsyms", None) or symtab.nlists
-            for nlist_entry, name_bytes in symbols:
-                n_type = int(nlist_entry.n_type)
-
-                # For undefsyms, they're already filtered. For nlists, filter manually.
-                if symbols is symtab.nlists:
-                    if not (n_type & N_EXT):
-                        continue
-                    if (n_type & N_TYPE) != N_UNDF:
-                        continue
-
-                # Filter by library ordinal when target is known
-                if target_ordinal is not None:
-                    n_desc = int(nlist_entry.n_desc)
-                    ordinal = (n_desc >> 8) & 0xFF
-                    # 0 = SELF, 0xFE = EXECUTABLE, 0xFF = DYNAMIC_LOOKUP
-                    if ordinal not in (0, 0xFE, 0xFF) and ordinal != target_ordinal:
-                        continue
-
-                name = name_bytes.decode("utf-8", errors="replace") if name_bytes else ""
-                # Strip leading underscore (Mach-O C symbol convention)
-                if name.startswith("_"):
-                    name = name[1:]
-                if name:
-                    reqs.undefined_symbols.add(name)
+            _collect_macho_undefined_symbols(macho, header, reqs, target_ordinal)
         except Exception as exc:  # noqa: BLE001
             log.debug("SymbolTable failed for %s: %s", app_path, exc)
 
@@ -498,6 +540,62 @@ def _get_lib_soname(lib_path: Path) -> str:
 # Core: appcompat check
 # ---------------------------------------------------------------------------
 
+def _scope_app_symbols_to_library(
+    app_reqs: AppRequirements, old_lib_path: Path, app_path: Path,
+) -> None:
+    """Scope app-required symbols to those actually exported by the target library.
+
+    For ELF binaries, normalises symbol names and intersects with the old
+    library's exports to avoid false positives from unrelated dependencies.
+    Modifies ``app_reqs.undefined_symbols`` in place.
+    """
+    if _detect_app_format(app_path) != "elf" or _detect_app_format(old_lib_path) != "elf":
+        return
+
+    # Normalize app symbols to keep matching robust when version suffixes
+    # appear in one data source but not the other.
+    app_reqs.undefined_symbols = {
+        _normalize_elf_symbol_name(s) for s in app_reqs.undefined_symbols
+    }
+
+    old_exports = _get_old_lib_exports_for_scoping(old_lib_path)
+    if old_exports:
+        before = len(app_reqs.undefined_symbols)
+        app_reqs.undefined_symbols = {
+            s for s in app_reqs.undefined_symbols if s in old_exports
+        }
+        dropped = before - len(app_reqs.undefined_symbols)
+        if dropped > 0:
+            log.debug(
+                "appcompat scoped %d symbols to target library exports (%s)",
+                dropped,
+                old_lib_path,
+            )
+    else:
+        log.debug(
+            "appcompat scoping skipped: no exports parsed for target library (%s)",
+            old_lib_path,
+        )
+
+
+def _compute_appcompat_verdict(
+    missing_symbols: list[str],
+    missing_versions: list[str],
+    breaking_for_app: list[Change],
+    required_count: int,
+    policy: str,
+    policy_file: PolicyFile | None,
+) -> Verdict:
+    """Determine the app-specific compatibility verdict."""
+    if missing_symbols or missing_versions:
+        return Verdict.BREAKING
+    if breaking_for_app:
+        if policy_file is not None:
+            return policy_file.compute_verdict(breaking_for_app)
+        return compute_verdict(breaking_for_app, policy=policy)
+    return Verdict.COMPATIBLE if required_count > 0 else Verdict.NO_CHANGE
+
+
 def check_appcompat(
     app_path: Path,
     old_lib_path: Path,
@@ -532,33 +630,7 @@ def check_appcompat(
 
     # Guard against over-collection in ELF consumers with many dependencies:
     # keep only symbols that are actually exported by the target old library.
-    # This prevents unrelated DSO imports from being attributed to the checked
-    # library (false BREAKING in appcompat).
-    if _detect_app_format(app_path) == "elf" and _detect_app_format(old_lib_path) == "elf":
-        # Normalize app symbols to keep matching robust when version suffixes
-        # appear in one data source but not the other.
-        app_reqs.undefined_symbols = {
-            _normalize_elf_symbol_name(s) for s in app_reqs.undefined_symbols
-        }
-
-        old_exports = _get_old_lib_exports_for_scoping(old_lib_path)
-        if old_exports:
-            before = len(app_reqs.undefined_symbols)
-            app_reqs.undefined_symbols = {
-                s for s in app_reqs.undefined_symbols if s in old_exports
-            }
-            dropped = before - len(app_reqs.undefined_symbols)
-            if dropped > 0:
-                log.debug(
-                    "appcompat scoped %d symbols to target library exports (%s)",
-                    dropped,
-                    old_lib_path,
-                )
-        else:
-            log.debug(
-                "appcompat scoping skipped: no exports parsed for target library (%s)",
-                old_lib_path,
-            )
+    _scope_app_symbols_to_library(app_reqs, old_lib_path, app_path)
 
     # 2. Run standard library comparison
     from .dumper import dump
@@ -624,17 +696,10 @@ def check_appcompat(
     else:
         coverage = 0.0 if required_count > 0 else 100.0
 
-    # Verdict: missing symbols/versions → BREAKING, else based on relevant changes
-    if missing_symbols or missing_versions:
-        verdict = Verdict.BREAKING
-    elif breaking_for_app:
-        verdict = (
-            policy_file.compute_verdict(breaking_for_app)
-            if policy_file is not None
-            else compute_verdict(breaking_for_app, policy=policy)
-        )
-    else:
-        verdict = Verdict.COMPATIBLE if required_count > 0 else Verdict.NO_CHANGE
+    verdict = _compute_appcompat_verdict(
+        missing_symbols, missing_versions, breaking_for_app,
+        required_count, policy, policy_file,
+    )
 
     return AppCompatResult(
         app_path=str(app_path),

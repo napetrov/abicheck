@@ -118,6 +118,47 @@ _RESERVED_FIELD_RE = re.compile(
 
 
 
+def _try_match_reserved_field(
+    fname: str,
+    f_old: TypeField,
+    name: str,
+    added_by_offset: dict[int, TypeField],
+    added_by_type: dict[str, list[TypeField]],
+    reserved_matched_added: set[str],
+) -> Change | None:
+    """Check if a removed field is a reserved field put into use.
+
+    Returns a USED_RESERVED_FIELD Change if matched, or None.
+    """
+    if not _RESERVED_FIELD_RE.match(fname):
+        return None
+
+    candidate: TypeField | None = None
+    # Primary: match by offset + type (when available)
+    if f_old.offset_bits is not None:
+        c = added_by_offset.get(f_old.offset_bits)
+        if c is not None and f_old.type == c.type:
+            candidate = c
+    # Fallback: match by type when offsets unavailable (DWARF-only)
+    if candidate is None and f_old.offset_bits is None:
+        candidates = added_by_type.get(f_old.type, [])
+        for c in candidates:
+            if c.name not in reserved_matched_added:
+                candidate = c
+                break
+    if candidate is not None and not _RESERVED_FIELD_RE.match(candidate.name):
+        # Reserved field -> real field at same offset/type -> COMPATIBLE
+        reserved_matched_added.add(candidate.name)
+        return Change(
+            kind=ChangeKind.USED_RESERVED_FIELD,
+            symbol=name,
+            description=f"Reserved field put into use: {name}::{fname} → {candidate.name}",
+            old_value=fname,
+            new_value=candidate.name,
+        )
+    return None
+
+
 def _diff_type_fields(name: str, t_old: RecordType, t_new: RecordType) -> list[Change]:
     changes: list[Change] = []
     old_fields = {f.name: f for f in t_old.fields}
@@ -143,34 +184,12 @@ def _diff_type_fields(name: str, t_old: RecordType, t_new: RecordType) -> list[C
         f_new = new_fields.get(fname)
         if f_new is None:
             # Check if this is a reserved field put into use
-            if _RESERVED_FIELD_RE.match(fname):
-                candidate: TypeField | None = None
-                # Primary: match by offset + type (when available)
-                if f_old.offset_bits is not None:
-                    c = added_by_offset.get(f_old.offset_bits)
-                    if c is not None and f_old.type == c.type:
-                        candidate = c
-                # Fallback: match by type when offsets unavailable (DWARF-only)
-                if candidate is None and f_old.offset_bits is None:
-                    candidates = added_by_type.get(f_old.type, [])
-                    for c in candidates:
-                        if c.name not in reserved_matched_added:
-                            candidate = c
-                            break
-                if (
-                    candidate is not None
-                    and not _RESERVED_FIELD_RE.match(candidate.name)
-                ):
-                    # Reserved field → real field at same offset/type → COMPATIBLE
-                    changes.append(Change(
-                        kind=ChangeKind.USED_RESERVED_FIELD,
-                        symbol=name,
-                        description=f"Reserved field put into use: {name}::{fname} → {candidate.name}",
-                        old_value=fname,
-                        new_value=candidate.name,
-                    ))
-                    reserved_matched_added.add(candidate.name)
-                    continue
+            matched = _try_match_reserved_field(
+                fname, f_old, name, added_by_offset, added_by_type, reserved_matched_added,
+            )
+            if matched is not None:
+                changes.append(matched)
+                continue
             changes.append(Change(
                 kind=ChangeKind.TYPE_FIELD_REMOVED,
                 symbol=name,

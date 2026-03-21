@@ -201,34 +201,56 @@ def resolve_dependencies(
                 graph.edges.append((requester_path, resolved_key))
             continue
 
-        meta = parse_elf_metadata(resolved_path)
-        node = ResolvedDSO(
-            path=resolved_path, soname=meta.soname or soname,
-            needed=list(meta.needed), rpath=meta.rpath,
-            runpath=meta.runpath, resolution_reason=reason,
-            depth=depth, elf_metadata=meta,
+        _register_resolved_dso(
+            resolved_path, resolved_key, soname, reason, depth,
+            requester_path, graph, queue, visited_sonames,
+            propagated_rpaths, prefix, platform_token, lib_token,
         )
-        graph.nodes[resolved_key] = node
-        if requester_path:
-            graph.edges.append((requester_path, resolved_key))
-
-        # Propagate RPATH: merge with ancestor RPATHs.
-        if meta.rpath and not meta.runpath:
-            own_rpaths = _expand_rpath(
-                meta.rpath, resolved_path.parent, prefix,
-                platform_token=platform_token, lib_token=lib_token,
-            )
-            propagated_rpaths[resolved_key] = _merge_rpaths(
-                own_rpaths, propagated_rpaths.get(requester_path or "", []),
-            )
-        elif requester_path and requester_path in propagated_rpaths:
-            propagated_rpaths[resolved_key] = propagated_rpaths[requester_path]
-
-        for needed_child in meta.needed:
-            if needed_child not in visited_sonames:
-                queue.append((needed_child, resolved_key, depth + 1))
 
     return graph
+
+
+def _register_resolved_dso(
+    resolved_path: Path,
+    resolved_key: str,
+    soname: str,
+    reason: str,
+    depth: int,
+    requester_path: str | None,
+    graph: DependencyGraph,
+    queue: deque[tuple[str, str | None, int]],
+    visited_sonames: set[str],
+    propagated_rpaths: dict[str, list[str]],
+    prefix: str,
+    platform_token: str,
+    lib_token: str,
+) -> None:
+    """Parse a newly resolved DSO, add it to the graph, and enqueue its children."""
+    meta = parse_elf_metadata(resolved_path)
+    node = ResolvedDSO(
+        path=resolved_path, soname=meta.soname or soname,
+        needed=list(meta.needed), rpath=meta.rpath,
+        runpath=meta.runpath, resolution_reason=reason,
+        depth=depth, elf_metadata=meta,
+    )
+    graph.nodes[resolved_key] = node
+    if requester_path:
+        graph.edges.append((requester_path, resolved_key))
+
+    # Propagate RPATH: merge with ancestor RPATHs.
+    if meta.rpath and not meta.runpath:
+        own_rpaths = _expand_rpath(
+            meta.rpath, resolved_path.parent, prefix,
+            platform_token=platform_token, lib_token=lib_token,
+        )
+        propagated_rpaths[resolved_key] = _merge_rpaths(
+            own_rpaths, propagated_rpaths.get(requester_path or "", []),
+        )
+    elif requester_path and requester_path in propagated_rpaths:
+        propagated_rpaths[resolved_key] = propagated_rpaths[requester_path]
+
+    for needed_child in meta.needed:
+        queue.append((needed_child, resolved_key, depth + 1))
 
 
 def _merge_rpaths(own: list[str], ancestor: list[str]) -> list[str]:

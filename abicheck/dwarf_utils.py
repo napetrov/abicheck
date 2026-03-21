@@ -160,69 +160,84 @@ def _evaluate_location_expr(expr: list[object]) -> int:
 
         # ---- DWARFExprOp or plain tuple ----
         if isinstance(item, tuple):
-            # pyelftools DWARFExprOp: hasattr(item, 'args')
-            if hasattr(item, "args"):
-                op = getattr(item, "op", 0)
-                args = getattr(item, "args", [])
-                operand = args[0] if args else 0
-            else:
-                # Plain (opcode, operand, ...) tuple
-                op = item[0] if len(item) > 0 else 0
-                operand = item[1] if len(item) > 1 else 0
-                if not (isinstance(op, int) and isinstance(operand, int)):
-                    i += 1
-                    continue
-
-            if isinstance(op, int):
-                # DW_OP_plus_uconst = 0x23
-                if op == 0x23:
-                    stack[-1] = stack[-1] + operand if stack else operand
-                # DW_OP_constu = 0x10, DW_OP_consts = 0x11
-                elif op in (0x10, 0x11):
-                    stack.append(operand)
-                # DW_OP_lit0..DW_OP_lit31 = 0x30..0x4f
-                elif 0x30 <= op <= 0x4F:
-                    stack.append(op - 0x30)
-                # DW_OP_plus = 0x22
-                elif op == 0x22 and len(stack) >= 2:
-                    b = stack.pop()
-                    stack[-1] += b
+            _eval_tuple_item(item, stack)
             i += 1
             continue
 
         # ---- Raw integer stream ----
         if isinstance(item, int):
-            # DW_OP_plus_uconst = 0x23 (operand: ULEB128)
-            if item == 0x23:
-                val, i = _read_uleb128(items, i + 1)
-                stack[-1] = stack[-1] + val if stack else val
-                continue
-            # DW_OP_constu = 0x10 (operand: ULEB128)
-            if item == 0x10:
-                val, i = _read_uleb128(items, i + 1)
-                stack.append(val)
-                continue
-            # DW_OP_consts = 0x11 (operand: SLEB128)
-            if item == 0x11:
-                val, i = _read_sleb128(items, i + 1)
-                stack.append(val)
-                continue
-            # DW_OP_lit0..DW_OP_lit31 (0x30..0x4f) — no operand
-            if 0x30 <= item <= 0x4F:
-                stack.append(item - 0x30)
-                i += 1
-                continue
-            # DW_OP_plus = 0x22 — no operand
-            if item == 0x22 and len(stack) >= 2:
-                b = stack.pop()
-                stack[-1] += b
-                i += 1
-                continue
-            # Unknown opcode or bare integer — treat as constant
-            stack.append(item)
+            i = _eval_raw_int_item(item, items, i, stack)
+            continue
+
         i += 1
 
     return stack[-1] if stack else 0
+
+
+def _eval_tuple_item(item: tuple[object, ...], stack: list[int]) -> None:
+    """Evaluate a single tuple item (DWARFExprOp or plain tuple) onto *stack*."""
+    # pyelftools DWARFExprOp: hasattr(item, 'args')
+    if hasattr(item, "args"):
+        op = getattr(item, "op", 0)
+        args = getattr(item, "args", [])
+        operand = args[0] if args else 0
+    else:
+        # Plain (opcode, operand, ...) tuple
+        op = item[0] if len(item) > 0 else 0
+        operand = item[1] if len(item) > 1 else 0
+        if not (isinstance(op, int) and isinstance(operand, int)):
+            return
+
+    if isinstance(op, int):
+        # DW_OP_plus_uconst = 0x23
+        if op == 0x23:
+            stack[-1] = stack[-1] + operand if stack else operand
+        # DW_OP_constu = 0x10, DW_OP_consts = 0x11
+        elif op in (0x10, 0x11):
+            stack.append(operand)
+        # DW_OP_lit0..DW_OP_lit31 = 0x30..0x4f
+        elif 0x30 <= op <= 0x4F:
+            stack.append(op - 0x30)
+        # DW_OP_plus = 0x22
+        elif op == 0x22 and len(stack) >= 2:
+            b = stack.pop()
+            stack[-1] += b
+
+
+def _eval_raw_int_item(
+    item: int, items: list[object], i: int, stack: list[int],
+) -> int:
+    """Evaluate a single raw-integer item onto *stack*.
+
+    Returns the updated index *i* (already advanced past operands).
+    """
+    # DW_OP_plus_uconst = 0x23 (operand: ULEB128)
+    if item == 0x23:
+        val, i = _read_uleb128(items, i + 1)
+        stack[-1] = stack[-1] + val if stack else val
+        return i
+    # DW_OP_constu = 0x10 (operand: ULEB128)
+    if item == 0x10:
+        val, i = _read_uleb128(items, i + 1)
+        stack.append(val)
+        return i
+    # DW_OP_consts = 0x11 (operand: SLEB128)
+    if item == 0x11:
+        val, i = _read_sleb128(items, i + 1)
+        stack.append(val)
+        return i
+    # DW_OP_lit0..DW_OP_lit31 (0x30..0x4f) — no operand
+    if 0x30 <= item <= 0x4F:
+        stack.append(item - 0x30)
+        return i + 1
+    # DW_OP_plus = 0x22 — no operand
+    if item == 0x22 and len(stack) >= 2:
+        b = stack.pop()
+        stack[-1] += b
+        return i + 1
+    # Unknown opcode or bare integer — treat as constant
+    stack.append(item)
+    return i + 1
 
 
 def decode_member_location(val: int | list[object] | None) -> int:

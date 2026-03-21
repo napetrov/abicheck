@@ -160,6 +160,81 @@ def _compute_load_order(graph: DependencyGraph) -> list[str]:
     return order
 
 
+def _try_versioned_match(
+    consumer: str,
+    sym_name: str,
+    required_version: str,
+    provider_path: str,
+    versions: list[tuple[str, bool, str]],
+    first_provider: str | None,
+    export_index: dict[str, dict[str, list[tuple[str, bool, str]]]],
+) -> SymbolBinding | None:
+    """Try to match a versioned symbol requirement against *provider_path*.
+
+    Returns a SymbolBinding on match, or None to continue searching.
+    """
+    for ver, is_default, vis in versions:
+        if vis in ("hidden", "internal"):
+            continue
+        if ver == required_version:
+            # Detect interposition: only when a *different* provider
+            # that also exports the *same version* appeared earlier
+            # in the load order.
+            if (
+                first_provider is not None
+                and first_provider != provider_path
+                and _provider_has_version(
+                    export_index, first_provider, sym_name, required_version,
+                )
+            ):
+                return SymbolBinding(
+                    consumer=consumer,
+                    symbol=sym_name,
+                    version=required_version,
+                    provider=provider_path,
+                    status=BindingStatus.INTERPOSED,
+                    explanation=(
+                        f"Symbol {sym_name}@{required_version} resolved from "
+                        f"{provider_path} but {first_provider} also exports "
+                        f"{sym_name}@{required_version} (interposition)"
+                    ),
+                )
+            return SymbolBinding(
+                consumer=consumer,
+                symbol=sym_name,
+                version=required_version,
+                provider=provider_path,
+                status=BindingStatus.RESOLVED_OK,
+                explanation=f"Resolved {sym_name}@{required_version} from {provider_path}",
+            )
+    return None
+
+
+def _try_unversioned_match(
+    consumer: str,
+    sym_name: str,
+    provider_path: str,
+    versions: list[tuple[str, bool, str]],
+) -> SymbolBinding | None:
+    """Try to match an unversioned symbol requirement against *provider_path*.
+
+    Returns a SymbolBinding on match, or None to continue searching.
+    """
+    for ver, is_default, vis in versions:
+        if vis in ("hidden", "internal"):
+            continue
+        if not ver or is_default:
+            return SymbolBinding(
+                consumer=consumer,
+                symbol=sym_name,
+                version="",
+                provider=provider_path,
+                status=BindingStatus.RESOLVED_OK,
+                explanation=f"Resolved {sym_name} from {provider_path}",
+            )
+    return None
+
+
 def _make_not_found_binding(
     consumer: str,
     sym_name: str,
@@ -264,58 +339,19 @@ def _resolve_import(
 
         # Check version compatibility.
         if required_version:
-            # Need a matching version.
-            for ver, is_default, vis in versions:
-                if vis in ("hidden", "internal"):
-                    continue
-                if ver == required_version:
-                    # Detect interposition: only when a *different* provider
-                    # that also exports the *same version* appeared earlier
-                    # in the load order.  If first_provider != provider_path
-                    # but first_provider's version didn't match, that's just
-                    # a version miss — not interposition.
-                    if (
-                        first_provider is not None
-                        and first_provider != provider_path
-                        and _provider_has_version(
-                            export_index, first_provider, sym_name, required_version,
-                        )
-                    ):
-                        return SymbolBinding(
-                            consumer=consumer,
-                            symbol=sym_name,
-                            version=required_version,
-                            provider=provider_path,
-                            status=BindingStatus.INTERPOSED,
-                            explanation=(
-                                f"Symbol {sym_name}@{required_version} resolved from "
-                                f"{provider_path} but {first_provider} also exports "
-                                f"{sym_name}@{required_version} (interposition)"
-                            ),
-                        )
-                    return SymbolBinding(
-                        consumer=consumer,
-                        symbol=sym_name,
-                        version=required_version,
-                        provider=provider_path,
-                        status=BindingStatus.RESOLVED_OK,
-                        explanation=f"Resolved {sym_name}@{required_version} from {provider_path}",
-                    )
+            match = _try_versioned_match(
+                consumer, sym_name, required_version, provider_path,
+                versions, first_provider, export_index,
+            )
+            if match is not None:
+                return match
             # Symbol found but version doesn't match — keep searching.
         else:
-            # No version required — any default version or unversioned is fine.
-            for ver, is_default, vis in versions:
-                if vis in ("hidden", "internal"):
-                    continue
-                if not ver or is_default:
-                    return SymbolBinding(
-                        consumer=consumer,
-                        symbol=sym_name,
-                        version="",
-                        provider=provider_path,
-                        status=BindingStatus.RESOLVED_OK,
-                        explanation=f"Resolved {sym_name} from {provider_path}",
-                    )
+            match = _try_unversioned_match(
+                consumer, sym_name, provider_path, versions,
+            )
+            if match is not None:
+                return match
 
     return _make_not_found_binding(
         consumer, sym_name, required_version, is_weak,

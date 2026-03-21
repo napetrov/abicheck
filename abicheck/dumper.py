@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -281,6 +282,106 @@ def _detect_cpp_headers(header_paths: list[Path]) -> bool:
     return False
 
 
+def _resolve_compiler_binary(
+    compiler: str,
+    gcc_path: str | None,
+    gcc_prefix: str | None,
+) -> tuple[str, str]:
+    """Resolve the compiler binary and dialect (gnu/msvc) for castxml.
+
+    Returns (cc_bin, cc_id) where cc_id is "gnu" or "msvc".
+    """
+    _cc_map = {"c++": "g++", "cc": "gcc", "g++": "g++", "gcc": "gcc",
+               "clang++": "clang++", "clang": "clang"}
+
+    if gcc_path:
+        cc_bin = gcc_path
+    elif gcc_prefix:
+        suffix = "g++" if compiler in ("c++", "g++", "clang++") else "gcc"
+        cc_bin = f"{gcc_prefix}{suffix}"
+    else:
+        cc_bin = _cc_map.get(compiler, compiler)
+
+    exe_name = Path(cc_bin).name.lower()
+    cc_id = "msvc" if exe_name in ("cl", "cl.exe") else "gnu"
+    return cc_bin, cc_id
+
+
+def _build_castxml_command(
+    cc_bin: str, cc_id: str,
+    extra_includes: list[Path],
+    out_xml: Path, agg_path: Path,
+    *,
+    sysroot: Path | None = None,
+    nostdinc: bool = False,
+    gcc_options: str | None = None,
+    force_cpp: bool = False,
+) -> list[str]:
+    """Build the castxml command line."""
+    cmd = ["castxml", "--castxml-output=1",
+           f"--castxml-cc-{cc_id}", cc_bin]
+    for inc in extra_includes:
+        cmd += ["-I", str(inc)]
+
+    if sysroot:
+        cmd += [f"--sysroot={sysroot.as_posix()}"]
+    if nostdinc:
+        cmd += ["-nostdinc"]
+    if gcc_options:
+        cmd += shlex.split(gcc_options, posix=os.name != "nt")
+
+    # Workaround: castxml with --castxml-cc-gnu gcc auto-injects -std=gnu++17
+    # which is rejected when parsing a .h file in C mode.
+    if not force_cpp and cc_id == "gnu":
+        cmd += ["-x", "c", "-std=gnu11"]
+
+    cmd += ["-o", str(out_xml), str(agg_path)]
+    return cmd
+
+
+def _validate_castxml_output(
+    result: subprocess.CompletedProcess[str],
+    out_xml: Path,
+    headers: list[Path],
+    force_cpp: bool,
+) -> Element:
+    """Validate castxml output and return parsed XML root."""
+    if result.returncode != 0:
+        hint = ""
+        if not force_cpp and _detect_cpp_headers(headers):
+            hint = (
+                "\n\nHint: The header files appear to contain C++ syntax "
+                "(class, namespace, template) but --lang c was specified. "
+                "Try removing --lang or using --lang c++."
+            )
+        raise SnapshotError(
+            f"castxml failed (exit {result.returncode}):\n{result.stderr[:2000]}{hint}"
+        )
+    if not out_xml.exists() or out_xml.stat().st_size == 0:
+        stderr_snippet = result.stderr[:1000].strip()
+        detail = f"\ncastxml stderr: {stderr_snippet}" if stderr_snippet else ""
+        raise SnapshotError(
+            f"castxml exited 0 but produced no output file (or empty file).{detail}"
+        )
+    try:
+        root = cast(Element, DefusedET.parse(str(out_xml)).getroot())
+    except Exception as xml_exc:
+        stderr_snippet = result.stderr[:1000].strip()
+        detail = f"\ncastxml stderr: {stderr_snippet}" if stderr_snippet else ""
+        raise SnapshotError(
+            f"castxml produced invalid XML: {xml_exc}{detail}"
+        ) from xml_exc
+    if len(root) == 0:
+        stderr_snippet = result.stderr[:1000].strip()
+        detail = f"\ncastxml stderr: {stderr_snippet}" if stderr_snippet else ""
+        raise SnapshotError(
+            f"castxml produced an empty XML document (no declarations found). "
+            f"Check that the header paths are correct and the compiler can "
+            f"parse them.{detail}"
+        )
+    return root
+
+
 def _castxml_dump(
     headers: list[Path],
     extra_includes: list[Path],
@@ -324,38 +425,16 @@ def _castxml_dump(
         except Exception:
             _cached_root = None
         if _cached_root is None:
-            # Corrupt/unparseable cache entry — remove and re-run castxml
             cached.unlink(missing_ok=True)
         else:
             return cast(Element, _cached_root)
 
-    # Map logical compiler name → castxml cc flag
-    _cc_map = {"c++": "g++", "cc": "gcc", "g++": "g++", "gcc": "gcc",
-               "clang++": "clang++", "clang": "clang"}
-
-    # Determine the compiler binary to use
-    if gcc_path:
-        cc_bin = gcc_path
-    elif gcc_prefix:
-        # e.g. gcc_prefix="aarch64-linux-gnu-" → "aarch64-linux-gnu-g++" or "aarch64-linux-gnu-gcc"
-        suffix = "g++" if compiler in ("c++", "g++", "clang++") else "gcc"
-        cc_bin = f"{gcc_prefix}{suffix}"
-    else:
-        cc_bin = _cc_map.get(compiler, compiler)
-
-    # Determine GNU vs MSVC dialect (inspect executable name, not substring,
-    # to avoid misclassifying paths like "/opt/local/bin/g++")
-    exe_name = Path(cc_bin).name.lower()
-    cc_id = "msvc" if exe_name in ("cl", "cl.exe") else "gnu"
+    cc_bin, cc_id = _resolve_compiler_binary(compiler, gcc_path, gcc_prefix)
 
     with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
         out_xml = Path(tmp.name)
 
     # Determine aggregate header extension: .h for C-only, .hpp for C++ (FIX-A).
-    # When --lang is not explicitly set, auto-detect from header content:
-    # - .hpp/.hxx/.hh extensions → C++
-    # - Structural C++ syntax (class/namespace/template declarations) → C++
-    # - Otherwise → C (prevents castxml from applying C++ mangling to C functions)
     force_cpp = lang and lang.upper() in ("C++", "CPP")
     if not lang:
         force_cpp = _detect_cpp_headers(headers)
@@ -366,27 +445,11 @@ def _castxml_dump(
             agg.write(f'#include "{h.resolve()}"\n')
         agg_path = Path(agg.name)
 
-    cmd = ["castxml", "--castxml-output=1",
-           f"--castxml-cc-{cc_id}", cc_bin]
-    for inc in extra_includes:
-        cmd += ["-I", str(inc)]
-
-    # Cross-compilation / toolchain flags
-    if sysroot:
-        cmd += [f"--sysroot={sysroot.as_posix()}"]
-    if nostdinc:
-        cmd += ["-nostdinc"]
-    if gcc_options:
-        # Split on whitespace, just like ABICC does
-        cmd += gcc_options.split()
-
-    # Workaround: castxml with --castxml-cc-gnu gcc auto-injects -std=gnu++17
-    # which is rejected when parsing a .h file in C mode. Force explicit C
-    # language and standard so castxml passes these to the compiler instead.
-    if not force_cpp and cc_id == "gnu":
-        cmd += ["-x", "c", "-std=gnu11"]
-
-    cmd += ["-o", str(out_xml), str(agg_path)]
+    cmd = _build_castxml_command(
+        cc_bin, cc_id, extra_includes, out_xml, agg_path,
+        sysroot=sysroot, nostdinc=nostdinc, gcc_options=gcc_options,
+        force_cpp=bool(force_cpp),
+    )
 
     try:
         try:
@@ -401,46 +464,7 @@ def _castxml_dump(
                 f"syntax that causes the compiler to hang. Check that the header "
                 f"is valid and can be compiled with gcc/g++.{stderr_snippet}"
             ) from exc
-        if result.returncode != 0:
-            hint = ""
-            if not force_cpp and _detect_cpp_headers(headers):
-                hint = (
-                    "\n\nHint: The header files appear to contain C++ syntax "
-                    "(class, namespace, template) but --lang c was specified. "
-                    "Try removing --lang or using --lang c++."
-                )
-            raise SnapshotError(
-                f"castxml failed (exit {result.returncode}):\n{result.stderr[:2000]}{hint}"
-            )
-        # Guard against castxml exiting 0 but not writing an output file,
-        # or writing an empty/truncated file (happens with some header errors).
-        if not out_xml.exists() or out_xml.stat().st_size == 0:
-            stderr_snippet = result.stderr[:1000].strip()
-            detail = f"\ncastxml stderr: {stderr_snippet}" if stderr_snippet else ""
-            raise SnapshotError(
-                f"castxml exited 0 but produced no output file (or empty file).{detail}"
-            )
-        # Parse the XML; propagate parse errors as RuntimeError with context.
-        try:
-            root = cast(Element, DefusedET.parse(str(out_xml)).getroot())
-        except Exception as xml_exc:
-            stderr_snippet = result.stderr[:1000].strip()
-            detail = f"\ncastxml stderr: {stderr_snippet}" if stderr_snippet else ""
-            raise SnapshotError(
-                f"castxml produced invalid XML: {xml_exc}{detail}"
-            ) from xml_exc
-        # castxml may exit 0 but emit an empty root element when the header
-        # fails to parse (no children = no type/function declarations captured).
-        # This is a silent failure that would yield a false COMPATIBLE verdict.
-        if len(root) == 0:
-            stderr_snippet = result.stderr[:1000].strip()
-            detail = f"\ncastxml stderr: {stderr_snippet}" if stderr_snippet else ""
-            raise SnapshotError(
-                f"castxml produced an empty XML document (no declarations found). "
-                f"Check that the header paths are correct and the compiler can "
-                f"parse them.{detail}"
-            )
-        # Save to cache
+        root = _validate_castxml_output(result, out_xml, headers, bool(force_cpp))
         shutil.copy2(str(out_xml), str(cached))
         return root
     finally:

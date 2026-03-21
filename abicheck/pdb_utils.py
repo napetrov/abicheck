@@ -60,6 +60,46 @@ def _is_network_path(p: str | Path) -> bool:
 _MAX_CODEVIEW_SIZE = 4096
 
 
+def _resolve_absolute_pdb_path(
+    pwin: PureWindowsPath, dll_path: Path, embedded_name: str, embedded: str,
+) -> Path | None:
+    """Try to resolve an absolute Windows PDB path to a local file."""
+    try:
+        dll_drive = PureWindowsPath(str(Path(dll_path).resolve())).drive
+        emb_drive = pwin.drive
+        if dll_drive and emb_drive and dll_drive.lower() != emb_drive.lower():
+            log.debug(
+                "locate_pdb: skipping embedded path on different drive %s", embedded
+            )
+            # Fall through to filename-only lookup
+            return None
+        # Construct a host-native Path for the filesystem check.
+        if pwin.drive:
+            candidate = Path(*pwin.parts[1:]) if len(pwin.parts) > 1 else Path(embedded_name)
+            candidate = dll_path.parent / candidate
+        else:
+            candidate = Path(embedded)
+        if candidate.is_file():
+            return candidate
+    except (ValueError, OSError):
+        pass  # drive comparison failed; fall through to filename-only
+    return None
+
+
+def _resolve_relative_pdb_path(
+    pwin: PureWindowsPath, dll_path: Path, embedded_name: str,
+) -> Path | None:
+    """Try to resolve a relative Windows PDB path against the DLL directory."""
+    candidate = dll_path.parent / Path(*pwin.parts) if pwin.parts else dll_path.parent / embedded_name
+    try:
+        candidate.resolve().relative_to(dll_path.parent.resolve())
+        if candidate.is_file():
+            return candidate
+    except (ValueError, OSError):
+        pass  # traversal attempt or resolution error
+    return None
+
+
 def _resolve_embedded_pdb(
     dll_path: Path,
     allow_network: bool,
@@ -98,35 +138,13 @@ def _resolve_embedded_pdb(
     # they share the same drive/root as the DLL itself.  Use PureWindowsPath so
     # that "C:\build\foo.pdb" is recognised as absolute on POSIX hosts too.
     if pwin.drive or pwin.is_absolute():
-        try:
-            dll_drive = PureWindowsPath(str(Path(dll_path).resolve())).drive
-            emb_drive = pwin.drive
-            if dll_drive and emb_drive and dll_drive.lower() != emb_drive.lower():
-                log.debug(
-                    "locate_pdb: skipping embedded path on different drive %s", embedded
-                )
-                # Fall through to filename-only lookup below
-            else:
-                # Construct a host-native Path for the filesystem check.
-                # For relative Windows paths (backslash but no drive), join parts.
-                if pwin.drive:
-                    candidate = Path(*pwin.parts[1:]) if len(pwin.parts) > 1 else Path(embedded_name)
-                    candidate = dll_path.parent / candidate
-                else:
-                    candidate = Path(embedded)
-                if candidate.is_file():
-                    return candidate
-        except (ValueError, OSError):
-            pass  # drive comparison failed; fall through to filename-only
+        result = _resolve_absolute_pdb_path(pwin, dll_path, embedded_name, embedded)
+        if result is not None:
+            return result
     else:
-        # Relative path: resolve against DLL directory and guard against traversal.
-        candidate = dll_path.parent / Path(*pwin.parts) if pwin.parts else dll_path.parent / embedded_name
-        try:
-            candidate.resolve().relative_to(dll_path.parent.resolve())
-            if candidate.is_file():
-                return candidate
-        except (ValueError, OSError):
-            pass  # traversal attempt or resolution error; fall through
+        result = _resolve_relative_pdb_path(pwin, dll_path, embedded_name)
+        if result is not None:
+            return result
 
     # Fall back to same filename in the DLL's directory (always local, no traversal)
     local = dll_path.parent / embedded_name
@@ -173,6 +191,33 @@ def locate_pdb(
     return None
 
 
+def _parse_codeview_raw(raw: bytes) -> str | None:
+    """Extract PDB path from raw CodeView debug data bytes."""
+    if raw[:4] == _RSDS_SIG and len(raw) >= 24:
+        # RSDS: 4 (sig) + 16 (GUID) + 4 (age) + filename
+        pdb_name = raw[24:].split(b"\x00", 1)[0]
+        return pdb_name.decode("utf-8", errors="replace")
+    if raw[:4] == _NB10_SIG and len(raw) >= 16:
+        # NB10: 4 (sig) + 4 (offset) + 4 (timestamp) + 4 (age) + filename
+        pdb_name = raw[16:].split(b"\x00", 1)[0]
+        return pdb_name.decode("utf-8", errors="replace")
+    return None
+
+
+def _parse_codeview_entry(data: object) -> str | None:
+    """Extract PDB path from a pefile-parsed CodeView structure."""
+    if not hasattr(data, "CvSignature"):
+        return None
+    sig_bytes = struct.pack("<I", data.CvSignature)
+    if sig_bytes in (_RSDS_SIG, _NB10_SIG):
+        if hasattr(data, "PdbFileName"):
+            fname = data.PdbFileName
+            if isinstance(fname, bytes):
+                return fname.rstrip(b"\x00").decode("utf-8", errors="replace")
+            return str(fname)
+    return None
+
+
 def _extract_pdb_path_from_pe(dll_path: Path) -> str | None:
     """Extract the PDB path string from a PE binary's debug directory.
 
@@ -198,38 +243,19 @@ def _extract_pdb_path_from_pe(dll_path: Path) -> str | None:
 
             data = dbg.entry
             if data is None:
-                # Fall back to raw data via AddressOfRawData (RVA),
-                # which is what pe.get_data() expects.
+                # Fall back to raw data via AddressOfRawData (RVA).
                 size = dbg.struct.SizeOfData
-                # Sanity cap: CodeView header + MAX_PATH is well under 1 KB.
-                # Reject oversized entries to prevent OOM from crafted PEs.
                 if size and size <= _MAX_CODEVIEW_SIZE and dbg.struct.AddressOfRawData:
                     raw: bytes = pe.get_data(dbg.struct.AddressOfRawData, size)
-                    if raw[:4] == _RSDS_SIG and len(raw) >= 24:
-                        # RSDS: 4 (sig) + 16 (GUID) + 4 (age) + filename
-                        pdb_name = raw[24:].split(b"\x00", 1)[0]
-                        return pdb_name.decode("utf-8", errors="replace")
-                    if raw[:4] == _NB10_SIG and len(raw) >= 16:
-                        # NB10: 4 (sig) + 4 (offset) + 4 (timestamp) + 4 (age) + filename
-                        pdb_name = raw[16:].split(b"\x00", 1)[0]
-                        return pdb_name.decode("utf-8", errors="replace")
+                    result = _parse_codeview_raw(raw)
+                    if result is not None:
+                        return result
                 continue
 
             # pefile parses the CodeView data into a named structure
-            if hasattr(data, "CvSignature"):
-                sig_bytes = struct.pack("<I", data.CvSignature)
-                if sig_bytes == _RSDS_SIG:
-                    if hasattr(data, "PdbFileName"):
-                        fname = data.PdbFileName
-                        if isinstance(fname, bytes):
-                            return fname.rstrip(b"\x00").decode("utf-8", errors="replace")
-                        return str(fname)
-                elif sig_bytes == _NB10_SIG:
-                    if hasattr(data, "PdbFileName"):
-                        fname = data.PdbFileName
-                        if isinstance(fname, bytes):
-                            return fname.rstrip(b"\x00").decode("utf-8", errors="replace")
-                        return str(fname)
+            result = _parse_codeview_entry(data)
+            if result is not None:
+                return result
 
         return None
 

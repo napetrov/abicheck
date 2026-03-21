@@ -145,9 +145,9 @@ PARITY_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str, s
     ),
 ]
 
-_CONFIRMED  = [c for c in PARITY_CASES if c[8] == "parity"]
-_CORRECT    = [c for c in PARITY_CASES if c[8] == "correct"]
-_DIVERGE    = [c for c in PARITY_CASES if c[8] == "divergence"]
+_CONFIRMED = [c for c in PARITY_CASES if c[8] == "parity"]
+_CORRECT = [c for c in PARITY_CASES if c[8] == "correct"]
+_DIVERGE = [c for c in PARITY_CASES if c[8] == "divergence"]
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +273,7 @@ def test_confirmed_parity(
     """Both tools must agree on verdict — full parity enforced."""
     ac, ab = _setup(name, src_v1, src_v2, hdr_v1, hdr_v2, lang, tmp_path)
     assert ac == abicheck_exp, f"abicheck: expected {abicheck_exp}, got {ac}"
-    assert ab == abidiff_exp,  f"abidiff:  expected {abidiff_exp}, got {ab}"
+    assert ab == abidiff_exp, f"abidiff:  expected {abidiff_exp}, got {ab}"
     assert ac == ab, f"PARITY BROKEN: abicheck={ac}, abidiff={ab}"
 
 
@@ -295,7 +295,7 @@ def test_abicheck_correct(
     """
     ac, ab = _setup(name, src_v1, src_v2, hdr_v1, hdr_v2, lang, tmp_path)
     assert ac == abicheck_exp, f"abicheck: expected {abicheck_exp}, got {ac}"
-    assert ab == abidiff_exp,  f"abidiff:  expected {abidiff_exp}, got {ab}"
+    assert ab == abidiff_exp, f"abidiff:  expected {abidiff_exp}, got {ab}"
     # Tools intentionally differ: abicheck BREAKING, abidiff COMPATIBLE.
     # If abidiff also becomes BREAKING, this gap is fully closed.
     if ac == ab:
