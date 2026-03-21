@@ -19,6 +19,7 @@ from typing import Any
 
 from .checker_policy import ChangeKind
 from .checker_types import Change
+from .detector_registry import registry
 from .model import (
     AbiSnapshot,
     Function,
@@ -175,6 +176,7 @@ def _check_inline_transitions(
     return changes
 
 
+@registry.detector("functions")
 def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     elf_only_mode = getattr(old, "elf_only_mode", False)
     changes: list[Change] = []
@@ -238,6 +240,7 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("variables")
 def _diff_variables(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
     old_map = _public_variables(old)
@@ -286,6 +289,7 @@ def _diff_variables(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("param_defaults")
 def _diff_param_defaults(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect parameter default value changes/removals."""
     changes: list[Change] = []
@@ -318,6 +322,7 @@ def _diff_param_defaults(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("param_renames")
 def _diff_param_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect parameter renames (same type+position, different name)."""
     changes: list[Change] = []
@@ -341,6 +346,7 @@ def _diff_param_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("pointer_levels")
 def _diff_pointer_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect pointer level changes in params and return types."""
     changes: list[Change] = []
@@ -391,6 +397,7 @@ def _is_access_narrowing(old_access: Any, new_access: Any) -> bool:
     return _RANK.get(new_access, 0) > _RANK.get(old_access, 0)
 
 
+@registry.detector("access_levels")
 def _diff_access_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect narrowing access level changes on methods and fields.
 
@@ -443,6 +450,7 @@ def _diff_access_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("anon_fields")
 def _diff_anon_fields(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect changes in anonymous struct/union members."""
     changes: list[Change] = []
@@ -485,6 +493,7 @@ def _diff_anon_fields(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("symbol_renames")
 def _diff_symbol_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect batch symbol renames (namespace refactoring).
 
@@ -551,6 +560,7 @@ def _diff_symbol_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("param_restrict")
 def _diff_param_restrict(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect restrict qualifier changes on parameters (ABICC: Parameter_Became_Restrict)."""
     changes: list[Change] = []
@@ -574,6 +584,7 @@ def _diff_param_restrict(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("param_va_list")
 def _diff_param_va_list(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect va_list parameter changes (ABICC: Parameter_Became_VaList/Non_VaList)."""
     changes: list[Change] = []
@@ -604,6 +615,7 @@ def _diff_param_va_list(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("constants")
 def _diff_constants(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect preprocessor constant (#define) changes (ABICC: Changed/Added/Removed_Constant)."""
     changes: list[Change] = []
@@ -639,6 +651,7 @@ def _diff_constants(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("var_access")
 def _diff_var_access(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect global data access level changes (ABICC: Global_Data_Became_Private/Protected/Public)."""
     changes: list[Change] = []

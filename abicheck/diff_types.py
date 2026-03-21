@@ -20,6 +20,7 @@ from collections import Counter
 
 from .checker_policy import ChangeKind
 from .checker_types import Change
+from .detector_registry import registry
 from .diff_symbols import _PUBLIC_VIS, _public_functions, _public_variables
 from .model import (
     AbiSnapshot,
@@ -32,6 +33,7 @@ from .model import (
 from .model import is_compiler_internal_type as _is_compiler_internal_type
 
 
+@registry.detector("types")
 def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
     # Include ALL types (including unions) for size/alignment/base/vtable checks.
@@ -306,6 +308,7 @@ def _diff_type_vtable(name: str, t_old: RecordType, t_new: RecordType) -> list[C
     )]
 
 
+@registry.detector("enums")
 def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
     old_map: dict[str, EnumType] = {e.name: e for e in old.enums}
@@ -404,6 +407,7 @@ def _sig_key(f: Function) -> tuple[str, tuple[str, ...]]:
     return (f.name, tuple(p.type for p in f.params))
 
 
+@registry.detector("method_qualifiers")
 def _diff_method_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect cv-qualifier, static, and pure-virtual changes.
 
@@ -483,6 +487,7 @@ def _diff_method_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("unions")
 def _diff_unions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
     old_unions = {t.name: t for t in old.types if t.is_union}
@@ -564,6 +569,7 @@ def _has_version_family_successor(name: str, new_typedefs: dict[str, str]) -> bo
     return any(k.lower().startswith(prefix) for k in new_typedefs)
 
 
+@registry.detector("typedefs")
 def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
     for alias, old_type in old.typedefs.items():
@@ -611,6 +617,7 @@ def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 # ── Sprint 7: enum rename, field qualifier, pointer level, access, param default ─
 
 
+@registry.detector("enum_renames")
 def _diff_enum_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect enum member renames: same value present under different name."""
     changes: list[Change] = []
@@ -712,6 +719,7 @@ def _check_field_qualifier_pair(
     return changes
 
 
+@registry.detector("field_qualifiers")
 def _diff_field_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect field-level const/volatile/mutable qualifier changes."""
     changes: list[Change] = []
@@ -734,6 +742,7 @@ def _diff_field_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("field_renames")
 def _diff_field_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect field renames: same offset+type, different name."""
     changes: list[Change] = []
@@ -776,6 +785,7 @@ def _diff_field_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 # ── ABICC full parity detectors ───────────────────────────────────────────────
 
 
+@registry.detector("var_values")
 def _diff_var_values(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect global data value changes (ABICC: Global_Data_Value_Changed).
 
@@ -805,6 +815,7 @@ def _diff_var_values(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("type_kind_changes")
 def _diff_type_kind_changes(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect struct↔union kind changes (ABICC: StructToUnion / DataType_Type)."""
     changes: list[Change] = []
@@ -830,6 +841,7 @@ def _diff_type_kind_changes(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("reserved_fields")
 def _diff_reserved_fields(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect reserved fields put into use (ABICC: Used_Reserved_Field).
 
@@ -884,6 +896,7 @@ def _diff_reserved_fields(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("const_overloads")
 def _diff_const_overloads(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect removed const method overloads (ABICC: Removed_Const_Overload).
 
