@@ -68,8 +68,10 @@ def appcompat_to_html(result: object) -> str:
 
         old_path = getattr(old_meta, "path", "\u2014") if old_meta else "\u2014"
         new_path = getattr(new_meta, "path", "\u2014") if new_meta else "\u2014"
-        old_sha = (getattr(old_meta, "sha256", "\u2014")[:16] + "\u2026") if old_meta else "\u2014"
-        new_sha = (getattr(new_meta, "sha256", "\u2014")[:16] + "\u2026") if new_meta else "\u2014"
+        old_sha_val = (getattr(old_meta, "sha256", None) or "\u2014") if old_meta else "\u2014"
+        old_sha = old_sha_val[:16] + "\u2026"
+        new_sha_val = (getattr(new_meta, "sha256", None) or "\u2014") if new_meta else "\u2014"
+        new_sha = new_sha_val[:16] + "\u2026"
         old_size = str(getattr(old_meta, "size_bytes", 0)) if old_meta else "\u2014"
         new_size = str(getattr(new_meta, "size_bytes", 0)) if new_meta else "\u2014"
         file_info_html = f"""<div class='summary-section'>

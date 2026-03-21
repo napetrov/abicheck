@@ -91,6 +91,16 @@ def test_html_shows_file_metadata() -> None:
     assert "4096" in out
 
 
+def test_html_file_metadata_with_none_sha256() -> None:
+    """sha256=None on metadata must not raise TypeError."""
+    r = _appcompat_result(with_metadata=True)
+    r.full_diff.old_metadata.sha256 = None
+    r.full_diff.new_metadata.sha256 = None
+    out = appcompat_to_html(r)
+    assert "Library Files" in out
+    assert "SHA-256" in out
+
+
 def test_html_shows_confidence() -> None:
     out = appcompat_to_html(_appcompat_result(with_metadata=True))
     assert "Analysis Confidence" in out
