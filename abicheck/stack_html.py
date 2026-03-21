@@ -263,7 +263,7 @@ def _render_node_html(
 
     h_esc = html.escape
     connector = "\u2514\u2500\u2500 " if is_last else "\u251c\u2500\u2500 "
-    reason = f" ({h_esc(node.resolution_reason)})" if node.depth > 0 else ""
+    reason = f" ({h_esc(node.resolution_reason)})" if node.depth > 0 and node.resolution_reason else ""
     line = f"{h_esc(prefix)}{connector}<code>{h_esc(node.soname)}</code>{reason}"
 
     if key in on_path:
