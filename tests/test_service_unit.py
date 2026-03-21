@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 import json
-import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from abicheck.checker_policy import ChangeKind, Verdict
-from abicheck.checker_types import Change, DiffResult
+from abicheck.checker_types import DiffResult
 from abicheck.errors import SnapshotError, ValidationError
 from abicheck.model import AbiSnapshot, DependencyInfo, Function, Visibility
 from abicheck.service import (
@@ -24,7 +22,6 @@ from abicheck.service import (
     run_dump,
     sniff_text_format,
 )
-
 
 # ── detect_binary_format() ──────────────────────────────────────────────────
 
@@ -213,7 +210,7 @@ class TestRunDump:
         p = tmp_path / "lib.so"
         p.write_bytes(b"\x7fELF" + b"\x00" * 100)
         snap = AbiSnapshot(library="test", version="1.0")
-        with patch("abicheck.service._dump_elf", return_value=snap) as mock:
+        with patch("abicheck.service._dump_elf", return_value=snap):
             result = run_dump(p, "elf")
         assert result is snap
 
@@ -221,7 +218,7 @@ class TestRunDump:
         p = tmp_path / "lib.dll"
         p.write_bytes(b"MZ" + b"\x00" * 100)
         snap = AbiSnapshot(library="test", version="1.0")
-        with patch("abicheck.service._dump_pe", return_value=snap) as mock:
+        with patch("abicheck.service._dump_pe", return_value=snap):
             result = run_dump(p, "pe")
         assert result is snap
 
@@ -229,7 +226,7 @@ class TestRunDump:
         p = tmp_path / "lib.dylib"
         p.write_bytes(b"\xfe\xed\xfa\xce" + b"\x00" * 100)
         snap = AbiSnapshot(library="test", version="1.0")
-        with patch("abicheck.service._dump_macho", return_value=snap) as mock:
+        with patch("abicheck.service._dump_macho", return_value=snap):
             result = run_dump(p, "macho")
         assert result is snap
 
@@ -555,11 +552,14 @@ class TestLoadSuppressionAndPolicy:
         assert p is None
 
     def test_policy_file_with_non_default_policy_warns(self, tmp_path, caplog):
+        import logging
+
         pf = tmp_path / "policy.yaml"
         pf.write_text("overrides: {}\n")
-        _, p = load_suppression_and_policy(None, policy="permissive", policy_file_path=pf)
+        with caplog.at_level(logging.WARNING, logger="abicheck.service"):
+            _, p = load_suppression_and_policy(None, policy="permissive", policy_file_path=pf)
         assert p is not None
-        assert "ignored" in caplog.text.lower() or True  # warning may or may not show
+        assert "ignored" in caplog.text.lower()
 
     def test_invalid_policy_file(self, tmp_path):
         pf = tmp_path / "bad_policy.yaml"
