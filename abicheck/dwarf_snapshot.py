@@ -565,7 +565,7 @@ class _DwarfSnapshotBuilder:
                 line = _attr_int(die, "DW_AT_decl_line")
                 return f"{fname}:{line}" if line else fname
         except Exception:  # noqa: BLE001
-            pass
+            log.debug("Failed to resolve source location for DIE")
         return None
 
     def _process_field(self, die: Any, CU: Any) -> TypeField | None:
@@ -713,7 +713,7 @@ class _DwarfSnapshotBuilder:
                         # Anonymous enum — register under typedef name
                         self._process_enum_named(target, CU, name)
             except Exception:  # noqa: BLE001
-                pass
+                log.debug("Failed to process typedef target for %s", name)
 
         if name in self.typedefs:
             return  # first wins

@@ -43,7 +43,7 @@ def demangle(symbol: str) -> str | None:
         import cxxfilt
         return str(cxxfilt.demangle(symbol))
     except Exception:  # noqa: BLE001
-        pass
+        _log.debug("cxxfilt demangling failed for %s", symbol)
     try:
         result = subprocess.run(
             ["c++filt", symbol],
