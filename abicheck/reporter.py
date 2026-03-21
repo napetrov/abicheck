@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 from .checker import (
     Change,
     DiffResult,
+    LibraryMetadata,
     Verdict,
 )
 from .checker_policy import (
@@ -810,7 +811,7 @@ def _footer_lines() -> list[str]:
     ]
 
 
-def _build_library_files_section(old_meta: object, new_meta: object) -> list[str]:
+def _build_library_files_section(old_meta: LibraryMetadata | None, new_meta: LibraryMetadata | None) -> list[str]:
     """Build the '## Library Files' markdown section."""
     lines = ["## Library Files", "", "| | Old | New |", "|---|---|---|"]
     old_path = getattr(old_meta, "path", "—") if old_meta else "—"

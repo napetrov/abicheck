@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
+from collections.abc import Callable
 from typing import IO
 
 from elftools.common.exceptions import ELFError
@@ -327,7 +328,8 @@ def _find_cxx_stdlib(needed_libs: list[str]) -> str | None:
 
 # Lookup table: (prefix_tuple, finder_fn_or_None, default_if_no_finder_match)
 # When finder_fn is None, default is returned unconditionally.
-_ORIGIN_PREFIX_TABLE: list[tuple[tuple[str, ...], object, str]] = [
+_FinderFn = Callable[[list[str]], str | None]
+_ORIGIN_PREFIX_TABLE: list[tuple[tuple[str, ...], _FinderFn | None, str]] = [
     # libc++ inline namespace __1 — must be checked BEFORE generic _ZNSt
     (("_ZNSt3__1", "_ZNKSt3__1"), _find_libcxx, "libc++.so.1"),
     # C++ stdlib symbols (libstdc++ / libc++)

@@ -33,6 +33,10 @@ from .reporter import to_json
 from .serialization import load_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from .appcompat import AppRequirements
+    from .checker_types import DiffResult
     from .policy_file import PolicyFile
     from .severity import SeverityConfig
     from .suppression import SuppressionList
@@ -762,7 +766,7 @@ def _resolve_severity(
     potential_breaking: str | None,
     quality_issues: str | None,
     addition: str | None,
-) -> tuple[object, bool]:
+) -> tuple[SeverityConfig, bool]:
     """Resolve severity configuration and return (config, explicitly_set)."""
     from .severity import resolve_severity_config
     explicitly_set = any(v is not None for v in (
@@ -778,7 +782,7 @@ def _resolve_severity(
     return config, explicitly_set
 
 
-def _apply_strict_elf_only(pf: object, policy: str) -> object:
+def _apply_strict_elf_only(pf: PolicyFile | None, policy: str) -> PolicyFile:
     """Inject PolicyFile override that upgrades FUNC_REMOVED_ELF_ONLY to BREAKING."""
     from .checker_policy import ChangeKind as _CK
     from .checker_policy import Verdict as _V
@@ -796,7 +800,7 @@ def _apply_strict_elf_only(pf: object, policy: str) -> object:
     return _PF(base_policy=policy, overrides=strict_overrides)
 
 
-def _merge_redundant_changes(result: object) -> None:
+def _merge_redundant_changes(result: DiffResult) -> None:
     """Re-merge redundant changes back into the main change list."""
     for c in result.changes:
         if c.caused_count > 0:
@@ -808,7 +812,7 @@ def _merge_redundant_changes(result: object) -> None:
     result.redundant_count = 0
 
 
-def _warn_all_suppressed(result: object) -> None:
+def _warn_all_suppressed(result: DiffResult) -> None:
     """Warn if a suppression file swallowed all changes."""
     total_changes = len(result.changes) + result.suppressed_count
     if result.suppression_file_provided and total_changes > 0 and len(result.changes) == 0:
@@ -829,11 +833,12 @@ def _write_or_echo(output: Path | None, text: str) -> None:
 
 
 def _exit_with_severity_or_verdict(
-    result: object, sev_config: object, severity_explicitly_set: bool,
+    result: DiffResult, sev_config: SeverityConfig | None, severity_explicitly_set: bool,
 ) -> None:
     """Exit with appropriate code based on severity config or legacy verdict."""
     from .severity import compute_exit_code
     if severity_explicitly_set:
+        assert sev_config is not None
         eff_sets = result._effective_kind_sets()
         exit_code = compute_exit_code(result.changes, sev_config, kind_sets=eff_sets)
         if exit_code != 0:
@@ -1134,7 +1139,7 @@ def _handle_list_required_symbols(
     check_against_lib: Path | None,
     old_lib: Path | None, new_lib: Path | None,
     weak_mode: bool, fmt: str,
-    _get_lib_soname: object, parse_app_requirements: object,
+    _get_lib_soname: Callable[[Path], str], parse_app_requirements: Callable[..., AppRequirements],
 ) -> None:
     """Handle the --list-required-symbols flow."""
     target_lib = check_against_lib if weak_mode else (old_lib or new_lib)
@@ -1343,7 +1348,7 @@ _RELEASE_VERDICT_ORDER: dict[str, int] = {
 def _discover_files(
     input_dir: Path, lib_dir: Path,
     include_private: bool,
-    discover_shared_libraries: object, is_package: object,
+    discover_shared_libraries: Callable[..., list[Path]], is_package: Callable[[Path], bool],
 ) -> list[Path]:
     """Discover library files from a directory or extracted package."""
     if is_package(input_dir):
@@ -1376,7 +1381,7 @@ def _match_release_keys(
     old_dir: Path, new_dir: Path,
     old_map: dict[str, Path], new_map: dict[str, Path],
     old_files: list[Path], new_files: list[Path],
-    is_package: object,
+    is_package: Callable[[Path], bool],
 ) -> tuple[list[str], list[str], list[str], dict[str, Path], dict[str, Path]]:
     """Match library keys between old and new, handling direct file pairs."""
     direct_file_pair = (
@@ -1415,7 +1420,7 @@ def _compare_release_libraries(
     matched_keys: list[str],
     old_map: dict[str, Path], new_map: dict[str, Path],
     old_debug_dir: Path | None, new_debug_dir: Path | None,
-    resolve_debug_info: object,
+    resolve_debug_info: Callable[[Path, Path], Path | None],
     old_h: list[Path], new_h: list[Path],
     old_inc: list[Path], new_inc: list[Path],
     old_version: str, new_version: str,

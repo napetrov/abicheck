@@ -368,12 +368,6 @@ _ALL_CASES = _collect_cases()
 # ---------------------------------------------------------------------------
 # Parametrized integration test
 # ---------------------------------------------------------------------------
-@pytest.mark.integration
-@pytest.mark.parametrize(
-    "case_name,expected_verdict",
-    [(c, e) for c, e in _ALL_CASES if e is not None],
-    ids=[c for c, e in _ALL_CASES if e is not None],
-)
 def _header_list(hdr: Path | None) -> list[Path]:
     """Return a single-element list if *hdr* exists, else an empty list."""
     return [hdr] if hdr and hdr.exists() else []
@@ -481,6 +475,12 @@ def _assert_verdict(
     )
 
 
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "case_name,expected_verdict",
+    [(c, e) for c, e in _ALL_CASES if e is not None],
+    ids=[c for c, e in _ALL_CASES if e is not None],
+)
 def test_example_pipeline(
     case_name: str,
     expected_verdict: str,

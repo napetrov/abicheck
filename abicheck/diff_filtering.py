@@ -21,7 +21,7 @@ from .checker_policy import ChangeKind, Confidence
 from .checker_types import Change
 from .detectors import DetectorResult
 from .diff_symbols import _PUBLIC_VIS, _public_functions
-from .model import AbiSnapshot
+from .model import AbiSnapshot, Function
 
 # ── Post-processing: enrich and deduplicate ────────────────────────────────
 
@@ -123,7 +123,7 @@ def _resolve_ancestor_functions(
     ancestors: set[str],
     type_to_funcs: dict[str, list[str]],
     type_to_mangled: dict[str, list[str]],
-    old_pub: dict[str, object],
+    old_pub: dict[str, Function],
     ancestor_func_cache: dict[str, list[tuple[str, str]]],
 ) -> None:
     """Scan ancestor types and extend type_to_funcs/type_to_mangled for *tname*."""

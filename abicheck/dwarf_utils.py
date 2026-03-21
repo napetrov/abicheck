@@ -174,7 +174,7 @@ def _evaluate_location_expr(expr: list[object]) -> int:
     return stack[-1] if stack else 0
 
 
-def _eval_tuple_item(item: tuple, stack: list[int]) -> None:
+def _eval_tuple_item(item: tuple[object, ...], stack: list[int]) -> None:
     """Evaluate a single tuple item (DWARFExprOp or plain tuple) onto *stack*."""
     # pyelftools DWARFExprOp: hasattr(item, 'args')
     if hasattr(item, "args"):
