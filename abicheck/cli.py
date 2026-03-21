@@ -29,7 +29,7 @@ from .compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_du
 from .compat.cli import compat_group
 from .dumper import dump
 from .errors import AbicheckError
-from .reporter import to_json, to_markdown, to_stat, to_stat_json
+from .reporter import to_json
 from .serialization import load_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
@@ -181,61 +181,11 @@ def _dump_native_binary(
             raise click.ClickException(f"Failed to dump '{path}': {exc}") from exc
 
     if binary_fmt == "pe":
-        from .pe_metadata import parse_pe_metadata
+        from .service import _dump_pe
         try:
-            pe_meta = parse_pe_metadata(path)
-        except ImportError as exc:
+            return _dump_pe(path, version, pdb_path=pdb_path)
+        except AbicheckError as exc:
             raise click.ClickException(str(exc)) from exc
-        except (RuntimeError, OSError, ValueError) as exc:
-            raise click.ClickException(f"Failed to parse PE '{path}': {exc}") from exc
-        if not pe_meta.machine:
-            raise click.ClickException(
-                f"Failed to extract PE metadata from '{path}'. "
-                "The file may be corrupt or not a valid PE binary."
-            )
-        if not pe_meta.exports:
-            raise click.ClickException(
-                f"PE file '{path}' has no exports (named or ordinal). "
-                "Verify the file is a valid DLL."
-            )
-        # Build snapshot from PE export table — include ordinal-only exports
-        from .model import Function, Visibility
-        funcs = [
-            Function(
-                name=(exp.name or f"ordinal:{exp.ordinal}"),
-                mangled=(exp.name or f"ordinal:{exp.ordinal}"),
-                return_type="?",
-                visibility=Visibility.PUBLIC,
-                is_extern_c=not (exp.name or "").startswith("?"),  # MSVC mangling uses ? prefix
-            )
-            for exp in pe_meta.exports
-        ]
-
-        # PDB debug info extraction (struct layouts, enums, calling conventions)
-        dwarf_meta = None
-        dwarf_adv = None
-        try:
-            from .pdb_metadata import parse_pdb_debug_info
-            from .pdb_utils import locate_pdb
-            pdb_file = locate_pdb(
-                path, pdb_path_override=pdb_path,
-                allow_network=False,  # never auto-download from symbol servers
-            )
-            if pdb_file is not None:
-                dwarf_meta, dwarf_adv = parse_pdb_debug_info(pdb_file)
-                _logger.info("PDB debug info loaded from %s", pdb_file)
-            else:
-                _logger.debug("No PDB file found for %s", path)
-        except Exception as exc:  # noqa: BLE001
-            _logger.warning("PDB parsing failed for %s: %s", path, exc)
-
-        return AbiSnapshot(
-            library=path.name, version=version,
-            functions=funcs, pe=pe_meta,
-            dwarf=dwarf_meta,
-            dwarf_advanced=dwarf_adv,
-            platform="pe",
-        )
 
     if binary_fmt == "macho":
         from .macho_metadata import parse_macho_metadata
@@ -652,92 +602,13 @@ def _render_output(
     severity_config: SeverityConfig | None = None,
 ) -> str:
     """Render comparison result in the requested output format."""
-    if stat:
-        if fmt == "json":
-            return to_stat_json(result)
-        return to_stat(result)
-    if fmt == "json":
-        base = to_json(
-            result, show_only=show_only, report_mode=report_mode,
-            show_impact=show_impact, severity_config=severity_config,
-        )
-        if follow_deps and (old.dependency_info or (new and new.dependency_info)):
-            import json
-            d = json.loads(base)
-            if old.dependency_info:
-                from dataclasses import asdict
-                d["old_dependency_info"] = asdict(old.dependency_info)
-            if new and new.dependency_info:
-                from dataclasses import asdict
-                d["new_dependency_info"] = asdict(new.dependency_info)
-            return json.dumps(d, indent=2)
-        return base
-    if fmt == "sarif":
-        from .sarif import to_sarif_str
-        return to_sarif_str(result, show_only=show_only)
-    if fmt == "html":
-        from .html_report import generate_html_report
-        return generate_html_report(
-            result,
-            lib_name=old.library,
-            old_version=old.version,
-            new_version=new.version if new else "new",
-            old_symbol_count=result.old_symbol_count,
-            show_only=show_only,
-            show_impact=show_impact,
-        )
-    md = to_markdown(
-        result, show_only=show_only, report_mode=report_mode,
-        show_impact=show_impact, severity_config=severity_config,
+    from .service import render_output
+    return render_output(
+        fmt, result, old, new,
+        follow_deps=follow_deps, show_only=show_only,
+        report_mode=report_mode, show_impact=show_impact,
+        stat=stat, severity_config=severity_config,
     )
-    if follow_deps and (old.dependency_info or (new and new.dependency_info)):
-        md += _render_deps_section_md(old, new)
-    return md
-
-
-def _render_deps_section_md(old: AbiSnapshot, new: AbiSnapshot | None) -> str:
-    """Append dependency summary section to markdown output."""
-    lines: list[str] = ["", "## Dependency Analysis", ""]
-
-    for label, snap in [("Old", old), ("New", new)]:
-        if snap is None or snap.dependency_info is None:
-            continue
-        info = snap.dependency_info
-        lines.append(f"### {label} version (`{snap.version}`)")
-        lines.append("")
-
-        if info.nodes:
-            lines.append(f"**Dependencies**: {len(info.nodes)} resolved DSOs")
-            for node in info.nodes:
-                raw_depth = node.get("depth", 0)
-                depth = raw_depth if isinstance(raw_depth, int) else 0
-                indent = "  " * depth
-                reason = node.get("resolution_reason", "")
-                lines.append(f"  {indent}- `{node.get('soname', '?')}` ({reason})")
-            lines.append("")
-
-        if info.bindings_summary:
-            lines.append("**Bindings**:")
-            for status, count in sorted(info.bindings_summary.items()):
-                lines.append(f"  - `{status}`: {count}")
-            lines.append("")
-
-        if info.unresolved:
-            lines.append("**Unresolved libraries**:")
-            for u in info.unresolved:
-                lines.append(f"  - `{u.get('soname', '?')}` needed by `{u.get('consumer', '?')}`")
-            lines.append("")
-
-        if info.missing_symbols:
-            lines.append(f"**Missing symbols**: {len(info.missing_symbols)}")
-            for ms in info.missing_symbols[:10]:
-                ver = f"@{ms['version']}" if ms.get('version') else ""
-                lines.append(f"  - `{ms['symbol']}{ver}`")
-            if len(info.missing_symbols) > 10:
-                lines.append(f"  - ... +{len(info.missing_symbols) - 10} more")
-            lines.append("")
-
-    return "\n".join(lines)
 
 
 def _collect_additions(result: DiffResult) -> list[object]:
