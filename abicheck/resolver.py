@@ -250,8 +250,7 @@ def _register_resolved_dso(
         propagated_rpaths[resolved_key] = propagated_rpaths[requester_path]
 
     for needed_child in meta.needed:
-        if needed_child not in visited_sonames:
-            queue.append((needed_child, resolved_key, depth + 1))
+        queue.append((needed_child, resolved_key, depth + 1))
 
 
 def _merge_rpaths(own: list[str], ancestor: list[str]) -> list[str]:

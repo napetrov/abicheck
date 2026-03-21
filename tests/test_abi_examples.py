@@ -196,8 +196,10 @@ def _try_cmake_build(
 ) -> tuple[Path | None, Path | None]:
     """Attempt to build with CMake. Returns (libv1, libv2) or (None, None)."""
     cmake_file = case_dir / "CMakeLists.txt"
-    if not cmake_file.exists() or not shutil.which("cmake"):
-        return None, None
+    if not cmake_file.exists():
+        pytest.skip(f"{case_name}: no CMakeLists.txt found in {case_dir}")
+    if not shutil.which("cmake"):
+        pytest.skip(f"{case_name}: cmake not found in PATH")
 
     cmake_build = tmp_path / "cmake_build"
     r = subprocess.run(
@@ -206,7 +208,10 @@ def _try_cmake_build(
         capture_output=True, text=True, timeout=60,
     )
     if r.returncode != 0:
-        return None, None
+        pytest.fail(
+            f"{case_name}: cmake configure failed (rc={r.returncode}):\n"
+            f"stdout: {r.stdout[:500]}\nstderr: {r.stderr[:500]}"
+        )
 
     r = subprocess.run(
         ["cmake", "--build", str(cmake_build),
@@ -215,7 +220,10 @@ def _try_cmake_build(
         capture_output=True, text=True, timeout=120,
     )
     if r.returncode != 0:
-        return None, None
+        pytest.fail(
+            f"{case_name}: cmake build failed (rc={r.returncode}):\n"
+            f"stdout: {r.stdout[:500]}\nstderr: {r.stderr[:500]}"
+        )
 
     out_dir = cmake_build / case_name
     return _find_lib(out_dir, "v1"), _find_lib(out_dir, "v2")
@@ -254,11 +262,12 @@ def _run_dump(
 ) -> None:
     """Run abicheck dump for a single version; skip or fail on error."""
     r = subprocess.run(
-        ["abicheck", "dump", str(lib), "-H", str(header), "-o", str(snap)],
+        [sys.executable, "-m", "abicheck.cli", "dump", str(lib), "-H", str(header), "-o", str(snap)],
         capture_output=True, text=True, check=False, timeout=60,
     )
     if r.returncode != 0:
-        if "castxml" in r.stderr.lower() or "not found" in r.stderr.lower():
+        combined = r.stderr.lower() + r.stdout.lower()
+        if "castxml" in combined:
             pytest.skip(f"castxml unavailable for {case_name}:\n{r.stderr[:300]}")
         pytest.fail(f"abicheck dump {label} failed in {case_name}:\n{r.stderr[:500]}")
 
@@ -271,7 +280,7 @@ def _run_compare_and_assert(
 ) -> None:
     """Run abicheck compare and assert the verdict matches."""
     rc = subprocess.run(
-        ["abicheck", "compare", str(snap1), str(snap2), "--format", "json"],
+        [sys.executable, "-m", "abicheck.cli", "compare", str(snap1), str(snap2), "--format", "json"],
         capture_output=True, text=True, check=False, timeout=60,
     )
 

@@ -790,8 +790,8 @@ def _apply_strict_elf_only(pf: PolicyFile | None, policy: str) -> PolicyFile:
 
     strict_overrides = {_CK.FUNC_REMOVED_ELF_ONLY: _V.BREAKING}
     if pf is not None:
-        merged_overrides = dict(strict_overrides)
-        merged_overrides.update(pf.overrides)
+        merged_overrides = dict(pf.overrides)
+        merged_overrides.update(strict_overrides)
         return _PF(
             base_policy=pf.base_policy,
             overrides=merged_overrides,

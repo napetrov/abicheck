@@ -340,8 +340,8 @@ def _collect_macho_undefined_symbols(
         if target_ordinal is not None:
             n_desc = int(nlist_entry.n_desc)
             ordinal = (n_desc >> 8) & 0xFF
-            # 0 = SELF, 0xFE = EXECUTABLE, 0xFF = DYNAMIC_LOOKUP
-            if ordinal not in (0, 0xFE, 0xFF) and ordinal != target_ordinal:
+            # Reject special ordinals: 0 = SELF, 0xFE = EXECUTABLE, 0xFF = DYNAMIC_LOOKUP
+            if ordinal in (0, 0xFE, 0xFF) or ordinal != target_ordinal:
                 continue
 
         name = name_bytes.decode("utf-8", errors="replace") if name_bytes else ""

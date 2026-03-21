@@ -286,10 +286,8 @@ def _try_v1v2_layout(case_dir: Path) -> _SourceResult:
     """Try v1/v2 source layout."""
     for ext in (".c", ".cpp"):
         v1 = case_dir / f"v1{ext}"
-        if v1.exists():
-            v2 = case_dir / f"v2{ext}"
-            if not v2.exists():
-                v2 = v1
+        v2 = case_dir / f"v2{ext}"
+        if v1.exists() and v2.exists():
             hext = _header_ext(ext)
             v1h = case_dir / f"v1{hext}"
             v2h = case_dir / f"v2{hext}"
@@ -305,10 +303,8 @@ def _try_old_new_layout(case_dir: Path) -> _SourceResult:
         return _NO_SOURCES
     for ext in (".c", ".cpp"):
         v1 = old_dir / f"lib{ext}"
-        if v1.exists():
-            v2 = new_dir / f"lib{ext}"
-            if not v2.exists():
-                v2 = v1
+        v2 = new_dir / f"lib{ext}"
+        if v1.exists() and v2.exists():
             v1h = _find_header(old_dir, "lib")
             v2h = _find_header(new_dir, "lib")
             return v1, v2, v1h, v2h
@@ -319,10 +315,8 @@ def _try_libfoo_layout(case_dir: Path) -> _SourceResult:
     """Try libfoo_v1/v2 layout (case18)."""
     for ext in (".c", ".cpp"):
         v1 = case_dir / f"libfoo_v1{ext}"
-        if v1.exists():
-            v2 = case_dir / f"libfoo_v2{ext}"
-            if not v2.exists():
-                v2 = v1
+        v2 = case_dir / f"libfoo_v2{ext}"
+        if v1.exists() and v2.exists():
             hext = _header_ext(ext)
             v1h = case_dir / f"foo_v1{hext}"
             v2h = case_dir / f"foo_v2{hext}"
@@ -331,13 +325,11 @@ def _try_libfoo_layout(case_dir: Path) -> _SourceResult:
 
 
 def _try_good_bad_layout(case_dir: Path) -> _SourceResult:
-    """Try good/bad layout (cases 05/06/13)."""
+    """Try good/bad layout (cases 05/06/13). v1=bad (old), v2=good (new)."""
     for ext in (".c", ".cpp"):
-        v1 = case_dir / f"good{ext}"
-        if v1.exists():
-            v2 = case_dir / f"bad{ext}"
-            if not v2.exists():
-                v2 = v1
+        v1 = case_dir / f"bad{ext}"
+        v2 = case_dir / f"good{ext}"
+        if v1.exists() and v2.exists():
             return v1, v2, None, None
     return _NO_SOURCES
 

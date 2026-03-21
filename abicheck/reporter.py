@@ -175,7 +175,7 @@ class ShowOnlyFilter:
         if not actions:
             return True
         _ADDED_SUFFIXES = ("_added", "_added_compatible")
-        _REMOVED_SUFFIXES = ("_removed", "_deleted", "_elf_only", "_elf_fallback")
+        _REMOVED_SUFFIXES = ("_removed", "_deleted", "_elf_only", "_elf_fallback", "_const_overload")
         if "added" in actions and any(kind_val.endswith(s) for s in _ADDED_SUFFIXES):
             return True
         if "removed" in actions and any(kind_val.endswith(s) for s in _REMOVED_SUFFIXES):

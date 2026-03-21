@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -327,7 +328,7 @@ def _build_castxml_command(
     if nostdinc:
         cmd += ["-nostdinc"]
     if gcc_options:
-        cmd += gcc_options.split()
+        cmd += shlex.split(gcc_options, posix=os.name != "nt")
 
     # Workaround: castxml with --castxml-cc-gnu gcc auto-injects -std=gnu++17
     # which is rejected when parsing a .h file in C mode.
