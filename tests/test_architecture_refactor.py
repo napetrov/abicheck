@@ -25,8 +25,6 @@ from abicheck.checker_policy import (
     SDK_VENDOR_COMPAT_KINDS,
     ChangeKind,
 )
-from abicheck.checker_policy import Verdict as PolicyVerdict
-
 
 # ─── Part A: ChangeKindRegistry tests ────────────────────────────────────────
 

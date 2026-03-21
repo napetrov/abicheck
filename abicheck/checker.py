@@ -40,7 +40,6 @@ from .checker_types import (  # noqa: F401
     DiffResult,
     LibraryMetadata,
 )
-from .detectors import DetectorResult
 from .detector_registry import registry as _detector_registry
 from .diff_filtering import (  # noqa: F401
     _ROOT_TYPE_CHANGE_KINDS,
@@ -69,21 +68,7 @@ from .diff_platform import (  # noqa: F401
     _extract_template_args,
     _template_outer,
 )
-from .diff_symbols import (
-    _PUBLIC_VIS,
-    _diff_access_levels,
-    _diff_anon_fields,
-    _diff_constants,
-    _diff_functions,
-    _diff_param_defaults,
-    _diff_param_renames,
-    _diff_param_restrict,
-    _diff_param_va_list,
-    _diff_pointer_levels,
-    _diff_symbol_renames,
-    _diff_var_access,
-    _diff_variables,
-)
+from .diff_symbols import _PUBLIC_VIS
 from .diff_types import (  # noqa: F401
     _diff_const_overloads,
     _diff_enum_renames,
