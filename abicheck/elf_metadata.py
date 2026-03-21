@@ -24,11 +24,11 @@ from __future__ import annotations
 import logging
 import os
 import stat
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
-from collections.abc import Callable
 from typing import IO
 
 from elftools.common.exceptions import ELFError
