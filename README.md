@@ -17,9 +17,15 @@ Typical problems it catches: removed or renamed symbols, changed function signat
 
 ## Installation
 
+Install from PyPI:
+
 ```bash
 pip install abicheck
-# or
+```
+
+Or with conda:
+
+```bash
 conda install -c conda-forge abicheck
 ```
 
@@ -31,16 +37,23 @@ conda install -c conda-forge abicheck
 | **`castxml`** | Clang-based C/C++ AST parser for header analysis (all platforms) |
 | **`g++` or `clang++`** | Must be accessible to castxml |
 
-`castxml` and a C++ compiler are required for header AST analysis. Without them, abicheck still works in binary-only mode (exports, imports, dependencies).
+`castxml` and a C++ compiler are required for header AST analysis. Without them, abicheck still works in **binary-only mode** (exports, imports, dependencies).
+
+Ubuntu / Debian:
 
 ```bash
-# Ubuntu / Debian
 sudo apt install castxml g++
+```
 
-# macOS
+macOS:
+
+```bash
 brew install castxml
+```
 
-# conda (all platforms)
+conda (all platforms):
+
+```bash
 conda install -c conda-forge castxml
 ```
 
@@ -49,79 +62,127 @@ conda install -c conda-forge castxml
 ```bash
 git clone https://github.com/napetrov/abicheck.git
 cd abicheck
-pip install -e .          # runtime only
-pip install -e ".[dev]"   # with test & lint dependencies
+```
+
+Runtime only:
+
+```bash
+pip install -e .
+```
+
+With test and lint dependencies:
+
+```bash
+pip install -e ".[dev]"
 ```
 
 ---
 
 ## Quick start
 
+### Compare two library versions
+
 ```bash
-# Compare two library versions
 abicheck compare libfoo.so.1 libfoo.so.2 \
   --old-header include/v1/foo.h --new-header include/v2/foo.h
+```
 
-# Same header for both versions
+Use `-H` when both versions share the same header:
+
+```bash
 abicheck compare libfoo.so.1 libfoo.so.2 -H include/foo.h
+```
 
-# Save baseline snapshot, then compare against new builds
+### Save a baseline snapshot, then compare against new builds
+
+```bash
 abicheck dump libfoo.so -H include/foo.h --version 1.0 -o baseline.json
+```
+
+```bash
 abicheck compare baseline.json ./build/libfoo.so --new-header include/foo.h
 ```
 
-Output formats: `markdown` (default), `json`, `sarif`, `html`. Use `--format` and `-o` to select.
+### Output formats
 
-### Full-stack dependency validation (Linux ELF)
-
-Check whether a binary will load and run correctly in a given environment by
-resolving its full dependency tree, simulating symbol binding, and detecting
-ABI-breaking changes across all loaded DSOs:
+Available formats: `markdown` (default), `json`, `sarif`, `html`.
 
 ```bash
-# Show dependency tree + symbol binding status for a binary
-abicheck deps /usr/bin/python3
+abicheck compare old.so new.so -H foo.h --format json -o report.json
+```
 
-# Compare a binary's full stack across two sysroots
+```bash
+abicheck compare old.so new.so -H foo.h --format sarif -o report.sarif
+```
+
+```bash
+abicheck compare old.so new.so -H foo.h --format html -o report.html
+```
+
+---
+
+## Check application compatibility
+
+Check whether your **application** (not just the library) is affected by a library update. Unlike `compare` (which shows all library changes), `appcompat` filters the diff to show only changes that affect the symbols your application actually uses.
+
+Full check — does my app break with the new libfoo?
+
+```bash
+abicheck appcompat ./myapp libfoo.so.1 libfoo.so.2 -H include/foo.h
+```
+
+Quick check — does this library have all symbols my app needs?
+
+```bash
+abicheck appcompat ./myapp --check-against libfoo.so.2
+```
+
+See [Application Compatibility](https://napetrov.github.io/abicheck/user-guide/appcompat/) for full details.
+
+---
+
+## Full-stack dependency validation (Linux ELF)
+
+Check whether a binary will load and run correctly in a given environment by resolving its full dependency tree, simulating symbol binding, and detecting ABI-breaking changes across all loaded DSOs.
+
+Show dependency tree and symbol binding status:
+
+```bash
+abicheck deps /usr/bin/python3
+```
+
+Compare a binary's full stack across two sysroots:
+
+```bash
 abicheck stack-check usr/bin/myapp \
     --baseline /rootfs/v1 --candidate /rootfs/v2
+```
 
-# Include dependency info in a regular compare
+Include dependency info in a regular compare:
+
+```bash
 abicheck compare old.so new.so -H foo.h --follow-deps
 ```
 
 For the full CLI reference see the [documentation](https://napetrov.github.io/abicheck/getting-started/).
 
-### Check application compatibility
-
-Check whether your **application** (not just the library) is affected by a library update:
-
-```bash
-# Full check: does my app break with the new libfoo?
-abicheck appcompat ./myapp libfoo.so.1 libfoo.so.2 -H include/foo.h
-```
-
-```bash
-# Quick check: does this library have all symbols my app needs?
-abicheck appcompat ./myapp --check-against libfoo.so.2
-```
-
-Unlike `compare` (which shows all library changes), `appcompat` filters the diff to show only changes that affect the symbols your application actually uses. See [Application Compatibility](https://napetrov.github.io/abicheck/user-guide/appcompat/) for full details.
-
 ---
 
 ## Exit codes
 
-**compare:**
+Use these exit codes to gate CI pipelines. Non-zero exits can fail your build when breaking changes are detected.
+
+### compare / compare-release
 
 | Exit code | Verdict | Meaning |
 |-----------|---------|---------|
-| `0` | `NO_CHANGE`, `COMPATIBLE`, `COMPATIBLE_WITH_RISK` | Safe — no binary ABI break |
-| `1` | — | Severity-driven error in additions/quality (with `--severity-*` flags) |
-| `2` | `API_BREAK` | Source-level break (recompile needed, binary may work) |
+| `0` | `NO_CHANGE` / `COMPATIBLE` / `COMPATIBLE_WITH_RISK` | Safe — no binary ABI break |
+| `1` | `SEVERITY_ERROR` | Severity-driven error (with `--severity-*` flags) |
+| `2` | `API_BREAK` | Source-level break (recompile needed, binary may still work) |
 | `4` | `BREAKING` | Binary ABI break (old binaries will crash or misbehave) |
+| `8` | `REMOVED_LIBRARY` | Library removed in new version (compare-release only) |
 
-**stack-check:**
+### stack-check
 
 | Exit code | Verdict | Meaning |
 |-----------|---------|---------|
@@ -129,11 +190,21 @@ Unlike `compare` (which shows all library changes), `appcompat` filters the diff
 | `1` | `WARN` | Binary loads but ABI risk in dependencies |
 | `4` | `FAIL` | Load failure or ABI break in dependency stack |
 
-See the [full exit code reference](https://napetrov.github.io/abicheck/reference/exit-codes/) for `deps`, `compat`, and CI gate patterns.
+### appcompat
+
+| Exit code | Verdict | Meaning |
+|-----------|---------|---------|
+| `0` | `COMPATIBLE` | App is not affected by the library change |
+| `2` | `API_BREAK` | App uses changed API (recompile needed) |
+| `4` | `BREAKING` | App will crash or misbehave with new library |
+
+See the [full exit code reference](https://napetrov.github.io/abicheck/reference/exit-codes/) for CI gate patterns.
 
 ---
 
 ## GitHub Action
+
+Basic usage:
 
 ```yaml
 - uses: napetrov/abicheck@v1
@@ -143,7 +214,44 @@ See the [full exit code reference](https://napetrov.github.io/abicheck/reference
     new-header: include/foo.h
 ```
 
-The action installs Python, castxml, and abicheck automatically. See the [full GitHub Action documentation](https://napetrov.github.io/abicheck/user-guide/github-action/) for SARIF integration, cross-compilation, and matrix builds.
+With SARIF upload to GitHub Code Scanning:
+
+```yaml
+- uses: napetrov/abicheck@v1
+  with:
+    old-library: abi-baseline.json
+    new-library: build/libfoo.so
+    new-header: include/foo.h
+    format: sarif
+    upload-sarif: true
+```
+
+Fail on both ABI and API breaks:
+
+```yaml
+- uses: napetrov/abicheck@v1
+  with:
+    old-library: abi-baseline.json
+    new-library: build/libfoo.so
+    new-header: include/foo.h
+    fail-on-breaking: true
+    fail-on-api-break: true
+```
+
+Use the action's outputs to control downstream steps:
+
+```yaml
+- uses: napetrov/abicheck@v1
+  id: abi
+  with:
+    old-library: abi-baseline.json
+    new-library: build/libfoo.so
+    new-header: include/foo.h
+
+- run: echo "ABI verdict was ${{ steps.abi.outputs.verdict }}"
+```
+
+The action installs Python, castxml, and abicheck automatically. Available outputs: `verdict`, `exit-code`, `report-path`. See the [full GitHub Action documentation](https://napetrov.github.io/abicheck/user-guide/github-action/) for cross-compilation and matrix builds.
 
 ---
 
@@ -161,17 +269,61 @@ Policies control how detected changes are classified. A change that is `BREAKING
 abicheck compare old.so new.so -H foo.h --policy sdk_vendor
 ```
 
-Custom YAML overrides are also supported. See [Policy Profiles](https://napetrov.github.io/abicheck/user-guide/policies/) for full details.
+Use a custom YAML policy file for per-kind verdict overrides:
+
+```bash
+abicheck compare old.so new.so -H foo.h --policy-file my-policy.yaml
+```
+
+See [Policy Profiles](https://napetrov.github.io/abicheck/user-guide/policies/) for full details including YAML format.
+
+---
+
+## Suppression files
+
+Suppress known or intentional changes so they don't fail CI:
+
+```bash
+abicheck compare old.so new.so -H foo.h --suppress suppressions.yaml
+```
+
+Example `suppressions.yaml`:
+
+```yaml
+version: 1
+
+suppressions:
+  # Exact symbol match
+  - symbol: "_ZN3foo6Client10disconnectEv"
+    change_kind: "func_removed"
+    reason: "Client::disconnect() deprecated in v1.8, removed in v2.0"
+
+  # Pattern match — suppress all changes in internal namespaces
+  - symbol_pattern: ".*N6detail.*"
+    reason: "detail:: namespace is not part of public ABI"
+
+  # All change kinds for a symbol
+  - symbol: "_ZN3foo12LegacyHandleEv"
+    reason: "LegacyHandle replaced by Handle alias — shim keeps compat"
+```
+
+ABICC-format suppression files are also supported for easier migration. See [Migrating from ABICC](https://napetrov.github.io/abicheck/user-guide/from-abicc/) for details.
 
 ---
 
 ## ABICC drop-in replacement
 
-```bash
-# Before (ABICC):
-abi-compliance-checker -lib libfoo -old old.xml -new new.xml -report-path r.html
+If you're migrating from abi-compliance-checker, abicheck provides a compatibility CLI:
 
-# After (abicheck — same flags):
+Before (ABICC):
+
+```bash
+abi-compliance-checker -lib libfoo -old old.xml -new new.xml -report-path r.html
+```
+
+After (abicheck — same flags):
+
+```bash
 abicheck compat check -lib libfoo -old old.xml -new new.xml -report-path r.html
 ```
 
@@ -183,17 +335,50 @@ See [Migrating from ABICC](https://napetrov.github.io/abicheck/user-guide/from-a
 
 The `examples/` directory contains **63 real-world ABI scenarios** — each with paired `v1`/`v2` source code and a consumer app that demonstrates the actual failure.
 
+Build an example:
+
 ```bash
 cd examples
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build --target case01_symbol_removal_v1 case01_symbol_removal_v2 --config Debug
-
-abicheck compare build/case01_symbol_removal/libv1.so build/case01_symbol_removal/libv2.so \
-    --old-header case01_symbol_removal/v1.h --new-header case01_symbol_removal/v2.h
-# Verdict: BREAKING — symbol 'helper' was removed
 ```
 
+```bash
+cmake --build build --target case01_symbol_removal_v1 case01_symbol_removal_v2 --config Debug
+```
+
+Run abicheck on it:
+
+```bash
+abicheck compare build/case01_symbol_removal/libv1.so build/case01_symbol_removal/libv2.so \
+    --old-header case01_symbol_removal/v1.h --new-header case01_symbol_removal/v2.h
+```
+
+Expected output verdict: `BREAKING — symbol 'helper' was removed`.
+
 Covers: symbol removal, type/signature changes, struct layout, enums, vtables, qualifiers, templates, and more. See [Breaking Cases Catalog](https://napetrov.github.io/abicheck/concepts/breaking-cases-catalog/) and [ABI Breaks Explained](https://napetrov.github.io/abicheck/concepts/abi-breaks-explained/) for the full guide.
+
+---
+
+## Python API
+
+abicheck can be used as a library for programmatic ABI checks:
+
+```python
+from pathlib import Path
+from abicheck.service import run_compare
+
+result, old_snapshot, new_snapshot = run_compare(
+    old_input=Path("libfoo.so.1"),
+    new_input=Path("libfoo.so.2"),
+    old_headers=[Path("include/v1/foo.h")],
+    new_headers=[Path("include/v2/foo.h")],
+)
+
+print(result.verdict)       # e.g. Verdict.BREAKING
+print(len(result.changes))  # number of detected changes
+```
+
+`run_compare` also accepts optional parameters for includes, version labels, language (`"c++"` or `"c"`), suppression files, policy selection, and PDB paths. See `abicheck.service` for the full signature.
 
 ---
 
@@ -205,12 +390,6 @@ Full documentation is available at **[napetrov.github.io/abicheck](https://napet
 - [Installation & first check](https://napetrov.github.io/abicheck/getting-started/)
 - [Exit codes reference](https://napetrov.github.io/abicheck/reference/exit-codes/)
 
-**Concepts:**
-- [Verdicts explained](https://napetrov.github.io/abicheck/concepts/verdicts/)
-- [Architecture](https://napetrov.github.io/abicheck/concepts/architecture/)
-- [Limitations](https://napetrov.github.io/abicheck/concepts/limitations/)
-- [Troubleshooting](https://napetrov.github.io/abicheck/troubleshooting/)
-
 **User guide:**
 - [CLI Usage](https://napetrov.github.io/abicheck/user-guide/cli-usage/)
 - [Application compatibility](https://napetrov.github.io/abicheck/user-guide/appcompat/) — check if your app breaks with a library update
@@ -219,6 +398,12 @@ Full documentation is available at **[napetrov.github.io/abicheck](https://napet
 - [GitHub Action](https://napetrov.github.io/abicheck/user-guide/github-action/)
 - [Migrating from ABICC](https://napetrov.github.io/abicheck/user-guide/from-abicc/)
 - [MCP Integration](https://napetrov.github.io/abicheck/user-guide/mcp-integration/)
+
+**Concepts:**
+- [Verdicts explained](https://napetrov.github.io/abicheck/concepts/verdicts/)
+- [Architecture](https://napetrov.github.io/abicheck/concepts/architecture/)
+- [Limitations](https://napetrov.github.io/abicheck/concepts/limitations/)
+- [Troubleshooting](https://napetrov.github.io/abicheck/troubleshooting/)
 
 **Reference:**
 - [Change kind reference](https://napetrov.github.io/abicheck/reference/change-kinds/)
