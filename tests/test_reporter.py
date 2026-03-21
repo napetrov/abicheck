@@ -327,3 +327,34 @@ class TestAppCompatTraceability:
         assert "Library Files" in md
         assert "/old/lib.so" in md
         assert "**Confidence**" in md
+
+    def test_appcompat_markdown_includes_policy(self):
+        from abicheck.reporter import appcompat_to_markdown
+        r = self._appcompat_result()
+        md = appcompat_to_markdown(r)
+        assert "**Policy**" in md
+        assert "`strict_abi`" in md
+
+
+class TestStatJsonConfidence:
+    """Stat JSON must include confidence and evidence_tiers."""
+
+    def test_stat_json_default_confidence(self):
+        r = _result(Verdict.NO_CHANGE)
+        d = json.loads(to_json(r, stat=True))
+        assert d["confidence"] == "high"
+        assert d["evidence_tiers"] == []
+        assert "coverage_warnings" not in d
+
+    def test_stat_json_with_confidence(self):
+        from abicheck.checker_policy import Confidence
+        r = _result(Verdict.BREAKING, [
+            Change(ChangeKind.FUNC_REMOVED, "_Z3foov", "removed"),
+        ])
+        r.confidence = Confidence.LOW
+        r.evidence_tiers = ["elf"]
+        r.coverage_warnings = ["DWARF stripped"]
+        d = json.loads(to_json(r, stat=True))
+        assert d["confidence"] == "low"
+        assert d["evidence_tiers"] == ["elf"]
+        assert d["coverage_warnings"] == ["DWARF stripped"]

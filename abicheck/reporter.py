@@ -252,6 +252,11 @@ def to_stat_json(result: DiffResult, indent: int = 2) -> str:
     }
     if result.redundant_count > 0:
         d["redundant_count"] = result.redundant_count
+    # Confidence & evidence metadata
+    d["confidence"] = result.confidence.value
+    d["evidence_tiers"] = list(result.evidence_tiers)
+    if result.coverage_warnings:
+        d["coverage_warnings"] = list(result.coverage_warnings)
     return json.dumps(d, indent=indent)
 
 
@@ -1148,10 +1153,16 @@ def appcompat_to_markdown(result: object, *, show_irrelevant: bool = False) -> s
         conf_val = conf.value if hasattr(conf, "value") else str(conf)
         tiers = getattr(full_diff, "evidence_tiers", []) or []
         tier_str = ", ".join(f"`{t}`" for t in tiers) if tiers else "_none_"
+        policy_val = getattr(full_diff, "policy", None) or "strict_abi"
         lines += [
-            f"> **Confidence**: {conf_val.upper()} | **Evidence**: {tier_str}",
+            f"> **Confidence**: {conf_val.upper()} | **Evidence**: {tier_str} | **Policy**: `{policy_val}`",
             "",
         ]
+    else:
+        # Still show policy when confidence is absent
+        policy_val = getattr(full_diff, "policy", None) if full_diff else None
+        if policy_val:
+            lines += [f"> **Policy**: `{policy_val}`", ""]
 
     # Symbol coverage section
     lines += ["## Symbol Coverage", ""]
