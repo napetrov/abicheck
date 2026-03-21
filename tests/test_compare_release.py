@@ -6,7 +6,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from abicheck.cli import _canonical_library_key, _version_sort_key, main
+from abicheck.cli import _canonical_library_key, _is_supported_compare_input, _version_sort_key, main
 from abicheck.model import AbiSnapshot, Function, Param, Visibility
 from abicheck.serialization import snapshot_to_json
 
@@ -386,3 +386,100 @@ class TestMixedInputs:
         # Only 1 comparison, and warnings should mention 1.10 as selected
         assert len(data["libraries"]) == 1
         assert any("1.10" in w for w in data.get("warnings", []))
+
+
+class TestFilterOutNonABIFiles:
+    """Regression tests for false-positive detection of non‑ABI files."""
+
+    def test_ignore_json_without_library_key(self, tmp_path: Path) -> None:
+        """JSON files without "library" field should be ignored, not cause ERROR."""
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
+
+        # Real ABI snapshot (accepted)
+        snap = _snap()
+        _write_snap(old_dir / "libfoo.so.json", snap)
+        _write_snap(new_dir / "libfoo.so.json", snap)
+
+        # False‑positive JSON files (should be ignored)
+        (old_dir / "auditwheel.cdx.json").write_text(
+            '{"bomFormat": "CycloneDX", "specVersion": "1.4", "metadata": {"component": {"type": "library"}}, "components": []}'
+        )
+        (new_dir / "auditwheel.cdx.json").write_text(
+            '{"bomFormat": "CycloneDX", "specVersion": "1.4", "metadata": {"component": {"type": "library"}}, "components": []}'
+        )
+        (old_dir / "studentized_range_mpmath_ref.json").write_text(
+            '{"data": [[1, 2, 3], [4, 5, 6]]}'
+        )
+        (new_dir / "studentized_range_mpmath_ref.json").write_text(
+            '{"data": [[1, 2, 3], [4, 5, 6]]}'
+        )
+        # Template file that starts with '{' (Jinja, etc.)
+        (old_dir / "html.tpl").write_text("{% extends 'base.tpl' %}\n{% block content %}\n...\n{% endblock %}")
+        (new_dir / "html.tpl").write_text("{% extends 'base.tpl' %}\n{% block content %}\n...\n{% endblock %}")
+
+        code, out = _invoke("compare-release", str(old_dir), str(new_dir), "--format", "json")
+        assert code == 0, f"Should pass (only one real library). Output: {out}"
+        data = json.loads(out)
+        # Only the real ABI snapshot is compared
+        assert len(data["libraries"]) == 1
+        assert data["libraries"][0]["library"] == "libfoo.so.json"
+        assert data["libraries"][0]["verdict"] == "NO_CHANGE"
+        # No ERROR verdict from the incidental JSON/template files
+        assert not any(lib.get("verdict") == "ERROR" for lib in data["libraries"])
+
+    def test_ignore_parquet_and_other_non_so_extensions(self, tmp_path: Path) -> None:
+        """Files like *.parquet, *.csv, etc. should not be mistaken for .so candidates."""
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
+
+        # Real library (accepted)
+        snap = _snap()
+        _write_snap(old_dir / "libfoo.so.json", snap)
+        _write_snap(new_dir / "libfoo.so.json", snap)
+
+        # Files that contain the substring "so" but are not .so libraries
+        (old_dir / "v0.7.1.some-named-index.parquet").write_bytes(b"PAR1" + b"fake data" * 100)
+        (new_dir / "v0.7.1.some-named-index.parquet").write_bytes(b"PAR1" + b"fake data" * 100)
+        (old_dir / "solution.json").write_text('{"answer": 42}')
+        (new_dir / "solution.json").write_text('{"answer": 42}')
+        (old_dir / "something.dll.txt").write_text("Not a DLL")
+        (new_dir / "something.dll.txt").write_text("Not a DLL")
+
+        code, out = _invoke("compare-release", str(old_dir), str(new_dir), "--format", "json")
+        assert code == 0, f"Should pass (only one real library). Output: {out}"
+        data = json.loads(out)
+        # Only the real ABI snapshot is compared
+        assert len(data["libraries"]) == 1
+        assert data["libraries"][0]["library"] == "libfoo.so.json"
+        assert not any(lib.get("verdict") == "ERROR" for lib in data["libraries"])
+
+    def test_accept_real_abi_snapshots(self, tmp_path: Path) -> None:
+        """Legitimate ABI snapshots (JSON with "library" key) should still be accepted."""
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
+
+        # ABI snapshot with "library" field
+        snap1 = _snap("1.0", library="libfoo.so")
+        snap2 = _snap("2.0", library="libfoo.so")
+        _write_snap(old_dir / "libfoo.json", snap1)
+        _write_snap(new_dir / "libfoo.json", snap2)
+
+        code, out = _invoke("compare-release", str(old_dir), str(new_dir), "--format", "json")
+        assert code == 0, f"Should compare the two snapshots. Output: {out}"
+        data = json.loads(out)
+        assert len(data["libraries"]) == 1
+        assert data["libraries"][0]["library"] == "libfoo.json"
+        assert data["libraries"][0]["verdict"] == "NO_CHANGE"
+
+    def test_pyd_extension_accepted(self, tmp_path: Path) -> None:
+        """Python Windows extension .pyd (a PE DLL) should be accepted."""
+        pyd = tmp_path / "module.pyd"
+        pyd.write_bytes(b"not-a-real-pe")
+        assert _is_supported_compare_input(pyd)
