@@ -226,3 +226,33 @@ def test_html_tree_node_with_none_reason() -> None:
     out = stack_to_html(r)
     assert "(None)" not in out
     assert "libfoo.so" in out
+
+
+def test_html_escapes_xss_in_root_binary() -> None:
+    """Malicious root_binary must be escaped."""
+    r = _stack_result()
+    r = StackCheckResult(
+        root_binary="<script>alert(1)</script>",
+        baseline_env="/baseline", candidate_env="/candidate",
+        loadability=StackVerdict.PASS, abi_risk=StackVerdict.PASS,
+        baseline_graph=_graph(), candidate_graph=_graph(),
+        bindings_baseline=[], bindings_candidate=[],
+        missing_symbols=[], stack_changes=[], risk_score="low",
+    )
+    out = stack_to_html(r)
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
+
+
+def test_html_escapes_xss_in_missing_symbol() -> None:
+    """Missing symbol names with HTML must be escaped."""
+    evil = _binding("/bin/app", "<img src=x>", "missing", explanation="<b>bad</b>")
+    out = stack_to_html(_stack_result(missing_symbols=[evil]))
+    assert "<img " not in out
+    assert "&lt;img " in out
+    assert "<b>bad</b>" not in out
+
+
+def test_html_medium_risk_score() -> None:
+    out = stack_to_html(_stack_result(risk_score="medium"))
+    assert "MEDIUM" in out

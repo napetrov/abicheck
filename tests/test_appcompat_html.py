@@ -113,3 +113,60 @@ def test_html_shows_no_relevant_changes() -> None:
     out = appcompat_to_html(_appcompat_result(irrelevant=[change]))
     assert "No Relevant Changes" in out
     assert "Irrelevant Changes" in out
+
+
+def test_html_confidence_absent_without_metadata() -> None:
+    """When confidence is None the Analysis Confidence section is omitted."""
+    out = appcompat_to_html(_appcompat_result(with_metadata=False))
+    assert "Analysis Confidence" not in out
+
+
+def test_html_shows_missing_versions() -> None:
+    out = appcompat_to_html(_appcompat_result(missing_versions=["GLIBC_2.34", "GLIBC_2.38"]))
+    assert "Missing Symbol Versions" in out
+    assert "GLIBC_2.34" in out
+    assert "GLIBC_2.38" in out
+
+
+def test_html_shows_breaking_for_app() -> None:
+    from enum import Enum
+
+    class K(str, Enum):
+        V = "func_removed"
+
+    change = SimpleNamespace(
+        kind=K.V, symbol="removed_func", description="Public function removed",
+        old_value="removed_func", new_value=None, source_location=None,
+        affected_symbols=None, caused_by_type=None, caused_count=0,
+        demangled_symbol="removed_func",
+    )
+    out = appcompat_to_html(_appcompat_result(
+        verdict=Verdict.BREAKING, breaking=[change],
+    ))
+    assert "Relevant Changes" in out
+    assert "removed_func" in out
+
+
+def test_html_escapes_xss_in_app_path() -> None:
+    """Malicious app_path must be escaped in output."""
+    r = _appcompat_result()
+    r.app_path = "<script>alert(1)</script>"
+    out = appcompat_to_html(r)
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
+
+
+def test_html_escapes_xss_in_library_paths() -> None:
+    """Library paths with HTML must be escaped."""
+    r = _appcompat_result()
+    r.old_lib_path = "<img src=x onerror=alert(1)>"
+    out = appcompat_to_html(r)
+    assert "<img " not in out
+    assert "&lt;img " in out
+
+
+def test_html_escapes_xss_in_missing_symbols() -> None:
+    """Missing symbol names with HTML must be escaped."""
+    out = appcompat_to_html(_appcompat_result(missing=["<b>evil</b>"]))
+    assert "<b>evil</b>" not in out
+    assert "&lt;b&gt;" in out
