@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import html
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .stack_checker import StackCheckResult
@@ -138,7 +138,7 @@ def stack_to_html(result: StackCheckResult) -> str:
     # Stack changes
     stack_changes_html = ""
     if result.stack_changes:
-        rows = []
+        sc_rows: list[str] = []
         for sc in result.stack_changes:
             if sc.change_type == "removed":
                 icon_sc = "\u274c"
@@ -157,7 +157,7 @@ def stack_to_html(result: StackCheckResult) -> str:
                 )
                 detail = "Content changed"
                 abi_info = f"{h(abi_verdict)} ({abi_breaking} breaking / {abi_total} total)"
-            rows.append(
+            sc_rows.append(
                 f"<tr><td>{icon_sc}</td>"
                 f"<td><code>{h(sc.library)}</code></td>"
                 f"<td>{h(sc.change_type)}</td>"
@@ -168,7 +168,7 @@ def stack_to_html(result: StackCheckResult) -> str:
   <h3>Stack Changes ({len(result.stack_changes)})</h3>
   <table class='changes'>
     <thead><tr><th></th><th>Library</th><th>Change</th><th>Detail</th><th>ABI Info</th></tr></thead>
-    <tbody>{chr(10).join(rows)}</tbody>
+    <tbody>{chr(10).join(sc_rows)}</tbody>
   </table>
 </div>"""
 
@@ -249,7 +249,7 @@ def _render_tree_html(lines: list[str], graph: object) -> None:
 
 def _render_node_html(
     lines: list[str],
-    nodes: dict,
+    nodes: dict[str, Any],
     adj: dict[str, list[str]],
     key: str,
     prefix: str,

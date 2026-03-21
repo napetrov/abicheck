@@ -35,7 +35,7 @@ def appcompat_to_html(result: object) -> str:
     h = html.escape
 
     verdict = getattr(result, "verdict", None)
-    v_label = verdict.value if hasattr(verdict, "value") else str(verdict or "UNKNOWN")
+    v_label: str = verdict.value if verdict is not None and hasattr(verdict, "value") else str(verdict or "UNKNOWN")
     fg, bg = _VERDICT_STYLE.get(v_label, ("#212121", "#f5f5f5"))
 
     app_path = getattr(result, "app_path", "")
