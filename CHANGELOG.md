@@ -12,20 +12,40 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ### Planned
 - `--policy-file` schema validation improvements
 - Version-stamped typedef suppression (libpng `png_libpng_version_X_Y_Z` pattern)
-- Formalize evidence/confidence tiers in JSON output (DWARF_AWARE / HEADER_AWARE;
-  ELF_ONLY tier already used throughout detection)
 
 ---
 
-## [0.2.0] — 2026-03-18
+## [0.2.0] — 2026-03-21
 
 ### Added
+
+#### Application Compatibility Checking ([ADR-005](docs/development/adr/005-application-compatibility.md)) (#157)
+- **`abicheck appcompat`** — answer "Will my application break with the new library?" by
+  intersecting the app's required symbols with the library diff. Only changes affecting symbols
+  your binary actually uses are reported.
+- Full mode (old lib + new lib + headers) and weak mode (`--check-against` a single library).
+- `--list-required-symbols` to inspect which symbols your binary imports.
+- `--show-irrelevant` to see filtered-out changes that do not affect your application.
+- Works with ELF, PE, and Mach-O binaries.
 
 #### Cross-Platform Support
 - **Windows (PE/COFF)** and **macOS (Mach-O)** binary metadata analysis (exports, imports,
   dependencies) alongside existing Linux (ELF) support.
 - **PDB parser**: Windows PE debug info extraction for type-level analysis.
 - Windows MSVC/MinGW toolchain support matrix and smoke tests.
+- macOS ARM64 regression tests and `install_name` coverage.
+
+#### Configurable Severity Levels (#180)
+- Four issue categories: `abi_breaking`, `potential_breaking`, `quality_issues`, `additions`,
+  each assignable to `error`, `warning`, or `info`.
+- **`--severity-preset`**: Built-in presets (`default`, `strict`, `info-only`) for quick
+  configuration.
+- Per-category overrides: `--severity-abi-breaking`, `--severity-potential-breaking`,
+  `--severity-quality-issues`, `--severity-additions`.
+- Severity controls report visualization (badges, section grouping) and exit codes.
+- PolicyFile overrides supported. JSON output includes top-level `"severity"` object
+  and per-change `"severity"` field.
+- Replaces the removed `--fail-on-additions` flag.
 
 #### Report Filtering & Deduplication ([ADR-004](docs/development/adr/004-report-filtering-and-deduplication.md))
 - **Redundancy filtering**: Automatically collapses derived changes caused by root type changes
@@ -67,19 +87,135 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - `label` field for human-readable suppression rule names.
 - `source_location` field for file-scoped suppression rules.
 - `expires` field for time-limited suppression rules with automatic expiry.
+- **Suppression audit mode**: detect stale rules matching nothing, high-risk suppressions
+  masking BREAKING changes, and near-expiry rules.
+
+#### Detection Improvements
+- **ELF visibility tracking**: New `SYMBOL_ELF_VISIBILITY_CHANGED` ChangeKind for
+  DEFAULT/PROTECTED/HIDDEN/INTERNAL transitions.
+- **`FUNC_REMOVED_FROM_BINARY`**: New BREAKING-severity ChangeKind for mixed-mode (headers +
+  ELF) when a function is removed from the binary but header still declares it.
+- **Global variable ELF-only tracking**: Collect STT_OBJECT and STT_TLS symbols as Variable
+  entries in ELF-only fallback, enabling VAR_REMOVED/VAR_ADDED detection without headers.
+- **DWARF reserved field detection**: DWARF struct layout diff detects reserved field
+  activations (matching AST-level detection). Patterns include `reserved`, `mbz`, `fill`,
+  `filler`, requiring matching offset AND type.
+- **DWARF opaque struct handling**: Opaque types (forward-declared, accessed only via pointer)
+  no longer trigger BREAKING for internal field changes. Correctly deserialized from JSON
+  snapshots.
+- **Type name canonicalization**: `canonicalize_type_name()` normalizes "struct Foo" vs "Foo",
+  "const int" vs "int const", and whitespace differences, reducing false positives in
+  field/return/variable/parameter type comparisons.
+- **Cross-detector deduplication**: Centralized dedup collapses overlapping FUNC_REMOVED/
+  FUNC_ADDED/VAR_REMOVED/VAR_ADDED reports from function, PE, and Mach-O detectors.
+- **Confidence/evidence tracking**: `Confidence` enum (high/medium/low) on `DiffResult` based
+  on available data sources (ELF, DWARF, header, PE, Mach-O). Human-readable
+  `coverage_warnings` for disabled detectors.
+- **Import-time ChangeKind completeness assertion**: Every `ChangeKind` member must appear in
+  exactly one of BREAKING/COMPATIBLE/API_BREAK/RISK sets, enforced at import time.
 
 #### Additional Improvements
-- **GitHub Action** (`napetrov/abicheck@v1`) for CI integration.
+- **GitHub Action** (`napetrov/abicheck@v1`) for CI integration with per-mode verdict mapping,
+  format validation, and severity-preset support.
 - **MCP server** for AI agent integration.
+- **`--strict-elf-only`** flag: injects PolicyFile override upgrading `FUNC_REMOVED_ELF_ONLY`
+  to BREAKING.
+- **`compare-release`** composable file-classifier pipeline to identify ABI-relevant files in
+  directory scans, ignoring non-ABI files.
 - 13 new ABI compatibility test cases (cases 42, 49–62).
 - Sentinel enum detection by name pattern (`*_last`/`*_max`/`*_count`).
 - `--allow-symbols-only` flag for ELF compare without headers.
 - Cross-platform CMake build support for example cases.
+- 11 new Architecture Decision Records (ADRs 003–013).
+- Renovate bot for dependency updates, GitHub issue/PR templates, CODEOWNERS.
+
+### Changed
+- **`checker.py` split into focused modules** (#187): The monolithic checker (3,939 lines) was
+  split into `diff_types.py`, `diff_platform.py`, `diff_filtering.py`, `diff_symbols.py`, and
+  `checker_types.py`. New `service.py` provides shared orchestration (`resolve_input`,
+  `run_dump`, `run_compare`, `render_output`).
+- **Standardized error hierarchy**: `PolicyError`, `ReportError` and other domain-specific
+  exceptions added to `errors.py`. 46 error sites migrated from generic `RuntimeError`/
+  `ValueError`. All inherit from `AbicheckError` and their original builtin for backward compat.
+- **Code consolidation** (−226 lines): Shared DWARF utilities (`dwarf_utils.py`), unified
+  `binary_utils.py` with `detect_binary_format()`, deduplicated HTML report constants, and
+  PDB/PE module cleanup.
+- **`--fail-on-additions` removed**: Replaced by the configurable severity system
+  (`--severity-additions`).
+- **Documentation reorganized**: Complete structure overhaul with standardized file naming.
 
 ### Fixed
+- **Appcompat DSO scoping**: Symbols from unrelated DSOs (e.g., libexpat symbols when checking
+  libz) no longer falsely attributed to the target library (#184).
+- **C++ header auto-detection**: `.h` headers default to C mode; auto-detect C++ from structural
+  syntax (class/namespace/template). Fixes false mismatches when castxml used wrong language
+  mode.
+- **C++ DWARF function extraction**: Demangled export index via batch `c++filt` with three-tier
+  `_is_exported` check. Fixes missed C++ function detection in DWARF path.
+- **Enum change deduplication**: Same-kind symbol-based dedup pass for enum ChangeKinds, preferring
+  entries with populated old_value/new_value.
+- **Compiler internal type filtering**: Filter `__va_list_tag`, `__builtin_va_list`, etc. from
+  DWARF path. Eliminates false positives from compiler internals.
+- **PDB struct extraction**: Deferred canonical registration until fields successfully extracted,
+  preventing empty layouts from blocking valid later duplicates.
+- **Compat HTML ELF-layer miscounting**: ELF-layer changes (soname_changed, etc.) now correctly
+  categorized instead of being counted as Interface Problems.
+- **Namespace-qualified type names**: Fixed `split("::")[0]` truncating names like
+  `ns::MyStruct` to `ns`. Replaced with `_root_type_name()`.
+- **Enum rename one-to-one guard**: Prevents aliases from collapsing true removals.
+- **DWARF placeholder object check**: Check `dwarf.has_dwarf` flag instead of just `is not None`.
+- **`affected_pct` always 0.0%**: `old_symbol_count` now propagated through `_apply_warn_newsym`
+  and `_limit_affected_changes`. Capped at 100%.
+- **Enum symbol qualification**: Use member-qualified enum symbols (`Color::GREEN`) so AST/DWARF
+  dedup works via exact description matching.
+- **Human-readable function parameters**: Format params as `int, int*` instead of raw Python repr.
+- **PolicyFile on DiffResult**: Store `PolicyFile` on `DiffResult` with `_effective_kind_sets()`
+  so policy overrides correctly affect report section classification.
+- **Safe output file writing**: `_safe_write_output()` helper with parent directory creation
+  replacing bare `write_text()` calls.
+- **ELF format validation**: Validate ELF format in `deps_cmd` and `stack_check_cmd` before
+  processing, preventing cryptic errors on non-ELF inputs.
+- **PIE executable detection**: Distinguish PIE executables from shared libraries via PT_INTERP
+  segment check.
+- **castxml timeout handling**: Catch `subprocess.TimeoutExpired` with user-friendly error.
+  Diagnostic hint when castxml fails in C mode on C++ headers.
+- **JSON `--show-only` metadata**: Add `filtered_summary`/`show_only_applied` to JSON output.
+  Always include `old_file`/`new_file` keys (null when absent).
+- **`--show-only` exit code**: No longer incorrectly affects exit codes (display-only).
+- **Library removal verdict**: Elevate verdict to `COMPATIBLE_WITH_RISK` when libraries are
+  removed from dependency list.
+- **compare-release non-ABI file noise**: Directory scans now ignore scripts, configs, and
+  documentation that caused spurious errors.
+- **GitHub Action / CLI alignment**: Fixed 7 discrepancies in verdict/exit-code mapping,
+  format validation, and severity-preset scoping.
+- **DWARFExprOp, TOCTOU, PDB ODR fixes**: Fixed attribute access, file operation races,
+  and One Definition Rule handling.
 - `enum_last_member_value_changed` downgraded to risk severity in policy.
 - ABICC compat: auto-forward `abicheck compat <flags>` to `compat check`.
 - Test parity fixes for ABICC 2.3.
+
+### Performance
+- **Ancestor function cache**: Each ancestor type scanned at most once in
+  `_enrich_affected_symbols`, eliminating quadratic behavior on large diffs.
+- **Pre-compiled regex patterns**: Word-boundary patterns in `_filter_redundant`,
+  `_is_pointer_only_type`, and `_has_public_pointer_factory` compiled once and cached.
+- **ELF section scan optimization**: Capture `.gnu.version` and `.dynsym` sections during main
+  `iter_sections()` loop instead of re-scanning.
+- **Session-scoped CMake builds**: Integration tests share a single cmake configure pass
+  (reduced ~29 passes to 1 on Windows).
+- **Parallel test execution**: pytest-xdist support with `--dist worksteal` and filelock-based
+  build directory sharing.
+
+### Testing
+- Test coverage improved from 86% to 93.4% through systematic review of 117 test files.
+- Hypothesis-based property tests: identical snapshots must produce NO_CHANGE, single known
+  mutations must detect the specific ChangeKind.
+- Exhaustive policy × ChangeKind matrix test: every ChangeKind verified under all 3 policies.
+- Ground truth v3 with `expected_kinds` and `expected_absent_kinds` for bidirectional validation.
+- macOS ARM64 regression tests and `install_name` edge-case coverage.
+- `func_deleted` edge-case regressions for ABICC #100 (`= delete` hardening).
+- Fixed trivially-true tests, duplicate test bodies, wrong mocks, and weak assertions.
+- Removed duplicate tests, added `slow` marker, parametrized repetitive assertions.
 
 ### Platform
 - **Linux** (ELF/DWARF) — full support.
