@@ -216,6 +216,11 @@ def to_sarif(
                     **({"redundantCount": result.redundant_count} if result.redundant_count > 0 else {}),
                     **({"oldFile": {"path": result.old_metadata.path, "sha256": result.old_metadata.sha256, "sizeBytes": result.old_metadata.size_bytes}} if result.old_metadata is not None else {}),
                     **({"newFile": {"path": result.new_metadata.path, "sha256": result.new_metadata.sha256, "sizeBytes": result.new_metadata.size_bytes}} if result.new_metadata is not None else {}),
+                    "confidence": result.confidence.value,
+                    "evidenceTiers": list(result.evidence_tiers),
+                    **({"coverageWarnings": list(result.coverage_warnings)} if result.coverage_warnings else {}),
+                    "policy": result.policy or "strict_abi",
+                    **({"policyOverrides": {k.value: v.value for k, v in result.policy_file.overrides.items()}} if result.policy_file and result.policy_file.overrides else {}),
                 },
             }
         ],

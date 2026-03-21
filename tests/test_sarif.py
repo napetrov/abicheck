@@ -271,3 +271,51 @@ class TestExitCodes:
                 f"Verdict {verdict}: expected exitCode={expected_code}, got {inv['exitCode']}"
             )
             assert inv["exitCodeDescription"] == verdict.value
+
+
+# ---------------------------------------------------------------------------
+# Confidence, evidence tiers, and policy in SARIF properties
+# ---------------------------------------------------------------------------
+
+class TestSarifConfidenceAndPolicy:
+    """SARIF run properties must include confidence, evidence, and policy metadata."""
+
+    def test_confidence_default_high(self) -> None:
+        doc = to_sarif(_make_result([], verdict=Verdict.NO_CHANGE))
+        props = doc["runs"][0]["properties"]
+        assert props["confidence"] == "high"
+        assert props["evidenceTiers"] == []
+        assert "coverageWarnings" not in props
+
+    def test_confidence_with_tiers_and_warnings(self) -> None:
+        from abicheck.checker_policy import Confidence
+        r = _make_result([_breaking_change()])
+        r.confidence = Confidence.LOW
+        r.evidence_tiers = ["elf"]
+        r.coverage_warnings = ["DWARF not available"]
+        doc = to_sarif(r)
+        props = doc["runs"][0]["properties"]
+        assert props["confidence"] == "low"
+        assert props["evidenceTiers"] == ["elf"]
+        assert props["coverageWarnings"] == ["DWARF not available"]
+
+    def test_policy_in_properties(self) -> None:
+        doc = to_sarif(_make_result([], verdict=Verdict.NO_CHANGE))
+        props = doc["runs"][0]["properties"]
+        assert props["policy"] == "strict_abi"
+
+    def test_policy_overrides_in_properties(self) -> None:
+        from abicheck.policy_file import PolicyFile
+        r = _make_result([_breaking_change()])
+        r.policy_file = PolicyFile(
+            base_policy="strict_abi",
+            overrides={ChangeKind.FUNC_REMOVED: Verdict.COMPATIBLE},
+        )
+        doc = to_sarif(r)
+        props = doc["runs"][0]["properties"]
+        assert props["policyOverrides"] == {"func_removed": "COMPATIBLE"}
+
+    def test_policy_overrides_absent_when_no_file(self) -> None:
+        doc = to_sarif(_make_result([], verdict=Verdict.NO_CHANGE))
+        props = doc["runs"][0]["properties"]
+        assert "policyOverrides" not in props

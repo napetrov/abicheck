@@ -365,6 +365,22 @@ def generate_xml_report(
 
     root = ET.Element("reports")
 
+    # File metadata for traceability
+    old_meta = getattr(result, "old_metadata", None)
+    new_meta = getattr(result, "new_metadata", None)
+    if old_meta or new_meta:
+        file_info = ET.SubElement(root, "file_info")
+        if old_meta:
+            old_el = ET.SubElement(file_info, "old_file")
+            ET.SubElement(old_el, "path").text = getattr(old_meta, "path", "")
+            ET.SubElement(old_el, "sha256").text = getattr(old_meta, "sha256", "")
+            ET.SubElement(old_el, "size_bytes").text = str(getattr(old_meta, "size_bytes", 0))
+        if new_meta:
+            new_el = ET.SubElement(file_info, "new_file")
+            ET.SubElement(new_el, "path").text = getattr(new_meta, "path", "")
+            ET.SubElement(new_el, "sha256").text = getattr(new_meta, "sha256", "")
+            ET.SubElement(new_el, "size_bytes").text = str(getattr(new_meta, "size_bytes", 0))
+
     redundant_count = getattr(result, "redundant_count", 0)
 
     # Binary compatibility section (all changes)

@@ -10,6 +10,17 @@
 | Deployment risk changes | 1 |
 | Compatible changes | 0 |
 
+## Analysis Confidence
+
+| Confidence | HIGH |
+|---|---|
+| Evidence tiers | `elf`, `header` |
+| Coverage gap | Detector 'pe' disabled: missing PE metadata |
+| Coverage gap | Detector 'macho' disabled: missing Mach-O metadata |
+| Coverage gap | Detector 'advanced_dwarf' disabled: missing DWARF advanced metadata |
+
+> **Policy**: `strict_abi`
+
 ## ⚠️ Deployment Risk Changes
 
 > These changes are **binary-compatible** but may cause the library to fail
