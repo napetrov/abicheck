@@ -23,7 +23,6 @@ from abicheck.classify import (
 from abicheck.model import AbiSnapshot, Function, Visibility
 from abicheck.serialization import snapshot_to_json
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _write_abi_snapshot(path: Path) -> Path:

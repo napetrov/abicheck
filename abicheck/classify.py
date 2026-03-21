@@ -42,8 +42,6 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
-
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +90,7 @@ class FileClassifier(ABC):
     """
 
     @abstractmethod
-    def accepts(self, path: Path) -> Optional[bool]:
+    def accepts(self, path: Path) -> bool | None:
         ...
 
 
@@ -110,7 +108,7 @@ class BinaryExtensionClassifier(FileClassifier):
     _SO_RE: re.Pattern[str] = re.compile(r"\.so(?:\.|$)")
     _BINARY_EXTS: frozenset[str] = frozenset({".dll", ".dylib", ".pyd"})
 
-    def accepts(self, path: Path) -> Optional[bool]:
+    def accepts(self, path: Path) -> bool | None:
         lower = path.name.lower()
         if self._SO_RE.search(lower):
             return True
@@ -126,7 +124,7 @@ class MagicByteClassifier(FileClassifier):
     no extension) that the extension classifier would miss.
     """
 
-    def accepts(self, path: Path) -> Optional[bool]:
+    def accepts(self, path: Path) -> bool | None:
         fmt = _detect_binary_format(path)
         return True if fmt is not None else None
 
@@ -169,7 +167,7 @@ class AbiJsonClassifier(FileClassifier):
         # ("libabigail-json-v2", re.compile(r'"abi-corpus"\s*:', re.MULTILINE)),
     ]
 
-    def accepts(self, path: Path) -> Optional[bool]:
+    def accepts(self, path: Path) -> bool | None:
         if path.suffix.lower() != ".json":
             return None
         try:
@@ -186,7 +184,7 @@ class PerlDumpClassifier(FileClassifier):
 
     _PERL_EXTS: frozenset[str] = frozenset({".pl", ".pm"})
 
-    def accepts(self, path: Path) -> Optional[bool]:
+    def accepts(self, path: Path) -> bool | None:
         if path.suffix.lower() not in self._PERL_EXTS:
             return None
         head = _sniff_head(path)
@@ -201,7 +199,7 @@ class FallbackSniffClassifier(FileClassifier):
     templates starting with ``{%``, etc.) are still rejected.
     """
 
-    def accepts(self, path: Path) -> Optional[bool]:
+    def accepts(self, path: Path) -> bool | None:
         head = _sniff_head(path)
         if _looks_like_perl_dump(head):
             return True

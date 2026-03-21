@@ -6,7 +6,12 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from abicheck.cli import _canonical_library_key, _is_supported_compare_input, _version_sort_key, main
+from abicheck.cli import (
+    _canonical_library_key,
+    _is_supported_compare_input,
+    _version_sort_key,
+    main,
+)
 from abicheck.model import AbiSnapshot, Function, Param, Visibility
 from abicheck.serialization import snapshot_to_json
 
