@@ -28,8 +28,9 @@ Fix known ABICC / libabigail limitations and add new detection capability:
 
 **Done:** DWARF-aware struct/enum layout; calling convention, packing, toolchain flags detection;
 AST-DWARF deduplication; field qualifiers (const/volatile/mutable); enum/parameter rename heuristics;
-ELF_ONLY visibility tier used throughout detection.
-**TODO:** Expose evidence/confidence levels in JSON output; formalize HEADER_AWARE tier.
+ELF_ONLY visibility tier used throughout detection; `Confidence` enum (high/medium/low) on
+`DiffResult` with `coverage_warnings` for disabled detectors (v0.2.0).
+**TODO:** Formalize HEADER_AWARE tier as distinct from DWARF_AWARE in JSON output schema.
 
 ---
 
@@ -103,7 +104,7 @@ for PyPI; publish workflow with dry-run mode.
 | Goal | Status |
 |------|--------|
 | G1: ABICC drop-in | Done — 114 ChangeKinds, compat CLI, suppression files, XML reports |
-| G2: Known gaps | DWARF layout, toolchain flags, AST-DWARF dedup done; evidence tiers TODO |
+| G2: Known gaps | DWARF layout, toolchain flags, AST-DWARF dedup, confidence tracking done; HEADER_AWARE tier TODO |
 | G3: libabigail tests | Done — ~54 parity test functions + 63 example cases |
 | G4: Agent-friendly | Done — JSON, SARIF, exit codes, snapshots, MCP server, GitHub Action |
 | G5: Break encyclopedia | Done — 63 example cases with docs + coverage matrix |
