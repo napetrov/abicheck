@@ -38,10 +38,14 @@ Zero changes to ``cli.py`` are needed for either extension path.
 """
 from __future__ import annotations
 
+import logging
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +73,8 @@ def _sniff_head(path: Path) -> str:
         with open(path, "rb") as fh:
             raw = fh.read(_SNIFF_BYTES)
         return raw.decode("utf-8", errors="replace").lstrip()
-    except OSError:
+    except OSError as exc:
+        logger.warning("classify: cannot read %s: %s", path, exc)
         return ""
 
 
@@ -140,6 +145,12 @@ class AbiJsonClassifier(FileClassifier):
     which is sufficient for all known ABI snapshot formats (top-level keys
     appear within the first 4 KiB in every generator we support).
     If a future generator emits a large preamble, increase this constant.
+
+    Note: current fingerprint checks for a ``"library":`` key. This is a
+    practical heuristic for known abicheck/abicc snapshots, but arbitrary JSON
+    files that happen to include the same key could be false positives. If that
+    appears in the wild, add stricter co-occurrence fingerprints (e.g.
+    ``"functions":`` plus schema version marker).
     """
 
     _JSON_PROBE_BYTES: int = 4096
@@ -164,7 +175,8 @@ class AbiJsonClassifier(FileClassifier):
         try:
             with open(path, "rb") as fh:
                 head = fh.read(self._JSON_PROBE_BYTES).decode("utf-8", errors="replace")
-        except OSError:
+        except OSError as exc:
+            logger.warning("classify: cannot read JSON candidate %s: %s", path, exc)
             return False
         return any(pat.search(head) for _, pat in self.FINGERPRINTS) or False
 
@@ -189,30 +201,21 @@ class FallbackSniffClassifier(FileClassifier):
     templates starting with ``{%``, etc.) are still rejected.
     """
 
-    _abi_json = AbiJsonClassifier()
-    _perl = PerlDumpClassifier()
-
     def accepts(self, path: Path) -> Optional[bool]:
         head = _sniff_head(path)
         if _looks_like_perl_dump(head):
-            # Reuse PerlDumpClassifier logic (sniff already confirms Perl)
             return True
         if head.startswith("{"):
-            # Looks like JSON — apply the same ABI-marker check
-            result = self._abi_json.accepts(path)
-            # AbiJsonClassifier returns None for non-.json extensions; treat
-            # as "needs content check" which we trigger by passing a fake .json path
-            if result is None:
-                # Build a temporary probe using the probe bytes we already read
-                try:
-                    with open(path, "rb") as fh:
-                        probe = fh.read(AbiJsonClassifier._JSON_PROBE_BYTES).decode(
-                            "utf-8", errors="replace"
-                        )
-                except OSError:
-                    return False
-                return any(pat.search(probe) for _, pat in AbiJsonClassifier.FINGERPRINTS) or False
-            return result
+            # Looks like JSON on a non-.json extension — apply ABI marker check.
+            try:
+                with open(path, "rb") as fh:
+                    probe = fh.read(AbiJsonClassifier._JSON_PROBE_BYTES).decode(
+                        "utf-8", errors="replace"
+                    )
+            except OSError as exc:
+                logger.warning("classify: cannot read fallback JSON candidate %s: %s", path, exc)
+                return False
+            return any(pat.search(probe) for _, pat in AbiJsonClassifier.FINGERPRINTS) or False
         return False
 
 

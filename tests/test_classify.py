@@ -12,8 +12,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 from abicheck.classify import (
     AbiJsonClassifier,
     BinaryExtensionClassifier,
@@ -77,18 +75,20 @@ class TestBinaryExtensionClassifier:
     def test_tpl_passthrough(self, tmp_path: Path) -> None:
         assert self.clf.accepts(tmp_path / "html.tpl") is None
 
+    def test_dll_txt_not_matched(self, tmp_path: Path) -> None:
+        assert self.clf.accepts(tmp_path / "something.dll.txt") is None
+
 
 # ── MagicByteClassifier ───────────────────────────────────────────────────────
 
 class TestMagicByteClassifier:
     clf = MagicByteClassifier()
 
-    def test_elf_magic(self, tmp_path: Path) -> None:
+    def test_elf_magic(self, tmp_path: Path, monkeypatch) -> None:
         f = tmp_path / "noext"
         f.write_bytes(ELF_MAGIC)
-        # Only True if binary_utils agrees; this is an integration-light test
-        result = self.clf.accepts(f)
-        assert result in (True, None)  # depends on binary_utils
+        monkeypatch.setattr("abicheck.classify._detect_binary_format", lambda _p: "elf")
+        assert self.clf.accepts(f) is True
 
     def test_plain_text_passthrough(self, tmp_path: Path) -> None:
         f = tmp_path / "readme.txt"
@@ -136,13 +136,14 @@ class TestAbiJsonClassifier:
         assert self.clf.accepts(p) is None
 
     def test_fingerprint_registry_extensible(self) -> None:
-        """Ensure FINGERPRINTS is a mutable list that can accept new formats."""
+        """Ensure FINGERPRINTS is extensible and restored after mutation."""
         original_len = len(AbiJsonClassifier.FINGERPRINTS)
         new_fp = ("test-format", re.compile(r'"abi-corpus"\s*:'))
         AbiJsonClassifier.FINGERPRINTS.append(new_fp)
-        assert len(AbiJsonClassifier.FINGERPRINTS) == original_len + 1
-        # Clean up
-        AbiJsonClassifier.FINGERPRINTS.pop()
+        try:
+            assert len(AbiJsonClassifier.FINGERPRINTS) == original_len + 1
+        finally:
+            AbiJsonClassifier.FINGERPRINTS.pop()
 
 
 # ── PerlDumpClassifier ────────────────────────────────────────────────────────
@@ -155,6 +156,11 @@ class TestPerlDumpClassifier:
         p.write_text('{"x":1}')
         assert self.clf.accepts(p) is None
 
+    def test_valid_perl_dump_accepted(self, tmp_path: Path) -> None:
+        p = tmp_path / "libfoo.pl"
+        p.write_text("$VAR1 = { 'library' => 'libfoo.so' };\n")
+        assert self.clf.accepts(p) is True
+
     def test_pl_not_perl_dump_rejected(self, tmp_path: Path) -> None:
         p = tmp_path / "script.pl"
         p.write_text("#!/usr/bin/perl\nprint 'hello';\n")
@@ -166,6 +172,10 @@ class TestPerlDumpClassifier:
 
 class TestFallbackSniffClassifier:
     clf = FallbackSniffClassifier()
+
+    def test_abi_json_with_custom_extension_accepted(self, tmp_path: Path) -> None:
+        p = _write_abi_snapshot(tmp_path / "libfoo.abi")
+        assert self.clf.accepts(p) is True
 
     def test_jinja_tpl_rejected(self, tmp_path: Path) -> None:
         """Jinja template starting with {# / {% has no ABI marker → rejected."""
@@ -206,6 +216,12 @@ class TestPipeline:
     def test_so_versioned_accepted(self, tmp_path: Path) -> None:
         p = tmp_path / "libfoo.so.1.2"
         p.write_bytes(b"binary content")
+        assert is_supported_compare_input(p) is True
+
+    def test_node_extension_elf_accepted_via_magic(self, tmp_path: Path, monkeypatch) -> None:
+        p = tmp_path / "addon.node"
+        p.write_bytes(b"binary content")
+        monkeypatch.setattr("abicheck.classify._detect_binary_format", lambda _p: "elf")
         assert is_supported_compare_input(p) is True
 
     def test_dll_accepted(self, tmp_path: Path) -> None:
