@@ -10,6 +10,19 @@
 | Deployment risk changes | 1 |
 | Compatible changes | 0 |
 
+## Analysis Confidence
+
+| Field | Value |
+|---|---|
+| Confidence | LOW |
+| Evidence tiers | `elf` |
+| Coverage gap | Detector 'pe' disabled: missing PE metadata |
+| Coverage gap | Detector 'macho' disabled: missing Mach-O metadata |
+| Coverage gap | Detector 'advanced_dwarf' disabled: missing DWARF advanced metadata |
+| Coverage gap | Binary-only analysis without debug info; many ABI changes cannot be detected (struct layout, enum values, type changes) |
+
+> **Policy**: `strict_abi`
+
 ## ⚠️ Deployment Risk Changes
 
 > These changes are **binary-compatible** but may cause the library to fail

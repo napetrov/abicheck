@@ -252,6 +252,11 @@ def to_stat_json(result: DiffResult, indent: int = 2) -> str:
     }
     if result.redundant_count > 0:
         d["redundant_count"] = result.redundant_count
+    # Confidence & evidence metadata
+    d["confidence"] = result.confidence.value
+    d["evidence_tiers"] = list(result.evidence_tiers)
+    if result.coverage_warnings:
+        d["coverage_warnings"] = list(result.coverage_warnings)
     return json.dumps(d, indent=indent)
 
 
@@ -472,6 +477,11 @@ def _to_json_leaf(
     }
     if result.redundant_count > 0:
         d["redundant_count"] = result.redundant_count
+    # Confidence & evidence metadata
+    d["confidence"] = result.confidence.value
+    d["evidence_tiers"] = list(result.evidence_tiers)
+    if result.coverage_warnings:
+        d["coverage_warnings"] = list(result.coverage_warnings)
     return json.dumps(d, indent=indent)
 
 
@@ -575,6 +585,19 @@ def to_json(
         for det in result.detector_results
         if det.changes_count > 0 or det.coverage_gap is not None
     ]
+    # Confidence & evidence metadata — helps users assess verdict trust level
+    d["confidence"] = result.confidence.value
+    d["evidence_tiers"] = list(result.evidence_tiers)
+    if result.coverage_warnings:
+        d["coverage_warnings"] = list(result.coverage_warnings)
+    # Policy file overrides (custom re-classifications)
+    if result.policy_file and result.policy_file.overrides:
+        d["policy_overrides"] = {
+            kind.value: verdict.value
+            for kind, verdict in result.policy_file.overrides.items()
+        }
+        if result.policy_file.source_path:
+            d["policy_file"] = str(result.policy_file.source_path)
     if show_impact:
         d["show_only_applied"] = show_only is not None
     return json.dumps(d, indent=indent)
@@ -914,8 +937,8 @@ def to_markdown(
     if show_only:
         changes = apply_show_only(changes, show_only, policy=result.policy)
 
-    # Classify filtered changes by severity
-    breaking_set, api_break_set, compat_set, risk_set = _policy_kind_sets(result.policy)
+    # Classify filtered changes using effective kind sets (respects PolicyFile overrides)
+    breaking_set, api_break_set, compat_set, risk_set = result._effective_kind_sets()
     breaking = [c for c in changes if c.kind in breaking_set]
     source_breaks = [c for c in changes if c.kind in api_break_set]
     risk = [c for c in changes if c.kind in risk_set]
@@ -935,6 +958,36 @@ def to_markdown(
         f"| Compatible changes | {len(result.compatible)} |",
         "",
     ]
+
+    # Confidence & evidence tier metadata
+    conf = getattr(result, "confidence", None)
+    tiers = getattr(result, "evidence_tiers", None)
+    cov_warns = getattr(result, "coverage_warnings", None)
+    if conf is not None:
+        conf_val = conf.value if hasattr(conf, "value") else str(conf)
+        tier_str = ", ".join(f"`{t}`" for t in tiers) if tiers else "_none_"
+        lines += [
+            "## Analysis Confidence",
+            "",
+            "| Field | Value |",
+            "|---|---|",
+            f"| Confidence | {conf_val.upper()} |",
+            f"| Evidence tiers | {tier_str} |",
+        ]
+        if cov_warns:
+            for w in cov_warns:
+                lines.append(f"| Coverage gap | {w} |")
+        lines.append("")
+
+    # Policy info
+    lines.append(f"> **Policy**: `{result.policy or 'strict_abi'}`")
+    if result.policy_file and result.policy_file.overrides:
+        overrides_str = ", ".join(
+            f"`{k.value}` → `{v.value}`"
+            for k, v in result.policy_file.overrides.items()
+        )
+        lines.append(f"> **Policy overrides**: {overrides_str}")
+    lines.append("")
 
     # Severity configuration summary when provided
     if severity_config is not None:
@@ -1054,6 +1107,17 @@ def appcompat_to_json(result: object, indent: int = 2) -> str:
 
     if full_diff:
         d["full_library_verdict"] = full_diff.verdict.value
+        # Traceability: file metadata from the underlying library diff
+        d["old_file"] = _metadata_dict(getattr(full_diff, "old_metadata", None))
+        d["new_file"] = _metadata_dict(getattr(full_diff, "new_metadata", None))
+        # Confidence & evidence
+        conf = getattr(full_diff, "confidence", None)
+        if conf is not None:
+            d["confidence"] = conf.value if hasattr(conf, "value") else str(conf)
+            d["evidence_tiers"] = list(getattr(full_diff, "evidence_tiers", []) or [])
+            cov_warns = getattr(full_diff, "coverage_warnings", []) or []
+            if cov_warns:
+                d["coverage_warnings"] = list(cov_warns)
 
     return _json.dumps(d, indent=indent)
 
@@ -1096,6 +1160,42 @@ def appcompat_to_markdown(result: object, *, show_irrelevant: bool = False) -> s
             f"**Verdict:** {v_emoji} `{v_label}`",
             "",
         ]
+
+    # File metadata (traceability)
+    full_diff = getattr(result, "full_diff", None)
+    old_meta = getattr(full_diff, "old_metadata", None) if full_diff else None
+    new_meta = getattr(full_diff, "new_metadata", None) if full_diff else None
+    if old_meta or new_meta:
+        lines += ["## Library Files", "", "| | Old | New |", "|---|---|---|"]
+        old_path = getattr(old_meta, "path", "—") if old_meta else "—"
+        new_path = getattr(new_meta, "path", "—") if new_meta else "—"
+        old_sha = getattr(old_meta, "sha256", "—")[:12] if old_meta else "—"
+        new_sha = getattr(new_meta, "sha256", "—")[:12] if new_meta else "—"
+        old_size = _fmt_size(old_meta.size_bytes) if old_meta else "—"
+        new_size = _fmt_size(new_meta.size_bytes) if new_meta else "—"
+        lines += [
+            f"| **Path** | `{old_path}` | `{new_path}` |",
+            f"| **SHA-256** | `{old_sha}…` | `{new_sha}…` |",
+            f"| **Size** | {old_size} | {new_size} |",
+            "",
+        ]
+
+    # Confidence info
+    conf = getattr(full_diff, "confidence", None) if full_diff else None
+    if conf is not None:
+        conf_val = conf.value if hasattr(conf, "value") else str(conf)
+        tiers = getattr(full_diff, "evidence_tiers", []) or []
+        tier_str = ", ".join(f"`{t}`" for t in tiers) if tiers else "_none_"
+        policy_val = getattr(full_diff, "policy", None) or "strict_abi"
+        lines += [
+            f"> **Confidence**: {conf_val.upper()} | **Evidence**: {tier_str} | **Policy**: `{policy_val}`",
+            "",
+        ]
+    else:
+        # Still show policy when confidence is absent
+        policy_val = getattr(full_diff, "policy", None) if full_diff else None
+        if policy_val:
+            lines += [f"> **Policy**: `{policy_val}`", ""]
 
     # Symbol coverage section
     lines += ["## Symbol Coverage", ""]

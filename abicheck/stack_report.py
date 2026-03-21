@@ -71,16 +71,44 @@ def stack_to_json(result: StackCheckResult, indent: int = 2) -> str:
 
     # Stack changes (two-env mode).
     if result.stack_changes:
-        d["stack_changes"] = [
-            {
+        sc_list = []
+        for sc in result.stack_changes:
+            sc_dict: dict[str, object] = {
                 "library": sc.library,
                 "change_type": sc.change_type,
                 "abi_verdict": sc.abi_diff.verdict.value if sc.abi_diff else None,
                 "abi_breaking": len(sc.abi_diff.breaking) if sc.abi_diff else 0,
                 "abi_changes": len(sc.abi_diff.changes) if sc.abi_diff else 0,
             }
-            for sc in result.stack_changes
-        ]
+            # Per-library confidence and evidence tiers
+            if sc.abi_diff:
+                diff = sc.abi_diff
+                conf = getattr(diff, "confidence", None)
+                if conf is not None:
+                    sc_dict["confidence"] = conf.value if hasattr(conf, "value") else str(conf)
+                tiers = getattr(diff, "evidence_tiers", []) or []
+                if tiers:
+                    sc_dict["evidence_tiers"] = list(tiers)
+                cov_warns = getattr(diff, "coverage_warnings", []) or []
+                if cov_warns:
+                    sc_dict["coverage_warnings"] = list(cov_warns)
+                # File metadata for traceability
+                old_meta = getattr(diff, "old_metadata", None)
+                new_meta = getattr(diff, "new_metadata", None)
+                if old_meta:
+                    sc_dict["old_file"] = {
+                        "path": getattr(old_meta, "path", ""),
+                        "sha256": getattr(old_meta, "sha256", ""),
+                        "size_bytes": getattr(old_meta, "size_bytes", 0),
+                    }
+                if new_meta:
+                    sc_dict["new_file"] = {
+                        "path": getattr(new_meta, "path", ""),
+                        "sha256": getattr(new_meta, "sha256", ""),
+                        "size_bytes": getattr(new_meta, "size_bytes", 0),
+                    }
+            sc_list.append(sc_dict)
+        d["stack_changes"] = sc_list
 
     return json.dumps(d, indent=indent, default=str)
 
@@ -122,9 +150,18 @@ def _render_stack_changes_section(lines: list[str], stack_changes: list[StackCha
             verdict = sc.abi_diff.verdict.value if sc.abi_diff else "unknown"
             emoji = "❌" if verdict == "BREAKING" else ("⚠️" if verdict in ("API_BREAK", "COMPATIBLE_WITH_RISK") else "✅")
             lines.append(f"- {emoji} **{sc.library}** — content changed (ABI: `{verdict}`)")
-            if sc.abi_diff and sc.abi_diff.breaking:
-                for c in sc.abi_diff.breaking[:5]:
-                    lines.append(f"  - `{c.kind.value}`: {c.description}")
+            if sc.abi_diff:
+                conf = getattr(sc.abi_diff, "confidence", None)
+                tiers = getattr(sc.abi_diff, "evidence_tiers", []) or []
+                tier_str = ", ".join(f"`{t}`" for t in tiers) if tiers else "_none_"
+                if conf is not None:
+                    conf_val = conf.value if hasattr(conf, "value") else str(conf)
+                    lines.append(f"  - Confidence: **{conf_val.upper()}** | Evidence: {tier_str}")
+                elif tiers:
+                    lines.append(f"  - Evidence: {tier_str}")
+                if sc.abi_diff.breaking:
+                    for c in sc.abi_diff.breaking[:5]:
+                        lines.append(f"  - `{c.kind.value}`: {c.description}")
     lines.append("")
 
 

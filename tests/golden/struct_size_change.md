@@ -10,6 +10,19 @@
 | Deployment risk changes | 0 |
 | Compatible changes | 1 |
 
+## Analysis Confidence
+
+| Field | Value |
+|---|---|
+| Confidence | MEDIUM |
+| Evidence tiers | `header` |
+| Coverage gap | Detector 'pe' disabled: missing PE metadata |
+| Coverage gap | Detector 'macho' disabled: missing Mach-O metadata |
+| Coverage gap | Detector 'advanced_dwarf' disabled: missing DWARF advanced metadata |
+| Coverage gap | No binary metadata available; verdict is based on header analysis only |
+
+> **Policy**: `strict_abi`
+
 ## ❌ Breaking Changes
 
 - **type_size_changed**: Size changed: Point (64 → 96 bits) (`64` → `96`)

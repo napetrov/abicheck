@@ -1207,7 +1207,7 @@ def _handle_list_required_symbols(
 @click.option("--old-version", "old_version", default="old", show_default=True)
 @click.option("--new-version", "new_version", default="new", show_default=True)
 # ── Output options ────────────────────────────────────────────────────────────
-@click.option("--format", "fmt", type=click.Choice(["json", "markdown"]),
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "html"]),
               default="markdown", show_default=True)
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("--show-irrelevant", is_flag=True, default=False,
@@ -1320,6 +1320,9 @@ def appcompat_cmd(
 
     if fmt == "json":
         text = appcompat_to_json(result)
+    elif fmt == "html":
+        from .appcompat_html import appcompat_to_html
+        text = appcompat_to_html(result)
     else:
         text = appcompat_to_markdown(result, show_irrelevant=show_irrelevant)
 
@@ -1802,7 +1805,7 @@ def compare_release_cmd(
               help="Sysroot prefix for cross/container analysis.")
 @click.option("--ld-library-path", "ld_library_path", default="",
               help="Simulated LD_LIBRARY_PATH (colon-separated).")
-@click.option("--format", "fmt", type=click.Choice(["json", "markdown"]),
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "html"]),
               default="markdown", show_default=True)
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("-v", "--verbose", is_flag=True, default=False)
@@ -1846,7 +1849,13 @@ def deps_cmd(
         ld_library_path=ld_library_path,
     )
 
-    text = stack_to_json(result) if fmt == "json" else stack_to_markdown(result)
+    if fmt == "json":
+        text = stack_to_json(result)
+    elif fmt == "html":
+        from .stack_html import stack_to_html
+        text = stack_to_html(result)
+    else:
+        text = stack_to_markdown(result)
     if output:
         _safe_write_output(output, text)
         click.echo(f"Report written to {output}", err=True)
@@ -1870,7 +1879,7 @@ def deps_cmd(
               help="Additional directory to search for shared libraries.")
 @click.option("--ld-library-path", "ld_library_path", default="",
               help="Simulated LD_LIBRARY_PATH (colon-separated).")
-@click.option("--format", "fmt", type=click.Choice(["json", "markdown"]),
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "html"]),
               default="markdown", show_default=True)
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("-v", "--verbose", is_flag=True, default=False)
@@ -1930,7 +1939,13 @@ def stack_check_cmd(
         search_paths=list(search_paths) or None,
     )
 
-    text = stack_to_json(result) if fmt == "json" else stack_to_markdown(result)
+    if fmt == "json":
+        text = stack_to_json(result)
+    elif fmt == "html":
+        from .stack_html import stack_to_html
+        text = stack_to_html(result)
+    else:
+        text = stack_to_markdown(result)
     if output:
         _safe_write_output(output, text)
         click.echo(f"Report written to {output}", err=True)

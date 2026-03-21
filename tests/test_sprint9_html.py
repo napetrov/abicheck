@@ -372,3 +372,48 @@ def test_changed_breaking_kinds_subset_of_breaking_kinds() -> None:
 def test_removed_kinds_subset_of_breaking_kinds() -> None:
     from abicheck.report_classifications import BREAKING_KINDS, REMOVED_KINDS
     assert REMOVED_KINDS <= BREAKING_KINDS
+
+
+# ---------------------------------------------------------------------------
+# Confidence / evidence tiers / policy in HTML report
+# ---------------------------------------------------------------------------
+
+def test_confidence_section_present() -> None:
+    """HTML report includes Analysis Confidence section."""
+    from enum import Enum
+
+    class Conf(str, Enum):
+        LOW = "low"
+
+    r = _result()
+    r.confidence = Conf.LOW
+    r.evidence_tiers = ["elf"]
+    r.coverage_warnings = ["DWARF stripped"]
+    r.policy = "strict_abi"
+    r.policy_file = None
+    out = generate_html_report(r)
+    assert "Analysis Confidence" in out
+    assert "LOW" in out
+    assert "elf" in out
+    assert "DWARF stripped" in out
+
+
+def test_policy_shown_in_html() -> None:
+    """HTML report shows the active policy."""
+    r = _result()
+    r.confidence = SimpleNamespace(value="high")
+    r.evidence_tiers = []
+    r.coverage_warnings = []
+    r.policy = "sdk_vendor"
+    r.policy_file = None
+    out = generate_html_report(r)
+    assert "sdk_vendor" in out
+
+
+def test_confidence_absent_without_attribute() -> None:
+    """HTML report works without confidence attribute (backward compat)."""
+    r = _result()
+    # No confidence attribute set — _result() uses SimpleNamespace
+    out = generate_html_report(r)
+    assert "<!DOCTYPE html>" in out
+    # Should NOT crash — just skip the section
