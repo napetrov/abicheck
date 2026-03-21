@@ -43,7 +43,7 @@ from enum import Enum
 from typing import Protocol
 
 from .change_registry import REGISTRY as _REGISTRY
-from .change_registry import Verdict
+from .change_registry import Verdict as Verdict
 
 
 class ChangeKind(str, Enum):
