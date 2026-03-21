@@ -1,8 +1,8 @@
 # Architecture Review Fixes — Implementation Spec
 
 > **Branch:** `claude/refactor-rules-architecture-AAkVz`
-> **Status:** Partially implemented (commit `119587b3f`)
-> **Scope:** 5 implemented fixes across 5 files, grouped into 2 problem areas
+> **Status:** Implemented (commit `119587b3f` + FIX-I)
+> **Scope:** 6 fixes across 5 files, grouped into 3 problem areas
 > **Out of scope:** FIX-C, FIX-E, FIX-G, FIX-H (implemented but documented
 > separately). FIX-A Parts 2/3 (plain-name fallback in `diff_symbols.py`,
 > demangled fallback in `appcompat.py`) are also out of scope for this spec.
@@ -261,26 +261,48 @@ circular imports and keeps type-level filtering logic with type definitions.
 
 ## Problem 3: Logging & Diagnostics
 
-### ~~FIX-I — Type dedup warning throttling~~ (NOT IMPLEMENTED)
+### FIX-I — Type/enum dedup debug logging with throttling
 
-**Status:** Not implemented. The `seen_type_dup` set described below does
-not exist in the codebase, and the commit `119587b3f` diff does not include
-any changes related to type dedup throttling. The `seen_func_dup` /
-`seen_var_dup` patterns referenced as prior art also do not exist.
+**File:** `abicheck/dwarf_snapshot.py` — `_DwarfSnapshotBuilder` class
 
-The type dedup warning in `model.py` (line 312) uses a different
-aggregation-based approach (collecting duplicates into a dict and logging
-a summary), which partially addresses the log noise concern but through
-a different mechanism than what was originally proposed.
+**Problem:**
+When DWARF analysis encounters duplicate type or enum definitions (common
+with templates and header-only libraries), the `_DwarfSnapshotBuilder`
+silently skipped them with no diagnostic output. Users running in verbose
+mode (`-v` / `--debug`) had no way to see which types were being
+deduplicated, making it hard to diagnose unexpected missing types.
 
-**Original proposal (not implemented):**
+**Note:** `model.py` has a separate aggregation-based dedup warning in
+`AbiSnapshot.index()` (line 312) that logs a summary of duplicate mangled
+symbols. FIX-I addresses the earlier DWARF extraction stage in
+`_DwarfSnapshotBuilder`, where duplicates arise from multiple compilation
+units defining the same type (ODR).
 
-**File:** `abicheck/dwarf_snapshot.py` (not `checker.py` — the
-`_DwarfSnapshotBuilder` class lives in `dwarf_snapshot.py`)
+**Fix:** Add `_logged_type_dups` and `_logged_enum_dups` throttling sets
+that log a `debug` message only on the first duplicate occurrence per name:
 
-Add a `seen_type_dup` throttling set to log only the first occurrence of
-each duplicate type name, matching the proposed pattern for functions and
-variables.
+```python
+# In __init__:
+self._logged_type_dups: set[str] = set()
+self._logged_enum_dups: set[str] = set()
+
+# In _process_record_named (type dedup):
+if qualified in self._seen_type_names:
+    if qualified not in self._logged_type_dups:
+        self._logged_type_dups.add(qualified)
+        log.debug("Duplicate type skipped (first-wins): %s", qualified)
+    return
+
+# In _process_enum_named (enum dedup):
+if qualified in self._seen_enum_names:
+    if qualified not in self._logged_enum_dups:
+        self._logged_enum_dups.add(qualified)
+        log.debug("Duplicate enum skipped (first-wins): %s", qualified)
+    return
+```
+
+**Impact:** With throttling, a library with 500 duplicate instances of
+`std::pair<int,int>` produces 1 debug line instead of 500.
 
 ---
 
@@ -293,9 +315,9 @@ variables.
 | FIX-B1 (param) | `dwarf_snapshot.py` | -10 | Code hygiene |
 | FIX-B2 (cache) | `demangle.py` | 1 | Performance |
 | FIX-D | `model.py`, `dwarf_snapshot.py` | +15 / -27 | Code dedup |
-| ~~FIX-I~~ | — | — | Not implemented |
+| FIX-I | `dwarf_snapshot.py` | +8 | Diagnostics |
 
-**Total:** 4 files, +25 / -38 lines (net -13 lines) — excludes FIX-I (not implemented)
+**Total:** 5 files, +33 / -38 lines (net -5 lines)
 
 ---
 
@@ -332,7 +354,7 @@ Test file: `tests/test_review_fixes.py` (51 tests across 9 classes)
 | FIX-B1 | **None (direct)** | `TestConfidenceComputation` (4 tests) tests confidence enum semantics, not `_is_exported()`. The dead parameter removal is implicitly validated by passing tests. |
 | FIX-B2 | **None** | Cache size is a runtime tuning constant; no test validates it. |
 | FIX-D | **Implicit** | Any test using compiler internal types exercises the deduplicated constant. |
-| ~~FIX-I~~ | **N/A** | Not implemented. |
+| FIX-I | `TestTypeDedupThrottling` | 3 tests: type throttling, enum throttling, no-dup-no-log. |
 
 ### Other test classes in `test_review_fixes.py` (not mapped to spec fixes)
 
