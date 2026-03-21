@@ -192,6 +192,29 @@ class Suppression:
         return True
 
 
+def _parse_expires(expires_raw: object, entry_index: int) -> date | None:
+    """Parse and validate an ``expires`` value from a suppression entry.
+
+    Returns a :class:`date` or *None*.  Raises :class:`ValueError` on
+    invalid date formats.
+    """
+    if expires_raw is None:
+        return None
+    if isinstance(expires_raw, date):
+        # datetime is a subclass of date; convert to date to avoid
+        # TypeError when comparing datetime to date in is_expired()
+        if isinstance(expires_raw, datetime):
+            return expires_raw.date()
+        return expires_raw
+    try:
+        return date.fromisoformat(str(expires_raw))
+    except ValueError as e:
+        raise ValueError(
+            f"Suppression entry {entry_index}: invalid 'expires' date {expires_raw!r} "
+            "(expected ISO 8601 format, e.g. 2026-06-01)"
+        ) from e
+
+
 class SuppressionList:
     def __init__(self, suppressions: list[Suppression]) -> None:
         self._suppressions = suppressions
@@ -244,24 +267,7 @@ class SuppressionList:
                     f"Allowed keys: {sorted(_KNOWN_ENTRY_KEYS)}"
                 )
             # Parse expires date
-            expires_raw = item.get("expires")
-            expires: date | None = None
-            if expires_raw is not None:
-                if isinstance(expires_raw, date):
-                    # datetime is a subclass of date; convert to date to avoid
-                    # TypeError when comparing datetime to date in is_expired()
-                    if isinstance(expires_raw, datetime):
-                        expires = expires_raw.date()
-                    else:
-                        expires = expires_raw
-                else:
-                    try:
-                        expires = date.fromisoformat(str(expires_raw))
-                    except ValueError as e:
-                        raise ValueError(
-                            f"Suppression entry {i}: invalid 'expires' date {expires_raw!r} "
-                            "(expected ISO 8601 format, e.g. 2026-06-01)"
-                        ) from e
+            expires = _parse_expires(item.get("expires"), i)
             try:
                 sup = Suppression(
                     symbol=item.get("symbol"),

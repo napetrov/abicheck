@@ -167,119 +167,109 @@ def _current_platform() -> str:
     return sys.platform
 
 
-@pytest.mark.integration
-@pytest.mark.parametrize("case_name,expected_verdict,hdr_v1,hdr_v2", CASES,
-                         ids=[c[0] for c in CASES])
-def test_abi_example(case_name, expected_verdict, hdr_v1, hdr_v2, tmp_path):
-    _require_tool("castxml")
+def _find_source(d: Path, hint: str) -> Path:
+    """Resolve a compilable source from a hint that may be a header."""
+    p = d / hint
+    if p.suffix in (".c", ".cpp"):
+        return p
+    # hint is a header — look for matching source
+    stem = p.stem
+    for ext in (".c", ".cpp"):
+        src = d / f"{stem}{ext}"
+        if src.exists():
+            return src
+    # libfoo pattern: foo_v1.h → libfoo_v1.c
+    if stem.endswith(("_v1", "_v2")):
+        base = stem[:-3]  # e.g. "foo"
+        tag = stem[-3:]   # e.g. "_v1"
+        for ext in (".c", ".cpp"):
+            src = d / f"lib{base}{tag}{ext}"
+            if src.exists():
+                return src
+    return p  # best effort
 
-    # Platform filter
-    platforms = _PLATFORMS.get(case_name, ["linux", "macos", "windows"])
-    current = _current_platform()
-    if current not in platforms:
-        pytest.skip(f"{case_name} not supported on {current}")
 
-    case_dir = EXAMPLES_DIR / case_name
-    assert case_dir.is_dir(), f"Case directory not found: {case_dir}"
-
-    build_dir = tmp_path / case_name
-    shutil.copytree(str(case_dir), str(build_dir))
-
-    suffix = _shared_lib_suffix()
-
-    # Build strategy: CMake > direct compilation
+def _try_cmake_build(
+    case_name: str,
+    case_dir: Path,
+    tmp_path: Path,
+) -> tuple[Path | None, Path | None]:
+    """Attempt to build with CMake. Returns (libv1, libv2) or (None, None)."""
     cmake_file = case_dir / "CMakeLists.txt"
-    libv1 = None
-    libv2 = None
+    if not cmake_file.exists() or not shutil.which("cmake"):
+        return None, None
 
-    if cmake_file.exists() and shutil.which("cmake"):
-        cmake_build = tmp_path / "cmake_build"
-        r = subprocess.run(
-            ["cmake", "-S", str(case_dir.parent), "-B", str(cmake_build),
-             "-DCMAKE_BUILD_TYPE=Debug"],
-            capture_output=True, text=True, timeout=60,
-        )
-        if r.returncode == 0:
-            r = subprocess.run(
-                ["cmake", "--build", str(cmake_build),
-                 "--target", f"{case_name}_v1", f"{case_name}_v2",
-                 "--config", "Debug"],
-                capture_output=True, text=True, timeout=120,
-            )
-            if r.returncode == 0:
-                out_dir = cmake_build / case_name
-                libv1 = _find_lib(out_dir, "v1")
-                libv2 = _find_lib(out_dir, "v2")
+    cmake_build = tmp_path / "cmake_build"
+    r = subprocess.run(
+        ["cmake", "-S", str(case_dir.parent), "-B", str(cmake_build),
+         "-DCMAKE_BUILD_TYPE=Debug"],
+        capture_output=True, text=True, timeout=60,
+    )
+    if r.returncode != 0:
+        return None, None
 
-    if not libv1 or not libv2:
-        # Fallback: direct compilation.
-        # hdr_v1/hdr_v2 may be header names (e.g. v1.hpp, foo_v1.h) rather
-        # than compilable source files. Try to find the actual source file.
-        def _find_source(d: Path, hint: str) -> Path:
-            """Resolve a compilable source from a hint that may be a header."""
-            p = d / hint
-            if p.suffix in (".c", ".cpp"):
-                return p
-            # hint is a header — look for matching source
-            stem = p.stem
-            for ext in (".c", ".cpp"):
-                src = d / f"{stem}{ext}"
-                if src.exists():
-                    return src
-            # libfoo pattern: foo_v1.h → libfoo_v1.c
-            if stem.endswith(("_v1", "_v2")):
-                base = stem[:-3]  # e.g. "foo"
-                tag = stem[-3:]   # e.g. "_v1"
-                for ext in (".c", ".cpp"):
-                    src = d / f"lib{base}{tag}{ext}"
-                    if src.exists():
-                        return src
-            return p  # best effort
+    r = subprocess.run(
+        ["cmake", "--build", str(cmake_build),
+         "--target", f"{case_name}_v1", f"{case_name}_v2",
+         "--config", "Debug"],
+        capture_output=True, text=True, timeout=120,
+    )
+    if r.returncode != 0:
+        return None, None
 
-        src_v1 = _find_source(build_dir, hdr_v1)
-        src_v2 = _find_source(build_dir, hdr_v2)
-        libv1 = tmp_path / f"libv1{suffix}"
-        libv2 = tmp_path / f"libv2{suffix}"
+    out_dir = cmake_build / case_name
+    return _find_lib(out_dir, "v1"), _find_lib(out_dir, "v2")
 
-        err = _compile_shared(src_v1, libv1)
+
+def _compile_fallback(
+    case_name: str,
+    build_dir: Path,
+    tmp_path: Path,
+    hdr_v1: str,
+    hdr_v2: str,
+) -> tuple[Path, Path]:
+    """Direct compilation fallback. Returns (libv1, libv2)."""
+    suffix = _shared_lib_suffix()
+    src_v1 = _find_source(build_dir, hdr_v1)
+    src_v2 = _find_source(build_dir, hdr_v2)
+    libv1 = tmp_path / f"libv1{suffix}"
+    libv2 = tmp_path / f"libv2{suffix}"
+
+    for label, src, lib in [("v1", src_v1, libv1), ("v2", src_v2, libv2)]:
+        err = _compile_shared(src, lib)
         if err == "no_compiler":
-            pytest.skip(f"no compiler found for {case_name} v1")
+            pytest.skip(f"no compiler found for {case_name} {label}")
         elif err:
-            pytest.fail(f"{case_name} v1: {err}")
+            pytest.fail(f"{case_name} {label}: {err}")
 
-        err = _compile_shared(src_v2, libv2)
-        if err == "no_compiler":
-            pytest.skip(f"no compiler found for {case_name} v2")
-        elif err:
-            pytest.fail(f"{case_name} v2: {err}")
+    return libv1, libv2
 
-    snap1 = tmp_path / "snap1.json"
-    snap2 = tmp_path / "snap2.json"
 
-    header1 = build_dir / hdr_v1
-    header2 = build_dir / hdr_v2
-
-    # Dump v1
-    r1 = subprocess.run(
-        ["abicheck", "dump", str(libv1), "-H", str(header1), "-o", str(snap1)],
+def _run_dump(
+    case_name: str,
+    lib: Path,
+    header: Path,
+    snap: Path,
+    label: str,
+) -> None:
+    """Run abicheck dump for a single version; skip or fail on error."""
+    r = subprocess.run(
+        ["abicheck", "dump", str(lib), "-H", str(header), "-o", str(snap)],
         capture_output=True, text=True, check=False, timeout=60,
     )
-    if r1.returncode != 0:
-        if "castxml" in r1.stderr.lower() or "not found" in r1.stderr.lower():
-            pytest.skip(f"castxml unavailable for {case_name}:\n{r1.stderr[:300]}")
-        pytest.fail(f"abicheck dump v1 failed in {case_name}:\n{r1.stderr[:500]}")
+    if r.returncode != 0:
+        if "castxml" in r.stderr.lower() or "not found" in r.stderr.lower():
+            pytest.skip(f"castxml unavailable for {case_name}:\n{r.stderr[:300]}")
+        pytest.fail(f"abicheck dump {label} failed in {case_name}:\n{r.stderr[:500]}")
 
-    # Dump v2
-    r2 = subprocess.run(
-        ["abicheck", "dump", str(libv2), "-H", str(header2), "-o", str(snap2)],
-        capture_output=True, text=True, check=False, timeout=60,
-    )
-    if r2.returncode != 0:
-        if "castxml" in r2.stderr.lower() or "not found" in r2.stderr.lower():
-            pytest.skip(f"castxml unavailable for {case_name}:\n{r2.stderr[:300]}")
-        pytest.fail(f"abicheck dump v2 failed in {case_name}:\n{r2.stderr[:500]}")
 
-    # Compare
+def _run_compare_and_assert(
+    case_name: str,
+    expected_verdict: str,
+    snap1: Path,
+    snap2: Path,
+) -> None:
+    """Run abicheck compare and assert the verdict matches."""
     rc = subprocess.run(
         ["abicheck", "compare", str(snap1), str(snap2), "--format", "json"],
         capture_output=True, text=True, check=False, timeout=60,
@@ -298,3 +288,37 @@ def test_abi_example(case_name, expected_verdict, hdr_v1, hdr_v2, tmp_path):
         f"{case_name}: expected verdict={expected_verdict!r}, got {verdict!r}\n"
         f"stdout: {rc.stdout[:1000]}"
     )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("case_name,expected_verdict,hdr_v1,hdr_v2", CASES,
+                         ids=[c[0] for c in CASES])
+def test_abi_example(case_name, expected_verdict, hdr_v1, hdr_v2, tmp_path):
+    _require_tool("castxml")
+
+    # Platform filter
+    platforms = _PLATFORMS.get(case_name, ["linux", "macos", "windows"])
+    current = _current_platform()
+    if current not in platforms:
+        pytest.skip(f"{case_name} not supported on {current}")
+
+    case_dir = EXAMPLES_DIR / case_name
+    assert case_dir.is_dir(), f"Case directory not found: {case_dir}"
+
+    build_dir = tmp_path / case_name
+    shutil.copytree(str(case_dir), str(build_dir))
+
+    # Build strategy: CMake > direct compilation
+    libv1, libv2 = _try_cmake_build(case_name, case_dir, tmp_path)
+    if not libv1 or not libv2:
+        libv1, libv2 = _compile_fallback(
+            case_name, build_dir, tmp_path, hdr_v1, hdr_v2,
+        )
+
+    snap1 = tmp_path / "snap1.json"
+    snap2 = tmp_path / "snap2.json"
+
+    _run_dump(case_name, libv1, build_dir / hdr_v1, snap1, "v1")
+    _run_dump(case_name, libv2, build_dir / hdr_v2, snap2, "v2")
+
+    _run_compare_and_assert(case_name, expected_verdict, snap1, snap2)

@@ -229,7 +229,20 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
     # Correlate per-symbol version entries using sections captured above.
     _correlate_symbol_versions(ver_sym_section, dynsym_section, meta, ver_index_map, so_path)
 
-    # Post-loop: filter out version-definition auxiliary symbols.
+    _postprocess_metadata(meta, ver_index_map, ver_sym_section, dynsym_section, so_path)
+
+    return meta
+
+
+def _postprocess_metadata(
+    meta: ElfMetadata,
+    ver_index_map: dict[int, tuple[str, str, bool]],
+    ver_sym_section: GNUVerSymSection | None,
+    dynsym_section: SymbolTableSection | None,
+    so_path: Path,
+) -> None:
+    """Post-loop processing: filter version-def aux symbols and fix origin hints."""
+    # Filter out version-definition auxiliary symbols.
     # GNU ld emits these as OBJECT/size=0 in .dynsym; lld/gold may use NOTYPE.
     # Both are ELF artefacts of --version-script, not real exported functions.
     _ver_def_names: set[str] = set(meta.versions_defined)
@@ -258,8 +271,6 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
             new_origin = _guess_symbol_origin(sym.name, meta.needed)
             if new_origin is not None:
                 sym.origin_lib = new_origin
-
-    return meta
 
 
 def _parse_dynamic(section: DynamicSection, meta: ElfMetadata) -> None:
@@ -298,6 +309,46 @@ def _parse_version_need(section: GNUVerNeedSection, meta: ElfMetadata) -> None:
                 meta.versions_required[lib].append(ver)
 
 
+def _find_libcxx(needed_libs: list[str]) -> str | None:
+    """Find a libc++ (not libstdc++) library in the needed list."""
+    for lib in needed_libs:
+        if "c++" in lib and "stdc++" not in lib:
+            return lib
+    return None
+
+
+def _find_cxx_stdlib(needed_libs: list[str]) -> str | None:
+    """Find any C++ standard library (libstdc++ or libc++) in the needed list."""
+    for lib in needed_libs:
+        if "stdc++" in lib or "c++" in lib:
+            return lib
+    return None
+
+
+# Lookup table: (prefix_tuple, finder_fn_or_None, default_if_no_finder_match)
+# When finder_fn is None, default is returned unconditionally.
+_ORIGIN_PREFIX_TABLE: list[tuple[tuple[str, ...], object, str]] = [
+    # libc++ inline namespace __1 — must be checked BEFORE generic _ZNSt
+    (("_ZNSt3__1", "_ZNKSt3__1"), _find_libcxx, "libc++.so.1"),
+    # C++ stdlib symbols (libstdc++ / libc++)
+    (("_ZNSt", "_ZNKSt", "_ZSt", "_ZTI", "_ZTS", "_ZTVN10__cxxabiv"), _find_cxx_stdlib, "libstdc++.so.6"),
+    # C++ operator new / delete (Itanium ABI)
+    (("_Znwm", "_Znwj", "_Znam", "_Znaj", "_ZdlPv", "_ZdaPv", "_ZnwmSt", "_ZnamSt"), _find_cxx_stdlib, "libstdc++.so.6"),
+    # Intel SVML
+    (("__svml_",), None, "<intel-compiler-rt>"),
+    # Vectorized math functions (libmvec)
+    (("_ZGV",), None, "libmvec.so.1"),
+    # x87 math helpers (libgcc.a static)
+    (("ix86_",), None, "libgcc.a (static)"),
+    # libm SIMD helpers
+    (("__libm_sse2_", "__libm_avx_"), None, "libm.so.6"),
+    # GCC runtime support
+    (("__cpu_model", "__cpu_features"), None, "libgcc_s.so.1"),
+    # GNU libc internal
+    (("__libc_", "__glibc_"), None, "libc.so.6"),
+]
+
+
 def _guess_symbol_origin(name: str, needed_libs: list[str]) -> str | None:
     """Guess which dependency library a symbol likely originates from.
 
@@ -313,58 +364,13 @@ def _guess_symbol_origin(name: str, needed_libs: list[str]) -> str | None:
     itself.  The result is used to annotate the ``origin_lib`` field of
     :class:`ElfSymbol`; it is informational and never suppresses real changes.
     """
-    # libc++ inline namespace __1 symbols — must be checked BEFORE generic _ZNSt.
-    # _ZNSt3__1 / _ZNKSt3__1 are Itanium-mangled names in the libc++ ABI.
-    if name.startswith(("_ZNSt3__1", "_ZNKSt3__1")):
-        for lib in needed_libs:
-            if "c++" in lib and "stdc++" not in lib:
-                return lib
-        return "libc++.so.1"
-
-    # C++ stdlib symbols (libstdc++ / libc++)
-    # These prefixes match Itanium-mangled names from <stdexcept>, <string>,
-    # <typeinfo>, <exception>, and C++ ABI support classes.
-    if name.startswith(("_ZNSt", "_ZNKSt", "_ZSt", "_ZTI", "_ZTS", "_ZTVN10__cxxabiv")):
-        for lib in needed_libs:
-            if "stdc++" in lib or "c++" in lib:
-                return lib
-        return "libstdc++.so.6"  # likely even if not listed in DT_NEEDED
-
-    # C++ operator new / delete (Itanium ABI — libstdc++ or libc++)
-    if name.startswith((
-        "_Znwm", "_Znwj", "_Znam", "_Znaj",    # operator new / new[]
-        "_ZdlPv", "_ZdaPv",                      # operator delete / delete[]
-        "_ZnwmSt", "_ZnamSt",                    # nothrow variants
-    )):
-        for lib in needed_libs:
-            if "stdc++" in lib or "c++" in lib:
-                return lib
-        return "libstdc++.so.6"
-
-    # Intel SVML — Intel compiler static runtime (not libgcc_s)
-    if name.startswith("__svml_"):
-        return "<intel-compiler-rt>"
-
-    # _ZGV* — vectorized math functions (SIMD variants), from libmvec (glibc)
-    if name.startswith("_ZGV"):
-        return "libmvec.so.1"
-
-    # ix86_* — statically linked x87 math helpers from libgcc.a (not the shared libgcc_s)
-    if name.startswith("ix86_"):
-        return "libgcc.a (static)"
-
-    # libm SIMD helpers (SSE2/AVX variants of math functions)
-    if name.startswith(("__libm_sse2_", "__libm_avx_")):
-        return "libm.so.6"
-
-    # GCC runtime support symbols
-    # __cpu_model / __cpu_features are GCC CPU-feature-detection helpers.
-    if name.startswith(("__cpu_model", "__cpu_features")):
-        return "libgcc_s.so.1"
-
-    # GNU libc internal symbols
-    if name.startswith(("__libc_", "__glibc_")):
-        return "libc.so.6"
+    for prefixes, finder_fn, default in _ORIGIN_PREFIX_TABLE:
+        if name.startswith(prefixes):
+            if finder_fn is not None:
+                found = finder_fn(needed_libs)
+                if found is not None:
+                    return found
+            return default
 
     return None  # likely native to this library
 
@@ -532,30 +538,47 @@ def _correlate_symbol_versions(
         if sym_ordinal >= len(ver_entries):
             break
         ver_idx, is_hidden = ver_entries[sym_ordinal]
-        if ver_idx < 2:
-            if _is_import_sym(sym):
-                import_idx += 1
-            elif _is_export_sym(sym):
-                export_idx += 1
-            continue
+        export_idx, import_idx = _apply_version_to_symbol(
+            sym, ver_idx, is_hidden, ver_index_map, meta, export_idx, import_idx,
+        )
 
-        entry = ver_index_map.get(ver_idx)
-        if entry is None:
-            if _is_import_sym(sym):
-                import_idx += 1
-            elif _is_export_sym(sym):
-                export_idx += 1
-            continue
 
-        _lib_name, ver_name, _is_defined = entry
-
+def _apply_version_to_symbol(
+    sym: object,
+    ver_idx: int,
+    is_hidden: bool,
+    ver_index_map: dict[int, tuple[str, str, bool]],
+    meta: ElfMetadata,
+    export_idx: int,
+    import_idx: int,
+) -> tuple[int, int]:
+    """Apply version info to a single symbol, returning updated indices."""
+    if ver_idx < 2:
         if _is_import_sym(sym):
-            if import_idx < len(meta.imports):
-                meta.imports[import_idx].version = ver_name
-                meta.imports[import_idx].is_default = not is_hidden
             import_idx += 1
         elif _is_export_sym(sym):
-            if export_idx < len(meta.symbols):
-                meta.symbols[export_idx].version = ver_name
-                meta.symbols[export_idx].is_default = not is_hidden
             export_idx += 1
+        return export_idx, import_idx
+
+    entry = ver_index_map.get(ver_idx)
+    if entry is None:
+        if _is_import_sym(sym):
+            import_idx += 1
+        elif _is_export_sym(sym):
+            export_idx += 1
+        return export_idx, import_idx
+
+    _lib_name, ver_name, _is_defined = entry
+
+    if _is_import_sym(sym):
+        if import_idx < len(meta.imports):
+            meta.imports[import_idx].version = ver_name
+            meta.imports[import_idx].is_default = not is_hidden
+        import_idx += 1
+    elif _is_export_sym(sym):
+        if export_idx < len(meta.symbols):
+            meta.symbols[export_idx].version = ver_name
+            meta.symbols[export_idx].is_default = not is_hidden
+        export_idx += 1
+
+    return export_idx, import_idx

@@ -54,11 +54,10 @@ _TYPE_CHANGE_KINDS: frozenset[ChangeKind] = frozenset({
 })
 
 
-def _enrich_source_locations(
-    changes: list[Change], old: AbiSnapshot, new: AbiSnapshot,
-) -> None:
-    """Fill in source_location on Changes from the model data."""
-    # Build type→location lookup
+def _build_location_index(
+    old: AbiSnapshot, new: AbiSnapshot,
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """Build type, function, and variable location lookup dicts from snapshots."""
     type_loc: dict[str, str] = {}
     for t in old.types:
         if t.source_location:
@@ -67,7 +66,6 @@ def _enrich_source_locations(
         if t.source_location:
             type_loc.setdefault(t.name, t.source_location)
 
-    # Build function→location lookup
     func_loc: dict[str, str] = {}
     for f in old.functions:
         if f.source_location:
@@ -76,7 +74,6 @@ def _enrich_source_locations(
         if f.source_location:
             func_loc.setdefault(f.mangled, f.source_location)
 
-    # Build variable→location lookup
     var_loc: dict[str, str] = {}
     for v in old.variables:
         if v.source_location:
@@ -84,6 +81,15 @@ def _enrich_source_locations(
     for v in new.variables:
         if v.source_location:
             var_loc.setdefault(v.mangled, v.source_location)
+
+    return type_loc, func_loc, var_loc
+
+
+def _enrich_source_locations(
+    changes: list[Change], old: AbiSnapshot, new: AbiSnapshot,
+) -> None:
+    """Fill in source_location on Changes from the model data."""
+    type_loc, func_loc, var_loc = _build_location_index(old, new)
 
     for c in changes:
         if c.source_location:
@@ -95,6 +101,50 @@ def _enrich_source_locations(
             loc = type_loc.get(_root_type_name(c))
         if loc:
             c.source_location = loc
+
+
+def _all_ancestors(
+    tname: str, type_embeds: dict[str, set[str]],
+) -> set[str]:
+    """BFS over type_embeds to find all transitive parent types."""
+    visited: set[str] = set()
+    queue = list(type_embeds.get(tname, set()))
+    while queue:
+        parent = queue.pop()
+        if parent in visited:
+            continue
+        visited.add(parent)
+        queue.extend(type_embeds.get(parent, set()))
+    return visited
+
+
+def _resolve_ancestor_functions(
+    tname: str,
+    ancestors: set[str],
+    type_to_funcs: dict[str, list[str]],
+    type_to_mangled: dict[str, list[str]],
+    old_pub: dict[str, object],
+    ancestor_func_cache: dict[str, list[tuple[str, str]]],
+) -> None:
+    """Scan ancestor types and extend type_to_funcs/type_to_mangled for *tname*."""
+    for parent in ancestors:
+        if parent in type_to_funcs:
+            type_to_funcs[tname].extend(type_to_funcs[parent])
+            type_to_mangled[tname].extend(type_to_mangled.get(parent, []))
+        elif parent in ancestor_func_cache:
+            for fname, mname in ancestor_func_cache[parent]:
+                type_to_funcs[tname].append(fname)
+                type_to_mangled[tname].append(mname)
+        else:
+            parent_funcs: list[tuple[str, str]] = []
+            for _m, func in old_pub.items():
+                func_types_used = {func.return_type} | {p.type for p in func.params}
+                if any(parent in ft for ft in func_types_used if ft):
+                    parent_funcs.append((func.name, func.mangled))
+            ancestor_func_cache[parent] = parent_funcs
+            for fname, mname in parent_funcs:
+                type_to_funcs[tname].append(fname)
+                type_to_mangled[tname].append(mname)
 
 
 def _enrich_affected_symbols(
@@ -148,43 +198,16 @@ def _enrich_affected_symbols(
 
     # Compute transitive closure: if Leaf is in Container is in Wrapper,
     # functions using Wrapper are also affected by Leaf changes.
-    def _all_ancestors(tname: str) -> set[str]:
-        """BFS over type_embeds to find all transitive parent types."""
-        visited: set[str] = set()
-        queue = list(type_embeds.get(tname, set()))
-        while queue:
-            parent = queue.pop()
-            if parent in visited:
-                continue
-            visited.add(parent)
-            queue.extend(type_embeds.get(parent, set()))
-        return visited
-
     # Cache: ancestor type → list of (func_name, mangled) so each ancestor
     # is scanned at most once across all affected types.
-    _ancestor_func_cache: dict[str, list[tuple[str, str]]] = {}
+    ancestor_func_cache: dict[str, list[tuple[str, str]]] = {}
 
     for tname in affected_types:
-        ancestors = _all_ancestors(tname)
-        for parent in ancestors:
-            if parent in type_to_funcs:
-                type_to_funcs[tname].extend(type_to_funcs[parent])
-                type_to_mangled[tname].extend(type_to_mangled.get(parent, []))
-            elif parent in _ancestor_func_cache:
-                for fname, mname in _ancestor_func_cache[parent]:
-                    type_to_funcs[tname].append(fname)
-                    type_to_mangled[tname].append(mname)
-            else:
-                # Parent type not in affected_types — scan functions once, cache result.
-                parent_funcs: list[tuple[str, str]] = []
-                for _mangled, func in old_pub.items():
-                    func_types_used = {func.return_type} | {p.type for p in func.params}
-                    if any(parent in ft for ft in func_types_used if ft):
-                        parent_funcs.append((func.name, func.mangled))
-                _ancestor_func_cache[parent] = parent_funcs
-                for fname, mname in parent_funcs:
-                    type_to_funcs[tname].append(fname)
-                    type_to_mangled[tname].append(mname)
+        ancestors = _all_ancestors(tname, type_embeds)
+        _resolve_ancestor_functions(
+            tname, ancestors, type_to_funcs, type_to_mangled,
+            old_pub, ancestor_func_cache,
+        )
 
     # Assign to changes — include both demangled names (display) and
     # mangled names (appcompat matching, FIX-A Part 3).
@@ -279,6 +302,24 @@ def _root_type_name(c: Change) -> str:
     return c.symbol
 
 
+def _mark_as_redundant(
+    c: Change,
+    matched_root: str,
+    root_types: dict[str, Change],
+    redundant: list[Change],
+) -> None:
+    """Classify *c* as redundant: annotate both *c* and its root change."""
+    c.caused_by_type = matched_root
+    root_change = root_types[matched_root]
+    root_change.caused_count += 1
+    if root_change.affected_symbols is None:
+        root_change.affected_symbols = []
+    sym = c.symbol
+    if sym and sym not in root_change.affected_symbols:
+        root_change.affected_symbols.append(sym)
+    redundant.append(c)
+
+
 def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]]:
     """Identify changes that are consequences of a root type change.
 
@@ -321,15 +362,7 @@ def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]
             other_roots = {k: v for k, v in root_types.items() if k != type_name}
             matched_root = _match_root_type(c, other_roots, compiled_patterns)
             if matched_root is not None:
-                c.caused_by_type = matched_root
-                root_change = root_types[matched_root]
-                root_change.caused_count += 1
-                if root_change.affected_symbols is None:
-                    root_change.affected_symbols = []
-                sym = c.symbol
-                if sym and sym not in root_change.affected_symbols:
-                    root_change.affected_symbols.append(sym)
-                redundant.append(c)
+                _mark_as_redundant(c, matched_root, root_types, redundant)
                 # Remove this root from root_types so derived changes
                 # won't point at a root that is itself redundant.
                 removed_roots.add(type_name)
@@ -356,15 +389,7 @@ def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]
         # Check if this change references a (kept) root type
         matched_root = _match_root_type(c, root_types, compiled_patterns)
         if matched_root is not None:
-            c.caused_by_type = matched_root
-            root_change = root_types[matched_root]
-            root_change.caused_count += 1
-            if root_change.affected_symbols is None:
-                root_change.affected_symbols = []
-            sym = c.symbol
-            if sym and sym not in root_change.affected_symbols:
-                root_change.affected_symbols.append(sym)
-            redundant.append(c)
+            _mark_as_redundant(c, matched_root, root_types, redundant)
         else:
             kept.append(c)
 
@@ -640,6 +665,89 @@ def _filter_reserved_field_renames(changes: list[Change]) -> list[Change]:
 
 
 
+def _dedup_exact(changes: list[Change]) -> list[Change]:
+    """Pass 1: collapse entries with the same (kind, description)."""
+    result: list[Change] = []
+    seen: set[tuple[str, str]] = set()
+    for c in changes:
+        key = (c.kind.value, c.description)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(c)
+    return result
+
+
+def _dedup_enum_same_kind(changes: list[Change]) -> list[Change]:
+    """Pass 2: for enum change kinds, keep the best entry per (kind, symbol).
+
+    Prefers entries with populated ``old_value``/``new_value`` fields,
+    using longer description as tiebreaker.
+    """
+    best_enum: dict[tuple[str, str], Change] = {}
+    for c in changes:
+        if c.kind not in _ENUM_DEDUP_KINDS:
+            continue
+        key = (c.kind.value, c.symbol)
+        if key not in best_enum:
+            best_enum[key] = c
+        else:
+            existing = best_enum[key]
+            c_has_vals = bool(c.old_value) or bool(c.new_value)
+            e_has_vals = bool(existing.old_value) or bool(existing.new_value)
+            if c_has_vals and not e_has_vals:
+                best_enum[key] = c
+            elif not c_has_vals and e_has_vals:
+                pass  # keep existing
+            elif len(c.description) > len(existing.description):
+                best_enum[key] = c
+
+    result: list[Change] = []
+    for c in changes:
+        if c.kind in _ENUM_DEDUP_KINDS:
+            key = (c.kind.value, c.symbol)
+            if best_enum.get(key) is not c:
+                continue  # not the winner — drop
+        result.append(c)
+    return result
+
+
+def _dedup_cross_kind(changes: list[Change]) -> list[Change]:
+    """Pass 3: drop a DWARF finding when an equivalent AST finding exists.
+
+    Handles both exact symbol matches and parent-type matches for
+    field-qualified symbols (FIX-F).
+    """
+    ast_findings: set[tuple[str, str]] = set()
+    for c in changes:
+        ast_findings.add((c.kind.value, c.symbol))
+
+    _DWARF_FIELD_LEVEL_KINDS = {
+        ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
+        ChangeKind.STRUCT_FIELD_REMOVED,
+        ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
+    }
+
+    result: list[Change] = []
+    for c in changes:
+        equiv_ast_kinds = _DWARF_TO_AST_EQUIV.get(c.kind)
+        if equiv_ast_kinds:
+            # Exact symbol match
+            if any((ak.value, c.symbol) in ast_findings for ak in equiv_ast_kinds):
+                continue
+
+            # Parent-type match (FIX-F): "Point::x" → check "Point"
+            # Only for field-level changes; type-level changes (size, alignment)
+            # must not match parent — "Outer::Inner" is a nested type, not a field.
+            if c.kind in _DWARF_FIELD_LEVEL_KINDS and "::" in c.symbol:
+                parent = c.symbol.rsplit("::", 1)[0]
+                if any((ak.value, parent) in ast_findings for ak in equiv_ast_kinds):
+                    continue
+
+        result.append(c)
+    return result
+
+
 def _deduplicate_ast_dwarf(changes: list[Change]) -> list[Change]:
     """Remove DWARF findings that duplicate an AST finding for the same symbol.
 
@@ -661,74 +769,9 @@ def _deduplicate_ast_dwarf(changes: list[Change]) -> list[Change]:
        ``STRUCT_FIELD_OFFSET_CHANGED`` for ``Point::x`` is dropped when
        ``TYPE_FIELD_OFFSET_CHANGED`` for ``Point`` is already present.
     """
-    # Pass 1: Exact dedup by (kind, description)
-    stage1: list[Change] = []
-    seen_exact: set[tuple[str, str]] = set()
-    for c in changes:
-        key = (c.kind.value, c.description)
-        if key in seen_exact:
-            continue
-        seen_exact.add(key)
-        stage1.append(c)
-
-    # Pass 2: Same-kind symbol dedup for enum kinds (FIX-C)
-    # Use a two-pass approach: pick the best entry per (kind, symbol) key,
-    # then filter stage1 to keep only the winners.
-    best_enum: dict[tuple[str, str], Change] = {}
-    for c in stage1:
-        if c.kind not in _ENUM_DEDUP_KINDS:
-            continue
-        key = (c.kind.value, c.symbol)
-        if key not in best_enum:
-            best_enum[key] = c
-        else:
-            existing = best_enum[key]
-            # Prefer the entry with populated old_value/new_value
-            c_has_vals = bool(c.old_value) or bool(c.new_value)
-            e_has_vals = bool(existing.old_value) or bool(existing.new_value)
-            if c_has_vals and not e_has_vals:
-                best_enum[key] = c
-            elif not c_has_vals and e_has_vals:
-                pass  # keep existing
-            elif len(c.description) > len(existing.description):
-                best_enum[key] = c
-
-    stage2: list[Change] = []
-    for c in stage1:
-        if c.kind in _ENUM_DEDUP_KINDS:
-            key = (c.kind.value, c.symbol)
-            if best_enum.get(key) is not c:
-                continue  # not the winner — drop
-        stage2.append(c)
-
-    # Pass 3: Cross-kind dedup — index AST findings then drop DWARF duplicates
-    ast_findings: set[tuple[str, str]] = set()
-    for c in stage2:
-        ast_findings.add((c.kind.value, c.symbol))
-
-    result: list[Change] = []
-    for c in stage2:
-        equiv_ast_kinds = _DWARF_TO_AST_EQUIV.get(c.kind)
-        if equiv_ast_kinds:
-            # Exact symbol match
-            if any((ak.value, c.symbol) in ast_findings for ak in equiv_ast_kinds):
-                continue
-
-            # Parent-type match (FIX-F): "Point::x" → check "Point"
-            # Only for field-level changes; type-level changes (size, alignment)
-            # must not match parent — "Outer::Inner" is a nested type, not a field.
-            _FIELD_LEVEL_KINDS = {
-                ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
-                ChangeKind.STRUCT_FIELD_REMOVED,
-                ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
-            }
-            if c.kind in _FIELD_LEVEL_KINDS and "::" in c.symbol:
-                parent = c.symbol.rsplit("::", 1)[0]
-                if any((ak.value, parent) in ast_findings for ak in equiv_ast_kinds):
-                    continue
-
-        result.append(c)
-    return result
+    stage1 = _dedup_exact(changes)
+    stage2 = _dedup_enum_same_kind(stage1)
+    return _dedup_cross_kind(stage2)
 
 
 def _deduplicate_cross_detector(changes: list[Change]) -> list[Change]:
@@ -825,8 +868,13 @@ def _find_opaque_types(snap: AbiSnapshot) -> set[str]:
     if not opaque:
         return set()
 
-    # For types flagged via source_location (not castxml is_opaque), verify
-    # that no public function uses them by value.
+    by_value_types = _find_by_value_types(snap, opaque)
+
+    return opaque - by_value_types
+
+
+def _find_by_value_types(snap: AbiSnapshot, opaque: set[str]) -> set[str]:
+    """Return the subset of *opaque* types that any public function/variable uses by value."""
     by_value_types: set[str] = set()
     for func in snap.functions:
         if func.visibility not in _PUBLIC_VIS:
@@ -848,8 +896,7 @@ def _find_opaque_types(snap: AbiSnapshot) -> set[str]:
         for tname in opaque:
             if tname in vt and not (vt.endswith("*") or "* " in vt):
                 by_value_types.add(tname)
-
-    return opaque - by_value_types
+    return by_value_types
 
 
 def _downgrade_opaque_type_changes(
@@ -883,30 +930,13 @@ def _downgrade_opaque_type_changes(
     return result
 
 
-def _compute_confidence(
-    detector_results: list[DetectorResult],
-    old: AbiSnapshot,
-    new: AbiSnapshot,
-) -> tuple[list[str], Confidence, list[str]]:
-    """Compute evidence tiers, confidence level, and coverage warnings.
+def _detect_evidence_tiers(
+    old: AbiSnapshot, new: AbiSnapshot,
+) -> tuple[list[str], bool, bool, bool, bool, bool, bool]:
+    """Detect which evidence tiers are available from the snapshots.
 
-    Returns (evidence_tiers, confidence, coverage_warnings).
-
-    Evidence tiers:
-    - "elf": ELF metadata present and analyzed
-    - "dwarf": DWARF debug info present
-    - "header": Header/AST information (functions/types/enums)
-    - "pe": PE metadata present
-    - "macho": Mach-O metadata present
-
-    Confidence:
-    - "high": headers + at least one binary metadata source (ELF/DWARF/PE/Mach-O)
-    - "medium": headers only, or binary-only with ELF+DWARF
-    - "low": binary-only without DWARF, or very limited data
+    Returns (tiers, has_elf, has_dwarf, has_dwarf_advanced, has_pe, has_macho, has_headers).
     """
-    tiers: list[str] = []
-    warnings: list[str] = []
-
     has_elf = old.elf is not None or new.elf is not None
     has_dwarf = (old.dwarf is not None and old.dwarf.has_dwarf) or (new.dwarf is not None and new.dwarf.has_dwarf)
     has_dwarf_advanced = (old.dwarf_advanced is not None and old.dwarf_advanced.has_dwarf) or (new.dwarf_advanced is not None and new.dwarf_advanced.has_dwarf)
@@ -917,6 +947,7 @@ def _compute_confidence(
         or new.functions or new.types or new.enums or new.typedefs or new.variables
     )
 
+    tiers: list[str] = []
     if has_elf:
         tiers.append("elf")
     if has_dwarf:
@@ -930,12 +961,19 @@ def _compute_confidence(
     if has_macho:
         tiers.append("macho")
 
-    # Check for disabled detectors and generate warnings.
-    for dr in detector_results:
-        if not dr.enabled and dr.coverage_gap:
-            warnings.append(f"Detector '{dr.name}' disabled: {dr.coverage_gap}")
+    return tiers, has_elf, has_dwarf, has_dwarf_advanced, has_pe, has_macho, has_headers
 
-    # Compute confidence level.
+
+def _determine_confidence_level(
+    has_elf: bool, has_dwarf: bool, has_pe: bool, has_macho: bool,
+    has_headers: bool,
+    detector_results: list[DetectorResult],
+    warnings: list[str],
+) -> Confidence:
+    """Compute the confidence level based on available evidence and detector state.
+
+    Appends appropriate warnings to *warnings* as a side effect.
+    """
     if has_headers and (has_elf or has_dwarf or has_pe or has_macho):
         confidence = Confidence.HIGH
     elif has_headers:
@@ -967,6 +1005,46 @@ def _compute_confidence(
     if dwarf_detector and not dwarf_detector.enabled:
         if confidence == Confidence.HIGH:
             confidence = Confidence.MEDIUM
+
+    return confidence
+
+
+def _compute_confidence(
+    detector_results: list[DetectorResult],
+    old: AbiSnapshot,
+    new: AbiSnapshot,
+) -> tuple[list[str], Confidence, list[str]]:
+    """Compute evidence tiers, confidence level, and coverage warnings.
+
+    Returns (evidence_tiers, confidence, coverage_warnings).
+
+    Evidence tiers:
+    - "elf": ELF metadata present and analyzed
+    - "dwarf": DWARF debug info present
+    - "header": Header/AST information (functions/types/enums)
+    - "pe": PE metadata present
+    - "macho": Mach-O metadata present
+
+    Confidence:
+    - "high": headers + at least one binary metadata source (ELF/DWARF/PE/Mach-O)
+    - "medium": headers only, or binary-only with ELF+DWARF
+    - "low": binary-only without DWARF, or very limited data
+    """
+    tiers, has_elf, has_dwarf, _has_dwarf_adv, has_pe, has_macho, has_headers = (
+        _detect_evidence_tiers(old, new)
+    )
+
+    warnings: list[str] = []
+
+    # Check for disabled detectors and generate warnings.
+    for dr in detector_results:
+        if not dr.enabled and dr.coverage_gap:
+            warnings.append(f"Detector '{dr.name}' disabled: {dr.coverage_gap}")
+
+    confidence = _determine_confidence_level(
+        has_elf, has_dwarf, has_pe, has_macho, has_headers,
+        detector_results, warnings,
+    )
 
     return tiers, confidence, warnings
 

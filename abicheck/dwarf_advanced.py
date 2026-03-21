@@ -325,13 +325,21 @@ def _is_nontrivial_aggregate(
         cache[key] = False  # assume trivial; overwrite below if non-trivial found
 
     class_name = _attr_str(type_die, "DW_AT_name") or ""
-    result = False
+    result = _check_children_nontrivial(type_die, class_name, cache, CU)
 
+    if cache is not None and key is not None:
+        cache[key] = result
+    return result
+
+
+def _check_children_nontrivial(
+    type_die: Any, class_name: str, cache: dict[int, bool] | None, CU: Any,
+) -> bool:
+    """Iterate children of a struct/class DIE to detect non-trivial properties."""
     for ch in type_die.iter_children():
         if ch.tag == "DW_TAG_inheritance":
-            # Any base class → conservatively non-trivial
-            result = True
-            break
+            # Any base class -> conservatively non-trivial
+            return True
 
         if ch.tag == "DW_TAG_member" and CU is not None:
             # Check if member's type is itself non-trivial (e.g. std::string member)
@@ -340,8 +348,7 @@ def _is_nontrivial_aggregate(
                 member_tag = getattr(member_type_die, "tag", "")
                 if member_tag in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
                     if _is_nontrivial_aggregate(member_type_die, cache=cache, CU=CU):
-                        result = True
-                        break
+                        return True
             continue
 
         if ch.tag != "DW_TAG_subprogram":
@@ -358,18 +365,14 @@ def _is_nontrivial_aggregate(
             continue
         # User-defined destructor
         if name.startswith("~") or any(p in linkage for p in ("D0Ev", "D1Ev", "D2Ev")):
-            result = True
-            break
+            return True
         # User-declared copy/move constructor
         if class_name and linkage and any(
             p in linkage for p in (f"{class_name}C1E", f"{class_name}C2E")
         ):
-            result = True
-            break
+            return True
 
-    if cache is not None and key is not None:
-        cache[key] = result
-    return result
+    return False
 
 
 def _unwrap_qualifiers(type_die: Any, CU: Any, cache: _DwarfTypeCache | None = None) -> Any:

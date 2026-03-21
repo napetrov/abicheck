@@ -494,21 +494,11 @@ def render_output(
         return to_stat(result)
 
     if fmt == "json":
-        base = to_json(
-            result, show_only=show_only, report_mode=report_mode,
+        return _render_json_output(
+            result, old, new, follow_deps=follow_deps,
+            show_only=show_only, report_mode=report_mode,
             show_impact=show_impact, severity_config=severity_config,
         )
-        if follow_deps and (old.dependency_info or (new and new.dependency_info)):
-            import json
-            d = json.loads(base)
-            if old.dependency_info:
-                from dataclasses import asdict
-                d["old_dependency_info"] = asdict(old.dependency_info)
-            if new and new.dependency_info:
-                from dataclasses import asdict
-                d["new_dependency_info"] = asdict(new.dependency_info)
-            return json.dumps(d, indent=2)
-        return base
 
     if fmt == "sarif":
         from .sarif import to_sarif_str
@@ -538,6 +528,34 @@ def render_output(
     if follow_deps and (old.dependency_info or (new and new.dependency_info)):
         md += _render_deps_section_md(old, new)
     return md
+
+
+def _render_json_output(
+    result: DiffResult,
+    old: AbiSnapshot,
+    new: AbiSnapshot | None,
+    *,
+    follow_deps: bool,
+    show_only: str | None,
+    report_mode: str,
+    show_impact: bool,
+    severity_config: SeverityConfig | None,
+) -> str:
+    """Render comparison result as JSON, optionally including dependency info."""
+    base = to_json(
+        result, show_only=show_only, report_mode=report_mode,
+        show_impact=show_impact, severity_config=severity_config,
+    )
+    if follow_deps and (old.dependency_info or (new and new.dependency_info)):
+        import json
+        from dataclasses import asdict
+        d = json.loads(base)
+        if old.dependency_info:
+            d["old_dependency_info"] = asdict(old.dependency_info)
+        if new and new.dependency_info:
+            d["new_dependency_info"] = asdict(new.dependency_info)
+        return json.dumps(d, indent=2)
+    return base
 
 
 def _render_deps_section_md(old: AbiSnapshot, new: AbiSnapshot | None) -> str:

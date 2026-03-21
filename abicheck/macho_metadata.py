@@ -291,6 +291,19 @@ def _parse(dylib_path: Path) -> MachoMetadata:
                 _sect_ordinal += 1
 
     # Parse exported symbols via SymbolTable
+    _parse_macho_symbols(macho, header, _section_segment, meta, dylib_path)
+
+    return meta
+
+
+def _parse_macho_symbols(
+    macho: MachO,
+    header: Any,
+    section_segment: dict[int, str],
+    meta: MachoMetadata,
+    dylib_path: Path,
+) -> None:
+    """Parse Mach-O symbol table and populate *meta.exports*."""
     try:
         symtab = SymbolTable(macho, header=header)
         # Prefer extdefsyms (available when LC_DYSYMTAB is present),
@@ -315,7 +328,7 @@ def _parse(dylib_path: Path) -> MachoMetadata:
             sym_type = MachoSymbolType.WEAK if is_weak else MachoSymbolType.EXPORTED
             # Classify as data (variable) when the symbol lives in __DATA segment.
             n_sect = int(nlist_entry.n_sect)
-            seg = _section_segment.get(n_sect, "")
+            seg = section_segment.get(n_sect, "")
             is_data = seg == "__DATA"
             meta.exports.append(MachoExport(
                 name=name, sym_type=sym_type, is_weak=is_weak, is_data=is_data,
@@ -323,5 +336,3 @@ def _parse(dylib_path: Path) -> MachoMetadata:
     except Exception as exc:  # noqa: BLE001
         # SymbolTable may fail on binaries without LC_SYMTAB (stripped, .tbd stubs, etc.)
         log.debug("parse_macho_metadata: SymbolTable failed for %s: %s", dylib_path, exc)
-
-    return meta

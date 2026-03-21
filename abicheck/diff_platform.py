@@ -114,6 +114,41 @@ def _diff_pe(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+def _diff_macho_exports(
+    old: AbiSnapshot, new: AbiSnapshot, o: Any, n: Any,
+) -> list[Change]:
+    """Compute export-level delta between old and new Mach-O metadata."""
+    changes: list[Change] = []
+    old_names = {e.name for e in o.exports if e.name}
+    new_names = {e.name for e in n.exports if e.name}
+    old_fn_names = {f.name for f in old.functions if f.name}
+    new_fn_names = {f.name for f in new.functions if f.name}
+
+    removed_kind = (
+        ChangeKind.FUNC_REMOVED_ELF_ONLY
+        if getattr(old, "elf_only_mode", False) and getattr(new, "elf_only_mode", False)
+        else ChangeKind.FUNC_REMOVED
+    )
+    for name in sorted(old_names - new_names):
+        if name in old_fn_names:
+            continue
+        changes.append(Change(
+            kind=removed_kind,
+            symbol=name,
+            description=f"export removed from dylib: {name}",
+        ))
+
+    for name in sorted(new_names - old_names):
+        if name in new_fn_names:
+            continue
+        changes.append(Change(
+            kind=ChangeKind.FUNC_ADDED,
+            symbol=name,
+            description=f"new export in dylib: {name}",
+        ))
+    return changes
+
+
 @registry.detector(
     "macho",
     requires_support=lambda o, n: (
@@ -133,33 +168,7 @@ def _diff_macho(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     # Deduplicate per symbol to avoid double-reporting, but keep metadata-only
     # changes that function model may miss.
     if o.exports or n.exports:
-        old_names = {e.name for e in o.exports if e.name}
-        new_names = {e.name for e in n.exports if e.name}
-        old_fn_names = {f.name for f in old.functions if f.name}
-        new_fn_names = {f.name for f in new.functions if f.name}
-
-        removed_kind = (
-            ChangeKind.FUNC_REMOVED_ELF_ONLY
-            if getattr(old, "elf_only_mode", False) and getattr(new, "elf_only_mode", False)
-            else ChangeKind.FUNC_REMOVED
-        )
-        for name in sorted(old_names - new_names):
-            if name in old_fn_names:
-                continue
-            changes.append(Change(
-                kind=removed_kind,
-                symbol=name,
-                description=f"export removed from dylib: {name}",
-            ))
-
-        for name in sorted(new_names - old_names):
-            if name in new_fn_names:
-                continue
-            changes.append(Change(
-                kind=ChangeKind.FUNC_ADDED,
-                symbol=name,
-                description=f"new export in dylib: {name}",
-            ))
+        changes.extend(_diff_macho_exports(old, new, o, n))
 
     # Install name change (equivalent of SONAME change)
     if o.install_name != n.install_name and (o.install_name or n.install_name):

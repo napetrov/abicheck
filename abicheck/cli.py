@@ -752,6 +752,99 @@ def _build_match_map(paths: list[Path]) -> tuple[dict[str, Path], list[str]]:
     return mapping, warnings
 
 
+# ---------------------------------------------------------------------------
+# Shared helpers for CLI commands
+# ---------------------------------------------------------------------------
+
+def _resolve_severity(
+    preset: str | None,
+    abi_breaking: str | None,
+    potential_breaking: str | None,
+    quality_issues: str | None,
+    addition: str | None,
+) -> tuple[object, bool]:
+    """Resolve severity configuration and return (config, explicitly_set)."""
+    from .severity import resolve_severity_config
+    explicitly_set = any(v is not None for v in (
+        preset, abi_breaking, potential_breaking, quality_issues, addition,
+    ))
+    config = resolve_severity_config(
+        preset=preset,
+        abi_breaking=abi_breaking,
+        potential_breaking=potential_breaking,
+        quality_issues=quality_issues,
+        addition=addition,
+    )
+    return config, explicitly_set
+
+
+def _apply_strict_elf_only(pf: object, policy: str) -> object:
+    """Inject PolicyFile override that upgrades FUNC_REMOVED_ELF_ONLY to BREAKING."""
+    from .checker_policy import ChangeKind as _CK
+    from .checker_policy import Verdict as _V
+    from .policy_file import PolicyFile as _PF
+
+    strict_overrides = {_CK.FUNC_REMOVED_ELF_ONLY: _V.BREAKING}
+    if pf is not None:
+        merged_overrides = dict(strict_overrides)
+        merged_overrides.update(pf.overrides)
+        return _PF(
+            base_policy=pf.base_policy,
+            overrides=merged_overrides,
+            source_path=pf.source_path,
+        )
+    return _PF(base_policy=policy, overrides=strict_overrides)
+
+
+def _merge_redundant_changes(result: object) -> None:
+    """Re-merge redundant changes back into the main change list."""
+    for c in result.changes:
+        if c.caused_count > 0:
+            c.caused_count = 0
+    for c in result.redundant_changes:
+        c.caused_by_type = None
+    result.changes = result.changes + result.redundant_changes
+    result.redundant_changes = []
+    result.redundant_count = 0
+
+
+def _warn_all_suppressed(result: object) -> None:
+    """Warn if a suppression file swallowed all changes."""
+    total_changes = len(result.changes) + result.suppressed_count
+    if result.suppression_file_provided and total_changes > 0 and len(result.changes) == 0:
+        click.echo(
+            "Warning: all ABI changes were suppressed by the suppression file. "
+            "Verify your suppression rules are not too broad.",
+            err=True,
+        )
+
+
+def _write_or_echo(output: Path | None, text: str) -> None:
+    """Write text to file or echo to stdout."""
+    if output:
+        _safe_write_output(output, text)
+        click.echo(f"Report written to {output}", err=True)
+    else:
+        click.echo(text)
+
+
+def _exit_with_severity_or_verdict(
+    result: object, sev_config: object, severity_explicitly_set: bool,
+) -> None:
+    """Exit with appropriate code based on severity config or legacy verdict."""
+    from .severity import compute_exit_code
+    if severity_explicitly_set:
+        eff_sets = result._effective_kind_sets()
+        exit_code = compute_exit_code(result.changes, sev_config, kind_sets=eff_sets)
+        if exit_code != 0:
+            sys.exit(exit_code)
+    else:
+        if result.verdict.value == "BREAKING":
+            sys.exit(4)
+        elif result.verdict.value == "API_BREAK":
+            sys.exit(2)
+
+
 @main.command("compare")
 @click.argument("old_input", type=click.Path(exists=True, path_type=Path))
 @click.argument("new_input", type=click.Path(exists=True, path_type=Path))
@@ -933,18 +1026,9 @@ def compare_cmd(
     """
     _setup_verbosity(verbose)
 
-    # Resolve severity configuration (preset + per-category overrides)
-    from .severity import resolve_severity_config
-    severity_explicitly_set = any(v is not None for v in (
-        severity_preset, severity_abi_breaking, severity_potential_breaking,
-        severity_quality_issues, severity_addition,
-    ))
-    sev_config = resolve_severity_config(
-        preset=severity_preset,
-        abi_breaking=severity_abi_breaking,
-        potential_breaking=severity_potential_breaking,
-        quality_issues=severity_quality_issues,
-        addition=severity_addition,
+    sev_config, severity_explicitly_set = _resolve_severity(
+        severity_preset, severity_abi_breaking,
+        severity_potential_breaking, severity_quality_issues, severity_addition,
     )
 
     old_h, new_h, old_inc, new_inc = _resolve_per_side_options(
@@ -961,7 +1045,6 @@ def compare_cmd(
         old_includes_only, new_includes_only,
     )
 
-    # Resolve per-side PDB paths: --old-pdb-path overrides --pdb-path for old, etc.
     resolved_old_pdb = old_pdb_path if old_pdb_path else pdb_path
     resolved_new_pdb = new_pdb_path if new_pdb_path else pdb_path
 
@@ -980,31 +1063,9 @@ def compare_cmd(
 
     suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
 
-    # --strict-elf-only: inject a PolicyFile override that upgrades
-    # FUNC_REMOVED_ELF_ONLY from COMPATIBLE to BREAKING (FIX-E).
     if strict_elf_only:
-        from .checker_policy import ChangeKind as _CK
-        from .checker_policy import Verdict as _V
-        from .policy_file import PolicyFile as _PF
+        pf = _apply_strict_elf_only(pf, policy)
 
-        strict_overrides = {_CK.FUNC_REMOVED_ELF_ONLY: _V.BREAKING}
-        if pf is not None:
-            # Merge: user policy file overrides take precedence, but we inject
-            # the strict-elf-only override for kinds not already overridden.
-            merged_overrides = dict(strict_overrides)
-            merged_overrides.update(pf.overrides)
-            pf = _PF(
-                base_policy=pf.base_policy,
-                overrides=merged_overrides,
-                source_path=pf.source_path,
-            )
-        else:
-            pf = _PF(
-                base_policy=policy,
-                overrides=strict_overrides,
-            )
-
-    # Populate dependency info if --follow-deps is active and inputs are ELF binaries.
     if follow_deps:
         if old_fmt == "elf":
             _populate_dependency_info(old, old_input, list(search_paths), None, ld_library_path)
@@ -1013,32 +1074,13 @@ def compare_cmd(
 
     result = compare(old, new, suppression=suppression, policy=policy, policy_file=pf)
 
-    # Attach file-level metadata (path, SHA-256, size) for report traceability
     result.old_metadata = _collect_metadata(old_input)
     result.new_metadata = _collect_metadata(new_input)
 
-    # --show-redundant: merge redundant changes back into the main list
     if show_redundant and result.redundant_changes:
-        # Clear collapse annotations: root changes should no longer claim
-        # derived changes were collapsed, and re-merged changes should not
-        # carry caused_by_type references.
-        for c in result.changes:
-            if c.caused_count > 0:
-                c.caused_count = 0
-        for c in result.redundant_changes:
-            c.caused_by_type = None
-        result.changes = result.changes + result.redundant_changes
-        result.redundant_changes = []
-        result.redundant_count = 0
+        _merge_redundant_changes(result)
 
-    # Warn if suppression file swallowed all changes (potential misconfiguration)
-    total_changes = len(result.changes) + result.suppressed_count
-    if result.suppression_file_provided and total_changes > 0 and len(result.changes) == 0:
-        click.echo(
-            "Warning: all ABI changes were suppressed by the suppression file. "
-            "Verify your suppression rules are not too broad.",
-            err=True,
-        )
+    _warn_all_suppressed(result)
 
     text = _render_output(
         fmt, result, old, new,
@@ -1047,29 +1089,82 @@ def compare_cmd(
         show_impact=show_impact, stat=stat,
         severity_config=sev_config if severity_explicitly_set else None,
     )
-    if output:
-        _safe_write_output(output, text)
-        click.echo(f"Report written to {output}", err=True)
-    else:
-        click.echo(text)
+    _write_or_echo(output, text)
 
-    # Severity-aware exit code: use severity config when any --severity-*
-    # flag was explicitly provided.  Otherwise fall back to legacy verdict-
-    # based exit codes for full backward compatibility.
-    from .severity import compute_exit_code
-    if severity_explicitly_set:
-        # Use effective kind sets which include PolicyFile and --strict-elf-only
-        # overrides, not just the built-in policy name.
-        eff_sets = result._effective_kind_sets()
-        exit_code = compute_exit_code(result.changes, sev_config, kind_sets=eff_sets)
-        if exit_code != 0:
-            sys.exit(exit_code)
+    _exit_with_severity_or_verdict(result, sev_config, severity_explicitly_set)
+
+
+def _validate_appcompat_args(
+    weak_mode: bool,
+    old_lib: Path | None, new_lib: Path | None,
+    list_symbols: bool,
+    old_headers_only: tuple[Path, ...], new_headers_only: tuple[Path, ...],
+    old_includes_only: tuple[Path, ...], new_includes_only: tuple[Path, ...],
+) -> None:
+    """Validate appcompat CLI argument combinations."""
+    if weak_mode and (old_lib is not None or new_lib is not None):
+        raise click.UsageError(
+            "--check-against cannot be used with positional OLD_LIB/NEW_LIB arguments."
+        )
+    if not weak_mode and (old_lib is None or new_lib is None):
+        raise click.UsageError(
+            "Provide OLD_LIB and NEW_LIB arguments, or use --check-against for weak mode."
+        )
+    if weak_mode or list_symbols:
+        _rejected: list[str] = []
+        if old_headers_only:
+            _rejected.append("--old-header")
+        if new_headers_only:
+            _rejected.append("--new-header")
+        if old_includes_only:
+            _rejected.append("--old-include")
+        if new_includes_only:
+            _rejected.append("--new-include")
+        if _rejected:
+            mode_label = "--check-against" if weak_mode else "--list-required-symbols"
+            raise click.UsageError(
+                f"{', '.join(_rejected)} cannot be used with {mode_label}. "
+                f"Per-side header/include flags are only supported in full "
+                f"comparison mode (OLD_LIB NEW_LIB)."
+            )
+
+
+def _handle_list_required_symbols(
+    app_path: Path,
+    check_against_lib: Path | None,
+    old_lib: Path | None, new_lib: Path | None,
+    weak_mode: bool, fmt: str,
+    _get_lib_soname: object, parse_app_requirements: object,
+) -> None:
+    """Handle the --list-required-symbols flow."""
+    target_lib = check_against_lib if weak_mode else (old_lib or new_lib)
+    if target_lib is None:
+        raise click.UsageError(
+            "--list-required-symbols requires a library path "
+            "(via positional args or --check-against)."
+        )
+    lib_name = _get_lib_soname(target_lib)
+    reqs = parse_app_requirements(app_path, lib_name)
+    if fmt == "json":
+        import json as _json
+        click.echo(_json.dumps({
+            "application": str(app_path),
+            "library": lib_name,
+            "needed_libs": reqs.needed_libs,
+            "required_symbols": sorted(reqs.undefined_symbols),
+            "required_versions": reqs.required_versions,
+        }, indent=2))
     else:
-        # Legacy exit-code behaviour (preserves backward compatibility)
-        if result.verdict.value == "BREAKING":
-            sys.exit(4)
-        elif result.verdict.value == "API_BREAK":
-            sys.exit(2)
+        click.echo(f"Application: {app_path}")
+        click.echo(f"Library filter: {lib_name}")
+        click.echo(f"Needed libraries: {', '.join(reqs.needed_libs) or '(none)'}")
+        click.echo(f"Required symbols ({len(reqs.undefined_symbols)}):")
+        for sym in sorted(reqs.undefined_symbols):
+            click.echo(f"  {sym}")
+        if reqs.required_versions:
+            click.echo(f"Required versions ({len(reqs.required_versions)}):")
+            for ver, lib in sorted(reqs.required_versions.items()):
+                click.echo(f"  {ver} (from {lib})")
 
 
 @main.command("appcompat")
@@ -1176,66 +1271,19 @@ def appcompat_cmd(
     from .appcompat import check_against as _check_against
     from .reporter import appcompat_to_json, appcompat_to_markdown
 
-    # Validate arguments
     weak_mode = check_against_lib is not None
-    if weak_mode and (old_lib is not None or new_lib is not None):
-        raise click.UsageError(
-            "--check-against cannot be used with positional OLD_LIB/NEW_LIB arguments."
-        )
-    if not weak_mode and (old_lib is None or new_lib is None):
-        raise click.UsageError(
-            "Provide OLD_LIB and NEW_LIB arguments, or use --check-against for weak mode."
-        )
+    _validate_appcompat_args(
+        weak_mode, old_lib, new_lib, list_symbols,
+        old_headers_only, new_headers_only,
+        old_includes_only, new_includes_only,
+    )
 
-    # Reject per-side flags that only apply to full comparison mode
-    if weak_mode or list_symbols:
-        _rejected: list[str] = []
-        if old_headers_only:
-            _rejected.append("--old-header")
-        if new_headers_only:
-            _rejected.append("--new-header")
-        if old_includes_only:
-            _rejected.append("--old-include")
-        if new_includes_only:
-            _rejected.append("--new-include")
-        if _rejected:
-            mode_label = "--check-against" if weak_mode else "--list-required-symbols"
-            raise click.UsageError(
-                f"{', '.join(_rejected)} cannot be used with {mode_label}. "
-                f"Per-side header/include flags are only supported in full "
-                f"comparison mode (OLD_LIB NEW_LIB)."
-            )
-
-    # --list-required-symbols: just list and exit
     if list_symbols:
-        target_lib = check_against_lib if weak_mode else (old_lib or new_lib)
-        if target_lib is None:
-            raise click.UsageError(
-                "--list-required-symbols requires a library path "
-                "(via positional args or --check-against)."
-            )
-        lib_name = _get_lib_soname(target_lib)
-        reqs = parse_app_requirements(app_path, lib_name)
-        if fmt == "json":
-            import json as _json
-            click.echo(_json.dumps({
-                "application": str(app_path),
-                "library": lib_name,
-                "needed_libs": reqs.needed_libs,
-                "required_symbols": sorted(reqs.undefined_symbols),
-                "required_versions": reqs.required_versions,
-            }, indent=2))
-        else:
-            click.echo(f"Application: {app_path}")
-            click.echo(f"Library filter: {lib_name}")
-            click.echo(f"Needed libraries: {', '.join(reqs.needed_libs) or '(none)'}")
-            click.echo(f"Required symbols ({len(reqs.undefined_symbols)}):")
-            for sym in sorted(reqs.undefined_symbols):
-                click.echo(f"  {sym}")
-            if reqs.required_versions:
-                click.echo(f"Required versions ({len(reqs.required_versions)}):")
-                for ver, lib in sorted(reqs.required_versions.items()):
-                    click.echo(f"  {ver} (from {lib})")
+        _handle_list_required_symbols(
+            app_path, check_against_lib, old_lib, new_lib,
+            weak_mode, fmt,
+            _get_lib_soname, parse_app_requirements,
+        )
         return
 
     if weak_mode:
@@ -1280,6 +1328,215 @@ def appcompat_cmd(
         sys.exit(4)
     elif result.verdict == Verdict.API_BREAK:
         sys.exit(2)
+
+
+# ---------------------------------------------------------------------------
+# compare-release helpers
+# ---------------------------------------------------------------------------
+
+_RELEASE_VERDICT_ORDER: dict[str, int] = {
+    "NO_CHANGE": 0, "COMPATIBLE": 1, "COMPATIBLE_WITH_RISK": 2,
+    "API_BREAK": 3, "BREAKING": 4, "ERROR": 5,
+}
+
+
+def _discover_files(
+    input_dir: Path, lib_dir: Path,
+    include_private: bool,
+    discover_shared_libraries: object, is_package: object,
+) -> list[Path]:
+    """Discover library files from a directory or extracted package."""
+    if is_package(input_dir):
+        files = discover_shared_libraries(lib_dir, include_private=include_private)
+        if not files:
+            files = _collect_release_inputs(lib_dir)
+    else:
+        files = _collect_release_inputs(lib_dir)
+    return files
+
+
+def _resolve_release_headers(
+    headers: tuple[Path, ...],
+    old_headers_only: tuple[Path, ...],
+    new_headers_only: tuple[Path, ...],
+    old_header_dir: Path | None,
+    new_header_dir: Path | None,
+) -> tuple[list[Path], list[Path]]:
+    """Resolve per-side headers for compare-release."""
+    old_h: list[Path] = list(old_headers_only) if old_headers_only else list(headers)
+    new_h: list[Path] = list(new_headers_only) if new_headers_only else list(headers)
+    if old_header_dir and not old_headers_only:
+        old_h = [old_header_dir]
+    if new_header_dir and not new_headers_only:
+        new_h = [new_header_dir]
+    return old_h, new_h
+
+
+def _match_release_keys(
+    old_dir: Path, new_dir: Path,
+    old_map: dict[str, Path], new_map: dict[str, Path],
+    old_files: list[Path], new_files: list[Path],
+    is_package: object,
+) -> tuple[list[str], list[str], list[str], dict[str, Path], dict[str, Path]]:
+    """Match library keys between old and new, handling direct file pairs."""
+    direct_file_pair = (
+        old_dir.is_file() and new_dir.is_file()
+        and not is_package(old_dir) and not is_package(new_dir)
+    )
+    if direct_file_pair:
+        matched_keys = ["__direct_pair__"]
+        old_map = {"__direct_pair__": old_files[0]}
+        new_map = {"__direct_pair__": new_files[0]}
+        return matched_keys, [], [], old_map, new_map
+
+    matched_keys = sorted(set(old_map) & set(new_map))
+    removed_keys = sorted(set(old_map) - set(new_map))
+    added_keys = sorted(set(new_map) - set(old_map))
+    return matched_keys, removed_keys, added_keys, old_map, new_map
+
+
+def _collect_release_warnings(
+    warning_msgs: list[str],
+    matched_keys: list[str], removed_keys: list[str], added_keys: list[str],
+    old_map: dict[str, Path], new_map: dict[str, Path],
+) -> None:
+    """Collect warning messages for unmatched libraries."""
+    for k in removed_keys:
+        warning_msgs.append(f"Warning: library removed: {old_map[k].name}")
+    for k in added_keys:
+        warning_msgs.append(f"Info: library added: {new_map[k].name}")
+    if not matched_keys:
+        warning_msgs.append(
+            "Warning: no matching library pairs found between OLD and NEW inputs."
+        )
+
+
+def _compare_release_libraries(
+    matched_keys: list[str],
+    old_map: dict[str, Path], new_map: dict[str, Path],
+    old_debug_dir: Path | None, new_debug_dir: Path | None,
+    resolve_debug_info: object,
+    old_h: list[Path], new_h: list[Path],
+    old_inc: list[Path], new_inc: list[Path],
+    old_version: str, new_version: str,
+    lang: str, suppress: Path | None,
+    policy: str, policy_file_path: Path | None,
+    output_dir: Path | None,
+) -> tuple[list[dict[str, object]], str]:
+    """Compare each matched library pair and collect results."""
+    library_results: list[dict[str, object]] = []
+    worst_verdict = "NO_CHANGE"
+
+    for key in matched_keys:
+        old_path = old_map[key]
+        new_path = new_map[key]
+        old_dbg = resolve_debug_info(old_path, old_debug_dir) if old_debug_dir else None
+        new_dbg = resolve_debug_info(new_path, new_debug_dir) if new_debug_dir else None
+        try:
+            result, _, _ = _run_compare_pair(
+                old_path, new_path,
+                old_h, new_h, old_inc, new_inc,
+                old_version, new_version,
+                lang, suppress, policy, policy_file_path,
+                old_pdb_path=old_dbg, new_pdb_path=new_dbg,
+            )
+        except (click.ClickException, click.UsageError) as exc:
+            msg = exc.format_message()
+            click.echo(f"Error comparing {old_path.name}: {msg}", err=True)
+            library_results.append({
+                "library": old_path.name, "verdict": "ERROR", "error": msg,
+            })
+            worst_verdict = "ERROR"
+            continue
+
+        v = result.verdict.value
+        if _RELEASE_VERDICT_ORDER.get(v, 0) > _RELEASE_VERDICT_ORDER.get(worst_verdict, 0):
+            worst_verdict = v
+
+        library_results.append({
+            "library": old_path.name, "verdict": v,
+            "breaking": len(result.breaking),
+            "source_breaks": len(result.source_breaks),
+            "risk_changes": len(result.risk),
+            "compatible_additions": len(result.compatible),
+        })
+
+        if output_dir:
+            lib_report_path = output_dir / f"{old_path.stem}.json"
+            _safe_write_output(lib_report_path, to_json(result))
+
+    return library_results, worst_verdict
+
+
+def _format_release_summary(
+    fmt: str, worst_verdict: str,
+    old_dir: Path, new_dir: Path,
+    library_results: list[dict[str, object]],
+    removed_keys: list[str], added_keys: list[str],
+    old_map: dict[str, Path], new_map: dict[str, Path],
+    warning_msgs: list[str],
+) -> str:
+    """Format the release comparison summary as JSON or markdown."""
+    if fmt == "json":
+        summary: dict[str, object] = {
+            "verdict": worst_verdict,
+            "old_dir": str(old_dir),
+            "new_dir": str(new_dir),
+            "libraries": library_results,
+            "unmatched_old": [old_map[k].name for k in removed_keys],
+            "unmatched_new": [new_map[k].name for k in added_keys],
+            "warnings": warning_msgs,
+        }
+        return json.dumps(summary, indent=2)
+
+    _VERDICT_EMOJI = {
+        "NO_CHANGE": "✅", "COMPATIBLE": "✅", "COMPATIBLE_WITH_RISK": "⚠️",
+        "API_BREAK": "⚠️", "BREAKING": "❌", "ERROR": "💥",
+    }
+    lines: list[str] = [
+        "# ABI Release Comparison", "",
+        "| | |", "|---|---|",
+        f"| **Old** | `{old_dir}` |",
+        f"| **New** | `{new_dir}` |",
+        f"| **Verdict** | {_VERDICT_EMOJI.get(worst_verdict, '?')} `{worst_verdict}` |",
+        "", "## Libraries", "",
+        "| Library | Verdict | Breaking | Source | Risk | Additions |",
+        "|---|---|---|---|---|---|",
+    ]
+    for lib in library_results:
+        em = _VERDICT_EMOJI.get(str(lib["verdict"]), "?")
+        lines.append(
+            f"| `{lib['library']}` | {em} `{lib['verdict']}` "
+            f"| {lib.get('breaking', '—')} | {lib.get('source_breaks', '—')} "
+            f"| {lib.get('risk_changes', '—')} | {lib.get('compatible_additions', '—')} |"
+        )
+    if removed_keys:
+        lines += ["", "## ⚠️ Removed Libraries", ""]
+        for k in removed_keys:
+            lines.append(f"- `{old_map[k].name}`")
+    if added_keys:
+        lines += ["", "## ℹ️ Added Libraries", ""]
+        for k in added_keys:
+            lines.append(f"- `{new_map[k].name}`")
+    return "\n".join(lines)
+
+
+def _write_release_summary_file(
+    output_dir: Path, worst_verdict: str,
+    library_results: list[dict[str, object]],
+    removed_keys: list[str], added_keys: list[str],
+    old_map: dict[str, Path], new_map: dict[str, Path],
+) -> None:
+    """Write per-library summary JSON to output directory."""
+    summary_data: dict[str, object] = {
+        "verdict": worst_verdict,
+        "libraries": library_results,
+        "unmatched_old": [old_map[k].name for k in removed_keys],
+        "unmatched_new": [new_map[k].name for k in added_keys],
+    }
+    summary_path = output_dir / "summary.json"
+    _safe_write_output(summary_path, json.dumps(summary_data, indent=2))
+    click.echo(f"Per-library reports written to {output_dir}/", err=True)
 
 
 @main.command("compare-release")
@@ -1455,23 +1712,9 @@ def compare_release_cmd(
             new_dir, debug_info2, devel_pkg2,
         )
 
-        # When packages were extracted, first try binary discovery (ELF DSOs),
-        # then fall back to _collect_release_inputs (catches JSON snapshots too).
-        if is_package(old_dir):
-            old_files = discover_shared_libraries(old_lib_dir, include_private=include_private_dso)
-            if not old_files:
-                old_files = _collect_release_inputs(old_lib_dir)
-        else:
-            old_files = _collect_release_inputs(old_lib_dir)
+        old_files = _discover_files(old_dir, old_lib_dir, include_private_dso, discover_shared_libraries, is_package)
+        new_files = _discover_files(new_dir, new_lib_dir, include_private_dso, discover_shared_libraries, is_package)
 
-        if is_package(new_dir):
-            new_files = discover_shared_libraries(new_lib_dir, include_private=include_private_dso)
-            if not new_files:
-                new_files = _collect_release_inputs(new_lib_dir)
-        else:
-            new_files = _collect_release_inputs(new_lib_dir)
-
-        # --dso-only: keep only ELF shared objects (ET_DYN), skip executables
         if dso_only:
             old_files = [f for f in old_files if _is_elf_shared_object(f)]
             new_files = [f for f in new_files if _is_elf_shared_object(f)]
@@ -1480,45 +1723,17 @@ def compare_release_cmd(
         new_map, new_warns = _build_match_map(new_files)
         warning_msgs: list[str] = [f"Warning: {w}" for w in (old_warns + new_warns)]
 
-        # Use headers from devel packages if extracted, otherwise use CLI flags
-        old_h: list[Path] = list(old_headers_only) if old_headers_only else list(headers)
-        new_h: list[Path] = list(new_headers_only) if new_headers_only else list(headers)
-        if old_header_dir and not old_headers_only:
-            old_h = [old_header_dir]
-        if new_header_dir and not new_headers_only:
-            new_h = [new_header_dir]
+        old_h, new_h = _resolve_release_headers(
+            headers, old_headers_only, new_headers_only,
+            old_header_dir, new_header_dir,
+        )
         old_inc: list[Path] = list(includes)
         new_inc: list[Path] = list(includes)
 
-        # Special case: file-vs-file should compare directly even when names differ.
-        # (Does not apply to package inputs — those are always discovered.)
-        direct_file_pair = (
-            old_dir.is_file() and new_dir.is_file()
-            and not is_package(old_dir) and not is_package(new_dir)
+        matched_keys, removed_keys, added_keys, old_map, new_map = _match_release_keys(
+            old_dir, new_dir, old_map, new_map, old_files, new_files, is_package,
         )
-        if direct_file_pair:
-            matched_keys = ["__direct_pair__"]
-            old_map = {"__direct_pair__": old_files[0]}
-            new_map = {"__direct_pair__": new_files[0]}
-            removed_keys: list[str] = []
-            added_keys: list[str] = []
-        else:
-            matched_keys = sorted(set(old_map) & set(new_map))
-            removed_keys = sorted(set(old_map) - set(new_map))
-            added_keys = sorted(set(new_map) - set(old_map))
-
-        if removed_keys:
-            for k in removed_keys:
-                warning_msgs.append(f"Warning: library removed: {old_map[k].name}")
-
-        if added_keys:
-            for k in added_keys:
-                warning_msgs.append(f"Info: library added: {new_map[k].name}")
-
-        if not matched_keys:
-            warning_msgs.append(
-                "Warning: no matching library pairs found between OLD and NEW inputs."
-            )
+        _collect_release_warnings(warning_msgs, matched_keys, removed_keys, added_keys, old_map, new_map)
 
         if fmt != "json":
             for msg in warning_msgs:
@@ -1527,137 +1742,31 @@ def compare_release_cmd(
         if output_dir:
             output_dir.mkdir(parents=True, exist_ok=True)
 
-        library_results: list[dict[str, object]] = []
-        worst_verdict = "NO_CHANGE"
-        _VERDICT_ORDER = {
-            "NO_CHANGE": 0,
-            "COMPATIBLE": 1,
-            "COMPATIBLE_WITH_RISK": 2,
-            "API_BREAK": 3,
-            "BREAKING": 4,
-            "ERROR": 5,
-        }
+        library_results, worst_verdict = _compare_release_libraries(
+            matched_keys, old_map, new_map,
+            old_debug_dir, new_debug_dir, resolve_debug_info,
+            old_h, new_h, old_inc, new_inc,
+            old_version, new_version,
+            lang, suppress, policy, policy_file_path,
+            output_dir,
+        )
 
-        for key in matched_keys:
-            old_path = old_map[key]
-            new_path = new_map[key]
-            # Resolve per-binary debug info from extracted debug packages
-            old_dbg = (
-                resolve_debug_info(old_path, old_debug_dir)
-                if old_debug_dir else None
-            )
-            new_dbg = (
-                resolve_debug_info(new_path, new_debug_dir)
-                if new_debug_dir else None
-            )
-            try:
-                result, _, _ = _run_compare_pair(
-                    old_path, new_path,
-                    old_h, new_h, old_inc, new_inc,
-                    old_version, new_version,
-                    lang, suppress, policy, policy_file_path,
-                    old_pdb_path=old_dbg, new_pdb_path=new_dbg,
-                )
-            except (click.ClickException, click.UsageError) as exc:
-                msg = exc.format_message()
-                click.echo(f"Error comparing {old_path.name}: {msg}", err=True)
-                library_results.append({
-                    "library": old_path.name,
-                    "verdict": "ERROR",
-                    "error": msg,
-                })
-                worst_verdict = "ERROR"
-                continue
-
-            v = result.verdict.value
-            if _VERDICT_ORDER.get(v, 0) > _VERDICT_ORDER.get(worst_verdict, 0):
-                worst_verdict = v
-
-            lib_entry: dict[str, object] = {
-                "library": old_path.name,
-                "verdict": v,
-                "breaking": len(result.breaking),
-                "source_breaks": len(result.source_breaks),
-                "risk_changes": len(result.risk),
-                "compatible_additions": len(result.compatible),
-            }
-            library_results.append(lib_entry)
-
-            if output_dir:
-                lib_report_path = output_dir / f"{old_path.stem}.json"
-                _safe_write_output(lib_report_path, to_json(result))
-
-        # Removed libraries should not leave verdict as NO_CHANGE
-        if removed_keys and _VERDICT_ORDER.get(worst_verdict, 0) < _VERDICT_ORDER.get("COMPATIBLE_WITH_RISK", 0):
+        if removed_keys and _RELEASE_VERDICT_ORDER.get(worst_verdict, 0) < _RELEASE_VERDICT_ORDER.get("COMPATIBLE_WITH_RISK", 0):
             worst_verdict = "COMPATIBLE_WITH_RISK"
 
-        # Summary output
-        if fmt == "json":
-            summary: dict[str, object] = {
-                "verdict": worst_verdict,
-                "old_dir": str(old_dir),
-                "new_dir": str(new_dir),
-                "libraries": library_results,
-                "unmatched_old": [old_map[k].name for k in removed_keys],
-                "unmatched_new": [new_map[k].name for k in added_keys],
-                "warnings": warning_msgs,
-            }
-            text = json.dumps(summary, indent=2)
-        else:
-            _VERDICT_EMOJI = {
-                "NO_CHANGE": "✅", "COMPATIBLE": "✅", "COMPATIBLE_WITH_RISK": "⚠️",
-                "API_BREAK": "⚠️", "BREAKING": "❌", "ERROR": "💥",
-            }
-            lines: list[str] = [
-                "# ABI Release Comparison",
-                "",
-                "| | |",
-                "|---|---|",
-                f"| **Old** | `{old_dir}` |",
-                f"| **New** | `{new_dir}` |",
-                f"| **Verdict** | {_VERDICT_EMOJI.get(worst_verdict, '?')} `{worst_verdict}` |",
-                "",
-                "## Libraries",
-                "",
-                "| Library | Verdict | Breaking | Source | Risk | Additions |",
-                "|---|---|---|---|---|---|",
-            ]
-            for lib in library_results:
-                em = _VERDICT_EMOJI.get(str(lib["verdict"]), "?")
-                lines.append(
-                    f"| `{lib['library']}` | {em} `{lib['verdict']}` "
-                    f"| {lib.get('breaking', '—')} | {lib.get('source_breaks', '—')} "
-                    f"| {lib.get('risk_changes', '—')} | {lib.get('compatible_additions', '—')} |"
-                )
-            if removed_keys:
-                lines += ["", "## ⚠️ Removed Libraries", ""]
-                for k in removed_keys:
-                    lines.append(f"- `{old_map[k].name}`")
-            if added_keys:
-                lines += ["", "## ℹ️ Added Libraries", ""]
-                for k in added_keys:
-                    lines.append(f"- `{new_map[k].name}`")
-            text = "\n".join(lines)
-
-        if output:
-            _safe_write_output(output, text)
-            click.echo(f"Report written to {output}", err=True)
-        else:
-            click.echo(text)
+        text = _format_release_summary(
+            fmt, worst_verdict, old_dir, new_dir,
+            library_results, removed_keys, added_keys,
+            old_map, new_map, warning_msgs,
+        )
+        _write_or_echo(output, text)
 
         if output_dir:
-            summary_path = output_dir / "summary.json"
-            summary_data: dict[str, object] = {
-                "verdict": worst_verdict,
-                "libraries": library_results,
-                "unmatched_old": [old_map[k].name for k in removed_keys],
-                "unmatched_new": [new_map[k].name for k in added_keys],
-            }
-            _safe_write_output(summary_path, json.dumps(summary_data, indent=2))
-            click.echo(f"Per-library reports written to {output_dir}/", err=True)
+            _write_release_summary_file(
+                output_dir, worst_verdict, library_results,
+                removed_keys, added_keys, old_map, new_map,
+            )
 
-        # Exit codes — ABI severity takes priority over policy flags.
-        # A removed library is a deployment decision; a binary ABI break is more urgent.
         if worst_verdict in ("BREAKING", "ERROR"):
             sys.exit(4)
         elif worst_verdict == "API_BREAK":
