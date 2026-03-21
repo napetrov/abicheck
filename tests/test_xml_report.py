@@ -522,6 +522,7 @@ class TestXmlFileMetadata:
         new_file = file_info.find("new_file")
         assert new_file is not None
         assert new_file.find("path").text == "/new/lib.so"
+        assert new_file.find("sha256").text == "bb" * 32
         assert new_file.find("size_bytes").text == "8192"
 
     def test_file_info_absent_when_no_metadata(self):

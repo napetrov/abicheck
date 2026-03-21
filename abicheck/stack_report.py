@@ -86,10 +86,12 @@ def stack_to_json(result: StackCheckResult, indent: int = 2) -> str:
                 conf = getattr(diff, "confidence", None)
                 if conf is not None:
                     sc_dict["confidence"] = conf.value if hasattr(conf, "value") else str(conf)
-                    sc_dict["evidence_tiers"] = list(getattr(diff, "evidence_tiers", []) or [])
-                    cov_warns = getattr(diff, "coverage_warnings", []) or []
-                    if cov_warns:
-                        sc_dict["coverage_warnings"] = list(cov_warns)
+                tiers = getattr(diff, "evidence_tiers", []) or []
+                if tiers:
+                    sc_dict["evidence_tiers"] = list(tiers)
+                cov_warns = getattr(diff, "coverage_warnings", []) or []
+                if cov_warns:
+                    sc_dict["coverage_warnings"] = list(cov_warns)
                 # File metadata for traceability
                 old_meta = getattr(diff, "old_metadata", None)
                 new_meta = getattr(diff, "new_metadata", None)
@@ -151,10 +153,12 @@ def _render_stack_changes_section(lines: list[str], stack_changes: list[StackCha
             if sc.abi_diff:
                 conf = getattr(sc.abi_diff, "confidence", None)
                 tiers = getattr(sc.abi_diff, "evidence_tiers", []) or []
+                tier_str = ", ".join(f"`{t}`" for t in tiers) if tiers else "_none_"
                 if conf is not None:
                     conf_val = conf.value if hasattr(conf, "value") else str(conf)
-                    tier_str = ", ".join(f"`{t}`" for t in tiers) if tiers else "_none_"
                     lines.append(f"  - Confidence: **{conf_val.upper()}** | Evidence: {tier_str}")
+                elif tiers:
+                    lines.append(f"  - Evidence: {tier_str}")
                 if sc.abi_diff.breaking:
                     for c in sc.abi_diff.breaking[:5]:
                         lines.append(f"  - `{c.kind.value}`: {c.description}")
