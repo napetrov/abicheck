@@ -176,7 +176,7 @@ Use these exit codes to gate CI pipelines. Non-zero exits can fail your build wh
 
 | Exit code | Verdict | Meaning |
 |-----------|---------|---------|
-| `0` | `COMPATIBLE` | Safe — no binary ABI break |
+| `0` | `NO_CHANGE` / `COMPATIBLE` / `COMPATIBLE_WITH_RISK` | Safe — no binary ABI break |
 | `1` | `SEVERITY_ERROR` | Severity-driven error (with `--severity-*` flags) |
 | `2` | `API_BREAK` | Source-level break (recompile needed, binary may still work) |
 | `4` | `BREAKING` | Binary ABI break (old binaries will crash or misbehave) |
@@ -287,6 +287,26 @@ Suppress known or intentional changes so they don't fail CI:
 abicheck compare old.so new.so -H foo.h --suppress suppressions.yaml
 ```
 
+Example `suppressions.yaml`:
+
+```yaml
+version: 1
+
+suppressions:
+  # Exact symbol match
+  - symbol: "_ZN3foo6Client10disconnectEv"
+    change_kind: "func_removed"
+    reason: "Client::disconnect() deprecated in v1.8, removed in v2.0"
+
+  # Pattern match — suppress all changes in internal namespaces
+  - symbol_pattern: ".*N6detail.*"
+    reason: "detail:: namespace is not part of public ABI"
+
+  # All change kinds for a symbol
+  - symbol: "_ZN3foo12LegacyHandleEv"
+    reason: "LegacyHandle replaced by Handle alias — shim keeps compat"
+```
+
 ABICC-format suppression files are also supported for easier migration. See [Migrating from ABICC](https://napetrov.github.io/abicheck/user-guide/from-abicc/) for details.
 
 ---
@@ -344,18 +364,21 @@ Covers: symbol removal, type/signature changes, struct layout, enums, vtables, q
 abicheck can be used as a library for programmatic ABI checks:
 
 ```python
-from abicheck.service import compare_libraries
+from pathlib import Path
+from abicheck.service import run_compare
 
-result = compare_libraries(
-    old_library="libfoo.so.1",
-    new_library="libfoo.so.2",
-    old_headers=["include/v1/foo.h"],
-    new_headers=["include/v2/foo.h"],
+result, old_snapshot, new_snapshot = run_compare(
+    old_input=Path("libfoo.so.1"),
+    new_input=Path("libfoo.so.2"),
+    old_headers=[Path("include/v1/foo.h")],
+    new_headers=[Path("include/v2/foo.h")],
 )
 
 print(result.verdict)       # e.g. Verdict.BREAKING
 print(len(result.changes))  # number of detected changes
 ```
+
+`run_compare` also accepts optional parameters for includes, version labels, language (`"c++"` or `"c"`), suppression files, policy selection, and PDB paths. See `abicheck.service` for the full signature.
 
 ---
 
