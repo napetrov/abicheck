@@ -191,7 +191,7 @@ def stack_to_html(result: StackCheckResult) -> str:
 </div>
 
 <div class="verdict-box" style="background:{bg}; color:{fg}; border-left:6px solid {fg};">
-  <h2>{icon} Risk: {h(result.risk_score.upper())}</h2>
+  <h2>{icon} Risk: {h(str(result.risk_score).upper())}</h2>
   <div class="bc-metric">
     Loadability: <strong>{h(load_val.upper())}</strong>
     &nbsp;&nbsp;|&nbsp;&nbsp;

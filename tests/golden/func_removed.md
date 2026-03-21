@@ -12,8 +12,9 @@
 
 ## Analysis Confidence
 
-| Confidence | MEDIUM |
+| Field | Value |
 |---|---|
+| Confidence | MEDIUM |
 | Evidence tiers | `header` |
 | Coverage gap | Detector 'pe' disabled: missing PE metadata |
 | Coverage gap | Detector 'macho' disabled: missing Mach-O metadata |

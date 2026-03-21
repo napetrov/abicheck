@@ -187,7 +187,7 @@ def _symbol_cell(change: object) -> str:
     mangled = h(getattr(change, "symbol", "") or "")
     demangled = h(getattr(change, "demangled_symbol", "") or mangled)
     if demangled and demangled != mangled and mangled:
-        return f"<abbr title='{mangled}'>{demangled}</abbr>"
+        return f"<abbr title=\"{html.escape(mangled, quote=True)}\">{demangled}</abbr>"
     return demangled or mangled
 
 

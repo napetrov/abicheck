@@ -12,8 +12,9 @@
 
 ## Analysis Confidence
 
-| Confidence | LOW |
+| Field | Value |
 |---|---|
+| Confidence | LOW |
 | Evidence tiers | `elf` |
 | Coverage gap | Detector 'pe' disabled: missing PE metadata |
 | Coverage gap | Detector 'macho' disabled: missing Mach-O metadata |

@@ -459,6 +459,11 @@ def _to_json_leaf(
     }
     if result.redundant_count > 0:
         d["redundant_count"] = result.redundant_count
+    # Confidence & evidence metadata
+    d["confidence"] = result.confidence.value
+    d["evidence_tiers"] = list(result.evidence_tiers)
+    if result.coverage_warnings:
+        d["coverage_warnings"] = list(result.coverage_warnings)
     return json.dumps(d, indent=indent)
 
 
@@ -838,8 +843,8 @@ def to_markdown(
     if show_only:
         changes = apply_show_only(changes, show_only, policy=result.policy)
 
-    # Classify filtered changes by severity
-    breaking_set, api_break_set, compat_set, risk_set = _policy_kind_sets(result.policy)
+    # Classify filtered changes using effective kind sets (respects PolicyFile overrides)
+    breaking_set, api_break_set, compat_set, risk_set = result._effective_kind_sets()
     breaking = [c for c in changes if c.kind in breaking_set]
     source_breaks = [c for c in changes if c.kind in api_break_set]
     risk = [c for c in changes if c.kind in risk_set]
@@ -870,8 +875,9 @@ def to_markdown(
         lines += [
             "## Analysis Confidence",
             "",
-            f"| Confidence | {conf_val.upper()} |",
+            "| Field | Value |",
             "|---|---|",
+            f"| Confidence | {conf_val.upper()} |",
             f"| Evidence tiers | {tier_str} |",
         ]
         if cov_warns:
