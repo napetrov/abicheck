@@ -110,6 +110,30 @@ def _check_function_signature(mangled: str, f_old: Function, f_new: Function) ->
             new_value=_format_params(f_new.params),
         ))
 
+    # Ref-qualifier changes (&/&&)
+    old_rq = getattr(f_old, "ref_qualifier", "") or ""
+    new_rq = getattr(f_new, "ref_qualifier", "") or ""
+    if old_rq != new_rq:
+        changes.append(Change(
+            kind=ChangeKind.FUNC_REF_QUAL_CHANGED,
+            symbol=mangled,
+            description=f"Ref-qualifier changed: {f_old.name} ({old_rq!r} → {new_rq!r})",
+            old_value=old_rq or "(none)",
+            new_value=new_rq or "(none)",
+        ))
+
+    # Language linkage change (extern "C" ↔ C++)
+    if f_old.is_extern_c != f_new.is_extern_c:
+        old_linkage = 'extern "C"' if f_old.is_extern_c else "C++"
+        new_linkage = 'extern "C"' if f_new.is_extern_c else "C++"
+        changes.append(Change(
+            kind=ChangeKind.FUNC_LANGUAGE_LINKAGE_CHANGED,
+            symbol=mangled,
+            description=f"Language linkage changed: {f_old.name} ({old_linkage} → {new_linkage})",
+            old_value=old_linkage,
+            new_value=new_linkage,
+        ))
+
     if f_old.is_noexcept and not f_new.is_noexcept:
         changes.append(Change(
             kind=ChangeKind.FUNC_NOEXCEPT_REMOVED,

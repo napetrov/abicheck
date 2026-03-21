@@ -304,6 +304,17 @@ class ChangeKind(str, Enum):
     # against these symbols; they resolve through the dependency directly).
     SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED = "symbol_leaked_from_dependency_changed"
 
+    # ── Gap analysis: proposed new checks ──────────────────────────────────
+    FUNC_REF_QUAL_CHANGED = "func_ref_qual_changed"  # &/&& ref-qualifier changed
+    FUNC_LANGUAGE_LINKAGE_CHANGED = "func_language_linkage_changed"  # extern "C" ↔ C++
+    SYMBOL_VERSION_ALIAS_CHANGED = "symbol_version_alias_changed"  # default version alias changed
+    TLS_VAR_SIZE_CHANGED = "tls_var_size_changed"  # TLS variable size changed
+    PROTECTED_VISIBILITY_CHANGED = "protected_visibility_changed"  # STV_PROTECTED ↔ DEFAULT
+    GLIBCXX_DUAL_ABI_FLIP_DETECTED = "glibcxx_dual_abi_flip_detected"  # dual ABI toggle diagnostic
+    INLINE_NAMESPACE_MOVED = "inline_namespace_moved"  # inline namespace version change
+    VTABLE_SYMBOL_IDENTITY_CHANGED = "vtable_symbol_identity_changed"  # vtable/typeinfo symbol rename
+    ABI_SURFACE_EXPLOSION = "abi_surface_explosion"  # dramatic ABI surface growth/shrink
+
 
 class HasKind(Protocol):
     kind: ChangeKind
