@@ -828,15 +828,17 @@ def _version_sort_key(path: Path, canonical_key: str) -> tuple[list[tuple[int, i
 
 
 def _is_supported_compare_input(path: Path) -> bool:
-    """Return True for files accepted by compare/resolve_input."""
-    if not path.is_file():
-        return False
-    lower = path.name.lower()
-    if ".so" in lower or lower.endswith((".dll", ".dylib", ".json", ".pl", ".pm")):
-        return True
-    if _detect_binary_format(path) is not None:
-        return True
-    return _sniff_text_format(path) in {"json", "perl"}
+    """Return True for files accepted by compare-release directory scanning.
+
+    Delegates to :func:`abicheck.classify.is_supported_compare_input` which
+    runs a composable classifier pipeline (binary extensions → magic bytes →
+    ABI JSON fingerprint → Perl dump → fallback sniff).
+
+    To add support for a new ABI snapshot format, edit ``abicheck/classify.py``
+    rather than this function.
+    """
+    from .classify import is_supported_compare_input
+    return is_supported_compare_input(path)
 
 
 def _collect_release_inputs(path: Path) -> list[Path]:
