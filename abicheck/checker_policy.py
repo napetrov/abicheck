@@ -316,6 +316,7 @@ class ChangeKind(str, Enum):
     ABI_SURFACE_EXPLOSION = "abi_surface_explosion"  # dramatic ABI surface growth/shrink
 
     # SYCL Plugin Interface (PI) — ADR-020
+    SYCL_IMPLEMENTATION_CHANGED = "sycl_implementation_changed"
     SYCL_PI_VERSION_CHANGED = "sycl_pi_version_changed"
     SYCL_PI_ENTRYPOINT_REMOVED = "sycl_pi_entrypoint_removed"
     SYCL_PI_ENTRYPOINT_ADDED = "sycl_pi_entrypoint_added"

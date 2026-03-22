@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -117,36 +118,55 @@ class SyclMetadata:
 # Static extraction — uses pyelftools, no SYCL runtime needed
 # ---------------------------------------------------------------------------
 
+_HIDDEN_VISIBILITIES = frozenset({"STV_HIDDEN", "STV_INTERNAL"})
+
+
 def _extract_pi_symbols(so_path: Path) -> list[str]:
     """Extract exported PI function names from a plugin .so via pyelftools.
 
+    Uses ``.dynsym`` only (not ``.symtab``) to match ``elf_metadata.py``
+    behaviour. Filters out hidden/internal symbols. Uses ``os.fstat()``
+    after open to prevent TOCTOU attacks (symlink to FIFO/device).
+
     Returns an empty list on parse errors (logged as WARNING).
     """
-    try:
-        from elftools.common.exceptions import ELFError
-        from elftools.elf.elffile import ELFFile
-        from elftools.elf.sections import SymbolTableSection
-    except ImportError:
-        log.warning("pyelftools not installed; cannot extract PI symbols from %s", so_path)
-        return []
+    from elftools.common.exceptions import ELFError
+    from elftools.elf.elffile import ELFFile
+    from elftools.elf.sections import SymbolTableSection
 
     pi_symbols: list[str] = []
     try:
         with open(so_path, "rb") as f:
+            # TOCTOU protection: verify fd is a regular file after open.
+            st = os.fstat(f.fileno())
+            if not stat.S_ISREG(st.st_mode):
+                log.warning("_extract_pi_symbols: not a regular file: %s", so_path)
+                return []
             elf = ELFFile(f)
             for section in elf.iter_sections():
                 if not isinstance(section, SymbolTableSection):
+                    continue
+                # Only process .dynsym — .symtab may contain internal pi*
+                # static functions that are not part of the public PI surface.
+                if section.name != ".dynsym":
                     continue
                 for sym in section.iter_symbols():
                     name = sym.name
                     if not name:
                         continue
-                    # Only exported (GLOBAL/WEAK, not UND) symbols matching PI pattern
                     info_bind = sym.entry["st_info"]["bind"]
                     shndx = sym.entry["st_shndx"]
-                    if info_bind in ("STB_GLOBAL", "STB_WEAK") and shndx != "SHN_UNDEF":
-                        if _PI_SYMBOL_RE.match(name):
-                            pi_symbols.append(name)
+                    # Filter: exported (GLOBAL/WEAK), defined (not UND),
+                    # and not hidden/internal visibility.
+                    if info_bind not in ("STB_GLOBAL", "STB_WEAK"):
+                        continue
+                    if shndx == "SHN_UNDEF":
+                        continue
+                    vis = sym.entry["st_other"]["visibility"]
+                    if vis in _HIDDEN_VISIBILITIES:
+                        continue
+                    if _PI_SYMBOL_RE.match(name):
+                        pi_symbols.append(name)
     except (ELFError, OSError, ValueError) as exc:
         log.warning("Failed to extract PI symbols from %s: %s", so_path, exc)
     return sorted(pi_symbols)
@@ -296,9 +316,17 @@ def parse_sycl_metadata(
 
     plugins = discover_sycl_plugins(search_paths)
 
-    # Detect runtime PI version from plugin versions (take the max)
+    # Detect runtime PI version from plugin versions (take the max).
+    # Use tuple comparison to avoid lexicographic ordering issues
+    # (e.g., "1.10" should be > "1.2").
     pi_versions = [p.pi_version for p in plugins if p.pi_version]
-    runtime_pi_version = max(pi_versions) if pi_versions else ""
+    if pi_versions:
+        runtime_pi_version = max(
+            pi_versions,
+            key=lambda v: tuple(int(x) for x in v.split(".") if x.isdigit()),
+        )
+    else:
+        runtime_pi_version = ""
 
     return SyclMetadata(
         implementation=implementation,

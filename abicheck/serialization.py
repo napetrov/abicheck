@@ -264,6 +264,29 @@ def _dwarf_advanced_from_dict(d: dict[str, Any]) -> Any:
     )
 
 
+def _sycl_from_dict(d: dict[str, Any]) -> Any:
+    from .sycl_metadata import SyclMetadata, SyclPluginInfo
+
+    plugins = [
+        SyclPluginInfo(
+            name=p.get("name", ""),
+            library=p.get("library", ""),
+            pi_version=p.get("pi_version", ""),
+            entry_points=p.get("entry_points", []),
+            backend_type=p.get("backend_type", ""),
+            min_driver_version=p.get("min_driver_version"),
+        )
+        for p in d.get("plugins", [])
+    ]
+    return SyclMetadata(
+        implementation=d.get("implementation", ""),
+        runtime_version=d.get("runtime_version", ""),
+        pi_version=d.get("pi_version", ""),
+        plugins=plugins,
+        plugin_search_paths=d.get("plugin_search_paths", []),
+    )
+
+
 def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
     # Inspect schema version for future migration hooks.
     # Snapshots without schema_version are treated as v1 (pre-versioning format).
@@ -370,6 +393,9 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         else None
     )
 
+    sycl_data = d.get("sycl")
+    sycl = _sycl_from_dict(sycl_data) if isinstance(sycl_data, dict) else None
+
     dep_data = d.get("dependency_info")
     dep_info = (
         DependencyInfo(
@@ -388,7 +414,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         functions=funcs, variables=variables, types=types,
         enums=enums, typedefs=typedefs,
         elf=elf, pe=pe, macho=macho,
-        dwarf=dwarf, dwarf_advanced=dwarf_advanced,
+        dwarf=dwarf, dwarf_advanced=dwarf_advanced, sycl=sycl,
         elf_only_mode=bool(d.get("elf_only_mode", False)),
         constants=d.get("constants", {}),
         platform=d.get("platform"),

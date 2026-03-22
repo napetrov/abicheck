@@ -35,6 +35,27 @@ from .model import AbiSnapshot
 from .sycl_metadata import SyclMetadata, SyclPluginInfo
 
 
+def _diff_implementation(old: SyclMetadata, new: SyclMetadata) -> list[Change]:
+    """Detect SYCL implementation changes (e.g., DPC++ -> AdaptiveCpp)."""
+    changes: list[Change] = []
+    if (
+        old.implementation
+        and new.implementation
+        and old.implementation != new.implementation
+    ):
+        changes.append(Change(
+            kind=ChangeKind.SYCL_IMPLEMENTATION_CHANGED,
+            symbol="sycl::implementation",
+            description=(
+                f"SYCL implementation changed from {old.implementation} to "
+                f"{new.implementation}; entirely different runtime ABI."
+            ),
+            old_value=old.implementation,
+            new_value=new.implementation,
+        ))
+    return changes
+
+
 def _diff_pi_version(old: SyclMetadata, new: SyclMetadata) -> list[Change]:
     """Detect PI interface version changes at the runtime level."""
     changes: list[Change] = []
@@ -129,22 +150,10 @@ def _diff_plugin_entrypoints(
                 new_value=ep,
             ))
 
-        # Per-plugin PI version change
-        if (
-            old_plugin.pi_version
-            and new_plugin.pi_version
-            and old_plugin.pi_version != new_plugin.pi_version
-        ):
-            changes.append(Change(
-                kind=ChangeKind.SYCL_PI_VERSION_CHANGED,
-                symbol=f"sycl::pi::{name}",
-                description=(
-                    f"PI version of plugin '{name}' changed from "
-                    f"{old_plugin.pi_version} to {new_plugin.pi_version}."
-                ),
-                old_value=old_plugin.pi_version,
-                new_value=new_plugin.pi_version,
-            ))
+        # Per-plugin PI version changes are NOT emitted separately to
+        # avoid duplicating the runtime-level SYCL_PI_VERSION_CHANGED
+        # from _diff_pi_version() (runtime pi_version is derived from
+        # plugin versions).
 
     return changes
 
@@ -235,6 +244,7 @@ def _diff_sycl(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     assert o is not None and n is not None  # guaranteed by requires_support
 
     changes: list[Change] = []
+    changes.extend(_diff_implementation(o, n))
     changes.extend(_diff_pi_version(o, n))
     changes.extend(_diff_plugins(o, n))
     changes.extend(_diff_plugin_entrypoints(o, n))

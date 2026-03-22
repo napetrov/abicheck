@@ -465,6 +465,10 @@ REGISTRY = ChangeKindRegistry([
               "a per-symbol break, but may indicate an unintended visibility regression."),
 
     # ── SYCL Plugin Interface (PI) ────────────────────────────────────────
+    _E("sycl_implementation_changed", _B,
+       impact="SYCL implementation changed (e.g., DPC++ to AdaptiveCpp); "
+              "entirely different runtime ABI, plugin interface, and binary layout. "
+              "All SYCL consumers must be rebuilt."),
     _E("sycl_pi_version_changed", _B,
        impact="PI interface version changed; runtime rejects plugins compiled against the old "
               "PI version. All backend plugins must be rebuilt or upgraded."),

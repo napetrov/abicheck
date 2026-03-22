@@ -238,10 +238,25 @@ Change Registry
 
 ### Risks
 
-- PI interface may evolve (DPC++ is moving toward Unified Runtime / UR).
-  Design should accommodate PI → UR migration path.
+- **PI-to-Unified-Runtime (UR) transition**: DPC++ is actively migrating from
+  PI (`libpi_*.so`, `piPluginInit`, `pi*` entry points) to Unified Runtime
+  (`libur_adapter_*.so`, `urAdapterGet`, `ur*` entry points). The current
+  implementation targets PI only. Migration strategy:
+  1. **Detection**: presence of `libur_adapter_*.so` files or `urAdapterGet`
+     symbol indicates UR-based distribution.
+  2. **Model extension**: `SyclPluginInfo` should gain an
+     `interface_type: "pi" | "ur"` field to distinguish plugin interface
+     generations.
+  3. **Dual support**: during the transition period, distributions may ship
+     both PI and UR plugins. The extractor should discover both patterns.
+  4. **Timeline**: UR support should be added in Phase 2 or 3, before PI is
+     fully deprecated upstream.
 - Plugin `.so` files may not ship with debug info, limiting type-level
   analysis to symbol-only mode.
+- **Linux-only scope**: current implementation assumes ELF plugins
+  (`libpi_*.so`, pyelftools). DPC++ also ships on Windows (`pi_*.dll`).
+  Windows support for SYCL plugin discovery is deferred but should be
+  addressed if PE platform support is needed.
 
 ---
 

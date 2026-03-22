@@ -98,15 +98,41 @@ class EnvironmentMatrix:
     sycl: SyclConstraints = field(default_factory=SyclConstraints)
     cuda: CudaConstraints = field(default_factory=CudaConstraints)
 
-    # Target platform
-    target_os: str = "linux"
-    target_arch: str = "x86_64"
+    # Target platform — None means unspecified (no assumption).
+    target_os: str | None = None
+    target_arch: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EnvironmentMatrix:
-        """Parse from a dictionary (e.g., loaded from YAML)."""
+        """Parse from a dictionary (e.g., loaded from YAML).
+
+        Raises:
+            TypeError: If *data* is not a dict.
+            ValueError: If field types are wrong.
+        """
+        if not isinstance(data, dict):
+            raise TypeError(
+                f"EnvironmentMatrix expects a dict, got {type(data).__name__}"
+            )
+
+        _KNOWN_KEYS = {
+            "compilers", "abi_version", "libstdcxx_dual_abi",
+            "sycl", "cuda", "target_os", "target_arch",
+        }
+        unknown = set(data) - _KNOWN_KEYS
+        if unknown:
+            log.warning("EnvironmentMatrix: unknown keys ignored: %s", unknown)
+
         sycl_data = data.get("sycl", {})
+        if not isinstance(sycl_data, dict):
+            raise ValueError(f"'sycl' must be a dict, got {type(sycl_data).__name__}")
         cuda_data = data.get("cuda", {})
+        if not isinstance(cuda_data, dict):
+            raise ValueError(f"'cuda' must be a dict, got {type(cuda_data).__name__}")
+
+        compilers = data.get("compilers", [])
+        if not isinstance(compilers, list):
+            raise ValueError(f"'compilers' must be a list, got {type(compilers).__name__}")
 
         sycl = SyclConstraints(
             implementation=sycl_data.get("implementation", ""),
@@ -118,6 +144,11 @@ class EnvironmentMatrix:
         driver_range = None
         if isinstance(driver_range_raw, (list, tuple)) and len(driver_range_raw) == 2:
             driver_range = (str(driver_range_raw[0]), str(driver_range_raw[1]))
+        elif driver_range_raw is not None:
+            log.warning(
+                "EnvironmentMatrix: 'cuda.driver_range' must be a 2-element "
+                "list [min, max], got %r; ignored", driver_range_raw,
+            )
 
         cuda = CudaConstraints(
             gpu_architectures=cuda_data.get("gpu_architectures", []),
@@ -127,13 +158,13 @@ class EnvironmentMatrix:
         )
 
         return cls(
-            compilers=data.get("compilers", []),
+            compilers=compilers,
             abi_version=data.get("abi_version"),
             libstdcxx_dual_abi=data.get("libstdcxx_dual_abi"),
             sycl=sycl,
             cuda=cuda,
-            target_os=data.get("target_os", "linux"),
-            target_arch=data.get("target_arch", "x86_64"),
+            target_os=data.get("target_os"),
+            target_arch=data.get("target_arch"),
         )
 
     @classmethod
