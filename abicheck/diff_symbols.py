@@ -111,8 +111,8 @@ def _check_function_signature(mangled: str, f_old: Function, f_new: Function) ->
         ))
 
     # Ref-qualifier changes (&/&&)
-    old_rq = getattr(f_old, "ref_qualifier", "") or ""
-    new_rq = getattr(f_new, "ref_qualifier", "") or ""
+    old_rq = f_old.ref_qualifier or ""
+    new_rq = f_new.ref_qualifier or ""
     if old_rq != new_rq:
         changes.append(Change(
             kind=ChangeKind.FUNC_REF_QUAL_CHANGED,

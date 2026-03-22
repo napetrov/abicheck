@@ -834,19 +834,20 @@ def _diff_inline_namespace(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     if not removed or not added:
         return changes
 
-    # Build lookup by demangled name with versioned namespace stripped
-    # Pattern: matches v1, v2, __v1, __v2 etc. as inline namespace components
-    _INLINE_NS_RE = re.compile(r'(?:::)?(?:__)?v(\d+)(?:::)')
+    # Build lookup by demangled name with versioned namespace stripped.
+    # Pattern: matches ::v1::, ::__v2::, etc. as inline namespace components.
+    # Anchored to :: on both sides to avoid matching v1 inside identifiers.
+    _INLINE_NS_RE = re.compile(r'::(?:__)?v\d+::')
 
     def _strip_inline_ns(name: str) -> str:
         return _INLINE_NS_RE.sub("::", name)
 
-    removed_by_stripped: dict[str, str] = {}
+    removed_by_stripped: dict[str, list[str]] = {}
     for m in removed:
         f = old_map[m]
         stripped = _strip_inline_ns(f.name)
         if stripped != f.name:
-            removed_by_stripped[stripped] = m
+            removed_by_stripped.setdefault(stripped, []).append(m)
 
     matched_count = 0
     for m in added:
@@ -894,8 +895,9 @@ def _diff_vtable_identity(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
     removed_rtti = old_rtti - new_rtti
     added_rtti = new_rtti - old_rtti
+    common_rtti = old_rtti & new_rtti
 
-    if not removed_rtti or not added_rtti:
+    if not removed_rtti and not added_rtti and not common_rtti:
         return changes
 
     # Check for version/visibility changes: same type but different symbol
@@ -910,10 +912,25 @@ def _diff_vtable_identity(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     added_types = {_type_key(s) for s in added_rtti}
 
     # Types whose RTTI symbols were both removed and re-added → identity changed
-    identity_changed = removed_types & added_types
-    if not identity_changed:
-        # Also check if typeinfo/vtable visibility changed for existing symbols
-        for sym_name in old_rtti & new_rtti:
+    identity_changed = removed_types & added_types if (removed_rtti and added_rtti) else set()
+    if identity_changed:
+        for type_key in sorted(identity_changed):
+            # Find representative old/new symbol names for this type
+            old_sym = next(s for s in removed_rtti if _type_key(s) == type_key)
+            new_sym = next(s for s in added_rtti if _type_key(s) == type_key)
+            changes.append(Change(
+                kind=ChangeKind.VTABLE_SYMBOL_IDENTITY_CHANGED,
+                symbol=old_sym,
+                description=(
+                    f"RTTI/vtable symbol identity changed: {old_sym} → {new_sym}; "
+                    f"may break cross-DSO RTTI and exception handling"
+                ),
+                old_value=old_sym,
+                new_value=new_sym,
+            ))
+    # Also check if typeinfo/vtable visibility changed for existing symbols
+    if common_rtti:
+        for sym_name in common_rtti:
             s_old = o.symbol_map.get(sym_name)
             s_new = n.symbol_map.get(sym_name)
             if s_old and s_new:
