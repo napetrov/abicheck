@@ -84,6 +84,7 @@ from .diff_types import (  # noqa: F401
     _diff_var_values,
     _is_version_stamped_typedef,
 )
+from .diff_sycl import _diff_sycl  # noqa: F401 — triggers detector registration
 from .dwarf_advanced import (
     diff_advanced_dwarf,  # noqa: F401 — re-export for monkeypatching
 )

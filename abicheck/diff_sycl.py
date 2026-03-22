@@ -1,0 +1,244 @@
+# Copyright 2026 Nikolay Petrov
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""SYCL Plugin Interface (PI) ABI change detector.
+
+Compares SYCL metadata between two snapshots to detect:
+- PI version incompatibilities
+- Missing/added PI entry points in backend plugins
+- Removed/added backend plugins
+- Plugin search path drift
+- Backend driver requirement changes
+
+Registered via ``@registry.detector("sycl")`` and automatically skipped when
+``SyclMetadata`` is absent from either snapshot.
+
+See ADR-020 for design rationale.
+"""
+from __future__ import annotations
+
+from .checker_policy import ChangeKind
+from .checker_types import Change
+from .detector_registry import registry
+from .model import AbiSnapshot
+from .sycl_metadata import SyclMetadata, SyclPluginInfo
+
+
+def _diff_pi_version(old: SyclMetadata, new: SyclMetadata) -> list[Change]:
+    """Detect PI interface version changes at the runtime level."""
+    changes: list[Change] = []
+    if old.pi_version and new.pi_version and old.pi_version != new.pi_version:
+        changes.append(Change(
+            kind=ChangeKind.SYCL_PI_VERSION_CHANGED,
+            symbol="sycl::pi",
+            description=(
+                f"PI interface version changed from {old.pi_version} to "
+                f"{new.pi_version}; backend plugins compiled against the old "
+                f"version may be rejected at runtime."
+            ),
+            old_value=old.pi_version,
+            new_value=new.pi_version,
+        ))
+    return changes
+
+
+def _diff_plugins(old: SyclMetadata, new: SyclMetadata) -> list[Change]:
+    """Detect added/removed backend plugins."""
+    changes: list[Change] = []
+    old_names = {p.name for p in old.plugins}
+    new_names = {p.name for p in new.plugins}
+
+    for name in sorted(old_names - new_names):
+        old_plugin = old.plugin_map[name]
+        changes.append(Change(
+            kind=ChangeKind.SYCL_PLUGIN_REMOVED,
+            symbol=f"sycl::pi::{name}",
+            description=(
+                f"Backend plugin '{old_plugin.library}' ({name}) removed; "
+                f"applications targeting the {old_plugin.backend_type} backend "
+                f"will fail at runtime."
+            ),
+            old_value=old_plugin.library,
+            new_value=None,
+        ))
+
+    for name in sorted(new_names - old_names):
+        new_plugin = new.plugin_map[name]
+        changes.append(Change(
+            kind=ChangeKind.SYCL_PLUGIN_ADDED,
+            symbol=f"sycl::pi::{name}",
+            description=(
+                f"Backend plugin '{new_plugin.library}' ({name}) added; "
+                f"new {new_plugin.backend_type} backend support available."
+            ),
+            old_value=None,
+            new_value=new_plugin.library,
+        ))
+
+    return changes
+
+
+def _diff_plugin_entrypoints(
+    old: SyclMetadata, new: SyclMetadata,
+) -> list[Change]:
+    """Detect added/removed PI entry points within plugins that exist in both."""
+    changes: list[Change] = []
+    old_map = old.plugin_map
+    new_map = new.plugin_map
+    common = sorted(set(old_map) & set(new_map))
+
+    for name in common:
+        old_plugin = old_map[name]
+        new_plugin = new_map[name]
+        old_eps = set(old_plugin.entry_points)
+        new_eps = set(new_plugin.entry_points)
+
+        for ep in sorted(old_eps - new_eps):
+            changes.append(Change(
+                kind=ChangeKind.SYCL_PI_ENTRYPOINT_REMOVED,
+                symbol=f"sycl::pi::{name}::{ep}",
+                description=(
+                    f"PI entry point '{ep}' removed from plugin "
+                    f"'{old_plugin.library}'; runtime calls to this function "
+                    f"will fail."
+                ),
+                old_value=ep,
+                new_value=None,
+            ))
+
+        for ep in sorted(new_eps - old_eps):
+            changes.append(Change(
+                kind=ChangeKind.SYCL_PI_ENTRYPOINT_ADDED,
+                symbol=f"sycl::pi::{name}::{ep}",
+                description=(
+                    f"PI entry point '{ep}' added to plugin "
+                    f"'{new_plugin.library}'."
+                ),
+                old_value=None,
+                new_value=ep,
+            ))
+
+        # Per-plugin PI version change
+        if (
+            old_plugin.pi_version
+            and new_plugin.pi_version
+            and old_plugin.pi_version != new_plugin.pi_version
+        ):
+            changes.append(Change(
+                kind=ChangeKind.SYCL_PI_VERSION_CHANGED,
+                symbol=f"sycl::pi::{name}",
+                description=(
+                    f"PI version of plugin '{name}' changed from "
+                    f"{old_plugin.pi_version} to {new_plugin.pi_version}."
+                ),
+                old_value=old_plugin.pi_version,
+                new_value=new_plugin.pi_version,
+            ))
+
+    return changes
+
+
+def _diff_plugin_search_paths(
+    old: SyclMetadata, new: SyclMetadata,
+) -> list[Change]:
+    """Detect plugin search path changes."""
+    changes: list[Change] = []
+    if old.plugin_search_paths != new.plugin_search_paths:
+        changes.append(Change(
+            kind=ChangeKind.SYCL_PLUGIN_SEARCH_PATH_CHANGED,
+            symbol="sycl::pi::search_paths",
+            description=(
+                "SYCL plugin search paths changed; plugins may not be found "
+                "at runtime without deployment configuration update."
+            ),
+            old_value=", ".join(old.plugin_search_paths),
+            new_value=", ".join(new.plugin_search_paths),
+        ))
+    return changes
+
+
+def _diff_runtime_version(
+    old: SyclMetadata, new: SyclMetadata,
+) -> list[Change]:
+    """Detect SYCL runtime version changes (informational)."""
+    changes: list[Change] = []
+    if (
+        old.runtime_version
+        and new.runtime_version
+        and old.runtime_version != new.runtime_version
+    ):
+        changes.append(Change(
+            kind=ChangeKind.SYCL_RUNTIME_VERSION_CHANGED,
+            symbol="sycl::runtime",
+            description=(
+                f"SYCL runtime version changed from {old.runtime_version} "
+                f"to {new.runtime_version}."
+            ),
+            old_value=old.runtime_version,
+            new_value=new.runtime_version,
+        ))
+    return changes
+
+
+def _diff_backend_driver_reqs(
+    old: SyclMetadata, new: SyclMetadata,
+) -> list[Change]:
+    """Detect backend driver requirement changes across plugins."""
+    changes: list[Change] = []
+    old_map = old.plugin_map
+    new_map = new.plugin_map
+
+    for name in sorted(set(old_map) & set(new_map)):
+        old_drv = old_map[name].min_driver_version
+        new_drv = new_map[name].min_driver_version
+        if old_drv and new_drv and old_drv != new_drv:
+            changes.append(Change(
+                kind=ChangeKind.SYCL_BACKEND_DRIVER_REQ_CHANGED,
+                symbol=f"sycl::pi::{name}::driver",
+                description=(
+                    f"Minimum driver requirement for {name} backend changed "
+                    f"from {old_drv} to {new_drv}."
+                ),
+                old_value=old_drv,
+                new_value=new_drv,
+            ))
+
+    return changes
+
+
+# ---------------------------------------------------------------------------
+# Detector registration
+# ---------------------------------------------------------------------------
+
+@registry.detector(
+    "sycl",
+    requires_support=lambda o, n: (
+        o.sycl is not None and n.sycl is not None,
+        "missing SYCL metadata",
+    ),
+)
+def _diff_sycl(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """SYCL PI compatibility detector (ADR-020)."""
+    o = old.sycl
+    n = new.sycl
+    assert o is not None and n is not None  # guaranteed by requires_support
+
+    changes: list[Change] = []
+    changes.extend(_diff_pi_version(o, n))
+    changes.extend(_diff_plugins(o, n))
+    changes.extend(_diff_plugin_entrypoints(o, n))
+    changes.extend(_diff_plugin_search_paths(o, n))
+    changes.extend(_diff_runtime_version(o, n))
+    changes.extend(_diff_backend_driver_reqs(o, n))
+    return changes
