@@ -214,6 +214,112 @@ Change Registry
 
 ---
 
+## How SYCL scanning works (integration guide)
+
+SYCL scanning is **automatic** — no special flags or configuration needed.
+It piggybacks on the existing ELF scan pipeline with zero overhead for
+non-SYCL libraries.
+
+### Data flow
+
+```
+abicheck compare old/lib/libsycl.so new/lib/libsycl.so --header new/include/sycl/
+          │
+          ▼
+    service.py:run_dump()
+          │
+          ├── 1. _dump_elf()        ── existing ELF pipeline (symbols, types, DWARF)
+          │       returns AbiSnapshot with elf=..., functions=..., types=...
+          │
+          └── 2. _try_attach_sycl_metadata(snapshot, lib_path)
+                  │
+                  ├── _detect_sycl_implementation(lib_path.parent)
+                  │   checks: libsycl.so exists? → "dpcpp"
+                  │           libacpp-rt.so exists? → "adaptivecpp"
+                  │           neither? → None (skip, zero cost)
+                  │
+                  └── IF detected → parse_sycl_metadata(lib_dir)
+                      │
+                      ├── discover_sycl_plugins() — glob libpi_*.so in lib_dir
+                      │   for each plugin:
+                      │   ├── open .so, fstat() to verify regular file
+                      │   ├── parse .dynsym via pyelftools
+                      │   ├── collect pi* symbols (filter hidden/internal)
+                      │   └── detect PI version from symbol heuristics
+                      │
+                      └── attach result → snapshot.sycl = SyclMetadata(...)
+
+    checker.py:compare(old_snap, new_snap)
+          │
+          └── detector_registry.run_all()
+              │
+              ├── "elf" detector  ── runs always (libsycl.so symbol diff)
+              ├── "types" detector ── runs always (type layout diff)
+              ├── "sycl" detector ── runs ONLY IF both old.sycl and new.sycl
+              │   │                   are not None (auto-gated by requires_support)
+              │   ├── _diff_implementation()      ── DPC++ → AdaptiveCpp?
+              │   ├── _diff_pi_version()           ── PI version changed?
+              │   ├── _diff_plugins()              ── plugins added/removed?
+              │   ├── _diff_plugin_entrypoints()   ── PI functions missing?
+              │   ├── _diff_plugin_search_paths()  ── search paths changed?
+              │   ├── _diff_runtime_version()       ── informational
+              │   └── _diff_backend_driver_reqs()   ── driver req raised?
+              └── ... other detectors
+```
+
+### Why no `--sycl-lib-dir` flag?
+
+The library path already tells us everything. When you pass `libsycl.so`, its
+parent directory is the lib dir. The auto-detection (`_detect_sycl_implementation`)
+runs a few `Path.exists()` calls — effectively zero cost — and only triggers
+the full plugin scan when SYCL artifacts are found.
+
+For `abicheck compare libfoo.so.old libfoo.so.new` on a non-SYCL library,
+the detection short-circuits immediately (no `libsycl.so` in parent dir)
+and adds zero overhead.
+
+### What gets compared
+
+A SYCL scan produces TWO independent layers of results in a single run:
+
+1. **Host ABI** (existing pipeline): symbol additions/removals, type layout
+   changes, vtable mutations in `libsycl.so` itself. This is the same as
+   scanning any shared library.
+
+2. **Plugin Interface** (SYCL detector): plugin inventory, PI entry points,
+   PI version, search paths. This is the SYCL-specific layer that checks
+   the runtime ↔ plugin contract.
+
+Both layers are reported together. A single comparison may produce both
+"function `sycl::device::get_info` removed" (from ELF diff) and
+"PI plugin `libpi_opencl.so` removed" (from SYCL diff).
+
+### Example CI usage
+
+```yaml
+# GitHub Action — works with zero SYCL-specific configuration
+- uses: ./
+  with:
+    mode: compare
+    old-library: sdk-old/lib/libsycl.so
+    new-library: sdk-new/lib/libsycl.so
+    header: sdk-new/include/sycl/
+    policy: strict_abi
+    fail-on-breaking: 'true'
+```
+
+The action auto-detects the SYCL distribution because `libsycl.so` is in
+the lib dir alongside the `libpi_*.so` plugins. No additional inputs needed.
+
+### Non-SYCL libraries are unaffected
+
+The only cost for `abicheck compare libfoo.so.old libfoo.so.new` is
+`_detect_sycl_implementation(parent_dir)` which does 2-3 `Path.exists()`
+calls and returns `None`. No plugin scanning, no pyelftools overhead,
+no extra memory allocation.
+
+---
+
 ## Consequences
 
 ### Positive
@@ -238,25 +344,13 @@ Change Registry
 
 ### Risks
 
-- **PI-to-Unified-Runtime (UR) transition**: DPC++ is actively migrating from
-  PI (`libpi_*.so`, `piPluginInit`, `pi*` entry points) to Unified Runtime
-  (`libur_adapter_*.so`, `urAdapterGet`, `ur*` entry points). The current
-  implementation targets PI only. Migration strategy:
-  1. **Detection**: presence of `libur_adapter_*.so` files or `urAdapterGet`
-     symbol indicates UR-based distribution.
-  2. **Model extension**: `SyclPluginInfo` should gain an
-     `interface_type: "pi" | "ur"` field to distinguish plugin interface
-     generations.
-  3. **Dual support**: during the transition period, distributions may ship
-     both PI and UR plugins. The extractor should discover both patterns.
-  4. **Timeline**: UR support should be added in Phase 2 or 3, before PI is
-     fully deprecated upstream.
-- Plugin `.so` files may not ship with debug info, limiting type-level
-  analysis to symbol-only mode.
-- **Linux-only scope**: current implementation assumes ELF plugins
-  (`libpi_*.so`, pyelftools). DPC++ also ships on Windows (`pi_*.dll`).
-  Windows support for SYCL plugin discovery is deferred but should be
-  addressed if PE platform support is needed.
+- PI interface is DPC++ specific. If Intel deprecates PI in favour of a
+  different plugin mechanism, the extractor will need updating. When that
+  happens, add a new pattern alongside PI, not replace it.
+- Plugin `.so` files rarely ship debug info, so type-level analysis is
+  limited to symbol-only mode (entry point presence/absence).
+- Current implementation is Linux-only (ELF plugins, pyelftools). Windows
+  support (`pi_*.dll`) is deferred until PE platform support is needed.
 
 ---
 
@@ -271,12 +365,15 @@ Change Registry
 4. Add `ChangeKind` enum entries in `checker_policy.py`
 5. Bump snapshot schema version to 4
 
-### Phase 2: Static extraction (Sprint 2)
+### Phase 2: Static extraction and auto-detection (Sprint 2)
 
 1. Implement `parse_sycl_metadata()` — inventory plugin `.so` files, extract
-   `pi*` exports via pyelftools
-2. Wire extraction into `dumper.py` pipeline (detect SYCL artifacts alongside
-   ELF parsing)
+   `pi*` exports via pyelftools (`.dynsym` only, visibility-filtered)
+2. Wire extraction into `service.py:run_dump()` via auto-detection: after the
+   ELF dump completes, check if the library's parent directory looks like a
+   SYCL distribution. If so, attach `SyclMetadata` to the snapshot. No new
+   CLI flags — zero overhead for non-SYCL libraries (cost: a few `Path.exists()`
+   calls from `_detect_sycl_implementation()`)
 3. Implement `diff_sycl.py` detector with `@registry.detector("sycl")`
 
 ### Phase 3: Environment matrix (Sprint 3)

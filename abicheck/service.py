@@ -205,12 +205,39 @@ def run_dump(
     _includes = includes or []
 
     if binary_fmt == "elf":
-        return _dump_elf(path, _headers, _includes, version, lang, dwarf_only=dwarf_only)
+        snap = _dump_elf(path, _headers, _includes, version, lang, dwarf_only=dwarf_only)
+        _try_attach_sycl_metadata(snap, path)
+        return snap
     if binary_fmt == "pe":
         return _dump_pe(path, version, pdb_path=pdb_path)
     if binary_fmt == "macho":
         return _dump_macho(path, version)
     raise ValidationError(f"Unsupported binary format: {binary_fmt}")
+
+
+def _try_attach_sycl_metadata(snap: AbiSnapshot, lib_path: Path) -> None:
+    """Auto-detect SYCL distribution and attach plugin metadata.
+
+    Runs only when ``lib_path`` lives in a directory that looks like a
+    SYCL runtime distribution (contains ``libsycl.so`` or ``libacpp-rt.so``).
+    Cost for non-SYCL libraries: one ``_detect_sycl_implementation()`` call
+    which is a few ``Path.exists()`` checks — effectively zero overhead.
+    """
+    from .sycl_metadata import parse_sycl_metadata
+
+    lib_dir = lib_path.resolve().parent
+    try:
+        sycl = parse_sycl_metadata(lib_dir)
+    except Exception as exc:  # noqa: BLE001
+        _logger.debug("SYCL metadata extraction skipped: %s", exc)
+        return
+    if sycl is not None:
+        snap.sycl = sycl
+        _logger.info(
+            "SYCL metadata attached: implementation=%s, %d plugin(s)",
+            sycl.implementation,
+            len(sycl.plugins),
+        )
 
 
 def _dump_elf(
