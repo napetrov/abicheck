@@ -153,6 +153,28 @@ class TestProtectedVisibility:
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
         assert not _has_kind(r, ChangeKind.PROTECTED_VISIBILITY_CHANGED)
 
+    def test_common_default_to_protected(self):
+        """COMMON data symbols should also trigger PROTECTED_VISIBILITY_CHANGED."""
+        old_elf = ElfMetadata(symbols=[
+            _elf_sym("common_sym", sym_type=SymbolType.COMMON, visibility="default"),
+        ])
+        new_elf = ElfMetadata(symbols=[
+            _elf_sym("common_sym", sym_type=SymbolType.COMMON, visibility="protected"),
+        ])
+        r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
+        assert _has_kind(r, ChangeKind.PROTECTED_VISIBILITY_CHANGED)
+
+    def test_common_protected_to_default(self):
+        """COMMON data symbols: protected→default should also trigger."""
+        old_elf = ElfMetadata(symbols=[
+            _elf_sym("common_sym", sym_type=SymbolType.COMMON, visibility="protected"),
+        ])
+        new_elf = ElfMetadata(symbols=[
+            _elf_sym("common_sym", sym_type=SymbolType.COMMON, visibility="default"),
+        ])
+        r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
+        assert _has_kind(r, ChangeKind.PROTECTED_VISIBILITY_CHANGED)
+
     def test_same_visibility_no_change(self):
         old_elf = ElfMetadata(symbols=[
             _elf_sym("global_data", sym_type=SymbolType.OBJECT, visibility="default"),
@@ -190,6 +212,33 @@ class TestSymbolVersionAlias:
     def test_no_versioned_symbols_no_change(self):
         old_elf = ElfMetadata(symbols=[_elf_sym("foo")])
         new_elf = ElfMetadata(symbols=[_elf_sym("foo")])
+        r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
+        assert not _has_kind(r, ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED)
+
+    def test_is_default_flip_same_version_no_change(self):
+        """Same version string but is_default flips → not a version alias change.
+
+        The detector tracks default *version string* changes, not default flag flips.
+        When is_default goes True→False the symbol loses its default designation
+        but the version string hasn't changed to a different value.
+        """
+        old_elf = ElfMetadata(symbols=[
+            _elf_sym("foo", version="VER_1.0", is_default=True),
+        ])
+        new_elf = ElfMetadata(symbols=[
+            _elf_sym("foo", version="VER_1.0", is_default=False),
+        ])
+        r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
+        assert not _has_kind(r, ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED)
+
+    def test_unversioned_is_default_flip_no_change(self):
+        """Non-versioned symbols flipping is_default → no change."""
+        old_elf = ElfMetadata(symbols=[
+            _elf_sym("foo", version="", is_default=False),
+        ])
+        new_elf = ElfMetadata(symbols=[
+            _elf_sym("foo", version="", is_default=True),
+        ])
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
         assert not _has_kind(r, ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED)
 
@@ -246,6 +295,20 @@ class TestGlibcxxDualAbi:
         new_funcs = [_pub_func(f"other{i}", f"_Zother{i}v") for i in range(10)]
         r = compare(_snap(functions=old_funcs), _snap(functions=new_funcs))
         assert not _has_kind(r, ChangeKind.GLIBCXX_DUAL_ABI_FLIP_DETECTED)
+
+    def test_exact_threshold_cxx11_to_legacy(self):
+        """Exactly 5 removed + 5 added (threshold boundary) → detected."""
+        old_funcs = self._make_cxx11_funcs("lib", 5)
+        new_funcs = self._make_legacy_funcs("lib", 5)
+        r = compare(_snap(functions=old_funcs), _snap(functions=new_funcs))
+        assert _has_kind(r, ChangeKind.GLIBCXX_DUAL_ABI_FLIP_DETECTED)
+
+    def test_exact_threshold_legacy_to_cxx11(self):
+        """Exactly 5 removed + 5 added (threshold boundary), reverse direction."""
+        old_funcs = self._make_legacy_funcs("lib", 5)
+        new_funcs = self._make_cxx11_funcs("lib", 5)
+        r = compare(_snap(functions=old_funcs), _snap(functions=new_funcs))
+        assert _has_kind(r, ChangeKind.GLIBCXX_DUAL_ABI_FLIP_DETECTED)
 
 
 # ── INLINE_NAMESPACE_MOVED ────────────────────────────────────────────────────

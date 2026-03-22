@@ -217,9 +217,6 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     new_by_name: dict[str, Function] = {
         f.name: f for f in new_map.values()
     }
-    old_by_name: dict[str, Function] = {
-        f.name: f for f in old_map.values()
-    }
     matched_by_name: set[str] = set()
 
     for mangled, f_old in old_map.items():
