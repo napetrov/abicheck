@@ -697,8 +697,12 @@ def _diff_protected_visibility(old: AbiSnapshot, new: AbiSnapshot) -> list[Chang
             continue
         if {old_vis, new_vis} != _ELF_VIS_PROTECTED_PAIR:
             continue
-        # Skip function symbols — already covered by func_visibility_protected_changed
-        if s_old.sym_type == SymbolType.FUNC:
+        # Only report for actual data symbols (OBJECT/COMMON) where copy
+        # relocations are a concern.  Function symbols are already covered by
+        # func_visibility_protected_changed; TLS/IFUNC/other types don't use
+        # copy relocations, so DEFAULT↔PROTECTED is benign for them.
+        _DATA_TYPES = (SymbolType.OBJECT, SymbolType.COMMON)
+        if s_old.sym_type not in _DATA_TYPES or s_new.sym_type not in _DATA_TYPES:
             continue
         changes.append(Change(
             kind=ChangeKind.PROTECTED_VISIBILITY_CHANGED,
@@ -835,26 +839,30 @@ def _diff_inline_namespace(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         return changes
 
     # Build lookup by demangled name with versioned namespace stripped.
-    # Pattern: matches ::v1::, ::__v2::, etc. as inline namespace components.
-    # Anchored to :: on both sides to avoid matching v1 inside identifiers.
-    _INLINE_NS_RE = re.compile(r'::(?:__)?v\d+::')
+    # Matches Itanium-style ::v1::, ::__v2:: AND libc++-style ::__1::, ::__2::
+    # Anchored to :: on both sides to avoid matching inside identifiers.
+    _INLINE_NS_RE = re.compile(r'::(?:__)?(?:v)?\d+::')
 
     def _strip_inline_ns(name: str) -> str:
         return _INLINE_NS_RE.sub("::", name)
 
+    # Index ALL removed symbols by stripped name (not just those with a
+    # namespace match) so that unversioned→versioned moves are caught too.
     removed_by_stripped: dict[str, list[str]] = {}
     for m in removed:
         f = old_map[m]
         stripped = _strip_inline_ns(f.name)
-        if stripped != f.name:
-            removed_by_stripped.setdefault(stripped, []).append(m)
+        removed_by_stripped.setdefault(stripped, []).append(m)
 
     matched_count = 0
     for m in added:
         f = new_map[m]
         stripped = _strip_inline_ns(f.name)
         if stripped in removed_by_stripped:
-            matched_count += 1
+            # Only count as a move if at least one side had an inline namespace
+            old_name = old_map[removed_by_stripped[stripped][0]].name
+            if stripped != f.name or stripped != old_name:
+                matched_count += 1
 
     # Only emit if we find a pattern of namespace-version moves (2+ symbols)
     if matched_count >= 2:
@@ -900,53 +908,69 @@ def _diff_vtable_identity(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     if not removed_rtti and not added_rtti and not common_rtti:
         return changes
 
-    # Check for version/visibility changes: same type but different symbol
-    # Group by prefix (_ZTV/_ZTI/_ZTS) + type hash (rest of symbol)
-    def _type_key(sym: str) -> str:
+    # Use compound (prefix, type_hash) keys so _ZTV and _ZTI for the same
+    # type are tracked independently — they are different RTTI artefacts.
+    def _rtti_key(sym: str) -> tuple[str, str]:
         for p in _RTTI_PREFIXES:
             if sym.startswith(p):
-                return sym[len(p):]
-        return sym
+                return (p, sym[len(p):])
+        return ("", sym)
 
-    removed_types = {_type_key(s) for s in removed_rtti}
-    added_types = {_type_key(s) for s in added_rtti}
+    removed_keys = {_rtti_key(s) for s in removed_rtti}
+    added_keys = {_rtti_key(s) for s in added_rtti}
 
-    # Types whose RTTI symbols were both removed and re-added → identity changed
-    identity_changed = removed_types & added_types if (removed_rtti and added_rtti) else set()
+    # Same (prefix, type_hash) in both removed and added → identity changed
+    # (e.g. _ZTVFoo@@V1 removed, _ZTVFoo@@V2 added — same prefix + type)
+    identity_changed = removed_keys & added_keys if (removed_rtti and added_rtti) else set()
     if identity_changed:
-        for type_key in sorted(identity_changed):
-            # Find representative old/new symbol names for this type
-            old_sym = next(s for s in removed_rtti if _type_key(s) == type_key)
-            new_sym = next(s for s in added_rtti if _type_key(s) == type_key)
+        for rkey in sorted(identity_changed):
+            prefix, type_hash = rkey
+            old_sym = prefix + type_hash
+            new_sym = prefix + type_hash  # same name, but different properties
+            # Reconstruct from actual removed/added sets for accuracy
+            actual_old = next((s for s in removed_rtti if _rtti_key(s) == rkey), old_sym)
+            actual_new = next((s for s in added_rtti if _rtti_key(s) == rkey), new_sym)
             changes.append(Change(
                 kind=ChangeKind.VTABLE_SYMBOL_IDENTITY_CHANGED,
-                symbol=old_sym,
+                symbol=actual_old,
                 description=(
-                    f"RTTI/vtable symbol identity changed: {old_sym} → {new_sym}; "
+                    f"RTTI/vtable symbol identity changed: {actual_old} → {actual_new}; "
                     f"may break cross-DSO RTTI and exception handling"
                 ),
-                old_value=old_sym,
-                new_value=new_sym,
+                old_value=actual_old,
+                new_value=actual_new,
             ))
-    # Also check if typeinfo/vtable visibility changed for existing symbols
+
+    # Also check existing RTTI symbols for visibility or version changes
     if common_rtti:
         for sym_name in common_rtti:
             s_old = o.symbol_map.get(sym_name)
             s_new = n.symbol_map.get(sym_name)
-            if s_old and s_new:
-                old_vis = s_old.visibility or "default"
-                new_vis = s_new.visibility or "default"
-                if old_vis != new_vis:
-                    changes.append(Change(
-                        kind=ChangeKind.VTABLE_SYMBOL_IDENTITY_CHANGED,
-                        symbol=sym_name,
-                        description=(
-                            f"RTTI/vtable symbol visibility changed: {sym_name} "
-                            f"({old_vis} → {new_vis}); may break cross-DSO RTTI"
-                        ),
-                        old_value=old_vis,
-                        new_value=new_vis,
-                    ))
+            if not s_old or not s_new:
+                continue
+            old_vis = s_old.visibility or "default"
+            new_vis = s_new.visibility or "default"
+            vis_changed = old_vis != new_vis
+            ver_changed = (s_old.version != s_new.version) or (s_old.is_default != s_new.is_default)
+            if vis_changed or ver_changed:
+                detail_parts = []
+                if vis_changed:
+                    detail_parts.append(f"visibility {old_vis} → {new_vis}")
+                if ver_changed:
+                    old_v = s_old.version or "(none)"
+                    new_v = s_new.version or "(none)"
+                    detail_parts.append(f"version {old_v} → {new_v}")
+                detail = ", ".join(detail_parts)
+                changes.append(Change(
+                    kind=ChangeKind.VTABLE_SYMBOL_IDENTITY_CHANGED,
+                    symbol=sym_name,
+                    description=(
+                        f"RTTI/vtable symbol changed: {sym_name} "
+                        f"({detail}); may break cross-DSO RTTI"
+                    ),
+                    old_value=old_vis if vis_changed else (s_old.version or "(none)"),
+                    new_value=new_vis if vis_changed else (s_new.version or "(none)"),
+                ))
 
     return changes
 

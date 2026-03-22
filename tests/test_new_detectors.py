@@ -131,6 +131,28 @@ class TestProtectedVisibility:
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
         assert not _has_kind(r, ChangeKind.PROTECTED_VISIBILITY_CHANGED)
 
+    def test_tls_not_reported(self):
+        """TLS symbols don't use copy relocations — DEFAULT↔PROTECTED is benign."""
+        old_elf = ElfMetadata(symbols=[
+            _elf_sym("tls_sym", sym_type=SymbolType.TLS, visibility="default"),
+        ])
+        new_elf = ElfMetadata(symbols=[
+            _elf_sym("tls_sym", sym_type=SymbolType.TLS, visibility="protected"),
+        ])
+        r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
+        assert not _has_kind(r, ChangeKind.PROTECTED_VISIBILITY_CHANGED)
+
+    def test_ifunc_not_reported(self):
+        """IFUNC symbols should not trigger PROTECTED_VISIBILITY_CHANGED."""
+        old_elf = ElfMetadata(symbols=[
+            _elf_sym("ifunc_sym", sym_type=SymbolType.IFUNC, visibility="default"),
+        ])
+        new_elf = ElfMetadata(symbols=[
+            _elf_sym("ifunc_sym", sym_type=SymbolType.IFUNC, visibility="protected"),
+        ])
+        r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
+        assert not _has_kind(r, ChangeKind.PROTECTED_VISIBILITY_CHANGED)
+
     def test_same_visibility_no_change(self):
         old_elf = ElfMetadata(symbols=[
             _elf_sym("global_data", sym_type=SymbolType.OBJECT, visibility="default"),
@@ -268,21 +290,59 @@ class TestInlineNamespace:
         r = compare(_snap(functions=old_funcs), _snap(functions=new_funcs))
         assert not _has_kind(r, ChangeKind.INLINE_NAMESPACE_MOVED)
 
+    def test_libcxx_1_to_2_move_detected(self):
+        """libc++ inline namespace ::__1:: → ::__2:: should be detected."""
+        old_funcs = [
+            _pub_func(f"std::__1::func{i}", f"_ZNSt3__1func{i}Ev")
+            for i in range(5)
+        ]
+        new_funcs = [
+            _pub_func(f"std::__2::func{i}", f"_ZNSt3__2func{i}Ev")
+            for i in range(5)
+        ]
+        r = compare(_snap(functions=old_funcs), _snap(functions=new_funcs))
+        assert _has_kind(r, ChangeKind.INLINE_NAMESPACE_MOVED)
+
+    def test_unversioned_to_versioned_move_detected(self):
+        """Unversioned → versioned namespace move should be detected."""
+        old_funcs = [
+            _pub_func(f"ns::func{i}", f"_ZN2nsfunc{i}Ev_old")
+            for i in range(5)
+        ]
+        new_funcs = [
+            _pub_func(f"ns::v2::func{i}", f"_ZN2ns2v2func{i}Ev_new")
+            for i in range(5)
+        ]
+        r = compare(_snap(functions=old_funcs), _snap(functions=new_funcs))
+        assert _has_kind(r, ChangeKind.INLINE_NAMESPACE_MOVED)
+
 
 # ── VTABLE_SYMBOL_IDENTITY_CHANGED ────────────────────────────────────────────
 
 class TestVtableIdentity:
-    def test_rtti_identity_change_same_type_key(self):
-        """RTTI symbols removed and re-added with same type key but different prefix.
-
-        E.g. old has _ZTV5MyObj (vtable), new has _ZTS5MyObj (typeinfo name) —
-        both have type key '5MyObj', indicating RTTI identity changed.
-        """
+    def test_cross_prefix_not_identity_change(self):
+        """_ZTV→_ZTS for same type is NOT an identity change (different RTTI artefacts)."""
         old_elf = ElfMetadata(symbols=[
             _elf_sym("_ZTV5MyObj", sym_type=SymbolType.OBJECT, size=24),
         ])
         new_elf = ElfMetadata(symbols=[
             _elf_sym("_ZTS5MyObj", sym_type=SymbolType.OBJECT, size=16),
+        ])
+        r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
+        # Different prefixes → not same RTTI artefact
+        assert not _has_kind(r, ChangeKind.VTABLE_SYMBOL_IDENTITY_CHANGED)
+
+    def test_same_prefix_identity_change(self):
+        """Same RTTI prefix removed and re-added with different properties → identity change.
+
+        Simulates version-script change: _ZTV5MyObj present in both old and new
+        but with different versions (handled via common_rtti path).
+        """
+        old_elf = ElfMetadata(symbols=[
+            _elf_sym("_ZTV5MyObj", sym_type=SymbolType.OBJECT, version="VER_1", is_default=True),
+        ])
+        new_elf = ElfMetadata(symbols=[
+            _elf_sym("_ZTV5MyObj", sym_type=SymbolType.OBJECT, version="VER_2", is_default=True),
         ])
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
         assert _has_kind(r, ChangeKind.VTABLE_SYMBOL_IDENTITY_CHANGED)
@@ -306,6 +366,19 @@ class TestVtableIdentity:
         ])
         new_elf = ElfMetadata(symbols=[
             _elf_sym("regular_func", sym_type=SymbolType.FUNC),
+        ])
+        r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
+        assert not _has_kind(r, ChangeKind.VTABLE_SYMBOL_IDENTITY_CHANGED)
+
+    def test_same_rtti_no_change(self):
+        """Identical RTTI symbols should not trigger."""
+        old_elf = ElfMetadata(symbols=[
+            _elf_sym("_ZTV5MyObj", sym_type=SymbolType.OBJECT, visibility="default",
+                     version="VER_1", is_default=True),
+        ])
+        new_elf = ElfMetadata(symbols=[
+            _elf_sym("_ZTV5MyObj", sym_type=SymbolType.OBJECT, visibility="default",
+                     version="VER_1", is_default=True),
         ])
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
         assert not _has_kind(r, ChangeKind.VTABLE_SYMBOL_IDENTITY_CHANGED)
@@ -376,9 +449,30 @@ class TestFuncRefQualChanged:
 # ── FUNC_LANGUAGE_LINKAGE_CHANGED ─────────────────────────────────────────────
 
 class TestFuncLanguageLinkageChanged:
-    def test_linkage_changed(self):
+    def test_linkage_changed_same_mangled(self):
+        """Same mangled name, extern C flag flipped."""
         f_old = _pub_func("c_func", "c_func", is_extern_c=True)
         f_new = _pub_func("c_func", "c_func", is_extern_c=False)
+        r = compare(_snap(functions=[f_old]), _snap(functions=[f_new]))
+        assert _has_kind(r, ChangeKind.FUNC_LANGUAGE_LINKAGE_CHANGED)
+
+    def test_extern_c_to_cpp_different_mangled(self):
+        """extern "C" → C++ flip: mangled name changes (c_func → _Z6c_funcv).
+
+        The fallback matcher should still pair them by plain name.
+        """
+        f_old = _pub_func("c_func", "c_func", is_extern_c=True)
+        f_new = _pub_func("c_func", "_Z6c_funcv", is_extern_c=False)
+        r = compare(_snap(functions=[f_old]), _snap(functions=[f_new]))
+        assert _has_kind(r, ChangeKind.FUNC_LANGUAGE_LINKAGE_CHANGED)
+
+    def test_cpp_to_extern_c_different_mangled(self):
+        """C++ → extern "C" flip: mangled name changes (_Z6c_funcv → c_func).
+
+        The reverse direction should also be detected.
+        """
+        f_old = _pub_func("c_func", "_Z6c_funcv", is_extern_c=False)
+        f_new = _pub_func("c_func", "c_func", is_extern_c=True)
         r = compare(_snap(functions=[f_old]), _snap(functions=[f_new]))
         assert _has_kind(r, ChangeKind.FUNC_LANGUAGE_LINKAGE_CHANGED)
 
