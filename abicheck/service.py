@@ -543,7 +543,11 @@ def render_output(
             show_impact=show_impact,
         )
 
-    _SUPPORTED_FORMATS = {"json", "sarif", "html", "markdown", "md"}
+    if fmt == "junit":
+        from .junit_report import to_junit_xml
+        return to_junit_xml(result, old, show_only=show_only)
+
+    _SUPPORTED_FORMATS = {"json", "sarif", "html", "junit", "markdown", "md"}
     if fmt not in _SUPPORTED_FORMATS:
         raise ValidationError(f"Unsupported output format: {fmt!r} (expected one of {sorted(_SUPPORTED_FORMATS)})")
 
