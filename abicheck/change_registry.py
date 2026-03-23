@@ -462,4 +462,32 @@ REGISTRY = ChangeKindRegistry([
        impact="Public ABI surface grew or shrank dramatically (e.g. lost "
               "-fvisibility=hidden). This is a configuration/packaging signal, not "
               "a per-symbol break, but may indicate an unintended visibility regression."),
+
+    # ── SYCL Plugin Interface (PI) ────────────────────────────────────────
+    _E("sycl_implementation_changed", _B,
+       impact="SYCL implementation changed (e.g., DPC++ to AdaptiveCpp); "
+              "entirely different runtime ABI, plugin interface, and binary layout. "
+              "All SYCL consumers must be rebuilt."),
+    _E("sycl_pi_version_changed", _B,
+       impact="PI interface version changed; runtime rejects plugins compiled against the old "
+              "PI version. All backend plugins must be rebuilt or upgraded."),
+    _E("sycl_pi_entrypoint_removed", _B,
+       impact="Required PI entry point removed from plugin dispatch table; runtime calls to "
+              "this function will crash or return PI_ERROR_UNKNOWN."),
+    _E("sycl_pi_entrypoint_added", _C, is_addition=True,
+       impact="New PI entry point added to dispatch table; existing plugins are unaffected."),
+    _E("sycl_plugin_removed", _B,
+       impact="Backend plugin removed from distribution; applications targeting this backend "
+              "will fail at runtime with PI_ERROR_DEVICE_NOT_FOUND."),
+    _E("sycl_plugin_added", _C, is_addition=True,
+       impact="New backend plugin available; broadens hardware support."),
+    _E("sycl_plugin_search_path_changed", _R,
+       impact="Plugin discovery path changed; plugins may not be found at runtime unless "
+              "deployment configuration is updated."),
+    _E("sycl_runtime_version_changed", _C,
+       impact="SYCL runtime version changed; informational. Actual binary breaks are detected "
+              "by symbol/type diff of the runtime library."),
+    _E("sycl_backend_driver_req_changed", _R,
+       impact="Minimum backend driver version requirement increased; may fail on systems with "
+              "older drivers (e.g., Level Zero, OpenCL ICD)."),
 ])

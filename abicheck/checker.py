@@ -68,6 +68,7 @@ from .diff_platform import (  # noqa: F401
     _extract_template_args,
     _template_outer,
 )
+from .diff_sycl import _diff_sycl  # noqa: F401 — triggers detector registration
 from .diff_symbols import _PUBLIC_VIS
 from .diff_types import (  # noqa: F401
     _diff_const_overloads,

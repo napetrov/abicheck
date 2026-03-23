@@ -315,6 +315,17 @@ class ChangeKind(str, Enum):
     VTABLE_SYMBOL_IDENTITY_CHANGED = "vtable_symbol_identity_changed"  # vtable/typeinfo symbol rename
     ABI_SURFACE_EXPLOSION = "abi_surface_explosion"  # dramatic ABI surface growth/shrink
 
+    # SYCL Plugin Interface (PI) — ADR-020
+    SYCL_IMPLEMENTATION_CHANGED = "sycl_implementation_changed"
+    SYCL_PI_VERSION_CHANGED = "sycl_pi_version_changed"
+    SYCL_PI_ENTRYPOINT_REMOVED = "sycl_pi_entrypoint_removed"
+    SYCL_PI_ENTRYPOINT_ADDED = "sycl_pi_entrypoint_added"
+    SYCL_PLUGIN_REMOVED = "sycl_plugin_removed"
+    SYCL_PLUGIN_ADDED = "sycl_plugin_added"
+    SYCL_PLUGIN_SEARCH_PATH_CHANGED = "sycl_plugin_search_path_changed"
+    SYCL_RUNTIME_VERSION_CHANGED = "sycl_runtime_version_changed"
+    SYCL_BACKEND_DRIVER_REQ_CHANGED = "sycl_backend_driver_req_changed"
+
 
 class HasKind(Protocol):
     kind: ChangeKind
