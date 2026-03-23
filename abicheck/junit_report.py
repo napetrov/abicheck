@@ -98,7 +98,10 @@ def _is_failure(
         return True
     if change.kind in risk_set:
         return policy_for(change.kind).severity == "error"
-    return False
+    # Kinds not in any explicit set (e.g. newly added ChangeKinds): consult
+    # policy_for() which defaults to BREAKING/severity="error" for unknown
+    # kinds, ensuring fail-closed behaviour.
+    return policy_for(change.kind).severity == "error"
 
 
 def _failure_type(
@@ -165,11 +168,13 @@ def _build_testsuite(
         if sym not in all_symbols:
             all_symbols[sym] = _classname_for(c)
 
-    # Count failures
-    failure_count = sum(
-        1 for c in change_by_symbol.values()
-        if _is_failure(c, breaking_set, api_break_set, risk_set)
-    )
+    # Count failures — a symbol counts as failing if ANY of its changes fail
+    # (not just the first one stored in change_by_symbol).
+    symbols_with_failure: set[str] = set()
+    for c in changes:
+        if _is_failure(c, breaking_set, api_break_set, risk_set):
+            symbols_with_failure.add(c.symbol)
+    failure_count = len(symbols_with_failure)
 
     total = len(all_symbols) if all_symbols else len(change_by_symbol)
 
@@ -242,7 +247,9 @@ def _add_failure(
     # Body text: detailed explanation + source location
     body_parts = [description]
     if change.old_value is not None or change.new_value is not None:
-        body_parts.append(f"({change.old_value or '?'} \u2192 {change.new_value or '?'})")
+        old = change.old_value if change.old_value is not None else "?"
+        new = change.new_value if change.new_value is not None else "?"
+        body_parts.append(f"({old} \u2192 {new})")
     if change.source_location:
         body_parts.append(f"Source: {change.source_location}")
     fail.text = "\n".join(body_parts)

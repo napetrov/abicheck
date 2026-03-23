@@ -516,7 +516,7 @@ def render_output(
     Raises:
         ValidationError: For unrecognised output format.
     """
-    if stat:
+    if stat and fmt != "junit":
         if fmt == "json":
             return to_stat_json(result)
         return to_stat(result)

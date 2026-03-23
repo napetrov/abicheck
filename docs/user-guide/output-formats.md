@@ -47,6 +47,10 @@ and `caused_count` annotations on root type changes.
 `<caused_by>` and `<caused_count>` elements on individual problems. Both binary
 and source sections include their own redundant counts.
 
+**JUnit XML**: Redundant changes are filtered upstream before the formatter
+receives them, so derived changes do not appear as test cases. No
+JUnit-specific redundancy metadata is emitted.
+
 ## `--show-only` filter
 
 Limit displayed changes by severity, element, or action (AND across dimensions,
@@ -208,6 +212,8 @@ ABI changes are mapped to JUnit test cases:
   severity is overridden to `"error"`)
 - Unchanged symbols from the old library also appear as passing test cases,
   so the pass-rate is meaningful
+- When a symbol has multiple breaking changes, the `<testcase>` contains
+  multiple `<failure>` children (one per change)
 
 ### Severity mapping
 
@@ -271,8 +277,9 @@ Function foo::legacy() was removed
 ```yaml
 abi-check:
   script:
-    - abicheck compare old.so new.so -H include/ --format junit -o abi-results.xml
+    - abicheck compare old.so new.so -H include/ --format junit -o abi-results.xml || true
   artifacts:
+    when: always
     reports:
       junit: abi-results.xml
 ```

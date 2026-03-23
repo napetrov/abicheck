@@ -6,17 +6,15 @@ snapshot files.
 """
 from __future__ import annotations
 
-import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from abicheck.checker_types import Change, DiffResult
 from abicheck.checker_policy import ChangeKind, Verdict
 from abicheck.junit_report import to_junit_xml, to_junit_xml_multi
-from abicheck.model import AbiSnapshot, Function, RecordType, Variable, EnumType, EnumMember
+from abicheck.model import AbiSnapshot, Function, RecordType, Variable, EnumType
 from abicheck.serialization import snapshot_to_json
 
 
@@ -250,6 +248,37 @@ class TestCompatibleWithRisk:
         assert ts.get("failures") == "0"
         tc = ts.find("testcase")
         assert tc.find("failure") is None
+
+    def test_risk_change_with_error_severity_fails(self) -> None:
+        """COMPATIBLE_WITH_RISK changes with overridden severity 'error' should fail.
+
+        We use a policy_file override to promote a RISK kind to severity 'error'.
+        """
+        from unittest.mock import patch
+        from abicheck.checker_policy import PolicyEntry
+
+        changes = [
+            Change(
+                kind=ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+                symbol="libc.so.6",
+                description="New GLIBC_2.34 version requirement added",
+            ),
+        ]
+        result = _make_result(changes, verdict=Verdict.COMPATIBLE_WITH_RISK)
+        # Patch policy_for to return severity="error" for this kind
+        original_entry = PolicyEntry(
+            Verdict.COMPATIBLE_WITH_RISK,
+            "error",
+            "symbol_version_required_added",
+        )
+        with patch("abicheck.junit_report.policy_for", return_value=original_entry):
+            xml = to_junit_xml(result)
+        root = _parse(xml)
+        ts = root.find("testsuite")
+        assert ts.get("failures") == "1"
+        fail = root.find(".//failure")
+        assert fail is not None
+        assert fail.get("type") == "COMPATIBLE_WITH_RISK"
 
 
 # ---------------------------------------------------------------------------
@@ -536,6 +565,42 @@ class TestWithSnapshot:
         assert ts.get("tests") == "4"
         assert ts.get("failures") == "1"
 
+    def test_snapshot_with_variables_and_enums(self) -> None:
+        """Snapshot containing variables and enums — all appear as testcases."""
+        from abicheck.model import Visibility
+        snap = _make_snapshot(
+            functions=[
+                Function(name="f1", mangled="f1", return_type="void"),
+            ],
+            variables=[
+                Variable(name="g_count", mangled="g_count", type="int",
+                         visibility=Visibility.PUBLIC),
+            ],
+            enums=[
+                EnumType(name="Color", members=[]),
+            ],
+        )
+        changes = [
+            Change(kind=ChangeKind.VAR_REMOVED, symbol="g_count", description="removed"),
+        ]
+        result = _make_result(changes)
+        xml = to_junit_xml(result, snap)
+        root = _parse(xml)
+        ts = root.find("testsuite")
+        # 1 function + 1 variable + 1 enum = 3 total
+        assert ts.get("tests") == "3"
+        assert ts.get("failures") == "1"
+        # Variable testcase has failure
+        var_tc = ts.find(".//testcase[@name='g_count']")
+        assert var_tc is not None
+        assert var_tc.get("classname") == "variables"
+        assert var_tc.find("failure") is not None
+        # Enum testcase passes
+        enum_tc = ts.find(".//testcase[@name='Color']")
+        assert enum_tc is not None
+        assert enum_tc.get("classname") == "enums"
+        assert enum_tc.find("failure") is None
+
     def test_additions_included_in_count(self) -> None:
         """New symbols (not in old snapshot) should also be counted."""
         snap = _make_snapshot(
@@ -572,6 +637,86 @@ class TestValidXml:
         # Should not raise
         root = ET.fromstring(xml)
         assert root.tag == "testsuites"
+
+
+# ---------------------------------------------------------------------------
+# show_only filter
+# ---------------------------------------------------------------------------
+
+class TestShowOnly:
+    def test_show_only_breaking_filters_compatible(self) -> None:
+        """--show-only breaking hides compatible additions."""
+        changes = [
+            Change(kind=ChangeKind.FUNC_REMOVED, symbol="old_func",
+                   description="removed"),
+            Change(kind=ChangeKind.FUNC_ADDED, symbol="new_func",
+                   description="added"),
+        ]
+        result = _make_result(changes)
+        xml = to_junit_xml(result, show_only="breaking")
+        root = _parse(xml)
+        ts = root.find("testsuite")
+        # Only the breaking change should appear
+        assert ts.get("tests") == "1"
+        assert ts.get("failures") == "1"
+        tc = ts.find("testcase")
+        assert tc.get("name") == "old_func"
+
+    def test_show_only_functions_filters_types(self) -> None:
+        """--show-only functions hides type changes."""
+        changes = [
+            Change(kind=ChangeKind.FUNC_REMOVED, symbol="f1",
+                   description="removed"),
+            Change(kind=ChangeKind.TYPE_SIZE_CHANGED, symbol="MyStruct",
+                   description="size changed", old_value="8", new_value="16"),
+        ]
+        result = _make_result(changes)
+        xml = to_junit_xml(result, show_only="functions")
+        root = _parse(xml)
+        ts = root.find("testsuite")
+        assert ts.get("tests") == "1"
+        tc = ts.find("testcase")
+        assert tc.get("name") == "f1"
+
+    def test_show_only_with_multi(self) -> None:
+        """show_only works with to_junit_xml_multi."""
+        r1 = _make_result(
+            [
+                Change(kind=ChangeKind.FUNC_REMOVED, symbol="f1",
+                       description="removed"),
+                Change(kind=ChangeKind.FUNC_ADDED, symbol="f2",
+                       description="added"),
+            ],
+            library="libfoo.so.1",
+        )
+        xml = to_junit_xml_multi([(r1, None)], show_only="breaking")
+        root = _parse(xml)
+        ts = root.find("testsuite")
+        assert ts.get("tests") == "1"
+        assert ts.get("failures") == "1"
+
+
+# ---------------------------------------------------------------------------
+# failure_count correctness with extra_changes
+# ---------------------------------------------------------------------------
+
+class TestFailureCountCorrectness:
+    def test_failure_count_when_first_change_is_compatible(self) -> None:
+        """failure_count must count symbols with ANY failing change,
+        even when the first change per symbol is compatible."""
+        changes = [
+            # First change for symbol "f" is compatible (addition)
+            Change(kind=ChangeKind.FUNC_ADDED, symbol="f",
+                   description="added"),
+            # Second change for symbol "f" is breaking
+            Change(kind=ChangeKind.FUNC_RETURN_CHANGED, symbol="f",
+                   description="return type changed"),
+        ]
+        xml = to_junit_xml(_make_result(changes))
+        root = _parse(xml)
+        ts = root.find("testsuite")
+        # The symbol should be counted as a failure
+        assert ts.get("failures") == "1"
 
 
 # ===========================================================================
@@ -634,7 +779,7 @@ class TestJUnitCLICompare:
         ])
         assert result.exit_code == 4  # BREAKING
         root = ET.fromstring(result.output)
-        assert int(root.get("failures")) >= 1
+        assert root.get("failures") == "1"
         fail = root.find(".//failure")
         assert fail is not None
         assert "BREAKING" in fail.get("type")
@@ -663,9 +808,9 @@ class TestJUnitCLICompare:
         assert result.exit_code == 0
         root = ET.fromstring(result.output)
         assert root.get("failures") == "0"
-        # Addition should appear as a passing testcase
+        # Both kept and added functions should appear as testcases
         tcs = root.findall(".//testcase")
-        assert len(tcs) >= 1
+        assert len(tcs) == 2
 
     def test_compare_output_to_file(self, tmp_path: Path) -> None:
         """--format junit -o file.xml writes valid XML to file."""
@@ -783,9 +928,8 @@ class TestJUnitCLICompare:
         ])
         root = ET.fromstring(result.output)
         ts = root.find("testsuite")
-        # At minimum we should see a failure for the removed function
-        failures = int(ts.get("failures"))
-        assert failures >= 1
+        # Exactly one function was removed
+        assert ts.get("failures") == "1"
 
     def test_compare_policy_sdk_vendor(self, tmp_path: Path) -> None:
         """Different policy can reclassify changes, reflected in JUnit."""
@@ -812,6 +956,61 @@ class TestJUnitCLICompare:
         assert result.exit_code == 0
         root = ET.fromstring(result.output)
         assert root.get("failures") == "0"
+
+    def test_compare_show_only_breaking(self, tmp_path: Path) -> None:
+        """--show-only breaking with --format junit filters to breaking only."""
+        from abicheck.cli import main
+
+        old = self._snap("1.0", [
+            Function(name="foo", mangled="_Z3foov", return_type="int"),
+            Function(name="bar", mangled="_Z3barv", return_type="void"),
+        ])
+        new = self._snap("2.0", [
+            Function(name="foo", mangled="_Z3foov", return_type="int"),
+            Function(name="baz", mangled="_Z3bazv", return_type="void"),
+        ])
+        _write_snapshot(tmp_path / "old.json", old)
+        _write_snapshot(tmp_path / "new.json", new)
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare",
+            str(tmp_path / "old.json"),
+            str(tmp_path / "new.json"),
+            "--format", "junit",
+            "--show-only", "breaking",
+        ])
+        assert result.exit_code == 4  # BREAKING
+        root = ET.fromstring(result.output)
+        ts = root.find("testsuite")
+        # Only the breaking removal should be a failure (addition is filtered out)
+        assert ts.get("failures") == "1"
+        # The removed function should have a <failure> element
+        failures = root.findall(".//failure")
+        assert len(failures) == 1
+        assert "BREAKING" in failures[0].get("type")
+
+    def test_compare_stat_with_junit_produces_xml(self, tmp_path: Path) -> None:
+        """--stat --format junit should still produce JUnit XML (stat ignored)."""
+        from abicheck.cli import main
+
+        funcs = [Function(name="foo", mangled="_Z3foov", return_type="int")]
+        old = self._snap("1.0", funcs)
+        new = self._snap("2.0", funcs)
+        _write_snapshot(tmp_path / "old.json", old)
+        _write_snapshot(tmp_path / "new.json", new)
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare",
+            str(tmp_path / "old.json"),
+            str(tmp_path / "new.json"),
+            "--format", "junit",
+            "--stat",
+        ])
+        assert result.exit_code == 0, result.output
+        root = ET.fromstring(result.output)
+        assert root.tag == "testsuites"
 
     def test_format_junit_accepted_by_cli(self) -> None:
         """--format junit is recognized without error (even if inputs are bad)."""

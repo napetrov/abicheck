@@ -41,6 +41,8 @@ abicheck compare libfoo.so.1 libfoo.so.2 -H include/
 # Output formats
 abicheck compare libfoo.so.1 libfoo.so.2 \
   --old-header v1/foo.h --new-header v2/foo.h --format sarif -o abi.sarif
+abicheck compare libfoo.so.1 libfoo.so.2 \
+  --old-header v1/foo.h --new-header v2/foo.h --format junit -o results.xml
 ```
 
 `compare` auto-detects each input: `.so` files are dumped on-the-fly, `.json`
