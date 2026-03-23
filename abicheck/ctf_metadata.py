@@ -41,8 +41,8 @@ import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .btf_metadata import FuncProto
 from .dwarf_metadata import DwarfMetadata, EnumInfo, FieldInfo, StructLayout
+from .type_metadata import FuncProto, read_null_terminated_string
 
 log = logging.getLogger(__name__)
 
@@ -237,9 +237,14 @@ def _decompress_if_needed(data: bytes, header: CtfHeader) -> bytes:
     """Decompress CTF data if CTF_F_COMPRESS flag is set."""
     if not (header.flags & CTF_F_COMPRESS):
         return data
-    # Data after the preamble (4 bytes) is zlib-compressed
+    # Data after the preamble (4 bytes) is zlib-compressed.
+    # Limit decompressed size to 256 MiB to prevent zip-bomb DoS.
+    _MAX_DECOMPRESS = 256 * 1024 * 1024
     try:
-        decompressed = zlib.decompress(data[_CTF_PREAMBLE_SIZE:])
+        decompressor = zlib.decompressobj()
+        decompressed = decompressor.decompress(data[_CTF_PREAMBLE_SIZE:], _MAX_DECOMPRESS)
+        if decompressor.unconsumed_tail:
+            raise ValueError("CTF decompressed data exceeds 256 MiB limit")
     except zlib.error as exc:
         raise ValueError(f"CTF decompression failed: {exc}") from exc
     # Reassemble: preamble + decompressed body
@@ -252,12 +257,7 @@ def _decompress_if_needed(data: bytes, header: CtfHeader) -> bytes:
 
 def _read_string(str_data: bytes, offset: int) -> str:
     """Read a null-terminated string from the CTF string table."""
-    if offset < 0 or offset >= len(str_data):
-        return ""
-    end = str_data.find(b"\x00", offset)
-    if end < 0:
-        return str_data[offset:].decode("utf-8", errors="replace")
-    return str_data[offset:end].decode("utf-8", errors="replace")
+    return read_null_terminated_string(str_data, offset)
 
 
 # ---------------------------------------------------------------------------

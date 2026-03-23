@@ -329,7 +329,7 @@ class TestCoverageSummary:
             exercised.update(meta.get("expected_absent_kinds", []))
 
         total_kinds = len(REGISTRY)
-        # At least 15% of change kinds should be exercised
+        # At least 10% of change kinds should be exercised
         assert len(exercised) >= total_kinds * 0.10, (
             f"Only {len(exercised)} of {total_kinds} ChangeKinds exercised "
             f"in example cases"
