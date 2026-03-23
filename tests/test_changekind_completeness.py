@@ -156,6 +156,7 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.ELF_VISIBILITY_CHANGED,
     ChangeKind.EXECUTABLE_STACK,
     ChangeKind.SYMBOL_RENAMED_BATCH,
+    ChangeKind.FUNC_LIKELY_RENAMED,
     # Gap analysis: new checks
     ChangeKind.FUNC_REF_QUAL_CHANGED,
     ChangeKind.FUNC_LANGUAGE_LINKAGE_CHANGED,

@@ -294,6 +294,7 @@ class ChangeKind(str, Enum):
     # versions are added, indicating a namespace refactoring. Old consumers linked
     # against the unprefixed symbols will get undefined symbol errors.
     SYMBOL_RENAMED_BATCH = "symbol_renamed_batch"
+    FUNC_LIKELY_RENAMED = "func_likely_renamed"  # binary fingerprint match: same code, different name
 
     # ── Symbol origin detection ────────────────────────────────────────────────
     # Emitted when a symbol that changed (removed, type-changed, etc.) is detected
