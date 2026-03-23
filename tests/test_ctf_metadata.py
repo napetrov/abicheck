@@ -467,6 +467,23 @@ class TestDecompression:
         result = _decompress_if_needed(data, hdr)
         assert result == data
 
+    def test_decompress_exceeds_size_limit(self) -> None:
+        """Zip bomb guard: decompression must fail when output exceeds 256 MiB."""
+        from abicheck.ctf_metadata import CtfHeader
+        hdr = CtfHeader(
+            magic=CTF_MAGIC, version=CTF_VERSION_3, flags=CTF_F_COMPRESS,
+            parent_label=0, parent_name=0, label_off=0, object_off=0,
+            func_off=0, type_off=0, str_off=0, str_len=0,
+        )
+        # Build a zlib-compressed blob of zeros that decompresses to ~300 MiB.
+        # Zeros compress extremely well, so the compressed payload is tiny.
+        big_data = b"\x00" * (300 * 1024 * 1024)
+        compressed = zlib.compress(big_data)
+        preamble = struct.pack("<HBB", CTF_MAGIC, CTF_VERSION_3, CTF_F_COMPRESS)
+        data = preamble + compressed
+        with pytest.raises(ValueError, match="exceeds 256 MiB limit"):
+            _decompress_if_needed(data, hdr)
+
     def test_decompress_bad_data(self) -> None:
         from abicheck.ctf_metadata import CtfHeader
         hdr = CtfHeader(

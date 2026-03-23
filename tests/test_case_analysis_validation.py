@@ -288,7 +288,7 @@ class TestExpectedKindsVerdictAlignment:
 
 
 class TestCoverageSummary:
-    """Report coverage statistics (informational, always passes)."""
+    """Enforce minimum coverage thresholds for example case metadata."""
 
     def test_total_case_count(self, verdicts: dict) -> None:
         """Verify we have the expected number of cases."""

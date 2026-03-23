@@ -508,6 +508,18 @@ class TestFuncRefQualChanged:
         r = compare(_snap(functions=[f_old]), _snap(functions=[f_new]))
         assert not _has_kind(r, ChangeKind.FUNC_REF_QUAL_CHANGED)
 
+    def test_ref_qualifier_different_mangled(self):
+        """Ref-qualifier change with different mangled names (real-world case).
+
+        In Itanium ABI, &/&& ref-qualifiers change the mangled name, so the
+        functions won't match by mangled name.  The method_qualifiers detector
+        should still pair them by (name, params) and report the change.
+        """
+        f_old = _pub_func("Foo::bar", "_ZNR3Foo3barEv", ref_qualifier="&")
+        f_new = _pub_func("Foo::bar", "_ZNO3Foo3barEv", ref_qualifier="&&")
+        r = compare(_snap(functions=[f_old]), _snap(functions=[f_new]))
+        assert _has_kind(r, ChangeKind.FUNC_REF_QUAL_CHANGED)
+
 
 # ── FUNC_LANGUAGE_LINKAGE_CHANGED ─────────────────────────────────────────────
 

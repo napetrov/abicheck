@@ -503,6 +503,18 @@ def _diff_method_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 new_value=f"const={f_new.is_const} volatile={f_new.is_volatile}",
             ))
 
+        # Ref-qualifier change (&/&&) — also changes mangled name
+        old_rq = f_old.ref_qualifier or ""
+        new_rq = f_new.ref_qualifier or ""
+        if old_rq != new_rq:
+            changes.append(Change(
+                kind=ChangeKind.FUNC_REF_QUAL_CHANGED,
+                symbol=f_old.mangled,
+                description=f"Ref-qualifier changed: {f_old.name} ({old_rq!r} → {new_rq!r})",
+                old_value=old_rq or "(none)",
+                new_value=new_rq or "(none)",
+            ))
+
     return changes
 
 
