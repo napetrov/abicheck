@@ -20,6 +20,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Supports `--show-only` filtering, suppression files, and policy overrides.
 - New module: `abicheck/junit_report.py` (stdlib only, no external dependencies).
 
+#### Binary Fingerprint Rename Detection (Exploratory)
+- **Binary fingerprint rename detection** (exploratory, ADR-003 extension):
+  new `binary_fingerprint.py` module with `compute_function_fingerprints()`,
+  `match_renamed_functions()`, and `compute_section_summary()`.  Uses function
+  code size and SHA-256 hash from ELF `.dynsym` + `.text` to detect likely
+  renames when symbol names change but the underlying code is identical.
+  New `FUNC_LIKELY_RENAMED` change kind (verdict: `COMPATIBLE_WITH_RISK`).
+  Integrated as the `fingerprint_renames` detector — fires only in
+  `elf_only_mode` (stripped binaries without debug info or headers).
+
 ### Planned
 - `--policy-file` schema validation improvements
 - Version-stamped typedef suppression (libpng `png_libpng_version_X_Y_Z` pattern)

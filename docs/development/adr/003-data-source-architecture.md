@@ -232,4 +232,56 @@ This means:
 | 3 | C++ features: inheritance, vtable, templates from DWARF | 3-5 days |
 | 4 | Visibility filtering (DWARF × ELF symbol intersection) | 1-2 days |
 | 5 | CLI: auto-detection, `--dwarf-only`, `--show-data-sources` | 1-2 days |
+
+---
+
+## Extension: Binary Fingerprint Rename Detection (Exploratory)
+
+**Date:** 2026-03-23
+**Status:** Exploratory prototype implemented
+
+### Context
+
+In `elf_only_mode` (L0 only, no DWARF or headers), symbol renames appear as
+"removed + added" pairs — noisy churn that obscures real ABI changes. When a
+library renames `libfoo_v1_create()` → `libfoo_create()` without changing the
+code, the diff engine reports one BREAKING removal and one COMPATIBLE addition
+instead of a single "renamed" signal.
+
+### Approach
+
+Lightweight binary fingerprinting using data already available in L0:
+
+1. **Function size fingerprinting**: Use `st_size` from `.dynsym` to match
+   removed/added symbol pairs with identical code sizes.
+2. **Code hash fingerprinting**: When the binary file is available (not just
+   a serialized snapshot), read the function's code bytes from `.text` and
+   compute SHA-256 for exact matching.
+3. **Section-level triage**: Compare `.text`/`.rodata`/`.data` section hashes
+   for a coarse "did the binary change significantly" signal.
+
+### Implementation
+
+- `abicheck/binary_fingerprint.py` — standalone module with:
+  - `compute_function_fingerprints(binary_path)` → code-hash fingerprints
+  - `match_renamed_functions(old_fps, new_fps)` → 3-pass matching (exact,
+    size-only, fuzzy within 5% tolerance)
+  - `compute_section_summary(binary_path)` → section-level triage
+- `fingerprint_renames` detector registered in `diff_symbols.py` — fires only
+  in `elf_only_mode` when both snapshots have ELF metadata.
+- New `FUNC_LIKELY_RENAMED` change kind (verdict: `COMPATIBLE_WITH_RISK`).
+
+### Scope boundaries (not in scope)
+
+- Full disassembly or CFG extraction
+- BinDiff/Ghidra integration
+- Instruction-level analysis
+- Architecture-specific knowledge
+
+### Next steps
+
+If the prototype shows value (measurable reduction in false removed/added
+pairs on real-world libraries), write a full ADR and integrate into the
+post-processing pipeline to suppress redundant `FUNC_REMOVED` + `FUNC_ADDED`
+pairs when a `FUNC_LIKELY_RENAMED` exists for the same symbol pair.
 | 6 | Validation: DWARF vs castxml snapshot equivalence on test suite | 2-3 days |

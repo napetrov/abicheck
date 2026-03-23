@@ -28,6 +28,7 @@ The project is a Python-based ABI compatibility checker for C/C++ shared librari
 | `serialization.py` | AbiSnapshot ↔ JSON round-trip |
 | `suppression.py` | YAML-based suppression rules for known changes |
 | `severity.py` | Severity classification for changes |
+| `binary_fingerprint.py` | Lightweight binary fingerprinting for rename detection in stripped binaries (exploratory, ADR-003 extension) |
 | `elf_metadata.py` | ELF dynamic section + symbol table via pyelftools |
 | `pe_metadata.py` | PE/COFF reader — Windows `.dll` binaries (via pefile) |
 | `macho_metadata.py` | Mach-O reader — macOS `.dylib` binaries (via macholib) |
