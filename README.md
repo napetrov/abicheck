@@ -297,6 +297,7 @@ suppressions:
   - symbol: "_ZN3foo6Client10disconnectEv"
     change_kind: "func_removed"
     reason: "Client::disconnect() deprecated in v1.8, removed in v2.0"
+    expires: "2026-09-01"
 
   # Pattern match — suppress all changes in internal namespaces
   - symbol_pattern: ".*N6detail.*"
@@ -305,7 +306,31 @@ suppressions:
   # All change kinds for a symbol
   - symbol: "_ZN3foo12LegacyHandleEv"
     reason: "LegacyHandle replaced by Handle alias — shim keeps compat"
+    expires: "2026-12-31"
 ```
+
+### Suppression lifecycle
+
+Auto-generate candidate rules from a JSON diff, then enforce justification and expiry in CI:
+
+```bash
+# Generate candidates from a diff
+abicheck compare old.so new.so -H foo.h --format json -o diff.json
+abicheck suggest-suppressions diff.json -o candidates.yml
+
+# Enforce in CI: require reasons and fail on expired rules
+abicheck compare old.so new.so -H foo.h \
+  --suppress suppressions.yaml \
+  --strict-suppressions \
+  --require-justification
+```
+
+| Flag | Effect |
+|------|--------|
+| `--strict-suppressions` | Fail if any suppression rule is past its `expires` date |
+| `--require-justification` | Fail if any rule has an empty or missing `reason` field |
+
+See [Suppressions](https://napetrov.github.io/abicheck/user-guide/suppressions/) for the full reference.
 
 ABICC-format suppression files are also supported for easier migration. See [Migrating from ABICC](https://napetrov.github.io/abicheck/user-guide/from-abicc/) for details.
 

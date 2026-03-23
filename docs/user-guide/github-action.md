@@ -81,6 +81,8 @@ automatically, then runs ABI comparison and reports results.
 | `policy` | `strict_abi` | Built-in policy: `strict_abi`, `sdk_vendor`, `plugin_abi` |
 | `policy-file` | — | Custom YAML policy file |
 | `suppress` | — | YAML suppression file (supports `label`, `source_location`, `expires`) |
+| `strict-suppressions` | `false` | Fail if any suppression rule is past its `expires` date |
+| `require-justification` | `false` | Fail if any suppression rule has an empty or missing `reason` field |
 | `verbose` | `false` | Enable debug output |
 
 ### Action behavior
