@@ -546,7 +546,10 @@ def render_output(
 
     if fmt == "junit":
         from .junit_report import to_junit_xml
-        return to_junit_xml(result, old, show_only=show_only)
+        return to_junit_xml(
+            result, old,
+            show_only=show_only, severity_config=severity_config,
+        )
 
     _SUPPORTED_FORMATS = {"json", "sarif", "html", "junit", "markdown", "md"}
     if fmt not in _SUPPORTED_FORMATS:

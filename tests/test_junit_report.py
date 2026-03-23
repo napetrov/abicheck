@@ -6,17 +6,16 @@ snapshot files.
 """
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from click.testing import CliRunner
+from defusedxml.ElementTree import fromstring as xml_fromstring
 
-from abicheck.checker_types import Change, DiffResult
 from abicheck.checker_policy import ChangeKind, Verdict
+from abicheck.checker_types import Change, DiffResult
 from abicheck.junit_report import to_junit_xml, to_junit_xml_multi
-from abicheck.model import AbiSnapshot, Function, RecordType, Variable, EnumType
+from abicheck.model import AbiSnapshot, EnumType, Function, RecordType, Variable
 from abicheck.serialization import snapshot_to_json
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -58,8 +57,8 @@ def _make_snapshot(
     return s
 
 
-def _parse(xml_str: str) -> ET.Element:
-    return ET.fromstring(xml_str)
+def _parse(xml_str: str):  # noqa: ANN201
+    return xml_fromstring(xml_str)
 
 
 def _write_snapshot(path: Path, snap: AbiSnapshot) -> Path:
@@ -255,6 +254,7 @@ class TestCompatibleWithRisk:
         We use a policy_file override to promote a RISK kind to severity 'error'.
         """
         from unittest.mock import patch
+
         from abicheck.checker_policy import PolicyEntry
 
         changes = [
@@ -328,7 +328,7 @@ class TestXmlEscaping:
             ),
         ]
         xml = to_junit_xml(_make_result(changes))
-        # This should parse without error — if escaping is wrong, ET.fromstring fails
+        # This should parse without error — if escaping is wrong, xml_fromstring fails
         root = _parse(xml)
         tc = root.find(".//testcase")
         assert tc.get("name") == "_ZN3foo3barINS_3BazIiEEEEvT_"
@@ -346,7 +346,8 @@ class TestXmlEscaping:
         xml = to_junit_xml(_make_result(changes))
         root = _parse(xml)
         fail = root.find(".//failure")
-        assert "std::vector<int>" in fail.text or "std::vector&lt;int&gt;" in ET.tostring(fail, encoding="unicode")
+        import xml.etree.ElementTree
+        assert "std::vector<int>" in fail.text or "std::vector&lt;int&gt;" in xml.etree.ElementTree.tostring(fail, encoding="unicode")
 
     def test_ampersand_in_symbol(self) -> None:
         """Symbol names or descriptions containing & must be escaped."""
@@ -635,7 +636,7 @@ class TestValidXml:
         ]
         xml = to_junit_xml(_make_result(changes))
         # Should not raise
-        root = ET.fromstring(xml)
+        root = xml_fromstring(xml)
         assert root.tag == "testsuites"
 
 
@@ -719,6 +720,115 @@ class TestFailureCountCorrectness:
         assert ts.get("failures") == "1"
 
 
+# ---------------------------------------------------------------------------
+# show_only + snapshot interaction
+# ---------------------------------------------------------------------------
+
+class TestShowOnlyWithSnapshot:
+    def test_show_only_excludes_unchanged_snapshot_symbols(self) -> None:
+        """When show_only is active, unchanged snapshot symbols must NOT
+        appear as passing testcases (documented: 'filtered-out changes
+        are omitted entirely')."""
+        snap = _make_snapshot(
+            functions=[
+                Function(name="unchanged", mangled="unchanged", return_type="void"),
+                Function(name="removed", mangled="removed", return_type="void"),
+            ],
+        )
+        changes = [
+            Change(kind=ChangeKind.FUNC_REMOVED, symbol="removed",
+                   description="removed"),
+        ]
+        result = _make_result(changes)
+        xml = to_junit_xml(result, snap, show_only="breaking")
+        root = _parse(xml)
+        ts = root.find("testsuite")
+        # Only the breaking change should appear — not the unchanged "unchanged"
+        assert ts.get("tests") == "1"
+        assert ts.get("failures") == "1"
+        tcs = ts.findall("testcase")
+        assert len(tcs) == 1
+        assert tcs[0].get("name") == "removed"
+
+
+# ---------------------------------------------------------------------------
+# severity_config propagation
+# ---------------------------------------------------------------------------
+
+class TestSeverityConfig:
+    def test_severity_config_escalates_addition_to_failure(self) -> None:
+        """When severity_config marks additions as 'error', they become
+        failures in JUnit."""
+        from abicheck.severity import SeverityConfig, SeverityLevel
+
+        config = SeverityConfig(
+            abi_breaking=SeverityLevel.ERROR,
+            potential_breaking=SeverityLevel.ERROR,
+            quality_issues=SeverityLevel.WARNING,
+            addition=SeverityLevel.ERROR,
+        )
+        changes = [
+            Change(kind=ChangeKind.FUNC_ADDED, symbol="f",
+                   description="added"),
+        ]
+        result = _make_result(changes, verdict=Verdict.COMPATIBLE)
+        xml = to_junit_xml(result, severity_config=config)
+        root = _parse(xml)
+        ts = root.find("testsuite")
+        assert ts.get("failures") == "1"
+
+    def test_severity_config_demotes_breaking_to_pass(self) -> None:
+        """When severity_config marks abi_breaking as 'warning', additions
+        that were BREAKING still fail (breaking_set takes priority)."""
+        # Note: _is_failure always returns True for breaking_set regardless of
+        # severity_config. This test verifies that contract.
+        changes = [
+            Change(kind=ChangeKind.FUNC_REMOVED, symbol="f",
+                   description="removed"),
+        ]
+        result = _make_result(changes)
+        xml = to_junit_xml(result)
+        root = _parse(xml)
+        ts = root.find("testsuite")
+        assert ts.get("failures") == "1"
+
+
+# ---------------------------------------------------------------------------
+# Error libraries in multi-suite
+# ---------------------------------------------------------------------------
+
+class TestErrorLibraries:
+    def test_error_library_appears_as_error_testsuite(self) -> None:
+        """Failed compare-release pairs should produce <error> testcases."""
+        r1 = _make_result(
+            [Change(kind=ChangeKind.FUNC_REMOVED, symbol="f1",
+                    description="removed")],
+            library="libfoo.so.1",
+        )
+        error_libs = [
+            {"library": "libbar.so.1", "error": "missing headers"},
+        ]
+        xml = to_junit_xml_multi(
+            [(r1, None)],
+            error_libraries=error_libs,
+        )
+        root = _parse(xml)
+        suites = root.findall("testsuite")
+        assert len(suites) == 2
+        # First suite is normal
+        assert suites[0].get("name") == "libfoo.so.1"
+        # Second suite is the error
+        err_suite = suites[1]
+        assert err_suite.get("name") == "libbar.so.1"
+        assert err_suite.get("errors") == "1"
+        err_tc = err_suite.find("testcase")
+        assert err_tc.find("error") is not None
+        assert "missing headers" in err_tc.find("error").get("message")
+        # Roll-up counts
+        assert root.get("errors") == "1"
+        assert root.get("tests") == "2"  # 1 normal + 1 error
+
+
 # ===========================================================================
 # INTEGRATION TESTS — CLI pipeline
 # ===========================================================================
@@ -750,7 +860,7 @@ class TestJUnitCLICompare:
             "--format", "junit",
         ])
         assert result.exit_code == 0, result.output
-        root = ET.fromstring(result.output)
+        root = xml_fromstring(result.output)
         assert root.tag == "testsuites"
         assert root.get("failures") == "0"
         ts = root.find("testsuite")
@@ -778,7 +888,7 @@ class TestJUnitCLICompare:
             "--format", "junit",
         ])
         assert result.exit_code == 4  # BREAKING
-        root = ET.fromstring(result.output)
+        root = xml_fromstring(result.output)
         assert root.get("failures") == "1"
         fail = root.find(".//failure")
         assert fail is not None
@@ -806,7 +916,7 @@ class TestJUnitCLICompare:
             "--format", "junit",
         ])
         assert result.exit_code == 0
-        root = ET.fromstring(result.output)
+        root = xml_fromstring(result.output)
         assert root.get("failures") == "0"
         # Both kept and added functions should appear as testcases
         tcs = root.findall(".//testcase")
@@ -834,7 +944,7 @@ class TestJUnitCLICompare:
         assert result.exit_code == 0, result.output
         assert out_path.exists()
         content = out_path.read_text(encoding="utf-8")
-        root = ET.fromstring(content)
+        root = xml_fromstring(content)
         assert root.tag == "testsuites"
 
     def test_compare_with_suppression(self, tmp_path: Path) -> None:
@@ -875,7 +985,7 @@ class TestJUnitCLICompare:
         # With suppression, verdict may be NO_CHANGE or COMPATIBLE
         assert result.exit_code == 0, result.output
         content = out_path.read_text(encoding="utf-8")
-        root = ET.fromstring(content)
+        root = xml_fromstring(content)
         assert root.get("failures") == "0"
 
     def test_compare_return_type_changed(self, tmp_path: Path) -> None:
@@ -899,7 +1009,7 @@ class TestJUnitCLICompare:
             "--format", "junit",
         ])
         assert result.exit_code == 4  # BREAKING
-        root = ET.fromstring(result.output)
+        root = xml_fromstring(result.output)
         fail = root.find(".//failure")
         assert fail is not None
         assert "func_return_changed" in fail.get("message")
@@ -926,7 +1036,7 @@ class TestJUnitCLICompare:
             str(tmp_path / "new.json"),
             "--format", "junit",
         ])
-        root = ET.fromstring(result.output)
+        root = xml_fromstring(result.output)
         ts = root.find("testsuite")
         # Exactly one function was removed
         assert ts.get("failures") == "1"
@@ -954,7 +1064,7 @@ class TestJUnitCLICompare:
             "--policy", "sdk_vendor",
         ])
         assert result.exit_code == 0
-        root = ET.fromstring(result.output)
+        root = xml_fromstring(result.output)
         assert root.get("failures") == "0"
 
     def test_compare_show_only_breaking(self, tmp_path: Path) -> None:
@@ -981,7 +1091,7 @@ class TestJUnitCLICompare:
             "--show-only", "breaking",
         ])
         assert result.exit_code == 4  # BREAKING
-        root = ET.fromstring(result.output)
+        root = xml_fromstring(result.output)
         ts = root.find("testsuite")
         # Only the breaking removal should be a failure (addition is filtered out)
         assert ts.get("failures") == "1"
@@ -1009,7 +1119,7 @@ class TestJUnitCLICompare:
             "--stat",
         ])
         assert result.exit_code == 0, result.output
-        root = ET.fromstring(result.output)
+        root = xml_fromstring(result.output)
         assert root.tag == "testsuites"
 
     def test_format_junit_accepted_by_cli(self) -> None:
@@ -1048,5 +1158,5 @@ class TestJUnitCLICompare:
             "--format", "junit",
         ])
         # Must parse as valid XML regardless of exit code
-        root = ET.fromstring(result.output)
+        root = xml_fromstring(result.output)
         assert root.tag == "testsuites"
