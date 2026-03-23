@@ -35,7 +35,7 @@ from .checker_policy import ChangeKind
 from .checker_types import Change
 from .detector_registry import registry
 from .model import AbiSnapshot
-from .sycl_metadata import SyclMetadata, SyclPluginInfo
+from .sycl_metadata import SyclMetadata
 
 
 def _diff_implementation(old: SyclMetadata, new: SyclMetadata) -> list[Change]:
@@ -78,16 +78,21 @@ def _diff_pi_version(old: SyclMetadata, new: SyclMetadata) -> list[Change]:
 
 
 def _diff_plugins(old: SyclMetadata, new: SyclMetadata) -> list[Change]:
-    """Detect added/removed backend plugins."""
-    changes: list[Change] = []
-    old_names = {p.name for p in old.plugins}
-    new_names = {p.name for p in new.plugins}
+    """Detect added/removed backend plugins.
 
-    for name in sorted(old_names - new_names):
-        old_plugin = old.plugin_map[name]
+    Plugins are keyed by ``(interface_type, name)`` so that a PI and UR
+    plugin sharing the same backend name are treated as distinct entries.
+    """
+    changes: list[Change] = []
+    old_keys = {(p.interface_type, p.name) for p in old.plugins}
+    new_keys = {(p.interface_type, p.name) for p in new.plugins}
+
+    for key in sorted(old_keys - new_keys):
+        iface, name = key
+        old_plugin = old.plugin_map[key]
         changes.append(Change(
             kind=ChangeKind.SYCL_PLUGIN_REMOVED,
-            symbol=f"sycl::pi::{name}",
+            symbol=f"sycl::{iface}::{name}",
             description=(
                 f"Backend plugin '{old_plugin.library}' ({name}) removed; "
                 f"applications targeting the {old_plugin.backend_type} backend "
@@ -97,11 +102,12 @@ def _diff_plugins(old: SyclMetadata, new: SyclMetadata) -> list[Change]:
             new_value=None,
         ))
 
-    for name in sorted(new_names - old_names):
-        new_plugin = new.plugin_map[name]
+    for key in sorted(new_keys - old_keys):
+        iface, name = key
+        new_plugin = new.plugin_map[key]
         changes.append(Change(
             kind=ChangeKind.SYCL_PLUGIN_ADDED,
-            symbol=f"sycl::pi::{name}",
+            symbol=f"sycl::{iface}::{name}",
             description=(
                 f"Backend plugin '{new_plugin.library}' ({name}) added; "
                 f"new {new_plugin.backend_type} backend support available."
@@ -116,15 +122,16 @@ def _diff_plugins(old: SyclMetadata, new: SyclMetadata) -> list[Change]:
 def _diff_plugin_entrypoints(
     old: SyclMetadata, new: SyclMetadata,
 ) -> list[Change]:
-    """Detect added/removed PI entry points within plugins that exist in both."""
+    """Detect added/removed entry points within plugins that exist in both."""
     changes: list[Change] = []
     old_map = old.plugin_map
     new_map = new.plugin_map
     common = sorted(set(old_map) & set(new_map))
 
-    for name in common:
-        old_plugin = old_map[name]
-        new_plugin = new_map[name]
+    for key in common:
+        old_plugin = old_map[key]
+        new_plugin = new_map[key]
+        name = key[1]  # (interface_type, name)
         old_eps = set(old_plugin.entry_points)
         new_eps = set(new_plugin.entry_points)
         iface = new_plugin.interface_type.upper()  # "PI" or "UR"
@@ -212,9 +219,10 @@ def _diff_backend_driver_reqs(
     old_map = old.plugin_map
     new_map = new.plugin_map
 
-    for name in sorted(set(old_map) & set(new_map)):
-        old_drv = old_map[name].min_driver_version
-        new_drv = new_map[name].min_driver_version
+    for key in sorted(set(old_map) & set(new_map)):
+        name = key[1]  # (interface_type, name)
+        old_drv = old_map[key].min_driver_version
+        new_drv = new_map[key].min_driver_version
         if old_drv and new_drv and old_drv != new_drv:
             changes.append(Change(
                 kind=ChangeKind.SYCL_BACKEND_DRIVER_REQ_CHANGED,

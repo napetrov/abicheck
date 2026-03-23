@@ -146,9 +146,14 @@ class SyclMetadata:
     plugin_search_paths: list[str] = field(default_factory=list)
 
     @property
-    def plugin_map(self) -> dict[str, SyclPluginInfo]:
-        """Plugin name -> SyclPluginInfo lookup."""
-        return {p.name: p for p in self.plugins}
+    def plugin_map(self) -> dict[tuple[str, str], SyclPluginInfo]:
+        """(interface_type, name) -> SyclPluginInfo lookup.
+
+        Keyed by ``(p.interface_type, p.name)`` so PI and UR plugins
+        with the same backend name (e.g. both ``level_zero``) are
+        treated as distinct entries.
+        """
+        return {(p.interface_type, p.name): p for p in self.plugins}
 
 
 # ---------------------------------------------------------------------------
@@ -350,8 +355,10 @@ def _detect_sycl_implementation(lib_dir: Path) -> str:
         lib_dir.glob("libsycl.so.*")
     ):
         return "dpcpp"
-    # AdaptiveCpp uses libacpp-rt.so
+    # AdaptiveCpp uses libacpp-rt.so (or versioned libacpp-rt.so.*)
     if (lib_dir / "libacpp-rt.so").exists() or any(
+        lib_dir.glob("libacpp-rt.so.*")
+    ) or any(
         lib_dir.glob("libhipsycl-rt.so*")
     ):
         return "adaptivecpp"

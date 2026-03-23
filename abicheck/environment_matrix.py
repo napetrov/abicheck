@@ -134,27 +134,45 @@ class EnvironmentMatrix:
         if not isinstance(compilers, list):
             raise ValueError(f"'compilers' must be a list, got {type(compilers).__name__}")
 
+        backends = sycl_data.get("backends", [])
+        if not isinstance(backends, list):
+            raise ValueError(
+                f"'sycl.backends' must be a list, got {type(backends).__name__}"
+            )
+
         sycl = SyclConstraints(
-            implementation=sycl_data.get("implementation", ""),
-            backends=sycl_data.get("backends", []),
-            min_pi_version=sycl_data.get("min_pi_version", ""),
+            implementation=str(sycl_data.get("implementation", "")),
+            backends=[str(b) for b in backends],
+            min_pi_version=str(sycl_data.get("min_pi_version", "")),
         )
+
+        gpu_archs = cuda_data.get("gpu_architectures", [])
+        if not isinstance(gpu_archs, list):
+            raise ValueError(
+                f"'cuda.gpu_architectures' must be a list, got {type(gpu_archs).__name__}"
+            )
 
         driver_range_raw = cuda_data.get("driver_range")
         driver_range = None
         if isinstance(driver_range_raw, (list, tuple)) and len(driver_range_raw) == 2:
             driver_range = (str(driver_range_raw[0]), str(driver_range_raw[1]))
         elif driver_range_raw is not None:
-            log.warning(
-                "EnvironmentMatrix: 'cuda.driver_range' must be a 2-element "
-                "list [min, max], got %r; ignored", driver_range_raw,
+            raise ValueError(
+                f"'cuda.driver_range' must be a 2-element list [min, max], "
+                f"got {driver_range_raw!r}"
+            )
+
+        require_ptx = cuda_data.get("require_ptx", False)
+        if not isinstance(require_ptx, bool):
+            raise ValueError(
+                f"'cuda.require_ptx' must be a bool, got {type(require_ptx).__name__}"
             )
 
         cuda = CudaConstraints(
-            gpu_architectures=cuda_data.get("gpu_architectures", []),
+            gpu_architectures=[str(a) for a in gpu_archs],
             driver_range=driver_range,
-            toolkit_version=cuda_data.get("toolkit_version", ""),
-            require_ptx=cuda_data.get("require_ptx", False),
+            toolkit_version=str(cuda_data.get("toolkit_version", "")),
+            require_ptx=require_ptx,
         )
 
         return cls(

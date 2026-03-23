@@ -129,6 +129,7 @@ Detects:
 
 | ChangeKind | Default verdict | Impact |
 |------------|----------------|--------|
+| `sycl_implementation_changed` | BREAKING | SYCL implementation swapped (e.g. DPC++ → AdaptiveCpp); entirely different ABI |
 | `sycl_pi_version_changed` | BREAKING | Runtime rejects plugins with incompatible PI version |
 | `sycl_pi_entrypoint_removed` | BREAKING | Plugin dispatch table missing required function; runtime crashes |
 | `sycl_pi_entrypoint_added` | COMPATIBLE | New PI capability; existing code unaffected |
