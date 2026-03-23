@@ -8,12 +8,33 @@
 ## 1. Baseline Pinning Workflow
 
 **Current state:** Snapshots (`abicheck dump`) produce JSON files with `schema_version: 3`.
-Comparison (`abicheck compare`) accepts two file paths. The GitHub Action has a
-`baseline` input but only for `stack-check` mode (filesystem sysroot, not a snapshot
-reference). Users manually download baselines in CI via `gh release download`.
+Comparison (`abicheck compare`) accepts two file paths (auto-detecting binary, JSON
+snapshot, or ABICC Perl dump). The GitHub Action has a `baseline` input but only for
+`stack-check` mode (filesystem sysroot, not a snapshot reference). Users manually
+download baselines in CI via `gh release download`.
 
-**Gap:** No `abicheck baseline` command. No automatic discovery of "the right baseline"
-from git tags, GitHub Releases, or a local registry.
+**Gap:** No automatic discovery of "the right baseline" from git tags or releases.
+No provenance metadata in snapshots. No streamlined produce→store→fetch cycle.
+
+### Design Philosophy
+
+**Baselines are artifacts, not local state.** The tool should not mandate *where*
+baselines live. Different teams store them differently:
+
+| Storage | When to use | Who manages lifecycle |
+|---------|------------|---------------------|
+| **GitHub Release assets** | Open-source libraries, public API contracts | Release workflow uploads, PR workflow downloads |
+| **Git-committed files** | Small libraries, want baselines auditable in PR diffs | Developer commits, reviewer approves |
+| **CI artifact store** (S3, Artifactory, GCS) | Large binaries, private repos, retention policies | CI pipeline with upload/download steps |
+| **GitHub Actions cache** | Ephemeral, branch-scoped comparisons | `actions/cache@v4` with branch+SHA key |
+
+abicheck should make the **produce** and **consume** sides easy, and stay out of the
+**store** side — that's the CI system's job.
+
+### What `.abicheck/baselines/` is NOT
+
+~~A local registry with an index.yaml manifest.~~ That design assumes baselines are
+managed locally, which doesn't match CI reality. Dropped from scope.
 
 ### Scope
 
@@ -21,43 +42,120 @@ from git tags, GitHub Releases, or a local registry.
 
 | Item | Detail |
 |------|--------|
-| **What** | Add optional fields to `AbiSnapshot`: `git_commit`, `git_tag`, `created_at` (ISO 8601), `ci_run_id` |
+| **What** | Add optional fields to `AbiSnapshot`: `git_commit`, `git_tag`, `created_at` (ISO 8601), `build_id` (opaque string for CI run ID, build number, etc.) |
 | **Files** | `model.py` (dataclass), `serialization.py` (bump `SCHEMA_VERSION` to 4, serialize/deserialize new fields) |
 | **Compat** | Old snapshots (v1–v3) load unchanged — new fields default to `None`. Forward-reading (v4 by old tool) already emits a warning and proceeds. |
+| **CLI flags** | `abicheck dump --git-tag v2.0 --build-id $CI_RUN_ID` — explicit. Auto-detect `git_commit` from `git rev-parse HEAD` when inside a git repo (opt-out with `--no-git`). `created_at` always set automatically. |
+| **Why it matters** | When a comparison fails in CI, the report says "old: v1.2.3 (abc1234, built 2026-03-01)" instead of "old: v1.2.3". Provenance turns a snapshot from an opaque blob into a traceable artifact. |
 | **Tests** | Roundtrip test for v4 fields. Verify v3 snapshot still loads cleanly against v4 code. |
-| **Size** | ~80 lines model + serialization, ~40 lines tests |
+| **Size** | ~100 lines model + serialization + CLI, ~50 lines tests |
 
-#### 1b. `abicheck baseline save` / `abicheck baseline show` subcommands
-
-| Item | Detail |
-|------|--------|
-| **What** | `baseline save` wraps `dump` + writes snapshot to a conventional path (`.abicheck/baselines/<lib>-<tag>.json`) and optionally updates a `.abicheck/baselines/index.yaml` manifest. `baseline show` prints the current pinned baseline for a library. |
-| **Files** | New module `abicheck/baseline.py` (~200 lines). CLI wiring in `cli.py` (~60 lines). |
-| **Design choice** | File-based registry (no database). Index is optional — compare can also accept a raw path. |
-| **Tests** | Unit tests for save/show/index CRUD. Integration test: dump → save → compare round-trip. |
-| **Size** | ~260 lines implementation, ~120 lines tests |
-
-#### 1c. `--baseline` convenience flag on `compare`
+#### 1b. Standardized snapshot naming convention
 
 | Item | Detail |
 |------|--------|
-| **What** | `abicheck compare --baseline latest ./build/libfoo.so -H include/foo.h` resolves the old-input automatically from the index or from git tags. Accepts `latest`, `stable`, or a semver/tag string. |
-| **Files** | `cli.py` (new option + resolver call), `baseline.py` (resolution logic) |
-| **Prerequisite** | 1b |
-| **Size** | ~60 lines |
+| **What** | `abicheck dump` gains `--output-name auto` mode that writes to `<library>-<version>.abicheck.json` (e.g., `libfoo-2.0.0.abicheck.json`). The `.abicheck.json` suffix is a recognizable convention that CI scripts can glob for (`*.abicheck.json`). |
+| **Files** | `cli.py` (~15 lines in dump command) |
+| **Why** | Eliminates bikeshedding over filenames. CI scripts can `gh release upload ... *.abicheck.json`. Download side can `gh release download --pattern '*.abicheck.json'`. |
+| **Size** | ~15 lines implementation, ~10 lines tests |
 
-#### 1d. GitHub Action `baseline: latest-release` input
+#### 1c. GitHub Action `baseline` input (auto-fetch from release)
 
 | Item | Detail |
 |------|--------|
-| **What** | New action input `baseline` (values: `latest-release`, `<tag>`, file path). `run.sh` uses `gh release download` to fetch the matching snapshot asset. |
-| **Files** | `action.yml`, `action/run.sh` |
-| **Prerequisite** | Snapshot must be uploaded as a release asset (documented recipe) |
-| **Size** | ~40 lines shell |
+| **What** | New action input `baseline` with three modes: |
+| | `baseline: latest-release` — `run.sh` calls `gh release download --pattern '*.abicheck.json' -D /tmp/baseline/` and uses the downloaded file as `old-library`. |
+| | `baseline: v2.0.0` — fetches from that specific tag's release assets. |
+| | `baseline: path/to/file.json` — uses as-is (current behavior, just explicit). |
+| **Files** | `action.yml` (~15 lines input definition), `action/run.sh` (~40 lines fetch logic) |
+| **Error handling** | If no release exists or no `*.abicheck.json` asset found, fail with clear message: "No ABI baseline found in release <tag>. Run `abicheck dump` in your release workflow." |
+| **Size** | ~55 lines shell, ~15 lines YAML |
 
-#### Priority order: 1a → 1b → 1c → 1d
+#### 1d. `abicheck dump --upload-release` (optional convenience)
 
-**Total estimate:** ~440 lines implementation, ~160 lines tests, schema version bump.
+| Item | Detail |
+|------|--------|
+| **What** | When `--upload-release` is passed, after writing the snapshot file, shell out to `gh release upload <tag> <snapshot-file> --clobber`. Requires `GH_TOKEN` and a tag context. |
+| **Files** | `cli.py` (~30 lines: subprocess call, error handling, tag detection from `--git-tag` or `git describe --tags`) |
+| **Why** | Collapses the two-step "dump then upload" into one command. Purely optional — teams that use S3 or git-committed baselines ignore this. |
+| **Prerequisite** | 1a (for `--git-tag`), `gh` CLI on PATH |
+| **Size** | ~30 lines implementation, ~15 lines tests (mock subprocess) |
+
+#### 1e. Documented recipes for each storage pattern
+
+| Item | Detail |
+|------|--------|
+| **What** | Expand `docs/user-guide/github-action.md` and add `docs/user-guide/baseline-management.md` with concrete, copy-paste CI snippets for: |
+| | **Recipe A: GitHub Releases** — release workflow dumps + uploads; PR workflow uses `baseline: latest-release` |
+| | **Recipe B: Git-committed baselines** — dump to `abi/` directory, commit, compare in PR CI |
+| | **Recipe C: Actions cache** — cache baseline by branch, restore in PR |
+| | **Recipe D: External artifact store** — S3 upload/download example |
+| **Files** | New `docs/user-guide/baseline-management.md` (~150 lines) |
+| **Size** | ~150 lines docs |
+
+#### Priority order: 1a → 1b → 1c → 1e → 1d
+
+1d is optional — it's a convenience wrapper around `gh release upload` that some
+teams may prefer to do in their own CI script.
+
+**Total estimate:** ~200 lines implementation, ~75 lines tests, ~150 lines docs,
+schema version bump.
+
+### End-to-end flow (GitHub Releases recipe)
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Release workflow (on: release: types: [published])  │
+│                                                      │
+│  1. Build library                                    │
+│  2. abicheck dump libfoo.so -H include/foo.h \      │
+│       --version $TAG --output-name auto              │
+│     → writes libfoo-2.0.0.abicheck.json              │
+│  3. gh release upload $TAG libfoo-2.0.0.abicheck.json│
+│     (or use --upload-release flag in step 2)         │
+└─────────────────────────────────────────────────────┘
+                        │
+                        ▼  (stored as release asset)
+┌─────────────────────────────────────────────────────┐
+│  PR workflow (on: pull_request)                       │
+│                                                      │
+│  1. Build library                                    │
+│  2. uses: napetrov/abicheck@v1                       │
+│     with:                                            │
+│       baseline: latest-release                       │
+│       new-library: build/libfoo.so                   │
+│       new-header: include/foo.h                      │
+│     → action auto-fetches baseline from release      │
+│     → compares, posts verdict to job summary         │
+└─────────────────────────────────────────────────────┘
+```
+
+### End-to-end flow (git-committed baselines recipe)
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Developer (local or release CI)                     │
+│                                                      │
+│  1. abicheck dump libfoo.so -H include/foo.h \      │
+│       --version 2.0.0 -o abi/libfoo.abicheck.json   │
+│  2. git add abi/libfoo.abicheck.json                 │
+│  3. git commit -m "Update ABI baseline for v2.0.0"   │
+│  4. git push                                         │
+└─────────────────────────────────────────────────────┘
+                        │
+                        ▼  (committed in repo)
+┌─────────────────────────────────────────────────────┐
+│  PR workflow                                         │
+│                                                      │
+│  1. Build library                                    │
+│  2. uses: napetrov/abicheck@v1                       │
+│     with:                                            │
+│       old-library: abi/libfoo.abicheck.json          │
+│       new-library: build/libfoo.so                   │
+│       new-header: include/foo.h                      │
+│     → no download step needed — file is in the repo  │
+└─────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -302,7 +400,7 @@ get confused about which tool is running. No disambiguation guidance exists.
 
 | # | Enhancement | Impl Lines | Test Lines | Doc Lines | Priority | Complexity |
 |---|-------------|-----------|-----------|----------|----------|------------|
-| 1 | Baseline pinning | ~440 | ~160 | ~40 | Medium | High |
+| 1 | Baseline pinning | ~200 | ~75 | ~150 | Medium | Medium |
 | 2 | MCP auth hardening | ~290 | ~110 | ~120 | Medium | Medium |
 | 3 | Schema compat tests | 0 | ~130 | 0 | Low | Low |
 | 4 | Diffoscope integration | ~90 | ~40 | ~30 | Low | Low |
@@ -313,7 +411,7 @@ get confused about which tool is running. No disambiguation guidance exists.
 
 1. **Schema compat tests (3)** — Zero production code risk, fills a testing gap, fast win
 2. **Naming collision (6)** — Trivial, high user-facing value for confused users
-3. **Parallel diff / caching (5)** — Start with 5c (cache) for immediate speedup, then 5a (parallel)
-4. **MCP auth hardening (2)** — Start with 2a (ADR) to lock down the design, then 2c/2d
-5. **Baseline pinning (1)** — Largest scope; start with 1a (provenance metadata) as foundation
+3. **Baseline pinning (1)** — Start with 1a (provenance), then 1b+1c (naming+action), then 1e (docs)
+4. **Parallel diff / caching (5)** — Start with 5c (cache) for immediate speedup, then 5a (parallel)
+5. **MCP auth hardening (2)** — Start with 2a (ADR) to lock down the design, then 2c/2d
 6. **Diffoscope integration (4)** — Nice-to-have, lowest urgency
