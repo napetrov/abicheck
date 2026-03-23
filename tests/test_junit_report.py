@@ -1,12 +1,23 @@
-"""Tests for JUnit XML output."""
+"""Tests for JUnit XML output.
+
+Unit tests for the ``junit_report`` module, plus CLI integration tests that
+exercise the full ``abicheck compare --format junit`` pipeline using JSON
+snapshot files.
+"""
 from __future__ import annotations
 
+import json
 import xml.etree.ElementTree as ET
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
 
 from abicheck.checker_types import Change, DiffResult
 from abicheck.checker_policy import ChangeKind, Verdict
 from abicheck.junit_report import to_junit_xml, to_junit_xml_multi
 from abicheck.model import AbiSnapshot, Function, RecordType, Variable, EnumType, EnumMember
+from abicheck.serialization import snapshot_to_json
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +62,16 @@ def _make_snapshot(
 
 def _parse(xml_str: str) -> ET.Element:
     return ET.fromstring(xml_str)
+
+
+def _write_snapshot(path: Path, snap: AbiSnapshot) -> Path:
+    path.write_text(snapshot_to_json(snap), encoding="utf-8")
+    return path
+
+
+# ===========================================================================
+# UNIT TESTS
+# ===========================================================================
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +211,46 @@ class TestBreakingChanges:
         assert ts.get("tests") == "2"
         assert ts.get("failures") == "1"
 
+    def test_api_break_is_failure(self) -> None:
+        """API_BREAK changes (e.g. enum member renamed) should be failures."""
+        changes = [
+            Change(
+                kind=ChangeKind.ENUM_MEMBER_RENAMED,
+                symbol="Status",
+                description="Enum member renamed from OK to SUCCESS",
+            ),
+        ]
+        xml = to_junit_xml(_make_result(changes, verdict=Verdict.API_BREAK))
+        root = _parse(xml)
+        ts = root.find("testsuite")
+        assert ts.get("failures") == "1"
+        fail = root.find(".//failure")
+        assert fail.get("type") == "API_BREAK"
+
+
+# ---------------------------------------------------------------------------
+# COMPATIBLE_WITH_RISK handling
+# ---------------------------------------------------------------------------
+
+class TestCompatibleWithRisk:
+    def test_risk_change_default_severity_passes(self) -> None:
+        """COMPATIBLE_WITH_RISK changes with severity 'warning' should pass."""
+        changes = [
+            Change(
+                kind=ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED,
+                symbol="libc.so.6",
+                description="New GLIBC_2.34 version requirement added",
+            ),
+        ]
+        result = _make_result(changes, verdict=Verdict.COMPATIBLE_WITH_RISK)
+        xml = to_junit_xml(result)
+        root = _parse(xml)
+        ts = root.find("testsuite")
+        # Default severity for RISK_KINDS is "warning", not "error" — passes
+        assert ts.get("failures") == "0"
+        tc = ts.find("testcase")
+        assert tc.find("failure") is None
+
 
 # ---------------------------------------------------------------------------
 # Suppressed changes → pass
@@ -257,6 +318,76 @@ class TestXmlEscaping:
         root = _parse(xml)
         fail = root.find(".//failure")
         assert "std::vector<int>" in fail.text or "std::vector&lt;int&gt;" in ET.tostring(fail, encoding="unicode")
+
+    def test_ampersand_in_symbol(self) -> None:
+        """Symbol names or descriptions containing & must be escaped."""
+        changes = [
+            Change(
+                kind=ChangeKind.FUNC_REMOVED,
+                symbol="foo&bar",
+                description="Function foo&bar() removed",
+            ),
+        ]
+        xml = to_junit_xml(_make_result(changes))
+        root = _parse(xml)  # Would raise if escaping failed
+        tc = root.find(".//testcase")
+        assert tc.get("name") == "foo&bar"
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
+
+class TestEdgeCases:
+    def test_empty_description_uses_kind(self) -> None:
+        """When description is empty, the failure message should still be useful."""
+        changes = [
+            Change(kind=ChangeKind.FUNC_REMOVED, symbol="f", description=""),
+        ]
+        xml = to_junit_xml(_make_result(changes))
+        root = _parse(xml)
+        fail = root.find(".//failure")
+        assert "func_removed" in fail.get("message")
+        # Body should use kind-derived text when description is empty
+        assert fail.text is not None and len(fail.text) > 0
+
+    def test_none_old_value_none_new_value(self) -> None:
+        """When both old_value and new_value are None, no (? → ?) line appears."""
+        changes = [
+            Change(kind=ChangeKind.FUNC_REMOVED, symbol="f", description="removed"),
+        ]
+        xml = to_junit_xml(_make_result(changes))
+        root = _parse(xml)
+        fail = root.find(".//failure")
+        assert "→" not in fail.text
+
+    def test_old_value_is_empty_string(self) -> None:
+        """Empty string old_value should still emit the (? → new) line (is not None)."""
+        changes = [
+            Change(kind=ChangeKind.FUNC_RETURN_CHANGED, symbol="f",
+                   description="changed", old_value="", new_value="int"),
+        ]
+        xml = to_junit_xml(_make_result(changes))
+        root = _parse(xml)
+        fail = root.find(".//failure")
+        assert "→" in fail.text
+
+    def test_multiple_changes_same_symbol(self) -> None:
+        """Multiple breaking changes on the same symbol produce multiple <failure> children."""
+        changes = [
+            Change(kind=ChangeKind.FUNC_RETURN_CHANGED, symbol="f",
+                   description="return type changed", old_value="int", new_value="long"),
+            Change(kind=ChangeKind.FUNC_PARAMS_CHANGED, symbol="f",
+                   description="parameter count changed"),
+        ]
+        xml = to_junit_xml(_make_result(changes))
+        root = _parse(xml)
+        ts = root.find("testsuite")
+        # Only 1 testcase (same symbol)
+        assert ts.get("tests") == "1"
+        tc = ts.find("testcase")
+        failures = tc.findall("failure")
+        assert len(failures) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -440,4 +571,283 @@ class TestValidXml:
         xml = to_junit_xml(_make_result(changes))
         # Should not raise
         root = ET.fromstring(xml)
+        assert root.tag == "testsuites"
+
+
+# ===========================================================================
+# INTEGRATION TESTS — CLI pipeline
+# ===========================================================================
+
+
+class TestJUnitCLICompare:
+    """Integration tests that run ``abicheck compare --format junit`` via
+    the Click test runner with JSON snapshot files."""
+
+    @staticmethod
+    def _snap(version: str, funcs: list[Function]) -> AbiSnapshot:
+        return AbiSnapshot(library="libtest.so", version=version, functions=funcs)
+
+    def test_compare_no_changes(self, tmp_path: Path) -> None:
+        """No ABI changes → valid JUnit XML with zero failures."""
+        from abicheck.cli import main
+
+        funcs = [Function(name="foo", mangled="_Z3foov", return_type="int")]
+        old = self._snap("1.0", funcs)
+        new = self._snap("2.0", funcs)
+        _write_snapshot(tmp_path / "old.json", old)
+        _write_snapshot(tmp_path / "new.json", new)
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare",
+            str(tmp_path / "old.json"),
+            str(tmp_path / "new.json"),
+            "--format", "junit",
+        ])
+        assert result.exit_code == 0, result.output
+        root = ET.fromstring(result.output)
+        assert root.tag == "testsuites"
+        assert root.get("failures") == "0"
+        ts = root.find("testsuite")
+        assert ts.get("name") == "libtest.so"
+
+    def test_compare_breaking_changes(self, tmp_path: Path) -> None:
+        """Removing a function → JUnit XML with failure, exit code 4."""
+        from abicheck.cli import main
+
+        old = self._snap("1.0", [
+            Function(name="foo", mangled="_Z3foov", return_type="int"),
+            Function(name="bar", mangled="_Z3barv", return_type="void"),
+        ])
+        new = self._snap("2.0", [
+            Function(name="foo", mangled="_Z3foov", return_type="int"),
+        ])
+        _write_snapshot(tmp_path / "old.json", old)
+        _write_snapshot(tmp_path / "new.json", new)
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare",
+            str(tmp_path / "old.json"),
+            str(tmp_path / "new.json"),
+            "--format", "junit",
+        ])
+        assert result.exit_code == 4  # BREAKING
+        root = ET.fromstring(result.output)
+        assert int(root.get("failures")) >= 1
+        fail = root.find(".//failure")
+        assert fail is not None
+        assert "BREAKING" in fail.get("type")
+
+    def test_compare_compatible_addition(self, tmp_path: Path) -> None:
+        """Adding a function → JUnit XML with zero failures, exit code 0."""
+        from abicheck.cli import main
+
+        old = self._snap("1.0", [
+            Function(name="foo", mangled="_Z3foov", return_type="int"),
+        ])
+        new = self._snap("2.0", [
+            Function(name="foo", mangled="_Z3foov", return_type="int"),
+            Function(name="bar", mangled="_Z3barv", return_type="void"),
+        ])
+        _write_snapshot(tmp_path / "old.json", old)
+        _write_snapshot(tmp_path / "new.json", new)
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare",
+            str(tmp_path / "old.json"),
+            str(tmp_path / "new.json"),
+            "--format", "junit",
+        ])
+        assert result.exit_code == 0
+        root = ET.fromstring(result.output)
+        assert root.get("failures") == "0"
+        # Addition should appear as a passing testcase
+        tcs = root.findall(".//testcase")
+        assert len(tcs) >= 1
+
+    def test_compare_output_to_file(self, tmp_path: Path) -> None:
+        """--format junit -o file.xml writes valid XML to file."""
+        from abicheck.cli import main
+
+        funcs = [Function(name="foo", mangled="_Z3foov", return_type="int")]
+        old = self._snap("1.0", funcs)
+        new = self._snap("2.0", funcs)
+        _write_snapshot(tmp_path / "old.json", old)
+        _write_snapshot(tmp_path / "new.json", new)
+        out_path = tmp_path / "results.xml"
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare",
+            str(tmp_path / "old.json"),
+            str(tmp_path / "new.json"),
+            "--format", "junit",
+            "-o", str(out_path),
+        ])
+        assert result.exit_code == 0, result.output
+        assert out_path.exists()
+        content = out_path.read_text(encoding="utf-8")
+        root = ET.fromstring(content)
+        assert root.tag == "testsuites"
+
+    def test_compare_with_suppression(self, tmp_path: Path) -> None:
+        """Suppressed changes should not appear as failures in JUnit output."""
+        from abicheck.cli import main
+
+        old = self._snap("1.0", [
+            Function(name="foo", mangled="_Z3foov", return_type="int"),
+            Function(name="bar", mangled="_Z3barv", return_type="void"),
+        ])
+        new = self._snap("2.0", [
+            Function(name="foo", mangled="_Z3foov", return_type="int"),
+        ])
+        _write_snapshot(tmp_path / "old.json", old)
+        _write_snapshot(tmp_path / "new.json", new)
+
+        # Write a suppression file that suppresses the removed function
+        supp_path = tmp_path / "supp.yml"
+        supp_path.write_text(
+            "version: 1\n"
+            "suppressions:\n"
+            "  - symbol: _Z3barv\n"
+            "    change_kind: func_removed\n"
+            "    reason: intentional removal\n",
+            encoding="utf-8",
+        )
+
+        out_path = tmp_path / "results.xml"
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare",
+            str(tmp_path / "old.json"),
+            str(tmp_path / "new.json"),
+            "--format", "junit",
+            "--suppress", str(supp_path),
+            "-o", str(out_path),
+        ])
+        # With suppression, verdict may be NO_CHANGE or COMPATIBLE
+        assert result.exit_code == 0, result.output
+        content = out_path.read_text(encoding="utf-8")
+        root = ET.fromstring(content)
+        assert root.get("failures") == "0"
+
+    def test_compare_return_type_changed(self, tmp_path: Path) -> None:
+        """Return type change → JUnit failure with old/new values."""
+        from abicheck.cli import main
+
+        old = self._snap("1.0", [
+            Function(name="getval", mangled="_Z6getvalv", return_type="int"),
+        ])
+        new = self._snap("2.0", [
+            Function(name="getval", mangled="_Z6getvalv", return_type="long"),
+        ])
+        _write_snapshot(tmp_path / "old.json", old)
+        _write_snapshot(tmp_path / "new.json", new)
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare",
+            str(tmp_path / "old.json"),
+            str(tmp_path / "new.json"),
+            "--format", "junit",
+        ])
+        assert result.exit_code == 4  # BREAKING
+        root = ET.fromstring(result.output)
+        fail = root.find(".//failure")
+        assert fail is not None
+        assert "func_return_changed" in fail.get("message")
+
+    def test_compare_multiple_change_types(self, tmp_path: Path) -> None:
+        """Mix of additions, removals, and unchanged → correct counts."""
+        from abicheck.cli import main
+
+        old = self._snap("1.0", [
+            Function(name="keep", mangled="_Z4keepv", return_type="void"),
+            Function(name="remove", mangled="_Z6removev", return_type="void"),
+        ])
+        new = self._snap("2.0", [
+            Function(name="keep", mangled="_Z4keepv", return_type="void"),
+            Function(name="added", mangled="_Z5addedv", return_type="void"),
+        ])
+        _write_snapshot(tmp_path / "old.json", old)
+        _write_snapshot(tmp_path / "new.json", new)
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare",
+            str(tmp_path / "old.json"),
+            str(tmp_path / "new.json"),
+            "--format", "junit",
+        ])
+        root = ET.fromstring(result.output)
+        ts = root.find("testsuite")
+        # At minimum we should see a failure for the removed function
+        failures = int(ts.get("failures"))
+        assert failures >= 1
+
+    def test_compare_policy_sdk_vendor(self, tmp_path: Path) -> None:
+        """Different policy can reclassify changes, reflected in JUnit."""
+        from abicheck.cli import main
+
+        old = self._snap("1.0", [
+            Function(name="foo", mangled="_Z3foov", return_type="int"),
+        ])
+        new = self._snap("2.0", [
+            Function(name="foo", mangled="_Z3foov", return_type="int"),
+            Function(name="bar", mangled="_Z3barv", return_type="void"),
+        ])
+        _write_snapshot(tmp_path / "old.json", old)
+        _write_snapshot(tmp_path / "new.json", new)
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare",
+            str(tmp_path / "old.json"),
+            str(tmp_path / "new.json"),
+            "--format", "junit",
+            "--policy", "sdk_vendor",
+        ])
+        assert result.exit_code == 0
+        root = ET.fromstring(result.output)
+        assert root.get("failures") == "0"
+
+    def test_format_junit_accepted_by_cli(self) -> None:
+        """--format junit is recognized without error (even if inputs are bad)."""
+        from abicheck.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare", "/nonexistent/old.json", "/nonexistent/new.json",
+            "--format", "junit",
+        ])
+        # Should fail on missing file, NOT on unrecognized format
+        assert "Unsupported output format" not in (result.output or "")
+
+    def test_xml_output_is_well_formed(self, tmp_path: Path) -> None:
+        """Stress test: verify well-formed XML with special characters."""
+        from abicheck.cli import main
+        from abicheck.model import Param
+
+        old = self._snap("1.0", [
+            Function(name="bar<int>", mangled="_Z3barIiEvT_", return_type="void",
+                     params=[Param(name="x", type="int")]),
+        ])
+        new = self._snap("2.0", [
+            Function(name="bar<int>", mangled="_Z3barIiEvT_", return_type="void",
+                     params=[Param(name="x", type="long")]),
+        ])
+        _write_snapshot(tmp_path / "old.json", old)
+        _write_snapshot(tmp_path / "new.json", new)
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "compare",
+            str(tmp_path / "old.json"),
+            str(tmp_path / "new.json"),
+            "--format", "junit",
+        ])
+        # Must parse as valid XML regardless of exit code
+        root = ET.fromstring(result.output)
         assert root.tag == "testsuites"

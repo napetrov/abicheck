@@ -21,10 +21,26 @@ standard dashboards.
 Usage::
 
     abicheck compare old.so new.so --format junit -o results.xml
+
+Mapping rules:
+
+- Each library in a ``compare-release`` is a ``<testsuite>``
+- Each exported symbol/type that was checked is a ``<testcase>``
+- ``classname`` groups: ``functions``, ``variables``, ``types``,
+  ``enums``, ``metadata``
+- Changes with verdict BREAKING or API_BREAK → ``<failure>``
+- Changes with verdict COMPATIBLE_WITH_RISK → ``<failure>`` only when
+  the change kind has severity ``"error"`` (currently none do by default)
+- COMPATIBLE changes → pass (testcase exists with no ``<failure>`` child)
+- ``type`` attribute: the verdict level (``BREAKING``, ``API_BREAK``,
+  ``COMPATIBLE_WITH_RISK``)
+- ``message`` attribute: ``change_kind: one-line summary``
+- Body text: detailed explanation + source location if available
 """
 
 from __future__ import annotations
 
+import io
 import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING
 
@@ -66,16 +82,32 @@ def _classname_for(change: Change) -> str:
 # Verdict → failure classification
 # ---------------------------------------------------------------------------
 
-def _is_failure(change: Change, breaking_set: frozenset[ChangeKind],
-                api_break_set: frozenset[ChangeKind]) -> bool:
-    """Return True if the change should be a JUnit <failure>."""
-    return change.kind in breaking_set or change.kind in api_break_set
+def _is_failure(
+    change: Change,
+    breaking_set: frozenset[ChangeKind],
+    api_break_set: frozenset[ChangeKind],
+    risk_set: frozenset[ChangeKind],
+) -> bool:
+    """Return True if the change should be a JUnit ``<failure>``.
+
+    BREAKING and API_BREAK changes always fail.  COMPATIBLE_WITH_RISK
+    changes fail only when their per-kind severity is ``"error"``
+    (currently all RISK_KINDS default to ``"warning"``, so they pass).
+    """
+    if change.kind in breaking_set or change.kind in api_break_set:
+        return True
+    if change.kind in risk_set:
+        return policy_for(change.kind).severity == "error"
+    return False
 
 
-def _failure_type(change: Change, breaking_set: frozenset[ChangeKind],
-                  api_break_set: frozenset[ChangeKind],
-                  risk_set: frozenset[ChangeKind]) -> str:
-    """Return the ``type`` attribute for a <failure> element."""
+def _failure_type(
+    change: Change,
+    breaking_set: frozenset[ChangeKind],
+    api_break_set: frozenset[ChangeKind],
+    risk_set: frozenset[ChangeKind],
+) -> str:
+    """Return the ``type`` attribute for a ``<failure>`` element."""
     if change.kind in breaking_set:
         return "BREAKING"
     if change.kind in api_break_set:
@@ -136,7 +168,7 @@ def _build_testsuite(
     # Count failures
     failure_count = sum(
         1 for c in change_by_symbol.values()
-        if _is_failure(c, breaking_set, api_break_set)
+        if _is_failure(c, breaking_set, api_break_set, risk_set)
     )
 
     total = len(all_symbols) if all_symbols else len(change_by_symbol)
@@ -169,7 +201,7 @@ def _build_testsuite(
     # Additional changes for symbols that already have a testcase
     # (e.g. multiple changes to the same symbol) — append as extra failures
     for c in extra_changes:
-        if _is_failure(c, breaking_set, api_break_set):
+        if _is_failure(c, breaking_set, api_break_set, risk_set):
             # Find the existing testcase for this symbol
             for tc in ts:
                 if tc.get("name") == c.symbol:
@@ -187,7 +219,7 @@ def _maybe_add_failure(
     risk_set: frozenset[ChangeKind],
 ) -> None:
     """Add a ``<failure>`` child to *tc* if the change is a failure."""
-    if _is_failure(change, breaking_set, api_break_set):
+    if _is_failure(change, breaking_set, api_break_set, risk_set):
         _add_failure(tc, change, breaking_set, api_break_set, risk_set)
 
 
@@ -200,16 +232,17 @@ def _add_failure(
 ) -> None:
     """Append a ``<failure>`` element to testcase *tc*."""
     ftype = _failure_type(change, breaking_set, api_break_set, risk_set)
-    message = f"{change.kind.value}: {change.description}"
+    description = change.description or change.kind.value.replace("_", " ")
+    message = f"{change.kind.value}: {description}"
 
     fail = ET.SubElement(tc, "failure")
     fail.set("message", message)
     fail.set("type", ftype)
 
     # Body text: detailed explanation + source location
-    body_parts = [change.description]
-    if change.old_value or change.new_value:
-        body_parts.append(f"({change.old_value or '?'} → {change.new_value or '?'})")
+    body_parts = [description]
+    if change.old_value is not None or change.new_value is not None:
+        body_parts.append(f"({change.old_value or '?'} \u2192 {change.new_value or '?'})")
     if change.source_location:
         body_parts.append(f"Source: {change.source_location}")
     fail.text = "\n".join(body_parts)
@@ -289,7 +322,6 @@ def _to_xml_string(root: ET.Element) -> str:
     """Serialize an ElementTree element to an XML string with declaration."""
     ET.indent(root)
     tree = ET.ElementTree(root)
-    import io
     buf = io.BytesIO()
     tree.write(buf, encoding="UTF-8", xml_declaration=True)
     return buf.getvalue().decode("UTF-8")

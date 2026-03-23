@@ -510,7 +510,8 @@ def render_output(
 ) -> str:
     """Render comparison result in the requested output format.
 
-    Supported formats: ``'json'``, ``'markdown'``, ``'sarif'``, ``'html'``.
+    Supported formats: ``'json'``, ``'markdown'``, ``'sarif'``, ``'html'``,
+    ``'junit'``.
 
     Raises:
         ValidationError: For unrecognised output format.
