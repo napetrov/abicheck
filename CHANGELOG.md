@@ -30,6 +30,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   Integrated as the `fingerprint_renames` detector — fires only in
   `elf_only_mode` (stripped binaries without debug info or headers).
 
+#### Debian Symbols File Adapter
+- **`abicheck debian-symbols generate`** — generate Debian symbols files (`dpkg-gensymbols`
+  format) from shared library binaries. Supports C++ demangled `(c++)` form, ELF symbol
+  versioning (`@Base` / `@VERSION_NODE`), and automatic SONAME-to-package-name derivation.
+  Options: `--package`, `--version`, `--no-cpp`, `-o`.
+- **`abicheck debian-symbols validate`** — validate a Debian symbols file against a binary.
+  Reports missing and new symbols. Respects `(optional)` tag semantics. Exit code `0` = match,
+  `2` = mismatch.
+- **`abicheck debian-symbols diff`** — diff two Debian symbols files showing added, removed,
+  and version-changed symbols.
+- Full Debian tag syntax support: `(c++)`, `(optional)`, `(arch=...)`, pipe-separated groups
+  (`(c++|optional)`), and round-trip formatting preservation.
+- New module: `abicheck.debian_symbols` with Python API for programmatic use
+  (`generate_symbols_file`, `validate_symbols`, `diff_symbols_files`, `parse_symbols_file`).
+
 ### Planned
 - `--policy-file` schema validation improvements
 - Version-stamped typedef suppression (libpng `png_libpng_version_X_Y_Z` pattern)
