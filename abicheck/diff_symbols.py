@@ -110,6 +110,30 @@ def _check_function_signature(mangled: str, f_old: Function, f_new: Function) ->
             new_value=_format_params(f_new.params),
         ))
 
+    # Ref-qualifier changes (&/&&)
+    old_rq = f_old.ref_qualifier or ""
+    new_rq = f_new.ref_qualifier or ""
+    if old_rq != new_rq:
+        changes.append(Change(
+            kind=ChangeKind.FUNC_REF_QUAL_CHANGED,
+            symbol=mangled,
+            description=f"Ref-qualifier changed: {f_old.name} ({old_rq!r} → {new_rq!r})",
+            old_value=old_rq or "(none)",
+            new_value=new_rq or "(none)",
+        ))
+
+    # Language linkage change (extern "C" ↔ C++)
+    if f_old.is_extern_c != f_new.is_extern_c:
+        old_linkage = 'extern "C"' if f_old.is_extern_c else "C++"
+        new_linkage = 'extern "C"' if f_new.is_extern_c else "C++"
+        changes.append(Change(
+            kind=ChangeKind.FUNC_LANGUAGE_LINKAGE_CHANGED,
+            symbol=mangled,
+            description=f"Language linkage changed: {f_old.name} ({old_linkage} → {new_linkage})",
+            old_value=old_linkage,
+            new_value=new_linkage,
+        ))
+
     if f_old.is_noexcept and not f_new.is_noexcept:
         changes.append(Change(
             kind=ChangeKind.FUNC_NOEXCEPT_REMOVED,
@@ -186,10 +210,10 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     # Build a lookup of ALL functions in new snapshot (including hidden).
     new_all = new.function_map
 
-    # FIX-A Part 2: Build secondary index by plain name for fallback matching
+    # FIX-A Part 2: Build secondary indices by plain name for fallback matching
     # when mangled names differ due to C/C++ compilation mode mismatch.
-    # new_by_name includes all functions so new-side extern "C" functions
-    # (which may lack the flag when compiled as C) can still be matched.
+    # Match by name when *either* side uses extern "C" (covers both C→C++ and
+    # C++→C linkage flips).
     new_by_name: dict[str, Function] = {
         f.name: f for f in new_map.values()
     }
@@ -200,8 +224,9 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             changes.extend(_check_function_signature(mangled, f_old, new_map[mangled]))
             continue
 
-        # Fallback: match extern "C" functions by plain name (FIX-A Part 2)
-        if f_old.is_extern_c and f_old.name in new_by_name:
+        # Fallback: match by plain name when either side uses extern "C"
+        if (f_old.is_extern_c or (f_old.name in new_by_name and new_by_name[f_old.name].is_extern_c)) \
+                and f_old.name in new_by_name:
             f_new = new_by_name[f_old.name]
             changes.extend(_check_function_signature(f_old.name, f_old, f_new))
             matched_by_name.add(f_old.name)

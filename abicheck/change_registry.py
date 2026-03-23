@@ -408,4 +408,58 @@ REGISTRY = ChangeKindRegistry([
               "existing consumers are unlikely to be affected directly, but the leak itself is a "
               "library quality issue. Apply -fvisibility=hidden to prevent accidental ABI surface "
               "enlargement from dependencies."),
+
+    # ── Gap analysis: proposed new checks ──────────────────────────────────
+
+    # C++ ref-qualifier change on member functions (& / &&)
+    _E("func_ref_qual_changed", _B,
+       impact="Ref-qualifier (&/&&) on a member function changed; this alters the "
+              "Itanium C++ ABI mangled name and overload resolution, so old binaries "
+              "link to the wrong symbol or fail to resolve it."),
+
+    # extern "C" ↔ C++ linkage flip
+    _E("func_language_linkage_changed", _B,
+       impact="Language linkage changed (extern \"C\" ↔ C++); the mangled symbol name "
+              "changes, so old binaries reference a symbol that no longer exists under "
+              "that name."),
+
+    # Symbol version alias (default version) changed
+    _E("symbol_version_alias_changed", _R,
+       impact="Default symbol version alias changed (e.g. foo@@VER_1.0 → foo@@VER_2.0). "
+              "Old binaries requesting the previous default version may get a link or "
+              "load error if the old version alias is not retained."),
+
+    # TLS variable model or size changed
+    _E("tls_var_size_changed", _B,
+       impact="Exported thread-local (TLS) variable size changed; consumers using copy "
+              "relocations or direct TLS access will read/write out of bounds."),
+
+    # ELF visibility: STV_PROTECTED ↔ STV_DEFAULT for data symbols
+    _E("protected_visibility_changed", _R,
+       impact="ELF symbol visibility changed between DEFAULT and PROTECTED. For data "
+              "symbols this can break copy relocations; for functions it changes "
+              "interposition semantics. The symbol remains exported."),
+
+    # libstdc++ dual ABI flip diagnostic
+    _E("glibcxx_dual_abi_flip_detected", _C,
+       impact="Mass symbol churn detected that matches a libstdc++ dual ABI toggle "
+              "(_GLIBCXX_USE_CXX11_ABI). Individual removed/added symbols are likely "
+              "caused by this single root cause rather than intentional API changes."),
+
+    # Inline namespace move
+    _E("inline_namespace_moved", _B,
+       impact="Symbols moved to a different inline namespace (e.g. v1:: → v2::); "
+              "mangled names change so old binaries fail to resolve the symbols."),
+
+    # vtable/typeinfo symbol identity changed (layout stable)
+    _E("vtable_symbol_identity_changed", _R,
+       impact="Vtable or typeinfo symbol identity changed (e.g. via visibility or "
+              "version-script changes) while class layout is stable. Cross-DSO RTTI "
+              "comparison and exception handling may silently fail."),
+
+    # ABI surface explosion diagnostic
+    _E("abi_surface_explosion", _C,
+       impact="Public ABI surface grew or shrank dramatically (e.g. lost "
+              "-fvisibility=hidden). This is a configuration/packaging signal, not "
+              "a per-symbol break, but may indicate an unintended visibility regression."),
 ])

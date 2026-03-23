@@ -639,6 +639,382 @@ def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]
     return changes
 
 
+# ── Gap analysis: new ELF-level detectors ─────────────────────────────────────
+
+@registry.detector("tls_checks")
+def _diff_tls_symbols(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect size changes for exported TLS (thread-local) symbols."""
+    from .elf_metadata import ElfMetadata
+
+    o: ElfMetadata = getattr(old, "elf", None) or ElfMetadata()
+    n: ElfMetadata = getattr(new, "elf", None) or ElfMetadata()
+    changes: list[Change] = []
+
+    old_syms = o.symbol_map
+    new_syms = n.symbol_map
+
+    for sym_name, s_old in old_syms.items():
+        if s_old.sym_type != SymbolType.TLS:
+            continue
+        s_new = new_syms.get(sym_name)
+        if s_new is None or s_new.sym_type != SymbolType.TLS:
+            continue
+        if s_old.size > 0 and s_new.size > 0 and s_old.size != s_new.size:
+            changes.append(Change(
+                kind=ChangeKind.TLS_VAR_SIZE_CHANGED,
+                symbol=sym_name,
+                description=(
+                    f"TLS variable size changed: {sym_name} "
+                    f"({s_old.size} → {s_new.size} bytes)"
+                ),
+                old_value=str(s_old.size),
+                new_value=str(s_new.size),
+            ))
+
+    return changes
+
+
+@registry.detector("protected_visibility")
+def _diff_protected_visibility(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect DEFAULT ↔ PROTECTED visibility changes for non-function symbols.
+
+    Function DEFAULT↔PROTECTED is already handled by func_visibility_protected_changed.
+    This detector covers data/object symbols where the change can break copy relocations.
+    """
+    from .elf_metadata import ElfMetadata
+
+    o: ElfMetadata = getattr(old, "elf", None) or ElfMetadata()
+    n: ElfMetadata = getattr(new, "elf", None) or ElfMetadata()
+    changes: list[Change] = []
+
+    for sym_name, s_old in o.symbol_map.items():
+        s_new = n.symbol_map.get(sym_name)
+        if s_new is None:
+            continue
+        old_vis = s_old.visibility or "default"
+        new_vis = s_new.visibility or "default"
+        if old_vis == new_vis:
+            continue
+        if {old_vis, new_vis} != _ELF_VIS_PROTECTED_PAIR:
+            continue
+        # Only report for actual data symbols (OBJECT/COMMON) where copy
+        # relocations are a concern.  Function symbols are already covered by
+        # func_visibility_protected_changed; TLS/IFUNC/other types don't use
+        # copy relocations, so DEFAULT↔PROTECTED is benign for them.
+        _DATA_TYPES = (SymbolType.OBJECT, SymbolType.COMMON)
+        if s_old.sym_type not in _DATA_TYPES or s_new.sym_type not in _DATA_TYPES:
+            continue
+        changes.append(Change(
+            kind=ChangeKind.PROTECTED_VISIBILITY_CHANGED,
+            symbol=sym_name,
+            description=(
+                f"Data symbol visibility changed: {sym_name} "
+                f"({old_vis} → {new_vis}); may break copy relocations"
+            ),
+            old_value=old_vis,
+            new_value=new_vis,
+        ))
+
+    return changes
+
+
+@registry.detector("symbol_version_alias")
+def _diff_symbol_version_aliases(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect default symbol version alias changes.
+
+    When a symbol's default version changes (e.g. foo@@VER_1.0 → foo@@VER_2.0)
+    without retaining the old version as a non-default alias, old binaries
+    requesting the previous default may fail.
+    """
+    from .elf_metadata import ElfMetadata
+
+    o: ElfMetadata = getattr(old, "elf", None) or ElfMetadata()
+    n: ElfMetadata = getattr(new, "elf", None) or ElfMetadata()
+    changes: list[Change] = []
+
+    # Build maps of symbol_name → (version, is_default) for versioned symbols
+    old_default_ver: dict[str, str] = {}
+    new_default_ver: dict[str, str] = {}
+    new_all_vers: dict[str, set[str]] = {}
+
+    for s in o.symbols:
+        if s.version and s.is_default:
+            old_default_ver[s.name] = s.version
+    for s in n.symbols:
+        if s.version:
+            new_all_vers.setdefault(s.name, set()).add(s.version)
+            if s.is_default:
+                new_default_ver[s.name] = s.version
+
+    for sym_name, old_ver in old_default_ver.items():
+        new_ver = new_default_ver.get(sym_name)
+        if new_ver is None or new_ver == old_ver:
+            continue
+        # Default version changed — check if old version is retained as alias
+        retained = old_ver in new_all_vers.get(sym_name, set())
+        desc = (
+            f"Default symbol version changed: {sym_name} "
+            f"(@@{old_ver} → @@{new_ver})"
+        )
+        if not retained:
+            desc += " — old version NOT retained as alias"
+        changes.append(Change(
+            kind=ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED,
+            symbol=sym_name,
+            description=desc,
+            old_value=old_ver,
+            new_value=new_ver,
+        ))
+
+    return changes
+
+
+@registry.detector("glibcxx_dual_abi")
+def _diff_glibcxx_dual_abi(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect mass symbol churn caused by libstdc++ dual ABI toggles.
+
+    When _GLIBCXX_USE_CXX11_ABI is flipped, symbols containing std::string
+    and std::list change their mangling (e.g. std::__cxx11::basic_string vs
+    std::basic_string). This detector identifies this pattern and emits a
+    single diagnostic instead of hundreds of individual add/remove reports.
+    """
+    changes: list[Change] = []
+    old_map = {f.mangled: f for f in old.functions if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
+    new_map = {f.mangled: f for f in new.functions if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
+
+    removed = set(old_map.keys()) - set(new_map.keys())
+    added = set(new_map.keys()) - set(old_map.keys())
+
+    if len(removed) < 5 or len(added) < 5:
+        return changes
+
+    # Detect dual ABI markers in removed/added symbols
+    _CXX11_ABI_MARKERS = ("__cxx11", "cxx11")
+    removed_with_marker = sum(1 for s in removed if any(m in s for m in _CXX11_ABI_MARKERS))
+    added_with_marker = sum(1 for s in added if any(m in s for m in _CXX11_ABI_MARKERS))
+
+    # Pattern 1: Old has __cxx11 symbols, new doesn't (ABI=1 → ABI=0)
+    # Pattern 2: Old lacks __cxx11, new has them (ABI=0 → ABI=1)
+    total_churn = len(removed) + len(added)
+    marker_churn = removed_with_marker + added_with_marker
+
+    if marker_churn > 0 and marker_churn >= total_churn * 0.3:
+        direction = (
+            "CXX11 ABI → legacy ABI"
+            if removed_with_marker > added_with_marker
+            else "legacy ABI → CXX11 ABI"
+        )
+        changes.append(Change(
+            kind=ChangeKind.GLIBCXX_DUAL_ABI_FLIP_DETECTED,
+            symbol="__glibcxx_dual_abi",
+            description=(
+                f"libstdc++ dual ABI flip detected ({direction}): "
+                f"{marker_churn} of {total_churn} churned symbols contain "
+                f"CXX11 ABI markers; likely caused by _GLIBCXX_USE_CXX11_ABI toggle"
+            ),
+            old_value=f"{removed_with_marker} removed with marker",
+            new_value=f"{added_with_marker} added with marker",
+        ))
+
+    return changes
+
+
+@registry.detector("inline_namespace")
+def _diff_inline_namespace(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect symbols that moved between inline namespaces (e.g. v1:: → v2::).
+
+    Uses demangled function names to identify namespace-only changes where the
+    function signature is otherwise identical.
+    """
+    import re
+
+    changes: list[Change] = []
+    old_map = {f.mangled: f for f in old.functions if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
+    new_map = {f.mangled: f for f in new.functions if f.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
+
+    removed = set(old_map.keys()) - set(new_map.keys())
+    added = set(new_map.keys()) - set(old_map.keys())
+
+    if not removed or not added:
+        return changes
+
+    # Build lookup by demangled name with versioned namespace stripped.
+    # Matches Itanium-style ::v1::, ::__v2:: AND libc++-style ::__1::, ::__2::
+    # Anchored to :: on both sides to avoid matching inside identifiers.
+    _INLINE_NS_RE = re.compile(r'::(?:__)?(?:v)?\d+::')
+
+    def _strip_inline_ns(name: str) -> str:
+        return _INLINE_NS_RE.sub("::", name)
+
+    # Index ALL removed symbols by stripped name (not just those with a
+    # namespace match) so that unversioned→versioned moves are caught too.
+    removed_by_stripped: dict[str, list[str]] = {}
+    for m in removed:
+        f = old_map[m]
+        stripped = _strip_inline_ns(f.name)
+        removed_by_stripped.setdefault(stripped, []).append(m)
+
+    matched_count = 0
+    for m in added:
+        f = new_map[m]
+        stripped = _strip_inline_ns(f.name)
+        if stripped in removed_by_stripped:
+            # Only count as a move if at least one side had an inline namespace
+            old_name = old_map[removed_by_stripped[stripped][0]].name
+            if stripped != f.name or stripped != old_name:
+                matched_count += 1
+
+    # Only emit if we find a pattern of namespace-version moves (2+ symbols)
+    if matched_count >= 2:
+        changes.append(Change(
+            kind=ChangeKind.INLINE_NAMESPACE_MOVED,
+            symbol="__inline_namespace_move",
+            description=(
+                f"Inline namespace move detected: {matched_count} symbols "
+                f"appear to have moved between inline namespace versions "
+                f"(e.g. ::v1:: → ::v2::); mangled names changed"
+            ),
+            old_value=f"{matched_count} symbols in old namespace",
+            new_value=f"{matched_count} symbols in new namespace",
+        ))
+
+    return changes
+
+
+@registry.detector("vtable_identity")
+def _diff_vtable_identity(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect vtable/typeinfo symbol identity changes while class layout is stable.
+
+    When visibility or version-script rules change, vtable and typeinfo symbols
+    may get different mangled names or versions even though the class layout
+    hasn't changed. This breaks cross-DSO RTTI and exception handling.
+    """
+    from .elf_metadata import ElfMetadata
+
+    o: ElfMetadata = getattr(old, "elf", None) or ElfMetadata()
+    n: ElfMetadata = getattr(new, "elf", None) or ElfMetadata()
+    changes: list[Change] = []
+
+    # Find vtable/typeinfo symbols by mangling convention (_ZTV, _ZTI, _ZTS)
+    _RTTI_PREFIXES = ("_ZTV", "_ZTI", "_ZTS")
+
+    old_rtti = {s.name for s in o.symbols if any(s.name.startswith(p) for p in _RTTI_PREFIXES)}
+    new_rtti = {s.name for s in n.symbols if any(s.name.startswith(p) for p in _RTTI_PREFIXES)}
+
+    removed_rtti = old_rtti - new_rtti
+    added_rtti = new_rtti - old_rtti
+    common_rtti = old_rtti & new_rtti
+
+    if not removed_rtti and not added_rtti and not common_rtti:
+        return changes
+
+    # Use compound (prefix, type_hash) keys so _ZTV and _ZTI for the same
+    # type are tracked independently — they are different RTTI artefacts.
+    def _rtti_key(sym: str) -> tuple[str, str]:
+        for p in _RTTI_PREFIXES:
+            if sym.startswith(p):
+                return (p, sym[len(p):])
+        return ("", sym)
+
+    removed_keys = {_rtti_key(s) for s in removed_rtti}
+    added_keys = {_rtti_key(s) for s in added_rtti}
+
+    # Same (prefix, type_hash) in both removed and added → identity changed
+    # (e.g. _ZTVFoo@@V1 removed, _ZTVFoo@@V2 added — same prefix + type)
+    identity_changed = removed_keys & added_keys if (removed_rtti and added_rtti) else set()
+    if identity_changed:
+        for rkey in sorted(identity_changed):
+            prefix, type_hash = rkey
+            old_sym = prefix + type_hash
+            new_sym = prefix + type_hash  # same name, but different properties
+            # Reconstruct from actual removed/added sets for accuracy
+            actual_old = next((s for s in removed_rtti if _rtti_key(s) == rkey), old_sym)
+            actual_new = next((s for s in added_rtti if _rtti_key(s) == rkey), new_sym)
+            changes.append(Change(
+                kind=ChangeKind.VTABLE_SYMBOL_IDENTITY_CHANGED,
+                symbol=actual_old,
+                description=(
+                    f"RTTI/vtable symbol identity changed: {actual_old} → {actual_new}; "
+                    f"may break cross-DSO RTTI and exception handling"
+                ),
+                old_value=actual_old,
+                new_value=actual_new,
+            ))
+
+    # Also check existing RTTI symbols for visibility or version changes
+    if common_rtti:
+        for sym_name in common_rtti:
+            s_old = o.symbol_map.get(sym_name)
+            s_new = n.symbol_map.get(sym_name)
+            if not s_old or not s_new:
+                continue
+            old_vis = s_old.visibility or "default"
+            new_vis = s_new.visibility or "default"
+            vis_changed = old_vis != new_vis
+            ver_changed = (s_old.version != s_new.version) or (s_old.is_default != s_new.is_default)
+            if vis_changed or ver_changed:
+                detail_parts = []
+                if vis_changed:
+                    detail_parts.append(f"visibility {old_vis} → {new_vis}")
+                if ver_changed:
+                    old_v = s_old.version or "(none)"
+                    new_v = s_new.version or "(none)"
+                    detail_parts.append(f"version {old_v} → {new_v}")
+                detail = ", ".join(detail_parts)
+                changes.append(Change(
+                    kind=ChangeKind.VTABLE_SYMBOL_IDENTITY_CHANGED,
+                    symbol=sym_name,
+                    description=(
+                        f"RTTI/vtable symbol changed: {sym_name} "
+                        f"({detail}); may break cross-DSO RTTI"
+                    ),
+                    old_value=old_vis if vis_changed else (s_old.version or "(none)"),
+                    new_value=new_vis if vis_changed else (s_new.version or "(none)"),
+                ))
+
+    return changes
+
+
+@registry.detector("abi_surface")
+def _diff_abi_surface(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect dramatic ABI surface growth or shrinkage.
+
+    A large increase in exported symbols may indicate a lost -fvisibility=hidden.
+    A large decrease may indicate an overly aggressive version script.
+    """
+    from .elf_metadata import ElfMetadata
+
+    o: ElfMetadata = getattr(old, "elf", None) or ElfMetadata()
+    n: ElfMetadata = getattr(new, "elf", None) or ElfMetadata()
+    changes: list[Change] = []
+
+    old_count = len(o.symbols)
+    new_count = len(n.symbols)
+
+    if old_count < 10:
+        return changes  # too few symbols to judge
+
+    ratio = new_count / old_count if old_count > 0 else 0
+    delta = new_count - old_count
+
+    # Thresholds: >2x growth or <0.5x shrinkage with at least 50 symbol delta
+    if abs(delta) >= 50 and (ratio > 2.0 or ratio < 0.5):
+        direction = "grew" if delta > 0 else "shrank"
+        changes.append(Change(
+            kind=ChangeKind.ABI_SURFACE_EXPLOSION,
+            symbol="__abi_surface",
+            description=(
+                f"ABI surface {direction} dramatically: "
+                f"{old_count} → {new_count} exported symbols "
+                f"({ratio:.1f}x); check -fvisibility=hidden and version scripts"
+            ),
+            old_value=str(old_count),
+            new_value=str(new_count),
+        ))
+
+    return changes
+
+
 # ── Sprint 3: DWARF-aware layout diff ────────────────────────────────────────
 
 @registry.detector("dwarf")

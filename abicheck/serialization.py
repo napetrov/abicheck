@@ -309,6 +309,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             access=AccessLevel(f.get("access", "public")),
             return_pointer_depth=f.get("return_pointer_depth", 0),
             elf_visibility=ElfVisibility(f["elf_visibility"]) if f.get("elf_visibility") else None,
+            ref_qualifier=f.get("ref_qualifier", ""),
         )
         for f in d.get("functions", [])
     ]

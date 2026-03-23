@@ -141,9 +141,9 @@ class TestDetectorRegistry:
     """Self-registering detector registry."""
 
     def test_all_detectors_registered(self):
-        """All 31 detectors are registered via decorators."""
+        """All 38 detectors are registered via decorators."""
         registry = _get_populated_registry()
-        assert len(registry) == 31
+        assert len(registry) == 38
 
     def test_detector_names_unique(self):
         """No duplicate detector names."""
@@ -163,6 +163,9 @@ class TestDetectorRegistry:
             "reserved_fields", "const_overloads", "param_restrict", "param_va_list",
             "constants", "var_access", "elf_deleted_fallback", "template_inner_types",
             "symbol_renames", "method_qualifiers", "unions", "typedefs",
+            "tls_checks", "protected_visibility", "symbol_version_alias",
+            "glibcxx_dual_abi", "inline_namespace", "vtable_identity",
+            "abi_surface",
         }
         assert expected <= names
 
@@ -177,7 +180,7 @@ class TestDetectorRegistry:
         assert isinstance(changes, list)
         assert isinstance(results, list)
         # Results should have entries for all detectors (enabled or disabled)
-        assert len(results) == 31
+        assert len(results) == 38
 
     def test_support_check_disables_detector(self):
         """Detectors with failing support checks are disabled."""
@@ -313,7 +316,7 @@ class TestCompareUsesNewArchitecture:
         result = compare(old, new)
         assert result.verdict.value == "NO_CHANGE"
         assert result.changes == []
-        assert len(result.detector_results) == 31
+        assert len(result.detector_results) == 38
 
     def test_compare_detects_func_removal(self):
         """compare() detects function removal via registry."""
