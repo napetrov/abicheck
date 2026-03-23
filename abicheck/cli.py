@@ -588,8 +588,13 @@ def _load_suppression_and_policy(
             suppression = SuppressionList.load(
                 suppress, require_justification=require_justification,
             )
-        except (ValueError, OSError) as e:
+        except OSError as e:
             raise click.BadParameter(str(e), param_hint="--suppress") from e
+        except ValueError as e:
+            msg = str(e)
+            if "no 'reason' field" in msg:
+                raise click.ClickException(msg) from e
+            raise click.BadParameter(msg, param_hint="--suppress") from e
         if strict_suppressions:
             expired = suppression.check_expired_strict()
             if expired:
@@ -1875,7 +1880,7 @@ def compare_release_cmd(
 @click.argument("diff_json", type=click.Path(exists=True, path_type=Path))
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None,
               help="Output file for candidate suppressions (default: stdout).")
-@click.option("--expiry-days", type=int, default=180, show_default=True,
+@click.option("--expiry-days", type=click.IntRange(min=0), default=180, show_default=True,
               help="Number of days from today for the expires field.")
 def suggest_suppressions_cmd(
     diff_json: Path,
@@ -1901,9 +1906,22 @@ def suggest_suppressions_cmd(
     except (OSError, json.JSONDecodeError) as e:
         raise click.ClickException(f"Cannot read JSON diff: {e}") from e
 
-    changes = data.get("changes", [])
+    if not isinstance(data, dict):
+        raise click.ClickException(
+            "JSON diff must be an object with a 'changes' key"
+        )
+    if "changes" not in data:
+        raise click.ClickException(
+            "JSON diff is missing required 'changes' key"
+        )
+    changes = data["changes"]
     if not isinstance(changes, list):
-        raise click.ClickException("JSON diff must have a 'changes' array")
+        raise click.ClickException("'changes' must be an array")
+    for i, entry in enumerate(changes):
+        if not isinstance(entry, dict):
+            raise click.ClickException(
+                f"changes[{i}] must be an object, got {type(entry).__name__}"
+            )
 
     yaml_text = suggest_suppressions(changes, expiry_days=expiry_days)
     _write_or_echo(output, yaml_text)
