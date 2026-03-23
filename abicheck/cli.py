@@ -2205,9 +2205,7 @@ def debian_symbols_generate(
 
 @debian_symbols_group.command("validate")
 @click.argument("so_path", type=click.Path(exists=True, path_type=Path))
-@click.option("--symbols", "symbols_path", required=True,
-              type=click.Path(exists=True, path_type=Path),
-              help="Path to existing Debian symbols file to validate.")
+@click.argument("symbols_path", type=click.Path(exists=True, path_type=Path))
 def debian_symbols_validate(so_path: Path, symbols_path: Path) -> None:
     """Validate a Debian symbols file against a shared library binary.
 
@@ -2218,7 +2216,7 @@ def debian_symbols_validate(so_path: Path, symbols_path: Path) -> None:
 
     \b
     Example:
-      abicheck debian-symbols validate libfoo.so --symbols debian/libfoo1.symbols
+      abicheck debian-symbols validate libfoo.so debian/libfoo1.symbols
     """
     from .debian_symbols import format_validation_report, validate_from_binary
 

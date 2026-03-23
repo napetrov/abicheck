@@ -26,11 +26,17 @@ A symbols file has the structure::
      _ZN3foo3barEv@Base 1.0
      (c++)"foo::bar()@Base" 1.0
      (arch=amd64)_ZN3foo3bazEv@Base 1.0
+
+Limitations:
+  - ``#include`` directives and ``#PACKAGE#`` substitution are not supported.
+  - ``(regex)`` and ``(symver)`` pattern-matching tags are not evaluated.
+  - ``(arch=...)`` tags are parsed but not filtered (no ``--arch`` option yet).
 """
 from __future__ import annotations
 
 import logging
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -38,6 +44,9 @@ from .demangle import demangle
 from .elf_metadata import ElfMetadata, ElfSymbol, SymbolType, parse_elf_metadata
 
 _log = logging.getLogger(__name__)
+
+# Maximum symbols file size we are willing to read (50 MiB).
+_MAX_SYMBOLS_FILE_BYTES = 50 * 1024 * 1024
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -53,25 +62,32 @@ class DebianSymbolEntry:
     name: str               # symbol name (mangled or demangled with quotes)
     version_node: str       # "Base" or a version node like "LIBFOO_1.0"
     min_version: str        # minimum package version where this symbol appeared
-    tags: list[str] = field(default_factory=list)  # e.g. ["c++", "arch=amd64"]
+    # Raw tag groups exactly as parsed, e.g. [["c++", "optional"], ["arch=amd64"]].
+    # Each inner list is one parenthesised group; pipe-separated values stay together.
+    tag_groups: list[list[str]] = field(default_factory=list)
+
+    @property
+    def tags(self) -> list[str]:
+        """Flat list of all individual tag values (convenience accessor)."""
+        return [t for group in self.tag_groups for t in group]
 
     @property
     def is_cpp(self) -> bool:
         return "c++" in self.tags
 
     @property
-    def mangled_name(self) -> str:
-        """Return the mangled symbol name (strip quotes from demangled C++ form)."""
-        if self.is_cpp:
-            # (c++)"foo::bar()@Base" → the name field is foo::bar()
-            # The mangled name is not stored; return name as-is for matching
-            return self.name
-        # For non-C++ entries, name is the mangled form (before @)
-        return self.name
+    def is_optional(self) -> bool:
+        return "optional" in self.tags
 
     def format_line(self) -> str:
-        """Format as a Debian symbols file line (without leading space)."""
-        tag_prefix = "".join(f"({t})" for t in self.tags)
+        """Format as a Debian symbols file line (without leading space).
+
+        Preserves the original tag grouping so that ``(c++|optional)``
+        round-trips correctly instead of being split into ``(c++)(optional)``.
+        """
+        tag_prefix = "".join(
+            "(" + "|".join(group) + ")" for group in self.tag_groups
+        )
         if self.is_cpp:
             return f'{tag_prefix}"{self.name}@{self.version_node}" {self.min_version}'
         return f"{tag_prefix}{self.name}@{self.version_node} {self.min_version}"
@@ -88,7 +104,7 @@ class DebianSymbolsFile:
     def format(self) -> str:
         """Format the complete Debian symbols file."""
         lines = [f"{self.library} {self.package} {self.min_version}"]
-        for sym in sorted(self.symbols, key=lambda s: s.name):
+        for sym in sorted(self.symbols, key=lambda s: s.format_line()):
             lines.append(f" {sym.format_line()}")
         return "\n".join(lines) + "\n"
 
@@ -99,7 +115,11 @@ class ValidationResult:
     library: str
     missing: list[DebianSymbolEntry] = field(default_factory=list)
     new_symbols: list[str] = field(default_factory=list)  # "name@version_node"
-    passed: bool = True
+
+    @property
+    def passed(self) -> bool:
+        """Validation passes when no required symbols are missing."""
+        return len(self.missing) == 0
 
 
 @dataclass
@@ -156,21 +176,23 @@ def _parse_symbol_line(line: str, lineno: int) -> DebianSymbolEntry | None:
         (c++|optional)"foo::bar()@Base" 1.0
         (arch=amd64)_ZN3foo3barEv@Base 1.0
     """
-    tags: list[str] = []
+    tag_groups: list[list[str]] = []
     rest = line
 
     # Extract leading tags: (tag1)(tag2)...
+    # Each parenthesised group is stored as a list so pipe-separated tags
+    # (e.g. "c++|optional") round-trip correctly.
     while rest.startswith("("):
         m = _TAG_RE.match(rest)
         if not m:
             break
         tag_content = m.group(1)
-        # A tag may contain pipe-separated values: (c++|optional)
-        for t in tag_content.split("|"):
-            tags.append(t.strip())
+        group = [t.strip() for t in tag_content.split("|")]
+        tag_groups.append(group)
         rest = rest[m.end():]
 
-    is_cpp = "c++" in tags
+    flat_tags = [t for g in tag_groups for t in g]
+    is_cpp = "c++" in flat_tags
 
     if is_cpp:
         # C++ form: "demangled_name@VersionNode" min_version
@@ -210,12 +232,29 @@ def _parse_symbol_line(line: str, lineno: int) -> DebianSymbolEntry | None:
         name=name,
         version_node=version_node,
         min_version=min_version.strip(),
-        tags=tags,
+        tag_groups=tag_groups,
     )
 
 
 def load_symbols_file(path: Path) -> DebianSymbolsFile:
-    """Load and parse a Debian symbols file from disk."""
+    """Load and parse a Debian symbols file from disk.
+
+    Verifies the target is a regular file and enforces a size limit to
+    prevent memory exhaustion from malicious input.
+
+    The regular-file check uses ``os.stat()`` before ``open()`` to avoid
+    blocking on FIFOs or device nodes.  (``parse_elf_metadata`` uses
+    ``fstat()`` *after* open, which works for ELF binaries but would block
+    on a FIFO.)
+    """
+    st = path.stat()
+    if not stat.S_ISREG(st.st_mode):
+        raise ValueError(f"Not a regular file: {path}")
+    if st.st_size > _MAX_SYMBOLS_FILE_BYTES:
+        raise ValueError(
+            f"Symbols file too large ({st.st_size} bytes, "
+            f"limit {_MAX_SYMBOLS_FILE_BYTES}): {path}"
+        )
     return parse_symbols_file(path.read_text(encoding="utf-8"))
 
 
@@ -270,21 +309,21 @@ def generate_symbols_file(
             continue
 
         ver_node = _symbol_version_node(sym)
-        tags: list[str] = []
+        tag_groups: list[list[str]] = []
         name = sym.name
 
         # Try to demangle C++ symbols
         if use_cpp:
             demangled = demangle(sym.name)
             if demangled is not None:
-                tags.append("c++")
+                tag_groups.append(["c++"])
                 name = demangled
 
         result.symbols.append(DebianSymbolEntry(
             name=name,
             version_node=ver_node,
             min_version=version,
-            tags=tags,
+            tag_groups=tag_groups,
         ))
 
     return result
@@ -353,6 +392,9 @@ def validate_symbols(
     - Symbols listed in the file but missing from the binary.
     - Symbols exported by the binary but not listed in the file.
 
+    Symbols tagged ``(optional)`` are skipped — they do not cause a failure
+    when absent from the binary (per ``dpkg-gensymbols(1)`` semantics).
+
     Returns a ``ValidationResult``.
     """
     soname = elf_meta.soname or "UNKNOWN"
@@ -368,12 +410,13 @@ def validate_symbols(
         binary_syms[key] = sym
         binary_mangled_set.add(sym.name)
 
-    # Build demangled → mangled mapping for C++ symbol lookup
-    demangled_to_mangled: dict[str, str] = {}
+    # Build demangled → list of mangled names for C++ symbol lookup.
+    # Multiple mangled names can demangle to the same string (e.g. ABI tags).
+    demangled_to_mangled: dict[str, list[str]] = {}
     for sym_name in binary_mangled_set:
         d = demangle(sym_name)
         if d is not None:
-            demangled_to_mangled[d] = sym_name
+            demangled_to_mangled.setdefault(d, []).append(sym_name)
 
     result = ValidationResult(library=soname)
 
@@ -381,31 +424,44 @@ def validate_symbols(
     matched_binary_keys: set[str] = set()
 
     for entry in symbols_file.symbols:
-        if entry.is_cpp:
-            # Look up by demangled name
-            mangled = demangled_to_mangled.get(entry.name)
-            if mangled is not None:
-                key = f"{mangled}@{entry.version_node}"
-                if key in binary_syms:
-                    matched_binary_keys.add(key)
-                    continue
-            # Not found
+        # (optional) symbols are not required — skip validation
+        if entry.is_optional:
+            # Still try to match so they don't appear as "new"
+            _try_match(entry, binary_syms, demangled_to_mangled, matched_binary_keys)
+            continue
+
+        if not _try_match(entry, binary_syms, demangled_to_mangled, matched_binary_keys):
             result.missing.append(entry)
-        else:
-            key = f"{entry.name}@{entry.version_node}"
-            if key in binary_syms:
-                matched_binary_keys.add(key)
-            else:
-                result.missing.append(entry)
 
     # Find new symbols (in binary but not in symbols file)
     for key in sorted(binary_syms.keys()):
         if key not in matched_binary_keys:
             result.new_symbols.append(key)
 
-    result.passed = len(result.missing) == 0
-
     return result
+
+
+def _try_match(
+    entry: DebianSymbolEntry,
+    binary_syms: dict[str, ElfSymbol],
+    demangled_to_mangled: dict[str, list[str]],
+    matched_binary_keys: set[str],
+) -> bool:
+    """Try to match a symbols-file entry against the binary.  Returns True on match."""
+    if entry.is_cpp:
+        candidates = demangled_to_mangled.get(entry.name, [])
+        for mangled in candidates:
+            key = f"{mangled}@{entry.version_node}"
+            if key in binary_syms:
+                matched_binary_keys.add(key)
+                return True
+        return False
+
+    key = f"{entry.name}@{entry.version_node}"
+    if key in binary_syms:
+        matched_binary_keys.add(key)
+        return True
+    return False
 
 
 def validate_from_binary(
@@ -461,40 +517,44 @@ def diff_symbols_files(
 ) -> SymbolsDiff:
     """Compute the diff between two Debian symbols files.
 
+    Identity key includes the version node so that the same symbol name
+    under different version nodes (common with ELF symbol versioning)
+    is tracked correctly.
+
     Returns a ``SymbolsDiff`` with added, removed, and version-changed symbols.
     """
     result = SymbolsDiff()
 
-    # Index by (name, version_node, is_cpp) for identity
     def _key(entry: DebianSymbolEntry) -> str:
         return f"{'(c++)' if entry.is_cpp else ''}{entry.name}@{entry.version_node}"
 
-    old_by_name: dict[str, DebianSymbolEntry] = {}
+    def _ident(entry: DebianSymbolEntry) -> str:
+        """Name-only key for version-change detection."""
+        return f"{'(c++)' if entry.is_cpp else ''}{entry.name}"
+
+    old_by_key: dict[str, DebianSymbolEntry] = {}
     for entry in old.symbols:
-        # Use name + tags as identity key (without version_node for version change detection)
-        ident = f"{'(c++)' if entry.is_cpp else ''}{entry.name}"
-        old_by_name[ident] = entry
+        old_by_key[_key(entry)] = entry
 
-    new_by_name: dict[str, DebianSymbolEntry] = {}
+    new_by_key: dict[str, DebianSymbolEntry] = {}
     for entry in new.symbols:
-        ident = f"{'(c++)' if entry.is_cpp else ''}{entry.name}"
-        new_by_name[ident] = entry
+        new_by_key[_key(entry)] = entry
 
-    old_keys = set(old_by_name.keys())
-    new_keys = set(new_by_name.keys())
+    old_keys = set(old_by_key.keys())
+    new_keys = set(new_by_key.keys())
 
     # Removed: in old but not in new
-    for ident in sorted(old_keys - new_keys):
-        result.removed.append(old_by_name[ident])
+    for k in sorted(old_keys - new_keys):
+        result.removed.append(old_by_key[k])
 
     # Added: in new but not in old
-    for ident in sorted(new_keys - old_keys):
-        result.added.append(new_by_name[ident])
+    for k in sorted(new_keys - old_keys):
+        result.added.append(new_by_key[k])
 
-    # Version changed: same symbol, different min_version
-    for ident in sorted(old_keys & new_keys):
-        old_entry = old_by_name[ident]
-        new_entry = new_by_name[ident]
+    # Version changed: same full key, different min_version
+    for k in sorted(old_keys & new_keys):
+        old_entry = old_by_key[k]
+        new_entry = new_by_key[k]
         if old_entry.min_version != new_entry.min_version:
             result.version_changed.append((old_entry, new_entry))
 

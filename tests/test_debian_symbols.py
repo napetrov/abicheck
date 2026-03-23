@@ -36,7 +36,7 @@ from abicheck.debian_symbols import (
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Helpers
 # ---------------------------------------------------------------------------
 
 def _make_elf_meta(
@@ -61,6 +61,33 @@ def _make_symbol(
         sym_type=sym_type,
         version=version,
         binding=binding,
+    )
+
+
+def _entry(
+    name: str,
+    version_node: str = "Base",
+    min_version: str = "1.0",
+    tag_groups: list[list[str]] | None = None,
+) -> DebianSymbolEntry:
+    return DebianSymbolEntry(
+        name=name,
+        version_node=version_node,
+        min_version=min_version,
+        tag_groups=tag_groups or [],
+    )
+
+
+def _cpp_entry(
+    name: str,
+    version_node: str = "Base",
+    min_version: str = "1.0",
+) -> DebianSymbolEntry:
+    return DebianSymbolEntry(
+        name=name,
+        version_node=version_node,
+        min_version=min_version,
+        tag_groups=[["c++"]],
     )
 
 
@@ -97,7 +124,7 @@ class TestParseSymbolsFile:
         assert entry.version_node == "Base"
         assert entry.min_version == "1.0"
 
-    def test_multiple_tags(self):
+    def test_multiple_tags_pipe_separated(self):
         text = (
             "libfoo.so.1 libfoo1 #MINVER#\n"
             ' (c++|optional)"foo::bar()@Base" 1.0\n'
@@ -106,6 +133,19 @@ class TestParseSymbolsFile:
         entry = sf.symbols[0]
         assert "c++" in entry.tags
         assert "optional" in entry.tags
+        assert entry.is_cpp
+        assert entry.is_optional
+        # Pipe-separated tags are stored in one group
+        assert entry.tag_groups == [["c++", "optional"]]
+
+    def test_multiple_separate_tag_groups(self):
+        text = (
+            "libfoo.so.1 libfoo1 #MINVER#\n"
+            " (c++)(arch=amd64)\"foo::bar()@Base\" 1.0\n"
+        )
+        sf = parse_symbols_file(text)
+        entry = sf.symbols[0]
+        assert entry.tag_groups == [["c++"], ["arch=amd64"]]
         assert entry.is_cpp
 
     def test_arch_tag(self):
@@ -146,6 +186,16 @@ class TestParseSymbolsFile:
         sf = parse_symbols_file(text)
         assert len(sf.symbols) == 1
 
+    def test_non_symbol_lines_skipped(self):
+        """Lines that don't start with a space (e.g. comments) are skipped."""
+        text = (
+            "libfoo.so.1 libfoo1 #MINVER#\n"
+            "# this is a comment\n"
+            " foo_init@Base 1.0\n"
+        )
+        sf = parse_symbols_file(text)
+        assert len(sf.symbols) == 1
+
     def test_cpp_template_symbol(self):
         text = (
             'libfoo.so.1 libfoo1 #MINVER#\n'
@@ -155,6 +205,77 @@ class TestParseSymbolsFile:
         entry = sf.symbols[0]
         assert entry.name == "std::vector<int>::push_back(int const&)"
         assert entry.version_node == "Base"
+
+    def test_deeply_nested_template(self):
+        name = "std::map<std::string, std::vector<std::pair<int, double>>>"
+        text = (
+            "libfoo.so.1 libfoo1 #MINVER#\n"
+            f' (c++)"{name}::insert()@Base" 1.0\n'
+        )
+        sf = parse_symbols_file(text)
+        entry = sf.symbols[0]
+        assert entry.name == f"{name}::insert()"
+
+    def test_symbol_with_at_in_name(self):
+        """rfind('@') should handle symbols whose demangled name contains @."""
+        text = (
+            "libfoo.so.1 libfoo1 #MINVER#\n"
+            " __cxa_atexit@@GLIBC_2.17 2.17\n"
+        )
+        sf = parse_symbols_file(text)
+        entry = sf.symbols[0]
+        # rfind picks the last @, so name="__cxa_atexit@", version_node="GLIBC_2.17"
+        assert entry.version_node == "GLIBC_2.17"
+
+    def test_special_chars_in_symbol_name(self):
+        text = (
+            "libfoo.so.1 libfoo1 #MINVER#\n"
+            " __libc_csu_init$impl@Base 1.0\n"
+        )
+        sf = parse_symbols_file(text)
+        assert sf.symbols[0].name == "__libc_csu_init$impl"
+
+    # --- Error paths in _parse_symbol_line ---
+
+    def test_missing_at_in_mangled_symbol(self):
+        """A mangled symbol line without @ is skipped with a warning."""
+        text = (
+            "libfoo.so.1 libfoo1 #MINVER#\n"
+            " foo_init 1.0\n"
+        )
+        sf = parse_symbols_file(text)
+        assert len(sf.symbols) == 0
+
+    def test_cpp_not_starting_with_quote(self):
+        """A (c++) tag followed by non-quoted text is skipped."""
+        text = (
+            "libfoo.so.1 libfoo1 #MINVER#\n"
+            " (c++)foo::bar()@Base 1.0\n"
+        )
+        sf = parse_symbols_file(text)
+        assert len(sf.symbols) == 0
+
+    def test_cpp_unterminated_quote(self):
+        text = (
+            "libfoo.so.1 libfoo1 #MINVER#\n"
+            ' (c++)"foo::bar()@Base 1.0\n'
+        )
+        sf = parse_symbols_file(text)
+        assert len(sf.symbols) == 0
+
+    def test_cpp_missing_at_in_quoted(self):
+        text = (
+            "libfoo.so.1 libfoo1 #MINVER#\n"
+            ' (c++)"foo::bar()" 1.0\n'
+        )
+        sf = parse_symbols_file(text)
+        assert len(sf.symbols) == 0
+
+    def test_header_with_extra_whitespace(self):
+        text = "  libfoo.so.1   libfoo1   #MINVER#\n foo@Base 1.0\n"
+        sf = parse_symbols_file(text)
+        assert sf.library == "libfoo.so.1"
+        assert sf.package == "libfoo1"
 
 
 # ---------------------------------------------------------------------------
@@ -176,30 +297,40 @@ class TestFormatSymbolsFile:
         assert len(sf2.symbols) == len(sf.symbols)
 
     def test_cpp_format_line(self):
+        entry = _cpp_entry("foo::bar()")
+        assert entry.format_line() == '(c++)"foo::bar()@Base" 1.0'
+
+    def test_mangled_format_line(self):
+        entry = _entry("_ZN3foo3barEv")
+        assert entry.format_line() == "_ZN3foo3barEv@Base 1.0"
+
+    def test_tagged_format_line(self):
+        entry = _entry("_ZN3foo3barEv", tag_groups=[["arch=amd64"]])
+        assert entry.format_line() == "(arch=amd64)_ZN3foo3barEv@Base 1.0"
+
+    def test_pipe_separated_tags_roundtrip(self):
+        """(c++|optional) must round-trip as (c++|optional), not (c++)(optional)."""
         entry = DebianSymbolEntry(
             name="foo::bar()",
             version_node="Base",
             min_version="1.0",
-            tags=["c++"],
+            tag_groups=[["c++", "optional"]],
         )
-        assert entry.format_line() == '(c++)"foo::bar()@Base" 1.0'
+        line = entry.format_line()
+        assert line == '(c++|optional)"foo::bar()@Base" 1.0'
+        # Parse it back
+        text = f"libfoo.so.1 libfoo1 #MINVER#\n {line}\n"
+        sf = parse_symbols_file(text)
+        assert sf.symbols[0].tag_groups == [["c++", "optional"]]
 
-    def test_mangled_format_line(self):
+    def test_multiple_tag_groups_format(self):
         entry = DebianSymbolEntry(
-            name="_ZN3foo3barEv",
+            name="foo::bar()",
             version_node="Base",
             min_version="1.0",
+            tag_groups=[["c++"], ["arch=amd64"]],
         )
-        assert entry.format_line() == "_ZN3foo3barEv@Base 1.0"
-
-    def test_tagged_format_line(self):
-        entry = DebianSymbolEntry(
-            name="_ZN3foo3barEv",
-            version_node="Base",
-            min_version="1.0",
-            tags=["arch=amd64"],
-        )
-        assert entry.format_line() == "(arch=amd64)_ZN3foo3barEv@Base 1.0"
+        assert entry.format_line() == '(c++)(arch=amd64)"foo::bar()@Base" 1.0'
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +427,13 @@ class TestGenerateSymbolsFile:
         sf = generate_symbols_file(meta, version="1.0")
         assert sf.package == "libfoo2"
 
+    def test_soname_to_package_no_so(self):
+        meta = _make_elf_meta(soname="libfoo", symbols=[
+            _make_symbol("foo_init"),
+        ])
+        sf = generate_symbols_file(meta, version="1.0")
+        assert sf.package == "libfoo"
+
     def test_custom_package_name(self):
         meta = _make_elf_meta(symbols=[
             _make_symbol("foo_init"),
@@ -309,6 +447,18 @@ class TestGenerateSymbolsFile:
         ])
         sf = generate_symbols_file(meta, version="1.0")
         assert len(sf.symbols) == 1
+
+    def test_empty_symbols_list(self):
+        meta = _make_elf_meta(symbols=[])
+        sf = generate_symbols_file(meta, version="1.0")
+        assert len(sf.symbols) == 0
+        text = sf.format()
+        assert text.startswith("libfoo.so.1 libfoo1")
+
+    def test_unknown_soname_fallback(self):
+        meta = _make_elf_meta(soname="", symbols=[_make_symbol("foo")])
+        sf = generate_symbols_file(meta, version="1.0")
+        assert sf.library == "UNKNOWN"
 
 
 # ---------------------------------------------------------------------------
@@ -331,13 +481,32 @@ class TestRoundtrip:
         assert len(sf2.symbols) == len(sf.symbols)
 
     def test_generate_validate_same_binary_pass(self):
-        """Generate symbols from a binary, then validate against the same binary → PASS."""
+        """Generate symbols from a binary, then validate against the same binary -> PASS."""
         meta = _make_elf_meta(symbols=[
             _make_symbol("foo_init"),
             _make_symbol("foo_process"),
         ])
         sf = generate_symbols_file(meta, version="1.0", use_cpp=False)
         result = validate_symbols(meta, sf)
+        assert result.passed
+        assert len(result.missing) == 0
+        assert len(result.new_symbols) == 0
+
+    def test_generate_parse_validate_roundtrip_cpp(self):
+        """Round-trip with C++ symbols: generate -> format -> parse -> validate -> PASS."""
+        meta = _make_elf_meta(symbols=[
+            _make_symbol("_ZN3foo3barEv"),
+            _make_symbol("_ZN3foo3bazEi"),
+        ])
+        with patch("abicheck.debian_symbols.demangle") as mock_demangle:
+            mock_demangle.side_effect = lambda s: {
+                "_ZN3foo3barEv": "foo::bar()",
+                "_ZN3foo3bazEi": "foo::baz(int)",
+            }.get(s)
+            sf = generate_symbols_file(meta, version="1.0", use_cpp=True)
+            text = sf.format()
+            sf2 = parse_symbols_file(text)
+            result = validate_symbols(meta, sf2)
         assert result.passed
         assert len(result.missing) == 0
         assert len(result.new_symbols) == 0
@@ -353,12 +522,10 @@ class TestValidation:
             _make_symbol("foo_init"),
         ])
         sf = DebianSymbolsFile(
-            library="libfoo.so.1",
-            package="libfoo1",
-            min_version="#MINVER#",
+            library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
             symbols=[
-                DebianSymbolEntry(name="foo_init", version_node="Base", min_version="1.0"),
-                DebianSymbolEntry(name="foo_legacy", version_node="Base", min_version="1.0"),
+                _entry("foo_init"),
+                _entry("foo_legacy"),
             ],
         )
         result = validate_symbols(meta, sf)
@@ -372,12 +539,8 @@ class TestValidation:
             _make_symbol("foo_new_thing"),
         ])
         sf = DebianSymbolsFile(
-            library="libfoo.so.1",
-            package="libfoo1",
-            min_version="#MINVER#",
-            symbols=[
-                DebianSymbolEntry(name="foo_init", version_node="Base", min_version="1.0"),
-            ],
+            library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
+            symbols=[_entry("foo_init")],
         )
         result = validate_symbols(meta, sf)
         assert result.passed  # new symbols don't cause failure
@@ -389,17 +552,8 @@ class TestValidation:
             _make_symbol("_ZN3foo3barEv"),
         ])
         sf = DebianSymbolsFile(
-            library="libfoo.so.1",
-            package="libfoo1",
-            min_version="#MINVER#",
-            symbols=[
-                DebianSymbolEntry(
-                    name="foo::bar()",
-                    version_node="Base",
-                    min_version="1.0",
-                    tags=["c++"],
-                ),
-            ],
+            library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
+            symbols=[_cpp_entry("foo::bar()")],
         )
         with patch("abicheck.debian_symbols.demangle", return_value="foo::bar()"):
             result = validate_symbols(meta, sf)
@@ -411,12 +565,8 @@ class TestValidation:
             _make_symbol("foo_init", version="LIBFOO_1.0"),
         ])
         sf = DebianSymbolsFile(
-            library="libfoo.so.1",
-            package="libfoo1",
-            min_version="#MINVER#",
-            symbols=[
-                DebianSymbolEntry(name="foo_init", version_node="LIBFOO_1.0", min_version="1.0"),
-            ],
+            library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
+            symbols=[_entry("foo_init", version_node="LIBFOO_1.0")],
         )
         result = validate_symbols(meta, sf)
         assert result.passed
@@ -426,19 +576,95 @@ class TestValidation:
             _make_symbol("foo_init", version="LIBFOO_2.0"),
         ])
         sf = DebianSymbolsFile(
-            library="libfoo.so.1",
-            package="libfoo1",
-            min_version="#MINVER#",
-            symbols=[
-                DebianSymbolEntry(name="foo_init", version_node="LIBFOO_1.0", min_version="1.0"),
-            ],
+            library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
+            symbols=[_entry("foo_init", version_node="LIBFOO_1.0")],
         )
         result = validate_symbols(meta, sf)
         assert not result.passed
         assert len(result.missing) == 1
 
+    def test_optional_symbol_missing_does_not_fail(self):
+        """Symbols tagged (optional) should not cause validation failure."""
+        meta = _make_elf_meta(symbols=[
+            _make_symbol("foo_init"),
+        ])
+        sf = DebianSymbolsFile(
+            library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
+            symbols=[
+                _entry("foo_init"),
+                DebianSymbolEntry(
+                    name="foo_optional",
+                    version_node="Base",
+                    min_version="1.0",
+                    tag_groups=[["optional"]],
+                ),
+            ],
+        )
+        result = validate_symbols(meta, sf)
+        assert result.passed
+        assert len(result.missing) == 0
+
+    def test_optional_symbol_present_not_reported_as_new(self):
+        """An (optional) symbol that IS present should not appear in new_symbols."""
+        meta = _make_elf_meta(symbols=[
+            _make_symbol("foo_init"),
+            _make_symbol("foo_optional"),
+        ])
+        sf = DebianSymbolsFile(
+            library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
+            symbols=[
+                _entry("foo_init"),
+                DebianSymbolEntry(
+                    name="foo_optional",
+                    version_node="Base",
+                    min_version="1.0",
+                    tag_groups=[["optional"]],
+                ),
+            ],
+        )
+        result = validate_symbols(meta, sf)
+        assert result.passed
+        assert len(result.new_symbols) == 0
+
+    def test_cpp_optional_missing_does_not_fail(self):
+        """(c++|optional) symbol missing from binary should not cause failure."""
+        meta = _make_elf_meta(symbols=[
+            _make_symbol("foo_init"),
+        ])
+        sf = DebianSymbolsFile(
+            library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
+            symbols=[
+                _entry("foo_init"),
+                DebianSymbolEntry(
+                    name="foo::legacy()",
+                    version_node="Base",
+                    min_version="1.0",
+                    tag_groups=[["c++", "optional"]],
+                ),
+            ],
+        )
+        with patch("abicheck.debian_symbols.demangle", return_value=None):
+            result = validate_symbols(meta, sf)
+        assert result.passed
+
+    def test_multiple_mangled_same_demangled(self):
+        """Multiple mangled names demangling to the same string should all match."""
+        meta = _make_elf_meta(symbols=[
+            _make_symbol("_ZN3foo3barEv"),        # foo::bar()
+            _make_symbol("_ZN3foo3barB5cxx11Ev"),  # foo::bar() [abi:cxx11]
+        ])
+        sf = DebianSymbolsFile(
+            library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
+            symbols=[_cpp_entry("foo::bar()")],
+        )
+        with patch("abicheck.debian_symbols.demangle", return_value="foo::bar()"):
+            result = validate_symbols(meta, sf)
+        assert result.passed
+        # One of the two mangled names is unmatched -> appears as new
+        assert len(result.new_symbols) == 1
+
     def test_validation_report_pass(self):
-        result = ValidationResult(library="libfoo.so.1", passed=True)
+        result = ValidationResult(library="libfoo.so.1")
         report = format_validation_report(result)
         assert "PASS" in report
         assert "MISSING" in report
@@ -446,24 +672,36 @@ class TestValidation:
     def test_validation_report_fail(self):
         result = ValidationResult(
             library="libfoo.so.1",
-            missing=[
-                DebianSymbolEntry(name="foo_legacy", version_node="Base", min_version="1.0"),
-            ],
-            passed=False,
+            missing=[_entry("foo_legacy")],
         )
         report = format_validation_report(result)
         assert "FAIL" in report
         assert "1 missing symbol" in report
 
+    def test_validation_report_fail_plural(self):
+        result = ValidationResult(
+            library="libfoo.so.1",
+            missing=[_entry("foo_a"), _entry("foo_b"), _entry("foo_c")],
+        )
+        report = format_validation_report(result)
+        assert "FAIL" in report
+        assert "3 missing symbols" in report
+
     def test_validation_report_with_new(self):
         result = ValidationResult(
             library="libfoo.so.1",
             new_symbols=["foo_new@Base"],
-            passed=True,
         )
         report = format_validation_report(result)
         assert "PASS" in report
         assert "1 new symbol" in report
+
+    def test_validation_result_passed_is_computed(self):
+        """passed is a @property, not a stored field."""
+        r = ValidationResult(library="test")
+        assert r.passed
+        r.missing.append(_entry("gone"))
+        assert not r.passed
 
 
 # ---------------------------------------------------------------------------
@@ -474,15 +712,11 @@ class TestDiff:
     def test_no_changes(self):
         old = DebianSymbolsFile(
             library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
-            symbols=[
-                DebianSymbolEntry(name="foo_init", version_node="Base", min_version="1.0"),
-            ],
+            symbols=[_entry("foo_init")],
         )
         new = DebianSymbolsFile(
             library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
-            symbols=[
-                DebianSymbolEntry(name="foo_init", version_node="Base", min_version="1.0"),
-            ],
+            symbols=[_entry("foo_init")],
         )
         diff = diff_symbols_files(old, new)
         assert len(diff.added) == 0
@@ -492,16 +726,11 @@ class TestDiff:
     def test_added_symbol(self):
         old = DebianSymbolsFile(
             library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
-            symbols=[
-                DebianSymbolEntry(name="foo_init", version_node="Base", min_version="1.0"),
-            ],
+            symbols=[_entry("foo_init")],
         )
         new = DebianSymbolsFile(
             library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
-            symbols=[
-                DebianSymbolEntry(name="foo_init", version_node="Base", min_version="1.0"),
-                DebianSymbolEntry(name="foo_new", version_node="Base", min_version="1.1"),
-            ],
+            symbols=[_entry("foo_init"), _entry("foo_new", min_version="1.1")],
         )
         diff = diff_symbols_files(old, new)
         assert len(diff.added) == 1
@@ -510,16 +739,11 @@ class TestDiff:
     def test_removed_symbol(self):
         old = DebianSymbolsFile(
             library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
-            symbols=[
-                DebianSymbolEntry(name="foo_init", version_node="Base", min_version="1.0"),
-                DebianSymbolEntry(name="foo_legacy", version_node="Base", min_version="1.0"),
-            ],
+            symbols=[_entry("foo_init"), _entry("foo_legacy")],
         )
         new = DebianSymbolsFile(
             library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
-            symbols=[
-                DebianSymbolEntry(name="foo_init", version_node="Base", min_version="1.0"),
-            ],
+            symbols=[_entry("foo_init")],
         )
         diff = diff_symbols_files(old, new)
         assert len(diff.removed) == 1
@@ -528,15 +752,11 @@ class TestDiff:
     def test_version_changed(self):
         old = DebianSymbolsFile(
             library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
-            symbols=[
-                DebianSymbolEntry(name="foo_init", version_node="Base", min_version="1.0"),
-            ],
+            symbols=[_entry("foo_init")],
         )
         new = DebianSymbolsFile(
             library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
-            symbols=[
-                DebianSymbolEntry(name="foo_init", version_node="Base", min_version="1.1"),
-            ],
+            symbols=[_entry("foo_init", min_version="1.1")],
         )
         diff = diff_symbols_files(old, new)
         assert len(diff.version_changed) == 1
@@ -547,18 +767,13 @@ class TestDiff:
     def test_cpp_diff(self):
         old = DebianSymbolsFile(
             library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
-            symbols=[
-                DebianSymbolEntry(name="foo::bar()", version_node="Base",
-                                  min_version="1.0", tags=["c++"]),
-            ],
+            symbols=[_cpp_entry("foo::bar()")],
         )
         new = DebianSymbolsFile(
             library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
             symbols=[
-                DebianSymbolEntry(name="foo::bar()", version_node="Base",
-                                  min_version="1.0", tags=["c++"]),
-                DebianSymbolEntry(name="foo::baz(int)", version_node="Base",
-                                  min_version="1.1", tags=["c++"]),
+                _cpp_entry("foo::bar()"),
+                _cpp_entry("foo::baz(int)", min_version="1.1"),
             ],
         )
         diff = diff_symbols_files(old, new)
@@ -566,10 +781,30 @@ class TestDiff:
         assert diff.added[0].name == "foo::baz(int)"
         assert diff.added[0].is_cpp
 
+    def test_same_name_different_version_nodes(self):
+        """Same symbol name under different version nodes should be tracked separately."""
+        old = DebianSymbolsFile(
+            library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
+            symbols=[
+                _entry("foo_init", version_node="LIBFOO_1.0"),
+                _entry("foo_init", version_node="LIBFOO_2.0"),
+            ],
+        )
+        new = DebianSymbolsFile(
+            library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
+            symbols=[
+                _entry("foo_init", version_node="LIBFOO_1.0"),
+            ],
+        )
+        diff = diff_symbols_files(old, new)
+        assert len(diff.removed) == 1
+        assert diff.removed[0].version_node == "LIBFOO_2.0"
+        assert len(diff.added) == 0
+
     def test_diff_report_format(self):
         diff = SymbolsDiff(
-            added=[DebianSymbolEntry(name="foo_new", version_node="Base", min_version="1.1")],
-            removed=[DebianSymbolEntry(name="foo_old", version_node="Base", min_version="1.0")],
+            added=[_entry("foo_new", min_version="1.1")],
+            removed=[_entry("foo_old")],
         )
         report = format_diff_report(diff, "old.symbols", "new.symbols")
         assert "old.symbols" in report
@@ -577,6 +812,20 @@ class TestDiff:
         assert "+ foo_new@Base 1.1" in report
         assert "- foo_old@Base 1.0" in report
         assert "Total changes: 2" in report
+
+    def test_diff_report_version_changed(self):
+        diff = SymbolsDiff(
+            version_changed=[(_entry("foo_init"), _entry("foo_init", min_version="2.0"))],
+        )
+        report = format_diff_report(diff)
+        assert "VERSION CHANGED" in report
+        assert "foo_init: 1.0 -> 2.0" in report
+        assert "Total changes: 1" in report
+
+    def test_diff_report_empty(self):
+        diff = SymbolsDiff()
+        report = format_diff_report(diff)
+        assert "Total changes: 0" in report
 
 
 # ---------------------------------------------------------------------------
@@ -608,6 +857,16 @@ class TestCLI:
         assert "--package" in result.output
         assert "--version" in result.output
 
+    def test_validate_takes_positional_symbols_path(self):
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["debian-symbols", "validate", "--help"])
+        assert result.exit_code == 0
+        assert "SYMBOLS_PATH" in result.output
+
     def test_diff_with_files(self, tmp_path: Path):
         from click.testing import CliRunner
 
@@ -635,6 +894,49 @@ class TestCLI:
         assert "ADDED" in result.output
         assert "foo_new" in result.output
 
+    def test_diff_identical_files(self, tmp_path: Path):
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        content = "libfoo.so.1 libfoo1 #MINVER#\n foo@Base 1.0\n"
+        (tmp_path / "a.sym").write_text(content)
+        (tmp_path / "b.sym").write_text(content)
+
+        runner = CliRunner()
+        result = runner.invoke(main, [
+            "debian-symbols", "diff",
+            str(tmp_path / "a.sym"), str(tmp_path / "b.sym"),
+        ])
+        assert result.exit_code == 0
+        assert "Total changes: 0" in result.output
+
+    def test_validate_exit_code_2_on_mismatch(self, tmp_path: Path):
+        """validate should exit 2 when symbols are missing from binary."""
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        # Create a symbols file that references a symbol not in the binary
+        sym_content = (
+            "libfoo.so.1 libfoo1 #MINVER#\n"
+            " missing_sym@Base 1.0\n"
+        )
+        sym_path = tmp_path / "test.symbols"
+        sym_path.write_text(sym_content)
+
+        # We need an actual ELF binary; mock parse_elf_metadata instead
+        mock_meta = _make_elf_meta(symbols=[_make_symbol("other_sym")])
+        with patch("abicheck.debian_symbols.parse_elf_metadata", return_value=mock_meta):
+            runner = CliRunner()
+            so_path = tmp_path / "libfoo.so"
+            so_path.write_bytes(b"\x7fELF")  # dummy file
+            result = runner.invoke(main, [
+                "debian-symbols", "validate", str(so_path), str(sym_path),
+            ])
+        assert result.exit_code == 2
+        assert "FAIL" in result.output
+
 
 # ---------------------------------------------------------------------------
 # Load from file
@@ -653,3 +955,16 @@ class TestLoadSymbolsFile:
         sf = load_symbols_file(path)
         assert sf.library == "libfoo.so.1"
         assert len(sf.symbols) == 2
+
+    def test_load_nonexistent_file(self, tmp_path: Path):
+        with pytest.raises(FileNotFoundError):
+            load_symbols_file(tmp_path / "nope.symbols")
+
+    def test_load_rejects_non_regular_file(self, tmp_path: Path):
+        """load_symbols_file should reject FIFOs / devices."""
+        import os
+
+        fifo = tmp_path / "fifo.symbols"
+        os.mkfifo(str(fifo))
+        with pytest.raises(ValueError, match="Not a regular file"):
+            load_symbols_file(fifo)
