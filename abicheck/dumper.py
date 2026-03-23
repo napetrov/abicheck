@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import shlex
@@ -46,6 +47,8 @@ from .model import (
     Variable,
     Visibility,
 )
+
+log = logging.getLogger(__name__)
 
 
 def _castxml_available() -> bool:
@@ -1014,6 +1017,7 @@ def dump(
     nostdinc: bool = False,
     lang: str | None = None,
     dwarf_only: bool = False,
+    debug_format: str | None = None,
 ) -> AbiSnapshot:
     """Create an AbiSnapshot from a shared library + headers.
 
@@ -1035,6 +1039,8 @@ def dump(
         lang: Force language ("C" or "C++").
         dwarf_only: If True, force DWARF-only mode even when headers
             are available (ADR-003).
+        debug_format: Force debug format: "dwarf", "btf", or "ctf".
+            None = auto-detect (DWARF preferred for userspace, BTF for kernel).
 
     Returns:
         AbiSnapshot with functions, variables, and types populated.
@@ -1067,7 +1073,94 @@ def dump(
         gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
         sysroot=sysroot, nostdinc=nostdinc, lang=lang,
         dwarf_only=dwarf_only,
+        debug_format=debug_format,
     )
+
+
+def _is_kernel_binary(path: Path) -> bool:
+    """Heuristic: is this a kernel binary (vmlinux, *.ko, *.ko.xz, *.ko.zst)?"""
+    name = path.name
+    if name == "vmlinux":
+        return True
+    suffixes = path.suffixes  # e.g. ['.ko', '.xz']
+    suffix_str = "".join(suffixes)
+    if suffix_str in (".ko", ".ko.xz", ".ko.zst", ".ko.gz"):
+        return True
+    # Check for .modinfo section (kernel module indicator)
+    try:
+        from elftools.elf.elffile import ELFFile
+        with open(path, "rb") as f:
+            elf = ELFFile(f)  # type: ignore[no-untyped-call]
+            return elf.get_section_by_name(".modinfo") is not None  # type: ignore[no-untyped-call]
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _resolve_debug_metadata(
+    so_path: Path,
+    debug_format: str | None,
+) -> tuple[Any, Any]:
+    """Resolve debug metadata using the specified or auto-detected format.
+
+    Returns (dwarf_meta, dwarf_adv) — the same types as parse_dwarf().
+    BTF/CTF data is converted to DwarfMetadata for checker compatibility.
+    """
+    from .dwarf_advanced import AdvancedDwarfMetadata
+
+    if debug_format == "btf":
+        from .btf_metadata import parse_btf_metadata
+        btf = parse_btf_metadata(so_path)
+        if not btf.has_btf:
+            log.warning("BTF requested but no .BTF section in %s", so_path)
+        return btf.to_dwarf_metadata(), AdvancedDwarfMetadata()
+
+    if debug_format == "ctf":
+        from .ctf_metadata import parse_ctf_metadata
+        ctf = parse_ctf_metadata(so_path)
+        if not ctf.has_ctf:
+            log.warning("CTF requested but no .ctf section in %s", so_path)
+        return ctf.to_dwarf_metadata(), AdvancedDwarfMetadata()
+
+    if debug_format == "dwarf":
+        from .dwarf_unified import parse_dwarf
+        return parse_dwarf(so_path)
+
+    # Auto-detect: kernel binaries prefer BTF, userspace prefers DWARF
+    is_kernel = _is_kernel_binary(so_path)
+
+    if is_kernel:
+        # BTF > DWARF > CTF for kernel binaries
+        from .btf_metadata import has_btf_section, parse_btf_metadata
+        if has_btf_section(so_path):
+            btf = parse_btf_metadata(so_path)
+            if btf.has_btf:
+                log.info("Using BTF debug info from %s (kernel binary)", so_path)
+                return btf.to_dwarf_metadata(), AdvancedDwarfMetadata()
+
+    # DWARF > BTF > CTF for userspace (or kernel fallback)
+    from .dwarf_unified import parse_dwarf
+    dwarf_meta, dwarf_adv = parse_dwarf(so_path)
+    if dwarf_meta.has_dwarf:
+        return dwarf_meta, dwarf_adv
+
+    # Fallback to BTF if DWARF not available
+    from .btf_metadata import has_btf_section, parse_btf_metadata
+    if has_btf_section(so_path):
+        btf = parse_btf_metadata(so_path)
+        if btf.has_btf:
+            log.info("No DWARF, falling back to BTF in %s", so_path)
+            return btf.to_dwarf_metadata(), AdvancedDwarfMetadata()
+
+    # Fallback to CTF
+    from .ctf_metadata import has_ctf_section, parse_ctf_metadata
+    if has_ctf_section(so_path):
+        ctf = parse_ctf_metadata(so_path)
+        if ctf.has_ctf:
+            log.info("No DWARF/BTF, falling back to CTF in %s", so_path)
+            return ctf.to_dwarf_metadata(), AdvancedDwarfMetadata()
+
+    # No debug info at all — return empty DWARF metadata
+    return dwarf_meta, dwarf_adv
 
 
 _ELF_VIS_MAP: dict[str, ElfVisibility] = {
@@ -1107,11 +1200,11 @@ def _dump_elf(
     nostdinc: bool = False,
     lang: str | None = None,
     dwarf_only: bool = False,
+    debug_format: str | None = None,
 ) -> AbiSnapshot:
-    """ELF-specific dump: pyelftools + DWARF + castxml."""
+    """ELF-specific dump: pyelftools + debug info (DWARF/BTF/CTF) + castxml."""
     exported_dynamic, exported_static = _pyelftools_exported_symbols(so_path)
 
-    from .dwarf_unified import parse_dwarf
     from .elf_metadata import SymbolType, parse_elf_metadata
 
     elf_meta = parse_elf_metadata(so_path)
@@ -1139,7 +1232,7 @@ def _dump_elf(
         }
         # Full set for CastxmlParser: determines PUBLIC vs ELF_ONLY visibility
         exported_dynamic = exported_dynamic_funcs | exported_dynamic_objects | exported_dynamic_tls
-    dwarf_meta, dwarf_adv = parse_dwarf(so_path)
+    dwarf_meta, dwarf_adv = _resolve_debug_metadata(so_path, debug_format)
 
     profile_hint: str | None = None
     if lang is not None:

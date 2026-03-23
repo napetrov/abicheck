@@ -105,12 +105,26 @@ class EnumInfo:
 
 @dataclass
 class DwarfMetadata:
-    """All DWARF-derived ABI-relevant type information from one .so."""
+    """All DWARF-derived ABI-relevant type information from one .so.
+
+    Implements the TypeMetadataSource protocol (see type_metadata.py).
+    """
     # name → StructLayout  (structs, classes, unions)
     structs: dict[str, StructLayout] = field(default_factory=dict)
     # name → EnumInfo
     enums: dict[str, EnumInfo] = field(default_factory=dict)
     has_dwarf: bool = False   # False = binary had no DWARF info
+
+    # TypeMetadataSource protocol methods
+    @property
+    def has_data(self) -> bool:
+        return self.has_dwarf
+
+    def get_struct_layout(self, name: str) -> StructLayout | None:
+        return self.structs.get(name)
+
+    def get_enum_info(self, name: str) -> EnumInfo | None:
+        return self.enums.get(name)
 
 
 # Tags whose subtrees we never descend into (function-local types, inline
