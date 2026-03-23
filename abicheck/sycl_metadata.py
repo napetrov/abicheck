@@ -12,20 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SYCL runtime and Plugin Interface (PI) metadata extraction.
+"""SYCL runtime and plugin metadata extraction.
 
 Extracts metadata from SYCL distributions for ABI compatibility checking:
 
-- PI plugin inventory (which backend plugins are shipped)
-- PI entry points per plugin (exported ``pi*`` symbols)
-- PI version detection (from symbol heuristics or runtime probing)
+- Plugin inventory (which backend plugins are shipped)
+- Entry points per plugin (exported ``pi*`` or ``ur*`` symbols)
+- Interface version detection (from symbol heuristics)
 - Plugin search path configuration
 
-Primary target: DPC++ (Intel's SYCL implementation).
-See ADR-020 for design rationale.
+Supports two plugin interface generations:
 
-Static extraction uses ``pyelftools`` to parse plugin ``.so`` files without
-requiring the SYCL runtime to be installed or functional.
+- **PI (Plugin Interface)**: ``libpi_*.so``, entry point ``piPluginInit``,
+  symbols prefixed ``pi``.  Used by DPC++ through ~2024.
+- **UR (Unified Runtime)**: ``libur_adapter_*.so``, entry point
+  ``urAdapterGet``, symbols prefixed ``ur``.  Successor to PI in newer
+  DPC++ releases.
+
+Both interfaces use the same detection approach: glob for plugin libraries,
+parse ``.dynsym`` via pyelftools, match symbol patterns.  No SYCL compiler
+or runtime needed — pure static analysis of ELF binaries.
+
+See ADR-020 for design rationale.
 """
 from __future__ import annotations
 
@@ -39,15 +47,19 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# PI entry point pattern — all DPC++ PI functions start with ``pi``
-# and use CamelCase (e.g., piPlatformsGet, piDeviceGetInfo).
+# Plugin interface patterns
+#
+# PI (Plugin Interface): DPC++ legacy — piCamelCase symbols, libpi_*.so
+# UR (Unified Runtime):  DPC++ current — urCamelCase symbols, libur_adapter_*.so
 # ---------------------------------------------------------------------------
 _PI_SYMBOL_RE = re.compile(r"^pi[A-Z]\w+$")
+_UR_SYMBOL_RE = re.compile(r"^ur[A-Z]\w+$")
 
-# Known DPC++ plugin library name patterns.
-_PLUGIN_NAME_RE = re.compile(r"^libpi_(\w+)\.so")
+# Library name → (plugin_name, interface_type)
+_PI_PLUGIN_NAME_RE = re.compile(r"^libpi_(\w+)\.so")
+_UR_PLUGIN_NAME_RE = re.compile(r"^libur_adapter_(\w+)\.so")
 
-# Well-known PI entry points that must be present for a valid plugin.
+# Well-known PI entry points that must be present for a valid PI plugin.
 PI_REQUIRED_ENTRYPOINTS: frozenset[str] = frozenset({
     "piPluginInit",
     "piPlatformsGet",
@@ -70,6 +82,30 @@ PI_REQUIRED_ENTRYPOINTS: frozenset[str] = frozenset({
     "piEventRelease",
 })
 
+# Well-known UR entry points that must be present for a valid UR adapter.
+UR_REQUIRED_ENTRYPOINTS: frozenset[str] = frozenset({
+    "urAdapterGet",
+    "urAdapterRelease",
+    "urPlatformGet",
+    "urPlatformGetInfo",
+    "urDeviceGet",
+    "urDeviceGetInfo",
+    "urContextCreate",
+    "urContextRelease",
+    "urQueueCreate",
+    "urQueueRelease",
+    "urMemBufferCreate",
+    "urMemRelease",
+    "urProgramCreateWithIL",
+    "urProgramBuild",
+    "urProgramRelease",
+    "urKernelCreate",
+    "urKernelRelease",
+    "urEnqueueKernelLaunch",
+    "urEventWait",
+    "urEventRelease",
+})
+
 # Backend type detection from plugin library name.
 _BACKEND_MAP: dict[str, str] = {
     "level_zero": "level_zero",
@@ -88,12 +124,13 @@ _BACKEND_MAP: dict[str, str] = {
 
 @dataclass
 class SyclPluginInfo:
-    """Metadata for a single PI backend plugin."""
+    """Metadata for a single backend plugin (PI or UR)."""
 
     name: str                           # e.g. "level_zero", "opencl", "cuda"
     library: str                        # e.g. "libpi_level_zero.so"
-    pi_version: str = ""                # PI interface version (if detectable)
-    entry_points: list[str] = field(default_factory=list)  # exported pi* symbols
+    interface_type: str = "pi"          # "pi" (Plugin Interface) or "ur" (Unified Runtime)
+    pi_version: str = ""                # interface version (if detectable)
+    entry_points: list[str] = field(default_factory=list)  # exported pi*/ur* symbols
     backend_type: str = ""              # "level_zero" | "opencl" | "cuda" | ...
     min_driver_version: str | None = None  # minimum backend driver version
 
@@ -121,8 +158,8 @@ class SyclMetadata:
 _HIDDEN_VISIBILITIES = frozenset({"STV_HIDDEN", "STV_INTERNAL"})
 
 
-def _extract_pi_symbols(so_path: Path) -> list[str]:
-    """Extract exported PI function names from a plugin .so via pyelftools.
+def _extract_plugin_symbols(so_path: Path, symbol_re: re.Pattern[str]) -> list[str]:
+    """Extract exported symbols matching *symbol_re* from a plugin ``.so``.
 
     Uses ``.dynsym`` only (not ``.symtab``) to match ``elf_metadata.py``
     behaviour. Filters out hidden/internal symbols. Uses ``os.fstat()``
@@ -134,20 +171,20 @@ def _extract_pi_symbols(so_path: Path) -> list[str]:
     from elftools.elf.elffile import ELFFile
     from elftools.elf.sections import SymbolTableSection
 
-    pi_symbols: list[str] = []
+    symbols: list[str] = []
     try:
         with open(so_path, "rb") as f:
             # TOCTOU protection: verify fd is a regular file after open.
             st = os.fstat(f.fileno())
             if not stat.S_ISREG(st.st_mode):
-                log.warning("_extract_pi_symbols: not a regular file: %s", so_path)
+                log.warning("_extract_plugin_symbols: not a regular file: %s", so_path)
                 return []
             elf = ELFFile(f)
             for section in elf.iter_sections():
                 if not isinstance(section, SymbolTableSection):
                     continue
-                # Only process .dynsym — .symtab may contain internal pi*
-                # static functions that are not part of the public PI surface.
+                # Only process .dynsym — .symtab may contain internal
+                # static functions that are not part of the public surface.
                 if section.name != ".dynsym":
                     continue
                 for sym in section.iter_symbols():
@@ -165,11 +202,11 @@ def _extract_pi_symbols(so_path: Path) -> list[str]:
                     vis = sym.entry["st_other"]["visibility"]
                     if vis in _HIDDEN_VISIBILITIES:
                         continue
-                    if _PI_SYMBOL_RE.match(name):
-                        pi_symbols.append(name)
+                    if symbol_re.match(name):
+                        symbols.append(name)
     except (ELFError, OSError, ValueError) as exc:
-        log.warning("Failed to extract PI symbols from %s: %s", so_path, exc)
-    return sorted(pi_symbols)
+        log.warning("Failed to extract symbols from %s: %s", so_path, exc)
+    return sorted(symbols)
 
 
 def _detect_backend_type(plugin_name: str) -> str:
@@ -200,39 +237,89 @@ def _detect_pi_version_from_symbols(symbols: list[str]) -> str:
     return ""
 
 
-def parse_sycl_plugin(so_path: Path) -> SyclPluginInfo | None:
-    """Parse a single SYCL PI plugin .so and extract metadata.
+def _detect_ur_version_from_symbols(symbols: list[str]) -> str:
+    """Heuristic UR version detection from exported symbol set.
 
-    Returns None if the file is not a valid PI plugin (no piPluginInit).
+    UR versions are detected by presence of landmark entry points
+    added in each release.
+
+    Returns empty string if version cannot be determined.
     """
-    name_match = _PLUGIN_NAME_RE.match(so_path.name)
-    if not name_match:
-        log.debug("Not a PI plugin (name mismatch): %s", so_path.name)
-        return None
+    # UR 0.10+ added urKernelSetArgSampler, urBindlessImages*
+    has_bindless = any(s.startswith("urBindlessImages") for s in symbols)
+    # UR 0.9+ added urVirtualMem*, urPhysicalMem*
+    has_virtual_mem = any(s.startswith("urVirtualMem") for s in symbols)
+    # UR 0.8+ added urCommandBuffer*
+    has_cmd_buffer = any(s.startswith("urCommandBuffer") for s in symbols)
 
-    plugin_name = name_match.group(1)
-    entry_points = _extract_pi_symbols(so_path)
+    if has_bindless:
+        return "0.10"
+    if has_virtual_mem:
+        return "0.9"
+    if has_cmd_buffer:
+        return "0.8"
+    if "urAdapterGet" in symbols:
+        return "0.7"
+    return ""
 
-    if "piPluginInit" not in entry_points:
-        log.warning("Plugin %s missing piPluginInit — not a valid PI plugin", so_path)
-        return None
 
-    return SyclPluginInfo(
-        name=plugin_name,
-        library=so_path.name,
-        pi_version=_detect_pi_version_from_symbols(entry_points),
-        entry_points=entry_points,
-        backend_type=_detect_backend_type(plugin_name),
-    )
+def parse_sycl_plugin(so_path: Path) -> SyclPluginInfo | None:
+    """Parse a single SYCL plugin .so (PI or UR) and extract metadata.
+
+    Tries PI pattern first (``libpi_*.so``), then UR (``libur_adapter_*.so``).
+    Returns None if the file matches neither pattern or lacks the required
+    init entry point.
+    """
+    # Try PI pattern: libpi_<backend>.so
+    pi_match = _PI_PLUGIN_NAME_RE.match(so_path.name)
+    if pi_match:
+        plugin_name = pi_match.group(1)
+        entry_points = _extract_plugin_symbols(so_path, _PI_SYMBOL_RE)
+        if "piPluginInit" not in entry_points:
+            log.warning("Plugin %s missing piPluginInit — not a valid PI plugin", so_path)
+            return None
+        return SyclPluginInfo(
+            name=plugin_name,
+            library=so_path.name,
+            interface_type="pi",
+            pi_version=_detect_pi_version_from_symbols(entry_points),
+            entry_points=entry_points,
+            backend_type=_detect_backend_type(plugin_name),
+        )
+
+    # Try UR pattern: libur_adapter_<backend>.so
+    ur_match = _UR_PLUGIN_NAME_RE.match(so_path.name)
+    if ur_match:
+        plugin_name = ur_match.group(1)
+        entry_points = _extract_plugin_symbols(so_path, _UR_SYMBOL_RE)
+        if "urAdapterGet" not in entry_points:
+            log.warning("Plugin %s missing urAdapterGet — not a valid UR adapter", so_path)
+            return None
+        return SyclPluginInfo(
+            name=plugin_name,
+            library=so_path.name,
+            interface_type="ur",
+            pi_version=_detect_ur_version_from_symbols(entry_points),
+            entry_points=entry_points,
+            backend_type=_detect_backend_type(plugin_name),
+        )
+
+    log.debug("Not a SYCL plugin (name mismatch): %s", so_path.name)
+    return None
+
+
+def _is_plugin_candidate(filename: str) -> bool:
+    """Check if a filename matches any known plugin naming pattern."""
+    return bool(_PI_PLUGIN_NAME_RE.match(filename) or _UR_PLUGIN_NAME_RE.match(filename))
 
 
 def discover_sycl_plugins(
     search_paths: list[Path],
 ) -> list[SyclPluginInfo]:
-    """Discover and parse all PI plugins in the given search paths.
+    """Discover and parse all SYCL plugins (PI and UR) in the given paths.
 
-    Scans directories for files matching ``libpi_*.so`` and extracts
-    PI metadata from each.
+    Scans directories for files matching ``libpi_*.so`` (PI) or
+    ``libur_adapter_*.so`` (UR) and extracts metadata from each.
     """
     plugins: list[SyclPluginInfo] = []
     seen: set[str] = set()
@@ -246,7 +333,7 @@ def discover_sycl_plugins(
                 continue
             if entry.name in seen:
                 continue
-            if not _PLUGIN_NAME_RE.match(entry.name):
+            if not _is_plugin_candidate(entry.name):
                 continue
             seen.add(entry.name)
             plugin = parse_sycl_plugin(entry)
@@ -275,14 +362,15 @@ def _default_plugin_search_paths() -> list[Path]:
     """Return default DPC++ plugin search paths from environment.
 
     DPC++ looks for plugins in:
-    1. SYCL_PI_PLUGINS_DIR (if set)
-    2. <libdir>/sycl/ (relative to libsycl.so)
-    3. Directories in LD_LIBRARY_PATH
+    1. ``SYCL_PI_PLUGINS_DIR`` — PI plugin directory (legacy)
+    2. ``SYCL_UR_ADAPTERS_DIR`` — UR adapter directory (newer DPC++)
+    3. ``<libdir>/sycl/`` — relative to ``libsycl.so`` (handled by caller)
     """
     paths: list[Path] = []
-    pi_dir = os.environ.get("SYCL_PI_PLUGINS_DIR")
-    if pi_dir:
-        paths.append(Path(pi_dir))
+    for env_var in ("SYCL_PI_PLUGINS_DIR", "SYCL_UR_ADAPTERS_DIR"):
+        val = os.environ.get(env_var)
+        if val:
+            paths.append(Path(val))
     return paths
 
 
@@ -316,7 +404,7 @@ def parse_sycl_metadata(
 
     plugins = discover_sycl_plugins(search_paths)
 
-    # Detect runtime PI version from plugin versions (take the max).
+    # Detect the dominant interface version from plugin versions.
     # Use tuple comparison to avoid lexicographic ordering issues
     # (e.g., "1.10" should be > "1.2").
     pi_versions = [p.pi_version for p in plugins if p.pi_version]

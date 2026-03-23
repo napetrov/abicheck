@@ -39,14 +39,41 @@ def _make_plugin(
     entry_points: list[str] | None = None,
     backend_type: str = "level_zero",
     min_driver_version: str | None = None,
+    interface_type: str = "pi",
 ) -> SyclPluginInfo:
+    if entry_points is None:
+        if interface_type == "ur":
+            entry_points = ["urAdapterGet", "urPlatformGet", "urDeviceGet"]
+        else:
+            entry_points = ["piPluginInit", "piPlatformsGet", "piDevicesGet"]
     return SyclPluginInfo(
         name=name,
         library=library,
+        interface_type=interface_type,
         pi_version=pi_version,
-        entry_points=entry_points or ["piPluginInit", "piPlatformsGet", "piDevicesGet"],
+        entry_points=entry_points,
         backend_type=backend_type,
         min_driver_version=min_driver_version,
+    )
+
+
+def _make_ur_plugin(
+    name: str = "level_zero",
+    library: str = "libur_adapter_level_zero.so",
+    pi_version: str = "0.9",
+    entry_points: list[str] | None = None,
+    backend_type: str = "level_zero",
+    min_driver_version: str | None = None,
+) -> SyclPluginInfo:
+    """Convenience wrapper for UR plugins."""
+    return _make_plugin(
+        name=name,
+        library=library,
+        pi_version=pi_version,
+        entry_points=entry_points,
+        backend_type=backend_type,
+        min_driver_version=min_driver_version,
+        interface_type="ur",
     )
 
 
@@ -390,3 +417,155 @@ class TestEnvironmentMatrix:
 
         with pytest.raises(ValueError, match="compilers.*must be a list"):
             EnvironmentMatrix.from_dict({"compilers": 42})
+
+
+# ---------------------------------------------------------------------------
+# UR (Unified Runtime) plugin support
+# ---------------------------------------------------------------------------
+
+class TestURPluginDetection:
+    """Test that UR plugins are detected and diffed correctly."""
+
+    def test_ur_plugin_removal(self):
+        """Removing a UR adapter is breaking, same as removing a PI plugin."""
+        old_p = _make_ur_plugin(name="level_zero")
+        new_plugins: list[SyclPluginInfo] = []
+        old = _make_sycl(plugins=[old_p])
+        new = _make_sycl(plugins=new_plugins)
+        changes = _diff_plugins(old, new)
+        assert len(changes) == 1
+        assert changes[0].kind == ChangeKind.SYCL_PLUGIN_REMOVED
+        assert "level_zero" in changes[0].description
+
+    def test_ur_plugin_addition(self):
+        """Adding a new UR adapter is compatible."""
+        new_p = _make_ur_plugin(name="cuda", library="libur_adapter_cuda.so", backend_type="cuda")
+        old = _make_sycl(plugins=[])
+        new = _make_sycl(plugins=[new_p])
+        changes = _diff_plugins(old, new)
+        assert len(changes) == 1
+        assert changes[0].kind == ChangeKind.SYCL_PLUGIN_ADDED
+
+    def test_ur_entrypoint_removed(self):
+        """Removing a UR entry point is breaking."""
+        old_p = _make_ur_plugin(entry_points=["urAdapterGet", "urPlatformGet", "urDeviceGet"])
+        new_p = _make_ur_plugin(entry_points=["urAdapterGet", "urPlatformGet"])
+        old = _make_sycl(plugins=[old_p])
+        new = _make_sycl(plugins=[new_p])
+        changes = _diff_plugin_entrypoints(old, new)
+        removed = [c for c in changes if c.kind == ChangeKind.SYCL_PI_ENTRYPOINT_REMOVED]
+        assert len(removed) == 1
+        assert "urDeviceGet" in removed[0].description
+        assert "UR" in removed[0].description  # mentions UR, not PI
+
+    def test_ur_entrypoint_added(self):
+        """Adding a UR entry point is compatible."""
+        old_p = _make_ur_plugin(entry_points=["urAdapterGet", "urPlatformGet"])
+        new_p = _make_ur_plugin(entry_points=["urAdapterGet", "urPlatformGet", "urDeviceGet"])
+        old = _make_sycl(plugins=[old_p])
+        new = _make_sycl(plugins=[new_p])
+        changes = _diff_plugin_entrypoints(old, new)
+        added = [c for c in changes if c.kind == ChangeKind.SYCL_PI_ENTRYPOINT_ADDED]
+        assert len(added) == 1
+        assert "UR" in added[0].description
+
+    def test_mixed_pi_and_ur_plugins(self):
+        """Distribution can ship both PI and UR plugins simultaneously."""
+        pi_plugin = _make_plugin(name="opencl", library="libpi_opencl.so", backend_type="opencl")
+        ur_plugin = _make_ur_plugin(name="level_zero")
+        old = _make_sycl(plugins=[pi_plugin, ur_plugin])
+
+        # New version drops PI opencl, keeps UR level_zero, adds UR cuda
+        ur_cuda = _make_ur_plugin(name="cuda", library="libur_adapter_cuda.so", backend_type="cuda")
+        new = _make_sycl(plugins=[ur_plugin, ur_cuda])
+
+        changes = _diff_plugins(old, new)
+        removed = [c for c in changes if c.kind == ChangeKind.SYCL_PLUGIN_REMOVED]
+        added = [c for c in changes if c.kind == ChangeKind.SYCL_PLUGIN_ADDED]
+        assert len(removed) == 1
+        assert removed[0].old_value == "libpi_opencl.so"
+        assert len(added) == 1
+        assert added[0].new_value == "libur_adapter_cuda.so"
+
+    def test_ur_interface_type_in_symbol_path(self):
+        """UR entry point changes use 'ur' in symbol path, not 'pi'."""
+        old_p = _make_ur_plugin(entry_points=["urAdapterGet", "urPlatformGet"])
+        new_p = _make_ur_plugin(entry_points=["urAdapterGet"])
+        old = _make_sycl(plugins=[old_p])
+        new = _make_sycl(plugins=[new_p])
+        changes = _diff_plugin_entrypoints(old, new)
+        assert len(changes) == 1
+        assert changes[0].symbol.startswith("sycl::ur::")
+
+    def test_ur_serialization_roundtrip(self):
+        """UR plugins survive serialization round-trip with interface_type."""
+        from abicheck.serialization import snapshot_from_dict, snapshot_to_dict
+
+        ur_plugin = _make_ur_plugin(
+            name="level_zero",
+            entry_points=["urAdapterGet", "urPlatformGet", "urDeviceGet"],
+        )
+        snap = AbiSnapshot(
+            library="libsycl.so", version="2026.1.0",
+            sycl=_make_sycl(plugins=[ur_plugin]),
+        )
+        d = snapshot_to_dict(snap)
+        restored = snapshot_from_dict(d)
+        assert restored.sycl is not None
+        assert len(restored.sycl.plugins) == 1
+        p = restored.sycl.plugins[0]
+        assert p.interface_type == "ur"
+        assert p.name == "level_zero"
+        assert "urAdapterGet" in p.entry_points
+
+    def test_full_detector_with_ur(self):
+        """Full SYCL detector works end-to-end with UR plugins."""
+        old_plugins = [
+            _make_ur_plugin(name="level_zero", entry_points=["urAdapterGet", "urPlatformGet", "urDeviceGet"]),
+            _make_ur_plugin(name="cuda", library="libur_adapter_cuda.so", backend_type="cuda"),
+        ]
+        new_plugins = [
+            _make_ur_plugin(name="level_zero", entry_points=["urAdapterGet", "urPlatformGet"]),
+        ]
+        old = AbiSnapshot(
+            library="libsycl.so", version="1.0",
+            sycl=_make_sycl(plugins=old_plugins),
+        )
+        new = AbiSnapshot(
+            library="libsycl.so", version="2.0",
+            sycl=_make_sycl(plugins=new_plugins),
+        )
+        changes = _diff_sycl(old, new)
+        kinds = {c.kind for c in changes}
+        assert ChangeKind.SYCL_PLUGIN_REMOVED in kinds        # cuda removed
+        assert ChangeKind.SYCL_PI_ENTRYPOINT_REMOVED in kinds  # urDeviceGet removed
+
+
+class TestURVersionDetection:
+    """Test UR version heuristic detection."""
+
+    def test_basic_ur_version(self):
+        from abicheck.sycl_metadata import _detect_ur_version_from_symbols
+        assert _detect_ur_version_from_symbols(["urAdapterGet", "urPlatformGet"]) == "0.7"
+
+    def test_ur_with_command_buffer(self):
+        from abicheck.sycl_metadata import _detect_ur_version_from_symbols
+        assert _detect_ur_version_from_symbols([
+            "urAdapterGet", "urCommandBufferCreate",
+        ]) == "0.8"
+
+    def test_ur_with_virtual_mem(self):
+        from abicheck.sycl_metadata import _detect_ur_version_from_symbols
+        assert _detect_ur_version_from_symbols([
+            "urAdapterGet", "urVirtualMemMap",
+        ]) == "0.9"
+
+    def test_ur_with_bindless(self):
+        from abicheck.sycl_metadata import _detect_ur_version_from_symbols
+        assert _detect_ur_version_from_symbols([
+            "urAdapterGet", "urBindlessImagesCreate",
+        ]) == "0.10"
+
+    def test_empty_symbols(self):
+        from abicheck.sycl_metadata import _detect_ur_version_from_symbols
+        assert _detect_ur_version_from_symbols([]) == ""

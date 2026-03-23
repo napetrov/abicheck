@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SYCL Plugin Interface (PI) ABI change detector.
+"""SYCL plugin ABI change detector (PI and UR).
 
 Compares SYCL metadata between two snapshots to detect:
-- PI version incompatibilities
-- Missing/added PI entry points in backend plugins
+- Plugin interface version incompatibilities (PI or UR)
+- Missing/added entry points in backend plugins
 - Removed/added backend plugins
 - Plugin search path drift
 - Backend driver requirement changes
+
+Works with both PI (Plugin Interface, ``libpi_*.so``) and UR (Unified
+Runtime, ``libur_adapter_*.so``) plugins using the same change kinds.
 
 Registered via ``@registry.detector("sycl")`` and automatically skipped when
 ``SyclMetadata`` is absent from either snapshot.
@@ -124,13 +127,14 @@ def _diff_plugin_entrypoints(
         new_plugin = new_map[name]
         old_eps = set(old_plugin.entry_points)
         new_eps = set(new_plugin.entry_points)
+        iface = new_plugin.interface_type.upper()  # "PI" or "UR"
 
         for ep in sorted(old_eps - new_eps):
             changes.append(Change(
                 kind=ChangeKind.SYCL_PI_ENTRYPOINT_REMOVED,
-                symbol=f"sycl::pi::{name}::{ep}",
+                symbol=f"sycl::{new_plugin.interface_type}::{name}::{ep}",
                 description=(
-                    f"PI entry point '{ep}' removed from plugin "
+                    f"{iface} entry point '{ep}' removed from plugin "
                     f"'{old_plugin.library}'; runtime calls to this function "
                     f"will fail."
                 ),
@@ -141,9 +145,9 @@ def _diff_plugin_entrypoints(
         for ep in sorted(new_eps - old_eps):
             changes.append(Change(
                 kind=ChangeKind.SYCL_PI_ENTRYPOINT_ADDED,
-                symbol=f"sycl::pi::{name}::{ep}",
+                symbol=f"sycl::{new_plugin.interface_type}::{name}::{ep}",
                 description=(
-                    f"PI entry point '{ep}' added to plugin "
+                    f"{iface} entry point '{ep}' added to plugin "
                     f"'{new_plugin.library}'."
                 ),
                 old_value=None,

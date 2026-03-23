@@ -271,6 +271,7 @@ def _sycl_from_dict(d: dict[str, Any]) -> Any:
         SyclPluginInfo(
             name=p.get("name", ""),
             library=p.get("library", ""),
+            interface_type=p.get("interface_type", "pi"),
             pi_version=p.get("pi_version", ""),
             entry_points=p.get("entry_points", []),
             backend_type=p.get("backend_type", ""),

@@ -26,12 +26,15 @@ strategies:
    standard shared library with exported C++ symbols. Existing ELF/PE/Mach-O
    diff engines already handle this. No new machinery needed.
 
-2. **Plugin Interface (PI)** — DPC++ (and compatible implementations) use a
-   backend plugin mechanism where `libsycl.so` dynamically loads backend
-   plugins (e.g., `libpi_level_zero.so`, `libpi_opencl.so`, `libpi_cuda.so`).
-   Each plugin exports a dispatch table via `piPluginInit()`. PI has a version
-   number, and missing/changed entry points break the runtime ↔ plugin
-   contract.
+2. **Plugin interfaces (PI and UR)** — DPC++ dynamically loads backend
+   plugins. Two interface generations exist:
+   - **PI (Plugin Interface)**: legacy. Libraries named `libpi_*.so`, init
+     entry point `piPluginInit()`, symbols prefixed `pi`.
+   - **UR (Unified Runtime)**: current. Libraries named `libur_adapter_*.so`,
+     init entry point `urAdapterGet()`, symbols prefixed `ur`.
+   Both use the same detection approach. A distribution may ship PI plugins,
+   UR adapters, or both during the transition period. Missing/changed entry
+   points break the runtime ↔ plugin contract regardless of interface.
 
 3. **Backend driver compatibility** — plugins depend on backend drivers
    (Level Zero, OpenCL ICD, CUDA driver). Version requirements flow through
@@ -44,11 +47,12 @@ strategies:
 |----------|--------|--------------------|
 | Exported symbol removed from `libsycl.so` | Applications crash at load time | Existing ELF diff (already works) |
 | Type layout changed in `libsycl.so` exports | Silent data corruption | Existing DWARF diff (already works) |
-| PI version bumped | Old plugins rejected at runtime | New: PI metadata extraction + version diff |
-| PI entry point removed from dispatch table | Plugin segfaults or returns errors | New: PI entry point set comparison |
-| PI plugin `.so` removed from distribution | Backend unavailable | New: Plugin inventory comparison |
-| PI plugin discovery path changed | Plugins not found at runtime | New: Plugin search-path diff |
-| Backend driver version requirement raised | Runtime fails on older systems | New: Environment matrix constraint |
+| PI/UR interface version bumped | Old plugins rejected at runtime | Plugin metadata extraction + version diff |
+| PI/UR entry point removed from dispatch table | Plugin segfaults or returns errors | Entry point set comparison |
+| Plugin `.so` removed from distribution | Backend unavailable | Plugin inventory comparison |
+| Plugin discovery path changed | Plugins not found at runtime | Plugin search-path diff |
+| SYCL implementation changed (DPC++ → AdaptiveCpp) | Entirely different ABI | Implementation detection |
+| Backend driver version requirement raised | Runtime fails on older systems | Environment matrix constraint |
 
 ### Design principles
 
@@ -74,11 +78,12 @@ strategies:
 ```python
 @dataclass
 class SyclPluginInfo:
-    """Metadata for a single PI backend plugin."""
+    """Metadata for a single backend plugin (PI or UR)."""
     name: str                          # e.g. "level_zero", "opencl", "cuda"
-    library: str                       # e.g. "libpi_level_zero.so"
-    pi_version: str                    # PI interface version (from piPluginInit)
-    entry_points: list[str]            # exported PI function names
+    library: str                       # e.g. "libpi_level_zero.so" or "libur_adapter_level_zero.so"
+    interface_type: str = "pi"         # "pi" (Plugin Interface) or "ur" (Unified Runtime)
+    pi_version: str                    # interface version (heuristic from symbols)
+    entry_points: list[str]            # exported pi*/ur* function names
     backend_type: str                  # "level_zero" | "opencl" | "cuda" | "hip"
     min_driver_version: str | None     # minimum backend driver version if known
 
@@ -98,16 +103,16 @@ Stored on `AbiSnapshot` as `sycl: SyclMetadata | None` — same pattern as
 
 ### 2. New extraction module: `sycl_metadata.py`
 
-**Static extraction** (no runtime needed):
-- Parse PI plugin `.so` files to extract exported `pi*` symbols
-- Detect PI version from symbol presence heuristics or version strings
+**Static extraction** (no SYCL compiler or runtime needed):
+- Glob for plugin libraries: `libpi_*.so` (PI) and `libur_adapter_*.so` (UR)
+- Parse `.dynsym` via pyelftools to extract exported `pi*`/`ur*` symbols
+- Detect interface version from symbol presence heuristics
 - Inventory plugin libraries in known search paths
-- Extract plugin search-path configuration from env/config files
+- Check `SYCL_PI_PLUGINS_DIR` and `SYCL_UR_ADAPTERS_DIR` environment variables
 
-**Optional runtime probing** (requires SYCL runtime):
-- Call `piPluginInit` to get exact PI version and dispatch table
-- Use `SYCL_PI_TRACE=2` for discovery tracing
-- Gated by `requires_support` — disabled when runtime unavailable
+**No special tooling required.** The entire extraction uses pyelftools (pure
+Python, already a project dependency) and filesystem checks. No SYCL compiler,
+no SYCL runtime, no SDK tools.
 
 ### 3. New detector: `diff_sycl.py`
 
@@ -190,11 +195,11 @@ AbiSnapshot
 ├── macho: MachoMetadata      ── existing
 ├── dwarf: DwarfMetadata      ── existing
 ├── dwarf_advanced: ...       ── existing
-├── sycl: SyclMetadata        ── NEW (PI plugins, versions, search paths)
+├── sycl: SyclMetadata        ── NEW (PI/UR plugins, versions, search paths)
 │   ├── pi_version
 │   ├── plugins[]
-│   │   ├── SyclPluginInfo (entry_points, pi_version, backend_type)
-│   │   └── ...
+│   │   ├── SyclPluginInfo (interface_type, entry_points, pi_version, backend_type)
+│   │   └── ...  (PI: libpi_*.so, UR: libur_adapter_*.so)
 │   └── plugin_search_paths[]
 └── (future) cuda: CudaMetadata
 
@@ -203,12 +208,12 @@ Detectors (registry)
 ├── "types"                   ── existing
 ├── "elf"                     ── existing (handles libsycl.so as any .so)
 ├── "dwarf"                   ── existing
-├── "sycl"                    ── NEW (PI version, entry points, plugins)
+├── "sycl"                    ── NEW (PI/UR version, entry points, plugins)
 └── (future) "cuda"
 
 Change Registry
 ├── func_removed, type_size_changed, ...  ── existing (114+ kinds)
-├── sycl_pi_version_changed, ...          ── NEW (8 kinds)
+├── sycl_implementation_changed, ...     ── NEW (9 kinds, shared by PI and UR)
 └── (future) cuda_*                       ── future
 ```
 
@@ -240,12 +245,14 @@ abicheck compare old/lib/libsycl.so new/lib/libsycl.so --header new/include/sycl
                   │
                   └── IF detected → parse_sycl_metadata(lib_dir)
                       │
-                      ├── discover_sycl_plugins() — glob libpi_*.so in lib_dir
+                      ├── discover_sycl_plugins() — glob both patterns:
+                      │   libpi_*.so (PI) and libur_adapter_*.so (UR)
                       │   for each plugin:
                       │   ├── open .so, fstat() to verify regular file
                       │   ├── parse .dynsym via pyelftools
-                      │   ├── collect pi* symbols (filter hidden/internal)
-                      │   └── detect PI version from symbol heuristics
+                      │   ├── collect pi*/ur* symbols (filter hidden/internal)
+                      │   ├── detect interface version from symbol heuristics
+                      │   └── set interface_type = "pi" or "ur"
                       │
                       └── attach result → snapshot.sycl = SyclMetadata(...)
 
@@ -309,7 +316,23 @@ Both layers are reported together. A single comparison may produce both
 ```
 
 The action auto-detects the SYCL distribution because `libsycl.so` is in
-the lib dir alongside the `libpi_*.so` plugins. No additional inputs needed.
+the lib dir alongside the `libpi_*.so` and/or `libur_adapter_*.so` plugins.
+No additional inputs needed.
+
+### No special tooling needed
+
+The entire SYCL scanning pipeline uses tools already in the project:
+
+| What | Tool | Already a dependency? |
+|------|------|-----------------------|
+| Detect SYCL distribution | `Path.exists()` | Python stdlib |
+| Find plugins | `Path.iterdir()` + regex | Python stdlib |
+| Parse plugin symbols | `pyelftools` | Yes (used by core ELF pipeline) |
+| Version detection | Symbol name heuristics | No external tool |
+
+No SYCL compiler, no SYCL runtime, no Intel oneAPI SDK, no special
+system packages. If abicheck can scan a regular `.so`, it can scan a
+SYCL distribution.
 
 ### Non-SYCL libraries are unaffected
 
@@ -337,20 +360,22 @@ no extra memory allocation.
 
 - PI interface is implementation-specific (DPC++). Other SYCL implementations
   may use different plugin mechanisms.
-- Static PI extraction (parsing exports) is less precise than runtime probing
-  (`piPluginInit`). Both modes should be supported.
+- Static extraction (parsing exports) is less precise than runtime probing
+  but works without any SYCL runtime installed, which is the key requirement.
 - SPIR-V device-code compatibility checking is deferred (complex, analogous
   to CUDA PTX/cubin problem).
 
 ### Risks
 
-- PI interface is DPC++ specific. If Intel deprecates PI in favour of a
-  different plugin mechanism, the extractor will need updating. When that
-  happens, add a new pattern alongside PI, not replace it.
+- Both PI and UR are DPC++ specific. Other SYCL implementations (AdaptiveCpp)
+  may use different plugin mechanisms. The `implementation` field and
+  `_detect_sycl_implementation()` heuristic accommodate this — new plugin
+  patterns can be added without changing the model.
 - Plugin `.so` files rarely ship debug info, so type-level analysis is
   limited to symbol-only mode (entry point presence/absence).
 - Current implementation is Linux-only (ELF plugins, pyelftools). Windows
-  support (`pi_*.dll`) is deferred until PE platform support is needed.
+  support (`pi_*.dll`, `ur_adapter_*.dll`) is deferred until PE platform
+  support is needed.
 
 ---
 
@@ -368,13 +393,15 @@ no extra memory allocation.
 ### Phase 2: Static extraction and auto-detection (Sprint 2)
 
 1. Implement `parse_sycl_metadata()` — inventory plugin `.so` files, extract
-   `pi*` exports via pyelftools (`.dynsym` only, visibility-filtered)
+   `pi*`/`ur*` exports via pyelftools (`.dynsym` only, visibility-filtered)
 2. Wire extraction into `service.py:run_dump()` via auto-detection: after the
    ELF dump completes, check if the library's parent directory looks like a
    SYCL distribution. If so, attach `SyclMetadata` to the snapshot. No new
    CLI flags — zero overhead for non-SYCL libraries (cost: a few `Path.exists()`
    calls from `_detect_sycl_implementation()`)
 3. Implement `diff_sycl.py` detector with `@registry.detector("sycl")`
+4. Support both PI (`libpi_*.so`) and UR (`libur_adapter_*.so`) plugins with
+   `interface_type` field on `SyclPluginInfo`
 
 ### Phase 3: Environment matrix (Sprint 3)
 
@@ -382,12 +409,6 @@ no extra memory allocation.
 2. Add `--env-matrix` CLI input (YAML format)
 3. Pass matrix through `compare()` to detectors
 4. Emit parameterized verdicts when constraints unspecified
-
-### Phase 4: Runtime probing (Sprint 4, optional)
-
-1. Add optional `piPluginInit` runtime probe (gated by flag)
-2. Add `SYCL_PI_TRACE` harness for discovery validation
-3. Report probe results as evidence tiers alongside static findings
 
 ---
 
