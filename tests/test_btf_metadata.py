@@ -42,6 +42,7 @@ from abicheck.btf_metadata import (
     BTF_MAGIC,
     BTF_VERSION,
     BtfMetadata,
+    BtfType,
     _extra_data_size,
     _parse_header,
     _parse_types,
@@ -555,23 +556,15 @@ class TestTypeResolverExtended:
         assert r.size(2) == 40
 
     def test_array_short_extra(self) -> None:
-        """Array with short extra data (< 12 bytes) returns fallback names."""
-        b = BtfBuilder()
-        # Manually add array type with short extra (8 bytes instead of 12)
-        # This will still parse since BtfBuilder puts extra directly in the entry
-        # but the resolver will see len(extra) < 12
-        array_extra = struct.pack("<III", 0, 0, 0)[:8]  # only 8 bytes
-        b.add_type("", BTF_KIND_ARRAY, 0, 0, extra=array_extra)
-        r = self._build_and_resolve(b)
-        # _parse_types expects 12 bytes for array, but we only provided 8
-        # The type will still be parsed since we're cheating through BtfBuilder
-        # However, the resolver's name/size methods check extra length
-        # Actually with BTF_KIND_ARRAY, _extra_data_size returns 12,
-        # but builder gave 8, so parse_types reads 12 (including 4 bytes of next data)
-        # This is fragile; let's just test the resolver handles it
-        # Since the type might not parse correctly, just verify no crash
-        assert isinstance(r.name(1), str)
-        assert isinstance(r.size(1), int)
+        """Array with short extra data (< 12 bytes) returns fallback values."""
+        # Construct BtfType directly with truncated extra to bypass _parse_types
+        void = BtfType(type_id=0, name_off=0, info=0, size_or_type=0, extra=b"")
+        array_info = (BTF_KIND_ARRAY << 24)
+        arr = BtfType(type_id=1, name_off=0, info=array_info, size_or_type=0,
+                      extra=b"\x00" * 8)  # only 8 bytes, need 12
+        resolver = _TypeResolver([void, arr], b"\x00")
+        assert resolver.name(1) == "[]"
+        assert resolver.size(1) == 0
 
     def test_volatile_name(self) -> None:
         b = BtfBuilder()
@@ -780,8 +773,8 @@ class TestTypeResolverExtended:
 # ---------------------------------------------------------------------------
 
 class TestParseHeaderExtended:
-    def test_version_warning(self) -> None:
-        """Non-standard BTF version should still parse (with warning)."""
+    def test_nonstandard_version_parses(self) -> None:
+        """Non-standard BTF version should still parse."""
         hdr = struct.pack("<HBBIIIII", BTF_MAGIC, 99, 0, 24, 0, 0, 0, 1)
         str_data = b"\x00"
         data = hdr + str_data

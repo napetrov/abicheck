@@ -177,7 +177,7 @@ def _read_btf_section(elf_path: Path) -> bytes | None:
         section = elf.get_section_by_name(".BTF")  # type: ignore[no-untyped-call]
         if section is None:
             return None
-        return section.data()  # type: ignore[no-untyped-call]
+        return bytes(section.data())
 
 
 # ---------------------------------------------------------------------------
@@ -424,7 +424,7 @@ class _TypeResolver:
         if kind == BTF_KIND_INT:
             # INT encoding: bits 0-7 = nr_bits, bits 8-15 = unused, bits 16-23 = offset
             if len(t.extra) >= 4:
-                enc = struct.unpack_from("<I", t.extra, 0)[0]
+                enc: int = struct.unpack_from("<I", t.extra, 0)[0]
                 nr_bits = enc & 0xFF
                 return (nr_bits + 7) // 8
             return t.size_or_type
@@ -437,6 +437,8 @@ class _TypeResolver:
 
         if kind == BTF_KIND_ARRAY:
             if len(t.extra) >= 12:
+                elem_type: int
+                nelems: int
                 elem_type, _, nelems = struct.unpack_from("<III", t.extra, 0)
                 return self.size(elem_type) * nelems
             return 0

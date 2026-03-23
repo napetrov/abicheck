@@ -183,7 +183,7 @@ def _read_ctf_section(elf_path: Path) -> bytes | None:
             section = elf.get_section_by_name(".SUNW_ctf")  # type: ignore[no-untyped-call]
         if section is None:
             return None
-        return section.data()  # type: ignore[no-untyped-call]
+        return bytes(section.data())
 
 
 # ---------------------------------------------------------------------------
@@ -493,15 +493,15 @@ class _TypeResolver:
 
         if kind == CTF_K_INTEGER:
             if len(t.extra) >= 4:
-                enc = struct.unpack_from("<I", t.extra, 0)[0]
+                enc: int = struct.unpack_from("<I", t.extra, 0)[0]
                 nr_bits = enc & 0xFFFF
                 return (nr_bits + 7) // 8
             return 0
 
         if kind == CTF_K_FLOAT:
             if len(t.extra) >= 4:
-                enc = struct.unpack_from("<I", t.extra, 0)[0]
-                nr_bits = enc & 0xFFFF
+                enc_f: int = struct.unpack_from("<I", t.extra, 0)[0]
+                nr_bits = enc_f & 0xFFFF
                 return (nr_bits + 7) // 8
             return 0
 
@@ -510,11 +510,15 @@ class _TypeResolver:
 
         if kind == CTF_K_ARRAY:
             if self._version >= CTF_VERSION_3 and len(t.extra) >= 12:
+                elem_type: int
+                nelems: int
                 elem_type, _, nelems = struct.unpack_from("<III", t.extra, 0)
                 return self.size(elem_type) * nelems
             if self._version < CTF_VERSION_3 and len(t.extra) >= 6:
-                elem_type, _, nelems = struct.unpack_from("<HHH", t.extra, 0)
-                return self.size(elem_type) * nelems
+                elem_type_v2: int
+                nelems_v2: int
+                elem_type_v2, _, nelems_v2 = struct.unpack_from("<HHH", t.extra, 0)
+                return self.size(elem_type_v2) * nelems_v2
             return 0
 
         if kind in (CTF_K_TYPEDEF, CTF_K_VOLATILE, CTF_K_CONST, CTF_K_RESTRICT):
