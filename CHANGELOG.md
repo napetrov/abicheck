@@ -45,6 +45,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - New module: `abicheck.debian_symbols` with Python API for programmatic use
   (`generate_symbols_file`, `validate_symbols`, `diff_symbols_files`, `parse_symbols_file`).
 
+#### ELF Symbol-Version Policy Checks
+- **`symbol_version_node_removed`** (BREAKING) — detects when an entire version node
+  (e.g., `LIBFOO_1.0`) is removed from the version script, listing affected symbols.
+  Deduplicated with `symbol_version_defined_removed` (the more specific node-level
+  change wins).
+- **`symbol_moved_version_node`** (COMPATIBLE_WITH_RISK) — detects when a symbol
+  migrates between version nodes (e.g., `LIBFOO_1.0` → `LIBFOO_2.0`).
+- **`soname_bump_recommended`** (COMPATIBLE) — post-detector advisory emitted when
+  binary-incompatible changes are detected but the SONAME is not bumped. This
+  advisory can be escalated to BREAKING via `--policy-file` with
+  `soname_bump_recommended: break`.
+- **`soname_bump_unnecessary`** (COMPATIBLE) — advisory emitted when the SONAME is
+  bumped but no binary-incompatible changes are detected.
+- **`version_script_missing`** (COMPATIBLE) — advisory emitted when the new library
+  exports symbols without a version script (`--version-script`).
+- New `diff_versioning.py` module with version-node graph diffing, SONAME bump
+  policy check (post-detector), and version-script presence detection.
+- Cross-detector deduplication for `SYMBOL_VERSION_NODE_REMOVED` vs
+  `SYMBOL_VERSION_DEFINED_REMOVED`.
+- 35 new tests covering all version-policy scenarios and checker integration.
+
 ### Planned
 - `--policy-file` schema validation improvements
 - Version-stamped typedef suppression (libpng `png_libpng_version_X_Y_Z` pattern)

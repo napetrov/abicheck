@@ -8,7 +8,7 @@
 
 ## Context
 
-abicheck detects 114 distinct types of ABI/API changes via the `ChangeKind`
+abicheck detects 119 distinct types of ABI/API changes via the `ChangeKind`
 enum. Each kind must be classified into exactly one severity tier under the
 default `strict_abi` policy (see ADR-010):
 
@@ -60,6 +60,7 @@ When classifying a new `ChangeKind`, apply these rules in order:
 | `FUNC_DELETED_ELF_FALLBACK` | ELF heuristic: symbol absent from `.dynsym` while header still declares it — binary-incompatible regardless of `= delete`. |
 | `VAR_BECAME_CONST` | Variable moved to `.rodata`; old code writing to it gets SIGSEGV. |
 | `TYPE_BECAME_OPAQUE` | Complete type → forward-declaration only; `sizeof` and field access fail. |
+| `SYMBOL_VERSION_NODE_REMOVED` | Entire version node removed from version script. All symbols under that node become unresolvable for applications linked against it. Deduplicated with `SYMBOL_VERSION_DEFINED_REMOVED` (the more specific node-level change wins). |
 
 #### COMPATIBLE tier — divergences from ABICC/libabigail
 
@@ -76,6 +77,9 @@ When classifying a new `ChangeKind`, apply these rules in order:
 | `IFUNC_INTRODUCED/REMOVED` | COMPATIBLE | Not detected | PLT/GOT mechanism handles resolution transparently. |
 | `TYPEDEF_VERSION_SENTINEL` | COMPATIBLE | BREAKING (ABICC) | Version-stamped typedefs (e.g., `png_libpng_version_1_6_46`) are compile-time sentinels only, never exported as ELF symbols. |
 | `FIELD_BECAME_CONST` etc. | COMPATIBLE | Not detected | Field qualifiers are informational; do not affect binary layout. |
+| `SONAME_BUMP_RECOMMENDED` | COMPATIBLE | Not detected | Policy advisory: breaking changes present but SONAME not bumped. The breaking changes themselves carry the BREAKING verdict; this is informational guidance. |
+| `SONAME_BUMP_UNNECESSARY` | COMPATIBLE | Not detected | Policy advisory: SONAME bumped without breaking changes. Informational — forces unnecessary relinking. |
+| `VERSION_SCRIPT_MISSING` | COMPATIBLE | Not detected | Quality advisory: library exports symbols without a version script. No ABI break, but makes future versioning harder. |
 
 #### API_BREAK tier — source-level only
 
@@ -95,6 +99,7 @@ When classifying a new `ChangeKind`, apply these rules in order:
 | `SYMBOL_VERSION_REQUIRED_ADDED` | New glibc/version requirement. Existing binaries unaffected (already linked). Risk: library won't load on systems with older glibc. |
 | `ENUM_LAST_MEMBER_VALUE_CHANGED` | Sentinel/MAX value changed. Binary-safe but source code using it as array bound may overflow. |
 | `SYMBOL_LEAKED_FROM_DEPENDENCY_CHANGED` | Symbol originates from dependency (libstdc++, libgcc); change is real but root cause is dependency versioning, not library's own API. |
+| `SYMBOL_MOVED_VERSION_NODE` | Symbol migrated between version nodes (e.g., `LIBFOO_1.0` → `LIBFOO_2.0`). Technically breaking for versioned lookups, but typically intentional during major releases. |
 
 ### Migration note for ABICC/libabigail users
 
