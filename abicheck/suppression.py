@@ -453,18 +453,25 @@ def suggest_suppressions(
     ]
 
     for change in changes:
-        kind = str(change.get("kind", ""))
-        symbol = str(change.get("symbol", ""))
+        raw_kind = change.get("kind")
+        raw_symbol = change.get("symbol")
+        if raw_kind is None or raw_symbol is None:
+            continue
+        kind = str(raw_kind)
+        symbol = str(raw_symbol)
         if not kind or not symbol:
             continue
 
         # Use type_pattern for type-level changes, symbol for symbol-level
         if kind in _TYPE_CHANGE_KINDS:
-            lines.append(f"  - type_pattern: {_yaml_quote(symbol)}")
+            # Strip member suffix (e.g. "Color::GREEN" → "Color") so the
+            # generated rule matches Suppression.matches() semantics.
+            type_name = symbol.rsplit("::", 1)[0] if "::" in symbol else symbol
+            lines.append(f"  - type_pattern: {_yaml_quote(type_name)}")
         else:
             lines.append(f"  - symbol: {_yaml_quote(symbol)}")
         lines.append(f"    change_kind: {_yaml_quote(kind)}")
-        lines.append(f'    reason: ""  # TODO: add justification')
+        lines.append('    reason: ""  # TODO: add justification')
         lines.append(f"    expires: {_yaml_quote(expires_str)}")
         lines.append("")
 
@@ -472,6 +479,6 @@ def suggest_suppressions(
 
 
 def _yaml_quote(value: str) -> str:
-    """Quote a string for safe YAML output."""
-    # Always quote to avoid YAML parsing issues with special chars
-    return f'"{value}"'
+    """Quote a string for safe YAML output, escaping special characters."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'

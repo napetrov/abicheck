@@ -606,11 +606,10 @@ def _load_suppression_and_policy(
                         or "?"
                     )
                     parts.append(
-                        f"  Rule {idx}: {target} expired on {rule.expires}"
+                        f"  Rule {idx + 1}: {target} expired on {rule.expires}"
                     )
                 parts.append(
-                    "Remove or renew expired rules before proceeding. "
-                    "Use --renew-suppressions to extend expiry dates interactively."
+                    "Remove or renew expired rules before proceeding."
                 )
                 raise click.ClickException("\n".join(parts))
 

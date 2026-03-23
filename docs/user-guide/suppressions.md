@@ -200,9 +200,9 @@ If any rule is past its `expires` date:
 
 ```
 Error: ERROR: 2 expired suppression rule(s) found in suppressions.yaml:
-  Rule 1: symbol_pattern="_ZN3foo.*Internal.*" expired on 2026-01-15
-  Rule 4: symbol="_ZN3bar6legacyEv" expired on 2026-03-01
-Remove or renew expired rules before proceeding. Use --renew-suppressions to extend expiry dates interactively.
+  Rule 2: symbol_pattern="_ZN3foo.*Internal.*" expired on 2026-01-15
+  Rule 5: symbol="_ZN3bar6legacyEv" expired on 2026-03-01
+Remove or renew expired rules before proceeding.
 ```
 
 This prevents stale suppressions from accumulating. When a rule expires, the team

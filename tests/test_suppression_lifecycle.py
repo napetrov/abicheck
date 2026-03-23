@@ -14,9 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from abicheck.checker import ChangeKind
-from abicheck.suppression import Suppression, SuppressionList, suggest_suppressions
-
+from abicheck.suppression import SuppressionList, suggest_suppressions
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -61,9 +59,9 @@ class TestStrictSuppressions:
         sl = SuppressionList.load(yaml_path)
         expired = sl.check_expired_strict()
         assert len(expired) == 2
-        # Check indices are correct (1-indexed in error msg but 0-indexed internally)
-        assert expired[0][0] == 1
-        assert expired[1][0] == 2
+        # check_expired_strict returns 0-based indices; CLI adds 1 for display
+        assert expired[0][0] == 1  # 0-based index of second rule
+        assert expired[1][0] == 2  # 0-based index of third rule
         assert expired[0][1].symbol_pattern == "_ZN3foo.*Internal.*"
         assert expired[1][1].symbol == "_ZN3bar6legacyEv"
 
@@ -167,6 +165,37 @@ class TestSuggestSuppressions:
         assert 'type_pattern: "MyStruct"' in yaml_text
         assert "symbol:" not in yaml_text.split("type_pattern")[1].split("\n")[0]
 
+    def test_type_pattern_strips_member_suffix(self) -> None:
+        """Member-qualified symbols like Color::GREEN should emit type_pattern: Color."""
+        changes = [
+            {"kind": "enum_member_removed", "symbol": "Color::GREEN"},
+        ]
+        yaml_text = suggest_suppressions(changes, today=date(2026, 3, 23))
+        assert 'type_pattern: "Color"' in yaml_text
+        assert "GREEN" not in yaml_text
+
+    def test_null_kind_or_symbol_skipped(self) -> None:
+        """JSON null values must not produce literal 'None' strings."""
+        changes = [
+            {"kind": None, "symbol": "_ZN3foo3barEv"},
+            {"kind": "func_removed", "symbol": None},
+            {"kind": None, "symbol": None},
+        ]
+        yaml_text = suggest_suppressions(changes, today=date(2026, 3, 23))
+        assert "None" not in yaml_text
+        assert 'symbol: "' not in yaml_text
+
+    def test_yaml_quote_escapes_special_chars(self) -> None:
+        """Symbols with backslashes or quotes must produce valid YAML."""
+        changes = [
+            {"kind": "func_removed", "symbol": 'foo\\"bar'},
+        ]
+        yaml_text = suggest_suppressions(changes, today=date(2026, 3, 23))
+        # Should be parseable as YAML without error
+        import yaml
+        data = yaml.safe_load(yaml_text)
+        assert len(data["suppressions"]) == 1
+
     def test_custom_expiry_days(self) -> None:
         changes = [
             {"kind": "func_removed", "symbol": "_ZN3foo3barEv"},
@@ -232,6 +261,7 @@ class TestStrictSuppressionsCliFlag:
 
     def test_strict_suppressions_fails_on_expired(self, tmp_path: Path) -> None:
         from click.testing import CliRunner
+
         from abicheck.cli import main
 
         past = date.today() - timedelta(days=30)
@@ -264,6 +294,7 @@ class TestStrictSuppressionsCliFlag:
 
     def test_strict_suppressions_passes_when_valid(self, tmp_path: Path) -> None:
         from click.testing import CliRunner
+
         from abicheck.cli import main
 
         future = date.today() + timedelta(days=90)
@@ -297,6 +328,7 @@ class TestRequireJustificationCliFlag:
 
     def test_require_justification_fails_on_missing(self, tmp_path: Path) -> None:
         from click.testing import CliRunner
+
         from abicheck.cli import main
 
         sup_path = write_yaml(tmp_path, """
@@ -328,6 +360,7 @@ class TestSuggestSuppressionsCliCommand:
 
     def test_suggest_from_json(self, tmp_path: Path) -> None:
         from click.testing import CliRunner
+
         from abicheck.cli import main
 
         diff_data = {
@@ -354,6 +387,7 @@ class TestSuggestSuppressionsCliCommand:
 
     def test_suggest_with_custom_expiry(self, tmp_path: Path) -> None:
         from click.testing import CliRunner
+
         from abicheck.cli import main
 
         diff_data = {
@@ -375,6 +409,7 @@ class TestSuggestSuppressionsCliCommand:
 
     def test_suggest_invalid_json(self, tmp_path: Path) -> None:
         from click.testing import CliRunner
+
         from abicheck.cli import main
 
         bad_path = tmp_path / "bad.json"
@@ -388,6 +423,7 @@ class TestSuggestSuppressionsCliCommand:
 
     def test_suggest_to_stdout(self, tmp_path: Path) -> None:
         from click.testing import CliRunner
+
         from abicheck.cli import main
 
         diff_data = {
