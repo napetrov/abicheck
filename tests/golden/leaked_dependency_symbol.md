@@ -8,7 +8,7 @@
 | Breaking changes | 0 |
 | Source-level breaks | 0 |
 | Deployment risk changes | 1 |
-| Compatible changes | 0 |
+| Compatible changes | 2 |
 
 ## Analysis Confidence
 
@@ -31,6 +31,11 @@
 > your target environment before deploying.
 
 - **symbol_leaked_from_dependency_changed**: Symbol '_ZNSt6thread8_M_startEv' was removed but appears to originate from 'libstdc++.so.6' (a dependency of this library). This is a real ABI change — the library is leaking dependency symbols into its public ABI surface. Consider applying -fvisibility=hidden.
+
+## 🔍 Quality Issues
+
+- **version_script_missing**: The old library exports 2 symbol(s) without a version script. This is a common oversight that prevents fine-grained symbol versioning and makes future ABI evolution harder to manage. Consider adding a version script (--version-script=libfoo.map).
+- **version_script_missing**: The new library exports 1 symbol(s) without a version script. This is a common oversight that prevents fine-grained symbol versioning and makes future ABI evolution harder to manage. Consider adding a version script (--version-script=libfoo.map).
 
 ---
 ## Legend

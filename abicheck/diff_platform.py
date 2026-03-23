@@ -38,6 +38,10 @@ _COPY_RELOC_TYPES = (SymbolType.OBJECT, SymbolType.COMMON)
 @registry.detector("elf")
 def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """ELF-only detectors (Sprint 2): no debug info required."""
+    from .diff_versioning import (
+        detect_version_node_changes,
+        detect_version_script_missing,
+    )
     from .elf_metadata import ElfMetadata
 
     o: ElfMetadata = getattr(old, "elf", None) or ElfMetadata()
@@ -48,6 +52,8 @@ def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes.extend(_diff_elf_symbol_metadata(o, n))
     changes.extend(_diff_visibility_leak(old, new))
     changes.extend(_diff_leaked_dependency_symbols(o, n))
+    changes.extend(detect_version_node_changes(o, n))
+    changes.extend(detect_version_script_missing(o, n))
     return changes
 
 

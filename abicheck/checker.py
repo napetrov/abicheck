@@ -69,6 +69,11 @@ from .diff_platform import (  # noqa: F401
     _template_outer,
 )
 from .diff_sycl import _diff_sycl  # noqa: F401 — triggers detector registration
+from .diff_versioning import (  # noqa: F401 — re-export for testing
+    check_soname_bump_policy,
+    detect_version_node_changes,
+    detect_version_script_missing,
+)
 from .diff_symbols import _PUBLIC_VIS
 from .diff_types import (  # noqa: F401
     _diff_const_overloads,
@@ -182,6 +187,14 @@ def compare(
 
     # Run all registered detectors via the self-registering registry.
     changes, detector_results = _detector_registry.run_all(old, new)
+
+    # Post-detector: SONAME bump policy check (needs full change list).
+    from .diff_versioning import check_soname_bump_policy
+    from .elf_metadata import ElfMetadata as _ElfMetadata
+
+    _old_elf = getattr(old, "elf", None) or _ElfMetadata()
+    _new_elf = getattr(new, "elf", None) or _ElfMetadata()
+    changes.extend(check_soname_bump_policy(changes, _old_elf, _new_elf))
 
     # Run the post-processing pipeline (filtering, dedup, enrichment, suppression).
     from .post_processing import DEFAULT_PIPELINE
