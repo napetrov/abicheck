@@ -8,7 +8,7 @@
 | Breaking changes | 0 |
 | Source-level breaks | 0 |
 | Deployment risk changes | 1 |
-| Compatible changes | 2 |
+| Compatible changes | 1 |
 
 ## Analysis Confidence
 
@@ -34,8 +34,7 @@
 
 ## 🔍 Quality Issues
 
-- **version_script_missing**: The old library exports 2 symbol(s) without a version script. This is a common oversight that prevents fine-grained symbol versioning and makes future ABI evolution harder to manage. Consider adding a version script (--version-script=libfoo.map).
-- **version_script_missing**: The new library exports 1 symbol(s) without a version script. This is a common oversight that prevents fine-grained symbol versioning and makes future ABI evolution harder to manage. Consider adding a version script (--version-script=libfoo.map).
+- **version_script_missing**: Library exports 1 symbol(s) without a version script. This is a common oversight that prevents fine-grained symbol versioning and makes future ABI evolution harder to manage. Consider adding a version script (--version-script=libfoo.map).
 
 ---
 ## Legend

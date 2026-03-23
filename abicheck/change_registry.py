@@ -473,6 +473,11 @@ REGISTRY = ChangeKindRegistry([
               "LIBFOO_2.0). Applications linked against the old version node will "
               "not find this symbol at the expected version. This is typically "
               "intentional during a major release."),
+    # TODO(policy): The spec calls for strict_abi to treat this as BREAKING
+    # and sdk_vendor as COMPATIBLE_WITH_RISK, but the current policy override
+    # mechanism only supports downgrading (not upgrading) verdicts.  Adding
+    # per-policy upgrades requires changes to policy_kind_sets() and the
+    # integrity assertions in checker_policy.py.  Tracked for v2.0.
     _E("soname_bump_recommended", _C,
        impact="Binary-incompatible changes detected but SONAME was not bumped. "
               "Consumers linked against the current SONAME will encounter runtime "

@@ -19,7 +19,7 @@ diffing, SONAME bump recommendations, and version-script-missing detection.
 """
 from __future__ import annotations
 
-from .checker_policy import ChangeKind, Verdict
+from .checker_policy import ChangeKind
 from .checker_types import Change
 from .elf_metadata import ElfMetadata
 
@@ -84,36 +84,31 @@ def detect_version_node_changes(
 def detect_version_script_missing(
     old_elf: ElfMetadata, new_elf: ElfMetadata,
 ) -> list[Change]:
-    """Check whether a library exports symbols without a version script.
+    """Check whether the new library exports symbols without a version script.
 
-    Emits VERSION_SCRIPT_MISSING when:
-      - The library has exported symbols
+    Only the new library is checked — warning about the old library is not
+    actionable in a diff tool.  Emits VERSION_SCRIPT_MISSING when:
+      - The new library has exported symbols
       - None of them carry a version tag
       - No version definitions exist
     """
-    changes: list[Change] = []
-
-    for label, elf in [("old", old_elf), ("new", new_elf)]:
-        if not elf.symbols:
-            continue
-        if elf.versions_defined:
-            continue
-        has_any_version = any(s.version for s in elf.symbols)
-        if has_any_version:
-            continue
-        changes.append(Change(
-            kind=ChangeKind.VERSION_SCRIPT_MISSING,
-            symbol="<version-script>",
-            description=(
-                f"The {label} library exports {len(elf.symbols)} symbol(s) without "
-                f"a version script. This is a common oversight that prevents "
-                f"fine-grained symbol versioning and makes future ABI evolution "
-                f"harder to manage. Consider adding a version script "
-                f"(--version-script=libfoo.map)."
-            ),
-        ))
-
-    return changes
+    if not new_elf.symbols:
+        return []
+    if new_elf.versions_defined:
+        return []
+    if any(s.version for s in new_elf.symbols):
+        return []
+    return [Change(
+        kind=ChangeKind.VERSION_SCRIPT_MISSING,
+        symbol="<version-script>",
+        description=(
+            f"Library exports {len(new_elf.symbols)} symbol(s) without "
+            f"a version script. This is a common oversight that prevents "
+            f"fine-grained symbol versioning and makes future ABI evolution "
+            f"harder to manage. Consider adding a version script "
+            f"(--version-script=libfoo.map)."
+        ),
+    )]
 
 
 def check_soname_bump_policy(
@@ -134,30 +129,39 @@ def check_soname_bump_policy(
 
     breaking_kinds = BREAKING_KINDS
     has_breaking = any(c.kind in breaking_kinds for c in changes)
-    soname_changed = (
-        old_elf.soname != new_elf.soname
-        and bool(old_elf.soname)
-        and bool(new_elf.soname)
-    )
+
+    # A SONAME is considered "bumped" only when both old and new have a
+    # non-empty SONAME and they differ.  If the new SONAME is empty the
+    # library *dropped* its SONAME — that is not a bump.
+    both_have_soname = bool(old_elf.soname) and bool(new_elf.soname)
+    soname_bumped = both_have_soname and old_elf.soname != new_elf.soname
 
     result: list[Change] = []
 
-    if has_breaking and not soname_changed and old_elf.soname:
+    if has_breaking and not soname_bumped and old_elf.soname:
         breaking_count = sum(1 for c in changes if c.kind in breaking_kinds)
+        if new_elf.soname:
+            detail = (
+                f"SONAME remains {old_elf.soname!r}"
+            )
+        else:
+            detail = (
+                f"SONAME was dropped (was {old_elf.soname!r})"
+            )
         result.append(Change(
             kind=ChangeKind.SONAME_BUMP_RECOMMENDED,
             symbol="DT_SONAME",
             description=(
                 f"{breaking_count} binary-incompatible change(s) detected but "
-                f"SONAME remains {old_elf.soname!r}. Consumers linked against "
+                f"{detail}. Consumers linked against "
                 f"{old_elf.soname!r} will encounter runtime failures. "
                 f"Recommended: bump SONAME to signal the ABI break."
             ),
             old_value=old_elf.soname,
-            new_value=new_elf.soname or old_elf.soname,
+            new_value=new_elf.soname,
         ))
 
-    if not has_breaking and soname_changed:
+    if not has_breaking and soname_bumped:
         result.append(Change(
             kind=ChangeKind.SONAME_BUMP_UNNECESSARY,
             symbol="DT_SONAME",
