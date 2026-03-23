@@ -8,7 +8,7 @@
 | [004](004-report-filtering-and-deduplication.md) | Report Filtering, Deduplication, and Leaf-Change Mode | Accepted |
 | [005](005-application-compat-check.md) | Application Compatibility Checking | Accepted |
 | [006](006-package-level-comparison.md) | Package-Level Comparison | Accepted |
-| [007](007-btf-ctf-debug-formats.md) | BTF and CTF Debug Format Support | Proposed |
+| [007](007-btf-ctf-debug-formats.md) | BTF and CTF Debug Format Support | Accepted |
 | [008](008-full-stack-dependency-validation.md) | Full-Stack Dependency Validation | Accepted |
 | [009](009-verdict-system-and-exit-codes.md) | Verdict System and Exit Code Contract | Accepted |
 | [010](010-policy-profile-system.md) | Policy Profile System | Accepted |
@@ -21,3 +21,6 @@
 | [017](017-github-action.md) | GitHub Action Design | Accepted |
 | [018](018-cross-platform-support.md) | Cross-Platform Binary Format Support | Accepted |
 | [019](019-testing-strategy.md) | Testing Strategy and Parity Validation | Accepted |
+| [020](020-build-context-capture.md) | Build-Context Aware Header Extraction | Proposed |
+| [021](021-debug-artifact-resolution.md) | Debug Artifact Resolution Subsystem | Proposed |
+| [022](022-baseline-registry.md) | Baseline Registry and Snapshot Distribution | Proposed |
