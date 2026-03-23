@@ -225,8 +225,11 @@ class SuppressionList:
         return cls(suppressions=[*a._suppressions, *b._suppressions])
 
     @classmethod
-    def load(cls, path: Path) -> SuppressionList:
+    def load(cls, path: Path, *, require_justification: bool = False) -> SuppressionList:
         """Load suppression rules from a YAML file.
+
+        If *require_justification* is True, every rule must have a non-empty
+        ``reason`` field or a ``ValueError`` is raised.
 
         Raises ValueError on schema violations, unknown keys, bad regex,
         or invalid change_kind values.
@@ -281,6 +284,12 @@ class SuppressionList:
                 )
             except ValueError as e:
                 raise ValueError(f"Suppression entry {i}: {e}") from e
+            if require_justification and not sup.reason:
+                raise ValueError(
+                    f"Suppression rule {i} has no 'reason' field. "
+                    "All suppression rules must include a justification "
+                    "when --require-justification is set."
+                )
             suppressions.append(sup)
 
         return cls(suppressions)
@@ -353,6 +362,18 @@ class SuppressionList:
             total_rules=len(self._suppressions),
         )
 
+    def check_expired_strict(self, today: date | None = None) -> list[tuple[int, Suppression]]:
+        """Return ``(index, rule)`` pairs for all expired rules.
+
+        Used by ``--strict-suppressions`` to enumerate expired rules with
+        their 0-based index in the suppression file.
+        """
+        check_date = today or date.today()
+        return [
+            (i, s) for i, s in enumerate(self._suppressions)
+            if s.is_expired(check_date)
+        ]
+
     def __len__(self) -> int:
         return len(self._suppressions)
 
@@ -405,3 +426,52 @@ class SuppressionAudit:
         if not self.has_issues:
             lines.append("  ✓ No issues found")
         return "\n".join(lines)
+
+
+def suggest_suppressions(
+    changes: list[dict[str, object]],
+    *,
+    expiry_days: int = 180,
+    today: date | None = None,
+) -> str:
+    """Generate candidate suppression rules as YAML from a list of change dicts.
+
+    *changes* is a list of change dictionaries as found in the ``"changes"``
+    key of a JSON diff result (each must have ``"kind"`` and ``"symbol"``).
+
+    Returns a YAML string with ``# TODO`` comments for unreviewed rules.
+    """
+    check_date = today or date.today()
+    expires_date = check_date + timedelta(days=expiry_days)
+    expires_str = expires_date.isoformat()
+
+    lines: list[str] = [
+        "# Auto-generated suppression candidates from abicheck compare",
+        "# Review each rule and add a justification before using",
+        "version: 1",
+        "suppressions:",
+    ]
+
+    for change in changes:
+        kind = str(change.get("kind", ""))
+        symbol = str(change.get("symbol", ""))
+        if not kind or not symbol:
+            continue
+
+        # Use type_pattern for type-level changes, symbol for symbol-level
+        if kind in _TYPE_CHANGE_KINDS:
+            lines.append(f"  - type_pattern: {_yaml_quote(symbol)}")
+        else:
+            lines.append(f"  - symbol: {_yaml_quote(symbol)}")
+        lines.append(f"    change_kind: {_yaml_quote(kind)}")
+        lines.append(f'    reason: ""  # TODO: add justification')
+        lines.append(f"    expires: {_yaml_quote(expires_str)}")
+        lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
+def _yaml_quote(value: str) -> str:
+    """Quote a string for safe YAML output."""
+    # Always quote to avoid YAML parsing issues with special chars
+    return f'"{value}"'
