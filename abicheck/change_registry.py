@@ -409,7 +409,6 @@ REGISTRY = ChangeKindRegistry([
               "library quality issue. Apply -fvisibility=hidden to prevent accidental ABI surface "
               "enlargement from dependencies."),
 
-<<<<<<< HEAD
     # ── Gap analysis: proposed new checks ──────────────────────────────────
 
     # C++ ref-qualifier change on member functions (& / &&)
