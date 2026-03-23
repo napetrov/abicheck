@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import shlex
@@ -46,6 +47,8 @@ from .model import (
     Variable,
     Visibility,
 )
+
+log = logging.getLogger(__name__)
 
 
 def _castxml_available() -> bool:
@@ -1103,20 +1106,19 @@ def _resolve_debug_metadata(
     BTF/CTF data is converted to DwarfMetadata for checker compatibility.
     """
     from .dwarf_advanced import AdvancedDwarfMetadata
-    from .dwarf_metadata import DwarfMetadata
 
     if debug_format == "btf":
         from .btf_metadata import parse_btf_metadata
         btf = parse_btf_metadata(so_path)
         if not btf.has_btf:
-            _logger.warning("BTF requested but no .BTF section in %s", so_path)
+            log.warning("BTF requested but no .BTF section in %s", so_path)
         return btf.to_dwarf_metadata(), AdvancedDwarfMetadata()
 
     if debug_format == "ctf":
         from .ctf_metadata import parse_ctf_metadata
         ctf = parse_ctf_metadata(so_path)
         if not ctf.has_ctf:
-            _logger.warning("CTF requested but no .ctf section in %s", so_path)
+            log.warning("CTF requested but no .ctf section in %s", so_path)
         return ctf.to_dwarf_metadata(), AdvancedDwarfMetadata()
 
     if debug_format == "dwarf":
@@ -1132,7 +1134,7 @@ def _resolve_debug_metadata(
         if has_btf_section(so_path):
             btf = parse_btf_metadata(so_path)
             if btf.has_btf:
-                _logger.info("Using BTF debug info from %s (kernel binary)", so_path)
+                log.info("Using BTF debug info from %s (kernel binary)", so_path)
                 return btf.to_dwarf_metadata(), AdvancedDwarfMetadata()
 
     # DWARF > BTF > CTF for userspace (or kernel fallback)
@@ -1146,7 +1148,7 @@ def _resolve_debug_metadata(
     if has_btf_section(so_path):
         btf = parse_btf_metadata(so_path)
         if btf.has_btf:
-            _logger.info("No DWARF, falling back to BTF in %s", so_path)
+            log.info("No DWARF, falling back to BTF in %s", so_path)
             return btf.to_dwarf_metadata(), AdvancedDwarfMetadata()
 
     # Fallback to CTF
@@ -1154,7 +1156,7 @@ def _resolve_debug_metadata(
     if has_ctf_section(so_path):
         ctf = parse_ctf_metadata(so_path)
         if ctf.has_ctf:
-            _logger.info("No DWARF/BTF, falling back to CTF in %s", so_path)
+            log.info("No DWARF/BTF, falling back to CTF in %s", so_path)
             return ctf.to_dwarf_metadata(), AdvancedDwarfMetadata()
 
     # No debug info at all — return empty DWARF metadata
