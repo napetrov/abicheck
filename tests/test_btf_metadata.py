@@ -274,14 +274,35 @@ class TestBtfEnums:
         e = meta.enums["big_enum"]
         assert e.members["BIG_VAL"] == 0x1DEADBEEF
 
+    def test_enum64_signed(self) -> None:
+        b = BtfBuilder()
+        e_name = b.add_string("NEG64")
+        # -1 as unsigned 64-bit: lo=0xFFFFFFFF, hi=0xFFFFFFFF
+        entries = struct.pack("<III", e_name, 0xFFFFFFFF, 0xFFFFFFFF)
+        b.add_type("signed64", BTF_KIND_ENUM64, 1, 8, extra=entries, kflag=1)
+
+        meta = parse_btf_from_bytes(b.build())
+        assert meta.enums["signed64"].members["NEG64"] == -1
+
     def test_negative_enum_values(self) -> None:
         b = BtfBuilder()
         e_name = b.add_string("NEG")
         entries = struct.pack("<Ii", e_name, -1)
-        b.add_type("signed_enum", BTF_KIND_ENUM, 1, 4, extra=entries)
+        # kflag=1 marks enumerators as signed
+        b.add_type("signed_enum", BTF_KIND_ENUM, 1, 4, extra=entries, kflag=1)
 
         meta = parse_btf_from_bytes(b.build())
         assert meta.enums["signed_enum"].members["NEG"] == -1
+
+    def test_unsigned_enum_values(self) -> None:
+        b = BtfBuilder()
+        e_name = b.add_string("BIG")
+        entries = struct.pack("<II", e_name, 0xFFFFFFFF)
+        # kflag=0 (default) → unsigned
+        b.add_type("unsigned_enum", BTF_KIND_ENUM, 1, 4, extra=entries)
+
+        meta = parse_btf_from_bytes(b.build())
+        assert meta.enums["unsigned_enum"].members["BIG"] == 0xFFFFFFFF
 
 
 # ---------------------------------------------------------------------------

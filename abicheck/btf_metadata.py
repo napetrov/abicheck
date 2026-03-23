@@ -525,11 +525,13 @@ def _extract_enums(
             if not name:
                 continue
             members: dict[str, int] = {}
+            # kflag=1 → signed enumerators, kflag=0 → unsigned
+            fmt = "<Ii" if t.kflag else "<II"
             for i in range(t.vlen):
                 off = i * 8
                 if off + 8 > len(t.extra):
                     break
-                e_name_off, e_val = struct.unpack_from("<Ii", t.extra, off)
+                e_name_off, e_val = struct.unpack_from(fmt, t.extra, off)
                 e_name = _read_string(str_data, e_name_off)
                 if e_name:
                     members[e_name] = e_val
@@ -554,6 +556,9 @@ def _extract_enums(
                     "<III", t.extra, off)
                 e_name = _read_string(str_data, e_name_off)
                 e_val = e_val_lo | (e_val_hi << 32)
+                # kflag=1 → signed: sign-extend 64-bit value
+                if t.kflag and e_val >= (1 << 63):
+                    e_val -= 1 << 64
                 if e_name:
                     members[e_name] = e_val
 

@@ -323,10 +323,13 @@ def _parse_types(
                 pos += 2
             else:
                 break
-            # Re-encode info for uniform handling
+            # Re-encode info for uniform handling (v3 layout)
             info = (kind << 24) | (int(isroot) << 31) | vlen
+            # kind, vlen already decoded above — no re-parse needed
 
-        kind, vlen, _isroot = parse_info(info)
+        if version >= CTF_VERSION_3:
+            # For v3, kind/vlen not yet decoded — decode now
+            kind, vlen, _isroot = _parse_info_v3(info)
 
         # Read kind-specific extra data
         extra_size = _extra_data_size(kind, vlen, version, size_or_type)
