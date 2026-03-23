@@ -5,18 +5,26 @@ Integration tests that use real ELF binaries are marked @pytest.mark.integration
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from abicheck.binary_fingerprint import (
-    _MIN_SYMBOL_SIZE,
     BinarySummary,
     FunctionFingerprint,
     SectionSummary,
+    compute_function_fingerprints,
+    compute_section_summary,
     match_renamed_functions,
 )
 from abicheck.checker import ChangeKind, compare
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import AbiSnapshot, Function, Visibility
+
+# Concrete size values for clarity (avoids importing private _MIN_SYMBOL_SIZE).
+_TINY_SIZE = 4    # below minimum threshold — should never match
+_NORMAL_SIZE = 100  # comfortably above threshold
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -50,7 +58,7 @@ def _snap_elf_only(
     )
 
 
-def _func_sym(name: str, size: int = 100) -> ElfSymbol:
+def _func_sym(name: str, size: int = _NORMAL_SIZE) -> ElfSymbol:
     """Create an exported FUNC ElfSymbol."""
     return ElfSymbol(
         name=name,
@@ -119,6 +127,26 @@ class TestBinarySummary:
         })
         assert old.differs_from(new) == {}
 
+    def test_differs_from_bss_size_change(self) -> None:
+        """Two .bss sections with same hash but different sizes are flagged."""
+        old = BinarySummary(sections={
+            ".bss": SectionSummary(".bss", 100, "same_hash"),
+        })
+        new = BinarySummary(sections={
+            ".bss": SectionSummary(".bss", 200, "same_hash"),
+        })
+        diffs = old.differs_from(new)
+        assert ".bss" in diffs
+
+    def test_has_text_present(self) -> None:
+        s = BinarySummary(sections={
+            ".text": SectionSummary(".text", 42, "x"),
+        })
+        assert s.has_text is True
+
+    def test_has_text_absent(self) -> None:
+        assert BinarySummary().has_text is False
+
     def test_text_size(self) -> None:
         s = BinarySummary(sections={
             ".text": SectionSummary(".text", 42, "x"),
@@ -159,7 +187,7 @@ class TestMatchRenamedFunctions:
 
     def test_fuzzy_size_match(self) -> None:
         """Size within 5% tolerance, unique match → confidence 0.5."""
-        old = {"old_func": _fp("old_func", 100)}
+        old = {"old_func": _fp("old_func", _NORMAL_SIZE)}
         new = {"new_func": _fp("new_func", 104)}  # 4% difference
         result = match_renamed_functions(old, new)
         assert len(result) == 1
@@ -167,7 +195,7 @@ class TestMatchRenamedFunctions:
 
     def test_no_fuzzy_match_beyond_tolerance(self) -> None:
         """Size difference > 5% → no match."""
-        old = {"old_func": _fp("old_func", 100)}
+        old = {"old_func": _fp("old_func", _NORMAL_SIZE)}
         new = {"new_func": _fp("new_func", 110)}  # 10% difference
         result = match_renamed_functions(old, new)
         assert len(result) == 0
@@ -188,13 +216,19 @@ class TestMatchRenamedFunctions:
         assert result[0].new_name == "new_only"
 
     def test_small_symbols_filtered(self) -> None:
-        """Symbols smaller than _MIN_SYMBOL_SIZE are skipped."""
-        old = {"tiny": _fp("tiny", _MIN_SYMBOL_SIZE - 1, "aaa")}
-        new = {"renamed_tiny": _fp("renamed_tiny", _MIN_SYMBOL_SIZE - 1, "aaa")}
+        """Symbols smaller than the minimum threshold are skipped."""
+        old = {"tiny": _fp("tiny", _TINY_SIZE, "aaa")}
+        new = {"renamed_tiny": _fp("renamed_tiny", _TINY_SIZE, "aaa")}
+        assert match_renamed_functions(old, new) == []
+
+    def test_zero_size_symbols_filtered(self) -> None:
+        """Symbols with size=0 never participate in matching."""
+        old = {"zero": _fp("zero", 0, "aaa")}
+        new = {"renamed_zero": _fp("renamed_zero", 0, "aaa")}
         assert match_renamed_functions(old, new) == []
 
     def test_ambiguous_size_match_skipped(self) -> None:
-        """Multiple candidates with same size → no match (ambiguous)."""
+        """Multiple candidates with same exact size → no match (ambiguous)."""
         old = {"old_func": _fp("old_func", 128)}
         new = {
             "candidate_a": _fp("candidate_a", 128),
@@ -203,8 +237,18 @@ class TestMatchRenamedFunctions:
         result = match_renamed_functions(old, new)
         assert len(result) == 0
 
+    def test_ambiguous_fuzzy_match_skipped(self) -> None:
+        """Multiple candidates within fuzzy tolerance → no match (ambiguous)."""
+        old = {"old_func": _fp("old_func", _NORMAL_SIZE)}
+        new = {
+            "candidate_a": _fp("candidate_a", 101),  # 1% diff
+            "candidate_b": _fp("candidate_b", 103),  # 3% diff
+        }
+        result = match_renamed_functions(old, new)
+        assert len(result) == 0
+
     def test_hash_mismatch_prevents_size_only_match(self) -> None:
-        """Same size but different code hashes → no size-only match."""
+        """Same size but different code hashes → no match at any pass."""
         old = {"old_func": _fp("old_func", 128, "aaaa")}
         new = {"new_func": _fp("new_func", 128, "bbbb")}
         result = match_renamed_functions(old, new)
@@ -227,7 +271,10 @@ class TestMatchRenamedFunctions:
         assert ("libfoo_v1_destroy", "libfoo_destroy") in names
 
     def test_greedy_matching_one_to_one(self) -> None:
-        """Each symbol is matched at most once (greedy 1:1)."""
+        """Each symbol is matched at most once (greedy 1:1).
+
+        'a' is matched first alphabetically; 'b' has no remaining partner.
+        """
         old = {
             "a": _fp("a", 100, "hash_x"),
             "b": _fp("b", 100, "hash_x"),  # same hash as 'a'
@@ -236,8 +283,9 @@ class TestMatchRenamedFunctions:
             "c": _fp("c", 100, "hash_x"),
         }
         result = match_renamed_functions(old, new)
-        # Only one match possible (1:1)
         assert len(result) == 1
+        assert result[0].old_name == "a"
+        assert result[0].new_name == "c"
 
     def test_empty_inputs(self) -> None:
         assert match_renamed_functions({}, {}) == []
@@ -245,10 +293,10 @@ class TestMatchRenamedFunctions:
         assert match_renamed_functions({}, {"b": _fp("b", 100)}) == []
 
     def test_sorted_by_confidence(self) -> None:
-        """Results are sorted by confidence descending."""
+        """Results are sorted by confidence descending with expected values."""
         old = {
             "exact_old": _fp("exact_old", 200, "hash_e"),
-            "fuzzy_old": _fp("fuzzy_old", 100),
+            "fuzzy_old": _fp("fuzzy_old", _NORMAL_SIZE),
         }
         new = {
             "exact_new": _fp("exact_new", 200, "hash_e"),
@@ -256,7 +304,72 @@ class TestMatchRenamedFunctions:
         }
         result = match_renamed_functions(old, new)
         assert len(result) == 2
-        assert result[0].confidence >= result[1].confidence
+        assert result[0].confidence == 1.0
+        assert result[1].confidence == 0.5
+
+
+# ---------------------------------------------------------------------------
+# compute_function_fingerprints / compute_section_summary — file-level tests
+# ---------------------------------------------------------------------------
+
+class TestComputeFunctionFingerprints:
+    def test_non_elf_file_returns_empty(self, tmp_path: object) -> None:
+        """Non-ELF file (PE magic) returns empty dict."""
+        p = os.path.join(str(tmp_path), "test.dll")
+        with open(p, "wb") as f:
+            f.write(b"MZ" + b"\x00" * 100)
+        assert compute_function_fingerprints(p) == {}
+
+    def test_missing_file_returns_empty(self) -> None:
+        """Non-existent path returns empty dict (graceful OSError)."""
+        assert compute_function_fingerprints("/nonexistent/path/libfoo.so") == {}
+
+    def test_directory_returns_empty(self, tmp_path: object) -> None:
+        """Directory is not a regular file and is rejected."""
+        # open() on a directory raises IsADirectoryError → caught by OSError handler
+        assert compute_function_fingerprints(str(tmp_path)) == {}
+
+    def test_empty_file_returns_empty(self, tmp_path: object) -> None:
+        """Empty file returns empty dict."""
+        p = os.path.join(str(tmp_path), "empty.so")
+        with open(p, "wb"):
+            pass
+        assert compute_function_fingerprints(p) == {}
+
+    def test_truncated_elf_returns_empty(self, tmp_path: object) -> None:
+        """File with ELF magic but truncated content returns empty dict."""
+        p = os.path.join(str(tmp_path), "truncated.so")
+        with open(p, "wb") as f:
+            f.write(b"\x7fELF")  # just the magic, nothing else
+        assert compute_function_fingerprints(p) == {}
+
+
+class TestComputeSectionSummary:
+    def test_non_elf_file_returns_empty(self, tmp_path: object) -> None:
+        """Non-ELF file returns empty BinarySummary."""
+        p = os.path.join(str(tmp_path), "test.dll")
+        with open(p, "wb") as f:
+            f.write(b"MZ" + b"\x00" * 100)
+        result = compute_section_summary(p)
+        assert result.sections == {}
+
+    def test_missing_file_returns_empty(self) -> None:
+        """Non-existent path returns empty BinarySummary."""
+        result = compute_section_summary("/nonexistent/path/libfoo.so")
+        assert result.sections == {}
+
+    def test_directory_returns_empty(self, tmp_path: object) -> None:
+        """Directory is not a regular file and is rejected."""
+        result = compute_section_summary(str(tmp_path))
+        assert result.sections == {}
+
+    def test_empty_file_returns_empty(self, tmp_path: object) -> None:
+        """Empty file returns empty BinarySummary."""
+        p = os.path.join(str(tmp_path), "empty.so")
+        with open(p, "wb"):
+            pass
+        result = compute_section_summary(p)
+        assert result.sections == {}
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +391,11 @@ class TestFingerprintRenameDetector:
         assert rename_changes[0].new_value == "libfoo_create"
 
     def test_not_triggered_without_elf_only_mode(self) -> None:
-        """Detector is gated behind elf_only_mode — disabled for header-based analysis."""
+        """Detector is gated behind elf_only_mode — disabled for header-based analysis.
+
+        Also verifies that FUNC_REMOVED/FUNC_ADDED are still reported by the
+        regular diff pipeline while the fingerprint detector is disabled.
+        """
         old = AbiSnapshot(
             library="libtest.so.1", version="1.0",
             functions=[Function(name="old_func", mangled="old_func",
@@ -296,6 +413,10 @@ class TestFingerprintRenameDetector:
         result = compare(old, new)
         rename_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_LIKELY_RENAMED]
         assert len(rename_changes) == 0
+        # Regular diff still fires
+        kinds = {c.kind for c in result.changes}
+        assert ChangeKind.FUNC_REMOVED in kinds
+        assert ChangeKind.FUNC_ADDED in kinds
 
     def test_not_triggered_without_elf_metadata(self) -> None:
         """Detector requires ELF metadata — disabled for PE/Mach-O."""
@@ -317,15 +438,15 @@ class TestFingerprintRenameDetector:
 
     def test_small_symbols_not_matched(self) -> None:
         """Tiny functions (stubs) should not produce rename matches."""
-        old = _snap_elf_only("1.0", [_func_sym("stub_old", 4)])
-        new = _snap_elf_only("2.0", [_func_sym("stub_new", 4)])
+        old = _snap_elf_only("1.0", [_func_sym("stub_old", _TINY_SIZE)])
+        new = _snap_elf_only("2.0", [_func_sym("stub_new", _TINY_SIZE)])
         result = compare(old, new)
         rename_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_LIKELY_RENAMED]
         assert len(rename_changes) == 0
 
     def test_different_sizes_not_matched(self) -> None:
         """Functions with significantly different sizes should not match."""
-        old = _snap_elf_only("1.0", [_func_sym("func_old", 100)])
+        old = _snap_elf_only("1.0", [_func_sym("func_old", _NORMAL_SIZE)])
         new = _snap_elf_only("2.0", [_func_sym("func_new", 200)])
         result = compare(old, new)
         rename_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_LIKELY_RENAMED]
@@ -341,6 +462,9 @@ class TestFingerprintRenameDetector:
 
         rename_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_LIKELY_RENAMED]
         assert len(rename_changes) == 2
+        rename_pairs = {(c.old_value, c.new_value) for c in rename_changes}
+        assert ("v1_init", "v2_init") in rename_pairs
+        assert ("v1_cleanup", "v2_cleanup") in rename_pairs
 
     def test_unchanged_functions_not_affected(self) -> None:
         """Functions present in both versions are not reported as renames."""
@@ -353,3 +477,26 @@ class TestFingerprintRenameDetector:
         assert len(rename_changes) == 1
         assert rename_changes[0].old_value == "old_only"
         assert rename_changes[0].new_value == "new_only"
+
+    def test_fuzzy_match_appears_in_compare_output(self) -> None:
+        """A fuzzy size match (within 5%) makes it through the full pipeline."""
+        old = _snap_elf_only("1.0", [_func_sym("old_func", _NORMAL_SIZE)])
+        new = _snap_elf_only("2.0", [_func_sym("new_func", 104)])  # 4% diff
+        result = compare(old, new)
+        rename_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_LIKELY_RENAMED]
+        assert len(rename_changes) == 1
+        assert "50%" in rename_changes[0].description
+
+    def test_fires_when_only_new_is_elf_only(self) -> None:
+        """Detector fires when only the *new* snapshot is elf_only_mode."""
+        old = AbiSnapshot(
+            library="libtest.so.1", version="1.0",
+            functions=[Function(name="old_func", mangled="old_func",
+                                return_type="void", visibility=Visibility.ELF_ONLY)],
+            elf=ElfMetadata(symbols=[_func_sym("old_func", 256)]),
+            elf_only_mode=False,
+        )
+        new = _snap_elf_only("2.0", [_func_sym("new_func", 256)])
+        result = compare(old, new)
+        rename_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_LIKELY_RENAMED]
+        assert len(rename_changes) == 1

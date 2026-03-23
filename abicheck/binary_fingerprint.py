@@ -23,11 +23,16 @@ signal to reduce false "removed + added" churn in symbols-only mode.
 
 Integration point: feed ``RenameCandidate`` results into the diff engine to
 convert "removed + added" pairs into "likely renamed" changes.
+
+Trust boundary: callers are responsible for validating paths.  This module
+opens files as given and does not sanitize or restrict path traversal.
 """
 from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO
@@ -71,6 +76,9 @@ class SectionSummary:
     content_hash: str  # SHA-256 of raw section bytes
 
 
+_EMPTY_HASH = hashlib.sha256(b"").hexdigest()
+
+
 @dataclass(frozen=True)
 class BinarySummary:
     """Section-level summary of an entire binary.
@@ -81,24 +89,25 @@ class BinarySummary:
     sections: dict[str, SectionSummary] = field(default_factory=dict)
 
     @property
-    def text_changed(self) -> bool | None:
-        """Return None if no .text info, True/False based on presence."""
+    def has_text(self) -> bool:
+        """Return True if the summary includes a .text section."""
         return ".text" in self.sections
 
     def differs_from(self, other: BinarySummary) -> dict[str, tuple[str, str]]:
         """Return sections that differ between self and other.
 
         Returns dict of section_name → (old_hash, new_hash) for sections
-        present in both but with different content hashes.  Sections only in
-        one binary are not included (they indicate structural changes).
+        present in both but with different content hashes or sizes.
+        Sections only in one binary are not included (they indicate
+        structural changes).
         """
         diffs: dict[str, tuple[str, str]] = {}
         common = set(self.sections) & set(other.sections)
         for name in sorted(common):
-            old_h = self.sections[name].content_hash
-            new_h = other.sections[name].content_hash
-            if old_h != new_h:
-                diffs[name] = (old_h, new_h)
+            old_s = self.sections[name]
+            new_s = other.sections[name]
+            if old_s.content_hash != new_s.content_hash or old_s.size != new_s.size:
+                diffs[name] = (old_s.content_hash, new_s.content_hash)
         return diffs
 
     @property
@@ -146,6 +155,10 @@ _ABI_SECTIONS = frozenset({
     ".init_array", ".fini_array", ".dynamic",
 })
 
+# Maximum section size (bytes) to read into memory for hashing.
+# Prevents OOM from crafted ELF files with enormous sh_size values.
+_MAX_SECTION_SIZE = 256 * 1024 * 1024  # 256 MiB
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -165,6 +178,11 @@ def compute_function_fingerprints(
     """
     try:
         with open(binary_path, "rb") as f:
+            # Verify regular file after open to avoid TOCTOU (symlink/FIFO).
+            st = os.fstat(f.fileno())
+            if not stat.S_ISREG(st.st_mode):
+                log.warning("compute_function_fingerprints: not a regular file: %s", binary_path)
+                return {}
             magic = f.read(4)
             if magic != b"\x7fELF":
                 return {}
@@ -183,6 +201,11 @@ def compute_section_summary(binary_path: str | Path) -> BinarySummary:
     """
     try:
         with open(binary_path, "rb") as f:
+            # Verify regular file after open to avoid TOCTOU (symlink/FIFO).
+            st = os.fstat(f.fileno())
+            if not stat.S_ISREG(st.st_mode):
+                log.warning("compute_section_summary: not a regular file: %s", binary_path)
+                return BinarySummary()
             magic = f.read(4)
             if magic != b"\x7fELF":
                 return BinarySummary()
@@ -207,6 +230,14 @@ def match_renamed_functions(
     5. Fuzzy match: size within 5%, no code hash → confidence 0.5.
 
     Uses a greedy 1:1 matching approach — each symbol matched at most once.
+    Confidence values reflect processing order: a symbol matched at 0.8 in
+    Pass 2 may have been 1.0 if a competing match had not consumed its
+    partner in Pass 1.
+
+    Complexity: Passes 1-2 are O(N) via hash/size indices.  Pass 3 is
+    O(N*M) over remaining unmatched symbols — acceptable for typical
+    shared libraries (< 10k symbols).
+
     Matches are returned sorted by confidence (highest first).
     """
     old_only = set(old_fps) - set(new_fps)
@@ -262,7 +293,7 @@ def match_renamed_functions(
 
     matched_old = {c.old_name for c in candidates}
 
-    # Pass 2: size-only matches (same size, no code hash or hash mismatch)
+    # Pass 2: size-only matches (same size, unique among remaining candidates)
     for old_name, old_fp in sorted(old_candidates.items()):
         if old_name in matched_old:
             continue
@@ -277,11 +308,11 @@ def match_renamed_functions(
             # If both have code hashes but they differ, skip
             if old_fp.code_hash and new_fp.code_hash and old_fp.code_hash != new_fp.code_hash:
                 continue
-            conf = 0.8 if (not old_fp.code_hash or not new_fp.code_hash) else 1.0
+            # 0.8 when either side lacks a code hash (size match only)
             candidates.append(RenameCandidate(
                 old_name=old_name,
                 new_name=new_name,
-                confidence=conf,
+                confidence=0.8,
                 old_fingerprint=old_fp,
                 new_fingerprint=new_fp,
             ))
@@ -346,6 +377,7 @@ def _extract_fingerprints(
 
     # Pre-load section data for code hashing.
     # Map section index → (section_offset, section_size, section_data).
+    # Typically 1-2 entries (.text and occasionally .text.hot).
     section_cache: dict[int, tuple[int, int, bytes]] = {}
 
     for sym in dynsym.iter_symbols():
@@ -390,7 +422,8 @@ def _compute_code_hash(
     """Compute SHA-256 of the function's code bytes.
 
     Returns hex digest or empty string if the bytes can't be read
-    (e.g., section not loaded, symbol spans outside section bounds).
+    (e.g., section not loaded, symbol spans outside section bounds,
+    or section exceeds _MAX_SECTION_SIZE).
     """
     if not isinstance(shndx, int):
         return ""
@@ -400,6 +433,13 @@ def _compute_code_hash(
             section: Section = elf.get_section(shndx)
             if section.header.sh_type == "SHT_NOBITS":
                 # .bss or similar — no actual data
+                return ""
+            if section.header.sh_size > _MAX_SECTION_SIZE:
+                log.warning(
+                    "_compute_code_hash: section %s (index %d) too large "
+                    "(%d bytes > %d limit), skipping",
+                    section.name, shndx, section.header.sh_size, _MAX_SECTION_SIZE,
+                )
                 return ""
             sec_data = section.data()
             section_cache[shndx] = (
@@ -436,8 +476,16 @@ def _extract_section_summary(f: IO[bytes]) -> BinarySummary:
             continue
         size = section.header.sh_size
         if section.header.sh_type == "SHT_NOBITS":
-            # .bss — hash is meaningless, use size only
-            content_hash = hashlib.sha256(b"").hexdigest()
+            # .bss — no file content; use stable sentinel hash.
+            # Size differences are caught by differs_from() via size comparison.
+            content_hash = _EMPTY_HASH
+        elif size > _MAX_SECTION_SIZE:
+            log.warning(
+                "compute_section_summary: section %s too large "
+                "(%d bytes > %d limit), skipping",
+                name, size, _MAX_SECTION_SIZE,
+            )
+            continue
         else:
             try:
                 content_hash = hashlib.sha256(section.data()).hexdigest()

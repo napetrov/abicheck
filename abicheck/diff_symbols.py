@@ -19,6 +19,7 @@ import logging
 from typing import Any
 
 from .binary_fingerprint import (
+    _MIN_SYMBOL_SIZE,
     FunctionFingerprint,
     match_renamed_functions,
 )
@@ -728,7 +729,7 @@ def _fingerprints_from_elf(snap: AbiSnapshot) -> dict[str, FunctionFingerprint]:
     for sym in snap.elf.symbols:
         if sym.sym_type != SymbolType.FUNC:
             continue
-        if sym.size <= 0:
+        if sym.size < _MIN_SYMBOL_SIZE:
             continue
         result[sym.name] = FunctionFingerprint(
             name=sym.name,
@@ -741,7 +742,8 @@ def _fingerprints_from_elf(snap: AbiSnapshot) -> dict[str, FunctionFingerprint]:
 @registry.detector(
     "fingerprint_renames",
     requires_support=lambda o, n: (
-        o.elf is not None and n.elf is not None and o.elf_only_mode,
+        o.elf is not None and n.elf is not None
+        and (o.elf_only_mode or n.elf_only_mode),
         "requires ELF metadata in elf_only_mode",
     ),
 )
@@ -752,6 +754,9 @@ def _diff_fingerprint_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change
     where rename churn is most problematic.  Uses function code size from
     ELF .dynsym to find removed+added pairs that likely represent the same
     function under a different name.
+
+    Fires when *either* snapshot is elf_only — the rename churn problem exists
+    even if only one side is stripped.
     """
     changes: list[Change] = []
 
@@ -763,8 +768,6 @@ def _diff_fingerprint_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change
 
     candidates = match_renamed_functions(old_fps, new_fps)
     for c in candidates:
-        if c.confidence < 0.5:
-            continue
         conf_pct = int(c.confidence * 100)
         changes.append(Change(
             kind=ChangeKind.FUNC_LIKELY_RENAMED,
