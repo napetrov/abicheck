@@ -1,0 +1,7 @@
+CRYPTO_2.0 {
+    global:
+        crypto_hash;
+        crypto_verify;
+    local:
+        *;
+};

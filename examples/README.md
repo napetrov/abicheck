@@ -33,11 +33,11 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 > Authoritative expected verdicts for benchmarking are in [`ground_truth.json`](ground_truth.json).
 > If a per-case README and benchmark expectation differ, treat [`ground_truth.json`](ground_truth.json) as source of truth.
 
-**63 published cases** (01–62 + 26b):
+**69 published cases** (01–68 + 26b):
 
 | Verdict | Count | checker_policy.py set | Icon |
 |---------|-------|-----------------------|------|
-| BREAKING | 42 | `BREAKING_KINDS` | 🔴 |
+| BREAKING | 48 | `BREAKING_KINDS` | 🔴 |
 | API_BREAK | 2 | `API_BREAK_KINDS` | 🟠 |
 | COMPATIBLE_WITH_RISK | 1 | `RISK_KINDS` | 🟡 |
 | COMPATIBLE (addition) | 7 | `ADDITION_KINDS` | 🟢 |
@@ -113,6 +113,12 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [60](case60_base_class_position_changed/README.md) | Base Class Position Changed (MI reorder) | Breaking | BREAKING 🔴 |
 | [61](case61_var_added/README.md) | Global Variable Added | Addition | COMPATIBLE 🟢 |
 | [62](case62_type_field_added_compatible/README.md) | Type Field Added (Opaque Struct) | Addition | COMPATIBLE 🟢 |
+| [63](case63_bitfield_changed/README.md) | Bitfield Width Changed | Breaking | BREAKING 🔴 |
+| [64](case64_calling_convention_changed/README.md) | Calling Convention Changed (ms_abi) | Breaking | BREAKING 🔴 |
+| [65](case65_symbol_version_removed/README.md) | Symbol Version Removed (ELF) | Breaking | BREAKING 🔴 |
+| [66](case66_language_linkage_changed/README.md) | Language Linkage Changed (extern "C") | Breaking | BREAKING 🔴 |
+| [67](case67_tls_var_size_changed/README.md) | TLS Variable Size Changed | Breaking | BREAKING 🔴 |
+| [68](case68_virtual_method_added/README.md) | Virtual Method Added (non-virtual → virtual) | Breaking | BREAKING 🔴 |
 
 ---
 

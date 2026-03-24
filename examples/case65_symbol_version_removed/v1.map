@@ -1,0 +1,12 @@
+CRYPTO_1.0 {
+    global:
+        crypto_hash;
+    local:
+        *;
+};
+
+CRYPTO_2.0 {
+    global:
+        crypto_hash;
+        crypto_verify;
+} CRYPTO_1.0;
