@@ -518,4 +518,16 @@ REGISTRY = ChangeKindRegistry([
     _E("sycl_backend_driver_req_changed", _R,
        impact="Minimum backend driver version requirement increased; may fail on systems with "
               "older drivers (e.g., Level Zero, OpenCL ICD)."),
+
+    # ── Flexible array member detection (libabigail parity) ──────────────
+    _E("flexible_array_member_changed", _C,
+       impact="Flexible array member (FAM) at end of struct changed: last field with "
+              "zero/unknown array size was added, removed, or changed type. The struct "
+              "binary layout is unchanged (FAM has zero static size), but runtime "
+              "allocation patterns may differ."),
+
+    # ── DWARF-based = delete detection (P3 gap) ─────────────────────────
+    _E("func_deleted_dwarf", _B,
+       impact="Function marked as deleted (= delete) detected via DWARF debug info. "
+              "The function was previously callable; callers will fail to link."),
 ])

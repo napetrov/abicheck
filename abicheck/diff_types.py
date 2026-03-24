@@ -205,6 +205,11 @@ def _diff_type_fields(name: str, t_old: RecordType, t_new: RecordType) -> list[C
                 symbol=name,
                 description=f"Field added: {name}::{fname}",
             ))
+
+    # FLEXIBLE_ARRAY_MEMBER_CHANGED: detect changes to trailing flexible array members.
+    # A FAM is the last field with type matching "T []" or "T [0]" — zero static size.
+    changes.extend(_diff_flexible_array_member(name, t_old, t_new))
+
     return changes
 
 
@@ -236,6 +241,70 @@ def _diff_type_field_pair(name: str, fname: str, f_old: TypeField, f_new: TypeFi
             old_value=f"bits={f_old.bitfield_bits}",
             new_value=f"bits={f_new.bitfield_bits}",
         ))
+    return changes
+
+
+_FAM_TYPE_RE = re.compile(r"^(.+)\s*\[\s*0?\s*\]$")
+
+
+def _is_flexible_array_member(field: TypeField) -> bool:
+    """Return True if *field* looks like a C99 flexible array member (T[] or T[0])."""
+    return bool(_FAM_TYPE_RE.match(field.type))
+
+
+def _diff_flexible_array_member(
+    name: str, t_old: RecordType, t_new: RecordType,
+) -> list[Change]:
+    """Detect changes to trailing flexible array members.
+
+    libabigail's BENIGN_INFINITE_ARRAY_CHANGE_CATEGORY: array type size changed
+    in a global variable or struct field, but the ELF symbol size is unchanged
+    (typical for flexible array members / zero-length arrays).
+    """
+    changes: list[Change] = []
+    old_fam = t_old.fields[-1] if t_old.fields and _is_flexible_array_member(t_old.fields[-1]) else None
+    new_fam = t_new.fields[-1] if t_new.fields and _is_flexible_array_member(t_new.fields[-1]) else None
+
+    if old_fam is None and new_fam is None:
+        return changes
+
+    if old_fam is not None and new_fam is None:
+        # FAM removed — already caught by TYPE_FIELD_REMOVED, but emit specific kind
+        changes.append(Change(
+            kind=ChangeKind.FLEXIBLE_ARRAY_MEMBER_CHANGED,
+            symbol=name,
+            description=f"Flexible array member removed: {name}::{old_fam.name}",
+            old_value=old_fam.type,
+            new_value="(removed)",
+        ))
+    elif old_fam is None and new_fam is not None:
+        # FAM added
+        changes.append(Change(
+            kind=ChangeKind.FLEXIBLE_ARRAY_MEMBER_CHANGED,
+            symbol=name,
+            description=f"Flexible array member added: {name}::{new_fam.name}",
+            old_value="(none)",
+            new_value=new_fam.type,
+        ))
+    elif old_fam is not None and new_fam is not None:
+        # Both have FAM — check if element type changed
+        old_elem = _FAM_TYPE_RE.match(old_fam.type)
+        new_elem = _FAM_TYPE_RE.match(new_fam.type)
+        if old_elem and new_elem:
+            old_base = canonicalize_type_name(old_elem.group(1))
+            new_base = canonicalize_type_name(new_elem.group(1))
+            if old_base != new_base:
+                changes.append(Change(
+                    kind=ChangeKind.FLEXIBLE_ARRAY_MEMBER_CHANGED,
+                    symbol=name,
+                    description=(
+                        f"Flexible array member element type changed: "
+                        f"{name}::{old_fam.name} ({old_fam.type} → {new_fam.type})"
+                    ),
+                    old_value=old_fam.type,
+                    new_value=new_fam.type,
+                ))
+
     return changes
 
 

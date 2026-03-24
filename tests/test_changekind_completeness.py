@@ -183,6 +183,10 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.SONAME_BUMP_RECOMMENDED,
     ChangeKind.SONAME_BUMP_UNNECESSARY,
     ChangeKind.VERSION_SCRIPT_MISSING,
+    # Flexible array member detection (libabigail parity)
+    ChangeKind.FLEXIBLE_ARRAY_MEMBER_CHANGED,
+    # DWARF-based = delete detection (P3 gap)
+    ChangeKind.FUNC_DELETED_DWARF,
 }
 
 
