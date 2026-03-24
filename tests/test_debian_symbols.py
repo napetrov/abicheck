@@ -15,6 +15,7 @@
 """Tests for the Debian symbols file adapter (abicheck.debian_symbols)."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1015,10 +1016,9 @@ class TestLoadSymbolsFile:
         with pytest.raises(FileNotFoundError):
             load_symbols_file(tmp_path / "nope.symbols")
 
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="os.mkfifo not available on Windows")
     def test_load_rejects_non_regular_file(self, tmp_path: Path):
         """load_symbols_file should reject FIFOs / devices."""
-        import os
-
         fifo = tmp_path / "fifo.symbols"
         os.mkfifo(str(fifo))
         with pytest.raises(ValueError, match="Not a regular file"):
