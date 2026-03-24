@@ -10,7 +10,7 @@ Covers:
 """
 from __future__ import annotations
 
-from abicheck.checker_policy import ChangeKind, Verdict
+from abicheck.checker_policy import ChangeKind
 from abicheck.checker_types import Change
 from abicheck.diff_versioning import (
     _build_version_node_map,
@@ -19,7 +19,6 @@ from abicheck.diff_versioning import (
     detect_version_script_missing,
 )
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -359,8 +358,8 @@ class TestSonameBumpUnnecessary:
 # ===========================================================================
 
 class TestVersionScriptMissing:
-    def test_new_library_without_version_script(self):
-        """New library exports symbols without version script -> VERSION_SCRIPT_MISSING."""
+    def test_both_missing_version_script_is_preexisting(self):
+        """Both old and new lack version script -> no warning (pre-existing)."""
         old = ElfMetadata(
             symbols=[_sym("foo"), _sym("bar")],
             versions_defined=[],
@@ -370,7 +369,31 @@ class TestVersionScriptMissing:
             versions_defined=[],
         )
         changes = detect_version_script_missing(old, new)
-        assert len(changes) == 1  # only new library reported
+        assert changes == []
+
+    def test_version_script_dropped(self):
+        """Old had version script, new does not -> VERSION_SCRIPT_MISSING."""
+        old = ElfMetadata(
+            symbols=[_sym("foo", "LIBFOO_1.0")],
+            versions_defined=["LIBFOO_1.0"],
+        )
+        new = ElfMetadata(
+            symbols=[_sym("foo")],
+            versions_defined=[],
+        )
+        changes = detect_version_script_missing(old, new)
+        assert len(changes) == 1
+        assert changes[0].kind == ChangeKind.VERSION_SCRIPT_MISSING
+
+    def test_new_library_no_old_symbols(self):
+        """Old has no symbols, new exports without version script -> warning."""
+        old = ElfMetadata(symbols=[], versions_defined=[])
+        new = ElfMetadata(
+            symbols=[_sym("foo"), _sym("bar")],
+            versions_defined=[],
+        )
+        changes = detect_version_script_missing(old, new)
+        assert len(changes) == 1
         assert changes[0].kind == ChangeKind.VERSION_SCRIPT_MISSING
 
     def test_library_with_version_script(self):
@@ -575,7 +598,7 @@ class TestCheckerIntegration:
         assert ChangeKind.SONAME_BUMP_RECOMMENDED in kinds
 
     def test_compare_version_script_missing(self):
-        """Full pipeline: version script missing warning."""
+        """Full pipeline: version script dropped -> warning fires."""
         from abicheck.model import AbiSnapshot
 
         old = AbiSnapshot(
@@ -586,8 +609,8 @@ class TestCheckerIntegration:
             types=[],
             elf=ElfMetadata(
                 soname="libfoo.so.1",
-                symbols=[_sym("foo")],
-                versions_defined=[],
+                symbols=[_sym("foo", "LIBFOO_1.0")],
+                versions_defined=["LIBFOO_1.0"],
             ),
         )
         new = AbiSnapshot(

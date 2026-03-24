@@ -91,12 +91,24 @@ def detect_version_script_missing(
       - The new library has exported symbols
       - None of them carry a version tag
       - No version definitions exist
+      - The old library *did* have a version script (i.e., the version script
+        was dropped or the library is new).  If neither old nor new has a
+        version script, this is a pre-existing condition, not a new change —
+        suppressing it avoids false verdict escalation on NO_CHANGE cases.
     """
     if not new_elf.symbols:
         return []
     if new_elf.versions_defined:
         return []
     if any(s.version for s in new_elf.symbols):
+        return []
+    # If the old library also lacks a version script, this is a pre-existing
+    # condition — not a new change.  Only warn when a version script was
+    # dropped or when comparing a brand-new library (old has no symbols).
+    old_had_version_script = bool(old_elf.versions_defined) or any(
+        s.version for s in old_elf.symbols
+    )
+    if not old_had_version_script and old_elf.symbols:
         return []
     return [Change(
         kind=ChangeKind.VERSION_SCRIPT_MISSING,

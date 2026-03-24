@@ -69,11 +69,6 @@ from .diff_platform import (  # noqa: F401
     _template_outer,
 )
 from .diff_sycl import _diff_sycl  # noqa: F401 — triggers detector registration
-from .diff_versioning import (  # noqa: F401 — re-export for testing
-    check_soname_bump_policy,
-    detect_version_node_changes,
-    detect_version_script_missing,
-)
 from .diff_symbols import _PUBLIC_VIS
 from .diff_types import (  # noqa: F401
     _diff_const_overloads,
@@ -89,6 +84,11 @@ from .diff_types import (  # noqa: F401
     _diff_unions,
     _diff_var_values,
     _is_version_stamped_typedef,
+)
+from .diff_versioning import (  # noqa: F401 — re-export for testing
+    check_soname_bump_policy,
+    detect_version_node_changes,
+    detect_version_script_missing,
 )
 from .dwarf_advanced import (
     diff_advanced_dwarf,  # noqa: F401 — re-export for monkeypatching
