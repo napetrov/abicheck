@@ -289,9 +289,9 @@ class FilesystemRegistry:
             parts.append(key.variant)
         result = self._root / Path(*parts)
         # Defense-in-depth: verify resolved path is under root
-        resolved = result.resolve()
-        root_resolved = self._root.resolve()
-        if not str(resolved).startswith(str(root_resolved)):
+        try:
+            result.resolve().relative_to(self._root.resolve())
+        except ValueError:
             raise ValidationError(f"Key path escapes registry root: {key.path}")
         return result
 

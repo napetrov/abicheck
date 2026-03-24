@@ -182,6 +182,7 @@ class EmbeddedDwarfResolver:
         debug_roots: list[Path] | None = None,
     ) -> DebugArtifact | None:
         try:
+            from elftools.common.exceptions import ELFError
             from elftools.elf.elffile import ELFFile
         except ImportError:
             return None
@@ -196,7 +197,7 @@ class EmbeddedDwarfResolver:
                         dwarf_path=binary_path,
                         source="embedded DWARF",
                     )
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, ELFError) as exc:
             _logger.debug("Cannot check embedded DWARF in %s: %s", binary_path, exc)
 
         return None
@@ -231,6 +232,7 @@ class SplitDwarfResolver:
 
         # Look for .dwo files referenced in the binary
         try:
+            from elftools.common.exceptions import ELFError
             from elftools.elf.elffile import ELFFile
         except ImportError:
             return None
@@ -258,7 +260,7 @@ class SplitDwarfResolver:
                         if isinstance(val, bytes):
                             val = val.decode("utf-8", errors="replace")
                         comp_dirs.add(val)
-        except (OSError, ValueError, KeyError) as exc:
+        except (OSError, ValueError, KeyError, ELFError) as exc:
             _logger.debug("Cannot check split DWARF in %s: %s", binary_path, exc)
             return None
 

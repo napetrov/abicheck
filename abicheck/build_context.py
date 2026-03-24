@@ -324,6 +324,10 @@ def _extract_flags(arguments: list[str], directory: Path) -> BuildContext:
             ctx.sysroot = Path(arguments[i + 1])
             i += 2
             continue
+        if arg == "-isysroot" and i + 1 < len(arguments):
+            ctx.sysroot = Path(arguments[i + 1])
+            i += 2
+            continue
 
         # -fvisibility=xxx (ABI-relevant but passed as extra flag)
         m = _VISIBILITY_RE.match(arg)

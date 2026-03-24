@@ -214,7 +214,12 @@ def run_dump(
     _includes = includes or []
 
     if binary_fmt == "elf":
-        snap = _dump_elf(path, _headers, _includes, version, lang, dwarf_only=dwarf_only)
+        snap = _dump_elf(
+            path, _headers, _includes, version, lang,
+            dwarf_only=dwarf_only,
+            debug_roots=debug_roots,
+            enable_debuginfod=enable_debuginfod,
+        )
         _try_attach_sycl_metadata(snap, path)
         return snap
     if binary_fmt == "pe":
@@ -257,6 +262,8 @@ def _dump_elf(
     lang: str,
     *,
     dwarf_only: bool = False,
+    debug_roots: list[Path] | None = None,
+    enable_debuginfod: bool = False,
 ) -> AbiSnapshot:
     """Dump an ELF binary to an ABI snapshot."""
     from .dumper import dump
