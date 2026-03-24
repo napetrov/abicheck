@@ -1163,6 +1163,7 @@ class TestMain:
 
         calls = []
         monkeypatch.setattr(mcp_server.mcp, "run", lambda transport: calls.append(transport))
+        monkeypatch.setattr("sys.argv", ["abicheck-mcp"])
         main()
         assert calls == ["stdio"]
 

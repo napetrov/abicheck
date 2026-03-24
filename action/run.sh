@@ -246,6 +246,7 @@ elif [[ "$MODE" == "compare-release" ]]; then
   if [[ "${INPUT_FAIL_ON_REMOVED_LIBRARY:-false}" == "true" ]]; then
     CMD+=(--fail-on-removed-library)
   fi
+  add_single_flag "--jobs" "${INPUT_JOBS:-0}"
 
 elif [[ "$MODE" == "deps" ]]; then
   # ── Deps mode (Linux ELF) ───────────────────────────────────────────────

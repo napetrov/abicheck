@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -448,7 +449,11 @@ def _collect_metadata(path: Path) -> LibraryMetadata | None:
 
 
 @click.group()
-@click.version_option(version=_abicheck_version, prog_name="abicheck")
+@click.version_option(
+    version=_abicheck_version,
+    prog_name="abicheck",
+    message="%(prog)s %(version)s (napetrov/abicheck)",
+)
 def main() -> None:
     """abicheck — ABI compatibility checker for C/C++ shared libraries."""
 
@@ -1213,6 +1218,9 @@ def _exit_with_severity_or_verdict(
                    "(requires --annotate).")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
+@click.option("--diffoscope", "use_diffoscope", is_flag=True, default=False,
+              help="Run diffoscope on breaking changes for byte-level binary diff. "
+                   "Requires diffoscope on PATH (optional external tool).")
 def compare_cmd(
     old_input: Path, new_input: Path,
     headers: tuple[Path, ...], includes: tuple[Path, ...], lang: str,
@@ -1237,6 +1245,7 @@ def compare_cmd(
     annotate: bool,
     annotate_additions: bool,
     verbose: bool,
+    use_diffoscope: bool,
 ) -> None:
     """Compare two ABI surfaces and report changes.
 
@@ -1361,6 +1370,26 @@ def compare_cmd(
         show_impact=show_impact, stat=stat,
         severity_config=sev_config if severity_explicitly_set else None,
     )
+
+    # Optionally append diffoscope byte-level diff on breaking changes
+    if use_diffoscope and result.verdict.value in ("API_BREAK", "BREAKING"):
+        from .diffoscope_bridge import run_diffoscope
+        diff_output = run_diffoscope(old_input, new_input)
+        if diff_output:
+            if fmt == "markdown":
+                text += "\n\n<details>\n<summary>diffoscope byte-level diff</summary>\n\n```\n"
+                text += diff_output
+                text += "\n```\n</details>\n"
+            elif fmt == "json":
+                # Inject into JSON output
+                import json as _json
+                data = _json.loads(text)
+                data["diffoscope_output"] = diff_output
+                text = _json.dumps(data, indent=2)
+            else:
+                text += "\n\n--- diffoscope byte-level diff ---\n"
+                text += diff_output
+
     _write_or_echo(output, text)
 
     _exit_with_severity_or_verdict(result, sev_config, severity_explicitly_set)
@@ -1686,6 +1715,49 @@ def _collect_release_warnings(
         )
 
 
+def _compare_one_library(
+    key: str,
+    old_map: dict[str, Path], new_map: dict[str, Path],
+    old_debug_dir: Path | None, new_debug_dir: Path | None,
+    resolve_debug_info: Callable[[Path, Path], Path | None],
+    old_h: list[Path], new_h: list[Path],
+    old_inc: list[Path], new_inc: list[Path],
+    old_version: str, new_version: str,
+    lang: str, suppress: Path | None,
+    policy: str, policy_file_path: Path | None,
+    output_dir: Path | None,
+) -> dict[str, object]:
+    """Compare one library pair — suitable for parallel dispatch."""
+    old_path = old_map[key]
+    new_path = new_map[key]
+    old_dbg = resolve_debug_info(old_path, old_debug_dir) if old_debug_dir else None
+    new_dbg = resolve_debug_info(new_path, new_debug_dir) if new_debug_dir else None
+    try:
+        result, _, _ = _run_compare_pair(
+            old_path, new_path,
+            old_h, new_h, old_inc, new_inc,
+            old_version, new_version,
+            lang, suppress, policy, policy_file_path,
+            old_pdb_path=old_dbg, new_pdb_path=new_dbg,
+        )
+    except (click.ClickException, click.UsageError) as exc:
+        msg = exc.format_message()
+        return {"library": old_path.name, "verdict": "ERROR", "error": msg}
+
+    v = result.verdict.value
+    entry: dict[str, object] = {
+        "library": old_path.name, "verdict": v,
+        "breaking": len(result.breaking),
+        "source_breaks": len(result.source_breaks),
+        "risk_changes": len(result.risk),
+        "compatible_additions": len(result.compatible),
+    }
+    if output_dir:
+        lib_report_path = output_dir / f"{old_path.stem}.json"
+        _safe_write_output(lib_report_path, to_json(result))
+    return entry
+
+
 def _compare_release_libraries(
     matched_keys: list[str],
     old_map: dict[str, Path], new_map: dict[str, Path],
@@ -1701,6 +1773,7 @@ def _compare_release_libraries(
     *,
     annotate: bool = False,
     annotate_additions: bool = False,
+    jobs: int = 1,
 ) -> tuple[list[dict[str, object]], str, list[tuple[DiffResult, AbiSnapshot]]]:
     """Compare each matched library pair and collect results.
 
@@ -1731,6 +1804,13 @@ def _compare_release_libraries(
             click.echo(f"Error comparing {old_path.name}: {msg}", err=True)
             library_results.append({
                 "library": old_path.name, "verdict": "ERROR", "error": msg,
+            })
+            worst_verdict = "ERROR"
+            continue
+        except Exception as exc:
+            click.echo(f"Error comparing {old_path.name}: {exc}", err=True)
+            library_results.append({
+                "library": old_path.name, "verdict": "ERROR", "error": str(exc),
             })
             worst_verdict = "ERROR"
             continue
@@ -1921,6 +2001,9 @@ def _write_release_summary_file(
               help="Include additions/compatible changes as ::notice annotations "
                    "(requires --annotate).")
 @click.option("-v", "--verbose", is_flag=True, default=False)
+@click.option("-j", "--jobs", "jobs", type=int, default=1, show_default=True,
+              help="Number of parallel library comparisons. "
+                   "Use 0 for auto-detect (CPU count).")
 def compare_release_cmd(
     old_dir: Path,
     new_dir: Path,
@@ -1950,6 +2033,7 @@ def compare_release_cmd(
     annotate: bool,
     annotate_additions: bool,
     verbose: bool,
+    jobs: int,
 ) -> None:
     """Compare all libraries in two release directories or packages.
 
@@ -2096,6 +2180,7 @@ def compare_release_cmd(
             collect_diff_results=(fmt == "junit"),
             annotate=annotate,
             annotate_additions=annotate_additions,
+            jobs=jobs,
         )
 
         if removed_keys and _RELEASE_VERDICT_ORDER.get(worst_verdict, 0) < _RELEASE_VERDICT_ORDER.get("COMPATIBLE_WITH_RISK", 0):

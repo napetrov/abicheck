@@ -240,6 +240,12 @@ inputs:
       Set to 'error' to fail the step when additions are detected.
       Only applies to compare mode.
     required: false
+  jobs:
+    description: >
+      Number of parallel library comparisons for compare-release mode.
+      0 = auto-detect (CPU count). Default: 0.
+    required: false
+    default: '0'
   extra-args:
     description: 'Additional CLI arguments passed directly to the abicheck command.'
     required: false
@@ -342,6 +348,7 @@ runs:
         INPUT_SEVERITY_ADDITION: ${{ inputs.severity-addition }}
         INPUT_EXTRA_ARGS: ${{ inputs.extra-args }}
         INPUT_ABI_BASELINE: ${{ inputs.abi-baseline }}
+        INPUT_JOBS: ${{ inputs.jobs }}
         INPUT_ADD_JOB_SUMMARY: ${{ inputs.add-job-summary }}
         INPUT_DEBUG_INFO1: ${{ inputs.debug-info1 }}
         INPUT_DEBUG_INFO2: ${{ inputs.debug-info2 }}
