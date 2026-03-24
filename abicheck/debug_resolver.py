@@ -40,6 +40,7 @@ Usage::
 """
 from __future__ import annotations
 
+import http.client
 import logging
 import os
 import re
@@ -498,7 +499,7 @@ class DebuginfodResolver:
         return [u.strip() for u in env.split() if u.strip()]
 
     @staticmethod
-    def _safe_urlopen(url: str, timeout: int = 30) -> object:
+    def _safe_urlopen(url: str, timeout: int = 30) -> http.client.HTTPResponse:
         """Open a URL after verifying the scheme is http or https.
 
         This explicit guard satisfies B310 (audit url open for permitted
@@ -512,7 +513,8 @@ class DebuginfodResolver:
             raise ValueError(f"Unsupported URL scheme {parsed_scheme!r}: {url}")
         req = urllib.request.Request(url)
         req.add_header("User-Agent", "abicheck-debuginfod-client")
-        return urllib.request.urlopen(req, timeout=timeout)  # nosec B310  # noqa: S310
+        resp: http.client.HTTPResponse = urllib.request.urlopen(req, timeout=timeout)  # nosec B310  # noqa: S310
+        return resp
 
     @staticmethod
     def _default_cache() -> Path:
