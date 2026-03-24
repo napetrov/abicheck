@@ -9,19 +9,15 @@ from __future__ import annotations
 
 import copy
 
-import pytest
-
 from abicheck.checker import ChangeKind, Verdict, compare
-from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
+from abicheck.elf_metadata import ElfMetadata
 from abicheck.model import (
     AbiSnapshot,
     AccessLevel,
-    ElfVisibility,
     EnumMember,
     EnumType,
     Function,
     Param,
-    ParamKind,
     RecordType,
     TypeField,
     Variable,

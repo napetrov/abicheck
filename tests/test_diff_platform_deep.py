@@ -6,8 +6,6 @@ All tests use synthetic metadata — no real binaries required.
 """
 from __future__ import annotations
 
-import copy
-
 import pytest
 
 from abicheck.checker import ChangeKind, Verdict, compare
@@ -16,18 +14,13 @@ from abicheck.dwarf_metadata import DwarfMetadata, EnumInfo, FieldInfo, StructLa
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import (
     AbiSnapshot,
-    EnumMember,
-    EnumType,
     Function,
-    Param,
     RecordType,
-    TypeField,
-    Variable,
     Visibility,
 )
 
 try:
-    from abicheck.macho_metadata import MachoExport, MachoMetadata
+    from abicheck.macho_metadata import MachoMetadata
     HAS_MACHO = True
 except ImportError:
     HAS_MACHO = False

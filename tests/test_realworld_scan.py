@@ -417,6 +417,12 @@ class TestRealWorldAbidiffParity:
             capture_output=True, text=True, timeout=30,
         )
         code = ab_result.returncode
+        # Check error bit first — abidiff sets bit 0 on tool errors
+        if code & 1:
+            pytest.fail(
+                f"abidiff returned error (code {code}): "
+                f"{ab_result.stderr[:300]}"
+            )
         if code == 0:
             ab_verdict = "NO_CHANGE"
         elif code & 8:

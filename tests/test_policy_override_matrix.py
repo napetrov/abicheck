@@ -15,25 +15,12 @@ import pytest
 
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.checker_policy import (
-    BREAKING_KINDS,
-    COMPATIBLE_KINDS,
-    Confidence,
     compute_verdict,
     policy_kind_sets,
 )
-from abicheck.checker_policy import (
-    API_BREAK_KINDS,
-    RISK_KINDS,
-)
 from abicheck.model import (
     AbiSnapshot,
-    EnumMember,
-    EnumType,
     Function,
-    Param,
-    RecordType,
-    TypeField,
-    Variable,
     Visibility,
 )
 from abicheck.policy_file import PolicyFile
@@ -342,11 +329,16 @@ class TestPolicyFileWithCompare:
         assert r.verdict == Verdict.BREAKING
 
     def test_policy_file_with_sdk_vendor_base(self):
-        """PolicyFile with sdk_vendor base: func_removed is still BREAKING."""
+        """PolicyFile with sdk_vendor base: func_removed is still BREAKING,
+        and downgraded kinds become COMPATIBLE (proving base_policy is applied)."""
         f_old = self._pub_func("helper", "_ZN3Cls6helperEv")
         pf = PolicyFile(base_policy="sdk_vendor")
         r = compare(self._snap(functions=[f_old]), self._snap(), policy_file=pf)
         assert r.verdict == Verdict.BREAKING
+        # Verify base_policy is actually applied: a downgraded kind should
+        # produce COMPATIBLE under sdk_vendor (but API_BREAK under strict_abi)
+        downgraded_kind = next(iter(SDK_VENDOR_DOWNGRADED))
+        assert pf.compute_verdict([_FakeChange(downgraded_kind)]) == Verdict.COMPATIBLE
 
 
 # ═══════════════════════════════════════════════════════════════════════════

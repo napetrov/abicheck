@@ -8,19 +8,12 @@ Verifies that:
 """
 from __future__ import annotations
 
-import copy
-
-import pytest
-
 from abicheck.checker import ChangeKind, Verdict, compare
-from abicheck.dwarf_metadata import DwarfMetadata, EnumInfo, FieldInfo, StructLayout
+from abicheck.dwarf_metadata import DwarfMetadata, FieldInfo, StructLayout
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import (
     AbiSnapshot,
-    EnumMember,
-    EnumType,
     Function,
-    Param,
     RecordType,
     TypeField,
     Variable,
@@ -144,10 +137,9 @@ class TestRedundancyFiltering:
 
         # TYPE_SIZE_CHANGED should be the root; field changes may be redundant
         visible = _kinds(r)
-        all_k = _all_kinds(r)
 
-        # Root change should be visible
-        assert ChangeKind.TYPE_SIZE_CHANGED in all_k
+        # Root change should be visible (not relegated to redundant_changes)
+        assert ChangeKind.TYPE_SIZE_CHANGED in visible
         # Verdict should reflect the worst change
         assert r.verdict == Verdict.BREAKING
 
@@ -169,7 +161,6 @@ class TestRedundancyFiltering:
         )
 
         # Both type changes should survive (different root types)
-        all_k = _all_kinds(r)
         type_size_changes = [c for c in r.changes + r.redundant_changes
                              if c.kind == ChangeKind.TYPE_SIZE_CHANGED]
         assert len(type_size_changes) == 2

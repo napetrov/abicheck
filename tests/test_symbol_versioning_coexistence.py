@@ -9,8 +9,6 @@ Validates ELF symbol version scenarios including:
 """
 from __future__ import annotations
 
-import pytest
-
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import (

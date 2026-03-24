@@ -2,8 +2,8 @@
 
 ## Current State (Post Enhancement)
 
-- **139 existing test files** + **12 new test files** = 151 test files
-- **4,516 existing tests** + **884 new tests** = 5,400 total
+- **139 existing test files** + **15 new test files** = 154 test files
+- **4,516 existing tests** + **906 new tests** = 5,422 total
 - All **143 ChangeKind** values referenced in tests
 - **80% code coverage** gate in CI
 
@@ -23,6 +23,9 @@
 | `test_suppression_edge_cases.py` | 26 | Expiration, pattern matching, audit trail, policy interaction |
 | `test_parallel_safety.py` | 6 | Concurrent compare() calls, no global state leakage |
 | `test_stripped_degradation.py` | 20 | DWARF stripping, confidence degradation, ELF-only mode |
+| `test_cross_compiler_fp.py` | 7 | Cross-compiler (gcc vs clang) false positive prevention |
+| `test_abidiff_parity_extended.py` | 8 | Extended abidiff parity tests for C/C++ scenarios |
+| `test_realworld_scan.py` | 6 | Real-world library release pattern tests |
 
 ---
 
@@ -179,8 +182,8 @@ These had only 1-3 references before and now have dedicated detection tests:
 - `func_likely_renamed` — tested in elf_only_mode; needs compiled binary validation
 - `glibcxx_dual_abi_flip_detected` — tested but FP rate unknown
 - `abi_surface_explosion` — threshold heuristics untested with real data
-- `vtable_symbol_identity_changed` — needs compiled C++ with RTTI
-- `inline_namespace_moved` — needs compiled C++ with inline namespaces
+- `vtable_symbol_identity_changed` — requires compiled C++ binaries with RTTI
+- `inline_namespace_moved` — requires compiled C++ binaries with inline namespaces
 - `sycl_*` (8 kinds) — synthetic tests exist; need real SYCL binaries
 
 ---
@@ -188,7 +191,7 @@ These had only 1-3 references before and now have dedicated detection tests:
 ## Architecture Notes
 
 ### Test Organization Strategy
-```
+```text
 tests/
 ├── test_checker.py                  # Core compare() + verdict classification
 ├── test_scan_accuracy.py            # Mutation-based FP/FN prevention

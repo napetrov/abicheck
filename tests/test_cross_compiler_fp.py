@@ -116,7 +116,7 @@ def _compile_so(src: str, out: Path, compiler: str, lang: str) -> None:
 def _dump_and_compare(gcc_so: Path, clang_so: Path, hdr: str | None,
                       lang: str, tmp_path: Path):
     """Dump both .so files and compare."""
-    from abicheck.checker import Verdict, compare
+    from abicheck.checker import compare
     from abicheck.dumper import dump
 
     compiler_name = "cc" if lang == "c" else "c++"
@@ -284,7 +284,7 @@ class TestStrippedVsUnstrippedFP:
         if r.returncode != 0:
             pytest.skip(f"strip failed: {r.stderr[:200]}")
 
-        from abicheck.checker import ChangeKind, Verdict, compare
+        from abicheck.checker import compare
         from abicheck.checker_policy import Confidence
         from abicheck.dumper import dump
 
@@ -307,6 +307,7 @@ class TestStrippedVsUnstrippedFP:
         # may not produce DwarfMetadata at all (has_dwarf=False on load),
         # so DWARF_INFO_MISSING detection depends on whether the dumper
         # populates the field. Validate confidence is degraded instead.
-        from abicheck.checker_policy import Confidence
-        # Stripped binary should have lower or equal confidence vs full debug
-        assert result.confidence is not None
+        # Stripped binary should not have HIGH confidence
+        assert result.confidence != Confidence.HIGH, (
+            "Stripped binary comparison should degrade confidence below HIGH"
+        )

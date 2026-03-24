@@ -11,22 +11,13 @@ Tests:
 """
 from __future__ import annotations
 
-import copy
 from datetime import date, timedelta
-
-import pytest
 
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.checker_types import Change
 from abicheck.model import (
     AbiSnapshot,
-    EnumMember,
-    EnumType,
     Function,
-    Param,
-    RecordType,
-    TypeField,
-    Variable,
     Visibility,
 )
 from abicheck.suppression import Suppression, SuppressionList

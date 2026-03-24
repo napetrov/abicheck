@@ -10,17 +10,11 @@ from __future__ import annotations
 import copy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import pytest
-
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.model import (
     AbiSnapshot,
-    EnumMember,
-    EnumType,
     Function,
-    Param,
     RecordType,
-    TypeField,
     Variable,
     Visibility,
 )

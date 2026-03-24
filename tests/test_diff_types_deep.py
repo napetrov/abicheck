@@ -6,10 +6,6 @@ other type-related ChangeKinds that have minimal dedicated test coverage.
 """
 from __future__ import annotations
 
-import copy
-
-import pytest
-
 from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.model import (
     AbiSnapshot,
@@ -17,10 +13,8 @@ from abicheck.model import (
     EnumMember,
     EnumType,
     Function,
-    Param,
     RecordType,
     TypeField,
-    Variable,
     Visibility,
 )
 

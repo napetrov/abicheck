@@ -7,22 +7,14 @@ from __future__ import annotations
 
 import copy
 
-import pytest
-
-from abicheck.checker import ChangeKind, Verdict, compare
+from abicheck.checker import Verdict, compare
 from abicheck.checker_policy import Confidence
-from abicheck.dwarf_advanced import AdvancedDwarfMetadata, ToolchainInfo
 from abicheck.dwarf_metadata import DwarfMetadata, StructLayout
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import (
     AbiSnapshot,
-    EnumMember,
-    EnumType,
     Function,
-    Param,
     RecordType,
-    TypeField,
-    Variable,
     Visibility,
 )
 
