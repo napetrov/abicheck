@@ -63,6 +63,7 @@ Save a baseline at release time, compare every new build:
 - [Change Kind Reference](reference/change-kinds.md) — full list of 114 detected change types
 - [Policy Profiles](user-guide/policies.md) — built-in and custom policies
 - [Suppressions](user-guide/suppressions.md) — YAML schema, matching semantics, and expiry rules
+- [Debian Symbols](user-guide/cli-usage.md#6-debian-symbols-file-integration) — generate, validate, and diff Debian symbols files for dpkg integration
 - [Migrating from ABICC](user-guide/from-abicc.md) — drop-in replacement and migration from abi-compliance-checker
 - [MCP Integration](user-guide/mcp-integration.md) — use abicheck from AI agents via MCP
 - [Tool Comparison](reference/tool-comparison.md) — abicheck vs abidiff vs ABICC

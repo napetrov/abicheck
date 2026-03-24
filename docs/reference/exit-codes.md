@@ -139,6 +139,55 @@ exit 0
 
 ---
 
+## `abicheck debian-symbols`
+
+### `debian-symbols generate`
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Symbols file generated successfully |
+| `1` | Error (binary not found, ELF parse error, I/O failure) |
+
+### `debian-symbols validate`
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Symbols file matches the binary (all required symbols present) |
+| `2` | Mismatch — one or more required symbols are missing from the binary |
+
+> Symbols tagged `(optional)` are not required — their absence does not cause
+> exit code `2`. This matches `dpkg-gensymbols` behaviour.
+
+New symbols found in the binary but not listed in the symbols file are reported
+in the output but do **not** change the exit code.
+
+### `debian-symbols diff`
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Diff computed successfully (regardless of whether changes were found) |
+| `1` | Error (file not found, parse error) |
+
+### CI gate patterns
+
+```bash
+# Update symbols file when library changes
+abicheck debian-symbols generate ./build/libfoo.so \
+    --package libfoo1 --version "$(dpkg-parsechangelog -SVersion)" \
+    -o debian/libfoo1.symbols
+
+# Validate symbols file in CI (fail on missing symbols)
+abicheck debian-symbols validate ./build/libfoo.so debian/libfoo1.symbols
+ret=$?
+[ $ret -eq 2 ] && echo "FAIL — symbols file needs updating" && exit 1
+echo "OK — symbols file matches binary"
+
+# Diff before/after to see what changed
+abicheck debian-symbols diff old.symbols new.symbols
+```
+
+---
+
 ## `abicheck compat`
 
 Matches `abi-compliance-checker` exit codes (ABICC drop-in):
@@ -173,18 +222,19 @@ In `abicheck compat`, non-verdict failures are further classified where possible
 
 ## Summary table
 
-| Verdict / State | `compare` exit (legacy) | `compare` exit (severity) | `appcompat` exit | `deps` exit | `stack-check` exit | `compat` exit |
-|-----------------|------------------------|--------------------------|-----------------|-------------|-------------------|---------------|
-| `NO_CHANGE` / `PASS` | `0` | `0` | `0` | `0` | `0` | `0` |
-| `COMPATIBLE` | `0` | `0` | `0` | — | — | `0` |
-| `COMPATIBLE_WITH_RISK` | `0` | `0`–`2`* | `0` | — | — | `0` |
-| Additions only | `0` | `0`–`1`* | n/a | — | — | n/a |
-| Quality issues only | `0` | `0`–`1`* | n/a | — | — | n/a |
-| `WARN` (ABI risk) | — | — | — | — | `1` | — |
-| `API_BREAK` | `2` | `0`–`2`* | `2` | — | — | `2` |
-| `BREAKING` / `FAIL` | `4` | `4` | `4` | — | `4` | `1` |
-| Load failure | — | — | — | `1` | `4` | — |
-| Tool error | `2`† | `2`† | `1` | — | — | `3/4/5/6/7/8/10/11` |
+| Verdict / State | `compare` exit (legacy) | `compare` exit (severity) | `appcompat` exit | `deps` exit | `stack-check` exit | `debian-symbols validate` exit | `compat` exit |
+|-----------------|------------------------|--------------------------|-----------------|-------------|-------------------|-------------------------------|---------------|
+| `NO_CHANGE` / `PASS` | `0` | `0` | `0` | `0` | `0` | `0` | `0` |
+| `COMPATIBLE` | `0` | `0` | `0` | — | — | — | `0` |
+| `COMPATIBLE_WITH_RISK` | `0` | `0`–`2`* | `0` | — | — | — | `0` |
+| Additions only | `0` | `0`–`1`* | n/a | — | — | — | n/a |
+| Quality issues only | `0` | `0`–`1`* | n/a | — | — | — | n/a |
+| `WARN` (ABI risk) | — | — | — | — | `1` | — | — |
+| `API_BREAK` | `2` | `0`–`2`* | `2` | — | — | — | `2` |
+| `BREAKING` / `FAIL` | `4` | `4` | `4` | — | `4` | — | `1` |
+| Missing symbols | — | — | — | — | — | `2` | — |
+| Load failure | — | — | — | `1` | `4` | — | — |
+| Tool error | `2`† | `2`† | `1` | — | — | `1` | `3/4/5/6/7/8/10/11` |
 
 \* Severity exit codes depend on the configuration. For example, with
 `--severity-addition error`, additions exit `1`; with `--severity-preset
