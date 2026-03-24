@@ -85,6 +85,11 @@ from .diff_types import (  # noqa: F401
     _diff_var_values,
     _is_version_stamped_typedef,
 )
+from .diff_versioning import (  # noqa: F401 — re-export for testing
+    check_soname_bump_policy,
+    detect_version_node_changes,
+    detect_version_script_missing,
+)
 from .dwarf_advanced import (
     diff_advanced_dwarf,  # noqa: F401 — re-export for monkeypatching
 )
@@ -182,6 +187,15 @@ def compare(
 
     # Run all registered detectors via the self-registering registry.
     changes, detector_results = _detector_registry.run_all(old, new)
+
+    # Post-detector: SONAME bump policy check (needs full change list).
+    # Uses the module-level import of check_soname_bump_policy.
+    from .elf_metadata import ElfMetadata as _ElfMetadata
+
+    _old_elf = getattr(old, "elf", None) or _ElfMetadata()
+    _new_elf = getattr(new, "elf", None) or _ElfMetadata()
+    soname_changes = check_soname_bump_policy(changes, _old_elf, _new_elf)
+    changes.extend(soname_changes)
 
     # Run the post-processing pipeline (filtering, dedup, enrichment, suppression).
     from .post_processing import DEFAULT_PIPELINE

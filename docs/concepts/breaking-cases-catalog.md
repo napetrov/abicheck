@@ -138,20 +138,40 @@ For the complete list of 100+ detected change types, see [Change Kind Reference]
     - Example: `examples/case13_symbol_versioning/`
     - Mitigation: maintain and test symbol version scripts in CI.
 
+21. **Version node removal** — entire version node removed from version script.
+    - Risk: applications linked against the removed version node get unresolved symbols.
+    - Type: hard break (`symbol_version_node_removed`).
+    - Mitigation: retain old version nodes and add new symbols under new nodes.
+
+22. **Symbol version migration** — symbol moved between version nodes.
+    - Risk: applications linked against old version node cannot find the symbol.
+    - Type: deployment risk (`symbol_moved_version_node`).
+    - Mitigation: keep the symbol under the old version node and add an alias under the new one.
+
+23. **Missing SONAME bump** — breaking changes without SONAME bump.
+    - Risk: consumers linked against old SONAME will silently pick up the broken library.
+    - Type: policy advisory (`soname_bump_recommended`).
+    - Mitigation: bump SONAME on every binary-incompatible release.
+
+24. **Missing version script** — library exports symbols without `--version-script`.
+    - Risk: no fine-grained symbol versioning; harder to evolve the ABI.
+    - Type: quality advisory (`version_script_missing`).
+    - Mitigation: add a version script (e.g., `--version-script=libfoo.map`).
+
 ## 5) Control cases (not direct ABI breaks)
 
-21. **case03_compat_addition** — compatible symbol addition.
-22. **case04_no_change** — unchanged baseline.
+25. **case03_compat_addition** — compatible symbol addition.
+26. **case04_no_change** — unchanged baseline.
 
 ## 6) Additional enum compatibility cases
 
-23. **case19_enum_member_removed** — enum member removed.
+27. **case19_enum_member_removed** — enum member removed.
     - Risk: old persisted/protocol values become invalid or semantically undefined.
     - Type: semantic compatibility break.
     - Example: `examples/case19_enum_member_removed/`
     - Mitigation: keep old enum members; mark deprecated instead of deleting.
 
-24. **case20_enum_member_value_changed** — enum member numeric value changed.
+28. **case20_enum_member_value_changed** — enum member numeric value changed.
     - Risk: cross-version state/wire interpretation mismatch.
     - Type: semantic compatibility break.
     - Example: `examples/case20_enum_member_value_changed/`
@@ -159,24 +179,24 @@ For the complete list of 100+ detected change types, see [Change Kind Reference]
 
 ## 7) Additional compatible/informational cases
 
-25. **case25_enum_member_added** — enum member appended at end.
+29. **case25_enum_member_added** — enum member appended at end.
     - Risk: source-level only (switch statements may not handle new value).
     - Type: **compatible** — existing compiled values are unchanged.
     - Example: `examples/case25_enum_member_added/`
     - Note: if adding shifts existing values, that is caught by `ENUM_MEMBER_VALUE_CHANGED`.
 
-26. **case26_union_field_added** — union field added with larger alignment.
+30. **case26_union_field_added** — union field added with larger alignment.
     - Risk: if the new field is the largest member, `sizeof(union)` grows → **TYPE_SIZE_CHANGED** → BREAKING.
     - Type: **breaking** — this fixture adds `double d` (8 bytes) to a union of `int`/`float` (4 bytes each), growing it from 4→8 bytes. Callers that stack-allocate or embed `union Value` in a struct are broken.
     - Note: adding a field that does *not* grow the union (smaller or equal size) is compatible. The field addition itself is not the break — the size change is. This fixture demonstrates the breaking variant.
     - Example: `examples/case26_union_field_added/`
 
-27. **case27_symbol_binding_weakened** — GLOBAL → WEAK symbol binding.
+31. **case27_symbol_binding_weakened** — GLOBAL → WEAK symbol binding.
     - Risk: interposition — WEAK symbol can be overridden by another GLOBAL definition.
     - Type: **compatible** — symbol is still exported and resolvable.
     - Example: `examples/case27_symbol_binding_weakened/`
 
-28. **case29_ifunc_transition** — regular function → GNU IFUNC.
+32. **case29_ifunc_transition** — regular function → GNU IFUNC.
     - Risk: older dynamic linkers may not support IFUNC resolution.
     - Type: **compatible** — PLT/GOT mechanism handles indirection transparently.
     - Example: `examples/case29_ifunc_transition/`

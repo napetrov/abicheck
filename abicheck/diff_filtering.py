@@ -796,6 +796,10 @@ def _deduplicate_cross_detector(changes: list[Change]) -> list[Change]:
         ChangeKind.FUNC_ADDED: "func_addition",
         ChangeKind.VAR_REMOVED: "var_removal",
         ChangeKind.VAR_ADDED: "var_addition",
+        # Version node removal and version definition removal both fire for
+        # the same version string.  Keep the more specific node-level change.
+        ChangeKind.SYMBOL_VERSION_NODE_REMOVED: "version_def_removal",
+        ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED: "version_def_removal",
     }
     seen: set[tuple[str, str]] = set()
     result: list[Change] = []

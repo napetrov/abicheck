@@ -463,6 +463,34 @@ REGISTRY = ChangeKindRegistry([
               "-fvisibility=hidden). This is a configuration/packaging signal, not "
               "a per-symbol break, but may indicate an unintended visibility regression."),
 
+    # ── ELF symbol-version policy checks ────────────────────────────────────
+    _E("symbol_version_node_removed", _B,
+       impact="A version node (e.g. LIBFOO_1.0) was entirely removed from the "
+              "version script. Applications linked against symbols under that "
+              "version node will get unresolved symbol errors at load time."),
+    _E("symbol_moved_version_node", _R,
+       impact="Symbol moved from one version node to another (e.g. LIBFOO_1.0 → "
+              "LIBFOO_2.0). Applications linked against the old version node will "
+              "not find this symbol at the expected version. This is typically "
+              "intentional during a major release."),
+    # TODO(policy): The spec calls for strict_abi to treat this as BREAKING
+    # and sdk_vendor as COMPATIBLE_WITH_RISK, but the current policy override
+    # mechanism only supports downgrading (not upgrading) verdicts.  Adding
+    # per-policy upgrades requires changes to policy_kind_sets() and the
+    # integrity assertions in checker_policy.py.  Tracked for v2.0.
+    _E("soname_bump_recommended", _C,
+       impact="Binary-incompatible changes detected but SONAME was not bumped. "
+              "Consumers linked against the current SONAME will encounter runtime "
+              "failures. Recommended: bump the SONAME to signal the ABI break."),
+    _E("soname_bump_unnecessary", _C,
+       impact="SONAME was bumped but no binary-incompatible changes were detected. "
+              "This forces all consumers to relink unnecessarily. Consider whether "
+              "the bump was intentional."),
+    _E("version_script_missing", _C,
+       impact="Library exports symbols without a version script. This is a common "
+              "oversight that prevents fine-grained symbol versioning and makes "
+              "future ABI evolution harder to manage."),
+
     # ── SYCL Plugin Interface (PI) ────────────────────────────────────────
     _E("sycl_implementation_changed", _B,
        impact="SYCL implementation changed (e.g., DPC++ to AdaptiveCpp); "

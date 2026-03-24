@@ -316,6 +316,13 @@ class ChangeKind(str, Enum):
     VTABLE_SYMBOL_IDENTITY_CHANGED = "vtable_symbol_identity_changed"  # vtable/typeinfo symbol rename
     ABI_SURFACE_EXPLOSION = "abi_surface_explosion"  # dramatic ABI surface growth/shrink
 
+    # ELF symbol-version policy checks
+    SYMBOL_VERSION_NODE_REMOVED = "symbol_version_node_removed"
+    SYMBOL_MOVED_VERSION_NODE = "symbol_moved_version_node"
+    SONAME_BUMP_RECOMMENDED = "soname_bump_recommended"
+    SONAME_BUMP_UNNECESSARY = "soname_bump_unnecessary"
+    VERSION_SCRIPT_MISSING = "version_script_missing"
+
     # SYCL Plugin Interface (PI) — ADR-020
     SYCL_IMPLEMENTATION_CHANGED = "sycl_implementation_changed"
     SYCL_PI_VERSION_CHANGED = "sycl_pi_version_changed"

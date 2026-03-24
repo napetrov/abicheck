@@ -32,6 +32,17 @@ Full strictness — every detected ABI change is classified at its maximum sever
 | `COMPATIBLE` | Safe addition or informational |
 | `NO_CHANGE` | No differences found |
 
+The `soname_bump_recommended` advisory is emitted as COMPATIBLE (quality issue) when
+binary-incompatible changes are detected but the SONAME is not bumped. The underlying
+breaking changes themselves carry the BREAKING verdict. Use custom policy files to
+escalate `soname_bump_recommended` to `break` if you want SONAME-bump enforcement to
+fail CI:
+
+```yaml
+overrides:
+  soname_bump_recommended: break
+```
+
 Use for: shared libraries, system libraries, public SDKs with strict compatibility guarantees.
 
 ---

@@ -127,6 +127,7 @@ These changes are immediately incompatible with existing compiled binaries.
 | Kind | Description |
 |------|-------------|
 | `symbol_version_defined_removed` | A symbol version definition (`GLIBC_2.5`, etc.) was removed from the library. Binaries linked against that version tag cannot find the symbol. |
+| `symbol_version_node_removed` | A version node (e.g., `LIBFOO_1.0`) was entirely removed from the version script. All symbols that were under that node become unresolvable for applications linked against it. More specific than `symbol_version_defined_removed` — includes which symbols were affected. |
 
 
 ### ELF Dynamic Section
@@ -197,6 +198,7 @@ library from loading in some deployment environments. Manual review is required.
 | `symbol_version_required_added` | A new required symbol version appeared in `DT_VERNEED` (e.g., a new `GLIBC_2.17` dependency). Existing compiled consumers are unaffected — they are already linked. However, the new library will fail to load on systems whose libc does not provide that version. Verify that all target deployment environments satisfy the new requirement. |
 | `symbol_leaked_from_dependency_changed` | A symbol exported by this library that appears to originate from a **dependency** (e.g., `libstdc++.so.6`, `libgcc_s.so.1`, `libc.so.6`) was removed, added, or changed. This is a real ABI fact — the library is leaking dependency symbols into its public ABI surface (a common side-effect of missing `-fvisibility=hidden`). Direct consumers of this library typically resolve those symbols through the dependency directly and are not immediately affected. However, the risk is that on other systems with a different version of the dependency, the leaked symbols may differ — causing failures. **Recommended action:** apply `-fvisibility=hidden` to prevent leaking dependency symbols. |
 | `func_likely_renamed` | A function likely was renamed (binary fingerprint match: identical code size and hash, different symbol name). Old binaries reference the old name and will fail to resolve at load time. **This is a heuristic signal** — the match is based on function size and code hash fingerprinting in stripped binaries (elf_only_mode). Verify the rename is intentional. Only fires in symbols-only analysis mode. |
+| `symbol_moved_version_node` | A symbol moved from one version node to another (e.g., `LIBFOO_1.0` → `LIBFOO_2.0`). Applications linked against the old version node will not find this symbol at the expected version. This is typically intentional during a major release, but should be verified. |
 
 ---
 
@@ -250,6 +252,14 @@ These changes are safe: they add new capabilities or carry diagnostic informatio
 | `common_symbol_risk` | A `STT_COMMON` symbol is exported. Common symbols have merge semantics that can cause surprising behavior — a risk warning, not a proven break. |
 | `symbol_version_defined_added` | Symbol versioning was introduced to the library (a new version definition added). New binaries link against the versioned symbol; old binaries use the unversioned fallback. |
 | `symbol_version_required_removed` | A previously required symbol version dependency was dropped. Reduces the minimum libc/glibc requirement — compatible or an improvement. |
+
+### ELF Symbol-Version Policy
+
+| Kind | Description |
+|------|-------------|
+| `soname_bump_recommended` | Binary-incompatible changes were detected but the SONAME was not bumped. Consumers linked against the current SONAME will encounter runtime failures. This is a quality/policy advisory — the underlying breaking changes are reported separately. **Recommended action:** bump the SONAME to signal the ABI break. |
+| `soname_bump_unnecessary` | The SONAME was bumped but no binary-incompatible changes were detected. This forces all consumers to relink unnecessarily. Consider whether the bump was intentional (e.g., a planned deprecation). |
+| `version_script_missing` | The library exports symbols without a version script (`--version-script`). This prevents fine-grained symbol versioning and makes future ABI evolution harder to manage. **Recommended action:** add a version script. |
 
 ### DWARF Diagnostics
 
