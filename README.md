@@ -57,6 +57,20 @@ conda (all platforms):
 conda install -c conda-forge castxml
 ```
 
+### Naming note
+
+This project (`napetrov/abicheck` on PyPI) is distinct from distro-packaged tools
+with similar names (`abi-compliance-checker` wrappers in Debian `devscripts`, or
+`abicheck` in Fedora's `libabigail-tools`). Run `abicheck --version` to confirm
+which tool is active — it should show `abicheck X.Y.Z (napetrov/abicheck)`.
+
+If the `abicheck` command conflicts with a distro tool, use:
+
+```bash
+python -m abicheck --version
+python -m abicheck dump libfoo.so -H include/foo.h
+```
+
 ### Install from source
 
 ```bash

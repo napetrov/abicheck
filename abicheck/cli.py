@@ -118,6 +118,126 @@ def _safe_write_output(output: Path, text: str) -> None:
         raise click.ClickException(f"Cannot write to {output}: {exc}") from exc
 
 
+def _stamp_provenance(
+    snap: AbiSnapshot,
+    *,
+    git_tag: str | None,
+    build_id: str | None,
+    no_git: bool,
+) -> None:
+    """Fill provenance metadata on a snapshot (mutates in place)."""
+    import datetime
+    import subprocess
+
+    snap.created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    snap.git_tag = git_tag
+    snap.build_id = build_id
+
+    if not no_git:
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                snap.git_commit = result.stdout.strip()
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass  # git not available or not a repo — leave as None
+
+
+def _resolve_output(
+    output: Path | None,
+    output_name: str | None,
+    snap: AbiSnapshot,
+) -> Path | None:
+    """Resolve the effective output path from --output or --output-name."""
+    if output:
+        return output
+    if output_name == "auto":
+        # Derive filename from library name and version
+        # Strip .so suffix variants for a clean name
+        lib = snap.library
+        # "libfoo.so.1.2.3" → "libfoo"
+        lib_clean = re.sub(r"\.so(\.\d+)*$", "", lib)
+        # "libfoo.dll" → "libfoo"
+        lib_clean = re.sub(r"\.(dll|dylib)$", "", lib_clean)
+        if not lib_clean or not lib_clean.strip():
+            raise click.ClickException(
+                "Cannot auto-name output: library name is empty in snapshot."
+            )
+        ver = snap.version if snap.version != "unknown" else ""
+        if ver:
+            return Path(f"{lib_clean}-{ver}.abicheck.json")
+        return Path(f"{lib_clean}.abicheck.json")
+    return None
+
+
+def _write_snapshot_output(
+    snap: AbiSnapshot,
+    effective_output: Path | None,
+    upload_release: bool,
+) -> None:
+    """Serialize snapshot, write to file/stdout, optionally upload to GitHub Release."""
+    result = snapshot_to_json(snap)
+    if effective_output:
+        _safe_write_output(effective_output, result)
+        click.echo(f"Snapshot written to {effective_output}", err=True)
+    else:
+        if upload_release:
+            raise click.UsageError(
+                "--upload-release requires --output or --output-name auto "
+                "(cannot upload from stdout)."
+            )
+        click.echo(result)
+        return
+
+    if upload_release:
+        _upload_to_release(effective_output, snap.git_tag)
+
+
+def _upload_to_release(snapshot_path: Path, git_tag: str | None) -> None:
+    """Upload a snapshot file to a GitHub Release using the gh CLI."""
+    import subprocess
+
+    # Determine tag: explicit --git-tag or auto-detect from git describe
+    tag = git_tag
+    if not tag:
+        try:
+            result = subprocess.run(
+                ["git", "describe", "--tags", "--exact-match", "HEAD"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                tag = result.stdout.strip()
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    if not tag:
+        raise click.ClickException(
+            "--upload-release: could not determine release tag. "
+            "Use --git-tag to specify it explicitly, or run from a tagged commit."
+        )
+    click.echo(f"Uploading {snapshot_path.name} to release {tag}...", err=True)
+    try:
+        subprocess.run(
+            ["gh", "release", "upload", "--clobber", "--", tag, str(snapshot_path.resolve())],
+            check=True, timeout=60,
+        )
+    except FileNotFoundError:
+        raise click.ClickException(
+            "--upload-release requires the GitHub CLI (gh). "
+            "Install it from https://cli.github.com/"
+        )
+    except subprocess.CalledProcessError as exc:
+        raise click.ClickException(
+            f"Failed to upload to release {tag}: gh exited with code {exc.returncode}"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise click.ClickException(
+            f"Upload to release {tag} timed out after 60 seconds."
+        ) from exc
+    click.echo(f"Uploaded {snapshot_path.name} to release {tag}", err=True)
+
+
 def _sniff_text_format(path: Path) -> str:
     """Read a small header chunk and return 'json', 'perl', or 'unknown'."""
     try:
@@ -331,7 +451,11 @@ def _collect_metadata(path: Path) -> LibraryMetadata | None:
 
 
 @click.group()
-@click.version_option(version=_abicheck_version, prog_name="abicheck")
+@click.version_option(
+    version=_abicheck_version,
+    prog_name="abicheck",
+    message="%(prog)s %(version)s (napetrov/abicheck)",
+)
 def main() -> None:
     """abicheck — ABI compatibility checker for C/C++ shared libraries."""
 
@@ -437,6 +561,21 @@ def _populate_dependency_info(
               help="Force DWARF debug format (ELF only).")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
+# ── Provenance metadata ──────────────────────────────────────────────────────
+@click.option("--git-tag", "git_tag", default=None,
+              help="Git tag to embed in the snapshot (e.g. v2.0.0).")
+@click.option("--build-id", "build_id", default=None,
+              help="Opaque build identifier (CI run ID, build number, etc.).")
+@click.option("--no-git", "no_git", is_flag=True, default=False,
+              help="Do not auto-detect git commit SHA.")
+# ── Output naming ────────────────────────────────────────────────────────────
+@click.option("--output-name", "output_name", type=click.Choice(["auto"]),
+              default=None,
+              help='Write snapshot to <library>-<version>.abicheck.json '
+                   '(use "auto").')
+@click.option("--upload-release", "upload_release", is_flag=True, default=False,
+              help="Upload the snapshot to a GitHub Release (requires gh CLI and GH_TOKEN). "
+                   "Uses --git-tag or auto-detected tag.")
 def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...],
              version: str, lang: str, output: Path | None,
              gcc_path: str | None, gcc_prefix: str | None, gcc_options: str | None,
@@ -444,7 +583,9 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
              follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
              dwarf_only: bool, show_data_sources: bool,
              debug_format: str | None,
-             verbose: bool) -> None:
+             verbose: bool,
+             git_tag: str | None, build_id: str | None, no_git: bool,
+             output_name: str | None, upload_release: bool) -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
     \b
@@ -455,8 +596,13 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
       abicheck dump libfoo.so.1 --follow-deps -o snap.json
       abicheck dump libfoo.so.1 --dwarf-only -o snap.json
       abicheck dump libfoo.so.1 --show-data-sources
+      abicheck dump libfoo.so.1 -H include/foo.h --version 2.0.0 --output-name auto
     """
     _setup_verbosity(verbose)
+
+    # --output and --output-name are mutually exclusive
+    if output and output_name:
+        raise click.UsageError("--output and --output-name are mutually exclusive.")
 
     # --show-data-sources: diagnostic output and exit
     if show_data_sources:
@@ -477,12 +623,9 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             raise
         except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
             raise click.ClickException(str(exc)) from exc
-        result = snapshot_to_json(snap)
-        if output:
-            _safe_write_output(output, result)
-            click.echo(f"Snapshot written to {output}", err=True)
-        else:
-            click.echo(result)
+        _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
+        effective_output = _resolve_output(output, output_name, snap)
+        _write_snapshot_output(snap, effective_output, upload_release)
         return
 
     compiler = "cc" if lang == "c" else "c++"
@@ -509,12 +652,9 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
     if follow_deps:
         _populate_dependency_info(snap, so_path, list(search_paths), sysroot, ld_library_path)
 
-    result = snapshot_to_json(snap)
-    if output:
-        _safe_write_output(output, result)
-        click.echo(f"Snapshot written to {output}", err=True)
-    else:
-        click.echo(result)
+    _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
+    effective_output = _resolve_output(output, output_name, snap)
+    _write_snapshot_output(snap, effective_output, upload_release)
 
 
 def _print_data_sources(so_path: Path, has_headers: bool) -> None:
@@ -903,9 +1043,9 @@ def _maybe_emit_annotations(
 
 def _write_release_step_summary(text: str, fmt: str) -> None:
     """Write a single step summary for compare-release when running in CI."""
-    import os
+    import os as _os
 
-    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    summary_path = _os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary_path:
         return
 
@@ -1080,6 +1220,9 @@ def _exit_with_severity_or_verdict(
                    "(requires --annotate).")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
+@click.option("--diffoscope", "use_diffoscope", is_flag=True, default=False,
+              help="Run diffoscope on breaking changes for byte-level binary diff. "
+                   "Requires diffoscope on PATH (optional external tool).")
 def compare_cmd(
     old_input: Path, new_input: Path,
     headers: tuple[Path, ...], includes: tuple[Path, ...], lang: str,
@@ -1104,6 +1247,7 @@ def compare_cmd(
     annotate: bool,
     annotate_additions: bool,
     verbose: bool,
+    use_diffoscope: bool,
 ) -> None:
     """Compare two ABI surfaces and report changes.
 
@@ -1228,6 +1372,32 @@ def compare_cmd(
         show_impact=show_impact, stat=stat,
         severity_config=sev_config if severity_explicitly_set else None,
     )
+
+    # Optionally append diffoscope byte-level diff on breaking changes
+    if use_diffoscope and result.verdict.value in ("API_BREAK", "BREAKING"):
+        old_is_binary = _detect_binary_format(old_input) is not None
+        new_is_binary = _detect_binary_format(new_input) is not None
+        if old_is_binary and new_is_binary:
+            from .diffoscope_bridge import run_diffoscope
+            diff_output = run_diffoscope(old_input, new_input)
+            if diff_output:
+                if fmt == "markdown":
+                    text += "\n\n<details>\n<summary>diffoscope byte-level diff</summary>\n\n```\n"
+                    text += diff_output
+                    text += "\n```\n</details>\n"
+                elif fmt == "json":
+                    try:
+                        data = json.loads(text)
+                        data["diffoscope_output"] = diff_output
+                        text = json.dumps(data, indent=2)
+                    except json.JSONDecodeError:
+                        pass  # don't corrupt JSON output
+                elif fmt not in ("sarif", "html", "junit"):
+                    text += "\n\n--- diffoscope byte-level diff ---\n"
+                    text += diff_output
+        else:
+            click.echo("Warning: --diffoscope skipped (inputs are not both binary files).", err=True)
+
     _write_or_echo(output, text)
 
     _exit_with_severity_or_verdict(result, sev_config, severity_explicitly_set)
@@ -1553,6 +1723,54 @@ def _collect_release_warnings(
         )
 
 
+def _compare_one_library(
+    key: str,
+    old_map: dict[str, Path], new_map: dict[str, Path],
+    old_debug_dir: Path | None, new_debug_dir: Path | None,
+    resolve_debug_info: Callable[[Path, Path], Path | None],
+    old_h: list[Path], new_h: list[Path],
+    old_inc: list[Path], new_inc: list[Path],
+    old_version: str, new_version: str,
+    lang: str, suppress: Path | None,
+    policy: str, policy_file_path: Path | None,
+    output_dir: Path | None,
+) -> dict[str, object]:
+    """Compare one library pair — suitable for parallel dispatch.
+
+    The entire per-library flow (debug info resolution, comparison, output
+    writing) is wrapped so that *any* exception yields an ERROR entry
+    instead of aborting the whole release comparison.
+    """
+    old_path = old_map[key]
+    new_path = new_map[key]
+    try:
+        old_dbg = resolve_debug_info(old_path, old_debug_dir) if old_debug_dir else None
+        new_dbg = resolve_debug_info(new_path, new_debug_dir) if new_debug_dir else None
+        result, _, _ = _run_compare_pair(
+            old_path, new_path,
+            old_h, new_h, old_inc, new_inc,
+            old_version, new_version,
+            lang, suppress, policy, policy_file_path,
+            old_pdb_path=old_dbg, new_pdb_path=new_dbg,
+        )
+        v = result.verdict.value
+        entry: dict[str, object] = {
+            "library": old_path.name, "verdict": v,
+            "breaking": len(result.breaking),
+            "source_breaks": len(result.source_breaks),
+            "risk_changes": len(result.risk),
+            "compatible_additions": len(result.compatible),
+        }
+        if output_dir:
+            lib_report_path = output_dir / f"{old_path.stem}.json"
+            _safe_write_output(lib_report_path, to_json(result))
+        return entry
+    except (click.ClickException, click.UsageError) as exc:
+        return {"library": old_path.name, "verdict": "ERROR", "error": exc.format_message()}
+    except Exception as exc:
+        return {"library": old_path.name, "verdict": "ERROR", "error": str(exc)}
+
+
 def _compare_release_libraries(
     matched_keys: list[str],
     old_map: dict[str, Path], new_map: dict[str, Path],
@@ -1568,66 +1786,95 @@ def _compare_release_libraries(
     *,
     annotate: bool = False,
     annotate_additions: bool = False,
+    jobs: int = 1,
 ) -> tuple[list[dict[str, object]], str, list[tuple[DiffResult, AbiSnapshot]]]:
     """Compare each matched library pair and collect results.
 
     When *collect_diff_results* is True, ``(DiffResult, old_snapshot)``
     pairs are collected and returned as the third element of the tuple
     (used by the JUnit output format).
+
+    When *jobs* > 1, comparisons are dispatched in parallel via
+    :func:`_compare_one_library` using a :class:`ProcessPoolExecutor`.
     """
+    import os as _os
+
+    effective_jobs = jobs if jobs > 0 else (_os.cpu_count() or 1)
     library_results: list[dict[str, object]] = []
     diff_pairs: list[tuple[DiffResult, AbiSnapshot]] = []
     worst_verdict = "NO_CHANGE"
     all_annotations: list[tuple[int, str]] = []
 
-    for key in matched_keys:
-        old_path = old_map[key]
-        new_path = new_map[key]
-        old_dbg = resolve_debug_info(old_path, old_debug_dir) if old_debug_dir else None
-        new_dbg = resolve_debug_info(new_path, new_debug_dir) if new_debug_dir else None
-        try:
-            result, old_snap, _ = _run_compare_pair(
-                old_path, new_path,
-                old_h, new_h, old_inc, new_inc,
-                old_version, new_version,
-                lang, suppress, policy, policy_file_path,
-                old_pdb_path=old_dbg, new_pdb_path=new_dbg,
-            )
-        except (click.ClickException, click.UsageError) as exc:
-            msg = exc.format_message()
-            click.echo(f"Error comparing {old_path.name}: {msg}", err=True)
-            library_results.append({
-                "library": old_path.name, "verdict": "ERROR", "error": msg,
-            })
-            worst_verdict = "ERROR"
-            continue
+    common_args = (
+        old_map, new_map, old_debug_dir, new_debug_dir, resolve_debug_info,
+        old_h, new_h, old_inc, new_inc,
+        old_version, new_version,
+        lang, suppress, policy, policy_file_path, output_dir,
+    )
 
-        v = result.verdict.value
+    # --- parallel path ---
+    if effective_jobs > 1 and len(matched_keys) > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor(max_workers=effective_jobs) as executor:
+            futures = {
+                executor.submit(_compare_one_library, key, *common_args): key
+                for key in matched_keys
+            }
+            for future in as_completed(futures):
+                key = futures[future]
+                try:
+                    entry = future.result()
+                except Exception as exc:
+                    click.echo(f"Error comparing {old_map[key].name}: {exc}", err=True)
+                    entry = {"library": old_map[key].name, "verdict": "ERROR", "error": str(exc)}
+                library_results.append(entry)
+    # --- sequential path ---
+    else:
+        for key in matched_keys:
+            entry = _compare_one_library(key, *common_args)
+            library_results.append(entry)
+
+    # Post-process all results: compute worst verdict, collect annotations,
+    # and optionally collect diff_pairs (for JUnit).
+    for entry in library_results:
+        v = str(entry["verdict"])
+        if v == "ERROR":
+            if "error" in entry:
+                click.echo(f"Error comparing {entry['library']}: {entry['error']}", err=True)
         if _RELEASE_VERDICT_ORDER.get(v, 0) > _RELEASE_VERDICT_ORDER.get(worst_verdict, 0):
             worst_verdict = v
 
-        library_results.append({
-            "library": old_path.name, "verdict": v,
-            "breaking": len(result.breaking),
-            "source_breaks": len(result.source_breaks),
-            "risk_changes": len(result.risk),
-            "compatible_additions": len(result.compatible),
-        })
-
-        if collect_diff_results:
-            diff_pairs.append((result, old_snap))
-
-        if annotate:
-            from .annotations import collect_annotations, is_github_actions
-
-            if is_github_actions():
-                all_annotations.extend(
-                    collect_annotations(result, annotate_additions=annotate_additions),
+    # collect_diff_results and annotate require re-running comparison for
+    # affected libraries (only used for JUnit / GitHub annotations which
+    # are sequential-only features)
+    if collect_diff_results or annotate:
+        for key in matched_keys:
+            old_path = old_map[key]
+            new_path = new_map[key]
+            old_dbg = resolve_debug_info(old_path, old_debug_dir) if old_debug_dir else None
+            new_dbg = resolve_debug_info(new_path, new_debug_dir) if new_debug_dir else None
+            try:
+                result, old_snap, _ = _run_compare_pair(
+                    old_path, new_path,
+                    old_h, new_h, old_inc, new_inc,
+                    old_version, new_version,
+                    lang, suppress, policy, policy_file_path,
+                    old_pdb_path=old_dbg, new_pdb_path=new_dbg,
                 )
+            except Exception:
+                continue
 
-        if output_dir:
-            lib_report_path = output_dir / f"{old_path.stem}.json"
-            _safe_write_output(lib_report_path, to_json(result))
+            if collect_diff_results:
+                diff_pairs.append((result, old_snap))
+
+            if annotate:
+                from .annotations import collect_annotations, is_github_actions
+
+                if is_github_actions():
+                    all_annotations.extend(
+                        collect_annotations(result, annotate_additions=annotate_additions),
+                    )
 
     # Emit annotations once: sort globally across all libraries by severity,
     # then truncate to the cap.  This ensures the most important annotations
@@ -1788,6 +2035,9 @@ def _write_release_summary_file(
               help="Include additions/compatible changes as ::notice annotations "
                    "(requires --annotate).")
 @click.option("-v", "--verbose", is_flag=True, default=False)
+@click.option("-j", "--jobs", "jobs", type=int, default=1, show_default=True,
+              help="Number of parallel library comparisons. "
+                   "Use 0 for auto-detect (CPU count).")
 def compare_release_cmd(
     old_dir: Path,
     new_dir: Path,
@@ -1817,6 +2067,7 @@ def compare_release_cmd(
     annotate: bool,
     annotate_additions: bool,
     verbose: bool,
+    jobs: int,
 ) -> None:
     """Compare all libraries in two release directories or packages.
 
@@ -1963,6 +2214,7 @@ def compare_release_cmd(
             collect_diff_results=(fmt == "junit"),
             annotate=annotate,
             annotate_additions=annotate_additions,
+            jobs=jobs,
         )
 
         if removed_keys and _RELEASE_VERDICT_ORDER.get(worst_verdict, 0) < _RELEASE_VERDICT_ORDER.get("COMPATIBLE_WITH_RISK", 0):

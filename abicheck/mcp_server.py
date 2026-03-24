@@ -25,10 +25,13 @@ Run as:
 
 from __future__ import annotations
 
+import concurrent.futures as _futures
 import json
 import logging
+import os as _os
 import platform
 import sys
+import time as _time
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +69,75 @@ from .reporter import to_json, to_markdown
 from .serialization import load_snapshot, snapshot_to_json
 
 _logger = logging.getLogger("abicheck.mcp")
+
+# ---------------------------------------------------------------------------
+# Configuration (environment variables or CLI flags)
+# ---------------------------------------------------------------------------
+
+def _env_int(name: str, default: str) -> int:
+    """Parse an integer environment variable with a clear error on bad input."""
+    raw = _os.environ.get(name, default)
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(
+            f"Environment variable {name}={raw!r} is not a valid integer"
+        ) from None
+
+
+#: Maximum seconds for a single tool invocation (abi_dump / abi_compare).
+MCP_TIMEOUT: int = _env_int("ABICHECK_MCP_TIMEOUT", "120")
+
+#: Maximum input file size in bytes (default 500 MB).
+MCP_MAX_FILE_SIZE: int = _env_int("ABICHECK_MCP_MAX_FILE_SIZE", str(500 * 1024 * 1024))
+
+#: Structured JSON log format flag (set via --log-format json).
+_structured_logging: bool = False
+
+
+def _check_file_size(path: Path, *, label: str = "input") -> None:
+    """Raise ValueError if *path* exceeds MCP_MAX_FILE_SIZE."""
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return  # let downstream handle missing files
+    except OSError as exc:
+        raise ValueError(f"Cannot check {label} file size: {exc}") from exc
+    if size > MCP_MAX_FILE_SIZE:
+        raise ValueError(
+            f"{label} is {size / (1024 * 1024):.1f} MB, "
+            f"exceeds limit of {MCP_MAX_FILE_SIZE / (1024 * 1024):.0f} MB"
+        )
+
+
+def _audit_log(
+    tool: str,
+    inputs: dict[str, str],
+    duration_s: float,
+    status: str,
+    verdict: str | None = None,
+) -> None:
+    """Log a tool invocation for audit purposes."""
+    record = {
+        "tool": tool,
+        "inputs": inputs,
+        "duration_s": round(duration_s, 3),
+        "status": status,
+    }
+    if verdict is not None:
+        record["verdict"] = verdict
+    if _structured_logging:
+        _logger.info(json.dumps(record))
+    else:
+        parts = [f"tool={tool}"]
+        for k, v in inputs.items():
+            parts.append(f"{k}={v}")
+        parts.append(f"duration={duration_s:.3f}s")
+        parts.append(f"status={status}")
+        if verdict is not None:
+            parts.append(f"verdict={verdict}")
+        _logger.info(" ".join(parts))
+
 
 # ---------------------------------------------------------------------------
 # Path safety helpers
@@ -431,32 +503,49 @@ def abi_dump(
         output_path: If provided, write snapshot to this file and return the path.
             Otherwise the snapshot JSON is returned inline.
     """
+    t0 = _time.monotonic()
     try:
         lib = _safe_read_path(library_path, label="library_path")
         if not lib.exists():
             return json.dumps({"status": "error", "error": "Library file not found"})
 
+        _check_file_size(lib, label="library_path")
         hdr_paths = [_safe_read_path(h, label="header") for h in (headers or [])]
         inc_paths = [_safe_read_path(d, label="include_dir") for d in (include_dirs or [])]
 
-        snap = _resolve_input(lib, hdr_paths, inc_paths, version, language)
+        # Run the expensive resolve+serialize in a thread with a real timeout
+        # so we don't block the MCP stdio server indefinitely.
+        with _futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_resolve_input, lib, hdr_paths, inc_paths, version, language)
+            try:
+                snap = future.result(timeout=MCP_TIMEOUT)
+            except _futures.TimeoutError:
+                elapsed = _time.monotonic() - t0
+                _audit_log("abi_dump", {"library": lib.name}, elapsed, "timeout")
+                return json.dumps({"status": "error", "error": f"abi_dump timed out after {MCP_TIMEOUT}s"})
         snap_json = snapshot_to_json(snap)
+
+        elapsed = _time.monotonic() - t0
 
         if output_path:
             out = _safe_write_path(output_path, label="output_path")
             out.write_text(snap_json, encoding="utf-8")
+            _audit_log("abi_dump", {"library": lib.name}, elapsed, "ok")
             return json.dumps({
                 "status": "ok",
                 "output_path": str(out),
                 "summary": _snapshot_summary(snap),
             })
 
+        _audit_log("abi_dump", {"library": lib.name}, elapsed, "ok")
         return json.dumps({
             "status": "ok",
             "summary": _snapshot_summary(snap),
             "snapshot": json.loads(snap_json),
         })
     except Exception as exc:
+        elapsed = _time.monotonic() - t0
+        _audit_log("abi_dump", {"library": Path(library_path).name}, elapsed, "error")
         _logger.exception("abi_dump failed")
         return json.dumps({"status": "error", "error": _sanitize_error(exc, context="abi_dump")})
 
@@ -511,12 +600,15 @@ def abi_compare(
         show_impact: If True, append an impact summary table.
         stat: If True, emit one-line summary instead of full report.
     """
+    t0 = _time.monotonic()
     try:
         old_path = _safe_read_path(old_input, label="old_input")
         new_path = _safe_read_path(new_input, label="new_input")
         for p, label in [(old_path, "old_input"), (new_path, "new_input")]:
             if not p.exists():
                 return json.dumps({"status": "error", "error": f"File not found for {label}"})
+        _check_file_size(old_path, label="old_input")
+        _check_file_size(new_path, label="new_input")
 
         # Validate policy name only when no policy_file override is provided.
         # policy_file takes precedence over the base policy name.
@@ -533,22 +625,7 @@ def abi_compare(
         new_h = [_safe_read_path(h, label="new_header") for h in new_headers] if new_headers is not None else shared
         inc = [_safe_read_path(d, label="include_dir") for d in (include_dirs or [])]
 
-        old_snap = _resolve_input(old_path, old_h, inc, "old", language)
-        new_snap = _resolve_input(new_path, new_h, inc, "new", language)
-
-        # Load suppression
-        suppression = None
-        if suppression_file:
-            from .suppression import SuppressionList
-            suppression = SuppressionList.load(_safe_read_path(suppression_file, label="suppression_file"))
-
-        # Load policy file
-        pf = None
-        if policy_file:
-            from .policy_file import PolicyFile
-            pf = PolicyFile.load(_safe_read_path(policy_file, label="policy_file"))
-
-        # Validate output_format early (before expensive compare)
+        # Validate output_format early (before expensive work)
         if output_format not in _VALID_FORMATS:
             return json.dumps({"status": "error", "error": f"Unknown output format {output_format!r}. Valid: {sorted(_VALID_FORMATS)}"})
 
@@ -560,7 +637,33 @@ def abi_compare(
             except ValueError as exc:
                 return json.dumps({"status": "error", "error": f"Invalid show_only: {exc}"})
 
-        result = compare(old_snap, new_snap, suppression=suppression, policy=policy, policy_file=pf)
+        # Resolve inputs, load suppression/policy, and compare — all under
+        # a real timeout so we don't block the MCP stdio server.
+        def _do_compare() -> tuple[AbiSnapshot, AbiSnapshot, DiffResult]:
+            old_snap = _resolve_input(old_path, old_h, inc, "old", language)
+            new_snap = _resolve_input(new_path, new_h, inc, "new", language)
+            suppression = None
+            if suppression_file:
+                from .suppression import SuppressionList
+                suppression = SuppressionList.load(
+                    _safe_read_path(suppression_file, label="suppression_file"),
+                )
+            pf = None
+            if policy_file:
+                from .policy_file import PolicyFile
+                pf = PolicyFile.load(
+                    _safe_read_path(policy_file, label="policy_file"),
+                )
+            return old_snap, new_snap, compare(old_snap, new_snap, suppression=suppression, policy=policy, policy_file=pf)
+
+        with _futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_do_compare)
+            try:
+                old_snap, new_snap, result = future.result(timeout=MCP_TIMEOUT)
+            except _futures.TimeoutError:
+                elapsed = _time.monotonic() - t0
+                _audit_log("abi_compare", {"old": old_path.name, "new": new_path.name}, elapsed, "timeout")
+                return json.dumps({"status": "error", "error": f"abi_compare timed out after {MCP_TIMEOUT}s"})
 
         # Use the active policy from the result (may differ from input when
         # policy_file overrides the base policy).
@@ -612,8 +715,20 @@ def abi_compare(
         else:
             response["report"] = rendered
 
+        elapsed = _time.monotonic() - t0
+        _audit_log(
+            "abi_compare",
+            {"old": old_path.name, "new": new_path.name},
+            elapsed, "ok", verdict=result.verdict.value,
+        )
         return json.dumps(response)
     except Exception as exc:
+        elapsed = _time.monotonic() - t0
+        _audit_log(
+            "abi_compare",
+            {"old": Path(old_input).name, "new": Path(new_input).name},
+            elapsed, "error",
+        )
         _logger.exception("abi_compare failed")
         return json.dumps({"status": "error", "error": _sanitize_error(exc, context="abi_compare")})
 
@@ -740,11 +855,35 @@ def abi_explain_change(
 
 def main() -> None:
     """Run the abicheck MCP server (stdio transport)."""
+    global MCP_TIMEOUT, MCP_MAX_FILE_SIZE, _structured_logging  # noqa: PLW0603
+
+    import argparse
+    parser = argparse.ArgumentParser(description="abicheck MCP server")
+    parser.add_argument("--timeout", type=int, default=MCP_TIMEOUT,
+                        help=f"Timeout in seconds for tool calls (default: {MCP_TIMEOUT})")
+    parser.add_argument("--max-file-size", type=int, default=MCP_MAX_FILE_SIZE,
+                        help=f"Max input file size in bytes (default: {MCP_MAX_FILE_SIZE})")
+    parser.add_argument("--log-format", choices=["text", "json"], default="text",
+                        help="Log format: text (default) or json (structured)")
+    args = parser.parse_args()
+
+    if args.timeout <= 0:
+        parser.error("--timeout must be a positive integer")
+    if args.max_file_size <= 0:
+        parser.error("--max-file-size must be a positive integer")
+    MCP_TIMEOUT = args.timeout
+    MCP_MAX_FILE_SIZE = args.max_file_size
+    _structured_logging = args.log_format == "json"
+
     # Redirect logging to stderr to avoid corrupting stdio JSON-RPC
     handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter("%(levelname)s: %(name)s: %(message)s"))
-    logging.getLogger("abicheck").addHandler(handler)
-    logging.getLogger("abicheck").setLevel(logging.WARNING)
+    if _structured_logging:
+        handler.setFormatter(logging.Formatter("%(message)s"))
+    else:
+        handler.setFormatter(logging.Formatter("%(levelname)s: %(name)s: %(message)s"))
+    logger = logging.getLogger("abicheck")
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
     mcp.run(transport="stdio")
 

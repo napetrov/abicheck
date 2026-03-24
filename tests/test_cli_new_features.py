@@ -387,8 +387,15 @@ class TestCompatDumpCmd:
             "-dump-path", str(dump_out),
         ])
         # May fail if descriptor parse needs real files, but should not crash
-        # with traceback
-        assert "Traceback" not in (result.output or "")
+        # with an application traceback.  Ignore logging infrastructure errors
+        # ("Logging error" / "I/O operation on closed file") that can appear in
+        # xdist workers on Windows when stderr is already closed.
+        output = result.output or ""
+        for i, line in enumerate(output.splitlines()):
+            if "Traceback" in line and "Logging error" not in line:
+                raise AssertionError(
+                    f"Unexpected traceback at line {i + 1} in output:\n{output}"
+                )
 
 
 # ── dataclasses.replace() via -vnum override ─────────────────────────────

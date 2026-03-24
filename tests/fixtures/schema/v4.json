@@ -1,0 +1,117 @@
+{
+  "library": "libcompat.so.1",
+  "version": "1.0.0",
+  "functions": [
+    {
+      "name": "compat_init",
+      "mangled": "_Z11compat_initv",
+      "return_type": "int",
+      "params": [],
+      "visibility": "public",
+      "is_virtual": false,
+      "is_noexcept": false,
+      "vtable_index": null,
+      "source_location": null,
+      "is_static": false,
+      "is_const": false,
+      "is_volatile": false,
+      "is_pure_virtual": false,
+      "is_deleted": false,
+      "is_inline": false,
+      "is_extern_c": false,
+      "access": "public",
+      "return_pointer_depth": 0,
+      "elf_visibility": null,
+      "ref_qualifier": ""
+    },
+    {
+      "name": "compat_free",
+      "mangled": "_Z11compat_freev",
+      "return_type": "void",
+      "params": [],
+      "visibility": "public",
+      "is_virtual": false,
+      "is_noexcept": false,
+      "vtable_index": null,
+      "source_location": null,
+      "is_static": false,
+      "is_const": false,
+      "is_volatile": false,
+      "is_pure_virtual": false,
+      "is_deleted": false,
+      "is_inline": false,
+      "is_extern_c": false,
+      "access": "public",
+      "return_pointer_depth": 0,
+      "elf_visibility": null,
+      "ref_qualifier": ""
+    }
+  ],
+  "variables": [],
+  "types": [
+    {
+      "name": "compat_config",
+      "kind": "struct",
+      "size_bits": 64,
+      "alignment_bits": 32,
+      "fields": [
+        {
+          "name": "flags",
+          "type": "int",
+          "offset_bits": 0,
+          "is_bitfield": false,
+          "bitfield_bits": null,
+          "is_const": false,
+          "is_volatile": false,
+          "is_mutable": false,
+          "access": "public"
+        },
+        {
+          "name": "version",
+          "type": "int",
+          "offset_bits": 32,
+          "is_bitfield": false,
+          "bitfield_bits": null,
+          "is_const": false,
+          "is_volatile": false,
+          "is_mutable": false,
+          "access": "public"
+        }
+      ],
+      "bases": [],
+      "virtual_bases": [],
+      "vtable": [],
+      "source_location": null,
+      "is_union": false,
+      "is_opaque": false
+    }
+  ],
+  "enums": [
+    {
+      "name": "compat_status",
+      "underlying_type": "int",
+      "members": [
+        {
+          "name": "OK",
+          "value": 0
+        },
+        {
+          "name": "ERROR",
+          "value": 1
+        }
+      ]
+    }
+  ],
+  "typedefs": {},
+  "elf": null,
+  "pe": null,
+  "macho": null,
+  "dwarf": null,
+  "dwarf_advanced": null,
+  "sycl": null,
+  "schema_version": 4,
+  "git_commit": "abc1234",
+  "git_tag": "v1.0.0",
+  "created_at": "2026-03-24T00:00:00+00:00",
+  "build_id": "fixture"
+}

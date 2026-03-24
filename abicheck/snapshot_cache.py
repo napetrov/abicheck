@@ -1,0 +1,166 @@
+# Copyright 2026 Nikolay Petrov
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Snapshot-level cache for avoiding redundant binary analysis.
+
+Cache key = SHA-256 of (binary content hash + header mtimes + compiler params).
+Cache location = ``~/.cache/abi_check/snapshots/<key>.json``.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+import os
+import tempfile
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .model import AbiSnapshot
+
+_logger = logging.getLogger("abicheck.cache")
+
+#: Maximum number of cached snapshots (LRU eviction by mtime).
+MAX_ENTRIES: int = 100
+
+
+def _get_cache_dir() -> Path:
+    """Return the cache directory, deferring Path.home() to call time."""
+    xdg = os.environ.get("XDG_CACHE_HOME", "")
+    if xdg:
+        base = Path(xdg)
+    else:
+        try:
+            base = Path.home() / ".cache"
+        except RuntimeError:
+            import tempfile
+            base = Path(tempfile.gettempdir())
+    return base / "abi_check" / "snapshots"
+
+
+# Module-level reference (can be monkeypatched in tests).
+_CACHE_DIR: Path = _get_cache_dir()
+
+
+def _cache_key(
+    binary_path: Path,
+    headers: list[Path],
+    includes: list[Path],
+    version: str,
+    lang: str,
+) -> str:
+    """Compute a deterministic cache key from all inputs that affect the snapshot."""
+    h = hashlib.sha256()
+    # Binary content hash — chunked to avoid loading huge files into memory
+    try:
+        with open(binary_path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+    except OSError:
+        return ""  # uncacheable
+    # Header mtimes (sorted for determinism)
+    for hdr in sorted(headers):
+        try:
+            h.update(str(hdr).encode())
+            h.update(str(hdr.stat().st_mtime_ns).encode())
+        except OSError:
+            h.update(b"MISSING")
+    # Include dirs (just their paths, not contents)
+    for inc in sorted(includes):
+        h.update(str(inc).encode())
+    # Compiler params
+    h.update(version.encode())
+    h.update(lang.encode())
+    return h.hexdigest()
+
+
+def lookup(
+    binary_path: Path,
+    headers: list[Path],
+    includes: list[Path],
+    version: str,
+    lang: str,
+) -> AbiSnapshot | None:
+    """Look up a cached snapshot. Returns None on miss."""
+    key = _cache_key(binary_path, headers, includes, version, lang)
+    if not key:
+        return None
+    cache_file = _CACHE_DIR / f"{key}.json"
+    try:
+        from .serialization import load_snapshot
+        snap = load_snapshot(cache_file)
+        # Touch mtime for LRU
+        cache_file.touch()
+        _logger.debug("Cache hit: %s → %s", binary_path.name, key[:12])
+        return snap
+    except Exception:
+        _logger.debug("Cache read error for %s, treating as miss", key[:12])
+        return None
+
+
+def store(
+    snap: AbiSnapshot,
+    binary_path: Path,
+    headers: list[Path],
+    includes: list[Path],
+    version: str,
+    lang: str,
+) -> None:
+    """Store a snapshot in the cache (atomic write via rename)."""
+    key = _cache_key(binary_path, headers, includes, version, lang)
+    if not key:
+        return
+    try:
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_file = _CACHE_DIR / f"{key}.json"
+        from .serialization import snapshot_to_json
+        # Write to temp file then atomic rename to avoid corruption
+        fd, tmp_path = tempfile.mkstemp(dir=_CACHE_DIR, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(snapshot_to_json(snap))
+            os.replace(tmp_path, cache_file)
+        except BaseException:
+            os.unlink(tmp_path)
+            raise
+        _logger.debug("Cache store: %s → %s", binary_path.name, key[:12])
+        _evict_if_needed()
+    except OSError as exc:
+        _logger.debug("Cache write failed: %s", exc)
+
+
+def _safe_mtime(p: Path) -> float:
+    """Return file mtime, or 0.0 if stat fails (e.g. concurrent deletion)."""
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _evict_if_needed() -> None:
+    """Remove oldest entries if cache exceeds MAX_ENTRIES."""
+    try:
+        entries = sorted(_CACHE_DIR.glob("*.json"), key=_safe_mtime)
+    except OSError:
+        return
+    excess = len(entries) - MAX_ENTRIES
+    if excess <= 0:
+        return
+    for p in entries[:excess]:
+        try:
+            p.unlink()
+            _logger.debug("Cache evict: %s", p.name[:12])
+        except OSError:
+            pass
