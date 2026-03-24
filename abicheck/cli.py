@@ -1391,9 +1391,8 @@ def compare_cmd(
                         data["diffoscope_output"] = diff_output
                         text = json.dumps(data, indent=2)
                     except json.JSONDecodeError:
-                        text += "\n\n--- diffoscope byte-level diff ---\n"
-                        text += diff_output
-                elif fmt not in ("sarif",):
+                        pass  # don't corrupt JSON output
+                elif fmt not in ("sarif", "html", "junit"):
                     text += "\n\n--- diffoscope byte-level diff ---\n"
                     text += diff_output
         else:
@@ -1736,12 +1735,17 @@ def _compare_one_library(
     policy: str, policy_file_path: Path | None,
     output_dir: Path | None,
 ) -> dict[str, object]:
-    """Compare one library pair — suitable for parallel dispatch."""
+    """Compare one library pair — suitable for parallel dispatch.
+
+    The entire per-library flow (debug info resolution, comparison, output
+    writing) is wrapped so that *any* exception yields an ERROR entry
+    instead of aborting the whole release comparison.
+    """
     old_path = old_map[key]
     new_path = new_map[key]
-    old_dbg = resolve_debug_info(old_path, old_debug_dir) if old_debug_dir else None
-    new_dbg = resolve_debug_info(new_path, new_debug_dir) if new_debug_dir else None
     try:
+        old_dbg = resolve_debug_info(old_path, old_debug_dir) if old_debug_dir else None
+        new_dbg = resolve_debug_info(new_path, new_debug_dir) if new_debug_dir else None
         result, _, _ = _run_compare_pair(
             old_path, new_path,
             old_h, new_h, old_inc, new_inc,
@@ -1749,24 +1753,22 @@ def _compare_one_library(
             lang, suppress, policy, policy_file_path,
             old_pdb_path=old_dbg, new_pdb_path=new_dbg,
         )
+        v = result.verdict.value
+        entry: dict[str, object] = {
+            "library": old_path.name, "verdict": v,
+            "breaking": len(result.breaking),
+            "source_breaks": len(result.source_breaks),
+            "risk_changes": len(result.risk),
+            "compatible_additions": len(result.compatible),
+        }
+        if output_dir:
+            lib_report_path = output_dir / f"{old_path.stem}.json"
+            _safe_write_output(lib_report_path, to_json(result))
+        return entry
     except (click.ClickException, click.UsageError) as exc:
-        msg = exc.format_message()
-        return {"library": old_path.name, "verdict": "ERROR", "error": msg}
+        return {"library": old_path.name, "verdict": "ERROR", "error": exc.format_message()}
     except Exception as exc:
         return {"library": old_path.name, "verdict": "ERROR", "error": str(exc)}
-
-    v = result.verdict.value
-    entry: dict[str, object] = {
-        "library": old_path.name, "verdict": v,
-        "breaking": len(result.breaking),
-        "source_breaks": len(result.source_breaks),
-        "risk_changes": len(result.risk),
-        "compatible_additions": len(result.compatible),
-    }
-    if output_dir:
-        lib_report_path = output_dir / f"{old_path.stem}.json"
-        _safe_write_output(lib_report_path, to_json(result))
-    return entry
 
 
 def _compare_release_libraries(

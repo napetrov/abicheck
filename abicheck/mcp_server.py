@@ -639,7 +639,7 @@ def abi_compare(
 
         # Resolve inputs, load suppression/policy, and compare — all under
         # a real timeout so we don't block the MCP stdio server.
-        def _do_compare():
+        def _do_compare() -> tuple[AbiSnapshot, AbiSnapshot, DiffResult]:
             old_snap = _resolve_input(old_path, old_h, inc, "old", language)
             new_snap = _resolve_input(new_path, new_h, inc, "new", language)
             suppression = None

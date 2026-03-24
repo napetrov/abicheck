@@ -96,7 +96,9 @@ class TestCacheKey:
 
 
 class TestLookupStore:
-    def test_miss_returns_none(self, tmp_path):
+    def test_miss_returns_none(self, tmp_path, monkeypatch):
+        import abicheck.snapshot_cache as sc
+        monkeypatch.setattr(sc, "_CACHE_DIR", tmp_path / "empty_cache")
         binary = tmp_path / "lib.so"
         binary.write_bytes(b"content")
         result = lookup(binary, [], [], "1.0", "c++")
