@@ -131,6 +131,8 @@ def resolve_input(
     is_elf: bool | None = None,
     pdb_path: Path | None = None,
     dwarf_only: bool = False,
+    debug_roots: list[Path] | None = None,
+    enable_debuginfod: bool = False,
 ) -> AbiSnapshot:
     """Auto-detect input type and return an ABI snapshot.
 
@@ -149,7 +151,11 @@ def resolve_input(
 
     # Fast path: caller already knows it's ELF
     if is_elf is True:
-        return run_dump(path, "elf", _headers, _includes, version, lang, dwarf_only=dwarf_only)
+        return run_dump(
+            path, "elf", _headers, _includes, version, lang,
+            dwarf_only=dwarf_only,
+            debug_roots=debug_roots, enable_debuginfod=enable_debuginfod,
+        )
 
     # Detect binary format from magic bytes
     binary_fmt = detect_binary_format(path) if is_elf is None else None
@@ -157,6 +163,7 @@ def resolve_input(
         return run_dump(
             path, binary_fmt, _headers, _includes, version, lang,
             pdb_path=pdb_path, dwarf_only=dwarf_only,
+            debug_roots=debug_roots, enable_debuginfod=enable_debuginfod,
         )
 
     # Text-based formats
@@ -194,6 +201,8 @@ def run_dump(
     *,
     pdb_path: Path | None = None,
     dwarf_only: bool = False,
+    debug_roots: list[Path] | None = None,
+    enable_debuginfod: bool = False,
 ) -> AbiSnapshot:
     """Extract an ABI snapshot from a native binary (ELF, PE, or Mach-O).
 
@@ -450,6 +459,9 @@ def run_compare(
     policy_file_path: Path | None = None,
     old_pdb_path: Path | None = None,
     new_pdb_path: Path | None = None,
+    old_debug_roots: list[Path] | None = None,
+    new_debug_roots: list[Path] | None = None,
+    enable_debuginfod: bool = False,
 ) -> tuple[DiffResult, AbiSnapshot, AbiSnapshot]:
     """Compare two ABI inputs and return the classified diff result.
 
@@ -478,11 +490,15 @@ def run_compare(
         old_input, _old_headers, _old_includes, old_version, lang,
         is_elf=True if old_fmt == "elf" else None,
         pdb_path=old_pdb_path,
+        debug_roots=old_debug_roots,
+        enable_debuginfod=enable_debuginfod,
     )
     new = resolve_input(
         new_input, _new_headers, _new_includes, new_version, lang,
         is_elf=True if new_fmt == "elf" else None,
         pdb_path=new_pdb_path,
+        debug_roots=new_debug_roots,
+        enable_debuginfod=enable_debuginfod,
     )
 
     suppression, pf = load_suppression_and_policy(suppress, policy, policy_file_path)

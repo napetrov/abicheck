@@ -559,6 +559,25 @@ def _populate_dependency_info(
               help="Force CTF debug format (ELF only).")
 @click.option("--dwarf", "debug_format", flag_value="dwarf",
               help="Force DWARF debug format (ELF only).")
+# ── Build context capture (ADR-020) ──────────────────────────────────────────
+@click.option("-p", "--build-dir", "compile_db_path", type=click.Path(path_type=Path), default=None,
+              help="Build directory containing compile_commands.json, or path to the "
+                   "file itself. Enables deterministic header parsing with exact build "
+                   "flags. Requires -H/--header.")
+@click.option("--compile-db", "compile_db_path_alt", type=click.Path(path_type=Path), default=None,
+              help="Explicit path to compile_commands.json (alias for -p).")
+@click.option("--compile-db-filter", "compile_db_filter", default=None,
+              help="Glob pattern to filter compile_commands.json entries by source file "
+                   "(e.g. 'src/libfoo/**'). Useful for large databases.")
+# ── Debug artifact resolution (ADR-021) ──────────────────────────────────────
+@click.option("--debug-root", "debug_roots", multiple=True, type=click.Path(path_type=Path),
+              help="Directory containing separate debug files (build-id trees, "
+                   "path-mirror debug files, or dSYM bundles). Can be repeated.")
+@click.option("--debuginfod", is_flag=True, default=False,
+              help="Enable debuginfod network resolution for debug info (opt-in). "
+                   "Uses DEBUGINFOD_URLS environment variable or --debuginfod-url.")
+@click.option("--debuginfod-url", "debuginfod_url", default=None,
+              help="debuginfod server URL (overrides DEBUGINFOD_URLS env var).")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 # ── Provenance metadata ──────────────────────────────────────────────────────
@@ -583,6 +602,10 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
              follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
              dwarf_only: bool, show_data_sources: bool,
              debug_format: str | None,
+             compile_db_path: Path | None, compile_db_path_alt: Path | None,
+             compile_db_filter: str | None,
+             debug_roots: tuple[Path, ...],
+             debuginfod: bool, debuginfod_url: str | None,
              verbose: bool,
              git_tag: str | None, build_id: str | None, no_git: bool,
              output_name: str | None, upload_release: bool) -> None:
@@ -596,6 +619,8 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
       abicheck dump libfoo.so.1 --follow-deps -o snap.json
       abicheck dump libfoo.so.1 --dwarf-only -o snap.json
       abicheck dump libfoo.so.1 --show-data-sources
+      abicheck dump libfoo.so.1 -H include/ -p build/  # build context from compile_commands.json
+      abicheck dump libfoo.so.1 --debug-root /usr/lib/debug  # separate debug files
       abicheck dump libfoo.so.1 -H include/foo.h --version 2.0.0 --output-name auto
     """
     _setup_verbosity(verbose)
@@ -603,6 +628,14 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
     # --output and --output-name are mutually exclusive
     if output and output_name:
         raise click.UsageError("--output and --output-name are mutually exclusive.")
+
+    # Resolve -p / --compile-db aliases
+    effective_compile_db = compile_db_path or compile_db_path_alt
+    if effective_compile_db and not headers:
+        raise click.UsageError(
+            "Compilation database (-p / --compile-db) requires -H/--header. "
+            "Without headers, CastXML has nothing to parse."
+        )
 
     # --show-data-sources: diagnostic output and exit
     if show_data_sources:
@@ -628,6 +661,38 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
         _write_snapshot_output(snap, effective_output, upload_release)
         return
 
+    # Load build context from compile_commands.json if provided (ADR-020)
+    build_context_flags: str | None = None
+    if effective_compile_db:
+        try:
+            from .build_context import build_context_union_fallback, load_compile_db
+            db_entries = load_compile_db(effective_compile_db)
+            ctx = build_context_union_fallback(db_entries, source_filter=compile_db_filter)
+            castxml_flags = ctx.to_castxml_flags()
+            if castxml_flags:
+                build_context_flags = " ".join(castxml_flags)
+                click.echo(
+                    f"Build context: {len(db_entries)} entries from "
+                    f"{effective_compile_db}, {len(castxml_flags)} flags derived",
+                    err=True,
+                )
+                if ctx.has_conflicts:
+                    click.echo(
+                        "Warning: conflicting flags detected in compile database; "
+                        "using first-match values. See --verbose for details.",
+                        err=True,
+                    )
+        except (FileNotFoundError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+
+    # Merge build context flags with explicit --gcc-options (explicit takes precedence)
+    effective_gcc_options = gcc_options
+    if build_context_flags:
+        if gcc_options:
+            effective_gcc_options = f"{build_context_flags} {gcc_options}"
+        else:
+            effective_gcc_options = build_context_flags
+
     compiler = "cc" if lang == "c" else "c++"
     resolved_headers = _expand_header_inputs(list(headers)) if headers else []
     try:
@@ -639,7 +704,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             compiler=compiler,
             gcc_path=gcc_path,
             gcc_prefix=gcc_prefix,
-            gcc_options=gcc_options,
+            gcc_options=effective_gcc_options,
             sysroot=sysroot,
             nostdinc=nostdinc,
             lang=lang if lang == "c" else None,
@@ -1218,6 +1283,16 @@ def _exit_with_severity_or_verdict(
 @click.option("--annotate-additions", is_flag=True, default=False,
               help="Include additions/compatible changes as ::notice annotations "
                    "(requires --annotate).")
+# ── Debug artifact resolution (ADR-021) ──────────────────────────────────────
+@click.option("--debug-root", "debug_roots", multiple=True, type=click.Path(path_type=Path),
+              help="Directory containing separate debug files (build-id trees, "
+                   "path-mirror, dSYM bundles). Applied to both sides. Can be repeated.")
+@click.option("--debug-root1", "debug_roots_old", multiple=True, type=click.Path(path_type=Path),
+              help="Debug root for old side only (overrides --debug-root for old).")
+@click.option("--debug-root2", "debug_roots_new", multiple=True, type=click.Path(path_type=Path),
+              help="Debug root for new side only (overrides --debug-root for new).")
+@click.option("--debuginfod", is_flag=True, default=False,
+              help="Enable debuginfod network resolution for debug info (opt-in).")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 @click.option("--diffoscope", "use_diffoscope", is_flag=True, default=False,
@@ -1246,6 +1321,10 @@ def compare_cmd(
     debug_format: str | None,
     annotate: bool,
     annotate_additions: bool,
+    debug_roots: tuple[Path, ...],
+    debug_roots_old: tuple[Path, ...],
+    debug_roots_new: tuple[Path, ...],
+    debuginfod: bool,
     verbose: bool,
     use_diffoscope: bool,
 ) -> None:
@@ -2610,6 +2689,180 @@ def debian_symbols_diff(old_symbols: Path, new_symbols: Path) -> None:
 
 
 main.add_command(debian_symbols_group)
+
+
+# ---------------------------------------------------------------------------
+# Baseline registry commands (ADR-022)
+# ---------------------------------------------------------------------------
+
+@main.group("baseline")
+def baseline_group() -> None:
+    """Manage ABI baseline snapshots.
+
+    Push, pull, list, and delete baseline snapshots from a registry.
+    Default backend: filesystem (--registry file:///path/to/baselines).
+    """
+
+
+@baseline_group.command("push")
+@click.argument("library", type=str)
+@click.option("--version", "version", required=True,
+              help="Version or branch name for the baseline.")
+@click.option("--platform", "platform", required=True,
+              help="Target platform (e.g. 'linux-x86_64'). Use --auto-platform to detect.")
+@click.option("--variant", default="",
+              help="Build variant (e.g. 'debug', 'ssl-enabled').")
+@click.option("--snapshot", "snapshot_path", required=True,
+              type=click.Path(exists=True, path_type=Path),
+              help="Path to the ABI snapshot JSON file.")
+@click.option("--registry", "registry_path", type=click.Path(path_type=Path),
+              default=None,
+              help="Path to the baseline registry directory. "
+                   "Defaults to .abicheck/baselines in the current directory.")
+@click.option("--auto-platform", is_flag=True, default=False,
+              help="Auto-detect platform from the binary in the snapshot.")
+@click.option("--git-commit", default=None,
+              help="Source commit SHA to record in baseline metadata.")
+@click.option("-v", "--verbose", is_flag=True, default=False)
+def baseline_push(
+    library: str, version: str, platform: str, variant: str,
+    snapshot_path: Path, registry_path: Path | None,
+    auto_platform: bool, git_commit: str | None, verbose: bool,
+) -> None:
+    """Push an ABI baseline snapshot to the registry.
+
+    \b
+    Example:
+      abicheck baseline push libfoo --version 1.0.0 --platform linux-x86_64 \\
+        --snapshot build/abi-snapshot.json
+    """
+    _setup_verbosity(verbose)
+    from .baseline import BaselineKey, BaselineMetadata, FilesystemRegistry
+    from .serialization import load_snapshot as _load
+
+    reg_path = registry_path or Path(".abicheck/baselines")
+    registry = FilesystemRegistry(reg_path)
+
+    snapshot = _load(snapshot_path)
+    snap_json = snapshot_path.read_text(encoding="utf-8")
+    meta = BaselineMetadata.create(snap_json, git_commit=git_commit)
+
+    key = BaselineKey(library=library, version=version, platform=platform, variant=variant)
+    ref = registry.push(key, snapshot, meta)
+    click.echo(f"Baseline pushed: {ref}", err=True)
+
+
+@baseline_group.command("pull")
+@click.argument("spec", type=str)
+@click.option("-o", "--output", type=click.Path(path_type=Path), required=True,
+              help="Output path for the snapshot JSON file.")
+@click.option("--registry", "registry_path", type=click.Path(path_type=Path),
+              default=None,
+              help="Path to the baseline registry directory.")
+@click.option("-v", "--verbose", is_flag=True, default=False)
+def baseline_pull(spec: str, output: Path, registry_path: Path | None, verbose: bool) -> None:
+    """Pull an ABI baseline snapshot from the registry.
+
+    SPEC is a colon-separated key: library:version:platform[:variant]
+
+    \b
+    Example:
+      abicheck baseline pull libfoo:1.0.0:linux-x86_64 -o baseline.json
+    """
+    _setup_verbosity(verbose)
+    from .baseline import BaselineKey, FilesystemRegistry
+
+    reg_path = registry_path or Path(".abicheck/baselines")
+    registry = FilesystemRegistry(reg_path)
+
+    try:
+        key = BaselineKey.from_spec(spec)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    result = registry.pull(key)
+    if result is None:
+        raise click.ClickException(f"Baseline not found: {key.path}")
+
+    snapshot, meta = result
+    snap_json = snapshot_to_json(snapshot)
+    _safe_write_output(output, snap_json)
+    click.echo(
+        f"Baseline pulled: {key.path} (abicheck {meta.abicheck_version}, "
+        f"created {meta.created_at})",
+        err=True,
+    )
+
+
+@baseline_group.command("list")
+@click.argument("prefix", required=False, default=None)
+@click.option("--registry", "registry_path", type=click.Path(path_type=Path),
+              default=None,
+              help="Path to the baseline registry directory.")
+@click.option("--format", "fmt", type=click.Choice(["text", "json"]),
+              default="text", show_default=True)
+@click.option("-v", "--verbose", is_flag=True, default=False)
+def baseline_list(prefix: str | None, registry_path: Path | None, fmt: str, verbose: bool) -> None:
+    """List available ABI baselines in the registry.
+
+    \b
+    Example:
+      abicheck baseline list
+      abicheck baseline list libfoo
+      abicheck baseline list --format json
+    """
+    _setup_verbosity(verbose)
+    from .baseline import FilesystemRegistry
+
+    reg_path = registry_path or Path(".abicheck/baselines")
+    registry = FilesystemRegistry(reg_path)
+
+    keys = registry.list(prefix=prefix)
+    if not keys:
+        click.echo("No baselines found.", err=True)
+        return
+
+    if fmt == "json":
+        click.echo(json.dumps([
+            {"library": k.library, "version": k.version,
+             "platform": k.platform, "variant": k.variant, "path": k.path}
+            for k in keys
+        ], indent=2))
+    else:
+        for k in keys:
+            click.echo(k.path)
+
+
+@baseline_group.command("delete")
+@click.argument("spec", type=str)
+@click.option("--registry", "registry_path", type=click.Path(path_type=Path),
+              default=None,
+              help="Path to the baseline registry directory.")
+@click.option("-v", "--verbose", is_flag=True, default=False)
+def baseline_delete(spec: str, registry_path: Path | None, verbose: bool) -> None:
+    """Delete an ABI baseline from the registry.
+
+    SPEC is a colon-separated key: library:version:platform[:variant]
+
+    \b
+    Example:
+      abicheck baseline delete libfoo:0.9.0:linux-x86_64
+    """
+    _setup_verbosity(verbose)
+    from .baseline import BaselineKey, FilesystemRegistry
+
+    reg_path = registry_path or Path(".abicheck/baselines")
+    registry = FilesystemRegistry(reg_path)
+
+    try:
+        key = BaselineKey.from_spec(spec)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if registry.delete(key):
+        click.echo(f"Baseline deleted: {key.path}", err=True)
+    else:
+        raise click.ClickException(f"Baseline not found: {key.path}")
 
 
 if __name__ == "__main__":
