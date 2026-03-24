@@ -14,6 +14,10 @@ All five formats support the report filtering options described below.
 The ABICC-compatible XML output (via `abicheck compat check`) includes
 redundancy annotations but does not support `--show-only` filtering.
 
+In addition to report formats, abicheck can emit **GitHub Actions workflow
+command annotations** (`--annotate`) that appear as inline comments on PR
+diffs. See [GitHub PR Annotations](annotations.md) for details.
+
 ## Redundancy filtering
 
 When a root type change (e.g. struct size change) causes many derived changes

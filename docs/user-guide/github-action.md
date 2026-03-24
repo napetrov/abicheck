@@ -420,6 +420,20 @@ binding information alongside the regular ABI diff:
           follow-deps: true
 ```
 
+### Inline PR annotations
+
+Add `--annotate` to get ABI breaking changes as inline comments on the PR diff.
+See [GitHub PR Annotations](annotations.md) for full details.
+
+```yaml
+      - uses: napetrov/abicheck@v1
+        with:
+          old-library: baseline.json
+          new-library: build/libfoo.so
+          new-header: include/foo.h
+          extra-args: --annotate
+```
+
 ### Conditional failure
 
 Allow API breaks but block binary ABI breaks:
