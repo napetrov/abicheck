@@ -67,8 +67,13 @@ Production `.so` files are typically stripped — in this case:
 - Calling convention drift, struct packing changes not detected (Tier 4 unavailable)
 - Tier 1 (castxml/headers) and Tier 2 (ELF symbols) still run — most critical breaks caught
 
-**Mitigation:** Use CI/staging debug builds (`CFLAGS=-g`) for deep analysis where possible.
-For production binaries, Tier 1+2 analysis covers the majority of real-world ABI breaks.
+**Mitigation:** Use `--debug-root` to point abicheck at separate debug files
+(distro debuginfo packages, build-id trees, or dSYM bundles). abicheck
+automatically searches for debug artifacts via a resolver chain. For
+Fedora/RHEL, use `--debuginfod` to fetch debug info by build-id from
+debuginfod servers. See the [CLI usage guide](../user-guide/cli-usage.md) for
+details. For production binaries without debug info, Tier 1+2 analysis covers
+the majority of real-world ABI breaks.
 
 ---
 
