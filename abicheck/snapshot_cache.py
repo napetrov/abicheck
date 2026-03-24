@@ -41,7 +41,8 @@ def _get_cache_dir() -> Path:
     try:
         base = Path(os.environ.get("XDG_CACHE_HOME", "")) or Path.home() / ".cache"
     except RuntimeError:
-        base = Path("/tmp")  # noqa: S108  # fallback for containerized envs
+        import tempfile
+        base = Path(tempfile.gettempdir())
     return base / "abi_check" / "snapshots"
 
 

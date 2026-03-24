@@ -71,6 +71,7 @@ _logger = logging.getLogger("abicheck.mcp")
 # Configuration (environment variables or CLI flags)
 # ---------------------------------------------------------------------------
 
+import concurrent.futures as _futures
 import os as _os
 import time as _time
 
@@ -514,13 +515,19 @@ def abi_dump(
         hdr_paths = [_safe_read_path(h, label="header") for h in (headers or [])]
         inc_paths = [_safe_read_path(d, label="include_dir") for d in (include_dirs or [])]
 
-        snap = _resolve_input(lib, hdr_paths, inc_paths, version, language)
+        # Run the expensive resolve+serialize in a thread with a real timeout
+        # so we don't block the MCP stdio server indefinitely.
+        with _futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_resolve_input, lib, hdr_paths, inc_paths, version, language)
+            try:
+                snap = future.result(timeout=MCP_TIMEOUT)
+            except _futures.TimeoutError:
+                elapsed = _time.monotonic() - t0
+                _audit_log("abi_dump", {"library": lib.name}, elapsed, "timeout")
+                return json.dumps({"status": "error", "error": f"abi_dump timed out after {MCP_TIMEOUT}s"})
         snap_json = snapshot_to_json(snap)
 
         elapsed = _time.monotonic() - t0
-        if elapsed > MCP_TIMEOUT:
-            _audit_log("abi_dump", {"library": lib.name}, elapsed, "timeout")
-            return json.dumps({"status": "error", "error": f"abi_dump timed out after {MCP_TIMEOUT}s"})
 
         if output_path:
             out = _safe_write_path(output_path, label="output_path")
@@ -620,22 +627,7 @@ def abi_compare(
         new_h = [_safe_read_path(h, label="new_header") for h in new_headers] if new_headers is not None else shared
         inc = [_safe_read_path(d, label="include_dir") for d in (include_dirs or [])]
 
-        old_snap = _resolve_input(old_path, old_h, inc, "old", language)
-        new_snap = _resolve_input(new_path, new_h, inc, "new", language)
-
-        # Load suppression
-        suppression = None
-        if suppression_file:
-            from .suppression import SuppressionList
-            suppression = SuppressionList.load(_safe_read_path(suppression_file, label="suppression_file"))
-
-        # Load policy file
-        pf = None
-        if policy_file:
-            from .policy_file import PolicyFile
-            pf = PolicyFile.load(_safe_read_path(policy_file, label="policy_file"))
-
-        # Validate output_format early (before expensive compare)
+        # Validate output_format early (before expensive work)
         if output_format not in _VALID_FORMATS:
             return json.dumps({"status": "error", "error": f"Unknown output format {output_format!r}. Valid: {sorted(_VALID_FORMATS)}"})
 
@@ -647,7 +639,33 @@ def abi_compare(
             except ValueError as exc:
                 return json.dumps({"status": "error", "error": f"Invalid show_only: {exc}"})
 
-        result = compare(old_snap, new_snap, suppression=suppression, policy=policy, policy_file=pf)
+        # Resolve inputs, load suppression/policy, and compare — all under
+        # a real timeout so we don't block the MCP stdio server.
+        def _do_compare():
+            old_snap = _resolve_input(old_path, old_h, inc, "old", language)
+            new_snap = _resolve_input(new_path, new_h, inc, "new", language)
+            suppression = None
+            if suppression_file:
+                from .suppression import SuppressionList
+                suppression = SuppressionList.load(
+                    _safe_read_path(suppression_file, label="suppression_file"),
+                )
+            pf = None
+            if policy_file:
+                from .policy_file import PolicyFile
+                pf = PolicyFile.load(
+                    _safe_read_path(policy_file, label="policy_file"),
+                )
+            return old_snap, new_snap, compare(old_snap, new_snap, suppression=suppression, policy=policy, policy_file=pf)
+
+        with _futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_do_compare)
+            try:
+                old_snap, new_snap, result = future.result(timeout=MCP_TIMEOUT)
+            except _futures.TimeoutError:
+                elapsed = _time.monotonic() - t0
+                _audit_log("abi_compare", {"old": old_path.name, "new": new_path.name}, elapsed, "timeout")
+                return json.dumps({"status": "error", "error": f"abi_compare timed out after {MCP_TIMEOUT}s"})
 
         # Use the active policy from the result (may differ from input when
         # policy_file overrides the base policy).

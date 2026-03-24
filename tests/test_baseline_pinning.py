@@ -209,46 +209,58 @@ class TestStampProvenance:
 # ---------------------------------------------------------------------------
 
 class TestUploadToRelease:
-    def test_upload_calls_gh(self):
+    def test_upload_calls_gh(self, tmp_path):
         from abicheck.cli import _upload_to_release
+        snap = tmp_path / "snap.json"
+        snap.write_text("{}")
         with mock.patch("subprocess.run") as m:
             m.return_value = mock.Mock(returncode=0)
-            _upload_to_release(Path("/tmp/snap.json"), "v2.0.0")
+            _upload_to_release(snap, "v2.0.0")
         m.assert_called_once_with(
-            ["gh", "release", "upload", "--", "v2.0.0", "/tmp/snap.json", "--clobber"],
+            ["gh", "release", "upload", "--clobber", "--", "v2.0.0", str(snap.resolve())],
             check=True, timeout=60,
         )
 
-    def test_upload_auto_detects_tag(self):
+    def test_upload_auto_detects_tag(self, tmp_path):
         from abicheck.cli import _upload_to_release
+        snap = tmp_path / "snap.json"
+        snap.write_text("{}")
         tag_result = mock.Mock(returncode=0, stdout="v1.0.0\n", stderr="")
         upload_result = mock.Mock(returncode=0)
         with mock.patch("subprocess.run", side_effect=[tag_result, upload_result]) as m:
-            _upload_to_release(Path("/tmp/snap.json"), None)
+            _upload_to_release(snap, None)
         # First call: git describe, second: gh release upload
         assert m.call_count == 2
 
-    def test_upload_no_tag_raises(self):
+    def test_upload_no_tag_raises(self, tmp_path):
         from abicheck.cli import _upload_to_release
+        snap = tmp_path / "snap.json"
+        snap.write_text("{}")
         tag_result = mock.Mock(returncode=1, stdout="", stderr="")
         with mock.patch("subprocess.run", return_value=tag_result):
             with pytest.raises(click.ClickException, match="could not determine release tag"):
-                _upload_to_release(Path("/tmp/snap.json"), None)
+                _upload_to_release(snap, None)
 
-    def test_upload_gh_not_found_raises(self):
+    def test_upload_gh_not_found_raises(self, tmp_path):
         from abicheck.cli import _upload_to_release
+        snap = tmp_path / "snap.json"
+        snap.write_text("{}")
         with mock.patch("subprocess.run", side_effect=FileNotFoundError):
             with pytest.raises(click.ClickException, match="GitHub CLI"):
-                _upload_to_release(Path("/tmp/snap.json"), "v1.0")
+                _upload_to_release(snap, "v1.0")
 
-    def test_upload_called_process_error_raises(self):
+    def test_upload_called_process_error_raises(self, tmp_path):
         from abicheck.cli import _upload_to_release
+        snap = tmp_path / "snap.json"
+        snap.write_text("{}")
         with mock.patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "gh")):
             with pytest.raises(click.ClickException, match="Failed to upload"):
-                _upload_to_release(Path("/tmp/snap.json"), "v1.0")
+                _upload_to_release(snap, "v1.0")
 
-    def test_upload_timeout_raises(self):
+    def test_upload_timeout_raises(self, tmp_path):
         from abicheck.cli import _upload_to_release
+        snap = tmp_path / "snap.json"
+        snap.write_text("{}")
         with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="gh", timeout=60)):
             with pytest.raises(click.ClickException, match="timed out"):
-                _upload_to_release(Path("/tmp/snap.json"), "v1.0")
+                _upload_to_release(snap, "v1.0")

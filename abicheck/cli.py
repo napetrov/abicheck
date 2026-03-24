@@ -220,7 +220,7 @@ def _upload_to_release(snapshot_path: Path, git_tag: str | None) -> None:
     click.echo(f"Uploading {snapshot_path.name} to release {tag}...", err=True)
     try:
         subprocess.run(
-            ["gh", "release", "upload", "--", tag, str(snapshot_path.resolve()), "--clobber"],
+            ["gh", "release", "upload", "--clobber", "--", tag, str(snapshot_path.resolve())],
             check=True, timeout=60,
         )
     except FileNotFoundError:
