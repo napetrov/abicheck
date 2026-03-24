@@ -871,6 +871,60 @@ def _warn_all_suppressed(result: DiffResult) -> None:
         )
 
 
+def _maybe_emit_annotations(
+    result: DiffResult,
+    *,
+    annotate: bool,
+    annotate_additions: bool,
+    write_step_summary: bool = True,
+) -> None:
+    """Emit GitHub annotations to stderr if --annotate is set and running in CI."""
+    if not annotate:
+        return
+
+    from .annotations import (
+        collect_annotations,
+        emit_github_step_summary,
+        format_annotations,
+        is_github_actions,
+    )
+
+    if not is_github_actions():
+        return
+
+    annotations = collect_annotations(result, annotate_additions=annotate_additions)
+    text = format_annotations(annotations)
+    if text:
+        click.echo(text, err=True)
+
+    if write_step_summary:
+        emit_github_step_summary(result)
+
+
+def _write_release_step_summary(text: str, fmt: str) -> None:
+    """Write a single step summary for compare-release when running in CI."""
+    import os
+
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary_path:
+        return
+
+    from .annotations import is_github_actions
+
+    if not is_github_actions():
+        return
+
+    # For markdown output, write the summary directly.
+    # For JSON, wrap it in a code block.
+    if fmt == "json":
+        content = f"```json\n{text}\n```\n"
+    else:
+        content = text + "\n"
+
+    with open(summary_path, "a", encoding="utf-8") as f:
+        f.write(content)
+
+
 def _write_or_echo(output: Path | None, text: str) -> None:
     """Write text to file or echo to stdout."""
     if output:
@@ -1017,6 +1071,13 @@ def _exit_with_severity_or_verdict(
               help="Force CTF debug format for both sides (ELF only).")
 @click.option("--dwarf", "debug_format", flag_value="dwarf",
               help="Force DWARF debug format for both sides (ELF only).")
+@click.option("--annotate", is_flag=True, default=False,
+              help="Emit GitHub Actions workflow command annotations to stderr. "
+                   "Annotations appear as inline comments on PR diffs. "
+                   "Only effective when GITHUB_ACTIONS=true.")
+@click.option("--annotate-additions", is_flag=True, default=False,
+              help="Include additions/compatible changes as ::notice annotations "
+                   "(requires --annotate).")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def compare_cmd(
@@ -1040,6 +1101,8 @@ def compare_cmd(
     report_mode: str, show_impact: bool,
     strict_elf_only: bool,
     debug_format: str | None,
+    annotate: bool,
+    annotate_additions: bool,
     verbose: bool,
 ) -> None:
     """Compare two ABI surfaces and report changes.
@@ -1090,6 +1153,9 @@ def compare_cmd(
       abicheck compare old.json new.json --suppress suppressions.yaml
     """
     _setup_verbosity(verbose)
+
+    if annotate_additions and not annotate:
+        raise click.UsageError("--annotate-additions requires --annotate")
 
     sev_config, severity_explicitly_set = _resolve_severity(
         severity_preset, severity_abi_breaking,
@@ -1152,6 +1218,8 @@ def compare_cmd(
         _merge_redundant_changes(result)
 
     _warn_all_suppressed(result)
+
+    _maybe_emit_annotations(result, annotate=annotate, annotate_additions=annotate_additions)
 
     text = _render_output(
         fmt, result, old, new,
@@ -1497,6 +1565,9 @@ def _compare_release_libraries(
     policy: str, policy_file_path: Path | None,
     output_dir: Path | None,
     collect_diff_results: bool = False,
+    *,
+    annotate: bool = False,
+    annotate_additions: bool = False,
 ) -> tuple[list[dict[str, object]], str, list[tuple[DiffResult, AbiSnapshot]]]:
     """Compare each matched library pair and collect results.
 
@@ -1507,6 +1578,7 @@ def _compare_release_libraries(
     library_results: list[dict[str, object]] = []
     diff_pairs: list[tuple[DiffResult, AbiSnapshot]] = []
     worst_verdict = "NO_CHANGE"
+    all_annotations: list[tuple[int, str]] = []
 
     for key in matched_keys:
         old_path = old_map[key]
@@ -1545,9 +1617,27 @@ def _compare_release_libraries(
         if collect_diff_results:
             diff_pairs.append((result, old_snap))
 
+        if annotate:
+            from .annotations import collect_annotations, is_github_actions
+
+            if is_github_actions():
+                all_annotations.extend(
+                    collect_annotations(result, annotate_additions=annotate_additions),
+                )
+
         if output_dir:
             lib_report_path = output_dir / f"{old_path.stem}.json"
             _safe_write_output(lib_report_path, to_json(result))
+
+    # Emit annotations once: sort globally across all libraries by severity,
+    # then truncate to the cap.  This ensures the most important annotations
+    # (errors) are always visible regardless of which library they came from.
+    if all_annotations:
+        from .annotations import format_annotations
+
+        text = format_annotations(all_annotations)
+        if text:
+            click.echo(text, err=True)
 
     return library_results, worst_verdict, diff_pairs
 
@@ -1691,6 +1781,12 @@ def _write_release_summary_file(
               help="Include private (non-public) shared objects from non-standard paths.")
 @click.option("--keep-extracted", is_flag=True, default=False,
               help="Keep extracted temporary files for debugging.")
+@click.option("--annotate", is_flag=True, default=False,
+              help="Emit GitHub Actions workflow command annotations to stdout. "
+                   "Only effective when GITHUB_ACTIONS=true.")
+@click.option("--annotate-additions", is_flag=True, default=False,
+              help="Include additions/compatible changes as ::notice annotations "
+                   "(requires --annotate).")
 @click.option("-v", "--verbose", is_flag=True, default=False)
 def compare_release_cmd(
     old_dir: Path,
@@ -1718,6 +1814,8 @@ def compare_release_cmd(
     dso_only: bool,
     include_private_dso: bool,
     keep_extracted: bool,
+    annotate: bool,
+    annotate_additions: bool,
     verbose: bool,
 ) -> None:
     """Compare all libraries in two release directories or packages.
@@ -1756,6 +1854,9 @@ def compare_release_cmd(
     )
 
     _setup_verbosity(verbose)
+
+    if annotate_additions and not annotate:
+        raise click.UsageError("--annotate-additions requires --annotate")
 
     # Track temporary directory paths for cleanup
     _temp_dir_paths: list[str] = []
@@ -1860,6 +1961,8 @@ def compare_release_cmd(
             lang, suppress, policy, policy_file_path,
             output_dir,
             collect_diff_results=(fmt == "junit"),
+            annotate=annotate,
+            annotate_additions=annotate_additions,
         )
 
         if removed_keys and _RELEASE_VERDICT_ORDER.get(worst_verdict, 0) < _RELEASE_VERDICT_ORDER.get("COMPATIBLE_WITH_RISK", 0):
@@ -1872,6 +1975,10 @@ def compare_release_cmd(
             diff_pairs=diff_pairs if fmt == "junit" else None,
         )
         _write_or_echo(output, text)
+
+        # Write a single step summary for the entire release comparison.
+        if annotate:
+            _write_release_step_summary(text, fmt)
 
         if output_dir:
             _write_release_summary_file(
