@@ -845,7 +845,7 @@
       "description": "Virtual method added to previously non-virtual class \u2014 vtable pointer inserted, sizeof grows, all field offsets shift (FUNC_VIRTUAL_ADDED)",
       "expected_kinds": ["func_virtual_added"]
     },
-    "case69_param_count_changed": {
+    "case69_trivial_to_nontrivial": {
       "expected": "BREAKING",
       "category": "breaking",
       "platforms": [
@@ -854,12 +854,12 @@
         "windows"
       ],
       "abi_break": true,
-      "api_break": true,
+      "api_break": false,
       "bad_practice": false,
-      "description": "Function parameter added (2 \u2192 3 args) \u2014 old callers don\u2019t push the new argument; callee reads uninitialized register (FUNC_PARAMS_CHANGED)",
-      "expected_kinds": ["func_params_changed"]
+      "description": "Trivially-copyable struct gains user-defined destructor \u2014 calling convention changes from register passing to hidden pointer (VALUE_ABI_TRAIT_CHANGED)",
+      "expected_kinds": ["value_abi_trait_changed"]
     },
-    "case70_virtual_base_added": {
+    "case70_flexible_array_member_changed": {
       "expected": "BREAKING",
       "category": "breaking",
       "platforms": [
@@ -870,8 +870,8 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
-      "description": "Non-virtual inheritance changed to virtual \u2014 vbase pointer inserted, base subobject relocated to end of most-derived object, sizeof and all offsets change (BASE_CLASS_VIRTUAL_CHANGED)",
-      "expected_kinds": ["base_class_virtual_changed"]
+      "description": "Flexible array member element type changed float \u2192 double \u2014 dynamic allocation size and element access offsets break while sizeof(Packet) stays the same (FLEXIBLE_ARRAY_MEMBER_CHANGED)",
+      "expected_kinds": ["flexible_array_member_changed"]
     },
     "case71_inline_namespace_moved": {
       "expected": "BREAKING",
@@ -887,7 +887,7 @@
       "description": "Symbols moved from inline namespace v1 to v2 \u2014 mangled names change so old binaries fail to resolve symbols (INLINE_NAMESPACE_MOVED)",
       "expected_kinds": ["inline_namespace_moved"]
     },
-    "case72_func_ref_qual_changed": {
+    "case72_covariant_return_changed": {
       "expected": "BREAKING",
       "category": "breaking",
       "platforms": [
@@ -898,8 +898,8 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
-      "description": "Member function ref-qualifier changed from & to && \u2014 mangled name changes (R \u2192 O in Itanium ABI), old binaries get undefined symbol (FUNC_REF_QUAL_CHANGED)",
-      "expected_kinds": ["func_ref_qual_changed"]
+      "description": "Intermediate class inserted into hierarchy changes covariant return type \u2014 vtable thunks apply wrong pointer adjustment, corrupting returned pointers (TYPE_VTABLE_CHANGED, TYPE_BASE_CHANGED)",
+      "expected_kinds": ["type_base_changed"]
     },
     "case73_typedef_underlying_changed": {
       "expected": "BREAKING",

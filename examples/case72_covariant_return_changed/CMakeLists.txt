@@ -1,4 +1,4 @@
-abicheck_add_case(case72_func_ref_qual_changed
+abicheck_add_case(case72_covariant_return_changed
     V1_SOURCES v1.cpp
     V2_SOURCES v2.cpp
     V1_HEADERS v1.h

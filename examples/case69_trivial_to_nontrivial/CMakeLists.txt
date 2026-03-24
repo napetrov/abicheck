@@ -1,4 +1,4 @@
-abicheck_add_case(case70_virtual_base_added
+abicheck_add_case(case69_trivial_to_nontrivial
     V1_SOURCES v1.cpp
     V2_SOURCES v2.cpp
     V1_HEADERS v1.h

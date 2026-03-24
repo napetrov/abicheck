@@ -119,10 +119,10 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [66](case66_language_linkage_changed/README.md) | Language Linkage Changed (extern "C") | Breaking | BREAKING 🔴 |
 | [67](case67_tls_var_size_changed/README.md) | TLS Variable Size Changed | Breaking | BREAKING 🔴 |
 | [68](case68_virtual_method_added/README.md) | Virtual Method Added (non-virtual → virtual) | Breaking | BREAKING 🔴 |
-| [69](case69_param_count_changed/README.md) | Parameter Count Changed (2→3 args) | Breaking | BREAKING 🔴 |
-| [70](case70_virtual_base_added/README.md) | Virtual Base Class Added (non-virtual→virtual) | Breaking | BREAKING 🔴 |
+| [69](case69_trivial_to_nontrivial/README.md) | Trivially Copyable → Non-Trivial (calling convention) | Breaking | BREAKING 🔴 |
+| [70](case70_flexible_array_member_changed/README.md) | Flexible Array Member Element Type Changed | Breaking | BREAKING 🔴 |
 | [71](case71_inline_namespace_moved/README.md) | Inline Namespace Moved (v1→v2) | Breaking | BREAKING 🔴 |
-| [72](case72_func_ref_qual_changed/README.md) | Function Ref-Qualifier Changed (&→&&) | Breaking | BREAKING 🔴 |
+| [72](case72_covariant_return_changed/README.md) | Covariant Return Type Changed (hierarchy insert) | Breaking | BREAKING 🔴 |
 | [73](case73_typedef_underlying_changed/README.md) | Typedef Underlying Type Changed (int→void*) | Breaking | BREAKING 🔴 |
 
 ---
