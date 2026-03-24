@@ -168,25 +168,6 @@ For the full CLI reference see the [documentation](https://napetrov.github.io/ab
 
 ---
 
-## Debian symbols file integration
-
-Generate, validate, and diff [Debian symbols files](https://manpages.debian.org/unstable/dpkg-dev/dpkg-gensymbols.1.en.html) for `dpkg-gensymbols` / `dpkg-shlibdeps` integration:
-
-```bash
-# Generate symbols file from a shared library
-abicheck debian-symbols generate libfoo.so -o debian/libfoo1.symbols
-
-# Validate symbols file against a binary (exit 0 = match, exit 2 = mismatch)
-abicheck debian-symbols validate libfoo.so debian/libfoo1.symbols
-
-# Diff two symbols files
-abicheck debian-symbols diff old/libfoo1.symbols new/libfoo1.symbols
-```
-
-Supports C++ demangled `(c++)` form, ELF symbol versioning (`@Base` / `@VERSION_NODE`), and Debian tags (`(optional)`, `(arch=...)`, pipe-separated groups). See the [CLI usage guide](https://napetrov.github.io/abicheck/user-guide/cli-usage/) for full options.
-
----
-
 ## Exit codes
 
 Use these exit codes to gate CI pipelines. Non-zero exits can fail your build when breaking changes are detected.
@@ -216,13 +197,6 @@ Use these exit codes to gate CI pipelines. Non-zero exits can fail your build wh
 | `0` | `COMPATIBLE` | App is not affected by the library change |
 | `2` | `API_BREAK` | App uses changed API (recompile needed) |
 | `4` | `BREAKING` | App will crash or misbehave with new library |
-
-### debian-symbols validate
-
-| Exit code | Meaning |
-|-----------|---------|
-| `0` | Symbols file matches the binary |
-| `2` | Mismatch — symbols in the file are missing from the binary |
 
 See the [full exit code reference](https://napetrov.github.io/abicheck/reference/exit-codes/) for CI gate patterns.
 
