@@ -2,8 +2,8 @@
 
 ## Current State (Post Enhancement)
 
-- **139 existing test files** + **7 new test files** = 146 test files
-- **4,516 existing tests** + **196 new tests** = 4,712 total
+- **139 existing test files** + **12 new test files** = 151 test files
+- **4,516 existing tests** + **884 new tests** = 5,400 total
 - All **143 ChangeKind** values referenced in tests
 - **80% code coverage** gate in CI
 
@@ -18,6 +18,11 @@
 | `test_multi_detector_interaction.py` | 12 | AST+DWARF dedup, redundancy filtering, cross-detector behavior |
 | `test_confidence_evidence.py` | 16 | Confidence tier and evidence source assertions |
 | `test_false_positive_resistance.py` | 30 | Systematic FP prevention for hidden symbols, additions, ELF metadata |
+| `test_policy_override_matrix.py` | 619 | Exhaustive ChangeKind × policy matrix, PolicyFile overrides |
+| `test_symbol_versioning_coexistence.py` | 17 | Version node add/remove, aliases, required versions |
+| `test_suppression_edge_cases.py` | 26 | Expiration, pattern matching, audit trail, policy interaction |
+| `test_parallel_safety.py` | 6 | Concurrent compare() calls, no global state leakage |
+| `test_stripped_degradation.py` | 20 | DWARF stripping, confidence degradation, ELF-only mode |
 
 ---
 
@@ -25,15 +30,10 @@
 
 ### P0 — Critical (Should block next release)
 
-#### 1. Stripped Binary Graceful Degradation
-**Gap:** No test validates behavior when DWARF debug info is absent (`strip -g`).
-**Risk:** Scanner may crash or produce misleading results on production binaries.
-**Plan:**
-- Add integration test that compiles a library, strips it, and runs comparison
-- Assert lower confidence level (LOW) and no crashes
-- Assert `DWARF_INFO_MISSING` change is reported
-- Verify header-only analysis still detects symbol-level changes
-**Effort:** 4h | **Requires:** gcc/castxml (integration marker)
+#### 1. Stripped Binary Graceful Degradation — DONE (synthetic)
+**Status:** Implemented in `test_stripped_degradation.py` (20 tests) using synthetic metadata.
+**Remaining:** Integration test with real `strip -g` on compiled binary (requires gcc).
+**Effort for remaining:** 2h | **Requires:** gcc/castxml (integration marker)
 
 #### 2. Differential Testing vs abidiff on Compiled Binaries
 **Gap:** Parity tests use synthetic snapshots, not actual compiled binaries.
@@ -97,30 +97,30 @@
 
 ### P2 — Medium Priority (Backlog)
 
-#### 8. Symbol Versioning Coexistence
-**Gap:** No test for libraries providing both `foo@V1` and `foo@@V2` (glibc pattern).
-**Plan:** Create ELF metadata with multiple version aliases; verify correct detection.
-**Effort:** 4h
+#### 8. Symbol Versioning Coexistence — DONE
+**Status:** Implemented in `test_symbol_versioning_coexistence.py` (17 tests).
+Covers version node add/remove, default vs non-default aliases, required versions,
+combined version + symbol changes, and edge cases.
 
 #### 9. Mutation Testing Integration
 **Gap:** No mutation testing to verify tests catch regressions in detector logic.
 **Plan:** Add `mutmut` config targeting `diff_symbols.py`, `diff_types.py`, `diff_platform.py`.
 **Effort:** 8h
 
-#### 10. Policy Override Matrix
-**Gap:** No systematic test of all 143 ChangeKind x 3 policy combinations.
-**Plan:** Generate matrix test asserting each override produces expected verdict.
-**Effort:** 4h
+#### 10. Policy Override Matrix — DONE
+**Status:** Implemented in `test_policy_override_matrix.py` (619 tests).
+Covers exhaustive ChangeKind × policy matrix, sdk_vendor/plugin_abi downgrades,
+PolicyFile overrides, and unknown policy fallback.
 
-#### 11. Suppression Edge Cases
-**Gap:** No test for conflicting rules, policy+suppression interaction, timezone-aware expiration.
-**Plan:** Add dedicated `test_suppression_edge_cases.py` with conflict resolution tests.
-**Effort:** 4h
+#### 11. Suppression Edge Cases — DONE
+**Status:** Implemented in `test_suppression_edge_cases.py` (26 tests).
+Covers expiration edge cases, pattern matching (regex/exact/type), conflicting rules,
+audit trail integrity, and suppression + policy interaction.
 
-#### 12. Parallel Safety
-**Gap:** No test validates concurrent `compare()` calls don't interfere.
-**Plan:** ThreadPoolExecutor running 10 concurrent comparisons with shared/different snapshots.
-**Effort:** 2h
+#### 12. Parallel Safety — DONE
+**Status:** Implemented in `test_parallel_safety.py` (6 tests).
+Covers 10 concurrent independent comparisons, shared snapshot reads,
+mixed change types concurrent, and sequential state independence.
 
 ---
 
