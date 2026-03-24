@@ -510,12 +510,13 @@ def render_output(
 ) -> str:
     """Render comparison result in the requested output format.
 
-    Supported formats: ``'json'``, ``'markdown'``, ``'sarif'``, ``'html'``.
+    Supported formats: ``'json'``, ``'markdown'``, ``'sarif'``, ``'html'``,
+    ``'junit'``.
 
     Raises:
         ValidationError: For unrecognised output format.
     """
-    if stat:
+    if stat and fmt != "junit":
         if fmt == "json":
             return to_stat_json(result)
         return to_stat(result)
@@ -543,7 +544,14 @@ def render_output(
             show_impact=show_impact,
         )
 
-    _SUPPORTED_FORMATS = {"json", "sarif", "html", "markdown", "md"}
+    if fmt == "junit":
+        from .junit_report import to_junit_xml
+        return to_junit_xml(
+            result, old,
+            show_only=show_only, severity_config=severity_config,
+        )
+
+    _SUPPORTED_FORMATS = {"json", "sarif", "html", "junit", "markdown", "md"}
     if fmt not in _SUPPORTED_FORMATS:
         raise ValidationError(f"Unsupported output format: {fmt!r} (expected one of {sorted(_SUPPORTED_FORMATS)})")
 

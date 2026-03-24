@@ -23,7 +23,7 @@ format selection works.
 
 ## Decision
 
-### Four output formats
+### Five output formats
 
 | Format | Primary consumer | CLI flag | Default? |
 |--------|-----------------|----------|----------|
@@ -31,6 +31,7 @@ format selection works.
 | **JSON** | Automation, AI agents, scripts | `--format json` | No |
 | **SARIF 2.1.0** | GitHub Code Scanning | `--format sarif` | No |
 | **HTML** | Standalone report viewing | `--format html` | No |
+| **JUnit XML** | GitLab CI, Jenkins, Azure DevOps | `--format junit` | No |
 
 ### Markdown (default)
 
@@ -89,6 +90,25 @@ format-specific data loss.
 Self-contained HTML was chosen over an external-stylesheet approach to ensure
 reports can be emailed, archived, or opened offline without broken rendering.
 
+### JUnit XML
+
+- Targets CI systems with JUnit test result dashboards (GitLab CI, Jenkins,
+  Azure DevOps, CircleCI)
+- Mapping:
+  - Each library → `<testsuite>`
+  - Each exported symbol/type → `<testcase>`
+  - `classname` groups: `functions`, `variables`, `types`, `enums`, `metadata`
+  - `BREAKING` / `API_BREAK` → `<failure>` element
+  - `COMPATIBLE_WITH_RISK` → `<failure>` only when per-kind severity is `error`
+  - `COMPATIBLE` → passing test case (no `<failure>` child)
+- When old snapshot is available, unchanged symbols appear as passing tests
+  for a meaningful pass-rate
+- Uses `xml.etree.ElementTree` (stdlib) — no external dependency
+
+JUnit was chosen over a proprietary CI-specific format because all major CI
+platforms support JUnit natively, making it the best single format for broad
+CI integration.
+
 ### Format selection
 
 ```bash
@@ -97,6 +117,7 @@ abicheck compare old.so new.so --format json                 # JSON
 abicheck compare old.so new.so --format sarif                # SARIF
 abicheck compare old.so new.so --format html                 # HTML
 abicheck compare old.so new.so --format html -o report.html  # HTML written to file
+abicheck compare old.so new.so --format junit -o results.xml # JUnit XML
 ```
 
 The format must be explicitly selected via `--format`. The `-o` / `--output`
@@ -106,7 +127,7 @@ regardless of the output filename.
 
 ### Information preservation
 
-All four formats are generated from the same `DiffResult` object. No
+All five formats are generated from the same `DiffResult` object. No
 format-specific information is added or lost — switching formats changes
 presentation only, not content. Verdict and exit code computation is
 independent of output format.
@@ -125,7 +146,7 @@ independent of output format.
 
 ### Negative
 
-- Four formatters to maintain (reporter.py, sarif.py, html_report.py)
+- Five formatters to maintain (reporter.py, sarif.py, html_report.py, junit_report.py)
 - SARIF severity mapping is a compatibility contract with GitHub
 - Self-contained HTML generates larger files than external-CSS approaches
 - JSON schema evolves with the project (see ADR-015 for schema versioning)
@@ -137,4 +158,5 @@ independent of output format.
 - `abicheck/reporter.py` — Markdown and JSON formatting
 - `abicheck/sarif.py` — SARIF 2.1.0 output
 - `abicheck/html_report.py` — HTML report generation
+- `abicheck/junit_report.py` — JUnit XML output
 - `abicheck/cli.py` — `--format` flag and output file handling

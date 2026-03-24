@@ -932,7 +932,7 @@ def _exit_with_severity_or_verdict(
 @click.option("--new-version", "new_version", default="new", show_default=True,
               help="Version label for new side (used when input is a .so file).")
 # ── Compare options (unchanged) ──────────────────────────────────────────────
-@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "sarif", "html"]),
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "sarif", "html", "junit"]),
               default="markdown", show_default=True)
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
@@ -1496,9 +1496,16 @@ def _compare_release_libraries(
     lang: str, suppress: Path | None,
     policy: str, policy_file_path: Path | None,
     output_dir: Path | None,
-) -> tuple[list[dict[str, object]], str]:
-    """Compare each matched library pair and collect results."""
+    collect_diff_results: bool = False,
+) -> tuple[list[dict[str, object]], str, list[tuple[DiffResult, AbiSnapshot]]]:
+    """Compare each matched library pair and collect results.
+
+    When *collect_diff_results* is True, ``(DiffResult, old_snapshot)``
+    pairs are collected and returned as the third element of the tuple
+    (used by the JUnit output format).
+    """
     library_results: list[dict[str, object]] = []
+    diff_pairs: list[tuple[DiffResult, AbiSnapshot]] = []
     worst_verdict = "NO_CHANGE"
 
     for key in matched_keys:
@@ -1507,7 +1514,7 @@ def _compare_release_libraries(
         old_dbg = resolve_debug_info(old_path, old_debug_dir) if old_debug_dir else None
         new_dbg = resolve_debug_info(new_path, new_debug_dir) if new_debug_dir else None
         try:
-            result, _, _ = _run_compare_pair(
+            result, old_snap, _ = _run_compare_pair(
                 old_path, new_path,
                 old_h, new_h, old_inc, new_inc,
                 old_version, new_version,
@@ -1535,11 +1542,14 @@ def _compare_release_libraries(
             "compatible_additions": len(result.compatible),
         })
 
+        if collect_diff_results:
+            diff_pairs.append((result, old_snap))
+
         if output_dir:
             lib_report_path = output_dir / f"{old_path.stem}.json"
             _safe_write_output(lib_report_path, to_json(result))
 
-    return library_results, worst_verdict
+    return library_results, worst_verdict, diff_pairs
 
 
 def _format_release_summary(
@@ -1549,8 +1559,20 @@ def _format_release_summary(
     removed_keys: list[str], added_keys: list[str],
     old_map: dict[str, Path], new_map: dict[str, Path],
     warning_msgs: list[str],
+    diff_pairs: list[tuple[DiffResult, AbiSnapshot]] | None = None,
 ) -> str:
-    """Format the release comparison summary as JSON or markdown."""
+    """Format the release comparison summary as JSON, markdown, or JUnit XML."""
+    if fmt == "junit":
+        from .junit_report import to_junit_xml_multi
+        pairs: list[tuple[DiffResult, AbiSnapshot | None]] = list(diff_pairs or [])
+        error_libs = [
+            entry for entry in library_results
+            if entry.get("verdict") == "ERROR"
+        ]
+        return to_junit_xml_multi(
+            pairs, error_libraries=error_libs if error_libs else None,
+        )
+
     if fmt == "json":
         summary: dict[str, object] = {
             "verdict": worst_verdict,
@@ -1635,7 +1657,7 @@ def _write_release_summary_file(
 @click.option("--lang", default="c++", show_default=True,
               type=click.Choice(["c++", "c"], case_sensitive=False))
 @click.option("--format", "fmt",
-              type=click.Choice(["json", "markdown"]),
+              type=click.Choice(["json", "markdown", "junit"]),
               default="markdown", show_default=True)
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None,
               help="Output file for summary report (default: stdout).")
@@ -1830,13 +1852,14 @@ def compare_release_cmd(
         if output_dir:
             output_dir.mkdir(parents=True, exist_ok=True)
 
-        library_results, worst_verdict = _compare_release_libraries(
+        library_results, worst_verdict, diff_pairs = _compare_release_libraries(
             matched_keys, old_map, new_map,
             old_debug_dir, new_debug_dir, resolve_debug_info,
             old_h, new_h, old_inc, new_inc,
             old_version, new_version,
             lang, suppress, policy, policy_file_path,
             output_dir,
+            collect_diff_results=(fmt == "junit"),
         )
 
         if removed_keys and _RELEASE_VERDICT_ORDER.get(worst_verdict, 0) < _RELEASE_VERDICT_ORDER.get("COMPATIBLE_WITH_RISK", 0):
@@ -1846,6 +1869,7 @@ def compare_release_cmd(
             fmt, worst_verdict, old_dir, new_dir,
             library_results, removed_keys, added_keys,
             old_map, new_map, warning_msgs,
+            diff_pairs=diff_pairs if fmt == "junit" else None,
         )
         _write_or_echo(output, text)
 

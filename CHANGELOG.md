@@ -9,6 +9,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+#### JUnit XML Output
+- **`--format junit`** for `compare` and `compare-release` commands — produces
+  JUnit XML reports for CI systems (GitLab CI, Jenkins, Azure DevOps) that
+  display ABI check results as standard test results in their dashboards.
+- Each exported symbol/type maps to a `<testcase>`; breaking changes become
+  `<failure>` elements with severity type and source location.
+- Supports `--show-only` filtering, suppression files, and policy overrides.
+- New module: `abicheck/junit_report.py` (stdlib only, no external dependencies).
+
 ### Planned
 - `--policy-file` schema validation improvements
 - Version-stamped typedef suppression (libpng `png_libpng_version_X_Y_Z` pattern)

@@ -8,8 +8,9 @@ abicheck supports multiple output formats for different use cases:
 | JSON | `--format json` | CI pipelines, machine processing |
 | SARIF | `--format sarif` | GitHub Code Scanning, SAST platforms |
 | HTML | `--format html` | Standalone reports, ABICC migration |
+| JUnit XML | `--format junit` | GitLab CI, Jenkins, Azure DevOps test dashboards |
 
-All four formats support the report filtering options described below.
+All five formats support the report filtering options described below.
 The ABICC-compatible XML output (via `abicheck compat check`) includes
 redundancy annotations but does not support `--show-only` filtering.
 
@@ -46,6 +47,10 @@ and `caused_count` annotations on root type changes.
 `<caused_by>` and `<caused_count>` elements on individual problems. Both binary
 and source sections include their own redundant counts.
 
+**JUnit XML**: Redundant changes are filtered upstream before the formatter
+receives them, so derived changes do not appear as test cases. No
+JUnit-specific redundancy metadata is emitted.
+
 ## `--show-only` filter
 
 Limit displayed changes by severity, element, or action (AND across dimensions,
@@ -60,6 +65,9 @@ how many changes matched: `> Filtered by: --show-only ... (5 of 42 changes shown
 
 **SARIF**: The `show_only` parameter filters which results appear in the SARIF
 output.
+
+**JUnit XML**: The `show_only` parameter filters which test cases appear in the
+output. Filtered-out changes are omitted entirely.
 
 ## `--stat` mode
 
@@ -175,4 +183,133 @@ jobs:
     }]
   }]
 }
+```
+
+---
+
+## JUnit XML Output
+
+abicheck can produce JUnit XML reports for CI systems that display test results
+in their standard dashboards — GitLab CI, Jenkins, Azure DevOps, CircleCI, and
+others.
+
+### Usage
+
+```bash
+abicheck compare old.json new.json --format junit -o results.xml
+abicheck compare-release release-1.0/ release-2.0/ --format junit -o abi-tests.xml
+```
+
+### How it works
+
+ABI changes are mapped to JUnit test cases:
+
+- Each **library** in a `compare-release` becomes a `<testsuite>`
+- Each **exported symbol or type** that was checked becomes a `<testcase>`
+- **BREAKING** and **API_BREAK** changes produce `<failure>` elements
+- **COMPATIBLE** changes (additions, no-change) are passing test cases
+- **COMPATIBLE_WITH_RISK** changes pass by default (unless their per-kind
+  severity is overridden to `"error"`)
+- Unchanged symbols from the old library also appear as passing test cases,
+  so the pass-rate is meaningful
+- When a symbol has multiple breaking changes, the `<testcase>` contains
+  multiple `<failure>` children (one per change)
+
+### Severity mapping
+
+| ABI Verdict | JUnit Outcome |
+|-------------|---------------|
+| BREAKING | `<failure type="BREAKING">` |
+| API_BREAK | `<failure type="API_BREAK">` |
+| COMPATIBLE_WITH_RISK (severity=warning) | Pass |
+| COMPATIBLE | Pass |
+
+### Classname groups
+
+Test cases are grouped by `classname` for CI dashboards that support
+hierarchical display:
+
+| Element | classname |
+|---------|-----------|
+| Functions | `functions` |
+| Variables | `variables` |
+| Types (struct/class/union) | `types` |
+| Enums | `enums` |
+| ELF metadata (SONAME, etc.) | `metadata` |
+
+### JUnit XML structure
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="abicheck" tests="47" failures="3" errors="0">
+  <testsuite name="libfoo.so.1" tests="47" failures="3" errors="0">
+    <!-- Passing: no ABI change detected -->
+    <testcase name="_ZN3foo3barEv" classname="functions" />
+
+    <!-- Failure: binary-incompatible change -->
+    <testcase name="_ZN3foo3bazEi" classname="functions">
+      <failure message="func_param_type_changed: parameter 1 type changed from int to long"
+               type="BREAKING">
+parameter 1 type changed from int to long
+(int → long)
+Source: include/foo.h:42
+      </failure>
+    </testcase>
+
+    <!-- Failure: removed symbol -->
+    <testcase name="_ZN3foo6legacyEv" classname="functions">
+      <failure message="func_removed: Function foo::legacy() was removed"
+               type="BREAKING">
+Function foo::legacy() was removed
+      </failure>
+    </testcase>
+
+    <!-- Passing: addition is compatible -->
+    <testcase name="_ZN3foo9new_thingEv" classname="functions" />
+  </testsuite>
+</testsuites>
+```
+
+### CI integration examples
+
+#### GitLab CI
+
+```yaml
+abi-check:
+  script:
+    - abicheck compare old.so new.so -H include/ --format junit -o abi-results.xml || true
+  artifacts:
+    when: always
+    reports:
+      junit: abi-results.xml
+```
+
+#### Jenkins (JUnit plugin)
+
+```groovy
+stage('ABI Check') {
+    steps {
+        sh 'abicheck compare old.so new.so -H include/ --format junit -o abi-results.xml'
+    }
+    post {
+        always {
+            junit 'abi-results.xml'
+        }
+    }
+}
+```
+
+#### Azure DevOps
+
+```yaml
+- task: CmdLine@2
+  inputs:
+    script: |
+      abicheck compare old.so new.so -H include/ --format junit -o abi-results.xml
+  continueOnError: true
+
+- task: PublishTestResults@2
+  inputs:
+    testResultsFiles: 'abi-results.xml'
+    testResultsFormat: 'JUnit'
 ```
