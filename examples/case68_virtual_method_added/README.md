@@ -1,0 +1,143 @@
+# Case 68: Virtual Method Added to Non-Virtual Class
+
+**Category:** Class Layout / Vtable | **Verdict:** BREAKING
+
+## What breaks
+
+The `Sensor` class gains a virtual destructor and `read()` becomes virtual. This
+introduces a **vtable pointer** (`vptr`) as a hidden member at the beginning of
+the object. On x86-64, this adds 8 bytes to the object size and shifts **every
+data member** to a higher offset:
+
+| Member | v1 offset | v2 offset | Shift |
+|--------|-----------|-----------|-------|
+| *(vptr)* | — | 0 | *new* |
+| `value_` | 0 | 8 | +8 |
+| `id_` | 8 | 16 | +8 |
+| **sizeof** | **16** | **24** | **+8** |
+
+Any consumer compiled against v1 that accesses `value_` at offset 0 will instead
+read the vtable pointer — interpreting a memory address as a `double`, producing
+astronomically wrong values.
+
+## Why this matters
+
+Adding the first virtual method to a class is one of the most destructive ABI
+changes possible, because it fundamentally alters the object layout:
+
+1. **Object size increases**: `sizeof(Sensor)` grows by `sizeof(void*)`, breaking
+   stack allocation, arrays, and embedding in other structs
+2. **All fields shift**: every data member moves to accommodate the vtable pointer,
+   causing every field access to read/write the wrong memory
+3. **Construction changes**: the constructor now initializes the vtable pointer,
+   adding a hidden write that wasn't there before
+4. **Copy semantics change**: memcpy of the object must include the vtable pointer
+5. **It's a one-way door**: once virtual, removing virtuality is equally breaking
+
+This is especially common when adding:
+- A virtual destructor (for proper cleanup through base pointers)
+- A virtual method for plugin/extension APIs
+- A virtual method for testing/mocking
+
+## Code diff
+
+```cpp
+// v1: non-virtual class (no vtable pointer)
+class Sensor {
+public:
+    Sensor(int id, double initial);
+    double read() const;        // non-virtual
+    void   calibrate(double offset);
+    int    get_id() const;
+private:
+    double value_;  // offset 0
+    int    id_;     // offset 8
+};
+// sizeof(Sensor) = 16
+
+// v2: virtual methods added (vtable pointer inserted!)
+class Sensor {
+public:
+    Sensor(int id, double initial);
+    virtual ~Sensor();            // NEW virtual destructor
+    virtual double read() const;  // NOW virtual
+    void   calibrate(double offset);
+    int    get_id() const;
+private:
+    double value_;  // offset 8 (shifted!)
+    int    id_;     // offset 16 (shifted!)
+};
+// sizeof(Sensor) = 24
+```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** compile app against v1 (non-virtual, 16 bytes), link to v2 `.so`.
+
+```bash
+# Build old library + app
+g++ -shared -fPIC -g v1.cpp -o libsensor.so
+g++ -g app.cpp -L. -lsensor -Wl,-rpath,. -o app
+./app
+# → sensor id    = 7 (expected 7)
+# → sensor value = 98.6 (expected 98.6)
+# → sizeof(Sensor) compiled = 16
+# → local sensor = 42.0 (expected 42.0)
+
+# Swap in new library (no recompile)
+g++ -shared -fPIC -g v2.cpp -o libsensor.so
+./app
+# → sensor id    = 0 (expected 7)         ← wrong offset!
+# → sensor value = 98.6 (expected 98.6)   ← may work via function call
+# → sizeof(Sensor) compiled = 16          ← but real size is now 24!
+# → local sensor = 5.3e-308 (expected 42.0) ← reads vtable ptr as double
+# → CORRUPTION: vtable pointer insertion shifted all fields!
+```
+
+**Why CRITICAL:** Stack-allocated objects are only 16 bytes (v1 size), but v2
+needs 24 bytes. The vtable pointer write at offset 0 overwrites `value_`, and
+`value_` is written to offset 8 where `id_` was, creating a cascade of
+corruption. For heap-allocated objects returned by the library, the function
+call may work (v2 created a 24-byte object), but direct field access by the
+app uses v1 offsets and reads the wrong data.
+
+## How to fix
+
+1. **Design for virtuality from the start**: if a class might ever need virtual
+   methods, add a virtual destructor in v1 to reserve the vtable pointer slot
+2. **Use the Pimpl idiom**: hide the implementation behind a pointer to avoid
+   exposing the class layout
+3. **Use C-style opaque handles**: `typedef struct Sensor Sensor;` with factory
+   functions — sizeof is never exposed
+4. **SONAME bump**: if virtual methods must be added, bump the major version
+
+## Real-world example
+
+Qt's `QObject` has been virtual since Qt 1.0 specifically to avoid this problem.
+The Qt ABI guidelines explicitly state: "never add a virtual function to a class
+that previously had none."
+
+The KDE Frameworks ABI policy documents this as one of the "cardinal sins" of
+ABI breakage, requiring a SONAME bump if violated.
+
+The Chromium project's Blink engine has encountered this when refactoring DOM
+classes — adding virtuality to `Node` subclasses required rebuilding all
+downstream components.
+
+## abicheck detection
+
+abicheck detects this via multiple change kinds:
+- `func_virtual_added` (BREAKING) — new virtual method introduced
+- `type_size_changed` (BREAKING) — sizeof increased due to vtable pointer
+- `type_vtable_changed` (BREAKING) — vtable created where none existed
+
+The combination provides high confidence that this is a vtable-insertion break,
+not just a coincidental size change.
+
+## References
+
+- [Itanium C++ ABI §2.4 — Virtual Table Layout](https://itanium-cxx-abi.github.io/cxx-abi/abi.html#vtable)
+- [KDE ABI Policy — Binary Compatibility Issues](https://community.kde.org/Policies/Binary_Compatibility_Issues_With_C%2B%2B)
+- [Qt ABI Stability Guidelines](https://wiki.qt.io/ABI_Stability)

@@ -766,6 +766,85 @@
       "api_break": false,
       "bad_practice": false,
       "description": "Field added to opaque struct (callers use pointer only) \u2014 layout change invisible to consumers (TYPE_FIELD_ADDED compatible)"
+    },
+    "case63_bitfield_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Bitfield width changed in struct \u2014 all subsequent bitfields shift to different bit positions (FIELD_BITFIELD_CHANGED)",
+      "expected_kinds": ["field_bitfield_changed"]
+    },
+    "case64_calling_convention_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": true,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "Function calling convention changed from default to regcall \u2014 parameters passed in wrong registers (CALLING_CONVENTION_CHANGED)",
+      "expected_kinds": ["calling_convention_changed"]
+    },
+    "case65_symbol_version_removed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": true,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "ELF symbol version node CRYPTO_1.0 removed \u2014 old binaries linked against that version fail at load time (SYMBOL_VERSION_DEFINED_REMOVED)",
+      "expected_kinds": ["symbol_version_defined_removed"]
+    },
+    "case66_language_linkage_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "extern \"C\" removed from C++ functions \u2014 symbol names change from unmangled to C++ mangled (FUNC_LANGUAGE_LINKAGE_CHANGED)",
+      "expected_kinds": ["func_language_linkage_changed"]
+    },
+    "case67_tls_var_size_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Thread-local variable ErrorCtx grows from 68 to 264 bytes \u2014 adjacent TLS variables shift to wrong offsets (TLS_VAR_SIZE_CHANGED)",
+      "expected_kinds": ["tls_var_size_changed"]
+    },
+    "case68_virtual_method_added": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Virtual method added to previously non-virtual class \u2014 vtable pointer inserted, sizeof grows, all field offsets shift (FUNC_VIRTUAL_ADDED)",
+      "expected_kinds": ["func_virtual_added"]
     }
   }
 }

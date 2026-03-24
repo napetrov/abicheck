@@ -1,0 +1,100 @@
+# Case 65: Symbol Version Removed
+
+**Category:** Symbol Versioning | **Verdict:** BREAKING
+
+## What breaks
+
+The `CRYPTO_1.0` symbol version node is removed from v2 of the library.
+Old binaries that were linked against `crypto_hash@CRYPTO_1.0` record that
+version requirement in their `.gnu.version_r` section. When the dynamic linker
+tries to load v2 (which only provides `CRYPTO_2.0`), it cannot satisfy the
+`CRYPTO_1.0` requirement and refuses to start the process.
+
+## Why this matters
+
+ELF symbol versioning (via `.gnu.version_d` / `.gnu.version_r` sections and
+version scripts) is the primary mechanism for maintaining backward compatibility
+in shared libraries across major-version boundaries. It allows a single `.so`
+to provide multiple implementations of the same symbol for different ABI
+generations.
+
+Removing a version node is equivalent to removing symbols — but worse, because:
+- The version was an **explicit promise** of backward compatibility
+- Tools like `nm` or `readelf -s` still show `crypto_hash` in the symbol table,
+  so the breakage is **invisible to naive checks**
+- The failure happens at **load time**, not link time — binaries that appeared
+  to link correctly fail only when deployed against the new library
+
+## Code diff
+
+```
+v1: .symver crypto_hash_v1,crypto_hash@CRYPTO_1.0     ← provides 1.0
+    .symver crypto_hash_v2,crypto_hash@@CRYPTO_2.0    ← default is 2.0
+
+v2: .symver crypto_hash,crypto_hash@@CRYPTO_2.0       ← CRYPTO_1.0 gone!
+```
+
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** compile app against v1 (links to `crypto_hash@CRYPTO_1.0`),
+swap in v2 `.so` which removed the `CRYPTO_1.0` version node.
+
+```bash
+# Build v1 library with both version nodes
+gcc -shared -fPIC -g v1.c -Wl,--version-script=v1.map -o libcrypto.so
+gcc -g app.c -L. -lcrypto -Wl,-rpath,. -o app
+./app
+# → hash("hello") = 99162322
+# → verify = 1 (expected 1)
+
+# Check version requirement recorded in the binary
+readelf -V app | grep CRYPTO
+# → 0x0020: Rev: 1  Flags: none  Version: 2  Cnt: 1  Name: CRYPTO_1.0
+
+# Swap in v2 library (CRYPTO_1.0 removed)
+gcc -shared -fPIC -g v2.c -Wl,--version-script=v2.map -o libcrypto.so
+./app
+# → ./app: /path/libcrypto.so: version `CRYPTO_1.0' not found
+#          (required by ./app)
+```
+
+**Why CRITICAL:** The dynamic linker's version check is strict — if the required
+version node doesn't exist in the loaded library, the process is killed
+immediately. This is a hard failure with a clear error message, but it still
+catches many library maintainers by surprise when they "clean up" old version
+nodes.
+
+## How to fix
+
+Never remove a symbol version node from a shared library. Instead:
+
+1. **Keep the old version node**: even if the implementation is identical, retain
+   the `.symver` alias so old binaries still resolve
+2. **Forward old versions**: `__asm__(".symver old_impl,func@OLD_VER")` can point
+   the old version to the new implementation
+3. **SONAME bump**: if you must drop old versions, increment the SONAME major
+   version to force all consumers to re-link
+
+## Real-world example
+
+glibc maintains symbol versions going back to `GLIBC_2.0` (1997). Removing any
+version node would break every binary linked against that version — potentially
+millions of executables across the entire Linux ecosystem. This is why glibc's
+version script is append-only.
+
+OpenSSL 3.0 removed the `OPENSSL_1.0.0` and `OPENSSL_1.1.0` version nodes,
+which is why it required a SONAME change from `libssl.so.1.1` to `libssl.so.3`
+— all consumers had to be rebuilt.
+
+## abicheck detection
+
+abicheck detects this as `symbol_version_defined_removed` (BREAKING) by
+comparing the `.gnu.version_d` sections of the two library versions.
+
+## References
+
+- [ELF Symbol Versioning](https://refspecs.linuxfoundation.org/LSB_5.0.0/LSB-Core-generic/LSB-Core-generic/symversion.html)
+- [Ulrich Drepper — How To Write Shared Libraries](https://www.akkadia.org/drepper/dsohowto.pdf)
+- [GNU ld — VERSION command](https://sourceware.org/binutils/docs/ld/VERSION.html)
