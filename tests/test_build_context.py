@@ -285,7 +285,7 @@ class TestBuildContext:
         flags = ctx.to_castxml_flags()
         assert "-std=c++17" in flags
         assert "--target=x86_64-linux-gnu" in flags
-        assert "--sysroot=/sysroot" in flags
+        assert f"--sysroot={Path('/sysroot')}" in flags
         assert "-DFOO=1" in flags
         assert "-DBAR" in flags
         assert "-fvisibility=hidden" in flags

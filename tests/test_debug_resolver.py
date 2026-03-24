@@ -201,9 +201,11 @@ class TestPathMirrorResolver:
         binary_path.write_bytes(b"\x7fELF")
 
         binary_resolved = binary_path.resolve()
-        mirror_path = debug_root / str(binary_resolved).lstrip("/")
+        # Use PurePosixPath-style join for cross-platform compatibility
+        rel_parts = binary_resolved.parts[1:]  # Skip root/drive
+        mirror_path = debug_root.joinpath(*rel_parts)
         mirror_debug = mirror_path.parent / (mirror_path.name + ".debug")
-        mirror_debug.parent.mkdir(parents=True)
+        mirror_debug.parent.mkdir(parents=True, exist_ok=True)
         mirror_debug.write_bytes(b"\x7fELF")
 
         result = PathMirrorResolver().resolve(binary_path=binary_path, debug_roots=[debug_root])
@@ -219,10 +221,11 @@ class TestPathMirrorResolver:
         binary_path.write_bytes(b"\x7fELF")
 
         binary_resolved = binary_path.resolve()
-        mirror_path = debug_root / str(binary_resolved).lstrip("/")
+        rel_parts = binary_resolved.parts[1:]  # Skip root/drive
+        mirror_path = debug_root.joinpath(*rel_parts)
         # Replace .so with .debug
         replaced = mirror_path.with_suffix(".debug")
-        replaced.parent.mkdir(parents=True)
+        replaced.parent.mkdir(parents=True, exist_ok=True)
         replaced.write_bytes(b"\x7fELF")
 
         result = PathMirrorResolver().resolve(binary_path=binary_path, debug_roots=[debug_root])

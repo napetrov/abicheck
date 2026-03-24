@@ -220,7 +220,7 @@ class BaselineMetadata:
 
         return cls(
             abicheck_version=str(data.get("abicheck_version") or ""),
-            schema_version=int(data.get("schema_version", _METADATA_SCHEMA_VERSION)),
+            schema_version=int(str(data.get("schema_version", _METADATA_SCHEMA_VERSION))),
             created_at=str(data.get("created_at") or ""),
             build_context_hash=str(data["build_context_hash"]) if data.get("build_context_hash") is not None else None,
             git_commit=str(data["git_commit"]) if data.get("git_commit") is not None else None,

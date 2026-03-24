@@ -663,7 +663,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 
     # Load build context from compile_commands.json if provided (ADR-020)
     # We build a per-header context map so each header gets its own TU-matched flags.
-    _db_entries: list | None = None
+    _db_entries: list | None = None  # type: ignore[type-arg]
     _per_header_ctx: dict[Path, list[str]] = {}
     build_context_flags: list[str] = []
     if effective_compile_db:

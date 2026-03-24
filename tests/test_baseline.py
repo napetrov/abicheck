@@ -443,3 +443,69 @@ class TestBaselineIntegrityError:
         err = BaselineIntegrityError("test")
         assert isinstance(err, ValidationError)
         assert isinstance(err, ValueError)  # via ValidationError
+
+
+# ---------------------------------------------------------------------------
+# Tests: detect_platform_from_binary
+# ---------------------------------------------------------------------------
+
+
+class TestDetectPlatformFromBinary:
+    def test_elf_binary(self, tmp_path: Path) -> None:
+        """ELF binary returns linux-<arch> platform."""
+        from abicheck.baseline import detect_platform_from_binary
+        binary = tmp_path / "libfoo.so"
+        # Minimal ELF header (x86_64)
+        elf_header = bytearray(64)
+        elf_header[0:4] = b"\x7fELF"
+        elf_header[4] = 2  # 64-bit
+        elf_header[5] = 1  # little-endian
+        elf_header[6] = 1  # ELF version
+        elf_header[16:18] = (3).to_bytes(2, 'little')  # ET_DYN
+        elf_header[18:20] = (0x3E).to_bytes(2, 'little')  # EM_X86_64
+        binary.write_bytes(bytes(elf_header))
+        result = detect_platform_from_binary(binary)
+        assert result.startswith("linux-")
+
+    def test_pe_binary(self, tmp_path: Path) -> None:
+        """PE binary returns windows-<arch> platform."""
+        from abicheck.baseline import detect_platform_from_binary
+        binary = tmp_path / "foo.dll"
+        binary.write_bytes(b"MZ" + b"\x00" * 200)
+        result = detect_platform_from_binary(binary)
+        assert result.startswith("windows-")
+
+    def test_unknown_format(self, tmp_path: Path) -> None:
+        """Unknown format returns <platform>-unknown."""
+        from abicheck.baseline import detect_platform_from_binary
+        binary = tmp_path / "unknown"
+        binary.write_bytes(b"random data" * 20)
+        result = detect_platform_from_binary(binary)
+        assert "unknown" in result
+
+    def test_nonexistent_file(self, tmp_path: Path) -> None:
+        """Non-existent file doesn't crash."""
+        from abicheck.baseline import detect_platform_from_binary
+        result = detect_platform_from_binary(tmp_path / "nope")
+        assert "unknown" in result
+
+
+# ---------------------------------------------------------------------------
+# Tests: _load_snapshot_from_string
+# ---------------------------------------------------------------------------
+
+
+class TestLoadSnapshotFromString:
+    def test_valid_json(self) -> None:
+        from abicheck.baseline import _load_snapshot_from_string
+        from abicheck.serialization import snapshot_to_json
+        snap = AbiSnapshot(library="libfoo.so", version="1.0.0", functions=[])
+        json_str = snapshot_to_json(snap)
+        restored = _load_snapshot_from_string(json_str)
+        assert restored.library == "libfoo.so"
+        assert restored.version == "1.0.0"
+
+    def test_invalid_json_raises(self) -> None:
+        from abicheck.baseline import _load_snapshot_from_string
+        with pytest.raises(Exception):
+            _load_snapshot_from_string("not valid json")

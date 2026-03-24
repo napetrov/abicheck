@@ -151,10 +151,10 @@ def extract_build_id(binary_path: Path) -> str | None:
     try:
         with open(binary_path, "rb") as f:
             elf = ELFFile(f)  # type: ignore[no-untyped-call]
-            for section in elf.iter_sections():
+            for section in elf.iter_sections():  # type: ignore[no-untyped-call]
                 if not isinstance(section, NoteSection):
                     continue
-                for note in section.iter_notes():
+                for note in section.iter_notes():  # type: ignore[no-untyped-call]
                     if note["n_type"] == "NT_GNU_BUILD_ID":
                         desc = note["n_desc"]
                         if isinstance(desc, str):
@@ -190,7 +190,7 @@ class EmbeddedDwarfResolver:
         try:
             with open(binary_path, "rb") as f:
                 elf = ELFFile(f)  # type: ignore[no-untyped-call]
-                debug_info = elf.get_section_by_name(".debug_info")
+                debug_info = elf.get_section_by_name(".debug_info")  # type: ignore[no-untyped-call]
                 if debug_info is not None and debug_info.data_size > 0:
                     _logger.debug("Embedded DWARF found in %s", binary_path)
                     return DebugArtifact(
@@ -242,7 +242,7 @@ class SplitDwarfResolver:
         try:
             with open(binary_path, "rb") as f:
                 elf = ELFFile(f)  # type: ignore[no-untyped-call]
-                if not elf.has_dwarf_info():
+                if not elf.has_dwarf_info():  # type: ignore[no-untyped-call]
                     return None
                 dwarf = elf.get_dwarf_info()  # type: ignore[no-untyped-call]
                 for cu in dwarf.iter_CUs():
