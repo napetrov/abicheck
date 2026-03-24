@@ -1523,7 +1523,7 @@ def _format_release_summary(
     """Format the release comparison summary as JSON, markdown, or JUnit XML."""
     if fmt == "junit":
         from .junit_report import to_junit_xml_multi
-        pairs = list(diff_pairs or [])
+        pairs: list[tuple[DiffResult, AbiSnapshot | None]] = list(diff_pairs or [])
         error_libs = [
             entry for entry in library_results
             if entry.get("verdict") == "ERROR"
