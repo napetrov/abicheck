@@ -2,7 +2,6 @@
 #include <string.h>
 
 __thread ErrorCtx tls_error = {0, ""};
-__thread int      tls_log_level = 0;
 
 void logger_set_error(int code, const char *msg) {
     tls_error.code = code;
@@ -12,8 +11,4 @@ void logger_set_error(int code, const char *msg) {
 
 int logger_get_error_code(void) {
     return tls_error.code;
-}
-
-const char *logger_get_error_message(void) {
-    return tls_error.message;
 }

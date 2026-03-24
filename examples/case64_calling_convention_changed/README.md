@@ -5,11 +5,18 @@
 ## What breaks
 
 The functions `vector_dot` and `vector_scale` change from the default System V
-AMD64 calling convention to `__attribute__((regcall))`. This changes which CPU
-registers carry function parameters and return values. A caller compiled against
-v1 passes arguments in the default registers (`rdi`, `rsi`, `rdx`, `xmm0`...),
-but the v2 function reads from the regcall register set — getting garbage or
-stale values.
+AMD64 calling convention to `__attribute__((ms_abi))` (Microsoft x64 convention).
+This changes which CPU registers carry function parameters and return values:
+
+| | System V ABI (v1) | Microsoft x64 ABI (v2) |
+|---|---|---|
+| Integer args | `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9` | `rcx`, `rdx`, `r8`, `r9` |
+| Float args | `xmm0`–`xmm7` | `xmm0`–`xmm3` |
+| Callee-saved | `rbx`, `rbp`, `r12`–`r15` | `rbx`, `rbp`, `rdi`, `rsi`, `r12`–`r15` |
+
+A caller compiled against v1 passes `a` in `rdi`, `b` in `rsi`, `len` in `edx`.
+The v2 function reads `a` from `rcx`, `b` from `rdx`, `len` from `r8d` — getting
+whatever stale values those registers happen to hold.
 
 ## Why this matters
 
@@ -24,18 +31,18 @@ The result is either garbage output, a segfault (if a pointer parameter is wrong
 or silent data corruption.
 
 This is particularly dangerous in math/compute libraries where:
-- Performance-sensitive code may switch to vectorcall/regcall for SIMD register usage
+- Performance-sensitive code may switch conventions for platform interop
 - The library "works fine" when rebuilt from source — the bug only manifests with
   pre-compiled consumers
 
 ## Code diff
 
 ```c
-/* v1: default calling convention */
+/* v1: default System V AMD64 calling convention */
 double vector_dot(const double *a, const double *b, int len);
 
-/* v2: regcall convention — different register assignment */
-__attribute__((regcall))
+/* v2: Microsoft x64 calling convention — different register assignment */
+__attribute__((ms_abi))
 double vector_dot(const double *a, const double *b, int len);
 ```
 
@@ -54,17 +61,16 @@ gcc -g app.c -L. -lfoo -Wl,-rpath,. -o app -lm
 # → scaled = {2.0, 4.0, 6.0} (expected {2.0, 4.0, 6.0})
 
 # Swap in new library (no recompile)
-# Note: regcall requires clang; gcc may not support it
-clang -shared -fPIC -g v2.c -o libfoo.so
+gcc -shared -fPIC -g v2.c -o libfoo.so
 ./app
-# → dot product = 0.0 (expected 32.0)
+# → Segmentation fault (or garbage output)
 # → WRONG RESULT: calling convention mismatch
 ```
 
-**Why CRITICAL:** The v2 function expects parameters in regcall registers but
-receives them in System V registers. The function reads uninitialized register
-values, producing wrong results. With pointer arguments, this could cause a
-segfault instead.
+**Why CRITICAL:** The v2 function expects pointer parameters in `rcx`/`rdx`
+(ms_abi) but receives them in `rdi`/`rsi` (sysv_abi). The function dereferences
+whatever garbage address is in `rcx`, causing a segfault. If by chance the
+register holds a valid address, the function silently reads wrong data.
 
 ## How to fix
 
@@ -83,6 +89,10 @@ The Windows ecosystem has dealt with this extensively: `__stdcall` vs `__cdecl`
 vs `__fastcall` vs `__vectorcall` have caused countless DLL compatibility issues.
 The Win32 API froze on `__stdcall` specifically to prevent this class of break.
 
+Wine (the Windows compatibility layer) must carefully match calling conventions
+between Linux System V and Windows ms_abi for every thunked function — getting
+even one wrong causes the exact crash demonstrated here.
+
 Intel's Math Kernel Library (MKL) uses `__cdecl` for its public API but internally
 uses `__vectorcall` for SIMD-heavy routines — the public entry points are thin
 wrappers that preserve the calling convention contract.
@@ -95,5 +105,6 @@ DWARF `DW_AT_calling_convention` attributes between the two binary versions.
 ## References
 
 - [System V AMD64 ABI — Register usage](https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.99.pdf)
-- [Intel regcall convention](https://www.intel.com/content/www/us/en/docs/cpp-compiler/developer-guide-reference/current/regcall.html)
+- [Microsoft x64 calling convention](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention)
 - [DWARF5 §5.7.1 — DW_AT_calling_convention](https://dwarfstd.org/doc/DWARF5.pdf)
+- [GCC — x86 Function Attributes (ms_abi)](https://gcc.gnu.org/onlinedocs/gcc/x86-Function-Attributes.html)

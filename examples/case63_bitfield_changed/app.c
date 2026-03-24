@@ -1,22 +1,32 @@
 /* DEMO: app compiled against v1 layout, but linked to v2 library at runtime.
-   v1 priority is at bits 8-15; v2 priority is at bits 10-17.
-   The app reads the wrong bits, getting a corrupt priority value. */
+   The app reads the priority field using v1 bit positions (bits 8-15).
+   v2's regmap_init() writes priority=128 into bits 10-17 (v2 layout).
+   The app reads bits 8-15 and gets a different value. */
 #include "v1.h"
 #include <stdio.h>
 
 int main(void) {
     RegMap r;
-    regmap_init(&r);  /* v2 writes mode=2 into 5-bit field, shifts everything */
+    /* Zero-initialize to make corruption visible */
+    *(uint32_t *)&r = 0;
 
-    uint32_t pri = regmap_read_priority(&r);
+    /* v2 library writes fields using v2 bit positions */
+    regmap_init(&r);
+
+    /* App reads using v1 compiled layout — v1 priority is at bits 8-15,
+       but v2 wrote priority=128 into bits 10-17 */
+    uint32_t pri = r.priority;
+    uint32_t mode = r.mode;
+    uint32_t channel = r.channel;
+
+    printf("mode     = %u (expected 2)\n", mode);
+    printf("channel  = %u (expected 5)\n", channel);
     printf("priority = %u (expected 128)\n", pri);
-
-    /* Also demonstrate the mode field mismatch */
-    regmap_set_mode(&r, 3);
-    printf("raw word after set_mode(3): 0x%08X\n", *(uint32_t *)&r);
+    printf("raw word = 0x%08X\n", *(uint32_t *)&r);
 
     if (pri != 128) {
-        printf("CORRUPTION: priority bits shifted due to bitfield width change!\n");
+        printf("CORRUPTION: bitfield layout mismatch — app reads v1 bit "
+               "positions but library wrote v2 bit positions!\n");
         return 1;
     }
     return 0;

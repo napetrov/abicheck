@@ -14,10 +14,6 @@ extern "C" Sensor* sensor_create(int id, double initial) {
     return new Sensor(id, initial);
 }
 
-extern "C" double sensor_read(const Sensor* s) {
-    return s->read();
-}
-
-extern "C" void sensor_calibrate(Sensor* s, double offset) {
-    s->calibrate(offset);
+extern "C" void sensor_destroy(Sensor* s) {
+    delete s;
 }

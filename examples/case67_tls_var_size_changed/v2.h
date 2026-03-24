@@ -2,20 +2,19 @@
 #define LOGGER_H
 
 /* Thread-local error context — EXPANDED in v2.
-   message buffer grew from 64 to 256 bytes, and a new 'source_line' field
-   was added. sizeof(ErrorCtx) changes from 68 to 264 bytes.
-   This shifts tls_log_level to a different TLS offset. */
+   New 'severity' field inserted BEFORE message, shifting message offset.
+   v1 message at offset 4, v2 message at offset 8.
+   sizeof(ErrorCtx) changes from 68 to 72 bytes. */
 typedef struct ErrorCtx {
-    int   code;
-    char  message[256];   /* was 64 — now 256 */
-    int   source_line;    /* new field */
+    int   code;          /* offset 0, 4 bytes (unchanged) */
+    int   severity;      /* offset 4, 4 bytes (NEW — shifts message!) */
+    char  message[64];   /* offset 8, 64 bytes (was at offset 4) */
 } ErrorCtx;
+/* sizeof(ErrorCtx) = 72 */
 
 extern __thread ErrorCtx tls_error;
-extern __thread int      tls_log_level;
 
 void logger_set_error(int code, const char *msg);
 int  logger_get_error_code(void);
-const char *logger_get_error_message(void);
 
 #endif

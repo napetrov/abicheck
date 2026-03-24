@@ -1,27 +1,28 @@
-/* DEMO: app compiled against v1 (ErrorCtx is 68 bytes).
-   v2 expands ErrorCtx to 264 bytes. The TLS block layout changes —
-   tls_log_level is at a different offset in v2's TLS segment.
-   When the app accesses tls_log_level directly, it reads from the
-   old offset, which now overlaps with tls_error.message[]. */
+/* DEMO: app compiled against v1 where tls_error.message is at offset 4.
+   v2 inserts a 'severity' field at offset 4, pushing message to offset 8.
+   The app reads tls_error.message at offset 4 (v1 layout) but v2 wrote
+   the severity integer there — the app gets garbage instead of the string. */
 #include "v1.h"
 #include <stdio.h>
+#include <string.h>
 
 int main(void) {
-    /* Set a known log level */
-    tls_log_level = 42;
-    printf("log_level = %d (expected 42)\n", tls_log_level);
+    /* Library sets error using v2 layout */
+    logger_set_error(404, "not found");
 
-    /* Now set an error — in v2, the expanded message buffer may
-       overwrite the old tls_log_level offset */
-    logger_set_error(404, "resource not found");
+    /* Read error code via library function — works fine */
+    int code = logger_get_error_code();
+    printf("error code = %d (expected 404)\n", code);
 
-    printf("error code = %d (expected 404)\n", logger_get_error_code());
-    printf("error msg  = \"%s\"\n", logger_get_error_message());
-    printf("log_level  = %d (expected 42)\n", tls_log_level);
+    /* Read message directly using v1 compiled layout.
+       v1: message is at offset 4 (immediately after code)
+       v2: severity=3 is at offset 4, message is at offset 8
+       The app reads offset 4 as a char[] and gets the severity int bytes. */
+    printf("message = \"%s\" (expected \"not found\")\n", tls_error.message);
 
-    if (tls_log_level != 42) {
-        printf("CORRUPTION: TLS variable layout shifted — "
-               "tls_log_level overwritten by expanded tls_error!\n");
+    if (strcmp(tls_error.message, "not found") != 0) {
+        printf("CORRUPTION: TLS struct layout changed — app reads v1 offset "
+               "but library wrote v2 layout!\n");
         return 1;
     }
     return 0;

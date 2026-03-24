@@ -45,27 +45,21 @@ This is especially common when adding:
 // v1: non-virtual class (no vtable pointer)
 class Sensor {
 public:
-    Sensor(int id, double initial);
-    double read() const;        // non-virtual
-    void   calibrate(double offset);
-    int    get_id() const;
-private:
     double value_;  // offset 0
     int    id_;     // offset 8
+    Sensor(int id, double initial);
+    double read() const;        // non-virtual
 };
 // sizeof(Sensor) = 16
 
 // v2: virtual methods added (vtable pointer inserted!)
 class Sensor {
 public:
+    double value_;  // offset 8 (shifted!)
+    int    id_;     // offset 16 (shifted!)
     Sensor(int id, double initial);
     virtual ~Sensor();            // NEW virtual destructor
     virtual double read() const;  // NOW virtual
-    void   calibrate(double offset);
-    int    get_id() const;
-private:
-    double value_;  // offset 8 (shifted!)
-    int    id_;     // offset 16 (shifted!)
 };
 // sizeof(Sensor) = 24
 ```

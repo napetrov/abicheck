@@ -1,5 +1,3 @@
-#include "v2.h"
-
 /* CRYPTO_1.0 version node removed — only CRYPTO_2.0 remains.
    Old binaries that were linked against crypto_hash@CRYPTO_1.0
    will fail to load: the dynamic linker cannot satisfy the version
@@ -15,6 +13,3 @@ int crypto_hash(const char *data, int len) {
 int crypto_verify(const char *data, int len, int hash) {
     return crypto_hash(data, len) == hash;
 }
-
-/* Only CRYPTO_2.0 version — CRYPTO_1.0 is gone */
-__asm__(".symver crypto_hash,crypto_hash@@CRYPTO_2.0");

@@ -47,17 +47,16 @@ gcc -shared -fPIC -g v1.c -Wl,--version-script=v1.map -o libcrypto.so
 gcc -g app.c -L. -lcrypto -Wl,-rpath,. -o app
 ./app
 # → hash("hello") = 99162322
-# → verify = 1 (expected 1)
+# → OK: crypto_hash@CRYPTO_1.0 resolved successfully
 
 # Check version requirement recorded in the binary
 readelf -V app | grep CRYPTO
-# → 0x0020: Rev: 1  Flags: none  Version: 2  Cnt: 1  Name: CRYPTO_1.0
+# → Name: CRYPTO_1.0  Flags: none  Version: 4
 
 # Swap in v2 library (CRYPTO_1.0 removed)
 gcc -shared -fPIC -g v2.c -Wl,--version-script=v2.map -o libcrypto.so
 ./app
-# → ./app: /path/libcrypto.so: version `CRYPTO_1.0' not found
-#          (required by ./app)
+# → ./app: ./libcrypto.so: version `CRYPTO_1.0' not found (required by ./app)
 ```
 
 **Why CRITICAL:** The dynamic linker's version check is strict — if the required
