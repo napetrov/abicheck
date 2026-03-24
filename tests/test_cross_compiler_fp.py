@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from abicheck.checker import Verdict
+
 # ── Test sources ──────────────────────────────────────────────────────────
 
 C_SRC = """\
@@ -188,8 +190,8 @@ class TestCppCrossFP:
         _compile_so(CPP_SRC, clang_so, "clang++", "cpp")
 
         r = _dump_and_compare(gcc_so, clang_so, CPP_HDR, "cpp", tmp_path)
-        # Should not crash — verdict may vary due to DWARF differences
-        assert r.verdict is not None
+        # Should not crash — verdict may vary due to DWARF vtable differences
+        assert isinstance(r.verdict, Verdict)
 
     def test_gxx_vs_clangxx_c_api_subset_no_break(self, tmp_path):
         """Same C++ with extern C wrapper — C API subset should not break."""
@@ -276,8 +278,7 @@ class TestStrippedVsUnstrippedFP:
             pytest.skip(f"Compilation failed: {r.stderr[:200]}")
 
         # Copy and strip
-        import shutil as _shutil
-        _shutil.copy2(debug_so, stripped_so)
+        shutil.copy2(debug_so, stripped_so)
         r = subprocess.run(["strip", "--strip-debug", str(stripped_so)],
                            capture_output=True, text=True, timeout=10)
         if r.returncode != 0:

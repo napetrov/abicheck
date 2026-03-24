@@ -230,10 +230,7 @@ class TestEnumLastMemberValueChanged:
             EnumMember("OK", 0), EnumMember("ERR", 1), EnumMember("MAX", 3),
         ])
         r = compare(_snap(enums=[e_old]), _snap(enums=[e_new]))
-        # Should detect value change on the last member
-        kind_set = _kinds(r)
-        assert (ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED in kind_set or
-                ChangeKind.ENUM_MEMBER_VALUE_CHANGED in kind_set)
+        assert ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED in _kinds(r)
 
 
 # ── type_became_opaque ───────────────────────────────────────────────────
@@ -276,14 +273,7 @@ class TestTypeKindChanged:
         t_old = RecordType(name="Widget", kind="struct", size_bits=32)
         t_new = RecordType(name="Widget", kind="class", size_bits=32)
         r = compare(_snap(types=[t_old]), _snap(types=[t_new]))
-        # struct → class may or may not be flagged depending on policy
-        # but when kind is different it should at least be detected
-        kind_set = _kinds(r)
-        if kind_set:
-            assert any(k in kind_set for k in (
-                ChangeKind.TYPE_KIND_CHANGED,
-                ChangeKind.SOURCE_LEVEL_KIND_CHANGED,
-            ))
+        assert ChangeKind.SOURCE_LEVEL_KIND_CHANGED in _kinds(r)
 
 
 # ── removed_const_overload ──────────────────────────────────────────────
@@ -299,10 +289,8 @@ class TestRemovedConstOverload:
         new = _snap(functions=[f_nc])  # only non-const remains
 
         r = compare(old, new)
-        # The const overload is removed — at least one of these should fire
         kind_set = _kinds(r)
-        assert (ChangeKind.REMOVED_CONST_OVERLOAD in kind_set or
-                ChangeKind.FUNC_REMOVED in kind_set)
+        assert ChangeKind.REMOVED_CONST_OVERLOAD in kind_set
 
 
 # ── Multiple type changes at once ────────────────────────────────────────

@@ -109,7 +109,6 @@ EXTENDED_CASES: list[tuple[str, str, str, str | None, str | None, str, str, str,
 
 _CONFIRMED = [c for c in EXTENDED_CASES if c[8] == "parity"]
 _CORRECT = [c for c in EXTENDED_CASES if c[8] == "correct"]
-_DIVERGE = [c for c in EXTENDED_CASES if c[8] == "divergence"]
 
 
 # ── Helpers (reuse from test_abidiff_parity.py) ──────────────────────────
@@ -134,32 +133,29 @@ def _compile_so(src: str, out: Path, lang: str) -> None:
 
 
 def _run_abicheck(old, new, hdr_v1, hdr_v2, lang, tmp_path):
-    try:
-        from abicheck.checker import compare
-        from abicheck.dumper import dump
+    from abicheck.checker import compare
+    from abicheck.dumper import dump
 
-        compiler = "cc" if lang == "c" else "c++"
-        headers_v1 = []
-        if hdr_v1 is not None:
-            h1 = tmp_path / f"{old.stem}_hdr.h"
-            h1.write_text(textwrap.dedent(hdr_v1).strip(), encoding="utf-8")
-            headers_v1 = [h1]
+    compiler = "cc" if lang == "c" else "c++"
+    headers_v1 = []
+    if hdr_v1 is not None:
+        h1 = tmp_path / f"{old.stem}_hdr.h"
+        h1.write_text(textwrap.dedent(hdr_v1).strip(), encoding="utf-8")
+        headers_v1 = [h1]
 
-        headers_v2 = []
-        if hdr_v2 is not None:
-            h2 = tmp_path / f"{new.stem}_hdr.h"
-            h2.write_text(textwrap.dedent(hdr_v2).strip(), encoding="utf-8")
-            headers_v2 = [h2]
+    headers_v2 = []
+    if hdr_v2 is not None:
+        h2 = tmp_path / f"{new.stem}_hdr.h"
+        h2.write_text(textwrap.dedent(hdr_v2).strip(), encoding="utf-8")
+        headers_v2 = [h2]
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            old_snap = dump(old, headers=headers_v1, version="v1", compiler=compiler)
-            new_snap = dump(new, headers=headers_v2, version="v2", compiler=compiler)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        old_snap = dump(old, headers=headers_v1, version="v1", compiler=compiler)
+        new_snap = dump(new, headers=headers_v2, version="v2", compiler=compiler)
 
-        result = compare(old_snap, new_snap)
-        return result.verdict.value
-    except Exception as exc:
-        return f"ERROR: {exc}"
+    result = compare(old_snap, new_snap)
+    return result.verdict.value
 
 
 def _run_abidiff(old, new):
@@ -170,12 +166,14 @@ def _run_abidiff(old, new):
     code = r.returncode
     if code == 0:
         return "NO_CHANGE"
-    if code & 1:
-        return "ERROR"
+    # Check BREAKING (bit 3) before ERROR (bit 0) — a breaking result
+    # with an error is still primarily a breaking result.
     if code & 8:
         return "BREAKING"
     if code & 4:
         return "COMPATIBLE"
+    if code & 1:
+        return "ERROR"
     return "NO_CHANGE"
 
 

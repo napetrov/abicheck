@@ -429,3 +429,10 @@ class TestRealWorldAbidiffParity:
         # Both should agree this is not BREAKING
         assert r.verdict != Verdict.BREAKING
         assert ab_verdict != "BREAKING"
+        # Both tools should classify this in the "safe" category
+        ac_safe = r.verdict in (Verdict.NO_CHANGE, Verdict.COMPATIBLE,
+                                 Verdict.COMPATIBLE_WITH_RISK)
+        ab_safe = ab_verdict in ("NO_CHANGE", "COMPATIBLE")
+        assert ac_safe and ab_safe, (
+            f"Parity: abicheck={r.verdict.value}, abidiff={ab_verdict}"
+        )

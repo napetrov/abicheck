@@ -37,9 +37,6 @@ def _kinds(result):
     return {c.kind for c in result.changes}
 
 
-def _all_kinds(result):
-    return {c.kind for c in result.changes + result.redundant_changes}
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Version Node Additions & Removals
@@ -116,7 +113,8 @@ class TestVersionNodeCoexistence:
         # New version added
         assert ChangeKind.SYMBOL_VERSION_DEFINED_ADDED in kind_set
         # Moving default version is a breaking change
-        assert r.verdict is not None
+        assert ChangeKind.SYMBOL_MOVED_VERSION_NODE in kind_set
+        assert r.verdict == Verdict.BREAKING
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -145,8 +143,8 @@ class TestVersionAliases:
             versions_defined=["LIBFOO_1.0", "LIBFOO_2.0"],
         )
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
-        # Should not crash; version changes may be detected
-        assert r.verdict is not None
+        assert ChangeKind.SYMBOL_MOVED_VERSION_NODE in _kinds(r)
+        assert r.verdict == Verdict.BREAKING
 
     def test_symbol_lost_default_status(self):
         """Symbol went from @@default to @specific (non-default)."""
@@ -165,7 +163,9 @@ class TestVersionAliases:
             ],
         )
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
-        assert r.verdict is not None  # should not crash
+        # Losing default status changes linker resolution behavior
+        kind_set = _kinds(r)
+        assert len(kind_set) > 0 or r.verdict == Verdict.NO_CHANGE
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -260,9 +260,7 @@ class TestVersionWithSymbolChanges:
             _snap(elf=new_elf),
         )
         kind_set = _kinds(r)
-        # Version removal may be reported as either DEFINED_REMOVED or NODE_REMOVED
-        assert (ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED in kind_set or
-                ChangeKind.SYMBOL_VERSION_NODE_REMOVED in kind_set)
+        assert ChangeKind.SYMBOL_VERSION_NODE_REMOVED in kind_set
         assert ChangeKind.FUNC_REMOVED in kind_set
 
 

@@ -163,8 +163,7 @@ class TestFuncPureVirtualChanged:
         f_v2 = _pub_func("Base::update", "_ZN4Base6updateEv",
                           is_virtual=True, is_pure_virtual=True)
         r = compare(_snap(functions=[f_v1]), _snap(functions=[f_v2]))
-        assert (ChangeKind.FUNC_VIRTUAL_BECAME_PURE in _kinds(r) or
-                ChangeKind.FUNC_PURE_VIRTUAL_ADDED in _kinds(r))
+        assert ChangeKind.FUNC_VIRTUAL_BECAME_PURE in _kinds(r)
         assert r.verdict == Verdict.BREAKING
 
     def test_added_new_pure_virtual(self):
@@ -220,8 +219,10 @@ class TestFuncRemovedFromBinary:
         old = _snap(functions=[f], elf=old_elf)
         new = _snap(functions=[f], elf=new_elf)  # still in headers
         r = compare(old, new)
-        # At a minimum, should not crash; detection depends on elf_deleted_fallback
-        assert r.verdict is not None
+        # FUNC_REMOVED_FROM_BINARY is not yet emitted by any detector.
+        # The ELF deleted fallback may or may not fire depending on mode.
+        # At minimum, verify comparison completes without error.
+        assert isinstance(r.verdict, Verdict)
 
 
 # ── func_deleted (= delete) ──────────────────────────────────────────────
@@ -486,7 +487,8 @@ class TestMultipleSymbolChanges:
         v_v1 = _pub_var("cfg", "_Z3cfgv", "int", is_const=False)
         v_v2 = _pub_var("cfg", "_Z3cfgv", "long", is_const=True)
         r = compare(_snap(variables=[v_v1]), _snap(variables=[v_v2]))
-        assert ChangeKind.VAR_TYPE_CHANGED in _kinds(r)
-        # VAR_BECAME_CONST may be in visible or redundant changes
+        # VAR_TYPE_CHANGED is the primary change; VAR_BECAME_CONST may be
+        # subsumed when both type and const change simultaneously.
         all_k = {c.kind for c in r.changes + r.redundant_changes}
-        assert ChangeKind.VAR_BECAME_CONST in all_k or ChangeKind.VAR_TYPE_CHANGED in all_k
+        assert ChangeKind.VAR_TYPE_CHANGED in all_k
+        assert r.verdict == Verdict.BREAKING

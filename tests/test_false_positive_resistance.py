@@ -327,7 +327,7 @@ class TestNoCrossTalk:
         )
 
         # Only function should have changes, not variable
-        var_changes = [c for c in r.changes if "data" in c.symbol]
+        var_changes = [c for c in r.changes if c.symbol == "_Z4datav"]
         assert len(var_changes) == 0
 
     def test_type_change_doesnt_affect_enum(self):

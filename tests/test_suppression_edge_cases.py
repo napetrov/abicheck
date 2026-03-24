@@ -295,7 +295,7 @@ class TestMultipleRules:
     """When multiple rules could match, any match suppresses."""
 
     def test_multiple_rules_same_symbol(self):
-        """Multiple rules matching the same symbol — first match wins."""
+        """Multiple rules matching the same symbol — any match suppresses."""
         sl = SuppressionList([
             Suppression(symbol="_Z3foov", reason="rule 1"),
             Suppression(symbol_pattern=r"_Z3.*", reason="rule 2"),

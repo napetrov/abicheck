@@ -32,11 +32,6 @@ try:
 except ImportError:
     HAS_MACHO = False
 
-try:
-    from abicheck.pe_metadata import PeExport, PeMetadata
-    HAS_PE = True
-except ImportError:
-    HAS_PE = False
 
 
 def _snap(version="1.0", functions=None, variables=None, types=None,
@@ -149,8 +144,7 @@ class TestElfVisibilityChanged:
                       sym_type=SymbolType.FUNC, visibility="protected")])
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
         kind_set = _kinds(r)
-        assert (ChangeKind.ELF_VISIBILITY_CHANGED in kind_set or
-                ChangeKind.SYMBOL_ELF_VISIBILITY_CHANGED in kind_set)
+        assert ChangeKind.SYMBOL_ELF_VISIBILITY_CHANGED in kind_set
 
 
 class TestSonameChanges:
@@ -196,8 +190,8 @@ class TestRpathRunpathChanged:
 class TestVisibilityLeak:
     """Internal symbols exported without -fvisibility=hidden."""
 
-    def test_visibility_leak_detected(self):
-        """New ELF has way more symbols than headers declare → leak."""
+    def test_visibility_leak_does_not_crash(self):
+        """New ELF has way more symbols than headers declare → no crash."""
         f = _pub_func("api", "_Z3apiv")
         old_elf = ElfMetadata(symbols=[
             ElfSymbol(name="_Z3apiv", binding=SymbolBinding.GLOBAL,
@@ -243,9 +237,8 @@ class TestCommonSymbolRisk:
                       sym_type=SymbolType.COMMON)])
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
         kind_set = _kinds(r)
-        # Either symbol_type_changed or common_symbol_risk
-        assert (ChangeKind.COMMON_SYMBOL_RISK in kind_set or
-                ChangeKind.SYMBOL_TYPE_CHANGED in kind_set)
+        assert ChangeKind.SYMBOL_TYPE_CHANGED in kind_set
+        assert ChangeKind.COMMON_SYMBOL_RISK in kind_set
 
 
 # ═══════════════════════════════════════════════════════════════════════════

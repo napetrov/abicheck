@@ -100,8 +100,7 @@ class TestEvidenceTiers:
     def test_empty_snapshot_minimal_evidence(self):
         """Empty snapshots have minimal evidence."""
         r = compare(_snap(), _snap())
-        # Might have 'header' (even though empty) or nothing
-        assert isinstance(r.evidence_tiers, list)
+        assert r.evidence_tiers == [] or r.evidence_tiers == ["header"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -146,7 +145,7 @@ class TestConfidenceLevels:
         confidence_order = {Confidence.LOW: 0, Confidence.MEDIUM: 1, Confidence.HIGH: 2}
         assert confidence_order[with_elf.confidence] >= confidence_order[header_only.confidence]
 
-    def test_elf_plus_dwarf_highest_confidence(self):
+    def test_elf_plus_dwarf_high_confidence(self):
         """ELF + DWARF + headers → should be HIGH or MEDIUM."""
         f = _pub_func("api", "_Z3apiv")
         elf = ElfMetadata(
@@ -172,8 +171,8 @@ class TestConfidenceLevels:
 class TestCoverageWarnings:
     """Verify coverage_warnings flag missing detectors."""
 
-    def test_no_warnings_with_complete_data(self):
-        """Full metadata → minimal or no warnings."""
+    def test_fewer_warnings_with_complete_data(self):
+        """Full metadata → fewer warnings than header-only."""
         f = _pub_func("api", "_Z3apiv")
         elf = ElfMetadata(
             symbols=[ElfSymbol(name="_Z3apiv", binding=SymbolBinding.GLOBAL,
@@ -181,15 +180,15 @@ class TestCoverageWarnings:
         )
         dwarf = DwarfMetadata(has_dwarf=True)
 
-        r = compare(
+        full = compare(
             _snap(functions=[f], elf=elf, dwarf=dwarf),
             _snap(functions=[f], elf=elf, dwarf=dwarf),
         )
-        # Should be a list (possibly empty)
-        assert isinstance(r.coverage_warnings, list)
+        header_only = compare(_snap(functions=[f]), _snap(functions=[f]))
+        assert len(full.coverage_warnings) <= len(header_only.coverage_warnings)
 
     def test_warnings_when_dwarf_missing(self):
-        """Missing DWARF → coverage warning about struct layout checks."""
+        """Missing DWARF → at least one coverage warning."""
         f = _pub_func("api", "_Z3apiv")
         elf = ElfMetadata(
             symbols=[ElfSymbol(name="_Z3apiv", binding=SymbolBinding.GLOBAL,
@@ -200,9 +199,7 @@ class TestCoverageWarnings:
             _snap(functions=[f], elf=elf),
             _snap(functions=[f], elf=elf),
         )
-        # Should have at least one warning about missing DWARF
-        assert isinstance(r.coverage_warnings, list)
-        # Not asserting specific warning text to avoid brittleness
+        assert len(r.coverage_warnings) > 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════

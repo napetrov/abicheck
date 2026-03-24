@@ -99,13 +99,17 @@ class TestConcurrentSharedSnapshots:
     """Multiple threads reading the same snapshots concurrently."""
 
     def test_shared_snapshot_concurrent_reads(self):
-        """Multiple threads comparing the same snapshot pair don't interfere."""
+        """Multiple threads comparing the same snapshot objects don't interfere.
+
+        No deepcopy — threads genuinely share the same snapshot data to
+        verify compare() does not mutate its inputs.
+        """
         f = _pub_func("api", "_Z3apiv", ret="int")
         old = _snap(functions=[f])
         new = _snap(functions=[_pub_func("api", "_Z3apiv", ret="long")])
 
         def run_compare(_idx):
-            r = compare(copy.deepcopy(old), copy.deepcopy(new))
+            r = compare(old, new)
             return r.verdict, any(
                 c.kind == ChangeKind.FUNC_RETURN_CHANGED for c in r.changes
             )
@@ -117,6 +121,10 @@ class TestConcurrentSharedSnapshots:
         for verdict, found in results:
             assert verdict == Verdict.BREAKING
             assert found
+
+        # Verify inputs were not mutated
+        assert len(old.functions) == 1
+        assert len(new.functions) == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════

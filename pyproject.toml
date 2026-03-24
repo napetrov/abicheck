@@ -145,4 +145,4 @@ paths_to_mutate = [
     "abicheck/checker_policy.py",    # verdict classification
 ]
 tests_dir = "tests/"
-runner = "python -m pytest -x -q --tb=no"
+runner = "python -m pytest -x -q --tb=no -m 'not integration and not libabigail and not abicc and not slow'"

@@ -342,14 +342,10 @@ class TestPolicyFileWithCompare:
         assert r.verdict == Verdict.BREAKING
 
     def test_policy_file_with_sdk_vendor_base(self):
-        """PolicyFile with sdk_vendor base further downgrades."""
-        f_old = self._pub_func("helper", "_ZN3Cls6helperEv",
-                                access=Visibility.PUBLIC)
-        f_old.access = __import__("abicheck.model", fromlist=["AccessLevel"]).AccessLevel.PUBLIC
+        """PolicyFile with sdk_vendor base: func_removed is still BREAKING."""
+        f_old = self._pub_func("helper", "_ZN3Cls6helperEv")
         pf = PolicyFile(base_policy="sdk_vendor")
-        # Under sdk_vendor, source-level breaks are COMPATIBLE
         r = compare(self._snap(functions=[f_old]), self._snap(), policy_file=pf)
-        # func_removed is still BREAKING even under sdk_vendor
         assert r.verdict == Verdict.BREAKING
 
 

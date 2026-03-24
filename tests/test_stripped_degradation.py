@@ -198,12 +198,9 @@ class TestElfOnlyMode:
             _snap(functions=[f], elf=old_elf, elf_only_mode=True),
             _snap(elf=new_elf, elf_only_mode=True),
         )
-        # Should detect something related to function removal
-        assert r.verdict is not None
         # In elf_only mode, removal produces FUNC_REMOVED_ELF_ONLY
-        kinds = _kinds(r)
-        assert (ChangeKind.FUNC_REMOVED_ELF_ONLY in kinds or
-                ChangeKind.FUNC_REMOVED in kinds)
+        assert ChangeKind.FUNC_REMOVED_ELF_ONLY in _kinds(r)
+        assert r.verdict == Verdict.COMPATIBLE  # ELF_ONLY removal is not BREAKING
 
     def test_elf_only_lower_confidence(self):
         """ELF-only mode should have lower confidence than header+ELF."""
@@ -271,8 +268,9 @@ class TestPartialMetadata:
             _snap(functions=[f], elf=old_elf),
             _snap(functions=[f]),
         )
-        # Should not crash; verdict should be valid
-        assert r.verdict is not None
+        # Asymmetric metadata should degrade gracefully, not crash or break
+        assert r.verdict in (Verdict.NO_CHANGE, Verdict.COMPATIBLE,
+                              Verdict.COMPATIBLE_WITH_RISK)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
