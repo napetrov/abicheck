@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import textwrap
 import warnings
 from pathlib import Path
@@ -239,6 +240,11 @@ class TestOptimizationLevelFP:
             f"changes: {[(c.kind.value, c.symbol) for c in r.changes]}"
         )
 
+    @pytest.mark.xfail(
+        sys.platform == "win32",
+        reason="MinGW -O2 inlines constructors away from PE exports",
+        strict=False,
+    )
     def test_o0_vs_o2_cpp_no_break(self, tmp_path):
         _require_tool("g++")
         _require_tool("castxml")

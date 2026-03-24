@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import textwrap
 import warnings
 from pathlib import Path
@@ -323,6 +324,10 @@ def _build_lib(src: str, hdr: str, name: str, tmp_path: Path) -> tuple[Path, Pat
 
     cmd = ["gcc", "-shared", "-fPIC", "-g", "-fvisibility=default",
            f"-I{tmp_path}", "-o", str(so_path), str(src_path)]
+    if sys.platform == "darwin":
+        # Set a consistent install_name so builds in different directories
+        # don't produce different LC_ID_DYLIB values.
+        cmd.insert(-1, f"-Wl,-install_name,lib{name}.so")
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if r.returncode != 0:
         pytest.skip(f"Compilation failed: {r.stderr[:300]}")
