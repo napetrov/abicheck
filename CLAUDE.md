@@ -18,7 +18,7 @@ pytest tests/ -m "not integration and not libabigail and not abicc and not slow 
 # Lint (must pass, CI enforces)
 ruff check abicheck/ tests/
 
-# Type check (must pass, CI enforces)
+# Type check (CI runs this — see "Known mypy issues" below)
 mypy abicheck/
 
 # Format check
@@ -123,12 +123,12 @@ Core pipeline (in order of data flow):
 
 ## Known mypy issues
 
-`mypy abicheck/` currently reports ~17 errors in:
-- `compat/cli.py` — Click's `Group` class typed as `Any`
-- `mcp_server.py` — FastMCP decorator typing
-- `dwarf_utils.py` — pyelftools untyped APIs
+CI runs `mypy abicheck/` as a required gate. It currently reports ~17 errors in:
+- `compat/cli.py` — Click's `Group` class typed as `Any` (4 errors)
+- `ctf_metadata.py`, `btf_metadata.py`, `dwarf_snapshot.py` — unused `type: ignore` comments (13 errors)
 
-These are upstream typing gaps, not bugs. Don't try to "fix" them unless you understand the root cause.
+These are upstream typing gaps or stale suppression comments, not bugs.
+**Your responsibility**: run `mypy abicheck/` after your changes and ensure you do not introduce *new* errors beyond the known baseline. Do not dismiss new mypy failures as "known issues".
 
 ## Files that are large — edit carefully
 
@@ -142,7 +142,7 @@ These files work correctly but are large. When editing, read the specific sectio
 ## Exit codes
 
 - `compare` command: 0 = compatible, 2 = source break, 4 = ABI break
-- `compat` command: 0 = compatible, 1 = breaking, 2 = error
+- `compat` command: 0 = compatible, 1 = BREAKING, 2 = API_BREAK (source-level), 3-11 = errors (see `compat/cli.py:_classify_compat_error_exit_code`)
 
 ## What NOT to do
 
