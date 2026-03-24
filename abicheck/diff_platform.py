@@ -32,6 +32,9 @@ from .model import (
 # Module-level constant: ELF visibility values that form the default<->protected pair (case51).
 _ELF_VIS_PROTECTED_PAIR: frozenset[str] = frozenset({"default", "protected"})
 
+# Data symbol types subject to copy relocations (OBJECT/COMMON).
+_COPY_RELOC_TYPES = (SymbolType.OBJECT, SymbolType.COMMON)
+
 @registry.detector("elf")
 def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """ELF-only detectors (Sprint 2): no debug info required."""
@@ -701,8 +704,7 @@ def _diff_protected_visibility(old: AbiSnapshot, new: AbiSnapshot) -> list[Chang
         # relocations are a concern.  Function symbols are already covered by
         # func_visibility_protected_changed; TLS/IFUNC/other types don't use
         # copy relocations, so DEFAULT↔PROTECTED is benign for them.
-        _DATA_TYPES = (SymbolType.OBJECT, SymbolType.COMMON)
-        if s_old.sym_type not in _DATA_TYPES or s_new.sym_type not in _DATA_TYPES:
+        if s_old.sym_type not in _COPY_RELOC_TYPES or s_new.sym_type not in _COPY_RELOC_TYPES:
             continue
         changes.append(Change(
             kind=ChangeKind.PROTECTED_VISIBILITY_CHANGED,

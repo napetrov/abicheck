@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .dwarf_metadata import DwarfMetadata, EnumInfo, FieldInfo, StructLayout
+from .type_metadata import FuncProto, read_null_terminated_string
 
 log = logging.getLogger(__name__)
 
@@ -104,14 +105,6 @@ class BtfType:
     @property
     def kflag(self) -> int:
         return (self.info >> 31) & 1
-
-
-@dataclass
-class FuncProto:
-    """Function prototype extracted from BTF."""
-    name: str
-    return_type: str
-    params: list[tuple[str, str]]  # [(param_name, param_type), ...]
 
 
 @dataclass
@@ -220,12 +213,7 @@ def _parse_header(data: bytes) -> BtfHeader:
 
 def _read_string(str_data: bytes, offset: int) -> str:
     """Read a null-terminated string from the BTF string section."""
-    if offset < 0 or offset >= len(str_data):
-        return ""
-    end = str_data.find(b"\x00", offset)
-    if end < 0:
-        return str_data[offset:].decode("utf-8", errors="replace")
-    return str_data[offset:end].decode("utf-8", errors="replace")
+    return read_null_terminated_string(str_data, offset)
 
 
 def _parse_types(type_data: bytes) -> list[BtfType]:

@@ -22,9 +22,31 @@ See ADR-007 for design rationale.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from .dwarf_metadata import EnumInfo, StructLayout
+
+
+@dataclass
+class FuncProto:
+    """Function prototype extracted from debug info (BTF/CTF)."""
+    name: str
+    return_type: str
+    params: list[tuple[str, str]]  # [(param_name, param_type), ...]
+
+
+def read_null_terminated_string(data: bytes, offset: int) -> str:
+    """Read a null-terminated UTF-8 string from a binary section.
+
+    Shared by BTF and CTF parsers for reading their string tables.
+    """
+    if offset < 0 or offset >= len(data):
+        return ""
+    end = data.find(b"\x00", offset)
+    if end < 0:
+        return data[offset:].decode("utf-8", errors="replace")
+    return data[offset:end].decode("utf-8", errors="replace")
 
 
 @runtime_checkable

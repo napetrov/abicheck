@@ -659,6 +659,10 @@ class _CastxmlParser:
             # castxml emits inline="1" for inline functions/methods
             is_inline = el.get("inline") == "1"
 
+            # C++ ref-qualifier: castxml emits refqual="lvalue" or "rvalue"
+            refqual_raw = el.get("refqual", "")
+            ref_qualifier = {"lvalue": "&", "rvalue": "&&"}.get(refqual_raw, "")
+
             funcs.append(Function(
                 name=name,
                 mangled=mangled,
@@ -678,6 +682,7 @@ class _CastxmlParser:
                 is_inline=is_inline,
                 access=self._access_level(el),
                 return_pointer_depth=ret_ptr_depth,
+                ref_qualifier=ref_qualifier,
             ))
         return funcs
 
@@ -1126,11 +1131,14 @@ def _resolve_debug_metadata(
         return parse_dwarf(so_path)
 
     # Auto-detect: kernel binaries prefer BTF, userspace prefers DWARF
+    from .btf_metadata import has_btf_section, parse_btf_metadata
+    from .ctf_metadata import has_ctf_section, parse_ctf_metadata
+    from .dwarf_unified import parse_dwarf
+
     is_kernel = _is_kernel_binary(so_path)
 
     if is_kernel:
         # BTF > DWARF > CTF for kernel binaries
-        from .btf_metadata import has_btf_section, parse_btf_metadata
         if has_btf_section(so_path):
             btf = parse_btf_metadata(so_path)
             if btf.has_btf:
@@ -1138,13 +1146,11 @@ def _resolve_debug_metadata(
                 return btf.to_dwarf_metadata(), AdvancedDwarfMetadata()
 
     # DWARF > BTF > CTF for userspace (or kernel fallback)
-    from .dwarf_unified import parse_dwarf
     dwarf_meta, dwarf_adv = parse_dwarf(so_path)
     if dwarf_meta.has_dwarf:
         return dwarf_meta, dwarf_adv
 
     # Fallback to BTF if DWARF not available
-    from .btf_metadata import has_btf_section, parse_btf_metadata
     if has_btf_section(so_path):
         btf = parse_btf_metadata(so_path)
         if btf.has_btf:
@@ -1152,7 +1158,6 @@ def _resolve_debug_metadata(
             return btf.to_dwarf_metadata(), AdvancedDwarfMetadata()
 
     # Fallback to CTF
-    from .ctf_metadata import has_ctf_section, parse_ctf_metadata
     if has_ctf_section(so_path):
         ctf = parse_ctf_metadata(so_path)
         if ctf.has_ctf:
