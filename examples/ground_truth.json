@@ -898,7 +898,7 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
-      "description": "Intermediate class inserted into hierarchy changes covariant return type \u2014 vtable thunks apply wrong pointer adjustment, corrupting returned pointers (TYPE_VTABLE_CHANGED, TYPE_BASE_CHANGED)",
+      "description": "Intermediate class inserted into hierarchy \u2014 vtable layout shifts, object size changes, covariant return type changes from Circle* to Drawable* (TYPE_BASE_CHANGED)",
       "expected_kinds": ["type_base_changed"]
     },
     "case73_typedef_underlying_changed": {

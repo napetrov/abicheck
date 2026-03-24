@@ -8,20 +8,24 @@ The class hierarchy changes: a new intermediate class `Drawable` is inserted
 between `Shape` and `Circle`. This causes `Circle::clone()` to change its
 covariant return type from `Circle*` to `Drawable*`.
 
-Under the Itanium C++ ABI, covariant return types require **vtable thunks** —
-small code fragments that adjust the `this` pointer when converting between base
-and derived return types. When the covariant return type changes:
+Under the Itanium C++ ABI, inserting an intermediate base class changes:
 
-1. The vtable thunk entry for `clone()` must adjust to a different offset
-2. The vtable layout changes due to the new base class `Drawable`
-3. Old binaries with stale vtables dispatch through the wrong thunk, applying
-   incorrect pointer adjustments
+1. **Vtable layout**: `Drawable` introduces new vtable entries (its own virtual
+   functions and RTTI), shifting existing `Shape` vtable slot positions
+2. **Object layout**: `Circle`'s data members move to accommodate the `Drawable`
+   subobject, changing field offsets and `sizeof(Circle)`
+3. **Covariant return type**: `clone()` now returns `Drawable*` instead of
+   `Circle*`, so callers expecting `Circle*` get a mistyped pointer
 
-This is fundamentally different from case09 (vtable reorder), case23 (pure virtual
-added), case38 (virtual methods changed), and case68 (virtual method added). Those
-change **which** slot is called; this case changes the **thunk adjustment** within
-a slot that still nominally exists. The break is in the pointer arithmetic, not
-the dispatch target.
+Old binaries compiled against v1 have hardcoded vtable slot indices and field
+offsets for the `Shape → Circle` hierarchy. In v2, the `Drawable` intermediate
+class shifts everything, causing virtual dispatch to call the wrong function
+and field accesses to read garbage.
+
+This is distinct from case09 (vtable reorder within same hierarchy), case37
+(base class type changed), and case38 (virtual methods added/removed). This case
+tests **hierarchy insertion** — adding a class between existing base and derived —
+which is a particularly common real-world mistake.
 
 ## Why abicheck catches it
 
@@ -63,15 +67,16 @@ g++ -g app.cpp -L. -lshape -Wl,-rpath,. -o app
 # Build v2 (hierarchy changed, covariant return changed)
 g++ -shared -fPIC -g v2.cpp -o libshape.so
 ./app
-# -> crash or garbage (vtable thunk applies wrong pointer adjustment)
+# -> crash or garbage (vtable layout shifted by Drawable insertion)
 ```
 
-**Why CRITICAL:** The old binary's vtable for `Circle` was compiled with thunk
-offsets for the `Shape → Circle` conversion. In v2, the hierarchy is
-`Shape → Drawable → Circle`, requiring different adjustment offsets. The old
-thunk applies the wrong offset to the returned pointer, yielding a misaligned
-or out-of-bounds pointer. Calling any method on the returned object crashes or
-corrupts memory.
+**Why CRITICAL:** The old binary's vtable for `Circle` was compiled with slot
+indices for the two-level hierarchy `Shape → Circle`. In v2, `Drawable` is
+inserted between them, adding new vtable entries and shifting slot positions.
+Old code dispatching through stale vtable indices calls the wrong function.
+Additionally, `sizeof(Circle)` changes due to the `Drawable` subobject, so
+the `clone()` return value points to an object with a different layout than
+the caller expects.
 
 ## How to fix
 

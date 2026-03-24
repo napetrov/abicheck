@@ -4,6 +4,5 @@ abicheck_add_case(case72_covariant_return_changed
     V1_HEADERS v1.h
     V2_HEADERS v2.h
     APP_SOURCES app.cpp
-    LANG CXX
     PLATFORMS linux macos windows
 )
