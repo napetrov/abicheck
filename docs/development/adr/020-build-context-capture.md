@@ -64,13 +64,16 @@ and other build systems generate it. Format:
 ```
 
 Each entry captures the **exact** compiler invocation for one translation unit.
+Entries use either `arguments` (JSON array) or `command` (shell string, parsed
+via `shlex.split()`). Both forms must be supported.
 
 ### What other tools do
 
 - **Android VNDK header-abi-dumper**: Runs per-TU with the exact compiler flags from
   the build system. The build system invokes the dumper — it doesn't ingest a database.
 - **clang-tidy / clangd**: Consume `compile_commands.json` natively to match analysis
-  to build context.
+  to build context. clangd uses per-header TU matching: it finds the "best" compile
+  command for each header file.
 - **libabigail / ABICC**: Do not consume compilation databases. Users supply headers
   and include paths manually.
 
@@ -100,64 +103,51 @@ abicheck dump libfoo.so -H include/ --compile-db /path/to/compile_commands.json
 
 # Combined with explicit overrides (overrides take precedence)
 abicheck dump libfoo.so -H include/ -p builddir --compiler-options "-DEXTRA=1"
+
+# Filter to specific source files (for large databases)
+abicheck dump libfoo.so -H include/ -p builddir --compile-db-filter "src/libfoo/**"
 ```
 
 `-p <builddir>` mirrors clang-tidy's convention. When specified, abicheck looks
 for `<builddir>/compile_commands.json`.
 
-### 2. Flag derivation pipeline
+**Prerequisite**: `-p` / `--compile-db` requires `-H` (headers). Without headers,
+CastXML has nothing to parse and the build context is irrelevant. If `-p` is
+specified without `-H`, emit an error: "compile database requires --headers/-H".
+
+### 2. Per-header TU matching (preferred) with union fallback
+
+The compilation database contains per-TU flags that may differ across source files.
+Rather than computing a global union of all flags (which breaks for mutually exclusive
+defines like `-DUSE_OPENSSL=1` vs `-DUSE_GNUTLS=1`), abicheck matches each public
+header to the best TU and uses that TU's exact flags:
 
 ```text
-compile_commands.json
-  │
-  ├── Parse all entries
-  │
-  ├── Filter to library's TUs (match by source file paths)
-  │     Strategy: intersect compile_commands entries with source files
-  │     that produce symbols found in the binary (via build artifacts or heuristics)
-  │
-  ├── Extract per-TU flags:
-  │     -D / -U defines
-  │     -I / -isystem include paths
-  │     -std= language standard
-  │     --target= / -target triple
-  │     --sysroot=
-  │     -fvisibility=
-  │     -fabi-version=
-  │     -f[no-]exceptions, -f[no-]rtti
-  │     -fpack-struct=, -fms-extensions
-  │
-  ├── Compute unified flag set for header parsing:
-  │     Option A: Union of all TU flags (broadest coverage, may over-include)
-  │     Option B: Intersection (most conservative, may under-include)
-  │     Decision: Union with conflict detection
-  │     - Defines: union all -D flags; warn on conflicting values for same macro
-  │     - Includes: union all -I paths (order: most-common-first)
-  │     - Language standard: use the highest -std= value (warn if mixed C/C++)
-  │     - Target/sysroot: must be consistent across TUs (error if conflicting)
-  │
-  └── Feed unified flags to CastXML
+Per-header TU matching (Phase 1 strategy):
+  For each public header H in -H directories:
+    1. Find TUs that directly #include H
+       (scan compile_commands entries for -include or grep source files)
+    2. If multiple TUs include H with different flags → warn, use first match
+    3. If no TU directly includes H → fall back to union strategy for H
+    4. Use the matched TU's exact flags for CastXML invocation on H
+
+Union fallback (for headers not matched to any TU):
+  - Union all -D flags; warn on conflicting values
+  - Union all -I paths (order: most-common-first)
+  - Target/sysroot: must be consistent across TUs (error if conflicting)
 ```
 
-### 3. Public header scope resolution
+This mirrors clangd's approach: find the best compile command for each file rather
+than merging incompatible commands.
 
-Not all types in headers are part of the public ABI. The compilation database
-enables a "public header scope" filter:
+**C vs C++ handling**: If TUs mix C and C++ standards (e.g., `-std=c11` and
+`-std=c++17`), these are different languages — not comparable on a single axis.
+Resolution: use C++ mode for CastXML when any C++ TU is present, since CastXML
+in C++ mode can still parse C headers via `extern "C"` blocks. Emit a warning:
+"mixed C/C++ TUs detected; using C++ mode for header parsing." This aligns with
+the existing `force_cpp` detection logic in `dumper.py`.
 
-```text
-Public ABI surface = types reachable from:
-  1. Headers in the -H / --headers directories (user-specified public headers)
-  2. Exported symbols in the binary (L0 metadata)
-
-Exclude:
-  - Types only defined in private/internal headers
-  - Types not reachable from any exported function signature or variable
-```
-
-This mirrors Android's header-abi-dumper approach: only types reachable from
-exported include roots count as public ABI.
-
-Implementation:
+### 3. Flag derivation and the BuildContext model
 
 ```python
 @dataclass
@@ -171,18 +161,39 @@ class BuildContext:
     target_triple: str | None        # --target=x86_64-linux-gnu
     sysroot: Path | None             # --sysroot=
     extra_flags: list[str]           # Remaining flags passed through to CastXML
-    source_file: str                 # compile_commands.json path (for diagnostics)
+    compile_db_path: Path            # Path to compile_commands.json (for diagnostics)
 
     # Conflict tracking
     define_conflicts: dict[str, list[str]]  # macro → [value1, value2, ...]
     standard_variants: list[str]            # all -std= values seen
 
-def build_context_from_compile_db(
-    compile_db_path: Path,
-    source_filter: Callable[[str], bool] | None = None,
+def build_context_for_header(
+    compile_db: list[dict],
+    header_path: Path,
+    source_filter: str | None = None,
 ) -> BuildContext:
-    """Parse compile_commands.json and derive unified build context."""
+    """Find the best TU for a header and derive its build context."""
+
+def build_context_union_fallback(
+    compile_db: list[dict],
+    source_filter: str | None = None,
+) -> BuildContext:
+    """Union strategy for headers not matched to a specific TU."""
 ```
+
+Flags extracted per-TU:
+- `-D` / `-U` defines
+- `-I` / `-isystem` include paths
+- `-std=` language standard
+- `--target=` / `-target` triple
+- `--sysroot=`
+- `-fvisibility=`
+- `-fabi-version=`
+- `-f[no-]exceptions`, `-f[no-]rtti`
+- `-fpack-struct=`, `-fms-extensions`
+
+The `command` string form is parsed via `shlex.split()` (POSIX mode). On Windows
+builds where `command` may use CMD quoting, the parser handles both conventions.
 
 ### 4. CastXML integration
 
@@ -190,12 +201,19 @@ CastXML supports configuring its internal Clang preprocessor to match an externa
 compiler. The build context feeds into CastXML invocation:
 
 ```python
-def _build_castxml_args(context: BuildContext, header: Path) -> list[str]:
+def _build_castxml_args(
+    context: BuildContext, header: Path, gcc_path: str = "g++"
+) -> list[str]:
     args = ["castxml", "--castxml-output=1"]
 
-    # Language standard
+    # Compiler emulation: --castxml-cc-gnu expects a compiler executable
+    # (e.g., "g++", "gcc", or a cross-compiler path), NOT a language standard.
+    # The language standard is passed as a separate -std= flag.
+    args.extend(["--castxml-cc-gnu", gcc_path])
+
+    # Language standard (separate flag, not part of --castxml-cc-gnu)
     if context.language_standard:
-        args.extend(["--castxml-cc-gnu", f"({context.language_standard})"])
+        args.append(f"-std={context.language_standard}")
 
     # Target
     if context.target_triple:
@@ -221,53 +239,79 @@ def _build_castxml_args(context: BuildContext, header: Path) -> list[str]:
     return args
 ```
 
+**Interaction with existing CLI flags**: When both `-p` (compile database) and
+`--compiler-options` / `--includes` / `--sysroot` / `--gcc-path` / `--gcc-prefix`
+are specified, the explicit CLI flags take precedence and override the corresponding
+values from the database. This matches the principle of explicit user intent
+overriding automatic detection.
+
 ### 5. Deterministic caching
 
-Build-context awareness enables content-addressed caching of CastXML results:
+Build-context awareness enables content-addressed caching of CastXML results.
+
+The cache key must include **transitive header content**, not just the top-level
+header. This matches the existing cache behavior in `dumper.py` which walks
+include directories and hashes mtimes of `.h`/`.hpp` files.
 
 ```python
-def _cache_key(header_path: Path, context: BuildContext) -> str:
-    """Content-addressed cache key for deterministic header parsing."""
+def _cache_key(header_path: Path, context: BuildContext, header_dirs: list[Path]) -> str:
+    """Content-addressed cache key for deterministic header parsing.
+
+    Every BuildContext field that affects CastXML output must be included.
+    Missing a field here causes false cache hits and wrong ABI results.
+    """
     h = hashlib.sha256()
+    # Top-level header content
     h.update(header_path.read_bytes())
+    # Transitive includes: walk header directories and hash mtimes
+    for hdir in sorted(header_dirs):
+        for p in sorted(hdir.rglob("*.h")) + sorted(hdir.rglob("*.hpp")):
+            h.update(str(p).encode())
+            h.update(str(p.stat().st_mtime_ns).encode())
+    # All ABI-affecting BuildContext fields
     h.update(json.dumps(context.defines, sort_keys=True).encode())
+    h.update(json.dumps(sorted(context.undefines)).encode())
     h.update(json.dumps([str(p) for p in context.include_paths]).encode())
+    h.update(json.dumps([str(p) for p in context.system_includes]).encode())
     h.update((context.language_standard or "").encode())
     h.update((context.target_triple or "").encode())
+    h.update(str(context.sysroot or "").encode())
+    h.update(json.dumps(sorted(context.extra_flags)).encode())
     return h.hexdigest()[:16]
 ```
 
-Cache location: `<builddir>/.abicheck_cache/` or `--cache-dir`.
+Cache location: `$XDG_CACHE_HOME/abicheck/castxml/` or `--cache-dir` with
+`castxml/` subdirectory. See ADR-021 for unified cache strategy across subsystems.
 
-Cache invalidation: any change to header content or build flags produces a new key.
-This eliminates redundant CastXML invocations in CI when only a subset of headers
-changed.
+Cache invalidation: any change to header content, header mtimes, or build flags
+produces a new key.
 
 ### 6. Conflict handling
 
-When TUs disagree on flags, abicheck must handle it explicitly:
+When TUs disagree on flags (relevant only for the union fallback path):
 
 | Conflict type | Resolution | Diagnostic |
 |---------------|------------|------------|
-| Different `-D` values for same macro | Use the value from the TU that defines it last (alphabetical source file order) | Warning: "macro FOO defined as 1 in src/a.cpp and 2 in src/b.cpp; using 2" |
-| Mixed `-std=` | Use highest standard | Warning: "mixed standards c++14, c++17; using c++17" |
+| Different `-D` values for same macro | Warning; use value from first-matched TU | Warning: "macro FOO has conflicting values across TUs: 1 (src/a.cpp), 2 (src/b.cpp)" |
+| Mixed C and C++ `-std=` | Use C++ mode (CastXML can parse C in C++ mode) | Warning: "mixed C/C++ TUs; using C++ mode" |
+| Different C++-only `-std=` | Use the highest standard | Warning: "mixed standards c++14, c++17; using c++17" |
 | Different targets | Error — cannot unify | Error: "conflicting target triples; use --compiler-options to override" |
 | Different sysroots | Error | Error: "conflicting sysroots" |
 
 ### 7. Fallback behavior
 
 ```text
-compile_commands.json available?
-├── YES → Derive BuildContext → use for CastXML
-│         User --compiler-options override specific flags
-│         Warn on conflicts
+-p or --compile-db specified?
+├── YES → -H specified?
+│         ├── YES → Per-header TU matching with union fallback
+│         │         Warn on conflicts, override with --compiler-options
+│         └── NO  → Error: "compile database requires --headers/-H"
 │
-└── NO  → -p specified?
-          ├── YES → Error: "compile_commands.json not found in {builddir}"
-          └── NO  → Current behavior (manual flags only)
+└── NO  → Current behavior (manual flags via --compiler-options / --includes)
 ```
 
-No silent fallback when `-p` is explicitly given — fail loud.
+No silent fallback when `-p` is explicitly given but the file is missing — fail
+loud: "compile_commands.json not found in {builddir}".
 
 ---
 
@@ -276,16 +320,26 @@ No silent fallback when `-p` is explicitly given — fail loud.
 ### Positive
 - Eliminates header parse drift — the most common source of ABI tool inaccuracy
 - Standard format understood by all major build systems (CMake, Meson, Ninja, Bear)
-- Enables deterministic caching keyed by (header content + flags)
-- Public header scope resolution reduces false positives from internal types
+- Per-header TU matching avoids the mutually-exclusive-defines problem
+- Enables deterministic caching keyed by (header content + transitive includes + flags)
 - Convention (`-p`) familiar to clang-tidy/clangd users
+- `--compile-db-filter` provides escape hatch for large databases (e.g., kernel: 30K+ entries)
 
 ### Negative
 - `compile_commands.json` only captures TU flags — not link-time or install-time transforms
-- Union-of-flags strategy may over-include in some edge cases
+- Per-header TU matching requires scanning source files for `#include` directives (I/O cost)
+- Union fallback may over-include when headers can't be matched to specific TUs
 - Requires build system to generate `compile_commands.json` (not always default)
-- Cache management adds complexity (disk cleanup, invalidation edge cases)
-- Per-TU flag extraction parsing must handle both `arguments` array and `command` string formats
+- Cache must hash transitive includes (more expensive than single-file hash)
+- Per-TU flag extraction parsing must handle both `arguments` array and `command` string
+  (via `shlex.split()`) formats
+
+### Known limitation: public header scope resolution
+
+Filtering the ABI surface to only types reachable from public headers is a
+valuable improvement but architecturally independent of compile database ingestion.
+It deserves a separate ADR. This ADR focuses on getting the right flags to CastXML;
+scope filtering can layer on top once build context is reliable.
 
 ---
 
@@ -293,11 +347,22 @@ No silent fallback when `-p` is explicitly given — fail loud.
 
 | Phase | Scope | Effort |
 |-------|-------|--------|
-| 1 | `BuildContext` model + `compile_commands.json` parser | 2-3 days |
+| 0 | Plumb `BuildContext` / `compile_db_path` through `dump()` → `_dump_elf()` → `_castxml_dump()` | 1-2 days |
+| 1 | `BuildContext` model + `compile_commands.json` parser (both `arguments` and `command` forms) | 2-3 days |
 | 2 | Flag extraction (defines, includes, std, target, sysroot) | 2-3 days |
-| 3 | Conflict detection and resolution logic | 1-2 days |
-| 4 | CastXML integration — feed `BuildContext` into dumper pipeline | 2-3 days |
-| 5 | CLI: `-p`, `--compile-db`, interaction with existing `--compiler-options` | 1-2 days |
-| 6 | Deterministic cache (content-addressed, cache-dir) | 2-3 days |
-| 7 | Public header scope resolver (types reachable from exported headers) | 3-5 days |
-| 8 | Tests: multi-TU, mixed flags, conflict cases, cache hit/miss | 2-3 days |
+| 3 | Per-header TU matching (source scanning for `#include` directives) | 2-3 days |
+| 4 | Union fallback + conflict detection and resolution logic | 1-2 days |
+| 5 | CastXML integration — feed `BuildContext` into dumper pipeline | 2-3 days |
+| 6 | CLI: `-p`, `--compile-db`, `--compile-db-filter`, interaction with existing flags | 1-2 days |
+| 7 | Deterministic cache (content-addressed with transitive include hashing) | 2-3 days |
+| 8 | Tests: multi-TU, mixed C/C++, conflict cases, per-header matching, cache hit/miss | 2-3 days |
+
+---
+
+## References
+
+- `abicheck/dumper.py` — current CastXML invocation (`_castxml_dump`) and cache logic
+- ADR-003 — Data Source Architecture (L0/L1/L2 pipeline, `--show-data-sources`)
+- ADR-021 — Debug Artifact Resolution (unified `--cache-dir` strategy; split DWARF
+  flags in compile_commands.json produce artifacts resolved by ADR-021)
+- Clang JSON Compilation Database specification
