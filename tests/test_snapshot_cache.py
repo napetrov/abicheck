@@ -223,8 +223,13 @@ class TestStoreErrorPaths:
     def test_store_oserror_on_mkdir(self, tmp_path, monkeypatch):
         """Store gracefully handles OSError on mkdir."""
         import abicheck.snapshot_cache as sc
-        # Point cache to a non-writable location
-        monkeypatch.setattr(sc, "_CACHE_DIR", Path("/proc/nonexistent/cache"))
+        cache_dir = tmp_path / "cache"
+        monkeypatch.setattr(sc, "_CACHE_DIR", cache_dir)
+
+        def _raise_oserror(*args, **kwargs):
+            raise OSError("permission denied")
+
+        monkeypatch.setattr(Path, "mkdir", _raise_oserror)
         binary = tmp_path / "lib.so"
         binary.write_bytes(b"ELF content")
         snap = _sample_snap()
