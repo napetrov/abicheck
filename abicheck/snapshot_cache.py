@@ -21,9 +21,9 @@ Cache location = ``~/.cache/abi_check/snapshots/<key>.json``.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,11 +32,21 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger("abicheck.cache")
 
-#: Default cache directory.
-_CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "abi_check" / "snapshots"
-
 #: Maximum number of cached snapshots (LRU eviction by mtime).
 MAX_ENTRIES: int = 100
+
+
+def _get_cache_dir() -> Path:
+    """Return the cache directory, deferring Path.home() to call time."""
+    try:
+        base = Path(os.environ.get("XDG_CACHE_HOME", "")) or Path.home() / ".cache"
+    except RuntimeError:
+        base = Path("/tmp")  # noqa: S108  # fallback for containerized envs
+    return base / "abi_check" / "snapshots"
+
+
+# Module-level reference (can be monkeypatched in tests).
+_CACHE_DIR: Path = _get_cache_dir()
 
 
 def _cache_key(
@@ -48,9 +58,11 @@ def _cache_key(
 ) -> str:
     """Compute a deterministic cache key from all inputs that affect the snapshot."""
     h = hashlib.sha256()
-    # Binary content hash
+    # Binary content hash — chunked to avoid loading huge files into memory
     try:
-        h.update(binary_path.read_bytes())
+        with open(binary_path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
     except OSError:
         return ""  # uncacheable
     # Header mtimes (sorted for determinism)
@@ -81,8 +93,6 @@ def lookup(
     if not key:
         return None
     cache_file = _CACHE_DIR / f"{key}.json"
-    if not cache_file.exists():
-        return None
     try:
         from .serialization import load_snapshot
         snap = load_snapshot(cache_file)
@@ -103,25 +113,41 @@ def store(
     version: str,
     lang: str,
 ) -> None:
-    """Store a snapshot in the cache."""
+    """Store a snapshot in the cache (atomic write via rename)."""
     key = _cache_key(binary_path, headers, includes, version, lang)
     if not key:
         return
     try:
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
         cache_file = _CACHE_DIR / f"{key}.json"
-        from .serialization import save_snapshot
-        save_snapshot(snap, cache_file)
+        from .serialization import snapshot_to_json
+        # Write to temp file then atomic rename to avoid corruption
+        fd, tmp_path = tempfile.mkstemp(dir=_CACHE_DIR, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(snapshot_to_json(snap))
+            os.replace(tmp_path, cache_file)
+        except BaseException:
+            os.unlink(tmp_path)
+            raise
         _logger.debug("Cache store: %s → %s", binary_path.name, key[:12])
         _evict_if_needed()
     except OSError as exc:
         _logger.debug("Cache write failed: %s", exc)
 
 
+def _safe_mtime(p: Path) -> float:
+    """Return file mtime, or 0.0 if stat fails (e.g. concurrent deletion)."""
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _evict_if_needed() -> None:
     """Remove oldest entries if cache exceeds MAX_ENTRIES."""
     try:
-        entries = sorted(_CACHE_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        entries = sorted(_CACHE_DIR.glob("*.json"), key=_safe_mtime)
     except OSError:
         return
     excess = len(entries) - MAX_ENTRIES

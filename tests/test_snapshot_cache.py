@@ -55,6 +55,37 @@ class TestCacheKey:
         key = _cache_key(tmp_path / "nonexistent.so", [], [], "1.0", "c++")
         assert key == ""
 
+    def test_different_lang_different_key(self, tmp_path):
+        binary = tmp_path / "lib.so"
+        binary.write_bytes(b"ELF content")
+        key_cpp = _cache_key(binary, [], [], "1.0", "c++")
+        key_c = _cache_key(binary, [], [], "1.0", "c")
+        assert key_cpp != key_c
+
+    def test_different_includes_different_key(self, tmp_path):
+        binary = tmp_path / "lib.so"
+        binary.write_bytes(b"ELF content")
+        inc1 = tmp_path / "inc1"
+        inc1.mkdir()
+        inc2 = tmp_path / "inc2"
+        inc2.mkdir()
+        key1 = _cache_key(binary, [], [inc1], "1.0", "c++")
+        key2 = _cache_key(binary, [], [inc2], "1.0", "c++")
+        assert key1 != key2
+
+    def test_header_mtime_change_different_key(self, tmp_path):
+        import time
+        binary = tmp_path / "lib.so"
+        binary.write_bytes(b"ELF content")
+        hdr = tmp_path / "foo.h"
+        hdr.write_text("#pragma once\n")
+        key1 = _cache_key(binary, [hdr], [], "1.0", "c++")
+        # Change header mtime
+        import os
+        os.utime(hdr, (time.time() + 10, time.time() + 10))
+        key2 = _cache_key(binary, [hdr], [], "1.0", "c++")
+        assert key1 != key2
+
 
 class TestLookupStore:
     def test_miss_returns_none(self, tmp_path):
@@ -97,6 +128,38 @@ class TestLookupStore:
         binary.write_bytes(b"version 2")
         result = lookup(binary, [], [], "1.0", "c++")
         assert result is None  # cache miss — binary changed
+
+    def test_missing_binary_no_op(self, tmp_path, monkeypatch):
+        """store/lookup with missing binary should be no-ops, not crash."""
+        cache_dir = tmp_path / "cache"
+        import abicheck.snapshot_cache as sc
+        monkeypatch.setattr(sc, "_CACHE_DIR", cache_dir)
+
+        snap = _sample_snap()
+        store(snap, tmp_path / "gone.so", [], [], "1.0", "c++")
+        assert not cache_dir.exists()  # nothing stored
+        result = lookup(tmp_path / "gone.so", [], [], "1.0", "c++")
+        assert result is None
+
+    def test_corrupted_cache_returns_none(self, tmp_path, monkeypatch):
+        """Corrupted JSON in cache should be treated as a miss."""
+        cache_dir = tmp_path / "cache"
+        import abicheck.snapshot_cache as sc
+        monkeypatch.setattr(sc, "_CACHE_DIR", cache_dir)
+
+        binary = tmp_path / "lib.so"
+        binary.write_bytes(b"ELF content")
+
+        # Store valid entry first
+        snap = _sample_snap()
+        store(snap, binary, [], [], "1.0", "c++")
+
+        # Corrupt the cached file
+        for f in cache_dir.glob("*.json"):
+            f.write_text("{ invalid json")
+
+        result = lookup(binary, [], [], "1.0", "c++")
+        assert result is None
 
 
 class TestEviction:

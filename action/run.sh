@@ -41,9 +41,11 @@ MODE="${INPUT_MODE:-compare}"
 ABI_BASELINE="${INPUT_ABI_BASELINE:-}"
 if [[ -n "$ABI_BASELINE" && "$MODE" == "compare" ]]; then
   BASELINE_DIR=$(mktemp -d)
+  # Clean up temp dir on exit (combined with STDERR_FILE cleanup later)
+  _BASELINE_CLEANUP="$BASELINE_DIR"
   if [[ "$ABI_BASELINE" == "latest-release" ]]; then
     echo "::group::Fetch ABI baseline from latest release"
-    if ! gh release download --pattern '*.abicheck.json' -D "$BASELINE_DIR" 2>&1; then
+    if ! gh release download --pattern '*.abicheck.json' -D "$BASELINE_DIR"; then
       echo "::error::No ABI baseline found in latest release. Run 'abicheck dump --output-name auto' in your release workflow and upload the *.abicheck.json file as a release asset."
       exit 1
     fi
@@ -54,7 +56,7 @@ if [[ -n "$ABI_BASELINE" && "$MODE" == "compare" ]]; then
   else
     # Treat as a tag name
     echo "::group::Fetch ABI baseline from release $ABI_BASELINE"
-    if ! gh release download "$ABI_BASELINE" --pattern '*.abicheck.json' -D "$BASELINE_DIR" 2>&1; then
+    if ! gh release download "$ABI_BASELINE" --pattern '*.abicheck.json' -D "$BASELINE_DIR"; then
       echo "::error::No ABI baseline found in release '$ABI_BASELINE'. Ensure the release has a *.abicheck.json asset."
       exit 1
     fi
@@ -318,7 +320,7 @@ echo ""
 ABICHECK_EXIT=0
 ABICHECK_OUTPUT=""
 STDERR_FILE=$(mktemp)
-trap 'rm -f "$STDERR_FILE"' EXIT
+trap 'rm -f "$STDERR_FILE"; rm -rf "${_BASELINE_CLEANUP:-}"' EXIT
 
 if [[ -n "${OUTPUT_FILE:-}" ]]; then
   # Output goes to file; capture stderr separately for error detection

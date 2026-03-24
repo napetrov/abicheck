@@ -35,6 +35,11 @@ class TestRunDiffoscope:
             output = run_diffoscope(Path("old.so"), Path("new.so"))
         assert output is None
 
+    def test_returns_none_on_os_error(self):
+        with mock.patch("subprocess.run", side_effect=OSError("permission denied")):
+            output = run_diffoscope(Path("old.so"), Path("new.so"))
+        assert output is None
+
     def test_custom_timeout(self):
         result = mock.Mock(returncode=0, stdout="", stderr="")
         with mock.patch("subprocess.run", return_value=result) as m:

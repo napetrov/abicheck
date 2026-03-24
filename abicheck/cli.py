@@ -157,12 +157,15 @@ def _resolve_output(
     if output_name == "auto":
         # Derive filename from library name and version
         # Strip .so suffix variants for a clean name
-        import re
         lib = snap.library
         # "libfoo.so.1.2.3" → "libfoo"
         lib_clean = re.sub(r"\.so(\.\d+)*$", "", lib)
         # "libfoo.dll" → "libfoo"
         lib_clean = re.sub(r"\.(dll|dylib)$", "", lib_clean)
+        if not lib_clean or not lib_clean.strip():
+            raise click.ClickException(
+                "Cannot auto-name output: library name is empty in snapshot."
+            )
         ver = snap.version if snap.version != "unknown" else ""
         if ver:
             return Path(f"{lib_clean}-{ver}.abicheck.json")
@@ -217,7 +220,7 @@ def _upload_to_release(snapshot_path: Path, git_tag: str | None) -> None:
     click.echo(f"Uploading {snapshot_path.name} to release {tag}...", err=True)
     try:
         subprocess.run(
-            ["gh", "release", "upload", tag, str(snapshot_path), "--clobber"],
+            ["gh", "release", "upload", "--", tag, str(snapshot_path.resolve()), "--clobber"],
             check=True, timeout=60,
         )
     except FileNotFoundError:
@@ -229,10 +232,10 @@ def _upload_to_release(snapshot_path: Path, git_tag: str | None) -> None:
         raise click.ClickException(
             f"Failed to upload to release {tag}: gh exited with code {exc.returncode}"
         ) from exc
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
         raise click.ClickException(
             f"Upload to release {tag} timed out after 60 seconds."
-        )
+        ) from exc
     click.echo(f"Uploaded {snapshot_path.name} to release {tag}", err=True)
 
 
@@ -1373,22 +1376,29 @@ def compare_cmd(
 
     # Optionally append diffoscope byte-level diff on breaking changes
     if use_diffoscope and result.verdict.value in ("API_BREAK", "BREAKING"):
-        from .diffoscope_bridge import run_diffoscope
-        diff_output = run_diffoscope(old_input, new_input)
-        if diff_output:
-            if fmt == "markdown":
-                text += "\n\n<details>\n<summary>diffoscope byte-level diff</summary>\n\n```\n"
-                text += diff_output
-                text += "\n```\n</details>\n"
-            elif fmt == "json":
-                # Inject into JSON output
-                import json as _json
-                data = _json.loads(text)
-                data["diffoscope_output"] = diff_output
-                text = _json.dumps(data, indent=2)
-            else:
-                text += "\n\n--- diffoscope byte-level diff ---\n"
-                text += diff_output
+        old_is_binary = _detect_binary_format(old_input) is not None
+        new_is_binary = _detect_binary_format(new_input) is not None
+        if old_is_binary and new_is_binary:
+            from .diffoscope_bridge import run_diffoscope
+            diff_output = run_diffoscope(old_input, new_input)
+            if diff_output:
+                if fmt == "markdown":
+                    text += "\n\n<details>\n<summary>diffoscope byte-level diff</summary>\n\n```\n"
+                    text += diff_output
+                    text += "\n```\n</details>\n"
+                elif fmt == "json":
+                    try:
+                        data = json.loads(text)
+                        data["diffoscope_output"] = diff_output
+                        text = json.dumps(data, indent=2)
+                    except json.JSONDecodeError:
+                        text += "\n\n--- diffoscope byte-level diff ---\n"
+                        text += diff_output
+                elif fmt not in ("sarif",):
+                    text += "\n\n--- diffoscope byte-level diff ---\n"
+                    text += diff_output
+        else:
+            click.echo("Warning: --diffoscope skipped (inputs are not both binary files).", err=True)
 
     _write_or_echo(output, text)
 
@@ -1743,6 +1753,8 @@ def _compare_one_library(
     except (click.ClickException, click.UsageError) as exc:
         msg = exc.format_message()
         return {"library": old_path.name, "verdict": "ERROR", "error": msg}
+    except Exception as exc:
+        return {"library": old_path.name, "verdict": "ERROR", "error": str(exc)}
 
     v = result.verdict.value
     entry: dict[str, object] = {

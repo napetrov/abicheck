@@ -74,11 +74,23 @@ _logger = logging.getLogger("abicheck.mcp")
 import os as _os
 import time as _time
 
+
+def _env_int(name: str, default: str) -> int:
+    """Parse an integer environment variable with a clear error on bad input."""
+    raw = _os.environ.get(name, default)
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(
+            f"Environment variable {name}={raw!r} is not a valid integer"
+        ) from None
+
+
 #: Maximum seconds for a single tool invocation (abi_dump / abi_compare).
-MCP_TIMEOUT: int = int(_os.environ.get("ABICHECK_MCP_TIMEOUT", "120"))
+MCP_TIMEOUT: int = _env_int("ABICHECK_MCP_TIMEOUT", "120")
 
 #: Maximum input file size in bytes (default 500 MB).
-MCP_MAX_FILE_SIZE: int = int(_os.environ.get("ABICHECK_MCP_MAX_FILE_SIZE", str(500 * 1024 * 1024)))
+MCP_MAX_FILE_SIZE: int = _env_int("ABICHECK_MCP_MAX_FILE_SIZE", str(500 * 1024 * 1024))
 
 #: Structured JSON log format flag (set via --log-format json).
 _structured_logging: bool = False
@@ -88,8 +100,10 @@ def _check_file_size(path: Path, *, label: str = "input") -> None:
     """Raise ValueError if *path* exceeds MCP_MAX_FILE_SIZE."""
     try:
         size = path.stat().st_size
-    except OSError:
+    except FileNotFoundError:
         return  # let downstream handle missing files
+    except OSError as exc:
+        raise ValueError(f"Cannot check {label} file size: {exc}") from exc
     if size > MCP_MAX_FILE_SIZE:
         raise ValueError(
             f"{label} is {size / (1024 * 1024):.1f} MB, "
@@ -111,7 +125,7 @@ def _audit_log(
         "duration_s": round(duration_s, 3),
         "status": status,
     }
-    if verdict:
+    if verdict is not None:
         record["verdict"] = verdict
     if _structured_logging:
         _logger.info(json.dumps(record))
@@ -121,7 +135,7 @@ def _audit_log(
             parts.append(f"{k}={v}")
         parts.append(f"duration={duration_s:.3f}s")
         parts.append(f"status={status}")
-        if verdict:
+        if verdict is not None:
             parts.append(f"verdict={verdict}")
         _logger.info(" ".join(parts))
 
@@ -837,6 +851,10 @@ def main() -> None:
                         help="Log format: text (default) or json (structured)")
     args = parser.parse_args()
 
+    if args.timeout <= 0:
+        parser.error("--timeout must be a positive integer")
+    if args.max_file_size <= 0:
+        parser.error("--max-file-size must be a positive integer")
     MCP_TIMEOUT = args.timeout
     MCP_MAX_FILE_SIZE = args.max_file_size
     _structured_logging = args.log_format == "json"
