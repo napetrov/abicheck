@@ -4,11 +4,12 @@
    The app reads bits 8-15 and gets a different value. */
 #include "v1.h"
 #include <stdio.h>
+#include <string.h>
 
 int main(void) {
     RegMap r;
     /* Zero-initialize to make corruption visible */
-    *(uint32_t *)&r = 0;
+    memset(&r, 0, sizeof(r));
 
     /* v2 library writes fields using v2 bit positions */
     regmap_init(&r);
@@ -22,7 +23,11 @@ int main(void) {
     printf("mode     = %u (expected 2)\n", mode);
     printf("channel  = %u (expected 5)\n", channel);
     printf("priority = %u (expected 128)\n", pri);
-    printf("raw word = 0x%08X\n", *(uint32_t *)&r);
+
+    /* Show the raw word for debugging */
+    uint32_t raw;
+    memcpy(&raw, &r, sizeof(raw));
+    printf("raw word = 0x%08X\n", raw);
 
     if (pri != 128) {
         printf("CORRUPTION: bitfield layout mismatch — app reads v1 bit "
