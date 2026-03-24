@@ -267,6 +267,12 @@ class AbiSnapshot:
     # Full-stack dependency info (populated by --follow-deps)
     dependency_info: DependencyInfo | None = field(default=None)
 
+    # Provenance metadata (schema v4) — tracks where/when a snapshot was created
+    git_commit: str | None = None   # SHA from git rev-parse HEAD at dump time
+    git_tag: str | None = None      # e.g. "v2.0.0", set via --git-tag or auto-detected
+    created_at: str | None = None   # ISO 8601 timestamp, auto-set at dump time
+    build_id: str | None = None     # opaque CI identifier (run ID, build number, etc.)
+
     # Indexes (built lazily)
     _func_by_mangled: dict[str, Function] | None = field(default=None, repr=False, compare=False)
     _var_by_mangled: dict[str, Variable] | None = field(default=None, repr=False, compare=False)

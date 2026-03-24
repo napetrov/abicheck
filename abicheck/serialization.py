@@ -41,7 +41,8 @@ from .model import (
 # v1: initial format (pre-schema-versioning; snapshots without schema_version are treated as v1)
 # v2: schema_version field added (PR #89)
 # v3: pe/macho metadata fields added (multi-format support)
-SCHEMA_VERSION: int = 3
+# v4: provenance metadata (git_commit, git_tag, created_at, build_id)
+SCHEMA_VERSION: int = 4
 
 
 def _sets_to_lists(obj: Any) -> Any:
@@ -421,6 +422,11 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         platform=d.get("platform"),
         language_profile=d.get("language_profile"),
         dependency_info=dep_info,
+        # Provenance metadata (v4)
+        git_commit=d.get("git_commit"),
+        git_tag=d.get("git_tag"),
+        created_at=d.get("created_at"),
+        build_id=d.get("build_id"),
     )
 
 

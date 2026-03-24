@@ -118,6 +118,123 @@ def _safe_write_output(output: Path, text: str) -> None:
         raise click.ClickException(f"Cannot write to {output}: {exc}") from exc
 
 
+def _stamp_provenance(
+    snap: AbiSnapshot,
+    *,
+    git_tag: str | None,
+    build_id: str | None,
+    no_git: bool,
+) -> None:
+    """Fill provenance metadata on a snapshot (mutates in place)."""
+    import datetime
+    import subprocess
+
+    snap.created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    snap.git_tag = git_tag
+    snap.build_id = build_id
+
+    if not no_git:
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                snap.git_commit = result.stdout.strip()
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass  # git not available or not a repo — leave as None
+
+
+def _resolve_output(
+    output: Path | None,
+    output_name: str | None,
+    snap: AbiSnapshot,
+) -> Path | None:
+    """Resolve the effective output path from --output or --output-name."""
+    if output:
+        return output
+    if output_name == "auto":
+        # Derive filename from library name and version
+        # Strip .so suffix variants for a clean name
+        import re
+        lib = snap.library
+        # "libfoo.so.1.2.3" → "libfoo"
+        lib_clean = re.sub(r"\.so(\.\d+)*$", "", lib)
+        # "libfoo.dll" → "libfoo"
+        lib_clean = re.sub(r"\.(dll|dylib)$", "", lib_clean)
+        ver = snap.version if snap.version != "unknown" else ""
+        if ver:
+            return Path(f"{lib_clean}-{ver}.abicheck.json")
+        return Path(f"{lib_clean}.abicheck.json")
+    return None
+
+
+def _write_snapshot_output(
+    snap: AbiSnapshot,
+    effective_output: Path | None,
+    upload_release: bool,
+) -> None:
+    """Serialize snapshot, write to file/stdout, optionally upload to GitHub Release."""
+    result = snapshot_to_json(snap)
+    if effective_output:
+        _safe_write_output(effective_output, result)
+        click.echo(f"Snapshot written to {effective_output}", err=True)
+    else:
+        if upload_release:
+            raise click.UsageError(
+                "--upload-release requires --output or --output-name auto "
+                "(cannot upload from stdout)."
+            )
+        click.echo(result)
+        return
+
+    if upload_release:
+        _upload_to_release(effective_output, snap.git_tag)
+
+
+def _upload_to_release(snapshot_path: Path, git_tag: str | None) -> None:
+    """Upload a snapshot file to a GitHub Release using the gh CLI."""
+    import subprocess
+
+    # Determine tag: explicit --git-tag or auto-detect from git describe
+    tag = git_tag
+    if not tag:
+        try:
+            result = subprocess.run(
+                ["git", "describe", "--tags", "--exact-match", "HEAD"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                tag = result.stdout.strip()
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    if not tag:
+        raise click.ClickException(
+            "--upload-release: could not determine release tag. "
+            "Use --git-tag to specify it explicitly, or run from a tagged commit."
+        )
+    click.echo(f"Uploading {snapshot_path.name} to release {tag}...", err=True)
+    try:
+        subprocess.run(
+            ["gh", "release", "upload", tag, str(snapshot_path), "--clobber"],
+            check=True, timeout=60,
+        )
+    except FileNotFoundError:
+        raise click.ClickException(
+            "--upload-release requires the GitHub CLI (gh). "
+            "Install it from https://cli.github.com/"
+        )
+    except subprocess.CalledProcessError as exc:
+        raise click.ClickException(
+            f"Failed to upload to release {tag}: gh exited with code {exc.returncode}"
+        ) from exc
+    except subprocess.TimeoutExpired:
+        raise click.ClickException(
+            f"Upload to release {tag} timed out after 60 seconds."
+        )
+    click.echo(f"Uploaded {snapshot_path.name} to release {tag}", err=True)
+
+
 def _sniff_text_format(path: Path) -> str:
     """Read a small header chunk and return 'json', 'perl', or 'unknown'."""
     try:
@@ -437,6 +554,21 @@ def _populate_dependency_info(
               help="Force DWARF debug format (ELF only).")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
+# ── Provenance metadata ──────────────────────────────────────────────────────
+@click.option("--git-tag", "git_tag", default=None,
+              help="Git tag to embed in the snapshot (e.g. v2.0.0).")
+@click.option("--build-id", "build_id", default=None,
+              help="Opaque build identifier (CI run ID, build number, etc.).")
+@click.option("--no-git", "no_git", is_flag=True, default=False,
+              help="Do not auto-detect git commit SHA.")
+# ── Output naming ────────────────────────────────────────────────────────────
+@click.option("--output-name", "output_name", type=click.Choice(["auto"]),
+              default=None,
+              help='Write snapshot to <library>-<version>.abicheck.json '
+                   '(use "auto").')
+@click.option("--upload-release", "upload_release", is_flag=True, default=False,
+              help="Upload the snapshot to a GitHub Release (requires gh CLI and GH_TOKEN). "
+                   "Uses --git-tag or auto-detected tag.")
 def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...],
              version: str, lang: str, output: Path | None,
              gcc_path: str | None, gcc_prefix: str | None, gcc_options: str | None,
@@ -444,7 +576,9 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
              follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
              dwarf_only: bool, show_data_sources: bool,
              debug_format: str | None,
-             verbose: bool) -> None:
+             verbose: bool,
+             git_tag: str | None, build_id: str | None, no_git: bool,
+             output_name: str | None, upload_release: bool) -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
     \b
@@ -455,8 +589,13 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
       abicheck dump libfoo.so.1 --follow-deps -o snap.json
       abicheck dump libfoo.so.1 --dwarf-only -o snap.json
       abicheck dump libfoo.so.1 --show-data-sources
+      abicheck dump libfoo.so.1 -H include/foo.h --version 2.0.0 --output-name auto
     """
     _setup_verbosity(verbose)
+
+    # --output and --output-name are mutually exclusive
+    if output and output_name:
+        raise click.UsageError("--output and --output-name are mutually exclusive.")
 
     # --show-data-sources: diagnostic output and exit
     if show_data_sources:
@@ -477,12 +616,9 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             raise
         except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
             raise click.ClickException(str(exc)) from exc
-        result = snapshot_to_json(snap)
-        if output:
-            _safe_write_output(output, result)
-            click.echo(f"Snapshot written to {output}", err=True)
-        else:
-            click.echo(result)
+        _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
+        effective_output = _resolve_output(output, output_name, snap)
+        _write_snapshot_output(snap, effective_output, upload_release)
         return
 
     compiler = "cc" if lang == "c" else "c++"
@@ -509,12 +645,9 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
     if follow_deps:
         _populate_dependency_info(snap, so_path, list(search_paths), sysroot, ld_library_path)
 
-    result = snapshot_to_json(snap)
-    if output:
-        _safe_write_output(output, result)
-        click.echo(f"Snapshot written to {output}", err=True)
-    else:
-        click.echo(result)
+    _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
+    effective_output = _resolve_output(output, output_name, snap)
+    _write_snapshot_output(snap, effective_output, upload_release)
 
 
 def _print_data_sources(so_path: Path, has_headers: bool) -> None:

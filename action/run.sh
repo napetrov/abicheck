@@ -35,6 +35,41 @@ CMD=(abicheck)
 
 MODE="${INPUT_MODE:-compare}"
 
+# ---------------------------------------------------------------------------
+# Baseline auto-fetch: resolve INPUT_ABI_BASELINE → INPUT_OLD_LIBRARY
+# ---------------------------------------------------------------------------
+ABI_BASELINE="${INPUT_ABI_BASELINE:-}"
+if [[ -n "$ABI_BASELINE" && "$MODE" == "compare" ]]; then
+  BASELINE_DIR=$(mktemp -d)
+  if [[ "$ABI_BASELINE" == "latest-release" ]]; then
+    echo "::group::Fetch ABI baseline from latest release"
+    if ! gh release download --pattern '*.abicheck.json' -D "$BASELINE_DIR" 2>&1; then
+      echo "::error::No ABI baseline found in latest release. Run 'abicheck dump --output-name auto' in your release workflow and upload the *.abicheck.json file as a release asset."
+      exit 1
+    fi
+    echo "::endgroup::"
+  elif [[ -f "$ABI_BASELINE" ]]; then
+    # Direct file path — use as-is
+    cp "$ABI_BASELINE" "$BASELINE_DIR/"
+  else
+    # Treat as a tag name
+    echo "::group::Fetch ABI baseline from release $ABI_BASELINE"
+    if ! gh release download "$ABI_BASELINE" --pattern '*.abicheck.json' -D "$BASELINE_DIR" 2>&1; then
+      echo "::error::No ABI baseline found in release '$ABI_BASELINE'. Ensure the release has a *.abicheck.json asset."
+      exit 1
+    fi
+    echo "::endgroup::"
+  fi
+  # Pick the first .abicheck.json found
+  BASELINE_FILE=$(find "$BASELINE_DIR" -name '*.abicheck.json' | head -1)
+  if [[ -z "$BASELINE_FILE" ]]; then
+    echo "::error::No *.abicheck.json file found after download."
+    exit 1
+  fi
+  echo "Using ABI baseline: $BASELINE_FILE"
+  INPUT_OLD_LIBRARY="$BASELINE_FILE"
+fi
+
 if [[ "$MODE" == "dump" ]]; then
   # ── Dump mode ───────────────────────────────────────────────────────────
   CMD+=(dump)
