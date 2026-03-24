@@ -42,6 +42,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -53,6 +55,12 @@ _DEFAULT_DEBUG_ROOTS = [
     Path("/usr/lib/debug"),
     Path("/usr/lib/debug/usr"),
 ]
+
+# Strict hex pattern for build-id validation
+_BUILD_ID_RE = re.compile(r"^[0-9a-f]+$")
+
+# Maximum size for debuginfod downloads (512 MiB)
+_MAX_DEBUGINFOD_SIZE = 512 * 1024 * 1024
 
 
 @dataclass
@@ -117,6 +125,11 @@ class DebugResolverBackend(Protocol):
         ...
 
 
+def _is_valid_build_id(build_id: str | None) -> bool:
+    """Validate that a build-id is a strict lowercase hex string."""
+    return build_id is not None and bool(_BUILD_ID_RE.fullmatch(build_id))
+
+
 # ---------------------------------------------------------------------------
 # Build-id extraction
 # ---------------------------------------------------------------------------
@@ -147,7 +160,7 @@ def extract_build_id(binary_path: Path) -> str | None:
                         if isinstance(desc, bytes):
                             return desc.hex().lower()
                         return str(desc).lower()
-    except Exception as exc:  # noqa: BLE001
+    except (OSError, ValueError, KeyError) as exc:
         _logger.debug("Failed to extract build-id from %s: %s", binary_path, exc)
 
     return None
@@ -181,7 +194,7 @@ class EmbeddedDwarfResolver:
                         dwarf_path=binary_path,
                         source="embedded DWARF",
                     )
-        except Exception as exc:  # noqa: BLE001
+        except (OSError, ValueError) as exc:
             _logger.debug("Cannot check embedded DWARF in %s: %s", binary_path, exc)
 
         return None
@@ -199,7 +212,8 @@ class SplitDwarfResolver:
         # Check for .dwp (DWARF package) alongside the binary
         dwp_candidates = [
             binary_path.with_suffix(".dwp"),
-            binary_path.parent / (binary_path.stem + ".dwp"),
+            # For multi-extension names like libfoo.so.1 → libfoo.so.1.dwp
+            binary_path.parent / (binary_path.name + ".dwp"),
         ]
         for dwp in dwp_candidates:
             if dwp.exists():
@@ -220,7 +234,7 @@ class SplitDwarfResolver:
             return None
 
         dwo_names: list[str] = []
-        comp_dirs: list[str] = []
+        comp_dirs: set[str] = set()
         try:
             with open(binary_path, "rb") as f:
                 elf = ELFFile(f)  # type: ignore[no-untyped-call]
@@ -236,20 +250,20 @@ class SplitDwarfResolver:
                             if isinstance(val, bytes):
                                 val = val.decode("utf-8", errors="replace")
                             dwo_names.append(val)
-                    # Get comp_dir for path resolution
+                    # Get comp_dir for path resolution (deduplicated)
                     if "DW_AT_comp_dir" in top_die.attributes:
                         val = top_die.attributes["DW_AT_comp_dir"].value
                         if isinstance(val, bytes):
                             val = val.decode("utf-8", errors="replace")
-                        comp_dirs.append(val)
-        except Exception as exc:  # noqa: BLE001
+                        comp_dirs.add(val)
+        except (OSError, ValueError, KeyError) as exc:
             _logger.debug("Cannot check split DWARF in %s: %s", binary_path, exc)
             return None
 
         if not dwo_names:
             return None
 
-        # Try to find a directory containing .dwo files
+        # Try to find a directory containing ALL (or most) .dwo files
         search_dirs = [binary_path.parent]
         for comp_dir in comp_dirs:
             p = Path(comp_dir)
@@ -258,19 +272,27 @@ class SplitDwarfResolver:
         for root in (debug_roots or []):
             search_dirs.append(root)
 
+        total = len(dwo_names)
+        # Require at least half of .dwo files to be present
+        min_required = max(1, total // 2)
         for search_dir in search_dirs:
             found_count = sum(
                 1 for name in dwo_names
                 if (search_dir / name).exists()
             )
-            if found_count > 0:
-                _logger.debug(
-                    "Found %d/%d .dwo files in %s",
-                    found_count, len(dwo_names), search_dir,
-                )
+            if found_count >= min_required:
+                if found_count < total:
+                    _logger.warning(
+                        "Partial split DWARF: found %d/%d .dwo files in %s",
+                        found_count, total, search_dir,
+                    )
+                else:
+                    _logger.debug(
+                        "Found all %d .dwo files in %s", total, search_dir,
+                    )
                 return DebugArtifact(
                     dwo_dir=search_dir,
-                    source=f"split DWARF ({found_count} .dwo files)",
+                    source=f"split DWARF ({found_count}/{total} .dwo files)",
                 )
 
         return None
@@ -285,7 +307,7 @@ class BuildIdTreeResolver:
         build_id: str | None = None,
         debug_roots: list[Path] | None = None,
     ) -> DebugArtifact | None:
-        if not build_id or len(build_id) < 3:
+        if not _is_valid_build_id(build_id) or not build_id or len(build_id) < 3:
             return None
 
         prefix = build_id[:2]
@@ -330,7 +352,7 @@ class PathMirrorResolver:
                     source=f"path mirror ({root})",
                 )
 
-            # Also try without .debug extension replacement
+            # Also try replacing suffix with .debug
             debug_replaced = mirror.with_suffix(".debug")
             if debug_replaced.exists() and debug_replaced != debug_with_ext:
                 _logger.debug("Found debug file via path mirror: %s", debug_replaced)
@@ -358,7 +380,10 @@ class DSYMResolver:
         dwarf_file = self._dsym_dwarf_path(dsym, binary_name)
         if dwarf_file and dwarf_file.exists():
             _logger.debug("Found dSYM bundle: %s", dsym)
-            return DebugArtifact(dsym_path=dsym, source="dSYM bundle (adjacent)")
+            return DebugArtifact(
+                dwarf_path=dwarf_file, dsym_path=dsym,
+                source="dSYM bundle (adjacent)",
+            )
 
         # Strategy 2: Framework bundle
         if ".framework" in str(binary_path):
@@ -369,7 +394,7 @@ class DSYMResolver:
                 if dwarf_file and dwarf_file.exists():
                     _logger.debug("Found dSYM bundle (framework): %s", dsym)
                     return DebugArtifact(
-                        dsym_path=dsym,
+                        dwarf_path=dwarf_file, dsym_path=dsym,
                         source="dSYM bundle (framework)",
                     )
 
@@ -380,7 +405,7 @@ class DSYMResolver:
             if dwarf_file and dwarf_file.exists():
                 _logger.debug("Found dSYM bundle in debug root: %s", dsym)
                 return DebugArtifact(
-                    dsym_path=dsym,
+                    dwarf_path=dwarf_file, dsym_path=dsym,
                     source=f"dSYM bundle ({root})",
                 )
 
@@ -483,6 +508,10 @@ class DebuginfodResolver:
     ) -> DebugArtifact | None:
         if not build_id:
             return None
+        # Validate build-id is strictly hex to prevent URL injection
+        if not _is_valid_build_id(build_id):
+            _logger.warning("Invalid build-id (not hex): %r", build_id)
+            return None
         if not self._urls:
             _logger.debug("No debuginfod URLs configured")
             return None
@@ -515,22 +544,41 @@ class DebuginfodResolver:
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     if resp.status != 200:
                         continue
-                    data = resp.read()
+                    # Read with size limit to prevent memory exhaustion
+                    data = resp.read(_MAX_DEBUGINFOD_SIZE + 1)
+                    if len(data) > _MAX_DEBUGINFOD_SIZE:
+                        _logger.warning(
+                            "Debuginfod response exceeds %d MiB limit, skipping",
+                            _MAX_DEBUGINFOD_SIZE // (1024 * 1024),
+                        )
+                        continue
 
                 # Validate ELF magic
-                if not data[:4] == b"\x7fELF":
+                if len(data) < 16 or data[:4] != b"\x7fELF":
                     _logger.warning("Downloaded file is not valid ELF: %s", fetch_url)
                     continue
 
-                # Cache the downloaded file
+                # Atomic cache write: write to temp file then rename
                 cached.parent.mkdir(parents=True, exist_ok=True)
-                cached.write_bytes(data)
+                fd, tmp_path = tempfile.mkstemp(dir=cached.parent)
+                try:
+                    os.write(fd, data)
+                    os.close(fd)
+                    os.rename(tmp_path, str(cached))
+                except BaseException:
+                    os.close(fd) if not os.get_inheritable(fd) else None  # noqa: B018
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                    raise
+
                 _logger.info("Downloaded and cached debug info: %s", cached)
                 return DebugArtifact(
                     dwarf_path=cached,
                     source=f"debuginfod ({url})",
                 )
-            except Exception as exc:  # noqa: BLE001
+            except (OSError, urllib.error.URLError) as exc:
                 _logger.debug("debuginfod fetch failed from %s: %s", url, exc)
                 continue
 
@@ -566,19 +614,6 @@ def resolve_debug_info(
 
     Tries each resolver in order and returns the first successful match.
     Returns None if no debug info is found (symbols-only mode fallback).
-
-    Args:
-        binary_path: Path to the binary file.
-        debug_roots: Additional directories to search for debug files.
-        build_id: Pre-extracted build-id (hex string). If None, will be
-                  extracted from the binary.
-        enable_debuginfod: If True, include debuginfod in the resolver chain.
-        debuginfod_urls: Override debuginfod server URLs.
-        debuginfod_cache_dir: Override debuginfod cache directory.
-        debuginfod_allow_insecure: Allow HTTP (non-HTTPS) debuginfod URLs.
-
-    Returns:
-        DebugArtifact describing found debug info, or None.
     """
     if build_id is None:
         build_id = extract_build_id(binary_path)

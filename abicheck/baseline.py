@@ -45,19 +45,40 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
+import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
 from . import __version__ as _abicheck_version
+from .errors import ValidationError
 from .model import AbiSnapshot
-from .serialization import load_snapshot, snapshot_to_json
+from .serialization import snapshot_to_json
 
 _logger = logging.getLogger(__name__)
 
 # Current baseline metadata schema version
 _METADATA_SCHEMA_VERSION = 1
+
+# Safe name pattern: alphanumeric, dots, hyphens, underscores, plus signs
+_SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9._\-+]+$")
+
+
+def _validate_key_field(field_name: str, value: str) -> None:
+    """Validate a BaselineKey field against path traversal and injection."""
+    if not value:
+        raise ValidationError(f"BaselineKey {field_name} must not be empty")
+    if ".." in value:
+        raise ValidationError(
+            f"BaselineKey {field_name} must not contain '..': {value!r}"
+        )
+    if not _SAFE_NAME_RE.match(value):
+        raise ValidationError(
+            f"BaselineKey {field_name} contains invalid characters: {value!r} "
+            f"(allowed: alphanumeric, dots, hyphens, underscores, plus signs)"
+        )
 
 
 @dataclass(frozen=True)
@@ -68,6 +89,13 @@ class BaselineKey:
     version: str
     platform: str
     variant: str = ""
+
+    def __post_init__(self) -> None:
+        _validate_key_field("library", self.library)
+        _validate_key_field("version", self.version)
+        _validate_key_field("platform", self.platform)
+        if self.variant:
+            _validate_key_field("variant", self.variant)
 
     @property
     def path(self) -> str:
@@ -86,8 +114,13 @@ class BaselineKey:
         """
         parts = path.strip("/").split("/")
         if len(parts) < 3:
-            raise ValueError(
+            raise ValidationError(
                 f"Invalid baseline path {path!r}: expected "
+                "library/version/platform[/variant]"
+            )
+        if len(parts) > 4:
+            raise ValidationError(
+                f"Too many segments in baseline path {path!r}: expected "
                 "library/version/platform[/variant]"
             )
         return cls(
@@ -106,8 +139,13 @@ class BaselineKey:
         """
         parts = spec.split(":")
         if len(parts) < 3:
-            raise ValueError(
+            raise ValidationError(
                 f"Invalid baseline spec {spec!r}: expected "
+                "library:version:platform[:variant]"
+            )
+        if len(parts) > 4:
+            raise ValidationError(
+                f"Too many segments in baseline spec {spec!r}: expected "
                 "library:version:platform[:variant]"
             )
         return cls(
@@ -121,6 +159,10 @@ class BaselineKey:
         return self.path
 
 
+class BaselineIntegrityError(ValidationError):
+    """Raised when a baseline snapshot fails integrity verification."""
+
+
 @dataclass
 class BaselineMetadata:
     """Provenance and integrity metadata for a baseline (ADR-022)."""
@@ -130,7 +172,7 @@ class BaselineMetadata:
     created_at: str = ""
     build_context_hash: str | None = None
     git_commit: str | None = None
-    checksum: str = ""
+    checksum: str | None = None
     signature: str | None = None
 
     @classmethod
@@ -152,9 +194,17 @@ class BaselineMetadata:
         )
 
     def verify_checksum(self, snapshot_json: str) -> bool:
-        """Verify that the snapshot matches the stored checksum."""
-        if not self.checksum:
+        """Verify that the snapshot matches the stored checksum.
+
+        Returns True if the checksum matches or if no checksum was set
+        (legacy metadata without checksum field). Returns False on mismatch.
+        """
+        if self.checksum is None:
+            # Legacy metadata without checksum — cannot verify
             return True
+        if self.checksum == "":
+            # Empty string is invalid — treat as mismatch (not legacy)
+            return False
         return hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest() == self.checksum
 
     def to_dict(self) -> dict[str, object]:
@@ -162,14 +212,20 @@ class BaselineMetadata:
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> BaselineMetadata:
+        checksum_raw = data.get("checksum")
+        if checksum_raw is None:
+            checksum_val: str | None = None
+        else:
+            checksum_val = str(checksum_raw)
+
         return cls(
-            abicheck_version=str(data.get("abicheck_version", "")),
+            abicheck_version=str(data.get("abicheck_version") or ""),
             schema_version=int(data.get("schema_version", _METADATA_SCHEMA_VERSION)),
-            created_at=str(data.get("created_at", "")),
-            build_context_hash=data.get("build_context_hash"),  # type: ignore[arg-type]
-            git_commit=data.get("git_commit"),  # type: ignore[arg-type]
-            checksum=str(data.get("checksum", "")),
-            signature=data.get("signature"),  # type: ignore[arg-type]
+            created_at=str(data.get("created_at") or ""),
+            build_context_hash=str(data["build_context_hash"]) if data.get("build_context_hash") is not None else None,
+            git_commit=str(data["git_commit"]) if data.get("git_commit") is not None else None,
+            checksum=checksum_val,
+            signature=str(data["signature"]) if data.get("signature") is not None else None,
         )
 
 
@@ -231,7 +287,13 @@ class FilesystemRegistry:
         parts = [key.library, key.version, key.platform]
         if key.variant:
             parts.append(key.variant)
-        return self._root / Path(*parts)
+        result = self._root / Path(*parts)
+        # Defense-in-depth: verify resolved path is under root
+        resolved = result.resolve()
+        root_resolved = self._root.resolve()
+        if not str(resolved).startswith(str(root_resolved)):
+            raise ValidationError(f"Key path escapes registry root: {key.path}")
+        return result
 
     def push(
         self,
@@ -239,7 +301,7 @@ class FilesystemRegistry:
         snapshot: AbiSnapshot,
         metadata: BaselineMetadata | None = None,
     ) -> str:
-        """Store a baseline snapshot to the filesystem."""
+        """Store a baseline snapshot to the filesystem (atomic writes)."""
         key_dir = self._key_dir(key)
         key_dir.mkdir(parents=True, exist_ok=True)
 
@@ -251,18 +313,19 @@ class FilesystemRegistry:
         snap_path = key_dir / "snapshot.json"
         meta_path = key_dir / "metadata.json"
 
-        snap_path.write_text(snap_json, encoding="utf-8")
-        meta_path.write_text(
-            json.dumps(metadata.to_dict(), indent=2),
-            encoding="utf-8",
-        )
+        # Atomic write: temp file then rename
+        _atomic_write(snap_path, snap_json)
+        _atomic_write(meta_path, json.dumps(metadata.to_dict(), indent=2))
 
         ref = f"fs://{key.path}"
         _logger.info("Baseline pushed: %s → %s", ref, key_dir)
         return ref
 
     def pull(self, key: BaselineKey) -> tuple[AbiSnapshot, BaselineMetadata] | None:
-        """Retrieve a baseline snapshot from the filesystem."""
+        """Retrieve a baseline snapshot from the filesystem.
+
+        Raises BaselineIntegrityError if the checksum does not match.
+        """
         key_dir = self._key_dir(key)
         snap_path = key_dir / "snapshot.json"
         meta_path = key_dir / "metadata.json"
@@ -277,19 +340,19 @@ class FilesystemRegistry:
             try:
                 meta_raw = json.loads(meta_path.read_text(encoding="utf-8"))
                 meta = BaselineMetadata.from_dict(meta_raw)
-            except (json.JSONDecodeError, KeyError) as exc:
+            except (json.JSONDecodeError, KeyError, TypeError) as exc:
                 _logger.warning("Invalid metadata for %s: %s", key.path, exc)
 
-        # Load and verify snapshot
+        # Read snapshot once, verify checksum, then deserialize
         snap_json = snap_path.read_text(encoding="utf-8")
         if not meta.verify_checksum(snap_json):
-            _logger.warning(
-                "Checksum mismatch for baseline %s — snapshot may have been "
-                "modified since it was pushed",
-                key.path,
+            raise BaselineIntegrityError(
+                f"Checksum mismatch for baseline {key.path} — "
+                "the snapshot may have been modified since it was pushed. "
+                "Re-push the baseline to update the checksum."
             )
 
-        snapshot = load_snapshot(snap_path)
+        snapshot = _load_snapshot_from_string(snap_json)
         _logger.info("Baseline pulled: %s", key.path)
         return snapshot, meta
 
@@ -341,16 +404,48 @@ class FilesystemRegistry:
         import shutil
         shutil.rmtree(key_dir)
 
-        # Clean up empty parent directories
-        for parent in [key_dir.parent, key_dir.parent.parent]:
+        # Walk up and remove empty parent directories up to (not including) root
+        parent = key_dir.parent
+        root_resolved = self._root.resolve()
+        while parent.resolve() != root_resolved:
             try:
-                if parent.exists() and parent != self._root and not any(parent.iterdir()):
+                if parent.exists() and not any(parent.iterdir()):
                     parent.rmdir()
+                else:
+                    break
             except OSError:
-                pass
+                break
+            parent = parent.parent
 
         _logger.info("Baseline deleted: %s", key.path)
         return True
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write content to a file atomically (write to temp, then rename)."""
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        Path(tmp_path).rename(path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _load_snapshot_from_string(snap_json: str) -> AbiSnapshot:
+    """Deserialize a snapshot from a JSON string (avoids re-reading from disk)."""
+    from .serialization import snapshot_from_dict
+
+    data = json.loads(snap_json)
+    return snapshot_from_dict(data)
+
+
+# We need os for _atomic_write
+import os  # noqa: E402
 
 
 def detect_platform_from_binary(binary_path: Path) -> str:
@@ -404,6 +499,17 @@ def detect_platform_from_binary(binary_path: Path) -> str:
         return f"windows-{arch}"
 
     if fmt == "macho":
+        try:
+            from macholib.MachO import MachO
+            m = MachO(str(binary_path))
+            for header in m.headers:
+                cpu = header.header.cputype
+                cpu_map = {1: "x86", 7: "x86", 12: "arm", 16777228: "aarch64",
+                           16777223: "x86_64"}
+                arch = cpu_map.get(cpu, str(cpu))
+                break
+        except Exception:  # noqa: BLE001
+            pass
         return f"macos-{arch}"
 
     return f"unknown-{arch}"

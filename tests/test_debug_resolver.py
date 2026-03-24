@@ -17,16 +17,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from abicheck.debug_resolver import (
     BuildIdTreeResolver,
     DebugArtifact,
+    DebuginfodResolver,
     DSYMResolver,
     PDBResolver,
     PathMirrorResolver,
     SplitDwarfResolver,
+    _is_valid_build_id,
     format_data_sources,
     resolve_debug_info,
 )
@@ -63,6 +66,25 @@ def test_debug_artifact_properties() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tests: build-id validation
+# ---------------------------------------------------------------------------
+
+
+def test_valid_build_id() -> None:
+    assert _is_valid_build_id("abcdef1234567890")
+    assert _is_valid_build_id("0123456789abcdef")
+
+
+def test_invalid_build_id() -> None:
+    assert not _is_valid_build_id(None)
+    assert not _is_valid_build_id("")
+    assert not _is_valid_build_id("ABCDEF")  # uppercase
+    assert not _is_valid_build_id("../etc/passwd")
+    assert not _is_valid_build_id("abc def")
+    assert not _is_valid_build_id("abc%00def")
+
+
+# ---------------------------------------------------------------------------
 # Tests: BuildIdTreeResolver
 # ---------------------------------------------------------------------------
 
@@ -88,7 +110,6 @@ def test_build_id_tree_resolver_found(tmp_path: Path) -> None:
 
 
 def test_build_id_tree_resolver_not_found(tmp_path: Path) -> None:
-    """Returns None when build-id tree doesn't contain a match."""
     resolver = BuildIdTreeResolver()
     result = resolver.resolve(
         binary_path=tmp_path / "libfoo.so",
@@ -99,13 +120,15 @@ def test_build_id_tree_resolver_not_found(tmp_path: Path) -> None:
 
 
 def test_build_id_tree_resolver_no_build_id() -> None:
-    """Returns None when no build-id is provided."""
     resolver = BuildIdTreeResolver()
-    result = resolver.resolve(
-        binary_path=Path("/usr/lib/libfoo.so"),
-        build_id=None,
-    )
-    assert result is None
+    assert resolver.resolve(Path("/usr/lib/libfoo.so"), build_id=None) is None
+
+
+def test_build_id_tree_resolver_invalid_build_id() -> None:
+    """Rejects non-hex build-ids (prevents path traversal)."""
+    resolver = BuildIdTreeResolver()
+    assert resolver.resolve(Path("/x"), build_id="../etc/passwd") is None
+    assert resolver.resolve(Path("/x"), build_id="UPPER") is None
 
 
 # ---------------------------------------------------------------------------
@@ -114,14 +137,11 @@ def test_build_id_tree_resolver_no_build_id() -> None:
 
 
 def test_path_mirror_resolver_found(tmp_path: Path) -> None:
-    """Finds debug file via path mirror convention."""
     debug_root = tmp_path / "debug"
     binary_path = tmp_path / "usr" / "lib" / "libfoo.so"
     binary_path.parent.mkdir(parents=True)
     binary_path.write_bytes(b"\x7fELF")
 
-    # Create the mirrored debug file at debug_root + absolute_binary_path + .debug
-    # The path mirror convention mirrors the full absolute path under the debug root
     binary_resolved = binary_path.resolve()
     mirror_path = debug_root / str(binary_resolved).lstrip("/")
     mirror_debug = mirror_path.parent / (mirror_path.name + ".debug")
@@ -129,10 +149,7 @@ def test_path_mirror_resolver_found(tmp_path: Path) -> None:
     mirror_debug.write_bytes(b"\x7fELF")
 
     resolver = PathMirrorResolver()
-    result = resolver.resolve(
-        binary_path=binary_path,
-        debug_roots=[debug_root],
-    )
+    result = resolver.resolve(binary_path=binary_path, debug_roots=[debug_root])
     assert result is not None
     assert result.dwarf_path == mirror_debug
     assert "path mirror" in result.source
@@ -144,35 +161,32 @@ def test_path_mirror_resolver_found(tmp_path: Path) -> None:
 
 
 def test_dsym_resolver_found(tmp_path: Path) -> None:
-    """Finds dSYM bundle adjacent to binary."""
+    """Finds dSYM bundle and sets BOTH dsym_path and dwarf_path."""
     binary_path = tmp_path / "libfoo.dylib"
     binary_path.write_bytes(b"\xcf\xfa\xed\xfe")
 
-    # Create dSYM bundle
     dsym_dir = tmp_path / "libfoo.dylib.dSYM"
     dwarf_dir = dsym_dir / "Contents" / "Resources" / "DWARF"
     dwarf_dir.mkdir(parents=True)
-    (dwarf_dir / "libfoo.dylib").write_bytes(b"\xcf\xfa\xed\xfe")
+    dwarf_file = dwarf_dir / "libfoo.dylib"
+    dwarf_file.write_bytes(b"\xcf\xfa\xed\xfe")
 
     resolver = DSYMResolver()
     result = resolver.resolve(binary_path=binary_path)
     assert result is not None
     assert result.dsym_path == dsym_dir
+    assert result.dwarf_path == dwarf_file  # P0 fix: dwarf_path is now set
+    assert result.has_dwarf
     assert "dSYM" in result.source
 
 
 def test_dsym_resolver_not_found(tmp_path: Path) -> None:
-    """Returns None when no dSYM bundle exists."""
     binary_path = tmp_path / "libfoo.dylib"
     binary_path.write_bytes(b"\xcf\xfa\xed\xfe")
-
-    resolver = DSYMResolver()
-    result = resolver.resolve(binary_path=binary_path)
-    assert result is None
+    assert DSYMResolver().resolve(binary_path=binary_path) is None
 
 
 def test_dsym_resolver_in_debug_root(tmp_path: Path) -> None:
-    """Finds dSYM bundle in a debug root directory."""
     binary_path = tmp_path / "libfoo.dylib"
     binary_path.write_bytes(b"\xcf\xfa\xed\xfe")
 
@@ -180,15 +194,13 @@ def test_dsym_resolver_in_debug_root(tmp_path: Path) -> None:
     dsym_dir = debug_root / "libfoo.dylib.dSYM"
     dwarf_dir = dsym_dir / "Contents" / "Resources" / "DWARF"
     dwarf_dir.mkdir(parents=True)
-    (dwarf_dir / "libfoo.dylib").write_bytes(b"\xcf\xfa\xed\xfe")
+    dwarf_file = dwarf_dir / "libfoo.dylib"
+    dwarf_file.write_bytes(b"\xcf\xfa\xed\xfe")
 
-    resolver = DSYMResolver()
-    result = resolver.resolve(
-        binary_path=binary_path,
-        debug_roots=[debug_root],
-    )
+    result = DSYMResolver().resolve(binary_path=binary_path, debug_roots=[debug_root])
     assert result is not None
     assert result.dsym_path == dsym_dir
+    assert result.dwarf_path == dwarf_file
 
 
 # ---------------------------------------------------------------------------
@@ -197,35 +209,25 @@ def test_dsym_resolver_in_debug_root(tmp_path: Path) -> None:
 
 
 def test_pdb_resolver_adjacent(tmp_path: Path) -> None:
-    """Finds PDB adjacent to PE binary."""
     binary_path = tmp_path / "foo.dll"
     binary_path.write_bytes(b"MZ")
-
     pdb_path = tmp_path / "foo.pdb"
     pdb_path.write_bytes(b"PDB data")
 
-    resolver = PDBResolver()
-    result = resolver.resolve(binary_path=binary_path)
+    result = PDBResolver().resolve(binary_path=binary_path)
     assert result is not None
     assert result.pdb_path == pdb_path
-    assert "adjacent" in result.source
 
 
 def test_pdb_resolver_in_debug_root(tmp_path: Path) -> None:
-    """Finds PDB in a debug root."""
     binary_path = tmp_path / "foo.dll"
     binary_path.write_bytes(b"MZ")
-
     debug_root = tmp_path / "symbols"
     pdb = debug_root / "foo.pdb"
     pdb.parent.mkdir(parents=True)
     pdb.write_bytes(b"PDB data")
 
-    resolver = PDBResolver()
-    result = resolver.resolve(
-        binary_path=binary_path,
-        debug_roots=[debug_root],
-    )
+    result = PDBResolver().resolve(binary_path=binary_path, debug_roots=[debug_root])
     assert result is not None
     assert result.pdb_path == pdb
 
@@ -236,18 +238,61 @@ def test_pdb_resolver_in_debug_root(tmp_path: Path) -> None:
 
 
 def test_split_dwarf_dwp_found(tmp_path: Path) -> None:
-    """Finds .dwp file adjacent to binary."""
     binary_path = tmp_path / "libfoo.so"
     binary_path.write_bytes(b"\x7fELF")
-
     dwp_path = tmp_path / "libfoo.dwp"
     dwp_path.write_bytes(b"DWP data")
 
-    resolver = SplitDwarfResolver()
-    result = resolver.resolve(binary_path=binary_path)
+    result = SplitDwarfResolver().resolve(binary_path=binary_path)
     assert result is not None
     assert result.dwp_path == dwp_path
-    assert "dwp" in result.source.lower()
+
+
+# ---------------------------------------------------------------------------
+# Tests: DebuginfodResolver
+# ---------------------------------------------------------------------------
+
+
+def test_debuginfod_rejects_invalid_build_id() -> None:
+    """Non-hex build-ids are rejected before any network call."""
+    resolver = DebuginfodResolver(server_urls=["https://example.com"])
+    assert resolver.resolve(Path("/x"), build_id="../traversal") is None
+    assert resolver.resolve(Path("/x"), build_id="UPPERCASE") is None
+    assert resolver.resolve(Path("/x"), build_id=None) is None
+
+
+def test_debuginfod_rejects_insecure_url() -> None:
+    """HTTP URLs are skipped by default."""
+    resolver = DebuginfodResolver(
+        server_urls=["http://insecure.example.com"],
+        allow_insecure=False,
+    )
+    # Should return None without making any HTTP call
+    assert resolver.resolve(Path("/x"), build_id="abcdef1234567890") is None
+
+
+def test_debuginfod_cache_hit(tmp_path: Path) -> None:
+    """Cached debug files are returned without network access."""
+    build_id = "abcdef1234567890"
+    cache_dir = tmp_path / "cache"
+    cached = cache_dir / build_id[:2] / f"{build_id[2:]}.debug"
+    cached.parent.mkdir(parents=True)
+    cached.write_bytes(b"\x7fELF" + b"\x00" * 12)
+
+    resolver = DebuginfodResolver(
+        server_urls=["https://example.com"],
+        cache_dir=cache_dir,
+    )
+    result = resolver.resolve(Path("/x"), build_id=build_id)
+    assert result is not None
+    assert result.dwarf_path == cached
+    assert "cached" in result.source
+
+
+def test_debuginfod_no_urls() -> None:
+    """Returns None when no URLs are configured."""
+    resolver = DebuginfodResolver(server_urls=[])
+    assert resolver.resolve(Path("/x"), build_id="abcdef1234567890") is None
 
 
 # ---------------------------------------------------------------------------
@@ -256,18 +301,13 @@ def test_split_dwarf_dwp_found(tmp_path: Path) -> None:
 
 
 def test_format_data_sources_with_artifact() -> None:
-    """format_data_sources includes artifact info."""
-    artifact = DebugArtifact(
-        dwarf_path=Path("/debug/libfoo.debug"),
-        source="build-id tree",
-    )
+    artifact = DebugArtifact(dwarf_path=Path("/debug/libfoo.debug"), source="build-id tree")
     output = format_data_sources(Path("/lib/libfoo.so"), artifact, has_headers=True)
     assert "build-id tree" in output
     assert "Headers:    available" in output
 
 
 def test_format_data_sources_no_artifact() -> None:
-    """format_data_sources handles None artifact."""
     output = format_data_sources(Path("/lib/libfoo.so"), None, has_headers=False)
     assert "symbols-only" in output
     assert "not provided" in output

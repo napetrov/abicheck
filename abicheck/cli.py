@@ -662,18 +662,25 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
         return
 
     # Load build context from compile_commands.json if provided (ADR-020)
-    build_context_flags: str | None = None
+    build_context_flags: list[str] = []
     if effective_compile_db:
         try:
-            from .build_context import build_context_union_fallback, load_compile_db
+            from .build_context import build_context_for_header, load_compile_db
             db_entries = load_compile_db(effective_compile_db)
-            ctx = build_context_union_fallback(db_entries, source_filter=compile_db_filter)
-            castxml_flags = ctx.to_castxml_flags()
-            if castxml_flags:
-                build_context_flags = " ".join(castxml_flags)
+            # Use per-header matching when headers are available, else union fallback
+            resolved_hdrs = _expand_header_inputs(list(headers)) if headers else []
+            if resolved_hdrs:
+                ctx = build_context_for_header(
+                    db_entries, resolved_hdrs[0], source_filter=compile_db_filter,
+                )
+            else:
+                from .build_context import build_context_union_fallback
+                ctx = build_context_union_fallback(db_entries, source_filter=compile_db_filter)
+            build_context_flags = ctx.to_castxml_flags()
+            if build_context_flags:
                 click.echo(
                     f"Build context: {len(db_entries)} entries from "
-                    f"{effective_compile_db}, {len(castxml_flags)} flags derived",
+                    f"{effective_compile_db}, {len(build_context_flags)} flags derived",
                     err=True,
                 )
                 if ctx.has_conflicts:
@@ -682,16 +689,30 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
                         "using first-match values. See --verbose for details.",
                         err=True,
                     )
-        except (FileNotFoundError, ValueError) as exc:
+        except (AbicheckError, OSError) as exc:
             raise click.ClickException(str(exc)) from exc
 
-    # Merge build context flags with explicit --gcc-options (explicit takes precedence)
+    # Merge build context flags with explicit --gcc-options (explicit wins — later flags override)
     effective_gcc_options = gcc_options
     if build_context_flags:
+        # Pass as a single string; later flags override earlier ones in GCC/CastXML
+        merged = " ".join(build_context_flags)
         if gcc_options:
-            effective_gcc_options = f"{build_context_flags} {gcc_options}"
+            effective_gcc_options = f"{merged} {gcc_options}"
         else:
-            effective_gcc_options = build_context_flags
+            effective_gcc_options = merged
+
+    # Debug artifact resolution (ADR-021): resolve before dump
+    if debug_roots or debuginfod:
+        from .debug_resolver import resolve_debug_info
+        artifact = resolve_debug_info(
+            so_path,
+            debug_roots=list(debug_roots) or None,
+            enable_debuginfod=debuginfod,
+            debuginfod_urls=[debuginfod_url] if debuginfod_url else None,
+        )
+        if artifact:
+            click.echo(f"Debug info: {artifact.source}", err=True)
 
     compiler = "cc" if lang == "c" else "c++"
     resolved_headers = _expand_header_inputs(list(headers)) if headers else []
@@ -1293,6 +1314,8 @@ def _exit_with_severity_or_verdict(
               help="Debug root for new side only (overrides --debug-root for new).")
 @click.option("--debuginfod", is_flag=True, default=False,
               help="Enable debuginfod network resolution for debug info (opt-in).")
+@click.option("--debuginfod-url", "debuginfod_url", default=None,
+              help="debuginfod server URL (overrides DEBUGINFOD_URLS env var).")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 @click.option("--diffoscope", "use_diffoscope", is_flag=True, default=False,
@@ -1325,6 +1348,7 @@ def compare_cmd(
     debug_roots_old: tuple[Path, ...],
     debug_roots_new: tuple[Path, ...],
     debuginfod: bool,
+    debuginfod_url: str | None,
     verbose: bool,
     use_diffoscope: bool,
 ) -> None:
@@ -1401,6 +1425,30 @@ def compare_cmd(
 
     resolved_old_pdb = old_pdb_path if old_pdb_path else pdb_path
     resolved_new_pdb = new_pdb_path if new_pdb_path else pdb_path
+
+    # Resolve per-side debug roots: --debug-root1 overrides --debug-root for old, etc.
+    resolved_old_debug = list(debug_roots_old) if debug_roots_old else list(debug_roots)
+    resolved_new_debug = list(debug_roots_new) if debug_roots_new else list(debug_roots)
+
+    # Log debug resolution if roots are specified
+    if resolved_old_debug or resolved_new_debug or debuginfod:
+        from .debug_resolver import resolve_debug_info
+        for label, binary, droots in [
+            ("old", old_input, resolved_old_debug),
+            ("new", new_input, resolved_new_debug),
+        ]:
+            if _detect_binary_format(binary) is not None and (droots or debuginfod):
+                artifact = resolve_debug_info(
+                    binary,
+                    debug_roots=droots or None,
+                    enable_debuginfod=debuginfod,
+                    debuginfod_urls=[debuginfod_url] if debuginfod_url else None,
+                )
+                if artifact:
+                    click.echo(
+                        f"Debug info ({label}): {artifact.source}",
+                        err=True,
+                    )
 
     old = _resolve_input(
         old_input, old_h, old_inc, old_version, lang,
@@ -2747,7 +2795,17 @@ def baseline_push(
     snap_json = snapshot_path.read_text(encoding="utf-8")
     meta = BaselineMetadata.create(snap_json, git_commit=git_commit)
 
-    key = BaselineKey(library=library, version=version, platform=platform, variant=variant)
+    effective_platform = platform
+    if auto_platform and not platform:
+        raise click.UsageError(
+            "--auto-platform requires a binary path to detect from. "
+            "Use --platform to specify the platform explicitly."
+        )
+
+    try:
+        key = BaselineKey(library=library, version=version, platform=effective_platform, variant=variant)
+    except (ValueError, AbicheckError) as exc:
+        raise click.ClickException(str(exc)) from exc
     ref = registry.push(key, snapshot, meta)
     click.echo(f"Baseline pushed: {ref}", err=True)
 

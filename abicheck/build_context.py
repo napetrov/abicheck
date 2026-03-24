@@ -32,11 +32,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shlex
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
+
+from .errors import ValidationError
 
 _logger = logging.getLogger(__name__)
 
@@ -84,9 +87,9 @@ class CompileEntry:
             if isinstance(args_raw, list):
                 arguments = [str(a) for a in args_raw]
             else:
-                arguments = shlex.split(str(args_raw))
+                arguments = shlex.split(str(args_raw), posix=os.name != "nt")
         elif "command" in raw:
-            arguments = shlex.split(str(raw["command"]))
+            arguments = shlex.split(str(raw["command"]), posix=os.name != "nt")
         else:
             arguments = []
 
@@ -174,17 +177,21 @@ def load_compile_db(path: Path) -> list[CompileEntry]:
         path = path / "compile_commands.json"
 
     if not path.exists():
-        raise FileNotFoundError(f"Compilation database not found: {path}")
+        raise ValidationError(
+            f"Compilation database not found: {path}. "
+            "Ensure -p points to a directory containing compile_commands.json "
+            "or to the file itself."
+        )
 
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise ValueError(
+        raise ValidationError(
             f"Invalid JSON in compilation database {path}: {exc}"
         ) from exc
 
     if not isinstance(raw, list):
-        raise ValueError(
+        raise ValidationError(
             f"compile_commands.json must be a JSON array, got {type(raw).__name__}"
         )
 
@@ -196,7 +203,7 @@ def load_compile_db(path: Path) -> list[CompileEntry]:
             continue
         try:
             entries.append(CompileEntry.from_dict(item, db_dir))
-        except Exception as exc:  # noqa: BLE001
+        except (KeyError, TypeError, ValueError, OSError) as exc:
             _logger.warning("Skipping malformed entry at index %d: %s", i, exc)
 
     _logger.info("Loaded %d compile entries from %s", len(entries), path)
@@ -327,8 +334,8 @@ def _header_included_by_tu(
     """Check if a TU's source file likely includes the given header.
 
     Uses a lightweight scan of the source file for #include directives
-    that match the header filename.  This is approximate — a full
-    preprocessor run would be needed for 100% accuracy.
+    that match the header path suffix (not just filename) to reduce
+    false positives from unrelated headers with the same name.
     """
     try:
         source_content = entry.file.read_text(encoding="utf-8", errors="replace")
@@ -336,11 +343,24 @@ def _header_included_by_tu(
         return False
 
     header_name = header_path.name
-    # Match #include "..." or #include <...> containing the header filename
+    # First pass: quick check for the filename in any #include
+    if header_name not in source_content:
+        return False
+    # Match #include "..." or #include <...> containing the header filename.
+    # We check the matched path suffix against the actual header path to
+    # reduce false positives from unrelated headers with the same name.
     pattern = re.compile(
         rf'#\s*include\s*[<"]([^>"]*{re.escape(header_name)})[>"]'
     )
-    return bool(pattern.search(source_content))
+    for m in pattern.finditer(source_content):
+        include_arg = m.group(1)
+        # Check if the include argument is a suffix of the header path
+        if str(header_path).endswith(include_arg):
+            return True
+        # Also accept bare filename match as fallback
+        if include_arg == header_name:
+            return True
+    return False
 
 
 def build_context_for_header(
@@ -397,10 +417,7 @@ def build_context_for_header(
             )
         entry = matching_entries[0]
         ctx = _extract_flags(entry.arguments, entry.directory)
-        ctx.compile_db_path = (
-            entries[0].directory / "compile_commands.json"
-            if entries else None
-        )
+        ctx.compile_db_path = entry.directory / "compile_commands.json"
         return ctx
 
     # Phase 2: Union fallback
@@ -409,6 +426,31 @@ def build_context_for_header(
         header_path.name,
     )
     return build_context_union_fallback(filtered)
+
+
+def _std_sort_key(std: str) -> tuple[int, int]:
+    """Numeric sort key for C/C++ standard strings.
+
+    Maps standard names to (language, version) tuples for correct ordering.
+    Handles draft names like c++2a, c++2b, c++2c (→ 20, 23, 26).
+    """
+    # Extract the numeric/draft suffix after the last occurrence of c/c++/gnu/gnu++
+    m = re.search(r"(\d+[a-z]?)$", std)
+    if not m:
+        return (0, 0)
+    suffix = m.group(1)
+    is_cpp = "c++" in std or "gnu++" in std
+
+    # Map draft names to release numbers
+    draft_map = {"2a": 20, "2b": 23, "2c": 26}
+    if suffix in draft_map:
+        version = draft_map[suffix]
+    elif suffix.isdigit():
+        version = int(suffix)
+    else:
+        version = 0
+
+    return (1 if is_cpp else 0, version)
 
 
 def build_context_union_fallback(
@@ -501,13 +543,12 @@ def build_context_union_fallback(
 
     lang_std: str | None = None
     if standards:
-        # Sort by standard level: c++20 > c++17 > c++14 > c++11 > c11 > ...
         cpp_stds = [s for s in standards if "c++" in s or "gnu++" in s]
         c_stds = [s for s in standards if s not in cpp_stds]
         if cpp_stds:
-            lang_std = sorted(cpp_stds)[-1]  # highest C++
+            lang_std = max(cpp_stds, key=_std_sort_key)
         elif c_stds:
-            lang_std = sorted(c_stds)[-1]
+            lang_std = max(c_stds, key=_std_sort_key)
 
     # Target and sysroot: must be consistent
     targets = {ctx.target_triple for ctx in contexts if ctx.target_triple}

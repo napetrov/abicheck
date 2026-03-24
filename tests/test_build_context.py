@@ -94,24 +94,27 @@ def test_load_compile_db_from_file(compile_db_dir: Path) -> None:
 
 
 def test_load_compile_db_missing(tmp_path: Path) -> None:
-    """Missing file raises FileNotFoundError."""
-    with pytest.raises(FileNotFoundError):
+    """Missing file raises ValidationError."""
+    from abicheck.errors import ValidationError
+    with pytest.raises(ValidationError, match="not found"):
         load_compile_db(tmp_path / "nonexistent")
 
 
 def test_load_compile_db_invalid_json(tmp_path: Path) -> None:
-    """Invalid JSON raises ValueError."""
+    """Invalid JSON raises ValidationError."""
+    from abicheck.errors import ValidationError
     bad = tmp_path / "compile_commands.json"
     bad.write_text("not json")
-    with pytest.raises(ValueError, match="Invalid JSON"):
+    with pytest.raises(ValidationError, match="Invalid JSON"):
         load_compile_db(bad)
 
 
 def test_load_compile_db_not_array(tmp_path: Path) -> None:
-    """Non-array JSON raises ValueError."""
+    """Non-array JSON raises ValidationError."""
+    from abicheck.errors import ValidationError
     bad = tmp_path / "compile_commands.json"
     bad.write_text('{"key": "value"}')
-    with pytest.raises(ValueError, match="JSON array"):
+    with pytest.raises(ValidationError, match="JSON array"):
         load_compile_db(bad)
 
 
