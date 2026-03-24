@@ -1,0 +1,152 @@
+# CLAUDE.md — Instructions for AI agents working on abicheck
+
+## What is abicheck?
+
+ABI compatibility checker for C/C++ shared libraries. Pure Python (3.10+).
+Detects 114+ ABI/API breaking changes across ELF, PE/COFF, and Mach-O binaries.
+Drop-in replacement for abi-compliance-checker (ABICC).
+
+## Quick reference
+
+```bash
+# Install in dev mode (do this first if pytest/ruff/mypy are missing)
+pip install -e ".[dev]"
+
+# Run fast unit tests (THE go-to command — ~43s, ~5400 tests)
+pytest tests/ -m "not integration and not libabigail and not abicc and not slow and not golden" -q
+
+# Lint (must pass, CI enforces)
+ruff check abicheck/ tests/
+
+# Type check (must pass, CI enforces)
+mypy abicheck/
+
+# Format check
+ruff format --check abicheck/ tests/
+```
+
+## Test markers — know which tests you can run
+
+| Marker | What it needs | When to use |
+|--------|--------------|-------------|
+| *(default)* | Python only | Always run these — fast, no external deps |
+| `integration` | castxml + gcc/g++ | Only if modifying DWARF/ELF parsing |
+| `libabigail` | abidiff + gcc/g++ | Only for parity testing |
+| `abicc` | abi-compliance-checker + gcc/g++ | Only for parity testing |
+| `slow` | varies | Hypothesis/perf benchmarks, skip in normal dev |
+| `golden` | golden files | Snapshot tests, skip unless changing output format |
+
+**Default fast command excludes all external-tool markers.** Use it.
+
+## Architecture — module map
+
+Entry points:
+- `abicheck/cli.py` — Click CLI (large file, ~2600 lines; be careful with edits)
+- `abicheck/compat/cli.py` — ABICC-compatible CLI wrapper
+- `abicheck/mcp_server.py` — MCP server for AI agent integration
+- `abicheck/__main__.py` — `python -m abicheck` entry
+
+Core pipeline (in order of data flow):
+1. **Parsing** — extract metadata from binaries
+   - `elf_metadata.py`, `pe_metadata.py`, `macho_metadata.py` — platform-specific
+   - `dwarf_metadata.py`, `dwarf_advanced.py`, `dwarf_unified.py` — DWARF debug info
+   - `pdb_parser.py`, `pdb_metadata.py`, `pdb_utils.py` — Windows PDB
+   - `btf_metadata.py`, `ctf_metadata.py` — Linux kernel debug formats
+   - `sycl_metadata.py` — SYCL plugin interface
+2. **Snapshot** — `dumper.py` creates `AbiSnapshot` (model in `model.py`)
+   - `dwarf_snapshot.py` — DWARF-specific snapshot logic
+   - `snapshot_cache.py` — caching layer
+3. **Diffing** — compare two snapshots
+   - `diff_symbols.py` — function/variable/parameter changes
+   - `diff_types.py` — struct/enum/union/typedef changes
+   - `diff_platform.py` — ELF/PE/Mach-O specific changes
+   - `diff_filtering.py` — deduplication and redundancy removal
+   - `diff_versioning.py` — symbol version checks
+   - `diff_sycl.py` — SYCL-specific diffs
+4. **Detection** — classify changes
+   - `detectors.py` — individual detection rules
+   - `detector_registry.py` — registry pattern for detectors
+   - `checker.py` — main comparison orchestrator
+   - `checker_types.py` — `DiffResult`, result types
+   - `checker_policy.py` — verdict classification (ChangeKind enum lives here)
+5. **Policy & Suppression**
+   - `policy_file.py` — YAML policy profiles
+   - `suppression.py` — suppression rules (YAML + ABICC formats)
+   - `severity.py` — severity configuration
+6. **Reporting** — output results
+   - `reporter.py` — JSON/Markdown/text output
+   - `html_report.py` — HTML reports
+   - `sarif.py` — SARIF 2.1.0 output
+   - `junit_report.py` — JUnit XML output
+   - `report_summary.py`, `report_classifications.py` — report helpers
+7. **Application compatibility** — `appcompat.py`, `appcompat_html.py`
+8. **Utilities**
+   - `binary_utils.py` — binary file helpers
+   - `binary_fingerprint.py` — rename detection via fingerprinting
+   - `demangle.py` — C++ name demangling
+   - `classify.py` — symbol classification
+   - `annotations.py` — annotation handling
+   - `errors.py` — exception types
+   - `serialization.py` — snapshot serialization
+   - `package.py` — package/archive handling
+   - `debian_symbols.py` — Debian symbols file adapter
+   - `environment_matrix.py` — multi-env comparison
+   - `binder.py` — symbol binding logic
+   - `resolver.py` — symbol resolution
+   - `type_metadata.py`, `dwarf_utils.py` — shared type helpers
+   - `change_registry.py` — change kind registry
+   - `service.py` — service layer (Python API)
+   - `stack_checker.py`, `stack_report.py`, `stack_html.py` — stack analysis
+
+## Key types
+
+- `AbiSnapshot` (`model.py`) — serializable snapshot of a library's ABI surface
+- `DiffResult` (`checker_types.py`) — single detected change with kind, severity, details
+- `ChangeKind` (`checker_policy.py`) — enum of 114+ change types; categorized into `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, `RISK_KINDS`
+- `Verdict` (`checker.py`) — overall comparison result (compatible/source_break/breaking)
+- `LibraryMetadata` (`checker.py`) — parsed library info
+
+## Adding a new ChangeKind
+
+1. Add to `ChangeKind` enum in `checker_policy.py`
+2. Place in exactly one of `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, or `RISK_KINDS` (import-time assertion enforces completeness)
+3. Implement detection in the appropriate diff module
+4. Add unit test
+
+## Conventions
+
+- **Commits**: Conventional Commits (`feat:`, `fix:`, `test:`, `docs:`, `refactor:`)
+- **Branches**: `feat/<name>` or `fix/<name>`
+- **Python**: 3.10+ syntax, type annotations, `from __future__ import annotations`
+- **No line length limit** (ruff E501 ignored)
+- **Tests**: use `assert` freely; parametrize when possible
+
+## Known mypy issues
+
+`mypy abicheck/` currently reports ~17 errors in:
+- `compat/cli.py` — Click's `Group` class typed as `Any`
+- `mcp_server.py` — FastMCP decorator typing
+- `dwarf_utils.py` — pyelftools untyped APIs
+
+These are upstream typing gaps, not bugs. Don't try to "fix" them unless you understand the root cause.
+
+## Files that are large — edit carefully
+
+- `cli.py` (2,616 lines) — main CLI, many Click commands
+- `diff_platform.py` (1,618 lines) — all platform-specific detection
+- `dumper.py` (1,553 lines) — binary metadata extraction
+- `compat/cli.py` (1,389 lines) — ABICC compat CLI
+
+These files work correctly but are large. When editing, read the specific section you need rather than the whole file.
+
+## Exit codes
+
+- `compare` command: 0 = compatible, 2 = source break, 4 = ABI break
+- `compat` command: 0 = compatible, 1 = breaking, 2 = error
+
+## What NOT to do
+
+- Don't modify `examples/` test cases without understanding the ground truth they encode
+- Don't add dependencies without strong justification (this is a lightweight tool)
+- Don't skip test markers — if a test needs `castxml`, mark it `@pytest.mark.integration`
+- Don't "fix" the mypy errors listed above by adding `# type: ignore` broadly
