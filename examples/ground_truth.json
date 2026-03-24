@@ -850,9 +850,9 @@
       "category": "breaking",
       "platforms": [
         "linux",
-        "macos",
-        "windows"
+        "macos"
       ],
+      "known_gap": "Windows MSVC x64: structs >8 bytes are always passed by pointer regardless of triviality, so the calling convention does not change",
       "abi_break": true,
       "api_break": false,
       "bad_practice": false,
