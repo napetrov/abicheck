@@ -3,7 +3,8 @@
 ## What is abicheck?
 
 ABI compatibility checker for C/C++ shared libraries. Pure Python (3.10+).
-Detects 114+ ABI/API breaking changes across ELF, PE/COFF, and Mach-O binaries.
+Detects 145 ABI/API change types across ELF, PE/COFF, and Mach-O binaries,
+categorized into `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, and `RISK_KINDS` (see `ChangeKind`).
 Drop-in replacement for abi-compliance-checker (ABICC).
 
 ## Quick reference
@@ -102,7 +103,7 @@ Core pipeline (in order of data flow):
 
 - `AbiSnapshot` (`model.py`) — serializable snapshot of a library's ABI surface
 - `DiffResult` (`checker_types.py`) — single detected change with kind, severity, details
-- `ChangeKind` (`checker_policy.py`) — enum of 114+ change types; categorized into `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, `RISK_KINDS`
+- `ChangeKind` (`checker_policy.py`) — enum of 145 change types; categorized into `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, `RISK_KINDS`
 - `Verdict` (`checker.py`) — overall comparison result (compatible/source_break/breaking)
 - `LibraryMetadata` (`checker.py`) — parsed library info
 
@@ -141,7 +142,8 @@ These files work correctly but are large. When editing, read the specific sectio
 
 ## Exit codes
 
-- `compare` command: 0 = compatible, 2 = source break, 4 = ABI break
+- `compare` command (legacy, without `--severity-*` flags): 0 = compatible, 2 = source break, 4 = ABI break
+- `compare` command (severity-aware, with any `--severity-*` flag): 0 = no error-level findings, 1 = error in addition/quality only, 2 = error in potential_breaking, 4 = error in abi_breaking
 - `compat` command: 0 = compatible, 1 = BREAKING, 2 = API_BREAK (source-level), 3-11 = errors (see `compat/cli.py:_classify_compat_error_exit_code`)
 
 ## What NOT to do
@@ -150,3 +152,6 @@ These files work correctly but are large. When editing, read the specific sectio
 - Don't add dependencies without strong justification (this is a lightweight tool)
 - Don't skip test markers — if a test needs `castxml`, mark it `@pytest.mark.integration`
 - Don't "fix" the mypy errors listed above by adding `# type: ignore` broadly
+- Don't modify binary test fixtures without regenerating expected outputs
+- Don't change public API signatures without checking for breaking changes
+- Don't add platform-specific code without considering cross-platform compatibility
