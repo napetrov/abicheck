@@ -1,4 +1,13 @@
 # abicheck suppression file — realistic examples
+#
+# Lifecycle enforcement flags (recommended for CI):
+#   --strict-suppressions     fail if any rule is past its expires date
+#   --require-justification   fail if any rule has an empty/missing reason
+#
+# Generate candidates automatically:
+#   abicheck compare old.so new.so --format json -o diff.json
+#   abicheck suggest-suppressions diff.json -o candidates.yml
+#
 version: 1
 
 suppressions:
@@ -6,6 +15,7 @@ suppressions:
   - symbol: "_ZN3foo6Client10disconnectEv"
     change_kind: "func_removed"
     reason: "Client::disconnect() was deprecated in v1.8 and removed in v2.0"
+    expires: "2026-09-01"
 
   # 2. Pattern: suppress all changes in internal detail namespaces
   - symbol_pattern: ".*N6detail.*"
@@ -14,3 +24,11 @@ suppressions:
   # 3. Exact symbol, all change kinds: renamed type with binary-compatible shim
   - symbol: "_ZN3foo12LegacyHandleEv"
     reason: "LegacyHandle typedef replaced by Handle alias — shim keeps compatibility"
+    expires: "2026-12-31"
+
+  # 4. Time-boxed waiver with source location filter
+  - symbol_pattern: "_ZN4dnnl4impl.*"
+    source_location: "*/dnnl.h"
+    expires: "2026-06-30"
+    label: temporary
+    reason: "Temporary waiver until downstream migration completes (tracked in JIRA-1234)"

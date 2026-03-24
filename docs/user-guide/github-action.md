@@ -83,6 +83,12 @@ automatically, then runs ABI comparison and reports results.
 | `suppress` | — | YAML suppression file (supports `label`, `source_location`, `expires`) |
 | `verbose` | `false` | Enable debug output |
 
+To enable suppression lifecycle enforcement, pass the flags via `extra-args`:
+
+```yaml
+extra-args: '--strict-suppressions --require-justification'
+```
+
 ### Action behavior
 
 | Input | Default | Description |

@@ -574,6 +574,9 @@ def _warn_ignored_flags(
 
 def _load_suppression_and_policy(
     suppress: Path | None, policy: str, policy_file_path: Path | None,
+    *,
+    strict_suppressions: bool = False,
+    require_justification: bool = False,
 ) -> tuple[SuppressionList | None, PolicyFile | None]:
     """Load suppression list and policy file from CLI arguments."""
     from .policy_file import PolicyFile
@@ -582,9 +585,38 @@ def _load_suppression_and_policy(
     suppression: SuppressionList | None = None
     if suppress is not None:
         try:
-            suppression = SuppressionList.load(suppress)
-        except (ValueError, OSError) as e:
+            suppression = SuppressionList.load(
+                suppress, require_justification=require_justification,
+            )
+        except OSError as e:
             raise click.BadParameter(str(e), param_hint="--suppress") from e
+        except ValueError as e:
+            msg = str(e)
+            if "no 'reason' field" in msg:
+                raise click.ClickException(msg) from e
+            raise click.BadParameter(msg, param_hint="--suppress") from e
+        if strict_suppressions:
+            expired = suppression.check_expired_strict()
+            if expired:
+                parts = [
+                    f"ERROR: {len(expired)} expired suppression rule(s) "
+                    f"found in {suppress}:"
+                ]
+                for idx, rule in expired:
+                    target = (
+                        rule.symbol_pattern and f'symbol_pattern="{rule.symbol_pattern}"'
+                        or rule.symbol and f'symbol="{rule.symbol}"'
+                        or rule.type_pattern and f'type_pattern="{rule.type_pattern}"'
+                        or rule.source_location and f'source_location="{rule.source_location}"'
+                        or "?"
+                    )
+                    parts.append(
+                        f"  Rule {idx + 1}: {target} expired on {rule.expires}"
+                    )
+                parts.append(
+                    "Remove or renew expired rules before proceeding."
+                )
+                raise click.ClickException("\n".join(parts))
 
     pf: PolicyFile | None = None
     if policy_file_path is not None:
@@ -905,6 +937,10 @@ def _exit_with_severity_or_verdict(
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
               help="Suppression file (YAML) to filter known/intentional changes.")
+@click.option("--strict-suppressions", is_flag=True, default=False,
+              help="Fail with exit code 1 if any suppression rule has expired.")
+@click.option("--require-justification", is_flag=True, default=False,
+              help="Require every suppression rule to have a non-empty 'reason' field.")
 @click.option("--policy", "policy",
               type=click.Choice(["strict_abi", "sdk_vendor", "plugin_abi"], case_sensitive=True),
               default="strict_abi", show_default=True,
@@ -990,7 +1026,8 @@ def compare_cmd(
     old_includes_only: tuple[Path, ...], new_includes_only: tuple[Path, ...],
     old_version: str, new_version: str,
     fmt: str, output: Path | None,
-    suppress: Path | None, policy: str, policy_file_path: Path | None,
+    suppress: Path | None, strict_suppressions: bool, require_justification: bool,
+    policy: str, policy_file_path: Path | None,
     pdb_path: Path | None, old_pdb_path: Path | None, new_pdb_path: Path | None,
     dwarf_only: bool,
     severity_preset: str | None,
@@ -1091,7 +1128,11 @@ def compare_cmd(
         debug_format=debug_format,
     )
 
-    suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
+    suppression, pf = _load_suppression_and_policy(
+        suppress, policy, policy_file_path,
+        strict_suppressions=strict_suppressions,
+        require_justification=require_justification,
+    )
 
     if strict_elf_only:
         pf = _apply_strict_elf_only(pf, policy)
@@ -1602,6 +1643,10 @@ def _write_release_summary_file(
               help="Directory to write per-library reports.")
 @click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
               help="Suppression file (YAML).")
+@click.option("--strict-suppressions", is_flag=True, default=False,
+              help="Fail with exit code 1 if any suppression rule has expired.")
+@click.option("--require-justification", is_flag=True, default=False,
+              help="Require every suppression rule to have a non-empty 'reason' field.")
 @click.option("--policy", "policy",
               type=click.Choice(["strict_abi", "sdk_vendor", "plugin_abi"], case_sensitive=True),
               default="strict_abi", show_default=True)
@@ -1639,6 +1684,8 @@ def compare_release_cmd(
     output: Path | None,
     output_dir: Path | None,
     suppress: Path | None,
+    strict_suppressions: bool,
+    require_justification: bool,
     policy: str,
     policy_file_path: Path | None,
     fail_on_removed: bool,
@@ -1737,6 +1784,14 @@ def compare_release_cmd(
 
         return lib_dir, debug_dir, header_dir
 
+    # Validate suppression file early (before per-library loop)
+    if suppress is not None and (strict_suppressions or require_justification):
+        _load_suppression_and_policy(
+            suppress, policy, policy_file_path,
+            strict_suppressions=strict_suppressions,
+            require_justification=require_justification,
+        )
+
     try:
         old_lib_dir, old_debug_dir, old_header_dir = _extract_if_package(
             old_dir, debug_info1, devel_pkg1,
@@ -1817,6 +1872,59 @@ def compare_release_cmd(
                 f"Extracted files kept in: {kept_paths}",
                 err=True,
             )
+
+
+# ── Suggest suppressions command ──────────────────────────────────────────────
+
+@main.command("suggest-suppressions")
+@click.argument("diff_json", type=click.Path(exists=True, path_type=Path))
+@click.option("-o", "--output", type=click.Path(path_type=Path), default=None,
+              help="Output file for candidate suppressions (default: stdout).")
+@click.option("--expiry-days", type=click.IntRange(min=0), default=180, show_default=True,
+              help="Number of days from today for the expires field.")
+def suggest_suppressions_cmd(
+    diff_json: Path,
+    output: Path | None,
+    expiry_days: int,
+) -> None:
+    """Generate candidate suppression rules from a JSON diff result.
+
+    DIFF_JSON is a JSON file produced by 'abicheck compare --format json'.
+
+    \b
+    Example:
+      abicheck compare old.so new.so -H include/ --format json -o diff.json
+      abicheck suggest-suppressions diff.json -o candidates.yml
+    """
+    import json
+
+    from .suppression import suggest_suppressions
+
+    try:
+        text = diff_json.read_text(encoding="utf-8")
+        data = json.loads(text)
+    except (OSError, json.JSONDecodeError) as e:
+        raise click.ClickException(f"Cannot read JSON diff: {e}") from e
+
+    if not isinstance(data, dict):
+        raise click.ClickException(
+            "JSON diff must be an object with a 'changes' key"
+        )
+    if "changes" not in data:
+        raise click.ClickException(
+            "JSON diff is missing required 'changes' key"
+        )
+    changes = data["changes"]
+    if not isinstance(changes, list):
+        raise click.ClickException("'changes' must be an array")
+    for i, entry in enumerate(changes):
+        if not isinstance(entry, dict):
+            raise click.ClickException(
+                f"changes[{i}] must be an object, got {type(entry).__name__}"
+            )
+
+    yaml_text = suggest_suppressions(changes, expiry_days=expiry_days)
+    _write_or_echo(output, yaml_text)
 
 
 # ── Full-stack dependency commands ────────────────────────────────────────────
