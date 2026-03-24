@@ -160,6 +160,7 @@ class Function:
     is_volatile: bool = False     # volatile qualifier on this
     is_pure_virtual: bool = False
     is_deleted: bool = False      # = delete; previously callable → BREAKING
+    deleted_from_dwarf: bool = False  # True when is_deleted was set via DW_AT_deleted
     is_inline: bool = False       # inline keyword / attribute in header
     access: AccessLevel = AccessLevel.PUBLIC  # public/protected/private
     return_pointer_depth: int = 0  # T=0, T*=1, T**=2

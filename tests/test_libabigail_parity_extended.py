@@ -15,13 +15,10 @@ import json
 import textwrap
 from pathlib import Path
 
-import pytest
-
 from abicheck.checker import compare
 from abicheck.checker_policy import ChangeKind, Verdict
 from abicheck.model import (
     AbiSnapshot,
-    AccessLevel,
     EnumMember,
     EnumType,
     Function,
@@ -33,7 +30,6 @@ from abicheck.model import (
 )
 from abicheck.serialization import snapshot_from_dict, snapshot_to_json
 from abicheck.suppression import SuppressionList
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -326,7 +326,9 @@ class _DwarfSnapshotBuilder:
             return
 
         # Visibility: must be in ELF exported symbols.
-        if not self._is_exported(mangled, name):
+        # BUT: deleted functions won't have symbols in the new binary, so bypass
+        # the export check — we need them in the snapshot for cross-reference.
+        if not is_deleted and not self._is_exported(mangled, name):
             return
 
         # Dedup
@@ -384,6 +386,7 @@ class _DwarfSnapshotBuilder:
             access=access,
             return_pointer_depth=ret_ptr_depth,
             is_deleted=is_deleted,
+            deleted_from_dwarf=is_deleted,
         ))
 
     def _process_param(self, die: Any, CU: Any) -> Param | None:

@@ -14,7 +14,6 @@ from abicheck.checker_policy import ChangeKind, Verdict
 from abicheck.model import (
     AbiSnapshot,
     Function,
-    Param,
     RecordType,
     TypeField,
     Visibility,
@@ -156,16 +155,17 @@ class TestFlexibleArrayMemberChanged:
 
 
 class TestFuncDeletedDwarf:
-    """Detect = delete via DWARF path (elf_only_mode)."""
+    """Detect = delete via DWARF path (deleted_from_dwarf flag)."""
 
     def test_func_deleted_dwarf_detected(self) -> None:
-        """Function marked is_deleted in elf_only_mode → FUNC_DELETED_DWARF."""
+        """Function marked is_deleted + deleted_from_dwarf → FUNC_DELETED_DWARF."""
         old = _snap(functions=[
             _func("Foo::copy", "_ZN3Foo4copyERKS_"),
-        ], elf_only_mode=True)
+        ])
         new = _snap(functions=[
-            _func("Foo::copy", "_ZN3Foo4copyERKS_", is_deleted=True),
-        ], elf_only_mode=True)
+            _func("Foo::copy", "_ZN3Foo4copyERKS_",
+                  is_deleted=True, deleted_from_dwarf=True),
+        ])
         result = compare(old, new)
         assert ChangeKind.FUNC_DELETED_DWARF in _kinds(result)
         change = next(c for c in result.changes
@@ -174,28 +174,34 @@ class TestFuncDeletedDwarf:
         assert change.new_value == "deleted"
 
     def test_func_deleted_castxml_uses_func_deleted(self) -> None:
-        """Function marked is_deleted in header mode → FUNC_DELETED (not DWARF)."""
+        """Function marked is_deleted without deleted_from_dwarf → FUNC_DELETED."""
         old = _snap(functions=[
             _func("Foo::copy", "_ZN3Foo4copyERKS_"),
-        ], elf_only_mode=False)
+        ])
         new = _snap(functions=[
             _func("Foo::copy", "_ZN3Foo4copyERKS_", is_deleted=True),
-        ], elf_only_mode=False)
+        ])
         result = compare(old, new)
         assert ChangeKind.FUNC_DELETED in _kinds(result)
         assert ChangeKind.FUNC_DELETED_DWARF not in _kinds(result)
 
     def test_func_deleted_dwarf_is_breaking(self) -> None:
         """= delete detected via DWARF is BREAKING."""
-        old = _snap(functions=[_func("f", "_f")], elf_only_mode=True)
-        new = _snap(functions=[_func("f", "_f", is_deleted=True)], elf_only_mode=True)
+        old = _snap(functions=[_func("f", "_f")])
+        new = _snap(functions=[
+            _func("f", "_f", is_deleted=True, deleted_from_dwarf=True),
+        ])
         result = compare(old, new)
         assert result.verdict == Verdict.BREAKING
 
     def test_func_already_deleted_no_change(self) -> None:
         """Both old and new have is_deleted=True → no change."""
-        old = _snap(functions=[_func("f", "_f", is_deleted=True)], elf_only_mode=True)
-        new = _snap(functions=[_func("f", "_f", is_deleted=True)], elf_only_mode=True)
+        old = _snap(functions=[
+            _func("f", "_f", is_deleted=True, deleted_from_dwarf=True),
+        ])
+        new = _snap(functions=[
+            _func("f", "_f", is_deleted=True, deleted_from_dwarf=True),
+        ])
         result = compare(old, new)
         assert ChangeKind.FUNC_DELETED_DWARF not in _kinds(result)
         assert ChangeKind.FUNC_DELETED not in _kinds(result)

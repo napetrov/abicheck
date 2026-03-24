@@ -262,11 +262,11 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             continue
         f_old_any = old_all.get(mangled)
         if f_old_any is not None and not f_old_any.is_deleted:
-            # Determine source: if we're in elf_only_mode or no headers were provided,
-            # the is_deleted flag came from DWARF (DW_AT_deleted).
+            # Determine source: if the Function itself was marked deleted from DWARF
+            # (DW_AT_deleted), emit the DWARF-specific kind.
             kind = (
                 ChangeKind.FUNC_DELETED_DWARF
-                if new.elf_only_mode
+                if f_new.deleted_from_dwarf
                 else ChangeKind.FUNC_DELETED
             )
             changes.append(Change(
