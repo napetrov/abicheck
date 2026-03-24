@@ -15,11 +15,18 @@
 """Symbol-level ABI diff detectors (functions, variables, parameters)."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+from .binary_fingerprint import (
+    _MIN_SYMBOL_SIZE,
+    FunctionFingerprint,
+    match_renamed_functions,
+)
 from .checker_policy import ChangeKind
 from .checker_types import Change
 from .detector_registry import registry
+from .elf_metadata import SymbolType
 from .model import (
     AbiSnapshot,
     Function,
@@ -28,6 +35,8 @@ from .model import (
     Visibility,
     canonicalize_type_name,
 )
+
+_log = logging.getLogger(__name__)
 
 # Visibility levels that constitute the public ABI surface.
 _PUBLIC_VIS = (Visibility.PUBLIC, Visibility.ELF_ONLY)
@@ -704,5 +713,83 @@ def _diff_var_access(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                     old_value=v_old.access.value,
                     new_value=v_new.access.value,
                 ))
+    return changes
+
+
+_FUNC_LIKE_TYPES = frozenset({SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTYPE})
+
+
+def _fingerprints_from_elf(snap: AbiSnapshot) -> dict[str, FunctionFingerprint]:
+    """Build FunctionFingerprint dict from ELF metadata (size-only, no code hash).
+
+    Uses ElfSymbol.size from .dynsym to create fingerprints for rename matching.
+    Includes FUNC, IFUNC, and NOTYPE symbols — matching dumper.py's
+    ``exported_dynamic_funcs`` categorization for elf_only_mode snapshots.
+    Code hashing requires the binary file and is handled by
+    ``binary_fingerprint.compute_function_fingerprints()`` when a path is available.
+    """
+    if snap.elf is None:
+        return {}
+    result: dict[str, FunctionFingerprint] = {}
+    for sym in snap.elf.symbols:
+        if sym.sym_type not in _FUNC_LIKE_TYPES:
+            continue
+        if sym.size < _MIN_SYMBOL_SIZE:
+            continue
+        result[sym.name] = FunctionFingerprint(
+            name=sym.name,
+            size=sym.size,
+            code_hash="",  # no code hash from metadata alone
+        )
+    return result
+
+
+@registry.detector(
+    "fingerprint_renames",
+    requires_support=lambda o, n: (
+        o.elf is not None and n.elf is not None
+        and (o.elf_only_mode or n.elf_only_mode),
+        "requires ELF metadata in elf_only_mode",
+    ),
+)
+def _diff_fingerprint_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect likely function renames using binary fingerprint matching.
+
+    Only runs in elf_only_mode (stripped binaries without debug info or headers),
+    where rename churn is most problematic.  Uses function code size from
+    ELF .dynsym to find removed+added pairs that likely represent the same
+    function under a different name.
+
+    Fires when *either* snapshot is elf_only — the rename churn problem exists
+    even if only one side is stripped.
+    """
+    changes: list[Change] = []
+
+    old_fps = _fingerprints_from_elf(old)
+    new_fps = _fingerprints_from_elf(new)
+
+    if not old_fps or not new_fps:
+        return changes
+
+    candidates = match_renamed_functions(old_fps, new_fps)
+    for c in candidates:
+        conf_pct = int(c.confidence * 100)
+        changes.append(Change(
+            kind=ChangeKind.FUNC_LIKELY_RENAMED,
+            symbol=c.old_name,
+            description=(
+                f"Function likely renamed: {c.old_name} → {c.new_name} "
+                f"(size={c.old_fingerprint.size}B, confidence={conf_pct}%)"
+            ),
+            old_value=c.old_name,
+            new_value=c.new_name,
+        ))
+
+    if candidates:
+        _log.info(
+            "Fingerprint rename detection: %d candidate(s) found",
+            len(candidates),
+        )
+
     return changes
 

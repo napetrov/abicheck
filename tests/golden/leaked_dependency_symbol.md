@@ -16,6 +16,7 @@
 |---|---|
 | Confidence | HIGH |
 | Evidence tiers | `elf`, `header` |
+| Coverage gap | Detector 'fingerprint_renames' disabled: requires ELF metadata in elf_only_mode |
 | Coverage gap | Detector 'pe' disabled: missing PE metadata |
 | Coverage gap | Detector 'macho' disabled: missing Mach-O metadata |
 | Coverage gap | Detector 'sycl' disabled: missing SYCL metadata |

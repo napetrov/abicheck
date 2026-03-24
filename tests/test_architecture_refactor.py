@@ -141,9 +141,9 @@ class TestDetectorRegistry:
     """Self-registering detector registry."""
 
     def test_all_detectors_registered(self):
-        """All 39 detectors are registered via decorators."""
+        """All 40 detectors are registered via decorators."""
         registry = _get_populated_registry()
-        assert len(registry) == 39
+        assert len(registry) == 40
 
     def test_detector_names_unique(self):
         """No duplicate detector names."""
@@ -165,7 +165,7 @@ class TestDetectorRegistry:
             "symbol_renames", "method_qualifiers", "unions", "typedefs",
             "tls_checks", "protected_visibility", "symbol_version_alias",
             "glibcxx_dual_abi", "inline_namespace", "vtable_identity",
-            "abi_surface", "sycl",
+            "abi_surface", "sycl", "fingerprint_renames",
         }
         assert expected <= names
 
@@ -180,7 +180,7 @@ class TestDetectorRegistry:
         assert isinstance(changes, list)
         assert isinstance(results, list)
         # Results should have entries for all detectors (enabled or disabled)
-        assert len(results) == 39
+        assert len(results) == 40
 
     def test_support_check_disables_detector(self):
         """Detectors with failing support checks are disabled."""
@@ -225,7 +225,7 @@ class TestPostProcessingPipeline:
     """Pipeline-based post-processing."""
 
     def test_default_pipeline_has_expected_steps(self):
-        """DEFAULT_PIPELINE has all 10 expected steps."""
+        """DEFAULT_PIPELINE has all 11 expected steps."""
         from abicheck.post_processing import DEFAULT_PIPELINE
 
         expected_names = [
@@ -237,6 +237,7 @@ class TestPostProcessingPipeline:
             "downgrade_opaque_type_changes",
             "enrich_source_locations",
             "apply_suppression",
+            "suppress_renamed_pairs",
             "filter_redundant",
             "enrich_affected_symbols",
         ]
@@ -316,7 +317,7 @@ class TestCompareUsesNewArchitecture:
         result = compare(old, new)
         assert result.verdict.value == "NO_CHANGE"
         assert result.changes == []
-        assert len(result.detector_results) == 39
+        assert len(result.detector_results) == 40
 
     def test_compare_detects_func_removal(self):
         """compare() detects function removal via registry."""

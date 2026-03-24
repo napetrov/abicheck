@@ -159,6 +159,57 @@ class ApplySuppression:
         return filtered
 
 
+class SuppressRenamedPairs:
+    """Suppress FUNC_REMOVED + FUNC_ADDED pairs when a FUNC_LIKELY_RENAMED exists.
+
+    When the fingerprint rename detector identifies a rename (old_name → new_name),
+    the corresponding FUNC_REMOVED(old_name) and FUNC_ADDED(new_name) are redundant
+    noise.  This step moves them to ctx.redundant and annotates the rename change
+    with caused_count.
+    """
+
+    name = "suppress_renamed_pairs"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .checker_policy import ChangeKind
+
+        # Build rename mappings: old_name → new_name and new_name → old_name
+        renamed_old: dict[str, str] = {}  # old_value → new_value
+        renamed_new: dict[str, str] = {}  # new_value → old_value
+        rename_changes: dict[str, Change] = {}  # old_value → the rename Change
+        for c in changes:
+            if c.kind == ChangeKind.FUNC_LIKELY_RENAMED and c.old_value and c.new_value:
+                renamed_old[c.old_value] = c.new_value
+                renamed_new[c.new_value] = c.old_value
+                rename_changes[c.old_value] = c
+
+        if not renamed_old:
+            return changes
+
+        kept: list[Change] = []
+        for c in changes:
+            if c.kind in (ChangeKind.FUNC_REMOVED, ChangeKind.FUNC_REMOVED_ELF_ONLY):
+                old_name = c.old_value or c.symbol
+                if old_name in renamed_old:
+                    c.caused_by_type = f"rename:{old_name}→{renamed_old[old_name]}"
+                    ctx.redundant.append(c)
+                    rc = rename_changes.get(old_name)
+                    if rc is not None:
+                        rc.caused_count += 1
+                    continue
+            elif c.kind == ChangeKind.FUNC_ADDED:
+                new_name = c.new_value or c.symbol
+                if new_name in renamed_new:
+                    c.caused_by_type = f"rename:{renamed_new[new_name]}→{new_name}"
+                    ctx.redundant.append(c)
+                    rc = rename_changes.get(renamed_new[new_name])
+                    if rc is not None:
+                        rc.caused_count += 1
+                    continue
+            kept.append(c)
+        return kept
+
+
 class FilterRedundant:
     """Split changes into kept + redundant (derived from root type changes)."""
 
@@ -232,6 +283,7 @@ DEFAULT_PIPELINE = PostProcessingPipeline([
     DowngradeOpaqueTypeChanges(),
     EnrichSourceLocations(),
     ApplySuppression(),
+    SuppressRenamedPairs(),
     FilterRedundant(),
     EnrichAffectedSymbols(),
 ])
