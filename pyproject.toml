@@ -127,3 +127,22 @@ source = ["abicheck"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+
+[tool.mutmut]
+# Mutmut v3 config — mutation testing for core detector logic.
+# Usage:
+#   mutmut run                       # full run
+#   mutmut results                   # view surviving mutants
+#   mutmut show <id>                 # show a specific mutant
+#
+# Focus on the core detection modules where surviving mutants indicate
+# test gaps that could allow regressions:
+paths_to_mutate = [
+    "abicheck/diff_symbols.py",      # function/variable/parameter detectors
+    "abicheck/diff_types.py",        # type/enum/union/typedef detectors
+    "abicheck/diff_platform.py",     # ELF/DWARF/PE/Mach-O detectors
+    "abicheck/diff_filtering.py",    # deduplication and redundancy logic
+    "abicheck/checker_policy.py",    # verdict classification
+]
+tests_dir = "tests/"
+runner = "python -m pytest -x -q --tb=no"
