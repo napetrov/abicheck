@@ -273,23 +273,26 @@ def match_renamed_functions(
     candidates: list[RenameCandidate] = []
     used_new: set[str] = set()
 
-    # Pass 1: exact matches (same size + same code hash)
+    # Pass 1: exact matches (same size + same code hash, unique match only)
     for old_name, old_fp in sorted(old_candidates.items()):
         if not old_fp.code_hash:
             continue
-        for new_name, new_fp in new_by_hash.get(old_fp.code_hash, []):
-            if new_name in used_new:
-                continue
-            if old_fp.size == new_fp.size:
-                candidates.append(RenameCandidate(
-                    old_name=old_name,
-                    new_name=new_name,
-                    confidence=1.0,
-                    old_fingerprint=old_fp,
-                    new_fingerprint=new_fp,
-                ))
-                used_new.add(new_name)
-                break
+        # Collect unused new symbols with matching hash AND size
+        exact_matches = [
+            (n, fp) for n, fp in new_by_hash.get(old_fp.code_hash, [])
+            if n not in used_new and fp.size == old_fp.size
+        ]
+        # Only match when unambiguous (one candidate), mirroring passes 2/3
+        if len(exact_matches) == 1:
+            new_name, new_fp = exact_matches[0]
+            candidates.append(RenameCandidate(
+                old_name=old_name,
+                new_name=new_name,
+                confidence=1.0,
+                old_fingerprint=old_fp,
+                new_fingerprint=new_fp,
+            ))
+            used_new.add(new_name)
 
     matched_old = {c.old_name for c in candidates}
 

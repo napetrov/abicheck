@@ -716,10 +716,15 @@ def _diff_var_access(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+_FUNC_LIKE_TYPES = frozenset({SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTYPE})
+
+
 def _fingerprints_from_elf(snap: AbiSnapshot) -> dict[str, FunctionFingerprint]:
     """Build FunctionFingerprint dict from ELF metadata (size-only, no code hash).
 
     Uses ElfSymbol.size from .dynsym to create fingerprints for rename matching.
+    Includes FUNC, IFUNC, and NOTYPE symbols — matching dumper.py's
+    ``exported_dynamic_funcs`` categorization for elf_only_mode snapshots.
     Code hashing requires the binary file and is handled by
     ``binary_fingerprint.compute_function_fingerprints()`` when a path is available.
     """
@@ -727,7 +732,7 @@ def _fingerprints_from_elf(snap: AbiSnapshot) -> dict[str, FunctionFingerprint]:
         return {}
     result: dict[str, FunctionFingerprint] = {}
     for sym in snap.elf.symbols:
-        if sym.sym_type != SymbolType.FUNC:
+        if sym.sym_type not in _FUNC_LIKE_TYPES:
             continue
         if sym.size < _MIN_SYMBOL_SIZE:
             continue

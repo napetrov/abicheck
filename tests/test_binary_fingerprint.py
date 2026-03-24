@@ -500,3 +500,50 @@ class TestFingerprintRenameDetector:
         result = compare(old, new)
         rename_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_LIKELY_RENAMED]
         assert len(rename_changes) == 1
+
+    def test_notype_symbols_included(self) -> None:
+        """NOTYPE symbols (assembly-heavy or stripped) participate in rename matching."""
+        notype_old = ElfSymbol(
+            name="asm_func_old", binding=SymbolBinding.GLOBAL,
+            sym_type=SymbolType.NOTYPE, size=256,
+        )
+        notype_new = ElfSymbol(
+            name="asm_func_new", binding=SymbolBinding.GLOBAL,
+            sym_type=SymbolType.NOTYPE, size=256,
+        )
+        old = _snap_elf_only("1.0", [notype_old])
+        new = _snap_elf_only("2.0", [notype_new])
+        result = compare(old, new)
+        rename_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_LIKELY_RENAMED]
+        assert len(rename_changes) == 1
+        assert rename_changes[0].old_value == "asm_func_old"
+        assert rename_changes[0].new_value == "asm_func_new"
+
+    def test_rename_suppresses_removed_and_added(self) -> None:
+        """When a rename is detected, the paired FUNC_REMOVED and FUNC_ADDED are suppressed."""
+        old = _snap_elf_only("1.0", [_func_sym("libfoo_v1_create", 256)])
+        new = _snap_elf_only("2.0", [_func_sym("libfoo_create", 256)])
+        result = compare(old, new)
+
+        kept_kinds = {c.kind for c in result.changes}
+        # Rename should be in kept changes
+        assert ChangeKind.FUNC_LIKELY_RENAMED in kept_kinds
+        # FUNC_REMOVED and FUNC_ADDED should be suppressed (moved to redundant)
+        assert ChangeKind.FUNC_REMOVED not in kept_kinds
+        assert ChangeKind.FUNC_REMOVED_ELF_ONLY not in kept_kinds
+        assert ChangeKind.FUNC_ADDED not in kept_kinds
+        # The suppressed changes should appear in redundant_changes
+        redundant_kinds = {c.kind for c in result.redundant_changes}
+        assert ChangeKind.FUNC_REMOVED_ELF_ONLY in redundant_kinds or ChangeKind.FUNC_REMOVED in redundant_kinds
+
+    def test_pass1_ambiguous_exact_match_skipped(self) -> None:
+        """Pass 1: multiple new symbols with same hash+size → no 1.0 confidence match."""
+        old = {"old_func": _fp("old_func", 128, "same_hash")}
+        new = {
+            "new_a": _fp("new_a", 128, "same_hash"),
+            "new_b": _fp("new_b", 128, "same_hash"),
+        }
+        result = match_renamed_functions(old, new)
+        # No exact match due to ambiguity; may fall through to pass 2 or 3
+        exact = [r for r in result if r.confidence == 1.0]
+        assert len(exact) == 0

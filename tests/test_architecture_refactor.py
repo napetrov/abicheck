@@ -225,7 +225,7 @@ class TestPostProcessingPipeline:
     """Pipeline-based post-processing."""
 
     def test_default_pipeline_has_expected_steps(self):
-        """DEFAULT_PIPELINE has all 10 expected steps."""
+        """DEFAULT_PIPELINE has all 11 expected steps."""
         from abicheck.post_processing import DEFAULT_PIPELINE
 
         expected_names = [
@@ -237,6 +237,7 @@ class TestPostProcessingPipeline:
             "downgrade_opaque_type_changes",
             "enrich_source_locations",
             "apply_suppression",
+            "suppress_renamed_pairs",
             "filter_redundant",
             "enrich_affected_symbols",
         ]
