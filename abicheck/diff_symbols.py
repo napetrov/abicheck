@@ -252,7 +252,9 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 new_value=f_new.name,
             ))
 
-    # FUNC_DELETED: function was not deleted before, now marked = delete
+    # FUNC_DELETED / FUNC_DELETED_DWARF: function was not deleted before, now marked = delete.
+    # FUNC_DELETED: detected via castxml is_deleted attribute (header analysis).
+    # FUNC_DELETED_DWARF: detected via DWARF DW_AT_deleted attribute (binary analysis).
     old_all = old.function_map
     new_all_map = new.function_map
     for mangled, f_new in new_all_map.items():
@@ -260,8 +262,15 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
             continue
         f_old_any = old_all.get(mangled)
         if f_old_any is not None and not f_old_any.is_deleted:
+            # Determine source: if the Function itself was marked deleted from DWARF
+            # (DW_AT_deleted), emit the DWARF-specific kind.
+            kind = (
+                ChangeKind.FUNC_DELETED_DWARF
+                if f_new.deleted_from_dwarf
+                else ChangeKind.FUNC_DELETED
+            )
             changes.append(Change(
-                kind=ChangeKind.FUNC_DELETED,
+                kind=kind,
                 symbol=mangled,
                 description=f"Function explicitly deleted (= delete): {f_new.name}",
                 old_value="callable",

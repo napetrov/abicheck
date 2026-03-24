@@ -323,6 +323,12 @@ class ChangeKind(str, Enum):
     SONAME_BUMP_UNNECESSARY = "soname_bump_unnecessary"
     VERSION_SCRIPT_MISSING = "version_script_missing"
 
+    # ── Flexible array member detection (libabigail parity) ──────────────
+    FLEXIBLE_ARRAY_MEMBER_CHANGED = "flexible_array_member_changed"
+
+    # ── DWARF-based = delete detection (P3 gap) ─────────────────────────
+    FUNC_DELETED_DWARF = "func_deleted_dwarf"  # DW_AT_deleted in DWARF5+, or absent from DWARF but present in headers
+
     # SYCL Plugin Interface (PI) — ADR-020
     SYCL_IMPLEMENTATION_CHANGED = "sycl_implementation_changed"
     SYCL_PI_VERSION_CHANGED = "sycl_pi_version_changed"

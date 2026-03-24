@@ -315,12 +315,20 @@ class _DwarfSnapshotBuilder:
             linkage_name = _attr_str(die, "DW_AT_MIPS_linkage_name")
         mangled = linkage_name or name
 
+        # DWARF5 DW_AT_deleted: function marked as = delete by the compiler.
+        # Currently only emitted by very recent compilers (not yet in GCC/Clang mainline).
+        # Future-proofing: check for the attribute and set is_deleted on the Function.
+        is_deleted = _attr_bool(die, "DW_AT_deleted")
+
         # Skip declarations without definitions (DW_AT_declaration=True)
-        if _attr_bool(die, "DW_AT_declaration"):
+        # BUT: if it's marked deleted, we still want to record it for cross-reference.
+        if _attr_bool(die, "DW_AT_declaration") and not is_deleted:
             return
 
         # Visibility: must be in ELF exported symbols.
-        if not self._is_exported(mangled, name):
+        # BUT: deleted functions won't have symbols in the new binary, so bypass
+        # the export check — we need them in the snapshot for cross-reference.
+        if not is_deleted and not self._is_exported(mangled, name):
             return
 
         # Dedup
@@ -377,6 +385,8 @@ class _DwarfSnapshotBuilder:
             is_pure_virtual=is_pure_virtual,
             access=access,
             return_pointer_depth=ret_ptr_depth,
+            is_deleted=is_deleted,
+            deleted_from_dwarf=is_deleted,
         ))
 
     def _process_param(self, die: Any, CU: Any) -> Param | None:
