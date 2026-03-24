@@ -871,7 +871,7 @@
       "api_break": true,
       "bad_practice": false,
       "description": "Flexible array member element type changed float \u2192 double \u2014 dynamic allocation size and element access offsets break while sizeof(Packet) stays the same (FLEXIBLE_ARRAY_MEMBER_CHANGED)",
-      "expected_kinds": ["flexible_array_member_changed"]
+      "expected_kinds": ["flexible_array_member_changed", "func_return_changed"]
     },
     "case71_inline_namespace_moved": {
       "expected": "BREAKING",
