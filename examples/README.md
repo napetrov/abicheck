@@ -114,7 +114,7 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [61](case61_var_added/README.md) | Global Variable Added | Addition | COMPATIBLE 🟢 |
 | [62](case62_type_field_added_compatible/README.md) | Type Field Added (Opaque Struct) | Addition | COMPATIBLE 🟢 |
 | [63](case63_bitfield_changed/README.md) | Bitfield Width Changed | Breaking | BREAKING 🔴 |
-| [64](case64_calling_convention_changed/README.md) | Calling Convention Changed (regcall) | Breaking | BREAKING 🔴 |
+| [64](case64_calling_convention_changed/README.md) | Calling Convention Changed (ms_abi) | Breaking | BREAKING 🔴 |
 | [65](case65_symbol_version_removed/README.md) | Symbol Version Removed (ELF) | Breaking | BREAKING 🔴 |
 | [66](case66_language_linkage_changed/README.md) | Language Linkage Changed (extern "C") | Breaking | BREAKING 🔴 |
 | [67](case67_tls_var_size_changed/README.md) | TLS Variable Size Changed | Breaking | BREAKING 🔴 |

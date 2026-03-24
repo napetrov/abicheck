@@ -771,9 +771,7 @@
       "expected": "BREAKING",
       "category": "breaking",
       "platforms": [
-        "linux",
-        "macos",
-        "windows"
+        "linux"
       ],
       "abi_break": true,
       "api_break": true,
