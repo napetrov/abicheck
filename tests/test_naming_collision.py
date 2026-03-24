@@ -3,6 +3,14 @@ import subprocess
 import sys
 
 
+class TestMainModuleImport:
+    def test_main_module_importable(self):
+        """__main__.py can be imported without side effects."""
+        import abicheck.__main__ as mod
+        from abicheck.cli import main
+        assert mod.main is main
+
+
 class TestMainModule:
     def test_python_m_abicheck_version(self):
         """python -m abicheck --version should work."""

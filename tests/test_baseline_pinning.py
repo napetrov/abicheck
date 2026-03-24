@@ -7,9 +7,8 @@ from unittest import mock
 
 import click
 import pytest
-from click.testing import CliRunner
 
-from abicheck.model import AbiSnapshot, Function, Visibility
+from abicheck.model import AbiSnapshot
 from abicheck.serialization import (
     SCHEMA_VERSION,
     load_snapshot,

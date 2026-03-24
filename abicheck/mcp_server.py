@@ -25,10 +25,13 @@ Run as:
 
 from __future__ import annotations
 
+import concurrent.futures as _futures
 import json
 import logging
+import os as _os
 import platform
 import sys
+import time as _time
 from pathlib import Path
 from typing import Any
 
@@ -70,11 +73,6 @@ _logger = logging.getLogger("abicheck.mcp")
 # ---------------------------------------------------------------------------
 # Configuration (environment variables or CLI flags)
 # ---------------------------------------------------------------------------
-
-import concurrent.futures as _futures
-import os as _os
-import time as _time
-
 
 def _env_int(name: str, default: str) -> int:
     """Parse an integer environment variable with a clear error on bad input."""

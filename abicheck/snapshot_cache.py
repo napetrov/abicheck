@@ -38,11 +38,15 @@ MAX_ENTRIES: int = 100
 
 def _get_cache_dir() -> Path:
     """Return the cache directory, deferring Path.home() to call time."""
-    try:
-        base = Path(os.environ.get("XDG_CACHE_HOME", "")) or Path.home() / ".cache"
-    except RuntimeError:
-        import tempfile
-        base = Path(tempfile.gettempdir())
+    xdg = os.environ.get("XDG_CACHE_HOME", "")
+    if xdg:
+        base = Path(xdg)
+    else:
+        try:
+            base = Path.home() / ".cache"
+        except RuntimeError:
+            import tempfile
+            base = Path(tempfile.gettempdir())
     return base / "abi_check" / "snapshots"
 
 

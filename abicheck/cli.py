@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import sys
 from pathlib import Path
@@ -1044,9 +1043,9 @@ def _maybe_emit_annotations(
 
 def _write_release_step_summary(text: str, fmt: str) -> None:
     """Write a single step summary for compare-release when running in CI."""
-    import os
+    import os as _os
 
-    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    summary_path = _os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary_path:
         return
 
@@ -1792,67 +1791,88 @@ def _compare_release_libraries(
     When *collect_diff_results* is True, ``(DiffResult, old_snapshot)``
     pairs are collected and returned as the third element of the tuple
     (used by the JUnit output format).
+
+    When *jobs* > 1, comparisons are dispatched in parallel via
+    :func:`_compare_one_library` using a :class:`ProcessPoolExecutor`.
     """
+    import os as _os
+
+    effective_jobs = jobs if jobs > 0 else (_os.cpu_count() or 1)
     library_results: list[dict[str, object]] = []
     diff_pairs: list[tuple[DiffResult, AbiSnapshot]] = []
     worst_verdict = "NO_CHANGE"
     all_annotations: list[tuple[int, str]] = []
 
-    for key in matched_keys:
-        old_path = old_map[key]
-        new_path = new_map[key]
-        old_dbg = resolve_debug_info(old_path, old_debug_dir) if old_debug_dir else None
-        new_dbg = resolve_debug_info(new_path, new_debug_dir) if new_debug_dir else None
-        try:
-            result, old_snap, _ = _run_compare_pair(
-                old_path, new_path,
-                old_h, new_h, old_inc, new_inc,
-                old_version, new_version,
-                lang, suppress, policy, policy_file_path,
-                old_pdb_path=old_dbg, new_pdb_path=new_dbg,
-            )
-        except (click.ClickException, click.UsageError) as exc:
-            msg = exc.format_message()
-            click.echo(f"Error comparing {old_path.name}: {msg}", err=True)
-            library_results.append({
-                "library": old_path.name, "verdict": "ERROR", "error": msg,
-            })
-            worst_verdict = "ERROR"
-            continue
-        except Exception as exc:
-            click.echo(f"Error comparing {old_path.name}: {exc}", err=True)
-            library_results.append({
-                "library": old_path.name, "verdict": "ERROR", "error": str(exc),
-            })
-            worst_verdict = "ERROR"
-            continue
+    common_args = (
+        old_map, new_map, old_debug_dir, new_debug_dir, resolve_debug_info,
+        old_h, new_h, old_inc, new_inc,
+        old_version, new_version,
+        lang, suppress, policy, policy_file_path, output_dir,
+    )
 
-        v = result.verdict.value
+    # --- parallel path ---
+    if effective_jobs > 1 and len(matched_keys) > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor(max_workers=effective_jobs) as executor:
+            futures = {
+                executor.submit(_compare_one_library, key, *common_args): key
+                for key in matched_keys
+            }
+            for future in as_completed(futures):
+                key = futures[future]
+                try:
+                    entry = future.result()
+                except Exception as exc:
+                    click.echo(f"Error comparing {old_map[key].name}: {exc}", err=True)
+                    entry = {"library": old_map[key].name, "verdict": "ERROR", "error": str(exc)}
+                library_results.append(entry)
+    # --- sequential path ---
+    else:
+        for key in matched_keys:
+            entry = _compare_one_library(key, *common_args)
+            library_results.append(entry)
+
+    # Post-process all results: compute worst verdict, collect annotations,
+    # and optionally collect diff_pairs (for JUnit).
+    for entry in library_results:
+        v = str(entry["verdict"])
+        if v == "ERROR":
+            if "error" in entry:
+                click.echo(f"Error comparing {entry['library']}: {entry['error']}", err=True)
         if _RELEASE_VERDICT_ORDER.get(v, 0) > _RELEASE_VERDICT_ORDER.get(worst_verdict, 0):
             worst_verdict = v
 
-        library_results.append({
-            "library": old_path.name, "verdict": v,
-            "breaking": len(result.breaking),
-            "source_breaks": len(result.source_breaks),
-            "risk_changes": len(result.risk),
-            "compatible_additions": len(result.compatible),
-        })
-
-        if collect_diff_results:
-            diff_pairs.append((result, old_snap))
-
-        if annotate:
-            from .annotations import collect_annotations, is_github_actions
-
-            if is_github_actions():
-                all_annotations.extend(
-                    collect_annotations(result, annotate_additions=annotate_additions),
+    # collect_diff_results and annotate require re-running comparison for
+    # affected libraries (only used for JUnit / GitHub annotations which
+    # are sequential-only features)
+    if collect_diff_results or annotate:
+        for key in matched_keys:
+            old_path = old_map[key]
+            new_path = new_map[key]
+            old_dbg = resolve_debug_info(old_path, old_debug_dir) if old_debug_dir else None
+            new_dbg = resolve_debug_info(new_path, new_debug_dir) if new_debug_dir else None
+            try:
+                result, old_snap, _ = _run_compare_pair(
+                    old_path, new_path,
+                    old_h, new_h, old_inc, new_inc,
+                    old_version, new_version,
+                    lang, suppress, policy, policy_file_path,
+                    old_pdb_path=old_dbg, new_pdb_path=new_dbg,
                 )
+            except Exception:
+                continue
 
-        if output_dir:
-            lib_report_path = output_dir / f"{old_path.stem}.json"
-            _safe_write_output(lib_report_path, to_json(result))
+            if collect_diff_results:
+                diff_pairs.append((result, old_snap))
+
+            if annotate:
+                from .annotations import collect_annotations, is_github_actions
+
+                if is_github_actions():
+                    all_annotations.extend(
+                        collect_annotations(result, annotate_additions=annotate_additions),
+                    )
 
     # Emit annotations once: sort globally across all libraries by severity,
     # then truncate to the cap.  This ensures the most important annotations

@@ -1,9 +1,17 @@
 """Tests for snapshot caching layer (5c)."""
-import json
+from __future__ import annotations
+
 from pathlib import Path
+from unittest import mock
 
 from abicheck.model import AbiSnapshot, Function, Visibility
-from abicheck.snapshot_cache import _cache_key, lookup, store
+from abicheck.snapshot_cache import (
+    _cache_key,
+    _get_cache_dir,
+    _safe_mtime,
+    lookup,
+    store,
+)
 
 
 def _sample_snap() -> AbiSnapshot:
@@ -179,3 +187,43 @@ class TestEviction:
         # Should have at most MAX_ENTRIES files
         entries = list(cache_dir.glob("*.json"))
         assert len(entries) <= 3
+
+
+class TestGetCacheDir:
+    def test_fallback_on_runtime_error(self, monkeypatch):
+        """When Path.home() raises RuntimeError, fall back to tempdir."""
+        import tempfile
+        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+        with mock.patch("pathlib.Path.home", side_effect=RuntimeError("no home")):
+            result = _get_cache_dir()
+        assert str(result).startswith(tempfile.gettempdir())
+        assert result.name == "snapshots"
+
+    def test_xdg_cache_home_used(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+        result = _get_cache_dir()
+        assert str(result).startswith(str(tmp_path / "xdg"))
+
+
+class TestSafeMtime:
+    def test_returns_mtime_for_existing_file(self, tmp_path):
+        f = tmp_path / "test.json"
+        f.write_text("{}")
+        mtime = _safe_mtime(f)
+        assert mtime > 0
+
+    def test_returns_zero_for_missing_file(self, tmp_path):
+        mtime = _safe_mtime(tmp_path / "nonexistent.json")
+        assert mtime == 0.0
+
+
+class TestStoreErrorPaths:
+    def test_store_oserror_on_mkdir(self, tmp_path, monkeypatch):
+        """Store gracefully handles OSError on mkdir."""
+        import abicheck.snapshot_cache as sc
+        # Point cache to a non-writable location
+        monkeypatch.setattr(sc, "_CACHE_DIR", Path("/proc/nonexistent/cache"))
+        binary = tmp_path / "lib.so"
+        binary.write_bytes(b"ELF content")
+        snap = _sample_snap()
+        store(snap, binary, [], [], "1.0", "c++")  # should not raise
