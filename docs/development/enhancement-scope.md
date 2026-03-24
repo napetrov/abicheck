@@ -31,10 +31,12 @@ baselines live. Different teams store them differently:
 abicheck should make the **produce** and **consume** sides easy, and stay out of the
 **store** side — that's the CI system's job.
 
-### What `.abicheck/baselines/` is NOT
+### No `.abicheck/` project directory
 
-~~A local registry with an index.yaml manifest.~~ That design assumes baselines are
-managed locally, which doesn't match CI reality. Dropped from scope.
+No project-level directory is needed. Baselines are artifacts stored externally.
+Cache lives at `~/.cache/abi_check/` (XDG-standard). If project-level config is
+ever needed (suppression lists, default flags), a single `.abicheck.toml` at the
+repo root would suffice — but that's not in scope.
 
 ### Scope
 
