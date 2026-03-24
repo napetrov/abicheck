@@ -512,7 +512,7 @@ class DebuginfodResolver:
             raise ValueError(f"Unsupported URL scheme {parsed_scheme!r}: {url}")
         req = urllib.request.Request(url)
         req.add_header("User-Agent", "abicheck-debuginfod-client")
-        return urllib.request.urlopen(req, timeout=timeout)  # noqa: S310
+        return urllib.request.urlopen(req, timeout=timeout)  # nosec B310  # noqa: S310
 
     @staticmethod
     def _default_cache() -> Path:
