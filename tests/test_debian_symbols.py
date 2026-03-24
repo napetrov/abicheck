@@ -271,6 +271,32 @@ class TestParseSymbolsFile:
         sf = parse_symbols_file(text)
         assert len(sf.symbols) == 0
 
+    def test_cpp_symbol_with_quotes_in_name(self):
+        """C++ user-defined literal operator with quotes in the demangled name."""
+        text = (
+            'libfoo.so.1 libfoo1 #MINVER#\n'
+            ' (c++)"operator"" _foo(char const*, unsigned long)@Base" 1.0\n'
+        )
+        sf = parse_symbols_file(text)
+        assert len(sf.symbols) == 1
+        entry = sf.symbols[0]
+        assert entry.name == 'operator"" _foo(char const*, unsigned long)'
+        assert entry.version_node == "Base"
+
+    def test_cpp_quotes_roundtrip(self):
+        """Symbols with quotes in the name survive format -> parse round-trip."""
+        entry = DebianSymbolEntry(
+            name='operator"" _foo(char const*, unsigned long)',
+            version_node="Base",
+            min_version="1.0",
+            tag_groups=[["c++"]],
+        )
+        line = entry.format_line()
+        text = f"libfoo.so.1 libfoo1 #MINVER#\n {line}\n"
+        sf = parse_symbols_file(text)
+        assert len(sf.symbols) == 1
+        assert sf.symbols[0].name == entry.name
+
     def test_header_with_extra_whitespace(self):
         text = "  libfoo.so.1   libfoo1   #MINVER#\n foo@Base 1.0\n"
         sf = parse_symbols_file(text)
@@ -799,6 +825,35 @@ class TestDiff:
         diff = diff_symbols_files(old, new)
         assert len(diff.removed) == 1
         assert diff.removed[0].version_node == "LIBFOO_2.0"
+        assert len(diff.added) == 0
+
+    def test_same_name_different_arch_tags(self):
+        """(arch=amd64)foo@Base and (arch=arm64)foo@Base are distinct entries."""
+        old = DebianSymbolsFile(
+            library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
+            symbols=[
+                DebianSymbolEntry(
+                    name="foo_init", version_node="Base", min_version="1.0",
+                    tag_groups=[["arch=amd64"]],
+                ),
+                DebianSymbolEntry(
+                    name="foo_init", version_node="Base", min_version="1.0",
+                    tag_groups=[["arch=arm64"]],
+                ),
+            ],
+        )
+        new = DebianSymbolsFile(
+            library="libfoo.so.1", package="libfoo1", min_version="#MINVER#",
+            symbols=[
+                DebianSymbolEntry(
+                    name="foo_init", version_node="Base", min_version="1.0",
+                    tag_groups=[["arch=amd64"]],
+                ),
+            ],
+        )
+        diff = diff_symbols_files(old, new)
+        assert len(diff.removed) == 1
+        assert "arch=arm64" in diff.removed[0].tags
         assert len(diff.added) == 0
 
     def test_diff_report_format(self):

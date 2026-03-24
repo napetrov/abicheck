@@ -199,9 +199,11 @@ def _parse_symbol_line(line: str, lineno: int) -> DebianSymbolEntry | None:
         if not rest.startswith('"'):
             _log.warning("Line %d: expected quoted C++ symbol: %s", lineno, line)
             return None
-        # Find closing quote
-        end_quote = rest.index('"', 1) if '"' in rest[1:] else -1
-        if end_quote == -1:
+        # Find closing quote — use rfind to handle names containing quotes
+        # (e.g. operator"" _foo).  The closing quote is the last '"' in the
+        # line, followed by the min_version string.
+        end_quote = rest.rfind('"')
+        if end_quote <= 0:
             _log.warning("Line %d: unterminated quote: %s", lineno, line)
             return None
         quoted = rest[1:end_quote]
@@ -242,10 +244,12 @@ def load_symbols_file(path: Path) -> DebianSymbolsFile:
     Verifies the target is a regular file and enforces a size limit to
     prevent memory exhaustion from malicious input.
 
-    The regular-file check uses ``os.stat()`` before ``open()`` to avoid
-    blocking on FIFOs or device nodes.  (``parse_elf_metadata`` uses
-    ``fstat()`` *after* open, which works for ELF binaries but would block
-    on a FIFO.)
+    The regular-file check uses ``path.stat()`` *before* ``open()`` —
+    intentional tradeoff: this creates a small TOCTOU window, but avoids
+    blocking indefinitely on FIFOs or device nodes.  By contrast,
+    ``parse_elf_metadata`` uses ``fstat()`` *after* ``open()`` which is
+    TOCTOU-safe but would hang on a FIFO.  For a text symbols file the
+    pre-open stat is the safer choice.
     """
     st = path.stat()
     if not stat.S_ISREG(st.st_mode):
@@ -526,11 +530,12 @@ def diff_symbols_files(
     result = SymbolsDiff()
 
     def _key(entry: DebianSymbolEntry) -> str:
-        return f"{'(c++)' if entry.is_cpp else ''}{entry.name}@{entry.version_node}"
-
-    def _ident(entry: DebianSymbolEntry) -> str:
-        """Name-only key for version-change detection."""
-        return f"{'(c++)' if entry.is_cpp else ''}{entry.name}"
+        # Include tags so (arch=amd64)foo@Base and (arch=arm64)foo@Base
+        # are tracked as distinct entries.
+        tag_str = "".join(
+            "(" + "|".join(g) + ")" for g in entry.tag_groups
+        )
+        return f"{tag_str}{entry.name}@{entry.version_node}"
 
     old_by_key: dict[str, DebianSymbolEntry] = {}
     for entry in old.symbols:
