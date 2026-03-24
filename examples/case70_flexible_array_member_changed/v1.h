@@ -1,8 +1,6 @@
 #ifndef PACKET_H
 #define PACKET_H
 
-#include <stddef.h>
-
 /* v1: packet with flexible array of float samples */
 struct Packet {
     unsigned int id;

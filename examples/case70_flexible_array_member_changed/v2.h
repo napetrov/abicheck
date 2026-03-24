@@ -1,8 +1,6 @@
 #ifndef PACKET_H
 #define PACKET_H
 
-#include <stddef.h>
-
 /* v2: flexible array element type changed from float to double.
    sizeof(element) doubles from 4 to 8 bytes. Consumers that allocated
    with count * sizeof(float) now have half the space needed, and
