@@ -157,6 +157,13 @@ When debug info is available in the binary:
 - Extracts MSVC toolchain info (version, machine type, ABI flags) from DBI stream
 - Auto-discovers PDB files from PE debug directory; use `--pdb-path` to override
 
+**Debug artifact resolution** (via `debug_resolver` module):
+
+When debug info is not embedded, abicheck searches a configurable resolver
+chain: split DWARF (.dwo/.dwp), build-id trees, path mirrors, dSYM bundles,
+PDB files, and optionally debuginfod servers. Use `--debug-root` to point at
+separate debug file directories, or `--debuginfod` for network-based resolution.
+
 ---
 
 ## Key modules
@@ -165,9 +172,12 @@ When debug info is available in the binary:
 
 | Module | Responsibility |
 |--------|---------------|
-| `cli.py` | CLI entrypoint — `dump`, `compare`, `compat check`, `compat dump`, `deps`, `stack-check`, `appcompat` commands |
+| `cli.py` | CLI entrypoint — `dump`, `compare`, `compat check`, `compat dump`, `deps`, `stack-check`, `baseline`, `appcompat` commands |
 | `service.py` | Service layer — shared orchestration for CLI and MCP server (`resolve_input`, `run_dump`, `run_compare`, `render_output`) |
 | `mcp_server.py` | MCP (Model Context Protocol) server for AI agent integration |
+| `build_context.py` | `compile_commands.json` parsing and per-TU flag extraction |
+| `debug_resolver.py` | Debug artifact resolution chain (DWARF, PDB, dSYM, debuginfod) |
+| `baseline.py` | Baseline registry — push/pull/list/delete with SHA-256 integrity verification |
 
 ### Data model & serialization
 

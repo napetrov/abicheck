@@ -100,6 +100,77 @@ Available cross-compilation flags:
 - `--sysroot` — alternative system root directory
 - `--nostdinc` — do not search standard system include paths
 
+#### Build-context capture (`compile_commands.json`)
+
+Modern build systems (CMake, Meson, Ninja) generate a `compile_commands.json`
+file that captures the exact compiler flags for every source file. abicheck
+can ingest this file directly, eliminating manual flag specification:
+
+```bash
+# Generate compile_commands.json during build
+cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON .
+cmake --build build
+
+# Dump ABI with exact build flags derived automatically
+abicheck dump build/libfoo.so -H include/ -p build/
+```
+
+The `-p build/` flag tells abicheck to look for `build/compile_commands.json`
+and derive all flags automatically: defines, include paths, language standard,
+target triple, sysroot, and ABI-affecting options like `-fvisibility=hidden`.
+
+| Flag | Description |
+|------|-------------|
+| `-p <dir>` / `--build-dir <dir>` | Build directory containing `compile_commands.json` |
+| `--compile-db <file>` | Explicit path to `compile_commands.json` (alias for `-p`) |
+| `--compile-db-filter <glob>` | Filter entries by source file pattern (e.g., `src/libfoo/**`) |
+
+When both `-p` and explicit flags (`--gcc-options`, `--sysroot`) are specified,
+explicit flags take precedence.
+
+```bash
+# Override a single flag while inheriting the rest from compile_commands.json
+abicheck dump libfoo.so -H include/ -p build/ \
+    --gcc-options "-DEXTRA_DEFINE=1"
+```
+
+#### Debug artifact resolution
+
+abicheck achieves its highest accuracy with DWARF debug information, but in
+many deployments debug info is not embedded in the binary (stripped builds,
+split DWARF, distro debuginfo packages, dSYM bundles, PDB files). abicheck
+automatically searches for debug artifacts across multiple locations:
+
+```text
+1. Split DWARF (.dwo files or .dwp package)
+2. Embedded DWARF (binary itself has .debug_info)
+3. Build-id tree (/usr/lib/debug/.build-id/<ab>/<cdef...>.debug)
+4. Path mirror (/usr/lib/debug/usr/lib/libfoo.so.debug)
+5. dSYM bundle (macOS: Foo.dylib.dSYM/Contents/Resources/DWARF/Foo.dylib)
+6. PDB (Windows: adjacent .pdb or _NT_SYMBOL_PATH)
+7. debuginfod (opt-in network: query by build-id)
+```
+
+| Flag | Description |
+|------|-------------|
+| `--debug-root <dir>` | Directory containing separate debug files. Can be repeated. |
+| `--debug-root1 <dir>` | Debug root for old side only (`compare` command). |
+| `--debug-root2 <dir>` | Debug root for new side only (`compare` command). |
+| `--debuginfod` | Enable debuginfod network resolution (opt-in). |
+| `--debuginfod-url <url>` | Override debuginfod server URL. |
+
+```bash
+# Stripped distro packages with separate debuginfo
+abicheck compare \
+    old/usr/lib64/libfoo.so.1 new/usr/lib64/libfoo.so.1 \
+    --debug-root1 old-debug/usr/lib/debug \
+    --debug-root2 new-debug/usr/lib/debug
+
+# Fedora/RHEL: debug info fetched automatically by build-id
+export DEBUGINFOD_URLS="https://debuginfod.fedoraproject.org/"
+abicheck compare old-libfoo.so new-libfoo.so --debuginfod
+```
+
 #### Verbose output
 
 Add `-v` / `--verbose` to any native command to enable debug logging:
@@ -493,6 +564,9 @@ CLI
 - `abicheck.binder` — symbol binding simulation across a resolved dependency graph.
 - `abicheck.stack_checker` — stack-level ABI comparison and verdict computation.
 - `abicheck.stack_report` — JSON and Markdown output for stack-level results.
+- `abicheck.build_context` — compile_commands.json parsing and flag extraction.
+- `abicheck.debug_resolver` — debug artifact resolution (DWARF, PDB, dSYM, debuginfod).
+- `abicheck.baseline` — baseline registry (push/pull/list/delete with integrity checks).
 - `abicheck.compat` — ABICC compatibility layer (`abicheck.compat.descriptor`, `abicheck.compat.xml_report`, `abicheck.compat.cli`, `abicheck.compat.abicc_dump_import`).
 - `abicheck.debian_symbols` — Debian symbols file generation, parsing, validation, and diffing.
 - `abicheck.reporter` / `abicheck.sarif` / `abicheck.html_report` — output generators.
