@@ -498,6 +498,23 @@ class DebuginfodResolver:
         return [u.strip() for u in env.split() if u.strip()]
 
     @staticmethod
+    def _safe_urlopen(url: str, timeout: int = 30) -> object:
+        """Open a URL after verifying the scheme is http or https.
+
+        This explicit guard satisfies B310 (audit url open for permitted
+        schemes) by ensuring file://, ftp://, and other schemes are
+        never passed to ``urlopen``.
+        """
+        import urllib.request
+
+        parsed_scheme = urlparse(url).scheme.lower()
+        if parsed_scheme not in ("http", "https"):
+            raise ValueError(f"Unsupported URL scheme {parsed_scheme!r}: {url}")
+        req = urllib.request.Request(url)
+        req.add_header("User-Agent", "abicheck-debuginfod-client")
+        return urllib.request.urlopen(req, timeout=timeout)  # noqa: S310
+
+    @staticmethod
     def _default_cache() -> Path:
         xdg = os.environ.get("XDG_CACHE_HOME", "")
         if xdg:
@@ -547,11 +564,8 @@ class DebuginfodResolver:
             _logger.info("Fetching debug info from %s", fetch_url)
 
             try:
-                import urllib.request
-
-                req = urllib.request.Request(fetch_url)
-                req.add_header("User-Agent", "abicheck-debuginfod-client")
-                with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+                resp = self._safe_urlopen(fetch_url)
+                with resp:
                     if resp.status != 200:
                         continue
                     # Read with size limit to prevent memory exhaustion
@@ -590,7 +604,7 @@ class DebuginfodResolver:
                     dwarf_path=cached,
                     source=f"debuginfod ({url})",
                 )
-            except (OSError, urllib.error.URLError) as exc:
+            except (OSError, ValueError) as exc:
                 _logger.debug("debuginfod fetch failed from %s: %s", url, exc)
                 continue
 
