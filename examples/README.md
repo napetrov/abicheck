@@ -33,11 +33,11 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 > Authoritative expected verdicts for benchmarking are in [`ground_truth.json`](ground_truth.json).
 > If a per-case README and benchmark expectation differ, treat [`ground_truth.json`](ground_truth.json) as source of truth.
 
-**69 published cases** (01–68 + 26b):
+**74 published cases** (01–73 + 26b):
 
 | Verdict | Count | checker_policy.py set | Icon |
 |---------|-------|-----------------------|------|
-| BREAKING | 48 | `BREAKING_KINDS` | 🔴 |
+| BREAKING | 53 | `BREAKING_KINDS` | 🔴 |
 | API_BREAK | 2 | `API_BREAK_KINDS` | 🟠 |
 | COMPATIBLE_WITH_RISK | 1 | `RISK_KINDS` | 🟡 |
 | COMPATIBLE (addition) | 7 | `ADDITION_KINDS` | 🟢 |
@@ -119,6 +119,11 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | [66](case66_language_linkage_changed/README.md) | Language Linkage Changed (extern "C") | Breaking | BREAKING 🔴 |
 | [67](case67_tls_var_size_changed/README.md) | TLS Variable Size Changed | Breaking | BREAKING 🔴 |
 | [68](case68_virtual_method_added/README.md) | Virtual Method Added (non-virtual → virtual) | Breaking | BREAKING 🔴 |
+| [69](case69_param_count_changed/README.md) | Parameter Count Changed (2→3 args) | Breaking | BREAKING 🔴 |
+| [70](case70_virtual_base_added/README.md) | Virtual Base Class Added (non-virtual→virtual) | Breaking | BREAKING 🔴 |
+| [71](case71_inline_namespace_moved/README.md) | Inline Namespace Moved (v1→v2) | Breaking | BREAKING 🔴 |
+| [72](case72_func_ref_qual_changed/README.md) | Function Ref-Qualifier Changed (&→&&) | Breaking | BREAKING 🔴 |
+| [73](case73_typedef_underlying_changed/README.md) | Typedef Underlying Type Changed (int→void*) | Breaking | BREAKING 🔴 |
 
 ---
 

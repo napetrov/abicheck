@@ -844,6 +844,76 @@
       "bad_practice": false,
       "description": "Virtual method added to previously non-virtual class \u2014 vtable pointer inserted, sizeof grows, all field offsets shift (FUNC_VIRTUAL_ADDED)",
       "expected_kinds": ["func_virtual_added"]
+    },
+    "case69_param_count_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Function parameter added (2 \u2192 3 args) \u2014 old callers don\u2019t push the new argument; callee reads uninitialized register (FUNC_PARAMS_CHANGED)",
+      "expected_kinds": ["func_params_changed"]
+    },
+    "case70_virtual_base_added": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Non-virtual inheritance changed to virtual \u2014 vbase pointer inserted, base subobject relocated to end of most-derived object, sizeof and all offsets change (BASE_CLASS_VIRTUAL_CHANGED)",
+      "expected_kinds": ["base_class_virtual_changed"]
+    },
+    "case71_inline_namespace_moved": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "Symbols moved from inline namespace v1 to v2 \u2014 mangled names change so old binaries fail to resolve symbols (INLINE_NAMESPACE_MOVED)",
+      "expected_kinds": ["inline_namespace_moved"]
+    },
+    "case72_func_ref_qual_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Member function ref-qualifier changed from & to && \u2014 mangled name changes (R \u2192 O in Itanium ABI), old binaries get undefined symbol (FUNC_REF_QUAL_CHANGED)",
+      "expected_kinds": ["func_ref_qual_changed"]
+    },
+    "case73_typedef_underlying_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Typedef handle_t underlying type changed from int to void* \u2014 sizeof changes from 4 to 8 bytes, all functions using the typedef inherit the break (TYPEDEF_BASE_CHANGED)",
+      "expected_kinds": ["typedef_base_changed"]
     }
   }
 }
