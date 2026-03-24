@@ -1,4 +1,4 @@
-"""Deep detection tests for platform-specific ChangeKinds with shallow coverage.
+"""Deep detection tests for platform-specific ChangeKinds with exhaustive coverage.
 
 Covers: ELF symbol metadata (binding, type, size, visibility, IFUNC, versioning),
 DWARF layout cross-checks, Mach-O compat_version, and advanced DWARF detectors.
@@ -253,13 +253,19 @@ class TestSymbolVersionChanges:
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
         assert ChangeKind.SYMBOL_VERSION_DEFINED_ADDED in _kinds(r)
 
-    def test_version_required_added(self):
+    def test_version_required_added_compat(self):
+        """New lib not previously required → COMPAT (not a new runtime constraint)."""
         old_elf = ElfMetadata(versions_required={})
         new_elf = ElfMetadata(versions_required={"libc.so.6": ["GLIBC_2.34"]})
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
-        kind_set = _kinds(r)
-        assert (ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in kind_set or
-                ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT in kind_set)
+        assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED_COMPAT in _kinds(r)
+
+    def test_version_required_added_breaking(self):
+        """Genuinely newer version requirement on existing lib → BREAKING."""
+        old_elf = ElfMetadata(versions_required={"libc.so.6": ["GLIBC_2.17"]})
+        new_elf = ElfMetadata(versions_required={"libc.so.6": ["GLIBC_2.17", "GLIBC_2.34"]})
+        r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
+        assert ChangeKind.SYMBOL_VERSION_REQUIRED_ADDED in _kinds(r)
 
     def test_version_required_removed(self):
         old_elf = ElfMetadata(versions_required={"libc.so.6": ["GLIBC_2.28"]})

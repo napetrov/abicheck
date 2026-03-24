@@ -142,7 +142,7 @@ class TestSuppressionExpiration:
             symbol="_Z3foov",
             description="func removed",
         )
-        assert s.matches(change)
+        assert s.matches(change, today=today)
 
     def test_expired_suppression_does_not_affect_verdict(self):
         """Expired suppression → change remains unsuppressed."""
@@ -426,6 +426,8 @@ class TestSuppressionWithPolicy:
             suppression=sl,
             policy_file=pf,
         )
-        assert r.suppressed_count >= 1
-        # With the breaking change suppressed, verdict should drop
-        assert r.verdict != Verdict.BREAKING
+        assert r.suppressed_count == 1
+        suppressed_kinds = {c.kind for c in r.suppressed_changes}
+        assert ChangeKind.FUNC_RETURN_CHANGED in suppressed_kinds
+        # With the only breaking change suppressed, verdict should be NO_CHANGE
+        assert r.verdict == Verdict.NO_CHANGE

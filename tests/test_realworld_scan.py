@@ -169,13 +169,56 @@ compress_status  compress_reset(compress_stream *s);
 #endif
 """
 
-V2_COMPAT_SOURCE = V1_SOURCE + """\
+V2_COMPAT_IMPL = """\
+#include <stdlib.h>
+#include <string.h>
+
+struct compress_stream_s {
+    int   level;
+    int   window_bits;
+    int   mem_level;
+    void *buf;
+    size_t buf_len;
+};
+
+const char *compress_version(void) { return "1.1.0"; }
+
+compress_stream *compress_init(const compress_options *opts) {
+    compress_stream *s = calloc(1, sizeof(*s));
+    if (!s) return NULL;
+    s->level = opts ? opts->level : 6;
+    s->window_bits = opts ? opts->window_bits : 15;
+    s->mem_level = opts ? opts->mem_level : 8;
+    return s;
+}
+
+compress_status compress_feed(compress_stream *s, const void *in, size_t in_len) {
+    if (!s) return COMPRESS_ESTREAM;
+    (void)in; (void)in_len;
+    return COMPRESS_OK;
+}
+
+compress_status compress_flush(compress_stream *s, void *out, size_t *out_len) {
+    if (!s) return COMPRESS_ESTREAM;
+    (void)out; (void)out_len;
+    return COMPRESS_OK;
+}
+
+void compress_free(compress_stream *s) { free(s); }
+
+size_t compress_bound(size_t src_len) { return src_len + src_len / 1000 + 12; }
+
 compress_status compress_reset(compress_stream *s) {
     if (!s) return COMPRESS_ESTREAM;
     s->buf_len = 0;
     return COMPRESS_OK;
 }
 """
+
+# Build V2 source by concatenating the header (for public API consistency)
+# with the implementation. This ensures compress_version() returns "1.1.0"
+# matching the header's LIBCOMPRESS_VERSION.
+V2_COMPAT_SOURCE = V2_COMPAT_HEADER + "\n" + V2_COMPAT_IMPL
 
 # ── V2: Breaking change (struct layout changed) ─────────────────────────
 
@@ -387,9 +430,15 @@ class TestRealWorldNoChange:
         _require_tool("gcc")
         _require_tool("castxml")
 
-        v1_so, v1_hdr = _build_lib(V1_SOURCE, V1_HEADER, "compress_v1", tmp_path)
-        # Build again with different output name but same source
-        v1b_so, v1b_hdr = _build_lib(V1_SOURCE, V1_HEADER, "compress_v1b", tmp_path)
+        # Build in separate subdirectories with the same library name so the
+        # embedded SONAMEs match — different filenames would produce different
+        # SONAMEs and cause a spurious SONAME_CHANGED finding.
+        dir_a = tmp_path / "a"
+        dir_b = tmp_path / "b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+        v1_so, v1_hdr = _build_lib(V1_SOURCE, V1_HEADER, "compress_v1", dir_a)
+        v1b_so, v1b_hdr = _build_lib(V1_SOURCE, V1_HEADER, "compress_v1", dir_b)
 
         r = _scan(v1_so, v1_hdr, v1b_so, v1b_hdr, tmp_path)
         assert r.verdict == Verdict.NO_CHANGE, (
