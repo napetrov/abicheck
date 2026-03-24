@@ -551,7 +551,7 @@ class DebuginfodResolver:
 
                 req = urllib.request.Request(fetch_url)
                 req.add_header("User-Agent", "abicheck-debuginfod-client")
-                with urllib.request.urlopen(req, timeout=30) as resp:
+                with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
                     if resp.status != 200:
                         continue
                     # Read with size limit to prevent memory exhaustion

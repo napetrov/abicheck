@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -194,16 +195,17 @@ class TestBuildIdTreeResolver:
 
 
 class TestPathMirrorResolver:
+    @pytest.mark.skipif(sys.platform == "win32", reason="Path mirror is a Unix/Linux convention")
     def test_found_appended_debug(self, tmp_path: Path) -> None:
         debug_root = tmp_path / "debug"
         binary_path = tmp_path / "usr" / "lib" / "libfoo.so"
         binary_path.parent.mkdir(parents=True)
         binary_path.write_bytes(b"\x7fELF")
 
+        # Mirror the exact logic used by PathMirrorResolver.resolve():
+        #   mirror = root / str(binary_abs).lstrip("/")
         binary_resolved = binary_path.resolve()
-        # Use PurePosixPath-style join for cross-platform compatibility
-        rel_parts = binary_resolved.parts[1:]  # Skip root/drive
-        mirror_path = debug_root.joinpath(*rel_parts)
+        mirror_path = debug_root / str(binary_resolved).lstrip("/")
         mirror_debug = mirror_path.parent / (mirror_path.name + ".debug")
         mirror_debug.parent.mkdir(parents=True, exist_ok=True)
         mirror_debug.write_bytes(b"\x7fELF")
@@ -213,6 +215,7 @@ class TestPathMirrorResolver:
         assert result.dwarf_path == mirror_debug
         assert "path mirror" in result.source
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Path mirror is a Unix/Linux convention")
     def test_found_replaced_suffix(self, tmp_path: Path) -> None:
         """Test .so -> .debug suffix replacement."""
         debug_root = tmp_path / "debug"
@@ -220,9 +223,9 @@ class TestPathMirrorResolver:
         binary_path.parent.mkdir(parents=True)
         binary_path.write_bytes(b"\x7fELF")
 
+        # Mirror the exact logic used by PathMirrorResolver.resolve()
         binary_resolved = binary_path.resolve()
-        rel_parts = binary_resolved.parts[1:]  # Skip root/drive
-        mirror_path = debug_root.joinpath(*rel_parts)
+        mirror_path = debug_root / str(binary_resolved).lstrip("/")
         # Replace .so with .debug
         replaced = mirror_path.with_suffix(".debug")
         replaced.parent.mkdir(parents=True, exist_ok=True)
