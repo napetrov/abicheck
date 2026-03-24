@@ -36,7 +36,8 @@ V1_HEADER = """\
 #ifndef LIBCOMPRESS_H
 #define LIBCOMPRESS_H
 
-#include <stddef.h>
+/* Avoid <stddef.h> — castxml on macOS pulls in libc++ headers it cannot parse */
+typedef __SIZE_TYPE__ size_t;
 
 /* Version */
 #define LIBCOMPRESS_VERSION "1.0.0"
@@ -132,7 +133,8 @@ V2_COMPAT_HEADER = """\
 #ifndef LIBCOMPRESS_H
 #define LIBCOMPRESS_H
 
-#include <stddef.h>
+/* Avoid <stddef.h> — castxml on macOS pulls in libc++ headers it cannot parse */
+typedef __SIZE_TYPE__ size_t;
 
 #define LIBCOMPRESS_VERSION "1.1.0"
 #define LIBCOMPRESS_VERNUM  0x110
@@ -181,7 +183,8 @@ V2_BREAKING_HEADER = """\
 #ifndef LIBCOMPRESS_H
 #define LIBCOMPRESS_H
 
-#include <stddef.h>
+/* Avoid <stddef.h> — castxml on macOS pulls in libc++ headers it cannot parse */
+typedef __SIZE_TYPE__ size_t;
 
 #define LIBCOMPRESS_VERSION "2.0.0"
 #define LIBCOMPRESS_VERNUM  0x200
