@@ -791,7 +791,8 @@
       "api_break": false,
       "bad_practice": false,
       "description": "Function calling convention changed from default System V to ms_abi \u2014 parameters passed in wrong registers (CALLING_CONVENTION_CHANGED)",
-      "expected_kinds": ["calling_convention_changed"]
+      "expected_kinds": ["calling_convention_changed"],
+      "known_gap": "GCC does not emit DW_AT_calling_convention for __attribute__((ms_abi)); detection requires Clang"
     },
     "case65_symbol_version_removed": {
       "expected": "BREAKING",
