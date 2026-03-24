@@ -426,6 +426,28 @@ tests added (detection likely already works):
    Out of scope for library ABI checker.
 3. **Package-level diff** — `abipkgdiff` for RPM/deb. Can be built on abicheck Python API.
 
+### Additional libabigail Detections (from detailed research)
+
+libabigail's `diff_category` enum defines 22 change categories. Cross-reference:
+
+| libabigail Category | abicheck Coverage | Notes |
+|---|---|---|
+| `SIZE_OR_OFFSET_CHANGE_CATEGORY` | `TYPE_SIZE_CHANGED`, `TYPE_FIELD_OFFSET_CHANGED`, `ENUM_MEMBER_VALUE_CHANGED` | Fully covered |
+| `VIRTUAL_MEMBER_CHANGE_CATEGORY` | `TYPE_VTABLE_CHANGED`, `FUNC_VIRTUAL_ADDED/REMOVED` | Fully covered |
+| `REFERENCE_LVALUENESS_CHANGE_CATEGORY` (`int&`→`int&&`) | `FUNC_REF_QUAL_CHANGED` | Fully covered |
+| `NON_COMPATIBLE_DISTINCT_CHANGE_CATEGORY` | `FUNC_PARAMS_CHANGED`, `FUNC_RETURN_CHANGED` | Covered by type-level checks |
+| `FN_PARM_ADD_REMOVE_CHANGE_CATEGORY` | `FUNC_PARAMS_CHANGED` | Covered |
+| `ACCESS_CHANGE_CATEGORY` | `METHOD_ACCESS_CHANGED`, `FIELD_ACCESS_CHANGED` | Covered |
+| `COMPATIBLE_TYPE_CHANGE_CATEGORY` (typedef) | `TYPEDEF_BASE_CHANGED` | Covered |
+| `HARMLESS_ENUM_CHANGE_CATEGORY` (appending) | `ENUM_MEMBER_ADDED` | Covered |
+| `FN_PARM_TYPE_TOP_CV_CHANGE_CATEGORY` | `FUNC_PARAMS_CHANGED` | Covered |
+| `VOID_PTR_TO_PTR_CHANGE_CATEGORY` | `FUNC_PARAMS_CHANGED` / `TYPE_FIELD_TYPE_CHANGED` | Covered |
+| `BENIGN_INFINITE_ARRAY_CHANGE_CATEGORY` | No dedicated kind | **Minor gap** — flexible array member changes tracked via size but no specific ChangeKind |
+| `TYPE_DECL_ONLY_DEF_CHANGE_CATEGORY` | `TYPE_BECAME_OPAQUE` (one direction) | Covered for opaque→defined; defined→opaque also covered |
+| Unreachable type tracking | Not tracked | **Not a gap** — we analyze only types reachable from public API (same practical effect) |
+| CRC/modversions (kernel) | Not supported | **Out of scope** — kernel ABI feature |
+| Split debuginfo / DWZ | Supported via pyelftools | DWARF supplementary files handled |
+
 ### Non-Gaps (Intentional Differences)
 
 1. **Leaf-class vtable optimizations** — abicc downgrades severity for leaf classes. We don't.
