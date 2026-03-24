@@ -790,7 +790,7 @@
       "abi_break": true,
       "api_break": false,
       "bad_practice": false,
-      "description": "Function calling convention changed from default to regcall \u2014 parameters passed in wrong registers (CALLING_CONVENTION_CHANGED)",
+      "description": "Function calling convention changed from default System V to ms_abi \u2014 parameters passed in wrong registers (CALLING_CONVENTION_CHANGED)",
       "expected_kinds": ["calling_convention_changed"]
     },
     "case65_symbol_version_removed": {
@@ -829,7 +829,7 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
-      "description": "Thread-local variable ErrorCtx grows from 68 to 264 bytes \u2014 adjacent TLS variables shift to wrong offsets (TLS_VAR_SIZE_CHANGED)",
+      "description": "Thread-local variable ErrorCtx grows from 68 to 72 bytes due to inserted field \u2014 struct field offsets shift, causing consumers to read wrong data (TLS_VAR_SIZE_CHANGED)",
       "expected_kinds": ["tls_var_size_changed"]
     },
     "case68_virtual_method_added": {

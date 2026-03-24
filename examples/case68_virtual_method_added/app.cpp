@@ -6,8 +6,7 @@
 #include <cstdio>
 #include <cmath>
 
-extern "C" Sensor* sensor_create(int id, double initial);
-extern "C" void    sensor_destroy(Sensor* s);
+/* sensor_create and sensor_destroy are declared in v1.h */
 
 int main() {
     /* Create sensor via library (v2 allocates 24 bytes with vptr) */

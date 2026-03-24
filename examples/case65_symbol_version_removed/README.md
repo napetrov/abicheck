@@ -28,10 +28,13 @@ Removing a version node is equivalent to removing symbols — but worse, because
 ## Code diff
 
 ```
-v1: .symver crypto_hash_v1,crypto_hash@CRYPTO_1.0     ← provides 1.0
-    .symver crypto_hash_v2,crypto_hash@@CRYPTO_2.0    ← default is 2.0
+v1.c:  .symver crypto_hash_v1,crypto_hash@CRYPTO_1.0   ← compat version
+       .symver crypto_hash_v2,crypto_hash@@CRYPTO_2.0   ← default version
+v1.map: CRYPTO_1.0 { crypto_hash; };
+        CRYPTO_2.0 { crypto_hash; crypto_verify; } CRYPTO_1.0;
 
-v2: .symver crypto_hash,crypto_hash@@CRYPTO_2.0       ← CRYPTO_1.0 gone!
+v2.c:  (no .symver — plain crypto_hash() definition)    ← CRYPTO_1.0 gone!
+v2.map: CRYPTO_2.0 { crypto_hash; crypto_verify; };
 ```
 
 ## Real Failure Demo

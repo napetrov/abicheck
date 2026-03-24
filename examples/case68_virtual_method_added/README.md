@@ -75,27 +75,26 @@ public:
 g++ -shared -fPIC -g v1.cpp -o libsensor.so
 g++ -g app.cpp -L. -lsensor -Wl,-rpath,. -o app
 ./app
-# → sensor id    = 7 (expected 7)
-# → sensor value = 98.6 (expected 98.6)
-# → sizeof(Sensor) compiled = 16
-# → local sensor = 42.0 (expected 42.0)
+# → sizeof(Sensor) = 16 (v1=16, v2=24)
+# → id    = 7 (expected 7)
+# → value = 98.6 (expected 98.6)
 
 # Swap in new library (no recompile)
 g++ -shared -fPIC -g v2.cpp -o libsensor.so
 ./app
-# → sensor id    = 0 (expected 7)         ← wrong offset!
-# → sensor value = 98.6 (expected 98.6)   ← may work via function call
-# → sizeof(Sensor) compiled = 16          ← but real size is now 24!
-# → local sensor = 5.3e-308 (expected 42.0) ← reads vtable ptr as double
-# → CORRUPTION: vtable pointer insertion shifted all fields!
+# → sizeof(Sensor) = 16 (v1=16, v2=24)       ← app thinks 16, reality is 24
+# → id    = 1717986918 (expected 7)           ← reads value_ bytes as int!
+# → value = 0.0 (expected 98.6)              ← reads vtable pointer as double!
+# → CORRUPTION: id_ at v1 offset 8 reads v2's value_ field!
+# → CORRUPTION: value_ at v1 offset 0 reads v2's vtable pointer!
 ```
 
-**Why CRITICAL:** Stack-allocated objects are only 16 bytes (v1 size), but v2
-needs 24 bytes. The vtable pointer write at offset 0 overwrites `value_`, and
-`value_` is written to offset 8 where `id_` was, creating a cascade of
-corruption. For heap-allocated objects returned by the library, the function
-call may work (v2 created a 24-byte object), but direct field access by the
-app uses v1 offsets and reads the wrong data.
+**Why CRITICAL:** The app accesses `s->value_` at v1 offset 0, but v2 placed
+the vtable pointer there — the app reads an address as a `double`, getting 0.0
+or garbage. The app accesses `s->id_` at v1 offset 8, but v2 placed `value_`
+(98.6) there — interpreting the double's bytes as an `int` yields 1717986918.
+For heap-allocated objects the library created a 24-byte object correctly, but
+the app's direct field access uses v1 offsets and reads the wrong data.
 
 ## How to fix
 
@@ -122,13 +121,11 @@ downstream components.
 
 ## abicheck detection
 
-abicheck detects this via multiple change kinds:
-- `func_virtual_added` (BREAKING) — new virtual method introduced
-- `type_size_changed` (BREAKING) — sizeof increased due to vtable pointer
-- `type_vtable_changed` (BREAKING) — vtable created where none existed
-
-The combination provides high confidence that this is a vtable-insertion break,
-not just a coincidental size change.
+abicheck detects this primarily as `func_virtual_added` (BREAKING) — a virtual
+method was introduced to a class that previously had none. Depending on the
+analysis depth (DWARF-aware, header-aware), additional change kinds such as
+`type_size_changed` and `type_vtable_changed` may also be reported, providing
+further evidence of the vtable-insertion break.
 
 ## References
 

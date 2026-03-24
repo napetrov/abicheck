@@ -66,16 +66,16 @@ gcc -g app.c -L. -llogger -Wl,-rpath,. -o app
 gcc -shared -fPIC -g v2.c -o liblogger.so
 ./app
 # → error code = 404 (expected 404)
-# → message = "" (expected "not found")
+# → message = "\x03" (expected "not found")   ← reads severity=3 as a char!
 # → CORRUPTION: TLS struct layout changed
 ```
 
 **Why CRITICAL:** The app reads `tls_error.message` at v1's offset 4, but v2
-placed the `severity` integer (value 3) there. The app interprets `0x03 0x00
-0x00 0x00` as a string — which looks like a 1-byte string "\x03" or empty
-depending on endianness. The actual message "not found" is at offset 8, which
-the app never reads. No crash occurs — just silently wrong error messages,
-making debugging extremely difficult.
+placed the `severity` integer (value 3) there. On little-endian x86, the app
+interprets bytes `0x03 0x00 0x00 0x00` as a 1-character string `"\x03"` (a
+non-printable control character). The actual message `"not found"` is at
+offset 8, which the app never reads. No crash occurs — just silently wrong
+error messages, making debugging extremely difficult.
 
 ## How to fix
 

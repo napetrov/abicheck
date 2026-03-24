@@ -42,13 +42,17 @@ This is especially dangerous because:
 gcc -shared -fPIC -g v1.c -o libfoo.so
 gcc -g app.c -L. -lfoo -Wl,-rpath,. -o app
 ./app
+# → mode     = 2 (expected 2)
+# → channel  = 5 (expected 5)
 # → priority = 128 (expected 128)
 
 # Swap in new library (no recompile)
 gcc -shared -fPIC -g v2.c -o libfoo.so
 ./app
-# → priority = 32 (expected 128)
-# → CORRUPTION: priority bits shifted due to bitfield width change!
+# → mode     = 2 (expected 2)
+# → channel  = 4 (expected 5)
+# → priority = 1 (expected 128)
+# → CORRUPTION: bitfield layout mismatch
 ```
 
 **Why CRITICAL:** The v2 library writes `priority=128` into bits 10-17, but the

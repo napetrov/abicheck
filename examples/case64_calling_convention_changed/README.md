@@ -63,14 +63,16 @@ gcc -g app.c -L. -lfoo -Wl,-rpath,. -o app -lm
 # Swap in new library (no recompile)
 gcc -shared -fPIC -g v2.c -o libfoo.so
 ./app
-# → Segmentation fault (or garbage output)
-# → WRONG RESULT: calling convention mismatch
+# → dot product = 0.0 (expected 32.0)
+# → scaled = {0.0, 0.0, 0.0} (expected {2.0, 4.0, 6.0})
+# → WRONG RESULT: calling convention mismatch — parameters passed in wrong registers!
 ```
 
 **Why CRITICAL:** The v2 function expects pointer parameters in `rcx`/`rdx`
-(ms_abi) but receives them in `rdi`/`rsi` (sysv_abi). The function dereferences
-whatever garbage address is in `rcx`, causing a segfault. If by chance the
-register holds a valid address, the function silently reads wrong data.
+(ms_abi) but receives them in `rdi`/`rsi` (sysv_abi). The function reads from
+registers that hold stale values (typically zero), producing garbage results.
+With different register contents this could also cause a segfault if the stale
+value is dereferenced as a pointer.
 
 ## How to fix
 

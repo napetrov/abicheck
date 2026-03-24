@@ -1,5 +1,5 @@
-/* DEMO: app compiled against v1 (default calling convention).
-   v2 uses __regcall — parameters arrive in different registers.
+/* DEMO: app compiled against v1 (default System V calling convention).
+   v2 uses __attribute__((ms_abi)) — parameters arrive in different registers.
    The function reads garbage from the expected registers. */
 #include "v1.h"
 #include <stdio.h>
