@@ -230,7 +230,7 @@ The spec format is `library:version:platform[:variant]`.
 Baselines are stored as plain files in a directory tree (default:
 `.abicheck/baselines/`):
 
-```
+```text
 .abicheck/baselines/
 ├── libfoo/
 │   ├── 1.0.0/
@@ -309,5 +309,5 @@ jobs:
 | Stripped binaries fall back to symbols-only mode silently | `--debug-root` and `--debuginfod` find debug info automatically |
 | Debug info in dSYM/PDB requires manual `--pdb-path` | Resolved automatically via pluggable resolver chain |
 | Baselines stored ad-hoc (git, S3, regenerated) | `abicheck baseline push/pull/list/delete` with integrity checks |
-| No standard way to address baselines by version/platform | `BaselineKey` with `library:version:platform:variant` addressing |
+| No standard way to address baselines by version/platform | `BaselineKey` with `library:version:platform[:variant]` addressing |
 | No integrity verification for stored snapshots | SHA-256 checksums in metadata, verified on pull |

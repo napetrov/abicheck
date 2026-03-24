@@ -422,12 +422,16 @@ class FilesystemRegistry:
 
 
 def _atomic_write(path: Path, content: str) -> None:
-    """Write content to a file atomically (write to temp, then rename)."""
+    """Write content to a file atomically (write to temp, then rename).
+
+    Uses os.replace() for unconditional atomic overwrite on all platforms
+    (Path.rename raises FileExistsError on Windows if the target exists).
+    """
     fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
-        Path(tmp_path).rename(path)
+        os.replace(tmp_path, str(path))
     except BaseException:
         try:
             os.unlink(tmp_path)

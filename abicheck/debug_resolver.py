@@ -47,6 +47,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import urlparse
 
 _logger = logging.getLogger(__name__)
 
@@ -140,6 +141,7 @@ def extract_build_id(binary_path: Path) -> str | None:
     Returns the build-id as a lowercase hex string, or None if not found.
     """
     try:
+        from elftools.common.exceptions import ELFError
         from elftools.elf.elffile import ELFFile
         from elftools.elf.sections import NoteSection
     except ImportError:
@@ -160,7 +162,7 @@ def extract_build_id(binary_path: Path) -> str | None:
                         if isinstance(desc, bytes):
                             return desc.hex().lower()
                         return str(desc).lower()
-    except (OSError, ValueError, KeyError) as exc:
+    except (OSError, ValueError, KeyError, ELFError) as exc:
         _logger.debug("Failed to extract build-id from %s: %s", binary_path, exc)
 
     return None
@@ -273,8 +275,8 @@ class SplitDwarfResolver:
             search_dirs.append(root)
 
         total = len(dwo_names)
-        # Require at least half of .dwo files to be present
-        min_required = max(1, total // 2)
+        # Require at least ceiling-half of .dwo files to be present
+        min_required = max(1, (total + 1) // 2)
         for search_dir in search_dirs:
             found_count = sum(
                 1 for name in dwo_names
@@ -525,11 +527,17 @@ class DebuginfodResolver:
         # Fetch from server
         for url in self._urls:
             url = url.rstrip("/")
-            if not self._allow_insecure and not url.startswith("https://"):
+            scheme = urlparse(url).scheme.lower()
+            if scheme == "https":
+                pass  # always allowed
+            elif scheme == "http" and self._allow_insecure:
+                pass  # allowed with explicit opt-in
+            else:
                 _logger.warning(
-                    "Skipping insecure debuginfod URL %s "
-                    "(use --debuginfod-allow-insecure to allow HTTP)",
-                    url,
+                    "Skipping debuginfod URL %s (scheme %r not allowed; "
+                    "only https is accepted by default, use "
+                    "--debuginfod-allow-insecure to also allow http)",
+                    url, scheme,
                 )
                 continue
 
@@ -558,15 +566,17 @@ class DebuginfodResolver:
                     _logger.warning("Downloaded file is not valid ELF: %s", fetch_url)
                     continue
 
-                # Atomic cache write: write to temp file then rename
+                # Atomic cache write: write to temp file then replace
                 cached.parent.mkdir(parents=True, exist_ok=True)
                 fd, tmp_path = tempfile.mkstemp(dir=cached.parent)
                 try:
                     os.write(fd, data)
                     os.close(fd)
-                    os.rename(tmp_path, str(cached))
+                    fd = -1  # mark as closed
+                    os.replace(tmp_path, str(cached))
                 except BaseException:
-                    os.close(fd) if not os.get_inheritable(fd) else None  # noqa: B018
+                    if fd >= 0:
+                        os.close(fd)
                     try:
                         os.unlink(tmp_path)
                     except OSError:
@@ -591,8 +601,8 @@ class DebuginfodResolver:
 
 # Default resolver chain (ordered, first-match wins)
 _DEFAULT_RESOLVERS: list[DebugResolverBackend] = [
-    EmbeddedDwarfResolver(),
     SplitDwarfResolver(),
+    EmbeddedDwarfResolver(),
     BuildIdTreeResolver(),
     PathMirrorResolver(),
     DSYMResolver(),

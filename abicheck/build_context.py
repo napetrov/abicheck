@@ -159,6 +159,28 @@ class BuildContext:
         return bool(self.define_conflicts) or len(self.standard_variants) > 1
 
 
+def _entry_matches_filter(entry: CompileEntry, pattern: str) -> bool:
+    """Test if a compile entry matches a source_filter glob pattern.
+
+    Tests the pattern against the absolute path and also against the
+    path relative to the entry's compilation directory, so that relative
+    patterns like ``src/libfoo/**`` work as documented.
+    """
+    abs_str = str(entry.file)
+    if fnmatch(abs_str, pattern):
+        return True
+    # Also test against relative path (from the entry's build directory)
+    try:
+        rel_str = str(entry.file.relative_to(entry.directory))
+    except ValueError:
+        # file is not under directory — try CWD-relative too
+        try:
+            rel_str = str(entry.file.relative_to(Path.cwd()))
+        except ValueError:
+            return False
+    return fnmatch(rel_str, pattern)
+
+
 def load_compile_db(path: Path) -> list[CompileEntry]:
     """Load and parse a compile_commands.json file.
 
@@ -392,7 +414,7 @@ def build_context_for_header(
     if source_filter:
         filtered = [
             e for e in entries
-            if fnmatch(str(e.file), source_filter)
+            if _entry_matches_filter(e, source_filter)
         ]
         if not filtered:
             _logger.warning(
@@ -473,7 +495,7 @@ def build_context_union_fallback(
     if source_filter:
         filtered = [
             e for e in entries
-            if fnmatch(str(e.file), source_filter)
+            if _entry_matches_filter(e, source_filter)
         ]
         if not filtered:
             filtered = entries

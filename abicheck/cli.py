@@ -662,24 +662,36 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
         return
 
     # Load build context from compile_commands.json if provided (ADR-020)
+    # We build a per-header context map so each header gets its own TU-matched flags.
+    _db_entries: list | None = None
+    _per_header_ctx: dict[Path, list[str]] = {}
     build_context_flags: list[str] = []
     if effective_compile_db:
         try:
-            from .build_context import build_context_for_header, load_compile_db
-            db_entries = load_compile_db(effective_compile_db)
-            # Use per-header matching when headers are available, else union fallback
+            from .build_context import (
+                build_context_for_header,
+                build_context_union_fallback,
+                load_compile_db,
+            )
+            _db_entries = load_compile_db(effective_compile_db)
             resolved_hdrs = _expand_header_inputs(list(headers)) if headers else []
             if resolved_hdrs:
+                # Build context per header for accurate TU-specific flags
+                for hdr in resolved_hdrs:
+                    ctx = build_context_for_header(
+                        _db_entries, hdr, source_filter=compile_db_filter,
+                    )
+                    _per_header_ctx[hdr] = ctx.to_castxml_flags()
+                # Use the first header's context as the default/summary for logging
                 ctx = build_context_for_header(
-                    db_entries, resolved_hdrs[0], source_filter=compile_db_filter,
+                    _db_entries, resolved_hdrs[0], source_filter=compile_db_filter,
                 )
             else:
-                from .build_context import build_context_union_fallback
-                ctx = build_context_union_fallback(db_entries, source_filter=compile_db_filter)
+                ctx = build_context_union_fallback(_db_entries, source_filter=compile_db_filter)
             build_context_flags = ctx.to_castxml_flags()
             if build_context_flags:
                 click.echo(
-                    f"Build context: {len(db_entries)} entries from "
+                    f"Build context: {len(_db_entries)} entries from "
                     f"{effective_compile_db}, {len(build_context_flags)} flags derived",
                     err=True,
                 )
@@ -2791,16 +2803,32 @@ def baseline_push(
     reg_path = registry_path or Path(".abicheck/baselines")
     registry = FilesystemRegistry(reg_path)
 
+    from .serialization import snapshot_to_json
+
     snapshot = _load(snapshot_path)
-    snap_json = snapshot_path.read_text(encoding="utf-8")
-    meta = BaselineMetadata.create(snap_json, git_commit=git_commit)
+    # Compute checksum from canonical serialization (same form registry.push stores)
+    canonical_json = snapshot_to_json(snapshot)
+    meta = BaselineMetadata.create(canonical_json, git_commit=git_commit)
 
     effective_platform = platform
     if auto_platform and not platform:
-        raise click.UsageError(
-            "--auto-platform requires a binary path to detect from. "
-            "Use --platform to specify the platform explicitly."
-        )
+        # Detect platform from the library path embedded in the snapshot
+        if snapshot.library:
+            lib_path = Path(snapshot.library)
+            if lib_path.exists():
+                from .baseline import detect_platform_from_binary
+                effective_platform = detect_platform_from_binary(lib_path)
+                click.echo(f"Auto-detected platform: {effective_platform}", err=True)
+            else:
+                raise click.UsageError(
+                    f"--auto-platform: binary '{snapshot.library}' not found on disk. "
+                    "Use --platform to specify the platform explicitly."
+                )
+        else:
+            raise click.UsageError(
+                "--auto-platform: snapshot has no library path. "
+                "Use --platform to specify the platform explicitly."
+            )
 
     try:
         key = BaselineKey(library=library, version=version, platform=effective_platform, variant=variant)
