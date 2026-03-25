@@ -141,8 +141,7 @@ def classify_change(
     Uses the canonical kind sets from ``checker_policy`` by default.
 
     When *kind_sets* is provided (e.g. from ``DiffResult._effective_kind_sets()``),
-    those sets are used directly, which includes PolicyFile overrides and
-    ``--strict-elf-only`` reclassifications.
+    those sets are used directly, which includes PolicyFile overrides.
 
     When only *policy* is provided, uses the built-in policy-adjusted sets.
 

@@ -15,7 +15,7 @@
 """Extra CLI coverage tests for private helper functions.
 
 Covers: _expand_header_inputs, _setup_verbosity, _safe_write_output,
-_stamp_provenance, _resolve_output, _sniff_text_format, _detect_binary_format,
+_stamp_provenance, _sniff_text_format, _detect_binary_format,
 and _write_snapshot_output.
 """
 from __future__ import annotations
@@ -30,7 +30,6 @@ import pytest
 from abicheck.cli import (
     _detect_binary_format,
     _expand_header_inputs,
-    _resolve_output,
     _safe_write_output,
     _setup_verbosity,
     _sniff_text_format,
@@ -198,45 +197,6 @@ class TestStampProvenance:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_output
-# ---------------------------------------------------------------------------
-
-
-class TestResolveOutput:
-    """Tests for _resolve_output."""
-
-    def test_explicit_output(self) -> None:
-        """Explicit --output path is returned as-is."""
-        snap = AbiSnapshot(library="lib.so", version="1.0")
-        result = _resolve_output(Path("/out/snap.json"), None, snap)
-        assert result == Path("/out/snap.json")
-
-    def test_auto_with_version(self) -> None:
-        """Auto mode with known version includes version in filename."""
-        snap = AbiSnapshot(library="libfoo.so.1.2.3", version="1.2.3")
-        result = _resolve_output(None, "auto", snap)
-        assert result == Path("libfoo-1.2.3.abicheck.json")
-
-    def test_auto_without_version(self) -> None:
-        """Auto mode with unknown version omits version from filename."""
-        snap = AbiSnapshot(library="libfoo.so", version="unknown")
-        result = _resolve_output(None, "auto", snap)
-        assert result == Path("libfoo.abicheck.json")
-
-    def test_auto_with_empty_name_raises(self) -> None:
-        """Auto mode with empty library name raises ClickException."""
-        snap = AbiSnapshot(library=".so", version="1.0")
-        with pytest.raises(click.ClickException, match="library name is empty"):
-            _resolve_output(None, "auto", snap)
-
-    def test_none_returns_none(self) -> None:
-        """When neither --output nor --output-name is given, returns None."""
-        snap = AbiSnapshot(library="lib.so", version="1.0")
-        result = _resolve_output(None, None, snap)
-        assert result is None
-
-
-# ---------------------------------------------------------------------------
 # _sniff_text_format
 # ---------------------------------------------------------------------------
 
@@ -302,7 +262,7 @@ class TestWriteSnapshotOutput:
     def test_stdout_output(self, capsys: pytest.CaptureFixture[str]) -> None:
         """When effective_output is None, writes to stdout."""
         snap = AbiSnapshot(library="lib.so", version="1.0")
-        _write_snapshot_output(snap, None, upload_release=False)
+        _write_snapshot_output(snap, None)
         captured = capsys.readouterr()
         assert "lib.so" in captured.out
 
@@ -310,12 +270,6 @@ class TestWriteSnapshotOutput:
         """When effective_output is a path, writes JSON to that file."""
         snap = AbiSnapshot(library="lib.so", version="1.0")
         out = tmp_path / "snap.json"
-        _write_snapshot_output(snap, out, upload_release=False)
+        _write_snapshot_output(snap, out)
         assert out.exists()
         assert "lib.so" in out.read_text(encoding="utf-8")
-
-    def test_upload_release_without_file_raises(self) -> None:
-        """upload_release=True with no file raises UsageError."""
-        snap = AbiSnapshot(library="lib.so", version="1.0")
-        with pytest.raises(click.UsageError, match="--upload-release requires"):
-            _write_snapshot_output(snap, None, upload_release=True)

@@ -145,97 +145,17 @@ def _stamp_provenance(
             pass  # git not available or not a repo — leave as None
 
 
-def _resolve_output(
-    output: Path | None,
-    output_name: str | None,
-    snap: AbiSnapshot,
-) -> Path | None:
-    """Resolve the effective output path from --output or --output-name."""
-    if output:
-        return output
-    if output_name == "auto":
-        # Derive filename from library name and version
-        # Strip .so suffix variants for a clean name
-        lib = snap.library
-        # "libfoo.so.1.2.3" → "libfoo"
-        lib_clean = re.sub(r"\.so(\.\d+)*$", "", lib)
-        # "libfoo.dll" → "libfoo"
-        lib_clean = re.sub(r"\.(dll|dylib)$", "", lib_clean)
-        if not lib_clean or not lib_clean.strip():
-            raise click.ClickException(
-                "Cannot auto-name output: library name is empty in snapshot."
-            )
-        ver = snap.version if snap.version != "unknown" else ""
-        if ver:
-            return Path(f"{lib_clean}-{ver}.abicheck.json")
-        return Path(f"{lib_clean}.abicheck.json")
-    return None
-
-
 def _write_snapshot_output(
     snap: AbiSnapshot,
-    effective_output: Path | None,
-    upload_release: bool,
+    output: Path | None,
 ) -> None:
-    """Serialize snapshot, write to file/stdout, optionally upload to GitHub Release."""
+    """Serialize snapshot and write to file or stdout."""
     result = snapshot_to_json(snap)
-    if effective_output:
-        _safe_write_output(effective_output, result)
-        click.echo(f"Snapshot written to {effective_output}", err=True)
+    if output:
+        _safe_write_output(output, result)
+        click.echo(f"Snapshot written to {output}", err=True)
     else:
-        if upload_release:
-            raise click.UsageError(
-                "--upload-release requires --output or --output-name auto "
-                "(cannot upload from stdout)."
-            )
         click.echo(result)
-        return
-
-    if upload_release:
-        _upload_to_release(effective_output, snap.git_tag)
-
-
-def _upload_to_release(snapshot_path: Path, git_tag: str | None) -> None:
-    """Upload a snapshot file to a GitHub Release using the gh CLI."""
-    import subprocess
-
-    # Determine tag: explicit --git-tag or auto-detect from git describe
-    tag = git_tag
-    if not tag:
-        try:
-            result = subprocess.run(
-                ["git", "describe", "--tags", "--exact-match", "HEAD"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.returncode == 0:
-                tag = result.stdout.strip()
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-    if not tag:
-        raise click.ClickException(
-            "--upload-release: could not determine release tag. "
-            "Use --git-tag to specify it explicitly, or run from a tagged commit."
-        )
-    click.echo(f"Uploading {snapshot_path.name} to release {tag}...", err=True)
-    try:
-        subprocess.run(
-            ["gh", "release", "upload", "--clobber", "--", tag, str(snapshot_path.resolve())],
-            check=True, timeout=60,
-        )
-    except FileNotFoundError:
-        raise click.ClickException(
-            "--upload-release requires the GitHub CLI (gh). "
-            "Install it from https://cli.github.com/"
-        )
-    except subprocess.CalledProcessError as exc:
-        raise click.ClickException(
-            f"Failed to upload to release {tag}: gh exited with code {exc.returncode}"
-        ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise click.ClickException(
-            f"Upload to release {tag} timed out after 60 seconds."
-        ) from exc
-    click.echo(f"Uploaded {snapshot_path.name} to release {tag}", err=True)
 
 
 def _sniff_text_format(path: Path) -> str:
@@ -587,14 +507,6 @@ def _populate_dependency_info(
               help="Opaque build identifier (CI run ID, build number, etc.).")
 @click.option("--no-git", "no_git", is_flag=True, default=False,
               help="Do not auto-detect git commit SHA.")
-# ── Output naming ────────────────────────────────────────────────────────────
-@click.option("--output-name", "output_name", type=click.Choice(["auto"]),
-              default=None,
-              help='Write snapshot to <library>-<version>.abicheck.json '
-                   '(use "auto").')
-@click.option("--upload-release", "upload_release", is_flag=True, default=False,
-              help="Upload the snapshot to a GitHub Release (requires gh CLI and GH_TOKEN). "
-                   "Uses --git-tag or auto-detected tag.")
 def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...],
              version: str, lang: str, output: Path | None,
              gcc_path: str | None, gcc_prefix: str | None, gcc_options: str | None,
@@ -607,8 +519,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
              debug_roots: tuple[Path, ...],
              debuginfod: bool, debuginfod_url: str | None,
              verbose: bool,
-             git_tag: str | None, build_id: str | None, no_git: bool,
-             output_name: str | None, upload_release: bool) -> None:
+             git_tag: str | None, build_id: str | None, no_git: bool) -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
     \b
@@ -621,13 +532,8 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
       abicheck dump libfoo.so.1 --show-data-sources
       abicheck dump libfoo.so.1 -H include/ -p build/  # build context from compile_commands.json
       abicheck dump libfoo.so.1 --debug-root /usr/lib/debug  # separate debug files
-      abicheck dump libfoo.so.1 -H include/foo.h --version 2.0.0 --output-name auto
     """
     _setup_verbosity(verbose)
-
-    # --output and --output-name are mutually exclusive
-    if output and output_name:
-        raise click.UsageError("--output and --output-name are mutually exclusive.")
 
     # Resolve -p / --compile-db aliases
     effective_compile_db = compile_db_path or compile_db_path_alt
@@ -657,8 +563,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
         except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
             raise click.ClickException(str(exc)) from exc
         _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-        effective_output = _resolve_output(output, output_name, snap)
-        _write_snapshot_output(snap, effective_output, upload_release)
+        _write_snapshot_output(snap, output)
         return
 
     # Load build context from compile_commands.json if provided (ADR-020)
@@ -751,8 +656,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
         _populate_dependency_info(snap, so_path, list(search_paths), sysroot, ld_library_path)
 
     _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-    effective_output = _resolve_output(output, output_name, snap)
-    _write_snapshot_output(snap, effective_output, upload_release)
+    _write_snapshot_output(snap, output)
 
 
 def _print_data_sources(so_path: Path, has_headers: bool) -> None:
@@ -1068,23 +972,6 @@ def _resolve_severity(
     return config, explicitly_set
 
 
-def _apply_strict_elf_only(pf: PolicyFile | None, policy: str) -> PolicyFile:
-    """Inject PolicyFile override that upgrades FUNC_REMOVED_ELF_ONLY to BREAKING."""
-    from .checker_policy import ChangeKind as _CK
-    from .checker_policy import Verdict as _V
-    from .policy_file import PolicyFile as _PF
-
-    strict_overrides = {_CK.FUNC_REMOVED_ELF_ONLY: _V.BREAKING}
-    if pf is not None:
-        merged_overrides = dict(pf.overrides)
-        merged_overrides.update(strict_overrides)
-        return _PF(
-            base_policy=pf.base_policy,
-            overrides=merged_overrides,
-            source_path=pf.source_path,
-        )
-    return _PF(base_policy=policy, overrides=strict_overrides)
-
 
 def _merge_redundant_changes(result: DiffResult) -> None:
     """Re-merge redundant changes back into the main change list."""
@@ -1300,9 +1187,6 @@ def _exit_with_severity_or_verdict(
                    "'leaf' groups by root type changes with impact lists.")
 @click.option("--show-impact", is_flag=True, default=False,
               help="Append an impact summary table showing root changes and affected interfaces.")
-@click.option("--strict-elf-only", is_flag=True, default=False,
-              help="Treat ELF-only symbol removals as BREAKING instead of COMPATIBLE. "
-                   "Use when headers are unavailable but all exported symbols are public API.")
 @click.option("--btf", "debug_format", flag_value="btf", default=None,
               help="Force BTF debug format for both sides (ELF only).")
 @click.option("--ctf", "debug_format", flag_value="ctf",
@@ -1330,9 +1214,6 @@ def _exit_with_severity_or_verdict(
               help="debuginfod server URL (overrides DEBUGINFOD_URLS env var).")
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
-@click.option("--diffoscope", "use_diffoscope", is_flag=True, default=False,
-              help="Run diffoscope on breaking changes for byte-level binary diff. "
-                   "Requires diffoscope on PATH (optional external tool).")
 def compare_cmd(
     old_input: Path, new_input: Path,
     headers: tuple[Path, ...], includes: tuple[Path, ...], lang: str,
@@ -1352,7 +1233,6 @@ def compare_cmd(
     follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
     show_redundant: bool, show_only: str | None, stat: bool,
     report_mode: str, show_impact: bool,
-    strict_elf_only: bool,
     debug_format: str | None,
     annotate: bool,
     annotate_additions: bool,
@@ -1362,7 +1242,6 @@ def compare_cmd(
     debuginfod: bool,
     debuginfod_url: str | None,
     verbose: bool,
-    use_diffoscope: bool,
 ) -> None:
     """Compare two ABI surfaces and report changes.
 
@@ -1483,9 +1362,6 @@ def compare_cmd(
         require_justification=require_justification,
     )
 
-    if strict_elf_only:
-        pf = _apply_strict_elf_only(pf, policy)
-
     if follow_deps:
         if old_fmt == "elf":
             _populate_dependency_info(old, old_input, list(search_paths), None, ld_library_path)
@@ -1511,31 +1387,6 @@ def compare_cmd(
         show_impact=show_impact, stat=stat,
         severity_config=sev_config if severity_explicitly_set else None,
     )
-
-    # Optionally append diffoscope byte-level diff on breaking changes
-    if use_diffoscope and result.verdict.value in ("API_BREAK", "BREAKING"):
-        old_is_binary = _detect_binary_format(old_input) is not None
-        new_is_binary = _detect_binary_format(new_input) is not None
-        if old_is_binary and new_is_binary:
-            from .diffoscope_bridge import run_diffoscope
-            diff_output = run_diffoscope(old_input, new_input)
-            if diff_output:
-                if fmt == "markdown":
-                    text += "\n\n<details>\n<summary>diffoscope byte-level diff</summary>\n\n```\n"
-                    text += diff_output
-                    text += "\n```\n</details>\n"
-                elif fmt == "json":
-                    try:
-                        data = json.loads(text)
-                        data["diffoscope_output"] = diff_output
-                        text = json.dumps(data, indent=2)
-                    except json.JSONDecodeError:
-                        pass  # don't corrupt JSON output
-                elif fmt not in ("sarif", "html", "junit"):
-                    text += "\n\n--- diffoscope byte-level diff ---\n"
-                    text += diff_output
-        else:
-            click.echo("Warning: --diffoscope skipped (inputs are not both binary files).", err=True)
 
     _write_or_echo(output, text)
 

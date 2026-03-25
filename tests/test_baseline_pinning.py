@@ -1,12 +1,9 @@
-"""Tests for baseline pinning: provenance metadata (schema v4), output naming, upload."""
+"""Tests for baseline pinning: provenance metadata (schema v4)."""
 import json
 import subprocess
 import tempfile
 from pathlib import Path
 from unittest import mock
-
-import click
-import pytest
 
 from abicheck.model import AbiSnapshot
 from abicheck.serialization import (
@@ -97,58 +94,6 @@ class TestSchemaV4:
 
 
 # ---------------------------------------------------------------------------
-# 1b. Output naming (_resolve_output)
-# ---------------------------------------------------------------------------
-
-class TestResolveOutput:
-    def test_explicit_output_wins(self):
-        from abicheck.cli import _resolve_output
-        snap = _sample_snap()
-        assert _resolve_output(Path("my.json"), None, snap) == Path("my.json")
-
-    def test_output_name_auto_so(self):
-        from abicheck.cli import _resolve_output
-        snap = _sample_snap(library="libfoo.so.1", version="2.0.0")
-        result = _resolve_output(None, "auto", snap)
-        assert result == Path("libfoo-2.0.0.abicheck.json")
-
-    def test_output_name_auto_so_multi_version(self):
-        from abicheck.cli import _resolve_output
-        snap = _sample_snap(library="libfoo.so.1.2.3", version="2.0.0")
-        result = _resolve_output(None, "auto", snap)
-        assert result == Path("libfoo-2.0.0.abicheck.json")
-
-    def test_output_name_auto_dll(self):
-        from abicheck.cli import _resolve_output
-        snap = _sample_snap(library="foo.dll", version="3.1")
-        result = _resolve_output(None, "auto", snap)
-        assert result == Path("foo-3.1.abicheck.json")
-
-    def test_output_name_auto_dylib(self):
-        from abicheck.cli import _resolve_output
-        snap = _sample_snap(library="libbar.dylib", version="1.0")
-        result = _resolve_output(None, "auto", snap)
-        assert result == Path("libbar-1.0.abicheck.json")
-
-    def test_output_name_auto_unknown_version(self):
-        from abicheck.cli import _resolve_output
-        snap = _sample_snap(library="libfoo.so.1", version="unknown")
-        result = _resolve_output(None, "auto", snap)
-        assert result == Path("libfoo.abicheck.json")
-
-    def test_no_output_returns_none(self):
-        from abicheck.cli import _resolve_output
-        snap = _sample_snap()
-        assert _resolve_output(None, None, snap) is None
-
-    def test_output_name_auto_empty_library_raises(self):
-        from abicheck.cli import _resolve_output
-        snap = _sample_snap(library="")
-        with pytest.raises(click.ClickException, match="empty"):
-            _resolve_output(None, "auto", snap)
-
-
-# ---------------------------------------------------------------------------
 # Provenance stamping (_stamp_provenance)
 # ---------------------------------------------------------------------------
 
@@ -201,65 +146,3 @@ class TestStampProvenance:
         with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="git", timeout=5)):
             _stamp_provenance(snap, git_tag=None, build_id=None, no_git=False)
         assert snap.git_commit is None
-
-
-# ---------------------------------------------------------------------------
-# 1d. Upload release (_upload_to_release)
-# ---------------------------------------------------------------------------
-
-class TestUploadToRelease:
-    def test_upload_calls_gh(self, tmp_path):
-        from abicheck.cli import _upload_to_release
-        snap = tmp_path / "snap.json"
-        snap.write_text("{}")
-        with mock.patch("subprocess.run") as m:
-            m.return_value = mock.Mock(returncode=0)
-            _upload_to_release(snap, "v2.0.0")
-        m.assert_called_once_with(
-            ["gh", "release", "upload", "--clobber", "--", "v2.0.0", str(snap.resolve())],
-            check=True, timeout=60,
-        )
-
-    def test_upload_auto_detects_tag(self, tmp_path):
-        from abicheck.cli import _upload_to_release
-        snap = tmp_path / "snap.json"
-        snap.write_text("{}")
-        tag_result = mock.Mock(returncode=0, stdout="v1.0.0\n", stderr="")
-        upload_result = mock.Mock(returncode=0)
-        with mock.patch("subprocess.run", side_effect=[tag_result, upload_result]) as m:
-            _upload_to_release(snap, None)
-        # First call: git describe, second: gh release upload
-        assert m.call_count == 2
-
-    def test_upload_no_tag_raises(self, tmp_path):
-        from abicheck.cli import _upload_to_release
-        snap = tmp_path / "snap.json"
-        snap.write_text("{}")
-        tag_result = mock.Mock(returncode=1, stdout="", stderr="")
-        with mock.patch("subprocess.run", return_value=tag_result):
-            with pytest.raises(click.ClickException, match="could not determine release tag"):
-                _upload_to_release(snap, None)
-
-    def test_upload_gh_not_found_raises(self, tmp_path):
-        from abicheck.cli import _upload_to_release
-        snap = tmp_path / "snap.json"
-        snap.write_text("{}")
-        with mock.patch("subprocess.run", side_effect=FileNotFoundError):
-            with pytest.raises(click.ClickException, match="GitHub CLI"):
-                _upload_to_release(snap, "v1.0")
-
-    def test_upload_called_process_error_raises(self, tmp_path):
-        from abicheck.cli import _upload_to_release
-        snap = tmp_path / "snap.json"
-        snap.write_text("{}")
-        with mock.patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "gh")):
-            with pytest.raises(click.ClickException, match="Failed to upload"):
-                _upload_to_release(snap, "v1.0")
-
-    def test_upload_timeout_raises(self, tmp_path):
-        from abicheck.cli import _upload_to_release
-        snap = tmp_path / "snap.json"
-        snap.write_text("{}")
-        with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="gh", timeout=60)):
-            with pytest.raises(click.ClickException, match="timed out"):
-                _upload_to_release(snap, "v1.0")
