@@ -2,26 +2,33 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+static int check_visibility(const char *path, const char *label,
+                            int expect_exported, int fail_on_hidden) {
+    void *handle = dlopen(path, RTLD_NOW);
+    if (!handle) {
+        fprintf(stderr, "dlopen %s: %s\n", path, dlerror());
+        return 1;
+    }
+
+    void *sym = dlsym(handle, "internal_helper");
+    printf("%s: internal_helper %s\n", label, sym ? "EXPORTED" : "hidden");
+
+    int failure = 0;
+    if (expect_exported && !sym) {
+        printf("WRONG RESULT: %s no longer exports internal_helper\n", label);
+        failure = 1;
+    } else if (!expect_exported && fail_on_hidden && !sym) {
+        printf("WRONG RESULT: %s hides internal_helper (symbol removed)\n", label);
+        failure = 1;
+    }
+
+    dlclose(handle);
+    return failure;
+}
+
 int main(void) {
-    void *h;
-    void *sym;
-
-    /* v1 = bad.c (leaky visibility) */
-    /* Must be run from the build dir — relative path is intentional for this demo. */
-    h = dlopen("./libv1.so", RTLD_NOW);
-    if (!h) { fprintf(stderr, "dlopen libv1.so: %s\n", dlerror()); return 1; }
-    sym = dlsym(h, "internal_helper");
-    printf("v1.so (bad): internal_helper %s\n",
-           sym ? "EXPORTED (leak!)" : "hidden (unexpected)");
-    dlclose(h);
-
-    /* v2 = good.c (hidden by default visibility) */
-    h = dlopen("./libv2.so", RTLD_NOW);
-    if (!h) { fprintf(stderr, "dlopen libv2.so: %s\n", dlerror()); return 1; }
-    sym = dlsym(h, "internal_helper");
-    printf("v2.so (good): internal_helper %s\n",
-           sym ? "EXPORTED (bug!)" : "hidden (correct)");
-    dlclose(h);
-
-    return 0;
+    int failed = 0;
+    failed |= check_visibility("./libv1.so", "libv1.so (bad)", 1, 0);
+    failed |= check_visibility("./libv2.so", "libv2.so (good)", 0, 1);
+    return failed ? EXIT_FAILURE : EXIT_SUCCESS;
 }

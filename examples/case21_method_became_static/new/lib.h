@@ -1,4 +1,4 @@
 class Widget {
 public:
-    static void bar();
+    static int bar();
 };

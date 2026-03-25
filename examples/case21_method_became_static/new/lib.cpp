@@ -1,4 +1,7 @@
 #include "lib.h"
 #include <cstdio>
 
-void Widget::bar() { std::printf("bar() called (static method)\n"); }
+int Widget::bar() {
+    std::printf("bar() called (static method), returning fixed value\n");
+    return 7;
+}

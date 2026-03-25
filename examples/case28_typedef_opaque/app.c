@@ -1,21 +1,14 @@
-/* case28: typedef opaque / dim_t change demo
- * v1: dim_t = int  (get_dimension truncates 3000000000 to -1294967296)
- * v2: dim_t = long (get_dimension returns correct value 3000000000)
- *
- * The app prints the raw returned value. When run against v1 you see
- * truncation; when run against v2 you see the full value.
- */
+#include "v1.h"
 #include <stdio.h>
-#include "v1.h"   /* supplies dim_t typedef */
 
 int main(void) {
-    dim_t d = get_dimension(3000000000L);
-    /* print as both signed-long and unsigned to make truncation visible */
-    printf("get_dimension(3000000000) = %ld (0x%lx)\n", (long)d, (unsigned long)d);
-    if ((unsigned long)d == 3000000000UL) {
-        printf("CORRECT: long is 64-bit, no truncation\n");
-    } else {
-        printf("TRUNCATED: dim_t is 32-bit, value wrapped to %ld\n", (long)d);
+    /* Compiled against v1: dim_t = int, get_dimension(5) should return 5 */
+    dim_t d = get_dimension(5);
+    printf("get_dimension(5) = %ld\n", (long)d);
+
+    if (d != 5) {
+        printf("WRONG RESULT: typedef underlying type changed (int -> long)\n");
+        return 1;
     }
     return 0;
 }

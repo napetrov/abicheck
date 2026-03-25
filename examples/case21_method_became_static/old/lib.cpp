@@ -1,4 +1,7 @@
 #include "lib.h"
 #include <cstdio>
 
-void Widget::bar() { std::printf("bar() called (instance method)\n"); }
+int Widget::bar() {
+    std::printf("bar() called (instance method), value=%d\n", value);
+    return value + 1;
+}

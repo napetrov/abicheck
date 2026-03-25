@@ -6,5 +6,6 @@ abicheck_add_case(case49_executable_stack
     V1_LINK_OPTIONS -Wl,-z,execstack
     V2_SOURCES good.c
     V2_LINK_OPTIONS -Wl,-z,noexecstack
+    APP_SOURCES app.c
     PLATFORMS linux
 )
