@@ -141,6 +141,10 @@ case's README for copy-paste build instructions.
 - 🟡 **BAD PRACTICE** — library works today but mismanages the ABI contract
 - ✅ **BASELINE** — no change; expected passing state
 
+**Important:** some policy-escalated source/contract breaks (notably case30, case35)
+may keep identical runtime output for prebuilt binaries. For those, the demo shows:
+1) binary still runs, and 2) recompilation against new headers fails or changes allowed behavior.
+
 ---
 
 ## Benchmark Snapshot (63 cases, 2026-03-17)
