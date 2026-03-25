@@ -6,5 +6,6 @@ abicheck_add_case(case50_soname_inconsistent
     V1_LINK_OPTIONS $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wl,-soname,libfoo.so.0>
     V2_SOURCES good.c
     V2_LINK_OPTIONS $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wl,-soname,libfoo.so.1>
+    APP_SOURCES app.c
     PLATFORMS linux
 )

@@ -4,5 +4,6 @@
 abicheck_add_case(case53_namespace_pollution
     V1_SOURCES bad.c
     V2_SOURCES good.c
+    APP_SOURCES app.c
     PLATFORMS linux
 )
