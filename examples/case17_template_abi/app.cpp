@@ -28,8 +28,11 @@ int main() {
 
     std::printf("after  ctor: sentinel = %.8s\n", frame.sentinel);
 
-    if (std::memcmp(frame.sentinel, "SENTINEL", 8) != 0)
+    if (std::memcmp(frame.sentinel, "SENTINEL", 8) != 0) {
         std::printf("CORRUPTION: v2 constructor wrote past Buffer slot!\n");
+        b->~Buffer();
+        return 1;
+    }
 
     b->~Buffer();
     return 0;

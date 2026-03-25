@@ -25,8 +25,10 @@ int main(void) {
     printf("after  process: h.x=%d  canary=0x%X\n",
            frame.h.x, (unsigned)frame.canary);
 
-    if (frame.canary != 0x5AFE5AFE)
+    if (frame.canary != 0x5AFE5AFE) {
         printf("CORRUPTION: v2 read/wrote past ThirdPartyHandle boundary!\n");
+        return 1;
+    }
 
     return 0;
 }
