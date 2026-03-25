@@ -844,6 +844,76 @@
       "bad_practice": false,
       "description": "Virtual method added to previously non-virtual class \u2014 vtable pointer inserted, sizeof grows, all field offsets shift (FUNC_VIRTUAL_ADDED)",
       "expected_kinds": ["func_virtual_added"]
+    },
+    "case69_trivial_to_nontrivial": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "known_gap": "Windows MSVC x64: structs >8 bytes are always passed by pointer regardless of triviality, so the calling convention does not change",
+      "abi_break": true,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "Trivially-copyable struct gains user-defined destructor \u2014 calling convention changes from register passing to hidden pointer (VALUE_ABI_TRAIT_CHANGED)",
+      "expected_kinds": ["value_abi_trait_changed"]
+    },
+    "case70_flexible_array_member_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Flexible array member element type changed float \u2192 double \u2014 dynamic allocation size and element access offsets break while sizeof(Packet) stays the same (FLEXIBLE_ARRAY_MEMBER_CHANGED)",
+      "expected_kinds": ["flexible_array_member_changed", "func_return_changed"]
+    },
+    "case71_inline_namespace_moved": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "Symbols moved from inline namespace v1 to v2 \u2014 mangled names change so old binaries fail to resolve symbols (INLINE_NAMESPACE_MOVED)",
+      "expected_kinds": ["inline_namespace_moved"]
+    },
+    "case72_covariant_return_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Intermediate class inserted into hierarchy \u2014 vtable layout shifts, object size changes, covariant return type changes from Circle* to Drawable* (TYPE_BASE_CHANGED)",
+      "expected_kinds": ["type_base_changed"]
+    },
+    "case73_typedef_underlying_changed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Typedef handle_t underlying type changed from int to void* \u2014 sizeof changes from 4 to 8 bytes, all functions using the typedef inherit the break (TYPEDEF_BASE_CHANGED)",
+      "expected_kinds": ["typedef_base_changed"]
     }
   }
 }
