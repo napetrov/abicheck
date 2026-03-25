@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-/* App compiled against v1: aligned(8), sizeof=64, arrays stride by 64 */
+/* App compiled against v1: aligned(8), sizeof=64 */
 typedef struct __attribute__((aligned(8))) {
     char data[56];
     long checksum;
@@ -12,14 +12,23 @@ extern int block_process(CacheBlock *blocks, int count);
 
 int main(void) {
     CacheBlock blocks[4];
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 4; i++) {
         block_init(&blocks[i]);
+        blocks[i].data[0] = (char)(i + 1);
+    }
 
-    printf("sizeof(CacheBlock) = %zu\n", sizeof(CacheBlock));
-    printf("alignof(CacheBlock) = %zu\n", _Alignof(CacheBlock));
-    printf("ok = %d\n", block_process(blocks, 4));
-    /* v1: stride=64 (aligned 8), array is contiguous */
-    /* v2: library expects stride=64 (aligned 64), but sizeof may differ
-       due to padding — array element access is misaligned */
+    int ok = block_process(blocks, 4);
+    printf("block_process = %d (expected 4)\n", ok);
+
+    if (ok != 4) {
+        printf("WRONG RESULT: alignment change caused array stride/layout mismatch\n");
+        return 1;
+    }
+
+    /* Alignment-only breaks may not show at runtime on x86_64 (forgiving alignment),
+     * but can cause crashes on strict-alignment architectures (ARM/RISC-V)
+     * and are undefined behavior per C/C++ standards.
+     */
+    printf("OK on this arch (BREAKING in strict sense: alignment ABI changed)\n");
     return 0;
 }
