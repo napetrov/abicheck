@@ -1,4 +1,5 @@
 class Widget {
 public:
-    void bar();
+    int value;
+    int bar();
 };
