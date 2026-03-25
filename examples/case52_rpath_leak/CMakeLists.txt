@@ -6,5 +6,6 @@ abicheck_add_case(case52_rpath_leak
     V1_LINK_OPTIONS -Wl,-rpath,/home/build/myproject/lib
     V2_SOURCES good.c
     V2_LINK_OPTIONS "-Wl,-rpath,$ORIGIN"
+    APP_SOURCES app.c
     PLATFORMS linux
 )
