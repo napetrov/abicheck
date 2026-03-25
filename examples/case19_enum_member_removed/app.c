@@ -3,11 +3,11 @@
 
 int main(void) {
     enum Status s = get_status();
-    switch (s) {
-        case OK:    printf("OK\n"); break;
-        case ERROR: printf("ERROR\n"); break;
-        case FOO:   printf("FOO\n"); break;   /* FOO=2, valid in v1 */
-        default:    printf("UNKNOWN: %d\n", (int)s); break;
+    if (s == FOO) {
+        printf("FOO\n");
+        return 0;
     }
-    return 0;
+
+    printf("WRONG RESULT: expected FOO(%d), got %d\n", FOO, (int)s);
+    return 1;
 }

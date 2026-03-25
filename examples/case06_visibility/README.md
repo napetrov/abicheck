@@ -98,3 +98,25 @@ this. `-fvisibility=hidden` is standard practice since GCC 4.
 
 - [GCC visibility](https://gcc.gnu.org/wiki/Visibility)
 - [libabigail `abidiff` manual](https://sourceware.org/libabigail/manual/abidiff.html)
+## Real Failure Demo
+
+**Severity: CRITICAL**
+
+**Scenario:** compile the app against the leaky v1 library and observe that it finds `internal_helper`. Rebuild the shared object with the hidden-symbol v2 source, rerun the same binary, and notice that the symbol becomes unavailable (exit code 1).
+
+```bash
+# Build the two libraries and keep them beside the app
+gcc -shared -fPIC -g bad.c -o libv1.so
+gcc -shared -fPIC -g good.c -o libv2.so
+gcc -g app.c -ldl -o app
+
+# Run the app while both libs are present
+./app
+# → v1.so (bad): internal_helper EXPORTED (leak!)
+# → v2.so (good): internal_helper hidden (correct)
+# → WRONG RESULT: visibility contract not demonstrated as expected
+
+echo "exit: $?"  # → 1
+```
+
+**Why CRITICAL:** The consumer relies on the accidentally-exported `internal_helper` symbol. v2 hides it, so any binary that resolved the symbol at load time will now fail to link/symbolize and abort before it can handle the crash. This app shows the missing symbol and exits with failure to make the issue obvious.

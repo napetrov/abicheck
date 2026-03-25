@@ -10,10 +10,18 @@ extern Color pixel_get_color(const Pixel *p);
 
 int main(void) {
     Pixel *p = pixel_create(COLOR_BLUE, 255);
-    printf("color = %d\n", pixel_get_color(p));
-    /* v1: sizeof(Pixel) = 8,  color at offset 0 (4 bytes), alpha at offset 4 */
-    /* v2: sizeof(Pixel) = 16, color at offset 0 (8 bytes), alpha at offset 8 */
-    /* → offset mismatch for alpha, size mismatch for allocations */
+    int color = (int)pixel_get_color(p);
+    int alpha = p->alpha;  /* direct v1-layout read */
+
+    printf("color = %d\n", color);
+    printf("alpha = %d\n", alpha);
+
+    int ok = (color == COLOR_BLUE) && (alpha == 255);
     pixel_destroy(p);
+
+    if (!ok) {
+        printf("WRONG RESULT: enum underlying size/layout changed\n");
+        return 1;
+    }
     return 0;
 }
