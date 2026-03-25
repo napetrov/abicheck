@@ -9,14 +9,16 @@ typedef struct {
 
 extern Record* record_create(char tag, int value, char status);
 extern void record_destroy(Record *r);
-extern int record_get_value(const Record *r);
 
 int main(void) {
     Record *r = record_create('A', 42, 'X');
     printf("value = %d\n", r->value);
-    /* App uses its own v1 struct layout (offset 4 for value).
-       v1 lib: value at offset 4 → reads correctly = 42.
-       v2 lib (packed): value at offset 1 → app's offset 4 reads garbage. */
+    int ok = (r->value == 42);
     record_destroy(r);
+
+    if (!ok) {
+        printf("WRONG RESULT: struct packing/layout changed\n");
+        return 1;
+    }
     return 0;
 }

@@ -2,9 +2,12 @@
 #include <stdio.h>
 
 int main(void) {
-    /* v1 ABI: get_count() returns int */
+    /* v1 ABI: get_count() returns int 42 */
     int n = get_count();
     printf("get_count() = %d\n", n);
-    /* v1: prints 42; v2 (returns 3000000000L): prints -1294967296 (truncated) */
+    if (n != 42) {
+        printf("WRONG RESULT: return type changed/truncated\n");
+        return 1;
+    }
     return 0;
 }

@@ -9,8 +9,12 @@ extern int data_sum(const Data *d);
 int main(void) {
     Data d;
     data_init(&d, 10, 20);
-    printf("sum = %d\n", data_sum(&d));
-    /* v1: x=10, y=20, sum=30 */
-    /* v2: union — y overlaps x, sum=10 (wrong!) */
+    int sum = data_sum(&d);
+    printf("sum = %d\n", sum);
+
+    if (sum != 30) {
+        printf("WRONG RESULT: type kind changed (struct -> union)\n");
+        return 1;
+    }
     return 0;
 }
