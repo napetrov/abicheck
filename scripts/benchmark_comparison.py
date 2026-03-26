@@ -185,13 +185,28 @@ def _find_cmake_lib(directory: Path, name: str) -> Path | None:
     return None
 
 
-def _find_compiler(is_cpp: bool = False) -> str | None:
+def _find_compiler(is_cpp: bool = False, preferred_family: str | None = None) -> str | None:
     if is_cpp:
         candidates = {"win32": ["cl", "g++", "clang++"],
                        "darwin": ["clang++", "g++"]}.get(sys.platform, ["g++", "clang++"])
     else:
         candidates = {"win32": ["cl", "gcc", "clang"],
                        "darwin": ["clang", "gcc"]}.get(sys.platform, ["gcc", "clang"])
+
+    if preferred_family == "clang":
+        if is_cpp:
+            pref = ["clang++-18", "clang++", "g++", "cl"]
+        else:
+            pref = ["clang-18", "clang", "gcc", "cl"]
+        # Keep only known candidates while preserving preference.
+        candidates = [c for c in pref if c in set(candidates) or c.startswith("clang")]
+    elif preferred_family == "gcc":
+        if is_cpp:
+            pref = ["g++", "clang++", "cl"]
+        else:
+            pref = ["gcc", "clang", "cl"]
+        candidates = [c for c in pref if c in set(candidates)]
+
     for cc in candidates:
         if shutil.which(cc):
             return cc
@@ -199,9 +214,9 @@ def _find_compiler(is_cpp: bool = False) -> str | None:
 
 
 # ── Compile ───────────────────────────────────────────────────────────────────
-def compile_so(src: Path, out_so: Path) -> bool:
+def compile_so(src: Path, out_so: Path, *, preferred_family: str | None = None) -> bool:
     is_cpp = src.suffix == ".cpp"
-    compiler = _find_compiler(is_cpp)
+    compiler = _find_compiler(is_cpp, preferred_family=preferred_family)
     if not compiler:
         print(f"    [compile error] no {'C++' if is_cpp else 'C'} compiler found")
         return False
@@ -776,6 +791,8 @@ def parse_args() -> argparse.Namespace:
                    choices=["abicheck", "abicheck_compat", "abicheck_strict",
                             "abidiff", "abidiff_headers", "abicc_dumper", "abicc_xml"],
                    help="Run only selected tools")
+    p.add_argument("--case64-toolchain", choices=["auto", "gcc", "clang"], default="auto",
+                   help="Toolchain for case64_calling_convention_changed (default: auto; prefers clang when available)")
     return p.parse_args()
 
 
@@ -875,11 +892,26 @@ def main() -> None:
         used_make_artifacts = False
         used_cmake_artifacts = False
 
+        # case64_calling_convention_changed needs clang to expose CC drift reliably.
+        case64 = name == "case64_calling_convention_changed"
+        has_clang = bool(shutil.which("clang-18") or shutil.which("clang"))
+        if args.case64_toolchain == "clang":
+            preferred_family = "clang"
+        elif args.case64_toolchain == "gcc":
+            preferred_family = "gcc"
+        else:  # auto
+            preferred_family = "clang" if (case64 and has_clang) else None
+        force_clang_case64 = case64 and preferred_family == "clang"
+
         # Reuse prebuilt example binaries when available (e.g. examples/build-all-local).
         # This keeps benchmark runs working in environments without a compiler toolchain.
+        # For case64+clang we intentionally bypass prebuilt artifacts to ensure
+        # calling_convention_changed is exercised with clang-emitted DWARF.
         prebuilt_dirs = [EXAMPLES_DIR / "build-all-local", EXAMPLES_DIR / "build-real"]
         used_prebuilt_artifacts = False
         for prebuilt_root in prebuilt_dirs:
+            if force_clang_case64:
+                break
             prebuilt_case_dir = prebuilt_root / name
             if not prebuilt_case_dir.is_dir():
                 continue
@@ -894,7 +926,17 @@ def main() -> None:
                 used_cmake_artifacts = True
                 break
 
-        if used_prebuilt_artifacts:
+        if force_clang_case64:
+            if not compile_so(v1_src, v1_so, preferred_family="clang") or not compile_so(v2_src, v2_so, preferred_family="clang"):
+                print(f"  {name:<35} COMPILE_ERR(clang)")
+                results.append({"case": name, "expected": expected,
+                                 "expected_compat": EXPECTED_COMPAT.get(name, expected),
+                                 "abicheck": "ERROR", "abicheck_compat": "ERROR",
+                                 "abicheck_strict": "ERROR",
+                                 "abidiff": "ERROR", "abidiff_headers": "ERROR",
+                                 "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
+                continue
+        elif used_prebuilt_artifacts:
             pass
         elif cmake_file.exists() and shutil.which("cmake"):
             cmake_build = bdir / "cmake_build"
