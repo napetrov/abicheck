@@ -1852,7 +1852,11 @@ def _compare_release_libraries(
                     lang, suppress, policy, policy_file_path,
                     old_pdb_path=old_dbg, new_pdb_path=new_dbg,
                 )
-            except Exception:
+            except Exception as exc:
+                click.echo(
+                    f"Warning: failed to re-run comparison for {old_path.name}: {exc}",
+                    err=True,
+                )
                 continue
 
             if collect_diff_results:

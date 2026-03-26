@@ -483,7 +483,7 @@ def detect_platform_from_binary(binary_path: Path) -> str:
                 }
                 arch = arch_map.get(machine, str(machine))
         except Exception:  # noqa: BLE001
-            pass
+            arch = "unknown"
         return f"linux-{arch}"
 
     if fmt == "pe":
@@ -499,7 +499,7 @@ def detect_platform_from_binary(binary_path: Path) -> str:
                 arch = "aarch64"
             pe.close()
         except Exception:  # noqa: BLE001
-            pass
+            arch = "unknown"
         return f"windows-{arch}"
 
     if fmt == "macho":
@@ -513,7 +513,7 @@ def detect_platform_from_binary(binary_path: Path) -> str:
                 arch = cpu_map.get(cpu, str(cpu))
                 break
         except Exception:  # noqa: BLE001
-            pass
+            arch = "unknown"
         return f"macos-{arch}"
 
     return f"unknown-{arch}"

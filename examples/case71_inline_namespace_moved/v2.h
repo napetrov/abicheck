@@ -7,7 +7,6 @@ namespace crypto {
    e.g. _ZN6crypto2v17encryptEPKNS0_7ContextEPKci
      -> _ZN6crypto2v27encryptEPKNS0_7ContextEPKci */
 inline namespace v2 {
-
 struct Context {
     int algo;
     int key_size;
@@ -15,7 +14,6 @@ struct Context {
 
 int encrypt(const Context *ctx, const char *data, int len);
 int decrypt(const Context *ctx, const char *data, int len);
-
 } // namespace v2
 } // namespace crypto
 
