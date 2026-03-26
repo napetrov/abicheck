@@ -41,6 +41,8 @@ def _adv(
     packed: set[str] | None = None,
     flags: set[str] | None = None,
     all_structs: set[str] | None = None,
+    frame_regs: dict[str, str] | None = None,
+    callee_saved: dict[str, frozenset[str]] | None = None,
 ) -> AdvancedDwarfMetadata:
     packed_set = packed or set()
     # all_struct_names must include packed structs so diff guards work correctly
@@ -57,6 +59,8 @@ def _adv(
         value_abi_traits=value_traits or {},
         packed_structs=packed_set,
         all_struct_names=struct_names,
+        frame_registers=frame_regs or {},
+        callee_saved_regs=callee_saved or {},
     )
 
 
@@ -136,6 +140,16 @@ def test_value_abi_trait_changed_breaking() -> None:
     r = compare(old, new)
     kinds = {c.kind for c in r.changes}
     assert ChangeKind.VALUE_ABI_TRAIT_CHANGED in kinds
+    assert r.verdict == Verdict.BREAKING
+
+
+def test_callee_saved_fallback_detects_calling_convention_drift() -> None:
+    """ELF CFI fallback: saved rdi/rsi indicates ms_abi shift."""
+    old = _snap(_adv(callee_saved={"foo": frozenset({"rbx", "rbp", "r12"})}))
+    new = _snap(_adv(callee_saved={"foo": frozenset({"rbx", "rbp", "r12", "rdi", "rsi"})}))
+    r = compare(old, new)
+    kinds = {c.kind for c in r.changes}
+    assert ChangeKind.CALLING_CONVENTION_CHANGED in kinds
     assert r.verdict == Verdict.BREAKING
 
 

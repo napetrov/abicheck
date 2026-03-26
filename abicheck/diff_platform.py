@@ -854,6 +854,18 @@ def _diff_inline_namespace(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     # Anchored to :: on both sides to avoid matching inside identifiers.
     _INLINE_NS_RE = re.compile(r'::(?:__)?(?:v)?\d+::')
 
+    from .demangle import demangle_batch
+
+    # In elf_only mode Function.name may still be mangled; demangle in batch to
+    # make namespace-move detection robust across dump modes.
+    _all_mangled = [m for m in (removed | added) if m.startswith("_Z")]
+    _demangled = demangle_batch(_all_mangled)
+
+    def _func_name_for_matching(mangled: str, func_name: str) -> str:
+        if "::" in func_name:
+            return func_name
+        return _demangled.get(mangled, func_name)
+
     def _strip_inline_ns(name: str) -> str:
         return _INLINE_NS_RE.sub("::", name)
 
@@ -862,17 +874,20 @@ def _diff_inline_namespace(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     removed_by_stripped: dict[str, list[str]] = {}
     for m in removed:
         f = old_map[m]
-        stripped = _strip_inline_ns(f.name)
+        match_name = _func_name_for_matching(m, f.name)
+        stripped = _strip_inline_ns(match_name)
         removed_by_stripped.setdefault(stripped, []).append(m)
 
     matched_count = 0
     for m in added:
         f = new_map[m]
-        stripped = _strip_inline_ns(f.name)
+        new_name = _func_name_for_matching(m, f.name)
+        stripped = _strip_inline_ns(new_name)
         if stripped in removed_by_stripped:
             # Only count as a move if at least one side had an inline namespace
-            old_name = old_map[removed_by_stripped[stripped][0]].name
-            if stripped != f.name or stripped != old_name:
+            old_m = removed_by_stripped[stripped][0]
+            old_name = _func_name_for_matching(old_m, old_map[old_m].name)
+            if stripped != new_name or stripped != old_name:
                 matched_count += 1
 
     # Only emit if we find a pattern of namespace-version moves (2+ symbols)

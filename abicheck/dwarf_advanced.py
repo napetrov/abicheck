@@ -142,6 +142,13 @@ class AdvancedDwarfMetadata:
     # A change from "rbp" (frame-pointer) to "rsp" (stack-pointer) or vice-versa
     # indicates a calling-convention / frame-layout drift (#117).
     frame_registers: dict[str, str] = field(default_factory=dict)
+    # linkage_name → frozenset of callee-saved register names for exported functions.
+    # Derived from CFI DW_CFA_offset / DW_CFA_rel_offset rules in the function prologue.
+    # On x86-64 SysV ABI the callee-saved set is {rbx,rbp,r12-r15}.
+    # On x86-64 ms_abi (Windows x64) it additionally includes {rdi,rsi,r10,r11}.
+    # Presence of rdi/rsi in the saved-registers set is a strong ELF-level signal
+    # that the function uses ms_abi, even when DW_AT_calling_convention is absent (GCC gap).
+    callee_saved_regs: dict[str, frozenset[str]] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -697,12 +704,19 @@ def _extract_cfa_reg_from_fde(entry: Any, arch_key: str) -> str | None:
 
 
 def _parse_frame_registers(elf: Any, dwarf: Any, meta: AdvancedDwarfMetadata) -> None:
-    """Extract CFA register convention for exported functions from .eh_frame (#117).
+    """Extract CFA register convention + callee-saved regs for exported functions.
 
-    For each FDE (Frame Description Entry) in .eh_frame (or .debug_frame as fallback),
-    records the dominant post-prologue CFA register for each exported function.
-    When the CFA register changes between versions, it indicates a frame-pointer
-    convention change (e.g., rbp → rsp from -fomit-frame-pointer).
+    For each FDE in .eh_frame / .debug_frame:
+    - Records the dominant CFA register (frame_registers): rbp/rsp drift.
+    - Records callee-saved register fingerprint (callee_saved_regs): the set of
+      registers spilled in the prologue via DW_CFA_offset/DW_CFA_rel_offset.
+
+    Callee-saved fingerprint heuristic for calling-convention detection:
+      x86-64 SysV ABI  callee-saved: rbx, rbp, r12–r15
+      x86-64 ms_abi    callee-saved: rbx, rbp, rdi, rsi, r12–r15, xmm6–xmm15
+    Presence of rdi or rsi in the saved-register set is a reliable ELF-level
+    signal that the function uses ms_abi even when DW_AT_calling_convention is
+    absent (GCC does not emit this attribute for __attribute__((ms_abi))).
 
     Graceful: any parsing error is logged/skipped. Never raises.
     """
@@ -724,11 +738,41 @@ def _parse_frame_registers(elf: Any, dwarf: Any, meta: AdvancedDwarfMetadata) ->
                 reg = _extract_cfa_reg_from_fde(entry, arch_key)
                 if reg is not None:
                     meta.frame_registers[sym_name] = reg
+                # Extract callee-saved register fingerprint from prologue
+                saved = _extract_callee_saved_regs(entry, arch_key)
+                if saved:
+                    meta.callee_saved_regs[sym_name] = frozenset(saved)
             except (ELFError, OSError, ValueError, KeyError, IndexError) as exc:
                 log.debug("_parse_frame_registers: skipping FDE: %s", exc)
 
     except (ELFError, OSError, ValueError) as exc:
         log.warning("_parse_frame_registers: failed: %s", exc)
+
+
+def _extract_callee_saved_regs(entry: Any, arch_key: str) -> frozenset[str]:
+    """Extract the set of register names saved in the function prologue.
+
+    Uses DW_CFA_offset and DW_CFA_rel_offset rules (register is spilled to stack)
+    to identify callee-saved registers.  Returns frozenset of register name strings.
+    """
+    try:
+        decoded = entry.get_decoded()
+        if not decoded.table:
+            return frozenset()
+
+        saved: set[str] = set()
+        for row in decoded.table:
+            for reg_key, rule in row.items():
+                if reg_key in ("pc", "cfa"):
+                    continue
+                # rule is an object with .type; "offset" means register is saved
+                rule_type = getattr(rule, "type", None)
+                if rule_type and str(rule_type).lower() in ("offset", "reg_rule_offset"):
+                    if isinstance(reg_key, int):
+                        saved.add(_reg_name(reg_key, arch_key))
+        return frozenset(saved)
+    except Exception:  # noqa: BLE001
+        return frozenset()
 
 
 def _parse_producer(producer: str) -> ToolchainInfo:
@@ -792,7 +836,32 @@ def diff_advanced_dwarf(
                 old_cc, new_cc,
             ))
 
-    # 1b. Value-ABI trait drift (DWARF-based heuristic for platforms where
+    # 1b. ELF CFI callee-saved fingerprint drift.
+    # Fallback for GCC/Linux where DW_AT_calling_convention is often omitted:
+    # compare saved-register sets extracted from .eh_frame/.debug_frame.
+    old_saved_keys = set(old_meta.callee_saved_regs)
+    new_saved_keys = set(new_meta.callee_saved_regs)
+    already_reported_cc = {fname for fname in (old_cc_keys & new_cc_keys)
+                           if old_meta.calling_conventions[fname] != new_meta.calling_conventions[fname]}
+    for fname in sorted((old_saved_keys & new_saved_keys) - already_reported_cc):
+        old_saved = old_meta.callee_saved_regs[fname]
+        new_saved = new_meta.callee_saved_regs[fname]
+        if old_saved != new_saved:
+            # Strong x86-64 indicator: rdi/rsi becoming callee-saved implies ms_abi.
+            old_has_ms_hint = any(r in old_saved for r in ("rdi", "rsi", "edi", "esi"))
+            new_has_ms_hint = any(r in new_saved for r in ("rdi", "rsi", "edi", "esi"))
+            hint = ""
+            if old_has_ms_hint != new_has_ms_hint:
+                hint = " (ms_abi/sysv_abi drift inferred from CFI saved regs)"
+            results.append((
+                "calling_convention_changed", fname,
+                f"Calling convention changed (ELF CFI fallback): {fname} "
+                f"(saved regs: {sorted(old_saved)} → {sorted(new_saved)}){hint}",
+                ",".join(sorted(old_saved)), ",".join(sorted(new_saved)),
+            ))
+            already_reported_cc.add(fname)
+
+    # 1c. Value-ABI trait drift (DWARF-based heuristic for platforms where
     # DW_AT_calling_convention is not emitted, e.g. Linux x86-64 System V AMD64).
     #
     # On x86-64 SysV ABI, whether an aggregate is passed by value in registers
@@ -805,8 +874,6 @@ def diff_advanced_dwarf(
     #
     # Deduplication: skip if calling_convention_changed already fired for this function
     # (explicit DW_AT_calling_convention change is more authoritative).
-    already_reported_cc = {fname for fname in (old_cc_keys & new_cc_keys)
-                           if old_meta.calling_conventions[fname] != new_meta.calling_conventions[fname]}
     old_trait_keys = set(old_meta.value_abi_traits)
     new_trait_keys = set(new_meta.value_abi_traits)
     for fname in sorted((old_trait_keys & new_trait_keys) - already_reported_cc):
