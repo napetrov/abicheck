@@ -162,6 +162,41 @@ def test_callee_saved_fallback_ignores_non_marker_register_churn() -> None:
     assert ChangeKind.CALLING_CONVENTION_CHANGED not in kinds
 
 
+def test_extract_callee_saved_regs_mocked() -> None:
+    """Test _extract_callee_saved_regs with a mocked FDE."""
+    from abicheck.dwarf_advanced import _extract_callee_saved_regs
+    
+    class MockRow:
+        def __init__(self, pc, regs):
+            self.pc = pc
+            self.regs = regs
+        
+        def items(self):
+            return self.regs.items()
+    
+    class MockRule:
+        def __init__(self, typ):
+            self.type = typ
+    
+    class MockTable:
+        table = [
+            MockRow(pc=0x1000, regs={16: MockRule("offset")}),
+            MockRow(pc=0x1004, regs={3: MockRule("offset"), 4: MockRule("undefined")}),
+        ]
+    
+    class MockDecoded:
+        table = MockTable.table
+    
+    class MockEntry:
+        def get_decoded(self):
+            return MockDecoded()
+    
+    entry = MockEntry()
+    result = _extract_callee_saved_regs(entry, "x86_64")
+    # x86_64: reg 16 = rip, reg 3 = rbx, reg 4 = rsi (but undefined → not saved)
+    assert result == frozenset({"rip", "rbx"})
+
+
 def test_value_abi_trait_unchanged_no_change() -> None:
     results = diff_advanced_dwarf(
         _adv(value_traits={"foo": "ret:v(trivial)|p0:v(trivial)"}),
