@@ -38,11 +38,13 @@ import struct
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypeVar
 
 from .dwarf_metadata import DwarfMetadata, EnumInfo, FieldInfo, StructLayout
 from .type_metadata import FuncProto, read_null_terminated_string
 
 log = logging.getLogger(__name__)
+_T = TypeVar("_T")
 
 # ---------------------------------------------------------------------------
 # BTF constants (from include/uapi/linux/btf.h)
@@ -298,11 +300,11 @@ class _TypeResolver:
         self,
         *,
         type_id: int,
-        cache: dict[int, str] | dict[int, int],
+        cache: dict[int, _T],
         resolving: set[int],
-        cycle_value: str | int,
-        resolver: Callable[[int], str] | Callable[[int], int],
-    ) -> str | int:
+        cycle_value: _T,
+        resolver: Callable[[int], _T],
+    ) -> _T:
         if type_id in cache:
             return cache[type_id]
         if type_id in resolving:
@@ -324,7 +326,7 @@ class _TypeResolver:
             cycle_value="...",
             resolver=self._resolve_name,
         )
-        return str(result)
+        return result
 
     def size(self, type_id: int) -> int:
         """Resolve a type ID to its byte size."""
@@ -335,7 +337,7 @@ class _TypeResolver:
             cycle_value=0,
             resolver=self._resolve_size,
         )
-        return int(result)
+        return result
 
     def _get(self, type_id: int) -> BtfType | None:
         if 0 <= type_id < len(self._types):
