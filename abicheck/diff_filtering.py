@@ -172,17 +172,19 @@ def _enrich_affected_symbols(
     type_to_funcs: dict[str, list[str]] = {t: [] for t in affected_types}
     type_to_mangled: dict[str, list[str]] = {t: [] for t in affected_types}
     old_pub = _public_functions(old)
-    for _mangled, func in old_pub.items():
-        # Check return type
-        func_types_used: set[str] = set()
+
+    def _function_types(func: Function) -> set[str]:
+        out: set[str] = set()
         if func.return_type:
-            func_types_used.add(func.return_type)
+            out.add(func.return_type)
         for p in func.params:
             if p.type:
-                func_types_used.add(p.type)
+                out.add(p.type)
+        return out
 
+    for _mangled, func in old_pub.items():
+        func_types_used = _function_types(func)
         for tname in affected_types:
-            # Check if the type name appears in any parameter or return type
             if any(tname in ft for ft in func_types_used):
                 type_to_funcs[tname].append(func.name)
                 type_to_mangled[tname].append(func.mangled)
@@ -475,20 +477,27 @@ def _is_pointer_only_type(
                 return True
         return False
 
-    for f in snap.functions:
-        if f.visibility not in _PUBLIC_VIS:
-            continue
-        if _is_by_value(f.return_type):
-            return False
-        for p in f.params:
-            if _is_by_value(p.type):
-                return False
+    def _public_function_uses_by_value() -> bool:
+        for f in snap.functions:
+            if f.visibility not in _PUBLIC_VIS:
+                continue
+            if _is_by_value(f.return_type):
+                return True
+            for p in f.params:
+                if _is_by_value(p.type):
+                    return True
+        return False
 
-    for v in snap.variables:
-        if v.visibility not in _PUBLIC_VIS:
-            continue
-        if _is_by_value(v.type):
-            return False
+    def _public_variable_uses_by_value() -> bool:
+        for v in snap.variables:
+            if v.visibility not in _PUBLIC_VIS:
+                continue
+            if _is_by_value(v.type):
+                return True
+        return False
+
+    if _public_function_uses_by_value() or _public_variable_uses_by_value():
+        return False
 
     return True
 
@@ -1133,5 +1142,4 @@ def _downgrade_opaque_struct_changes(
         else:
             result.append(c)
     return result
-
 
