@@ -51,7 +51,7 @@ def _sets_to_lists(obj: Any) -> Any:
     dataclasses.asdict() does NOT convert set → list, so json.dumps() would
     raise TypeError. This post-processes the entire dict tree.
     """
-    if isinstance(obj, set):
+    if isinstance(obj, (set, frozenset)):
         return sorted(obj)
     if isinstance(obj, dict):
         return {k: _sets_to_lists(v) for k, v in obj.items()}
@@ -262,6 +262,8 @@ def _dwarf_advanced_from_dict(d: dict[str, Any]) -> Any:
         value_abi_traits=d.get("value_abi_traits", {}),
         packed_structs=set(d.get("packed_structs", [])),
         all_struct_names=set(d.get("all_struct_names", [])),
+        frame_registers=d.get("frame_registers", {}),
+        callee_saved_regs={k: frozenset(v) for k, v in d.get("callee_saved_regs", {}).items()},
     )
 
 
@@ -413,6 +415,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
 
     return AbiSnapshot(
         library=d["library"], version=d["version"],
+        source_path=d.get("source_path"),
         functions=funcs, variables=variables, types=types,
         enums=enums, typedefs=typedefs,
         elf=elf, pe=pe, macho=macho,

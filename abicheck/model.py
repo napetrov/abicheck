@@ -241,6 +241,9 @@ class AbiSnapshot:
     """Complete ABI snapshot of one version of a library."""
     library: str                   # e.g. "libfoo.so.1"
     version: str                   # e.g. "1.2.3"
+    # Optional on-disk artifact path that produced this snapshot.
+    # Used by binary-only fallback detectors that need lightweight disassembly.
+    source_path: str | None = None
     functions: list[Function] = field(default_factory=list)
     variables: list[Variable] = field(default_factory=list)
     types: list[RecordType] = field(default_factory=list)

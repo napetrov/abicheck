@@ -401,6 +401,8 @@ def run_abicheck(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
             verdict = "COMPATIBLE"
         elif raw_v == "NO_CHANGE":
             verdict = "NO_CHANGE"
+        elif raw_v == "COMPATIBLE_WITH_RISK":
+            verdict = "COMPATIBLE_WITH_RISK"
         else:
             verdict = "ERROR"
     except (json.JSONDecodeError, AttributeError):
@@ -873,7 +875,28 @@ def main() -> None:
         used_make_artifacts = False
         used_cmake_artifacts = False
 
-        if cmake_file.exists() and shutil.which("cmake"):
+        # Reuse prebuilt example binaries when available (e.g. examples/build-all-local).
+        # This keeps benchmark runs working in environments without a compiler toolchain.
+        prebuilt_dirs = [EXAMPLES_DIR / "build-all-local", EXAMPLES_DIR / "build-real"]
+        used_prebuilt_artifacts = False
+        for prebuilt_root in prebuilt_dirs:
+            prebuilt_case_dir = prebuilt_root / name
+            if not prebuilt_case_dir.is_dir():
+                continue
+            built_v1 = _find_cmake_lib(prebuilt_case_dir, "v1")
+            built_v2 = _find_cmake_lib(prebuilt_case_dir, "v2")
+            if built_v1 and built_v2:
+                v1_so = built_v1
+                v2_so = built_v2
+                used_prebuilt_artifacts = True
+                # Treat prebuilt CMake outputs the same as fresh CMake artifacts
+                # for header policy below.
+                used_cmake_artifacts = True
+                break
+
+        if used_prebuilt_artifacts:
+            pass
+        elif cmake_file.exists() and shutil.which("cmake"):
             cmake_build = bdir / "cmake_build"
             if cmake_build.exists():
                 shutil.rmtree(str(cmake_build))

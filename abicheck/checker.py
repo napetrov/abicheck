@@ -202,12 +202,19 @@ def compare(
     pp_ctx = DEFAULT_PIPELINE.run(changes, old, new, suppression=suppression)
     kept = pp_ctx.kept
     redundant = pp_ctx.redundant
+    opaque_filtered = pp_ctx.opaque_filtered
     suppressed = pp_ctx.suppressed
 
-    # Verdict computed on all unsuppressed changes (kept + redundant)
+    # Verdict computed on unsuppressed semantic changes.
+    # NOTE: opaque_filtered changes are intentionally excluded from verdict
+    # (they are compatibility-preserving noise, e.g. opaque handle size drift).
     all_unsuppressed = kept + redundant
     verdict = policy_file.compute_verdict(all_unsuppressed) if policy_file is not None else compute_verdict(all_unsuppressed, policy=policy)
     effective_policy = policy_file.base_policy if policy_file is not None else policy
+
+    # Keep opaque-filtered changes available for audit/UI (show-redundant),
+    # but never let them influence verdict computation.
+    redundant_for_report = redundant + opaque_filtered
 
     # Compute old_symbol_count once for downstream metrics (Bug 8)
     old_sym_count = sum(
@@ -233,8 +240,8 @@ def compare(
         detector_results=detector_results,
         policy=effective_policy,
         policy_file=policy_file,
-        redundant_changes=redundant,
-        redundant_count=len(redundant),
+        redundant_changes=redundant_for_report,
+        redundant_count=len(redundant_for_report),
         old_symbol_count=old_sym_count if old_sym_count > 0 else None,
         confidence=confidence,
         evidence_tiers=evidence_tiers,
