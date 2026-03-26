@@ -81,21 +81,21 @@ def test_verdict_stable_for_non_target_cases(case_name: str) -> None:
 
 @pytest.mark.integration
 @pytest.mark.parametrize("case_name", sorted(ALLOWED_TO_CHANGE))
-def test_target_cases_have_expected_pre_fix_baseline(case_name: str) -> None:
-    """Document current (pre-fix) behavior for targeted cases.
+def test_target_cases_match_committed_post_fix_baseline(case_name: str) -> None:
+    """Document current post-fix baseline for the originally targeted cases.
 
-    This is intentionally strict: if baseline artifacts are changed, reviewers see
-    explicit diffs for these target cases.
+    This remains intentionally strict: when baseline artifacts change, reviewers
+    get explicit diffs for the historically sensitive target set.
     """
     case_dir = BENCH_DIR / case_name
     baseline = _baseline_verdict(case_dir)
 
-    expected_pre_fix = {
-        "case49_executable_stack": "NO_CHANGE",
-        "case50_soname_inconsistent": "BREAKING",
-        "case51_protected_visibility": "NO_CHANGE",
-        "case54_used_reserved_field": "BREAKING",
-        "case62_type_field_added_compatible": "BREAKING",
+    expected_post_fix = {
+        "case49_executable_stack": "COMPATIBLE",
+        "case50_soname_inconsistent": "COMPATIBLE",
+        "case51_protected_visibility": "COMPATIBLE",
+        "case54_used_reserved_field": "COMPATIBLE",
+        "case62_type_field_added_compatible": "COMPATIBLE",
     }[case_name]
 
-    assert baseline == expected_pre_fix
+    assert baseline == expected_post_fix
