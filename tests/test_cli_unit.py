@@ -75,6 +75,58 @@ class TestCompareMarkdown:
         result = runner.invoke(main, ["compare", str(old_p), str(new_p)])
         assert result.exit_code == 4
 
+
+class TestBaselinePushAutoPlatform:
+    def test_auto_platform_detection_failure_requires_explicit_platform(self, tmp_path, monkeypatch):
+        snap = AbiSnapshot(library=str(tmp_path / "libfoo.so"), version="1.0", functions=[])
+        Path(snap.library).write_bytes(b"\x7fELF")
+        snapshot_path = tmp_path / "snap.json"
+        snapshot_path.write_text(snapshot_to_json(snap), encoding="utf-8")
+        registry = tmp_path / "registry"
+
+        monkeypatch.setattr("abicheck.baseline.detect_platform_from_binary", lambda _p: None)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "baseline", "push", "libfoo",
+                "--version", "1.0",
+                "--snapshot", str(snapshot_path),
+                "--registry", str(registry),
+                "--auto-platform",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "failed to detect binary architecture" in result.output
+
+    def test_auto_platform_detection_success_pushes_baseline(self, tmp_path, monkeypatch):
+        snap = AbiSnapshot(library=str(tmp_path / "libfoo.so"), version="1.0", functions=[])
+        Path(snap.library).write_bytes(b"\x7fELF")
+        snapshot_path = tmp_path / "snap.json"
+        snapshot_path.write_text(snapshot_to_json(snap), encoding="utf-8")
+        registry = tmp_path / "registry"
+
+        monkeypatch.setattr(
+            "abicheck.baseline.detect_platform_from_binary",
+            lambda _p: "linux-x86_64",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "baseline", "push", "libfoo",
+                "--version", "1.0",
+                "--snapshot", str(snapshot_path),
+                "--registry", str(registry),
+                "--auto-platform",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "Auto-detected platform: linux-x86_64" in result.output
+        assert "Baseline pushed:" in result.output
+
     def test_output_to_file(self, tmp_path):
         old_p, new_p = _write_snapshots(tmp_path)
         out = tmp_path / "report.md"

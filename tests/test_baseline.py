@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import types
 from pathlib import Path
 
 import pytest
@@ -489,6 +490,55 @@ class TestDetectPlatformFromBinary:
         from abicheck.baseline import detect_platform_from_binary
         result = detect_platform_from_binary(tmp_path / "nope")
         assert "unknown" in result
+
+    def test_elf_parse_error_returns_none_and_logs(self, tmp_path: Path, monkeypatch, caplog) -> None:
+        from abicheck.baseline import detect_platform_from_binary
+
+        binary = tmp_path / "libfoo.so"
+        binary.write_bytes(b"\x7fELF" + b"\x00" * 64)
+
+        class BrokenELFFile:
+            def __init__(self, *_args, **_kwargs) -> None:
+                raise ValueError("bad elf")
+
+        monkeypatch.setitem(__import__("sys").modules, "elftools.elf.elffile", types.SimpleNamespace(ELFFile=BrokenELFFile))
+        with caplog.at_level("WARNING"):
+            assert detect_platform_from_binary(binary) is None
+        assert "Failed to detect ELF architecture" in caplog.text
+
+    def test_pe_parse_error_returns_none_and_logs(self, tmp_path: Path, monkeypatch, caplog) -> None:
+        from abicheck.baseline import detect_platform_from_binary
+
+        binary = tmp_path / "foo.dll"
+        binary.write_bytes(b"MZ" + b"\x00" * 200)
+
+        class BrokenPE:
+            def __init__(self, *_args, **_kwargs) -> None:
+                raise ValueError("bad pe")
+
+        monkeypatch.setitem(__import__("sys").modules, "pefile", types.SimpleNamespace(PE=BrokenPE))
+        with caplog.at_level("WARNING"):
+            assert detect_platform_from_binary(binary) is None
+        assert "Failed to detect PE architecture" in caplog.text
+
+    def test_macho_parse_error_returns_none_and_logs(self, tmp_path: Path, monkeypatch, caplog) -> None:
+        from abicheck.baseline import detect_platform_from_binary
+
+        binary = tmp_path / "libfoo.dylib"
+        binary.write_bytes(b"\xfe\xed\xfa\xce" + b"\x00" * 64)
+
+        class BrokenMachO:
+            def __init__(self, *_args, **_kwargs) -> None:
+                raise ValueError("bad macho")
+
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "macholib.MachO",
+            types.SimpleNamespace(MachO=BrokenMachO),
+        )
+        with caplog.at_level("WARNING"):
+            assert detect_platform_from_binary(binary) is None
+        assert "Failed to detect Mach-O architecture" in caplog.text
 
 
 # ---------------------------------------------------------------------------

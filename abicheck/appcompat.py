@@ -169,17 +169,21 @@ def _collect_undefined_symbols(
             return 1
 
     def _is_symbol_from_target_library(sym_name: str, binding: str, ver_ndx: int) -> bool:
-        if not library_soname or versym_section is None:
+        if not library_soname:
             return True
+        from .elf_metadata import _guess_symbol_origin
+        if versym_section is None:
+            origin = _guess_symbol_origin(sym_name, reqs.needed_libs)
+            if origin is not None:
+                return origin == library_soname
+            return binding != "STB_WEAK"
         if ver_ndx >= 2:
             source_lib = ver_idx_to_lib.get(ver_ndx, "")
             return source_lib == library_soname
 
-        from .elf_metadata import _guess_symbol_origin
-
         origin = _guess_symbol_origin(sym_name, reqs.needed_libs)
         if origin is not None:
-            return False
+            return origin == library_soname
         return binding != "STB_WEAK"
 
     for section in elf.iter_sections():

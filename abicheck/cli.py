@@ -2623,7 +2623,7 @@ def baseline_group() -> None:
 @click.argument("library", type=str)
 @click.option("--version", "version", required=True,
               help="Version or branch name for the baseline.")
-@click.option("--platform", "platform", required=True,
+@click.option("--platform", "platform", required=False,
               help="Target platform (e.g. 'linux-x86_64'). Use --auto-platform to detect.")
 @click.option("--variant", default="",
               help="Build variant (e.g. 'debug', 'ssl-enabled').")
