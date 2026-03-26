@@ -807,6 +807,60 @@ def _remap_to_build(h: Path | None, src: Path, dst: Path) -> Path | None:
         return dst / h.name
 
 
+def _error_entry(case_name: str, expected: str) -> dict[str, Any]:
+    """Standardized error row for tool outputs."""
+    return {
+        "case": case_name,
+        "expected": expected,
+        "expected_compat": EXPECTED_COMPAT.get(case_name, expected),
+        "abicheck": "ERROR",
+        "abicheck_compat": "ERROR",
+        "abicheck_strict": "ERROR",
+        "abidiff": "ERROR",
+        "abidiff_headers": "ERROR",
+        "abicc_dumper": "ERROR",
+        "abicc_xml": "ERROR",
+    }
+
+
+def _case64_toolchain_policy(case_name: str, configured: str) -> tuple[str | None, bool]:
+    """Return (preferred_family, force_clang_case64) for benchmark compilation."""
+    case64 = case_name == "case64_calling_convention_changed"
+    has_clang = bool(shutil.which("clang-18") or shutil.which("clang"))
+    if configured == "clang":
+        preferred_family = "clang"
+    elif configured == "gcc":
+        preferred_family = "gcc"
+    else:  # auto
+        preferred_family = "clang" if (case64 and has_clang) else None
+    return preferred_family, (case64 and preferred_family == "clang")
+
+
+def _try_reuse_prebuilt(
+    *,
+    force_clang_case64: bool,
+    case_name: str,
+) -> tuple[Path | None, Path | None, bool, bool]:
+    """Try to reuse prebuilt example artifacts.
+
+    Returns (v1_so, v2_so, used_prebuilt_artifacts, used_cmake_artifacts).
+    """
+    if force_clang_case64:
+        return None, None, False, False
+
+    prebuilt_dirs = [EXAMPLES_DIR / "build-all-local", EXAMPLES_DIR / "build-real"]
+    for prebuilt_root in prebuilt_dirs:
+        prebuilt_case_dir = prebuilt_root / case_name
+        if not prebuilt_case_dir.is_dir():
+            continue
+        built_v1 = _find_cmake_lib(prebuilt_case_dir, "v1")
+        built_v2 = _find_cmake_lib(prebuilt_case_dir, "v2")
+        if built_v1 and built_v2:
+            return built_v1, built_v2, True, True
+
+    return None, None, False, False
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
     args = parse_args()
@@ -892,49 +946,18 @@ def main() -> None:
         used_make_artifacts = False
         used_cmake_artifacts = False
 
-        # case64_calling_convention_changed needs clang to expose CC drift reliably.
-        case64 = name == "case64_calling_convention_changed"
-        has_clang = bool(shutil.which("clang-18") or shutil.which("clang"))
-        if args.case64_toolchain == "clang":
-            preferred_family = "clang"
-        elif args.case64_toolchain == "gcc":
-            preferred_family = "gcc"
-        else:  # auto
-            preferred_family = "clang" if (case64 and has_clang) else None
-        force_clang_case64 = case64 and preferred_family == "clang"
-
-        # Reuse prebuilt example binaries when available (e.g. examples/build-all-local).
-        # This keeps benchmark runs working in environments without a compiler toolchain.
-        # For case64+clang we intentionally bypass prebuilt artifacts to ensure
-        # calling_convention_changed is exercised with clang-emitted DWARF.
-        prebuilt_dirs = [EXAMPLES_DIR / "build-all-local", EXAMPLES_DIR / "build-real"]
-        used_prebuilt_artifacts = False
-        for prebuilt_root in prebuilt_dirs:
-            if force_clang_case64:
-                break
-            prebuilt_case_dir = prebuilt_root / name
-            if not prebuilt_case_dir.is_dir():
-                continue
-            built_v1 = _find_cmake_lib(prebuilt_case_dir, "v1")
-            built_v2 = _find_cmake_lib(prebuilt_case_dir, "v2")
-            if built_v1 and built_v2:
-                v1_so = built_v1
-                v2_so = built_v2
-                used_prebuilt_artifacts = True
-                # Treat prebuilt CMake outputs the same as fresh CMake artifacts
-                # for header policy below.
-                used_cmake_artifacts = True
-                break
+        preferred_family, force_clang_case64 = _case64_toolchain_policy(name, args.case64_toolchain)
+        pb_v1, pb_v2, used_prebuilt_artifacts, pb_cmake = _try_reuse_prebuilt(
+            force_clang_case64=force_clang_case64, case_name=name,
+        )
+        if pb_v1 and pb_v2:
+            v1_so, v2_so = pb_v1, pb_v2
+            used_cmake_artifacts = pb_cmake
 
         if force_clang_case64:
             if not compile_so(v1_src, v1_so, preferred_family="clang") or not compile_so(v2_src, v2_so, preferred_family="clang"):
                 print(f"  {name:<35} COMPILE_ERR(clang)")
-                results.append({"case": name, "expected": expected,
-                                 "expected_compat": EXPECTED_COMPAT.get(name, expected),
-                                 "abicheck": "ERROR", "abicheck_compat": "ERROR",
-                                 "abicheck_strict": "ERROR",
-                                 "abidiff": "ERROR", "abidiff_headers": "ERROR",
-                                 "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
+                results.append(_error_entry(name, expected))
                 continue
         elif not used_prebuilt_artifacts and cmake_file.exists() and shutil.which("cmake"):
             cmake_build = bdir / "cmake_build"
@@ -965,24 +988,12 @@ def main() -> None:
                     v2_so = built_v2
                     used_cmake_artifacts = True
                 else:
-                    # CMake built but libs not found — don't fallback to compile_so
                     print(f"  {name:<35} CMAKE_NO_LIB")
-                    results.append({"case": name, "expected": expected,
-                                     "expected_compat": EXPECTED_COMPAT.get(name, expected),
-                                     "abicheck": "ERROR", "abicheck_compat": "ERROR",
-                                     "abicheck_strict": "ERROR",
-                                     "abidiff": "ERROR", "abidiff_headers": "ERROR",
-                                     "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
+                    results.append(_error_entry(name, expected))
                     continue
             else:
-                # CMake build failed — don't fallback to compile_so
                 print(f"  {name:<35} CMAKE_BUILD_ERR")
-                results.append({"case": name, "expected": expected,
-                                 "expected_compat": EXPECTED_COMPAT.get(name, expected),
-                                 "abicheck": "ERROR", "abicheck_compat": "ERROR",
-                                 "abicheck_strict": "ERROR",
-                                 "abidiff": "ERROR", "abidiff_headers": "ERROR",
-                                 "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
+                results.append(_error_entry(name, expected))
                 continue
         elif makefile.exists() and shutil.which("make"):
             build_copy = bdir / "make_build"
@@ -1005,24 +1016,14 @@ def main() -> None:
             else:
                 if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
                     print(f"  {name:<35} COMPILE_ERR")
-                    results.append({"case": name, "expected": expected,
-                                     "expected_compat": EXPECTED_COMPAT.get(name, expected),
-                                     "abicheck": "ERROR", "abicheck_compat": "ERROR",
-                                     "abicheck_strict": "ERROR",
-                                     "abidiff": "ERROR", "abidiff_headers": "ERROR",
-                                     "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
+                    results.append(_error_entry(name, expected))
                     continue
             if v1_so == built_v1:
                 v1_h_hint = _remap_to_build(v1_h_hint, case_dir, build_copy)
                 v2_h_hint = _remap_to_build(v2_h_hint, case_dir, build_copy)
         elif not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
             print(f"  {name:<35} COMPILE_ERR")
-            results.append({"case": name, "expected": expected,
-                             "expected_compat": EXPECTED_COMPAT.get(name, expected),
-                             "abicheck": "ERROR", "abicheck_compat": "ERROR",
-                             "abicheck_strict": "ERROR",
-                             "abidiff": "ERROR", "abidiff_headers": "ERROR",
-                             "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
+            results.append(_error_entry(name, expected))
             continue
 
         # Header selection policy:
