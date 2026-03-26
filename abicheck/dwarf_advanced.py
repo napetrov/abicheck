@@ -847,16 +847,23 @@ def diff_advanced_dwarf(
         old_saved = old_meta.callee_saved_regs[fname]
         new_saved = new_meta.callee_saved_regs[fname]
         if old_saved != new_saved:
-            # Strong x86-64 indicator: rdi/rsi becoming callee-saved implies ms_abi.
-            old_has_ms_hint = any(r in old_saved for r in ("rdi", "rsi", "edi", "esi"))
-            new_has_ms_hint = any(r in new_saved for r in ("rdi", "rsi", "edi", "esi"))
-            hint = ""
-            if old_has_ms_hint != new_has_ms_hint:
-                hint = " (ms_abi/sysv_abi drift inferred from CFI saved regs)"
+            # Only emit calling_convention_changed when ABI-distinguishing marker
+            # registers change.  On x86-64: rdi/rsi are callee-saved in ms_abi
+            # but caller-saved in SysV ABI — their appearance/disappearance is a
+            # reliable signal of calling-convention drift.  Ordinary
+            # register-allocation churn (rbx, r12–r15, etc.) that is present in
+            # *both* sides should not produce a false positive.
+            _MS_ABI_MARKERS = frozenset(("rdi", "rsi", "edi", "esi"))
+            old_has_ms_hint = bool(old_saved & _MS_ABI_MARKERS)
+            new_has_ms_hint = bool(new_saved & _MS_ABI_MARKERS)
+            if old_has_ms_hint == new_has_ms_hint:
+                # No ABI-marker change — register-allocation noise, skip.
+                continue
             results.append((
                 "calling_convention_changed", fname,
                 f"Calling convention changed (ELF CFI fallback): {fname} "
-                f"(saved regs: {sorted(old_saved)} → {sorted(new_saved)}){hint}",
+                f"(saved regs: {sorted(old_saved)} → {sorted(new_saved)}) "
+                f"(ms_abi/sysv_abi drift inferred from CFI saved regs)",
                 ",".join(sorted(old_saved)), ",".join(sorted(new_saved)),
             ))
             already_reported_cc.add(fname)

@@ -936,9 +936,7 @@ def main() -> None:
                                  "abidiff": "ERROR", "abidiff_headers": "ERROR",
                                  "abicc_dumper": "ERROR", "abicc_xml": "ERROR"})
                 continue
-        elif used_prebuilt_artifacts:
-            pass
-        elif cmake_file.exists() and shutil.which("cmake"):
+        elif not used_prebuilt_artifacts and cmake_file.exists() and shutil.which("cmake"):
             cmake_build = bdir / "cmake_build"
             if cmake_build.exists():
                 shutil.rmtree(str(cmake_build))

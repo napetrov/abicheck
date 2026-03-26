@@ -212,9 +212,11 @@ def compare(
     verdict = policy_file.compute_verdict(all_unsuppressed) if policy_file is not None else compute_verdict(all_unsuppressed, policy=policy)
     effective_policy = policy_file.base_policy if policy_file is not None else policy
 
-    # Keep opaque-filtered changes available for audit/UI (show-redundant),
-    # but never let them influence verdict computation.
+    # opaque_filtered changes are visible under --show-redundant for audit, but their
+    # label in the reporter is distinct from true display-dedup redundant changes.
+    # redundant_count reflects only the display-dedup set; opaque_filtered is additive.
     redundant_for_report = redundant + opaque_filtered
+    true_redundant_count = len(redundant)  # dedup-only (not opaque); used for report label
 
     # Compute old_symbol_count once for downstream metrics (Bug 8)
     old_sym_count = sum(
@@ -241,7 +243,7 @@ def compare(
         policy=effective_policy,
         policy_file=policy_file,
         redundant_changes=redundant_for_report,
-        redundant_count=len(redundant_for_report),
+        redundant_count=true_redundant_count,
         old_symbol_count=old_sym_count if old_sym_count > 0 else None,
         confidence=confidence,
         evidence_tiers=evidence_tiers,

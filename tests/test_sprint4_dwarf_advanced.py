@@ -153,6 +153,15 @@ def test_callee_saved_fallback_detects_calling_convention_drift() -> None:
     assert r.verdict == Verdict.BREAKING
 
 
+def test_callee_saved_fallback_ignores_non_marker_register_churn() -> None:
+    """rbx/r12 churn alone is not enough to claim calling-convention drift."""
+    old = _snap(_adv(callee_saved={"foo": frozenset({"rbx", "rbp", "r12"})}))
+    new = _snap(_adv(callee_saved={"foo": frozenset({"rbx", "rbp", "r12", "r13"})}))
+    r = compare(old, new)
+    kinds = {c.kind for c in r.changes}
+    assert ChangeKind.CALLING_CONVENTION_CHANGED not in kinds
+
+
 def test_value_abi_trait_unchanged_no_change() -> None:
     results = diff_advanced_dwarf(
         _adv(value_traits={"foo": "ret:v(trivial)|p0:v(trivial)"}),
