@@ -276,7 +276,7 @@ class AbiSnapshot:
     # Optional on-disk artifact path that produced this snapshot.
     # Keyword-only (placed after all other fields) to prevent accidental positional binding.
     # Used by binary-only fallback detectors that need lightweight disassembly.
-    source_path: str | None = None
+    source_path: str | None = field(default=None, kw_only=True)
 
     # Indexes (built lazily)
     _func_by_mangled: dict[str, Function] | None = field(default=None, repr=False, compare=False)

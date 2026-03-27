@@ -765,7 +765,9 @@ _RESET = "\033[0m"
 
 
 def _col(v: str, width: int = 12) -> str:
-    return f"{_COLORS.get(v, '')}{v:<{width}}{_RESET}"
+    # Keep table alignment stable even for long labels like COMPATIBLE_WITH_RISK.
+    clipped = v[:width]
+    return f"{_COLORS.get(v, '')}{clipped:<{width}}{_RESET}"
 
 
 def _correct(verdict: str, expected: str) -> str:
@@ -824,7 +826,7 @@ def _error_entry(case_name: str, expected: str) -> dict[str, Any]:
 
 
 def _case64_toolchain_policy(case_name: str, configured: str) -> tuple[str | None, bool]:
-    """Return (preferred_family, force_clang_case64) for benchmark compilation."""
+    """Return (preferred_family, force_case64_compile) for benchmark compilation."""
     case64 = case_name == "case64_calling_convention_changed"
     has_clang = bool(shutil.which("clang-18") or shutil.which("clang"))
     if configured == "clang":
@@ -833,19 +835,21 @@ def _case64_toolchain_policy(case_name: str, configured: str) -> tuple[str | Non
         preferred_family = "gcc"
     else:  # auto
         preferred_family = "clang" if (case64 and has_clang) else None
-    return preferred_family, (case64 and preferred_family == "clang")
+    # For case64, if toolchain is explicitly/implicitly selected, compile directly
+    # and bypass prebuilt artifacts to honor selected calling-convention compiler.
+    return preferred_family, (case64 and preferred_family is not None)
 
 
 def _try_reuse_prebuilt(
     *,
-    force_clang_case64: bool,
+    force_case64_compile: bool,
     case_name: str,
 ) -> tuple[Path | None, Path | None, bool, bool]:
     """Try to reuse prebuilt example artifacts.
 
     Returns (v1_so, v2_so, used_prebuilt_artifacts, used_cmake_artifacts).
     """
-    if force_clang_case64:
+    if force_case64_compile:
         return None, None, False, False
 
     prebuilt_dirs = [EXAMPLES_DIR / "build-all-local", EXAMPLES_DIR / "build-real"]
@@ -946,17 +950,17 @@ def main() -> None:
         used_make_artifacts = False
         used_cmake_artifacts = False
 
-        preferred_family, force_clang_case64 = _case64_toolchain_policy(name, args.case64_toolchain)
+        preferred_family, force_case64_compile = _case64_toolchain_policy(name, args.case64_toolchain)
         pb_v1, pb_v2, used_prebuilt_artifacts, pb_cmake = _try_reuse_prebuilt(
-            force_clang_case64=force_clang_case64, case_name=name,
+            force_case64_compile=force_case64_compile, case_name=name,
         )
         if pb_v1 and pb_v2:
             v1_so, v2_so = pb_v1, pb_v2
             used_cmake_artifacts = pb_cmake
 
-        if force_clang_case64:
-            if not compile_so(v1_src, v1_so, preferred_family="clang") or not compile_so(v2_src, v2_so, preferred_family="clang"):
-                print(f"  {name:<35} COMPILE_ERR(clang)")
+        if force_case64_compile:
+            if not compile_so(v1_src, v1_so, preferred_family=preferred_family) or not compile_so(v2_src, v2_so, preferred_family=preferred_family):
+                print(f"  {name:<35} COMPILE_ERR({preferred_family})")
                 results.append(_error_entry(name, expected))
                 continue
         elif not used_prebuilt_artifacts and cmake_file.exists() and shutil.which("cmake"):

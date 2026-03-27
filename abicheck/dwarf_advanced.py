@@ -740,8 +740,8 @@ def _parse_frame_registers(elf: Any, dwarf: Any, meta: AdvancedDwarfMetadata) ->
                     meta.frame_registers[sym_name] = reg
                 # Extract callee-saved register fingerprint from prologue
                 saved = _extract_callee_saved_regs(entry, arch_key)
-                if saved:
-                    meta.callee_saved_regs[sym_name] = frozenset(saved)
+                if saved is not None:
+                    meta.callee_saved_regs[sym_name] = saved
             except (ELFError, OSError, ValueError, KeyError, IndexError) as exc:
                 log.debug("_parse_frame_registers: skipping FDE: %s", exc)
 
@@ -749,11 +749,15 @@ def _parse_frame_registers(elf: Any, dwarf: Any, meta: AdvancedDwarfMetadata) ->
         log.warning("_parse_frame_registers: failed: %s", exc)
 
 
-def _extract_callee_saved_regs(entry: Any, arch_key: str) -> frozenset[str]:
+def _extract_callee_saved_regs(entry: Any, arch_key: str) -> frozenset[str] | None:
     """Extract the set of register names saved in the function prologue.
 
     Uses DW_CFA_offset and DW_CFA_rel_offset rules (register is spilled to stack)
-    to identify callee-saved registers.  Returns frozenset of register name strings.
+    to identify callee-saved registers.
+
+    Returns:
+    - frozenset[str] on successful decode (including empty set), or
+    - None when decoding failed and no trustworthy data is available.
     """
     try:
         decoded = entry.get_decoded()
@@ -772,7 +776,7 @@ def _extract_callee_saved_regs(entry: Any, arch_key: str) -> frozenset[str]:
                         saved.add(_reg_name(reg_key, arch_key))
         return frozenset(saved)
     except Exception:  # noqa: BLE001
-        return frozenset()
+        return None
 
 
 def _parse_producer(producer: str) -> ToolchainInfo:
@@ -853,7 +857,7 @@ def diff_advanced_dwarf(
             # reliable signal of calling-convention drift.  Ordinary
             # register-allocation churn (rbx, r12–r15, etc.) that is present in
             # *both* sides should not produce a false positive.
-            _MS_ABI_MARKERS = frozenset(("rdi", "rsi", "edi", "esi"))
+            _MS_ABI_MARKERS = frozenset(("rdi", "rsi"))
             old_has_ms_hint = bool(old_saved & _MS_ABI_MARKERS)
             new_has_ms_hint = bool(new_saved & _MS_ABI_MARKERS)
             if old_has_ms_hint == new_has_ms_hint:
