@@ -421,6 +421,20 @@ print(len(result.changes))  # number of detected changes
 
 ---
 
+## Validation snapshot (abicheck)
+
+Latest benchmark snapshot (see full methodology in docs):
+
+- **abicheck `compare`**: **42/42** on representative benchmark cases
+- **abicheck `compat`**: **40/42** (ABICC-compatible verdict vocabulary)
+- **abicheck `strict`**: **31/42** (intentional strict-policy promotion)
+- Full `examples/` suite: **63/63** cases pass for abicheck
+
+Details, caveats, and cross-tool analysis:
+- [Benchmark & Tool Comparison](https://napetrov.github.io/abicheck/reference/tool-comparison/)
+
+---
+
 ## Documentation
 
 Full documentation is available at **[napetrov.github.io/abicheck](https://napetrov.github.io/abicheck/)**.
