@@ -147,30 +147,29 @@ may keep identical runtime output for prebuilt binaries. For those, the demo sho
 
 ---
 
-## Benchmark Snapshot (63 cases, 2026-03-17)
+## Coverage & benchmark snapshot
 
-To avoid drift, this README keeps only a compact summary. Full per-case matrix and
-methodology live in docs:
-- [`../docs/benchmark_report.md`](../docs/benchmark_report.md)
-- [`../docs/tool_comparison.md`](../docs/tool_comparison.md)
+### Full examples coverage (abicheck)
 
-| Tool | Correct / Scored | Accuracy |
-|------|------------------|----------|
-| **abicheck (compare)** | **48/48** | **100%** |
-| abicheck (compat) | 46/48 | 96% |
-| abidiff | 12/48 | 25% |
-| abidiff + headers | 12/48 | 25% |
-| ABICC (xml) | 30/47 | 63% (1 timeout, 48 cases attempted) |
-| ABICC (abi-dumper) | 24/48 | 50% (12 error/timeout) |
+- The catalog currently contains **74 published cases** (`01–73` + `26b`).
+- `abicheck` has an expected verdict for **all 74/74** cases in [`ground_truth.json`](ground_truth.json).
+- CI validates this catalog via the **"Validate all examples"** job.
 
-### Why these numbers differ
+### Cross-tool benchmark subset
 
-- **`compat` < `compare`**: `compat` follows ABICC vocabulary and cannot emit `API_BREAK`
-  (`case31`, `case34`), so max is 46/48 in this suite.
-- **`abidiff` == `abidiff+headers` here**: `--headers-dir` only filters public symbols;
-  with `-fvisibility=default` in these examples, filtering does not change the set.
-- **ABICC(dumper)** missed case43 (base class member added) — classified as COMPATIBLE.
-  Reason: ABICC focuses on exported symbols, not derived class layout shifts.
+For cross-tool comparison (abicheck vs abidiff vs ABICC), we use a representative
+subset with stable scoring semantics. Full methodology and current numbers:
+
+- [`../docs/reference/tool-comparison.md`](../docs/reference/tool-comparison.md)
+
+Current documented snapshot:
+- **abicheck `compare`**: **42/42**
+- **abicheck `compat`**: **40/42**
+- **abicheck `strict`**: **31/42**
+
+> Why subset for cross-tool numbers: ABICC/libabigail comparability is tracked on
+> representative cases, while the full `examples/` catalog is used as abicheck
+> regression coverage.
 
 ---
 
