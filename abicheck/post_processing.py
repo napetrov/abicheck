@@ -220,7 +220,7 @@ class FilterRedundant:
 
         kept, redundant = _filter_redundant(changes)
         ctx.redundant.extend(redundant)
-        ctx.redundant.extend(ctx.opaque_filtered)
+        # opaque_filtered are kept separate - they are compatible changes that should not affect verdict
         ctx.kept = kept
         return kept
 

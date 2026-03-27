@@ -1296,6 +1296,7 @@ def _dump_elf(
         snapshot = AbiSnapshot(
             library=so_path.name,
             version=version,
+            source_path=str(so_path),
             functions=[
                 Function(
                     name=sym,
@@ -1336,6 +1337,7 @@ def _dump_elf(
     snapshot = AbiSnapshot(
         library=so_path.name,
         version=version,
+        source_path=str(so_path),
         functions=parser.parse_functions(),
         variables=parser.parse_variables(),
         types=parser.parse_types(),
@@ -1416,6 +1418,7 @@ def _dump_macho(
         return AbiSnapshot(
             library=dylib_path.name,
             version=version,
+            source_path=str(dylib_path),
             functions=[
                 Function(
                     name=_normalize_macho_sym(exp.name),
@@ -1465,6 +1468,7 @@ def _dump_macho(
     return AbiSnapshot(
         library=dylib_path.name,
         version=version,
+        source_path=str(dylib_path),
         functions=parser.parse_functions(),
         variables=parser.parse_variables(),
         types=parser.parse_types(),
@@ -1518,6 +1522,7 @@ def _dump_pe(
         return AbiSnapshot(
             library=dll_path.name,
             version=version,
+            source_path=str(dll_path),
             functions=[
                 Function(
                     name=sym, mangled=sym, return_type="?",
@@ -1542,6 +1547,7 @@ def _dump_pe(
     return AbiSnapshot(
         library=dll_path.name,
         version=version,
+        source_path=str(dll_path),
         functions=parser.parse_functions(),
         variables=parser.parse_variables(),
         types=parser.parse_types(),

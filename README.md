@@ -421,6 +421,29 @@ print(len(result.changes))  # number of detected changes
 
 ---
 
+## Validation snapshot (abicheck)
+
+All numbers below are computed on the **full 74-case catalog** (`01–73` + `26b`).
+
+| Configuration | Cases | Exact verdict accuracy | False Positives* | False Negatives* |
+|---|---:|---:|---:|---:|
+| `abicheck compare` | 74 | **69/74 (93%)** | 0 | 1 |
+| `abicheck compat` | 74 | **68/74 (92%)** | 0 | 1 |
+| `abicheck strict` (`--strict-mode full`) | 74 | **61/74 (82%)** | 6 | 1 |
+| `abidiff` | 74 | **23/74 (31%)** | 0 | 39 |
+| `abidiff + headers` | 74 | **23/74 (31%)** | 0 | 39 |
+
+\* FP/FN are for breaking-signal detection (`BREAKING` + `API_BREAK` treated as positive).
+
+Source run:
+- `python3 scripts/benchmark_comparison.py --tools abicheck abicheck_compat abicheck_strict abidiff abidiff_headers`
+
+Per-case matrix and methodology:
+- [Benchmark & Tool Comparison](https://napetrov.github.io/abicheck/reference/tool-comparison/)
+- [examples/README.md](examples/README.md)
+
+---
+
 ## Documentation
 
 Full documentation is available at **[napetrov.github.io/abicheck](https://napetrov.github.io/abicheck/)**.

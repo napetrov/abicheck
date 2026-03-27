@@ -273,6 +273,10 @@ class AbiSnapshot:
     git_tag: str | None = None      # e.g. "v2.0.0", set via --git-tag or auto-detected
     created_at: str | None = None   # ISO 8601 timestamp, auto-set at dump time
     build_id: str | None = None     # opaque CI identifier (run ID, build number, etc.)
+    # Optional on-disk artifact path that produced this snapshot.
+    # Keyword-only (placed after all other fields) to prevent accidental positional binding.
+    # Used by binary-only fallback detectors that need lightweight disassembly.
+    source_path: str | None = field(default=None, kw_only=True)
 
     # Indexes (built lazily)
     _func_by_mangled: dict[str, Function] | None = field(default=None, repr=False, compare=False)

@@ -41,6 +41,8 @@ def _adv(
     packed: set[str] | None = None,
     flags: set[str] | None = None,
     all_structs: set[str] | None = None,
+    frame_regs: dict[str, str] | None = None,
+    callee_saved: dict[str, frozenset[str]] | None = None,
 ) -> AdvancedDwarfMetadata:
     packed_set = packed or set()
     # all_struct_names must include packed structs so diff guards work correctly
@@ -57,6 +59,8 @@ def _adv(
         value_abi_traits=value_traits or {},
         packed_structs=packed_set,
         all_struct_names=struct_names,
+        frame_registers=frame_regs or {},
+        callee_saved_regs=callee_saved or {},
     )
 
 
@@ -137,6 +141,60 @@ def test_value_abi_trait_changed_breaking() -> None:
     kinds = {c.kind for c in r.changes}
     assert ChangeKind.VALUE_ABI_TRAIT_CHANGED in kinds
     assert r.verdict == Verdict.BREAKING
+
+
+def test_callee_saved_fallback_detects_calling_convention_drift() -> None:
+    """ELF CFI fallback: saved rdi/rsi indicates ms_abi shift."""
+    old = _snap(_adv(callee_saved={"foo": frozenset({"rbx", "rbp", "r12"})}))
+    new = _snap(_adv(callee_saved={"foo": frozenset({"rbx", "rbp", "r12", "rdi", "rsi"})}))
+    r = compare(old, new)
+    kinds = {c.kind for c in r.changes}
+    assert ChangeKind.CALLING_CONVENTION_CHANGED in kinds
+    assert r.verdict == Verdict.BREAKING
+
+
+def test_callee_saved_fallback_ignores_non_marker_register_churn() -> None:
+    """rbx/r12 churn alone is not enough to claim calling-convention drift."""
+    old = _snap(_adv(callee_saved={"foo": frozenset({"rbx", "rbp", "r12"})}))
+    new = _snap(_adv(callee_saved={"foo": frozenset({"rbx", "rbp", "r12", "r13"})}))
+    r = compare(old, new)
+    kinds = {c.kind for c in r.changes}
+    assert ChangeKind.CALLING_CONVENTION_CHANGED not in kinds
+
+
+def test_extract_callee_saved_regs_mocked() -> None:
+    """Test _extract_callee_saved_regs with a mocked FDE."""
+    from abicheck.dwarf_advanced import _extract_callee_saved_regs
+
+    class MockRow:
+        def __init__(self, pc, regs):
+            self.pc = pc
+            self.regs = regs
+
+        def items(self):
+            return self.regs.items()
+
+    class MockRule:
+        def __init__(self, typ):
+            self.type = typ
+
+    class MockTable:
+        table = [
+            MockRow(pc=0x1000, regs={16: MockRule("offset")}),
+            MockRow(pc=0x1004, regs={3: MockRule("offset"), 4: MockRule("undefined")}),
+        ]
+
+    class MockDecoded:
+        table = MockTable.table
+
+    class MockEntry:
+        def get_decoded(self):
+            return MockDecoded()
+
+    entry = MockEntry()
+    result = _extract_callee_saved_regs(entry, "x86_64")
+    # x86_64: reg 16 = rip, reg 3 = rbx, reg 4 = rsi (but undefined → not saved)
+    assert result == frozenset({"rip", "rbx"})
 
 
 def test_value_abi_trait_unchanged_no_change() -> None:
