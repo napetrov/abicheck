@@ -147,41 +147,33 @@ may keep identical runtime output for prebuilt binaries. For those, the demo sho
 
 ---
 
-## Coverage & benchmark snapshot
+## Coverage snapshot
 
-### Full examples coverage (abicheck)
+### Full catalog coverage (abicheck)
 
-- The catalog currently contains **74 published cases** (`01–73` + `26b`).
-- `abicheck` has an expected verdict for **all 74/74** cases in [`ground_truth.json`](ground_truth.json).
-- CI validates this catalog via the **"Validate all examples"** job.
+- Catalog size: **74 cases** (`01–73` + `26b`).
+- `ground_truth.json` contains expected verdicts for **74/74**.
+- CI job **Validate all examples** validates the whole catalog.
 
-### Cross-tool benchmark subset
+### abicheck mode characteristics (42-case benchmark subset)
 
-For cross-tool comparison (abicheck vs abidiff vs ABICC), we use a representative
-subset with stable scoring semantics. Full methodology and current numbers:
+| Mode | Cases | Exact verdict accuracy | False Positives* | False Negatives* |
+|---|---:|---:|---:|---:|
+| `compare` | 42 | **42/42 (100%)** | 0 | 0 |
+| `compat` | 42 | **40/42 (95%)** | 0 | 2 |
+| `strict` (`--strict-mode full`) | 42 | **31/42 (73%)** | 9 | 0 |
 
+\* FP/FN are for **breaking-signal detection** (`BREAKING` + `API_BREAK` treated as positive).
+
+### abidiff quick signal (full catalog)
+
+| Tool | Cases | Exact verdict accuracy | False Positives* | False Negatives* |
+|---|---:|---:|---:|---:|
+| `abidiff` | 74 | **23/74 (31%)** | 0 | 39 |
+| `abidiff + headers` | 74 | **23/74 (31%)** | 0 | 39 |
+
+Methodology and full per-case matrix:
 - [`../docs/reference/tool-comparison.md`](../docs/reference/tool-comparison.md)
-
-Current documented snapshot:
-- **abicheck `compare`**: **42/42**
-- **abicheck `compat`**: **40/42**
-- **abicheck `strict`**: **31/42**
-
-### Accuracy + FP/FN profile
-
-In addition to percentage accuracy, we track false positives and false negatives.
-For this section, **positive** means "breaking/API break expected" (`BREAKING` or
-`API_BREAK`).
-
-| Tool / run | Scored cases | Accuracy | False Positives | False Negatives | Notes |
-|---|---:|---:|---:|---:|---|
-| **abicheck (full catalog, CI Validate all examples)** | 74/74 | 100% | 0 | 0 | exact verdict match on all published cases |
-| abidiff (full catalog run) | 74/74 | 23/74 = 31% | 0 | 39 | full run including case65 symbol-version removal |
-| abidiff + headers (full catalog run) | 74/74 | 23/74 = 31% | 0 | 39 | same profile as abidiff in this suite |
-
-> Why subset for cross-tool numbers: ABICC/libabigail comparability is tracked on
-> representative cases, while the full `examples/` catalog is used as abicheck
-> regression coverage.
 
 ---
 

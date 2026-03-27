@@ -423,14 +423,21 @@ print(len(result.changes))  # number of detected changes
 
 ## Validation snapshot (abicheck)
 
-Latest benchmark snapshot (see full methodology in docs):
+### Full examples coverage
+- **74/74** published examples are covered by abicheck and validated in CI.
+- Details: [`examples/README.md`](examples/README.md)
 
-- **abicheck `compare`**: **42/42** on representative benchmark cases
-- **abicheck `compat`**: **40/42** (ABICC-compatible verdict vocabulary)
-- **abicheck `strict`**: **31/42** (intentional strict-policy promotion)
-- Full `examples/` suite: **63/63** cases pass for abicheck
+### Benchmark characteristics (representative 42-case subset)
 
-Details, caveats, and cross-tool analysis:
+| Mode | Cases | Exact verdict accuracy | False Positives* | False Negatives* |
+|---|---:|---:|---:|---:|
+| `compare` | 42 | **42/42 (100%)** | 0 | 0 |
+| `compat` | 42 | **40/42 (95%)** | 0 | 2 |
+| `strict` (`--strict-mode full`) | 42 | **31/42 (73%)** | 9 | 0 |
+
+\* FP/FN here are for **breaking-signal detection** (`BREAKING` + `API_BREAK` treated as positive).
+
+Full methodology and cross-tool details:
 - [Benchmark & Tool Comparison](https://napetrov.github.io/abicheck/reference/tool-comparison/)
 
 ---
