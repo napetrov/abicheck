@@ -809,25 +809,12 @@ def _parse_producer(producer: str) -> ToolchainInfo:
 # Diff (called from checker.py _diff_advanced_dwarf)
 # ---------------------------------------------------------------------------
 
-def diff_advanced_dwarf(
+def _diff_calling_conventions(
     old_meta: AdvancedDwarfMetadata,
     new_meta: AdvancedDwarfMetadata,
-) -> list[tuple[str, str, str, str | None, str | None]]:
-    """Return (kind, symbol, description, old_value, new_value) tuples.
-
-    Returns [] gracefully if either side has no DWARF.
-    """
-    if not old_meta.has_dwarf or not new_meta.has_dwarf:
-        return []
-
+) -> tuple[list[tuple[str, str, str, str | None, str | None]], set[str]]:
+    """Diff explicit DW_AT_calling_convention. Returns (results, already_reported_cc)."""
     results: list[tuple[str, str, str, str | None, str | None]] = []
-
-    # 1. Calling convention drift (explicit DW_AT_calling_convention).
-    # calling_conventions now stores ALL external functions (including "normal"),
-    # so we can distinguish "CC changed" from "function added/removed".
-    # Functions present only in old → removed (handled by ELF checker, skip here).
-    # Functions present only in new → added (skip; new additions are COMPATIBLE by default).
-    # Functions present in both → compare CC values.
     old_cc_keys = set(old_meta.calling_conventions)
     new_cc_keys = set(new_meta.calling_conventions)
     for fname in sorted(old_cc_keys & new_cc_keys):
@@ -839,29 +826,29 @@ def diff_advanced_dwarf(
                 f"Calling convention changed: {fname} ({old_cc} → {new_cc})",
                 old_cc, new_cc,
             ))
-
-    # 1b. ELF CFI callee-saved fingerprint drift.
-    # Fallback for GCC/Linux where DW_AT_calling_convention is often omitted:
-    # compare saved-register sets extracted from .eh_frame/.debug_frame.
-    old_saved_keys = set(old_meta.callee_saved_regs)
-    new_saved_keys = set(new_meta.callee_saved_regs)
     already_reported_cc = {fname for fname in (old_cc_keys & new_cc_keys)
                            if old_meta.calling_conventions[fname] != new_meta.calling_conventions[fname]}
+    return results, already_reported_cc
+
+
+def _diff_callee_saved_regs(
+    old_meta: AdvancedDwarfMetadata,
+    new_meta: AdvancedDwarfMetadata,
+    already_reported_cc: set[str],
+) -> tuple[list[tuple[str, str, str, str | None, str | None]], set[str]]:
+    """Diff ELF CFI callee-saved fingerprint. Returns (results, updated already_reported_cc)."""
+    results: list[tuple[str, str, str, str | None, str | None]] = []
+    old_saved_keys = set(old_meta.callee_saved_regs)
+    new_saved_keys = set(new_meta.callee_saved_regs)
+    already_reported_cc = set(already_reported_cc)
+    _MS_ABI_MARKERS = frozenset(("rdi", "rsi"))
     for fname in sorted((old_saved_keys & new_saved_keys) - already_reported_cc):
         old_saved = old_meta.callee_saved_regs[fname]
         new_saved = new_meta.callee_saved_regs[fname]
         if old_saved != new_saved:
-            # Only emit calling_convention_changed when ABI-distinguishing marker
-            # registers change.  On x86-64: rdi/rsi are callee-saved in ms_abi
-            # but caller-saved in SysV ABI — their appearance/disappearance is a
-            # reliable signal of calling-convention drift.  Ordinary
-            # register-allocation churn (rbx, r12–r15, etc.) that is present in
-            # *both* sides should not produce a false positive.
-            _MS_ABI_MARKERS = frozenset(("rdi", "rsi"))
             old_has_ms_hint = bool(old_saved & _MS_ABI_MARKERS)
             new_has_ms_hint = bool(new_saved & _MS_ABI_MARKERS)
             if old_has_ms_hint == new_has_ms_hint:
-                # No ABI-marker change — register-allocation noise, skip.
                 continue
             results.append((
                 "calling_convention_changed", fname,
@@ -871,20 +858,16 @@ def diff_advanced_dwarf(
                 ",".join(sorted(old_saved)), ",".join(sorted(new_saved)),
             ))
             already_reported_cc.add(fname)
+    return results, already_reported_cc
 
-    # 1c. Value-ABI trait drift (DWARF-based heuristic for platforms where
-    # DW_AT_calling_convention is not emitted, e.g. Linux x86-64 System V AMD64).
-    #
-    # On x86-64 SysV ABI, whether an aggregate is passed by value in registers
-    # or by hidden pointer depends on its triviality (Itanium C++ ABI §3.1.2):
-    # - trivially-destructible (no user-defined dtor): may use registers
-    # - non-trivially-destructible (has user-defined dtor): passed by pointer
-    #
-    # We detect this by comparing the per-function value-ABI trait fingerprint
-    # (return-type + parameter triviality) between versions.
-    #
-    # Deduplication: skip if calling_convention_changed already fired for this function
-    # (explicit DW_AT_calling_convention change is more authoritative).
+
+def _diff_value_abi_traits(
+    old_meta: AdvancedDwarfMetadata,
+    new_meta: AdvancedDwarfMetadata,
+    already_reported_cc: set[str],
+) -> list[tuple[str, str, str, str | None, str | None]]:
+    """Diff DWARF value-ABI trait fingerprints. Returns results list."""
+    results: list[tuple[str, str, str, str | None, str | None]] = []
     old_trait_keys = set(old_meta.value_abi_traits)
     new_trait_keys = set(new_meta.value_abi_traits)
     for fname in sorted((old_trait_keys & new_trait_keys) - already_reported_cc):
@@ -896,11 +879,15 @@ def diff_advanced_dwarf(
                 f"DWARF value-ABI trait changed: {fname} ({old_trait} → {new_trait})",
                 old_trait, new_trait,
             ))
+    return results
 
-    # 2. Struct packing drift.
-    # Use all_struct_names to guard against false "packing removed" reports when
-    # the struct itself was deleted (deletion is detected by the AST/ELF checker).
-    # Guard: only report "packing removed" when struct exists in BOTH binaries.
+
+def _diff_struct_packing(
+    old_meta: AdvancedDwarfMetadata,
+    new_meta: AdvancedDwarfMetadata,
+) -> list[tuple[str, str, str, str | None, str | None]]:
+    """Diff struct packing attributes. Returns results list."""
+    results: list[tuple[str, str, str, str | None, str | None]] = []
     both_struct_names = old_meta.all_struct_names & new_meta.all_struct_names
     for name in sorted((old_meta.packed_structs - new_meta.packed_structs) & both_struct_names):
         results.append((
@@ -908,18 +895,21 @@ def diff_advanced_dwarf(
             f"Struct packing removed: {name} was packed, now standard layout",
             "packed", "standard",
         ))
-    # "Packing added": only report when struct existed in old binary too.
-    # A brand-new packed struct has no prior ABI contract to break — consistent
-    # with how calling-convention additions are handled (new-only functions skipped).
-    # Symmetric with packing-removed guard above.
     for name in sorted((new_meta.packed_structs - old_meta.packed_structs) & old_meta.all_struct_names):
         results.append((
             "struct_packing_changed", name,
             f"Struct packing added: {name} is now __attribute__((packed))",
             "standard", "packed",
         ))
+    return results
 
-    # 3. Toolchain ABI flag drift
+
+def _diff_toolchain_flags(
+    old_meta: AdvancedDwarfMetadata,
+    new_meta: AdvancedDwarfMetadata,
+) -> list[tuple[str, str, str, str | None, str | None]]:
+    """Diff ABI-affecting compiler flags. Returns results list."""
+    results: list[tuple[str, str, str, str | None, str | None]] = []
     old_flags = old_meta.toolchain.abi_flags
     new_flags = new_meta.toolchain.abi_flags
     removed_flags = old_flags - new_flags
@@ -936,10 +926,15 @@ def diff_advanced_dwarf(
             ",".join(sorted(old_flags)) or None,
             ",".join(sorted(new_flags)) or None,
         ))
+    return results
 
-    # 4. Frame register / CFA convention drift (#117)
-    # Compare the dominant CFA register for functions present in both binaries.
-    # rsp ↔ rbp transition is the canonical indicator of -fomit-frame-pointer drift.
+
+def _diff_frame_registers(
+    old_meta: AdvancedDwarfMetadata,
+    new_meta: AdvancedDwarfMetadata,
+) -> list[tuple[str, str, str, str | None, str | None]]:
+    """Diff frame/CFA register usage. Returns results list."""
+    results: list[tuple[str, str, str, str | None, str | None]] = []
     old_fr_keys = set(old_meta.frame_registers)
     new_fr_keys = set(new_meta.frame_registers)
     for fname in sorted(old_fr_keys & new_fr_keys):
@@ -951,8 +946,28 @@ def diff_advanced_dwarf(
                 f"Frame/CFA register changed: {fname} ({old_reg} → {new_reg})",
                 old_reg, new_reg,
             ))
-
     return results
+
+
+def diff_advanced_dwarf(
+    old_meta: AdvancedDwarfMetadata,
+    new_meta: AdvancedDwarfMetadata,
+) -> list[tuple[str, str, str, str | None, str | None]]:
+    """Return (kind, symbol, description, old_value, new_value) tuples.
+
+    Returns [] gracefully if either side has no DWARF.
+    """
+    if not old_meta.has_dwarf or not new_meta.has_dwarf:
+        return []
+
+    cc_results, already_reported_cc = _diff_calling_conventions(old_meta, new_meta)
+    csr_results, already_reported_cc = _diff_callee_saved_regs(old_meta, new_meta, already_reported_cc)
+    trait_results = _diff_value_abi_traits(old_meta, new_meta, already_reported_cc)
+    pack_results = _diff_struct_packing(old_meta, new_meta)
+    flag_results = _diff_toolchain_flags(old_meta, new_meta)
+    frame_results = _diff_frame_registers(old_meta, new_meta)
+
+    return cc_results + csr_results + trait_results + pack_results + flag_results + frame_results
 
 
 # ---------------------------------------------------------------------------

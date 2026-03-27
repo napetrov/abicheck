@@ -865,6 +865,178 @@ def _try_reuse_prebuilt(
     return None, None, False, False
 
 
+# ── Module-level helpers extracted from main() ────────────────────────────────
+
+def _accuracy(results: list[dict], key: str, expected_key: str = "expected") -> tuple[int, int]:
+    scored = [r for r in results if r.get(expected_key, "?") != "?" and r[key] not in ("SKIP", "ERROR", "TIMEOUT", "NO_SOURCE")]
+    correct = sum(1 for r in scored if r[key] == r[expected_key])
+    return correct, len(scored)
+
+
+def _total_ms(results: list[dict], ms_key: str) -> float:
+    return sum(r.get(ms_key, 0) for r in results)
+
+
+@dataclass
+class _BuildResult:
+    v1_so: Path
+    v2_so: Path
+    used_make_artifacts: bool
+    used_cmake_artifacts: bool
+    v1_h_hint: Path | None
+    v2_h_hint: Path | None
+    ok: bool
+
+
+def _build_case_artifacts(
+    name: str,
+    expected: str,
+    case_dir: Path,
+    bdir: Path,
+    v1_src: Path,
+    v2_src: Path,
+    v1_h_hint: Path | None,
+    v2_h_hint: Path | None,
+    args: Any,
+    results: list[dict],
+) -> _BuildResult:
+    """Build shared libraries for a test case. Returns _BuildResult with ok=False on error."""
+    v1_so = bdir / f"lib_v1{SHARED_LIB_SUFFIX}"
+    v2_so = bdir / f"lib_v2{SHARED_LIB_SUFFIX}"
+    used_make_artifacts = False
+    used_cmake_artifacts = False
+
+    cmake_file = case_dir / "CMakeLists.txt"
+    makefile = case_dir / "Makefile"
+
+    preferred_family, force_case64_compile = _case64_toolchain_policy(name, args.case64_toolchain)
+    pb_v1, pb_v2, used_prebuilt_artifacts, pb_cmake = _try_reuse_prebuilt(
+        force_case64_compile=force_case64_compile, case_name=name,
+    )
+    if pb_v1 and pb_v2:
+        v1_so, v2_so = pb_v1, pb_v2
+        used_cmake_artifacts = pb_cmake
+
+    if force_case64_compile:
+        if not compile_so(v1_src, v1_so, preferred_family=preferred_family) or not compile_so(v2_src, v2_so, preferred_family=preferred_family):
+            print(f"  {name:<35} COMPILE_ERR({preferred_family})")
+            results.append(_error_entry(name, expected))
+            return _BuildResult(v1_so, v2_so, used_make_artifacts, used_cmake_artifacts, v1_h_hint, v2_h_hint, ok=False)
+    elif not used_prebuilt_artifacts and cmake_file.exists() and shutil.which("cmake"):
+        cmake_build = bdir / "cmake_build"
+        if cmake_build.exists():
+            shutil.rmtree(str(cmake_build))
+        cmake_build.mkdir(parents=True)
+        try:
+            cr = subprocess.run(
+                ["cmake", "-S", str(case_dir.parent), "-B", str(cmake_build),
+                 "-DCMAKE_BUILD_TYPE=Debug"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if cr.returncode == 0:
+                cr = subprocess.run(
+                    ["cmake", "--build", str(cmake_build),
+                     "--target", f"{name}_v1", f"{name}_v2",
+                     "--config", "Debug"],
+                    capture_output=True, text=True, timeout=120,
+                )
+        except subprocess.TimeoutExpired:
+            cr = type("R", (), {"returncode": -1})()
+        cmake_out = cmake_build / name
+        if cr.returncode == 0 and cmake_out.exists():
+            built_v1 = _find_cmake_lib(cmake_out, "v1")
+            built_v2 = _find_cmake_lib(cmake_out, "v2")
+            if built_v1 and built_v2:
+                v1_so = built_v1
+                v2_so = built_v2
+                used_cmake_artifacts = True
+            else:
+                print(f"  {name:<35} CMAKE_NO_LIB")
+                results.append(_error_entry(name, expected))
+                return _BuildResult(v1_so, v2_so, used_make_artifacts, used_cmake_artifacts, v1_h_hint, v2_h_hint, ok=False)
+        else:
+            print(f"  {name:<35} CMAKE_BUILD_ERR")
+            results.append(_error_entry(name, expected))
+            return _BuildResult(v1_so, v2_so, used_make_artifacts, used_cmake_artifacts, v1_h_hint, v2_h_hint, ok=False)
+    elif makefile.exists() and shutil.which("make"):
+        build_copy = bdir / "make_build"
+        if build_copy.exists():
+            shutil.rmtree(str(build_copy))
+        shutil.copytree(str(case_dir), str(build_copy))
+        try:
+            mr = subprocess.run(
+                ["make", "-C", str(build_copy)],
+                capture_output=True, text=True, timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            mr = type("R", (), {"returncode": -1})()
+        built_v1 = build_copy / "libv1.so"
+        built_v2 = build_copy / "libv2.so"
+        if mr.returncode == 0 and built_v1.exists() and built_v2.exists():
+            v1_so = built_v1
+            v2_so = built_v2
+            used_make_artifacts = True
+        else:
+            if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
+                print(f"  {name:<35} COMPILE_ERR")
+                results.append(_error_entry(name, expected))
+                return _BuildResult(v1_so, v2_so, used_make_artifacts, used_cmake_artifacts, v1_h_hint, v2_h_hint, ok=False)
+        if v1_so == built_v1:
+            v1_h_hint = _remap_to_build(v1_h_hint, case_dir, build_copy)
+            v2_h_hint = _remap_to_build(v2_h_hint, case_dir, build_copy)
+    elif not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
+        print(f"  {name:<35} COMPILE_ERR")
+        results.append(_error_entry(name, expected))
+        return _BuildResult(v1_so, v2_so, used_make_artifacts, used_cmake_artifacts, v1_h_hint, v2_h_hint, ok=False)
+
+    return _BuildResult(v1_so, v2_so, used_make_artifacts, used_cmake_artifacts, v1_h_hint, v2_h_hint, ok=True)
+
+
+def _print_accuracy_summary(results: list[dict], active_tools: list[Any], selected_tools: set[str]) -> None:
+    print("\n" + "─" * 80)
+    print("  Accuracy vs expected verdicts:")
+    for t in active_tools:
+        c, total = _accuracy(results, t.name, t.expected_key)
+        if total > 0:
+            pct = 100 * c // total
+            bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
+            tot_s = _total_ms(results, t.ms_key) / 1000
+            print(f"    {t.label}: {c:>2}/{total} ({pct:3}%) {bar}  [{tot_s:6.1f}s total]")
+
+    # Divergences from expected
+    if "abicheck" in selected_tools:
+        print("\n  Cases where abicheck differs from expected:")
+        for r in results:
+            if r.get("expected", "?") == "?":
+                continue
+            if r["abicheck"] not in ("SKIP", "ERROR", "TIMEOUT") and r["abicheck"] != r["expected"]:
+                print(f"    {r['case']:<40} got={r['abicheck']} expected={r['expected']}")
+
+    # Strict vs compat divergences
+    if "abicheck_strict" in selected_tools and "abicheck_compat" in selected_tools:
+        print("\n  Cases where abicheck_strict differs from abicheck_compat:")
+        for r in results:
+            ac_s = r.get("abicheck_strict", "SKIP")
+            ac_c = r.get("abicheck_compat", "SKIP")
+            if ac_s in ("SKIP", "ERROR", "TIMEOUT") or ac_c in ("SKIP", "ERROR", "TIMEOUT"):
+                continue
+            if ac_s != ac_c:
+                exp = r.get("expected", "?")
+                print(f"    {r['case']:<40} compat={ac_c} strict={ac_s} expected={exp}")
+
+    # Per-case timing for slow tools (registry-driven via show_slowest flag)
+    for tool_obj in active_tools:
+        if not tool_obj.show_slowest:
+            continue
+        print(f"\n  Top {tool_obj.col_name} slowest cases:")
+        slow = sorted(results, key=lambda r, k=tool_obj.ms_key: r.get(k, 0), reverse=True)
+        for r in slow[:10]:
+            ms = r.get(tool_obj.ms_key, 0)
+            if ms > 0:
+                verdict = r.get(tool_obj.name, "SKIP")
+                print(f"    {r['case']:<40} {ms:>7}ms  [{verdict}]")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
     args = parse_args()
@@ -939,96 +1111,20 @@ def main() -> None:
         bdir = BUILD_DIR / name
         bdir.mkdir(exist_ok=True)
 
-        v1_so = bdir / f"lib_v1{SHARED_LIB_SUFFIX}"
-        v2_so = bdir / f"lib_v2{SHARED_LIB_SUFFIX}"
         v1_h_gen = bdir / "v1.h"
         v2_h_gen = bdir / "v2.h"
 
         # Build strategy: CMake > Makefile > direct compilation
-        cmake_file = case_dir / "CMakeLists.txt"
-        makefile = case_dir / "Makefile"
-        used_make_artifacts = False
-        used_cmake_artifacts = False
-
-        preferred_family, force_case64_compile = _case64_toolchain_policy(name, args.case64_toolchain)
-        pb_v1, pb_v2, used_prebuilt_artifacts, pb_cmake = _try_reuse_prebuilt(
-            force_case64_compile=force_case64_compile, case_name=name,
-        )
-        if pb_v1 and pb_v2:
-            v1_so, v2_so = pb_v1, pb_v2
-            used_cmake_artifacts = pb_cmake
-
-        if force_case64_compile:
-            if not compile_so(v1_src, v1_so, preferred_family=preferred_family) or not compile_so(v2_src, v2_so, preferred_family=preferred_family):
-                print(f"  {name:<35} COMPILE_ERR({preferred_family})")
-                results.append(_error_entry(name, expected))
-                continue
-        elif not used_prebuilt_artifacts and cmake_file.exists() and shutil.which("cmake"):
-            cmake_build = bdir / "cmake_build"
-            if cmake_build.exists():
-                shutil.rmtree(str(cmake_build))
-            cmake_build.mkdir(parents=True)
-            try:
-                cr = subprocess.run(
-                    ["cmake", "-S", str(case_dir.parent), "-B", str(cmake_build),
-                     "-DCMAKE_BUILD_TYPE=Debug"],
-                    capture_output=True, text=True, timeout=60,
-                )
-                if cr.returncode == 0:
-                    cr = subprocess.run(
-                        ["cmake", "--build", str(cmake_build),
-                         "--target", f"{name}_v1", f"{name}_v2",
-                         "--config", "Debug"],
-                        capture_output=True, text=True, timeout=120,
-                    )
-            except subprocess.TimeoutExpired:
-                cr = type("R", (), {"returncode": -1})()
-            cmake_out = cmake_build / name
-            if cr.returncode == 0 and cmake_out.exists():
-                built_v1 = _find_cmake_lib(cmake_out, "v1")
-                built_v2 = _find_cmake_lib(cmake_out, "v2")
-                if built_v1 and built_v2:
-                    v1_so = built_v1
-                    v2_so = built_v2
-                    used_cmake_artifacts = True
-                else:
-                    print(f"  {name:<35} CMAKE_NO_LIB")
-                    results.append(_error_entry(name, expected))
-                    continue
-            else:
-                print(f"  {name:<35} CMAKE_BUILD_ERR")
-                results.append(_error_entry(name, expected))
-                continue
-        elif makefile.exists() and shutil.which("make"):
-            build_copy = bdir / "make_build"
-            if build_copy.exists():
-                shutil.rmtree(str(build_copy))
-            shutil.copytree(str(case_dir), str(build_copy))
-            try:
-                mr = subprocess.run(
-                    ["make", "-C", str(build_copy)],
-                    capture_output=True, text=True, timeout=60,
-                )
-            except subprocess.TimeoutExpired:
-                mr = type("R", (), {"returncode": -1})()
-            built_v1 = build_copy / "libv1.so"
-            built_v2 = build_copy / "libv2.so"
-            if mr.returncode == 0 and built_v1.exists() and built_v2.exists():
-                v1_so = built_v1
-                v2_so = built_v2
-                used_make_artifacts = True
-            else:
-                if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
-                    print(f"  {name:<35} COMPILE_ERR")
-                    results.append(_error_entry(name, expected))
-                    continue
-            if v1_so == built_v1:
-                v1_h_hint = _remap_to_build(v1_h_hint, case_dir, build_copy)
-                v2_h_hint = _remap_to_build(v2_h_hint, case_dir, build_copy)
-        elif not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
-            print(f"  {name:<35} COMPILE_ERR")
-            results.append(_error_entry(name, expected))
+        br = _build_case_artifacts(name, expected, case_dir, bdir, v1_src, v2_src,
+                                   v1_h_hint, v2_h_hint, args, results)
+        if not br.ok:
             continue
+        v1_so = br.v1_so
+        v2_so = br.v2_so
+        used_make_artifacts = br.used_make_artifacts
+        used_cmake_artifacts = br.used_cmake_artifacts
+        v1_h_hint = br.v1_h_hint
+        v2_h_hint = br.v2_h_hint
 
         # Header selection policy:
         # abicheck family (abicheck / abicheck_compat / abicheck_strict):
@@ -1080,56 +1176,7 @@ def main() -> None:
         results.append(entry)
 
     # ── Accuracy summary ──────────────────────────────────────────────────────
-    def accuracy(key: str, expected_key: str = "expected") -> tuple[int, int]:
-        scored = [r for r in results if r.get(expected_key, "?") != "?" and r[key] not in ("SKIP", "ERROR", "TIMEOUT", "NO_SOURCE")]
-        correct = sum(1 for r in scored if r[key] == r[expected_key])
-        return correct, len(scored)
-
-    def total_ms(ms_key: str) -> float:
-        return sum(r.get(ms_key, 0) for r in results)
-
-    print("\n" + "─" * 80)
-    print("  Accuracy vs expected verdicts:")
-    for t in active_tools:
-        c, total = accuracy(t.name, t.expected_key)
-        if total > 0:
-            pct = 100 * c // total
-            bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
-            tot_s = total_ms(t.ms_key) / 1000
-            print(f"    {t.label}: {c:>2}/{total} ({pct:3}%) {bar}  [{tot_s:6.1f}s total]")
-
-    # Divergences from expected
-    if "abicheck" in selected_tools:
-        print("\n  Cases where abicheck differs from expected:")
-        for r in results:
-            if r.get("expected", "?") == "?":
-                continue
-            if r["abicheck"] not in ("SKIP", "ERROR", "TIMEOUT") and r["abicheck"] != r["expected"]:
-                print(f"    {r['case']:<40} got={r['abicheck']} expected={r['expected']}")
-
-    # Strict vs compat divergences
-    if "abicheck_strict" in selected_tools and "abicheck_compat" in selected_tools:
-        print("\n  Cases where abicheck_strict differs from abicheck_compat:")
-        for r in results:
-            ac_s = r.get("abicheck_strict", "SKIP")
-            ac_c = r.get("abicheck_compat", "SKIP")
-            if ac_s in ("SKIP", "ERROR", "TIMEOUT") or ac_c in ("SKIP", "ERROR", "TIMEOUT"):
-                continue
-            if ac_s != ac_c:
-                exp = r.get("expected", "?")
-                print(f"    {r['case']:<40} compat={ac_c} strict={ac_s} expected={exp}")
-
-    # Per-case timing for slow tools (registry-driven via show_slowest flag)
-    for tool_obj in active_tools:
-        if not tool_obj.show_slowest:
-            continue
-        print(f"\n  Top {tool_obj.col_name} slowest cases:")
-        slow = sorted(results, key=lambda r, k=tool_obj.ms_key: r.get(k, 0), reverse=True)
-        for r in slow[:10]:
-            ms = r.get(tool_obj.ms_key, 0)
-            if ms > 0:
-                verdict = r.get(tool_obj.name, "SKIP")
-                print(f"    {r['case']:<40} {ms:>7}ms  [{verdict}]")
+    _print_accuracy_summary(results, active_tools, selected_tools)
 
     summary = REPORT_DIR / "comparison_summary.json"
     summary.write_text(json.dumps(results, indent=2))
