@@ -403,6 +403,56 @@ class TestSplitDwarfResolver:
         result = SplitDwarfResolver().resolve(binary_path=binary_path)
         assert result is None
 
+    def test_search_dirs_includes_comp_dir_and_debug_roots(self, tmp_path: Path) -> None:
+        binary_path = tmp_path / "libfoo.so"
+        binary_path.write_bytes(b"\x7fELF")
+        comp_dir = tmp_path / "build"
+        comp_dir.mkdir()
+        debug_root = tmp_path / "dbg"
+        debug_root.mkdir()
+
+        dirs = SplitDwarfResolver._search_dirs(
+            binary_path=binary_path,
+            comp_dirs={str(comp_dir)},
+            debug_roots=[debug_root],
+        )
+        assert binary_path.parent in dirs
+        assert comp_dir in dirs
+        assert debug_root in dirs
+
+    def test_resolve_dwo_dir_partial_match(self, tmp_path: Path) -> None:
+        search_dir = tmp_path / "dwo"
+        search_dir.mkdir()
+        (search_dir / "a.dwo").write_bytes(b"x")
+        (search_dir / "b.dwo").write_bytes(b"x")
+        artifact = SplitDwarfResolver._resolve_dwo_dir(
+            dwo_names=["a.dwo", "b.dwo", "c.dwo"],
+            search_dirs=[search_dir],
+        )
+        assert artifact is not None
+        assert artifact.dwo_dir == search_dir
+        assert "split DWARF" in artifact.source
+
+    def test_collect_dwo_names_returns_none_on_parse_error(self, tmp_path: Path, monkeypatch) -> None:
+        binary_path = tmp_path / "libfoo.so"
+        binary_path.write_bytes(b"\x7fELF")
+
+        class BrokenELFFile:
+            def __init__(self, *_args, **_kwargs) -> None:
+                raise ValueError("boom")
+
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "elftools.elf.elffile",
+            type("M", (), {"ELFFile": BrokenELFFile}),
+        )
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "elftools.common.exceptions",
+            type("E", (), {"ELFError": ValueError}),
+        )
+        assert SplitDwarfResolver._collect_dwo_names_and_comp_dirs(binary_path) is None
+
 
 # ---------------------------------------------------------------------------
 # Tests: DebuginfodResolver

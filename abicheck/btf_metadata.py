@@ -35,13 +35,16 @@ from __future__ import annotations
 
 import logging
 import struct
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypeVar
 
 from .dwarf_metadata import DwarfMetadata, EnumInfo, FieldInfo, StructLayout
 from .type_metadata import FuncProto, read_null_terminated_string
 
 log = logging.getLogger(__name__)
+_T = TypeVar("_T")
 
 # ---------------------------------------------------------------------------
 # BTF constants (from include/uapi/linux/btf.h)
@@ -293,33 +296,48 @@ class _TypeResolver:
         self._resolving_name: set[int] = set()
         self._resolving_size: set[int] = set()
 
-    def name(self, type_id: int) -> str:
-        """Resolve a type ID to a human-readable type name."""
-        if type_id in self._name_cache:
-            return self._name_cache[type_id]
-        if type_id in self._resolving_name:
-            return "..."  # cycle
-        self._resolving_name.add(type_id)
+    def _resolve_cached(
+        self,
+        *,
+        type_id: int,
+        cache: dict[int, _T],
+        resolving: set[int],
+        cycle_value: _T,
+        resolver: Callable[[int], _T],
+    ) -> _T:
+        if type_id in cache:
+            return cache[type_id]
+        if type_id in resolving:
+            return cycle_value
+        resolving.add(type_id)
         try:
-            result = self._resolve_name(type_id)
-            self._name_cache[type_id] = result
+            result = resolver(type_id)
+            cache[type_id] = result
             return result
         finally:
-            self._resolving_name.discard(type_id)
+            resolving.discard(type_id)
+
+    def name(self, type_id: int) -> str:
+        """Resolve a type ID to a human-readable type name."""
+        result = self._resolve_cached(
+            type_id=type_id,
+            cache=self._name_cache,
+            resolving=self._resolving_name,
+            cycle_value="...",
+            resolver=self._resolve_name,
+        )
+        return result
 
     def size(self, type_id: int) -> int:
         """Resolve a type ID to its byte size."""
-        if type_id in self._size_cache:
-            return self._size_cache[type_id]
-        if type_id in self._resolving_size:
-            return 0  # cycle
-        self._resolving_size.add(type_id)
-        try:
-            result = self._resolve_size(type_id)
-            self._size_cache[type_id] = result
-            return result
-        finally:
-            self._resolving_size.discard(type_id)
+        result = self._resolve_cached(
+            type_id=type_id,
+            cache=self._size_cache,
+            resolving=self._resolving_size,
+            cycle_value=0,
+            resolver=self._resolve_size,
+        )
+        return result
 
     def _get(self, type_id: int) -> BtfType | None:
         if 0 <= type_id < len(self._types):

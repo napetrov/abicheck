@@ -1852,7 +1852,11 @@ def _compare_release_libraries(
                     lang, suppress, policy, policy_file_path,
                     old_pdb_path=old_dbg, new_pdb_path=new_dbg,
                 )
-            except Exception:
+            except Exception as exc:
+                click.echo(
+                    f"Warning: failed to re-run comparison for {old_path.name}: {exc}",
+                    err=True,
+                )
                 continue
 
             if collect_diff_results:
@@ -2619,7 +2623,7 @@ def baseline_group() -> None:
 @click.argument("library", type=str)
 @click.option("--version", "version", required=True,
               help="Version or branch name for the baseline.")
-@click.option("--platform", "platform", required=True,
+@click.option("--platform", "platform", required=False,
               help="Target platform (e.g. 'linux-x86_64'). Use --auto-platform to detect.")
 @click.option("--variant", default="",
               help="Build variant (e.g. 'debug', 'ssl-enabled').")
@@ -2661,7 +2665,7 @@ def baseline_push(
     canonical_json = snapshot_to_json(snapshot)
     meta = BaselineMetadata.create(canonical_json, git_commit=git_commit)
 
-    effective_platform = platform
+    effective_platform: str | None = platform
     if auto_platform and not platform:
         # Detect platform from the library path embedded in the snapshot
         if snapshot.library:
@@ -2669,6 +2673,11 @@ def baseline_push(
             if lib_path.exists():
                 from .baseline import detect_platform_from_binary
                 effective_platform = detect_platform_from_binary(lib_path)
+                if effective_platform is None:
+                    raise click.UsageError(
+                        "--auto-platform: failed to detect binary architecture. "
+                        "Use --platform to specify the platform explicitly."
+                    )
                 click.echo(f"Auto-detected platform: {effective_platform}", err=True)
             else:
                 raise click.UsageError(
@@ -2680,6 +2689,11 @@ def baseline_push(
                 "--auto-platform: snapshot has no library path. "
                 "Use --platform to specify the platform explicitly."
             )
+
+    if effective_platform is None:
+        raise click.UsageError(
+            "Platform is required. Use --platform or --auto-platform with a detectable binary."
+        )
 
     try:
         key = BaselineKey(library=library, version=version, platform=effective_platform, variant=variant)

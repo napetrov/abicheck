@@ -207,16 +207,10 @@ class EmbeddedDwarfResolver:
 class SplitDwarfResolver:
     """Look for split DWARF (.dwo files or .dwp package)."""
 
-    def resolve(
-        self,
-        binary_path: Path,
-        build_id: str | None = None,
-        debug_roots: list[Path] | None = None,
-    ) -> DebugArtifact | None:
-        # Check for .dwp (DWARF package) alongside the binary
+    @staticmethod
+    def _resolve_dwp_candidate(binary_path: Path, debug_roots: list[Path] | None) -> DebugArtifact | None:
         dwp_candidates = [
             binary_path.with_suffix(".dwp"),
-            # For multi-extension names like libfoo.so.1 → libfoo.so.1.dwp
             binary_path.parent / (binary_path.name + ".dwp"),
         ]
         for dwp in dwp_candidates:
@@ -224,14 +218,16 @@ class SplitDwarfResolver:
                 _logger.debug("Found DWP file: %s", dwp)
                 return DebugArtifact(dwp_path=dwp, source="split DWARF (.dwp)")
 
-        # Check debug roots for .dwp
         for root in (debug_roots or []):
             dwp = root / (binary_path.name + ".dwp")
             if dwp.exists():
                 _logger.debug("Found DWP file in debug root: %s", dwp)
                 return DebugArtifact(dwp_path=dwp, source="split DWARF (.dwp) in debug root")
 
-        # Look for .dwo files referenced in the binary
+        return None
+
+    @staticmethod
+    def _collect_dwo_names_and_comp_dirs(binary_path: Path) -> tuple[list[str], set[str]] | None:
         try:
             from elftools.common.exceptions import ELFError
             from elftools.elf.elffile import ELFFile
@@ -244,18 +240,16 @@ class SplitDwarfResolver:
             with open(binary_path, "rb") as f:
                 elf = ELFFile(f)  # type: ignore[no-untyped-call]
                 if not elf.has_dwarf_info():  # type: ignore[no-untyped-call]
-                    return None
+                    return dwo_names, comp_dirs
                 dwarf = elf.get_dwarf_info()  # type: ignore[no-untyped-call]
                 for cu in dwarf.iter_CUs():
                     top_die = cu.get_top_DIE()
-                    # Check for DW_AT_GNU_dwo_name or DW_AT_dwo_name
                     for attr_name in ("DW_AT_GNU_dwo_name", "DW_AT_dwo_name"):
                         if attr_name in top_die.attributes:
                             val = top_die.attributes[attr_name].value
                             if isinstance(val, bytes):
                                 val = val.decode("utf-8", errors="replace")
                             dwo_names.append(val)
-                    # Get comp_dir for path resolution (deduplicated)
                     if "DW_AT_comp_dir" in top_die.attributes:
                         val = top_die.attributes["DW_AT_comp_dir"].value
                         if isinstance(val, bytes):
@@ -264,43 +258,58 @@ class SplitDwarfResolver:
         except (OSError, ValueError, KeyError, ELFError) as exc:
             _logger.debug("Cannot check split DWARF in %s: %s", binary_path, exc)
             return None
+        return dwo_names, comp_dirs
 
-        if not dwo_names:
-            return None
-
-        # Try to find a directory containing ALL (or most) .dwo files
-        search_dirs = [binary_path.parent]
+    @staticmethod
+    def _search_dirs(binary_path: Path, comp_dirs: set[str], debug_roots: list[Path] | None) -> list[Path]:
+        dirs = [binary_path.parent]
         for comp_dir in comp_dirs:
             p = Path(comp_dir)
             if p.is_absolute() and p.is_dir():
-                search_dirs.append(p)
-        for root in (debug_roots or []):
-            search_dirs.append(root)
+                dirs.append(p)
+        dirs.extend(debug_roots or [])
+        return dirs
 
+    @staticmethod
+    def _resolve_dwo_dir(dwo_names: list[str], search_dirs: list[Path]) -> DebugArtifact | None:
         total = len(dwo_names)
-        # Require at least ceiling-half of .dwo files to be present
         min_required = max(1, (total + 1) // 2)
         for search_dir in search_dirs:
-            found_count = sum(
-                1 for name in dwo_names
-                if (search_dir / name).exists()
-            )
-            if found_count >= min_required:
-                if found_count < total:
-                    _logger.warning(
-                        "Partial split DWARF: found %d/%d .dwo files in %s",
-                        found_count, total, search_dir,
-                    )
-                else:
-                    _logger.debug(
-                        "Found all %d .dwo files in %s", total, search_dir,
-                    )
-                return DebugArtifact(
-                    dwo_dir=search_dir,
-                    source=f"split DWARF ({found_count}/{total} .dwo files)",
+            found_count = sum(1 for name in dwo_names if (search_dir / name).exists())
+            if found_count < min_required:
+                continue
+            if found_count < total:
+                _logger.warning(
+                    "Partial split DWARF: found %d/%d .dwo files in %s",
+                    found_count, total, search_dir,
                 )
-
+            else:
+                _logger.debug("Found all %d .dwo files in %s", total, search_dir)
+            return DebugArtifact(
+                dwo_dir=search_dir,
+                source=f"split DWARF ({found_count}/{total} .dwo files)",
+            )
         return None
+
+    def resolve(
+        self,
+        binary_path: Path,
+        build_id: str | None = None,
+        debug_roots: list[Path] | None = None,
+    ) -> DebugArtifact | None:
+        dwp_artifact = self._resolve_dwp_candidate(binary_path, debug_roots)
+        if dwp_artifact is not None:
+            return dwp_artifact
+
+        collected = self._collect_dwo_names_and_comp_dirs(binary_path)
+        if collected is None:
+            return None
+        dwo_names, comp_dirs = collected
+        if not dwo_names:
+            return None
+
+        search_dirs = self._search_dirs(binary_path, comp_dirs, debug_roots)
+        return self._resolve_dwo_dir(dwo_names, search_dirs)
 
 
 class BuildIdTreeResolver:

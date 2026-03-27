@@ -3,7 +3,6 @@
 
 namespace crypto {
 inline namespace v1 {
-
 struct Context {
     int algo;
     int key_size;
@@ -11,7 +10,6 @@ struct Context {
 
 int encrypt(const Context *ctx, const char *data, int len);
 int decrypt(const Context *ctx, const char *data, int len);
-
 } // namespace v1
 } // namespace crypto
 

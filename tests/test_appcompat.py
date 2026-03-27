@@ -1053,6 +1053,56 @@ class TestParseElfAppRequirements:
 
         assert "any_func" in reqs.undefined_symbols
 
+    def test_elf_without_versym_includes_symbol_from_target_origin(self, tmp_path):
+        """Without .gnu.version, origin guess equal to target library should be included."""
+        from elftools.elf.sections import SymbolTableSection
+
+        f = tmp_path / "app.elf"
+        f.write_bytes(b"\x7fELF" + b"\x00" * 100)
+
+        mock_sym = MagicMock()
+        mock_sym.entry.st_shndx = "SHN_UNDEF"
+        mock_sym.name = "foo_init"
+        mock_sym.entry.st_info.bind = "STB_GLOBAL"
+
+        mock_dynsym = MagicMock(spec=SymbolTableSection)
+        mock_dynsym.name = ".dynsym"
+        mock_dynsym.iter_symbols.return_value = [mock_sym]
+
+        mock_elf = MagicMock()
+        mock_elf.iter_sections.return_value = [mock_dynsym]
+
+        with patch("elftools.elf.elffile.ELFFile", return_value=mock_elf):
+            with patch("abicheck.elf_metadata._guess_symbol_origin", return_value="libfoo.so.1"):
+                reqs = _parse_elf_app_requirements(f, "libfoo.so.1")
+
+        assert "foo_init" in reqs.undefined_symbols
+
+    def test_elf_without_versym_excludes_symbol_from_other_origin(self, tmp_path):
+        """Without .gnu.version, origin guess for another library should be excluded."""
+        from elftools.elf.sections import SymbolTableSection
+
+        f = tmp_path / "app.elf"
+        f.write_bytes(b"\x7fELF" + b"\x00" * 100)
+
+        mock_sym = MagicMock()
+        mock_sym.entry.st_shndx = "SHN_UNDEF"
+        mock_sym.name = "printf"
+        mock_sym.entry.st_info.bind = "STB_GLOBAL"
+
+        mock_dynsym = MagicMock(spec=SymbolTableSection)
+        mock_dynsym.name = ".dynsym"
+        mock_dynsym.iter_symbols.return_value = [mock_sym]
+
+        mock_elf = MagicMock()
+        mock_elf.iter_sections.return_value = [mock_dynsym]
+
+        with patch("elftools.elf.elffile.ELFFile", return_value=mock_elf):
+            with patch("abicheck.elf_metadata._guess_symbol_origin", return_value="libc.so.6"):
+                reqs = _parse_elf_app_requirements(f, "libfoo.so.1")
+
+        assert "printf" not in reqs.undefined_symbols
+
 
 # ---------------------------------------------------------------------------
 # Unit tests: _get_new_lib_exports

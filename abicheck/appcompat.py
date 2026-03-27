@@ -156,6 +156,36 @@ def _collect_undefined_symbols(
     """Read undefined symbols from .dynsym, filtered by target library."""
     from elftools.elf.sections import SymbolTableSection
 
+    def _version_index_for_symbol(idx: int) -> int:
+        if versym_section is None:
+            return 1
+        try:
+            ver_entry = versym_section.get_symbol(idx)
+            ver_ndx = ver_entry.entry["ndx"]
+            if isinstance(ver_ndx, str):
+                return 0 if ver_ndx == "VER_NDX_LOCAL" else 1
+            return int(ver_ndx) & 0x7FFF  # Mask off hidden bit.
+        except (IndexError, KeyError):
+            return 1
+
+    def _is_symbol_from_target_library(sym_name: str, binding: str, ver_ndx: int) -> bool:
+        if not library_soname:
+            return True
+        from .elf_metadata import _guess_symbol_origin
+        if versym_section is None:
+            origin = _guess_symbol_origin(sym_name, reqs.needed_libs)
+            if origin is not None:
+                return origin == library_soname
+            return binding != "STB_WEAK"
+        if ver_ndx >= 2:
+            source_lib = ver_idx_to_lib.get(ver_ndx, "")
+            return source_lib == library_soname
+
+        origin = _guess_symbol_origin(sym_name, reqs.needed_libs)
+        if origin is not None:
+            return origin == library_soname
+        return binding != "STB_WEAK"
+
     for section in elf.iter_sections():
         if isinstance(section, SymbolTableSection) and section.name == ".dynsym":
             for idx, sym in enumerate(section.iter_symbols()):
@@ -167,42 +197,9 @@ def _collect_undefined_symbols(
                 if binding not in ("STB_GLOBAL", "STB_WEAK"):
                     continue
 
-                # Filter by source library using .gnu.version correlation
-                if library_soname and versym_section is not None:
-                    try:
-                        ver_entry = versym_section.get_symbol(idx)
-                        ver_ndx = ver_entry.entry["ndx"]
-                        # pyelftools returns str for special indices
-                        # (VER_NDX_LOCAL, VER_NDX_GLOBAL) and int for
-                        # regular version indices.
-                        if isinstance(ver_ndx, str):
-                            ver_ndx = 0 if ver_ndx == "VER_NDX_LOCAL" else 1
-                        else:
-                            # Mask off the hidden bit (bit 15)
-                            ver_ndx = ver_ndx & 0x7FFF
-                    except (IndexError, KeyError):
-                        ver_ndx = 1  # treat as unversioned
-
-                    if ver_ndx >= 2:
-                        # Versioned symbol — check if from target library
-                        source_lib = ver_idx_to_lib.get(ver_ndx, "")
-                        if source_lib != library_soname:
-                            continue
-                    elif ver_ndx <= 1:
-                        # Unversioned symbol (index 0=local, 1=global).
-                        # Cannot determine source library from version info;
-                        # include only if it doesn't look like a system symbol.
-                        from .elf_metadata import _guess_symbol_origin
-                        origin = _guess_symbol_origin(
-                            sym.name, reqs.needed_libs,
-                        )
-                        if origin is not None:
-                            continue
-                        # Weak undefined symbols with unknown origin are
-                        # typically optional linker/runtime refs (e.g.
-                        # _ITM_*, __gmon_start__) — skip them.
-                        if binding == "STB_WEAK":
-                            continue
+                ver_ndx = _version_index_for_symbol(idx)
+                if not _is_symbol_from_target_library(sym.name, binding, ver_ndx):
+                    continue
 
                 reqs.undefined_symbols.add(sym.name)
 

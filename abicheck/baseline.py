@@ -452,10 +452,11 @@ def _load_snapshot_from_string(snap_json: str) -> AbiSnapshot:
 import os  # noqa: E402
 
 
-def detect_platform_from_binary(binary_path: Path) -> str:
+def detect_platform_from_binary(binary_path: Path) -> str | None:
     """Detect platform string from a binary file.
 
     Returns a string like "linux-x86_64", "windows-x86_64", "macos-arm64".
+    Returns ``None`` when architecture detection fails due to parse/import errors.
     """
     import sys
 
@@ -482,8 +483,13 @@ def detect_platform_from_binary(binary_path: Path) -> str:
                     "EM_S390": "s390x",
                 }
                 arch = arch_map.get(machine, str(machine))
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "Failed to detect ELF architecture for %s: %s",
+                binary_path,
+                exc,
+            )
+            return None
         return f"linux-{arch}"
 
     if fmt == "pe":
@@ -498,8 +504,13 @@ def detect_platform_from_binary(binary_path: Path) -> str:
             elif machine == 0xAA64:
                 arch = "aarch64"
             pe.close()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "Failed to detect PE architecture for %s: %s",
+                binary_path,
+                exc,
+            )
+            return None
         return f"windows-{arch}"
 
     if fmt == "macho":
@@ -512,8 +523,13 @@ def detect_platform_from_binary(binary_path: Path) -> str:
                            16777223: "x86_64"}
                 arch = cpu_map.get(cpu, str(cpu))
                 break
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "Failed to detect Mach-O architecture for %s: %s",
+                binary_path,
+                exc,
+            )
+            return None
         return f"macos-{arch}"
 
     return f"unknown-{arch}"

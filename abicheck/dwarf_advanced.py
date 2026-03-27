@@ -336,40 +336,48 @@ def _check_children_nontrivial(
     type_die: Any, class_name: str, cache: dict[int, bool] | None, CU: Any,
 ) -> bool:
     """Iterate children of a struct/class DIE to detect non-trivial properties."""
-    for ch in type_die.iter_children():
-        if ch.tag == "DW_TAG_inheritance":
-            # Any base class -> conservatively non-trivial
-            return True
+    def _member_type_is_nontrivial(ch: Any) -> bool:
+        if CU is None:
+            return False
+        member_type_die = _resolve_type_die(ch, CU)
+        if member_type_die is None:
+            return False
+        member_tag = getattr(member_type_die, "tag", "")
+        if member_tag not in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
+            return False
+        return _is_nontrivial_aggregate(member_type_die, cache=cache, CU=CU)
 
-        if ch.tag == "DW_TAG_member" and CU is not None:
-            # Check if member's type is itself non-trivial (e.g. std::string member)
-            member_type_die = _resolve_type_die(ch, CU)
-            if member_type_die is not None:
-                member_tag = getattr(member_type_die, "tag", "")
-                if member_tag in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
-                    if _is_nontrivial_aggregate(member_type_die, cache=cache, CU=CU):
-                        return True
-            continue
-
-        if ch.tag != "DW_TAG_subprogram":
-            continue
-
+    def _is_user_defined_special_member(ch: Any) -> bool:
         name = _attr_str(ch, "DW_AT_name") or ""
         linkage = _attr_str(ch, "DW_AT_linkage_name") or ""
-        # Skip defaulted and compiler-generated (artificial) members
         defaulted = ch.attributes.get("DW_AT_defaulted")
         artificial = ch.attributes.get("DW_AT_artificial")
         if (defaulted is not None and int(defaulted.value) != 0) or (
             artificial is not None and int(artificial.value) != 0
         ):
-            continue
-        # User-defined destructor
+            return False
         if name.startswith("~") or any(p in linkage for p in ("D0Ev", "D1Ev", "D2Ev")):
             return True
-        # User-declared copy/move constructor
-        if class_name and linkage and any(
-            p in linkage for p in (f"{class_name}C1E", f"{class_name}C2E")
-        ):
+        return bool(
+            class_name
+            and linkage
+            and any(p in linkage for p in (f"{class_name}C1E", f"{class_name}C2E"))
+        )
+
+    for ch in type_die.iter_children():
+        if ch.tag == "DW_TAG_inheritance":
+            # Any base class -> conservatively non-trivial
+            return True
+
+        if ch.tag == "DW_TAG_member":
+            if _member_type_is_nontrivial(ch):
+                return True
+            continue
+
+        if ch.tag != "DW_TAG_subprogram":
+            continue
+
+        if _is_user_defined_special_member(ch):
             return True
 
     return False
