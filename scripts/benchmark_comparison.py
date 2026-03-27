@@ -942,38 +942,40 @@ def _build_case_artifacts(
         v1_so, v2_so = pb_v1, pb_v2
         used_cmake_artifacts = pb_cmake
 
-    if force_case64_compile:
-        if not compile_so(
-            v1_src,
-            v1_so,
-            preferred_family=preferred_family,
-            extra_link_opts=_fallback_link_opts(case_dir, v1_src),
-        ) or not compile_so(
-            v2_src,
-            v2_so,
-            preferred_family=preferred_family,
-            extra_link_opts=_fallback_link_opts(case_dir, v2_src),
-        ):
-            print(f"  {name:<35} COMPILE_ERR({preferred_family})")
+    if not used_prebuilt_artifacts:
+        if not (cmake_file.exists() and shutil.which("cmake")):
+            print(f"  {name:<35} BUILD_PATH_UNAVAILABLE(prebuilt|cmake)")
             results.append(_error_entry(name, expected))
             return _BuildResult(v1_so, v2_so, used_make_artifacts, used_cmake_artifacts, v1_h_hint, v2_h_hint, ok=False)
-    elif not used_prebuilt_artifacts and cmake_file.exists() and shutil.which("cmake"):
+
         cmake_build = bdir / "cmake_build"
         if cmake_build.exists():
             shutil.rmtree(str(cmake_build))
         cmake_build.mkdir(parents=True)
+        cmake_env = os.environ.copy()
+        if force_case64_compile and preferred_family == "clang":
+            if shutil.which("clang"):
+                cmake_env.setdefault("CC", "clang")
+            if shutil.which("clang++"):
+                cmake_env.setdefault("CXX", "clang++")
+        elif force_case64_compile and preferred_family == "gcc":
+            if shutil.which("gcc"):
+                cmake_env.setdefault("CC", "gcc")
+            if shutil.which("g++"):
+                cmake_env.setdefault("CXX", "g++")
+
         try:
             cr = subprocess.run(
                 ["cmake", "-S", str(case_dir.parent), "-B", str(cmake_build),
                  "-DCMAKE_BUILD_TYPE=Debug"],
-                capture_output=True, text=True, timeout=60,
+                capture_output=True, text=True, timeout=60, env=cmake_env,
             )
             if cr.returncode == 0:
                 cr = subprocess.run(
                     ["cmake", "--build", str(cmake_build),
                      "--target", f"{name}_v1", f"{name}_v2",
                      "--config", "Debug"],
-                    capture_output=True, text=True, timeout=120,
+                    capture_output=True, text=True, timeout=120, env=cmake_env,
                 )
         except subprocess.TimeoutExpired:
             cr = type("R", (), {"returncode": -1})()
@@ -993,36 +995,6 @@ def _build_case_artifacts(
             print(f"  {name:<35} CMAKE_BUILD_ERR")
             results.append(_error_entry(name, expected))
             return _BuildResult(v1_so, v2_so, used_make_artifacts, used_cmake_artifacts, v1_h_hint, v2_h_hint, ok=False)
-    elif makefile.exists() and shutil.which("make"):
-        build_copy = bdir / "make_build"
-        if build_copy.exists():
-            shutil.rmtree(str(build_copy))
-        shutil.copytree(str(case_dir), str(build_copy))
-        try:
-            mr = subprocess.run(
-                ["make", "-C", str(build_copy)],
-                capture_output=True, text=True, timeout=60,
-            )
-        except subprocess.TimeoutExpired:
-            mr = type("R", (), {"returncode": -1})()
-        built_v1 = build_copy / "libv1.so"
-        built_v2 = build_copy / "libv2.so"
-        if mr.returncode == 0 and built_v1.exists() and built_v2.exists():
-            v1_so = built_v1
-            v2_so = built_v2
-            used_make_artifacts = True
-        else:
-            if not compile_so(v1_src, v1_so, extra_link_opts=_fallback_link_opts(case_dir, v1_src)) or not compile_so(v2_src, v2_so, extra_link_opts=_fallback_link_opts(case_dir, v2_src)):
-                print(f"  {name:<35} COMPILE_ERR")
-                results.append(_error_entry(name, expected))
-                return _BuildResult(v1_so, v2_so, used_make_artifacts, used_cmake_artifacts, v1_h_hint, v2_h_hint, ok=False)
-        if v1_so == built_v1:
-            v1_h_hint = _remap_to_build(v1_h_hint, case_dir, build_copy)
-            v2_h_hint = _remap_to_build(v2_h_hint, case_dir, build_copy)
-    elif not compile_so(v1_src, v1_so, extra_link_opts=_fallback_link_opts(case_dir, v1_src)) or not compile_so(v2_src, v2_so, extra_link_opts=_fallback_link_opts(case_dir, v2_src)):
-        print(f"  {name:<35} COMPILE_ERR")
-        results.append(_error_entry(name, expected))
-        return _BuildResult(v1_so, v2_so, used_make_artifacts, used_cmake_artifacts, v1_h_hint, v2_h_hint, ok=False)
 
     return _BuildResult(v1_so, v2_so, used_make_artifacts, used_cmake_artifacts, v1_h_hint, v2_h_hint, ok=True)
 
