@@ -214,7 +214,13 @@ def _find_compiler(is_cpp: bool = False, preferred_family: str | None = None) ->
 
 
 # ── Compile ───────────────────────────────────────────────────────────────────
-def compile_so(src: Path, out_so: Path, *, preferred_family: str | None = None) -> bool:
+def compile_so(
+    src: Path,
+    out_so: Path,
+    *,
+    preferred_family: str | None = None,
+    extra_link_opts: list[str] | None = None,
+) -> bool:
     is_cpp = src.suffix == ".cpp"
     compiler = _find_compiler(is_cpp, preferred_family=preferred_family)
     if not compiler:
@@ -230,11 +236,30 @@ def compile_so(src: Path, out_so: Path, *, preferred_family: str | None = None) 
     else:
         args = [compiler, "-shared", "-fPIC", "-g", "-Og", "-fvisibility=default",
                 "-o", str(out_so), str(src)]
+        if extra_link_opts:
+            args.extend(extra_link_opts)
 
     r = subprocess.run(args, capture_output=True, text=True)
     if r.returncode != 0:
         print(f"    [compile error] {src.name}: {r.stderr[:120]}")
     return r.returncode == 0
+
+
+def _fallback_link_opts(case_dir: Path, src: Path) -> list[str]:
+    """Best-effort linker options for direct compilation fallback.
+
+    Preserves case-specific version-script semantics when CMake isn't used.
+    """
+    if sys.platform.startswith("linux"):
+        # case65: explicit per-version scripts (v1.map / v2.map)
+        if src.stem == "v1" and (case_dir / "v1.map").exists():
+            return [f"-Wl,--version-script={case_dir / 'v1.map'}"]
+        if src.stem == "v2" and (case_dir / "v2.map").exists():
+            return [f"-Wl,--version-script={case_dir / 'v2.map'}"]
+        # case13: v2/good side has symbol version script
+        if src.stem == "good" and (case_dir / "libfoo.map").exists():
+            return [f"-Wl,--version-script={case_dir / 'libfoo.map'}"]
+    return []
 
 
 def make_header(src: Path, out_h: Path) -> None:
@@ -918,7 +943,17 @@ def _build_case_artifacts(
         used_cmake_artifacts = pb_cmake
 
     if force_case64_compile:
-        if not compile_so(v1_src, v1_so, preferred_family=preferred_family) or not compile_so(v2_src, v2_so, preferred_family=preferred_family):
+        if not compile_so(
+            v1_src,
+            v1_so,
+            preferred_family=preferred_family,
+            extra_link_opts=_fallback_link_opts(case_dir, v1_src),
+        ) or not compile_so(
+            v2_src,
+            v2_so,
+            preferred_family=preferred_family,
+            extra_link_opts=_fallback_link_opts(case_dir, v2_src),
+        ):
             print(f"  {name:<35} COMPILE_ERR({preferred_family})")
             results.append(_error_entry(name, expected))
             return _BuildResult(v1_so, v2_so, used_make_artifacts, used_cmake_artifacts, v1_h_hint, v2_h_hint, ok=False)
@@ -977,14 +1012,14 @@ def _build_case_artifacts(
             v2_so = built_v2
             used_make_artifacts = True
         else:
-            if not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
+            if not compile_so(v1_src, v1_so, extra_link_opts=_fallback_link_opts(case_dir, v1_src)) or not compile_so(v2_src, v2_so, extra_link_opts=_fallback_link_opts(case_dir, v2_src)):
                 print(f"  {name:<35} COMPILE_ERR")
                 results.append(_error_entry(name, expected))
                 return _BuildResult(v1_so, v2_so, used_make_artifacts, used_cmake_artifacts, v1_h_hint, v2_h_hint, ok=False)
         if v1_so == built_v1:
             v1_h_hint = _remap_to_build(v1_h_hint, case_dir, build_copy)
             v2_h_hint = _remap_to_build(v2_h_hint, case_dir, build_copy)
-    elif not compile_so(v1_src, v1_so) or not compile_so(v2_src, v2_so):
+    elif not compile_so(v1_src, v1_so, extra_link_opts=_fallback_link_opts(case_dir, v1_src)) or not compile_so(v2_src, v2_so, extra_link_opts=_fallback_link_opts(case_dir, v2_src)):
         print(f"  {name:<35} COMPILE_ERR")
         results.append(_error_entry(name, expected))
         return _BuildResult(v1_so, v2_so, used_make_artifacts, used_cmake_artifacts, v1_h_hint, v2_h_hint, ok=False)

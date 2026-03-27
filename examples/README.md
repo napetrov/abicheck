@@ -176,8 +176,8 @@ For this section, **positive** means "breaking/API break expected" (`BREAKING` o
 | Tool / run | Scored cases | Accuracy | False Positives | False Negatives | Notes |
 |---|---:|---:|---:|---:|---|
 | **abicheck (full catalog, CI Validate all examples)** | 74/74 | 100% | 0 | 0 | exact verdict match on all published cases |
-| abidiff (full catalog run) | 73/74 | 22/73 = 30% | 0 | 39 | `case65_symbol_version_removed` compile error in benchmark script run |
-| abidiff + headers (full catalog run) | 73/74 | 22/73 = 30% | 0 | 39 | same profile as abidiff in this suite |
+| abidiff (full catalog run) | 74/74 | 23/74 = 31% | 0 | 39 | full run including case65 symbol-version removal |
+| abidiff + headers (full catalog run) | 74/74 | 23/74 = 31% | 0 | 39 | same profile as abidiff in this suite |
 
 > Why subset for cross-tool numbers: ABICC/libabigail comparability is tracked on
 > representative cases, while the full `examples/` catalog is used as abicheck
