@@ -423,22 +423,24 @@ print(len(result.changes))  # number of detected changes
 
 ## Validation snapshot (abicheck)
 
-### Full examples coverage
-- **74/74** published examples are covered by abicheck and validated in CI.
-- Details: [`examples/README.md`](examples/README.md)
+All numbers below are computed on the **full 74-case catalog** (`01–73` + `26b`).
 
-### Benchmark characteristics (representative 42-case subset)
-
-| Mode | Cases | Exact verdict accuracy | False Positives* | False Negatives* |
+| Configuration | Cases | Exact verdict accuracy | False Positives* | False Negatives* |
 |---|---:|---:|---:|---:|
-| `compare` | 42 | **42/42 (100%)** | 0 | 0 |
-| `compat` | 42 | **40/42 (95%)** | 0 | 2 |
-| `strict` (`--strict-mode full`) | 42 | **31/42 (73%)** | 9 | 0 |
+| `abicheck compare` | 74 | **69/74 (93%)** | 0 | 1 |
+| `abicheck compat` | 74 | **68/74 (92%)** | 0 | 1 |
+| `abicheck strict` (`--strict-mode full`) | 74 | **61/74 (82%)** | 6 | 1 |
+| `abidiff` | 74 | **23/74 (31%)** | 0 | 39 |
+| `abidiff + headers` | 74 | **23/74 (31%)** | 0 | 39 |
 
-\* FP/FN here are for **breaking-signal detection** (`BREAKING` + `API_BREAK` treated as positive).
+\* FP/FN are for breaking-signal detection (`BREAKING` + `API_BREAK` treated as positive).
 
-Full methodology and cross-tool details:
+Source run:
+- `python3 scripts/benchmark_comparison.py --tools abicheck abicheck_compat abicheck_strict abidiff abidiff_headers`
+
+Per-case matrix and methodology:
 - [Benchmark & Tool Comparison](https://napetrov.github.io/abicheck/reference/tool-comparison/)
+- [examples/README.md](examples/README.md)
 
 ---
 

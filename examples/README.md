@@ -149,30 +149,14 @@ may keep identical runtime output for prebuilt binaries. For those, the demo sho
 
 ## Coverage snapshot
 
-### Full catalog coverage (abicheck)
-
 - Catalog size: **74 cases** (`01–73` + `26b`).
 - `ground_truth.json` contains expected verdicts for **74/74**.
 - CI job **Validate all examples** validates the whole catalog.
 
-### abicheck mode characteristics (42-case benchmark subset)
+Unified 74-case comparison table (all configurations, accuracy + FP/FN):
+- [`../README.md#validation-snapshot-abicheck`](../README.md#validation-snapshot-abicheck)
 
-| Mode | Cases | Exact verdict accuracy | False Positives* | False Negatives* |
-|---|---:|---:|---:|---:|
-| `compare` | 42 | **42/42 (100%)** | 0 | 0 |
-| `compat` | 42 | **40/42 (95%)** | 0 | 2 |
-| `strict` (`--strict-mode full`) | 42 | **31/42 (73%)** | 9 | 0 |
-
-\* FP/FN are for **breaking-signal detection** (`BREAKING` + `API_BREAK` treated as positive).
-
-### abidiff quick signal (full catalog)
-
-| Tool | Cases | Exact verdict accuracy | False Positives* | False Negatives* |
-|---|---:|---:|---:|---:|
-| `abidiff` | 74 | **23/74 (31%)** | 0 | 39 |
-| `abidiff + headers` | 74 | **23/74 (31%)** | 0 | 39 |
-
-Methodology and full per-case matrix:
+Per-case matrix and methodology:
 - [`../docs/reference/tool-comparison.md`](../docs/reference/tool-comparison.md)
 
 ---
