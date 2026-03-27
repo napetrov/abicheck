@@ -75,6 +75,15 @@ class TestCompareMarkdown:
         result = runner.invoke(main, ["compare", str(old_p), str(new_p)])
         assert result.exit_code == 4
 
+    def test_output_to_file(self, tmp_path):
+        old_p, new_p = _write_snapshots(tmp_path)
+        out = tmp_path / "report.md"
+        runner = CliRunner()
+        result = runner.invoke(main, ["compare", str(old_p), str(new_p), "-o", str(out)])
+        assert result.exit_code == 0
+        assert out.exists()
+        assert "Report written to" in result.output
+
 
 class TestBaselinePushAutoPlatform:
     def test_auto_platform_detection_failure_requires_explicit_platform(self, tmp_path, monkeypatch):
@@ -126,15 +135,6 @@ class TestBaselinePushAutoPlatform:
         assert result.exit_code == 0
         assert "Auto-detected platform: linux-x86_64" in result.output
         assert "Baseline pushed:" in result.output
-
-    def test_output_to_file(self, tmp_path):
-        old_p, new_p = _write_snapshots(tmp_path)
-        out = tmp_path / "report.md"
-        runner = CliRunner()
-        result = runner.invoke(main, ["compare", str(old_p), str(new_p), "-o", str(out)])
-        assert result.exit_code == 0
-        assert out.exists()
-        assert "Report written to" in result.output
 
 
 # ── compare JSON ────────────────────────────────────────────────────────
