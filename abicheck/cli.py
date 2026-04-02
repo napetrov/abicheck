@@ -550,6 +550,10 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 
     # Auto-detect binary format — PE/Mach-O skip the ELF/castxml path
     binary_fmt = _detect_binary_format(so_path)
+    if debug_format is not None and binary_fmt in ("pe", "macho"):
+        raise click.BadParameter(
+            f"--{debug_format} is only supported for ELF binaries, not {binary_fmt.upper()}."
+        )
     if binary_fmt in ("pe", "macho"):
         if follow_deps:
             click.echo("Warning: --follow-deps is only supported for ELF binaries.", err=True)

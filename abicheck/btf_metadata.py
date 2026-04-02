@@ -142,7 +142,12 @@ class BtfMetadata:
         return self.typedefs.get(name)
 
     def to_dwarf_metadata(self) -> DwarfMetadata:
-        """Convert to DwarfMetadata for checker compatibility."""
+        """Convert to DwarfMetadata for checker compatibility.
+
+        Note: Only structs and enums are transferred; func_protos and
+        typedefs are not included in DwarfMetadata. Callers needing full
+        BTF data should use BtfMetadata directly.
+        """
         return DwarfMetadata(
             structs=dict(self.structs),
             enums=dict(self.enums),
@@ -165,15 +170,17 @@ def has_btf_section(elf_path: Path) -> bool:
         return False
 
 
-def _read_btf_section(elf_path: Path) -> bytes | None:
-    """Read raw .BTF section data from an ELF file."""
+def _read_btf_section(elf_path: Path) -> tuple[bytes, int] | None:
+    """Read raw .BTF section data from an ELF file; return (data, pointer_size)."""
     from elftools.elf.elffile import ELFFile
     with open(elf_path, "rb") as f:
         elf = ELFFile(f)  # type: ignore[no-untyped-call]
         section = elf.get_section_by_name(".BTF")  # type: ignore[no-untyped-call]
         if section is None:
             return None
-        return bytes(section.data())
+        elf_class = elf.get_class()  # type: ignore[no-untyped-call]
+        pointer_size = 4 if elf_class == "ELFCLASS32" else 8
+        return bytes(section.data()), pointer_size
 
 
 # ---------------------------------------------------------------------------
@@ -287,9 +294,10 @@ def _extra_data_size(kind: int, vlen: int) -> int:
 class _TypeResolver:
     """Resolves BTF type references to names and sizes."""
 
-    def __init__(self, types: list[BtfType], str_data: bytes) -> None:
+    def __init__(self, types: list[BtfType], str_data: bytes, *, pointer_size: int = 8) -> None:
         self._types = types
         self._str = str_data
+        self._pointer_size = pointer_size
         self._name_cache: dict[int, str] = {}
         self._size_cache: dict[int, int] = {}
         # Track resolution in progress for cycle detection
@@ -439,7 +447,7 @@ class _TypeResolver:
             return t.size_or_type
 
         if kind == BTF_KIND_PTR:
-            return 8  # 64-bit pointers (kernel is typically 64-bit)
+            return self._pointer_size  # derived from ELF class (4 for 32-bit, 8 for 64-bit)
 
         if kind == BTF_KIND_ARRAY:
             if len(t.extra) >= 12:
@@ -659,11 +667,17 @@ def parse_btf_metadata(elf_path: Path) -> BtfMetadata:
         log.debug("parse_btf_metadata: no .BTF section in %s", elf_path)
         return empty
 
-    return parse_btf_from_bytes(raw)
+    btf_data, pointer_size = raw
+    return parse_btf_from_bytes(btf_data, pointer_size=pointer_size)
 
 
-def parse_btf_from_bytes(data: bytes) -> BtfMetadata:
+def parse_btf_from_bytes(data: bytes, pointer_size: int = 8) -> BtfMetadata:
     """Parse BTF from raw bytes (useful for testing without ELF wrapper).
+
+    Args:
+        data: Raw BTF section bytes.
+        pointer_size: Pointer size in bytes (4 for 32-bit, 8 for 64-bit).
+            Defaults to 8 (typical for kernel BTF).
 
     Returns ``BtfMetadata()`` on any error.  Never raises.
     """
@@ -694,7 +708,7 @@ def parse_btf_from_bytes(data: bytes) -> BtfMetadata:
         log.warning("parse_btf_from_bytes: type parsing failed: %s", exc)
         return empty
 
-    resolver = _TypeResolver(types, str_data)
+    resolver = _TypeResolver(types, str_data, pointer_size=pointer_size)
 
     meta = BtfMetadata(has_btf=True, type_count=len(types) - 1)
 
