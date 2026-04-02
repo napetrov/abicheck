@@ -325,6 +325,94 @@ jobs:
           path: abi-report-${{ runner.os }}.json
 ```
 
+### Post-matrix ABI gate (unified verdict)
+
+After per-platform matrix runs, a gate job downloads all JSON reports and
+produces one aggregated exit code for the entire workflow:
+
+```yaml
+jobs:
+  abi-scan:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            ext: so
+          - os: macos-latest
+            ext: dylib
+          - os: windows-latest
+            ext: dll
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: cmake -B build && cmake --build build
+
+      - name: ABI compare (native)
+        uses: napetrov/abicheck@v1
+        with:
+          old-library: baselines/${{ runner.os }}/abi-old.json
+          new-library: build/libfoo.${{ matrix.ext }}
+          new-header: include/foo.h
+          format: json
+          output-file: abi-report-${{ runner.os }}.json
+          fail-on-breaking: false   # let gate job decide
+
+      - name: Upload platform ABI report
+        uses: actions/upload-artifact@v4
+        with:
+          name: abi-report-${{ runner.os }}
+          path: abi-report-${{ runner.os }}.json
+
+  abi-gate:
+    needs: abi-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all ABI reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: abi-report-*
+          merge-multiple: true
+          path: abi-reports/
+
+      - name: Aggregate verdicts and gate
+        run: |
+          pip install abicheck --quiet
+          python3 - <<'PYEOF'
+          import json, sys, os, glob
+
+          SEVERITY = {"NO_CHANGE": 0, "COMPATIBLE": 0, "COMPATIBLE_WITH_RISK": 0,
+                      "API_BREAK": 2, "BREAKING": 4, "ERROR": 4}
+
+          worst = 0
+          rows = []
+          for path in sorted(glob.glob("abi-reports/*.json")):
+              with open(path) as f:
+                  data = json.load(f)
+              verdict = data.get("verdict", "ERROR")
+              platform = os.path.basename(path).replace("abi-report-", "").replace(".json", "")
+              rows.append(f"| {platform} | {verdict} |")
+              worst = max(worst, SEVERITY.get(verdict, 4))
+
+          table = "\n".join(rows)
+          print(f"## ABI Gate\n\n| Platform | Verdict |\n|---|---|\n{table}")
+
+          if worst >= 4:
+              print("BREAKING ABI change detected on at least one platform.", file=sys.stderr)
+              sys.exit(4)
+          elif worst >= 2:
+              print("API break detected on at least one platform.", file=sys.stderr)
+              sys.exit(2)
+          print("All platforms: compatible.")
+          PYEOF
+```
+
+!!! tip
+    Set `fail-on-breaking: false` in each matrix job so runners don't fail
+    early. The gate job reads all JSON reports and exits `4` (breaking),
+    `2` (API break), or `0` (compatible).
+
 ### Skip system dependency installation
 
 If `castxml` + compiler are already available (custom image, pre-provisioned VM,
