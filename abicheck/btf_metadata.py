@@ -178,8 +178,7 @@ def _read_btf_section(elf_path: Path) -> tuple[bytes, int] | None:
         section = elf.get_section_by_name(".BTF")  # type: ignore[no-untyped-call]
         if section is None:
             return None
-        elf_class = elf.get_class()  # type: ignore[no-untyped-call]
-        pointer_size = 4 if elf_class == "ELFCLASS32" else 8
+        pointer_size = 4 if elf.elfclass == 32 else 8
         return bytes(section.data()), pointer_size
 
 
