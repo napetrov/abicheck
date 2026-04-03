@@ -441,6 +441,10 @@ def _abicheck_verdict_from_compare(stdout: str, returncode: int) -> str:
     try:
         data = json.loads(stdout)
     except (json.JSONDecodeError, AttributeError):
+        # Non-JSON fallback: preserve explicit textual verdicts when available.
+        text = str(stdout).upper()
+        if "COMPATIBLE_WITH_RISK" in text:
+            return "COMPATIBLE_WITH_RISK"
         return _abicheck_verdict_from_exit_code(returncode)
     return {
         "BREAKING": "BREAKING",
