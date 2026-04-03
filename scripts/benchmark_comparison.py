@@ -445,6 +445,7 @@ def _abicheck_verdict_from_compare(stdout: str, returncode: int) -> str:
     return {
         "BREAKING": "BREAKING",
         "API_BREAK": "API_BREAK",
+        "COMPATIBLE_WITH_RISK": "COMPATIBLE_WITH_RISK",
         "COMPATIBLE": "COMPATIBLE",
         "NO_CHANGE": "NO_CHANGE",
         "COMPATIBLE_WITH_RISK": "COMPATIBLE_WITH_RISK",
@@ -456,6 +457,8 @@ def _abicheck_verdict_from_exit_code(returncode: int) -> str:
     return {
         4: "BREAKING",
         2: "API_BREAK",
+        # compare currently returns 0 for NO_CHANGE / COMPATIBLE / COMPATIBLE_WITH_RISK.
+        # Keep fallback behavior for ambiguous code 0.
         1: "COMPATIBLE",
         0: "NO_CHANGE",
     }.get(returncode, "ERROR")

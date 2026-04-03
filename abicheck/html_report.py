@@ -892,6 +892,7 @@ def _verdict_icon(verdict: str) -> str:
     return {
         "BREAKING": "🔴",
         "COMPATIBLE": "🟢",
+        "COMPATIBLE_WITH_RISK": "🟠",
         "NO_CHANGE": "🔵",
         "API_BREAK": "🟠",
     }.get(verdict, "⚪")
