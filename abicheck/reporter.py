@@ -1192,80 +1192,10 @@ def appcompat_to_markdown(result: object, *, show_irrelevant: bool = False) -> s
         if policy_val:
             lines += [f"> **Policy**: `{policy_val}`", ""]
 
-    # Symbol coverage section
-    lines += ["## Symbol Coverage", ""]
-    lines.append(
-        f"App requires **{required_count}** library symbols."
-    )
-
-    if missing:
-        lines.append(
-            f"**{len(missing)}** required symbol(s) missing from new version "
-            f"({coverage:.0f}% coverage)."
-        )
-    elif required_count > 0:
-        lines.append(
-            f"All {required_count} required symbols present in new version "
-            f"({coverage:.0f}% coverage)."
-        )
-    lines.append("")
-
-    # Missing symbols
-    if missing:
-        lines += ["## Missing Symbols", ""]
-        lines.append("These symbols are required by the application but absent from the new library:")
-        lines.append("")
-        for sym in missing:
-            lines.append(f"- `{sym}`")
-        lines.append("")
-
-    # Missing versions
-    if missing_ver:
-        lines += ["## Missing Symbol Versions", ""]
-        for ver in missing_ver:
-            lines.append(f"- `{ver}`")
-        lines.append("")
-
-    # Relevant changes
-    if breaking:
-        lines += [
-            f"## Relevant Changes ({len(breaking)} of {total_changes} total)",
-            "",
-            "These library changes affect symbols your application uses:",
-            "",
-            "| Kind | Symbol | Description |",
-            "|------|--------|-------------|",
-        ]
-        for c in breaking:
-            kind_val = c.kind.value if c.kind else ""
-            lines.append(f"| `{kind_val}` | `{c.symbol}` | {c.description} |")
-        lines.append("")
-    elif total_changes > 0:
-        lines += [
-            f"## Relevant Changes (0 of {total_changes} total)",
-            "",
-            "None of the library's ABI changes affect your application.",
-            "",
-        ]
-
-    # Irrelevant changes
-    if irrelevant and not show_irrelevant:
-        lines.append(
-            f"_{len(irrelevant)} library ABI change(s) do NOT affect your application. "
-            "Use `--show-irrelevant` to see them._"
-        )
-        lines.append("")
-    elif irrelevant and show_irrelevant:
-        lines += [
-            f"## Irrelevant Changes ({len(irrelevant)})",
-            "",
-            "These library changes do NOT affect your application:",
-            "",
-        ]
-        for c in irrelevant:
-            kind_val = c.kind.value if c.kind else ""
-            lines.append(f"- **{kind_val}**: {c.description}")
-        lines.append("")
+    lines += _appcompat_coverage_lines(required_count, coverage, missing)
+    lines += _appcompat_missing_lines(missing, missing_ver)
+    lines += _appcompat_relevant_lines(breaking, total_changes)
+    lines += _appcompat_irrelevant_lines(irrelevant, show_irrelevant)
 
     lines += [
         "---",
@@ -1288,3 +1218,94 @@ def _appcompat_header_lines(
         return header
     header.insert(1, f"**Library:** `{new_lib}`")
     return header
+
+
+def _appcompat_coverage_lines(
+    required_count: int,
+    coverage: float,
+    missing: list[object],
+) -> list[str]:
+    """Build symbol coverage section lines."""
+    lines = ["## Symbol Coverage", "", f"App requires **{required_count}** library symbols."]
+    if missing:
+        lines.append(
+            f"**{len(missing)}** required symbol(s) missing from new version "
+            f"({coverage:.0f}% coverage).",
+        )
+    elif required_count > 0:
+        lines.append(
+            f"All {required_count} required symbols present in new version "
+            f"({coverage:.0f}% coverage).",
+        )
+    lines.append("")
+    return lines
+
+
+def _appcompat_missing_lines(
+    missing: list[object],
+    missing_ver: list[object],
+) -> list[str]:
+    """Build missing symbol/version sections."""
+    lines: list[str] = []
+    if missing:
+        lines += ["## Missing Symbols", ""]
+        lines.append("These symbols are required by the application but absent from the new library:")
+        lines.append("")
+        for sym in missing:
+            lines.append(f"- `{sym}`")
+        lines.append("")
+    if missing_ver:
+        lines += ["## Missing Symbol Versions", ""]
+        for ver in missing_ver:
+            lines.append(f"- `{ver}`")
+        lines.append("")
+    return lines
+
+
+def _appcompat_relevant_lines(breaking: list[object], total_changes: int) -> list[str]:
+    """Build relevant changes section lines."""
+    if breaking:
+        lines: list[str] = [
+            f"## Relevant Changes ({len(breaking)} of {total_changes} total)",
+            "",
+            "These library changes affect symbols your application uses:",
+            "",
+            "| Kind | Symbol | Description |",
+            "|------|--------|-------------|",
+        ]
+        for change in breaking:
+            kind_val = change.kind.value if change.kind else ""
+            lines.append(f"| `{kind_val}` | `{change.symbol}` | {change.description} |")
+        lines.append("")
+        return lines
+    if total_changes > 0:
+        return [
+            f"## Relevant Changes (0 of {total_changes} total)",
+            "",
+            "None of the library's ABI changes affect your application.",
+            "",
+        ]
+    return []
+
+
+def _appcompat_irrelevant_lines(irrelevant: list[object], show_irrelevant: bool) -> list[str]:
+    """Build irrelevant changes section/note lines."""
+    if irrelevant and not show_irrelevant:
+        return [
+            f"_{len(irrelevant)} library ABI change(s) do NOT affect your application. "
+            "Use `--show-irrelevant` to see them._",
+            "",
+        ]
+    if irrelevant and show_irrelevant:
+        lines = [
+            f"## Irrelevant Changes ({len(irrelevant)})",
+            "",
+            "These library changes do NOT affect your application:",
+            "",
+        ]
+        for change in irrelevant:
+            kind_val = change.kind.value if change.kind else ""
+            lines.append(f"- **{kind_val}**: {change.description}")
+        lines.append("")
+        return lines
+    return []
