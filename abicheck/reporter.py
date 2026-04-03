@@ -1262,7 +1262,7 @@ def _appcompat_missing_lines(
     return lines
 
 
-def _appcompat_relevant_lines(breaking: list[object], total_changes: int) -> list[str]:
+def _appcompat_relevant_lines(breaking: list[Change], total_changes: int) -> list[str]:
     """Build relevant changes section lines."""
     if breaking:
         lines: list[str] = [
@@ -1288,7 +1288,7 @@ def _appcompat_relevant_lines(breaking: list[object], total_changes: int) -> lis
     return []
 
 
-def _appcompat_irrelevant_lines(irrelevant: list[object], show_irrelevant: bool) -> list[str]:
+def _appcompat_irrelevant_lines(irrelevant: list[Change], show_irrelevant: bool) -> list[str]:
     """Build irrelevant changes section/note lines."""
     if irrelevant and not show_irrelevant:
         return [

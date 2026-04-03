@@ -28,7 +28,7 @@ import logging
 import re as _re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 import click
 
@@ -663,7 +663,7 @@ def _looks_like_missing_path_message(msg: str) -> bool:
     )
 
 
-def _compat_fail(context: str, exc: BaseException) -> None:
+def _compat_fail(context: str, exc: BaseException) -> NoReturn:
     """Print compat-mode error and exit with ABICC-style code."""
     click.echo(f"Error {context}: {exc}", err=True)
     sys.exit(_classify_compat_error_exit_code(exc, context=context))
@@ -1460,6 +1460,8 @@ def _build_compat_suppression(
         except ValueError as exc:
             _compat_fail("in skip-internal-symbols/skip-internal-types", exc)
     if suppress is not None:
+        from ..suppression import SuppressionList  # noqa: PLC0415
+
         try:
             file_suppression = SuppressionList.load(suppress)
         except (ValueError, OSError) as exc:

@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -33,10 +34,9 @@ from .reporter import to_json
 from .serialization import load_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from .appcompat import AppRequirements
     from .checker_types import DiffResult
+    from .debug_resolver import DebugArtifact
     from .policy_file import PolicyFile
     from .severity import SeverityConfig
     from .suppression import SuppressionList
@@ -691,7 +691,7 @@ def _resolve_debug_artifact(
     debug_roots: tuple[Path, ...],
     debuginfod: bool,
     debuginfod_url: str | None,
-) -> object | None:
+) -> DebugArtifact | None:
     """Resolve optional separate debug artifacts for dump."""
     from .debug_resolver import resolve_debug_info
 
@@ -1686,6 +1686,19 @@ _RELEASE_VERDICT_ORDER: dict[str, int] = {
 }
 
 
+_CompareReleaseCommonArgs = tuple[
+    dict[str, Path], dict[str, Path],
+    Path | None, Path | None,
+    Callable[[Path, Path], Path | None],
+    list[Path], list[Path],
+    list[Path], list[Path],
+    str, str,
+    str, Path | None,
+    str, Path | None,
+    Path | None,
+]
+
+
 def _discover_files(
     input_dir: Path, lib_dir: Path,
     include_private: bool,
@@ -1897,7 +1910,7 @@ def _compare_release_libraries(
 
 def _compare_release_parallel(
     matched_keys: list[str],
-    common_args: tuple[object, ...],
+    common_args: _CompareReleaseCommonArgs,
     old_map: dict[str, Path],
     max_workers: int,
 ) -> list[dict[str, object]]:
@@ -1924,7 +1937,7 @@ def _compare_release_parallel(
 
 def _compare_release_sequential(
     matched_keys: list[str],
-    common_args: tuple[object, ...],
+    common_args: _CompareReleaseCommonArgs,
 ) -> list[dict[str, object]]:
     """Run per-library release comparisons sequentially."""
     return [_compare_one_library(key, *common_args) for key in matched_keys]
@@ -2347,7 +2360,7 @@ def _prepare_compare_release_inputs(
     new_headers_only: tuple[Path, ...],
     includes: tuple[Path, ...],
     extract_if_package: Callable[[Path, Path | None, Path | None], tuple[Path, Path | None, Path | None]],
-    discover_shared_libraries: Callable[[Path, bool], list[Path]],
+    discover_shared_libraries: Callable[..., list[Path]],
     is_package: Callable[[Path], bool],
     is_elf_shared_object: Callable[[Path], bool],
 ) -> tuple[
