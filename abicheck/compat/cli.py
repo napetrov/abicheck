@@ -568,6 +568,32 @@ def _warn_stub_flags(quiet: bool, **kwargs: object) -> None:
             _do_echo(f"Warning: {help_text}", quiet)
 
 
+def _looks_like_tool_missing(msg: str, ctx: str) -> bool:
+    """Return True when the error indicates missing external tooling."""
+    tool_missing_msg = any(
+        key in msg for key in ("not found in path", "command not found")
+    )
+    tool_missing_ctx = any(
+        key in ctx for key in ("castxml", "compiler tool", "external tool")
+    )
+    return tool_missing_msg or tool_missing_ctx
+
+
+def _is_descriptor_or_suppression_context(ctx: str) -> bool:
+    """Return True when context points to malformed config/descriptor input."""
+    return any(
+        key in ctx
+        for key in (
+            "descriptor",
+            "skip-symbols",
+            "symbols-list",
+            "skip-internal",
+            "suppression",
+            "logging",
+        )
+    )
+
+
 def _classify_compat_error_exit_code(exc: BaseException, *, context: str = "") -> int:
     """Classify compat-mode failures into ABICC-style extended exit codes.
 
@@ -586,14 +612,10 @@ def _classify_compat_error_exit_code(exc: BaseException, *, context: str = "") -
 
     msg = str(exc).lower()
     ctx = context.lower()
-
-    tool_missing_msg = any(
-        k in msg for k in ("not found in path", "command not found")
-    )
-    tool_missing_ctx = any(k in ctx for k in ("castxml", "compiler tool", "external tool"))
+    tool_missing = _looks_like_tool_missing(msg, ctx)
 
     if isinstance(exc, FileNotFoundError):
-        if tool_missing_msg or tool_missing_ctx:
+        if tool_missing:
             return 3
         return 4
     if isinstance(exc, PermissionError):
@@ -601,7 +623,7 @@ def _classify_compat_error_exit_code(exc: BaseException, *, context: str = "") -
 
     if isinstance(exc, OSError):
         if exc.errno in (errno.ENOENT,):
-            if tool_missing_msg or tool_missing_ctx:
+            if tool_missing:
                 return 3
             return 4
         if exc.errno in (errno.EACCES, errno.EPERM):
@@ -615,9 +637,7 @@ def _classify_compat_error_exit_code(exc: BaseException, *, context: str = "") -
     if any(k in msg for k in ("not found in path", "command not found", "no such file or directory")):
         return 3
 
-    if any(k in ctx for k in (
-        "descriptor", "skip-symbols", "symbols-list", "skip-internal", "suppression", "logging"
-    )):
+    if _is_descriptor_or_suppression_context(ctx):
         return 6
 
     if "report" in ctx or "output" in ctx:

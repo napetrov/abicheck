@@ -398,9 +398,9 @@ def run_abicheck(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
         cmd = [_PYTHON, "-m", "abicheck.cli", "dump", str(so), "-o", str(snap), "--version", ver]
         if h and h.exists():
             cmd += ["-H", str(h)]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=_ABICHECK_ENV)
-        ok = r.returncode == 0 and snap.exists()
-        return ok, (r.stderr or r.stdout)
+        run = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=_ABICHECK_ENV)
+        ok = run.returncode == 0 and snap.exists()
+        return ok, (run.stderr or run.stdout)
 
     try:
         ok, err = dump(v1_so, v1_h, snap1, "v1")
@@ -428,40 +428,37 @@ def run_abicheck(v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
     out = r.stdout + r.stderr
     (rdir / f"{case}_abicheck.txt").write_text(out)
 
-    # abicheck compare exit codes: 4=BREAKING, 2=API_BREAK, 1=COMPATIBLE, 0=NO_CHANGE
-    # Read verdict from JSON output for accuracy
-    try:
-        data = json.loads(r.stdout)
-        raw_v = data.get("verdict", "").upper()
-        if raw_v in ("BREAKING",):
-            verdict = "BREAKING"
-        elif raw_v == "API_BREAK":
-            verdict = "API_BREAK"
-        elif raw_v == "COMPATIBLE":
-            verdict = "COMPATIBLE"
-        elif raw_v == "NO_CHANGE":
-            verdict = "NO_CHANGE"
-        elif raw_v == "COMPATIBLE_WITH_RISK":
-            verdict = "COMPATIBLE_WITH_RISK"
-        else:
-            verdict = "ERROR"
-    except (json.JSONDecodeError, AttributeError):
-        # Fallback: exit code mapping (4=BREAKING, 2=API_BREAK, 1=COMPATIBLE, 0=NO_CHANGE)
-        if r.returncode == 4:
-            verdict = "BREAKING"
-        elif r.returncode == 2:
-            verdict = "API_BREAK"
-        elif r.returncode == 1:
-            verdict = "COMPATIBLE"
-        elif r.returncode == 0:
-            verdict = "NO_CHANGE"
-        else:
-            verdict = "ERROR"
+    verdict = _abicheck_verdict_from_compare(r.stdout, r.returncode)
 
     changes = [ln.strip() for ln in out.splitlines()
                if any(k in ln for k in ("removed", "added", "changed")) and ln.strip()]
     return ToolResult(verdict=verdict, changes=changes[:8], raw_output=out,
                       elapsed_ms=elapsed_ms)
+
+
+def _abicheck_verdict_from_compare(stdout: str, returncode: int) -> str:
+    """Derive normalized verdict from abicheck compare output or exit code."""
+    try:
+        data = json.loads(stdout)
+    except (json.JSONDecodeError, AttributeError):
+        return _abicheck_verdict_from_exit_code(returncode)
+    return {
+        "BREAKING": "BREAKING",
+        "API_BREAK": "API_BREAK",
+        "COMPATIBLE": "COMPATIBLE",
+        "NO_CHANGE": "NO_CHANGE",
+        "COMPATIBLE_WITH_RISK": "COMPATIBLE_WITH_RISK",
+    }.get(str(data.get("verdict", "")).upper(), "ERROR")
+
+
+def _abicheck_verdict_from_exit_code(returncode: int) -> str:
+    """Fallback verdict mapping from compare command exit code."""
+    return {
+        4: "BREAKING",
+        2: "API_BREAK",
+        1: "COMPATIBLE",
+        0: "NO_CHANGE",
+    }.get(returncode, "ERROR")
 
 
 def _write_compat_descriptor(so: Path, h: Path | None, ver: str, out: Path) -> None:

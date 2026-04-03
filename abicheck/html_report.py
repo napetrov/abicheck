@@ -30,6 +30,7 @@ No external CSS/JS dependencies — fully self-contained single HTML file.
 from __future__ import annotations
 
 import html
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -772,13 +773,7 @@ def generate_html_report(
             report_kind=report_kind,
         )
 
-    # Verdict icon
-    verdict_icon = {
-        "BREAKING": "🔴",
-        "COMPATIBLE": "🟢",
-        "NO_CHANGE": "🔵",
-        "API_BREAK": "🟠",
-    }.get(verdict, "⚪")
+    verdict_icon = _verdict_icon(verdict)
 
     summary_html = _summary_table(removed, changed, added, suppressed_count)
     nav_html = _nav_bar(removed, changed, added, suppressed_count)
@@ -793,31 +788,9 @@ def generate_html_report(
             f"</div>"
         )
 
-    sections = []
-    if removed:
-        sections.append(
-            _section("⛔ Removed Symbols", "removed", "section-removed", removed)
-        )
-    if changed:
-        sections.append(
-            _section("⚠️ Changed Symbols", "changed", "section-changed", changed)
-        )
-    if added:
-        sections.append(_section("✅ Added Symbols", "added", "section-added", added))
-    if suppressed:
-        sections.append(
-            _section(
-                "🔕 Suppressed Changes", "suppressed", "section-suppressed", suppressed
-            )
-        )
-    elif suppressed_count and not suppressed:
-        # Count known but details not stored
-        sections.append(
-            f"<div class='section section-suppressed' id='suppressed'>"
-            f"<h3>🔕 Suppressed Changes ({suppressed_count})</h3>"
-            f"<p class='empty'>Details not available (suppressed_changes list is empty).</p>"
-            f"</div>"
-        )
+    sections = _build_sections_html(
+        removed, changed, added, suppressed, suppressed_count, _section,
+    )
 
     if not sections:
         if show_only and all_changes:
@@ -836,9 +809,7 @@ def generate_html_report(
 
     sections_html = "\n".join(sections)
 
-    symbol_count_note = ""
-    if old_symbol_count:
-        symbol_count_note = f" / {old_symbol_count} exported symbols"
+    symbol_count_note = f" / {old_symbol_count} exported symbols" if old_symbol_count else ""
 
     redundant_count = getattr(result, "redundant_count", 0)
     redundancy_note = ""
@@ -914,6 +885,44 @@ def generate_html_report(
 </body>
 </html>
 """
+
+
+def _verdict_icon(verdict: str) -> str:
+    """Return emoji icon for verdict."""
+    return {
+        "BREAKING": "🔴",
+        "COMPATIBLE": "🟢",
+        "NO_CHANGE": "🔵",
+        "API_BREAK": "🟠",
+    }.get(verdict, "⚪")
+
+
+def _build_sections_html(
+    removed: list[object],
+    changed: list[object],
+    added: list[object],
+    suppressed: list[object],
+    suppressed_count: int,
+    section_builder: Callable[[str, str, str, list[object]], str],
+) -> list[str]:
+    """Build ordered section blocks for HTML report body."""
+    sections: list[str] = []
+    for title, anchor, css_class, items in (
+        ("⛔ Removed Symbols", "removed", "section-removed", removed),
+        ("⚠️ Changed Symbols", "changed", "section-changed", changed),
+        ("✅ Added Symbols", "added", "section-added", added),
+        ("🔕 Suppressed Changes", "suppressed", "section-suppressed", suppressed),
+    ):
+        if items:
+            sections.append(section_builder(title, anchor, css_class, items))
+    if suppressed_count and not suppressed:
+        sections.append(
+            f"<div class='section section-suppressed' id='suppressed'>"
+            f"<h3>🔕 Suppressed Changes ({suppressed_count})</h3>"
+            f"<p class='empty'>Details not available (suppressed_changes list is empty).</p>"
+            f"</div>"
+        )
+    return sections
 
 
 def write_html_report(
