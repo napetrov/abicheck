@@ -28,7 +28,7 @@ import logging
 import re as _re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 import click
 
@@ -568,6 +568,32 @@ def _warn_stub_flags(quiet: bool, **kwargs: object) -> None:
             _do_echo(f"Warning: {help_text}", quiet)
 
 
+def _looks_like_tool_missing(msg: str, ctx: str) -> bool:
+    """Return True when the error indicates missing external tooling."""
+    tool_missing_msg = any(
+        key in msg for key in ("not found in path", "command not found")
+    )
+    tool_missing_ctx = any(
+        key in ctx for key in ("castxml", "compiler tool", "external tool")
+    )
+    return tool_missing_msg or tool_missing_ctx
+
+
+def _is_descriptor_or_suppression_context(ctx: str) -> bool:
+    """Return True when context points to malformed config/descriptor input."""
+    return any(
+        key in ctx
+        for key in (
+            "descriptor",
+            "skip-symbols",
+            "symbols-list",
+            "skip-internal",
+            "suppression",
+            "logging",
+        )
+    )
+
+
 def _classify_compat_error_exit_code(exc: BaseException, *, context: str = "") -> int:
     """Classify compat-mode failures into ABICC-style extended exit codes.
 
@@ -586,50 +612,58 @@ def _classify_compat_error_exit_code(exc: BaseException, *, context: str = "") -
 
     msg = str(exc).lower()
     ctx = context.lower()
+    tool_missing = _looks_like_tool_missing(msg, ctx)
 
-    tool_missing_msg = any(
-        k in msg for k in ("not found in path", "command not found")
-    )
-    tool_missing_ctx = any(k in ctx for k in ("castxml", "compiler tool", "external tool"))
-
-    if isinstance(exc, FileNotFoundError):
-        if tool_missing_msg or tool_missing_ctx:
-            return 3
-        return 4
-    if isinstance(exc, PermissionError):
-        return 4
-
-    if isinstance(exc, OSError):
-        if exc.errno in (errno.ENOENT,):
-            if tool_missing_msg or tool_missing_ctx:
-                return 3
-            return 4
-        if exc.errno in (errno.EACCES, errno.EPERM):
-            return 4
-        if "report" in ctx or "output" in ctx:
-            return 7
-
-    if "castxml failed" in msg or "cannot compile" in msg or "compilation terminated" in msg:
+    fs_code = _classify_fs_error(exc, ctx, tool_missing)
+    if fs_code is not None:
+        return fs_code
+    if _is_compile_failure(msg):
         return 5
-
-    if any(k in msg for k in ("not found in path", "command not found", "no such file or directory")):
+    if _looks_like_missing_path_message(msg):
         return 3
-
-    if any(k in ctx for k in (
-        "descriptor", "skip-symbols", "symbols-list", "skip-internal", "suppression", "logging"
-    )):
+    if _is_descriptor_or_suppression_context(ctx):
         return 6
-
     if "report" in ctx or "output" in ctx:
         return 7
-
     if "dump" in ctx:
         return 8
-
     return 10
 
 
-def _compat_fail(context: str, exc: BaseException) -> None:
+def _classify_fs_error(exc: BaseException, ctx: str, tool_missing: bool) -> int | None:
+    """Classify filesystem/OS-level failures, or return None if not matched."""
+    if isinstance(exc, FileNotFoundError):
+        return 3 if tool_missing else 4
+    if isinstance(exc, PermissionError):
+        return 4
+    if not isinstance(exc, OSError):
+        return None
+    if exc.errno in (errno.ENOENT,):
+        return 3 if tool_missing else 4
+    if exc.errno in (errno.EACCES, errno.EPERM):
+        return 4
+    if "report" in ctx or "output" in ctx:
+        return 7
+    return None
+
+
+def _is_compile_failure(msg: str) -> bool:
+    """Return True when message indicates compilation/parsing failures."""
+    return any(
+        token in msg
+        for token in ("castxml failed", "cannot compile", "compilation terminated")
+    )
+
+
+def _looks_like_missing_path_message(msg: str) -> bool:
+    """Return True when message indicates missing command/path."""
+    return any(
+        token in msg
+        for token in ("not found in path", "command not found", "no such file or directory")
+    )
+
+
+def _compat_fail(context: str, exc: BaseException) -> NoReturn:
     """Print compat-mode error and exit with ABICC-style code."""
     click.echo(f"Error {context}: {exc}", err=True)
     sys.exit(_classify_compat_error_exit_code(exc, context=context))
@@ -1043,8 +1077,6 @@ def compat_check_cmd(  # noqa: PLR0913
         # After:
         abicheck compat check -lib libdnnl -old old.xml -new new.xml -report-path r.html
     """
-    from ..suppression import SuppressionList  # local import to avoid circular
-
     # ── Setup logging ────────────────────────────────────────────────────
     try:
         _log1_handler, _log2_handler = _setup_logging(log_path, log1_path, log2_path, logging_mode, quiet)
@@ -1066,27 +1098,19 @@ def compat_check_cmd(  # noqa: PLR0913
         skip_removed_constants=skip_removed_constants,
     )
 
-    # Info-level notices for accepted but limited-effect flags
-    if compat_html:
-        _do_echo("Note: -compat-html / -old-style enabled: HTML will match ABICC element IDs.", quiet)
-    if use_dumps:
-        _do_echo("Note: -use-dumps is accepted; abicheck auto-detects JSON dumps by extension.", quiet)
-    if filter_path:
-        _do_echo(f"Note: -filter {filter_path} is accepted for compatibility (not yet applied).", quiet)
-    if params_path:
-        _do_echo(f"Note: -params {params_path} is accepted for compatibility (not yet applied).", quiet)
-    if app_path:
-        _do_echo(f"Note: -app {app_path} is accepted for compatibility (not yet applied).", quiet)
-    if arch:
-        _do_echo(f"Note: -arch {arch} is recorded for informational purposes.", quiet)
-    if keep_cxx:
-        _do_echo("Note: -keep-cxx is accepted; abicheck includes all exported symbols by default.", quiet)
-    if keep_reserved:
-        _do_echo("Note: -keep-reserved is accepted; abicheck reports all field changes by default.", quiet)
-    if count_symbols:
-        _do_echo(f"Note: -count-symbols {count_symbols} is accepted for compatibility (not yet applied).", quiet)
-    if count_all_symbols:
-        _do_echo(f"Note: -count-all-symbols {count_all_symbols} is accepted for compatibility (not yet applied).", quiet)
+    _emit_compat_info_notes(
+        quiet=quiet,
+        compat_html=compat_html,
+        use_dumps=use_dumps,
+        filter_path=filter_path,
+        params_path=params_path,
+        app_path=app_path,
+        arch=arch,
+        keep_cxx=keep_cxx,
+        keep_reserved=keep_reserved,
+        count_symbols=count_symbols,
+        count_all_symbols=count_all_symbols,
+    )
 
     # ── Resolve relpath overrides ────────────────────────────────────────
     old_relpath = relpath1 or relpath
@@ -1102,65 +1126,29 @@ def compat_check_cmd(  # noqa: PLR0913
             quiet,
         )
 
-    # ── Parse descriptors (support both XML descriptors and JSON dumps) ──
-    try:
-        old_d = _load_descriptor_or_dump(old_desc, relpath=old_relpath)
-        new_d = _load_descriptor_or_dump(new_desc, relpath=new_relpath)
-    except (ValueError, FileNotFoundError, OSError) as exc:
-        _compat_fail("parsing descriptor", exc)
-
-    # ── Load skip-headers set ────────────────────────────────────────────
+    old_d, new_d = _parse_compat_descriptors(old_desc, new_desc, old_relpath, new_relpath)
     _skip_headers_set = _load_skip_headers(skip_headers)
     if _skip_headers_set:
         _do_echo(f"Applying -skip-headers: excluding {len(_skip_headers_set)} header(s).", quiet)
-
-    # Determine which inputs are dumps vs descriptors (handles mixed inputs)
-    from ..model import AbiSnapshot as _AbiSnapshot  # noqa: PLC0415
-
-    def _snap_from_input(
-        d: CompatDescriptor | _AbiSnapshot,
-        vnum_override: str | None,
-        desc_path: Path,
-    ) -> tuple[_AbiSnapshot, str]:
-        """Convert a descriptor or dump to (snapshot, version), honoring vnum override."""
-        if isinstance(d, _AbiSnapshot):
-            version = vnum_override or d.version
-            if vnum_override:
-                from dataclasses import replace as _replace  # noqa: PLC0415
-                d = _replace(d, version=vnum_override)
-            return d, version
-
-        # It's a CompatDescriptor — dump it
-        desc: CompatDescriptor = d
-        if vnum_override:
-            from dataclasses import replace as _replace  # noqa: PLC0415
-            desc = _replace(desc, version=vnum_override)
-        so = desc.libs[0]
-        if len(desc.libs) > 1:
-            _do_echo(
-                f"Warning: descriptor {desc_path.name} has {len(desc.libs)} <libs> entries; "
-                f"using only the first: {so}",
-                quiet,
-            )
-        hdrs = _resolve_headers_from_list(
-            headers_list_path, single_header, desc.headers,
-            skip_headers=_skip_headers_set or None,
-        )
-        if not so.exists():
-            _compat_fail("accessing input files", FileNotFoundError(f"library not found: {so}"))
-        snap = dump(
-            so, headers=hdrs, version=desc.version,
-            gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
-            sysroot=sysroot, nostdinc=nostdinc, lang=lang,
-        )
-        return snap, desc.version
 
     _logger = logging.getLogger("abicheck")
     try:
         # Activate log1 handler for old library analysis phase
         if _log1_handler is not None:
             _logger.addHandler(_log1_handler)
-        old_snap, old_version = _snap_from_input(old_d, vnum1, old_desc)
+        old_snap, old_version = _snapshot_from_compat_input(
+            old_d, vnum1, old_desc,
+            headers_list_path=headers_list_path,
+            single_header=single_header,
+            skip_headers_set=_skip_headers_set,
+            quiet=quiet,
+            gcc_path=gcc_path,
+            gcc_prefix=gcc_prefix,
+            gcc_options=gcc_options,
+            sysroot=sysroot,
+            nostdinc=nostdinc,
+            lang=lang,
+        )
         if _log1_handler is not None:
             _logger.removeHandler(_log1_handler)
             _log1_handler.close()
@@ -1168,7 +1156,19 @@ def compat_check_cmd(  # noqa: PLR0913
         # Activate log2 handler for new library analysis phase
         if _log2_handler is not None:
             _logger.addHandler(_log2_handler)
-        new_snap, new_version = _snap_from_input(new_d, vnum2, new_desc)
+        new_snap, new_version = _snapshot_from_compat_input(
+            new_d, vnum2, new_desc,
+            headers_list_path=headers_list_path,
+            single_header=single_header,
+            skip_headers_set=_skip_headers_set,
+            quiet=quiet,
+            gcc_path=gcc_path,
+            gcc_prefix=gcc_prefix,
+            gcc_options=gcc_options,
+            sysroot=sysroot,
+            nostdinc=nostdinc,
+            lang=lang,
+        )
         if _log2_handler is not None:
             _logger.removeHandler(_log2_handler)
             _log2_handler.close()
@@ -1183,39 +1183,12 @@ def compat_check_cmd(  # noqa: PLR0913
     if headers_only:
         _do_echo("Note: -headers-only is accepted — ELF/DWARF checks still run.", quiet)
 
-    # ── Build suppression from all sources ────────────────────────────────
-    suppression: SuppressionList | None = None
-
-    # -skip-symbols / -skip-types: build suppression on the fly
-    if skip_symbols_path is not None or skip_types_path is not None:
-        try:
-            suppression = _build_skip_suppression(skip_symbols_path, skip_types_path)
-        except (ValueError, OSError) as exc:
-            _compat_fail("in skip-symbols/skip-types", exc)
-
-    # -symbols-list / -types-list: whitelist (inverse of skip)
-    if symbols_list_path is not None or types_list_path is not None:
-        try:
-            wl = _build_whitelist_suppression(symbols_list_path, types_list_path)
-            suppression = _merge_suppression(suppression, wl)
-        except (ValueError, OSError) as exc:
-            _compat_fail("in symbols-list/types-list", exc)
-
-    # -skip-internal-symbols / -skip-internal-types: regex-based skip
-    if skip_internal_symbols is not None or skip_internal_types is not None:
-        try:
-            internal = _build_internal_suppression(skip_internal_symbols, skip_internal_types)
-            suppression = _merge_suppression(suppression, internal)
-        except ValueError as exc:
-            _compat_fail("in skip-internal-symbols/skip-internal-types", exc)
-
-    # --suppress: YAML suppression file
-    if suppress is not None:
-        try:
-            file_suppression = SuppressionList.load(suppress)
-        except (ValueError, OSError) as exc:
-            _compat_fail("loading suppression file", exc)
-        suppression = _merge_suppression(suppression, file_suppression)
+    suppression = _build_compat_suppression(
+        skip_symbols_path, skip_types_path,
+        symbols_list_path, types_list_path,
+        skip_internal_symbols, skip_internal_types,
+        suppress,
+    )
 
     result = compare(old_snap, new_snap, suppression=suppression, policy="strict_abi")
 
@@ -1346,6 +1319,155 @@ def compat_check_cmd(  # noqa: PLR0913
         sys.exit(1)
     if verdict == "API_BREAK":
         sys.exit(2)
+
+
+def _emit_compat_info_notes(
+    *,
+    quiet: bool,
+    compat_html: bool,
+    use_dumps: bool,
+    filter_path: Path | None,
+    params_path: Path | None,
+    app_path: Path | None,
+    arch: str | None,
+    keep_cxx: bool,
+    keep_reserved: bool,
+    count_symbols: str | None,
+    count_all_symbols: str | None,
+) -> None:
+    """Emit informational notes for ABICC-compat flags with limited effect."""
+    notes: list[str] = []
+    if compat_html:
+        notes.append("Note: -compat-html / -old-style enabled: HTML will match ABICC element IDs.")
+    if use_dumps:
+        notes.append("Note: -use-dumps is accepted; abicheck auto-detects JSON dumps by extension.")
+    if filter_path:
+        notes.append(f"Note: -filter {filter_path} is accepted for compatibility (not yet applied).")
+    if params_path:
+        notes.append(f"Note: -params {params_path} is accepted for compatibility (not yet applied).")
+    if app_path:
+        notes.append(f"Note: -app {app_path} is accepted for compatibility (not yet applied).")
+    if arch:
+        notes.append(f"Note: -arch {arch} is recorded for informational purposes.")
+    if keep_cxx:
+        notes.append("Note: -keep-cxx is accepted; abicheck includes all exported symbols by default.")
+    if keep_reserved:
+        notes.append("Note: -keep-reserved is accepted; abicheck reports all field changes by default.")
+    if count_symbols:
+        notes.append(f"Note: -count-symbols {count_symbols} is accepted for compatibility (not yet applied).")
+    if count_all_symbols:
+        notes.append(f"Note: -count-all-symbols {count_all_symbols} is accepted for compatibility (not yet applied).")
+    for note in notes:
+        _do_echo(note, quiet)
+
+
+def _parse_compat_descriptors(
+    old_desc: Path,
+    new_desc: Path,
+    old_relpath: str | None,
+    new_relpath: str | None,
+) -> tuple[CompatDescriptor | AbiSnapshot, CompatDescriptor | AbiSnapshot]:
+    """Parse old/new descriptors or dumps with compat-mode error mapping."""
+    try:
+        return (
+            _load_descriptor_or_dump(old_desc, relpath=old_relpath),
+            _load_descriptor_or_dump(new_desc, relpath=new_relpath),
+        )
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        _compat_fail("parsing descriptor", exc)
+
+
+def _snapshot_from_compat_input(
+    data: CompatDescriptor | AbiSnapshot,
+    vnum_override: str | None,
+    desc_path: Path,
+    *,
+    headers_list_path: Path | None,
+    single_header: str | None,
+    skip_headers_set: set[str],
+    quiet: bool,
+    gcc_path: str | None,
+    gcc_prefix: str | None,
+    gcc_options: str | None,
+    sysroot: Path | None,
+    nostdinc: bool,
+    lang: str | None,
+) -> tuple[AbiSnapshot, str]:
+    """Convert compat input (descriptor or dump) into a concrete snapshot."""
+    from ..model import AbiSnapshot as _AbiSnapshot
+
+    if isinstance(data, _AbiSnapshot):
+        if vnum_override:
+            from dataclasses import replace as _replace
+
+            return _replace(data, version=vnum_override), vnum_override
+        return data, data.version
+    desc = data
+    if vnum_override:
+        from dataclasses import replace as _replace
+
+        desc = _replace(desc, version=vnum_override)
+    so = desc.libs[0]
+    if len(desc.libs) > 1:
+        _do_echo(
+            f"Warning: descriptor {desc_path.name} has {len(desc.libs)} <libs> entries; "
+            f"using only the first: {so}",
+            quiet,
+        )
+    hdrs = _resolve_headers_from_list(
+        headers_list_path, single_header, desc.headers,
+        skip_headers=skip_headers_set or None,
+    )
+    if not so.exists():
+        _compat_fail("accessing input files", FileNotFoundError(f"library not found: {so}"))
+    snap = dump(
+        so, headers=hdrs, version=desc.version,
+        gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
+        sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+    )
+    return snap, desc.version
+
+
+def _build_compat_suppression(
+    skip_symbols_path: Path | None,
+    skip_types_path: Path | None,
+    symbols_list_path: Path | None,
+    types_list_path: Path | None,
+    skip_internal_symbols: str | None,
+    skip_internal_types: str | None,
+    suppress: Path | None,
+) -> SuppressionList | None:
+    """Build merged suppression rules from compat CLI sources."""
+    suppression: SuppressionList | None = None
+    if skip_symbols_path is not None or skip_types_path is not None:
+        try:
+            suppression = _build_skip_suppression(skip_symbols_path, skip_types_path)
+        except (ValueError, OSError) as exc:
+            _compat_fail("in skip-symbols/skip-types", exc)
+    if symbols_list_path is not None or types_list_path is not None:
+        try:
+            suppression = _merge_suppression(
+                suppression, _build_whitelist_suppression(symbols_list_path, types_list_path),
+            )
+        except (ValueError, OSError) as exc:
+            _compat_fail("in symbols-list/types-list", exc)
+    if skip_internal_symbols is not None or skip_internal_types is not None:
+        try:
+            suppression = _merge_suppression(
+                suppression,
+                _build_internal_suppression(skip_internal_symbols, skip_internal_types),
+            )
+        except ValueError as exc:
+            _compat_fail("in skip-internal-symbols/skip-internal-types", exc)
+    if suppress is not None:
+        from ..suppression import SuppressionList  # noqa: PLC0415
+
+        try:
+            file_suppression = SuppressionList.load(suppress)
+        except (ValueError, OSError) as exc:
+            _compat_fail("loading suppression file", exc)
+        suppression = _merge_suppression(suppression, file_suppression)
+    return suppression
 
 
 def _load_descriptor_or_dump(path: Path, *, relpath: str | None = None) -> CompatDescriptor | AbiSnapshot:

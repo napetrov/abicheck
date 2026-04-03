@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -33,10 +34,9 @@ from .reporter import to_json
 from .serialization import load_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from .appcompat import AppRequirements
     from .checker_types import DiffResult
+    from .debug_resolver import DebugArtifact
     from .policy_file import PolicyFile
     from .severity import SeverityConfig
     from .suppression import SuppressionList
@@ -551,82 +551,31 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
     # Auto-detect binary format — PE/Mach-O skip the ELF/castxml path
     binary_fmt = _detect_binary_format(so_path)
     if binary_fmt in ("pe", "macho"):
-        if follow_deps:
-            click.echo("Warning: --follow-deps is only supported for ELF binaries.", err=True)
-        try:
-            snap = _dump_native_binary(
-                so_path, binary_fmt, list(headers), list(includes), version, lang,
-                pdb_path=pdb_path,
-            )
-        except click.ClickException:
-            raise
-        except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
-            raise click.ClickException(str(exc)) from exc
-        _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-        _write_snapshot_output(snap, output)
+        _handle_non_elf_dump(
+            so_path,
+            binary_fmt,
+            headers,
+            includes,
+            version,
+            lang,
+            pdb_path,
+            follow_deps,
+            git_tag,
+            build_id,
+            no_git,
+            output,
+        )
         return
 
-    # Load build context from compile_commands.json if provided (ADR-020)
-    # We build a per-header context map so each header gets its own TU-matched flags.
-    _db_entries: list | None = None  # type: ignore[type-arg]
-    _per_header_ctx: dict[Path, list[str]] = {}
-    build_context_flags: list[str] = []
-    if effective_compile_db:
-        try:
-            from .build_context import (
-                build_context_for_header,
-                build_context_union_fallback,
-                load_compile_db,
-            )
-            _db_entries = load_compile_db(effective_compile_db)
-            resolved_hdrs = _expand_header_inputs(list(headers)) if headers else []
-            if resolved_hdrs:
-                # Build context per header for accurate TU-specific flags
-                for hdr in resolved_hdrs:
-                    ctx = build_context_for_header(
-                        _db_entries, hdr, source_filter=compile_db_filter,
-                    )
-                    _per_header_ctx[hdr] = ctx.to_castxml_flags()
-                # Use the first header's context as the default/summary for logging
-                ctx = build_context_for_header(
-                    _db_entries, resolved_hdrs[0], source_filter=compile_db_filter,
-                )
-            else:
-                ctx = build_context_union_fallback(_db_entries, source_filter=compile_db_filter)
-            build_context_flags = ctx.to_castxml_flags()
-            if build_context_flags:
-                click.echo(
-                    f"Build context: {len(_db_entries)} entries from "
-                    f"{effective_compile_db}, {len(build_context_flags)} flags derived",
-                    err=True,
-                )
-                if ctx.has_conflicts:
-                    click.echo(
-                        "Warning: conflicting flags detected in compile database; "
-                        "using first-match values. See --verbose for details.",
-                        err=True,
-                    )
-        except (AbicheckError, OSError) as exc:
-            raise click.ClickException(str(exc)) from exc
-
-    # Merge build context flags with explicit --gcc-options (explicit wins — later flags override)
-    effective_gcc_options = gcc_options
-    if build_context_flags:
-        # Pass as a single string; later flags override earlier ones in GCC/CastXML
-        merged = " ".join(build_context_flags)
-        if gcc_options:
-            effective_gcc_options = f"{merged} {gcc_options}"
-        else:
-            effective_gcc_options = merged
+    build_context_flags = _resolve_build_context_flags(
+        effective_compile_db, headers, compile_db_filter,
+    )
+    effective_gcc_options = _merge_gcc_options(build_context_flags, gcc_options)
 
     # Debug artifact resolution (ADR-021): resolve before dump
     if debug_roots or debuginfod:
-        from .debug_resolver import resolve_debug_info
-        artifact = resolve_debug_info(
-            so_path,
-            debug_roots=list(debug_roots) or None,
-            enable_debuginfod=debuginfod,
-            debuginfod_urls=[debuginfod_url] if debuginfod_url else None,
+        artifact = _resolve_debug_artifact(
+            so_path, debug_roots, debuginfod, debuginfod_url,
         )
         if artifact:
             click.echo(f"Debug info: {artifact.source}", err=True)
@@ -657,6 +606,101 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 
     _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
     _write_snapshot_output(snap, output)
+
+
+def _handle_non_elf_dump(
+    so_path: Path,
+    binary_fmt: str,
+    headers: tuple[Path, ...],
+    includes: tuple[Path, ...],
+    version: str,
+    lang: str,
+    pdb_path: Path | None,
+    follow_deps: bool,
+    git_tag: str | None,
+    build_id: str | None,
+    no_git: bool,
+    output: Path | None,
+) -> None:
+    """Handle PE/Mach-O native dump path and output writing."""
+    if follow_deps:
+        click.echo("Warning: --follow-deps is only supported for ELF binaries.", err=True)
+    try:
+        snap = _dump_native_binary(
+            so_path, binary_fmt, list(headers), list(includes), version, lang,
+            pdb_path=pdb_path,
+        )
+    except click.ClickException:
+        raise
+    except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
+    _write_snapshot_output(snap, output)
+
+
+def _resolve_build_context_flags(
+    effective_compile_db: Path | None,
+    headers: tuple[Path, ...],
+    compile_db_filter: str | None,
+) -> list[str]:
+    """Resolve compile database into castxml flags for dump."""
+    if not effective_compile_db:
+        return []
+    try:
+        from .build_context import (
+            build_context_for_header,
+            build_context_union_fallback,
+            load_compile_db,
+        )
+        db_entries = load_compile_db(effective_compile_db)
+        resolved_hdrs = _expand_header_inputs(list(headers)) if headers else []
+        if resolved_hdrs:
+            ctx = build_context_for_header(
+                db_entries, resolved_hdrs[0], source_filter=compile_db_filter,
+            )
+        else:
+            ctx = build_context_union_fallback(db_entries, source_filter=compile_db_filter)
+        flags = ctx.to_castxml_flags()
+        if flags:
+            click.echo(
+                f"Build context: {len(db_entries)} entries from "
+                f"{effective_compile_db}, {len(flags)} flags derived",
+                err=True,
+            )
+            if ctx.has_conflicts:
+                click.echo(
+                    "Warning: conflicting flags detected in compile database; "
+                    "using first-match values. See --verbose for details.",
+                    err=True,
+                )
+        return flags
+    except (AbicheckError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _merge_gcc_options(build_context_flags: list[str], gcc_options: str | None) -> str | None:
+    """Merge compile-db derived flags with explicit gcc options."""
+    if not build_context_flags:
+        return gcc_options
+    merged = " ".join(build_context_flags)
+    return f"{merged} {gcc_options}" if gcc_options else merged
+
+
+def _resolve_debug_artifact(
+    so_path: Path,
+    debug_roots: tuple[Path, ...],
+    debuginfod: bool,
+    debuginfod_url: str | None,
+) -> DebugArtifact | None:
+    """Resolve optional separate debug artifacts for dump."""
+    from .debug_resolver import resolve_debug_info
+
+    return resolve_debug_info(
+        so_path,
+        debug_roots=list(debug_roots) or None,
+        enable_debuginfod=debuginfod,
+        debuginfod_urls=[debuginfod_url] if debuginfod_url else None,
+    )
 
 
 def _print_data_sources(so_path: Path, has_headers: bool) -> None:
@@ -1642,6 +1686,19 @@ _RELEASE_VERDICT_ORDER: dict[str, int] = {
 }
 
 
+_CompareReleaseCommonArgs = tuple[
+    dict[str, Path], dict[str, Path],
+    Path | None, Path | None,
+    Callable[[Path, Path], Path | None],
+    list[Path], list[Path],
+    list[Path], list[Path],
+    str, str,
+    str, Path | None,
+    str, Path | None,
+    Path | None,
+]
+
+
 def _discover_files(
     input_dir: Path, lib_dir: Path,
     include_private: bool,
@@ -1802,28 +1859,14 @@ def _compare_release_libraries(
         lang, suppress, policy, policy_file_path, output_dir,
     )
 
-    # --- parallel path ---
     if effective_jobs > 1 and len(matched_keys) > 1:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        with ThreadPoolExecutor(max_workers=effective_jobs) as executor:
-            futures = {
-                executor.submit(_compare_one_library, key, *common_args): key
-                for key in matched_keys
-            }
-            for future in as_completed(futures):
-                key = futures[future]
-                try:
-                    entry = future.result()
-                except Exception as exc:
-                    click.echo(f"Error comparing {old_map[key].name}: {exc}", err=True)
-                    entry = {"library": old_map[key].name, "verdict": "ERROR", "error": str(exc)}
-                library_results.append(entry)
-    # --- sequential path ---
+        library_results.extend(
+            _compare_release_parallel(matched_keys, common_args, old_map, effective_jobs),
+        )
     else:
-        for key in matched_keys:
-            entry = _compare_one_library(key, *common_args)
-            library_results.append(entry)
+        library_results.extend(
+            _compare_release_sequential(matched_keys, common_args),
+        )
 
     # Post-process all results: compute worst verdict, collect annotations,
     # and optionally collect diff_pairs (for JUnit).
@@ -1839,36 +1882,18 @@ def _compare_release_libraries(
     # affected libraries (only used for JUnit / GitHub annotations which
     # are sequential-only features)
     if collect_diff_results or annotate:
-        for key in matched_keys:
-            old_path = old_map[key]
-            new_path = new_map[key]
-            old_dbg = resolve_debug_info(old_path, old_debug_dir) if old_debug_dir else None
-            new_dbg = resolve_debug_info(new_path, new_debug_dir) if new_debug_dir else None
-            try:
-                result, old_snap, _ = _run_compare_pair(
-                    old_path, new_path,
-                    old_h, new_h, old_inc, new_inc,
-                    old_version, new_version,
-                    lang, suppress, policy, policy_file_path,
-                    old_pdb_path=old_dbg, new_pdb_path=new_dbg,
-                )
-            except Exception as exc:
-                click.echo(
-                    f"Warning: failed to re-run comparison for {old_path.name}: {exc}",
-                    err=True,
-                )
-                continue
-
-            if collect_diff_results:
-                diff_pairs.append((result, old_snap))
-
-            if annotate:
-                from .annotations import collect_annotations, is_github_actions
-
-                if is_github_actions():
-                    all_annotations.extend(
-                        collect_annotations(result, annotate_additions=annotate_additions),
-                    )
+        extra_pairs, extra_annotations = _collect_release_extras(
+            matched_keys, old_map, new_map,
+            old_debug_dir, new_debug_dir, resolve_debug_info,
+            old_h, new_h, old_inc, new_inc,
+            old_version, new_version, lang,
+            suppress, policy, policy_file_path,
+            annotate_additions=annotate_additions,
+            collect_diff_results=collect_diff_results,
+            annotate=annotate,
+        )
+        diff_pairs.extend(extra_pairs)
+        all_annotations.extend(extra_annotations)
 
     # Emit annotations once: sort globally across all libraries by severity,
     # then truncate to the cap.  This ensures the most important annotations
@@ -1881,6 +1906,97 @@ def _compare_release_libraries(
             click.echo(text, err=True)
 
     return library_results, worst_verdict, diff_pairs
+
+
+def _compare_release_parallel(
+    matched_keys: list[str],
+    common_args: _CompareReleaseCommonArgs,
+    old_map: dict[str, Path],
+    max_workers: int,
+) -> list[dict[str, object]]:
+    """Run per-library release comparisons in parallel."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    results: list[dict[str, object]] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_compare_one_library, key, *common_args): key
+            for key in matched_keys
+        }
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                click.echo(f"Error comparing {old_map[key].name}: {exc}", err=True)
+                results.append(
+                    {"library": old_map[key].name, "verdict": "ERROR", "error": str(exc)},
+                )
+    return results
+
+
+def _compare_release_sequential(
+    matched_keys: list[str],
+    common_args: _CompareReleaseCommonArgs,
+) -> list[dict[str, object]]:
+    """Run per-library release comparisons sequentially."""
+    return [_compare_one_library(key, *common_args) for key in matched_keys]
+
+
+def _collect_release_extras(
+    matched_keys: list[str],
+    old_map: dict[str, Path],
+    new_map: dict[str, Path],
+    old_debug_dir: Path | None,
+    new_debug_dir: Path | None,
+    resolve_debug_info: Callable[[Path, Path], Path | None],
+    old_h: list[Path],
+    new_h: list[Path],
+    old_inc: list[Path],
+    new_inc: list[Path],
+    old_version: str,
+    new_version: str,
+    lang: str,
+    suppress: Path | None,
+    policy: str,
+    policy_file_path: Path | None,
+    *,
+    annotate_additions: bool,
+    collect_diff_results: bool,
+    annotate: bool,
+) -> tuple[list[tuple[DiffResult, AbiSnapshot]], list[tuple[int, str]]]:
+    """Collect optional re-run artifacts for JUnit and annotations."""
+    diff_pairs: list[tuple[DiffResult, AbiSnapshot]] = []
+    annotations: list[tuple[int, str]] = []
+    for key in matched_keys:
+        old_path = old_map[key]
+        new_path = new_map[key]
+        old_dbg = resolve_debug_info(old_path, old_debug_dir) if old_debug_dir else None
+        new_dbg = resolve_debug_info(new_path, new_debug_dir) if new_debug_dir else None
+        try:
+            result, old_snap, _ = _run_compare_pair(
+                old_path, new_path,
+                old_h, new_h, old_inc, new_inc,
+                old_version, new_version,
+                lang, suppress, policy, policy_file_path,
+                old_pdb_path=old_dbg, new_pdb_path=new_dbg,
+            )
+        except Exception as exc:
+            click.echo(
+                f"Warning: failed to re-run comparison for {old_path.name}: {exc}",
+                err=True,
+            )
+            continue
+        if collect_diff_results:
+            diff_pairs.append((result, old_snap))
+        if annotate:
+            from .annotations import collect_annotations, is_github_actions
+
+            if is_github_actions():
+                annotations.extend(
+                    collect_annotations(result, annotate_additions=annotate_additions),
+                )
+    return diff_pairs, annotations
 
 
 def _format_release_summary(
@@ -2161,35 +2277,19 @@ def compare_release_cmd(
         )
 
     try:
-        old_lib_dir, old_debug_dir, old_header_dir = _extract_if_package(
-            old_dir, debug_info1, devel_pkg1,
+        prep = _prepare_compare_release_inputs(
+            old_dir, new_dir,
+            debug_info1, debug_info2, devel_pkg1, devel_pkg2,
+            include_private_dso, dso_only,
+            headers, old_headers_only, new_headers_only, includes,
+            _extract_if_package, discover_shared_libraries, is_package, _is_elf_shared_object,
         )
-        new_lib_dir, new_debug_dir, new_header_dir = _extract_if_package(
-            new_dir, debug_info2, devel_pkg2,
-        )
-
-        old_files = _discover_files(old_dir, old_lib_dir, include_private_dso, discover_shared_libraries, is_package)
-        new_files = _discover_files(new_dir, new_lib_dir, include_private_dso, discover_shared_libraries, is_package)
-
-        if dso_only:
-            old_files = [f for f in old_files if _is_elf_shared_object(f)]
-            new_files = [f for f in new_files if _is_elf_shared_object(f)]
-
-        old_map, old_warns = _build_match_map(old_files)
-        new_map, new_warns = _build_match_map(new_files)
-        warning_msgs: list[str] = [f"Warning: {w}" for w in (old_warns + new_warns)]
-
-        old_h, new_h = _resolve_release_headers(
-            headers, old_headers_only, new_headers_only,
-            old_header_dir, new_header_dir,
-        )
-        old_inc: list[Path] = list(includes)
-        new_inc: list[Path] = list(includes)
-
-        matched_keys, removed_keys, added_keys, old_map, new_map = _match_release_keys(
-            old_dir, new_dir, old_map, new_map, old_files, new_files, is_package,
-        )
-        _collect_release_warnings(warning_msgs, matched_keys, removed_keys, added_keys, old_map, new_map)
+        (
+            old_debug_dir, new_debug_dir,
+            old_h, new_h, old_inc, new_inc,
+            old_map, new_map, warning_msgs,
+            matched_keys, removed_keys, added_keys,
+        ) = prep
 
         if fmt != "json":
             for msg in warning_msgs:
@@ -2232,12 +2332,7 @@ def compare_release_cmd(
                 removed_keys, added_keys, old_map, new_map,
             )
 
-        if worst_verdict in ("BREAKING", "ERROR"):
-            sys.exit(4)
-        elif worst_verdict == "API_BREAK":
-            sys.exit(2)
-        if fail_on_removed and removed_keys:
-            sys.exit(8)
+        _exit_compare_release(worst_verdict, fail_on_removed, removed_keys)
     finally:
         import shutil as _shutil
         if not keep_extracted:
@@ -2249,6 +2344,81 @@ def compare_release_cmd(
                 f"Extracted files kept in: {kept_paths}",
                 err=True,
             )
+
+
+def _prepare_compare_release_inputs(
+    old_dir: Path,
+    new_dir: Path,
+    debug_info1: Path | None,
+    debug_info2: Path | None,
+    devel_pkg1: Path | None,
+    devel_pkg2: Path | None,
+    include_private_dso: bool,
+    dso_only: bool,
+    headers: tuple[Path, ...],
+    old_headers_only: tuple[Path, ...],
+    new_headers_only: tuple[Path, ...],
+    includes: tuple[Path, ...],
+    extract_if_package: Callable[[Path, Path | None, Path | None], tuple[Path, Path | None, Path | None]],
+    discover_shared_libraries: Callable[..., list[Path]],
+    is_package: Callable[[Path], bool],
+    is_elf_shared_object: Callable[[Path], bool],
+) -> tuple[
+    Path | None, Path | None,
+    list[Path], list[Path], list[Path], list[Path],
+    dict[str, Path], dict[str, Path], list[str],
+    list[str], list[str], list[str],
+]:
+    """Prepare inputs/maps/keys for compare-release command."""
+    old_lib_dir, old_debug_dir, old_header_dir = extract_if_package(
+        old_dir, debug_info1, devel_pkg1,
+    )
+    new_lib_dir, new_debug_dir, new_header_dir = extract_if_package(
+        new_dir, debug_info2, devel_pkg2,
+    )
+    old_files = _discover_files(
+        old_dir, old_lib_dir, include_private_dso, discover_shared_libraries, is_package,
+    )
+    new_files = _discover_files(
+        new_dir, new_lib_dir, include_private_dso, discover_shared_libraries, is_package,
+    )
+    if dso_only:
+        old_files = [f for f in old_files if is_elf_shared_object(f)]
+        new_files = [f for f in new_files if is_elf_shared_object(f)]
+    old_map, old_warns = _build_match_map(old_files)
+    new_map, new_warns = _build_match_map(new_files)
+    warning_msgs: list[str] = [f"Warning: {warning}" for warning in (old_warns + new_warns)]
+    old_h, new_h = _resolve_release_headers(
+        headers, old_headers_only, new_headers_only, old_header_dir, new_header_dir,
+    )
+    old_inc = list(includes)
+    new_inc = list(includes)
+    matched_keys, removed_keys, added_keys, old_map, new_map = _match_release_keys(
+        old_dir, new_dir, old_map, new_map, old_files, new_files, is_package,
+    )
+    _collect_release_warnings(
+        warning_msgs, matched_keys, removed_keys, added_keys, old_map, new_map,
+    )
+    return (
+        old_debug_dir, new_debug_dir,
+        old_h, new_h, old_inc, new_inc,
+        old_map, new_map, warning_msgs,
+        matched_keys, removed_keys, added_keys,
+    )
+
+
+def _exit_compare_release(
+    worst_verdict: str,
+    fail_on_removed: bool,
+    removed_keys: list[str],
+) -> None:
+    """Exit compare-release with ABI-compatible status code mapping."""
+    if worst_verdict in ("BREAKING", "ERROR"):
+        sys.exit(4)
+    if worst_verdict == "API_BREAK":
+        sys.exit(2)
+    if fail_on_removed and removed_keys:
+        sys.exit(8)
 
 
 # ── Suggest suppressions command ──────────────────────────────────────────────
