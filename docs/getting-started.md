@@ -8,6 +8,23 @@ On all platforms it provides binary metadata analysis (exports, imports, depende
 
 ---
 
+## Which command do I need?
+
+abicheck ships several commands. Pick the one that matches your question:
+
+| Your question | Command | See |
+|---------------|---------|-----|
+| Does upgrading this library break existing consumers? | `abicheck compare` | [§2 below](#2-first-check-using-repo-examples) |
+| Does **my application** still work with the new library version? | `abicheck appcompat` | [§5 below](#5-application-compatibility-check) |
+| Will this binary load and run correctly in this sysroot? | `abicheck stack-check` | [CLI Usage](user-guide/cli-usage.md) |
+| Does my library dependency tree resolve without unresolved symbols? | `abicheck deps` | [CLI Usage](user-guide/cli-usage.md) |
+| I'm migrating from `abi-compliance-checker` and want the same flags. | `abicheck compat` | [Migrating from ABICC](user-guide/from-abicc.md) |
+| Save a reusable ABI baseline for CI. | `abicheck dump` | [§4 below](#4-snapshot-workflow-for-ci-baselines) |
+
+If you're unsure, start with `abicheck compare` — it's the default workflow.
+
+---
+
 ## 1) Install abicheck
 
 ```bash
@@ -60,7 +77,7 @@ pip install -e .
 
 ## 2) First check (using repo examples)
 
-The repo includes 63 ABI scenario examples with paired `v1`/`v2` sources and headers:
+The repo includes 74 ABI scenario examples with paired `v1`/`v2` sources and headers:
 
 ```bash
 cd examples/case01_symbol_removal

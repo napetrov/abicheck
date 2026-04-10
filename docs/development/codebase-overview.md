@@ -171,16 +171,17 @@ The README no longer references `re.search` for suppression patterns.
 
 The README now consistently uses `abicheck` as the CLI command name.
 
-### 4.3 ~~GOALS.md Exit Code Documentation is Wrong~~ (FIXED)
+### 4.3 ~~Goals Exit Code Documentation is Wrong~~ (FIXED)
 
-GOALS.md now documents the correct exit codes:
+[`docs/development/goals.md`](goals.md) now documents the correct exit codes:
 - `compare` command: 0 = compatible/no_change, 2 = source break, 4 = breaking ABI change
 - `compat` command: 0 = compatible/no_change, 1 = breaking, 2 = error
 
-### 4.4 ~~GOALS.md Claims ABICC and libabigail Are Unmaintained~~ (FIXED)
+### 4.4 ~~Goals Claims ABICC and libabigail Are Unmaintained~~ (FIXED)
 
-GOALS.md has been updated. It now correctly states that ABICC is no longer actively
-maintained while libabigail is maintained by Red Hat but focuses on DWARF-only analysis.
+[`docs/development/goals.md`](goals.md) has been updated. It now correctly states that
+ABICC is no longer actively maintained while libabigail is maintained by Red Hat but
+focuses on DWARF-only analysis.
 
 ### 4.5 ~~`pyproject.toml` Description Says "castxml-based"~~ (FIXED)
 
@@ -241,7 +242,7 @@ bring total parity coverage to ~54 test functions.
 7. ~~**Remove unused `_public()` helper**~~ — done
 8. **Unify `RecordType.kind` and `is_union`** to prevent inconsistency — open
 9. ~~**Update `__init__.py` docstring**~~ — done
-10. ~~**Update `GOALS.md` exit codes**~~ — done
+10. ~~**Update `docs/development/goals.md` exit codes**~~ — done
 
 ### P2 -- Test Coverage
 11. Add negative tests (benign changes should not be flagged) — `test_negative.py` added
@@ -251,5 +252,5 @@ bring total parity coverage to ~54 test functions.
 
 ### P3 -- Documentation (mostly resolved)
 15. ~~**Update `gap_report.md` status text**~~ — done
-16. ~~**Fix `GOALS.md` claim about libabigail**~~ — done
+16. ~~**Fix `docs/development/goals.md` claim about libabigail**~~ — done
 17. ~~**Update `pyproject.toml` description**~~ — done

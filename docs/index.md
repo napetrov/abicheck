@@ -1,73 +1,54 @@
 # abicheck
 
-**abicheck** is a command-line tool that detects breaking changes in C/C++ shared libraries before they reach production. It compares two versions of a shared library — along with their public headers — and reports whether existing binaries will continue to work or break at runtime.
+**abicheck** detects breaking changes in C/C++ shared libraries before they reach production. Point it at two builds of a library (plus their headers), and it tells you whether existing binaries will keep working or break at runtime.
 
-Typical problems it catches: removed or renamed symbols, changed function signatures, struct layout drift, vtable reordering, enum value reassignment, and 114 other ABI/API incompatibilities that cause crashes, silent data corruption, or linker failures after a library upgrade.
-
-> **Platforms:** Linux (ELF), Windows (PE/COFF), macOS (Mach-O). Binary metadata and header AST analysis on all platforms; debug info cross-check uses DWARF (Linux, macOS) and PDB (Windows).
+It supports ELF (Linux), PE/COFF (Windows), and Mach-O (macOS) binaries, and it's a drop-in replacement for `abi-compliance-checker`.
 
 ## Why abicheck
 
-- **Three-layer analysis** — ELF symbol table + Clang AST (via castxml) + DWARF cross-check — catches changes that no single layer detects alone
-- **114 detection rules** — covers symbol removal, signature changes, struct/class layout drift, vtable reordering, enum value shifts, qualifier changes, and many more (see [Change Kind Reference](reference/change-kinds.md))
-- **Multiple output formats** — Markdown, JSON, SARIF (GitHub Code Scanning), HTML
-- **Policy profiles** — `strict_abi`, `sdk_vendor`, `plugin_abi`, or custom YAML overrides
-- **ABICC drop-in** — full flag parity for migrating from abi-compliance-checker
-- **CI-ready** — clear exit codes, SARIF upload, snapshot-based baselines
+- **Three-layer analysis** — ELF/PE/Mach-O symbol tables + Clang AST (via castxml) + DWARF/PDB cross-check. Each layer catches things the others miss.
+- **145 detection rules** — symbol removal, signature changes, struct/class layout drift, vtable reordering, enum value shifts, qualifier changes, calling conventions, and many more. See the [Change Kind Reference](reference/change-kinds.md).
+- **Multiple output formats** — Markdown, JSON, SARIF (GitHub Code Scanning), HTML.
+- **Policy profiles** — `strict_abi`, `sdk_vendor`, `plugin_abi`, or custom YAML overrides.
+- **ABICC drop-in** — full flag parity for migrating from `abi-compliance-checker`.
+- **CI-ready** — clear exit codes, SARIF upload, snapshot-based baselines, first-class GitHub Action.
+- **Agent-friendly** — structured JSON, Python API, and an [MCP server](user-guide/mcp-integration.md) for AI-driven workflows.
 
-## Quick start
+## Where to go next
 
-```bash
-# Install
-git clone https://github.com/napetrov/abicheck.git
-cd abicheck && pip install -e .
+**New to abicheck?**
 
-# Compare two library versions
-abicheck compare libfoo.so.1 libfoo.so.2 \
-  --old-header include/v1/foo.h --new-header include/v2/foo.h
-```
+1. [Getting Started](getting-started.md) — install, first check, CI setup.
+2. [Verdicts](concepts/verdicts.md) — what each verdict means and how to react.
+3. [CLI Usage](user-guide/cli-usage.md) — every command, every flag.
 
-## Exit codes (`abicheck compare`)
+**Evaluating or comparing tools?**
 
-| Exit code | Verdict | Meaning |
-|-----------|---------|---------|
-| `0` | `NO_CHANGE` / `COMPATIBLE` | Safe — no breaking changes |
-| `1` | — | Tool/runtime error |
-| `2` | `API_BREAK` | Source-level API break (recompile needed, binary still works) |
-| `4` | `BREAKING` | Binary ABI break (old binaries will crash or misbehave) |
+- [Tool Comparison & Benchmarks](reference/tool-comparison.md) — abicheck vs `abidiff` vs ABICC on a 74-case catalog.
+- [ABI Breaks Explained](concepts/abi-breaks-explained.md) — real-world scenarios with code.
+- [Limitations](concepts/limitations.md) — what abicheck does *not* catch.
 
-> `abicheck compat` uses ABICC-compatible exit codes (1 = BREAKING, 2 = API_BREAK). See [Exit Codes](reference/exit-codes.md) for details.
+**Integrating into a release pipeline?**
 
-## CI integration
+- [GitHub Action](user-guide/github-action.md) — ready-to-paste workflow.
+- [Output Formats](user-guide/output-formats.md) — SARIF, JSON, HTML.
+- [Exit Codes](reference/exit-codes.md) — for gating CI.
+- [Policy Profiles](user-guide/policies.md) and [Suppressions](user-guide/suppressions.md).
 
-Save a baseline at release time, compare every new build:
+**Migrating from another tool?**
 
-```yaml
-- name: Compare ABI
-  run: |
-    abicheck compare abi-baseline.json ./build/libfoo.so \
-      --new-header include/foo.h --format sarif -o abi.sarif
+- [Migrating from ABICC](user-guide/from-abicc.md)
+- [Migrating from libabigail](user-guide/from-libabigail.md)
 
-- uses: github/codeql-action/upload-sarif@v3
-  if: always()
-  with:
-    sarif_file: abi.sarif
-```
+**Contributing or extending abicheck?**
 
-## Next steps
-
-- [Getting Started](getting-started.md) — installation, first check, CI setup
-- [Platform Support](reference/platforms.md) — Linux/macOS/Windows host matrix, cross-platform scanning
-- [Verdicts](concepts/verdicts.md) — what each verdict means and how to handle it
-- [ABI Breaks Explained](concepts/abi-breaks-explained.md) — real-world ABI/API break scenarios with code
-- [Change Kind Reference](reference/change-kinds.md) — full list of 114 detected change types
-- [Policy Profiles](user-guide/policies.md) — built-in and custom policies
-- [Suppressions](user-guide/suppressions.md) — YAML schema, matching semantics, and expiry rules
-- [Debian Symbols](user-guide/cli-usage.md#6-debian-symbols-file-integration) — generate, validate, and diff Debian symbols files for dpkg integration
-- [Migrating from ABICC](user-guide/from-abicc.md) — drop-in replacement and migration from abi-compliance-checker
-- [MCP Integration](user-guide/mcp-integration.md) — use abicheck from AI agents via MCP
-- [Tool Comparison](reference/tool-comparison.md) — abicheck vs abidiff vs ABICC
+- [Codebase Overview](development/codebase-overview.md)
+- [Testing Strategy](development/testing.md)
+- [Architecture Decision Records](development/adr/index.md)
+- [Project Goals & Status](development/goals.md)
 
 ## Status
 
 [![CI](https://github.com/napetrov/abicheck/actions/workflows/ci.yml/badge.svg)](https://github.com/napetrov/abicheck/actions/workflows/ci.yml)
+[![PyPI version](https://img.shields.io/pypi/v/abicheck.svg)](https://pypi.org/project/abicheck/)
+[![conda-forge](https://img.shields.io/conda/vn/conda-forge/abicheck.svg)](https://anaconda.org/conda-forge/abicheck)

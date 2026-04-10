@@ -12,7 +12,7 @@ This analysis cross-references:
 1. Existing ADRs (001–008, later extended to 001–019) and their coverage
 2. Implemented code in `abicheck/` (114 ChangeKinds, policy system, output formats, CLI, etc.)
 3. `pyproject.toml`, CI workflows, GitHub Action, and documentation
-4. `GOALS.md` and `CHANGELOG.md` for stated-but-undocumented decisions
+4. `docs/development/goals.md` and `CHANGELOG.md` for stated-but-undocumented decisions
 
 Each candidate is rated by **urgency**:
 - **HIGH** — Decision is complex, non-obvious, and actively affects contributors/users
