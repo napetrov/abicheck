@@ -1,42 +1,22 @@
 # ABI Scenario Catalog
 
-An **Application Binary Interface (ABI)** defines the low-level contract between
-compiled code: calling conventions, symbol names, type layouts, and vtable structure.
-When a shared library changes its ABI without bumping its SONAME, pre-built consumers
-crash or silently misbehave. Unlike the source-level API, ABI compatibility is
-invisible to the human eye — you need tooling like `abidiff` to catch it.
+This directory contains **74 published cases** (`01–73` + `26b`) demonstrating real-world ABI/API break scenarios. Each case is a minimal, compilable C/C++ example with:
 
-## Why ABI stability matters
+- Paired `v1/` and `v2/` source + headers.
+- A consumer `app.c` / `app.cpp` that demonstrates the actual failure at runtime.
+- A per-case `README.md` explaining what breaks and why.
 
-Downstream binaries link against a specific `.so` version at install time. If the
-library ships a new build that changes a function signature, removes a symbol, or
-alters a struct layout, the binary fails to load or produces wrong results — without
-any source change on the consumer side. Linux distributions, language runtimes, and
-embedded firmware all depend on ABI stability for safe rolling upgrades.
+The catalog drives abicheck's benchmark and serves as an encyclopedia of ABI pitfalls. For conceptual background on what ABI stability means and how to reason about it, see [ABI Breaks Explained](../docs/concepts/abi-breaks-explained.md).
 
-## abidiff exit-code reference (libabigail 2.4.0)
-
-| Exit | Meaning |
-|------|---------|
-| 0 | No ABI change |
-| 4 | ABI change detected (type/layout diff, addition) |
-| 12 | Breaking ABI change (symbol removed) |
-
-> In libabigail 2.4.0, only symbol **removal** triggers exit 12.  
-> Type changes, vtable reorderings, and struct growth return exit 4.  
-> Both should be treated as breaking by release policy.
+> **Authoritative expected verdicts for benchmarking** live in [`ground_truth.json`](ground_truth.json).
+> If a per-case README and `ground_truth.json` disagree, `ground_truth.json` is the source of truth.
 
 ---
 
-## Case Index
+## Verdict distribution
 
-> Authoritative expected verdicts for benchmarking are in [`ground_truth.json`](ground_truth.json).
-> If a per-case README and benchmark expectation differ, treat [`ground_truth.json`](ground_truth.json) as source of truth.
-
-**74 published cases** (01–73 + 26b):
-
-| Verdict | Count | checker_policy.py set | Icon |
-|---------|-------|-----------------------|------|
+| Verdict | Count | `checker_policy.py` set | Icon |
+|---------|-------|-------------------------|------|
 | BREAKING | 53 | `BREAKING_KINDS` | 🔴 |
 | API_BREAK | 2 | `API_BREAK_KINDS` | 🟠 |
 | COMPATIBLE_WITH_RISK | 1 | `RISK_KINDS` | 🟡 |
@@ -44,9 +24,20 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 | COMPATIBLE (quality) | 9 | `QUALITY_KINDS` | 🟡 |
 | NO_CHANGE | 2 | — | ✅ |
 
-> **Verdict source of truth:** [`ground_truth.json`](ground_truth.json), which aligns with
-> the 5-tier classification in [`abicheck/checker_policy.py`](../abicheck/checker_policy.py):
-> `BREAKING_KINDS` → `API_BREAK_KINDS` → `RISK_KINDS` → `QUALITY_KINDS` → `ADDITION_KINDS`.
+> **Verdict source of truth:** [`ground_truth.json`](ground_truth.json), which aligns with the 5-tier classification in [`abicheck/checker_policy.py`](../abicheck/checker_policy.py): `BREAKING_KINDS` → `API_BREAK_KINDS` → `RISK_KINDS` → `QUALITY_KINDS` → `ADDITION_KINDS`.
+
+**Severity labels used in "Real Failure Demo" sections:**
+
+- 🔴 **CRITICAL** — causes crash, wrong output, or silent data corruption
+- 🟡 **INFORMATIONAL** — no immediate breakage; compromises future-proofing
+- 🟡 **BAD PRACTICE** — library works today but mismanages the ABI contract
+- ✅ **BASELINE** — no change; expected passing state
+
+Some policy-escalated source/contract breaks (notably case30, case35) may keep identical runtime output for prebuilt binaries. For those, the demo shows: (1) binary still runs, and (2) recompilation against new headers fails or changes allowed behavior.
+
+---
+
+## Case index
 
 | # | Case | Category | abicheck verdict |
 |---|------|----------|-----------------|
@@ -127,127 +118,42 @@ embedded firmware all depend on ABI stability for safe rolling upgrades.
 
 ---
 
+## Running the catalog
 
-
-## Running Consumer App Demos
-
-Every case directory now includes an `app.c` or `app.cpp` that demonstrates
-the exact failure at runtime. See the **`## Real Failure Demo`** section in each
-case's README for copy-paste build instructions.
-
-**Severity classification used in Real Failure Demo sections:**
-- 🔴 **CRITICAL** — causes crash, wrong output, or silent data corruption
-- 🟡 **INFORMATIONAL** — no immediate breakage; compromises future-proofing
-- 🟡 **BAD PRACTICE** — library works today but mismanages the ABI contract
-- ✅ **BASELINE** — no change; expected passing state
-
-**Important:** some policy-escalated source/contract breaks (notably case30, case35)
-may keep identical runtime output for prebuilt binaries. For those, the demo shows:
-1) binary still runs, and 2) recompilation against new headers fails or changes allowed behavior.
-
----
-
-## Coverage snapshot
-
-- Catalog size: **74 cases** (`01–73` + `26b`).
-- `ground_truth.json` contains expected verdicts for **74/74**.
-- CI job **Validate all examples** validates the whole catalog.
-
-Unified 74-case comparison table (all configurations, accuracy + FP/FN):
-- [`../README.md#validation-snapshot-abicheck`](../README.md#validation-snapshot-abicheck)
-
-Per-case matrix and methodology:
-- [`../docs/reference/tool-comparison.md`](../docs/reference/tool-comparison.md)
-
----
-
-## Quick start
+### Validate all cases against ground truth
 
 ```bash
-# Install tools (Ubuntu/Debian)
-sudo apt-get install gcc g++ binutils abigail-tools abi-compliance-checker
-
-# Run all integration tests
-cd <repo-root>
-source venv/bin/activate
 pytest tests/test_abi_scenarios.py -v
+```
 
-# Manually explore a case
+The CI job **Validate all examples** runs this over the whole catalog on every push.
+
+### Build and explore a single case
+
+```bash
 cd examples/case01_symbol_removal
 gcc -shared -fPIC -g v1.c -o libv1.so
 gcc -shared -fPIC -g v2.c -o libv2.so
-abidw --headers-dir . --out-file v1.xml libv1.so
-abidw --headers-dir . --out-file v2.xml libv2.so
-abidiff v1.xml v2.xml
+
+abicheck compare libv1.so libv2.so --old-header v1.h --new-header v2.h
+# Verdict: BREAKING (symbol 'helper' was removed)
+```
+
+Every case directory includes an `app.c` or `app.cpp` that demonstrates the runtime failure. See the **Real Failure Demo** section in each case's `README.md` for copy-paste build instructions.
+
+### CMake build (all cases)
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
 ```
 
 ---
 
-## Dependency ABI Leaks
+## Related documentation
 
-A **dependency ABI leak** occurs when your public header `#include`s a type from
-a third-party library, and that type's layout changes between versions.
-
-### Why it's insidious
-
-Your library's `.so` file is **byte-for-byte identical**. `nm`, `readelf`, and naive
-`abidiff` see nothing suspicious. But callers compiled against the old headers pass
-structs of the wrong size, causing heap corruption, stack smashes, or wrong results.
-
-### Common culprits
-
-| Library | Exposed types | Risk |
-|---------|--------------|------|
-| TBB | `tbb::task_arena`, `tbb::mutex` | Numeric libraries include these in public headers |
-| Boost | `boost::shared_ptr`, `boost::optional` | Layout differs between Boost versions |
-| protobuf | `google::protobuf::Message` | Proto3/ABI breakage between major versions |
-| libstdc++ | `std::string` (CXX11 ABI) | Changed in GCC 5.x — broke entire ecosystems |
-| BLAS/LAPACK | Complex number types, sparse handles | Version-dependent layout |
-
-### Real-world examples
-
-**Numeric libraries** — Public headers that expose `tbb::task_arena` references are
-vulnerable when TBB changes `task_arena`'s internal layout between versions (e.g.
-TBB 2021.2 → 2021.3). The `.so` files don't change, but consumers break.
-
-**Deep learning frameworks** — Early versions of some DNN libraries exposed internal
-implementation types in semi-public headers, requiring major ABI breaks to clean up.
-
-### Best practices
-
-1. **Pimpl idiom** — hide implementation details behind a pointer to an incomplete type:
-   ```cpp
-   // foo.h
-   class Foo {
-   public:
-       Foo();
-       ~Foo();
-       void run();
-   private:
-       struct Impl;          // forward declaration only
-       Impl* pImpl_;         // no third-party types here
-   };
-   ```
-
-2. **Opaque C handles** — for C APIs, use typedefs to incomplete structs:
-   ```c
-   typedef struct foo_context foo_context_t;  // opaque
-   foo_context_t* foo_create(void);
-   void           foo_destroy(foo_context_t* ctx);
-   ```
-
-3. **Version your dependencies** — if you must expose a type, document the exact
-   version requirement and check it at CMake configure time.
-
-4. **Use abicheck** — run `abicheck dump` with all transitive dependency headers
-   to detect leaks before release.
-
-See [case18_dependency_leak](case18_dependency_leak/README.md) for a runnable example.
-
-
----
-
-## Local Build Comparison & Snapshot Workflow
-
-For comparing locally built libraries against published releases and using
-pre-saved ABI snapshots in CI, see **[docs/local_compare.md](../docs/local_compare.md)**.
+- **Unified 74-case accuracy table** (all configurations, FP/FN): [`../README.md#validation-snapshot`](../README.md#validation-snapshot)
+- **Per-case accuracy matrix and methodology:** [Tool Comparison & Benchmarks](../docs/reference/tool-comparison.md)
+- **What counts as an ABI break (with code):** [ABI Breaks Explained](../docs/concepts/abi-breaks-explained.md)
+- **Dependency ABI leaks** (case 18 background): [`case18_dependency_leak/README.md`](case18_dependency_leak/README.md)
+- **Local build & snapshot workflow:** [Local Compare](../docs/user-guide/local-compare.md)

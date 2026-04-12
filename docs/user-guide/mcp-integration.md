@@ -157,7 +157,7 @@ Extracts the public ABI surface from a shared library and its headers into a JSO
 
 ### `abi_list_changes` — List detectable change kinds
 
-Enumerates all 114 `ChangeKind` values with their impact classification.
+Enumerates all 145 `ChangeKind` values with their impact classification.
 
 **Parameters:**
 
@@ -169,7 +169,7 @@ Enumerates all 114 `ChangeKind` values with their impact classification.
 
 ```json
 {
-  "count": 114,
+  "count": 145,
   "change_kinds": [
     {
       "kind": "func_removed",

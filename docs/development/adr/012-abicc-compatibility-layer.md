@@ -171,4 +171,4 @@ The XML schema maps abicheck `ChangeKind` values to ABICC problem types
 - ADR-009 — Exit code contract (covers both `compare` and `compat` schemes)
 - ADR-011 — ABI change classification taxonomy (all 85+ ChangeKinds used in
   compat reports)
-- Goal 1 in `GOALS.md` — "Drop-In Replacement for ABICC"
+- Goal 1 in `docs/development/goals.md` — "Drop-In Replacement for ABICC"

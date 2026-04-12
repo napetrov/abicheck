@@ -5,7 +5,7 @@ benchmark results across real-world test cases, and why the numbers come out the
 
 > **Note:** abicheck detects 100+ change types (see [Change Kind Reference](change-kinds.md)).
 > The cross-tool benchmark table below uses 42 representative cases (case01-41 + case26b).
-> The full `examples/` directory has 63 cases — abicheck passes all of them.
+> The full `examples/` directory has 74 cases — abicheck matches the expected verdict on 69 of them (93% exact-match accuracy, all 74 cases counted).
 
 ---
 
