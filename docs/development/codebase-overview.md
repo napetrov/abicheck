@@ -173,13 +173,13 @@ The README now consistently uses `abicheck` as the CLI command name.
 
 ### 4.3 ~~Goals Exit Code Documentation is Wrong~~ (FIXED)
 
-[`docs/development/goals.md`](goals.md) now documents the correct exit codes:
+[Goals](goals.md) now documents the correct exit codes:
 - `compare` command: 0 = compatible/no_change, 2 = source break, 4 = breaking ABI change
 - `compat` command: 0 = compatible/no_change, 1 = breaking, 2 = error
 
 ### 4.4 ~~Goals Claims ABICC and libabigail Are Unmaintained~~ (FIXED)
 
-[`docs/development/goals.md`](goals.md) has been updated. It now correctly states that
+[Goals](goals.md) has been updated. It now correctly states that
 ABICC is no longer actively maintained while libabigail is maintained by Red Hat but
 focuses on DWARF-only analysis.
 

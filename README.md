@@ -111,7 +111,7 @@ abicheck compare old.so new.so -H foo.h \
   --suppress suppressions.yaml
 ```
 
-Built-in profiles: `strict_abi` (default), `sdk_vendor`, `plugin_abi`. Custom YAML policies and ABICC-format suppressions are both supported.
+Built-in profiles: `strict_abi` (default), `sdk_vendor`, `plugin_abi`. Custom YAML policies are supported, and the ABICC compat CLI accepts `-symbols-list`/`-types-list` whitelist flags.
 
 Full references:
 - [Policy Profiles](https://napetrov.github.io/abicheck/user-guide/policies/)

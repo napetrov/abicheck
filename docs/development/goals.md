@@ -15,7 +15,7 @@ Support everything ABICC currently does so existing users and pipelines can migr
 - JSON/HTML/Markdown reports with equivalent verdict semantics
 - Support for suppression files
 
-**Done:** 145 ChangeKinds implemented; suppression files fully supported (YAML + ABICC skip/whitelist formats); XML report generation for ABICC-compatible output; ABICC compat CLI with all major flags; auto-forwarding `abicheck compat <flags>` to `compat check`; test parity for ABICC 2.3.
+**Done:** 145 ChangeKinds implemented; YAML suppression files fully supported; ABICC compat CLI supports `-symbols-list` and `-types-list` whitelist flags (plain-text, one name per line); XML report generation for ABICC-compatible output; ABICC compat CLI with all major flags; auto-forwarding `abicheck compat <flags>` to `compat check`; test parity for ABICC 2.3.
 
 ---
 
