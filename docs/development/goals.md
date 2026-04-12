@@ -11,7 +11,7 @@
 Support everything ABICC currently does so existing users and pipelines can migrate without changes:
 
 - Same detection coverage (C/C++ ABI breaks: symbols, types, vtables, enums, layout)
-- CLI interface compatible with ABICC inputs (XML descriptors, headers + libs)
+- CLI compatible with ABICC inputs (XML descriptors, headers + libs)
 - JSON/HTML/Markdown reports with equivalent verdict semantics
 - Support for suppression files
 
@@ -54,7 +54,7 @@ Make the tool convenient for AI agents and automation pipelines:
 - Clear exit codes:
     - `compare` command: 0 = compatible/no_change, 2 = source break, 4 = breaking ABI change
     - `compat` command: 0 = compatible/no_change, 1 = breaking, 2 = error
-- Python API (`from abicheck import compare, dump`) — not just CLI
+- Python API (`from abicheck.service import run_compare`) — not just CLI
 - `--format json/markdown` output modes
 - Snapshot files for offline/async workflows (`abicheck dump` → `.abi.json`)
 
