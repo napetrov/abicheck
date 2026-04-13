@@ -64,7 +64,7 @@ Binary-compatible, but may break at deployment time. Verdict: 🟡 COMPATIBLE_WI
 
 | Change | Risk | Example |
 |--------|------|---------|
-| New GLIBC/GLIBCXX version requirement | Binaries won't load on older distros missing the required symbol version | [case15](https://github.com/napetrov/abicheck/tree/main/examples/case15_noexcept_change) (demonstrates GLIBCXX version bump as side effect) |
+| New GLIBC/GLIBCXX version requirement | Binaries won't load on older distros missing the required symbol version | -- (detected via `SYMBOL_VERSION_REQUIRED_ADDED`) |
 | Leaked dependency symbol changed | Transitive dependency update shifts symbols your consumers never directly linked | -- |
 | `noexcept` removed | C++17 callers compiled with `noexcept` in function type get UB on throw | [case15](https://github.com/napetrov/abicheck/tree/main/examples/case15_noexcept_change) |
 
@@ -121,4 +121,4 @@ Exits non-zero on any 🔴 BREAKING or 🟠 API_BREAK finding. Add `--suppress s
 | 🟢 | COMPATIBLE (addition) | New API surface, fully backward-compatible |
 | ✅ | NO_CHANGE | Identical ABI |
 
-Full verdict semantics: [Verdicts](verdicts.md) | All 74 example cases: [Scenario Catalog](https://github.com/napetrov/abicheck/tree/main/examples)
+Full verdict semantics: [Verdicts](verdicts.md) | All example cases: [Scenario Catalog](https://github.com/napetrov/abicheck/tree/main/examples)
