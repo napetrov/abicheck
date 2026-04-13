@@ -46,6 +46,7 @@ nav:
     - Migrating from ABICC: user-guide/from-abicc.md
     - Migrating from libabigail: user-guide/from-libabigail.md
   - Concepts:
+    - ABI Cheat Sheet: concepts/abi-cheat-sheet.md
     - Verdicts: concepts/verdicts.md
     - Architecture: concepts/architecture.md
     - ABI Breaks Explained: concepts/abi-breaks-explained.md
