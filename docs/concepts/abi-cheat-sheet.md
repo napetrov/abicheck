@@ -42,7 +42,7 @@ These cause crashes, wrong results, or link failures in pre-compiled consumers.
 | Change calling convention | Parameters read from wrong registers; total data corruption | [case64](https://github.com/napetrov/abicheck/tree/main/examples/case64_calling_convention_changed) |
 | Remove symbol version node | Dynamic linker refuses to load; `version 'FOO_1.0' not found` | [case65](https://github.com/napetrov/abicheck/tree/main/examples/case65_symbol_version_removed) |
 
-See the full 53-case breaking catalog in [Breaking Cases Catalog](breaking-cases-catalog.md).
+See the full breaking catalog in [Breaking Cases Catalog](breaking-cases-catalog.md).
 
 ---
 
