@@ -81,10 +81,10 @@ lives in the `DT_SONAME` entry of `.dynamic` and is set via
 `DT_NEEDED`, and at runtime `ld.so` searches for a file (usually an
 `ldconfig`-managed symlink) matching that string.
 
-[Case 05](https://github.com/napetrov/abicheck/tree/main/examples/case05_soname) covers a library built
+[Case 05](https://github.com/napetrov/abicheck/blob/main/examples/case05_soname/README.md) covers a library built
 without `-Wl,-soname` at all: `DT_NEEDED` points at the bare `libfoo.so`,
 which `ldconfig` cannot manage, so shipping `libfoo.so.1` later breaks
-every consumer. [Case 50](https://github.com/napetrov/abicheck/tree/main/examples/case50_soname_inconsistent)
+every consumer. [Case 50](https://github.com/napetrov/abicheck/blob/main/examples/case50_soname_inconsistent/README.md)
 is the subtler bug where a 1.x release is tagged `libfoo.so.0`: packaging
 generates dependencies on the wrong major, and the cutover forces a
 distribution-wide rebuild. Rule: SONAME major equals ABI epoch, and it
@@ -97,13 +97,13 @@ Every `.dynsym` entry has an `st_other` visibility byte: `STV_DEFAULT`
 interposable), or `STV_INTERNAL`. Without `-fvisibility=hidden`, every
 non-`static` function defaults to `STV_DEFAULT`, dragging the entire
 translation unit into the public ABI.
-[Case 06](https://github.com/napetrov/abicheck/tree/main/examples/case06_visibility) is the accidental
+[Case 06](https://github.com/napetrov/abicheck/blob/main/examples/case06_visibility/README.md) is the accidental
 leak: `internal_helper` was never intended as public API, but lacking
 `static` consumers can resolve it — the later "cleanup" that hides it
-breaks them. [Case 53](https://github.com/napetrov/abicheck/tree/main/examples/case53_namespace_pollution)
+breaks them. [Case 53](https://github.com/napetrov/abicheck/blob/main/examples/case53_namespace_pollution/README.md)
 is the related design error: exporting unprefixed names like `init` that
 collide in the process's flat symbol namespace.
-[Case 51](https://github.com/napetrov/abicheck/tree/main/examples/case51_protected_visibility) rounds it
+[Case 51](https://github.com/napetrov/abicheck/blob/main/examples/case51_protected_visibility/README.md) rounds it
 out: `DEFAULT` → `PROTECTED` is ABI-compatible for normal callers but
 silently defeats `LD_PRELOAD` interposition.
 
@@ -113,10 +113,10 @@ A version script (`-Wl,--version-script=libfoo.map`) groups symbols into
 named nodes like `LIBFOO_1.0`, recorded in `.gnu.version_d` and tagged in
 `.gnu.versym`; consumers carry matching `.gnu.version_r` entries. This lets
 one `.so` ship multiple ABI generations side by side.
-[Case 13](https://github.com/napetrov/abicheck/tree/main/examples/case13_symbol_versioning) shows that
+[Case 13](https://github.com/napetrov/abicheck/blob/main/examples/case13_symbol_versioning/README.md) shows that
 *adding* a version script is backward compatible — old binaries have no
 `DT_VERNEED`, so `ld.so` resolves by name.
-[Case 65](https://github.com/napetrov/abicheck/tree/main/examples/case65_symbol_version_removed) is the
+[Case 65](https://github.com/napetrov/abicheck/blob/main/examples/case65_symbol_version_removed/README.md) is the
 opposite: once a node has shipped, removing it deletes every symbol it
 tagged. glibc's `GLIBC_2.0` has been append-only since 1997 — which is
 why a binary built against an old glibc still loads against a current one,
@@ -131,7 +131,7 @@ x86-64 the two you meet are System V AMD64 (Linux/macOS/BSD, args in
 `rdi, rsi, rdx, rcx, r8, r9`) and Microsoft x64 (Windows or via
 `__attribute__((ms_abi))`, args in `rcx, rdx, r8, r9`). On 32-bit x86 the
 zoo is larger: `cdecl`, `stdcall`, `fastcall`, `thiscall`, `vectorcall`.
-[Case 64](https://github.com/napetrov/abicheck/tree/main/examples/case64_calling_convention_changed) shows
+[Case 64](https://github.com/napetrov/abicheck/blob/main/examples/case64_calling_convention_changed/README.md) shows
 the attribute flipping silently: the v1 caller loads pointers into
 `rdi`/`rsi`, the v2 `ms_abi` callee reads `rcx`/`rdx`, and the function
 operates on stale register contents — zero results or a segfault.
@@ -145,18 +145,18 @@ The `PT_GNU_STACK` program header advertises whether the process stack
 must be executable, and the linker unions it across input objects — so a
 single assembly file missing its `.note.GNU-stack` annotation promotes the
 entire `.so` (and every process that loads it) to an executable stack.
-[Case 49](https://github.com/napetrov/abicheck/tree/main/examples/case49_executable_stack) shows
+[Case 49](https://github.com/napetrov/abicheck/blob/main/examples/case49_executable_stack/README.md) shows
 `readelf -l` reporting `RWE` instead of `RW`; rpmlint and Debian lintian
 both reject the package.
 `DT_RPATH`/`DT_RUNPATH` hold extra linker search paths.
-[Case 52](https://github.com/napetrov/abicheck/tree/main/examples/case52_rpath_leak) shows a build system
+[Case 52](https://github.com/napetrov/abicheck/blob/main/examples/case52_rpath_leak/README.md) shows a build system
 baking `/home/build/myproject/lib` into the artifact: it only works on the
 build host, and anyone who can write that path gets a library-injection
 primitive. Use `$ORIGIN`-relative paths or strip `RPATH` entirely.
 
 ### Language Linkage and TLS
 
-[Case 66](https://github.com/napetrov/abicheck/tree/main/examples/case66_language_linkage_changed) covers
+[Case 66](https://github.com/napetrov/abicheck/blob/main/examples/case66_language_linkage_changed/README.md) covers
 `extern "C"` removal during a C++ modernization: source still compiles,
 but the `.dynsym` symbol flips from unmangled `parse_config` to mangled
 `_Z12parse_configPKc`, and every pre-linked consumer fails at load time.
@@ -165,7 +165,7 @@ TLS has four access models: `global-dynamic` (default for `.so`,
 `dlopen`-safe), `local-dynamic`, `initial-exec` (faster but requires
 presence at startup — `dlopen` fails), and `local-exec` (main executable
 only). Libraries intended for `dlopen` must avoid `initial-exec`.
-[Case 67](https://github.com/napetrov/abicheck/tree/main/examples/case67_tls_var_size_changed) adds a
+[Case 67](https://github.com/napetrov/abicheck/blob/main/examples/case67_tls_var_size_changed/README.md) adds a
 second hazard: any exported `__thread` struct whose layout shifts corrupts
 consumers per-thread. Freeze size, layout, and access model of TLS exports
 as first-class ABI.
