@@ -6,7 +6,7 @@ An **API** (Application Programming Interface) is a *source-level* contract: the
 
 The cost of an ABI break compounds with the size of the ecosystem depending on the library. When `libfoo.so.1` breaks ABI without bumping its SONAME, a Linux distribution must rebuild — and re-test, re-sign, and re-ship — every reverse-dependency in the archive; Debian and Fedora each track hundreds of such transitions per release. In embedded and firmware contexts, an ABI break shipped in an OTA update can brick devices in the field when a pre-linked application loads a new system library whose struct offsets have shifted. Plugin ecosystems — audio hosts loading VST modules, game engines loading mods, browsers loading NPAPI/PPAPI components, IDEs loading extensions — fracture entirely when the host's ABI changes: third-party binaries that shipped years earlier fault on first call, and the plugin author may no longer exist to rebuild them.
 
-abicheck classifies every comparison into one of five verdicts — `NO_CHANGE`, `COMPATIBLE`, `COMPATIBLE_WITH_RISK`, `API_BREAK`, and `BREAKING` — mapped to CI exit codes so that release gates can distinguish a harmless symbol addition from a silent memory-corruption hazard. The five tiers and their exit-code semantics are documented in detail in [./verdicts.md](./verdicts.md). This guide catalogs the concrete mechanisms by which ABI breaks occur; for a condensed checklist consult [./abi-cheat-sheet.md](./abi-cheat-sheet.md), and for prescriptive guidance on library design see [./abi-best-practices.md](./abi-best-practices.md).
+abicheck classifies every comparison into one of five verdicts — `NO_CHANGE`, `COMPATIBLE`, `COMPATIBLE_WITH_RISK`, `API_BREAK`, and `BREAKING` — mapped to CI exit codes so that release gates can distinguish a harmless symbol addition from a silent memory-corruption hazard. The five tiers and their exit-code semantics are documented in detail in [./verdicts.md](./verdicts.md). This guide catalogs the concrete mechanisms by which ABI breaks occur; for a condensed checklist consult [./abi-cheat-sheet.md](./abi-cheat-sheet.md).
 
 ## Part 1: Symbol Contract Breaks
 
@@ -42,13 +42,13 @@ When a public header includes a third-party type — `std::string`, `boost::any`
 ABI contract. Upgrade the third-party library and every consumer's compiled
 size, field offsets, and vtable assumptions become wrong, even though the
 wrapper library's own source never changed.
-[Case 18](../../examples/case18_dependency_leak/README.md) demonstrates this
+[Case 18](https://github.com/napetrov/abicheck/tree/main/examples/case18_dependency_leak) demonstrates this
 with a `ThirdPartyHandle` that grows from 4 to 8 bytes: `libfoo`'s exported
 symbols are identical, `nm` and naive `abidiff` see no difference, but a caller
 built against v1 headers allocates a 4-byte struct that the v2 library reads
 8 bytes from. libstdc++'s dual-ABI split (`std::string` after GCC 5) and the
 TBB 2021.3 `task_arena` re-layout both propagated through exactly this
-mechanism, fracturing every consumer that had leaked the type into its public
+mechanism, fracturing every consumer who had leaked the type into its public
 API. abicheck flags this only when DWARF for the third-party type is present
 in the shipped `.so`; stripped distributions hide the hazard entirely, which
 is why the fix is structural — pimpl or opaque handles — not tooling.
@@ -60,7 +60,7 @@ containing type's size and alignment depend entirely on the unnamed member's
 contents, but the anonymous member has no stable name to refer to in a diff,
 and in C++ it changes the mangled layout without touching any source-visible
 identifier.
-[Case 36](../../examples/case36_anon_struct/README.md) shows a
+[Case 36](https://github.com/napetrov/abicheck/tree/main/examples/case36_anon_struct) shows a
 `struct Variant { int tag; union { int i; float f; }; }` where replacing
 `float f` with `double d` inflates the union from 4 to 8 bytes and shifts the
 whole struct's size from 8 to 16, moving `i` from offset 4 to offset 8 due to
@@ -76,7 +76,7 @@ with the exact member offset delta.
 Swapping `struct` for `union`, `enum` for plain `int`, or `class` for `struct`
 at the same name — even when the size happens to match — is always an ABI
 break, because the *semantics* of member storage differ.
-[Case 55](../../examples/case55_type_kind_changed/README.md) changes `Data`
+[Case 55](https://github.com/napetrov/abicheck/tree/main/examples/case55_type_kind_changed) changes `Data`
 from a struct with sequential fields `x, y` (size 8) to a union where `x` and
 `y` overlap at offset 0 (size 4): `sizeof` shrinks, `y`'s offset moves, and
 writing one member now clobbers the other. Even a same-size swap — for
@@ -96,7 +96,7 @@ SONAME, but it only works if *no shipped binary ever touched the reserved
 bytes*. The moment a consumer writes to reserved storage (deliberately, via a
 cast, or accidentally, via `memset(&s, 0xFF, sizeof(s))` followed by
 field-wise init), repurposing those bytes becomes a silent data corruption.
-[Case 54](../../examples/case54_used_reserved_field/README.md) shows the
+[Case 54](https://github.com/napetrov/abicheck/tree/main/examples/case54_used_reserved_field) shows the
 *correct* pattern: v1 ships `__reserved1` and `__reserved2` at defined
 offsets; v2 renames them to `priority` and `max_retries` with the same types
 and offsets, and abicheck's `_diff_reserved_fields` detector recognizes the
@@ -113,7 +113,7 @@ contract.
 Pointer indirection is the single strongest ABI firewall available in C: a
 caller that handles only `T*` is agnostic to `sizeof(T)`, to `T`'s field
 offsets, and to the kind-tag of `T`.
-[Case 48](../../examples/case48_leaf_struct_through_pointer/README.md)
+[Case 48](https://github.com/napetrov/abicheck/tree/main/examples/case48_leaf_struct_through_pointer)
 contrasts this with the failing case — a `Container` that *embeds* `Leaf` by
 value. When `Leaf` grows from 4 to 8 bytes, `Container::flags` shifts from
 offset 8 to offset 16; the public API still takes only `Container*`, but the
