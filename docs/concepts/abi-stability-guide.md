@@ -66,7 +66,7 @@ The System V AMD64 calling convention — and its equivalents on other Itanium-A
 
 [case69](../../examples/case69_trivial_to_nontrivial/README.md) shows `struct Point { double x, y; }` gaining an empty user-defined `~Point() {}`: the layout is unchanged, `sizeof` is unchanged, the mangled symbol is unchanged, and the dynamic linker resolves the call perfectly. But the v1 caller passes `x`, `y` in `%xmm0`, `%xmm1` while the v2 callee reads `%rdi`, `%rsi` as pointers and dereferences them — segfault or silent garbage with no diagnostic from the toolchain.
 
-No header-diff tool that looks only at declarations will catch this; abicheck reports it as `value_abi_trait_changed` by inspecting the DWARF trivially-copyable flag. Any class you expect callers to pass by value across a library boundary must have its trivially-copyable status pinned from version 1 — if cleanup might ever be needed, add an empty `=default` destructor on day one so the ABI is established as non-trivial from the start.
+No header-diff tool that looks only at declarations will catch this; abicheck reports it as `value_abi_trait_changed` by inspecting the DWARF trivially-copyable flag. Any class you expect callers to pass by value across a library boundary must have its trivially-copyable status pinned from version 1. If cleanup might ever be needed, commit from day one to a *user-provided* destructor — either an empty body (`~T() {}`) or an out-of-line defaulted definition (`~T();` in the header, `T::~T() = default;` in the `.cpp`). An in-class `~T() = default;` on the first declaration is user-declared but *not* user-provided, so it does not make the type non-trivial and does not pin the calling convention.
 
 ### 7. Base Class Position and Layout
 
