@@ -91,7 +91,7 @@ Multi-level type changes propagate through indirection. [case45](https://github.
 > - **Pimpl idiom (C++).** The public class holds a single `d_ptr` to a private `Impl`; all state lives in `Impl`. `sizeof` of the public class never changes. Qt enforces this as a binary-compatibility rule across every public class in every release, which is why Qt 5.x maintained ABI for years despite internal refactors.
 > - **Reserved padding fields.** Include `void *reserved[N]` or `uint64_t _pad[N]` at the end of every public struct. Future releases can repurpose slots without changing `sizeof` or shifting offsets. POSIX `pthread_attr_t` and many kernel UAPI structs use this deliberately.
 > - **Freeze the enum underlying type.** In C++ write `enum class Color : int32_t { ... };` explicitly; in C keep all values within `int` range or add an explicit `INT32_MAX`-valued sentinel. Never let a new enumerator silently widen the type (see case57).
-> - **Never reorder, never insert — append only.** Reordering a field, inserting one in the middle, or removing one is always breaking. If a new field is required, append it at the end of the struct, and only when no embedded `sizeof(T)` assumption exists (see case26 vs case26b for the union analogue).
+> - **Never reorder, never insert — append-only.** Reordering a field, inserting one in the middle, or removing one is always breaking. If a new field is required, append it at the end of the struct, and only when no embedded `sizeof(T)` assumption exists (see case26 vs case26b for the union analog).
 
 ## Part 3: C++ ABI Specifics
 
