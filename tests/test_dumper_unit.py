@@ -20,6 +20,7 @@ from abicheck.dumper import (
     _CastxmlParser,
     _parse_vtable_index,
     _pyelftools_exported_symbols,
+    _resolve_debug_metadata,
     _vt_sort_key,
 )
 from abicheck.model import Visibility
@@ -105,6 +106,49 @@ class TestCachePath:
         p = _cache_path("abc123")
         assert p.name == "abc123.xml"
         assert "abi_check" in str(p)
+
+
+# ── _resolve_debug_metadata ─────────────────────────────────────────────
+
+class TestResolveDebugMetadata:
+    def test_forced_btf_uses_btf_parser(self, tmp_path, monkeypatch):
+        from abicheck.btf_metadata import BtfMetadata
+
+        monkeypatch.setattr(
+            "abicheck.btf_metadata.parse_btf_metadata",
+            lambda _path: BtfMetadata(has_btf=True),
+        )
+
+        dwarf_meta, dwarf_adv = _resolve_debug_metadata(tmp_path / "lib.so", "btf")
+
+        assert dwarf_meta.has_dwarf
+        assert dwarf_adv is not None
+
+    def test_forced_ctf_uses_ctf_parser(self, tmp_path, monkeypatch):
+        from abicheck.ctf_metadata import CtfMetadata
+
+        monkeypatch.setattr(
+            "abicheck.ctf_metadata.parse_ctf_metadata",
+            lambda _path: CtfMetadata(has_ctf=True),
+        )
+
+        dwarf_meta, dwarf_adv = _resolve_debug_metadata(tmp_path / "lib.so", "ctf")
+
+        assert dwarf_meta.has_dwarf
+        assert dwarf_adv is not None
+
+    def test_forced_dwarf_uses_dwarf_parser(self, tmp_path, monkeypatch):
+        from abicheck.dwarf_advanced import AdvancedDwarfMetadata
+        from abicheck.dwarf_metadata import DwarfMetadata
+
+        expected = (DwarfMetadata(has_dwarf=True), AdvancedDwarfMetadata())
+        monkeypatch.setattr("abicheck.dwarf_unified.parse_dwarf", lambda _path: expected)
+
+        assert _resolve_debug_metadata(tmp_path / "lib.so", "dwarf") is expected
+
+    def test_invalid_debug_format_raises_value_error(self, tmp_path):
+        with pytest.raises(ValueError, match="Invalid debug_format"):
+            _resolve_debug_metadata(tmp_path / "lib.so", "invalid")
 
 
 # ── _pyelftools_exported_symbols ────────────────────────────────────────

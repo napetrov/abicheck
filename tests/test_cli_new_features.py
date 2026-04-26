@@ -69,6 +69,30 @@ class TestDumpVerbose:
         assert out.exists()
 
 
+# ── debug format on non-ELF binaries ─────────────────────────────────────
+
+class TestDumpDebugFormatValidation:
+    def test_btf_flag_rejected_for_pe_binary(self, tmp_path):
+        dll = tmp_path / "foo.dll"
+        dll.write_bytes(b"MZ" + b"\0" * 62)
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["dump", str(dll), "--btf"])
+
+        assert result.exit_code != 0
+        assert "--btf is only supported for ELF binaries, not PE" in result.output
+
+    def test_ctf_flag_rejected_for_macho_binary(self, tmp_path):
+        dylib = tmp_path / "libfoo.dylib"
+        dylib.write_bytes(b"\xfe\xed\xfa\xcf" + b"\0" * 60)
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["dump", str(dylib), "--ctf"])
+
+        assert result.exit_code != 0
+        assert "--ctf is only supported for ELF binaries, not MACHO" in result.output
+
+
 # ── --lang on compare ────────────────────────────────────────────────────
 
 class TestCompareLang:

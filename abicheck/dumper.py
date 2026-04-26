@@ -1044,8 +1044,9 @@ def dump(
         lang: Force language ("C" or "C++").
         dwarf_only: If True, force DWARF-only mode even when headers
             are available (ADR-003).
-        debug_format: Force debug format: "dwarf", "btf", or "ctf".
+        debug_format: Force debug format for ELF inputs: "dwarf", "btf", or "ctf".
             None = auto-detect (DWARF preferred for userspace, BTF for kernel).
+            Ignored for Mach-O and PE binaries.
 
     Returns:
         AbiSnapshot with functions, variables, and types populated.
@@ -1129,6 +1130,11 @@ def _resolve_debug_metadata(
     if debug_format == "dwarf":
         from .dwarf_unified import parse_dwarf
         return parse_dwarf(so_path)
+
+    if debug_format is not None:
+        raise ValueError(
+            f"Invalid debug_format {debug_format!r}; expected 'dwarf', 'btf', or 'ctf'."
+        )
 
     # Auto-detect: kernel binaries prefer BTF, userspace prefers DWARF
     from .btf_metadata import has_btf_section, parse_btf_metadata
