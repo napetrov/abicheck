@@ -46,9 +46,11 @@ from abicheck.btf_metadata import (
     _extra_data_size,
     _parse_header,
     _parse_types,
+    _read_btf_section,
     _read_string,
     _TypeResolver,
     parse_btf_from_bytes,
+    parse_btf_metadata,
 )
 
 # ---------------------------------------------------------------------------
@@ -371,6 +373,22 @@ class TestTypeResolver:
         assert resolver.name(2) == "int *"
         assert resolver.size(2) == 8
 
+    def test_pointer_size_can_be_32_bit(self) -> None:
+        b = BtfBuilder()
+        int_enc = struct.pack("<I", 32)
+        b.add_type("int", BTF_KIND_INT, 0, 4, extra=int_enc)
+        b.add_type("", BTF_KIND_PTR, 0, 1)
+
+        data = b.build()
+        hdr = _parse_header(data)
+        type_start = hdr.hdr_len + hdr.type_off
+        str_start = hdr.hdr_len + hdr.str_off
+        str_end = str_start + hdr.str_len
+        types = _parse_types(data[type_start:type_start + hdr.type_len])
+        resolver = _TypeResolver(types, data[str_start:str_end], pointer_size=4)
+        assert resolver.name(2) == "int *"
+        assert resolver.size(2) == 4
+
     def test_const_name(self) -> None:
         b = BtfBuilder()
         int_enc = struct.pack("<I", 32)
@@ -420,6 +438,76 @@ class TestToDwarfMetadata:
 # ---------------------------------------------------------------------------
 # Error handling / graceful degradation
 # ---------------------------------------------------------------------------
+
+class TestBtfElfSection:
+    def test_read_btf_section_returns_data_and_pointer_size(self, tmp_path, monkeypatch) -> None:
+        btf_data = b"btf"
+
+        class FakeSection:
+            def data(self) -> bytes:
+                return btf_data
+
+        class FakeElf:
+            elfclass = 32
+
+            def __init__(self, _file) -> None:
+                pass
+
+            def get_section_by_name(self, name: str):
+                assert name == ".BTF"
+                return FakeSection()
+
+        import elftools.elf.elffile
+        monkeypatch.setattr(elftools.elf.elffile, "ELFFile", FakeElf)
+        elf_path = tmp_path / "lib.so"
+        elf_path.write_bytes(b"not really elf")
+
+        assert _read_btf_section(elf_path) == (btf_data, 4)
+
+    def test_read_btf_section_returns_none_when_section_missing(self, tmp_path, monkeypatch) -> None:
+        class FakeElf:
+            elfclass = 64
+
+            def __init__(self, _file) -> None:
+                pass
+
+            def get_section_by_name(self, name: str):
+                assert name == ".BTF"
+                return None
+
+        import elftools.elf.elffile
+        monkeypatch.setattr(elftools.elf.elffile, "ELFFile", FakeElf)
+        elf_path = tmp_path / "lib.so"
+        elf_path.write_bytes(b"not really elf")
+
+        assert _read_btf_section(elf_path) is None
+
+    def test_parse_btf_metadata_returns_empty_when_section_missing(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setattr("abicheck.btf_metadata._read_btf_section", lambda _path: None)
+
+        meta = parse_btf_metadata(tmp_path / "lib.so")
+
+        assert not meta.has_btf
+
+    def test_parse_btf_metadata_passes_pointer_size_from_elf(self, tmp_path, monkeypatch) -> None:
+        b = BtfBuilder()
+        int_enc = struct.pack("<I", 32)
+        b.add_type("int", BTF_KIND_INT, 0, 4, extra=int_enc)
+        b.add_type("", BTF_KIND_PTR, 0, 1)
+        ptr_name = b.add_string("ptr")
+        members = struct.pack("<III", ptr_name, 2, 0)
+        b.add_type("box", BTF_KIND_STRUCT, 1, 4, extra=members)
+
+        monkeypatch.setattr(
+            "abicheck.btf_metadata._read_btf_section",
+            lambda _path: (b.build(), 4),
+        )
+
+        meta = parse_btf_metadata(tmp_path / "lib32.so")
+
+        assert meta.has_btf
+        assert meta.structs["box"].fields[0].byte_size == 4
+
 
 class TestBtfErrorHandling:
     def test_empty_data(self) -> None:
