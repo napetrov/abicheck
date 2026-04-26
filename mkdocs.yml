@@ -51,6 +51,7 @@ nav:
     - Architecture: concepts/architecture.md
     - ABI Breaks Explained: concepts/abi-breaks-explained.md
     - Breaking Cases Catalog: concepts/breaking-cases-catalog.md
+    - ABI Stability Guide: concepts/abi-stability-guide.md
     - Limitations: concepts/limitations.md
   - Reference:
     - Change Kinds: reference/change-kinds.md
