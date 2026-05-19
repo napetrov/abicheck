@@ -115,6 +115,9 @@ Some policy-escalated source/contract breaks (notably case30, case35) may keep i
 | [71](case71_inline_namespace_moved/README.md) | Inline Namespace Moved (v1→v2) | Breaking | BREAKING 🔴 |
 | [72](case72_covariant_return_changed/README.md) | Covariant Return Type Changed (hierarchy insert) | Breaking | BREAKING 🔴 |
 | [73](case73_typedef_underlying_changed/README.md) | Typedef Underlying Type Changed (int→void*) | Breaking | BREAKING 🔴 |
+| [74](case74_detail_base_class_changed/README.md) | Internal `detail::` Base Class Layout Change (oneDAL-style leak) | Breaking | BREAKING 🔴 |
+| [75](case75_detail_embedded_by_value/README.md) | Internal `detail::` Impl Embedded by Value | Breaking | BREAKING 🔴 |
+| [76](case76_detail_pimpl_vtable_changed/README.md) | Internal `detail::` Polymorphic Base Vtable Change | Breaking | BREAKING 🔴 |
 
 ---
 
