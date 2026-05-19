@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🔴 **BREAKING** |
 | **Category** | Breaking |
-| **Platforms** | linux |
+| **Platforms** | Linux |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `func_return_changed` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case10_return_type/) |

@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🔴 **BREAKING** |
 | **Category** | Breaking |
-| **Platforms** | linux, macos, windows |
+| **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `param_pointer_level_changed` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case33_pointer_level/) |

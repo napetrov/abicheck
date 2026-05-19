@@ -5,12 +5,12 @@
 |-------|-------|
 | **Verdict** | 🟠 **API_BREAK** |
 | **Category** | API Break |
-| **Platforms** | linux, macos, windows |
+| **Platforms** | Linux, macOS, Windows |
 | **Flags** | API break |
 | **Detected `ChangeKind`s** | `enum_member_renamed` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case31_enum_rename/) |
 
-**Category:** Enum API | **Verdict:** 🟡 API_BREAK (binary compatible)
+**Category:** Enum API | **Verdict:** 🟠 API_BREAK (binary compatible)
 
 ## What changes
 

@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🔴 **BREAKING** |
 | **Category** | Breaking |
-| **Platforms** | linux, macos, windows |
+| **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | — |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case44_cyclic_type_member_added/) |

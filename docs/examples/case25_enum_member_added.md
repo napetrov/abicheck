@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🟢 **COMPATIBLE** |
 | **Category** | Addition (Compatible) |
-| **Platforms** | linux, macos, windows |
+| **Platforms** | Linux, macOS, Windows |
 | **Flags** | — |
 | **Detected `ChangeKind`s** | `enum_member_added` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case25_enum_member_added/) |

@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🔴 **BREAKING** |
 | **Category** | Breaking |
-| **Platforms** | linux, macos, windows |
+| **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break |
 | **Detected `ChangeKind`s** | — |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case26_union_field_added/) |

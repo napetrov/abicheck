@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🔴 **BREAKING** |
 | **Category** | Breaking |
-| **Platforms** | linux, macos, windows |
+| **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | — |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case43_base_class_member_added/) |
@@ -44,13 +44,7 @@ abicheck detects: `TYPE_SIZE_CHANGED` on `Base`, `TYPE_FIELD_OFFSET_CHANGED` on 
 g++ -shared -fPIC -g v1.cpp -o libv1.so
 g++ -shared -fPIC -g v2.cpp -o libv2.so
 
-# The size shift is immediately visible:
-python3 -c "
-import ctypes, subprocess, tempfile, os, sys
-
-# Quick check via abidw
-"
-
+# The base-class size shift is visible to abidiff:
 abidw --out-file v1.abi libv1.so
 abidw --out-file v2.abi libv2.so
 abidiff v1.abi v2.abi

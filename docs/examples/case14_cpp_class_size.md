@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🔴 **BREAKING** |
 | **Category** | Breaking |
-| **Platforms** | linux |
+| **Platforms** | Linux |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | — |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case14_cpp_class_size/) |

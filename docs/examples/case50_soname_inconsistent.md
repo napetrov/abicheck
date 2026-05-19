@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🟢 **COMPATIBLE** |
 | **Category** | Quality (Compatible) |
-| **Platforms** | linux |
+| **Platforms** | Linux |
 | **Flags** | Bad practice |
 | **Detected `ChangeKind`s** | — |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case50_soname_inconsistent/) |

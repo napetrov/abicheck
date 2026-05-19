@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🟢 **COMPATIBLE** |
 | **Category** | Addition (Compatible) |
-| **Platforms** | linux |
+| **Platforms** | Linux |
 | **Flags** | — |
 | **Detected `ChangeKind`s** | — |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case16_inline_to_non_inline/) |

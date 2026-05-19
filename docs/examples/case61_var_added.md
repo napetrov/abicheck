@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🟢 **COMPATIBLE** |
 | **Category** | Addition (Compatible) |
-| **Platforms** | linux, macos |
+| **Platforms** | Linux, macOS |
 | **Flags** | — |
 | **Detected `ChangeKind`s** | — |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case61_var_added/) |

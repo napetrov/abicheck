@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🟢 **COMPATIBLE** |
 | **Category** | Quality (Compatible) |
-| **Platforms** | linux |
+| **Platforms** | Linux |
 | **Flags** | Bad practice |
 | **Detected `ChangeKind`s** | `soname_missing` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case05_soname/) |

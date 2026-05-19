@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🔴 **BREAKING** |
 | **Category** | Breaking |
-| **Platforms** | linux |
+| **Platforms** | Linux |
 | **Flags** | ABI break |
 | **Detected `ChangeKind`s** | `calling_convention_changed` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case64_calling_convention_changed/) |

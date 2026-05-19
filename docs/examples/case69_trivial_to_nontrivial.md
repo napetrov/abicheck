@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🔴 **BREAKING** |
 | **Category** | Breaking |
-| **Platforms** | linux, macos |
+| **Platforms** | Linux, macOS |
 | **Flags** | ABI break |
 | **Detected `ChangeKind`s** | `value_abi_trait_changed` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case69_trivial_to_nontrivial/) |

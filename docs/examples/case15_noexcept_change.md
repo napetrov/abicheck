@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🟡 **COMPATIBLE_WITH_RISK** |
 | **Category** | Risk |
-| **Platforms** | linux |
+| **Platforms** | Linux |
 | **Flags** | API break |
 | **Detected `ChangeKind`s** | — |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case15_noexcept_change/) |

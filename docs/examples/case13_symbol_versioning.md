@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🟢 **COMPATIBLE** |
 | **Category** | Quality (Compatible) |
-| **Platforms** | linux |
+| **Platforms** | Linux |
 | **Flags** | — |
 | **Detected `ChangeKind`s** | — |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case13_symbol_versioning/) |

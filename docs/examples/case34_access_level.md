@@ -5,12 +5,12 @@
 |-------|-------|
 | **Verdict** | 🟠 **API_BREAK** |
 | **Category** | API Break |
-| **Platforms** | linux, macos |
+| **Platforms** | Linux, macOS |
 | **Flags** | API break |
 | **Detected `ChangeKind`s** | — |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case34_access_level/) |
 
-**Verdict:** 🟡 API_BREAK
+**Verdict:** 🟠 API_BREAK
 **abicheck verdict: API_BREAK** (with headers) / **NO_CHANGE** (ELF-only)
 
 ## What changes

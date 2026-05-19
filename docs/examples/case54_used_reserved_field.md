@@ -5,7 +5,7 @@
 |-------|-------|
 | **Verdict** | 🟢 **COMPATIBLE** |
 | **Category** | Quality (Compatible) |
-| **Platforms** | linux, macos |
+| **Platforms** | Linux, macOS |
 | **Flags** | — |
 | **Detected `ChangeKind`s** | — |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case54_used_reserved_field/) |
