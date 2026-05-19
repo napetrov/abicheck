@@ -24,7 +24,7 @@ consumers' perspective it's a binary ABI break:
 - `sizeof(knn_descriptor)` increased by 4–8 bytes (alignment-dependent).
 - Field offsets of `neighbor_count_` and the vtable pointer (if any) shifted.
 - Stack-allocated `knn_descriptor` instances overflow.
-- Heap-allocated objects from v1-compiled callers underallocate when constructed against v2 headers.
+- Heap-allocated objects from callers compiled against v1 headers can underallocate when run against v2 binaries.
 
 ## Why this case exists
 

@@ -404,18 +404,73 @@ class TestDetectInternalLeaks:
                 RecordType(name="ns::detail::Base", kind="class", size_bits=64),
             ],
         )
+        # NB: TYPE_FIELD_* (from diff_types) and STRUCT_FIELD_* (from
+        # diff_platform) use different symbol conventions. TYPE_FIELD_*
+        # puts the type name in symbol (the field name lives in
+        # `description`). STRUCT_FIELD_* puts "Type::field" in symbol.
         changes = [
             Change(kind=ChangeKind.TYPE_SIZE_CHANGED,
                    symbol="ns::detail::Base", description="size"),
-            # Field-level changes carry "Type::field" symbols.
+            # TYPE_FIELD_ADDED uses symbol=type-name (matches diff_types).
             Change(kind=ChangeKind.TYPE_FIELD_ADDED,
-                   symbol="ns::detail::Base::y", description="field added"),
+                   symbol="ns::detail::Base", description="field added: ns::detail::Base::y"),
+            # STRUCT_FIELD_OFFSET_CHANGED uses symbol="Type::field" (matches diff_platform).
+            Change(kind=ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
+                   symbol="ns::detail::Base::y",
+                   description="offset changed: ns::detail::Base::y"),
         ]
         leaks = detect_internal_leaks(changes, old, new)
         assert len(leaks) == 1
-        # Both source kinds should appear in the description
+        # All three source kinds should appear in the description
         assert "type_size_changed" in leaks[0].description
         assert "type_field_added" in leaks[0].description
+        assert "struct_field_offset_changed" in leaks[0].description
+
+    def test_namespaced_internal_type_with_type_field_change_not_truncated(
+        self,
+    ) -> None:
+        """Regression: a TYPE_FIELD_* change on a namespaced internal type
+        must not be misclassified as "Type::field" and have its last
+        segment stripped.
+
+        ``diff_types`` emits ``TYPE_FIELD_*`` with ``symbol=<type_name>``
+        (field name only in the description). If our root-type helper
+        treats the last segment as a field, ``ns::detail::Impl`` would
+        get truncated to ``ns::detail`` and the reachability lookup
+        would fail.
+        """
+        old = _snap(
+            functions=[_public_fn("make", "Public*", [])],
+            types=[
+                RecordType(name="Public", kind="class", fields=[
+                    TypeField(name="impl_", type="ns::detail::Impl"),
+                ]),
+                RecordType(name="ns::detail::Impl", kind="struct",
+                           fields=[TypeField(name="row", type="int",
+                                             offset_bits=0)]),
+            ],
+        )
+        new = _snap(
+            functions=[_public_fn("make", "Public*", [])],
+            types=[
+                RecordType(name="Public", kind="class", fields=[
+                    TypeField(name="impl_", type="ns::detail::Impl"),
+                ]),
+                RecordType(name="ns::detail::Impl", kind="struct", fields=[
+                    TypeField(name="row", type="int", offset_bits=0),
+                    TypeField(name="col", type="int", offset_bits=32),
+                ]),
+            ],
+        )
+        # Mimic diff_types: TYPE_FIELD_ADDED with symbol = containing type.
+        changes = [Change(
+            kind=ChangeKind.TYPE_FIELD_ADDED,
+            symbol="ns::detail::Impl",
+            description="Field added: ns::detail::Impl::col",
+        )]
+        leaks = detect_internal_leaks(changes, old, new)
+        assert len(leaks) == 1
+        assert leaks[0].symbol == "ns::detail::Impl"
 
     def test_custom_namespace_patterns(self) -> None:
         # Use a project-specific internal namespace name like "priv".

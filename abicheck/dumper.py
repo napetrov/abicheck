@@ -1301,13 +1301,25 @@ def _dump_elf(
         dwarf_only_types = list(snap.types)
 
     if not headers:
-        # No headers, no DWARF → symbol-only fallback (L0 only)
-        warnings.warn(
-            "No headers provided and no DWARF debug info — only ELF-exported "
-            "symbols will be captured; type information will be missing.",
-            UserWarning,
-            stacklevel=2,
-        )
+        # No headers → symbol-only fallback. When the DWARF snapshot
+        # builder produced types but no functions, we still preserve
+        # those types (see *dwarf_only_types*), so the warning is
+        # narrowed to reflect what's actually missing.
+        if dwarf_only_types:
+            warnings.warn(
+                "No headers provided — using ELF-exported symbols for "
+                "functions/variables; DWARF-derived type information "
+                "preserved.",
+                UserWarning,
+                stacklevel=2,
+            )
+        else:
+            warnings.warn(
+                "No headers provided and no DWARF debug info — only ELF-exported "
+                "symbols will be captured; type information will be missing.",
+                UserWarning,
+                stacklevel=2,
+            )
         snapshot = AbiSnapshot(
             library=so_path.name,
             version=version,

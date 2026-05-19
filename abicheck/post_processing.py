@@ -265,7 +265,14 @@ class DetectInternalLeaks:
         seen_symbols = {
             (c.kind, c.symbol) for c in changes
         }
+        # Synthetic leak findings must respect user suppression rules
+        # too. ``ApplySuppression`` ran earlier in the pipeline, so we
+        # apply the same predicate by hand here rather than re-running
+        # the whole step.
         for c in extra:
+            if ctx.suppression is not None and ctx.suppression.is_suppressed(c):
+                ctx.suppressed.append(c)
+                continue
             if (c.kind, c.symbol) not in seen_symbols:
                 changes.append(c)
                 seen_symbols.add((c.kind, c.symbol))

@@ -318,7 +318,7 @@ def compute_leak_paths(
     type_map = _build_type_map(snap)
 
     paths: dict[str, list[list[str]]] = collections.defaultdict(list)
-    visited: set[str] = set()
+    visited: set[tuple[str, str]] = set()
 
     def _record(typename: str, path: list[str]) -> None:
         if is_internal_type(typename, internal_set):
@@ -358,15 +358,20 @@ def compute_leak_paths(
         # DWARF can record base-class names un-qualified; resolve against
         # the type map before we record / enqueue children.
         typename = _resolve_type_name(typename, type_map)
-        # Cycle protection: visit each (typename, path[0]) pair at most once.
-        key = typename
+        # Cycle protection: visit each (entry_point, typename) pair at
+        # most once. We deliberately scope by entry point so that two
+        # public roots reaching the same intermediate type each get
+        # their children walked — otherwise the second root's path is
+        # never extended past the shared intermediate, which would lose
+        # by-value severity information for nested internal types.
+        key: tuple[str, str] = (path[0] if path else "", typename)
         if key in visited:
             # Still record the leak if this typename is internal — paths
             # vary by entry point, but the *first* recorded one is enough
             # for user-facing reporting.
             _record(typename, path + [typename])
             continue
-        visited.add(typename)
+        visited.add(key)
 
         _record(typename, path + [typename])
 
@@ -541,13 +546,23 @@ def detect_internal_leaks(
     return out
 
 
-# Change kinds where the change's ``symbol`` is "TypeName::fieldName".
-# For these, the containing type is the prefix before the last "::".
+# Change kinds whose ``symbol`` carries a ``Type::field`` form (i.e. the
+# field name appended after the containing type). For these, the leading
+# segment is the containing type and the trailing segment must be
+# stripped.
+#
+# NOTE: ``TYPE_FIELD_*`` (emitted by ``diff_types``) and
+# ``STRUCT_FIELD_*`` (emitted by ``diff_platform``) follow *different*
+# symbol conventions:
+#
+#     diff_types:    symbol = "ns::Type"          (field name in description only)
+#     diff_platform: symbol = "ns::Type::field"   (field name appended)
+#
+# Stripping the last segment for ``TYPE_FIELD_*`` would silently truncate
+# legitimate namespaced type names like ``ns::detail::Impl`` into
+# ``ns::detail``, breaking the reachability lookup. So only the
+# ``STRUCT_FIELD_*`` kinds participate in stripping.
 _FIELD_LEVEL_LEAK_KINDS: frozenset[ChangeKind] = frozenset({
-    ChangeKind.TYPE_FIELD_REMOVED,
-    ChangeKind.TYPE_FIELD_ADDED,
-    ChangeKind.TYPE_FIELD_OFFSET_CHANGED,
-    ChangeKind.TYPE_FIELD_TYPE_CHANGED,
     ChangeKind.STRUCT_FIELD_OFFSET_CHANGED,
     ChangeKind.STRUCT_FIELD_REMOVED,
     ChangeKind.STRUCT_FIELD_TYPE_CHANGED,
@@ -557,10 +572,12 @@ _FIELD_LEVEL_LEAK_KINDS: frozenset[ChangeKind] = frozenset({
 def _root_type_name_for_change(c: Change) -> str:
     """Peel any "::field" suffix off *c*'s symbol to get the containing type.
 
-    Only strips the final segment for change kinds known to address a
-    field (``Type::field``). Type-level kinds keep the symbol intact so
-    that a regular qualified type name (``ns::detail::Base``) is not
-    mistakenly truncated to ``ns::detail``.
+    Only strips the final segment for change kinds where the emitter is
+    known to put the field name into the symbol (``STRUCT_FIELD_*`` from
+    ``diff_platform``). Other kinds — including the ``TYPE_FIELD_*``
+    family from ``diff_types`` — carry the containing type name directly
+    in ``symbol`` and must be returned as-is to preserve namespaced
+    internal type names like ``ns::detail::Impl``.
     """
     sym = c.symbol or ""
     if "::" in sym and c.kind in _FIELD_LEVEL_LEAK_KINDS:

@@ -22,7 +22,9 @@ After the existing `struct_field_added` finding on `detail::table_impl`,
 the post-processor adds an `internal_type_leaks_via_public_api`
 finding whose `description` cites the embedding path:
 
-    mylib::table → field:impl_ → mylib::detail::table_impl
+```text
+mylib::table → field:impl_ → mylib::detail::table_impl
+```
 
 and notes the *embedded-by-value* severity hint (layout propagates,
 not just identity).
