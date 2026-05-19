@@ -28,7 +28,7 @@ GEN_SCRIPT = ROOT / "scripts" / "gen_examples_docs.py"
 
 
 def _ground_truth_cases() -> list[str]:
-    data = json.loads(GROUND_TRUTH.read_text())
+    data = json.loads(GROUND_TRUTH.read_text(encoding="utf-8"))
     return sorted(data["verdicts"].keys())
 
 
@@ -51,7 +51,7 @@ def test_ground_truth_matches_example_dirs() -> None:
 def test_case_readme_has_required_structure(case_name: str) -> None:
     readme = EXAMPLES_DIR / case_name / "README.md"
     assert readme.exists(), f"missing README: {readme}"
-    text = readme.read_text()
+    text = readme.read_text(encoding="utf-8")
 
     first_line = text.lstrip().splitlines()[0] if text.strip() else ""
     assert re.match(r"^#\s+\S", first_line), (

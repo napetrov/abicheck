@@ -118,7 +118,7 @@ def _read_case(name: str, meta: dict) -> Case:
     readme = EXAMPLES_DIR / name / "README.md"
     if not readme.exists():
         raise FileNotFoundError(f"missing per-case README: {readme}")
-    text = readme.read_text()
+    text = readme.read_text(encoding="utf-8")
     m = re.match(r"\s*#\s+(.+?)\n", text)
     if not m:
         raise ValueError(f"{readme}: first line must be H1 (# Title)")
@@ -320,7 +320,7 @@ def _render_group_index(
 
 
 def _load_cases() -> list[Case]:
-    data = json.loads(GROUND_TRUTH.read_text())
+    data = json.loads(GROUND_TRUTH.read_text(encoding="utf-8"))
     cases = []
     for name, meta in data["verdicts"].items():
         if meta["expected"] not in VERDICT_META:
@@ -331,6 +331,24 @@ def _load_cases() -> list[Case]:
     return cases
 
 
+def _write(path: Path, content: str) -> None:
+    # Write in binary with LF newlines so the on-disk tree is byte-stable across
+    # platforms — required for the --check drift gate to work on Windows.
+    path.write_bytes(content.encode("utf-8"))
+
+
+def _normalize(data: bytes) -> bytes:
+    # Strip BOM and normalize CRLF/CR → LF so the comparator survives a Windows
+    # checkout where core.autocrlf might have rewritten committed files.
+    if data.startswith(b"\xef\xbb\xbf"):
+        data = data[3:]
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def _files_match(a: Path, b: Path) -> bool:
+    return _normalize(a.read_bytes()) == _normalize(b.read_bytes())
+
+
 def _write_tree(out_dir: Path, cases: list[Case]) -> None:
     if out_dir.exists():
         shutil.rmtree(out_dir)
@@ -338,7 +356,7 @@ def _write_tree(out_dir: Path, cases: list[Case]) -> None:
     (out_dir / "by-verdict").mkdir()
     (out_dir / "by-category").mkdir()
 
-    (out_dir / "index.md").write_text(_render_index(cases))
+    _write(out_dir / "index.md", _render_index(cases))
 
     by_verdict: dict[str, list[Case]] = defaultdict(list)
     by_category: dict[str, list[Case]] = defaultdict(list)
@@ -348,34 +366,37 @@ def _write_tree(out_dir: Path, cases: list[Case]) -> None:
 
     for v in VERDICT_ORDER:
         info = VERDICT_META[v]
-        path = out_dir / "by-verdict" / f"{info['slug']}.md"
-        path.write_text(
+        _write(
+            out_dir / "by-verdict" / f"{info['slug']}.md",
             _render_group_index(
                 title=f"{info['icon']} {info['label']} cases",
                 blurb=info["blurb"],
                 cases=by_verdict.get(v, []),
-            )
+            ),
         )
 
     for cat in CATEGORY_ORDER:
         info = CATEGORY_META[cat]
-        path = out_dir / "by-category" / f"{cat}.md"
-        path.write_text(
+        _write(
+            out_dir / "by-category" / f"{cat}.md",
             _render_group_index(
                 title=f"{info['label']} cases",
                 blurb=info["blurb"],
                 cases=by_category.get(cat, []),
-            )
+            ),
         )
 
     for c in cases:
-        (out_dir / f"{c.name}.md").write_text(_render_case_page(c))
+        _write(out_dir / f"{c.name}.md", _render_case_page(c))
 
 
 def _trees_match(a: Path, b: Path) -> bool:
     cmp = filecmp.dircmp(a, b)
-    if cmp.left_only or cmp.right_only or cmp.diff_files or cmp.funny_files:
+    if cmp.left_only or cmp.right_only or cmp.funny_files:
         return False
+    for f in cmp.common_files:
+        if not _files_match(a / f, b / f):
+            return False
     for sub in cmp.common_dirs:
         if not _trees_match(a / sub, b / sub):
             return False
@@ -388,8 +409,9 @@ def _print_diff(expected: Path, actual: Path) -> None:
         print(f"  missing in {actual}: {cmp.left_only}", file=sys.stderr)
     if cmp.right_only:
         print(f"  stale in {actual}: {cmp.right_only}", file=sys.stderr)
-    if cmp.diff_files:
-        print(f"  changed: {cmp.diff_files}", file=sys.stderr)
+    diffs = [f for f in cmp.common_files if not _files_match(expected / f, actual / f)]
+    if diffs:
+        print(f"  changed: {diffs}", file=sys.stderr)
     for sub in cmp.common_dirs:
         _print_diff(expected / sub, actual / sub)
 
