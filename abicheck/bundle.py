@@ -1007,10 +1007,36 @@ def _entry_targets(entry: ManifestEntry) -> list[tuple[str, str]]:
     return [(t, "template") for t in expanded]
 
 
-def _match_target(
+def _build_demangled_index(snapshot: BundleSnapshot) -> list[tuple[str, str]]:
+    """Return ``[(demangled_name, library_name)]`` for every public export.
+
+    Performed once per :func:`_match_entry` call so manifest checking is
+    O(symbols + targets × index) rather than O(symbols × targets) — for
+    a oneDAL-sized bundle (~50k exported symbols) with a manifest
+    containing hundreds of template instantiations, the naïve
+    re-scan-per-target path would dominate ``compare-release`` runtime
+    now that bundle analysis is default-on.
+
+    Demangling uses :func:`abicheck.demangle.demangle`; when the
+    demangler is unavailable, the mangled name is recorded so
+    ``extern "C"`` symbols still match.
+    """
+    from .demangle import demangle as _demangle
+
+    index: list[tuple[str, str]] = []
+    for lib_name, meta in snapshot.metadata.items():
+        for sym in meta.symbols:
+            if sym.visibility not in ("default", "protected"):
+                continue
+            index.append((_demangle(sym.name) or sym.name, lib_name))
+    return index
+
+
+def _match_target_against_index(
     target: str,
     kind: str,
     snapshot: BundleSnapshot,
+    index: list[tuple[str, str]] | None = None,
 ) -> tuple[list[str], list[ProviderEntry]]:
     """Find every export in *snapshot* that satisfies *target* of *kind*.
 
@@ -1018,34 +1044,37 @@ def _match_target(
     has one :class:`ProviderEntry` per library that exports a matching
     symbol (de-duplicated; one entry per library, not per symbol).
 
-    Demangling uses :func:`abicheck.demangle.demangle`; when the
-    demangler is unavailable, pattern/template matching falls back to
-    the mangled name itself so ``extern "C"`` symbols still work.
+    When *index* is supplied (a pre-built demangled-name → library
+    mapping), the scan operates against the cached list. Callers
+    iterating many targets against the same snapshot should pass a
+    shared index to amortise the demangle pass.
     """
     import fnmatch
-
-    from .demangle import demangle as _demangle
 
     if kind == "symbol":
         providers = snapshot.resolution.providers_for(target)
         return ([target] if providers else []), providers
 
+    if index is None:
+        index = _build_demangled_index(snapshot)
+
     matched: list[str] = []
     provider_set: set[str] = set()
-    for lib_name, meta in snapshot.metadata.items():
-        for sym in meta.symbols:
-            if sym.visibility not in ("default", "protected"):
-                continue
-            demangled = _demangle(sym.name) or sym.name
-            hit = False
-            if kind == "pattern":
-                hit = fnmatch.fnmatchcase(demangled, target)
-            else:  # template
-                hit = target in demangled
-            if hit:
-                matched.append(demangled)
-                provider_set.add(lib_name)
-                break  # one match per library is enough for provider tracking
+    for demangled, lib_name in index:
+        if lib_name in provider_set:
+            # We already recorded this library as a provider — one
+            # match per library is enough; skip the rest of its exports.
+            # (Avoids quadratic work when a library exports thousands
+            # of symbols matching a coarse pattern.)
+            continue
+        hit = False
+        if kind == "pattern":
+            hit = fnmatch.fnmatchcase(demangled, target)
+        else:  # template
+            hit = target in demangled
+        if hit:
+            matched.append(demangled)
+            provider_set.add(lib_name)
     providers = [
         ProviderEntry(library=name, version="")
         for name in sorted(provider_set)
@@ -1053,9 +1082,16 @@ def _match_target(
     return matched, providers
 
 
+# Backward-compatibility alias for the original name — some tests and
+# external integrations imported _match_target directly. The new code
+# path is :func:`_match_target_against_index`.
+_match_target = _match_target_against_index
+
+
 def _match_entry(
     entry: ManifestEntry,
     snapshot: BundleSnapshot,
+    index: list[tuple[str, str]] | None = None,
 ) -> list[tuple[str, str, list[str], list[ProviderEntry]]]:
     """Return per-target match results for *entry*.
 
@@ -1066,10 +1102,21 @@ def _match_entry(
     a partially-satisfied template fires one ``MANIFEST_INSTANTIATION_REMOVED``
     per missing instantiation rather than silently passing because some
     sibling instantiation happened to match.
+
+    When the caller has many manifest entries to evaluate against the
+    same snapshot, build a shared index once via
+    :func:`_build_demangled_index` and pass it in to amortise the
+    O(symbols) demangle pass across all targets.
     """
+    needs_index = any(
+        kind != "symbol"
+        for _, kind in _entry_targets(entry)
+    )
+    if index is None and needs_index:
+        index = _build_demangled_index(snapshot)
     out: list[tuple[str, str, list[str], list[ProviderEntry]]] = []
     for target, kind in _entry_targets(entry):
-        matched, providers = _match_target(target, kind, snapshot)
+        matched, providers = _match_target_against_index(target, kind, snapshot, index)
         out.append((target, kind, matched, providers))
     return out
 
@@ -1083,6 +1130,10 @@ def _detect_manifest_drift(
 
     Decomposes template entries into one virtual target per
     instantiation so each instantiation is checked independently.
+    Per-snapshot demangle indexes are built once and reused across
+    every manifest entry — manifest enforcement scales O(symbols +
+    Σtargets) rather than O(symbols × Σtargets).
+
     For each target:
       - If no exported symbol matches → ``BUNDLE_MANIFEST_INSTANTIATION_REMOVED``.
       - If matched but at the wrong provider (when ``optional_provider=False``)
@@ -1092,8 +1143,13 @@ def _detect_manifest_drift(
     here (out-of-manifest exports are not necessarily promised).
     """
     findings: list[BundleFinding] = []
+    # Build the per-snapshot demangle indexes once; both the
+    # "missing in new" and "newly promised" passes reuse them.
+    new_index = _build_demangled_index(new)
+    old_index = _build_demangled_index(old)
+
     for entry in manifest.entries:
-        for target, kind, matched, providers in _match_entry(entry, new):
+        for target, kind, matched, providers in _match_entry(entry, new, new_index):
             if not matched:
                 findings.append(
                     BundleFinding(
@@ -1108,9 +1164,6 @@ def _detect_manifest_drift(
                 )
                 continue
             if not entry.optional_provider and entry.library is not None:
-                # Match the manifest `library:` field against either the
-                # bundle's canonical library key (e.g. "libcore.so") or
-                # the ELF SONAME of any candidate provider.
                 def _matches(prov: ProviderEntry, _entry: ManifestEntry = entry) -> bool:
                     if prov.library == _entry.library:
                         return True
@@ -1134,8 +1187,8 @@ def _detect_manifest_drift(
 
     # Newly-promised targets — matched in new bundle but not in old.
     for entry in manifest.entries:
-        new_targets = _match_entry(entry, new)
-        old_targets = {t: m for t, _, m, _ in _match_entry(entry, old)}
+        new_targets = _match_entry(entry, new, new_index)
+        old_targets = {t: m for t, _, m, _ in _match_entry(entry, old, old_index)}
         for target, kind, matched_new, _ in new_targets:
             if not matched_new:
                 continue

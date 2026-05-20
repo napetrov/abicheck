@@ -752,10 +752,10 @@ class TestManifestPatternMatching:
             ManifestEntry(
                 template="ns::T",
                 instantiations=(
-                    {"P1": "float",  "P2": "dense"},   # exported
-                    {"P1": "float",  "P2": "sparse"},  # MISSING
-                    {"P1": "double", "P2": "dense"},   # exported
-                    {"P1": "double", "P2": "sparse"},  # MISSING
+                    {"P1": "float", "P2": "dense"},   # exported
+                    {"P1": "float", "P2": "sparse"},  # MISSING
+                    {"P1": "double", "P2": "dense"},  # exported
+                    {"P1": "double", "P2": "sparse"}, # MISSING
                 ),
                 optional_provider=True,
             ),
@@ -772,6 +772,68 @@ class TestManifestPatternMatching:
         assert "ns::T<double, sparse>" in missing_symbols
         # Present instantiations must NOT have generated a finding.
         assert all("ns::T<float, dense>" not in f.symbol for f in removed)
+
+    def test_demangle_invoked_once_per_symbol_across_many_targets(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Performance regression guard: _detect_manifest_drift should
+        # build the demangle index once per snapshot and reuse it
+        # across every target — *not* re-demangle the whole bundle for
+        # each instantiation. The naïve implementation would call
+        # demangle() N_symbols × N_targets times; here we assert it's
+        # exactly N_symbols × 2 snapshots (old + new).
+        from abicheck import bundle as bundle_mod
+
+        call_count = [0]
+        original = bundle_mod.__dict__.get("_build_demangled_index")
+        assert original is not None
+
+        # Wrap demangle to count calls. Monkeypatch the import in
+        # _build_demangled_index by patching the module-level demangle
+        # if it's imported inside the function.
+        import abicheck.demangle as demangle_mod
+        original_demangle = demangle_mod.demangle
+
+        def counting_demangle(name: str) -> str | None:
+            call_count[0] += 1
+            return original_demangle(name)
+
+        monkeypatch.setattr(demangle_mod, "demangle", counting_demangle)
+
+        new = _snapshot({
+            "libcore.so": _meta(
+                soname="libcore.so.1",
+                exports=[
+                    "ns::T<float, dense>_ctor",
+                    "ns::T<float, sparse>_ctor",
+                    "ns::T<double, dense>_ctor",
+                    "ns::T<double, sparse>_ctor",
+                    "unrelated_symbol_1",
+                    "unrelated_symbol_2",
+                ],
+            ),
+        })
+        n_symbols = sum(len(m.symbols) for m in new.metadata.values())
+
+        # Manifest with many targets — naïve scaling would multiply.
+        manifest = InstantiationManifest(entries=(
+            ManifestEntry(
+                template="ns::T",
+                instantiations=tuple(
+                    {"P1": p1, "P2": p2}
+                    for p1 in ("float", "double", "int", "long")
+                    for p2 in ("dense", "sparse", "csr", "csc")
+                ),  # 16 targets
+                optional_provider=True,
+            ),
+        ))
+        compare_bundle(new, new, [], manifest=manifest)
+        # Expected: one full pass per snapshot (old + new), each
+        # producing n_symbols demangle calls. No per-target rescans.
+        assert call_count[0] == 2 * n_symbols, (
+            f"demangle called {call_count[0]} times; expected exactly "
+            f"{2 * n_symbols} (one pass each over old + new snapshot)"
+        )
 
     def test_required_provider_matches_soname(self) -> None:
         # Manifest format documents both filename keys (libcore.so) and
