@@ -24,3 +24,4 @@
 | [020](020-build-context-capture.md) | Build-Context Aware Header Extraction | Proposed |
 | [021](021-debug-artifact-resolution.md) | Debug Artifact Resolution Subsystem | Proposed |
 | [022](022-baseline-registry.md) | Baseline Registry and Snapshot Distribution | Proposed |
+| [023](023-bundle-aware-multi-binary-analysis.md) | Bundle-Aware Multi-Binary ABI Analysis | Proposed |
