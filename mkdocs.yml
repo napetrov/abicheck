@@ -40,6 +40,7 @@ nav:
     - Suppressions: user-guide/suppressions.md
     - Severity Configuration: user-guide/severity.md
     - Output Formats: user-guide/output-formats.md
+    - Multi-Binary Releases: user-guide/multi-binary.md
     - Local Compare: user-guide/local-compare.md
     - MCP Integration: user-guide/mcp-integration.md
     - GitHub Action: user-guide/github-action.md
