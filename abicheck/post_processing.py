@@ -20,6 +20,7 @@ through filtering, deduplication, enrichment, and suppression.
 
 Architecture review: Problem C — explicit pipeline replaces imperative chain.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -50,11 +51,46 @@ class PipelineStep(Protocol):
 
     name: str
 
-    def run(
-        self, changes: list[Change], ctx: PipelineContext
-    ) -> list[Change]:
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
         """Transform the change list, returning the updated list."""
         ...
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _matches_suppression_key(symbol: str, key: str) -> bool:
+    """Return ``True`` iff *symbol* is suppressed by *key*.
+
+    Used by :class:`DetectOneDALPatterns` to match per-symbol
+    ``Change.symbol`` strings against the suppression set built by the
+    grouped SYCL / ISA detectors.
+
+    Match rule:
+
+    * Always honour exact equality.
+    * Allow substring match (``key in symbol``) only when the key is
+      *structured enough* to be unambiguous — contains a namespace
+      separator (``::``), an underscore (``_``), or is at least 12
+      characters long. This guards against false suppressions where a
+      short leaf name like ``compute`` would otherwise hit unrelated
+      symbols (``precompute``, ``Recompute_xyz``).
+
+    The substring fallback exists because ``Change.symbol`` can be a
+    *different* mangled encoding from ``fn.mangled``: on Linux the
+    castxml-derived Itanium mangled name; on Windows the PE export-
+    table name (MSVC mangling). The demangled function name (e.g.
+    ``kmeans_compute_avx512``) is a substring of both encodings.
+    """
+    if not key:
+        return False
+    if symbol == key:
+        return True
+    if len(key) < 12 and "::" not in key and "_" not in key:
+        return False
+    return key in symbol
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +273,131 @@ class EnrichAffectedSymbols:
         return changes
 
 
+class DetectOneDALPatterns:
+    """Run the oneDAL-shaped detectors added in PR #239 (case77–case89).
+
+    Each individual detector lives in :mod:`abicheck.diff_onedal`; this
+    pipeline step wires them together, dedupes findings against the
+    existing change list, and respects user suppression.
+
+    Detectors run:
+
+    * ``detect_serialization_tag_changes``
+    * ``detect_missing_instantiations``
+    * ``detect_sycl_overload_set_removal`` (also suppresses redundant
+      per-symbol ``func_removed`` children)
+    * ``detect_cpu_dispatch_isa_dropped`` (likewise)
+    * ``detect_tag_type_renamed``
+    * ``detect_default_template_arg_changed``
+    * ``detect_inline_body_renamed_member``
+    """
+
+    name = "detect_onedal_patterns"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .checker_policy import ChangeKind
+        from .diff_onedal import (
+            detect_cpu_dispatch_isa_dropped,
+            detect_default_template_arg_changed,
+            detect_inline_body_renamed_member,
+            detect_missing_instantiations,
+            detect_serialization_tag_changes,
+            detect_sycl_overload_set_removal,
+            detect_tag_type_renamed,
+        )
+
+        new_findings: list[Change] = []
+        new_findings.extend(detect_serialization_tag_changes(ctx.old, ctx.new))
+        new_findings.extend(detect_missing_instantiations(ctx.old, ctx.new))
+
+        sycl_findings, sycl_suppressed = detect_sycl_overload_set_removal(
+            ctx.old,
+            ctx.new,
+        )
+        new_findings.extend(sycl_findings)
+
+        isa_findings, isa_suppressed = detect_cpu_dispatch_isa_dropped(
+            ctx.old,
+            ctx.new,
+        )
+        new_findings.extend(isa_findings)
+
+        new_findings.extend(detect_tag_type_renamed(ctx.old, ctx.new))
+        new_findings.extend(
+            detect_default_template_arg_changed(
+                ctx.old,
+                ctx.new,
+            )
+        )
+        new_findings.extend(
+            detect_inline_body_renamed_member(
+                ctx.old,
+                ctx.new,
+                changes,
+            )
+        )
+
+        # Filter out per-symbol ``func_removed`` findings that are
+        # children of the grouped SYCL/ISA detectors.
+        #
+        # Two reasons to use ``ctx.suppressed`` (not ``ctx.redundant``):
+        # (a) ``compare()`` computes verdict on ``kept + redundant`` —
+        #     redundant items still drive the verdict. Putting the
+        #     children there would let per-symbol BREAKING outrank the
+        #     grouped RISK finding. ``ctx.suppressed`` is excluded from
+        #     verdict computation, which is what we want for children
+        #     subsumed by a grouped finding.
+        # (b) ``FilterRedundant`` (earlier in the pipeline) sets
+        #     ``ctx.kept = changes`` — that's a *reference* to this same
+        #     list. If we rebind ``changes`` to a new filtered list,
+        #     ``ctx.kept`` still points at the old one and our
+        #     suppression is silently lost. Mutate in place instead.
+        #
+        # We match the per-symbol ``Change.symbol`` against the
+        # suppression set using BOTH exact equality and a guarded
+        # substring containment. On Linux ``diff_symbols._diff_functions``
+        # emits ``Change.symbol = fn.mangled`` (Itanium mangling); on
+        # Windows ``diff_platform._diff_pe`` emits
+        # ``Change.symbol = e.name`` (PE export-table name = MSVC
+        # mangling), which is a sibling encoding of the same underlying
+        # function but a different string. The demangled function name
+        # (e.g. ``kmeans_compute_avx512``) is a substring of both
+        # mangled forms, so substring containment is the platform-
+        # portable signal — *but* only when the key is structured enough
+        # to be unambiguous. A generic short leaf like ``compute`` would
+        # falsely match unrelated symbols such as ``precompute`` or
+        # ``Recompute_xyz``. The ``_matches_suppression_key`` helper
+        # requires the key to contain a namespace separator, an
+        # underscore, or be at least 12 chars before allowing substring
+        # match. Exact equality is always honoured.
+        suppressed_keys = sycl_suppressed | isa_suppressed
+        if suppressed_keys:
+            to_keep: list[Change] = []
+            for ch in changes:
+                if ch.kind == ChangeKind.FUNC_REMOVED and any(
+                    _matches_suppression_key(ch.symbol, key)
+                    for key in suppressed_keys
+                ):
+                    ctx.suppressed.append(ch)
+                    continue
+                to_keep.append(ch)
+            changes[:] = to_keep
+
+        if not new_findings:
+            return changes
+        seen_keys = {(c.kind, c.symbol) for c in changes}
+        for c in new_findings:
+            if ctx.suppression is not None and ctx.suppression.is_suppressed(c):
+                ctx.suppressed.append(c)
+                continue
+            key = (c.kind, c.symbol)
+            if key in seen_keys:
+                continue
+            changes.append(c)
+            seen_keys.add(key)
+        return changes
+
+
 class DetectInternalLeaks:
     """Detect internal-namespace (``detail::``, ``impl::``, …) types whose
     changes leak through the public ABI surface.
@@ -262,9 +423,7 @@ class DetectInternalLeaks:
         if not extra:
             return changes
         # Avoid duplicates if the pipeline is re-run.
-        seen_symbols = {
-            (c.kind, c.symbol) for c in changes
-        }
+        seen_symbols = {(c.kind, c.symbol) for c in changes}
         # Synthetic leak findings must respect user suppression rules
         # too. ``ApplySuppression`` ran earlier in the pipeline, so we
         # apply the same predicate by hand here rather than re-running
@@ -316,17 +475,20 @@ class PostProcessingPipeline:
 
 
 # Default pipeline matching the current compare() post-processing order.
-DEFAULT_PIPELINE = PostProcessingPipeline([
-    FilterReservedFieldRenames(),
-    FilterOpaqueSizeChanges(),
-    DowngradeOpaqueStructChanges(),
-    DeduplicateAstDwarf(),
-    DeduplicateCrossDetector(),
-    DowngradeOpaqueTypeChanges(),
-    EnrichSourceLocations(),
-    ApplySuppression(),
-    SuppressRenamedPairs(),
-    FilterRedundant(),
-    EnrichAffectedSymbols(),
-    DetectInternalLeaks(),
-])
+DEFAULT_PIPELINE = PostProcessingPipeline(
+    [
+        FilterReservedFieldRenames(),
+        FilterOpaqueSizeChanges(),
+        DowngradeOpaqueStructChanges(),
+        DeduplicateAstDwarf(),
+        DeduplicateCrossDetector(),
+        DowngradeOpaqueTypeChanges(),
+        EnrichSourceLocations(),
+        ApplySuppression(),
+        SuppressRenamedPairs(),
+        FilterRedundant(),
+        EnrichAffectedSymbols(),
+        DetectInternalLeaks(),
+        DetectOneDALPatterns(),
+    ]
+)
