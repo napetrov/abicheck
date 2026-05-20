@@ -525,9 +525,9 @@ def detect_cpu_dispatch_isa_dropped(
         # ``Change.symbol`` are sibling forms of the same underlying name.
         old_index = {f.mangled: f for f in old.functions}
         for _, mangled in overlapping:
-            fn = old_index.get(mangled)
-            if fn is not None and fn.name:
-                suppressed.add(fn.name)
+            removed_fn = old_index.get(mangled)
+            if removed_fn is not None and removed_fn.name:
+                suppressed.add(removed_fn.name)
         stems_sorted = sorted(affected_stems)
         findings.append(
             Change(
