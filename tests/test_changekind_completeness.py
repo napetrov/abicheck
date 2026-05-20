@@ -211,6 +211,9 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.BUNDLE_LIBRARY_REMOVED,
     ChangeKind.BUNDLE_LIBRARY_ADDED,
     ChangeKind.BUNDLE_INTRA_DEP_VERSION_DRIFT,
+    # Explicit specifier transitions — exercised in tests/test_explicit_ctor.py
+    ChangeKind.CTOR_EXPLICIT_ADDED,
+    ChangeKind.CTOR_EXPLICIT_REMOVED,
 }
 
 

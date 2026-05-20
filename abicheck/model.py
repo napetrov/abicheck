@@ -166,6 +166,7 @@ class Function:
     return_pointer_depth: int = 0  # T=0, T*=1, T**=2
     elf_visibility: ElfVisibility | None = None  # ELF st_other (populated from .dynsym)
     ref_qualifier: str = ""       # "" (none), "&" (lvalue), "&&" (rvalue)
+    is_explicit: bool = False     # explicit specifier on constructors / conversion operators (DW_AT_explicit)
 
 
 @dataclass

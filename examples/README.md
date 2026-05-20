@@ -1,6 +1,6 @@
 # ABI Scenario Catalog
 
-This directory contains **87 published cases** (`01–76` + `26b` + `77, 79–84, 86–87, 89`) demonstrating real-world ABI/API break scenarios. Each case is a minimal, compilable C/C++ example with:
+This directory contains **95 published cases** (`01–76` + `26b` + `77, 79–84, 86–87, 89, 90–93, 94, 106–108`) demonstrating real-world ABI/API break scenarios. Each case is a minimal, compilable C/C++ example with:
 
 - Paired `v1/` and `v2/` source + headers.
 - A consumer `app.c` / `app.cpp` that demonstrates the actual failure at runtime.
@@ -17,8 +17,8 @@ The catalog drives abicheck's benchmark and serves as an encyclopedia of ABI pit
 
 | Verdict | Count | `checker_policy.py` set | Icon |
 |---------|-------|-------------------------|------|
-| BREAKING | 65 | `BREAKING_KINDS` | 🔴 |
-| API_BREAK | 2 | `API_BREAK_KINDS` | 🟠 |
+| BREAKING | 68 | `BREAKING_KINDS` | 🔴 |
+| API_BREAK | 3 | `API_BREAK_KINDS` | 🟠 |
 | COMPATIBLE_WITH_RISK | 2 | `RISK_KINDS` | 🟡 |
 | COMPATIBLE (addition) | 7 | `ADDITION_KINDS` | 🟢 |
 | COMPATIBLE (quality) | 9 | `QUALITY_KINDS` | 🟡 |
@@ -128,6 +128,10 @@ Some policy-escalated source/contract breaks (notably case30, case35) may keep i
 | [86](case86_tag_struct_renamed/README.md) | Tag Struct Renamed (empty type re-mangling) | Breaking | BREAKING 🔴 |
 | [87](case87_default_template_arg_changed/README.md) | Default Template Argument Changed | Breaking | BREAKING 🔴 |
 | [89](case89_inline_accessor_renamed_pimpl_member/README.md) | Inline Accessor References Renamed Pimpl Member | Breaking | BREAKING 🔴 |
+| [94](case94_empty_tag_gained_state/README.md) | Empty Tag Gained State (oneTBB partitioner shape) | Breaking | BREAKING 🔴 |
+| [106](case106_ctor_became_explicit/README.md) | Conversion Operator Became `explicit` | API Break | API_BREAK 🟠 |
+| [107](case107_task_scheduler_init_removed/README.md) | `task_scheduler_init` Removed (oneTBB 2021.1) | Breaking | BREAKING 🔴 |
+| [108](case108_task_class_removed/README.md) | `task` Class Removed (oneTBB 2021.1) | Breaking | BREAKING 🔴 |
 
 ---
 

@@ -337,6 +337,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             return_pointer_depth=f.get("return_pointer_depth", 0),
             elf_visibility=ElfVisibility(f["elf_visibility"]) if f.get("elf_visibility") else None,
             ref_qualifier=f.get("ref_qualifier", ""),
+            is_explicit=f.get("is_explicit", False),
         )
         for f in d.get("functions", [])
     ]
