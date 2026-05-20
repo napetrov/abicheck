@@ -1080,3 +1080,49 @@ class TestPipelineIntegration:
         ctx = DEFAULT_PIPELINE.run([], old, new)
         kinds = [c.kind for c in ctx.kept]
         assert ChangeKind.SERIALIZATION_TAG_CHANGED in kinds
+
+
+class TestMatchesSuppressionKey:
+    """CodeRabbit regression: the substring fallback in the
+    ``DetectOneDALPatterns`` suppression step must not over-fire on
+    short generic leaf names.
+    """
+
+    def test_exact_match_always_suppresses(self) -> None:
+        from abicheck.post_processing import _matches_suppression_key
+
+        assert _matches_suppression_key("compute", "compute") is True
+
+    def test_short_leaf_does_not_substring_match(self) -> None:
+        """``compute`` (7 chars, no ``::``/``_``) must NOT suppress
+        unrelated symbols that happen to contain it as a substring.
+        """
+        from abicheck.post_processing import _matches_suppression_key
+
+        # ``compute`` IS a substring of ``Recompute_xyz`` — exactly the
+        # false-positive case CodeRabbit flagged.
+        assert _matches_suppression_key("Recompute_xyz", "compute") is False
+        assert _matches_suppression_key("precompute", "compute") is False
+
+    def test_structured_key_substring_matches(self) -> None:
+        from abicheck.post_processing import _matches_suppression_key
+
+        # Qualified key with ``::`` — safe.
+        assert _matches_suppression_key(
+            "?mylib::compute@xyz", "mylib::compute",
+        ) is True
+        # Key with ``_`` — safe.
+        assert _matches_suppression_key(
+            "?kmeans_compute_avx512@mylib@@YAHH@Z",
+            "kmeans_compute_avx512",
+        ) is True
+        # Key ≥ 12 chars even without delimiters — safe.
+        assert _matches_suppression_key(
+            "long_haystack_with_longidentifier_inside",
+            "longidentifier",
+        ) is True
+
+    def test_empty_key_never_matches(self) -> None:
+        from abicheck.post_processing import _matches_suppression_key
+
+        assert _matches_suppression_key("anything", "") is False
