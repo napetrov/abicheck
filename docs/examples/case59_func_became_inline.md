@@ -7,7 +7,7 @@
 | **Category** | Breaking |
 | **Platforms** | Linux, macOS |
 | **Flags** | ABI break |
-| **Detected `ChangeKind`s** | — |
+| **Detected `ChangeKind`s** | `func_removed` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case59_func_became_inline/) |
 
 **Category:** Symbol API | **Verdict:** BREAKING (API_BREAK)

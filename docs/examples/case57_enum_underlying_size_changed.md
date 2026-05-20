@@ -7,7 +7,7 @@
 | **Category** | Breaking |
 | **Platforms** | Linux, macOS |
 | **Flags** | ABI break, API break |
-| **Detected `ChangeKind`s** | — |
+| **Detected `ChangeKind`s** | `enum_underlying_size_changed` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case57_enum_underlying_size_changed/) |
 
 **Category:** Type Layout | **Verdict:** BREAKING

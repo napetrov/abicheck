@@ -7,7 +7,7 @@
 | **Category** | Breaking |
 | **Platforms** | Linux, macOS |
 | **Flags** | ABI break, API break |
-| **Detected `ChangeKind`s** | — |
+| **Detected `ChangeKind`s** | `struct_packing_changed` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case56_struct_packing_changed/) |
 
 **Category:** Type Layout / DWARF | **Verdict:** BREAKING

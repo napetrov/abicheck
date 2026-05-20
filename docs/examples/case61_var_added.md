@@ -7,7 +7,7 @@
 | **Category** | Addition (Compatible) |
 | **Platforms** | Linux, macOS |
 | **Flags** | — |
-| **Detected `ChangeKind`s** | — |
+| **Detected `ChangeKind`s** | `var_added` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case61_var_added/) |
 
 **Category:** Symbol API | **Verdict:** COMPATIBLE

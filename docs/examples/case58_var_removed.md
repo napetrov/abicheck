@@ -7,7 +7,7 @@
 | **Category** | Breaking |
 | **Platforms** | Linux, macOS |
 | **Flags** | ABI break, API break |
-| **Detected `ChangeKind`s** | — |
+| **Detected `ChangeKind`s** | `var_removed` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case58_var_removed/) |
 
 **Category:** Symbol API | **Verdict:** BREAKING

@@ -7,7 +7,7 @@
 | **Category** | Breaking |
 | **Platforms** | Linux |
 | **Flags** | ABI break, API break, Bad practice |
-| **Detected `ChangeKind`s** | — |
+| **Detected `ChangeKind`s** | `func_removed`, `func_added` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case53_namespace_pollution/) |
 
 **Category:** API Design / Policy | **Verdict:** BREAKING (bad practice)

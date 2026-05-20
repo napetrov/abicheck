@@ -7,7 +7,7 @@
 | **Category** | Addition (Compatible) |
 | **Platforms** | Linux, macOS |
 | **Flags** | — |
-| **Detected `ChangeKind`s** | — |
+| **Detected `ChangeKind`s** | `func_added` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case62_type_field_added_compatible/) |
 
 **Category:** Type Layout | **Verdict:** COMPATIBLE
