@@ -50,10 +50,22 @@ class Change:
 
 @dataclass
 class LibraryMetadata:
-    """File-level metadata for a library artifact (path, hash, size)."""
+    """File-level metadata for a library artifact (path, hash, size).
+
+    The optional ``tbb_interface_version`` field captures
+    ``TBB_INTERFACE_VERSION`` from oneTBB's ``oneapi/tbb/version.h`` when
+    a TBB-shaped header set is supplied to the dumper. It is reported as
+    a first-class signal in ``appcompat`` so users can spot
+    forward-compatibility violations (binary's
+    ``TBB_runtime_interface_version()`` < headers' compile-time
+    ``TBB_INTERFACE_VERSION``) without having to read the symbol table.
+    None when the dumper did not see a TBB version header.
+    """
+
     path: str                     # file path as given on the CLI
     sha256: str                   # hex digest
     size_bytes: int               # file size in bytes
+    tbb_interface_version: int | None = None
 
 
 @dataclass
