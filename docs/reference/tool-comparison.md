@@ -383,4 +383,4 @@ python3 scripts/benchmark_comparison.py --tools abicheck abidiff
 | Migrating from ABICC XML pipeline | `abicheck compat check` |
 | Strict gate (any addition = fail) | `abicheck compat check -s` |
 | Debug build available, DWARF check | `abicheck compare` (castxml already better) |
-| Quick ELF-only sanity check | `abidiff` (fast, 26% but catches symbol removals) |
+| Quick ELF-only sanity check | `abidiff` (fast, 30% (22/73) but catches symbol removals) |
