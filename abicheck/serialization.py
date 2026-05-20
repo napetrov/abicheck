@@ -18,7 +18,10 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .build_mode import BuildMode
 
 from .model import (
     AbiSnapshot,
@@ -42,7 +45,8 @@ from .model import (
 # v2: schema_version field added (PR #89)
 # v3: pe/macho metadata fields added (multi-format support)
 # v4: provenance metadata (git_commit, git_tag, created_at, build_id)
-SCHEMA_VERSION: int = 4
+# v5: build_mode capture (compiler/stdlib/std normalization)
+SCHEMA_VERSION: int = 5
 
 
 def _sets_to_lists(obj: Any) -> Any:
@@ -95,6 +99,16 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     # Convert all sets → sorted lists (needed for AdvancedDwarfMetadata.packed_structs
     # and ToolchainInfo.abi_flags; json.dumps raises TypeError on set objects)
     converted: dict[str, Any] = _sets_to_lists(d)
+
+    # BuildMode enums are (str, Enum), so dataclasses.asdict() carries
+    # them through as Enum instances rather than plain strings; normalize
+    # the build_mode subtree to bare strings for JSON serialization.
+    bm = converted.get("build_mode")
+    if isinstance(bm, dict):
+        for k in ("compiler_family", "language_std", "stdlib", "glibcxx_dual_abi"):
+            v = bm.get(k)
+            if v is not None and not isinstance(v, str):
+                bm[k] = v.value if hasattr(v, "value") else str(v)
 
     # Embed schema version for forward-compatibility.
     # Placed at top level so loaders can inspect it without parsing the full snapshot.
@@ -417,6 +431,10 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         else None
     )
 
+    # Rehydrate BuildMode (schema v5). Missing key = older snapshot →
+    # leave as None so build-mode-aware detectors fall back to "unknown".
+    build_mode = _build_mode_from_dict(d.get("build_mode"))
+
     return AbiSnapshot(
         library=d["library"], version=d["version"],
         source_path=d.get("source_path"),
@@ -434,6 +452,55 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         git_tag=d.get("git_tag"),
         created_at=d.get("created_at"),
         build_id=d.get("build_id"),
+        # Build-mode capture (v5)
+        build_mode=build_mode,
+    )
+
+
+def _build_mode_from_dict(raw: Any) -> BuildMode | None:
+    """Convert a serialized BuildMode dict (or None) back into the
+    typed dataclass. Returns None when the field is missing (older
+    snapshots) or malformed."""
+    if not isinstance(raw, dict):
+        return None
+    from .build_mode import (
+        BuildMode,
+        BuildModeProvenance,
+        CompilerFamily,
+        CxxStandard,
+        GlibcxxDualAbi,
+        StdlibFamily,
+    )
+
+    def _enum_or(cls: type, value: Any, default: Any) -> Any:
+        if value is None:
+            return default
+        try:
+            return cls(value)
+        except (ValueError, KeyError):
+            return default
+
+    prov_raw = raw.get("provenance") or {}
+    provenance = BuildModeProvenance(
+        raw_producer=prov_raw.get("raw_producer"),
+        raw_comment=prov_raw.get("raw_comment"),
+        compiler_version=prov_raw.get("compiler_version"),
+    )
+    return BuildMode(
+        compiler_family=_enum_or(
+            CompilerFamily, raw.get("compiler_family"), CompilerFamily.UNKNOWN,
+        ),
+        language_std=_enum_or(
+            CxxStandard, raw.get("language_std"), CxxStandard.UNKNOWN,
+        ),
+        stdlib=_enum_or(StdlibFamily, raw.get("stdlib"), StdlibFamily.UNKNOWN),
+        glibcxx_dual_abi=_enum_or(
+            GlibcxxDualAbi,
+            raw.get("glibcxx_dual_abi"),
+            GlibcxxDualAbi.NOT_APPLICABLE,
+        ),
+        libcpp_abi_version=raw.get("libcpp_abi_version"),
+        provenance=provenance,
     )
 
 

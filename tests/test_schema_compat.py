@@ -28,6 +28,7 @@ SCHEMA_VERSIONS = [
     pytest.param("v2.json", id="v2"),
     pytest.param("v3.json", id="v3"),
     pytest.param("v4.json", id="v4-provenance"),
+    pytest.param("v5.json", id="v5-build-mode"),
 ]
 
 
@@ -110,6 +111,20 @@ class TestCrossVersionCompare:
         result = compare(snap_v3, snap_v4)
         assert result.verdict == Verdict.NO_CHANGE
 
+    def test_v4_vs_v5_no_change(self):
+        """v5 adds build_mode metadata but the ABI surface is identical."""
+        snap_v4 = snapshot_from_dict(_load_fixture("v4.json"))
+        snap_v5 = snapshot_from_dict(_load_fixture("v5.json"))
+        result = compare(snap_v4, snap_v5)
+        assert result.verdict == Verdict.NO_CHANGE
+
+    def test_v1_vs_v5_no_change(self):
+        """Cross-jump: v1 ↔ v5 must still compare equal on identical ABI."""
+        snap_v1 = snapshot_from_dict(_load_fixture("v1.json"))
+        snap_v5 = snapshot_from_dict(_load_fixture("v5.json"))
+        result = compare(snap_v1, snap_v5)
+        assert result.verdict == Verdict.NO_CHANGE
+
 
 # ---------------------------------------------------------------------------
 # 3d. Reserialization stability tests
@@ -145,6 +160,41 @@ class TestReserialization:
         reserialized = snapshot_to_dict(snap)
         assert reserialized["git_commit"] == "abc1234"
         assert reserialized["git_tag"] == "v1.0.0"
+
+    def test_v5_build_mode_preserved(self):
+        """v5 build_mode field survives roundtrip with enums rehydrated."""
+        from abicheck.build_mode import (
+            BuildMode,
+            CompilerFamily,
+            CxxStandard,
+            GlibcxxDualAbi,
+            StdlibFamily,
+        )
+
+        d = _load_fixture("v5.json")
+        snap = snapshot_from_dict(d)
+        assert isinstance(snap.build_mode, BuildMode)
+        assert snap.build_mode.compiler_family == CompilerFamily.GCC
+        assert snap.build_mode.language_std == CxxStandard.CXX17
+        assert snap.build_mode.stdlib == StdlibFamily.LIBSTDCXX
+        assert snap.build_mode.glibcxx_dual_abi == GlibcxxDualAbi.CXX11
+        assert snap.build_mode.provenance.compiler_version == "11.4.0"
+
+        # Round-trip: serialize → reload → equal.
+        reserialized = snapshot_to_dict(snap)
+        bm = reserialized["build_mode"]
+        assert bm["compiler_family"] == "gcc"
+        assert bm["language_std"] == "c++17"
+        snap2 = snapshot_from_dict(reserialized)
+        assert snap2.build_mode == snap.build_mode
+
+    def test_v4_loads_with_build_mode_none(self):
+        """Older v4 snapshots that lack build_mode load as None — the
+        loader must not assume the field is present. This is the
+        backward-compat guarantee for the schema-v5 bump."""
+        d = _load_fixture("v4.json")
+        snap = snapshot_from_dict(d)
+        assert snap.build_mode is None
 
     def test_future_version_warning(self):
         """Loading a snapshot with schema_version > current emits a warning."""

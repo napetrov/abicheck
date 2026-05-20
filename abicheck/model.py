@@ -22,6 +22,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .build_mode import BuildMode
     from .dwarf_advanced import AdvancedDwarfMetadata
     from .dwarf_metadata import DwarfMetadata
     from .elf_metadata import ElfMetadata
@@ -282,6 +283,13 @@ class AbiSnapshot:
     git_tag: str | None = None      # e.g. "v2.0.0", set via --git-tag or auto-detected
     created_at: str | None = None   # ISO 8601 timestamp, auto-set at dump time
     build_id: str | None = None     # opaque CI identifier (run ID, build number, etc.)
+    # Build-mode capture (schema v5) — normalized compiler / stdlib / std
+    # mode derived from DWARF DW_AT_producer, ELF .comment, and mangled
+    # symbol heuristics. Used to attribute layout/mangling differences
+    # to build configuration rather than real ABI breaks. See
+    # ``abicheck/build_mode.py`` for the dataclass and detector logic.
+    # None when capture is unavailable or the dumper predates v5.
+    build_mode: BuildMode | None = None
     # Optional on-disk artifact path that produced this snapshot.
     # Keyword-only (placed after all other fields) to prevent accidental positional binding.
     # Used by binary-only fallback detectors that need lightweight disassembly.
