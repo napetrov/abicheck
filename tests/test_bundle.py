@@ -782,11 +782,7 @@ class TestManifestPatternMatching:
         # each instantiation. The naïve implementation would call
         # demangle() N_symbols × N_targets times; here we assert it's
         # exactly N_symbols × 2 snapshots (old + new).
-        from abicheck import bundle as bundle_mod
-
         call_count = [0]
-        original = bundle_mod.__dict__.get("_build_demangled_index")
-        assert original is not None
 
         # Wrap demangle to count calls. Monkeypatch the import in
         # _build_demangled_index by patching the module-level demangle
