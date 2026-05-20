@@ -96,9 +96,15 @@ _TAG_SUFFIX_PATTERNS: tuple[str, ...] = (
 
 # Standalone leaf names that should also count as serialization tags
 # even without a prefix (e.g. ``ns::detail::tag_id``).
+#
+# NB: ``"tag"`` alone is *too* broad — many libraries have generic
+# enums called ``Tag`` that are not serialization tags. We require a
+# more specific pattern: ``tag_id`` / ``tagid`` / ``serializationtag``
+# (and the suffix patterns above cover ``*_serialization_tag``,
+# ``*_tag_id``, ``*_tag`` for *constant/variable* names whose suffix
+# carries the intent).
 _TAG_EXACT_LEAVES: frozenset[str] = frozenset(
     {
-        "tag",
         "tag_id",
         "tagid",
         "serializationtag",
@@ -118,9 +124,16 @@ def _looks_like_serialization_tag(name: str) -> bool:
 def _collect_tag_constants(snap: AbiSnapshot) -> dict[str, str]:
     """Return ``{constant_name: stringified_value}`` for tag-shaped constants.
 
-    Looks at both ``snap.constants`` (``constexpr``/``#define``) and
-    ``snap.variables`` (``Variable.value`` populated by DWARF for
-    constant-initialised globals).
+    Three data sources, in order of reliability:
+
+    1. ``snap.constants`` — ``constexpr`` / ``#define`` values (when the
+       header-side dumper captures them).
+    2. ``snap.variables`` — global ``const`` variables (``Variable.value``
+       populated from DWARF where available).
+    3. ``snap.enums`` — ``enum class SerializationTag``-style enums whose
+       *type* name or *member* names match the tag-naming conventions.
+       This is the most portable source because DWARF always captures
+       ``DW_AT_const_value`` for enumerators.
     """
     out: dict[str, str] = {}
     for name, value in (snap.constants or {}).items():
@@ -129,6 +142,19 @@ def _collect_tag_constants(snap: AbiSnapshot) -> dict[str, str]:
     for var in snap.variables:
         if _looks_like_serialization_tag(var.name) and var.value is not None:
             out[var.name] = str(var.value)
+    for enum_t in snap.enums or []:
+        enum_leaf = _last_segment(enum_t.name).lower()
+        # An enum is tag-shaped when its TYPE name matches the tag pattern
+        # OR when any of its MEMBER names match (covers both
+        # ``enum SerializationTag { kmeans, ... }`` and
+        # ``enum Foo { kmeans_tag = 1, ... }``).
+        type_is_tag = enum_leaf in _TAG_EXACT_LEAVES or any(
+            enum_leaf.endswith(p) for p in _TAG_SUFFIX_PATTERNS
+        )
+        for m in enum_t.members:
+            full = f"{enum_t.name}::{m.name}"
+            if type_is_tag or _looks_like_serialization_tag(m.name):
+                out[full] = str(m.value)
     return out
 
 
@@ -193,6 +219,32 @@ def _looks_like_template_instantiation(name: str) -> bool:
     return bool(name) and bool(_TEMPLATE_ARGS_RE.search(name))
 
 
+def _callable_stem(name: str) -> str:
+    """Return *name* with all top-level template-argument groups stripped.
+
+    Examples
+    --------
+    >>> _callable_stem("ns::descriptor<float>::train")
+    'ns::descriptor::train'
+    >>> _callable_stem("ns::function<int, char>")
+    'ns::function'
+    >>> _callable_stem("Outer<X<int>>::Inner<Y>::run")
+    'Outer::Inner::run'
+    """
+    depth = 0
+    out: list[str] = []
+    for ch in name:
+        if ch == "<":
+            depth += 1
+            continue
+        if ch == ">":
+            depth -= 1
+            continue
+        if depth == 0:
+            out.append(ch)
+    return "".join(out)
+
+
 def detect_missing_instantiations(
     old: AbiSnapshot,
     new: AbiSnapshot,
@@ -205,20 +257,21 @@ def detect_missing_instantiations(
     new.index()
     new_mangled = {f.mangled for f in new.functions}
     findings: list[Change] = []
-    # Pre-compute the set of demangled names (without template args) that
-    # are still present in the new snapshot, so we can tell apart
-    # "whole template removed" from "one instantiation removed".
+    # Pre-compute the set of (callable_stem, args_excluding_ours) keys still
+    # present in the new snapshot. ``callable_stem`` is the full qualified
+    # identifier minus template args — comparing on this means we only flag
+    # a removal when a *sibling instantiation* of the SAME callable survives,
+    # not when an unrelated member of the same class survives.
     surviving_stems: set[str] = set()
     for fn in new.functions:
         if _looks_like_template_instantiation(fn.name):
-            stem = fn.name.split("<", 1)[0]
-            surviving_stems.add(stem)
+            surviving_stems.add(_callable_stem(fn.name))
     for fn in old.functions:
         if fn.mangled in new_mangled:
             continue
         if not _looks_like_template_instantiation(fn.name):
             continue
-        stem = fn.name.split("<", 1)[0]
+        stem = _callable_stem(fn.name)
         if stem not in surviving_stems:
             # The whole template family went away — this is a plain
             # API removal and is reported as ``func_removed`` already.
@@ -229,11 +282,11 @@ def detect_missing_instantiations(
                 symbol=fn.mangled,
                 description=(
                     f"Template instantiation '{fn.name}' was exported by the "
-                    f"old library but is missing from the new binary. The "
-                    f"enclosing template '{stem}' still exists, so the public "
-                    f"header very likely still advertises this instantiation. "
-                    f"Consumers built against the old header link cleanly but "
-                    f"fail at load time with an undefined-symbol error."
+                    f"old library but is missing from the new binary. Other "
+                    f"instantiations of '{stem}' still exist, so the public "
+                    f"header very likely still advertises this one. Consumers "
+                    f"built against the old header link cleanly but fail at "
+                    f"load time with an undefined-symbol error."
                 ),
                 old_value=fn.mangled,
                 new_value=None,
@@ -445,12 +498,16 @@ def detect_cpu_dispatch_isa_dropped(
     for token, removed in removed_by_isa.items():
         if len(removed) < min_removed:
             continue
-        affected_stems = {stem for stem, _ in removed}
-        # Require some overlap with surviving stems so we know the
-        # algorithms still exist under another ISA.
-        if not affected_stems & all_surviving_stems:
+        # Only group symbols whose algorithm stem still survives under some
+        # other ISA. Fully-removed algorithms keep their per-symbol
+        # ``func_removed`` finding so the user sees the real deletion.
+        overlapping = [
+            (stem, mangled) for stem, mangled in removed if stem in all_surviving_stems
+        ]
+        if len(overlapping) < min_removed:
             continue
-        affected_mangled = [m for _, m in removed]
+        affected_stems = {stem for stem, _ in overlapping}
+        affected_mangled = [m for _, m in overlapping]
         suppressed.update(affected_mangled)
         stems_sorted = sorted(affected_stems)
         findings.append(
@@ -619,17 +676,22 @@ def detect_default_template_arg_changed(
     new.index()
     new_mangled = {f.mangled for f in new.functions}
     removed = [f for f in old.functions if f.mangled not in new_mangled]
-    added_by_unq: dict[str, list[Function]] = defaultdict(list)
+    # Key by *qualified* callable stem (full namespace path with all
+    # template args stripped). This prevents matching ``ns1::foo::compute``
+    # against ``ns2::bar::compute`` and other namespace-confusion false
+    # positives — only different instantiations of the SAME callable get
+    # paired.
+    added_by_entity: dict[str, list[Function]] = defaultdict(list)
     for fn in new.functions:
-        added_by_unq[_unqualified_function_name(fn.name)].append(fn)
+        added_by_entity[_callable_stem(fn.name)].append(fn)
     findings: list[Change] = []
     seen_pairs: set[tuple[str, str]] = set()
     for fn in removed:
         old_args = _extract_template_args(fn.name)
         if old_args is None:
             continue
-        unq = _unqualified_function_name(fn.name)
-        for cand in added_by_unq.get(unq, []):
+        entity = _callable_stem(fn.name)
+        for cand in added_by_entity.get(entity, []):
             new_args = _extract_template_args(cand.name)
             if new_args is None or new_args == old_args:
                 continue

@@ -50,7 +50,7 @@ appearance. A new `TAG_TYPE_RENAMED` makes the correlation explicit.
 
 ## How abicheck detects it
 
-The new detector (`abicheck/diff_tag_renames.py`) runs after the
+The new detector (`abicheck/diff_onedal.py::detect_tag_type_renamed`) runs after the
 type-diff pass:
 
 1. Find every `TYPE_REMOVED` for a record type with zero fields and no

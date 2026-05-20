@@ -208,6 +208,38 @@ class TestSerializationTagDetector:
         new = _snap("lib", constants={"max_threads": "32"})
         assert detect_serialization_tag_changes(old, new) == []
 
+    def test_picks_up_enum_class_tag_values(self) -> None:
+        """Enum-class-based tag IDs (the case81 fixture pattern) are
+        the most portable data source — DWARF always captures
+        ``DW_AT_const_value`` for enumerators.
+        """
+        from abicheck.model import EnumMember, EnumType
+
+        old_enum = EnumType(
+            name="mylib::SerializationTag",
+            underlying_type="uint64_t",
+            members=[
+                EnumMember(name="kmeans_model", value=0x1001),
+                EnumMember(name="knn_model", value=0x1002),
+                EnumMember(name="linear_regression", value=0x1003),
+            ],
+        )
+        new_enum = EnumType(
+            name="mylib::SerializationTag",
+            underlying_type="uint64_t",
+            members=[
+                EnumMember(name="kmeans_model", value=0x1001),
+                EnumMember(name="knn_model", value=0x1003),  # swapped
+                EnumMember(name="linear_regression", value=0x1002),  # swapped
+            ],
+        )
+        old = AbiSnapshot(library="lib", version="1.0", enums=[old_enum])
+        new = AbiSnapshot(library="lib", version="2.0", enums=[new_enum])
+        findings = detect_serialization_tag_changes(old, new)
+        # One finding per shifted member (kmeans_model is unchanged).
+        kinds = [f.kind for f in findings]
+        assert kinds.count(ChangeKind.SERIALIZATION_TAG_CHANGED) == 2
+
     def test_picks_up_variable_initial_values(self) -> None:
         v1 = Variable(name="model_tag", mangled="model_tag", type="int", value="100")
         v2 = Variable(name="model_tag", mangled="model_tag", type="int", value="200")
@@ -276,6 +308,35 @@ class TestMissingInstantiationDetector:
             ],
         )
         new = _snap("lib", functions=[])
+        assert detect_missing_instantiations(old, new) == []
+
+    def test_sibling_template_member_removal_not_flagged(self) -> None:
+        """Codex P2 regression: removing ``descriptor<float>::train`` while
+        ``descriptor<float>::infer`` survives must NOT be flagged as a
+        missing instantiation. The stem must include the callable identity
+        (``descriptor::train``), not just the class name (``descriptor``)."""
+        old = _snap(
+            "lib",
+            functions=[
+                _fn(
+                    "ns::descriptor<float>::train",
+                    "_ZN2ns10descriptorIfE5trainEv",
+                ),
+                _fn(
+                    "ns::descriptor<float>::infer",
+                    "_ZN2ns10descriptorIfE5inferEv",
+                ),
+            ],
+        )
+        new = _snap(
+            "lib",
+            functions=[
+                _fn(
+                    "ns::descriptor<float>::infer",
+                    "_ZN2ns10descriptorIfE5inferEv",
+                ),
+            ],
+        )
         assert detect_missing_instantiations(old, new) == []
 
     def test_non_template_removal_ignored(self) -> None:
@@ -485,6 +546,47 @@ class TestCpuDispatchIsaDetector:
         findings, _ = detect_cpu_dispatch_isa_dropped(old, new)
         assert findings == []
 
+    def test_fully_removed_algo_not_suppressed(self) -> None:
+        """CodeRabbit Major regression: when ONE ISA tier is dropped
+        across surviving algorithms AND another algorithm is fully
+        removed (all ISAs gone), the fully-removed algorithm's
+        ``func_removed`` findings must remain visible — only the
+        symbols whose algorithm stem still survives under another
+        ISA should be suppressed under the grouped finding.
+        """
+        # kmeans + knn + linreg lose only AVX-512; ``gamma`` is deleted entirely.
+        algos_kept = ("kmeans", "knn", "linreg")
+        old = _snap(
+            "lib",
+            functions=[
+                _fn(f"{a}_compute_{isa}", f"_Z{len(a) + 8}{a}_compute_{isa}")
+                for a in algos_kept
+                for isa in ("avx512", "avx2", "sse42")
+            ]
+            + [
+                _fn("gamma_compute_avx512", "_Z20gamma_compute_avx512v"),
+                _fn("gamma_compute_avx2", "_Z18gamma_compute_avx2v"),
+            ],
+        )
+        new = _snap(
+            "lib",
+            functions=[
+                _fn(f"{a}_compute_{isa}", f"_Z{len(a) + 8}{a}_compute_{isa}")
+                for a in algos_kept
+                for isa in ("avx2", "sse42")
+            ],
+        )
+        findings, suppressed = detect_cpu_dispatch_isa_dropped(old, new)
+        # gamma_compute_avx512 must NOT be suppressed — its stem
+        # ``gamma_compute`` has no surviving sibling.
+        assert "_Z20gamma_compute_avx512v" not in suppressed
+        # The three "real" ISA-drop symbols ARE suppressed.
+        for a in algos_kept:
+            mangled = f"_Z{len(a) + 8}{a}_compute_avx512"
+            assert mangled in suppressed
+        # And the grouped finding still fires.
+        assert len(findings) == 1
+
 
 # ===========================================================================
 # case86 — tag struct renamed
@@ -609,6 +711,22 @@ class TestDefaultTemplateArgDetector:
             functions=[
                 _fn("ns::descriptor<float, B>::infer", "_Znewinfer"),
             ],
+        )
+        assert detect_default_template_arg_changed(old, new) == []
+
+    def test_cross_namespace_same_method_not_paired(self) -> None:
+        """Codex P2 / CodeRabbit Major regression: an unrelated removal
+        in ``ns1::foo<int>::compute`` and addition in
+        ``ns2::bar<float>::compute`` must NOT be paired just because
+        they share the unqualified ``compute`` method name.
+        """
+        old = _snap(
+            "lib",
+            functions=[_fn("ns1::foo<int>::compute", "_Zns1foo")],
+        )
+        new = _snap(
+            "lib",
+            functions=[_fn("ns2::bar<float>::compute", "_Zns2bar")],
         )
         assert detect_default_template_arg_changed(old, new) == []
 

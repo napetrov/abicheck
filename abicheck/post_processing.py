@@ -302,18 +302,31 @@ class DetectOneDALPatterns:
 
         # Filter out per-symbol ``func_removed`` findings that are
         # children of the grouped SYCL/ISA detectors.
+        #
+        # Two reasons to use ``ctx.suppressed`` (not ``ctx.redundant``):
+        # (a) ``compare()`` computes verdict on ``kept + redundant`` —
+        #     redundant items still drive the verdict. Putting the
+        #     children there would let per-symbol BREAKING outrank the
+        #     grouped RISK finding. ``ctx.suppressed`` is excluded from
+        #     verdict computation, which is what we want for children
+        #     subsumed by a grouped finding.
+        # (b) ``FilterRedundant`` (earlier in the pipeline) sets
+        #     ``ctx.kept = changes`` — that's a *reference* to this same
+        #     list. If we rebind ``changes`` to a new filtered list,
+        #     ``ctx.kept`` still points at the old one and our
+        #     suppression is silently lost. Mutate in place instead.
         suppressed_mangled = sycl_suppressed | isa_suppressed
         if suppressed_mangled:
-            kept: list[Change] = []
+            to_keep: list[Change] = []
             for ch in changes:
                 if (
                     ch.kind == ChangeKind.FUNC_REMOVED
                     and ch.symbol in suppressed_mangled
                 ):
-                    ctx.redundant.append(ch)
+                    ctx.suppressed.append(ch)
                     continue
-                kept.append(ch)
-            changes = kept
+                to_keep.append(ch)
+            changes[:] = to_keep
 
         if not new_findings:
             return changes
