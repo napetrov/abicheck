@@ -90,9 +90,10 @@ one.
 Introduce a **bundle layer** between release-directory discovery and
 per-library diff. The bundle layer treats the set of libraries shipped
 together as a single comparison subject. `compare-release` is the front door;
-the bundle layer is always on (no flag), because the user gave us the bundle
-and there is no scenario where they want the strictly-weaker per-library-only
-answer.
+the bundle layer is **enabled by default** — the user gave us the bundle
+and the strictly-weaker per-library-only answer is rarely what they want.
+An explicit `--no-bundle-analysis` escape hatch remains for debugging or
+for parity runs against the pre-ADR-023 behaviour.
 
 ### New types
 
@@ -221,8 +222,9 @@ JSON output of `compare-release --format json` gains top-level fields:
 
 The `verdict` is the worst of `bundle_verdict` and the worst per-library
 verdict. Existing `compare-release` exit codes (0/2/4/8) are unchanged in
-their meaning; the bundle findings can promote 0 → 4. Existing users do not
-need to do anything to get bundle findings — the default does.
+their meaning; the bundle findings can promote 0 → 4. Bundle analysis is
+**enabled by default**; users do not need to do anything to opt in.
+`--no-bundle-analysis` is the documented opt-out.
 
 ### `--manifest` format
 

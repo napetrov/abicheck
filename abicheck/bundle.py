@@ -294,11 +294,17 @@ def load_manifest(path: Path) -> InstantiationManifest:
     for raw in data["provides"]:
         if not isinstance(raw, dict) or "symbol" not in raw:
             raise ValueError(f"manifest {path}: entry missing 'symbol' field: {raw!r}")
+        optional_provider = raw.get("optional_provider", True)
+        if not isinstance(optional_provider, bool):
+            raise ValueError(
+                f"manifest {path}: 'optional_provider' must be a boolean "
+                f"(got {type(optional_provider).__name__} {optional_provider!r}): {raw!r}",
+            )
         entries.append(
             ManifestEntry(
                 symbol=str(raw["symbol"]),
                 library=str(raw["library"]) if raw.get("library") else None,
-                optional_provider=bool(raw.get("optional_provider", True)),
+                optional_provider=optional_provider,
             ),
         )
     return InstantiationManifest(entries=tuple(entries))
@@ -573,10 +579,15 @@ def _detect_intra_dep_removed(
             consumer_meta = new.metadata.get(consumer.library)
             if consumer_meta is None:
                 continue
-            intra_needed = new.resolution.intra_needed.get(consumer.library, [])
-            if not intra_needed:
-                # No sibling deps at all — this lib is standalone; skip.
-                continue
+            # Note: an earlier version of this code short-circuited here
+            # when consumer had no intra-bundle DT_NEEDED edges. That
+            # heuristic hid the canonical regression where a refactor
+            # drops both the only sibling provider *and* the DT_NEEDED
+            # edge that pointed at it — the .dynsym still carries the
+            # `U symbol` but no graph evidence remains. The downstream
+            # system-symbol allow-list (DEFAULT_SYSTEM_SYMBOLS +
+            # `_looks_system_symbol`) is what filters legitimately-
+            # external imports; rely on that signal alone.
             # If every non-intra DT_NEEDED of this consumer is on the
             # allow-list (built-in libc/libstdc++/libgcc plus user extras),
             # any unresolved import is assumed to come from outside the
@@ -676,6 +687,10 @@ def _detect_intra_type_changed(
     work — out of scope for ADR-023 first cut).
     """
     findings: list[BundleFinding] = []
+    # Dedup: one finding per (consumer, provider, type) triple — multiple
+    # low-level changes (size + alignment + field-removed) against the
+    # same type would otherwise emit N copies of the same cross-DSO break.
+    seen: set[tuple[str, str, str]] = set()
     type_kinds = {
         ChangeKind.TYPE_SIZE_CHANGED,
         ChangeKind.TYPE_ALIGNMENT_CHANGED,
@@ -703,6 +718,10 @@ def _detect_intra_type_changed(
                         crossing_consumers.append(sib_name)
                         break
             for consumer_lib in sorted(set(crossing_consumers)):
+                key = (consumer_lib, provider_lib, type_name)
+                if key in seen:
+                    continue
+                seen.add(key)
                 findings.append(
                     BundleFinding(
                         kind=ChangeKind.BUNDLE_INTRA_TYPE_CHANGED,

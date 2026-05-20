@@ -1,8 +1,12 @@
 # Case 93: Bundle — instantiation manifest drift
 
-**Category:** Bundle / manifest | **Verdict:** 🔴 BREAKING (with manifest);
-🟢 COMPATIBLE / BREAKING (without manifest, falls back to per-library
-`func_removed`)
+**Category:** Bundle / manifest
+**Bundle verdict (with `--manifest`):** 🔴 BREAKING
+**Bundle verdict (without `--manifest`):** 🟢 NO_CHANGE
+**Combined verdict (per-library worst-of × bundle):** 🔴 BREAKING — the
+per-library diff still flags `func_removed` even when no manifest is
+supplied; `--manifest` upgrades the diagnosis from "a symbol vanished" to
+"a documented public promise was broken".
 
 ## What changed
 The release ships a single library `libcore.so` with four explicit template

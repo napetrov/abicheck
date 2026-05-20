@@ -177,6 +177,31 @@ class TestIntraDepRemoved:
         )
         assert len(with_extra.bundle_findings) <= len(result_default.bundle_findings)
 
+    def test_fires_when_dt_needed_was_stripped(self) -> None:
+        # Regression for the CodeRabbit feedback: previously the bundle
+        # layer short-circuited when consumer.intra_needed was empty,
+        # which hid the case where a build refactor removed BOTH the
+        # only sibling provider *and* the DT_NEEDED edge that pointed at
+        # it. The unresolved import remains in .dynsym; the bundle layer
+        # must still flag it (the system-symbol allow-list separately
+        # filters out genuinely-external imports).
+        new = _snapshot({
+            "libcore.so": _meta(soname="libcore.so.1"),  # provider gone
+            "libalgo.so": _meta(
+                soname="libalgo.so.1",
+                needed=[],                        # DT_NEEDED stripped too
+                imports=["onedal_internal_op"],   # not a system symbol
+            ),
+        })
+        result = compare_bundle(new, new, per_library_results=[])
+        intra_removed = [
+            f for f in result.bundle_findings
+            if f.kind == ChangeKind.BUNDLE_INTRA_DEP_REMOVED
+        ]
+        assert len(intra_removed) == 1
+        assert intra_removed[0].symbol == "onedal_internal_op"
+        assert intra_removed[0].consumer_library == "libalgo.so"
+
 
 # ---------------------------------------------------------------------------
 # bundle_intra_dep_signature_changed
@@ -382,6 +407,35 @@ class TestIntraTypeChanged:
         assert type_findings[0].consumer_library == "libalgo.so"
         assert type_findings[0].provider_library == "libcore.so"
 
+    def test_dedupe_multiple_low_level_changes_same_type(self) -> None:
+        # A single type can produce several low-level diffs (size +
+        # alignment + field_removed); the bundle layer must collapse
+        # those into one cross-DSO finding per (consumer, provider, type).
+        new = _snapshot({
+            "libcore.so": _meta(
+                soname="libcore.so.1", exports=["DataCollection_ctor"],
+            ),
+            "libalgo.so": _meta(
+                soname="libalgo.so.1", needed=["libcore.so.1"],
+                exports=["_Z3runP14DataCollection"],
+            ),
+        })
+        diff = _diff(
+            "libcore.so",
+            Change(kind=ChangeKind.TYPE_SIZE_CHANGED,
+                   symbol="DataCollection", description=""),
+            Change(kind=ChangeKind.TYPE_ALIGNMENT_CHANGED,
+                   symbol="DataCollection", description=""),
+            Change(kind=ChangeKind.TYPE_FIELD_REMOVED,
+                   symbol="DataCollection", description=""),
+        )
+        result = compare_bundle(new, new, [diff])
+        type_findings = [
+            f for f in result.bundle_findings
+            if f.kind == ChangeKind.BUNDLE_INTRA_TYPE_CHANGED
+        ]
+        assert len(type_findings) == 1
+
 
 # ---------------------------------------------------------------------------
 # bundle_intra_dep_resolved_to_different_version (gnu.version_d drift)
@@ -515,6 +569,29 @@ class TestManifest:
         path = tmp_path / "bad.yaml"
         path.write_text("version: 1\n")
         with pytest.raises(ValueError, match="missing top-level 'provides:'"):
+            load_manifest(path)
+
+    def test_load_manifest_rejects_string_optional_provider(self, tmp_path: Path) -> None:
+        # YAML quote-ifies bool-looking strings; users hand-editing
+        # `optional_provider: "false"` (string) would silently get
+        # parsed as truthy by bool() — validate strictly instead.
+        path = tmp_path / "stringy.json"
+        path.write_text(
+            '{"version": 1, "provides": ['
+            '{"symbol": "x", "library": "lib.so.1", "optional_provider": "false"}'
+            ']}',
+        )
+        with pytest.raises(ValueError, match="optional_provider.*must be a boolean"):
+            load_manifest(path)
+
+    def test_load_manifest_rejects_int_optional_provider(self, tmp_path: Path) -> None:
+        path = tmp_path / "inty.json"
+        path.write_text(
+            '{"version": 1, "provides": ['
+            '{"symbol": "x", "optional_provider": 1}'
+            ']}',
+        )
+        with pytest.raises(ValueError, match="optional_provider.*must be a boolean"):
             load_manifest(path)
 
     def test_required_provider_matches_soname(self) -> None:
@@ -849,7 +926,8 @@ class TestCompareReleaseBundleE2E:
             import shutil as _shutil
             import subprocess as _sub
             gcc = _shutil.which("gcc")
-            assert gcc is not None
+            if gcc is None:
+                pytest.skip("gcc unavailable; cannot build bundle E2E fixture")
             _sub.run(
                 [gcc, "-shared", "-fPIC", "-g", "-O0", str(src_file),
                  "-o", str(side / "libalgo.so"),
@@ -973,7 +1051,8 @@ class TestCompareReleaseBundleE2E:
             import shutil as _shutil
             import subprocess as _sub
             gcc = _shutil.which("gcc")
-            assert gcc is not None
+            if gcc is None:
+                pytest.skip("gcc unavailable; cannot build bundle E2E fixture")
             _sub.run(
                 [gcc, "-shared", "-fPIC", "-g", "-O0", str(src_file),
                  "-o", str(side / "libalgo.so"),

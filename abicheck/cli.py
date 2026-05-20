@@ -2040,6 +2040,11 @@ def _run_bundle_analysis(
         old_snap = build_bundle_snapshot(dict(old_map))
         new_snap = build_bundle_snapshot(dict(new_map))
     except Exception as exc:
+        # Treat snapshot-build failures as additive degradation: the
+        # per-library compare-release report is still useful, and the
+        # user has an obvious escape hatch (--no-bundle-analysis) if they
+        # want to silence this. A surprise CLI exit here would block CI
+        # pipelines that previously didn't see bundle analysis at all.
         click.echo(f"Warning: bundle analysis skipped: {exc}", err=True)
         return None
 
@@ -2048,8 +2053,12 @@ def _run_bundle_analysis(
         try:
             manifest = load_manifest(manifest_path)
         except Exception as exc:
-            click.echo(f"Warning: failed to load manifest {manifest_path}: {exc}", err=True)
-            return None
+            # Manifest is an *explicit* user input. A malformed --manifest
+            # is a user error, not an environmental quirk; fail loudly so
+            # the contract violation isn't hidden behind a stderr warning.
+            raise click.ClickException(
+                f"Failed to load manifest {manifest_path}: {exc}",
+            ) from exc
 
     system_extra: list[str] = [
         s.strip() for s in bundle_system_providers.split(",") if s.strip()
@@ -2061,6 +2070,9 @@ def _run_bundle_analysis(
             system_providers=system_extra or None,
         )
     except Exception as exc:
+        # Analysis-engine bugs should not block the per-library report;
+        # surface as a warning. Future work: surface as a coverage_warning
+        # in the JSON output so downstream CI can detect degradation.
         click.echo(f"Warning: bundle analysis raised: {exc}", err=True)
         return BundleDiffResult(old_root=old_snap.root, new_root=new_snap.root)
 
@@ -2155,8 +2167,14 @@ def _format_release_summary(
     if bundle_result is not None and bundle_result.bundle_findings:
         lines += ["", "## 🔗 Bundle (Cross-Library) Findings", ""]
         for f in bundle_result.bundle_findings:
+            # Library-scoped findings (bundle_library_added /
+            # bundle_library_removed) carry the library name in
+            # `symbol`; manifest/import findings carry the symbol.
+            # Both are non-empty in practice, but guard against future
+            # finding shapes with no symbol attribution.
             lines.append(
-                f"- **{f.kind.value}** — `{f.symbol}`"
+                f"- **{f.kind.value}**"
+                + (f" — `{f.symbol}`" if f.symbol else "")
                 + (f" (consumer: `{f.consumer_library}`)" if f.consumer_library else "")
                 + (f" (provider: `{f.provider_library}`)" if f.provider_library else ""),
             )

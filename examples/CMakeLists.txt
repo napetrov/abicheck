@@ -311,6 +311,13 @@ function(abicheck_add_bundle_case CASE_NAME)
       if(NOT EXISTS ${_src})
         # Allow .c fallback for plain-C bundle cases.
         set(_src "${_case_src}/${_side}/${_lib}.c")
+        if(NOT EXISTS ${_src})
+          message(FATAL_ERROR
+            "abicheck_add_bundle_case(${CASE_NAME}): missing source for "
+            "'${_lib}' on '${_side}' side. Expected either "
+            "'${_case_src}/${_side}/${_lib}.cpp' or "
+            "'${_case_src}/${_side}/${_lib}.c'.")
+        endif()
       endif()
       add_library(${_tgt} SHARED ${_src})
       set_target_properties(${_tgt} PROPERTIES
