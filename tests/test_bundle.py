@@ -6,6 +6,7 @@ examples/case90-93 fixtures live in tests/test_bundle_examples.py.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -795,6 +796,12 @@ def _build_tiny_so(release_dir: Path, name: str, src: str) -> Path:
     return out
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="Uses GNU ld flags (-Wl,-soname, -Wl,--no-as-needed); "
+           "Mach-O ld and link.exe don't accept them. Bundle analysis "
+           "itself is ELF/Linux-only per ADR-018 / ADR-023.",
+)
 class TestCompareReleaseBundleE2E:
     """Exercise compare-release end-to-end with the bundle layer enabled.
 

@@ -283,7 +283,7 @@ def load_manifest(path: Path) -> InstantiationManifest:
 
     text = path.read_text(encoding="utf-8")
     if path.suffix.lower() in (".yaml", ".yml"):
-        import yaml  # type: ignore[import-untyped]
+        import yaml
         data = yaml.safe_load(text)
     else:
         data = json.loads(text)
