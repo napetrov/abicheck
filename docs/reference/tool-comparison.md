@@ -230,9 +230,9 @@ Full-catalog scan status from `python3 scripts/benchmark_comparison.py` on the c
 
 | Tool | Cases attempted | Scored | Correct | Accuracy | Not scored / notes |
 |------|:---------------:|:------:|:-------:|:--------:|--------------------|
-| abicheck compare | 74 | 74 | 73 | **98%** | `case64_calling_convention_changed` returned `NO_CHANGE` |
-| abicheck compat | 74 | 74 | 70 | 94% | ABICC-style compatibility mode |
-| abicheck strict | 74 | 74 | 61 | 82% | Intentional strict promotion of compatible/API breaks |
+| abicheck compare | 74 | 74 | 74 | **100%** | Full exact match after forcing Clang for `case64` |
+| abicheck compat | 74 | 74 | 71 | 95% | ABICC-style compatibility mode |
+| abicheck strict | 74 | 74 | 62 | 83% | Intentional strict promotion of compatible/API breaks |
 | abidiff | 74 | 73 | 22 | 30% of scored | `case16_inline_to_non_inline` hangs/timeouts |
 | abidiff+headers | 74 | 73 | 22 | 30% of scored | `case16_inline_to_non_inline` hangs/timeouts |
 | ABICC(dump) | 74 | 71 | 51 | 71% of scored | `case09`, `case59` timeout; `case16` error |
@@ -242,9 +242,9 @@ Full-catalog scan status from `python3 scripts/benchmark_comparison.py` on the c
 
 | Check configuration | Full 74-case run | Status |
 |---------------------|:----------------:|--------|
-| `abicheck` | ✅ 74/74 completed | 73/74 exact |
-| `abicheck_compat` | ✅ 74/74 completed | 70/74 exact |
-| `abicheck_strict` | ✅ 74/74 completed | 61/74 exact |
+| `abicheck` | ✅ 74/74 completed | 74/74 exact |
+| `abicheck_compat` | ✅ 74/74 completed | 71/74 exact |
+| `abicheck_strict` | ✅ 74/74 completed | 62/74 exact |
 | `abidiff` | ⚠️ 73/74 completed | `case16_inline_to_non_inline` hangs |
 | `abidiff_headers` | ⚠️ 73/74 completed | `case16_inline_to_non_inline` hangs |
 | `abicc_dumper` | ⚠️ 71/74 scored | `case09`, `case59` timeout; `case16` error |
