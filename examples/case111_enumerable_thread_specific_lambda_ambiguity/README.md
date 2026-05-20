@@ -1,6 +1,6 @@
 # Case 111: enumerable_thread_specific Lambda-Init Ambiguity
 
-**Category:** Subtle source break / oneTBB regression suite | **Verdict:** 🟡 COMPATIBLE_WITH_RISK
+**Category:** Subtle source break / oneTBB regression suite | **Verdict:** 🟢 COMPATIBLE (known gap — see below)
 
 ## What breaks
 

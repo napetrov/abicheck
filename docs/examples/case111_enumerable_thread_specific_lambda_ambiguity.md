@@ -10,7 +10,7 @@
 | **Detected `ChangeKind`s** | `func_added` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case111_enumerable_thread_specific_lambda_ambiguity/) |
 
-**Category:** Subtle source break / oneTBB regression suite | **Verdict:** 🟡 COMPATIBLE_WITH_RISK
+**Category:** Subtle source break / oneTBB regression suite | **Verdict:** 🟢 COMPATIBLE (known gap — see below)
 
 ## What breaks
 
