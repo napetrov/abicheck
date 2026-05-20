@@ -1792,6 +1792,11 @@ def _compare_one_library(
     The entire per-library flow (debug info resolution, comparison, output
     writing) is wrapped so that *any* exception yields an ERROR entry
     instead of aborting the whole release comparison.
+
+    The full :class:`DiffResult` is stashed in the returned dict under
+    the ``"_diff_result"`` key. Callers that need the full diff (the
+    bundle layer, JUnit aggregation) pop it from the entry before
+    JSON-serialising — keeps the per-library compare a single-pass.
     """
     old_path = old_map[key]
     new_path = new_map[key]
@@ -1812,6 +1817,7 @@ def _compare_one_library(
             "source_breaks": len(result.source_breaks),
             "risk_changes": len(result.risk),
             "compatible_additions": len(result.compatible),
+            "_diff_result": result,
         }
         if output_dir:
             lib_report_path = output_dir / f"{old_path.stem}.json"
@@ -2007,12 +2013,15 @@ def _collect_release_extras(
 def _run_bundle_analysis(
     old_map: dict[str, Path],
     new_map: dict[str, Path],
-    diff_pairs: list[tuple[DiffResult, AbiSnapshot]],
+    per_lib_results: list[DiffResult],
     *,
     manifest_path: Path | None,
     bundle_system_providers: str,
 ) -> BundleDiffResult | None:
     """Run bundle-level (ADR-023) analysis on a compare-release run.
+
+    Reuses the per-library :class:`DiffResult`s already computed by
+    :func:`_compare_release_libraries` — no second per-pair compare pass.
 
     Returns None when there is nothing to analyze (e.g. all libraries
     failed to dump). Errors during analysis are caught and reported as a
@@ -2045,7 +2054,6 @@ def _run_bundle_analysis(
     system_extra: list[str] = [
         s.strip() for s in bundle_system_providers.split(",") if s.strip()
     ]
-    per_lib_results = [pair[0] for pair in diff_pairs]
     try:
         return compare_bundle(
             old_snap, new_snap, per_lib_results,
@@ -2406,6 +2414,9 @@ def compare_release_cmd(
             output_dir.mkdir(parents=True, exist_ok=True)
 
         bundle_enabled = not no_bundle_analysis
+        # JUnit still re-runs pairs in _collect_release_extras because it
+        # needs old AbiSnapshot too. Bundle analysis reuses the
+        # _diff_result stashed in each library entry from the first pass.
         library_results, worst_verdict, diff_pairs = _compare_release_libraries(
             matched_keys, old_map, new_map,
             old_debug_dir, new_debug_dir, resolve_debug_info,
@@ -2413,7 +2424,7 @@ def compare_release_cmd(
             old_version, new_version,
             lang, suppress, policy, policy_file_path,
             output_dir,
-            collect_diff_results=(fmt == "junit") or bundle_enabled,
+            collect_diff_results=(fmt == "junit"),
             annotate=annotate,
             annotate_additions=annotate_additions,
             jobs=jobs,
@@ -2421,8 +2432,16 @@ def compare_release_cmd(
 
         bundle_result = None
         if bundle_enabled:
+            # Pull the per-library DiffResults out of the entries (stashed
+            # by _compare_one_library) and feed them into the bundle layer
+            # without re-running the per-library compare.
+            stashed_diffs: list[DiffResult] = []
+            for entry in library_results:
+                diff = entry.get("_diff_result") if isinstance(entry, dict) else None
+                if isinstance(diff, DiffResult):
+                    stashed_diffs.append(diff)
             bundle_result = _run_bundle_analysis(
-                old_map, new_map, diff_pairs,
+                old_map, new_map, stashed_diffs,
                 manifest_path=manifest_path,
                 bundle_system_providers=bundle_system_providers,
             )
@@ -2430,6 +2449,13 @@ def compare_release_cmd(
                 bv = bundle_result.bundle_verdict.value
                 if _RELEASE_VERDICT_ORDER.get(bv, 0) > _RELEASE_VERDICT_ORDER.get(worst_verdict, 0):
                     worst_verdict = bv
+
+        # Strip _diff_result from entries before they leave this scope —
+        # it's a Python object that can't be JSON-serialised and the
+        # summary formatter doesn't need it.
+        for entry in library_results:
+            if isinstance(entry, dict):
+                entry.pop("_diff_result", None)
 
         if removed_keys and _RELEASE_VERDICT_ORDER.get(worst_verdict, 0) < _RELEASE_VERDICT_ORDER.get("COMPATIBLE_WITH_RISK", 0):
             worst_verdict = "COMPATIBLE_WITH_RISK"

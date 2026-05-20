@@ -438,13 +438,16 @@ def compare_bundle(
     sys_libs = set(DEFAULT_SYSTEM_PROVIDERS) | set(system_providers or ())
     findings: list[BundleFinding] = []
 
-    # Index per-library diff results by library name for cross-reference.
+    # Index per-library diff results by canonical basename. This is the
+    # same key the resolution graph uses for libraries (see
+    # build_bundle_snapshot's `libraries` dict), so look-ups in the
+    # detectors agree. We canonicalise once instead of double-indexing —
+    # double-indexing caused detectors to iterate the same DiffResult
+    # twice when DiffResult.library happened to differ from its basename.
     diff_by_library: dict[str, DiffResult] = {}
     for result in per_library_results:
-        # DiffResult.library is the soname / filename; normalize both.
-        diff_by_library[result.library] = result
-        # Also index by basename (e.g. "libcore.so") for resilience.
-        diff_by_library.setdefault(Path(result.library).name, result)
+        canonical = Path(result.library).name
+        diff_by_library.setdefault(canonical, result)
 
     # 1. bundle_library_removed / bundle_library_added (structural)
     findings.extend(_detect_library_structural_changes(old, new))
@@ -552,16 +555,12 @@ def _detect_intra_dep_removed(
     Excludes imports satisfied by system libraries (``libc``, ``libstdc++``,
     etc.) since they are out of bundle scope by design. Excludes weak
     imports (linker treats unresolved weak as 0/NULL at runtime).
+    A consumer's import is treated as system-provided when every DT_NEEDED
+    edge it carries that resolves *outside* the bundle is in the
+    ``system_providers`` allow-list (built-in plus user-extended via
+    ``--bundle-system-providers``).
     """
     findings: list[BundleFinding] = []
-
-    # Build a set of all sonames in DT_NEEDED of every library, used to
-    # decide whether an unresolved import is "expected to be system" or
-    # "genuinely intra-bundle". Symbols imported via a system DT_NEEDED
-    # don't count as bundle problems.
-    needed_to_system: dict[str, set[str]] = {}
-    for name, extras in new.resolution.extra_needed.items():
-        needed_to_system[name] = {s for s in extras if s in system_providers or _looks_system(s)}
 
     for symbol, consumers in new.resolution.consumers.items():
         providers = new.resolution.providers_for(symbol)
@@ -571,9 +570,6 @@ def _detect_intra_dep_removed(
         for consumer in consumers:
             if consumer.weak:
                 continue
-            # If the consumer's DT_NEEDED has ONLY system libs that aren't
-            # in the bundle, this import is expected to come from outside.
-            # We treat such symbols as "not a bundle finding".
             consumer_meta = new.metadata.get(consumer.library)
             if consumer_meta is None:
                 continue
@@ -581,11 +577,19 @@ def _detect_intra_dep_removed(
             if not intra_needed:
                 # No sibling deps at all — this lib is standalone; skip.
                 continue
-            # If the symbol is provided by a sibling's old version but not
-            # the new, it'll show up here. Heuristic: report only if at
-            # least one sibling provides ANY symbol with the same prefix or
-            # if the import is unambiguously bundle-scoped (not in system
-            # allow-list and not in the standard C++/C namespace).
+            # If every non-intra DT_NEEDED of this consumer is on the
+            # allow-list (built-in libc/libstdc++/libgcc plus user extras),
+            # any unresolved import is assumed to come from outside the
+            # bundle. This is what --bundle-system-providers controls.
+            extra_needed = new.resolution.extra_needed.get(consumer.library, [])
+            if extra_needed and all(
+                e in system_providers or _looks_system(e)
+                for e in extra_needed
+            ):
+                # And the symbol itself looks system-shaped (mangled std::,
+                # well-known C runtime entry, etc.) — skip the finding.
+                if symbol in DEFAULT_SYSTEM_SYMBOLS or _looks_system_symbol(symbol):
+                    continue
             if symbol in DEFAULT_SYSTEM_SYMBOLS or _looks_system_symbol(symbol):
                 continue
             findings.append(
@@ -860,7 +864,17 @@ def _detect_manifest_drift(
             )
             continue
         if not entry.optional_provider and entry.library is not None:
-            if not any(p.library == entry.library for p in providers):
+            # Match the manifest `library:` field against either the
+            # bundle's canonical library key (e.g. "libcore.so") or the
+            # ELF SONAME of any candidate provider (e.g. "libcore.so.1").
+            # The ADR documents both spellings; user-supplied manifests in
+            # practice use SONAMEs (e.g. libonedal_core.so.1).
+            def _matches(prov: ProviderEntry) -> bool:
+                if prov.library == entry.library:
+                    return True
+                meta = new.metadata.get(prov.library)
+                return meta is not None and meta.soname == entry.library
+            if not any(_matches(p) for p in providers):
                 got = ", ".join(sorted(p.library for p in providers))
                 findings.append(
                     BundleFinding(
