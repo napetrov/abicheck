@@ -732,6 +732,47 @@ class TestManifestPatternMatching:
         assert "int" in removed[0].description
         assert "dense" in removed[0].description
 
+    def test_template_partial_instantiation_match_within_one_entry(self) -> None:
+        # Regression for CodeRabbit feedback: a single template entry
+        # with multiple instantiations must check each independently.
+        # Previously the matcher pooled all expansions and declared the
+        # entry satisfied iff *any* matched — masking partial regressions
+        # where, say, two of four promised instantiations were dropped.
+        new = _snapshot({
+            "libcore.so": _meta(
+                soname="libcore.so.1",
+                exports=[
+                    "ns::T<float, dense>_ctor",
+                    "ns::T<double, dense>_ctor",
+                    # <float, sparse> and <double, sparse> NOT exported
+                ],
+            ),
+        })
+        manifest = InstantiationManifest(entries=(
+            ManifestEntry(
+                template="ns::T",
+                instantiations=(
+                    {"P1": "float",  "P2": "dense"},   # exported
+                    {"P1": "float",  "P2": "sparse"},  # MISSING
+                    {"P1": "double", "P2": "dense"},   # exported
+                    {"P1": "double", "P2": "sparse"},  # MISSING
+                ),
+                optional_provider=True,
+            ),
+        ))
+        result = compare_bundle(new, new, [], manifest=manifest)
+        removed = [
+            f for f in result.bundle_findings
+            if f.kind == ChangeKind.BUNDLE_MANIFEST_INSTANTIATION_REMOVED
+        ]
+        # Exactly two findings, one for each missing instantiation.
+        assert len(removed) == 2
+        missing_symbols = {f.symbol for f in removed}
+        assert "ns::T<float, sparse>" in missing_symbols
+        assert "ns::T<double, sparse>" in missing_symbols
+        # Present instantiations must NOT have generated a finding.
+        assert all("ns::T<float, dense>" not in f.symbol for f in removed)
+
     def test_required_provider_matches_soname(self) -> None:
         # Manifest format documents both filename keys (libcore.so) and
         # SONAMEs (libcore.so.1) for the `library:` field. The bundle

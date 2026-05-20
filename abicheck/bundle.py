@@ -982,35 +982,53 @@ def _detect_version_drift(
     return findings
 
 
-def _match_entry(
-    entry: ManifestEntry,
+def _entry_targets(entry: ManifestEntry) -> list[tuple[str, str]]:
+    """Decompose a manifest entry into ``[(display_name, match_kind)]``.
+
+    Where ``match_kind`` is one of:
+        - ``"symbol"`` — literal equality against ``.dynsym``.
+        - ``"pattern"`` — fnmatch glob against the *demangled* form.
+        - ``"template"`` — substring match against the demangled form.
+
+    A symbol or pattern entry yields one target; a template entry
+    yields **one target per instantiation**, so each instantiation is
+    matched (and reported) independently. The reviewer's regression:
+    a single template entry with four instantiations where only two
+    are exported previously short-circuited at "any match found" and
+    declared the entry satisfied. Per-instantiation decomposition
+    makes the contract explicit and gives users one finding per
+    missing instantiation.
+    """
+    if entry.symbol is not None:
+        return [(entry.symbol, "symbol")]
+    if entry.pattern is not None:
+        return [(entry.pattern, "pattern")]
+    expanded = _expand_instantiations(entry.template or "", entry.instantiations)
+    return [(t, "template") for t in expanded]
+
+
+def _match_target(
+    target: str,
+    kind: str,
     snapshot: BundleSnapshot,
 ) -> tuple[list[str], list[ProviderEntry]]:
-    """Return ``(matched_demangled_substrings, providers)`` for *entry*.
+    """Find every export in *snapshot* that satisfies *target* of *kind*.
 
-    For ``symbol`` entries: literal lookup against the resolution graph.
-    For ``pattern`` and ``template`` entries: scan every library's
-    exported symbols, demangle them, and collect any that match the
-    glob/substring. *providers* is the list of libraries that exported
-    any matching symbol (one entry per library, not per symbol).
+    Returns ``(matched_demangled_names, providers)``.  The provider list
+    has one :class:`ProviderEntry` per library that exports a matching
+    symbol (de-duplicated; one entry per library, not per symbol).
 
-    Demangling is performed via :func:`abicheck.demangle.demangle`;
-    when the demangler is unavailable, pattern/template entries fall
-    back to matching the mangled name itself (better than nothing,
-    catches `extern "C"` symbols).
+    Demangling uses :func:`abicheck.demangle.demangle`; when the
+    demangler is unavailable, pattern/template matching falls back to
+    the mangled name itself so ``extern "C"`` symbols still work.
     """
     import fnmatch
 
     from .demangle import demangle as _demangle
 
-    if entry.symbol is not None:
-        providers = snapshot.resolution.providers_for(entry.symbol)
-        return ([entry.symbol] if providers else []), providers
-
-    if entry.pattern is not None:
-        targets = [entry.pattern]
-    else:
-        targets = _expand_instantiations(entry.template or "", entry.instantiations)
+    if kind == "symbol":
+        providers = snapshot.resolution.providers_for(target)
+        return ([target] if providers else []), providers
 
     matched: list[str] = []
     provider_set: set[str] = set()
@@ -1019,23 +1037,41 @@ def _match_entry(
             if sym.visibility not in ("default", "protected"):
                 continue
             demangled = _demangle(sym.name) or sym.name
-            for target in targets:
-                if entry.pattern is not None:
-                    if fnmatch.fnmatchcase(demangled, target):
-                        matched.append(demangled)
-                        provider_set.add(lib_name)
-                        break
-                else:
-                    # template form: substring match on the expanded signature
-                    if target in demangled:
-                        matched.append(demangled)
-                        provider_set.add(lib_name)
-                        break
+            hit = False
+            if kind == "pattern":
+                hit = fnmatch.fnmatchcase(demangled, target)
+            else:  # template
+                hit = target in demangled
+            if hit:
+                matched.append(demangled)
+                provider_set.add(lib_name)
+                break  # one match per library is enough for provider tracking
     providers = [
         ProviderEntry(library=name, version="")
         for name in sorted(provider_set)
     ]
     return matched, providers
+
+
+def _match_entry(
+    entry: ManifestEntry,
+    snapshot: BundleSnapshot,
+) -> list[tuple[str, str, list[str], list[ProviderEntry]]]:
+    """Return per-target match results for *entry*.
+
+    ``[(target_display_name, kind, matched_demangled, providers), ...]``
+
+    For ``symbol`` and ``pattern`` entries the list has one element.
+    For ``template`` entries it has one element per instantiation, so
+    a partially-satisfied template fires one ``MANIFEST_INSTANTIATION_REMOVED``
+    per missing instantiation rather than silently passing because some
+    sibling instantiation happened to match.
+    """
+    out: list[tuple[str, str, list[str], list[ProviderEntry]]] = []
+    for target, kind in _entry_targets(entry):
+        matched, providers = _match_target(target, kind, snapshot)
+        out.append((target, kind, matched, providers))
+    return out
 
 
 def _detect_manifest_drift(
@@ -1045,7 +1081,9 @@ def _detect_manifest_drift(
 ) -> list[BundleFinding]:
     """Enforce a release manifest against the new bundle.
 
-    For each promised entry (symbol / pattern / template):
+    Decomposes template entries into one virtual target per
+    instantiation so each instantiation is checked independently.
+    For each target:
       - If no exported symbol matches → ``BUNDLE_MANIFEST_INSTANTIATION_REMOVED``.
       - If matched but at the wrong provider (when ``optional_provider=False``)
         → ``BUNDLE_MANIFEST_INSTANTIATION_REMOVED`` (contract names the lib).
@@ -1055,64 +1093,65 @@ def _detect_manifest_drift(
     """
     findings: list[BundleFinding] = []
     for entry in manifest.entries:
-        matched, providers = _match_entry(entry, new)
-        if not matched:
+        for target, kind, matched, providers in _match_entry(entry, new):
+            if not matched:
+                findings.append(
+                    BundleFinding(
+                        kind=ChangeKind.BUNDLE_MANIFEST_INSTANTIATION_REMOVED,
+                        symbol=target,
+                        description=(
+                            f"Manifest promises {kind} {target!r} but no "
+                            f"exported symbol in the new bundle matches it."
+                        ),
+                        provider_library=entry.library,
+                    ),
+                )
+                continue
+            if not entry.optional_provider and entry.library is not None:
+                # Match the manifest `library:` field against either the
+                # bundle's canonical library key (e.g. "libcore.so") or
+                # the ELF SONAME of any candidate provider.
+                def _matches(prov: ProviderEntry, _entry: ManifestEntry = entry) -> bool:
+                    if prov.library == _entry.library:
+                        return True
+                    meta = new.metadata.get(prov.library)
+                    return meta is not None and meta.soname == _entry.library
+                if not any(_matches(p) for p in providers):
+                    got = ", ".join(sorted(p.library for p in providers))
+                    findings.append(
+                        BundleFinding(
+                            kind=ChangeKind.BUNDLE_MANIFEST_INSTANTIATION_REMOVED,
+                            symbol=target,
+                            description=(
+                                f"Manifest requires {kind} {target!r} to be "
+                                f"provided by {entry.library}, but it is "
+                                f"provided by {got} instead."
+                            ),
+                            provider_library=entry.library,
+                            new_value=got,
+                        ),
+                    )
+
+    # Newly-promised targets — matched in new bundle but not in old.
+    for entry in manifest.entries:
+        new_targets = _match_entry(entry, new)
+        old_targets = {t: m for t, _, m, _ in _match_entry(entry, old)}
+        for target, kind, matched_new, _ in new_targets:
+            if not matched_new:
+                continue
+            if old_targets.get(target):
+                continue
             findings.append(
                 BundleFinding(
-                    kind=ChangeKind.BUNDLE_MANIFEST_INSTANTIATION_REMOVED,
-                    symbol=entry.display_name(),
+                    kind=ChangeKind.BUNDLE_MANIFEST_INSTANTIATION_ADDED,
+                    symbol=target,
                     description=(
-                        f"Manifest promises {entry.kind()} {entry.display_name()!r} "
-                        f"but no exported symbol in the new bundle matches it."
+                        f"Manifest now promises {kind} {target!r}; "
+                        f"not exported by the old bundle. New public surface."
                     ),
                     provider_library=entry.library,
                 ),
             )
-            continue
-        if not entry.optional_provider and entry.library is not None:
-            # Match the manifest `library:` field against either the
-            # bundle's canonical library key (e.g. "libcore.so") or the
-            # ELF SONAME of any candidate provider (e.g. "libcore.so.1").
-            def _matches(prov: ProviderEntry) -> bool:
-                if prov.library == entry.library:
-                    return True
-                meta = new.metadata.get(prov.library)
-                return meta is not None and meta.soname == entry.library
-            if not any(_matches(p) for p in providers):
-                got = ", ".join(sorted(p.library for p in providers))
-                findings.append(
-                    BundleFinding(
-                        kind=ChangeKind.BUNDLE_MANIFEST_INSTANTIATION_REMOVED,
-                        symbol=entry.display_name(),
-                        description=(
-                            f"Manifest requires {entry.display_name()!r} to be "
-                            f"provided by {entry.library}, but it is provided by "
-                            f"{got} instead."
-                        ),
-                        provider_library=entry.library,
-                        new_value=got,
-                    ),
-                )
-
-    # Newly-promised entries (matched in new bundle but not in old).
-    for entry in manifest.entries:
-        matched_new, _ = _match_entry(entry, new)
-        if not matched_new:
-            continue
-        matched_old, _ = _match_entry(entry, old)
-        if matched_old:
-            continue
-        findings.append(
-            BundleFinding(
-                kind=ChangeKind.BUNDLE_MANIFEST_INSTANTIATION_ADDED,
-                symbol=entry.display_name(),
-                description=(
-                    f"Manifest now promises {entry.kind()} {entry.display_name()!r}; "
-                    f"not exported by the old bundle. New public surface."
-                ),
-                provider_library=entry.library,
-            ),
-        )
 
     return findings
 
