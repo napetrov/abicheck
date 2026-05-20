@@ -5,6 +5,7 @@
 // every previously-compiled consumer that called the old form fails to
 // link.
 #pragma once
+#include <cstddef>  // matches v1.h so the cstddef typedef set lands in both snapshots
 
 namespace mylib {
 

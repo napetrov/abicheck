@@ -1286,7 +1286,7 @@
       "abi_break": false,
       "api_break": false,
       "bad_practice": true,
-      "known_gap": "Constructor overload ambiguity at consumer call sites cannot be detected from library snapshots alone — it depends on call-site context. abicheck classifies the added overload as COMPATIBLE (additive) but the real-world source-break risk is only visible to a header-AST-aware analyzer. Filed against the roadmap entry that introduces castxml header-AST capture (concept tightening / hidden friends).",
+      "known_gap": "Two gaps stack here. (1) castxml does not emit mangled names for user-declared constructors (same gap as case106 / case112), so the added second ctor cannot be observed as FUNC_ADDED end-to-end — abicheck currently returns NO_CHANGE on this case. (2) Even with the FUNC_ADDED in place, constructor overload ambiguity at consumer call sites cannot be detected from library snapshots alone; that needs the castxml header-AST capture path on the roadmap (concept tightening / hidden friends). The case is preserved as a regression fixture for whenever either gap is closed.",
       "description": "A second constructor overload accepting `std::function<int()>` is added next to the existing `int`-form constructor. By itself this is a pure addition — existing call sites that pass an int still resolve to the original constructor. The risk: brace-initialization and generic callable arguments can become ambiguous at downstream call sites. Member of the oneTBB regression suite.",
       "expected_kinds": ["func_added"]
     },
@@ -1301,6 +1301,7 @@
       "abi_break": true,
       "api_break": true,
       "bad_practice": false,
+      "known_gap": "Two detector gaps stack on this case in the castxml-driven pipeline: (1) castxml does not emit mangled names for user-declared constructors (same gap as case106), so the v1 ctor `task_arena(attach_mode_t)` collapses with all other ctors under mangled='task_arena' and FUNC_REMOVED never fires; (2) abicheck's enum diff defers wholly-removed enums to TYPE_REMOVED, but TYPE_REMOVED only iterates `snap.types`, never `snap.enums`, so `attach_mode_t` removal goes silently undetected. End-to-end the verdict comes out COMPATIBLE (only the new nested `attach` struct is observed as TYPE_ADDED). The case is preserved as a regression fixture for whenever either gap is closed.",
       "description": "An `attach_mode_t` enum + matching constructor are replaced by an empty tag struct `task_arena::attach` + tag-dispatched constructor. The old enum, its members, and the old constructor's mangled symbol are all removed. Member of the oneTBB regression suite; mirrors the 2021 `task_arena::attach` tag introduction.",
       "expected_kinds": ["func_removed", "type_removed", "enum_member_removed"]
     }

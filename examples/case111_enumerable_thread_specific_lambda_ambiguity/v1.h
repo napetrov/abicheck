@@ -6,8 +6,15 @@
 //     mylib::enumerable_thread_specific<int> ets(42);
 //
 // unambiguously.
+//
+// NOTE: a real oneTBB-flavoured version would accept `std::function<int()>`
+// as the lambda-init parameter, but we use a plain function-pointer typedef
+// here. Pulling in `<functional>` from libstdc++ 13 breaks castxml dumping
+// (clang rejects `__attribute__((__assume__(...)))` inside `stl_bvector.h`),
+// which would prevent abicheck's integration tests from ever running on
+// this case. A function-pointer overload is sufficient to demonstrate the
+// overload-ambiguity risk at consumer call sites.
 #pragma once
-#include <functional>
 
 namespace mylib {
 

@@ -4,14 +4,22 @@
 
 ## What breaks
 
-A second constructor overload is added — `enumerable_thread_specific(std::function<int()>)`.
-By itself this is a pure addition: existing call sites that pass an `int`
-still resolve to the original constructor. But consumer code patterns
-that previously had a single viable conversion path can now become
-ambiguous, particularly with brace-initialization or generic callable
-arguments. The risk is silent — code that compiled before may compile to
-a different constructor against the new headers, or stop compiling at
-unrelated call sites that infer the wrong overload.
+A second constructor overload is added — `enumerable_thread_specific(int_factory_t)`
+(a function-pointer-typed factory). By itself this is a pure addition:
+existing call sites that pass an `int` still resolve to the original
+constructor. But consumer code patterns that previously had a single
+viable conversion path can now become ambiguous, particularly with
+brace-initialization or generic callable arguments. The risk is silent —
+code that compiled before may compile to a different constructor against
+the new headers, or stop compiling at unrelated call sites that infer
+the wrong overload.
+
+**Why function-pointer instead of `std::function`?** A real oneTBB-flavoured
+example would accept `std::function<int()>`, but pulling in
+`<functional>` from libstdc++ 13 trips castxml/clang (`__assume__`
+attribute in `<bits/stl_bvector.h>`), which would prevent the integration
+test from ever running. A function-pointer typedef exhibits the same
+overload-ambiguity risk for the purposes of this regression fixture.
 
 ## Why this is in the oneTBB regression suite
 
@@ -42,7 +50,7 @@ resolvability.
 | v1 | v2 |
 |----|------|
 | `enumerable_thread_specific(int);` | same — plus a new overload |
-| (no other ctors) | `enumerable_thread_specific(std::function<int()>);` |
+| (no other ctors) | `enumerable_thread_specific(int_factory_t);` (`typedef int (*int_factory_t)()`) |
 
 ## How to fix (as a library maintainer)
 
