@@ -654,4 +654,19 @@ REGISTRY = ChangeKindRegistry([
               "name baked into their binary. At runtime, the inline body "
               "accesses a field at the wrong offset (or by a name that no "
               "longer exists), producing silent wrong data or crashes."),
+
+    # ── Explicit specifier transitions ───────────────────────────────────
+    _E("ctor_explicit_added", _A,
+       impact="A constructor or conversion operator gained the `explicit` "
+              "specifier. Source code that relied on implicit conversion "
+              "(copy-initialization like `Foo f = 42;`, pass-by-value at a "
+              "call site, or return-by-implicit-conversion) no longer "
+              "compiles. The mangled name is unchanged so binaries keep "
+              "running, but recompilation against the new header fails."),
+    _E("ctor_explicit_removed", _R,
+       impact="A constructor or conversion operator lost the `explicit` "
+              "specifier. Existing code keeps compiling, but implicit "
+              "conversion paths that previously did not consider this "
+              "function now do, potentially selecting a different overload "
+              "than before and causing silent behavioral drift."),
 ])

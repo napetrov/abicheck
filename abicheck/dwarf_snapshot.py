@@ -359,6 +359,13 @@ class _DwarfSnapshotBuilder:
         is_pure_virtual = _attr_int(die, "DW_AT_virtuality") == 2  # DW_VIRTUALITY_pure_virtual
         is_extern_c = not mangled.startswith("_Z")
         is_static = not _attr_bool(die, "DW_AT_external")
+        # DW_AT_explicit is emitted by g++/clang++ on ctors and conversion ops
+        # whose source-level declaration carries the `explicit` specifier
+        # (C++20 conditional `explicit(bool)` collapses to its resolved bool).
+        # Tri-state: True/False are authoritative readings from DWARF; the
+        # snapshot loader defaults to None for older snapshots that predate
+        # this field, so the diff can distinguish "unknown" from "implicit".
+        is_explicit: bool | None = _attr_bool(die, "DW_AT_explicit")
 
         # Access level
         access_val = _attr_int(die, "DW_AT_accessibility")
@@ -387,6 +394,7 @@ class _DwarfSnapshotBuilder:
             return_pointer_depth=ret_ptr_depth,
             is_deleted=is_deleted,
             deleted_from_dwarf=is_deleted,
+            is_explicit=is_explicit,
         ))
 
     def _process_param(self, die: Any, CU: Any) -> Param | None:

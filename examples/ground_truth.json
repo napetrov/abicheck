@@ -1175,6 +1175,63 @@
       "expected_libraries": {
         "libcore.so": {"verdict": "BREAKING", "expected_kinds": ["func_removed"]}
       }
+    },
+    "case94_empty_tag_gained_state": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "An empty tag struct (mirrors tbb::auto_partitioner) gains a member; sizeof grows from 1 to 8. Any consumer that passed the tag by value into a header-inline algorithm interface now writes an undersized argument into a wider slot. Detected by the existing type_size_changed / type_field_added pair.",
+      "expected_kinds": ["type_size_changed", "type_field_added"]
+    },
+    "case106_ctor_became_explicit": {
+      "expected": "API_BREAK",
+      "category": "api_break",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": false,
+      "api_break": true,
+      "bad_practice": false,
+      "known_gap": "castxml does not emit the `explicit` attribute on <Converter> elements (user-defined conversion operators), and does not emit a mangled name for user-declared constructors. The CTOR_EXPLICIT_ADDED detector is therefore not exercised end-to-end by the default castxml-based dump path on Linux/macOS — only via DWARF-only mode. The detector itself is validated by tests/test_explicit_ctor.py with synthetic snapshots.",
+      "description": "A converting conversion operator on a public handle type (mirrors `operator int()` on a oneTBB handle) gains the `explicit` specifier. The mangled name is unchanged so previously-compiled binaries still link, but any source code that wrote `int n = ta;` or relied on implicit conversion at a call site fails to compile against v2. Detected by the new CTOR_EXPLICIT_ADDED ChangeKind, derived from DW_AT_explicit on DW_TAG_subprogram (and `explicit=\"1\"` on castxml Method/Constructor — but not Converter, see known_gap).",
+      "expected_kinds": ["ctor_explicit_added"]
+    },
+    "case107_task_scheduler_init_removed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Named regression fixture for oneTBB's largest historical ABI break: tbb::task_scheduler_init was removed in oneTBB 2021.1. The entire publicly-exported class and all of its members disappear. Detected by the existing FUNC_REMOVED / TYPE_REMOVED detectors.",
+      "expected_kinds": ["func_removed", "type_removed"]
+    },
+    "case108_task_class_removed": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Named regression fixture for the oneTBB 2021.1 removal of the polymorphic `tbb::task` base class. Removing a publicly-derivable polymorphic base destroys every user subclass's vtable, breaks RTTI across DSOs, and undefines the typeinfo symbol. Detected by existing FUNC_REMOVED / TYPE_REMOVED detectors.",
+      "expected_kinds": ["func_removed", "type_removed"]
     }
   }
 }

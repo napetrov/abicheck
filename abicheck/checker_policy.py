@@ -395,6 +395,16 @@ class ChangeKind(str, Enum):
     BUNDLE_LIBRARY_ADDED = "bundle_library_added"
     BUNDLE_INTRA_DEP_VERSION_DRIFT = "bundle_intra_dep_resolved_to_different_version"
 
+    # ── Explicit specifier transitions on constructors / conversion ops ─
+    # Source-level contract: an `explicit` specifier added to a previously-
+    # implicit converting constructor invalidates user code that depended on
+    # implicit conversion (e.g. `Foo f = 42;` or pass-by-value at call site).
+    # Removing `explicit` is the dual; existing code keeps compiling, but
+    # implicit conversion may now select a different overload and cause
+    # behavioral drift. Neither change alters the mangled name.
+    CTOR_EXPLICIT_ADDED = "ctor_explicit_added"
+    CTOR_EXPLICIT_REMOVED = "ctor_explicit_removed"
+
 
 class HasKind(Protocol):
     kind: ChangeKind
