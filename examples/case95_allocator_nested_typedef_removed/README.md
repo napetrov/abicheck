@@ -1,6 +1,6 @@
 # Case 95: Allocator Nested-Typedef Removed
 
-**Category:** Source API contract | **Verdict:** 🟠 API_BREAK
+**Category:** Source API contract | **Verdict:** 🔴 BREAKING
 
 ## What breaks
 

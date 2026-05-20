@@ -1,6 +1,6 @@
 # Case 109: flow::graph Policy Tag Renames
 
-**Category:** Source API / oneTBB regression suite | **Verdict:** 🟠 API_BREAK
+**Category:** Source API / oneTBB regression suite | **Verdict:** 🔴 BREAKING
 
 ## What breaks
 

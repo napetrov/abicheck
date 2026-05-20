@@ -3,14 +3,14 @@
 
 | Field | Value |
 |-------|-------|
-| **Verdict** | 🟠 **API_BREAK** |
-| **Category** | API Break |
+| **Verdict** | 🔴 **BREAKING** |
+| **Category** | Breaking |
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | API break |
 | **Detected `ChangeKind`s** | `typedef_removed` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case95_allocator_nested_typedef_removed/) |
 
-**Category:** Source API contract | **Verdict:** 🟠 API_BREAK
+**Category:** Source API contract | **Verdict:** 🔴 BREAKING
 
 ## What breaks
 
@@ -100,4 +100,4 @@ g++ -std=c++17 -I. app.cpp -L. -lmylib -o app
 - [`v2.cpp`](https://github.com/napetrov/abicheck/blob/main/examples/case95_allocator_nested_typedef_removed/v2.cpp)
 - [`v2.h`](https://github.com/napetrov/abicheck/blob/main/examples/case95_allocator_nested_typedef_removed/v2.h)
 
-_See also: [Examples overview](index.md) · [All API_BREAK cases](by-verdict/api-break.md) · [Category: API Break](by-category/api_break.md)._
+_See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

@@ -16,8 +16,8 @@ Use this catalog to:
 
 | Verdict | Count | What it means |
 |---------|-------|---------------|
-| 🔴 [BREAKING](by-verdict/breaking.md) | 70 | ABI breaks: existing consumers will fail at runtime. |
-| 🟠 [API_BREAK](by-verdict/api-break.md) | 5 | Source-level / API-only breaks; recompilation fails or behavior shifts. |
+| 🔴 [BREAKING](by-verdict/breaking.md) | 72 | ABI breaks: existing consumers will fail at runtime. |
+| 🟠 [API_BREAK](by-verdict/api-break.md) | 3 | Source-level / API-only breaks; recompilation fails or behavior shifts. |
 | 🟡 [COMPATIBLE_WITH_RISK](by-verdict/compatible-risk.md) | 2 | Backward-compatible at the symbol level but with behavioral risk. |
 | 🟢 [COMPATIBLE](by-verdict/compatible.md) | 17 | Backward-compatible changes (additions or quality-only). |
 | ✅ [NO_CHANGE](by-verdict/no-change.md) | 2 | Identical ABI/API — baseline control cases. |
@@ -39,8 +39,8 @@ Source files (`v1.*`, `v2.*`, `app.*`, `CMakeLists.txt`) are linked at the botto
 
 | Category | Cases | What it covers |
 |----------|-------|----------------|
-| [Breaking](by-category/breaking.md) | 70 | Listed in `BREAKING_KINDS` — runtime ABI break. |
-| [API Break](by-category/api_break.md) | 5 | Listed in `API_BREAK_KINDS` — source/API-level break. |
+| [Breaking](by-category/breaking.md) | 72 | Listed in `BREAKING_KINDS` — runtime ABI break. |
+| [API Break](by-category/api_break.md) | 3 | Listed in `API_BREAK_KINDS` — source/API-level break. |
 | [Risk](by-category/risk.md) | 2 | Listed in `RISK_KINDS` — symbol-compatible but behaviorally risky. |
 | [Addition (Compatible)](by-category/addition.md) | 8 | Listed in `ADDITION_KINDS` — backward-compatible additions. |
 | [Quality (Compatible)](by-category/quality.md) | 9 | Listed in `QUALITY_KINDS` — metadata/quality issues, not ABI breaks. |
@@ -62,7 +62,7 @@ Source files (`v1.*`, `v2.*`, `app.*`, `CMakeLists.txt`) are linked at the botto
 | [case106_ctor_became_explicit](case106_ctor_became_explicit.md) | Conversion Operator Became `explicit` | 🟠 API_BREAK | API Break |
 | [case107_task_scheduler_init_removed](case107_task_scheduler_init_removed.md) | `task_scheduler_init` Removed (oneTBB historical break) | 🔴 BREAKING | Breaking |
 | [case108_task_class_removed](case108_task_class_removed.md) | `task` Class Removed (oneTBB historical break — vtable angle) | 🔴 BREAKING | Breaking |
-| [case109_flow_graph_policy_renames](case109_flow_graph_policy_renames.md) | flow::graph Policy Tag Renames | 🟠 API_BREAK | API Break |
+| [case109_flow_graph_policy_renames](case109_flow_graph_policy_renames.md) | flow::graph Policy Tag Renames | 🔴 BREAKING | Breaking |
 | [case10_return_type](case10_return_type.md) | Return Type Change | 🔴 BREAKING | Breaking |
 | [case110_concurrent_unordered_map_api_drift](case110_concurrent_unordered_map_api_drift.md) | concurrent_unordered_map API Drift | 🔴 BREAKING | Breaking |
 | [case111_enumerable_thread_specific_lambda_ambiguity](case111_enumerable_thread_specific_lambda_ambiguity.md) | enumerable_thread_specific Lambda-Init Ambiguity | 🟢 COMPATIBLE | Addition (Compatible) |
@@ -145,4 +145,4 @@ Source files (`v1.*`, `v2.*`, `app.*`, `CMakeLists.txt`) are linked at the botto
 | [case87_default_template_arg_changed](case87_default_template_arg_changed.md) | Default template argument changed | 🔴 BREAKING | Breaking |
 | [case89_inline_accessor_renamed_pimpl_member](case89_inline_accessor_renamed_pimpl_member.md) | Inline accessor references renamed pimpl member | 🔴 BREAKING | Breaking |
 | [case94_empty_tag_gained_state](case94_empty_tag_gained_state.md) | Empty Tag Gained State | 🔴 BREAKING | Breaking |
-| [case95_allocator_nested_typedef_removed](case95_allocator_nested_typedef_removed.md) | Allocator Nested-Typedef Removed | 🟠 API_BREAK | API Break |
+| [case95_allocator_nested_typedef_removed](case95_allocator_nested_typedef_removed.md) | Allocator Nested-Typedef Removed | 🔴 BREAKING | Breaking |

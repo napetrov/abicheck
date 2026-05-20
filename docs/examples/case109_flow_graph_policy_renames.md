@@ -3,14 +3,14 @@
 
 | Field | Value |
 |-------|-------|
-| **Verdict** | 🟠 **API_BREAK** |
-| **Category** | API Break |
+| **Verdict** | 🔴 **BREAKING** |
+| **Category** | Breaking |
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | API break |
 | **Detected `ChangeKind`s** | `typedef_removed`, `type_removed` |
 | **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case109_flow_graph_policy_renames/) |
 
-**Category:** Source API / oneTBB regression suite | **Verdict:** 🟠 API_BREAK
+**Category:** Source API / oneTBB regression suite | **Verdict:** 🔴 BREAKING
 
 ## What breaks
 
@@ -76,4 +76,4 @@ consumer wants to silence informational additions.
 - [`v2.cpp`](https://github.com/napetrov/abicheck/blob/main/examples/case109_flow_graph_policy_renames/v2.cpp)
 - [`v2.h`](https://github.com/napetrov/abicheck/blob/main/examples/case109_flow_graph_policy_renames/v2.h)
 
-_See also: [Examples overview](index.md) · [All API_BREAK cases](by-verdict/api-break.md) · [Category: API Break](by-category/api_break.md)._
+_See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

@@ -3,12 +3,10 @@
 
 Listed in `API_BREAK_KINDS` — source/API-level break.
 
-_5 case(s)._ [← back to all examples](../index.md)
+_3 case(s)._ [← back to all examples](../index.md)
 
 | Case | Title | Verdict | Category |
 |------|-------|---------|----------|
 | [case106_ctor_became_explicit](../case106_ctor_became_explicit.md) | Conversion Operator Became `explicit` | 🟠 API_BREAK | API Break |
-| [case109_flow_graph_policy_renames](../case109_flow_graph_policy_renames.md) | flow::graph Policy Tag Renames | 🟠 API_BREAK | API Break |
 | [case31_enum_rename](../case31_enum_rename.md) | Case 31 — Enum Member Rename | 🟠 API_BREAK | API Break |
 | [case34_access_level](../case34_access_level.md) | Case 34 — Access Level Changed | 🟠 API_BREAK | API Break |
-| [case95_allocator_nested_typedef_removed](../case95_allocator_nested_typedef_removed.md) | Allocator Nested-Typedef Removed | 🟠 API_BREAK | API Break |
