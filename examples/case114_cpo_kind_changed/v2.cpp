@@ -2,11 +2,9 @@
 
 namespace lib {
 
+// `sort` itself is `inline constexpr` in the header, which gives it
+// linkage without any out-of-line definition. Only the operator() body
+// needs to be defined here so the symbol is exported by the .so.
 void __sort_fn::operator()(int*, int*) const {}
-
-// Out-of-line definition of the CPO variable so it has a concrete
-// address (avoids the inline-constexpr storage gymnastics that some
-// platforms handle differently).
-constexpr __sort_fn sort;
 
 } // namespace lib
