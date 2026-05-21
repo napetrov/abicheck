@@ -43,6 +43,7 @@ by either the header dumper or the binary dumper.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
@@ -93,10 +94,19 @@ _INTERNAL_TEMPLATE_NAMESPACES: tuple[str, ...] = (
 )
 
 
+# A Function whose demangled name contains ``<...>`` is (in Itanium /
+# MSVC C++ ABI terms) an instantiated template specialisation. The
+# regex requires ``<`` to be followed by a non-bracket character so that
+# ``operator<`` and ``operator<<`` don't get false-flagged as
+# instantiations (their ``<`` is followed by space, ``=``, or another
+# ``<``, none of which match ``[^<>]``).
+_TEMPLATE_ARGS_RE = re.compile(r"<[^<>]")
+
+
 def _looks_like_template_instantiation(name: str) -> bool:
     """A declared C++ name is a template instantiation iff it contains a
-    top-level ``<``. We use the same heuristic as ``diff_onedal``."""
-    return "<" in name
+    top-level ``<`` followed by a non-bracket character."""
+    return bool(name) and bool(_TEMPLATE_ARGS_RE.search(name))
 
 
 def _qualified_function_name(name: str, mangled: str) -> str:
@@ -534,6 +544,57 @@ def detect_unspecified_return_now_named(
         ))
 
     return changes
+
+
+# ---------------------------------------------------------------------------
+# INSTANTIATION_MISSING_FROM_BINARY (moved from diff_onedal in PR-D)
+# ---------------------------------------------------------------------------
+
+
+def detect_missing_instantiations(
+    old: AbiSnapshot,
+    new: AbiSnapshot,
+) -> list[Change]:
+    """Emit ``INSTANTIATION_MISSING_FROM_BINARY`` for template-instantiation
+    symbols present in *old* that vanished in *new* but whose enclosing
+    template still exists.
+
+    Generalised from the oneDAL-shaped detector originally added in
+    PR #239; the heuristic (instantiation = function name contains
+    ``<`` at top level) is library-agnostic. Re-exported from
+    :mod:`abicheck.diff_onedal` for backwards compatibility.
+    """
+    old.index()
+    new.index()
+    new_mangled = {f.mangled for f in new.functions}
+    findings: list[Change] = []
+    surviving_stems: set[str] = set()
+    for fn in new.functions:
+        if _looks_like_template_instantiation(fn.name):
+            surviving_stems.add(_strip_template_args(fn.name))
+    for fn in old.functions:
+        if fn.mangled in new_mangled:
+            continue
+        if not _looks_like_template_instantiation(fn.name):
+            continue
+        stem = _strip_template_args(fn.name)
+        if stem not in surviving_stems:
+            continue
+        findings.append(Change(
+            kind=ChangeKind.INSTANTIATION_MISSING_FROM_BINARY,
+            symbol=fn.mangled,
+            description=(
+                f"Template instantiation '{fn.name}' was exported by the "
+                f"old library but is missing from the new binary. Other "
+                f"instantiations of '{stem}' still exist, so the public "
+                f"header very likely still advertises this one. Consumers "
+                f"built against the old header link cleanly but fail at "
+                f"load time with an undefined-symbol error."
+            ),
+            old_value=fn.mangled,
+            new_value=None,
+        ))
+    return findings
 
 
 # ---------------------------------------------------------------------------

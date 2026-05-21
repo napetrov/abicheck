@@ -296,15 +296,18 @@ class DetectOneDALPatterns:
 
     def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
         from .checker_policy import ChangeKind
+
+        # Generic detectors live in dedicated modules after PR-D; the
+        # remaining oneDAL-shaped ones stay in diff_onedal.
         from .diff_onedal import (
             detect_cpu_dispatch_isa_dropped,
             detect_default_template_arg_changed,
             detect_inline_body_renamed_member,
-            detect_missing_instantiations,
-            detect_serialization_tag_changes,
             detect_sycl_overload_set_removal,
             detect_tag_type_renamed,
         )
+        from .diff_serialization import detect_serialization_tag_changes
+        from .diff_templates import detect_missing_instantiations
 
         new_findings: list[Change] = []
         new_findings.extend(detect_serialization_tag_changes(ctx.old, ctx.new))
