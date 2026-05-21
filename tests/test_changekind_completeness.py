@@ -214,6 +214,9 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     # Explicit specifier transitions — exercised in tests/test_explicit_ctor.py
     ChangeKind.CTOR_EXPLICIT_ADDED,
     ChangeKind.CTOR_EXPLICIT_REMOVED,
+    # Hidden friend transitions — exercised in tests/test_hidden_friends.py
+    ChangeKind.HIDDEN_FRIEND_ADDED,
+    ChangeKind.HIDDEN_FRIEND_REMOVED,
 }
 
 
