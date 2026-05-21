@@ -1302,6 +1302,34 @@
       "bad_practice": false,
       "description": "Public name `lib::sort` is published in v1 as a free function and in v2 as a customisation point object (constexpr variable of an unspecified function-object class type). Call syntax keeps working but decltype, extern templates, and trait specialisations break.",
       "expected_kinds": ["cpo_kind_changed"]
+    },
+    "case115_api_depends_on_consumer_env": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Header declares `lib::extended()` only when the consumer defines `USE_FEATURE`. The v1 build defines the macro and exports extended(); v2 builds without it. Per single-config diff this is a normal func_removed; the matrix detector layers an API_DEPENDS_ON_CONSUMER_ENV finding on top when both macro states are probed.",
+      "expected_kinds": ["func_removed"]
+    },
+    "case116_cxx_standard_floor_raised": {
+      "expected": "NO_CHANGE",
+      "category": "no_change",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "v1 header works under C++17; v2 adds a `requires` clause to the same template. Symbol set is unchanged so per-binary diff is NO_CHANGE; the source-level break for C++17 consumers is invisible to per-binary detectors. The matrix-aware CXX_STANDARD_FLOOR_RAISED finding (emitted by the probe harness when fed per-configuration cxx_std) is the channel that surfaces it.",
+      "expected_kinds": []
     }
   }
 }

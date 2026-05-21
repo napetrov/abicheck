@@ -432,6 +432,12 @@ class ChangeKind(str, Enum):
     MANDATORY_TEMPLATE_PARAM_ADDED = "mandatory_template_param_added"
     UNSPECIFIED_RETURN_NOW_NAMED = "unspecified_return_now_named"
 
+    # ── Build-configuration / probe-harness patterns (PR-C) ──────────────
+    # See examples/case115_api_depends_on_consumer_env/README.md
+    API_DEPENDS_ON_CONSUMER_ENV = "api_depends_on_consumer_env"
+    CXX_STANDARD_FLOOR_RAISED = "cxx_standard_floor_raised"
+    BEHAVIOURAL_DEFAULT_CHANGED = "behavioural_default_changed"
+
 
 class HasKind(Protocol):
     kind: ChangeKind

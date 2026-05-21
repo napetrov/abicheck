@@ -751,4 +751,28 @@ REGISTRY = ChangeKindRegistry([
               "stored the result with the deduced spelling (`auto x = "
               "make_X();`) keeps compiling; source that wrote out the "
               "type fails to compile."),
+
+    # ── Build-config / probe-harness patterns (PR-C) ────────────────────
+    _E("api_depends_on_consumer_env", _R,
+       impact="A public declaration is present under one consumer build "
+              "configuration (compiler, language standard, macro set) "
+              "and absent under another. Source that compiled on the "
+              "library author's machine may not compile on the consumer's. "
+              "Detected only when abicheck is given a probe matrix "
+              "(snapshots taken under multiple configurations)."),
+
+    _E("cxx_standard_floor_raised", _A,
+       impact="The library's minimum required C++ standard increased "
+              "between releases (e.g. C++17 → C++20). Consumers still "
+              "building with the old standard no longer get a working "
+              "header set; standard-library facilities removed in newer "
+              "standards (e.g. std::result_of) may also disappear from "
+              "the API surface."),
+
+    _E("behavioural_default_changed", _R,
+       impact="A documented default value changed without altering any "
+              "signature — e.g. the default device selector, the default "
+              "execution backend, or the default policy. Source compiles "
+              "and links unchanged; runtime behaviour silently differs. "
+              "Read from the probe manifest's `defaults:` section."),
 ])

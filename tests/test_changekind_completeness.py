@@ -225,6 +225,10 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.OVERLOAD_SET_REROUTED,
     ChangeKind.MANDATORY_TEMPLATE_PARAM_ADDED,
     ChangeKind.UNSPECIFIED_RETURN_NOW_NAMED,
+    # Build-config / probe-harness patterns — exercised in tests/test_diff_build_config.py
+    ChangeKind.API_DEPENDS_ON_CONSUMER_ENV,
+    ChangeKind.CXX_STANDARD_FLOOR_RAISED,
+    ChangeKind.BEHAVIOURAL_DEFAULT_CHANGED,
 }
 
 
