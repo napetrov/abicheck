@@ -405,6 +405,15 @@ class ChangeKind(str, Enum):
     CTOR_EXPLICIT_ADDED = "ctor_explicit_added"
     CTOR_EXPLICIT_REMOVED = "ctor_explicit_removed"
 
+    # Hidden friends (in-class `friend` declarations, typically inline).
+    # Inline-defined hidden friends are findable only via ADL on one of
+    # their argument types; removing one is a source-level break for any
+    # consumer that wrote `a + b` (or similar operator/ADL usage). When
+    # the friend was also defined out-of-line, removal additionally fires
+    # FUNC_REMOVED at the binary level; the two findings are complementary.
+    HIDDEN_FRIEND_REMOVED = "hidden_friend_removed"
+    HIDDEN_FRIEND_ADDED = "hidden_friend_added"
+
 
 class HasKind(Protocol):
     kind: ChangeKind
