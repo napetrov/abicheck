@@ -214,6 +214,11 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     # Explicit specifier transitions — exercised in tests/test_explicit_ctor.py
     ChangeKind.CTOR_EXPLICIT_ADDED,
     ChangeKind.CTOR_EXPLICIT_REMOVED,
+    # Namespace-shape patterns — exercised in tests/test_diff_namespaces.py
+    ChangeKind.EXPERIMENTAL_GRADUATED,
+    ChangeKind.EXPERIMENTAL_REMOVED_WITHOUT_REPLACEMENT,
+    ChangeKind.STD_REEXPORT_REMOVED,
+    ChangeKind.INLINE_NAMESPACE_VERSION_BUMPED,
 }
 
 

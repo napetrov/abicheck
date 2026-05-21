@@ -669,4 +669,43 @@ REGISTRY = ChangeKindRegistry([
               "conversion paths that previously did not consider this "
               "function now do, potentially selecting a different overload "
               "than before and causing silent behavioral drift."),
+
+    # ── Namespace-shape patterns (PR follow-up to #238) ─────────────────
+    # Generic detectors for template / header-only libraries (oneDPL-shaped
+    # but not oneDPL-specific). Live in abicheck/diff_namespaces.py.
+    _E("experimental_graduated", _C, is_addition=True,
+       impact="A declaration that previously lived under an `experimental::` "
+              "(or similar) namespace is now also available at a stable name "
+              "in the same library, while the experimental alias is retained. "
+              "Compatible: existing consumers keep compiling; new consumers "
+              "are encouraged to migrate to the stable name."),
+
+    _E("experimental_removed_without_replacement", _A,
+       impact="A declaration that previously lived under an `experimental::` "
+              "(or similar) namespace was removed and no declaration with "
+              "the same leaf name appears under a stable namespace in the "
+              "new headers. Consumers that depended on the experimental name "
+              "no longer compile. The mangled name change is the same as a "
+              "func_removed/type_removed for an instantiated template, but "
+              "the experimental graduation pattern is named explicitly so "
+              "users see whether a replacement was published."),
+
+    _E("std_reexport_removed", _A,
+       impact="A public header used to re-export a name from `std::` "
+              "(e.g. `using std::execution::par;`) and the re-export was "
+              "deleted in the new headers. Consumer source that referenced "
+              "the library-qualified name (`lib::par`) no longer compiles "
+              "even though the underlying `std::par` is still available. "
+              "Source break only — no symbol disappears, but every TU that "
+              "named the library alias must be edited."),
+
+    _E("inline_namespace_version_bumped", _B,
+       impact="A header-declared symbol or type lives under a versioned "
+              "inline namespace (e.g. `inline namespace _V1`) and the "
+              "version segment shifted (`_V1` → `_V2`). Declarations look "
+              "identical to consumers but every newly compiled TU produces "
+              "a different mangled symbol; old TUs in the same program ODR-"
+              "violate against new TUs. Specialisation of inline_namespace_"
+              "moved that fires from declared-name evidence (works even "
+              "when the library ships no .so)."),
 ])

@@ -405,6 +405,22 @@ class ChangeKind(str, Enum):
     CTOR_EXPLICIT_ADDED = "ctor_explicit_added"
     CTOR_EXPLICIT_REMOVED = "ctor_explicit_removed"
 
+    # ── Namespace-shape patterns (oneDPL / header-only follow-up) ────────
+    # See examples/case109_experimental_graduated/README.md
+    EXPERIMENTAL_GRADUATED = "experimental_graduated"
+    # See examples/case110_experimental_removed_without_replacement/README.md
+    EXPERIMENTAL_REMOVED_WITHOUT_REPLACEMENT = (
+        "experimental_removed_without_replacement"
+    )
+    # See examples/case111_std_reexport_removed/README.md
+    STD_REEXPORT_REMOVED = "std_reexport_removed"
+    # Specialisation of INLINE_NAMESPACE_MOVED for header-declared
+    # symbols whose qualified name path explicitly carries a versioned
+    # inline namespace segment (``::_V1::`` → ``::_V2::``). Fires at the
+    # declaration level so it is detectable even when the library ships
+    # no .so (header-only / template libraries).
+    INLINE_NAMESPACE_VERSION_BUMPED = "inline_namespace_version_bumped"
+
 
 class HasKind(Protocol):
     kind: ChangeKind

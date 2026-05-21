@@ -1232,6 +1232,48 @@
       "bad_practice": false,
       "description": "Named regression fixture for the oneTBB 2021.1 removal of the polymorphic `tbb::task` base class. Removing a publicly-derivable polymorphic base destroys every user subclass's vtable, breaks RTTI across DSOs, and undefines the typeinfo symbol. Detected by existing FUNC_REMOVED / TYPE_REMOVED detectors.",
       "expected_kinds": ["func_removed", "type_removed"]
+    },
+    "case109_experimental_graduated": {
+      "expected": "COMPATIBLE",
+      "category": "addition",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "A declaration lived only under lib::experimental:: in v1 and is published at the stable lib:: name in v2 while the experimental alias is retained. The dedicated EXPERIMENTAL_GRADUATED finding makes the migration event visible; the underlying signal is also a plain func_added for the stable name.",
+      "expected_kinds": ["experimental_graduated", "func_added"]
+    },
+    "case110_experimental_removed_without_replacement": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "A declaration only ever lived under lib::experimental:: in v1 and is removed from v2 with no stable-namespace replacement. The dedicated EXPERIMENTAL_REMOVED_WITHOUT_REPLACEMENT finding tells reviewers there is no migration target; the underlying mangled symbol disappearance is also reported as a plain func_removed.",
+      "expected_kinds": ["experimental_removed_without_replacement", "func_removed"]
+    },
+    "case112_inline_namespace_version_bumped": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": true,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "Library uses a versioned inline namespace `_V1` in v1 and bumps to `_V2` in v2. Declarations look identical to consumers so source keeps compiling, but every freshly built TU emits mangled symbols carrying the new version segment — old and new TUs of the same program ODR-violate. Specialisation of the existing inline_namespace_moved that fires from declared-name evidence so it works on header-only inputs and single-symbol bumps.",
+      "expected_kinds": ["inline_namespace_version_bumped"]
     }
   }
 }

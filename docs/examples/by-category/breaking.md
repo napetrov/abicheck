@@ -3,7 +3,7 @@
 
 Listed in `BREAKING_KINDS` — runtime ABI break.
 
-_68 case(s)._ [← back to all examples](../index.md)
+_70 case(s)._ [← back to all examples](../index.md)
 
 | Case | Title | Verdict | Category |
 |------|-------|---------|----------|
@@ -16,6 +16,8 @@ _68 case(s)._ [← back to all examples](../index.md)
 | [case107_task_scheduler_init_removed](../case107_task_scheduler_init_removed.md) | `task_scheduler_init` Removed (oneTBB historical break) | 🔴 BREAKING | Breaking |
 | [case108_task_class_removed](../case108_task_class_removed.md) | `task` Class Removed (oneTBB historical break — vtable angle) | 🔴 BREAKING | Breaking |
 | [case10_return_type](../case10_return_type.md) | Return Type Change | 🔴 BREAKING | Breaking |
+| [case110_experimental_removed_without_replacement](../case110_experimental_removed_without_replacement.md) | : removed without replacement (API break) | 🔴 BREAKING | Breaking |
+| [case112_inline_namespace_version_bumped](../case112_inline_namespace_version_bumped.md) | case112 — inline namespace version bumped (BREAKING) | 🔴 BREAKING | Breaking |
 | [case11_global_var_type](../case11_global_var_type.md) | Global Variable Type Change | 🔴 BREAKING | Breaking |
 | [case12_function_removed](../case12_function_removed.md) | Function Removed from Shared Library | 🔴 BREAKING | Breaking |
 | [case14_cpp_class_size](../case14_cpp_class_size.md) | C++ Class Size Change | 🔴 BREAKING | Breaking |

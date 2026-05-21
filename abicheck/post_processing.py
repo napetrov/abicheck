@@ -398,6 +398,50 @@ class DetectOneDALPatterns:
         return changes
 
 
+class DetectNamespacePatterns:
+    """Run the generic namespace-shape detectors.
+
+    These cover header-only / template-library failure modes that aren't
+    bound to any one library: experimental graduations, silent removals
+    from experimental namespaces, and ``using std::X;`` re-export drops.
+    Lives in :mod:`abicheck.diff_namespaces`.
+    """
+
+    name = "detect_namespace_patterns"
+
+    def __init__(
+        self,
+        experimental_namespaces: tuple[str, ...] | None = None,
+    ) -> None:
+        self._experimental_namespaces = experimental_namespaces
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        from .diff_namespaces import (
+            DEFAULT_EXPERIMENTAL_NAMESPACES,
+            detect_namespace_patterns,
+        )
+
+        namespaces = (
+            self._experimental_namespaces or DEFAULT_EXPERIMENTAL_NAMESPACES
+        )
+        new_findings = detect_namespace_patterns(
+            ctx.old, ctx.new, experimental_namespaces=namespaces,
+        )
+        if not new_findings:
+            return changes
+        seen_keys = {(c.kind, c.symbol) for c in changes}
+        for c in new_findings:
+            if ctx.suppression is not None and ctx.suppression.is_suppressed(c):
+                ctx.suppressed.append(c)
+                continue
+            key = (c.kind, c.symbol)
+            if key in seen_keys:
+                continue
+            changes.append(c)
+            seen_keys.add(key)
+        return changes
+
+
 class DetectInternalLeaks:
     """Detect internal-namespace (``detail::``, ``impl::``, …) types whose
     changes leak through the public ABI surface.
@@ -490,5 +534,6 @@ DEFAULT_PIPELINE = PostProcessingPipeline(
         EnrichAffectedSymbols(),
         DetectInternalLeaks(),
         DetectOneDALPatterns(),
+        DetectNamespacePatterns(),
     ]
 )

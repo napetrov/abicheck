@@ -273,6 +273,7 @@ class TestPostProcessingPipeline:
             "enrich_affected_symbols",
             "detect_internal_leaks",
             "detect_onedal_patterns",
+            "detect_namespace_patterns",
         ]
         assert DEFAULT_PIPELINE.step_names == expected_names
 
