@@ -440,12 +440,16 @@ def _find_cycles(graph: dict[str, set[str]]) -> list[list[str]]:
 # cycle — e.g. Click sub-command modules that register on a parent's group.
 IMPORT_CYCLE_ALLOWLIST: frozenset[frozenset[str]] = frozenset(
     {
-        # cli.py imports cli_compare_release / cli_baseline / cli_debian_symbols
-        # at module-load tail to register their @main.command(...) decorators;
-        # those sub-modules import `main` and shared helpers back from cli.
+        # cli.py imports cli_compare_release / cli_baseline / cli_debian_symbols /
+        # cli_appcompat / cli_stack / cli_suggest at module-load tail to register
+        # their @main.command(...) decorators; those sub-modules import `main`
+        # and shared helpers back from cli.
         frozenset({"cli", "cli_compare_release"}),
         frozenset({"cli", "cli_baseline"}),
         frozenset({"cli", "cli_debian_symbols"}),
+        frozenset({"cli", "cli_appcompat"}),
+        frozenset({"cli", "cli_stack"}),
+        frozenset({"cli", "cli_suggest"}),
     }
 )
 

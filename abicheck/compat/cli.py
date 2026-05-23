@@ -23,12 +23,11 @@ Commands:
 """
 from __future__ import annotations
 
-import errno
 import logging
 import re as _re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING
 
 import click
 
@@ -39,6 +38,15 @@ from ..dumper import dump
 from ..html_report import write_html_report
 from ..reporter import to_json, to_markdown
 from ..serialization import load_snapshot, save_snapshot
+from ._errors import (
+    _classify_compat_error_exit_code,
+    _classify_fs_error,
+    _compat_fail,
+    _is_compile_failure,
+    _is_descriptor_or_suppression_context,
+    _looks_like_missing_path_message,
+    _looks_like_tool_missing,
+)
 from .abicc_dump_import import (
     import_abicc_perl_dump,
     is_abicc_perl_dump_file,
@@ -46,6 +54,17 @@ from .abicc_dump_import import (
 )
 from .descriptor import CompatDescriptor, parse_descriptor
 from .xml_report import write_xml_report
+
+# Re-exports for backwards compatibility (these used to be defined inline).
+__all__ = [
+    "_classify_compat_error_exit_code",
+    "_classify_fs_error",
+    "_compat_fail",
+    "_is_compile_failure",
+    "_is_descriptor_or_suppression_context",
+    "_looks_like_missing_path_message",
+    "_looks_like_tool_missing",
+]
 
 if TYPE_CHECKING:
     from ..checker import DiffResult
@@ -566,107 +585,6 @@ def _warn_stub_flags(quiet: bool, **kwargs: object) -> None:
         val = kwargs.get(param_name)
         if val is not None and val is not False and val != 0:
             _do_echo(f"Warning: {help_text}", quiet)
-
-
-def _looks_like_tool_missing(msg: str, ctx: str) -> bool:
-    """Return True when the error indicates missing external tooling."""
-    tool_missing_msg = any(
-        key in msg for key in ("not found in path", "command not found")
-    )
-    tool_missing_ctx = any(
-        key in ctx for key in ("castxml", "compiler tool", "external tool")
-    )
-    return tool_missing_msg or tool_missing_ctx
-
-
-def _is_descriptor_or_suppression_context(ctx: str) -> bool:
-    """Return True when context points to malformed config/descriptor input."""
-    return any(
-        key in ctx
-        for key in (
-            "descriptor",
-            "skip-symbols",
-            "symbols-list",
-            "skip-internal",
-            "suppression",
-            "logging",
-        )
-    )
-
-
-def _classify_compat_error_exit_code(exc: BaseException, *, context: str = "") -> int:
-    """Classify compat-mode failures into ABICC-style extended exit codes.
-
-    Codes used:
-      3  - missing external command/tooling
-      4  - cannot access input files
-      5  - header compilation/parsing failed
-      6  - invalid descriptor/config/suppression inputs
-      7  - failed to write report/output artifacts
-      8  - dump/analysis pipeline failure
-      10 - generic internal/tool error fallback
-      11 - interrupted run
-    """
-    if isinstance(exc, KeyboardInterrupt):
-        return 11
-
-    msg = str(exc).lower()
-    ctx = context.lower()
-    tool_missing = _looks_like_tool_missing(msg, ctx)
-
-    fs_code = _classify_fs_error(exc, ctx, tool_missing)
-    if fs_code is not None:
-        return fs_code
-    if _is_compile_failure(msg):
-        return 5
-    if _looks_like_missing_path_message(msg):
-        return 3
-    if _is_descriptor_or_suppression_context(ctx):
-        return 6
-    if "report" in ctx or "output" in ctx:
-        return 7
-    if "dump" in ctx:
-        return 8
-    return 10
-
-
-def _classify_fs_error(exc: BaseException, ctx: str, tool_missing: bool) -> int | None:
-    """Classify filesystem/OS-level failures, or return None if not matched."""
-    if isinstance(exc, FileNotFoundError):
-        return 3 if tool_missing else 4
-    if isinstance(exc, PermissionError):
-        return 4
-    if not isinstance(exc, OSError):
-        return None
-    if exc.errno in (errno.ENOENT,):
-        return 3 if tool_missing else 4
-    if exc.errno in (errno.EACCES, errno.EPERM):
-        return 4
-    if "report" in ctx or "output" in ctx:
-        return 7
-    return None
-
-
-def _is_compile_failure(msg: str) -> bool:
-    """Return True when message indicates compilation/parsing failures."""
-    return any(
-        token in msg
-        for token in ("castxml failed", "cannot compile", "compilation terminated")
-    )
-
-
-def _looks_like_missing_path_message(msg: str) -> bool:
-    """Return True when message indicates missing command/path."""
-    return any(
-        token in msg
-        for token in ("not found in path", "command not found", "no such file or directory")
-    )
-
-
-def _compat_fail(context: str, exc: BaseException) -> NoReturn:
-    """Print compat-mode error and exit with ABICC-style code."""
-    click.echo(f"Error {context}: {exc}", err=True)
-    sys.exit(_classify_compat_error_exit_code(exc, context=context))
 
 
 # ── compat group ──────────────────────────────────────────────────────────────

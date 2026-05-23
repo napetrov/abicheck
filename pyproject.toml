@@ -94,9 +94,12 @@ disable_error_code = ["attr-defined", "unused-ignore"]
 # Click decorators (@click.command, @click.option, etc.) are untyped.
 module = [
     "abicheck.cli",
+    "abicheck.cli_appcompat",
     "abicheck.cli_compare_release",
     "abicheck.cli_debian_symbols",
     "abicheck.cli_baseline",
+    "abicheck.cli_stack",
+    "abicheck.cli_suggest",
     "abicheck.compat.cli",
 ]
 disallow_untyped_decorators = false

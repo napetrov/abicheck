@@ -5,9 +5,12 @@ shapes so abicheck can substitute into existing ABICC-based pipelines.
 
 ## Files
 
-- `cli.py` (large — ~1500 lines, allowed) — Click commands that mirror
+- `cli.py` (large — ~1430 lines, allowed) — Click commands that mirror
   ABICC: `compat check`, `compat dump`, top-level `abicheck compat <args>`
   auto-forwarding.
+- `_errors.py` — error classification helpers (`_classify_compat_error_exit_code`,
+  `_compat_fail`, `_classify_fs_error`). Re-exported by `cli.py` so existing
+  `from abicheck.compat.cli import _compat_fail` imports keep working.
 - `abicc_dump_import.py` — reads ABICC XML dumps and translates them into
   `AbiSnapshot` objects.
 - `descriptor.py` — parses ABICC descriptor XML (`-d1 <file>`).
@@ -24,7 +27,7 @@ shapes so abicheck can substitute into existing ABICC-based pipelines.
 | 0 | compatible |
 | 1 | BREAKING |
 | 2 | API_BREAK (source-level) |
-| 3–11 | errors (see `_classify_compat_error_exit_code` in `cli.py`) |
+| 3–11 | errors (see `_classify_compat_error_exit_code` in `_errors.py`) |
 
 Changing these requires a CHANGELOG note and downstream coordination —
 many CI pipelines rely on the numeric meaning.
