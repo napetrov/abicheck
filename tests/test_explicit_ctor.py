@@ -131,3 +131,7 @@ class TestExplicitCtor:
         loc_el = Element("Location", file="_1", line="2")
 
         assert parser._source_line_has_explicit(loc_el) is True
+
+        declaration_el = Element("Converter", file="_1", line="2")
+        assert parser._source_line_has_explicit(None, declaration_el) is True
+        assert str(source) in parser._source_lines_cache
