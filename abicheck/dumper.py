@@ -553,6 +553,7 @@ class _CastxmlParser:
         self._exported_static = exported_static
         self._id_map: dict[str, Element] = {}
         self._virtual_methods_by_class: dict[str, list[Element]] = {}
+        self._source_lines_cache: dict[str, list[str]] = {}
         self._build_id_map()
 
     def _build_id_map(self) -> None:
@@ -593,7 +594,10 @@ class _CastxmlParser:
             return None
         try:
             line_no = int(line_raw)
-            lines = Path(fname).read_text(encoding="utf-8").splitlines()
+            lines = self._source_lines_cache.get(fname)
+            if lines is None:
+                lines = Path(fname).read_text(encoding="utf-8").splitlines()
+                self._source_lines_cache[fname] = lines
         except (OSError, UnicodeDecodeError, ValueError, IndexError):
             return None
         start = max(0, line_no - 1)
