@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | — |
 | **Detected `ChangeKind`s** | `enum_member_added` |
-| **Source files** | [browse source](../../examples/case25_enum_member_added/) |
+| **Source files** | `examples/case25_enum_member_added/` |
 
 **Verdict:** 🟢 COMPATIBLE
 **abicheck verdict: COMPATIBLE (informational/warning)**
@@ -94,7 +94,7 @@ Existing values are unchanged — old binaries never see the new `YELLOW` value 
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case25_enum_member_added/CMakeLists.txt)
-- [`app.c`](../../examples/case25_enum_member_added/app.c)
+- `CMakeLists.txt`
+- `app.c`
 
 _See also: [Examples overview](index.md) · [All COMPATIBLE cases](by-verdict/compatible.md) · [Category: Addition (Compatible)](by-category/addition.md)._

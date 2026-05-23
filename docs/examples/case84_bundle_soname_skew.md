@@ -8,7 +8,7 @@
 | **Platforms** | Linux |
 | **Flags** | ABI break, Bad practice |
 | **Detected `ChangeKind`s** | `bundle_soname_skew` |
-| **Source files** | [browse source](../../examples/case84_bundle_soname_skew/) |
+| **Source files** | `examples/case84_bundle_soname_skew/` |
 
 **Category:** Cross-artifact ABI | **Verdict:** BREAKING
 
@@ -100,9 +100,9 @@ produces the `.so` files. The CMake integration wires this up under the
 
 ## Source files
 
-- [`gen_bundle.sh`](../../examples/case84_bundle_soname_skew/gen_bundle.sh)
-- [`onedal_core.c`](../../examples/case84_bundle_soname_skew/onedal_core.c)
-- [`onedal_dpc.c`](../../examples/case84_bundle_soname_skew/onedal_dpc.c)
-- [`onedal_thread.c`](../../examples/case84_bundle_soname_skew/onedal_thread.c)
+- `gen_bundle.sh`
+- `onedal_core.c`
+- `onedal_dpc.c`
+- `onedal_thread.c`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

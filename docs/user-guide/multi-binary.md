@@ -361,7 +361,7 @@ for f in result.bundle_findings:
 - [ADR-023](../development/adr/023-bundle-aware-multi-binary-analysis.md) — design rationale
 - [ADR-008](../development/adr/008-full-stack-dependency-validation.md) — the resolver/binder engine the bundle layer reuses
 - Example cases:
-  [case90 — intra-bundle removed symbol](../examples/case90_bundle_intra_dep_removed.md),
-  [case91 — extern-C signature drift](../examples/case91_bundle_intra_signature_drift.md),
-  [case92 — provider migration](../examples/case92_bundle_provider_changed.md),
-  [case93 — manifest drift](../examples/case93_bundle_manifest_drift.md)
+  `case90_bundle_intra_dep_removed` — intra-bundle removed symbol,
+  `case91_bundle_intra_signature_drift` — extern-C signature drift,
+  `case92_bundle_provider_changed` — provider migration,
+  `case93_bundle_manifest_drift` — manifest drift

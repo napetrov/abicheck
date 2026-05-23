@@ -150,19 +150,21 @@ def _read_case(name: str, meta: dict) -> Case:
 
 
 def _rewrite_links(body: str) -> str:
-    # Rewrite source-tree links from examples/<case>/README.md so generated
-    # docs remain navigable in local/offline builds.
+    # Rewrite links from examples/<case>/README.md for generated docs. MkDocs
+    # strict mode validates Markdown links against files under docs/, so source
+    # files outside docs/ are rendered as code literals instead of links.
     def repl(m: re.Match) -> str:
         text, target = m.group(1), m.group(2)
         if target.startswith(("http://", "https://", "#", "mailto:")):
             return m.group(0)
-        # Bare filenames like v1.c, app.cpp point to the source case directory.
-        if target.startswith("../"):
-            url = posixpath.normpath(
-                f"{REPO_ROOT_FROM_DOCS_EXAMPLES}/examples/__CASE__/{target}"
-            )
-        elif "/" not in target and "." in target:
-            url = f"{REPO_ROOT_FROM_DOCS_EXAMPLES}/examples/__CASE__/{target}"
+        if target.startswith("../docs/"):
+            url = posixpath.normpath("../" + target.removeprefix("../docs/"))
+            return f"[{text}]({url})"
+        # Bare filenames like v1.c, app.cpp and ../ source-tree paths live
+        # outside docs/; keep the reference visible without creating a checked
+        # MkDocs link.
+        if target.startswith("../") or ("/" not in target and "." in target):
+            return f"`{text.strip('`')}`"
         else:
             url = target
         return f"[{text}]({url})"
@@ -197,7 +199,7 @@ def _meta_table(case: Case) -> str:
         f"| **Platforms** | {platforms} |\n"
         f"| **Flags** | {flag_str} |\n"
         f"| **Detected `ChangeKind`s** | {kinds} |\n"
-        f"| **Source files** | [browse source]({REPO_ROOT_FROM_DOCS_EXAMPLES}/examples/{case.name}/) |\n"
+        f"| **Source files** | `examples/{case.name}/` |\n"
     )
 
 
@@ -208,10 +210,7 @@ def _source_links(case: Case) -> str:
     )
     if not files:
         return ""
-    lines = [
-        f"- [`{f}`]({REPO_ROOT_FROM_DOCS_EXAMPLES}/examples/{case.name}/{f})"
-        for f in files
-    ]
+    lines = [f"- `{f}`" for f in files]
     return "## Source files\n\n" + "\n".join(lines) + "\n"
 
 
@@ -265,9 +264,9 @@ def _render_index(cases: list[Case]) -> str:
         "- Look up the **mitigation pattern** for a specific change.\n"
         "- Cross-reference detected [`ChangeKind`s](../reference/change-kinds.md) with concrete reproductions.\n\n",
         "> **Ground truth.** Expected verdicts and detected change kinds live in "
-        "[`examples/ground_truth.json`](../../examples/ground_truth.json) and are the "
+        "`examples/ground_truth.json` and are the "
         "single source of truth — these pages are generated from that file plus per-case "
-        "`README.md` files under [`examples/`](../../examples/).\n\n",
+        "`README.md` files under `examples/`.\n\n",
         "## Verdict distribution\n\n",
         "| Verdict | Count | What it means |\n",
         "|---------|-------|---------------|\n",

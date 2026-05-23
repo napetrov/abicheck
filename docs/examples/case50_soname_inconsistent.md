@@ -8,7 +8,7 @@
 | **Platforms** | Linux |
 | **Flags** | Bad practice |
 | **Detected `ChangeKind`s** | — |
-| **Source files** | [browse source](../../examples/case50_soname_inconsistent/) |
+| **Source files** | `examples/case50_soname_inconsistent/` |
 
 **Policy verdict:** 🟡 BAD PRACTICE | **ABI compatibility verdict:** COMPATIBLE
 
@@ -118,9 +118,9 @@ rejected during review because they break upgrade paths.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case50_soname_inconsistent/CMakeLists.txt)
-- [`app.c`](../../examples/case50_soname_inconsistent/app.c)
-- [`bad.c`](../../examples/case50_soname_inconsistent/bad.c)
-- [`good.c`](../../examples/case50_soname_inconsistent/good.c)
+- `CMakeLists.txt`
+- `app.c`
+- `bad.c`
+- `good.c`
 
 _See also: [Examples overview](index.md) · [All COMPATIBLE cases](by-verdict/compatible.md) · [Category: Quality (Compatible)](by-category/quality.md)._

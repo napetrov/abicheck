@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | — |
-| **Source files** | [browse source](../../examples/case60_base_class_position_changed/) |
+| **Source files** | `examples/case60_base_class_position_changed/` |
 
 **Category:** C++ Layout | **Verdict:** BREAKING
 
@@ -78,9 +78,9 @@ cp /tmp/abicheck-examples-build/case61_base_class_position_changed/libv2.so "$tm
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case60_base_class_position_changed/CMakeLists.txt)
-- [`app.cpp`](../../examples/case60_base_class_position_changed/app.cpp)
-- [`v1.cpp`](../../examples/case60_base_class_position_changed/v1.cpp)
-- [`v2.cpp`](../../examples/case60_base_class_position_changed/v2.cpp)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v2.cpp`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

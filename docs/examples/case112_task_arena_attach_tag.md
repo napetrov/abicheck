@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `func_removed`, `type_removed`, `enum_member_removed` |
-| **Source files** | [browse source](../../examples/case112_task_arena_attach_tag/) |
+| **Source files** | `examples/case112_task_arena_attach_tag/` |
 
 **Category:** ABI + source break / oneTBB regression suite | **Verdict:** 🔴 BREAKING
 
@@ -80,11 +80,11 @@ g++ -std=c++17 -I. app.cpp -L. -lmylib -o app
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case112_task_arena_attach_tag/CMakeLists.txt)
-- [`app.cpp`](../../examples/case112_task_arena_attach_tag/app.cpp)
-- [`v1.cpp`](../../examples/case112_task_arena_attach_tag/v1.cpp)
-- [`v1.h`](../../examples/case112_task_arena_attach_tag/v1.h)
-- [`v2.cpp`](../../examples/case112_task_arena_attach_tag/v2.cpp)
-- [`v2.h`](../../examples/case112_task_arena_attach_tag/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

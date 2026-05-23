@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS |
 | **Flags** | ABI break |
 | **Detected `ChangeKind`s** | `serialization_tag_changed` |
-| **Source files** | [browse source](../../examples/case81_serialization_tag_reassigned/) |
+| **Source files** | `examples/case81_serialization_tag_reassigned/` |
 
 **Category:** Payload ABI | **Verdict:** BREAKING
 
@@ -89,11 +89,11 @@ file format — changing them is on par with changing a wire protocol field.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case81_serialization_tag_reassigned/CMakeLists.txt)
-- [`app.cpp`](../../examples/case81_serialization_tag_reassigned/app.cpp)
-- [`v1.cpp`](../../examples/case81_serialization_tag_reassigned/v1.cpp)
-- [`v1.h`](../../examples/case81_serialization_tag_reassigned/v1.h)
-- [`v2.cpp`](../../examples/case81_serialization_tag_reassigned/v2.cpp)
-- [`v2.h`](../../examples/case81_serialization_tag_reassigned/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS |
 | **Flags** | API break |
 | **Detected `ChangeKind`s** | — |
-| **Source files** | [browse source](../../examples/case34_access_level/) |
+| **Source files** | `examples/case34_access_level/` |
 
 **Verdict:** 🟠 API_BREAK
 **abicheck verdict: API_BREAK** (with headers) / **NO_CHANGE** (ELF-only)
@@ -129,11 +129,11 @@ Access level narrowing: binary layout unchanged, compile fails
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case34_access_level/CMakeLists.txt)
-- [`app.cpp`](../../examples/case34_access_level/app.cpp)
-- [`v1.cpp`](../../examples/case34_access_level/v1.cpp)
-- [`v1.hpp`](../../examples/case34_access_level/v1.hpp)
-- [`v2.cpp`](../../examples/case34_access_level/v2.cpp)
-- [`v2.hpp`](../../examples/case34_access_level/v2.hpp)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.hpp`
+- `v2.cpp`
+- `v2.hpp`
 
 _See also: [Examples overview](index.md) · [All API_BREAK cases](by-verdict/api-break.md) · [Category: API Break](by-category/api_break.md)._

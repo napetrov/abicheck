@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `internal_type_leaks_via_public_api` |
-| **Source files** | [browse source](../../examples/case77_detail_templated_base_changed/) |
+| **Source files** | `examples/case77_detail_templated_base_changed/` |
 
 **Category:** Internal-leak | **Verdict:** BREAKING
 
@@ -109,11 +109,11 @@ the binary layout of every shipped algorithm descriptor.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case77_detail_templated_base_changed/CMakeLists.txt)
-- [`app.cpp`](../../examples/case77_detail_templated_base_changed/app.cpp)
-- [`v1.cpp`](../../examples/case77_detail_templated_base_changed/v1.cpp)
-- [`v1.h`](../../examples/case77_detail_templated_base_changed/v1.h)
-- [`v2.cpp`](../../examples/case77_detail_templated_base_changed/v2.cpp)
-- [`v2.h`](../../examples/case77_detail_templated_base_changed/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

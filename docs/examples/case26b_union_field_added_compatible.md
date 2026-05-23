@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | — |
 | **Detected `ChangeKind`s** | — |
-| **Source files** | [browse source](../../examples/case26b_union_field_added_compatible/) |
+| **Source files** | `examples/case26b_union_field_added_compatible/` |
 
 **Verdict:** 🟢 COMPATIBLE
 
@@ -98,7 +98,7 @@ Verdict: **COMPATIBLE**.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case26b_union_field_added_compatible/CMakeLists.txt)
-- [`app.c`](../../examples/case26b_union_field_added_compatible/app.c)
+- `CMakeLists.txt`
+- `app.c`
 
 _See also: [Examples overview](index.md) · [All COMPATIBLE cases](by-verdict/compatible.md) · [Category: Addition (Compatible)](by-category/addition.md)._

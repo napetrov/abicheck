@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | API break |
 | **Detected `ChangeKind`s** | `ctor_explicit_added` |
-| **Source files** | [browse source](../../examples/case106_ctor_became_explicit/) |
+| **Source files** | `examples/case106_ctor_became_explicit/` |
 
 **Category:** Source API contract | **Verdict:** 🟠 API_BREAK
 
@@ -100,11 +100,11 @@ g++ -std=c++17 -I"$tmp" -c "$tmp/app.cpp" -o "$tmp/app.o"
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case106_ctor_became_explicit/CMakeLists.txt)
-- [`app.cpp`](../../examples/case106_ctor_became_explicit/app.cpp)
-- [`v1.cpp`](../../examples/case106_ctor_became_explicit/v1.cpp)
-- [`v1.h`](../../examples/case106_ctor_became_explicit/v1.h)
-- [`v2.cpp`](../../examples/case106_ctor_became_explicit/v2.cpp)
-- [`v2.h`](../../examples/case106_ctor_became_explicit/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All API_BREAK cases](by-verdict/api-break.md) · [Category: API Break](by-category/api_break.md)._

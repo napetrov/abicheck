@@ -8,7 +8,7 @@
 | **Platforms** | Linux |
 | **Flags** | Bad practice |
 | **Detected `ChangeKind`s** | — |
-| **Source files** | [browse source](../../examples/case52_rpath_leak/) |
+| **Source files** | `examples/case52_rpath_leak/` |
 
 **Category:** ELF / Deployment | **Verdict:** BAD PRACTICE
 
@@ -123,9 +123,9 @@ as a warning for the same reason.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case52_rpath_leak/CMakeLists.txt)
-- [`app.c`](../../examples/case52_rpath_leak/app.c)
-- [`bad.c`](../../examples/case52_rpath_leak/bad.c)
-- [`good.c`](../../examples/case52_rpath_leak/good.c)
+- `CMakeLists.txt`
+- `app.c`
+- `bad.c`
+- `good.c`
 
 _See also: [Examples overview](index.md) · [All COMPATIBLE cases](by-verdict/compatible.md) · [Category: Quality (Compatible)](by-category/quality.md)._

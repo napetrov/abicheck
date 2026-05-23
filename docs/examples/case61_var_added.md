@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS |
 | **Flags** | — |
 | **Detected `ChangeKind`s** | `var_added` |
-| **Source files** | [browse source](../../examples/case61_var_added/) |
+| **Source files** | `examples/case61_var_added/` |
 
 **Category:** Symbol API | **Verdict:** COMPATIBLE
 
@@ -68,9 +68,9 @@ python3 -m abicheck.cli compare /tmp/v1.json /tmp/v2.json
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case61_var_added/CMakeLists.txt)
-- [`app.c`](../../examples/case61_var_added/app.c)
-- [`bad.c`](../../examples/case61_var_added/bad.c)
-- [`good.c`](../../examples/case61_var_added/good.c)
+- `CMakeLists.txt`
+- `app.c`
+- `bad.c`
+- `good.c`
 
 _See also: [Examples overview](index.md) · [All COMPATIBLE cases](by-verdict/compatible.md) · [Category: Addition (Compatible)](by-category/addition.md)._

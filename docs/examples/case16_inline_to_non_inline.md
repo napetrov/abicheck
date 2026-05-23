@@ -8,7 +8,7 @@
 | **Platforms** | Linux |
 | **Flags** | — |
 | **Detected `ChangeKind`s** | — |
-| **Source files** | [browse source](../../examples/case16_inline_to_non_inline/) |
+| **Source files** | `examples/case16_inline_to_non_inline/` |
 
 **Verdict:** 🟢 COMPATIBLE
 ## What changes
@@ -131,11 +131,11 @@ Inline→non-inline: old binary uses inlined copy, runtime unaffected
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case16_inline_to_non_inline/CMakeLists.txt)
-- [`app.cpp`](../../examples/case16_inline_to_non_inline/app.cpp)
-- [`v1.cpp`](../../examples/case16_inline_to_non_inline/v1.cpp)
-- [`v1.hpp`](../../examples/case16_inline_to_non_inline/v1.hpp)
-- [`v2.cpp`](../../examples/case16_inline_to_non_inline/v2.cpp)
-- [`v2.hpp`](../../examples/case16_inline_to_non_inline/v2.hpp)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.hpp`
+- `v2.cpp`
+- `v2.hpp`
 
 _See also: [Examples overview](index.md) · [All COMPATIBLE cases](by-verdict/compatible.md) · [Category: Addition (Compatible)](by-category/addition.md)._

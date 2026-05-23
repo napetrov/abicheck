@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `internal_type_leaks_via_public_api` |
-| **Source files** | [browse source](../../examples/case76_detail_pimpl_vtable_changed/) |
+| **Source files** | `examples/case76_detail_pimpl_vtable_changed/` |
 
 **Category:** Internal-leak | **Verdict:** BREAKING
 
@@ -139,11 +139,11 @@ If polymorphism must remain part of the public surface, only ever
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case76_detail_pimpl_vtable_changed/CMakeLists.txt)
-- [`app.cpp`](../../examples/case76_detail_pimpl_vtable_changed/app.cpp)
-- [`v1.cpp`](../../examples/case76_detail_pimpl_vtable_changed/v1.cpp)
-- [`v1.h`](../../examples/case76_detail_pimpl_vtable_changed/v1.h)
-- [`v2.cpp`](../../examples/case76_detail_pimpl_vtable_changed/v2.cpp)
-- [`v2.h`](../../examples/case76_detail_pimpl_vtable_changed/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `var_removed` |
-| **Source files** | [browse source](../../examples/case58_var_removed/) |
+| **Source files** | `examples/case58_var_removed/` |
 
 **Category:** Symbol API | **Verdict:** BREAKING
 
@@ -83,9 +83,9 @@ cp /tmp/abicheck-examples-build/case59_var_removed/libv2.so "$tmp/libv1.so"
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case58_var_removed/CMakeLists.txt)
-- [`app.c`](../../examples/case58_var_removed/app.c)
-- [`bad.c`](../../examples/case58_var_removed/bad.c)
-- [`good.c`](../../examples/case58_var_removed/good.c)
+- `CMakeLists.txt`
+- `app.c`
+- `bad.c`
+- `good.c`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

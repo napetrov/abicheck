@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS |
 | **Flags** | ABI break |
 | **Detected `ChangeKind`s** | `func_removed` |
-| **Source files** | [browse source](../../examples/case59_func_became_inline/) |
+| **Source files** | `examples/case59_func_became_inline/` |
 
 **Category:** Symbol API | **Verdict:** BREAKING (API_BREAK)
 
@@ -112,11 +112,11 @@ cp /tmp/abicheck-examples-build/case60_func_became_inline/libv2.so "$tmp/libv1.s
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case59_func_became_inline/CMakeLists.txt)
-- [`app.c`](../../examples/case59_func_became_inline/app.c)
-- [`bad.c`](../../examples/case59_func_became_inline/bad.c)
-- [`bad.h`](../../examples/case59_func_became_inline/bad.h)
-- [`good.c`](../../examples/case59_func_became_inline/good.c)
-- [`good.h`](../../examples/case59_func_became_inline/good.h)
+- `CMakeLists.txt`
+- `app.c`
+- `bad.c`
+- `bad.h`
+- `good.c`
+- `good.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break |
 | **Detected `ChangeKind`s** | `inline_namespace_moved` |
-| **Source files** | [browse source](../../examples/case71_inline_namespace_moved/) |
+| **Source files** | `examples/case71_inline_namespace_moved/` |
 
 **Category:** Symbol ABI | **Verdict:** BREAKING
 
@@ -122,11 +122,11 @@ distributions.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case71_inline_namespace_moved/CMakeLists.txt)
-- [`app.cpp`](../../examples/case71_inline_namespace_moved/app.cpp)
-- [`v1.cpp`](../../examples/case71_inline_namespace_moved/v1.cpp)
-- [`v1.h`](../../examples/case71_inline_namespace_moved/v1.h)
-- [`v2.cpp`](../../examples/case71_inline_namespace_moved/v2.cpp)
-- [`v2.h`](../../examples/case71_inline_namespace_moved/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

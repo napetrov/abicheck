@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `func_removed`, `type_removed` |
-| **Source files** | [browse source](../../examples/case108_task_class_removed/) |
+| **Source files** | `examples/case108_task_class_removed/` |
 
 **Category:** Polymorphic Class Removal | **Verdict:** 🔴 BREAKING
 
@@ -96,11 +96,11 @@ migration is:
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case108_task_class_removed/CMakeLists.txt)
-- [`app.cpp`](../../examples/case108_task_class_removed/app.cpp)
-- [`v1.cpp`](../../examples/case108_task_class_removed/v1.cpp)
-- [`v1.h`](../../examples/case108_task_class_removed/v1.h)
-- [`v2.cpp`](../../examples/case108_task_class_removed/v2.cpp)
-- [`v2.h`](../../examples/case108_task_class_removed/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `func_removed`, `type_removed` |
-| **Source files** | [browse source](../../examples/case107_task_scheduler_init_removed/) |
+| **Source files** | `examples/case107_task_scheduler_init_removed/` |
 
 **Category:** Class Removal | **Verdict:** 🔴 BREAKING
 
@@ -92,11 +92,11 @@ migration showed the only safe path:
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case107_task_scheduler_init_removed/CMakeLists.txt)
-- [`app.cpp`](../../examples/case107_task_scheduler_init_removed/app.cpp)
-- [`v1.cpp`](../../examples/case107_task_scheduler_init_removed/v1.cpp)
-- [`v1.h`](../../examples/case107_task_scheduler_init_removed/v1.h)
-- [`v2.cpp`](../../examples/case107_task_scheduler_init_removed/v2.cpp)
-- [`v2.h`](../../examples/case107_task_scheduler_init_removed/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

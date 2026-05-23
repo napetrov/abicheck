@@ -8,7 +8,7 @@
 | **Platforms** | Linux |
 | **Flags** | ABI break, API break, Bad practice |
 | **Detected `ChangeKind`s** | `func_removed`, `func_added` |
-| **Source files** | [browse source](../../examples/case53_namespace_pollution/) |
+| **Source files** | `examples/case53_namespace_pollution/` |
 
 **Category:** API Design / Policy | **Verdict:** BREAKING (bad practice)
 
@@ -130,9 +130,9 @@ Libraries that historically did NOT prefix (like early POSIX `open`, `read`,
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case53_namespace_pollution/CMakeLists.txt)
-- [`app.c`](../../examples/case53_namespace_pollution/app.c)
-- [`bad.c`](../../examples/case53_namespace_pollution/bad.c)
-- [`good.c`](../../examples/case53_namespace_pollution/good.c)
+- `CMakeLists.txt`
+- `app.c`
+- `bad.c`
+- `good.c`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

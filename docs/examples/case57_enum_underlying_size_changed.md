@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `enum_underlying_size_changed` |
-| **Source files** | [browse source](../../examples/case57_enum_underlying_size_changed/) |
+| **Source files** | `examples/case57_enum_underlying_size_changed/` |
 
 **Category:** Type Layout | **Verdict:** BREAKING
 
@@ -77,11 +77,11 @@ cp /tmp/abicheck-examples-build/case58_enum_underlying_size_changed/libv2.so "$t
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case57_enum_underlying_size_changed/CMakeLists.txt)
-- [`app.c`](../../examples/case57_enum_underlying_size_changed/app.c)
-- [`bad.c`](../../examples/case57_enum_underlying_size_changed/bad.c)
-- [`bad.h`](../../examples/case57_enum_underlying_size_changed/bad.h)
-- [`good.c`](../../examples/case57_enum_underlying_size_changed/good.c)
-- [`good.h`](../../examples/case57_enum_underlying_size_changed/good.h)
+- `CMakeLists.txt`
+- `app.c`
+- `bad.c`
+- `bad.h`
+- `good.c`
+- `good.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

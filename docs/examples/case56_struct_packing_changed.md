@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `struct_packing_changed` |
-| **Source files** | [browse source](../../examples/case56_struct_packing_changed/) |
+| **Source files** | `examples/case56_struct_packing_changed/` |
 
 **Category:** Type Layout / DWARF | **Verdict:** BREAKING
 
@@ -81,11 +81,11 @@ cp /tmp/abicheck-examples-build/case57_struct_packing_changed/libv2.so "$tmp/lib
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case56_struct_packing_changed/CMakeLists.txt)
-- [`app.c`](../../examples/case56_struct_packing_changed/app.c)
-- [`bad.c`](../../examples/case56_struct_packing_changed/bad.c)
-- [`bad.h`](../../examples/case56_struct_packing_changed/bad.h)
-- [`good.c`](../../examples/case56_struct_packing_changed/good.c)
-- [`good.h`](../../examples/case56_struct_packing_changed/good.h)
+- `CMakeLists.txt`
+- `app.c`
+- `bad.c`
+- `bad.h`
+- `good.c`
+- `good.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

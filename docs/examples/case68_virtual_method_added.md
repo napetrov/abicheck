@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `func_virtual_added` |
-| **Source files** | [browse source](../../examples/case68_virtual_method_added/) |
+| **Source files** | `examples/case68_virtual_method_added/` |
 
 **Category:** Class Layout / Vtable | **Verdict:** BREAKING
 
@@ -147,11 +147,11 @@ further evidence of the vtable-insertion break.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case68_virtual_method_added/CMakeLists.txt)
-- [`app.cpp`](../../examples/case68_virtual_method_added/app.cpp)
-- [`v1.cpp`](../../examples/case68_virtual_method_added/v1.cpp)
-- [`v1.h`](../../examples/case68_virtual_method_added/v1.h)
-- [`v2.cpp`](../../examples/case68_virtual_method_added/v2.cpp)
-- [`v2.h`](../../examples/case68_virtual_method_added/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | — |
 | **Detected `ChangeKind`s** | `experimental_graduated`, `func_added` |
-| **Source files** | [browse source](../../examples/case117_experimental_graduated/) |
+| **Source files** | `examples/case117_experimental_graduated/` |
 
 ## What this case demonstrates
 
@@ -41,11 +41,11 @@ additive.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case117_experimental_graduated/CMakeLists.txt)
-- [`app.cpp`](../../examples/case117_experimental_graduated/app.cpp)
-- [`v1.cpp`](../../examples/case117_experimental_graduated/v1.cpp)
-- [`v1.h`](../../examples/case117_experimental_graduated/v1.h)
-- [`v2.cpp`](../../examples/case117_experimental_graduated/v2.cpp)
-- [`v2.h`](../../examples/case117_experimental_graduated/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All COMPATIBLE cases](by-verdict/compatible.md) · [Category: Addition (Compatible)](by-category/addition.md)._

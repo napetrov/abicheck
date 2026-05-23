@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `sycl_overload_set_removed` |
-| **Source files** | [browse source](../../examples/case82_sycl_overload_set_removed/) |
+| **Source files** | `examples/case82_sycl_overload_set_removed/` |
 
 **Category:** Overload-family ABI | **Verdict:** BREAKING
 
@@ -75,11 +75,11 @@ one go.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case82_sycl_overload_set_removed/CMakeLists.txt)
-- [`app.cpp`](../../examples/case82_sycl_overload_set_removed/app.cpp)
-- [`v1.cpp`](../../examples/case82_sycl_overload_set_removed/v1.cpp)
-- [`v1.h`](../../examples/case82_sycl_overload_set_removed/v1.h)
-- [`v2.cpp`](../../examples/case82_sycl_overload_set_removed/v2.cpp)
-- [`v2.h`](../../examples/case82_sycl_overload_set_removed/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS |
 | **Flags** | ABI break |
 | **Detected `ChangeKind`s** | `inline_body_references_renamed_member` |
-| **Source files** | [browse source](../../examples/case89_inline_accessor_renamed_pimpl_member/) |
+| **Source files** | `examples/case89_inline_accessor_renamed_pimpl_member/` |
 
 **Category:** Pimpl ABI | **Verdict:** BREAKING
 
@@ -95,11 +95,11 @@ consumer binary already compiled against the previous header.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case89_inline_accessor_renamed_pimpl_member/CMakeLists.txt)
-- [`app.cpp`](../../examples/case89_inline_accessor_renamed_pimpl_member/app.cpp)
-- [`v1.cpp`](../../examples/case89_inline_accessor_renamed_pimpl_member/v1.cpp)
-- [`v1.h`](../../examples/case89_inline_accessor_renamed_pimpl_member/v1.h)
-- [`v2.cpp`](../../examples/case89_inline_accessor_renamed_pimpl_member/v2.cpp)
-- [`v2.h`](../../examples/case89_inline_accessor_renamed_pimpl_member/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

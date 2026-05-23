@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | — |
 | **Detected `ChangeKind`s** | `cpu_dispatch_isa_dropped` |
-| **Source files** | [browse source](../../examples/case83_cpu_dispatch_isa_dropped/) |
+| **Source files** | `examples/case83_cpu_dispatch_isa_dropped/` |
 
 **Category:** Dispatch ABI | **Verdict:** COMPATIBLE_WITH_RISK
 
@@ -81,11 +81,11 @@ dispatch tables. ISA-specialized symbols have suffixes like
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case83_cpu_dispatch_isa_dropped/CMakeLists.txt)
-- [`app.cpp`](../../examples/case83_cpu_dispatch_isa_dropped/app.cpp)
-- [`v1.cpp`](../../examples/case83_cpu_dispatch_isa_dropped/v1.cpp)
-- [`v1.h`](../../examples/case83_cpu_dispatch_isa_dropped/v1.h)
-- [`v2.cpp`](../../examples/case83_cpu_dispatch_isa_dropped/v2.cpp)
-- [`v2.h`](../../examples/case83_cpu_dispatch_isa_dropped/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All COMPATIBLE_WITH_RISK cases](by-verdict/compatible-risk.md) · [Category: Risk](by-category/risk.md)._

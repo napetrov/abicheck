@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `instantiation_missing_from_binary` |
-| **Source files** | [browse source](../../examples/case79_missing_template_instantiation/) |
+| **Source files** | `examples/case79_missing_template_instantiation/` |
 
 **Category:** Header-vs-binary parity | **Verdict:** BREAKING
 
@@ -88,11 +88,11 @@ example.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case79_missing_template_instantiation/CMakeLists.txt)
-- [`app.cpp`](../../examples/case79_missing_template_instantiation/app.cpp)
-- [`v1.cpp`](../../examples/case79_missing_template_instantiation/v1.cpp)
-- [`v1.h`](../../examples/case79_missing_template_instantiation/v1.h)
-- [`v2.cpp`](../../examples/case79_missing_template_instantiation/v2.cpp)
-- [`v2.h`](../../examples/case79_missing_template_instantiation/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

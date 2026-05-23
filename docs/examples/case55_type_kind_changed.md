@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `type_kind_changed` |
-| **Source files** | [browse source](../../examples/case55_type_kind_changed/) |
+| **Source files** | `examples/case55_type_kind_changed/` |
 
 **Category:** Type Layout | **Verdict:** BREAKING
 
@@ -74,11 +74,11 @@ cp /tmp/abicheck-examples-build/case56_type_kind_changed/libv2.so "$tmp/libv1.so
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case55_type_kind_changed/CMakeLists.txt)
-- [`app.c`](../../examples/case55_type_kind_changed/app.c)
-- [`bad.c`](../../examples/case55_type_kind_changed/bad.c)
-- [`bad.h`](../../examples/case55_type_kind_changed/bad.h)
-- [`good.c`](../../examples/case55_type_kind_changed/good.c)
-- [`good.h`](../../examples/case55_type_kind_changed/good.h)
+- `CMakeLists.txt`
+- `app.c`
+- `bad.c`
+- `bad.h`
+- `good.c`
+- `good.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

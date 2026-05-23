@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | — |
-| **Source files** | [browse source](../../examples/case42_type_alignment_changed/) |
+| **Source files** | `examples/case42_type_alignment_changed/` |
 
 **Category:** Type Layout / DWARF | **Verdict:** BREAKING
 
@@ -100,11 +100,11 @@ cp /tmp/abicheck-examples-build/case43_type_alignment_changed/libv2.so "$tmp/lib
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case42_type_alignment_changed/CMakeLists.txt)
-- [`app.c`](../../examples/case42_type_alignment_changed/app.c)
-- [`bad.c`](../../examples/case42_type_alignment_changed/bad.c)
-- [`bad.h`](../../examples/case42_type_alignment_changed/bad.h)
-- [`good.c`](../../examples/case42_type_alignment_changed/good.c)
-- [`good.h`](../../examples/case42_type_alignment_changed/good.h)
+- `CMakeLists.txt`
+- `app.c`
+- `bad.c`
+- `bad.h`
+- `good.c`
+- `good.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

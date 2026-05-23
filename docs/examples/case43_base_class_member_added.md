@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | — |
-| **Source files** | [browse source](../../examples/case43_base_class_member_added/) |
+| **Source files** | `examples/case43_base_class_member_added/` |
 
 **Category:** C++ Layout | **Verdict:** 🔴 BREAKING
 
@@ -74,11 +74,11 @@ Options:
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case43_base_class_member_added/CMakeLists.txt)
-- [`app.cpp`](../../examples/case43_base_class_member_added/app.cpp)
-- [`v1.cpp`](../../examples/case43_base_class_member_added/v1.cpp)
-- [`v1.hpp`](../../examples/case43_base_class_member_added/v1.hpp)
-- [`v2.cpp`](../../examples/case43_base_class_member_added/v2.cpp)
-- [`v2.hpp`](../../examples/case43_base_class_member_added/v2.hpp)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.hpp`
+- `v2.cpp`
+- `v2.hpp`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

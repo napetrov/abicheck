@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS |
 | **Flags** | — |
 | **Detected `ChangeKind`s** | `func_added` |
-| **Source files** | [browse source](../../examples/case62_type_field_added_compatible/) |
+| **Source files** | `examples/case62_type_field_added_compatible/` |
 
 **Category:** Type Layout | **Verdict:** COMPATIBLE
 
@@ -100,11 +100,11 @@ struct Widget {
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case62_type_field_added_compatible/CMakeLists.txt)
-- [`app.c`](../../examples/case62_type_field_added_compatible/app.c)
-- [`bad.c`](../../examples/case62_type_field_added_compatible/bad.c)
-- [`bad.h`](../../examples/case62_type_field_added_compatible/bad.h)
-- [`good.c`](../../examples/case62_type_field_added_compatible/good.c)
-- [`good.h`](../../examples/case62_type_field_added_compatible/good.h)
+- `CMakeLists.txt`
+- `app.c`
+- `bad.c`
+- `bad.h`
+- `good.c`
+- `good.h`
 
 _See also: [Examples overview](index.md) · [All COMPATIBLE cases](by-verdict/compatible.md) · [Category: Addition (Compatible)](by-category/addition.md)._

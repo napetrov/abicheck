@@ -8,7 +8,7 @@
 | **Platforms** | Linux |
 | **Flags** | Bad practice |
 | **Detected `ChangeKind`s** | — |
-| **Source files** | [browse source](../../examples/case49_executable_stack/) |
+| **Source files** | `examples/case49_executable_stack/` |
 
 **Category:** ELF / Security | **Verdict:** BAD PRACTICE
 
@@ -118,9 +118,9 @@ readelf -W -l /tmp/abicheck-examples-build/case50_executable_stack/libv2.so | gr
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case49_executable_stack/CMakeLists.txt)
-- [`app.c`](../../examples/case49_executable_stack/app.c)
-- [`bad.c`](../../examples/case49_executable_stack/bad.c)
-- [`good.c`](../../examples/case49_executable_stack/good.c)
+- `CMakeLists.txt`
+- `app.c`
+- `bad.c`
+- `good.c`
 
 _See also: [Examples overview](index.md) · [All COMPATIBLE cases](by-verdict/compatible.md) · [Category: Quality (Compatible)](by-category/quality.md)._

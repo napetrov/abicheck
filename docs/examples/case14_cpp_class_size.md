@@ -8,7 +8,7 @@
 | **Platforms** | Linux |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | — |
-| **Source files** | [browse source](../../examples/case14_cpp_class_size/) |
+| **Source files** | `examples/case14_cpp_class_size/` |
 
 **Category:** C++ ABI | **Verdict:** 🟡 ABI CHANGE (exit 4)
 
@@ -93,11 +93,11 @@ adjacent variables and potentially return addresses.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case14_cpp_class_size/CMakeLists.txt)
-- [`app.cpp`](../../examples/case14_cpp_class_size/app.cpp)
-- [`v1.cpp`](../../examples/case14_cpp_class_size/v1.cpp)
-- [`v1.h`](../../examples/case14_cpp_class_size/v1.h)
-- [`v2.cpp`](../../examples/case14_cpp_class_size/v2.cpp)
-- [`v2.h`](../../examples/case14_cpp_class_size/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `func_language_linkage_changed` |
-| **Source files** | [browse source](../../examples/case66_language_linkage_changed/) |
+| **Source files** | `examples/case66_language_linkage_changed/` |
 
 **Category:** Function ABI | **Verdict:** BREAKING
 
@@ -119,11 +119,11 @@ rather than a simple removal + addition.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case66_language_linkage_changed/CMakeLists.txt)
-- [`app.c`](../../examples/case66_language_linkage_changed/app.c)
-- [`v1.cpp`](../../examples/case66_language_linkage_changed/v1.cpp)
-- [`v1.h`](../../examples/case66_language_linkage_changed/v1.h)
-- [`v2.cpp`](../../examples/case66_language_linkage_changed/v2.cpp)
-- [`v2.h`](../../examples/case66_language_linkage_changed/v2.h)
+- `CMakeLists.txt`
+- `app.c`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

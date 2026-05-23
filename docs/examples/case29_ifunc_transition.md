@@ -8,7 +8,7 @@
 | **Platforms** | Linux |
 | **Flags** | — |
 | **Detected `ChangeKind`s** | — |
-| **Source files** | [browse source](../../examples/case29_ifunc_transition/) |
+| **Source files** | `examples/case29_ifunc_transition/` |
 
 **Verdict:** 🟢 COMPATIBLE
 **abicheck verdict: COMPATIBLE (informational/warning)**
@@ -106,7 +106,7 @@ IFUNC: PLT/GOT transparent to caller, runtime compat
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case29_ifunc_transition/CMakeLists.txt)
-- [`app.c`](../../examples/case29_ifunc_transition/app.c)
+- `CMakeLists.txt`
+- `app.c`
 
 _See also: [Examples overview](index.md) · [All COMPATIBLE cases](by-verdict/compatible.md) · [Category: Quality (Compatible)](by-category/quality.md)._

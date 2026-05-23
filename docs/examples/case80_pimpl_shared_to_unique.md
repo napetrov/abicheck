@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `internal_type_leaks_via_public_api` |
-| **Source files** | [browse source](../../examples/case80_pimpl_shared_to_unique/) |
+| **Source files** | `examples/case80_pimpl_shared_to_unique/` |
 
 **Category:** Pimpl ABI | **Verdict:** BREAKING
 
@@ -90,11 +90,11 @@ the API" cleanup without realizing it is binary-incompatible.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case80_pimpl_shared_to_unique/CMakeLists.txt)
-- [`app.cpp`](../../examples/case80_pimpl_shared_to_unique/app.cpp)
-- [`v1.cpp`](../../examples/case80_pimpl_shared_to_unique/v1.cpp)
-- [`v1.h`](../../examples/case80_pimpl_shared_to_unique/v1.h)
-- [`v2.cpp`](../../examples/case80_pimpl_shared_to_unique/v2.cpp)
-- [`v2.h`](../../examples/case80_pimpl_shared_to_unique/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

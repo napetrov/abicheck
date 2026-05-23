@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break |
 | **Detected `ChangeKind`s** | `default_template_arg_changed` |
-| **Source files** | [browse source](../../examples/case87_default_template_arg_changed/) |
+| **Source files** | `examples/case87_default_template_arg_changed/` |
 
 **Category:** Template ABI | **Verdict:** BREAKING
 
@@ -91,11 +91,11 @@ every explicit instantiation that didn't override that argument.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case87_default_template_arg_changed/CMakeLists.txt)
-- [`app.cpp`](../../examples/case87_default_template_arg_changed/app.cpp)
-- [`v1.cpp`](../../examples/case87_default_template_arg_changed/v1.cpp)
-- [`v1.h`](../../examples/case87_default_template_arg_changed/v1.h)
-- [`v2.cpp`](../../examples/case87_default_template_arg_changed/v2.cpp)
-- [`v2.h`](../../examples/case87_default_template_arg_changed/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

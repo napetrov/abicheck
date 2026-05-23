@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS, Windows |
 | **Flags** | ABI break, API break |
 | **Detected `ChangeKind`s** | `type_size_changed`, `type_field_added` |
-| **Source files** | [browse source](../../examples/case94_empty_tag_gained_state/) |
+| **Source files** | `examples/case94_empty_tag_gained_state/` |
 
 **Category:** Type Layout | **Verdict:** 🔴 BREAKING
 
@@ -83,11 +83,11 @@ specifically to avoid the silent-corruption pattern this case demonstrates.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case94_empty_tag_gained_state/CMakeLists.txt)
-- [`app.cpp`](../../examples/case94_empty_tag_gained_state/app.cpp)
-- [`v1.cpp`](../../examples/case94_empty_tag_gained_state/v1.cpp)
-- [`v1.h`](../../examples/case94_empty_tag_gained_state/v1.h)
-- [`v2.cpp`](../../examples/case94_empty_tag_gained_state/v2.cpp)
-- [`v2.h`](../../examples/case94_empty_tag_gained_state/v2.h)
+- `CMakeLists.txt`
+- `app.cpp`
+- `v1.cpp`
+- `v1.h`
+- `v2.cpp`
+- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

@@ -8,7 +8,7 @@
 | **Platforms** | Linux, macOS |
 | **Flags** | — |
 | **Detected `ChangeKind`s** | `used_reserved_field` |
-| **Source files** | [browse source](../../examples/case54_used_reserved_field/) |
+| **Source files** | `examples/case54_used_reserved_field/` |
 
 **Category:** Type Layout | **Verdict:** COMPATIBLE
 
@@ -92,11 +92,11 @@ cp /tmp/abicheck-examples-build/case55_used_reserved_field/libv2.so "$tmp/libv1.
 
 ## Source files
 
-- [`CMakeLists.txt`](../../examples/case54_used_reserved_field/CMakeLists.txt)
-- [`app.c`](../../examples/case54_used_reserved_field/app.c)
-- [`bad.c`](../../examples/case54_used_reserved_field/bad.c)
-- [`bad.h`](../../examples/case54_used_reserved_field/bad.h)
-- [`good.c`](../../examples/case54_used_reserved_field/good.c)
-- [`good.h`](../../examples/case54_used_reserved_field/good.h)
+- `CMakeLists.txt`
+- `app.c`
+- `bad.c`
+- `bad.h`
+- `good.c`
+- `good.h`
 
 _See also: [Examples overview](index.md) · [All COMPATIBLE cases](by-verdict/compatible.md) · [Category: Quality (Compatible)](by-category/quality.md)._
