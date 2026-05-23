@@ -50,7 +50,6 @@ class ChangeKind(str, Enum):
     # Function / variable changes
     FUNC_REMOVED = "func_removed"  # public symbol removed → BREAKING
     FUNC_REMOVED_ELF_ONLY = "func_removed_elf_only"  # ELF-only symbol removed (visibility cleanup, not hard break)
-    FUNC_REMOVED_FROM_BINARY = "func_removed_from_binary"  # header-declared function disappeared from .dynsym → BREAKING
     FUNC_ADDED = "func_added"  # new public symbol → COMPATIBLE
     FUNC_RETURN_CHANGED = "func_return_changed"  # return type changed → BREAKING
     FUNC_PARAMS_CHANGED = "func_params_changed"  # parameter types changed → BREAKING
@@ -130,11 +129,6 @@ class ChangeKind(str, Enum):
 
     # ELF security / bad practice
     EXECUTABLE_STACK = "executable_stack"  # PT_GNU_STACK has PF_X — NX protection disabled (bad practice)
-
-    # ELF symbol visibility drift (.dynsym STV_*)
-    ELF_VISIBILITY_CHANGED = (
-        "elf_visibility_changed"  # DEFAULT→PROTECTED (interposition semantics change)
-    )
 
     # Symbol metadata drift (ELF .dynsym)
     SYMBOL_BINDING_CHANGED = "symbol_binding_changed"  # GLOBAL→WEAK (breaking)

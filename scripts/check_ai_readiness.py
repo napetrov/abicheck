@@ -71,7 +71,7 @@ MIN_SOURCE_FILES_FOR_RATIO = 3
 # Documented baseline mypy error count (see CLAUDE.md → "Known mypy issues").
 # Fail if mypy reports MORE errors than this; emit a WARN when the count drops
 # so the baseline is lowered deliberately rather than drifting silently.
-MYPY_ERROR_BASELINE = 27
+MYPY_ERROR_BASELINE = 26
 
 
 # ---------------------------------------------------------------------------

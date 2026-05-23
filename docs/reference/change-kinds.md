@@ -35,8 +35,8 @@ These changes are immediately incompatible with existing compiled binaries.
 | `func_virtual_became_pure` | A virtual method that had a default implementation is now pure. Derived classes that relied on the base implementation now fail to link. |
 | `func_deleted` | A function was marked `= delete`. Previously callable code now gets a link-time error (callers compiled against old header had no error). |
 | `func_deleted_dwarf` | A function was marked `= delete`, detected via DWARF debug info (`DW_AT_deleted` in DWARF 5+, or a function declared in headers but absent from the DWARF compilation units). The function was previously callable; callers fail to link. |
+| `func_deleted_elf_fallback` | A function declared in the public headers disappeared from `.dynsym` (header-declared but no longer exported) and no explicit `= delete` annotation was present in metadata. Best-effort mixed-mode fallback: consumers' PLT entries fail to resolve at load time. |
 | `func_ref_qual_changed` | A C++ member function's ref-qualifier (`&` / `&&`) changed. This alters the Itanium ABI mangled name and the overload resolution result; old binaries link to a symbol that no longer exists under the previous name. |
-| `func_removed_from_binary` | A function declared in the public headers disappeared from `.dynsym` (header-declared but no longer exported). Consumers' PLT entries fail to resolve at load time. *Reserved kind — currently caught by `func_removed`; planned to be emitted by a dedicated mixed-mode detector that triangulates headers against the binary symbol table.* |
 
 ### Variable Changes
 
@@ -293,7 +293,6 @@ These changes are safe: they add new capabilities or carry diagnostic informatio
 | `symbol_version_defined_added` | Symbol versioning was introduced to the library (a new version definition added). New binaries link against the versioned symbol; old binaries use the unversioned fallback. |
 | `symbol_version_required_removed` | A previously required symbol version dependency was dropped. Reduces the minimum libc/glibc requirement — compatible or an improvement. |
 | `symbol_version_required_added_compat` | A new required symbol version dependency was added, but it is older than the previous maximum (e.g. `GLIBC_2.14` added while already depending on `GLIBC_2.17`). Existing target systems already satisfy the new requirement — informational only. The breaking case (a *newer* requirement) is reported as `symbol_version_required_added` under `COMPATIBLE_WITH_RISK`. |
-| `elf_visibility_changed` | ELF symbol visibility changed (e.g. `STV_DEFAULT` → `STV_PROTECTED`). The symbol is still exported but interposition semantics differ. *Legacy alias kept for backwards compatibility — the active emitter is `symbol_elf_visibility_changed`.* |
 | `symbol_elf_visibility_changed` | ELF symbol visibility (`st_other`) changed (e.g. `STV_DEFAULT` → `STV_PROTECTED`). The symbol is still exported, but interposition via `LD_PRELOAD` may stop working for intra-library calls. |
 
 ### ELF Symbol-Version Policy

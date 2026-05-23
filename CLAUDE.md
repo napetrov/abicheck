@@ -124,7 +124,7 @@ Core pipeline (in order of data flow):
 
 ## Known mypy issues
 
-CI runs `mypy abicheck/` as a required gate. The current baseline is **27 errors** (concentrated in `compat/cli.py`, `ctf_metadata.py`, `btf_metadata.py`, `dwarf_snapshot.py`). `scripts/check_ai_readiness.py` enforces the baseline — a higher count fails CI.
+CI runs `mypy abicheck/` as a required gate. The current baseline is **26 errors** (concentrated in `compat/cli.py`, `ctf_metadata.py`, `btf_metadata.py`, `dwarf_snapshot.py`). `scripts/check_ai_readiness.py` enforces the baseline — a higher count fails CI.
 
 These are upstream typing gaps or stale suppression comments, not bugs.
 **Your responsibility**: run `mypy abicheck/` after your changes and ensure you do not introduce *new* errors beyond the documented baseline. Do not dismiss new mypy failures as "known issues". If you legitimately reduce the count, lower `MYPY_ERROR_BASELINE` in `scripts/check_ai_readiness.py` to lock in the win.
