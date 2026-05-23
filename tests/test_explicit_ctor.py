@@ -135,3 +135,15 @@ class TestExplicitCtor:
         declaration_el = Element("Converter", file="_1", line="2")
         assert parser._source_line_has_explicit(None, declaration_el) is True
         assert str(source) in parser._source_lines_cache
+
+    def test_castxml_converter_fallback_preserves_unknown_on_missing_source(self) -> None:
+        root = Element("GCC_XML")
+        root.append(Element("File", id="_1", name=""))
+        root.append(Element("File", id="_2", name="/does/not/exist.h"))
+        parser = _CastxmlParser(root, exported_dynamic=set(), exported_static=set())
+
+        assert parser._source_line_has_explicit(None) is None
+        assert parser._source_line_has_explicit(Element("Location", file="_missing", line="1")) is None
+        assert parser._source_line_has_explicit(Element("Location", file="_1", line="1")) is None
+        assert parser._source_line_has_explicit(Element("Location", file="_2", line="not-int")) is None
+        assert parser._source_line_has_explicit(Element("Location", file="_2", line="1")) is None
