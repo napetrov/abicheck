@@ -17,7 +17,6 @@ from click.testing import CliRunner
 
 from abicheck.cli import main
 
-
 # ── cli_suggest: suggest-suppressions ───────────────────────────────────────
 
 class TestSuggestSuppressionsCmd:
