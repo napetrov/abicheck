@@ -15,9 +15,21 @@ import click
 import pytest
 from click.testing import CliRunner
 
+from abicheck import cli_appcompat as _cli_appcompat
 from abicheck.cli import main
+from abicheck.cli_appcompat import (
+    _handle_list_required_symbols,
+    _validate_appcompat_args,
+)
+from abicheck.compat._errors import _classify_compat_error_exit_code, _compat_fail
+from abicheck.diff_platform_templates import (
+    _extract_template_args,
+    _split_top_level_args,
+    _template_outer,
+)
 
 # ── cli_suggest: suggest-suppressions ───────────────────────────────────────
+
 
 class TestSuggestSuppressionsCmd:
     """Cover error paths and happy path of the suggest-suppressions command."""
@@ -74,87 +86,62 @@ class TestSuggestSuppressionsCmd:
 
 # ── compat/_errors: error classification ────────────────────────────────────
 
+
 class TestCompatErrors:
     """Exercise the error-classification helpers extracted to compat/_errors."""
 
     def test_keyboard_interrupt_is_eleven(self) -> None:
-        from abicheck.compat._errors import _classify_compat_error_exit_code
-
         assert _classify_compat_error_exit_code(KeyboardInterrupt()) == 11
 
     def test_tool_missing_message_is_three(self) -> None:
-        from abicheck.compat._errors import _classify_compat_error_exit_code
-
         assert _classify_compat_error_exit_code(
-            RuntimeError("castxml not found in PATH"), context="parsing"
+            RuntimeError("castxml not found in PATH"), context="parsing",
         ) == 3
 
     def test_compile_failure_is_five(self) -> None:
-        from abicheck.compat._errors import _classify_compat_error_exit_code
-
         assert _classify_compat_error_exit_code(
             RuntimeError("castxml failed: cannot compile"),
         ) == 5
 
     def test_descriptor_context_is_six(self) -> None:
-        from abicheck.compat._errors import _classify_compat_error_exit_code
-
         assert _classify_compat_error_exit_code(
-            ValueError("bad XML"), context="parsing descriptor"
+            ValueError("bad XML"), context="parsing descriptor",
         ) == 6
 
     def test_report_context_is_seven(self) -> None:
-        from abicheck.compat._errors import _classify_compat_error_exit_code
-
         assert _classify_compat_error_exit_code(
-            RuntimeError("oops"), context="writing report"
+            RuntimeError("oops"), context="writing report",
         ) == 7
 
     def test_dump_context_is_eight(self) -> None:
-        from abicheck.compat._errors import _classify_compat_error_exit_code
-
         assert _classify_compat_error_exit_code(
-            RuntimeError("snapshot failed"), context="running dump pipeline"
+            RuntimeError("snapshot failed"), context="running dump pipeline",
         ) == 8
 
     def test_fallback_is_ten(self) -> None:
-        from abicheck.compat._errors import _classify_compat_error_exit_code
-
         assert _classify_compat_error_exit_code(RuntimeError("unknown")) == 10
 
     def test_file_not_found_is_four(self, tmp_path: Path) -> None:
-        from abicheck.compat._errors import _classify_compat_error_exit_code
-
         exc = FileNotFoundError(2, "No such file or directory", str(tmp_path / "x"))
         assert _classify_compat_error_exit_code(exc, context="reading input") == 4
 
     def test_permission_error_is_four(self) -> None:
-        from abicheck.compat._errors import _classify_compat_error_exit_code
-
         assert _classify_compat_error_exit_code(PermissionError("denied")) == 4
 
     def test_os_error_eacces_is_four(self) -> None:
-        from abicheck.compat._errors import _classify_compat_error_exit_code
-
         exc = OSError(errno.EACCES, "access denied")
         assert _classify_compat_error_exit_code(exc) == 4
 
     def test_os_error_in_report_context_is_seven(self) -> None:
-        from abicheck.compat._errors import _classify_compat_error_exit_code
-
         exc = OSError(errno.ENOSPC, "no space")
         assert _classify_compat_error_exit_code(exc, context="writing report") == 7
 
     def test_unrelated_os_error_falls_through(self) -> None:
-        from abicheck.compat._errors import _classify_compat_error_exit_code
-
         # ENOSPC isn't classified by _classify_fs_error and the message has no
         # known token, so we land on the catch-all (10).
         assert _classify_compat_error_exit_code(OSError(errno.ENOSPC, "no space")) == 10
 
     def test_compat_fail_exits_with_code(self) -> None:
-        from abicheck.compat._errors import _compat_fail
-
         with pytest.raises(SystemExit) as exc_info:
             _compat_fail("loading descriptor", FileNotFoundError("missing"))
         # FileNotFoundError → 4 (cannot access input files) unless tool-missing
@@ -163,11 +150,11 @@ class TestCompatErrors:
 
 # ── cli_appcompat: validation helpers ───────────────────────────────────────
 
+
 class TestValidateAppcompatArgs:
     """Direct unit tests for the appcompat argument validator."""
 
     def _call(self, **kw: Any) -> None:
-        from abicheck.cli_appcompat import _validate_appcompat_args
         defaults: dict[str, Any] = {
             "weak_mode": False,
             "old_lib": Path("/tmp/old.so"),
@@ -231,8 +218,6 @@ class TestHandleListRequiredSymbols:
     """Direct unit tests for the list-required-symbols handler."""
 
     def _call(self, fmt: str, *, weak_mode: bool = True) -> str:
-        from abicheck.cli_appcompat import _handle_list_required_symbols
-
         captured: list[str] = []
 
         def _fake_echo(msg: str = "", **_kw: Any) -> None:
@@ -250,9 +235,8 @@ class TestHandleListRequiredSymbols:
         def _fake_parse(_app: Path, _lib: str) -> _FakeReqs:
             return reqs
 
-        from abicheck import cli_appcompat as mod
-        orig = mod.click.echo
-        mod.click.echo = _fake_echo  # type: ignore[assignment]
+        orig = _cli_appcompat.click.echo
+        _cli_appcompat.click.echo = _fake_echo  # type: ignore[assignment]
         try:
             _handle_list_required_symbols(
                 Path("/tmp/app"),
@@ -264,7 +248,7 @@ class TestHandleListRequiredSymbols:
                 parse_app_requirements=_fake_parse,
             )
         finally:
-            mod.click.echo = orig  # type: ignore[assignment]
+            _cli_appcompat.click.echo = orig  # type: ignore[assignment]
         return "\n".join(captured)
 
     def test_text_format(self) -> None:
@@ -281,8 +265,6 @@ class TestHandleListRequiredSymbols:
         assert data["required_versions"] == {"GLIBC_2.17": "libc.so.6"}
 
     def test_missing_target_lib_raises(self) -> None:
-        from abicheck.cli_appcompat import _handle_list_required_symbols
-
         def _never(p: Path) -> str:
             raise AssertionError("should not be called")
 
@@ -297,6 +279,7 @@ class TestHandleListRequiredSymbols:
 
 
 # ── cli_stack: command help / argument validation ───────────────────────────
+
 
 class TestCliStackBasics:
     """Cover the surface of the deps / stack-check commands beyond their core
@@ -347,6 +330,7 @@ class TestCliStackBasics:
 
 # ── diff_platform_templates: pure helpers ───────────────────────────────────
 
+
 class TestTemplateHelpers:
     """Cover the standalone string helpers in diff_platform_templates."""
 
@@ -362,8 +346,6 @@ class TestTemplateHelpers:
     def test_extract_template_args(
         self, type_str: str, expected: list[str] | None,
     ) -> None:
-        from abicheck.diff_platform_templates import _extract_template_args
-
         assert _extract_template_args(type_str) == expected
 
     @pytest.mark.parametrize("type_str,expected", [
@@ -373,20 +355,14 @@ class TestTemplateHelpers:
         ("int", "int"),
     ])
     def test_template_outer(self, type_str: str, expected: str) -> None:
-        from abicheck.diff_platform_templates import _template_outer
-
         assert _template_outer(type_str) == expected
 
     def test_split_top_level_args_respects_nesting(self) -> None:
-        from abicheck.diff_platform_templates import _split_top_level_args
-
         assert _split_top_level_args("int, Foo<int, double>, char") == [
             "int", "Foo<int, double>", "char",
         ]
 
     def test_split_top_level_args_respects_parens(self) -> None:
-        from abicheck.diff_platform_templates import _split_top_level_args
-
         assert _split_top_level_args("void(int, double), char") == [
             "void(int, double)", "char",
         ]
