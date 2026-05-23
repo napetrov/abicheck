@@ -21,8 +21,8 @@ set is unchanged. The set of *providers* changed:
 
 ```bash
 cmake -S examples -B /tmp/abicheck-examples-build -DCMAKE_BUILD_TYPE=Debug
-cmake --build /tmp/abicheck-examples-build --target case90_bundle_provider_changed_old_libutil case90_bundle_provider_changed_new_libutil
-PYTHONPATH=. python3 -m abicheck.cli compare-release   /tmp/abicheck-examples-build/case90_bundle_provider_changed/old   /tmp/abicheck-examples-build/case90_bundle_provider_changed/new   --format markdown
+cmake --build /tmp/abicheck-examples-build --target case92_bundle_provider_changed_old_libutil case92_bundle_provider_changed_new_libutil
+PYTHONPATH=. python3 -m abicheck.cli compare-release   /tmp/abicheck-examples-build/case92_bundle_provider_changed/old   /tmp/abicheck-examples-build/case92_bundle_provider_changed/new   --format markdown
 # bundle_provider_changed: shared_util moved from libcore.so to libutil.so.
 ```
 

@@ -53,23 +53,23 @@ older baseline snapshots that predate the field.
 ```bash
 cmake -S examples -B /tmp/abicheck-examples-build -DCMAKE_BUILD_TYPE=Debug
 cmake --build /tmp/abicheck-examples-build \
-  --target case93_ctor_became_explicit_app case93_ctor_became_explicit_v2
+  --target case106_ctor_became_explicit_app case106_ctor_became_explicit_v2
 
-/tmp/abicheck-examples-build/case93_ctor_became_explicit/app_v1
+/tmp/abicheck-examples-build/case106_ctor_became_explicit/app_v1
 # concurrency = 4 (expect 4)
 
 # Runtime substitution is still OK: the mangled conversion-operator symbol
 # did not change.
 tmp=$(mktemp -d)
-cp /tmp/abicheck-examples-build/case93_ctor_became_explicit/app_v1 "$tmp/"
-cp /tmp/abicheck-examples-build/case93_ctor_became_explicit/libv2.so "$tmp/libv1.so"
+cp /tmp/abicheck-examples-build/case106_ctor_became_explicit/app_v1 "$tmp/"
+cp /tmp/abicheck-examples-build/case106_ctor_became_explicit/libv2.so "$tmp/libv1.so"
 (cd "$tmp" && LD_LIBRARY_PATH=. ./app_v1)
 # concurrency = 4 (expect 4)
 
 # Source rebuild against the v2 header fails because app.cpp does `int n = ta;`.
 tmp=$(mktemp -d)
-cp examples/case93_ctor_became_explicit/app.cpp "$tmp/app.cpp"
-cp examples/case93_ctor_became_explicit/v2.h "$tmp/v1.h"
+cp examples/case106_ctor_became_explicit/app.cpp "$tmp/app.cpp"
+cp examples/case106_ctor_became_explicit/v2.h "$tmp/v1.h"
 g++ -std=c++17 -I"$tmp" -c "$tmp/app.cpp" -o "$tmp/app.o"
 # error: cannot convert 'mylib::task_arena' to 'int' in initialization
 ```

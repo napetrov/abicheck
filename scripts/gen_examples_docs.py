@@ -287,7 +287,7 @@ def _render_index(cases: list[Case]) -> str:
         "- **How to fix** — the mitigation pattern, where the README documents one.\n"
         "- **Real-world example** — historical occurrences in widely-used libraries.\n"
         "- **References** — links to relevant standards, manuals, and abicheck source.\n\n"
-        "Source files (`v1.*`, `v2.*`, `app.*`, `CMakeLists.txt`) are linked at the bottom of every page.\n\n"
+        "Source files (`v1.*`, `v2.*`, `app.*`, `CMakeLists.txt`) are listed at the bottom of every page.\n\n"
     )
     lines.append("## Browse by category\n\n")
     by_cat: dict[str, list[Case]] = defaultdict(list)

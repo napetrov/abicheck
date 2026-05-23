@@ -49,11 +49,11 @@ reachability walker follows template-instantiation edges into `detail::`.
 
 ```bash
 cmake -S examples -B /tmp/abicheck-examples-build -DCMAKE_BUILD_TYPE=Debug
-cmake --build /tmp/abicheck-examples-build --target case78_detail_templated_base_changed_app case78_detail_templated_base_changed_v2
+cmake --build /tmp/abicheck-examples-build --target case77_detail_templated_base_changed_app case77_detail_templated_base_changed_v2
 
 tmp=$(mktemp -d)
-cp /tmp/abicheck-examples-build/case78_detail_templated_base_changed/app_v1 "$tmp/"
-cp /tmp/abicheck-examples-build/case78_detail_templated_base_changed/libv2.so "$tmp/libv1.so"
+cp /tmp/abicheck-examples-build/case77_detail_templated_base_changed/app_v1 "$tmp/"
+cp /tmp/abicheck-examples-build/case77_detail_templated_base_changed/libv2.so "$tmp/libv1.so"
 (cd "$tmp" && LD_LIBRARY_PATH=. ./app_v1)
 # *** stack smashing detected ***: terminated
 ```

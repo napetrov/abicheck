@@ -15,8 +15,8 @@ runtime `dlopen("libalgo.so")` fails with `undefined symbol: core_mul`.
 
 ```bash
 cmake -S examples -B /tmp/abicheck-examples-build -DCMAKE_BUILD_TYPE=Debug
-cmake --build /tmp/abicheck-examples-build --target case88_bundle_intra_dep_removed_old_libalgo case88_bundle_intra_dep_removed_new_libalgo
-PYTHONPATH=. python3 -m abicheck.cli compare-release   /tmp/abicheck-examples-build/case88_bundle_intra_dep_removed/old   /tmp/abicheck-examples-build/case88_bundle_intra_dep_removed/new   --format markdown
+cmake --build /tmp/abicheck-examples-build --target case90_bundle_intra_dep_removed_old_libalgo case90_bundle_intra_dep_removed_new_libalgo
+PYTHONPATH=. python3 -m abicheck.cli compare-release   /tmp/abicheck-examples-build/case90_bundle_intra_dep_removed/old   /tmp/abicheck-examples-build/case90_bundle_intra_dep_removed/new   --format markdown
 # bundle_intra_dep_removed: libalgo.so imports core_mul, but no new bundle library exports it.
 ```
 

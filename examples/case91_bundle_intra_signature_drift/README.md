@@ -20,8 +20,8 @@ calling convention is now wrong:
 
 ```bash
 cmake -S examples -B /tmp/abicheck-examples-build -DCMAKE_BUILD_TYPE=Debug
-cmake --build /tmp/abicheck-examples-build --target case89_bundle_intra_signature_drift_old_libalgo case89_bundle_intra_signature_drift_new_libalgo
-PYTHONPATH=. python3 -m abicheck.cli compare-release   /tmp/abicheck-examples-build/case89_bundle_intra_signature_drift/old   /tmp/abicheck-examples-build/case89_bundle_intra_signature_drift/new   --format markdown
+cmake --build /tmp/abicheck-examples-build --target case91_bundle_intra_signature_drift_old_libalgo case91_bundle_intra_signature_drift_new_libalgo
+PYTHONPATH=. python3 -m abicheck.cli compare-release   /tmp/abicheck-examples-build/case91_bundle_intra_signature_drift/old   /tmp/abicheck-examples-build/case91_bundle_intra_signature_drift/new   --format markdown
 # bundle_intra_dep_signature_changed: libalgo.so calls core_add but libcore.so changed its DWARF signature.
 ```
 

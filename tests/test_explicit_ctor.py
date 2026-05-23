@@ -69,9 +69,9 @@ class TestExplicitCtor:
     def test_none_on_either_side_suppresses_detector(self) -> None:
         """Tri-state: a missing `is_explicit` field (older snapshot, or a
         Function tag where the attribute is N/A) must NOT produce a finding
-        when compared against a fresh snapshot. This pins the Codex review
-        concern: defaulting unknown→implicit would cause spurious
-        CTOR_EXPLICIT_ADDED findings on every consumer upgrading abicheck.
+        when compared against a fresh snapshot. Defaulting unknown→implicit
+        would cause spurious CTOR_EXPLICIT_ADDED findings on every consumer
+        upgrading abicheck.
         """
         # old has unknown explicitness; new is explicit
         old = _snap("1.0", [_ctor("_ZN3FooC1Ei", is_explicit=None)])
@@ -125,16 +125,46 @@ class TestExplicitCtor:
             encoding="utf-8",
         )
         root = Element("GCC_XML")
-        file_el = Element("File", id="_1", name=str(source))
-        root.append(file_el)
+        root.append(Element("File", id="_1", name=str(source)))
+        root.append(Element("FundamentalType", id="_2", name="int"))
         parser = _CastxmlParser(root, exported_dynamic=set(), exported_static=set())
-        loc_el = Element("Location", file="_1", line="2")
+        loc_el = Element("Location", file="_1", line="3")
 
         assert parser._source_line_has_explicit(loc_el) is True
 
-        declaration_el = Element("Converter", file="_1", line="2")
+        declaration_el = Element("Converter", file="_1", line="3")
         assert parser._source_line_has_explicit(None, declaration_el) is True
         assert str(source) in parser._source_lines_cache
+
+    def test_castxml_converter_parse_functions_reads_operator_line_fallback(self, tmp_path) -> None:
+        source = tmp_path / "v2.h"
+        source.write_text(
+            "struct Token {\n"
+            "    explicit\n"
+            "    operator int() const;\n"
+            "};\n",
+            encoding="utf-8",
+        )
+        root = Element("GCC_XML")
+        root.append(Element("File", id="_1", name=str(source)))
+        root.append(Element("FundamentalType", id="_2", name="int"))
+        root.append(
+            Element(
+                "Converter",
+                id="_3",
+                file="_1",
+                line="3",
+                returns="_2",
+                mangled="_ZNK5TokencviEv",
+            )
+        )
+        parser = _CastxmlParser(root, exported_dynamic={"_ZNK5TokencviEv"}, exported_static=set())
+
+        funcs = parser.parse_functions()
+
+        assert len(funcs) == 1
+        assert funcs[0].name == "operator int"
+        assert funcs[0].is_explicit is True
 
     def test_castxml_converter_fallback_preserves_unknown_on_missing_source(self) -> None:
         root = Element("GCC_XML")

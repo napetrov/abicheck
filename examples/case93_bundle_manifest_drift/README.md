@@ -30,8 +30,8 @@ instantiated the dropped triple will fail to link.
 
 ```bash
 cmake -S examples -B /tmp/abicheck-examples-build -DCMAKE_BUILD_TYPE=Debug
-cmake --build /tmp/abicheck-examples-build --target case91_bundle_manifest_drift_old_libcore case91_bundle_manifest_drift_new_libcore
-PYTHONPATH=. python3 -m abicheck.cli compare-release   /tmp/abicheck-examples-build/case91_bundle_manifest_drift/old   /tmp/abicheck-examples-build/case91_bundle_manifest_drift/new   --manifest examples/case91_bundle_manifest_drift/manifest.yaml   --format markdown
+cmake --build /tmp/abicheck-examples-build --target case93_bundle_manifest_drift_old_libcore case93_bundle_manifest_drift_new_libcore
+PYTHONPATH=. python3 -m abicheck.cli compare-release   /tmp/abicheck-examples-build/case93_bundle_manifest_drift/old   /tmp/abicheck-examples-build/case93_bundle_manifest_drift/new   --manifest examples/case93_bundle_manifest_drift/manifest.yaml   --format markdown
 # bundle_manifest_instantiation_removed: train_double_sparse is promised but no longer exported.
 ```
 

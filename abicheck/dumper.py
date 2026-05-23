@@ -600,14 +600,21 @@ class _CastxmlParser:
                 self._source_lines_cache[fname] = lines
         except (OSError, UnicodeDecodeError, ValueError, IndexError):
             return None
-        start = max(0, line_no - 1)
+        # CastXML can point a split conversion operator at the ``operator``
+        # line, while the ``explicit`` keyword is on the preceding line.
+        start = max(0, line_no - 4)
         window_parts: list[str] = []
-        for line in lines[start : min(len(lines), start + 6)]:
+        for line in lines[start : min(len(lines), line_no + 5)]:
             window_parts.append(line.strip())
-            if ";" in line or "{" in line:
+            if line_no - 1 <= start + len(window_parts) - 1 and (";" in line or "{" in line):
                 break
         window = " ".join(window_parts)
-        return bool(re.search(r"\bexplicit\b.*\boperator\b", window))
+        operator_match = re.search(r"\boperator\b", window)
+        if operator_match is None:
+            return False
+        prefix = window[:operator_match.start()]
+        declaration_start = max(prefix.rfind(";"), prefix.rfind("{"), prefix.rfind("}"))
+        return bool(re.search(r"\bexplicit\b", prefix[declaration_start + 1 :]))
 
     def _type_name(self, id_: str, depth: int = 0) -> str:
         if depth > 10:

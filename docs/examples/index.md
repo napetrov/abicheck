@@ -33,7 +33,7 @@ Each case page starts with a metadata table (verdict, category, platforms, detec
 - **Real-world example** — historical occurrences in widely-used libraries.
 - **References** — links to relevant standards, manuals, and abicheck source.
 
-Source files (`v1.*`, `v2.*`, `app.*`, `CMakeLists.txt`) are linked at the bottom of every page.
+Source files (`v1.*`, `v2.*`, `app.*`, `CMakeLists.txt`) are listed at the bottom of every page.
 
 ## Browse by category
 

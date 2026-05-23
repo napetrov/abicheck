@@ -18,11 +18,11 @@ The smoke app does not crash, but the public by-value tag changed from empty to 
 
 ```bash
 cmake -S examples -B /tmp/abicheck-examples-build -DCMAKE_BUILD_TYPE=Debug
-cmake --build /tmp/abicheck-examples-build --target case92_empty_tag_gained_state_app case92_empty_tag_gained_state_v2
+cmake --build /tmp/abicheck-examples-build --target case94_empty_tag_gained_state_app case94_empty_tag_gained_state_v2
 
 tmp=$(mktemp -d)
-cp /tmp/abicheck-examples-build/case92_empty_tag_gained_state/app_v1 "$tmp/"
-cp /tmp/abicheck-examples-build/case92_empty_tag_gained_state/libv2.so "$tmp/libv1.so"
+cp /tmp/abicheck-examples-build/case94_empty_tag_gained_state/app_v1 "$tmp/"
+cp /tmp/abicheck-examples-build/case94_empty_tag_gained_state/libv2.so "$tmp/libv1.so"
 (cd "$tmp" && LD_LIBRARY_PATH=. ./app_v1)
 # run(7) = 14 (expect 14)
 ```
