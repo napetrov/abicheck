@@ -157,8 +157,8 @@ class TestValidateAppcompatArgs:
     def _call(self, **kw: Any) -> None:
         defaults: dict[str, Any] = {
             "weak_mode": False,
-            "old_lib": Path("/tmp/old.so"),
-            "new_lib": Path("/tmp/new.so"),
+            "old_lib": Path("old.so"),
+            "new_lib": Path("new.so"),
             "list_symbols": False,
             "old_headers_only": (),
             "new_headers_only": (),
@@ -196,14 +196,14 @@ class TestValidateAppcompatArgs:
         with pytest.raises(click.UsageError, match=flag):
             self._call(
                 weak_mode=True, old_lib=None, new_lib=None,
-                **{kwarg: (Path("/tmp/h.h"),)},
+                **{kwarg: (Path("h.h"),)},
             )
 
     def test_list_symbols_rejects_per_side_flags(self) -> None:
         with pytest.raises(click.UsageError, match="--list-required-symbols"):
             self._call(
                 list_symbols=True,
-                old_headers_only=(Path("/tmp/h.h"),),
+                old_headers_only=(Path("h.h"),),
             )
 
 
@@ -239,10 +239,10 @@ class TestHandleListRequiredSymbols:
         _cli_appcompat.click.echo = _fake_echo  # type: ignore[assignment]
         try:
             _handle_list_required_symbols(
-                Path("/tmp/app"),
-                Path("/tmp/lib") if weak_mode else None,
-                None if weak_mode else Path("/tmp/old"),
-                None if weak_mode else Path("/tmp/new"),
+                Path("app"),
+                Path("lib") if weak_mode else None,
+                None if weak_mode else Path("old"),
+                None if weak_mode else Path("new"),
                 weak_mode=weak_mode, fmt=fmt,
                 _get_lib_soname=_fake_get_soname,
                 parse_app_requirements=_fake_parse,
@@ -270,7 +270,7 @@ class TestHandleListRequiredSymbols:
 
         with pytest.raises(click.UsageError, match="requires a library path"):
             _handle_list_required_symbols(
-                Path("/tmp/app"),
+                Path("app"),
                 None, None, None,
                 weak_mode=False, fmt="markdown",
                 _get_lib_soname=_never,
