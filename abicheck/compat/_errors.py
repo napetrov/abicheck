@@ -30,7 +30,12 @@ import click
 def _looks_like_tool_missing(msg: str, ctx: str) -> bool:
     """Return True when the error indicates missing external tooling."""
     tool_missing_msg = any(
-        key in msg for key in ("not found in path", "command not found")
+        key in msg
+        for key in (
+            "not found in path",
+            "command not found",
+            "executable file not found",
+        )
     )
     tool_missing_ctx = any(
         key in ctx for key in ("castxml", "compiler tool", "external tool")
@@ -92,7 +97,7 @@ def _classify_compat_error_exit_code(exc: BaseException, *, context: str = "") -
 def _classify_fs_error(exc: BaseException, ctx: str, tool_missing: bool) -> int | None:
     """Classify filesystem/OS-level failures, or return None if not matched."""
     if isinstance(exc, FileNotFoundError):
-        return 3 if tool_missing else 4
+        return 3 if tool_missing or _missing_filename_looks_like_command(exc, ctx) else 4
     if isinstance(exc, PermissionError):
         return 4
     if not isinstance(exc, OSError):
@@ -104,6 +109,21 @@ def _classify_fs_error(exc: BaseException, ctx: str, tool_missing: bool) -> int 
     if "report" in ctx or "output" in ctx:
         return 7
     return None
+
+
+def _missing_filename_looks_like_command(exc: BaseException, ctx: str) -> bool:
+    """Return True when ``exc.filename`` looks like a bare command name during a dump.
+
+    ``FileNotFoundError`` from a missing executable (``subprocess`` couldn't
+    spawn castxml/gcc) carries the bare command in ``exc.filename`` with no
+    path separator, while a missing user input file is typically an absolute
+    or relative path. This heuristic only kicks in inside a "during dump"
+    context, so generic missing-input failures still classify as rc=4.
+    """
+    if "during dump" not in ctx:
+        return False
+    missing_name = (getattr(exc, "filename", "") or "").strip()
+    return bool(missing_name) and "/" not in missing_name and "\\" not in missing_name
 
 
 def _is_compile_failure(msg: str) -> bool:

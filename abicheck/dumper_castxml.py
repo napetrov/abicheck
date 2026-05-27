@@ -297,15 +297,25 @@ class _CastxmlParser:
                 or not raw_mangled  # C functions have no mangled name
             )
 
-            loc_id = el.get("location", "")
-            loc_el = self._id_map.get(loc_id)
-            source_loc = None
-            if loc_el is not None:
-                file_id = loc_el.get("file", "")
-                file_el = self._id_map.get(file_id)
-                fname = file_el.get("name", "") if file_el is not None else ""
-                line = loc_el.get("line", "")
-                source_loc = f"{fname}:{line}" if fname else None
+            # CastXML may store source location two ways:
+            #   1. Directly as ``file``/``line`` attributes on the declaration
+            #      element (modern compound-attribute form).
+            #   2. As ``location="loc1"`` referencing a separate ``Location``
+            #      element in the id map (legacy form).
+            # Try direct attrs first, then fall back to the id-map lookup so
+            # both formats are supported without losing source_location info.
+            file_id = el.get("file", "")
+            line = el.get("line", "")
+            loc_el: Element | None = None
+            if not (file_id and line):
+                loc_id = el.get("location", "")
+                loc_el = self._id_map.get(loc_id) if loc_id else None
+                if loc_el is not None:
+                    file_id = loc_el.get("file", "")
+                    line = loc_el.get("line", "")
+            file_el = self._id_map.get(file_id) if file_id else None
+            fname = file_el.get("name", "") if file_el is not None else ""
+            source_loc = f"{fname}:{line}" if fname and line else None
 
             is_static = el.get("static") == "1"
             is_const = el.get("const") == "1"
@@ -595,23 +605,33 @@ class _CastxmlParser:
 
         # Use a dict keyed by vtable_index so derived methods overwrite base entries,
         # preventing duplicate slots when a derived class overrides a virtual method.
-        slots: dict[int | None, str] = {}
+        # Unindexed entries (no vtable_index attribute) are kept separately so
+        # multiple virtuals without an index don't collapse onto a single ``None``
+        # key — that would silently drop all but the last one from the vtable.
+        slots: dict[int, str] = {}
+        unindexed: list[str] = []
         for base in class_el:
             if base.tag != "Base":
                 continue
             base_type_el = self._resolve(base.get("type", ""))
             if base_type_el is not None:
                 for idx, name in self._collect_virtual_methods(base_type_el.get("id", ""), seen):
-                    slots[idx] = name
+                    if idx is None:
+                        unindexed.append(name)
+                    else:
+                        slots[idx] = name
 
         for method_el in self._virtual_methods_by_class.get(cid, []):
             mangled_name = method_el.get("mangled", "")
             if not mangled_name:
                 continue
             idx = _parse_vtable_index(method_el.get("vtable_index"))
-            slots[idx] = mangled_name
+            if idx is None:
+                unindexed.append(mangled_name)
+            else:
+                slots[idx] = mangled_name
 
-        return list(slots.items())
+        return list(slots.items()) + [(None, name) for name in unindexed]
 
 
     def parse_enums(self) -> list[EnumType]:
@@ -630,7 +650,10 @@ class _CastxmlParser:
                     m_name = child.get("name", "")
                     m_val_str = child.get("init", "0")
                     try:
-                        m_val = int(m_val_str)
+                        # base=0 auto-detects 0x.../0o.../0b... prefixes and signs
+                        # so common C/C++ initializers like 0x10 don't silently
+                        # collapse to 0.
+                        m_val = int(m_val_str, 0)
                     except ValueError:
                         m_val = 0
                     members.append(EnumMember(name=m_name, value=m_val))

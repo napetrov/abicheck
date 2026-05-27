@@ -44,7 +44,10 @@ def _split_top_level_args(inner: str) -> list[str]:
         if c in _OPEN:
             nesting[_OPEN[c]] += 1
             current.append(c)
-        elif c == ">" and all(n == 0 for n in nesting[1:]) and nesting[0] > 0:
+        elif c == ">" and nesting[0] > 0:
+            # Angle depth always unwinds when a '>' is seen — even inside an
+            # open '('/'['/'{' — so types like
+            # ``Foo<void (*)(std::vector<int>), double>`` parse correctly.
             nesting[0] -= 1
             current.append(c)
         elif c in _CLOSE and c != ">":

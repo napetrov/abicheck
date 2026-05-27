@@ -342,6 +342,12 @@ class TestTemplateHelpers:
         ("std::function<void(int, double)>", ["void(int, double)"]),
         ("int", None),
         ("std::vector<int", None),  # unbalanced
+        # Regression: angle depth must unwind even when '>' appears while
+        # parentheses are open (function-pointer templates).
+        (
+            "Foo<void (*)(std::vector<int>), double>",
+            ["void (*)(std::vector<int>)", "double"],
+        ),
     ])
     def test_extract_template_args(
         self, type_str: str, expected: list[str] | None,
@@ -366,3 +372,61 @@ class TestTemplateHelpers:
         assert _split_top_level_args("void(int, double), char") == [
             "void(int, double)", "char",
         ]
+
+    def test_split_top_level_args_unwinds_angle_through_open_paren(self) -> None:
+        """Regression: '>' inside an open '(' must still pop angle depth."""
+        # Pre-fix this would not split at the outer comma because the angle
+        # depth got stuck while parentheses were open.
+        assert _split_top_level_args(
+            "void (*)(std::vector<int>), double",
+        ) == ["void (*)(std::vector<int>)", "double"]
+
+
+# ── dumper_castxml: enum + vtable helpers ───────────────────────────────────
+
+
+class TestCastxmlEnumHexInit:
+    """Regression test for hex/octal enum initializers."""
+
+    def test_hex_enum_value_parsed(self) -> None:
+        from xml.etree.ElementTree import Element
+
+        from abicheck.dumper_castxml import _CastxmlParser
+
+        root = Element("CastXML")
+        enum = Element("Enumeration", id="e1", name="Flags")
+        enum.append(Element("EnumValue", name="A", init="0x10"))
+        enum.append(Element("EnumValue", name="B", init="0x20"))
+        enum.append(Element("EnumValue", name="C", init="-1"))
+        root.append(enum)
+        parser = _CastxmlParser(root, set(), set())
+        [e] = parser.parse_enums()
+        assert {m.name: m.value for m in e.members} == {"A": 16, "B": 32, "C": -1}
+
+
+class TestCastxmlVtableUnindexed:
+    """Regression test: multiple virtuals without vtable_index must not collapse."""
+
+    def test_unindexed_virtuals_kept_separately(self) -> None:
+        from xml.etree.ElementTree import Element
+
+        from abicheck.dumper_castxml import _CastxmlParser
+
+        root = Element("CastXML")
+        cls = Element("Class", id="c1", name="C", members="")
+        root.append(cls)
+        # Two virtual methods, neither with a vtable_index attribute.
+        root.append(Element(
+            "Method", id="m1", name="foo", mangled="_ZN1C3fooEv",
+            virtual="1", context="c1",
+        ))
+        root.append(Element(
+            "Method", id="m2", name="bar", mangled="_ZN1C3barEv",
+            virtual="1", context="c1",
+        ))
+        parser = _CastxmlParser(root, set(), set())
+        slots = parser._collect_virtual_methods("c1")
+        # Pre-fix, both methods would land on the same `None` key in a dict and
+        # one would silently overwrite the other. Both must survive.
+        names = [name for _idx, name in slots]
+        assert sorted(names) == ["_ZN1C3barEv", "_ZN1C3fooEv"]

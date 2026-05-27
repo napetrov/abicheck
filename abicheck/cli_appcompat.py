@@ -32,6 +32,7 @@ from .cli import (
     _expand_header_inputs,
     _load_suppression_and_policy,
     _resolve_per_side_options,
+    _safe_write_output,
     _setup_verbosity,
     main,
 )
@@ -268,7 +269,7 @@ def appcompat_cmd(
         text = appcompat_to_markdown(result, show_irrelevant=show_irrelevant)
 
     if output:
-        output.write_text(text, encoding="utf-8")
+        _safe_write_output(output, text)
         click.echo(f"Report written to {output}", err=True)
     else:
         click.echo(text)

@@ -143,7 +143,7 @@ def stack_check_cmd(
     _setup_verbosity(verbose)
 
     # Guard against accidental no-op comparisons.
-    if baseline == candidate:
+    if baseline.resolve() == candidate.resolve():
         raise click.UsageError(
             "--baseline and --candidate resolve to the same sysroot; "
             "provide two different roots for stack comparison."
