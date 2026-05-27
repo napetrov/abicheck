@@ -124,7 +124,7 @@ Core pipeline (in order of data flow):
 
 ## Known mypy issues
 
-CI runs `mypy abicheck/` as a required gate. The current baseline is **27 errors** (concentrated in `compat/cli.py`, `ctf_metadata.py`, `btf_metadata.py`, `dwarf_snapshot.py`). `scripts/check_ai_readiness.py` enforces the baseline — a higher count fails CI.
+CI runs `mypy abicheck/` as a required gate. The current baseline is **26 errors** (concentrated in `compat/cli.py`, `ctf_metadata.py`, `btf_metadata.py`, `dwarf_snapshot.py`). `scripts/check_ai_readiness.py` enforces the baseline — a higher count fails CI.
 
 These are upstream typing gaps or stale suppression comments, not bugs.
 **Your responsibility**: run `mypy abicheck/` after your changes and ensure you do not introduce *new* errors beyond the documented baseline. Do not dismiss new mypy failures as "known issues". If you legitimately reduce the count, lower `MYPY_ERROR_BASELINE` in `scripts/check_ai_readiness.py` to lock in the win.
@@ -153,13 +153,19 @@ Run locally: `python scripts/check_ai_readiness.py`. Errors fail; warnings print
 
 ## Files that are large — edit carefully
 
-- `cli.py` (~1,950 lines) — main CLI, Click commands; sub-command modules below register on it
+- `cli.py` (~1,500 lines) — main CLI, Click commands; sub-command modules below register on it
 - `cli_compare_release.py` (~950 lines) — `compare-release` command and helpers (split from `cli.py`)
+- `cli_appcompat.py` (~280 lines) — `appcompat` command and helpers (split from `cli.py`)
 - `cli_baseline.py` (~240 lines) — `baseline` command group (split from `cli.py`)
+- `cli_stack.py` (~190 lines) — `deps` and `stack-check` commands (split from `cli.py`)
 - `cli_debian_symbols.py` (~130 lines) — `debian-symbols` command group (split from `cli.py`)
-- `diff_platform.py` (~1,600 lines) — all platform-specific detection
-- `dumper.py` (~1,600 lines) — binary metadata extraction
-- `compat/cli.py` (~1,500 lines) — ABICC compat CLI
+- `cli_suggest.py` (~80 lines) — `suggest-suppressions` command (split from `cli.py`)
+- `diff_platform.py` (~1,460 lines) — all platform-specific detection
+- `diff_platform_templates.py` (~180 lines) — template inner-type detectors (split from `diff_platform.py`)
+- `dumper.py` (~1,150 lines) — binary metadata extraction
+- `dumper_castxml.py` (~610 lines) — castxml XML parser (split from `dumper.py`)
+- `compat/cli.py` (~1,430 lines) — ABICC compat CLI
+- `compat/_errors.py` (~130 lines) — ABICC compat error classification helpers (split from `compat/cli.py`)
 
 The 2000-line hard cap is enforced for every source file (no allowlist). Files above 1500 lines emit a WARN as a refactor signal. When editing, read the specific section you need rather than the whole file.
 

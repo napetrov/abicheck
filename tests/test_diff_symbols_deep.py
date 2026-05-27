@@ -187,18 +187,18 @@ class TestFuncNoexceptRemoved:
         assert ChangeKind.FUNC_NOEXCEPT_ADDED in _kinds(r)
 
 
-# ── func_removed_from_binary (1 ref!) ─────────────────────────────────────
+# ── header-declared function disappeared from .dynsym ─────────────────────
 
-class TestFuncRemovedFromBinary:
+class TestHeaderDeclaredFunctionMissingFromBinary:
     """Function declared in header but not in binary symbol table.
 
-    NOTE: FUNC_REMOVED_FROM_BINARY is registered but not yet emitted by any
-    detector. This test documents the intended behavior and validates that
-    ELF-level symbol disappearance is still caught via the ELF deleted fallback.
+    The mixed-mode (headers + ELF) detector emits FUNC_DELETED_ELF_FALLBACK
+    when this happens — the previously-exported symbol is gone from .dynsym
+    while the header still declares the function.
     """
 
     def test_elf_symbol_disappeared_is_detected(self):
-        """When a function's ELF symbol disappears, some breaking signal should fire."""
+        """When a function's ELF symbol disappears, FUNC_DELETED_ELF_FALLBACK fires."""
         f = _pub_func("api_call", "_Z8api_callv")
         old_elf = ElfMetadata(
             symbols=[ElfSymbol(name="_Z8api_callv", binding=SymbolBinding.GLOBAL,
@@ -209,10 +209,8 @@ class TestFuncRemovedFromBinary:
         old = _snap(functions=[f], elf=old_elf)
         new = _snap(functions=[f], elf=new_elf)  # still in headers
         r = compare(old, new)
-        # FUNC_REMOVED_FROM_BINARY is not yet emitted by any detector.
-        # The ELF deleted fallback may or may not fire depending on mode.
-        # At minimum, verify comparison completes without error.
-        assert isinstance(r.verdict, Verdict)
+        assert ChangeKind.FUNC_DELETED_ELF_FALLBACK in _kinds(r)
+        assert r.verdict == Verdict.BREAKING
 
 
 # ── func_deleted (= delete) ──────────────────────────────────────────────

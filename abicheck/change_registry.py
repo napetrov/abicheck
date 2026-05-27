@@ -124,8 +124,6 @@ REGISTRY = ChangeKindRegistry([
        impact="Old binaries call a symbol that no longer exists; dynamic linker will refuse to load or crash at call site."),
     _E("func_removed_elf_only", _C,
        impact="Symbol removed from ELF but was not in public headers; low risk unless dlsym() callers depend on it."),
-    _E("func_removed_from_binary", _B,
-       impact="Header-declared function disappeared from .dynsym; consumers' PLT entries will fail to resolve at load time."),
     _E("func_added", _C, is_addition=True,
        impact="New function available; existing binaries are unaffected."),
     _E("func_return_changed", _B,
@@ -243,10 +241,6 @@ REGISTRY = ChangeKindRegistry([
     # ── ELF security / bad practice ────────────────────────────────────────
     _E("executable_stack", _C,
        impact="Library has executable stack (PT_GNU_STACK RWE); NX protection disabled — security risk."),
-
-    # ── ELF symbol visibility drift ────────────────────────────────────────
-    _E("elf_visibility_changed", _C,
-       impact="ELF symbol visibility changed (e.g. DEFAULT→PROTECTED); symbol still exported but interposition semantics differ."),
 
     # ── Symbol metadata drift ──────────────────────────────────────────────
     _E("symbol_binding_changed", _C,
