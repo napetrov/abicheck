@@ -67,6 +67,13 @@ dev = [
 python_version = "3.10"
 strict = true
 ignore_missing_imports = true
+# ``unused-ignore`` flips on/off depending on the mypy + pyelftools combo
+# the developer or CI runner happens to have installed (different
+# Python minor versions, different bundled stubs). Disabling it globally
+# keeps the `# type: ignore[...]` comments scattered throughout the
+# pyelftools call sites portable across environments without forcing a
+# strict version pin on every contributor.
+disable_error_code = ["unused-ignore"]
 
 [[tool.mypy.overrides]]
 # pyelftools has no type stubs or py.typed marker — all its APIs are untyped.
@@ -88,10 +95,13 @@ module = [
     "abicheck.binary_fingerprint",
 ]
 disallow_untyped_calls = false
-disable_error_code = ["attr-defined", "unused-ignore"]
+disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
 # Click decorators (@click.command, @click.option, etc.) are untyped.
+# ``compat/cli.py`` additionally subclasses ``click.Group`` (typed as Any)
+# and threads click-managed list[str] values through helper accessors, so
+# we also relax ``no-any-return`` / ``misc`` there.
 module = [
     "abicheck.cli",
     "abicheck.cli_appcompat",
@@ -103,6 +113,7 @@ module = [
     "abicheck.compat.cli",
 ]
 disallow_untyped_decorators = false
+disable_error_code = ["no-any-return", "misc"]
 
 [[tool.mypy.overrides]]
 # FastMCP decorators (@mcp.tool, etc.) are untyped.
@@ -117,6 +128,7 @@ module = [
     "abicheck.suppression",
     "abicheck.environment_matrix",
     "abicheck.probe_harness",
+    "abicheck.bundle",
 ]
 disable_error_code = ["import-untyped"]
 

@@ -39,6 +39,11 @@ class PipelineContext:
     old: AbiSnapshot
     new: AbiSnapshot
     suppression: SuppressionList | None = None
+    # Glob patterns identifying contractually frozen namespaces (e.g.
+    # ``**::detail::r1``). Threaded in from PolicyFile.frozen_namespaces.
+    # Consumed by EscalateFrozenNamespaceViolations to tag matching
+    # findings with Change.frozen_namespace_violation.
+    frozen_namespaces: list[str] = field(default_factory=list)
     # Accumulated side-outputs
     opaque_filtered: list[Change] = field(default_factory=list)
     suppressed: list[Change] = field(default_factory=list)
@@ -515,6 +520,129 @@ class DetectInternalLeaks:
         return changes
 
 
+class EscalateFrozenNamespaceViolations:
+    """Tag findings whose symbol / caused_by_type lies in a contractually
+    frozen namespace (e.g. ``**::detail::r1``).
+
+    A "frozen namespace" is one that the library author has declared
+    off-limits for changes: it is configured via
+    :attr:`PolicyFile.frozen_namespaces` and threaded in through
+    :attr:`PipelineContext.frozen_namespaces`.
+
+    Action per matched change:
+
+    * Set :attr:`Change.frozen_namespace_violation` to the matching glob
+      pattern. The verdict computation (:meth:`PolicyFile.compute_verdict`)
+      uses this field to refuse any policy_override that would downgrade
+      the change.
+    * Prefix the description with ``[frozen-namespace violation:
+      <pattern>] `` so the reporter surfaces the policy context.
+
+    No new ChangeKind is introduced — the underlying kind (e.g.
+    ``FUNC_REMOVED``) is preserved so downstream tools that already know
+    how to react to it continue to work unchanged.
+
+    Matching uses :func:`fnmatch.fnmatchcase` against ``::``-joined name
+    segments of the symbol (and, when set, ``caused_by_type``).  Template
+    arguments are stripped before matching so
+    ``ns::detail::r1::foo<int>(int)`` correctly matches
+    ``**::detail::r1::*``.
+    """
+
+    name = "escalate_frozen_namespace_violations"
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        if not ctx.frozen_namespaces:
+            return changes
+        # Imported lazily so this module stays free of import cycles.
+        import fnmatch
+
+        from .demangle import demangle
+        from .internal_leak import _strip_template_args
+
+        patterns = list(ctx.frozen_namespaces)
+
+        # Pre-build mangled→qualified-name lookups so we can recover the
+        # C++ namespace of ``extern "C"`` symbols whose ``Change.symbol``
+        # is just the unqualified export name (e.g. ``dispatch`` for a
+        # function declared in ``mylib::detail::r1::``). Both snapshots
+        # are consulted because FUNC_REMOVED is only in old and
+        # FUNC_ADDED only in new.
+        qualified_lookup: dict[str, str] = {}
+        for snap in (ctx.old, ctx.new):
+            if snap is None:
+                continue
+            try:
+                snap.index()
+            except Exception:  # noqa: BLE001 — defensive; snapshots may be partial
+                continue
+            func_map = getattr(snap, "_func_by_mangled", None) or {}
+            for mangled, fn in func_map.items():
+                fname = getattr(fn, "name", None)
+                if fname and "::" in fname and mangled not in qualified_lookup:
+                    qualified_lookup[mangled] = fname
+
+        def _match(name: str | None) -> str | None:
+            if not name:
+                return None
+            # Collect every plausible C++-qualified form of *name*:
+            # 1. the raw value (mangled, demangled, or already qualified);
+            # 2. the demangled form when the raw value looks Itanium-mangled;
+            # 3. the snapshot-recorded qualified name (Function.name), which
+            #    is the only form that recovers the namespace of an
+            #    ``extern "C"`` symbol whose export name is unqualified.
+            forms: list[str] = [name]
+            if name.startswith("_Z"):
+                dm = demangle(name)
+                if dm:
+                    forms.append(dm)
+            qual = qualified_lookup.get(name)
+            if qual:
+                forms.append(qual)
+
+            for form in forms:
+                # Walk every ancestor prefix so ``**::detail::r1`` matches
+                # both ``ns::detail::r1::foo`` and the deeper
+                # ``ns::detail::r1::sub::foo``.
+                candidate = _strip_template_args(form)
+                while True:
+                    for pat in patterns:
+                        if fnmatch.fnmatchcase(candidate, pat):
+                            return pat
+                    if "::" not in candidate:
+                        break
+                    candidate = candidate.rsplit("::", 1)[0]
+            return None
+
+        def _tag(c: Change) -> None:
+            if c.frozen_namespace_violation is not None:
+                # Already tagged by an earlier step (e.g. internal-leak
+                # overlay that synthesised a finding with the field set).
+                return
+            pat = (
+                _match(c.symbol)
+                or _match(c.caused_by_type)
+                or _match(c.qualified_name)
+            )
+            if pat is None:
+                return
+            c.frozen_namespace_violation = pat
+            if not c.description.startswith("[frozen-namespace violation"):
+                c.description = (
+                    f"[frozen-namespace violation: {pat}] " + c.description
+                )
+
+        for c in changes:
+            _tag(c)
+        # ``compare()`` computes the verdict on kept + redundant, so
+        # findings moved into ctx.redundant by FilterRedundant must also
+        # be tagged — otherwise a downgrade override could silently
+        # apply to a redundant-but-frozen finding.
+        for c in ctx.redundant:
+            _tag(c)
+        return changes
+
+
 # ---------------------------------------------------------------------------
 # Pipeline orchestrator
 # ---------------------------------------------------------------------------
@@ -536,9 +664,15 @@ class PostProcessingPipeline:
         old: AbiSnapshot,
         new: AbiSnapshot,
         suppression: SuppressionList | None = None,
+        frozen_namespaces: list[str] | None = None,
     ) -> PipelineContext:
         """Run all steps, returning the final PipelineContext."""
-        ctx = PipelineContext(old=old, new=new, suppression=suppression)
+        ctx = PipelineContext(
+            old=old,
+            new=new,
+            suppression=suppression,
+            frozen_namespaces=list(frozen_namespaces or []),
+        )
         for step in self.steps:
             changes = step.run(changes, ctx)
         # Ensure ctx.kept is set even if FilterRedundant didn't run
@@ -569,5 +703,8 @@ DEFAULT_PIPELINE = PostProcessingPipeline(
         DetectOneDALPatterns(),
         DetectNamespacePatterns(),
         DetectTemplatePatterns(),
+        # Runs last so it can tag both raw findings and the synthetic
+        # overlays added by DetectInternalLeaks / DetectOneDALPatterns.
+        EscalateFrozenNamespaceViolations(),
     ]
 )

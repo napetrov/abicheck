@@ -124,10 +124,9 @@ Core pipeline (in order of data flow):
 
 ## Known mypy issues
 
-CI runs `mypy abicheck/` as a required gate. The current baseline is **26 errors** (concentrated in `compat/cli.py`, `ctf_metadata.py`, `btf_metadata.py`, `dwarf_snapshot.py`). `scripts/check_ai_readiness.py` enforces the baseline — a higher count fails CI.
+CI runs `mypy abicheck/` as a required gate. The baseline is currently **0 errors** — the previously-documented 26 errors were all `unused-ignore` / `no-any-return` / `misc` warnings on third-party calls (pyelftools, click). They are suppressed in `pyproject.toml` via per-module `disable_error_code` overrides, which keeps the file portable across mypy releases without churning the underlying `# type: ignore` comments.
 
-These are upstream typing gaps or stale suppression comments, not bugs.
-**Your responsibility**: run `mypy abicheck/` after your changes and ensure you do not introduce *new* errors beyond the documented baseline. Do not dismiss new mypy failures as "known issues". If you legitimately reduce the count, lower `MYPY_ERROR_BASELINE` in `scripts/check_ai_readiness.py` to lock in the win.
+**Your responsibility**: run `mypy abicheck/` after your changes and ensure it stays clean. If a new third-party suppression is needed, extend the existing `disable_error_code` override for that module rather than scattering ad-hoc `# type: ignore` comments. If you legitimately reduce a real error to zero, leave `MYPY_ERROR_BASELINE = 0` in `scripts/check_ai_readiness.py` — it now warns on drift in either direction.
 
 ## AI-readiness gate
 
