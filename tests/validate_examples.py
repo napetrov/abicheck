@@ -390,6 +390,15 @@ def _check_case_preconditions(
     if CURRENT_PLATFORM not in platforms:
         return CaseResult(name, "SKIP", expected_raw, None,
                           f"not supported on {CURRENT_PLATFORM} (requires {platforms})")
+
+    # Skip cases whose required compiler feature is unavailable (e.g. C23
+    # _BitInt on GCC < 14): the fixture cannot compile, so it is not a FAIL.
+    feature = entry.get("requires_feature")
+    if feature is not None:
+        from feature_probe import compiler_supports
+        if not compiler_supports(feature):
+            return CaseResult(name, "SKIP", expected_raw, None,
+                              f"compiler lacks required feature {feature!r}")
     return None
 
 

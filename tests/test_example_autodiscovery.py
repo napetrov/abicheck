@@ -88,6 +88,14 @@ KNOWN_GAPS: dict[str, str] = {
     for k, v in _gt_data["verdicts"].items()
     if "known_gap" in v
 }
+# requires_feature: case_name → compiler feature that must be available, else
+# the case is skipped (the fixture cannot even compile on toolchains lacking
+# it — e.g. C23 _BitInt needs GCC 14+, so GCC 13 on ubuntu-latest skips it).
+REQUIRES_FEATURE: dict[str, str] = {
+    k: v["requires_feature"]
+    for k, v in _gt_data["verdicts"].items()
+    if "requires_feature" in v
+}
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +506,19 @@ def test_example_pipeline(
 
     if not shutil.which("castxml"):
         pytest.skip("castxml not found in PATH")
+
+    # --- Compiler-feature filter ---
+    # Some cases use language features the native toolchain may not implement
+    # (e.g. C23 _BitInt needs GCC 14+). The fixture cannot compile at all on
+    # such toolchains, so skip rather than fail.
+    feature = REQUIRES_FEATURE.get(case_name)
+    if feature is not None:
+        from tests.feature_probe import compiler_supports
+        if not compiler_supports(feature):
+            pytest.skip(
+                f"{case_name} requires compiler feature {feature!r} which the "
+                f"native toolchain does not support"
+            )
 
     case_dir = EXAMPLES_DIR / case_name
     assert case_dir.is_dir(), f"Case directory not found: {case_dir}"

@@ -1752,7 +1752,8 @@
             "description": "A public C23 _BitInt(128) accumulator widened to _BitInt(256) across a struct field, a by-value parameter, and a return type. The bit width is part of the type, so storage size and calling-convention treatment change.",
             "expected_kinds": [
                 "bit_int_width_changed"
-            ]
+            ],
+            "requires_feature": "_BitInt"
         },
         "case116_atomic_qualifier_changed": {
             "expected": "BREAKING",
