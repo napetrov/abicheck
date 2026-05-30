@@ -1,8 +1,8 @@
-cmake_minimum_required(VERSION 3.15)
-project(case113_abi_tag_changed CXX)
-
-add_library(case113_v1 SHARED v1.cpp)
-add_library(case113_v2 SHARED v2.cpp)
-
-set_target_properties(case113_v1 PROPERTIES OUTPUT_NAME case113)
-set_target_properties(case113_v2 PROPERTIES OUTPUT_NAME case113)
+abicheck_add_case(case113_abi_tag_changed
+    V1_SOURCES v1.cpp
+    V2_SOURCES v2.cpp
+    V1_HEADERS v1.h
+    V2_HEADERS v2.h
+    APP_SOURCES app.cpp
+    PLATFORMS linux macos windows
+)

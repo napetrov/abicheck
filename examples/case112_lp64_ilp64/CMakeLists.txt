@@ -1,8 +1,8 @@
-cmake_minimum_required(VERSION 3.15)
-project(case112_lp64_ilp64 C)
-
-add_library(case112_v1 SHARED v1.c)
-add_library(case112_v2 SHARED v2.c)
-
-set_target_properties(case112_v1 PROPERTIES OUTPUT_NAME case112)
-set_target_properties(case112_v2 PROPERTIES OUTPUT_NAME case112)
+abicheck_add_case(case112_lp64_ilp64
+    V1_SOURCES v1.c
+    V2_SOURCES v2.c
+    V1_HEADERS v1.h
+    V2_HEADERS v2.h
+    APP_SOURCES app.c
+    PLATFORMS linux macos windows
+)

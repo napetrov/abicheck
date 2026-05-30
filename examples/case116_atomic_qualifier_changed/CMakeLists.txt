@@ -1,11 +1,13 @@
-cmake_minimum_required(VERSION 3.15)
-project(case116_atomic_qualifier_changed C)
+abicheck_add_case(case116_atomic_qualifier_changed
+    V1_SOURCES v1.c
+    V2_SOURCES v2.c
+    V1_HEADERS v1.h
+    V2_HEADERS v2.h
+    APP_SOURCES app.c
+    PLATFORMS linux macos windows
+)
 
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-
-add_library(case116_v1 SHARED v1.c)
-add_library(case116_v2 SHARED v2.c)
-
-set_target_properties(case116_v1 PROPERTIES OUTPUT_NAME case116)
-set_target_properties(case116_v2 PROPERTIES OUTPUT_NAME case116)
+# _Atomic is C11; ensure at least C11 even if the toolchain default is older.
+set_target_properties(case116_atomic_qualifier_changed_v1 case116_atomic_qualifier_changed_v2
+    PROPERTIES C_STANDARD 11
+)

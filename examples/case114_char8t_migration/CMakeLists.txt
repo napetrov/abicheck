@@ -1,11 +1,12 @@
-cmake_minimum_required(VERSION 3.15)
-project(case114_char8t_migration CXX)
+abicheck_add_case(case114_char8t_migration
+    V1_SOURCES v1.cpp
+    V2_SOURCES v2.cpp
+    V1_HEADERS v1.h
+    V2_HEADERS v2.h
+    APP_SOURCES app.cpp
+    PLATFORMS linux macos windows
+)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-add_library(case114_v1 SHARED v1.cpp)
-add_library(case114_v2 SHARED v2.cpp)
-
-set_target_properties(case114_v1 PROPERTIES OUTPUT_NAME case114)
-set_target_properties(case114_v2 PROPERTIES OUTPUT_NAME case114)
+# char8_t is a C++20 feature; the repo-wide default is C++17.
+target_compile_features(case114_char8t_migration_v1 PRIVATE cxx_std_20)
+target_compile_features(case114_char8t_migration_v2 PRIVATE cxx_std_20)

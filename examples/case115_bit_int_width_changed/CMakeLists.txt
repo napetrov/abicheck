@@ -1,10 +1,13 @@
-cmake_minimum_required(VERSION 3.15)
-project(case115_bit_int_width_changed C)
+abicheck_add_case(case115_bit_int_width_changed
+    V1_SOURCES v1.c
+    V2_SOURCES v2.c
+    V1_HEADERS v1.h
+    V2_HEADERS v2.h
+    APP_SOURCES app.c
+    PLATFORMS linux macos windows
+)
 
-set(CMAKE_C_STANDARD 23)
-
-add_library(case115_v1 SHARED v1.c)
-add_library(case115_v2 SHARED v2.c)
-
-set_target_properties(case115_v1 PROPERTIES OUTPUT_NAME case115)
-set_target_properties(case115_v2 PROPERTIES OUTPUT_NAME case115)
+# _BitInt(N) is a C23 feature; request the latest C standard the toolchain has.
+set_target_properties(case115_bit_int_width_changed_v1 case115_bit_int_width_changed_v2
+    PROPERTIES C_STANDARD 23
+)
