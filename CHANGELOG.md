@@ -11,6 +11,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+#### Release Recommendation (semver + SONAME)
+- New `abicheck/semver.py` derives a **release recommendation** from the
+  policy-aware verdict + change set: a semantic-version bump
+  (`major`/`minor`/`patch`/`none`) and a SONAME action
+  (`bump_required`/`bump_performed`/`bump_missing`/`no_bump_needed`).
+- Always emitted in `abicheck compare --format json` under the additive
+  `release_recommendation` key (also in `--stat --format json`); opt-in for
+  Markdown via the new **`--recommend`** flag. Policy-aware (honours
+  `--policy sdk_vendor`/`plugin_abi` and custom policy files).
+- New tests: `tests/test_semver_recommendation.py`,
+  `tests/test_workflow_scenarios.py` (drop-in upgrade, additive minor,
+  host↔plugin load contract, policy-scoped decision).
+
+#### Use-Case Coverage Evaluation
+- New `docs/development/usecase-coverage-evaluation.md` maps abicheck against
+  the full application/library ABI-API change use-case space and records the
+  code/test/example follow-ups (gaps G1–G8).
+- Cross-platform honesty: `docs/reference/platforms.md` now states the
+  validation reality (Linux = CI-validated baseline; macOS/Windows =
+  parser-level/partial), guarded by `tests/test_platform_coverage_honesty.py`.
+
 #### JUnit XML Output
 - **`--format junit`** for `compare` and `compare-release` commands — produces
   JUnit XML reports for CI systems (GitLab CI, Jenkins, Azure DevOps) that

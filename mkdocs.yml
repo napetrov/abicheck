@@ -81,6 +81,7 @@ nav:
   - Development:
     - Goals: development/goals.md
     - Backlog: development/backlog.md
+    - Use-Case Coverage Evaluation: development/usecase-coverage-evaluation.md
     - Codebase Overview: development/codebase-overview.md
     - Testing: development/testing.md
     - Report Comparison: development/report-comparison.md
