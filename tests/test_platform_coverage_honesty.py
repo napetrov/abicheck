@@ -35,7 +35,7 @@ _KNOWN_PLATFORMS = {"linux", "macos", "windows"}
 
 
 def _verdicts() -> dict[str, dict]:
-    data = json.loads(_GROUND_TRUTH.read_text())
+    data = json.loads(_GROUND_TRUTH.read_text(encoding="utf-8"))
     return data["verdicts"]
 
 
@@ -97,7 +97,7 @@ def test_platforms_doc_records_the_validation_caveat() -> None:
     """The honesty caveat must stay in the platforms reference doc."""
     platforms_doc = (
         Path(__file__).parent.parent / "docs" / "reference" / "platforms.md"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "Validation status" in platforms_doc
     assert "baseline" in platforms_doc.lower()
 

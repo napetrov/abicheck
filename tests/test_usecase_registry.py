@@ -49,7 +49,7 @@ _GAP_RE = re.compile(r"^G[0-9]+$")
 
 
 def _load() -> list[dict]:
-    data = yaml.safe_load(_REGISTRY.read_text())
+    data = yaml.safe_load(_REGISTRY.read_text(encoding="utf-8"))
     assert isinstance(data, dict) and "use_cases" in data, (
         "registry must have use_cases"
     )
@@ -111,13 +111,13 @@ def test_all_axes_are_represented() -> None:
 def test_gap_ids_are_documented_in_eval_doc() -> None:
     """Every gap id the registry references must appear in the evaluation doc,
     so the machine registry and the human narrative cannot drift apart."""
-    doc = _EVAL_DOC.read_text()
+    doc = _EVAL_DOC.read_text(encoding="utf-8")
     gaps = {c["gap"] for c in _load() if "gap" in c}
     missing = {g for g in gaps if not re.search(rf"\b{g}\b", doc)}
     assert not missing, f"gap ids in registry but not in eval doc: {missing}"
 
 
 def test_eval_doc_links_to_registry() -> None:
-    assert "usecase-registry.yaml" in _EVAL_DOC.read_text(), (
+    assert "usecase-registry.yaml" in _EVAL_DOC.read_text(encoding="utf-8"), (
         "the evaluation doc must point readers at the machine-readable registry"
     )
