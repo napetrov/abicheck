@@ -105,6 +105,43 @@ abicheck compare old.json new.json --show-impact
 
 ---
 
+## Analysis confidence and evidence tier
+
+Every comparison reports how much evidence backed the verdict, so consumers can
+calibrate trust. Three related fields appear in the Markdown "Analysis
+Confidence" section and the JSON report:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `confidence` | `high` / `medium` / `low` | Overall trust level (does the available evidence corroborate the verdict, and were any detectors disabled). |
+| `evidence_tier` | `elf_only` / `dwarf_aware` / `header_aware` | **Canonical, ordered analysis depth.** Key trust decisions off this scalar. |
+| `evidence_tiers` | list of strings | Raw data sources that were available (`elf`, `dwarf`, `dwarf_advanced`, `header`, `pe`, `macho`). Retained for backward compatibility. |
+
+The `evidence_tier` scalar collapses the raw sources into a single ordered label
+(shallow → deep):
+
+- **`elf_only`** — symbol-table-only. Binary export tables (ELF/PE/Mach-O) are
+  present, but there is no DWARF debug info and no header/AST surface. Only
+  symbol add/remove and version changes are observable; struct layout, enum
+  values, and type changes are **not**.
+- **`dwarf_aware`** — DWARF (or equivalent debug info) is present, enabling
+  struct layout, enum, and calling-convention analysis, but no header/AST
+  surface is available to cross-check declared API intent.
+- **`header_aware`** — a parsed header/AST surface (functions/types/enums) is
+  present. The richest tier, and the only one that can reason about
+  declared-but-not-emitted API, inline/template changes, and macro contracts.
+
+```json
+{
+  "verdict": "breaking",
+  "confidence": "high",
+  "evidence_tier": "header_aware",
+  "evidence_tiers": ["elf", "dwarf", "header"]
+}
+```
+
+---
+
 ## SARIF Output
 
 abicheck supports [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/) output for integration with GitHub Code Scanning and other SAST platforms.
