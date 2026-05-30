@@ -192,3 +192,27 @@ def test_markdown_recommendation_is_opt_in() -> None:
     result = compare(old, new)
     assert "Release Recommendation" not in to_markdown(result)
     assert "Release Recommendation" in to_markdown(result, show_recommendation=True)
+
+
+def test_leaf_json_also_includes_recommendation() -> None:
+    """report_mode='leaf' must still expose release_recommendation (it has an
+    early return that previously bypassed the field)."""
+    old = AbiSnapshot(
+        library="libfoo.so", version="1.0", functions=[_fn("a"), _fn("b")]
+    )
+    new = AbiSnapshot(library="libfoo.so", version="2.0", functions=[_fn("a")])
+    result = compare(old, new)
+    payload = json.loads(to_json(result, report_mode="leaf"))
+    assert payload["release_recommendation"]["version_bump"] == "major"
+
+
+def test_leaf_markdown_honors_recommendation_flag() -> None:
+    old = AbiSnapshot(library="libfoo.so", version="1.0", functions=[_fn("a")])
+    new = AbiSnapshot(
+        library="libfoo.so", version="2.0", functions=[_fn("a"), _fn("c")]
+    )
+    result = compare(old, new)
+    assert "Release Recommendation" not in to_markdown(result, report_mode="leaf")
+    assert "Release Recommendation" in to_markdown(
+        result, report_mode="leaf", show_recommendation=True
+    )

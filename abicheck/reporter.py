@@ -362,6 +362,7 @@ def _to_markdown_leaf(
     result: DiffResult,
     show_impact: bool = False,
     show_only: str | None = None,
+    show_recommendation: bool = False,
 ) -> str:
     """Leaf-change mode: root type changes with affected interface lists."""
     from .checker import _ROOT_TYPE_CHANGE_KINDS
@@ -380,6 +381,9 @@ def _to_markdown_leaf(
         f"| **Verdict** | {emoji} `{label}` |",
         "",
     ]
+
+    if show_recommendation:
+        _append_recommendation_section(lines, result)
 
     changes = list(result.changes)
     if show_only:
@@ -481,6 +485,8 @@ def _to_json_leaf(
         # FIX-H: populate changes with union for backward-compat consumers
         "changes": leaf_changes_list + non_type_list,
     }
+    # Release recommendation — always present in JSON, including leaf mode.
+    d["release_recommendation"] = recommend_release(result).to_dict()
     if result.redundant_count > 0:
         d["redundant_count"] = result.redundant_count
     # Confidence & evidence metadata
@@ -935,7 +941,10 @@ def to_markdown(
         return to_stat(result)
 
     if report_mode == "leaf":
-        return _to_markdown_leaf(result, show_impact=show_impact, show_only=show_only)
+        return _to_markdown_leaf(
+            result, show_impact=show_impact, show_only=show_only,
+            show_recommendation=show_recommendation,
+        )
 
     v = result.verdict
     emoji = _VERDICT_EMOJI[v]
