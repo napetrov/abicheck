@@ -27,7 +27,7 @@ import hashlib
 import logging
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from .checker import compare
 from .checker_types import DiffResult, LibraryMetadata
@@ -37,6 +37,8 @@ from .reporter import to_json, to_markdown, to_stat, to_stat_json
 from .serialization import load_snapshot
 
 if TYPE_CHECKING:
+    from .dwarf_advanced import AdvancedDwarfMetadata
+    from .dwarf_metadata import DwarfMetadata
     from .policy_file import PolicyFile
     from .severity import SeverityConfig
     from .suppression import SuppressionList
@@ -376,7 +378,9 @@ def _try_header_scoped_dump(
     return snap
 
 
-def _extract_pdb_debug(path: Path, pdb_path: Path | None) -> tuple[Any, Any]:
+def _extract_pdb_debug(
+    path: Path, pdb_path: Path | None
+) -> tuple[DwarfMetadata | None, AdvancedDwarfMetadata | None]:
     """Locate and parse a PDB for *path*.
 
     Returns ``(dwarf_meta, dwarf_adv)`` or ``(None, None)`` when no PDB is found
