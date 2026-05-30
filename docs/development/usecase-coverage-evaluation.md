@@ -47,25 +47,34 @@ A real invocation is a point in this space:
 
 ## Coverage scorecard
 
-| Axis · cell | Status | Evidence |
+> **The authoritative, machine-checked status of every use case lives in
+> [`usecase-registry.yaml`](usecase-registry.yaml)**, validated by
+> `tests/test_usecase_registry.py` (it enforces that coverage claims cite
+> evidence paths that actually exist, and that unfinished items carry a tracked
+> gap + next steps). The table below is a human snapshot; statuses use the
+> registry's vocabulary:
+> `complete` · `partial` · `modeled` (code exists, not validated end-to-end) ·
+> `planned` · `by_design_excluded`.
+
+| Use case | Status | Notes |
 |---|---|---|
-| Change taxonomy | Complete | 145 kinds; 120 cases; parity tests |
-| C / C++ archetypes | Strong | 35 C + 52 C++ example pairs |
-| ELF/Linux platform | Complete | 29 integration tests; full pipeline |
-| Windows PE/MSVC | Modeled-only | parsers + unit tests; MSVC "untested in CI"; 0 e2e; `known_gap`s (case80/81/89) |
-| macOS Mach-O/ARM64 | Modeled-only | parsers + unit tests; castxml Xcode bug; ARM64 HFA/HVA not tracked; 0 e2e |
-| `compare`/release/baseline/Debian/ABICC | Strong | dedicated CLIs + tests |
-| MCP server | Tested | 135 unit tests (pure mocks, Linux) |
-| Reporting: JSON/SARIF/JUnit | Strong | 34 SARIF + 55 JUnit tests |
-| Reporting: Markdown/HTML | Thin | Markdown ≈2 files; HTML partial |
-| Build-config matrix (`probe`) | Siloed | works, but not wired into `compare`; 1 spec example; cases 97/98 invisible per-binary |
-| Bundle / multi-library | Partial | Linux-only; case84 `skip:true` (CLI wiring incomplete) |
-| Plugin (host↔plugin) | One-directional | `plugin_abi` policy + appcompat; no bidirectional contract scenario |
-| Header-only / inline-only | Detector-blocked | castxml can't emit concept bodies / ctor mangled names (cases 78/105/106/111 dormant) |
-| Kernel / eBPF (BTF/CTF) | Parser-only | `btf_metadata.py`/`ctf_metadata.py` exist; ADR-007 "Proposed"; no workflow/example |
-| Static libraries (`.a`/`.lib`) | Unhandled | not supported and not listed as a limitation/non-goal |
-| semver recommendation | **Now present** | see [Implemented in this change](#implemented-in-this-change) |
-| FFI consumers (Rust/Go/Python) | By-design partial | C ABI covered; other languages a stated non-goal |
+| Change taxonomy | `complete` | 145 kinds; 120 cases; parity tests |
+| **Release recommendation (semver + SONAME)** | `complete` | **added in this change** |
+| C / C++ archetypes | `complete` | 35 C + 52 C++ example pairs |
+| Linux ELF platform | `complete` | the CI-validated baseline |
+| Windows PE/MSVC | `partial` | MSVC+PDB e2e lane (`test_msvc_pdb_e2e.py`); MinGW experimental |
+| macOS Mach-O/ARM64 | `modeled` | parsers + unit tests; no e2e; ARM64 HFA/HVA not tracked |
+| `compare`/release/baseline/Debian/ABICC | `complete` | dedicated CLIs + tests |
+| MCP server | `complete` | unit-tested (mocks, Linux) |
+| Reporting: JSON/SARIF/JUnit | `complete` | versioned schema + 34 SARIF / 55 JUnit tests |
+| Reporting: Markdown/HTML | `partial` | thin test coverage (G3) |
+| Build-config matrix (`probe`) | `partial` | works, but not wired into `compare` (G2); cases 97/98 invisible per-binary |
+| Bundle / multi-library | `partial` | Linux-only; case84 `skip:true` (CLI wiring, G2) |
+| Plugin (host↔plugin) | `partial` | policy + scenario tests; no bidirectional CLI/fixture (G5) |
+| Header-only / inline-only | `planned` | castxml can't emit concept bodies / ctor mangled names (G4; cases 78/105/106/111 dormant) |
+| Kernel / eBPF (BTF/CTF) | `modeled` | parsers exist; no workflow/example (G6) |
+| Static libraries (`.a`/`.lib`) | `planned` | scope decision pending (G8) |
+| FFI consumers (Rust/Go/Python) | `by_design_excluded` | C ABI covered; other languages a stated non-goal |
 
 ---
 
@@ -75,7 +84,7 @@ A real invocation is a point in this space:
 |---|---|:--:|:--:|:--:|
 | **G1** | Cross-platform is aspirational, not validated (Win/macOS) | ARM64 AAPCS, MSVC mangling fidelity | PE/Mach-O **e2e** in CI | label tags honestly |
 | **G2** | Build-config matrix siloed in `probe` | fold matrix findings into `compare` | matrix e2e beyond oneDPL | 2–3 more probe specs |
-| **G3** | Catalog only exercises `compare` | — | drive catalog through appcompat/stack/bundle | promote cases to scenarios |
+| **G3** | Catalog only exercises `compare`; Markdown/HTML test coverage thin | — | drive catalog through appcompat/stack/bundle; broaden Markdown/HTML | promote cases to scenarios |
 | **G4** | Header-only / inline-only (detector frontier) | libclang header-AST extractor | unblock cases 78/105/106/111 | reuse dormant fixtures |
 | **G5** | Plugin host↔plugin contract is one-directional | optional host-contract check | bidirectional scenario | host/plugin fixture |
 | **G6** | Kernel/eBPF use case is parser-only | small workflow glue | BTF compare scenario | vmlinux/module fixture |
@@ -100,7 +109,17 @@ A real invocation is a point in this space:
 
 ---
 
-## Implemented in this change
+## What is implemented vs. planned
+
+To be unambiguous: this work **fully implemented one cell** (the semver/SONAME
+recommender), **partially advanced two** (the plugin contract — via scenario
+tests; cross-platform — via an honesty doc + guard), and **left the rest as
+tracked plans** (`planned`/`partial`/`modeled` rows in
+[`usecase-registry.yaml`](usecase-registry.yaml), each with a gap id and
+`next_steps`). Nothing else from the scorecard was silently "finished" — the
+registry test would fail if a status claimed evidence that did not exist.
+
+### Implemented in this change
 
 This PR lands the highest value-per-effort slice and the scaffolding for the
 rest:

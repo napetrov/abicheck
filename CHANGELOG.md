@@ -17,17 +17,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   (`major`/`minor`/`patch`/`none`) and a SONAME action
   (`bump_required`/`bump_performed`/`bump_missing`/`no_bump_needed`).
 - Always emitted in `abicheck compare --format json` under the additive
-  `release_recommendation` key (also in `--stat --format json`); opt-in for
-  Markdown via the new **`--recommend`** flag. Policy-aware (honours
-  `--policy sdk_vendor`/`plugin_abi` and custom policy files).
+  `release_recommendation` key (also in `--stat --format json` and leaf mode);
+  opt-in for Markdown via the new **`--recommend`** flag (works in leaf mode
+  too). Policy-aware (honours `--policy sdk_vendor`/`plugin_abi` and custom
+  policy files).
+- JSON schema bumped to **1.1** (additive): `release_recommendation` documented
+  as an optional object in `abicheck/schemas/compare_report.schema.json`.
 - New tests: `tests/test_semver_recommendation.py`,
   `tests/test_workflow_scenarios.py` (drop-in upgrade, additive minor,
   host↔plugin load contract, policy-scoped decision).
 
-#### Use-Case Coverage Evaluation
+#### Use-Case Coverage Evaluation + machine-checked registry
 - New `docs/development/usecase-coverage-evaluation.md` maps abicheck against
   the full application/library ABI-API change use-case space and records the
   code/test/example follow-ups (gaps G1–G8).
+- New `docs/development/usecase-registry.yaml` — the machine-checkable source of
+  truth for every use case (`status`, `axis`, `evidence`, `gap`, `next_steps`),
+  validated by `tests/test_usecase_registry.py`: coverage claims must cite
+  evidence paths that exist, and unfinished items must carry a gap + plan. This
+  makes the use cases first-class, extensible, and testable.
 - Cross-platform honesty: `docs/reference/platforms.md` now states the
   validation reality (Linux = CI-validated baseline; macOS/Windows =
   parser-level/partial), guarded by `tests/test_platform_coverage_honesty.py`.
