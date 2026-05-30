@@ -1,0 +1,26 @@
+# Case 114: char8_t migration (C++20 char-family → char8_t)
+
+**Category:** Binary ABI break / C++20 | **Verdict:** 🔴 BREAKING
+
+## What changed
+
+`v1` exposes a UTF-8 API over `const char*`. `v2` migrates to C++20 `char8_t`
+on both the function parameters and the `Utf8View::data` field. `char8_t` is a
+distinct type (Itanium mangling code `Du`), not an alias for `char` /
+`unsigned char`, so it participates in overload resolution and name mangling.
+
+`utf8_length(const char*)` mangles to `_Z11utf8_lengthPKc`; the v2
+`utf8_length(const char8_t*)` mangles to `_Z11utf8_lengthPKDu` — a different
+symbol. A consumer built against v1 fails to resolve it against v2.
+
+## How abicheck catches it
+
+`char8t_migration` fires for each public slot (parameter, return, or field)
+whose spelling moves between a char-family type and `char8_t` in either
+direction. The per-symbol `func_params_changed` / field findings are still
+present; the specialised kind names the C++20 root cause.
+
+## Files
+- `v1.h` / `v2.h` — char* vs char8_t* declarations
+- `v1.cpp` / `v2.cpp` — the two library builds
+- `app.cpp` — consumer built against the char* interface

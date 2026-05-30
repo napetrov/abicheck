@@ -1,0 +1,29 @@
+# Case 117: [[no_unique_address]] layout overlay (no new ChangeKind)
+
+**Category:** Binary ABI break / C++20 layout | **Verdict:** 🔴 BREAKING
+
+## What changed
+
+`v1` stores an empty stateless `EmptyPolicy` as an ordinary member of `Widget`,
+so it occupies at least one byte and forces padding. `v2` marks the same member
+`[[no_unique_address]]`, letting the compiler overlay it with the following
+`value` member. `Widget` therefore shrinks and the offset of `value` moves.
+
+## Why there is no dedicated ChangeKind
+
+This is the point of the case: `[[no_unique_address]]` does not need a special
+detector. The overlay manifests as a plain layout change that abicheck already
+catches with its existing structural kinds:
+
+- `type_size_changed` / `struct_size_changed` — `sizeof(Widget)` shrank
+- `type_field_offset_changed` / `struct_field_offset_changed` — `value` moved
+- possibly `type_alignment_changed` — depending on the members involved
+
+A consumer compiled against the v1 layout reads `value` at the wrong offset
+against v2. See `docs/development/adr/0001-deferred-modern-cpp-abi.md` for why
+this (and not, say, C++20 modules) is in scope for the snapshot pipeline.
+
+## Files
+- `v1.h` / `v2.h` — ordinary vs `[[no_unique_address]]` member
+- `v1.cpp` / `v2.cpp` — the two library builds
+- `app.cpp` — consumer built against the v1 layout
