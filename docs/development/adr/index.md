@@ -25,3 +25,4 @@
 | [021](021-debug-artifact-resolution.md) | Debug Artifact Resolution Subsystem | Proposed |
 | [022](022-baseline-registry.md) | Baseline Registry and Snapshot Distribution | Proposed |
 | [023](023-bundle-aware-multi-binary-analysis.md) | Bundle-Aware Multi-Binary ABI Analysis | Proposed |
+| [024](024-public-abi-surface-resolution.md) | Public ABI Surface Resolution and False-Positive Traceability | Proposed |

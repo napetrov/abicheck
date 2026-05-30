@@ -341,6 +341,9 @@ valuable improvement but architecturally independent of compile database ingesti
 It deserves a separate ADR. This ADR focuses on getting the right flags to CastXML;
 scope filtering can layer on top once build context is reliable.
 
+> **Update:** that separate ADR is now
+> [ADR-024 — Public ABI Surface Resolution and False-Positive Traceability](024-public-abi-surface-resolution.md).
+
 ---
 
 ## Implementation Plan

@@ -241,6 +241,7 @@ in those public headers via castxml. This is **best-effort**:
   declaration matches, abicheck warns and falls back to the export table. `extern "C"`
   and MinGW-built exports match by plain name and scope correctly.
 
-Reachability-based public-surface filtering for ELF (keeping only types reachable from
-public headers) remains a separate, larger effort tracked in
-[ADR-020](../development/adr/020-build-context-capture.md#known-limitation-public-header-scope-resolution).
+Reachability-based public-surface filtering (keeping only the symbols and types reachable
+from public headers, with an auditable trail of what was filtered and why) remains a
+separate, larger effort designed in
+[ADR-024](../development/adr/024-public-abi-surface-resolution.md).
