@@ -427,6 +427,18 @@ class TestSurfaceLedgerOutput:
         symbols = {c["symbol"] for c in ledger["out_of_surface_changes"]}
         assert any("InternalCache" in s for s in symbols)
 
+    def test_leaf_json_includes_surface_scope_ledger(self):
+        # The leaf report mode takes an early-return path in to_json(); the
+        # ledger must be present there too, not just in the full report.
+        import json
+
+        from abicheck.reporter import to_json
+
+        d = json.loads(to_json(self._scoped_result(), report_mode="leaf"))
+        assert "surface_scope" in d
+        symbols = {c["symbol"] for c in d["surface_scope"]["out_of_surface_changes"]}
+        assert any("InternalCache" in s for s in symbols)
+
     def test_sarif_includes_surface_scope_ledger(self):
         from abicheck.sarif import to_sarif
 
