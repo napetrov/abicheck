@@ -3,7 +3,7 @@
 
 Listed in `BREAKING_KINDS` — runtime ABI break.
 
-_78 case(s)._ [← back to all examples](../index.md)
+_84 case(s)._ [← back to all examples](../index.md)
 
 | Case | Title | Verdict | Category |
 |------|-------|---------|----------|
@@ -22,6 +22,12 @@ _78 case(s)._ [← back to all examples](../index.md)
 | [case109_flow_graph_policy_renames](../case109_flow_graph_policy_renames.md) | flow::graph Policy Tag Renames | 🔴 BREAKING | Breaking |
 | [case10_return_type](../case10_return_type.md) | Return Type Change | 🔴 BREAKING | Breaking |
 | [case110_concurrent_unordered_map_api_drift](../case110_concurrent_unordered_map_api_drift.md) | concurrent_unordered_map API Drift | 🔴 BREAKING | Breaking |
+| [case112_lp64_ilp64](../case112_lp64_ilp64.md) | LP64 → ILP64 integer-model switch (oneMKL MKL_INT 32→64) | 🔴 BREAKING | Breaking |
+| [case113_abi_tag_changed](../case113_abi_tag_changed.md) | ABI-tag set change ([abi:cxx11] lost on a single symbol) | 🔴 BREAKING | Breaking |
+| [case114_char8t_migration](../case114_char8t_migration.md) | char8_t migration (C++20 char-family → char8_t) | 🔴 BREAKING | Breaking |
+| [case115_bit_int_width_changed](../case115_bit_int_width_changed.md) | _BitInt(N) width change (C23 128 → 256) | 🔴 BREAKING | Breaking |
+| [case116_atomic_qualifier_changed](../case116_atomic_qualifier_changed.md) | _Atomic qualifier added (C11) | 🔴 BREAKING | Breaking |
+| [case117_no_unique_address](../case117_no_unique_address.md) | [[no_unique_address]] layout overlay (no new ChangeKind) | 🔴 BREAKING | Breaking |
 | [case11_global_var_type](../case11_global_var_type.md) | Global Variable Type Change | 🔴 BREAKING | Breaking |
 | [case12_function_removed](../case12_function_removed.md) | Function Removed from Shared Library | 🔴 BREAKING | Breaking |
 | [case14_cpp_class_size](../case14_cpp_class_size.md) | C++ Class Size Change | 🔴 BREAKING | Breaking |
