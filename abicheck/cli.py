@@ -1022,7 +1022,8 @@ def _echo_filtered_surface(result: DiffResult) -> None:
     )
     for c in result.out_of_surface_changes:
         loc = f" [{c.source_location}]" if c.source_location else ""
-        click.echo(f"  - {c.kind.value}: {c.symbol}{loc}", err=True)
+        reason = f" ({c.surface_exclusion_reason})" if c.surface_exclusion_reason else ""
+        click.echo(f"  - {c.kind.value}: {c.symbol}{loc}{reason}", err=True)
 
 
 def _warn_all_suppressed(result: DiffResult) -> None:

@@ -68,10 +68,19 @@ Use `--show-filtered` to print the ledger on the terminal.
 
 ### How it appears in each format
 
-**Text**: With `--show-filtered`, an audit block on stderr:
+Each demoted finding carries a `reason` code explaining why it was excluded:
+
+- `not-exported` — the symbol is known but not in the public export set.
+- `non-public-type` — the type is reachable from no public API root.
+
+(Provenance-derived reasons such as `private-header` / `system-header` are
+planned once per-declaration header tracking lands — see ADR-024 Phase 1.)
+
+**Text**: With `--show-filtered`, an audit block on stderr (the reason is shown
+in parentheses):
 ```
 Filtered as non-public ABI surface (1 finding, --scope-public-headers):
-  - type_size_changed: InternalCache
+  - type_size_changed: InternalCache (non-public-type)
 ```
 
 **JSON**: A top-level `surface_scope` object (present only when scoping is
@@ -83,14 +92,14 @@ active):
   "out_of_surface_changes": [
     {"kind": "type_size_changed", "symbol": "InternalCache",
      "description": "Size changed: InternalCache (64 → 128 bits)",
-     "source_location": null}
+     "source_location": null, "reason": "non-public-type"}
   ]
 }
 ```
 
 **SARIF**: A `surfaceScope` object in run-level `properties` with
 `outOfSurfaceCount` and `outOfSurfaceChanges` (same per-finding fields,
-camelCased), present only when scoping is active.
+camelCased; `reason` included when known), present only when scoping is active.
 
 ## `--show-only` filter
 

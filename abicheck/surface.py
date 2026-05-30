@@ -262,14 +262,41 @@ def change_in_public_surface(
 ) -> bool:
     """Return ``True`` if *change* concerns the public ABI surface.
 
+    Thin boolean wrapper over :func:`classify_change_surface` for callers
+    that only need the in/out decision.
+    """
+    return classify_change_surface(change, surf_old, surf_new)[0]
+
+
+# Exclusion reasons recorded on the surface ledger (ADR-024 §D5.1). These are
+# the reasons the *current* (pre-provenance) resolver can determine with
+# confidence. The provenance-dependent reasons from the ADR
+# (``private-header`` / ``system-header`` / ``mangling-fallback`` /
+# ``no-provenance``) require Phase 1 source-header tagging and are not emitted
+# yet; ``suppressed-by-user`` belongs to the separate suppression ledger.
+REASON_NOT_EXPORTED = "not-exported"        # symbol known but not in the public export set
+REASON_NON_PUBLIC_TYPE = "non-public-type"  # type reachable by no public API root
+
+
+def classify_change_surface(
+    change: Change,
+    surf_old: PublicSurface,
+    surf_new: PublicSurface,
+) -> tuple[bool, str | None]:
+    """Classify *change* against the public surface.
+
+    Returns ``(in_surface, reason)``. ``reason`` is ``None`` when the change
+    is in-surface (kept); otherwise it is a stable ledger reason code
+    explaining *why* the finding was demoted (ADR-024 §D5.1).
+
     Conservative by construction (ADR-024 §D5): leak findings, unknown
-    symbols, and unknown types all return ``True`` so scoping can only
-    ever remove findings it is *confident* are private.
+    symbols, and unknown types all stay in-surface so scoping can only ever
+    remove findings it is *confident* are private.
     """
     if change.kind.value in _NEVER_FILTER_KIND_NAMES:
-        return True
+        return True, None
     if not (surf_old.resolvable or surf_new.resolvable):
-        return True
+        return True, None
 
     public_symbols = surf_old.public_symbols | surf_new.public_symbols
     all_symbols = surf_old.all_symbols | surf_new.all_symbols
@@ -279,9 +306,10 @@ def change_in_public_surface(
     sym = change.symbol or ""
     # Symbol-level finding (function/variable): public iff a public symbol.
     if sym in all_symbols:
-        return sym in public_symbols
+        return (True, None) if sym in public_symbols else (False, REASON_NOT_EXPORTED)
     if sym and "::" in sym and sym.rsplit("::", 1)[1] in all_symbols:
-        return sym.rsplit("::", 1)[1] in public_symbols
+        tail = sym.rsplit("::", 1)[1]
+        return (True, None) if tail in public_symbols else (False, REASON_NOT_EXPORTED)
 
     # Type-level finding: check the implicated type name(s). A finding is
     # in-surface if *any* implicated type is reachable from the public API.
@@ -298,10 +326,12 @@ def change_in_public_surface(
     from .internal_leak import DEFAULT_INTERNAL_NAMESPACES, is_internal_type
 
     if any(is_internal_type(c, DEFAULT_INTERNAL_NAMESPACES) for c in candidates):
-        return True
+        return True, None
 
     known = {c for c in candidates if c in all_types}
     if not known:
         # We cannot place this finding — keep it (never hide an unknown).
-        return True
-    return bool(known & public_types)
+        return True, None
+    if known & public_types:
+        return True, None
+    return False, REASON_NON_PUBLIC_TYPE

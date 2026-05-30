@@ -218,7 +218,7 @@ class FilterNonPublicSurface:
     def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
         if not ctx.scope_to_public_surface:
             return changes
-        from .surface import change_in_public_surface, compute_public_surface
+        from .surface import classify_change_surface, compute_public_surface
 
         surf_old = compute_public_surface(ctx.old)
         surf_new = compute_public_surface(ctx.new)
@@ -227,9 +227,12 @@ class FilterNonPublicSurface:
             return changes
         kept: list[Change] = []
         for c in changes:
-            if change_in_public_surface(c, surf_old, surf_new):
+            in_surface, reason = classify_change_surface(c, surf_old, surf_new)
+            if in_surface:
                 kept.append(c)
             else:
+                # Tag with the ledger reason (ADR-024 §D5.1) before demoting.
+                c.surface_exclusion_reason = reason
                 ctx.out_of_surface.append(c)
         return kept
 

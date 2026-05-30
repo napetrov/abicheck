@@ -434,6 +434,7 @@ def _add_surface_scope(d: dict[str, object], result: DiffResult) -> None:
                 "symbol": c.symbol,
                 "description": c.description,
                 "source_location": c.source_location,
+                "reason": getattr(c, "surface_exclusion_reason", None),
             }
             for c in result.out_of_surface_changes
         ],

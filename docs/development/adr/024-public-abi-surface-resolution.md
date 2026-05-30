@@ -126,6 +126,13 @@ hard `--headers-dir` drop: we keep auditability.
    the full list) of entities **included** vs **excluded/demoted**, each with a reason:
    `private-header`, `system-header`, `not-exported`, `suppressed-by-user`,
    `mangling-fallback`, `no-provenance`. Available in text, JSON, and SARIF.
+   *Shipped (partial):* the ledger is disclosed in text/JSON/SARIF, and the
+   reasons the pre-provenance resolver can determine with confidence —
+   `not-exported` (symbol not in the export set) and `non-public-type` (type
+   reachable by no public root) — are tagged per finding. The
+   provenance-dependent reasons (`private-header`, `system-header`,
+   `mangling-fallback`, `no-provenance`) await Phase 1; `suppressed-by-user`
+   lives in the separate suppression ledger.
 2. **Leak guard always wins.** If a `PRIVATE_HEADER`-origin type is reachable from a
    `PUBLIC_HEADER`+exported root, emit `INTERNAL_TYPE_LEAKS_VIA_PUBLIC_API` (extend
    `internal_leak.py`) **regardless of scoping mode**. Scoping must never suppress a leak.
@@ -239,7 +246,9 @@ captures, avoiding the schema churn of full Phase 1 provenance:
   are exempt. Disclosing the ledger in the machine-readable formats — not
   just stderr — is what makes the "demote + disclose" promise (D4/D5)
   auditable in CI, the key difference from libabigail's hard `--headers-dir`
-  drop.
+  drop. Each demoted finding is tagged with a `reason` code — `not-exported`
+  or `non-public-type`, the two the pre-provenance resolver can determine
+  confidently (`classify_change_surface` in `abicheck/surface.py`).
 
 This is wired as the opt-in `FilterNonPublicSurface` post-processing step
 (`compare(..., scope_to_public_surface=True)` /

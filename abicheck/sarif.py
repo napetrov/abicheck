@@ -235,6 +235,7 @@ def to_sarif(
                                         "symbol": c.symbol,
                                         "description": c.description,
                                         **({"sourceLocation": c.source_location} if c.source_location else {}),
+                                        **({"reason": c.surface_exclusion_reason} if c.surface_exclusion_reason else {}),
                                     }
                                     for c in result.out_of_surface_changes
                                 ],

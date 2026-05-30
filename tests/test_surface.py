@@ -19,9 +19,12 @@ from abicheck.model import (
     Visibility,
 )
 from abicheck.surface import (
+    REASON_NON_PUBLIC_TYPE,
+    REASON_NOT_EXPORTED,
     PublicSurface,
     _type_identifiers,
     change_in_public_surface,
+    classify_change_surface,
     compute_public_surface,
 )
 
@@ -220,6 +223,55 @@ class TestChangeClassification:
         empty = PublicSurface()  # resolvable defaults to False
         c = Change(kind=ChangeKind.TYPE_SIZE_CHANGED, symbol="Whatever", description="")
         assert change_in_public_surface(c, empty, empty) is True
+
+
+# ── classify_change_surface: ledger reason codes (ADR-024 §D5.1) ─────────────
+
+
+class TestSurfaceExclusionReason:
+    def _surf(self, snap):
+        return compute_public_surface(snap)
+
+    def test_in_surface_has_no_reason(self):
+        snap = AbiSnapshot(library="l", version="1", functions=[_fn("api")])
+        s = self._surf(snap)
+        c = Change(kind=ChangeKind.FUNC_RETURN_CHANGED, symbol="api", description="")
+        assert classify_change_surface(c, s, s) == (True, None)
+
+    def test_not_exported_symbol_reason(self):
+        snap = AbiSnapshot(
+            library="l",
+            version="1",
+            functions=[_fn("api"), _fn("internal", vis=Visibility.ELF_ONLY)],
+        )
+        s = self._surf(snap)
+        c = Change(kind=ChangeKind.FUNC_RETURN_CHANGED, symbol="internal", description="")
+        assert classify_change_surface(c, s, s) == (False, REASON_NOT_EXPORTED)
+
+    def test_non_public_type_reason(self):
+        snap = AbiSnapshot(
+            library="l",
+            version="1",
+            functions=[_fn("api", ret="Result *")],
+            types=[_rec("Result"), _rec("InternalCache")],
+        )
+        s = self._surf(snap)
+        c = Change(
+            kind=ChangeKind.TYPE_SIZE_CHANGED, symbol="InternalCache", description=""
+        )
+        assert classify_change_surface(c, s, s) == (False, REASON_NON_PUBLIC_TYPE)
+
+    def test_change_in_public_surface_matches_classifier(self):
+        # The boolean wrapper must agree with the tuple classifier.
+        snap = AbiSnapshot(
+            library="l",
+            version="1",
+            functions=[_fn("api"), _fn("internal", vis=Visibility.ELF_ONLY)],
+        )
+        s = self._surf(snap)
+        for sym in ("api", "internal"):
+            c = Change(kind=ChangeKind.FUNC_RETURN_CHANGED, symbol=sym, description="")
+            assert change_in_public_surface(c, s, s) == classify_change_surface(c, s, s)[0]
 
 
 # ── end-to-end via compare(scope_to_public_surface=...) ──────────────────────
@@ -424,8 +476,12 @@ class TestSurfaceLedgerOutput:
         ledger = d["surface_scope"]
         assert ledger["enabled"] is True
         assert ledger["out_of_surface_count"] >= 1
-        symbols = {c["symbol"] for c in ledger["out_of_surface_changes"]}
+        entries = ledger["out_of_surface_changes"]
+        symbols = {c["symbol"] for c in entries}
         assert any("InternalCache" in s for s in symbols)
+        # ADR-024 §D5.1: each demoted finding carries a reason code.
+        internal = next(c for c in entries if "InternalCache" in c["symbol"])
+        assert internal["reason"] == REASON_NON_PUBLIC_TYPE
 
     def test_leaf_json_includes_surface_scope_ledger(self):
         # The leaf report mode takes an early-return path in to_json(); the
@@ -447,8 +503,11 @@ class TestSurfaceLedgerOutput:
         ledger = props["surfaceScope"]
         assert ledger["enabled"] is True
         assert ledger["outOfSurfaceCount"] >= 1
-        symbols = {c["symbol"] for c in ledger["outOfSurfaceChanges"]}
+        entries = ledger["outOfSurfaceChanges"]
+        symbols = {c["symbol"] for c in entries}
         assert any("InternalCache" in s for s in symbols)
+        internal = next(c for c in entries if "InternalCache" in c["symbol"])
+        assert internal["reason"] == REASON_NON_PUBLIC_TYPE
 
     def test_ledger_absent_when_scoping_off(self):
         import json
