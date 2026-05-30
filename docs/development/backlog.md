@@ -44,10 +44,20 @@ These came out of an external roadmap review. They are recorded here so they are
 not lost, but they are lower priority than the MSVC lane above and several are
 strategy decisions rather than engineering tasks.
 
+### Still open
+
 | Item | Notes |
 |------|-------|
-| Versioned JSON Schema file + stability guarantee | Publish a standalone `*.schema.json` for the compare report and document stability; schema currently lives implicitly in `model.py` / `reporter.py` (see ADR-015). |
-| `abicompat` / `abipkgdiff` parity lanes | Extend the existing libabigail/ABICC parity harness (`test_abidiff_parity.py`, `test_abicc_parity.py`) to cover `abicompat` (app-vs-lib) and `abipkgdiff` (package-vs-package), matching abicheck's `appcompat` and `compare-release` modes. |
-| Package-format test matrix | Add direct unit tests for the 6 supported extractors (deb/rpm/tar/conda/wheel/dir) in `package.py`, including the path-traversal / symlink-escape security paths. |
-| Release-pinned benchmark artifacts | Pin the README accuracy benchmark to a release tag and publish reproducible artifacts instead of running `scripts/benchmark_comparison.py` against HEAD. |
 | Parser/fuzzer safety checks | Add a fuzz/parser-safety harness for ELF/PE/Mach-O/XML/YAML inputs (the security docs already warn that untrusted binaries deserve sandboxing). |
+
+### Done
+
+These were implemented after the review (alongside the canonical
+`evidence_tier` work):
+
+| Item | Where |
+|------|-------|
+| Versioned JSON Schema file + stability guarantee | `abicheck/schemas/compare_report.schema.json` + `abicheck.schemas` module; every report emits `report_schema_version`; documented in `docs/user-guide/output-formats.md`; validated by `tests/test_report_schema.py`. |
+| `abicompat` / `abipkgdiff` parity lanes | `tests/test_abicompat_parity.py`, `tests/test_abipkgdiff_parity.py`; wired into the `libabigail-parity` CI lane. |
+| Package-format test matrix | `tests/test_package_extractor_matrix.py` — real round-trip extraction + a unified malicious-payload matrix for the stdlib formats. |
+| Release-pinned benchmark artifacts | `scripts/benchmark_comparison.py` emits `benchmark_report.json` (versions, git commit, ground-truth digest, accuracy); `publish.yml` attaches it to each GitHub Release. |
