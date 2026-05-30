@@ -89,6 +89,18 @@ class TestDiffByKey:
         out = diff_by_key(old, new, on_added=lambda k, v: [self._change(k)])
         assert [c.symbol for c in out] == ["b"]
 
+    def test_common_key_with_no_on_common_is_skipped(self) -> None:
+        # A key present in both maps but with on_common omitted must fall
+        # through silently (covers the elif-not-taken branch).
+        old = {"a": 1, "b": 2}
+        new = {"a": 1, "c": 3}
+        out = diff_by_key(
+            old, new,
+            on_removed=lambda k, v: [self._change(f"removed:{k}")],
+            on_added=lambda k, v: [self._change(f"added:{k}")],
+        )
+        assert [c.symbol for c in out] == ["removed:b", "added:c"]
+
     def test_preserves_map_iteration_order(self) -> None:
         old = {"z": 1, "y": 1, "x": 1}
         new = {"z": 1, "y": 1, "x": 1}
