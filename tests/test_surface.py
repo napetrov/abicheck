@@ -7,6 +7,8 @@ guarantees for backward-compatible changes to non-public API/ABI.
 
 from __future__ import annotations
 
+import pytest
+
 from abicheck.checker import compare
 from abicheck.checker_policy import ChangeKind, Verdict
 from abicheck.checker_types import Change
@@ -261,7 +263,8 @@ class TestSurfaceExclusionReason:
         )
         assert classify_change_surface(c, s, s) == (False, REASON_NON_PUBLIC_TYPE)
 
-    def test_change_in_public_surface_matches_classifier(self):
+    @pytest.mark.parametrize("sym", ["api", "internal"])
+    def test_change_in_public_surface_matches_classifier(self, sym):
         # The boolean wrapper must agree with the tuple classifier.
         snap = AbiSnapshot(
             library="l",
@@ -269,9 +272,8 @@ class TestSurfaceExclusionReason:
             functions=[_fn("api"), _fn("internal", vis=Visibility.ELF_ONLY)],
         )
         s = self._surf(snap)
-        for sym in ("api", "internal"):
-            c = Change(kind=ChangeKind.FUNC_RETURN_CHANGED, symbol=sym, description="")
-            assert change_in_public_surface(c, s, s) == classify_change_surface(c, s, s)[0]
+        c = Change(kind=ChangeKind.FUNC_RETURN_CHANGED, symbol=sym, description="")
+        assert change_in_public_surface(c, s, s) == classify_change_surface(c, s, s)[0]
 
 
 # ── end-to-end via compare(scope_to_public_surface=...) ──────────────────────
