@@ -306,7 +306,7 @@ def _match_old_function(
     mangled: str,
     f_old: Function,
     new_map: dict[str, Function],
-    new_by_name: dict[str, Function],
+    new_by_name: dict[str, list[Function]],
     new_all: dict[str, Function],
     matched_by_name: set[str],
     elf_only_mode: bool,
@@ -315,12 +315,17 @@ def _match_old_function(
     if mangled in new_map:
         return list(_check_function_signature(mangled, f_old, new_map[mangled]))
 
-    # FIX-A Part 2: fallback by plain name when either side uses extern "C".
-    if (
-        f_old.is_extern_c
-        or (f_old.name in new_by_name and new_by_name[f_old.name].is_extern_c)
-    ) and f_old.name in new_by_name:
-        f_new = new_by_name[f_old.name]
+    # Fallback by plain name when either side uses extern "C".
+    # The name->Function mapping is a MULTIMAP: only fall back when there is
+    # EXACTLY ONE extern-C candidate for this name, to avoid mis-pairing
+    # overloaded or templated functions that share a display name.
+    candidates = new_by_name.get(f_old.name, [])
+    extern_c_candidates = [f for f in candidates if f.is_extern_c]
+    if f_old.is_extern_c:
+        # Old side is extern "C": match against the unique new extern-C peer.
+        extern_c_candidates = candidates  # any single candidate is acceptable
+    if len(extern_c_candidates) == 1:
+        f_new = extern_c_candidates[0]
         result = list(_check_function_signature(f_old.name, f_old, f_new))
         matched_by_name.add(f_old.name)
         return result
@@ -336,10 +341,17 @@ def _detect_newly_deleted_functions(
 
     FUNC_DELETED: detected via castxml is_deleted attribute (header analysis).
     FUNC_DELETED_DWARF: detected via DWARF DW_AT_deleted attribute (binary analysis).
+
+    Only ABI-visible (PUBLIC / ELF_ONLY) functions are reported; hidden or
+    internal functions are not part of the public ABI surface and must not
+    produce spurious BREAKING findings.
     """
     changes: list[Change] = []
     for mangled, f_new in new_all.items():
         if not f_new.is_deleted:
+            continue
+        # Skip functions that are not part of the public ABI surface.
+        if f_new.visibility not in _PUBLIC_VIS:
             continue
         f_old_any = old_all.get(mangled)
         if f_old_any is not None and not f_old_any.is_deleted:
@@ -368,9 +380,13 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     # Build a lookup of ALL functions in new snapshot (including hidden).
     new_all = new.function_map
 
-    # FIX-A Part 2: Build secondary indices by plain name for fallback matching
-    # when mangled names differ due to C/C++ compilation mode mismatch.
-    new_by_name: dict[str, Function] = {f.name: f for f in new_map.values()}
+    # Build secondary index by plain name for extern-C fallback matching when
+    # mangled names differ due to C/C++ compilation mode mismatch.
+    # Use a multimap (name -> list) so overloaded/templated functions sharing a
+    # display name are not silently collapsed to one candidate.
+    new_by_name: dict[str, list[Function]] = {}
+    for f in new_map.values():
+        new_by_name.setdefault(f.name, []).append(f)
     matched_by_name: set[str] = set()
 
     for mangled, f_old in old_map.items():

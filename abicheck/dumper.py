@@ -26,10 +26,15 @@ import sys
 import tempfile
 import warnings
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from xml.etree.ElementTree import (
     Element,  # type annotation only; parsing uses defusedxml
 )
+
+if TYPE_CHECKING:
+    from .dwarf_advanced import AdvancedDwarfMetadata
+    from .dwarf_metadata import DwarfMetadata
+    from .elf_metadata import ElfMetadata
 
 from defusedxml import ElementTree as DefusedET
 
@@ -657,7 +662,7 @@ def _is_kernel_binary(path: Path) -> bool:
 def _resolve_debug_metadata(
     so_path: Path,
     debug_format: str | None,
-) -> tuple[Any, Any]:
+) -> tuple[DwarfMetadata, AdvancedDwarfMetadata]:
     """Resolve debug metadata using the specified or auto-detected format.
 
     Returns (dwarf_meta, dwarf_adv) — the same types as parse_dwarf().
@@ -750,7 +755,7 @@ def _populate_elf_visibility(snap: AbiSnapshot) -> None:
 
 
 def _elf_classify_symbols(
-    elf_meta: object,
+    elf_meta: ElfMetadata,
     exported_dynamic: set[str],
 ) -> tuple[set[str], set[str], set[str], set[str]]:
     """Split ELF metadata symbols into typed subsets for the no-header path.
@@ -763,17 +768,17 @@ def _elf_classify_symbols(
     exported_dynamic_funcs: set[str] = exported_dynamic  # fallback
     exported_dynamic_objects: set[str] = set()
     exported_dynamic_tls: set[str] = set()
-    if elf_meta is not None and elf_meta.symbols:  # type: ignore[union-attr]
+    if elf_meta.symbols:
         exported_dynamic_funcs = {
-            sym.name for sym in elf_meta.symbols  # type: ignore[union-attr]
+            sym.name for sym in elf_meta.symbols
             if sym.sym_type in (SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTYPE)
         }
         exported_dynamic_objects = {
-            sym.name for sym in elf_meta.symbols  # type: ignore[union-attr]
+            sym.name for sym in elf_meta.symbols
             if sym.sym_type == SymbolType.OBJECT
         }
         exported_dynamic_tls = {
-            sym.name for sym in elf_meta.symbols  # type: ignore[union-attr]
+            sym.name for sym in elf_meta.symbols
             if sym.sym_type == SymbolType.TLS
         }
         # Full set for CastxmlParser: determines PUBLIC vs ELF_ONLY visibility
@@ -795,9 +800,9 @@ def _elf_lang_to_profile(lang: str | None) -> str | None:
 
 def _try_dwarf_snapshot(
     so_path: Path,
-    elf_meta: object,
-    dwarf_meta: object,
-    dwarf_adv: object,
+    elf_meta: ElfMetadata,
+    dwarf_meta: DwarfMetadata,
+    dwarf_adv: AdvancedDwarfMetadata,
     version: str,
     profile_hint: str | None,
     headers: list[Path],
@@ -821,9 +826,9 @@ def _try_dwarf_snapshot(
 
     snap = build_snapshot_from_dwarf(
         so_path,
-        elf_meta,  # type: ignore[arg-type]
-        dwarf_meta,  # type: ignore[arg-type]
-        dwarf_adv,  # type: ignore[arg-type]
+        elf_meta,
+        dwarf_meta,
+        dwarf_adv,
         version=version,
         language_profile=profile_hint,
     )
@@ -849,9 +854,9 @@ def _try_dwarf_snapshot(
 def _build_symbol_only_snapshot(
     so_path: Path,
     version: str,
-    elf_meta: object,
-    dwarf_meta: object,
-    dwarf_adv: object,
+    elf_meta: ElfMetadata,
+    dwarf_meta: DwarfMetadata,
+    dwarf_adv: AdvancedDwarfMetadata,
     exported_dynamic_funcs: set[str],
     exported_dynamic_objects: set[str],
     exported_dynamic_tls: set[str],
@@ -912,9 +917,9 @@ def _build_symbol_only_snapshot(
         # snapshot's types lets downstream detectors (e.g. internal
         # leak detection) still see the relationships.
         types=dwarf_only_types,
-        elf=elf_meta,  # type: ignore[arg-type]
-        dwarf=dwarf_meta,  # type: ignore[arg-type]
-        dwarf_advanced=dwarf_adv,  # type: ignore[arg-type]
+        elf=elf_meta,
+        dwarf=dwarf_meta,
+        dwarf_advanced=dwarf_adv,
         elf_only_mode=True,
         platform="elf",
         language_profile=profile_hint,
@@ -956,7 +961,7 @@ def _dump_elf(
     # no headers + DWARF available → DWARF-only mode (24/30 detectors)
     # no headers + no DWARF → symbols-only mode (6/30 detectors)
     dwarf_only_types: list[RecordType] = []
-    if dwarf_only or (not headers and dwarf_meta.has_dwarf):  # type: ignore[union-attr]
+    if dwarf_only or (not headers and dwarf_meta.has_dwarf):
         snap, dwarf_only_types = _try_dwarf_snapshot(
             so_path, elf_meta, dwarf_meta, dwarf_adv,
             version, profile_hint, headers, dwarf_only,

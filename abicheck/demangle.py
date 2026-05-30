@@ -117,7 +117,8 @@ def _batch_phase2_cxxfilt(uncached: list[str], result: dict[str, str]) -> list[s
                     remaining.append(s)
             except Exception:  # noqa: BLE001
                 remaining.append(s)
-    except ImportError:
+    except Exception:  # noqa: BLE001
+        _log.debug("cxxfilt import or initialisation failed; falling back to c++filt")
         remaining = list(uncached)
     return remaining
 
@@ -125,6 +126,7 @@ def _batch_phase2_cxxfilt(uncached: list[str], result: dict[str, str]) -> list[s
 def _batch_phase3_cppfilt(remaining: list[str], result: dict[str, str]) -> None:
     """Fall back to a single batched ``c++filt`` subprocess call."""
     success_set: set[str] = set()
+    cppfilt_succeeded = False
     try:
         proc = subprocess.run(
             ["c++filt"],
@@ -132,19 +134,23 @@ def _batch_phase3_cppfilt(remaining: list[str], result: dict[str, str]) -> None:
             capture_output=True, text=True, timeout=30,
         )
         if proc.returncode == 0:
+            cppfilt_succeeded = True
             lines = proc.stdout.strip().split("\n")
             for mangled, demangled in zip(remaining, lines):
                 if demangled and demangled != mangled:
                     result[mangled] = demangled
                     _batch_cache_record_ok(mangled, demangled)
                     success_set.add(mangled)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         pass
-    # Record the genuinely-unresolvable symbols so we don't keep
-    # spawning c++filt for them.
-    for s in remaining:
-        if s not in success_set:
-            _batch_cache_record_fail(s)
+    # Only cache permanent FAILs when c++filt actually ran to completion
+    # (returncode 0). If the binary is missing, timed out, raised OSError,
+    # or returned non-zero, leave the symbols un-cached so a future call
+    # (e.g. after c++filt becomes available) can retry them.
+    if cppfilt_succeeded:
+        for s in remaining:
+            if s not in success_set:
+                _batch_cache_record_fail(s)
 
 
 def demangle_batch(symbols: list[str]) -> dict[str, str]:

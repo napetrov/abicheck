@@ -221,8 +221,10 @@ def _split_top_level_commas(s: str) -> list[str]:
     return parts
 
 
-def _build_type_map(snap: AbiSnapshot) -> dict[str, RecordType]:
+def _build_type_map(snap: AbiSnapshot) -> tuple[dict[str, RecordType], bool]:
     """Build a type-name → RecordType map for *snap*.
+
+    Returns a ``(type_map, is_dwarf_fallback)`` tuple.
 
     Primary source is ``snap.types`` (populated by header parsing or
     the DWARF snapshot builder). When that's empty but ``snap.dwarf``
@@ -233,13 +235,20 @@ def _build_type_map(snap: AbiSnapshot) -> dict[str, RecordType]:
     ``DwarfMetadata`` (it lacks base-class info), but
     ``DwarfMetadata.structs`` still gives us field types — enough to
     flag the *embedded-by-value* leak pattern.
+
+    ``is_dwarf_fallback`` is ``True`` when the returned map was built
+    from ``snap.dwarf.structs`` rather than ``snap.types``.  Callers
+    use this flag to skip public-type BFS seeding: the DWARF-only
+    record set is not filtered to the public ABI surface, so seeding
+    from it would produce spurious ``INTERNAL_TYPE_LEAKS_VIA_PUBLIC_API``
+    findings with no real public entry point.
     """
     out: dict[str, RecordType] = {t.name: t for t in snap.types}
     if out:
-        return out
+        return out, False
     dwarf = getattr(snap, "dwarf", None)
     if dwarf is None or not getattr(dwarf, "structs", None):
-        return out
+        return out, False
     from .model import RecordType as _RecordType
     from .model import TypeField as _TypeField
 
@@ -259,7 +268,7 @@ def _build_type_map(snap: AbiSnapshot) -> dict[str, RecordType]:
             fields=fields,
             is_union=layout.is_union,
         )
-    return out
+    return out, True
 
 
 def _resolve_type_name(
@@ -322,14 +331,27 @@ def _seed_queue_from_public_types(
     type_map: dict[str, RecordType],
     internal_set: set[str],
     queue: collections.deque[tuple[str, list[str]]],
+    *,
+    is_dwarf_fallback: bool = False,
 ) -> None:
     """Enqueue all public (non-internal-namespace) types from *type_map*.
 
     This catches classes declared in public headers but never referenced by
     an exported function symbol (e.g. inline-only templates).  The walk
-    uses the *unified* type map (snap.types ∪ snap.dwarf.structs) so it
-    works in the dumper's symbol-only fallback path.
+    uses the header-derived type map (``snap.types``) so it only seeds
+    from types on the genuine public ABI surface.
+
+    When *is_dwarf_fallback* is ``True`` the map was synthesised from
+    ``snap.dwarf.structs``, which is NOT filtered to the public ABI
+    surface.  In that case seeding is skipped entirely to avoid spurious
+    ``INTERNAL_TYPE_LEAKS_VIA_PUBLIC_API`` findings that have no real
+    public entry point.  Function- and variable-based seeding
+    (``_seed_queue_from_functions`` / ``_seed_queue_from_variables``)
+    still runs on the DWARF-only path and provides the real public
+    surface anchors.
     """
+    if is_dwarf_fallback:
+        return
     for seed_name in type_map:
         if seed_name and not is_internal_type(seed_name, internal_set):
             queue.append((seed_name, [f"type:{seed_name}"]))
@@ -441,12 +463,12 @@ def compute_leak_paths(
     or vtable changes.
     """
     internal_set = set(internal_namespaces)
-    type_map = _build_type_map(snap)
+    type_map, is_dwarf_fallback = _build_type_map(snap)
 
     queue: collections.deque[tuple[str, list[str]]] = collections.deque()
     _seed_queue_from_functions(snap, queue)
     _seed_queue_from_variables(snap, queue)
-    _seed_queue_from_public_types(type_map, internal_set, queue)
+    _seed_queue_from_public_types(type_map, internal_set, queue, is_dwarf_fallback=is_dwarf_fallback)
 
     paths = _bfs_collect_paths(queue, type_map, internal_set)
     return _dedup_paths(paths)
@@ -499,7 +521,7 @@ def _path_describes_value_embedding(
 
     Used to decide the severity hint in the leak's description.
     """
-    type_map = _build_type_map(snap)
+    type_map, _ = _build_type_map(snap)
     # Walk in pairs: when we see "field:<name>", the *previous* element is
     # the type containing the field; the field type is the *next* element
     # (or rather the next typename in the chain — fields don't show their

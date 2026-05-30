@@ -27,7 +27,7 @@ import logging
 import re as _re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
 
@@ -979,7 +979,7 @@ def _write_all_reports(
     gcc_path: str | None,
 ) -> None:
     """Write primary report, optional split reports, affected-symbols list, and stdout echo."""
-    _report_kwargs: dict = dict(  # type: ignore[type-arg]
+    _report_kwargs: dict[str, Any] = dict(
         fmt=fmt, lib_name=lib_name, old_version=old_version, new_version=new_version,
         effective_title=effective_title, compat_html=compat_html, arch=arch, gcc_path=gcc_path,
     )
@@ -1308,24 +1308,10 @@ def compat_check_cmd(  # noqa: PLR0913
         count_all_symbols=count_all_symbols,
     )
 
-    # ── Resolve relpath overrides ────────────────────────────────────────
-    old_relpath = relpath1 or relpath
-    new_relpath = relpath2 or relpath
-
-    old_is_abicc_perl = is_abicc_perl_dump_file(old_desc)
-    new_is_abicc_perl = is_abicc_perl_dump_file(new_desc)
-    if old_is_abicc_perl or new_is_abicc_perl:
-        _do_echo(
-            "Info: ABICC Perl ABI.dump input detected. "
-            "Using migration-focused importer (full ABICC dump parity is not guaranteed). "
-            "Prefer abicheck JSON dumps for best fidelity.",
-            quiet,
-        )
-
-    old_d, new_d = _parse_compat_descriptors(old_desc, new_desc, old_relpath, new_relpath)
-    _skip_headers_set = _load_skip_headers(skip_headers)
-    if _skip_headers_set:
-        _do_echo(f"Applying -skip-headers: excluding {len(_skip_headers_set)} header(s).", quiet)
+    # ── Resolve relpath overrides, detect Perl dumps, parse descriptors ──
+    old_d, new_d, _skip_headers_set = _load_compat_inputs(
+        old_desc, new_desc, relpath, relpath1, relpath2, skip_headers, quiet,
+    )
 
     old_snap, old_version, new_snap, new_version = _take_snapshots_with_logging(
         old_d, new_d, old_desc, new_desc, vnum1, vnum2, _log1_handler, _log2_handler,

@@ -576,19 +576,27 @@ def _extract_if_package(
     is_package: Callable[[Path], bool],
     detect_extractor: Callable[[Path], PackageExtractor | None],
 ) -> tuple[Path, Path | None, Path | None]:
-    """Extract package to tempdir if needed, return (lib_dir, debug_dir, header_dir)."""
-    if not is_package(input_path):
-        return input_path, None, None
+    """Extract package to tempdir if needed, return (lib_dir, debug_dir, header_dir).
 
-    extractor = detect_extractor(input_path)
-    if extractor is None:
-        raise click.ClickException(f"Unrecognized package format: {input_path}")
+    When *input_path* is a plain directory (not a package archive), it is used
+    as-is for lib_dir.  Side packages (*debug_pkg*, *devel_pkg*) are still
+    extracted in that case so that standalone debug/devel packages paired with
+    an already-extracted directory are not silently ignored.
+    """
+    # Default: treat input_path as an already-extracted library directory.
+    lib_dir: Path = input_path
+    debug_dir: Path | None = None
+    header_dir: Path | None = None
 
-    target = make_temp_dir("abicheck_pkg_")
-    result = extractor.extract(input_path, target)
-    lib_dir = result.lib_dir
-    debug_dir = result.debug_dir
-    header_dir = result.header_dir
+    if is_package(input_path):
+        extractor = detect_extractor(input_path)
+        if extractor is None:
+            raise click.ClickException(f"Unrecognized package format: {input_path}")
+        target = make_temp_dir("abicheck_pkg_")
+        result = extractor.extract(input_path, target)
+        lib_dir = result.lib_dir
+        debug_dir = result.debug_dir
+        header_dir = result.header_dir
 
     if debug_pkg is not None:
         dbg_ext = detect_extractor(debug_pkg)
@@ -596,7 +604,7 @@ def _extract_if_package(
             raise click.ClickException(f"Unrecognized debug package format: {debug_pkg}")
         dbg_target = make_temp_dir("abicheck_dbg_")
         dbg_result = dbg_ext.extract(debug_pkg, dbg_target)
-        debug_dir = dbg_result.lib_dir
+        debug_dir = dbg_result.debug_dir or dbg_result.lib_dir
 
     if devel_pkg is not None:
         dev_ext = detect_extractor(devel_pkg)
@@ -604,7 +612,7 @@ def _extract_if_package(
             raise click.ClickException(f"Unrecognized devel package format: {devel_pkg}")
         dev_target = make_temp_dir("abicheck_dev_")
         dev_result = dev_ext.extract(devel_pkg, dev_target)
-        header_dir = dev_result.lib_dir
+        header_dir = dev_result.header_dir or dev_result.lib_dir
 
     return lib_dir, debug_dir, header_dir
 

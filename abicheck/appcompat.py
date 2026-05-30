@@ -756,23 +756,10 @@ def check_against(
     )
 
     # Check version availability for ELF
-    missing_versions: list[str] = []
-    if _detect_app_format(new_lib_path) == "elf":
-        from .elf_metadata import parse_elf_metadata
-        new_elf_meta = parse_elf_metadata(new_lib_path)
-        new_defined_versions = set(new_elf_meta.versions_defined)
-        for ver_tag, _lib in app_reqs.required_versions.items():
-            if ver_tag not in new_defined_versions:
-                missing_versions.append(ver_tag)
+    missing_versions = _missing_app_versions(new_lib_path, app_reqs)
 
     required_count = len(app_reqs.undefined_symbols)
-    if new_exports:
-        coverage = (
-            (required_count - len(missing_symbols)) / required_count * 100.0
-            if required_count > 0 else 100.0
-        )
-    else:
-        coverage = 0.0 if required_count > 0 else 100.0
+    coverage = _compute_symbol_coverage(new_exports, required_count, len(missing_symbols))
 
     verdict = Verdict.BREAKING if (missing_symbols or missing_versions) else Verdict.COMPATIBLE
 

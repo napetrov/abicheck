@@ -346,9 +346,9 @@ def _load_manifest_data(path: Path) -> dict[str, object]:
         data = yaml.safe_load(text)
     else:
         data = json.loads(text)
-    if not isinstance(data, dict) or "provides" not in data:
+    if not isinstance(data, dict) or not isinstance(data.get("provides"), list):
         raise ValueError(f"manifest {path}: missing top-level 'provides:' list")
-    return data  # type: ignore[return-value]
+    return cast("dict[str, object]", data)
 
 
 def _validate_manifest_entry_shape(path: Path, raw: dict[str, object]) -> str:

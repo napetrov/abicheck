@@ -283,14 +283,19 @@ def _try_consume_target(arg: str, arguments: list[str], i: int, ctx: BuildContex
     return i  # no match — caller must advance
 
 
-def _try_consume_sysroot(arg: str, arguments: list[str], i: int, ctx: BuildContext) -> int:
-    """Handle --sysroot=, --sysroot, and -isysroot forms. Returns new index."""
+def _try_consume_sysroot(arg: str, arguments: list[str], i: int, directory: Path, ctx: BuildContext) -> int:
+    """Handle --sysroot=, --sysroot, and -isysroot forms. Returns new index.
+
+    Relative sysroot paths are resolved against *directory* (the compile
+    entry's working directory), matching the behaviour of -I and -isystem.
+    Absolute paths are stored as-is.
+    """
     m = _SYSROOT_RE.match(arg)
     if m:
-        ctx.sysroot = Path(m.group(1))
+        ctx.sysroot = _resolve_path(m.group(1), directory)
         return i + 1
     if arg in ("--sysroot", "-isysroot") and i + 1 < len(arguments):
-        ctx.sysroot = Path(arguments[i + 1])
+        ctx.sysroot = _resolve_path(arguments[i + 1], directory)
         return i + 2
     return i  # no match — caller must advance
 
@@ -300,17 +305,32 @@ def _is_abi_extra_flag(arg: str) -> bool:
     return bool(_VISIBILITY_RE.match(arg)) or arg.startswith(_ABI_EXTRA_PREFIXES)
 
 
-def _consume_define_undef(arg: str, ctx: BuildContext) -> bool:
-    """Handle -Dmacro[=value] and -Umacro. Returns True if consumed."""
+def _try_consume_define_undef(arg: str, arguments: list[str], i: int, ctx: BuildContext) -> int:
+    """Handle -Dmacro[=value], -D macro[=value], -Umacro, -U macro.
+
+    Handles both combined forms (``-DNAME=V``, ``-UNAME``) and split forms
+    (``-D NAME=V``, ``-U NAME``).  Returns the new argument index after
+    consuming this flag (and its value token if applicable), or *i* unchanged
+    if the argument was not a define/undef flag.
+    """
     m = _DEFINE_RE.match(arg)
     if m:
         ctx.defines[m.group(1)] = m.group(2)  # None if no =value
-        return True
+        return i + 1
+    if arg == "-D" and i + 1 < len(arguments):
+        # Split form: -D NAME[=VALUE]
+        name, _, value = arguments[i + 1].partition("=")
+        ctx.defines[name] = value if value else None
+        return i + 2
     m = _UNDEF_RE.match(arg)
     if m:
         ctx.undefines.add(m.group(1))
-        return True
-    return False
+        return i + 1
+    if arg == "-U" and i + 1 < len(arguments):
+        # Split form: -U NAME
+        ctx.undefines.add(arguments[i + 1])
+        return i + 2
+    return i  # no match — caller must advance
 
 
 def _consume_std_extra(arg: str, ctx: BuildContext) -> bool:
@@ -337,8 +357,9 @@ def _extract_flags(arguments: list[str], directory: Path) -> BuildContext:
     while i < len(arguments):
         arg = arguments[i]
 
-        if _consume_define_undef(arg, ctx):
-            i += 1
+        new_i = _try_consume_define_undef(arg, arguments, i, ctx)
+        if new_i != i:
+            i = new_i
             continue
 
         # -I and -isystem (combined and separate)
@@ -363,7 +384,7 @@ def _extract_flags(arguments: list[str], directory: Path) -> BuildContext:
             continue
 
         # --sysroot=, --sysroot, -isysroot (combined and separate)
-        new_i = _try_consume_sysroot(arg, arguments, i, ctx)
+        new_i = _try_consume_sysroot(arg, arguments, i, directory, ctx)
         if new_i != i:
             i = new_i
             continue
