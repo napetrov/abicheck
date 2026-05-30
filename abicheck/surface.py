@@ -21,8 +21,11 @@ The surface is computed from two facts that the dumper already records:
    of the public surface.
 2. **Type reachability** — a record/enum/typedef is public iff it is
    reachable from a public function/variable through return types,
-   parameter types, public/protected data members, base classes, or
-   typedef targets.
+   parameter types, data members, base classes, or typedef targets. The
+   closure deliberately follows *all* data members (including private and
+   pointer-typed ones): this over-keeps rather than risks hiding a layout
+   dependency, and precise by-value-vs-pointer reachability is left to a
+   later phase (ADR-024 §D3).
 
 This module performs *no* deletion on its own; it only answers "is this
 finding about the public surface?".  The pipeline step that consumes it

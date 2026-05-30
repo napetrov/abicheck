@@ -292,6 +292,35 @@ class TestScopedCompareNoFalsePositives:
         assert default.out_of_surface_count == 0
         assert default.scope_to_public_surface is False
 
+    def test_internal_leak_still_detected_under_scoping(self):
+        # End-to-end anti-hiding guarantee: a detail:: type that leaks via a
+        # public-header class (reached by compute_leak_paths' broader root set,
+        # NOT by this closure) must still produce a leak finding under scoping.
+        # Without the internal-namespace exemption the TYPE_SIZE_CHANGED would
+        # be filtered before DetectInternalLeaks runs, hiding the leak.
+        def _mk(impl_size):
+            return AbiSnapshot(
+                library="lib", version="x",
+                # A public symbol so the surface is resolvable, but it does NOT
+                # reference Widget — so Widget/detail::Impl are unreachable here.
+                functions=[_fn("public_unrelated")],
+                types=[
+                    _rec("Widget", bases=["ns::detail::Impl"]),
+                    _rec("ns::detail::Impl", size=impl_size),
+                ],
+            )
+
+        old, new = _mk(64), _mk(128)
+        scoped = compare(old, new, scope_to_public_surface=True)
+        kinds = {c.kind for c in scoped.changes}
+        assert ChangeKind.INTERNAL_TYPE_LEAKS_VIA_PUBLIC_API in kinds, (
+            f"leak hidden by scoping; got kinds={[k.value for k in kinds]}"
+        )
+        # The internal type's change must not have been silently filtered.
+        assert not any(
+            "detail::Impl" in c.symbol for c in scoped.out_of_surface_changes
+        )
+
     def test_adding_internal_symbol_is_compatible(self):
         old = AbiSnapshot(library="lib", version="1", functions=[_fn("public_api")])
         new = AbiSnapshot(
