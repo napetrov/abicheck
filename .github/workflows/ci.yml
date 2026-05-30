@@ -219,7 +219,7 @@ jobs:
       - name: Install package
         run: pip install -e ".[dev]"
       - name: Run libabigail parity tests
-        run: pytest tests/test_abidiff_parity.py -v -m libabigail --tb=short
+        run: pytest tests/test_abidiff_parity.py tests/test_abicompat_parity.py tests/test_abipkgdiff_parity.py -v -m libabigail --tb=short
 
   abicc-parity:
     needs: [heavy-parity-gate]
