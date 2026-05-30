@@ -209,36 +209,6 @@ def _dump_elf(
         raise click.ClickException(f"Failed to dump '{path}': {exc}") from exc
 
 
-def _dump_macho(path: Path, version: str) -> AbiSnapshot:
-    """Dump ABI snapshot from a Mach-O binary."""
-    from .macho_metadata import parse_macho_metadata
-    try:
-        macho_meta = parse_macho_metadata(path)
-    except (RuntimeError, OSError, ValueError) as exc:
-        raise click.ClickException(
-            f"Failed to parse Mach-O '{path}': {exc}"
-        ) from exc
-    if not macho_meta.exports and not macho_meta.install_name and not macho_meta.dependent_libs:
-        raise click.ClickException(
-            f"Mach-O file '{path}' has no exports or load-command metadata. "
-            "Verify the file is a valid dynamic library."
-        )
-    from .model import Function, Visibility
-    funcs = [
-        Function(
-            name=exp.name, mangled=exp.name, return_type="?",
-            visibility=Visibility.PUBLIC,
-            is_extern_c=not exp.name.startswith("_Z"),
-        )
-        for exp in macho_meta.exports if exp.name
-    ]
-    return AbiSnapshot(
-        library=path.name, version=version,
-        functions=funcs, macho=macho_meta,
-        platform="macho",
-    )
-
-
 def _dump_native_binary(
     path: Path, binary_fmt: str,
     headers: list[Path], includes: list[Path],
@@ -252,7 +222,9 @@ def _dump_native_binary(
 
     For ELF, headers are required for full AST analysis unless dwarf_only
     is set or DWARF debug info is available (ADR-003 fallback chain).
-    For PE/Mach-O, headers are optional — export tables provide the symbol surface.
+    For PE/Mach-O, headers are optional: when supplied they scope the ABI
+    surface to declarations in those public headers (best-effort, via castxml),
+    otherwise the export table provides the symbol surface.
     """
     if binary_fmt == "elf":
         return _dump_elf(path, headers, includes, version, lang,
@@ -261,12 +233,23 @@ def _dump_native_binary(
     if binary_fmt == "pe":
         from .service import _dump_pe
         try:
-            return _dump_pe(path, version, pdb_path=pdb_path)
+            return _dump_pe(
+                path, version,
+                headers=headers, includes=includes, lang=lang,
+                pdb_path=pdb_path,
+            )
         except AbicheckError as exc:
             raise click.ClickException(str(exc)) from exc
 
     if binary_fmt == "macho":
-        return _dump_macho(path, version)
+        from .service import _dump_macho
+        try:
+            return _dump_macho(
+                path, version,
+                headers=headers, includes=includes, lang=lang,
+            )
+        except AbicheckError as exc:
+            raise click.ClickException(str(exc)) from exc
 
     fmt_labels = {"elf": "ELF", "pe": "PE (Windows DLL)", "macho": "Mach-O (macOS dylib)"}
     raise click.ClickException(f"Unsupported binary format: {fmt_labels.get(binary_fmt, binary_fmt)}")
@@ -1029,6 +1012,19 @@ def _merge_redundant_changes(result: DiffResult) -> None:
     result.redundant_count = 0
 
 
+def _echo_filtered_surface(result: DiffResult) -> None:
+    """Print the public-surface audit ledger (ADR-024 §D5 traceability)."""
+    n = result.out_of_surface_count
+    click.echo(
+        f"\nFiltered as non-public ABI surface ({n} "
+        f"{'finding' if n == 1 else 'findings'}, --scope-public-headers):",
+        err=True,
+    )
+    for c in result.out_of_surface_changes:
+        loc = f" [{c.source_location}]" if c.source_location else ""
+        click.echo(f"  - {c.kind.value}: {c.symbol}{loc}", err=True)
+
+
 def _warn_all_suppressed(result: DiffResult) -> None:
     """Warn if a suppression file swallowed all changes."""
     total_changes = len(result.changes) + result.suppressed_count
@@ -1128,8 +1124,10 @@ def _exit_with_severity_or_verdict(
 @click.option("-H", "--header", "headers", multiple=True,
               type=click.Path(path_type=Path),
               help="Public header file or directory applied to both sides (repeat for multiple). "
-                   "Recommended for full ELF ABI analysis; without headers, ELF falls back to symbols-only mode. "
-                   "Validated when input is ELF; ignored for snapshots.")
+                   "Recommended for full ABI analysis; without headers, native binaries fall back to symbols-only mode. "
+                   "Scopes the ABI surface to declarations in these headers for ELF; on PE/Mach-O scoping is "
+                   "best-effort and falls back to the export table when castxml is unavailable or names don't match "
+                   "(e.g. MSVC C++ mangling). Validated for native binaries; ignored for snapshots.")
 @click.option("-I", "--include", "includes", multiple=True,
               type=click.Path(path_type=Path),
               help="Extra include directory for castxml (applied to both sides).")
@@ -1139,11 +1137,11 @@ def _exit_with_severity_or_verdict(
 @click.option("--old-header", "old_headers_only", multiple=True,
               type=click.Path(path_type=Path),
               help="Public header for old side only (overrides -H for old). "
-                   "Validated when input is ELF; ignored for snapshots.")
+                   "Validated for native binaries; ignored for snapshots.")
 @click.option("--new-header", "new_headers_only", multiple=True,
               type=click.Path(path_type=Path),
               help="Public header for new side only (overrides -H for new). "
-                   "Validated when input is ELF; ignored for snapshots.")
+                   "Validated for native binaries; ignored for snapshots.")
 @click.option("--old-include", "old_includes_only", multiple=True,
               type=click.Path(path_type=Path),
               help="Include dir for old side only (overrides -I for old).")
@@ -1214,6 +1212,13 @@ def _exit_with_severity_or_verdict(
 @click.option("--show-redundant", is_flag=True, default=False,
               help="Disable redundancy filtering and show all changes including those "
                    "derived from root type changes.")
+@click.option("--scope-public-headers", "scope_public_headers", is_flag=True, default=False,
+              help="Restrict findings to the public-header ABI surface (ADR-024): "
+                   "changes to symbols/types not reachable from public-header-declared "
+                   "exported API are recorded as filtered, not reported. Internal-type "
+                   "leaks are never hidden.")
+@click.option("--show-filtered", "show_filtered", is_flag=True, default=False,
+              help="List findings excluded by --scope-public-headers (audit trail).")
 @click.option("--show-only", "show_only", default=None,
               callback=_validate_show_only, expose_value=True, is_eager=False,
               help="Comma-separated filter tokens to limit displayed changes. "
@@ -1276,6 +1281,7 @@ def compare_cmd(
     severity_addition: str | None,
     follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
     show_redundant: bool, show_only: str | None, stat: bool,
+    scope_public_headers: bool, show_filtered: bool,
     report_mode: str, show_impact: bool,
     debug_format: str | None,
     annotate: bool,
@@ -1412,13 +1418,19 @@ def compare_cmd(
         if new_fmt == "elf":
             _populate_dependency_info(new, new_input, list(search_paths), None, ld_library_path)
 
-    result = compare(old, new, suppression=suppression, policy=policy, policy_file=pf)
+    result = compare(
+        old, new, suppression=suppression, policy=policy, policy_file=pf,
+        scope_to_public_surface=scope_public_headers,
+    )
 
     result.old_metadata = _collect_metadata(old_input)
     result.new_metadata = _collect_metadata(new_input)
 
     if show_redundant and result.redundant_changes:
         _merge_redundant_changes(result)
+
+    if show_filtered and result.out_of_surface_changes:
+        _echo_filtered_surface(result)
 
     _warn_all_suppressed(result)
 

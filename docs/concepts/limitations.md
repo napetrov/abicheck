@@ -226,3 +226,26 @@ abicheck compare old.so new.so -H include/foo.h
 ```
 
 This eliminates ELF-only mode entirely and removes the need for heuristic filtering.
+
+### Header scoping on PE and Mach-O
+
+Headers supplied via `-H/--header` (and the per-side `--old-header`/`--new-header`)
+are now honored for PE (Windows DLL) and Mach-O (macOS dylib) inputs, not just ELF.
+When headers are provided, the export-table surface is scoped to the symbols declared
+in those public headers via castxml. This is **best-effort**:
+
+- If castxml is unavailable, or the headers fail to parse, abicheck emits a warning and
+  falls back to the full export table (the previous behavior).
+- For C++ binaries built with **MSVC**, export names use MSVC mangling while castxml
+  emits Itanium-mangled names, so declarations may not match the export table. When no
+  declaration matches, abicheck warns and falls back to the export table. `extern "C"`
+  and MinGW-built exports match by plain name and scope correctly.
+
+Reachability-based public-surface filtering (keeping only the symbols and types reachable
+from the public API, with an auditable trail of what was filtered and why) is available as
+an **opt-in** mode: pass `--scope-public-headers` (add `--show-filtered` to print the audit
+ledger) to `abicheck compare`. Findings about symbols/types not reachable from the
+public-header-declared exported API are recorded as *filtered* rather than reported, while
+internal-type *leaks* are never hidden. Full source-header provenance (distinguishing a
+privately-included header from a public one independently of reachability) remains future
+work. See [ADR-024](../development/adr/024-public-abi-surface-resolution.md).

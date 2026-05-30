@@ -318,6 +318,7 @@ def _dump_and_compare(
     v2_so: Path,
     v1_hdr: Path | None,
     v2_hdr: Path | None,
+    scope_public_headers: bool = False,
 ) -> tuple[str | None, str | None]:
     """Run abicheck dump+compare. Returns (verdict, error_msg).
 
@@ -339,8 +340,13 @@ def _dump_and_compare(
     if r2.returncode != 0:
         return None, f"dump v2 failed: {r2.stderr[:200]}"
 
+    compare_cmd = [
+        sys.executable, "-m", "abicheck.cli", "compare", str(snap1), str(snap2), "--format", "json",
+    ]
+    if scope_public_headers:
+        compare_cmd.append("--scope-public-headers")
     rc = subprocess.run(
-        [sys.executable, "-m", "abicheck.cli", "compare", str(snap1), str(snap2), "--format", "json"],
+        compare_cmd,
         capture_output=True, text=True, timeout=60,
     )
     try:
@@ -459,7 +465,10 @@ def run_case(
         return _handle_build_error(name, expected_raw, build_err)
 
     # Dump + compare
-    got, dc_err = _dump_and_compare(tmp, v1_so, v2_so, v1_hdr, v2_hdr)
+    got, dc_err = _dump_and_compare(
+        tmp, v1_so, v2_so, v1_hdr, v2_hdr,
+        scope_public_headers=bool(entry.get("scope_public_headers", False)),
+    )
     if dc_err is not None:
         return CaseResult(name, "ERROR", expected_raw, None, dc_err)
 

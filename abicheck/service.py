@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,8 @@ from .reporter import to_json, to_markdown, to_stat, to_stat_json
 from .serialization import load_snapshot
 
 if TYPE_CHECKING:
+    from .dwarf_advanced import AdvancedDwarfMetadata
+    from .dwarf_metadata import DwarfMetadata
     from .policy_file import PolicyFile
     from .severity import SeverityConfig
     from .suppression import SuppressionList
@@ -223,9 +226,16 @@ def run_dump(
         _try_attach_sycl_metadata(snap, path)
         return snap
     if binary_fmt == "pe":
-        return _dump_pe(path, version, pdb_path=pdb_path)
+        return _dump_pe(
+            path, version,
+            headers=_headers, includes=_includes, lang=lang,
+            pdb_path=pdb_path,
+        )
     if binary_fmt == "macho":
-        return _dump_macho(path, version)
+        return _dump_macho(
+            path, version,
+            headers=_headers, includes=_includes, lang=lang,
+        )
     raise ValidationError(f"Unsupported binary format: {binary_fmt}")
 
 
@@ -297,13 +307,116 @@ def _dump_elf(
         raise SnapshotError(f"Failed to dump '{path}': {exc}") from exc
 
 
+def _has_matched_public_surface(snap: AbiSnapshot) -> bool:
+    """True if header parsing matched at least one exported symbol.
+
+    ``dumper._dump_pe`` / ``dumper._dump_macho`` mark a declaration ``PUBLIC``
+    only when its (mangled) name is present in the binary's export table.  When
+    no declaration matches — e.g. an MSVC-mangled C++ DLL parsed with a
+    Clang/GCC toolchain that emits Itanium names — every symbol collapses to
+    ``HIDDEN`` and header scoping has had no effect.
+    """
+    return any(f.visibility == Visibility.PUBLIC for f in snap.functions) or any(
+        v.visibility == Visibility.PUBLIC for v in snap.variables
+    )
+
+
+def _try_header_scoped_dump(
+    fmt: str,
+    path: Path,
+    headers: list[Path],
+    includes: list[Path],
+    version: str,
+    lang: str,
+) -> AbiSnapshot | None:
+    """Attempt a castxml header-scoped dump for a PE/Mach-O binary.
+
+    Returns the header-scoped snapshot when castxml is available *and* at least
+    one declared symbol matched the export table.  Returns ``None`` (after
+    emitting a ``UserWarning``) when scoping is unavailable or had no effect, so
+    the caller can fall back to export-table mode.  This mirrors the public-API
+    scoping that ``abidw --headers-dir`` / abi-dumper apply for ELF.
+    """
+    from .dumper import _dump_macho as _dumper_macho
+    from .dumper import _dump_pe as _dumper_pe
+
+    # Expand header directories into individual files (same as the ELF path),
+    # so `--header <dir>` scopes correctly instead of feeding a directory to
+    # castxml's `#include`. Done *outside* the broad except below so a genuinely
+    # bad/empty header path raises a clear ValidationError rather than silently
+    # falling back to the full export table.
+    resolved_headers = expand_header_inputs(headers)
+
+    compiler = "cc" if lang.lower() == "c" else "c++"
+    lang_arg = lang if lang.lower() == "c" else None
+    try:
+        if fmt == "pe":
+            snap = _dumper_pe(path, resolved_headers, includes, version, compiler, lang=lang_arg)
+        else:
+            snap = _dumper_macho(path, resolved_headers, includes, version, compiler, lang=lang_arg)
+    except Exception as exc:  # noqa: BLE001 — castxml missing / parse failure → fall back
+        warnings.warn(
+            f"Header-based ABI scoping unavailable for '{path.name}' "
+            f"({fmt.upper()}): {exc}. Falling back to export-table mode — "
+            f"--header/--include were ignored.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None
+
+    if not _has_matched_public_surface(snap):
+        warnings.warn(
+            f"None of the provided headers matched exported symbols in "
+            f"'{path.name}'. This commonly happens when a C++ {fmt.upper()} binary "
+            f"uses a name-mangling scheme (e.g. MSVC) different from the compiler "
+            f"used to parse the headers. Falling back to export-table mode — "
+            f"header-based scoping had no effect.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None
+    return snap
+
+
+def _extract_pdb_debug(
+    path: Path, pdb_path: Path | None
+) -> tuple[DwarfMetadata | None, AdvancedDwarfMetadata | None]:
+    """Locate and parse a PDB for *path*.
+
+    Returns ``(dwarf_meta, dwarf_adv)`` or ``(None, None)`` when no PDB is found
+    or parsing fails.  PDB extraction is best-effort and never fatal.
+    """
+    try:
+        from .pdb_metadata import parse_pdb_debug_info
+        from .pdb_utils import locate_pdb
+
+        pdb_file = locate_pdb(path, pdb_path_override=pdb_path, allow_network=False)
+        if pdb_file is not None:
+            meta, adv = parse_pdb_debug_info(pdb_file)
+            _logger.info("PDB debug info loaded from %s", pdb_file)
+            return meta, adv
+        _logger.debug("No PDB file found for %s", path)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("PDB parsing failed for %s: %s", path, exc)
+    return None, None
+
+
 def _dump_pe(
     path: Path,
     version: str,
     *,
+    headers: list[Path] | None = None,
+    includes: list[Path] | None = None,
+    lang: str = "c++",
     pdb_path: Path | None = None,
 ) -> AbiSnapshot:
-    """Dump a PE binary (Windows DLL) to an ABI snapshot."""
+    """Dump a PE binary (Windows DLL) to an ABI snapshot.
+
+    When *headers* are supplied the ABI surface is scoped to declarations in
+    those public headers via castxml (mirroring ``abidw --headers-dir``).  If
+    castxml is unavailable or no header declaration matches an exported symbol,
+    scoping is skipped (with a warning) and the full export table is used.
+    """
     from .pe_metadata import parse_pe_metadata
 
     try:
@@ -324,6 +437,19 @@ def _dump_pe(
             "Verify the file is a valid DLL."
         )
 
+    dwarf_meta, dwarf_adv = _extract_pdb_debug(path, pdb_path)
+
+    if headers:
+        scoped = _try_header_scoped_dump(
+            "pe", path, headers, includes or [], version, lang,
+        )
+        if scoped is not None:
+            # Preserve any PDB debug info alongside the header-scoped surface.
+            if dwarf_meta is not None:
+                scoped.dwarf = dwarf_meta
+                scoped.dwarf_advanced = dwarf_adv
+            return scoped
+
     funcs = [
         Function(
             name=(exp.name or f"ordinal:{exp.ordinal}"),
@@ -335,25 +461,6 @@ def _dump_pe(
         for exp in pe_meta.exports
     ]
 
-    # PDB debug info extraction
-    dwarf_meta = None
-    dwarf_adv = None
-    try:
-        from .pdb_metadata import parse_pdb_debug_info
-        from .pdb_utils import locate_pdb
-
-        pdb_file = locate_pdb(
-            path, pdb_path_override=pdb_path,
-            allow_network=False,
-        )
-        if pdb_file is not None:
-            dwarf_meta, dwarf_adv = parse_pdb_debug_info(pdb_file)
-            _logger.info("PDB debug info loaded from %s", pdb_file)
-        else:
-            _logger.debug("No PDB file found for %s", path)
-    except Exception as exc:  # noqa: BLE001
-        _logger.warning("PDB parsing failed for %s: %s", path, exc)
-
     return AbiSnapshot(
         library=path.name, version=version,
         functions=funcs, pe=pe_meta,
@@ -363,8 +470,19 @@ def _dump_pe(
     )
 
 
-def _dump_macho(path: Path, version: str) -> AbiSnapshot:
-    """Dump a Mach-O binary (macOS dylib) to an ABI snapshot."""
+def _dump_macho(
+    path: Path,
+    version: str,
+    *,
+    headers: list[Path] | None = None,
+    includes: list[Path] | None = None,
+    lang: str = "c++",
+) -> AbiSnapshot:
+    """Dump a Mach-O binary (macOS dylib) to an ABI snapshot.
+
+    When *headers* are supplied the ABI surface is scoped to declarations in
+    those public headers via castxml; otherwise the full export table is used.
+    """
     from .macho_metadata import parse_macho_metadata
 
     try:
@@ -377,6 +495,13 @@ def _dump_macho(path: Path, version: str) -> AbiSnapshot:
             f"Mach-O file '{path}' has no exports or load-command metadata. "
             "Verify the file is a valid dynamic library."
         )
+
+    if headers:
+        scoped = _try_header_scoped_dump(
+            "macho", path, headers, includes or [], version, lang,
+        )
+        if scoped is not None:
+            return scoped
 
     funcs = [
         Function(
@@ -469,6 +594,7 @@ def run_compare(
     old_debug_roots: list[Path] | None = None,
     new_debug_roots: list[Path] | None = None,
     enable_debuginfod: bool = False,
+    scope_to_public_surface: bool = False,
 ) -> tuple[DiffResult, AbiSnapshot, AbiSnapshot]:
     """Compare two ABI inputs and return the classified diff result.
 
@@ -509,7 +635,10 @@ def run_compare(
     )
 
     suppression, pf = load_suppression_and_policy(suppress, policy, policy_file_path)
-    result = compare(old, new, suppression=suppression, policy=policy, policy_file=pf)
+    result = compare(
+        old, new, suppression=suppression, policy=policy, policy_file=pf,
+        scope_to_public_surface=scope_to_public_surface,
+    )
     result.old_metadata = collect_metadata(old_input)
     result.new_metadata = collect_metadata(new_input)
     return result, old, new
