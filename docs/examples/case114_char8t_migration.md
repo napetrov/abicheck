@@ -42,8 +42,6 @@ present; the specialised kind names the C++20 root cause.
 - `CMakeLists.txt`
 - `app.cpp`
 - `v1.cpp`
-- `v1.h`
 - `v2.cpp`
-- `v2.h`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._
