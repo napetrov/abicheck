@@ -81,6 +81,7 @@ nav:
   - Development:
     - Goals: development/goals.md
     - Backlog: development/backlog.md
+    - User Scenarios & Flows: development/user-scenarios.md
     - Use-Case Coverage Evaluation: development/usecase-coverage-evaluation.md
     - Implementation Plans:
       - Overview: development/plans/index.md

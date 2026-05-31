@@ -9,6 +9,13 @@ This is a companion to [`adr/adr-gap-analysis.md`](adr/adr-gap-analysis.md)
 (which tracks *undocumented decisions*); this document tracks *uncovered
 scenarios*.
 
+Three related artifacts, kept distinct: the **examples catalog** (`examples/`)
+demonstrates ABI/API *change types*; the **user-scenario catalog**
+([User Scenarios & Flows](user-scenarios.md), `scenarios/`) defines *how users
+work with abicheck* and drives end-to-end *tool* validation; and the
+[plans](plans/index.md) track the *capability backlog*. This document is the
+map across all three.
+
 ---
 
 ## Headline

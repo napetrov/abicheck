@@ -1,0 +1,225 @@
+# User-scenario / flow catalog — how real people work with libraries, binaries,
+# and abicheck. This is a FIRST-CLASS entity, distinct from:
+#   - examples/        : compilable code demonstrating a specific ABI/API *change*
+#                        (change-type fixtures, validation + documentation);
+#   - docs/.../plans/  : the backlog of capability gaps to close.
+#
+# A scenario here describes a real-world USER FLOW (a persona, a situation, the
+# abicheck commands they run, and the outcome they expect) and is used to DRIVE
+# END-TO-END VALIDATION that abicheck works not just as an ABI/API-change
+# detector but as a usable scanner tool (exit codes, scoping, SARIF, gating,
+# offline snapshots, …).
+#
+# Validated by tests/test_scenarios.py:
+#   - structural validity + `validates` points at a real usecase-registry id;
+#   - every `automated: true` scenario has a `test` that exists and runs the
+#     abicheck CLI end-to-end and asserts the documented `expected` outcome;
+#   - every `automated: false` scenario is `status: planned` with a plan or note.
+#
+# Add a missed usage scenario here (e.g. issue #235) the moment it is found, so
+# it becomes a permanent end-to-end regression guard.
+
+schema_version: 1
+
+scenarios:
+  # ── CI gate: the core scanner use case ──────────────────────────────────────
+  - id: SC-CI-GATE-BREAKING
+    title: CI ABI gate fails the build on a removed public symbol
+    persona: CI engineer
+    narrative: >
+      A pull request drops a public function from a shared library. The ABI gate
+      in CI must fail (non-zero exit) so the breaking change cannot merge
+      silently.
+    flow:
+      - abicheck compare old.json new.json
+    expected:
+      exit_code: 4
+      verdict: BREAKING
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_ci_gate_breaking
+
+  - id: SC-CI-GATE-ADDITIVE
+    title: CI ABI gate passes a backward-compatible addition
+    persona: CI engineer
+    narrative: >
+      A release adds a new exported function and changes nothing else. The gate
+      must pass (exit 0) so additive work is not blocked.
+    flow:
+      - abicheck compare old.json new.json
+    expected:
+      exit_code: 0
+      verdict: COMPATIBLE
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_ci_gate_additive
+
+  - id: SC-EXIT-CONTRACT
+    title: Exit-code contract (0 / 2 / 4) is stable for tooling
+    persona: CI engineer
+    narrative: >
+      Build scripts gate on exit codes: 0 = compatible, 2 = source-level
+      (API) break, 4 = binary (ABI) break. This contract must hold so a
+      Makefile/pipeline can branch on it.
+    flow:
+      - abicheck compare old.json new.json   # exit code is the gate
+    expected:
+      exit_codes: {NO_CHANGE: 0, API_BREAK: 2, BREAKING: 4}
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_exit_contract
+
+  # ── The missed scenario from issue #235 ─────────────────────────────────────
+  - id: SC-PUBLIC-SURFACE-SCOPE
+    title: Public-header scoping suppresses private/internal ABI breaks
+    persona: Library maintainer
+    issue: 235
+    narrative: >
+      A maintainer ships a stable public API and changes only a private/internal
+      type that is not reachable from any public declaration. Run as a
+      compliance scanner with public headers and --scope-public-headers, abicheck
+      must NOT raise compliance errors for the private break (matching the
+      default behaviour of libabigail and abicc). The private change is recorded
+      as filtered (visible under --show-filtered), never as a verdict-affecting
+      finding.
+    flow:
+      - abicheck compare old.json new.json --scope-public-headers
+      - abicheck compare old.json new.json --scope-public-headers --show-filtered
+    expected:
+      exit_code: 0
+      verdict: NO_CHANGE   # the only change was to a private type → filtered
+      without_scope_exit_code: 4
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_public_surface_scope
+
+  # ── abicheck as a security/code-scanning tool ───────────────────────────────
+  - id: SC-SCAN-SARIF
+    title: Produce SARIF for GitHub Code Scanning
+    persona: AppSec / security engineer
+    narrative: >
+      A security team runs abicheck as a scanner in CI and uploads SARIF to
+      GitHub Code Scanning. The tool must emit valid SARIF 2.1.0 with one result
+      per finding, so breaks surface as code-scanning alerts.
+    flow:
+      - abicheck compare old.json new.json --format sarif -o abi.sarif
+    expected:
+      exit_code: 4
+      sarif: true
+    validates: UC-REP-sarif
+    automated: true
+    test: test_sc_scan_sarif
+
+  # ── abicheck answering the release question ─────────────────────────────────
+  - id: SC-RELEASE-RECOMMENDATION
+    title: "Answer: what version do I release, and do I bump the SONAME?"
+    persona: Library maintainer
+    narrative: >
+      Before tagging a release, the maintainer asks abicheck what semantic
+      version to publish. The JSON report must carry a release_recommendation
+      (version bump + SONAME action) so release automation can act on it.
+    flow:
+      - abicheck compare old.json new.json --format json
+    expected:
+      version_bump: major
+    validates: UC-CHANGE-semver-recommendation
+    automated: true
+    test: test_sc_release_recommendation
+
+  # ── Accepting a known/approved break ────────────────────────────────────────
+  - id: SC-ACCEPT-KNOWN-BREAK
+    title: Accept a known, intentional break via a suppression file
+    persona: Library maintainer
+    narrative: >
+      A maintainer intentionally removed a deprecated symbol and recorded a
+      justified, time-boxed suppression. The gate must pass (exit 0) while the
+      suppression is live, and the change is tracked as suppressed (audit trail).
+    flow:
+      - abicheck compare old.json new.json --suppress suppressions.yaml
+    expected:
+      exit_code: 0
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_accept_known_break
+
+  # ── Offline / async snapshot interchange ────────────────────────────────────
+  - id: SC-OFFLINE-SNAPSHOT
+    title: Offline ABI baseline as a portable JSON snapshot
+    persona: Release engineer
+    narrative: >
+      A team dumps the ABI of each release to a JSON snapshot and compares future
+      builds against the stored snapshot without re-dumping — an offline, async
+      workflow where snapshots are the portable interchange format.
+    flow:
+      - abicheck dump libfoo.so -H include/ -o v1.json   # at release time
+      - abicheck compare v1.json v2.json                 # later, offline
+    expected:
+      exit_code: 4
+      verdict: BREAKING
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_offline_snapshot
+
+  # ── Planned scenarios (need real binaries/toolchains; defined, not yet automated) ──
+  - id: SC-PACKAGE-RELEASE-SCAN
+    title: Scan two distro releases (RPM/deb/wheel) for ABI drift
+    persona: Distro packager
+    narrative: >
+      A packager compares two release artifacts (packages or directories of
+      shared objects) and gets a per-library verdict plus bundle-level findings.
+    flow:
+      - abicheck compare-release old-release/ new-release/ -H include/
+    expected:
+      exit_code: 4
+    validates: UC-WF-bundle
+    automated: false
+    status: planned
+    plan: docs/development/plans/g2-build-config-and-bundle.md
+
+  - id: SC-APP-IMPACT
+    title: "Answer: will my application break with the new library?"
+    persona: Application developer
+    narrative: >
+      A consumer checks whether a library upgrade affects the specific symbols
+      their app actually uses, filtering out irrelevant library churn.
+    flow:
+      - abicheck appcompat ./myapp libfoo.so.1 libfoo.so.2 -H include/
+    expected:
+      exit_code: 4
+    validates: UC-WF-appcompat
+    automated: false
+    status: planned
+    plan: docs/development/plans/g3-workflow-examples-and-reporting.md
+
+  - id: SC-SYSROOT-MIGRATION
+    title: Validate a binary still loads after a full-stack sysroot bump
+    persona: Platform / embedded engineer
+    narrative: >
+      An integrator compares a binary's entire resolved dependency stack across
+      two sysroots to confirm it still loads and binds before shipping an image.
+    flow:
+      - abicheck stack-check usr/bin/myapp --baseline old-root/ --candidate new-root/
+    expected:
+      exit_code: 4
+    validates: UC-WF-stack-deps
+    automated: false
+    status: planned
+    plan: docs/development/plans/g3-workflow-examples-and-reporting.md
+
+  - id: SC-AGENT-MCP
+    title: An AI agent inspects ABI changes through the MCP server
+    persona: AI agent / automation
+    narrative: >
+      An agent (Claude Code, Cursor, …) calls abicheck's MCP tools (abi_dump,
+      abi_compare, abi_explain_change) to analyse and explain changes
+      programmatically.
+    flow:
+      - python -m abicheck.mcp_server   # agent calls the exposed tools
+    expected:
+      tools: [abi_dump, abi_compare, abi_explain_change]
+    validates: UC-WF-mcp
+    automated: false
+    status: planned
+    note: >
+      The MCP tools are unit-tested (tests/test_mcp_server_unit.py); a live
+      client↔server end-to-end scenario is not yet automated.
