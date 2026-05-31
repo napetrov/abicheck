@@ -222,10 +222,10 @@ The feature is only credible if we can prove it neither over- nor under-filters.
 | Phase | Scope |
 |-------|-------|
 | **0** | PE/Mach-O header plumbing + directory expansion + fallback warnings — **done (PR #259)** |
-| **1** | Provenance capture: source-header tagging in castxml/DWARF/PDB parsers; model + serialization fields (schema bump) — *future (see note)* |
-| **2** | Header-scope resolution + surface ledger + `--scope-public-headers`/`--show-filtered` (opt-in, default off) — **done** (ledger now also disclosed in JSON `surface_scope` / SARIF `surfaceScope`, not just stderr text) |
+| **1** | Provenance capture: source-header tagging in castxml/DWARF/PDB parsers; model + serialization fields (schema bump) — **done** (`source_header` + 6-way `ScopeOrigin` on functions/variables/types/enums; schema v6; castxml + DWARF populate locations; PDB pending) |
+| **2** | Header-scope resolution + surface ledger + `--scope-public-headers`/`--show-filtered` (opt-in, default off) — **done** (ledger now also disclosed in JSON `surface_scope` / SARIF `surfaceScope`, not just stderr text; provenance-driven `private-header`/`system-header` reasons now wired) |
 | **3** | Reachability closure + leak-guard integration (extend `internal_leak.py`) — **done (closure shipped; leak exemption wired)** |
-| **4** | User-control overlay: widening public allowlist; integrate suppression as the narrowing layer; precedence + anti-hiding guard |
+| **4** | User-control overlay: widening public allowlist; integrate suppression as the narrowing layer; precedence + anti-hiding guard — **done** (widening via `--public-symbol`/`--public-symbols-list`; suppression remains the narrowing layer; widening only ever *keeps*, never hides) |
 | **5** | Parity + FP-rate gates; flip default to `header-scoped` once validated — *partial:* property-based monotonicity/subset/idempotence tests shipped (`tests/test_surface_property.py`); libabigail/abicc parity and the FP-rate CI gate remain |
 
 ### Implementation note (Phase 2/3 as shipped)

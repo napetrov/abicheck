@@ -66,6 +66,30 @@ excluded" trail stays inspectable. Internal-type leaks are never filtered.
 
 Use `--show-filtered` to print the ledger on the terminal.
 
+### Widening the surface (`--public-symbol`)
+
+Some symbols you *do* guarantee as public can't be seen by header provenance —
+hand-written asm stubs, `.def` exports, `extern "C"` shims, or symbols whose
+MSVC mangling castxml can't match. The **widening overlay** (ADR-024 §D6) forces
+such symbols back into the public surface so their changes are reported rather
+than demoted:
+
+```bash
+# Force individual symbols (repeatable), à la abi-compliance-checker -symbols-list
+abicheck compare old.so new.so --scope-public-headers \
+    --public-symbol my_asm_stub --public-symbol _ZN3foo3barEv
+
+# Or from a file (one symbol per line; '#' comments and blank lines ignored)
+abicheck compare old.so new.so --scope-public-headers \
+    --public-symbols-list public.syms
+```
+
+Matching is on the symbol as recorded on the finding (mangled or demangled),
+plus the trailing `::` segment of a qualified name. Widening only ever *keeps* a
+finding — it can never hide a break — and only takes effect together with
+`--scope-public-headers`. It is the counterpart to suppression, which *narrows*
+the surface; the two remain separate, auditable inputs.
+
 ### How it appears in each format
 
 Each demoted finding carries a `reason` code explaining why it was excluded:

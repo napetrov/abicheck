@@ -822,6 +822,24 @@ def _load_suppression_and_policy(
     return suppression, pf
 
 
+def _collect_force_public_symbols(
+    public_symbols: tuple[str, ...], symbols_list: Path | None,
+) -> set[str]:
+    """Merge --public-symbol values with a --public-symbols-list file.
+
+    The list file is one symbol per line; blank lines and ``#`` comments are
+    ignored (à la abi-compliance-checker -symbols-list). Inline trailing
+    comments are not stripped — a ``#`` must start the line to be a comment.
+    """
+    out: set[str] = {s.strip() for s in public_symbols if s.strip()}
+    if symbols_list is not None:
+        for raw in symbols_list.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if line and not line.startswith("#"):
+                out.add(line)
+    return out
+
+
 def _validate_show_only(
     ctx: click.Context, param: click.Parameter, value: str | None,
 ) -> str | None:
@@ -1331,6 +1349,16 @@ def _finalize_compare_result(
                    "leaks are never hidden.")
 @click.option("--show-filtered", "show_filtered", is_flag=True, default=False,
               help="List findings excluded by --scope-public-headers (audit trail).")
+@click.option("--public-symbol", "public_symbols", multiple=True,
+              help="Widening overlay (ADR-024 §D6): force a symbol (mangled or demangled "
+                   "name) into the public surface even when header provenance can't see it "
+                   "(asm stubs, .def exports, extern \"C\" shims, MSVC-mangling gaps). "
+                   "Repeatable. Only meaningful with --scope-public-headers.")
+@click.option("--public-symbols-list", "public_symbols_list",
+              type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None,
+              help="File of symbols to force public (one per line; '#' comments and blank "
+                   "lines ignored), à la abi-compliance-checker -symbols-list. "
+                   "Merged with --public-symbol.")
 @click.option("--show-only", "show_only", default=None,
               callback=_validate_show_only, expose_value=True, is_eager=False,
               help="Comma-separated filter tokens to limit displayed changes. "
@@ -1394,6 +1422,7 @@ def compare_cmd(
     follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
     show_redundant: bool, show_only: str | None, stat: bool,
     scope_public_headers: bool, show_filtered: bool,
+    public_symbols: tuple[str, ...], public_symbols_list: Path | None,
     report_mode: str, show_impact: bool,
     debug_format: str | None,
     annotate: bool,
@@ -1500,9 +1529,18 @@ def compare_cmd(
         require_justification=require_justification,
     )
 
+    force_public = _collect_force_public_symbols(public_symbols, public_symbols_list)
+    if force_public and not scope_public_headers:
+        click.echo(
+            "Warning: --public-symbol/--public-symbols-list only take effect with "
+            "--scope-public-headers; ignoring the widening overlay.",
+            err=True,
+        )
+
     result = compare(
         old, new, suppression=suppression, policy=policy, policy_file=pf,
         scope_to_public_surface=scope_public_headers,
+        force_public_symbols=force_public,
     )
 
     _finalize_compare_result(

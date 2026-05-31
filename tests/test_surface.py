@@ -641,3 +641,134 @@ class TestProvenanceReasons:
         # sym is in public_symbols on both sides; the public-header side blocks
         # the private-header demotion, so it stays in surface.
         assert classify_change_surface(c, s_old, s_new) == (True, None)
+
+
+# ── widening overlay (ADR-024 §D6 / Phase 4) ─────────────────────────────────
+
+
+class TestWideningOverlay:
+    """--public-symbol / force_public_symbols promote a symbol into the
+    public surface even when header provenance/export would demote it."""
+
+    def _run(self, changes, old, new, force_public):
+        from abicheck.post_processing import FilterNonPublicSurface, PipelineContext
+
+        ctx = PipelineContext(
+            old=old, new=new, scope_to_public_surface=True,
+            force_public_symbols=set(force_public),
+        )
+        kept = FilterNonPublicSurface().run(list(changes), ctx)
+        return kept, ctx.out_of_surface
+
+    def _pair(self):
+        old = AbiSnapshot(
+            library="l", version="1",
+            functions=[_fn("public_api"), _fn("stub_sym", vis=Visibility.ELF_ONLY)],
+        )
+        new = AbiSnapshot(
+            library="l", version="2",
+            functions=[_fn("public_api"), _fn("stub_sym", vis=Visibility.ELF_ONLY)],
+        )
+        return old, new
+
+    def test_forced_symbol_kept_in_surface(self):
+        old, new = self._pair()
+        c = Change(kind=ChangeKind.FUNC_RETURN_CHANGED, symbol="stub_sym", description="")
+        # Without widening: demoted (not-exported / non-public).
+        kept_off, ledger_off = self._run([c], old, new, force_public=set())
+        assert kept_off == [] and len(ledger_off) == 1
+        # With widening: kept, not on the ledger.
+        kept_on, ledger_on = self._run([c], old, new, force_public={"stub_sym"})
+        assert kept_on == [c] and ledger_on == []
+
+    def test_forced_symbol_matches_qualified_tail(self):
+        old, new = self._pair()
+        c = Change(kind=ChangeKind.FUNC_RETURN_CHANGED, symbol="ns::stub_sym", description="")
+        kept, ledger = self._run([c], old, new, force_public={"stub_sym"})
+        assert kept == [c] and ledger == []
+
+    def test_widening_does_not_affect_unlisted_symbols(self):
+        old, new = self._pair()
+        c = Change(kind=ChangeKind.FUNC_RETURN_CHANGED, symbol="stub_sym", description="")
+        kept, ledger = self._run([c], old, new, force_public={"other"})
+        assert kept == [] and len(ledger) == 1
+
+
+def test_collect_force_public_symbols_merges_flag_and_file(tmp_path):
+    from abicheck.cli import _collect_force_public_symbols
+
+    lst = tmp_path / "syms.txt"
+    lst.write_text("# public symbols\nfoo\n\n  bar  \n# comment\nbaz\n")
+    out = _collect_force_public_symbols(("qux", "foo"), lst)
+    assert out == {"foo", "bar", "baz", "qux"}
+
+
+def test_collect_force_public_symbols_no_file():
+    from abicheck.cli import _collect_force_public_symbols
+
+    assert _collect_force_public_symbols((), None) == set()
+    assert _collect_force_public_symbols(("a", " ", "b"), None) == {"a", "b"}
+
+
+class TestWideningCLI:
+    """End-to-end: --public-symbol re-promotes a demoted finding via the CLI."""
+
+    def _write(self, path, snap):
+        from abicheck.serialization import snapshot_to_json
+
+        path.write_text(snapshot_to_json(snap))
+
+    def _pair(self, tmp_path):
+        # InternalCache is an internal struct (no public API references it);
+        # its layout change is demoted under scoping. Widening by its name
+        # re-promotes it into the reported surface.
+        old = AbiSnapshot(
+            library="lib", version="1",
+            functions=[_fn("public_api", ret="Result *")],
+            types=[_rec("Result", size=64), _rec("InternalCache", size=64)],
+        )
+        new = AbiSnapshot(
+            library="lib", version="2",
+            functions=[_fn("public_api", ret="Result *")],
+            types=[_rec("Result", size=64), _rec("InternalCache", size=128)],
+        )
+        op, np_ = tmp_path / "old.json", tmp_path / "new.json"
+        self._write(op, old)
+        self._write(np_, new)
+        return op, np_
+
+    def test_public_symbol_flag_repromotes_finding(self, tmp_path):
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        op, np_ = self._pair(tmp_path)
+        runner = CliRunner()
+        # Scoped without widening: the internal change is filtered out of stdout.
+        scoped = runner.invoke(
+            main, ["compare", str(op), str(np_), "--scope-public-headers"]
+        )
+        assert "InternalCache" not in scoped.stdout
+        # Scoped + widened: the change is back in the report.
+        widened = runner.invoke(
+            main,
+            ["compare", str(op), str(np_), "--scope-public-headers",
+             "--public-symbol", "InternalCache"],
+        )
+        assert "InternalCache" in widened.stdout
+
+    def test_public_symbols_list_file(self, tmp_path):
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        op, np_ = self._pair(tmp_path)
+        syms = tmp_path / "public.syms"
+        syms.write_text("# guaranteed exports\nInternalCache\n")
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["compare", str(op), str(np_), "--scope-public-headers",
+             "--public-symbols-list", str(syms)],
+        )
+        assert "InternalCache" in result.stdout
