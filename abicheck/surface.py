@@ -137,6 +137,11 @@ class PublicSurface:
     # name. Only populated when the snapshot was dumped with a public-header
     # set; otherwise every value is UNKNOWN and provenance reasons never fire.
     origin_by_key: dict[str, ScopeOrigin] = field(default_factory=dict)
+    # True when *any* declaration carried a non-UNKNOWN origin — i.e. the
+    # snapshot was dumped with a public-header set so provenance is available.
+    # Lets the classifier distinguish a confident reachability demotion from one
+    # made without provenance to confirm it (ADR-024 §D5.1 ``no-provenance``).
+    has_provenance: bool = False
 
 
 def _symbol_keys(name: str, mangled: str) -> set[str]:
@@ -274,6 +279,13 @@ def compute_public_surface(snap: AbiSnapshot) -> PublicSurface:
     # Seed roots from public symbols; collect the type names they touch.
     seed_types, has_public = _seed_public_roots(snap, surface)
 
+    # Provenance is available iff some declaration was classified to a real
+    # origin (only happens when the snapshot was dumped with a public-header
+    # set). Used by the classifier to emit the ``no-provenance`` ledger reason.
+    surface.has_provenance = any(
+        o != ScopeOrigin.UNKNOWN for o in surface.origin_by_key.values()
+    )
+
     # Scoping only makes sense when we actually have header-derived public
     # visibility. Without headers every symbol is ELF_ONLY (ADR-016) and a
     # surface filter would hide everything — so declare it unresolvable.
@@ -284,6 +296,49 @@ def compute_public_surface(snap: AbiSnapshot) -> PublicSurface:
     # Transitive closure over the record/typedef graph.
     _walk_type_closure(snap, surface, record_by_name, seed_types)
     return surface
+
+
+# Scope-level confidence notes (ADR-024 §D5.3). Unlike the per-finding
+# exclusion reasons below, these qualify the *whole* surface resolution: they
+# flag that the resolved surface (and therefore every demotion decision made
+# against it) is less trustworthy than a clean header-scoped run.
+SCOPE_NOTE_MANGLING_FALLBACK = "mangling-fallback"      # MSVC C++ name-mangling gap
+SCOPE_NOTE_CASTXML_UNAVAILABLE = "castxml-unavailable"  # castxml missing / parse failed
+SCOPE_NOTE_NO_PROVENANCE = "no-provenance"              # surface resolved without provenance
+
+
+def surface_scope_confidence(
+    old: AbiSnapshot,
+    new: AbiSnapshot,
+    *,
+    scope_enabled: bool,
+) -> tuple[str, list[str]]:
+    """Summarise confidence in the header-scope resolution (ADR-024 §D5.3).
+
+    Returns ``(confidence, notes)`` where *confidence* is ``"high"`` or
+    ``"reduced"`` and *notes* is a deduplicated, order-stable list of structured
+    note codes. ``"high"`` with no notes is the clean case. The dumper records
+    the per-snapshot ``scope_fallback`` signal (castxml/mangling); a resolvable
+    surface that nonetheless lacks provenance adds ``no-provenance``.
+    """
+    notes: list[str] = []
+
+    def _add(code: str | None) -> None:
+        if code and code not in notes:
+            notes.append(code)
+
+    for snap in (old, new):
+        _add(getattr(snap, "scope_fallback", None))
+
+    if scope_enabled:
+        s_old = compute_public_surface(old)
+        s_new = compute_public_surface(new)
+        if (s_old.resolvable or s_new.resolvable) and not (
+            s_old.has_provenance or s_new.has_provenance
+        ):
+            _add(SCOPE_NOTE_NO_PROVENANCE)
+
+    return ("reduced" if notes else "high"), notes
 
 
 def change_in_public_surface(
@@ -311,6 +366,10 @@ REASON_PRIVATE_HEADER = (
     "private-header"  # decl originates in a non-public project header
 )
 REASON_SYSTEM_HEADER = "system-header"  # decl originates in a toolchain/system header
+# A type was demoted by reachability while provenance *was* available for the
+# snapshot but not for this type — the demotion is reachability-based, not
+# provenance-confirmed (reduced confidence; ADR-024 §D5.1 / §D5.3).
+REASON_NO_PROVENANCE = "no-provenance"
 
 # Map a demotable origin to its ledger reason code.
 _ORIGIN_REASON: dict[ScopeOrigin, str] = {
@@ -413,4 +472,13 @@ def classify_change_surface(
             if REASON_PRIVATE_HEADER in type_reasons
             else REASON_SYSTEM_HEADER
         )
+    # Reachability demotion. If provenance was available for the snapshot but
+    # none of the implicated types carried it, disclose the reduced confidence
+    # (ADR-024 §D5.3) rather than implying a provenance-confirmed verdict.
+    if surf_old.has_provenance and surf_new.has_provenance and all(
+        surf_old.origin_by_key.get(c, ScopeOrigin.UNKNOWN) == ScopeOrigin.UNKNOWN
+        and surf_new.origin_by_key.get(c, ScopeOrigin.UNKNOWN) == ScopeOrigin.UNKNOWN
+        for c in known
+    ):
+        return False, REASON_NO_PROVENANCE
     return False, REASON_NON_PUBLIC_TYPE

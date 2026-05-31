@@ -260,6 +260,12 @@ def compare(
         detector_results, old, new,
     )
 
+    # ADR-024 §D5.3: structured confidence in the surface resolution itself.
+    from .surface import surface_scope_confidence
+    scope_confidence, scope_notes = surface_scope_confidence(
+        old, new, scope_enabled=scope_to_public_surface,
+    )
+
     return DiffResult(
         old_version=old.version,
         new_version=new.version,
@@ -282,5 +288,7 @@ def compare(
         out_of_surface_count=len(out_of_surface),
         scope_to_public_surface=scope_to_public_surface,
         scope_resolved=scope_resolved,
+        surface_scope_confidence=scope_confidence,
+        surface_scope_notes=scope_notes,
         evidence_tier=evidence_tier,
     )
