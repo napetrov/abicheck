@@ -13,6 +13,10 @@ header-scope filter only ever *removes or demotes* findings and never
   *public* findings.
 * **Subset** — the scoped finding set is a subset of the universe of
   findings the unscoped run produces (filtering relocates, never invents).
+* **Anti-hiding** (§4, "the most important") — a layout break on a type
+  reachable from a public API always remains a reported finding.
+* **Widening** (§D6) — force-including every demoted symbol only moves
+  findings from the ledger back into the report; it never hides or invents.
 
 These run on synthetic snapshots (no castxml/gcc) but are Hypothesis-driven
 and therefore carry the ``slow`` marker like the other property suites.
@@ -206,3 +210,77 @@ def test_scoped_findings_subset_of_unscoped_universe(old: AbiSnapshot, new: AbiS
     assert _all_finding_keys(scoped) <= universe
     # And the reported (kept) scoped findings are themselves within that universe.
     assert _change_keys(scoped.changes) <= universe
+
+
+# ---------------------------------------------------------------------------
+# Anti-hiding — a break on a public-header type always survives scoping
+# (ADR-024 §"Validation & testing strategy" §4, "the most important")
+# ---------------------------------------------------------------------------
+
+
+@given(
+    type_name=st.sampled_from(_TYPE_POOL),
+    old_size=st.sampled_from([32, 64]),
+    new_size=st.sampled_from([128, 256]),
+)
+@settings(max_examples=40)
+def test_public_type_break_is_never_hidden_by_scoping(
+    type_name: str, old_size: int, new_size: int
+):
+    """A layout change to a type reachable from a PUBLIC function must remain a
+    reported finding under scoping — it is observable to consumers."""
+    def _pair(size: int, version: str) -> AbiSnapshot:
+        return AbiSnapshot(
+            library="lib",
+            version=version,
+            functions=[
+                Function(
+                    name="pub_api",
+                    mangled="_Z7pub_apiv",
+                    return_type=f"{type_name} *",
+                    params=[],
+                    visibility=Visibility.PUBLIC,
+                )
+            ],
+            types=[RecordType(name=type_name, kind="struct", size_bits=size)],
+        )
+
+    old, new = _pair(old_size, "1"), _pair(new_size, "2")
+    scoped = compare(old, new, scope_to_public_surface=True)
+
+    reported = _change_keys(scoped.changes)
+    demoted = _change_keys(scoped.out_of_surface_changes)
+    # The public type's change is reported and was NOT demoted to the ledger.
+    assert any(sym == type_name for _, sym in reported)
+    assert not any(sym == type_name for _, sym in demoted)
+
+
+# ---------------------------------------------------------------------------
+# Widening overlay (ADR-024 §D6 / Phase 4) — re-promotion never hides or invents
+# ---------------------------------------------------------------------------
+
+
+@given(old=_snapshot_st(version="1"), new=_snapshot_st(version="2"))
+@settings(max_examples=75)
+def test_widening_only_repromotes_never_hides_or_invents(
+    old: AbiSnapshot, new: AbiSnapshot
+):
+    """Force-including every demoted symbol moves findings from the ledger back
+    into the report and changes nothing else: kept grows, the ledger shrinks,
+    and the overall universe is identical (widening can only ever *keep*)."""
+    scoped = compare(copy.deepcopy(old), copy.deepcopy(new), scope_to_public_surface=True)
+    forced = {c.symbol for c in scoped.out_of_surface_changes if c.symbol}
+
+    widened = compare(
+        copy.deepcopy(old), copy.deepcopy(new),
+        scope_to_public_surface=True, force_public_symbols=forced,
+    )
+
+    # Re-promotion only adds to the reported set …
+    assert _change_keys(scoped.changes) <= _change_keys(widened.changes)
+    # … only removes from the ledger …
+    assert _change_keys(widened.out_of_surface_changes) <= _change_keys(
+        scoped.out_of_surface_changes
+    )
+    # … and never invents a finding the scoped run did not already have.
+    assert _all_finding_keys(widened) == _all_finding_keys(scoped)
