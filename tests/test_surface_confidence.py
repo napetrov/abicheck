@@ -125,6 +125,74 @@ class TestNoProvenanceReason:
         assert classify_change_surface(c, s, s) == (False, REASON_NON_PUBLIC_TYPE)
 
 
+# ── anti-hiding: export-only snapshots have no trustworthy type roots ─────────
+
+
+class TestExportOnlyAntiHiding:
+    """A PE binary whose header scoping fell back to the export table has
+    functions with ``return_type="?"`` and no params, so the reachability
+    closure has no roots. Demoting a type as "unreachable" there would hide a
+    real public ABI break (ADR-024 §D5.2 / Codex P1). The classifier must keep
+    such type findings unless provenance *confirms* they are private/system.
+    """
+
+    def _export_only_fn(self, name):
+        # Mirrors service._dump_pe export-table functions.
+        return Function(name=name, mangled=name, return_type="?", visibility=Visibility.PUBLIC)
+
+    def test_public_header_type_not_hidden_on_fallback(self):
+        # A PUBLIC_HEADER PDB type whose layout changed must stay in surface
+        # even though no typed function reaches it.
+        old = AbiSnapshot(
+            library="l.dll", version="1",
+            functions=[self._export_only_fn("Api")],
+            types=[_rec("Widget", size=64, origin=ScopeOrigin.PUBLIC_HEADER)],
+        )
+        new = AbiSnapshot(
+            library="l.dll", version="2",
+            functions=[self._export_only_fn("Api")],
+            types=[_rec("Widget", size=128, origin=ScopeOrigin.PUBLIC_HEADER)],
+        )
+        s_old, s_new = compute_public_surface(old), compute_public_surface(new)
+        assert s_old.has_typed_roots is False
+        c = Change(kind=ChangeKind.TYPE_SIZE_CHANGED, symbol="Widget", description="")
+        # Kept in surface — NOT demoted as non-public-type.
+        assert classify_change_surface(c, s_old, s_new) == (True, None)
+
+    def test_private_header_type_still_demoted_on_fallback(self):
+        # Confident provenance still demotes — anti-hiding does not block a
+        # genuinely private type.
+        old = AbiSnapshot(
+            library="l.dll", version="1",
+            functions=[self._export_only_fn("Api")],
+            types=[_rec("Internal", size=64, origin=ScopeOrigin.PRIVATE_HEADER)],
+        )
+        new = AbiSnapshot(
+            library="l.dll", version="2",
+            functions=[self._export_only_fn("Api")],
+            types=[_rec("Internal", size=128, origin=ScopeOrigin.PRIVATE_HEADER)],
+        )
+        s_old, s_new = compute_public_surface(old), compute_public_surface(new)
+        c = Change(kind=ChangeKind.TYPE_SIZE_CHANGED, symbol="Internal", description="")
+        in_surf, reason = classify_change_surface(c, s_old, s_new)
+        assert in_surf is False
+        assert reason == "private-header"
+
+    def test_typed_roots_still_demote_unreachable_type(self):
+        # Regression guard: with real typed roots, reachability demotion is
+        # still active (this is the normal castxml/ELF path).
+        old = AbiSnapshot(
+            library="l", version="1",
+            functions=[_fn("api", ret="Public *")],
+            types=[_rec("Public"), _rec("Unreached")],
+        )
+        s = compute_public_surface(old)
+        assert s.has_typed_roots is True
+        c = Change(kind=ChangeKind.TYPE_SIZE_CHANGED, symbol="Unreached", description="")
+        in_surf, _ = classify_change_surface(c, s, s)
+        assert in_surf is False
+
+
 # ── ledger disclosure (JSON + SARIF) ──────────────────────────────────────────
 
 

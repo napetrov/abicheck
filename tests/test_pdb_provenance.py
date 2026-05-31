@@ -10,18 +10,31 @@ type bridge that lets PDB-derived types reach public-surface resolution.
 from __future__ import annotations
 
 import struct
+from pathlib import Path
 
 from abicheck.dwarf_metadata import DwarfMetadata, EnumInfo, FieldInfo, StructLayout
 from abicheck.model import ScopeOrigin
+from abicheck.pdb_metadata import parse_pdb_debug_info
 from abicheck.pdb_model import model_types_from_dwarf_metadata
 from abicheck.pdb_parser import (
+    LF_FIELDLIST,
     LF_STRING_ID,
+    LF_STRUCTURE,
     LF_UDT_MOD_SRC_LINE,
     LF_UDT_SRC_LINE,
+    TypeDatabase,
+    _resolve_udt_source_files,
     extract_udt_source_files,
     parse_tpi_stream,
 )
 from abicheck.provenance import apply_provenance
+from tests.test_pdb_parser import (
+    _build_minimal_pdb,
+    _build_tpi_stream,
+    _make_lf_fieldlist,
+    _make_lf_member,
+    _make_lf_structure,
+)
 
 
 def _build_ipi_stream(records: list[tuple[int, bytes]]) -> bytes:
@@ -88,6 +101,29 @@ class TestExtractUdtSourceFiles:
         )
         assert extract_udt_source_files(ipi) == {}
 
+    def test_resolve_to_udt_name(self) -> None:
+        # _resolve_udt_source_files maps the IPI ti→file map onto UDT *names*
+        # via the TPI TypeDatabase (struct Vec3 at ti 0x1001).
+        tpi = parse_tpi_stream(
+            _build_tpi_stream(
+                [
+                    (LF_FIELDLIST, _make_lf_fieldlist([_make_lf_member(0, 0x74, 0, "x")])),
+                    (LF_STRUCTURE, _make_lf_structure(1, 0, 0x1000, 4, "Vec3")),
+                ]
+            )
+        )
+        types = TypeDatabase(tpi)
+        types.parse_all()
+        ipi = parse_tpi_stream(
+            _build_ipi_stream(
+                [
+                    (LF_STRING_ID, _string_id("include/vec.h")),
+                    (LF_UDT_SRC_LINE, _udt_src_line(0x1001, 0x1000, 5)),
+                ]
+            )
+        )
+        assert _resolve_udt_source_files(ipi, types) == {"Vec3": "include/vec.h"}
+
     def test_first_definition_wins(self) -> None:
         ipi = parse_tpi_stream(
             _build_ipi_stream(
@@ -139,6 +175,154 @@ class TestModelBridge:
     def test_empty_metadata_yields_nothing(self) -> None:
         assert model_types_from_dwarf_metadata(None) == ([], [])
         assert model_types_from_dwarf_metadata(DwarfMetadata()) == ([], [])
+
+    def test_bitfield_and_union_branches(self) -> None:
+        meta = DwarfMetadata(has_dwarf=True)
+        meta.structs["Flags"] = StructLayout(
+            name="Flags",
+            byte_size=4,
+            alignment=4,
+            is_union=False,
+            fields=[
+                FieldInfo(name="a", type_name="unsigned int", byte_offset=0,
+                          byte_size=4, bit_offset=0, bit_size=1),
+            ],
+        )
+        meta.structs["U"] = StructLayout(name="U", byte_size=8, is_union=True)
+        records, _ = model_types_from_dwarf_metadata(meta)
+        by_name = {r.name: r for r in records}
+        assert by_name["Flags"].alignment_bits == 32
+        assert by_name["Flags"].fields[0].is_bitfield is True
+        assert by_name["Flags"].fields[0].bitfield_bits == 1
+        assert by_name["U"].kind == "union" and by_name["U"].is_union is True
+
+
+class TestHeaderScopeFallback:
+    """The structured ``scope_fallback`` signal (ADR-024 §D5.3) returned by
+    service._try_header_scoped_dump when PE/Mach-O header scoping cannot apply.
+    """
+
+    def test_castxml_unavailable_fallback(self, tmp_path, monkeypatch):
+        import warnings as _w
+
+        import abicheck.dumper as dumper
+        from abicheck import service
+
+        hdr = tmp_path / "api.h"
+        hdr.write_text("int f(void);\n")
+
+        def _boom(*a, **k):
+            raise RuntimeError("castxml not found")
+
+        monkeypatch.setattr(dumper, "_dump_pe", _boom)
+        with _w.catch_warnings():
+            _w.simplefilter("ignore")
+            snap, reason = service._try_header_scoped_dump(
+                "pe", tmp_path / "lib.dll", [hdr], [], "1", "c++"
+            )
+        assert snap is None
+        assert reason == "castxml-unavailable"
+
+    def test_mangling_fallback(self, tmp_path, monkeypatch):
+        import warnings as _w
+
+        import abicheck.dumper as dumper
+        from abicheck import service
+        from abicheck.model import AbiSnapshot, Function, Visibility
+
+        hdr = tmp_path / "api.h"
+        hdr.write_text("int f(void);\n")
+
+        # A snapshot whose declared symbols never matched the export table:
+        # no PUBLIC-visibility symbols → _has_matched_public_surface is False.
+        def _unmatched(*a, **k):
+            return AbiSnapshot(
+                library="lib.dll", version="1",
+                functions=[Function(name="f", mangled="f", return_type="int",
+                                    visibility=Visibility.HIDDEN)],
+            )
+
+        monkeypatch.setattr(dumper, "_dump_pe", _unmatched)
+        with _w.catch_warnings():
+            _w.simplefilter("ignore")
+            snap, reason = service._try_header_scoped_dump(
+                "pe", tmp_path / "lib.dll", [hdr], [], "1", "c++"
+            )
+        assert snap is None
+        assert reason == "mangling-fallback"
+
+    def test_scoped_success_returns_no_fallback(self, tmp_path, monkeypatch):
+        import abicheck.dumper as dumper
+        from abicheck import service
+        from abicheck.model import AbiSnapshot, Function, Visibility
+
+        hdr = tmp_path / "api.h"
+        hdr.write_text("int f(void);\n")
+
+        def _matched(*a, **k):
+            return AbiSnapshot(
+                library="lib.dll", version="1",
+                functions=[Function(name="f", mangled="f", return_type="int",
+                                    visibility=Visibility.PUBLIC)],
+            )
+
+        monkeypatch.setattr(dumper, "_dump_pe", _matched)
+        snap, reason = service._try_header_scoped_dump(
+            "pe", tmp_path / "lib.dll", [hdr], [], "1", "c++"
+        )
+        assert snap is not None
+        assert reason is None
+
+
+class TestParsePdbEndToEnd:
+    def test_decl_file_flows_through_parse_pdb(self, tmp_path: Path) -> None:
+        # Full path: parse_pdb parses the IPI stream, resolves UDT→source, and
+        # pdb_metadata tags StructLayout.decl_file (ADR-024 Phase 1, PE path).
+        tpi = [
+            (LF_FIELDLIST, _make_lf_fieldlist([_make_lf_member(0, 0x74, 0, "x")])),
+            (LF_STRUCTURE, _make_lf_structure(1, 0, 0x1000, 4, "Vec3")),  # ti 0x1001
+        ]
+        ipi = [
+            (LF_STRING_ID, _string_id("include/vec.h")),                 # ti 0x1000
+            (LF_UDT_SRC_LINE, _udt_src_line(0x1001, 0x1000, 9)),
+        ]
+        pdb = tmp_path / "e2e.pdb"
+        pdb.write_bytes(_build_minimal_pdb(tpi_records=tpi, ipi_records=ipi))
+        meta, _adv = parse_pdb_debug_info(pdb)
+        assert "Vec3" in meta.structs
+        assert meta.structs["Vec3"].decl_file == "include/vec.h"
+
+    def test_no_ipi_leaves_decl_file_none(self, tmp_path: Path) -> None:
+        tpi = [
+            (LF_FIELDLIST, _make_lf_fieldlist([_make_lf_member(0, 0x74, 0, "x")])),
+            (LF_STRUCTURE, _make_lf_structure(1, 0, 0x1000, 4, "Vec3")),
+        ]
+        pdb = tmp_path / "noipi.pdb"
+        pdb.write_bytes(_build_minimal_pdb(tpi_records=tpi))  # no IPI stream
+        meta, _adv = parse_pdb_debug_info(pdb)
+        assert meta.structs["Vec3"].decl_file is None
+
+    def test_cli_apply_native_provenance(self) -> None:
+        # The CLI wrapper threads a PE/Mach-O snapshot through apply_provenance
+        # (lifting the old ELF-only restriction).
+        from abicheck.cli import _apply_native_provenance
+        from abicheck.model import AbiSnapshot
+
+        meta = DwarfMetadata(has_dwarf=True)
+        meta.structs["PublicType"] = StructLayout(
+            name="PublicType", byte_size=8, decl_file="include/api.h"
+        )
+        records, enums = model_types_from_dwarf_metadata(meta)
+        snap = AbiSnapshot(library="lib.dll", version="1", types=records, enums=enums)
+        out = _apply_native_provenance(snap, [Path("include/api.h")], None)
+        assert out.types[0].origin == ScopeOrigin.PUBLIC_HEADER
+        # No public set → no-op (origin stays UNKNOWN).
+        snap2 = AbiSnapshot(
+            library="lib.dll", version="1",
+            types=model_types_from_dwarf_metadata(meta)[0],
+        )
+        out2 = _apply_native_provenance(snap2, None, None)
+        assert out2.types[0].origin == ScopeOrigin.UNKNOWN
 
     def test_bridge_feeds_provenance_classification(self) -> None:
         # The decl_file → source_location bridge lets apply_provenance classify
