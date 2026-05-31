@@ -1070,8 +1070,9 @@ def _append_recommendation_section(lines: list[str], result: DiffResult) -> None
     lines += [
         "## Release Recommendation",
         "",
-        f"| Version bump | {emoji} **{rec.bump.value.upper()}** |",
+        "| Field | Value |",
         "|---|---|",
+        f"| Version bump | {emoji} **{rec.bump.value.upper()}** |",
         f"| SONAME action | `{rec.soname.value}` |",
         "",
         f"{rec.rationale}",

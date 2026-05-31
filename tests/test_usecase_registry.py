@@ -97,6 +97,12 @@ def test_unfinished_entries_have_a_plan(case: dict) -> None:
     if case["status"] in _NEEDS_PLAN:
         assert _GAP_RE.match(case.get("gap", "")), f"{case['id']}: needs a Gx gap id"
         assert case.get("next_steps", "").strip(), f"{case['id']}: needs next_steps"
+        # Each unfinished use case must link a detailed plan that actually exists.
+        plan = case.get("plan", "")
+        assert plan.startswith("docs/development/plans/"), (
+            f"{case['id']}: needs a plan: under docs/development/plans/"
+        )
+        assert (_REPO / plan).exists(), f"{case['id']}: plan file missing: {plan}"
     if case["status"] == "by_design_excluded":
         assert case.get("note", "").strip(), (
             f"{case['id']}: must explain exclusion in note"

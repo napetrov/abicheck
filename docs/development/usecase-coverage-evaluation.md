@@ -143,6 +143,14 @@ rest:
 
 ## Proposed next steps (tracked, not in this change)
 
+> **Detailed, actionable plans for every remaining item live in
+> [`plans/`](plans/index.md)** — one per gap, each with goal, acceptance
+> criteria, design, files to touch, test plan, and effort. Each `partial` /
+> `modeled` / `planned` entry in [`usecase-registry.yaml`](usecase-registry.yaml)
+> links its plan via a `plan:` field that the registry test verifies exists.
+
+Summary (see the plans for detail):
+
 - **G1 (CI):** add Windows (MinGW) and macOS smoke jobs that run `compare` /
   `appcompat` on a handful of native PE/Mach-O fixtures; promote the most
   reliable `known_gap` cases to validated once green.

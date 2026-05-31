@@ -191,7 +191,11 @@ def test_markdown_recommendation_is_opt_in() -> None:
     )
     result = compare(old, new)
     assert "Release Recommendation" not in to_markdown(result)
-    assert "Release Recommendation" in to_markdown(result, show_recommendation=True)
+    md = to_markdown(result, show_recommendation=True)
+    assert "Release Recommendation" in md
+    # Well-formed table: header + delimiter precede the data rows (regression
+    # guard — the delimiter must not sit between data rows).
+    assert "| Field | Value |\n|---|---|\n| Version bump |" in md
 
 
 def test_leaf_json_also_includes_recommendation() -> None:

@@ -7,7 +7,8 @@
 #   - every entry has a known `axis` and `status`;
 #   - `complete` / `partial` / `modeled` entries cite evidence whose paths
 #     actually exist in the repo (so coverage claims cannot silently rot);
-#   - `partial` / `modeled` / `planned` entries carry a `gap` id and `next_steps`;
+#   - `partial` / `modeled` / `planned` entries carry a `gap` id, `next_steps`,
+#     and a `plan:` pointing at a real plan file under docs/development/plans/;
 #   - `by_design_excluded` entries explain themselves in `note`.
 #
 # To extend coverage: add or update an entry here, point `evidence` at the
@@ -65,6 +66,7 @@ use_cases:
     name: Plugin host↔plugin load contract (dlopen)
     status: partial
     gap: G5
+    plan: docs/development/plans/g5-plugin-bidirectional-contract.md
     evidence:
       modules: [abicheck/appcompat.py]
       tests: [tests/test_workflow_scenarios.py]
@@ -78,6 +80,7 @@ use_cases:
     name: Header-only / inline-only libraries
     status: planned
     gap: G4
+    plan: docs/development/plans/g4-header-ast-extractor.md
     evidence:
       modules: [abicheck/dumper_castxml.py]
     next_steps: >
@@ -90,6 +93,7 @@ use_cases:
     name: Kernel / eBPF modules (BTF/CTF)
     status: modeled
     gap: G6
+    plan: docs/development/plans/g6-kernel-btf-and-accelerator.md
     evidence:
       modules: [abicheck/btf_metadata.py, abicheck/ctf_metadata.py]
       tests: [tests/test_btf_metadata.py]
@@ -102,6 +106,7 @@ use_cases:
     name: SYCL / heterogeneous accelerator stacks (PI/UR)
     status: partial
     gap: G6
+    plan: docs/development/plans/g6-kernel-btf-and-accelerator.md
     evidence:
       modules: [abicheck/sycl_metadata.py, abicheck/diff_sycl.py]
       tests: [tests/test_diff_sycl.py]
@@ -113,6 +118,7 @@ use_cases:
     name: Static libraries (.a / .lib)
     status: planned
     gap: G8
+    plan: docs/development/plans/g8-static-libraries.md
     next_steps: >
       Decide scope: either iterate `ar` archive members for link-time API
       checking, or document static libraries as an explicit non-goal.
@@ -139,6 +145,7 @@ use_cases:
     name: Windows PE/COFF + PDB (MSVC / MinGW)
     status: partial
     gap: G1
+    plan: docs/development/plans/g1-cross-platform-e2e.md
     evidence:
       modules: [abicheck/pe_metadata.py, abicheck/pdb_metadata.py]
       tests: [tests/test_pe_metadata_unit.py, tests/test_pdb_metadata.py, tests/test_msvc_pdb_e2e.py]
@@ -151,6 +158,7 @@ use_cases:
     name: macOS Mach-O (x86-64 / ARM64)
     status: modeled
     gap: G1
+    plan: docs/development/plans/g1-cross-platform-e2e.md
     evidence:
       modules: [abicheck/macho_metadata.py]
       tests: [tests/test_macho_metadata_unit.py, tests/test_macos_arm64_abi.py]
@@ -221,6 +229,7 @@ use_cases:
     name: Multi-library bundle / cohort analysis
     status: partial
     gap: G2
+    plan: docs/development/plans/g2-build-config-and-bundle.md
     evidence:
       modules: [abicheck/bundle.py]
       tests: [tests/test_bundle.py]
@@ -233,6 +242,7 @@ use_cases:
     name: Build-configuration matrix (probe harness)
     status: partial
     gap: G2
+    plan: docs/development/plans/g2-build-config-and-bundle.md
     evidence:
       modules: [abicheck/probe_harness.py, abicheck/diff_build_config.py]
       tests: [tests/test_probe_harness.py]
@@ -272,6 +282,7 @@ use_cases:
     name: Markdown / HTML reports
     status: partial
     gap: G3
+    plan: docs/development/plans/g3-workflow-examples-and-reporting.md
     evidence:
       modules: [abicheck/reporter.py, abicheck/html_report.py]
       tests: [tests/test_format_compliance.py, tests/test_sprint9_html.py]
@@ -306,6 +317,7 @@ use_cases:
     name: C++ standard floor raised (per-consumer source break)
     status: partial
     gap: G2
+    plan: docs/development/plans/g2-build-config-and-bundle.md
     evidence:
       examples: [examples/case98_cxx_standard_floor_raised]
     next_steps: >
