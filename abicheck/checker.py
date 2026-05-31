@@ -177,7 +177,9 @@ def compare(
     *,
     policy: str = "strict_abi",
     policy_file: PolicyFile | None = None,
-    scope_to_public_surface: bool = False,
+    scope_to_public_surface: bool = True,
+    force_public_symbols: set[str] | None = None,
+    extra_changes: list[Change] | None = None,
 ) -> DiffResult:
     """Diff two AbiSnapshots and return a DiffResult with verdict.
 
@@ -197,6 +199,13 @@ def compare(
     # Run all registered detectors via the self-registering registry.
     changes, detector_results = _detector_registry.run_all(old, new)
 
+    # Merge externally-computed findings (e.g. build-configuration / probe-matrix
+    # findings from diff_matrix(), which need multi-config inputs compare() does
+    # not have). They join the normal pipeline so suppression, reporting, and
+    # verdict composition treat them uniformly (G2: probe → compare).
+    if extra_changes:
+        changes.extend(extra_changes)
+
     # Post-detector: SONAME bump policy check (needs full change list).
     # Uses the module-level import of check_soname_bump_policy.
     from .elf_metadata import ElfMetadata as _ElfMetadata
@@ -214,12 +223,17 @@ def compare(
     pp_ctx = DEFAULT_PIPELINE.run(
         changes, old, new, suppression=suppression, frozen_namespaces=frozen_ns,
         scope_to_public_surface=scope_to_public_surface,
+        force_public_symbols=force_public_symbols,
     )
     kept = pp_ctx.kept
     redundant = pp_ctx.redundant
     opaque_filtered = pp_ctx.opaque_filtered
     suppressed = pp_ctx.suppressed
     out_of_surface = pp_ctx.out_of_surface
+    # scoping is "resolved" unless it was requested and had to fall back to the
+    # full export table (issue #235: an unconfirmed scope must not read as a
+    # confidently-clean public surface).
+    scope_resolved = not (scope_to_public_surface and pp_ctx.scope_fell_back)
 
     # Verdict computed on unsuppressed semantic changes.
     # NOTE: opaque_filtered changes are intentionally excluded from verdict
@@ -242,8 +256,17 @@ def compare(
     )
 
     # Compute evidence tiers and confidence from detector results.
-    evidence_tiers, confidence, coverage_warnings = _compute_confidence(
+    evidence_tiers, confidence, coverage_warnings, evidence_tier = _compute_confidence(
         detector_results, old, new,
+    )
+
+    # ADR-024 §D5.3: structured confidence in the surface resolution itself.
+    # Reuse the surfaces FilterNonPublicSurface already computed (when scoping
+    # ran) to avoid repeating the type-closure walk.
+    from .surface import surface_scope_confidence
+    scope_confidence, scope_notes = surface_scope_confidence(
+        old, new, scope_enabled=scope_to_public_surface,
+        surf_old=pp_ctx.surf_old, surf_new=pp_ctx.surf_new,
     )
 
     return DiffResult(
@@ -267,4 +290,8 @@ def compare(
         out_of_surface_changes=out_of_surface,
         out_of_surface_count=len(out_of_surface),
         scope_to_public_surface=scope_to_public_surface,
+        scope_resolved=scope_resolved,
+        surface_scope_confidence=scope_confidence,
+        surface_scope_notes=scope_notes,
+        evidence_tier=evidence_tier,
     )

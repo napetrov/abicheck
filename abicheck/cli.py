@@ -31,7 +31,7 @@ from .errors import AbicheckError
 from .serialization import load_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
-    from .checker_types import DiffResult
+    from .checker_types import Change, DiffResult
     from .debug_resolver import DebugArtifact
     from .policy_file import PolicyFile
     from .severity import SeverityConfig
@@ -209,6 +209,21 @@ def _dump_elf(
         raise click.ClickException(f"Failed to dump '{path}': {exc}") from exc
 
 
+def _apply_native_provenance(
+    snap: AbiSnapshot,
+    public_headers: list[Path] | None,
+    public_header_dirs: list[Path] | None,
+) -> AbiSnapshot:
+    """Tag declaration provenance on a PE/Mach-O snapshot (ADR-024 Phase 1).
+
+    Mirrors the ELF path (``dumper.create_snapshot``), which always runs
+    ``apply_provenance``. A no-op when no public-header set is supplied —
+    every origin stays ``UNKNOWN`` and behaviour is unchanged.
+    """
+    from .provenance import apply_provenance
+    return apply_provenance(snap, public_headers, public_header_dirs)
+
+
 def _dump_native_binary(
     path: Path, binary_fmt: str,
     headers: list[Path], includes: list[Path],
@@ -217,6 +232,8 @@ def _dump_native_binary(
     pdb_path: Path | None = None,
     dwarf_only: bool = False,
     debug_format: str | None = None,
+    public_headers: list[Path] | None = None,
+    public_header_dirs: list[Path] | None = None,
 ) -> AbiSnapshot:
     """Dump ABI snapshot from a native binary (ELF, PE, or Mach-O).
 
@@ -225,6 +242,10 @@ def _dump_native_binary(
     For PE/Mach-O, headers are optional: when supplied they scope the ABI
     surface to declarations in those public headers (best-effort, via castxml),
     otherwise the export table provides the symbol surface.
+
+    ``public_headers`` / ``public_header_dirs`` classify declaration provenance
+    (ADR-024 Phase 1). For PE they also let the PDB-derived types carry a
+    ``ScopeOrigin``; an empty set keeps every origin ``UNKNOWN`` (no-op).
     """
     if binary_fmt == "elf":
         return _dump_elf(path, headers, includes, version, lang,
@@ -233,23 +254,25 @@ def _dump_native_binary(
     if binary_fmt == "pe":
         from .service import _dump_pe
         try:
-            return _dump_pe(
+            snap = _dump_pe(
                 path, version,
                 headers=headers, includes=includes, lang=lang,
                 pdb_path=pdb_path,
             )
         except AbicheckError as exc:
             raise click.ClickException(str(exc)) from exc
+        return _apply_native_provenance(snap, public_headers, public_header_dirs)
 
     if binary_fmt == "macho":
         from .service import _dump_macho
         try:
-            return _dump_macho(
+            snap = _dump_macho(
                 path, version,
                 headers=headers, includes=includes, lang=lang,
             )
         except AbicheckError as exc:
             raise click.ClickException(str(exc)) from exc
+        return _apply_native_provenance(snap, public_headers, public_header_dirs)
 
     fmt_labels = {"elf": "ELF", "pe": "PE (Windows DLL)", "macho": "Mach-O (macOS dylib)"}
     raise click.ClickException(f"Unsupported binary format: {fmt_labels.get(binary_fmt, binary_fmt)}")
@@ -415,6 +438,16 @@ def _populate_dependency_info(
               help="Public header file or directory (repeat for multiple).")
 @click.option("-I", "--include", "includes", multiple=True, type=click.Path(path_type=Path),
               help="Extra include directory for castxml.")
+# ── Declaration provenance (ADR-015) ─────────────────────────────────────────
+@click.option("--public-header", "public_headers", multiple=True,
+              type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="Header treated as public for provenance classification (repeat for "
+                   "multiple). Declarations are tagged public/private/system in the snapshot. "
+                   "Opt-in: omitting this leaves every origin UNKNOWN.")
+@click.option("--public-header-dir", "public_header_dirs", multiple=True,
+              type=click.Path(exists=True, file_okay=False, path_type=Path),
+              help="Directory whose headers are treated as public for provenance "
+                   "classification (repeat for multiple).")
 @click.option("--version", "version", default="unknown", show_default=True,
               help="Library version string to embed in snapshot.")
 @click.option("--lang", default="c++", show_default=True,
@@ -487,6 +520,7 @@ def _populate_dependency_info(
 @click.option("--no-git", "no_git", is_flag=True, default=False,
               help="Do not auto-detect git commit SHA.")
 def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...],
+             public_headers: tuple[Path, ...], public_header_dirs: tuple[Path, ...],
              version: str, lang: str, output: Path | None,
              gcc_path: str | None, gcc_prefix: str | None, gcc_options: str | None,
              sysroot: Path | None, nostdinc: bool, pdb_path: Path | None,
@@ -547,6 +581,8 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             build_id,
             no_git,
             output,
+            public_headers,
+            public_header_dirs,
         )
         return
 
@@ -580,6 +616,8 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             lang=lang if lang == "c" else None,
             dwarf_only=dwarf_only,
             debug_format=debug_format,
+            public_headers=list(public_headers),
+            public_header_dirs=list(public_header_dirs),
         )
     except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -604,6 +642,8 @@ def _handle_non_elf_dump(
     build_id: str | None,
     no_git: bool,
     output: Path | None,
+    public_headers: tuple[Path, ...] = (),
+    public_header_dirs: tuple[Path, ...] = (),
 ) -> None:
     """Handle PE/Mach-O native dump path and output writing."""
     if follow_deps:
@@ -612,6 +652,8 @@ def _handle_non_elf_dump(
         snap = _dump_native_binary(
             so_path, binary_fmt, list(headers), list(includes), version, lang,
             pdb_path=pdb_path,
+            public_headers=list(public_headers),
+            public_header_dirs=list(public_header_dirs),
         )
     except click.ClickException:
         raise
@@ -804,6 +846,24 @@ def _load_suppression_and_policy(
     return suppression, pf
 
 
+def _collect_force_public_symbols(
+    public_symbols: tuple[str, ...], symbols_list: Path | None,
+) -> set[str]:
+    """Merge --public-symbol values with a --public-symbols-list file.
+
+    The list file is one symbol per line; blank lines and ``#`` comments are
+    ignored (à la abi-compliance-checker -symbols-list). Inline trailing
+    comments are not stripped — a ``#`` must start the line to be a comment.
+    """
+    out: set[str] = {s.strip() for s in public_symbols if s.strip()}
+    if symbols_list is not None:
+        for raw in symbols_list.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if line and not line.startswith("#"):
+                out.add(line)
+    return out
+
+
 def _validate_show_only(
     ctx: click.Context, param: click.Parameter, value: str | None,
 ) -> str | None:
@@ -830,6 +890,7 @@ def _render_output(
     show_impact: bool = False,
     stat: bool = False,
     severity_config: SeverityConfig | None = None,
+    show_recommendation: bool = False,
 ) -> str:
     """Render comparison result in the requested output format."""
     from .service import render_output
@@ -838,6 +899,7 @@ def _render_output(
         follow_deps=follow_deps, show_only=show_only,
         report_mode=report_mode, show_impact=show_impact,
         stat=stat, severity_config=severity_config,
+        show_recommendation=show_recommendation,
     )
 
 
@@ -846,6 +908,29 @@ def _collect_additions(result: DiffResult) -> list[object]:
     from .checker_policy import COMPATIBLE_KINDS
     addition_kinds = {k for k in COMPATIBLE_KINDS if k.value.endswith("_added")}
     return [c for c in result.changes if c.kind in addition_kinds]
+
+
+def _load_probe_matrix_changes(
+    probe_matrix_old: Path | None, probe_matrix_new: Path | None,
+) -> list[Change] | None:
+    """Load build-config matrix snapshots and return diff_matrix() findings.
+
+    These findings (CXX_STANDARD_FLOOR_RAISED, API_DEPENDS_ON_CONSUMER_ENV,
+    BEHAVIOURAL_DEFAULT_CHANGED) need multi-configuration inputs the plain
+    compare() does not have, so they are computed here and merged in (G2).
+    """
+    if probe_matrix_old is None and probe_matrix_new is None:
+        return None
+    if probe_matrix_old is None or probe_matrix_new is None:
+        raise click.UsageError(
+            "--probe-matrix-old and --probe-matrix-new must be given together."
+        )
+    from .diff_build_config import diff_matrix
+    from .probe_harness import load_matrix_snapshot
+
+    old_matrix = load_matrix_snapshot(probe_matrix_old)
+    new_matrix = load_matrix_snapshot(probe_matrix_new)
+    return list(diff_matrix(old_matrix, new_matrix))
 
 
 def _run_compare_pair(
@@ -863,6 +948,7 @@ def _run_compare_pair(
     policy_file_path: Path | None,
     old_pdb_path: Path | None,
     new_pdb_path: Path | None,
+    scope_to_public_surface: bool = False,
 ) -> tuple[DiffResult, AbiSnapshot, AbiSnapshot]:
     """Run compare for one old/new pair and return result + resolved snapshots."""
     old_fmt = _detect_binary_format(old_input)
@@ -888,7 +974,10 @@ def _run_compare_pair(
     )
 
     suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
-    result = compare(old, new, suppression=suppression, policy=policy, policy_file=pf)
+    result = compare(
+        old, new, suppression=suppression, policy=policy, policy_file=pf,
+        scope_to_public_surface=scope_to_public_surface,
+    )
     result.old_metadata = _collect_metadata(old_input)
     result.new_metadata = _collect_metadata(new_input)
     return result, old, new
@@ -1022,7 +1111,8 @@ def _echo_filtered_surface(result: DiffResult) -> None:
     )
     for c in result.out_of_surface_changes:
         loc = f" [{c.source_location}]" if c.source_location else ""
-        click.echo(f"  - {c.kind.value}: {c.symbol}{loc}", err=True)
+        reason = f" ({c.surface_exclusion_reason})" if c.surface_exclusion_reason else ""
+        click.echo(f"  - {c.kind.value}: {c.symbol}{loc}{reason}", err=True)
 
 
 def _warn_all_suppressed(result: DiffResult) -> None:
@@ -1117,6 +1207,111 @@ def _exit_with_severity_or_verdict(
             sys.exit(2)
 
 
+def _log_one_side_debug(
+    label: str, binary: Path, droots: list[Path],
+    *,
+    debuginfod: bool, debuginfod_url: str | None,
+) -> None:
+    """Resolve and log debug info for a single binary side, if applicable."""
+    if _detect_binary_format(binary) is None or not (droots or debuginfod):
+        return
+    from .debug_resolver import resolve_debug_info
+
+    artifact = resolve_debug_info(
+        binary,
+        debug_roots=droots or None,
+        enable_debuginfod=debuginfod,
+        debuginfod_urls=[debuginfod_url] if debuginfod_url else None,
+    )
+    if artifact:
+        click.echo(f"Debug info ({label}): {artifact.source}", err=True)
+
+
+def _log_debug_resolution(
+    old_input: Path, new_input: Path,
+    resolved_old_debug: list[Path], resolved_new_debug: list[Path],
+    *,
+    debuginfod: bool, debuginfod_url: str | None,
+) -> None:
+    """Resolve and log per-side debug info (debug roots / debuginfod), if any."""
+    if not (resolved_old_debug or resolved_new_debug or debuginfod):
+        return
+    _log_one_side_debug(
+        "old", old_input, resolved_old_debug,
+        debuginfod=debuginfod, debuginfod_url=debuginfod_url,
+    )
+    _log_one_side_debug(
+        "new", new_input, resolved_new_debug,
+        debuginfod=debuginfod, debuginfod_url=debuginfod_url,
+    )
+
+
+def _resolve_compare_snapshots(
+    old_input: Path, new_input: Path,
+    old_fmt: str | None, new_fmt: str | None,
+    old_h: list[Path], new_h: list[Path],
+    old_inc: list[Path], new_inc: list[Path],
+    old_version: str, new_version: str, lang: str,
+    pdb_path: Path | None, old_pdb_path: Path | None, new_pdb_path: Path | None,
+    dwarf_only: bool, debug_format: str | None,
+    follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
+) -> tuple[AbiSnapshot, AbiSnapshot]:
+    """Load both ABI snapshots and (optionally) populate ELF dependency info."""
+    old = _resolve_input(
+        old_input, old_h, old_inc, old_version, lang,
+        is_elf=True if old_fmt == "elf" else None,
+        pdb_path=old_pdb_path if old_pdb_path else pdb_path,
+        dwarf_only=dwarf_only,
+        debug_format=debug_format,
+    )
+    new = _resolve_input(
+        new_input, new_h, new_inc, new_version, lang,
+        is_elf=True if new_fmt == "elf" else None,
+        pdb_path=new_pdb_path if new_pdb_path else pdb_path,
+        dwarf_only=dwarf_only,
+        debug_format=debug_format,
+    )
+    if follow_deps:
+        if old_fmt == "elf":
+            _populate_dependency_info(old, old_input, list(search_paths), None, ld_library_path)
+        if new_fmt == "elf":
+            _populate_dependency_info(new, new_input, list(search_paths), None, ld_library_path)
+    return old, new
+
+
+def _finalize_compare_result(
+    result: DiffResult, old_input: Path, new_input: Path,
+    *,
+    show_redundant: bool, show_filtered: bool,
+    annotate: bool, annotate_additions: bool,
+) -> None:
+    """Attach metadata and emit redundancy/filter/suppression/annotation output."""
+    result.old_metadata = _collect_metadata(old_input)
+    result.new_metadata = _collect_metadata(new_input)
+
+    if show_redundant and result.redundant_changes:
+        _merge_redundant_changes(result)
+    if show_filtered and result.out_of_surface_changes:
+        _echo_filtered_surface(result)
+
+    # The scoping fallback warning goes to stderr so it never corrupts the
+    # machine-readable payload on stdout (which carries scope_resolved /
+    # manual_review_required for programmatic consumers).
+    if result.scope_to_public_surface and not result.scope_resolved:
+        click.echo(
+            "Warning: --scope-public-headers could not resolve the public "
+            "surface (no header-derived public symbols); fell back to the full "
+            "export table. Compatibility is UNCONFIRMED — treat this result as "
+            "manual-review-required, not a clean public surface.",
+            err=True,
+        )
+
+    _warn_all_suppressed(result)
+    _maybe_emit_annotations(
+        result, annotate=annotate, annotate_additions=annotate_additions
+    )
+
+
 @main.command("compare")
 @click.argument("old_input", type=click.Path(exists=True, path_type=Path))
 @click.argument("new_input", type=click.Path(exists=True, path_type=Path))
@@ -1153,8 +1348,11 @@ def _exit_with_severity_or_verdict(
 @click.option("--new-version", "new_version", default="new", show_default=True,
               help="Version label for new side (used when input is a .so file).")
 # ── Compare options (unchanged) ──────────────────────────────────────────────
-@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "sarif", "html", "junit"]),
-              default="markdown", show_default=True)
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "sarif", "html", "junit", "review"]),
+              default="markdown", show_default=True,
+              help="Output format. 'review' emits a compact GitHub-facing digest "
+                   "(verdict + counts + release recommendation + manual-review banner) "
+                   "suitable for a job summary or PR comment.")
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
               help="Suppression file (YAML) to filter known/intentional changes.")
@@ -1212,13 +1410,35 @@ def _exit_with_severity_or_verdict(
 @click.option("--show-redundant", is_flag=True, default=False,
               help="Disable redundancy filtering and show all changes including those "
                    "derived from root type changes.")
-@click.option("--scope-public-headers", "scope_public_headers", is_flag=True, default=False,
+@click.option("--scope-public-headers/--no-scope-public-headers", "scope_public_headers",
+              default=True, show_default=True,
               help="Restrict findings to the public-header ABI surface (ADR-024): "
                    "changes to symbols/types not reachable from public-header-declared "
                    "exported API are recorded as filtered, not reported. Internal-type "
-                   "leaks are never hidden.")
+                   "leaks are never hidden. On by default; use --no-scope-public-headers "
+                   "to report every finding regardless of surface.")
 @click.option("--show-filtered", "show_filtered", is_flag=True, default=False,
               help="List findings excluded by --scope-public-headers (audit trail).")
+@click.option("--public-symbol", "public_symbols", multiple=True,
+              help="Widening overlay (ADR-024 §D6): force a symbol (mangled or demangled "
+                   "name) into the public surface even when header provenance can't see it "
+                   "(asm stubs, .def exports, extern \"C\" shims, MSVC-mangling gaps). "
+                   "Repeatable. Only meaningful with --scope-public-headers.")
+@click.option("--public-symbols-list", "public_symbols_list",
+              type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None,
+              help="File of symbols to force public (one per line; '#' comments and blank "
+                   "lines ignored), à la abi-compliance-checker -symbols-list. "
+                   "Merged with --public-symbol.")
+@click.option("--probe-matrix-old", "probe_matrix_old", type=click.Path(exists=True, path_type=Path),
+              default=None,
+              help="Old build-configuration matrix snapshot (from 'abicheck probe run'). "
+                   "When given with --probe-matrix-new, build-config findings "
+                   "(CXX_STANDARD_FLOOR_RAISED, API_DEPENDS_ON_CONSUMER_ENV, "
+                   "BEHAVIOURAL_DEFAULT_CHANGED) are folded into this comparison's "
+                   "verdict and report (G2: probe -> compare).")
+@click.option("--probe-matrix-new", "probe_matrix_new", type=click.Path(exists=True, path_type=Path),
+              default=None,
+              help="New build-configuration matrix snapshot (pairs with --probe-matrix-old).")
 @click.option("--show-only", "show_only", default=None,
               callback=_validate_show_only, expose_value=True, is_eager=False,
               help="Comma-separated filter tokens to limit displayed changes. "
@@ -1236,6 +1456,9 @@ def _exit_with_severity_or_verdict(
                    "'leaf' groups by root type changes with impact lists.")
 @click.option("--show-impact", is_flag=True, default=False,
               help="Append an impact summary table showing root changes and affected interfaces.")
+@click.option("--recommend", is_flag=True, default=False,
+              help="Append a release recommendation (semver bump + SONAME action) to the "
+                   "report. Always present in --format json under 'release_recommendation'.")
 @click.option("--btf", "debug_format", flag_value="btf", default=None,
               help="Force BTF debug format for both sides (ELF only).")
 @click.option("--ctf", "debug_format", flag_value="ctf",
@@ -1282,7 +1505,9 @@ def compare_cmd(
     follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
     show_redundant: bool, show_only: str | None, stat: bool,
     scope_public_headers: bool, show_filtered: bool,
+    public_symbols: tuple[str, ...], public_symbols_list: Path | None,
     report_mode: str, show_impact: bool,
+    recommend: bool,
     debug_format: str | None,
     annotate: bool,
     annotate_additions: bool,
@@ -1292,6 +1517,8 @@ def compare_cmd(
     debuginfod: bool,
     debuginfod_url: str | None,
     verbose: bool,
+    probe_matrix_old: Path | None = None,
+    probe_matrix_new: Path | None = None,
 ) -> None:
     """Compare two ABI surfaces and report changes.
 
@@ -1364,46 +1591,22 @@ def compare_cmd(
         old_includes_only, new_includes_only,
     )
 
-    resolved_old_pdb = old_pdb_path if old_pdb_path else pdb_path
-    resolved_new_pdb = new_pdb_path if new_pdb_path else pdb_path
-
     # Resolve per-side debug roots: --debug-root1 overrides --debug-root for old, etc.
     resolved_old_debug = list(debug_roots_old) if debug_roots_old else list(debug_roots)
     resolved_new_debug = list(debug_roots_new) if debug_roots_new else list(debug_roots)
-
-    # Log debug resolution if roots are specified
-    if resolved_old_debug or resolved_new_debug or debuginfod:
-        from .debug_resolver import resolve_debug_info
-        for label, binary, droots in [
-            ("old", old_input, resolved_old_debug),
-            ("new", new_input, resolved_new_debug),
-        ]:
-            if _detect_binary_format(binary) is not None and (droots or debuginfod):
-                artifact = resolve_debug_info(
-                    binary,
-                    debug_roots=droots or None,
-                    enable_debuginfod=debuginfod,
-                    debuginfod_urls=[debuginfod_url] if debuginfod_url else None,
-                )
-                if artifact:
-                    click.echo(
-                        f"Debug info ({label}): {artifact.source}",
-                        err=True,
-                    )
-
-    old = _resolve_input(
-        old_input, old_h, old_inc, old_version, lang,
-        is_elf=True if old_fmt == "elf" else None,
-        pdb_path=resolved_old_pdb,
-        dwarf_only=dwarf_only,
-        debug_format=debug_format,
+    _log_debug_resolution(
+        old_input, new_input,
+        resolved_old_debug, resolved_new_debug,
+        debuginfod=debuginfod, debuginfod_url=debuginfod_url,
     )
-    new = _resolve_input(
-        new_input, new_h, new_inc, new_version, lang,
-        is_elf=True if new_fmt == "elf" else None,
-        pdb_path=resolved_new_pdb,
-        dwarf_only=dwarf_only,
-        debug_format=debug_format,
+
+    old, new = _resolve_compare_snapshots(
+        old_input, new_input, old_fmt, new_fmt,
+        old_h, new_h, old_inc, new_inc,
+        old_version, new_version, lang,
+        pdb_path, old_pdb_path, new_pdb_path,
+        dwarf_only, debug_format,
+        follow_deps, search_paths, ld_library_path,
     )
 
     suppression, pf = _load_suppression_and_policy(
@@ -1412,29 +1615,28 @@ def compare_cmd(
         require_justification=require_justification,
     )
 
-    if follow_deps:
-        if old_fmt == "elf":
-            _populate_dependency_info(old, old_input, list(search_paths), None, ld_library_path)
-        if new_fmt == "elf":
-            _populate_dependency_info(new, new_input, list(search_paths), None, ld_library_path)
+    force_public = _collect_force_public_symbols(public_symbols, public_symbols_list)
+    if force_public and not scope_public_headers:
+        click.echo(
+            "Warning: --public-symbol/--public-symbols-list only take effect with "
+            "--scope-public-headers; ignoring the widening overlay.",
+            err=True,
+        )
+
+    extra_changes = _load_probe_matrix_changes(probe_matrix_old, probe_matrix_new)
 
     result = compare(
         old, new, suppression=suppression, policy=policy, policy_file=pf,
         scope_to_public_surface=scope_public_headers,
+        force_public_symbols=force_public,
+        extra_changes=extra_changes,
     )
 
-    result.old_metadata = _collect_metadata(old_input)
-    result.new_metadata = _collect_metadata(new_input)
-
-    if show_redundant and result.redundant_changes:
-        _merge_redundant_changes(result)
-
-    if show_filtered and result.out_of_surface_changes:
-        _echo_filtered_surface(result)
-
-    _warn_all_suppressed(result)
-
-    _maybe_emit_annotations(result, annotate=annotate, annotate_additions=annotate_additions)
+    _finalize_compare_result(
+        result, old_input, new_input,
+        show_redundant=show_redundant, show_filtered=show_filtered,
+        annotate=annotate, annotate_additions=annotate_additions,
+    )
 
     text = _render_output(
         fmt, result, old, new,
@@ -1442,6 +1644,7 @@ def compare_cmd(
         show_only=show_only, report_mode=report_mode,
         show_impact=show_impact, stat=stat,
         severity_config=sev_config if severity_explicitly_set else None,
+        show_recommendation=recommend,
     )
 
     _write_or_echo(output, text)

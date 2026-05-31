@@ -49,7 +49,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .model import Visibility
+from .model import ScopeOrigin, Visibility
 
 if TYPE_CHECKING:
     from .checker_types import Change
@@ -138,6 +138,16 @@ _TYPE_NOISE: frozenset[str] = frozenset(
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_:]*")
 
 
+def _is_real_type(type_str: str | None) -> bool:
+    """True when *type_str* is a parsed type, not the export-only sentinel.
+
+    Export-table-only dumps (e.g. a PE binary whose header scoping fell back)
+    record ``return_type="?"`` and no parameters. Such roots carry no real
+    type information, so the reachability closure cannot trust them.
+    """
+    return bool(type_str) and type_str != "?"
+
+
 def _type_identifiers(type_str: str | None) -> set[str]:
     """Extract candidate record/enum/typedef names from a type string.
 
@@ -173,6 +183,23 @@ class PublicSurface:
     public_types: set[str] = field(default_factory=set)
     all_types: set[str] = field(default_factory=set)
     resolvable: bool = False
+    # Origin (ADR-024 D1 / ADR-015 v6) keyed by every symbol key and type
+    # name. Only populated when the snapshot was dumped with a public-header
+    # set; otherwise every value is UNKNOWN and provenance reasons never fire.
+    origin_by_key: dict[str, ScopeOrigin] = field(default_factory=dict)
+    # True when *any* declaration carried a non-UNKNOWN origin — i.e. the
+    # snapshot was dumped with a public-header set so provenance is available.
+    # Lets the classifier distinguish a confident reachability demotion from one
+    # made without provenance to confirm it (ADR-024 §D5.1 ``no-provenance``).
+    has_provenance: bool = False
+    # True when at least one public root carried real signature type info
+    # (a parameter or a return/variable type other than the export-only
+    # sentinel ``"?"``). When False the snapshot is export-table-only (e.g. a
+    # PE binary whose header scoping fell back), so the type-reachability
+    # closure has no roots and **cannot** be trusted to demote a type as
+    # "unreachable" — doing so would hide a real break (ADR-024 §D5.2). Only
+    # confident provenance (private/system header) may demote in that case.
+    has_typed_roots: bool = False
 
 
 def _symbol_keys(name: str, mangled: str) -> set[str]:
@@ -183,55 +210,94 @@ def _symbol_keys(name: str, mangled: str) -> set[str]:
     return keys
 
 
-def compute_public_surface(snap: AbiSnapshot) -> PublicSurface:
-    """Compute the public-ABI surface of *snap*.
+# Origins that justify demoting a finding out of the public surface.
+_DEMOTE_ORIGINS: frozenset[ScopeOrigin] = frozenset(
+    {ScopeOrigin.PRIVATE_HEADER, ScopeOrigin.SYSTEM_HEADER}
+)
 
-    Public roots are :data:`Visibility.PUBLIC` functions/variables. The
-    public type set is the transitive closure over the types they
-    reference (returns, params, fields, bases, typedef targets).
+
+def _merge_origin(existing: ScopeOrigin | None, new: ScopeOrigin) -> ScopeOrigin:
+    """Combine origins sharing a key. A non-demote origin (public/unknown/…)
+    always wins so we never demote a key that *any* public-header declaration
+    contributes to (conservative, ADR-024 §D5)."""
+    if existing is None or existing in _DEMOTE_ORIGINS:
+        return new if existing is None or new not in _DEMOTE_ORIGINS else existing
+    return existing
+
+
+def _record_origin(surface: PublicSurface, keys: set[str], origin: ScopeOrigin) -> None:
+    for k in keys:
+        surface.origin_by_key[k] = _merge_origin(surface.origin_by_key.get(k), origin)
+
+
+def _index_surface_types(snap: AbiSnapshot, surface: PublicSurface) -> dict[str, RecordType]:
+    """Populate ``surface.all_types`` and return a name -> record index.
+
+    Records are indexed by both their full name and (for namespaced types) the
+    trailing ``::`` segment, so the closure walk can match either encoding.
     """
-    surface = PublicSurface()
-
-    # Build the type universe and a name -> record index for closure walks.
     record_by_name: dict[str, RecordType] = {}
     for rec in snap.types:
         surface.all_types.add(rec.name)
         record_by_name[rec.name] = rec
+        keys = {rec.name}
         if "::" in rec.name:
-            record_by_name.setdefault(rec.name.rsplit("::", 1)[1], rec)
+            tail = rec.name.rsplit("::", 1)[1]
+            record_by_name.setdefault(tail, rec)
+            keys.add(tail)
+        _record_origin(surface, keys, getattr(rec, "origin", ScopeOrigin.UNKNOWN))
     for en in snap.enums:
         surface.all_types.add(en.name)
+        _record_origin(surface, {en.name}, getattr(en, "origin", ScopeOrigin.UNKNOWN))
     for alias in snap.typedefs:
         surface.all_types.add(alias)
+    return record_by_name
 
-    # Seed roots from public symbols; collect the type names they touch.
+
+def _seed_public_roots(snap: AbiSnapshot, surface: PublicSurface) -> tuple[set[str], bool]:
+    """Record public symbols on *surface*; return (seed type names, has_public).
+
+    Seeds the type-closure work-list from the return/parameter/variable types of
+    every :data:`Visibility.PUBLIC` function and variable.
+    """
     seed_types: set[str] = set()
     has_public = False
     for fn in snap.functions:
         keys = _symbol_keys(fn.name, fn.mangled)
         surface.all_symbols |= keys
+        _record_origin(surface, keys, getattr(fn, "origin", ScopeOrigin.UNKNOWN))
         if fn.visibility == Visibility.PUBLIC:
             has_public = True
             surface.public_symbols |= keys
+            if fn.params or _is_real_type(fn.return_type):
+                surface.has_typed_roots = True
             seed_types |= _type_identifiers(fn.return_type)
             for p in fn.params:
                 seed_types |= _type_identifiers(getattr(p, "type", None))
     for var in snap.variables:
         keys = _symbol_keys(var.name, var.mangled)
         surface.all_symbols |= keys
+        _record_origin(surface, keys, getattr(var, "origin", ScopeOrigin.UNKNOWN))
         if var.visibility == Visibility.PUBLIC:
             has_public = True
             surface.public_symbols |= keys
+            if _is_real_type(var.type):
+                surface.has_typed_roots = True
             seed_types |= _type_identifiers(var.type)
+    return seed_types, has_public
 
-    # Scoping only makes sense when we actually have header-derived public
-    # visibility. Without headers every symbol is ELF_ONLY (ADR-016) and a
-    # surface filter would hide everything — so declare it unresolvable.
-    surface.resolvable = has_public and not getattr(snap, "elf_only_mode", False)
-    if not surface.resolvable:
-        return surface
 
-    # Transitive closure over the record/typedef graph.
+def _walk_type_closure(
+    snap: AbiSnapshot,
+    surface: PublicSurface,
+    record_by_name: dict[str, RecordType],
+    seed_types: set[str],
+) -> None:
+    """Transitive closure over the record/typedef graph; fills public_types.
+
+    Follows typedef targets, record fields, and base classes from each seed
+    type, marking every reachable known type as part of the public surface.
+    """
     queue = list(seed_types)
     seen: set[str] = set()
     while queue:
@@ -258,7 +324,92 @@ def compute_public_surface(snap: AbiSnapshot) -> PublicSurface:
             for ident in _type_identifiers(base):
                 if ident not in seen:
                     queue.append(ident)
+
+
+def compute_public_surface(snap: AbiSnapshot) -> PublicSurface:
+    """Compute the public-ABI surface of *snap*.
+
+    Public roots are :data:`Visibility.PUBLIC` functions/variables. The
+    public type set is the transitive closure over the types they
+    reference (returns, params, fields, bases, typedef targets).
+    """
+    surface = PublicSurface()
+
+    # Build the type universe and a name -> record index for closure walks.
+    record_by_name = _index_surface_types(snap, surface)
+
+    # Seed roots from public symbols; collect the type names they touch.
+    seed_types, has_public = _seed_public_roots(snap, surface)
+
+    # Provenance is available iff some declaration was classified to a real
+    # origin (only happens when the snapshot was dumped with a public-header
+    # set). Used by the classifier to emit the ``no-provenance`` ledger reason.
+    surface.has_provenance = any(
+        o != ScopeOrigin.UNKNOWN for o in surface.origin_by_key.values()
+    )
+
+    # Scoping only makes sense when we actually have header-derived public
+    # visibility. Without headers every symbol is ELF_ONLY (ADR-016) and a
+    # surface filter would hide everything — so declare it unresolvable.
+    surface.resolvable = has_public and not getattr(snap, "elf_only_mode", False)
+    if not surface.resolvable:
+        return surface
+
+    # Transitive closure over the record/typedef graph.
+    _walk_type_closure(snap, surface, record_by_name, seed_types)
     return surface
+
+
+# Scope-level confidence notes (ADR-024 §D5.3). Unlike the per-finding
+# exclusion reasons below, these qualify the *whole* surface resolution: they
+# flag that the resolved surface (and therefore every demotion decision made
+# against it) is less trustworthy than a clean header-scoped run.
+SCOPE_NOTE_MANGLING_FALLBACK = "mangling-fallback"      # MSVC C++ name-mangling gap
+SCOPE_NOTE_CASTXML_UNAVAILABLE = "castxml-unavailable"  # castxml missing / parse failed
+SCOPE_NOTE_NO_PROVENANCE = "no-provenance"              # surface resolved without provenance
+
+
+def surface_scope_confidence(
+    old: AbiSnapshot,
+    new: AbiSnapshot,
+    *,
+    scope_enabled: bool,
+    surf_old: PublicSurface | None = None,
+    surf_new: PublicSurface | None = None,
+) -> tuple[str, list[str]]:
+    """Summarise confidence in the header-scope resolution (ADR-024 §D5.3).
+
+    Returns ``(confidence, notes)`` where *confidence* is ``"high"`` or
+    ``"reduced"`` and *notes* is a deduplicated, order-stable list of structured
+    note codes. ``"high"`` with no notes is the clean case. The dumper records
+    the per-snapshot ``scope_fallback`` signal (castxml/mangling); a resolvable
+    surface that nonetheless lacks provenance adds ``no-provenance``.
+
+    ``surf_old`` / ``surf_new`` may be passed when the caller has already run
+    :func:`compute_public_surface` (e.g. the ``FilterNonPublicSurface`` pipeline
+    step) to avoid repeating the type-closure walk; otherwise they are computed
+    on demand.
+    """
+    notes: list[str] = []
+
+    def _add(code: str | None) -> None:
+        if code and code not in notes:
+            notes.append(code)
+
+    for snap in (old, new):
+        _add(getattr(snap, "scope_fallback", None))
+
+    if scope_enabled:
+        s_old = surf_old if surf_old is not None else compute_public_surface(old)
+        s_new = surf_new if surf_new is not None else compute_public_surface(new)
+        # Flag reduced confidence when *any* resolvable side was scoped without
+        # provenance — a mixed comparison (one side has provenance, the other
+        # resolvable side does not) is still only half-trustworthy, so the note
+        # must fire unless every resolvable side carries provenance.
+        if any(s.resolvable and not s.has_provenance for s in (s_old, s_new)):
+            _add(SCOPE_NOTE_NO_PROVENANCE)
+
+    return ("reduced" if notes else "high"), notes
 
 
 def change_in_public_surface(
@@ -268,14 +419,76 @@ def change_in_public_surface(
 ) -> bool:
     """Return ``True`` if *change* concerns the public ABI surface.
 
+    Thin boolean wrapper over :func:`classify_change_surface` for callers
+    that only need the in/out decision.
+    """
+    return classify_change_surface(change, surf_old, surf_new)[0]
+
+
+# Exclusion reasons recorded on the surface ledger (ADR-024 §D5.1).
+# ``private-header`` / ``system-header`` are provenance-driven and only fire
+# when the snapshot was dumped with a public-header set (Phase 1, ADR-015 v6);
+# ``not-exported`` / ``non-public-type`` are the linkage/reachability reasons
+# the resolver can always determine. ``suppressed-by-user`` belongs to the
+# separate suppression ledger.
+REASON_NOT_EXPORTED = "not-exported"  # symbol known but not in the public export set
+REASON_NON_PUBLIC_TYPE = "non-public-type"  # type reachable by no public API root
+REASON_PRIVATE_HEADER = (
+    "private-header"  # decl originates in a non-public project header
+)
+REASON_SYSTEM_HEADER = "system-header"  # decl originates in a toolchain/system header
+# A type was demoted by reachability while provenance *was* available for the
+# snapshot but not for this type — the demotion is reachability-based, not
+# provenance-confirmed (reduced confidence; ADR-024 §D5.1 / §D5.3).
+REASON_NO_PROVENANCE = "no-provenance"
+
+# Map a demotable origin to its ledger reason code.
+_ORIGIN_REASON: dict[ScopeOrigin, str] = {
+    ScopeOrigin.PRIVATE_HEADER: REASON_PRIVATE_HEADER,
+    ScopeOrigin.SYSTEM_HEADER: REASON_SYSTEM_HEADER,
+}
+
+
+def _origin_reason(
+    surf_old: PublicSurface, surf_new: PublicSurface, key: str
+) -> str | None:
+    """Return the provenance demotion reason for *key*, or None to defer to
+    linkage/reachability. A public-header (or unknown) origin on *either* side
+    blocks demotion (conservative)."""
+    o_old = surf_old.origin_by_key.get(key, ScopeOrigin.UNKNOWN)
+    o_new = surf_new.origin_by_key.get(key, ScopeOrigin.UNKNOWN)
+    # Only demote when both sides agree the key is private/system. If either
+    # side is public/unknown/generated/export-only, keep deferring.
+    if o_old in _ORIGIN_REASON and o_new in _ORIGIN_REASON:
+        # Prefer private-header when the two disagree (the stronger signal).
+        if ScopeOrigin.PRIVATE_HEADER in (o_old, o_new):
+            return REASON_PRIVATE_HEADER
+        return REASON_SYSTEM_HEADER
+    return None
+
+
+def classify_change_surface(
+    change: Change,
+    surf_old: PublicSurface,
+    surf_new: PublicSurface,
+) -> tuple[bool, str | None]:
+    """Classify *change* against the public surface.
+
+    Returns ``(in_surface, reason)``. ``reason`` is ``None`` when the change
+    is in-surface (kept); otherwise it is a stable ledger reason code
+    explaining *why* the finding was demoted (ADR-024 §D5.1).
+
     Conservative by construction (ADR-024 §D5): leak findings, unknown
-    symbols, and unknown types all return ``True`` so scoping can only
-    ever remove findings it is *confident* are private.
+    symbols, and unknown types all stay in-surface so scoping can only ever
+    remove findings it is *confident* are private.
     """
     if change.kind.value in _NEVER_FILTER_KIND_NAMES:
-        return True
-    if not (surf_old.resolvable or surf_new.resolvable):
-        return True
+        return True, None
+    if not (surf_old.resolvable and surf_new.resolvable):
+        # If either side lacks a resolvable surface we cannot confidently
+        # place a finding as private on *both* versions — keep everything
+        # rather than risk hiding a real change from the unresolved side.
+        return True, None
 
     public_symbols = surf_old.public_symbols | surf_new.public_symbols
     all_symbols = surf_old.all_symbols | surf_new.all_symbols
@@ -292,11 +505,20 @@ def change_in_public_surface(
     type_level_finding = change.kind.value in _TYPE_LEVEL_KIND_NAMES
 
     # Symbol-level finding (function/variable): public iff a public symbol.
+    # A confident private/system-header origin demotes even an exported
+    # symbol — that is exactly the leaked-private-header case scoping targets.
     if not type_level_finding:
         if sym in all_symbols:
-            return sym in public_symbols
+            reason = _origin_reason(surf_old, surf_new, sym)
+            if reason is not None:
+                return False, reason
+            return (True, None) if sym in public_symbols else (False, REASON_NOT_EXPORTED)
         if sym and "::" in sym and sym.rsplit("::", 1)[1] in all_symbols:
-            return sym.rsplit("::", 1)[1] in public_symbols
+            tail = sym.rsplit("::", 1)[1]
+            reason = _origin_reason(surf_old, surf_new, tail)
+            if reason is not None:
+                return False, reason
+            return (True, None) if tail in public_symbols else (False, REASON_NOT_EXPORTED)
 
     # Type-level finding: check the implicated type name(s). A finding is
     # in-surface if *any* implicated type is reachable from the public API.
@@ -312,10 +534,40 @@ def change_in_public_surface(
     from .internal_leak import DEFAULT_INTERNAL_NAMESPACES, is_internal_type
 
     if any(is_internal_type(c, DEFAULT_INTERNAL_NAMESPACES) for c in candidates):
-        return True
+        return True, None
 
     known = {c for c in candidates if c in all_types}
     if not known:
         # We cannot place this finding — keep it (never hide an unknown).
-        return True
-    return bool(known & public_types)
+        return True, None
+    if known & public_types:
+        return True, None
+    # Prefer a provenance reason when every implicated type confidently
+    # originates from a private/system header; this is a *confident* demotion
+    # and applies even without typed roots (it is the leaked-private case).
+    type_reasons = {_origin_reason(surf_old, surf_new, c) for c in known}
+    if None not in type_reasons and type_reasons:
+        return False, (
+            REASON_PRIVATE_HEADER
+            if REASON_PRIVATE_HEADER in type_reasons
+            else REASON_SYSTEM_HEADER
+        )
+    # Beyond this point the only basis to demote is type-reachability. That is
+    # trustworthy *only* when the surface has real typed roots to walk from.
+    # An export-table-only snapshot (e.g. a PE binary whose header scoping fell
+    # back to the export table — functions are ``return_type="?"``) has none,
+    # so every type looks "unreachable". Demoting on that basis would hide a
+    # genuine public ABI break, including a change to a PUBLIC_HEADER type
+    # recovered from a PDB. Keep the finding in that case (ADR-024 §D5.2).
+    if not (surf_old.has_typed_roots and surf_new.has_typed_roots):
+        return True, None
+    # Reachability demotion. If provenance was available for the snapshot but
+    # none of the implicated types carried it, disclose the reduced confidence
+    # (ADR-024 §D5.3) rather than implying a provenance-confirmed verdict.
+    if surf_old.has_provenance and surf_new.has_provenance and all(
+        surf_old.origin_by_key.get(c, ScopeOrigin.UNKNOWN) == ScopeOrigin.UNKNOWN
+        and surf_new.origin_by_key.get(c, ScopeOrigin.UNKNOWN) == ScopeOrigin.UNKNOWN
+        for c in known
+    ):
+        return False, REASON_NO_PROVENANCE
+    return False, REASON_NON_PUBLIC_TYPE

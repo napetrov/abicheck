@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from .checker_policy import (
     ChangeKind,
     Confidence,
+    EvidenceTier,
     Verdict,
 )
 from .checker_policy import (
@@ -59,6 +60,11 @@ class Change:
     # Function record was found (e.g. type-level changes). Lets namespace
     # selectors match ``extern "C"`` entries whose export name is unqualified.
     qualified_name: str | None = None
+    # Set by FilterNonPublicSurface (ADR-024 §D5.1) when --scope-public-headers
+    # demotes this finding off the public surface. Carries a stable reason code
+    # (e.g. "not-exported", "non-public-type") for the audit ledger. None for
+    # in-surface findings and when scoping is off.
+    surface_exclusion_reason: str | None = None
 
 
 @dataclass
@@ -111,6 +117,24 @@ class DiffResult:
     out_of_surface_changes: list[Change] = field(default_factory=list)
     out_of_surface_count: int = 0
     scope_to_public_surface: bool = False
+    # False only when --scope-public-headers was requested but the public
+    # surface could not be resolved, so scoping fell back to the full export
+    # table. A False value means compatibility is *unconfirmed* and the result
+    # needs manual review — it must never read as a confidently-clean public
+    # surface (issue #235).
+    scope_resolved: bool = True
+    # ADR-024 §D5.3 — structured confidence in the surface resolution itself
+    # (distinct from ``confidence`` above, which is the overall verdict trust).
+    # "high" with no notes = clean header-scoped run; "reduced" with one or more
+    # structured note codes (e.g. "mangling-fallback", "no-provenance") when the
+    # surface had to be resolved less reliably. Disclosed in the JSON/SARIF
+    # surface ledger so the "demote + disclose" promise stays auditable.
+    surface_scope_confidence: str = "high"
+    surface_scope_notes: list[str] = field(default_factory=list)
+    # Canonical analysis depth (ordered): ELF_ONLY < DWARF_AWARE < HEADER_AWARE.
+    # Distinct from the raw ``evidence_tiers`` list above — this is the single
+    # scalar consumers should key trust decisions off of. See EvidenceTier.
+    evidence_tier: EvidenceTier = EvidenceTier.ELF_ONLY
 
     def _effective_kind_sets(
         self,

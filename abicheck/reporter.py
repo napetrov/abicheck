@@ -39,6 +39,8 @@ from .checker_policy import (
     policy_kind_sets as _policy_kind_sets,
 )
 from .report_summary import build_summary
+from .schemas import REPORT_SCHEMA_VERSION
+from .semver import recommend_release
 
 
 def _kind_to_severity(kind: ChangeKind, policy: str) -> str:
@@ -235,6 +237,7 @@ def to_stat_json(result: DiffResult, indent: int = 2) -> str:
     summary = build_summary(result)
     effective_policy = result.policy or "strict_abi"
     d: dict[str, object] = {
+        "report_schema_version": REPORT_SCHEMA_VERSION,
         "library": result.library,
         "old_version": result.old_version,
         "new_version": result.new_version,
@@ -250,10 +253,12 @@ def to_stat_json(result: DiffResult, indent: int = 2) -> str:
             "affected_pct": round(summary.affected_pct, 1),
         },
     }
+    d["release_recommendation"] = recommend_release(result).to_dict()
     if result.redundant_count > 0:
         d["redundant_count"] = result.redundant_count
     # Confidence & evidence metadata
     d["confidence"] = result.confidence.value
+    d["evidence_tier"] = result.evidence_tier.value
     d["evidence_tiers"] = list(result.evidence_tiers)
     if result.coverage_warnings:
         d["coverage_warnings"] = list(result.coverage_warnings)
@@ -357,6 +362,7 @@ def _to_markdown_leaf(
     result: DiffResult,
     show_impact: bool = False,
     show_only: str | None = None,
+    show_recommendation: bool = False,
 ) -> str:
     """Leaf-change mode: root type changes with affected interface lists."""
     from .checker import _ROOT_TYPE_CHANGE_KINDS
@@ -375,6 +381,9 @@ def _to_markdown_leaf(
         f"| **Verdict** | {emoji} `{label}` |",
         "",
     ]
+
+    if show_recommendation:
+        _append_recommendation_section(lines, result)
 
     changes = list(result.changes)
     if show_only:
@@ -409,6 +418,36 @@ def _to_markdown_leaf(
 
     lines += _footer_lines()
     return "\n".join(lines)
+
+
+def _add_surface_scope(d: dict[str, object], result: DiffResult) -> None:
+    """Attach the ADR-024 §D4/D5 public-surface scope ledger to a JSON dict.
+
+    When header scoping is active, findings that fall outside the public ABI
+    surface are demoted to this audit ledger rather than dropped — disclosed
+    here (not just on stderr) so the "why was this excluded" trail is
+    machine-readable. Shared by the full and leaf JSON paths so both formats
+    carry the ledger consistently.
+    """
+    if not result.scope_to_public_surface:
+        return
+    d["surface_scope"] = {
+        "enabled": True,
+        # ADR-024 §D5.3 — structured confidence in the resolution itself.
+        "confidence": result.surface_scope_confidence,
+        "notes": list(result.surface_scope_notes),
+        "out_of_surface_count": result.out_of_surface_count,
+        "out_of_surface_changes": [
+            {
+                "kind": c.kind.value,
+                "symbol": c.symbol,
+                "description": c.description,
+                "source_location": c.source_location,
+                "reason": getattr(c, "surface_exclusion_reason", None),
+            }
+            for c in result.out_of_surface_changes
+        ],
+    }
 
 
 def _to_json_leaf(
@@ -458,6 +497,7 @@ def _to_json_leaf(
     non_type_list = [_change_to_dict(c, policy=effective_policy, kind_sets=eff_sets) for c in non_type_changes]
 
     d: dict[str, object] = {
+        "report_schema_version": REPORT_SCHEMA_VERSION,
         "library": result.library,
         "old_version": result.old_version,
         "new_version": result.new_version,
@@ -475,13 +515,20 @@ def _to_json_leaf(
         # FIX-H: populate changes with union for backward-compat consumers
         "changes": leaf_changes_list + non_type_list,
     }
+    # Release recommendation — always present in JSON, including leaf mode.
+    d["release_recommendation"] = recommend_release(result).to_dict()
     if result.redundant_count > 0:
         d["redundant_count"] = result.redundant_count
     # Confidence & evidence metadata
     d["confidence"] = result.confidence.value
+    d["evidence_tier"] = result.evidence_tier.value
     d["evidence_tiers"] = list(result.evidence_tiers)
     if result.coverage_warnings:
         d["coverage_warnings"] = list(result.coverage_warnings)
+    _add_surface_scope(d, result)
+    scope = _scope_dict(result)
+    if scope is not None:
+        d["scope"] = scope
     return json.dumps(d, indent=indent)
 
 
@@ -496,6 +543,35 @@ def _metadata_dict(meta: object | None) -> dict[str, object] | None:
         "path": getattr(meta, "path", ""),
         "sha256": getattr(meta, "sha256", ""),
         "size_bytes": getattr(meta, "size_bytes", 0),
+    }
+
+
+def _scope_dict(result: DiffResult) -> dict[str, object] | None:
+    """Machine-readable public-surface scoping block (ADR-024, issue #235).
+
+    Only emitted when ``--scope-public-headers`` was requested, so default
+    reports are unchanged. Records whether scoping resolved or fell back to the
+    full export table (``manual_review_required``), the public additions count,
+    and the audit ledger of findings filtered as internal/private.
+    """
+    if not result.scope_to_public_surface:
+        return None
+    summary = build_summary(result)
+    return {
+        "public_headers_applied": True,
+        "resolved": result.scope_resolved,
+        "fell_back": not result.scope_resolved,
+        "manual_review_required": not result.scope_resolved,
+        "public_additions": summary.compatible_additions,
+        "filtered_internal_count": result.out_of_surface_count,
+        "filtered_internal_changes": [
+            {
+                "kind": c.kind.value,
+                "symbol": c.symbol,
+                "description": c.description,
+            }
+            for c in result.out_of_surface_changes
+        ],
     }
 
 
@@ -521,6 +597,7 @@ def to_json(
 
     summary = build_summary(result)
     d: dict[str, object] = {
+        "report_schema_version": REPORT_SCHEMA_VERSION,
         "library": result.library,
         "old_version": result.old_version,
         "new_version": result.new_version,
@@ -538,6 +615,8 @@ def to_json(
         "binary_compatibility_pct": round(summary.binary_compatibility_pct, 1),
         "affected_pct": round(summary.affected_pct, 1),
     }
+    # Release recommendation (semver bump + soname action) — additive, machine-facing.
+    d["release_recommendation"] = recommend_release(result).to_dict()
     effective_policy = result.policy or "strict_abi"
     d["policy"] = effective_policy
     eff_sets = result._effective_kind_sets()
@@ -575,6 +654,7 @@ def to_json(
             for c in result.suppressed_changes
         ],
     }
+    _add_surface_scope(d, result)
     d["detectors"] = [
         {
             "name": det.name,
@@ -587,6 +667,7 @@ def to_json(
     ]
     # Confidence & evidence metadata — helps users assess verdict trust level
     d["confidence"] = result.confidence.value
+    d["evidence_tier"] = result.evidence_tier.value
     d["evidence_tiers"] = list(result.evidence_tiers)
     if result.coverage_warnings:
         d["coverage_warnings"] = list(result.coverage_warnings)
@@ -600,6 +681,9 @@ def to_json(
             d["policy_file"] = str(result.policy_file.source_path)
     if show_impact:
         d["show_only_applied"] = show_only is not None
+    scope = _scope_dict(result)
+    if scope is not None:
+        d["scope"] = scope
     return json.dumps(d, indent=indent)
 
 
@@ -910,6 +994,89 @@ def _build_severity_sections(
     return lines
 
 
+# Verdict -> short merge-effect phrase for the reviewer digest.
+_VERDICT_MERGE_EFFECT = {
+    Verdict.NO_CHANGE: "no ABI/API change — safe to merge",
+    Verdict.COMPATIBLE: "backward-compatible — safe to merge",
+    Verdict.COMPATIBLE_WITH_RISK: "compatible but carries deployment risk — review advised",
+    Verdict.API_BREAK: "source-level (API) break — consumers must recompile",
+    Verdict.BREAKING: "binary (ABI) break — blocks merge under a strict gate",
+}
+
+
+def to_review_digest(result: DiffResult) -> str:
+    """Compact GitHub-facing review digest (Markdown).
+
+    A single, reviewer-oriented summary suitable for a job summary
+    ($GITHUB_STEP_SUMMARY) or a PR comment body: verdict + merge effect, a
+    counts table that separates breaking / API / risk / public additions /
+    filtered-internal, the release recommendation, a manual-review banner when
+    public-header scoping fell back (issue #235), and the top impacted symbols.
+    Distinct from to_markdown (the full report) — this is the "presentation"
+    layer over the same machine-readable decision contract.
+    """
+    summary = build_summary(result)
+    v = result.verdict
+    emoji = _VERDICT_EMOJI.get(v, "?")
+    label = _VERDICT_LABEL.get(v, v.value)
+    effect = _VERDICT_MERGE_EFFECT.get(v, "")
+
+    lines: list[str] = [
+        f"## ABI review — `{result.library}` {result.old_version} → {result.new_version}",
+        "",
+        f"**Verdict:** {emoji} `{label}` — {effect}",
+        "",
+    ]
+
+    # Manual-review banner: scoping requested but the public surface could not
+    # be confirmed, so compatibility is unconfirmed (don't overclaim).
+    if result.scope_to_public_surface and not result.scope_resolved:
+        lines += [
+            "> ⚠️ **Manual review required.** `--scope-public-headers` could not "
+            "resolve the public surface, so analysis fell back to the full export "
+            "table. Treat this result as *unconfirmed*, not a clean public surface.",
+            "",
+        ]
+
+    scoped = result.scope_to_public_surface
+    additions_label = "Public additions" if scoped else "Additions"
+    lines += [
+        "| Category | Count |",
+        "|---|---|",
+        f"| ❌ Breaking (ABI) | {summary.breaking} |",
+        f"| ⚠️ API breaks (source) | {summary.source_breaks} |",
+        f"| ⚠️ Risk findings | {summary.risk_count} |",
+        f"| ✅ {additions_label} | {summary.compatible_additions} |",
+    ]
+    if scoped:
+        lines.append(f"| 🔒 Filtered (internal/private) | {result.out_of_surface_count} |")
+    lines.append("")
+
+    rec = recommend_release(result)
+    lines += [
+        f"**Release recommendation:** `{rec.bump.value}` version bump · "
+        f"SONAME `{rec.soname.value}`",
+        "",
+    ]
+
+    # Top impacted symbols (breaking + API), capped for readability.
+    breaking_set, api_break_set, _, _ = result._effective_kind_sets()
+    impacted = [
+        c for c in result.changes
+        if c.kind in breaking_set or c.kind in api_break_set
+    ]
+    if impacted:
+        lines += ["**Top impacted symbols:**", ""]
+        for c in impacted[:10]:
+            sym = c.symbol or "?"
+            lines.append(f"- `{sym}` — {c.kind.value}")
+        if len(impacted) > 10:
+            lines.append(f"- … and {len(impacted) - 10} more")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def to_markdown(
     result: DiffResult,
     *,
@@ -918,12 +1085,16 @@ def to_markdown(
     show_impact: bool = False,
     stat: bool = False,
     severity_config: SeverityConfig | None = None,
+    show_recommendation: bool = False,
 ) -> str:
     if stat:
         return to_stat(result)
 
     if report_mode == "leaf":
-        return _to_markdown_leaf(result, show_impact=show_impact, show_only=show_only)
+        return _to_markdown_leaf(
+            result, show_impact=show_impact, show_only=show_only,
+            show_recommendation=show_recommendation,
+        )
 
     v = result.verdict
     emoji = _VERDICT_EMOJI[v]
@@ -962,6 +1133,9 @@ def to_markdown(
     _append_confidence_section(lines, result)
 
     _append_policy_section(lines, result)
+
+    if show_recommendation:
+        _append_recommendation_section(lines, result)
 
     # Severity configuration summary when provided
     if severity_config is not None:
@@ -1007,12 +1181,15 @@ def _append_confidence_section(lines: list[str], result: DiffResult) -> None:
     cov_warns = getattr(result, "coverage_warnings", None)
     conf_val = conf.value if hasattr(conf, "value") else str(conf)
     tier_str = ", ".join(f"`{t}`" for t in tiers) if tiers else "_none_"
+    etier = getattr(result, "evidence_tier", None)
+    etier_val = etier.value if (etier is not None and hasattr(etier, "value")) else str(etier)
     lines += [
         "## Analysis Confidence",
         "",
         "| Field | Value |",
         "|---|---|",
         f"| Confidence | {conf_val.upper()} |",
+        f"| Evidence tier | `{etier_val}` |",
         f"| Evidence tiers | {tier_str} |",
     ]
     if cov_warns:
@@ -1031,6 +1208,26 @@ def _append_policy_section(lines: list[str], result: DiffResult) -> None:
         )
         lines.append(f"> **Policy overrides**: {overrides}")
     lines.append("")
+
+
+_BUMP_EMOJI = {"major": "🔴", "minor": "🟢", "patch": "🟢", "none": "✅"}
+
+
+def _append_recommendation_section(lines: list[str], result: DiffResult) -> None:
+    """Append the release-recommendation section (semver bump + soname action)."""
+    rec = recommend_release(result)
+    emoji = _BUMP_EMOJI.get(rec.bump.value, "")
+    lines += [
+        "## Release Recommendation",
+        "",
+        "| Field | Value |",
+        "|---|---|",
+        f"| Version bump | {emoji} **{rec.bump.value.upper()}** |",
+        f"| SONAME action | `{rec.soname.value}` |",
+        "",
+        f"{rec.rationale}",
+        "",
+    ]
 
 
 def _format_change_md(c: object) -> str:
@@ -1123,6 +1320,9 @@ def appcompat_to_json(result: object, indent: int = 2) -> str:
         conf = getattr(full_diff, "confidence", None)
         if conf is not None:
             d["confidence"] = conf.value if hasattr(conf, "value") else str(conf)
+            etier = getattr(full_diff, "evidence_tier", None)
+            if etier is not None:
+                d["evidence_tier"] = etier.value if hasattr(etier, "value") else str(etier)
             d["evidence_tiers"] = list(getattr(full_diff, "evidence_tiers", []) or [])
             cov_warns = getattr(full_diff, "coverage_warnings", []) or []
             if cov_warns:
