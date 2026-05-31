@@ -178,6 +178,25 @@ class TestChangeClassification:
         c = Change(kind=ChangeKind.TYPE_SIZE_CHANGED, symbol="Result", description="")
         assert change_in_public_surface(c, s, s) is True
 
+    def test_public_type_change_with_private_symbol_name_collision_is_in_surface(self):
+        snap = AbiSnapshot(
+            library="l",
+            version="1",
+            functions=[
+                _fn("api", ret="Foo *"),
+                _fn("Foo", vis=Visibility.HIDDEN, mangled="_ZL3Foov"),
+            ],
+            types=[_rec("Foo")],
+        )
+        s = self._surf(snap)
+        assert "Foo" in s.public_types
+        assert "Foo" in s.all_symbols
+        assert "Foo" not in s.public_symbols
+
+        c = Change(kind=ChangeKind.TYPE_SIZE_CHANGED, symbol="Foo", description="")
+
+        assert change_in_public_surface(c, s, s) is True
+
     def test_leak_kind_never_filtered(self):
         snap = AbiSnapshot(
             library="l",
@@ -275,6 +294,40 @@ class TestScopedCompareNoFalsePositives:
         assert any("Result" in c.symbol for c in scoped.changes)
         assert scoped.verdict in (Verdict.BREAKING, Verdict.API_BREAK)
 
+    def test_public_struct_layout_change_with_private_symbol_collision_still_reported(
+        self,
+    ):
+        old = AbiSnapshot(
+            library="lib",
+            version="1",
+            functions=[
+                _fn("get_foo", ret="Foo *"),
+                _fn("Foo", vis=Visibility.HIDDEN, mangled="_ZL3Foov"),
+            ],
+            types=[_rec("Foo", size=64)],
+        )
+        new = AbiSnapshot(
+            library="lib",
+            version="2",
+            functions=[
+                _fn("get_foo", ret="Foo *"),
+                _fn("Foo", vis=Visibility.HIDDEN, mangled="_ZL3Foov"),
+            ],
+            types=[_rec("Foo", size=128)],
+        )
+
+        scoped = compare(old, new, scope_to_public_surface=True)
+
+        assert any(
+            c.kind == ChangeKind.TYPE_SIZE_CHANGED and c.symbol == "Foo"
+            for c in scoped.changes
+        )
+        assert not any(
+            c.kind == ChangeKind.TYPE_SIZE_CHANGED and c.symbol == "Foo"
+            for c in scoped.out_of_surface_changes
+        )
+        assert scoped.verdict in (Verdict.BREAKING, Verdict.API_BREAK)
+
     def test_scoping_off_by_default(self):
         old = AbiSnapshot(
             library="lib",
@@ -300,7 +353,8 @@ class TestScopedCompareNoFalsePositives:
         # be filtered before DetectInternalLeaks runs, hiding the leak.
         def _mk(impl_size):
             return AbiSnapshot(
-                library="lib", version="x",
+                library="lib",
+                version="x",
                 # A public symbol so the surface is resolvable, but it does NOT
                 # reference Widget — so Widget/detail::Impl are unreachable here.
                 functions=[_fn("public_unrelated")],
@@ -313,9 +367,9 @@ class TestScopedCompareNoFalsePositives:
         old, new = _mk(64), _mk(128)
         scoped = compare(old, new, scope_to_public_surface=True)
         kinds = {c.kind for c in scoped.changes}
-        assert ChangeKind.INTERNAL_TYPE_LEAKS_VIA_PUBLIC_API in kinds, (
-            f"leak hidden by scoping; got kinds={[k.value for k in kinds]}"
-        )
+        assert (
+            ChangeKind.INTERNAL_TYPE_LEAKS_VIA_PUBLIC_API in kinds
+        ), f"leak hidden by scoping; got kinds={[k.value for k in kinds]}"
         # The internal type's change must not have been silently filtered.
         assert not any(
             "detail::Impl" in c.symbol for c in scoped.out_of_surface_changes
