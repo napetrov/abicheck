@@ -72,7 +72,9 @@ def _scenarios() -> list[dict]:
             f"{fp.name}: needs a top-level 'scenarios' list"
         )
         group = data["scenarios"]
-        assert isinstance(group, list) and group, f"{fp.name}: scenarios must be non-empty"
+        assert isinstance(group, list) and group, (
+            f"{fp.name}: scenarios must be non-empty"
+        )
         for sc in group:
             sc["_source"] = fp.name
             items.append(sc)
@@ -115,10 +117,14 @@ def _save(snap: AbiSnapshot, path: Path) -> str:
     return str(path)
 
 
+def _cli(*args: str):
+    return CliRunner().invoke(main, list(args))
+
+
 def _compare(tmp_path: Path, old: AbiSnapshot, new: AbiSnapshot, *args: str):
     o = _save(old, tmp_path / "old.json")
     n = _save(new, tmp_path / "new.json")
-    return CliRunner().invoke(main, ["compare", o, n, *args])
+    return _cli("compare", o, n, *args)
 
 
 # ── catalog structure & registry sync ────────────────────────────────────────
@@ -297,3 +303,118 @@ def test_sc_offline_snapshot(tmp_path: Path) -> None:
     res = _compare(tmp_path, _lib("1", [_fn("a"), _fn("b")]), _lib("2", [_fn("a")]))
     assert res.exit_code == 4
     assert "BREAKING" in res.output
+
+
+def test_sc_ci_severity_gate(tmp_path: Path) -> None:
+    old, new = _lib("1", [_fn("a"), _fn("b")]), _lib("2", [_fn("a")])
+    # Default gate fails on the ABI break …
+    assert _compare(tmp_path, old, new).exit_code == 4
+    # … but downgrading abi_breaking to a warning passes (severity-aware scheme).
+    assert (
+        _compare(tmp_path, old, new, "--severity-abi-breaking", "warning").exit_code
+        == 0
+    )
+
+
+def test_sc_ci_stat(tmp_path: Path) -> None:
+    res = _compare(
+        tmp_path, _lib("1", [_fn("a"), _fn("b")]), _lib("2", [_fn("a")]), "--stat"
+    )
+    assert res.exit_code == 4
+    assert "total" in res.output
+    assert res.output.count("\n") <= 1  # one-line summary
+
+
+def test_sc_suppression_expiry(tmp_path: Path) -> None:
+    expired = tmp_path / "expired.yaml"
+    expired.write_text(
+        "version: 1\n"
+        "suppressions:\n"
+        '  - symbol: "b"\n'
+        '    change_kind: "func_removed"\n'
+        '    reason: "stale waiver"\n'
+        '    expires: "2000-01-01"\n',
+        encoding="utf-8",
+    )
+    res = _compare(
+        tmp_path,
+        _lib("1", [_fn("a"), _fn("b")]),
+        _lib("2", [_fn("a")]),
+        "--suppress",
+        str(expired),
+        "--strict-suppressions",
+    )
+    assert res.exit_code == 1  # the expired waiver fails the run
+
+
+def test_sc_policy_profile(tmp_path: Path) -> None:
+    e1 = EnumType(
+        name="Mode",
+        members=[EnumMember("A", 0), EnumMember("B", 1)],
+        underlying_type="int",
+    )
+    e2 = EnumType(
+        name="Mode",
+        members=[EnumMember("A", 0), EnumMember("RENAMED", 1)],
+        underlying_type="int",
+    )
+    old = _lib("1", [_fn("use")], enums=[e1])
+    new = _lib("2", [_fn("use")], enums=[e2])
+    assert _compare(tmp_path, old, new).exit_code == 2  # strict_abi: API break
+    assert _compare(tmp_path, old, new, "--policy", "sdk_vendor").exit_code == 0
+
+
+def test_sc_scan_junit(tmp_path: Path) -> None:
+    res = _compare(
+        tmp_path,
+        _lib("1", [_fn("a"), _fn("b")]),
+        _lib("2", [_fn("a")]),
+        "--format",
+        "junit",
+    )
+    assert res.exit_code == 4
+    assert "<testsuites" in res.output
+
+
+def test_sc_scan_html(tmp_path: Path) -> None:
+    res = _compare(
+        tmp_path,
+        _lib("1", [_fn("a"), _fn("b")]),
+        _lib("2", [_fn("a")]),
+        "--format",
+        "html",
+    )
+    assert res.exit_code == 4
+    assert "<!DOCTYPE html>" in res.output
+
+
+def test_sc_baseline_registry(tmp_path: Path) -> None:
+    reg = str(tmp_path / "registry")
+    v1 = _save(_lib("1", [_fn("a"), _fn("b")]), tmp_path / "v1.json")
+    v2 = _save(_lib("2", [_fn("a")]), tmp_path / "v2.json")
+    pinned = str(tmp_path / "pinned.json")
+
+    assert (
+        _cli(
+            "baseline",
+            "push",
+            "libfoo",
+            "--version",
+            "1",
+            "--platform",
+            "linux-x86_64",
+            "--snapshot",
+            v1,
+            "--registry",
+            reg,
+        ).exit_code
+        == 0
+    )
+    assert (
+        _cli(
+            "baseline", "pull", "libfoo:1:linux-x86_64", "-o", pinned, "--registry", reg
+        ).exit_code
+        == 0
+    )
+    # Gate a new build against the pinned baseline pulled from the registry.
+    assert _cli("compare", pinned, v2).exit_code == 4

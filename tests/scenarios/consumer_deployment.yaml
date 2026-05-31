@@ -67,3 +67,56 @@ scenarios:
     note: >
       The MCP tools are unit-tested (tests/test_mcp_server_unit.py); a live
       client↔server end-to-end scenario is not yet automated.
+
+  - id: SC-DEPS-LOADCHECK
+    title: Confirm a binary's symbols all bind in its dependency stack
+    persona: Platform / embedded engineer
+    narrative: >
+      Before shipping, an integrator checks that every undefined symbol in a
+      binary resolves against its resolved DT_NEEDED tree (would `ld.so` load it).
+    flow:
+      - abicheck deps ./myapp
+    expected:
+      exit_code: 1   # missing dependency or unresolved symbol
+    validates: UC-WF-stack-deps
+    automated: false
+    status: planned
+    note: >
+      Needs a real ELF binary + dependency tree; the resolver/binder is
+      unit-tested (tests/test_stack_checker.py). End-to-end fixture pending.
+
+  - id: SC-ABICC-DROPIN
+    title: Drop-in replacement for an existing ABICC pipeline
+    persona: Migrating team (from abi-compliance-checker)
+    narrative: >
+      A team with an existing ABICC pipeline switches to abicheck without
+      changing their inputs/flags, using `abicheck compat check` for ABICC
+      parity (XML descriptors, ABICC-style exit codes).
+    flow:
+      - abicheck compat check -lib libfoo -old old.xml -new new.xml
+    expected:
+      exit_code: 1   # ABICC-style: BREAKING
+    validates: UC-WF-abicc-compat
+    automated: false
+    status: planned
+    note: >
+      Needs ABICC XML descriptors / binaries; ABICC parity is covered by
+      tests/test_abicc_parity.py. End-to-end descriptor fixture pending.
+
+  - id: SC-DEBIAN-SYMBOLS
+    title: Maintain a Debian symbols file for a package
+    persona: Debian/Ubuntu packager
+    narrative: >
+      A packager generates and validates a dpkg-style symbols file from a built
+      shared object as part of the packaging workflow.
+    flow:
+      - abicheck debian-symbols generate libfoo.so.1 -o debian/libfoo1.symbols
+      - abicheck debian-symbols validate libfoo.so.1 debian/libfoo1.symbols
+    expected:
+      exit_code: 0
+    validates: UC-WF-debian-symbols
+    automated: false
+    status: planned
+    note: >
+      Needs a real .so to read the dynamic symbol table; the adapter is
+      unit-tested (tests/test_debian_symbols.py). End-to-end fixture pending.

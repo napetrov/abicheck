@@ -14,10 +14,13 @@ file. `tests/test_scenarios.py` merges every `tests/scenarios/*.yaml`:
 
 | File | Group |
 |---|---|
-| `ci_gating.yaml` | CI ABI gating (exit codes) |
-| `compliance_scanning.yaml` | public-surface scoping (issue #235), suppression, SARIF |
-| `release_management.yaml` | release recommendation, offline snapshots |
-| `consumer_deployment.yaml` | compare-release, appcompat, stack-check, MCP (planned) |
+| `ci_gating.yaml` | CI ABI gating — exit-code contract, severity gate, `--stat` |
+| `compliance_scanning.yaml` | public-surface scoping (issue #235), suppression (+ expiry), policy profiles |
+| `reporting.yaml` | report formats — SARIF, JUnit, HTML |
+| `release_management.yaml` | release recommendation, offline snapshots, baseline registry |
+| `consumer_deployment.yaml` | compare-release, appcompat, stack-check/deps, ABICC, Debian, MCP (planned) |
+
+There are currently **22 scenarios** (15 automated end-to-end + 7 planned).
 
 Add a new group by dropping in a new `*.yaml`; add a scenario by appending to an
 existing group. Scenario ids must be unique across all files.

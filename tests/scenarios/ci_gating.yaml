@@ -49,3 +49,35 @@ scenarios:
     validates: UC-WF-compare
     automated: true
     test: test_sc_exit_contract
+
+  - id: SC-CI-SEVERITY-GATE
+    title: Severity policy turns an ABI break into a warning (custom gate)
+    persona: CI engineer
+    narrative: >
+      A team is mid-migration and wants ABI breaks reported but NOT
+      build-failing for one release. Passing a --severity-* flag switches to the
+      severity-aware exit scheme; downgrading abi_breaking to "warning" yields
+      exit 0 while the default gate still fails with exit 4.
+    flow:
+      - abicheck compare old.json new.json --severity-abi-breaking warning
+    expected:
+      exit_code: 0
+      default_exit_code: 4
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_ci_severity_gate
+
+  - id: SC-CI-STAT
+    title: One-line --stat summary for CI logs
+    persona: CI engineer
+    narrative: >
+      A pipeline wants a compact, greppable one-line result in the job log
+      instead of a full report.
+    flow:
+      - abicheck compare old.json new.json --stat
+    expected:
+      exit_code: 4
+      output_contains: total
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_ci_stat

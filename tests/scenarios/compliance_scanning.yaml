@@ -43,18 +43,35 @@ scenarios:
     automated: true
     test: test_sc_accept_known_break
 
-  - id: SC-SCAN-SARIF
-    title: Produce SARIF for GitHub Code Scanning
-    persona: AppSec / security engineer
+  - id: SC-SUPPRESSION-EXPIRY
+    title: Strict suppressions fail when a waiver has expired
+    persona: Library maintainer
     narrative: >
-      A security team runs abicheck as a scanner in CI and uploads SARIF to
-      GitHub Code Scanning. The tool must emit valid SARIF 2.1.0 with one result
-      per finding, so breaks surface as code-scanning alerts.
+      Suppressions are time-boxed waivers. With --strict-suppressions, a rule
+      past its `expires` date fails the run (exit 1) so stale waivers can't hide
+      breaks indefinitely. (Note: an expired rule no longer suppresses, so the
+      underlying break also resurfaces.)
     flow:
-      - abicheck compare old.json new.json --format sarif -o abi.sarif
+      - abicheck compare old.json new.json --suppress expired.yaml --strict-suppressions
     expected:
-      exit_code: 4
-      sarif: true
-    validates: UC-REP-sarif
+      exit_code: 1
+    validates: UC-WF-compare
     automated: true
-    test: test_sc_scan_sarif
+    test: test_sc_suppression_expiry
+
+  - id: SC-POLICY-PROFILE
+    title: A policy profile reclassifies a source-only break
+    persona: SDK vendor
+    narrative: >
+      An SDK vendor ships source alongside binaries, so source-only API breaks
+      (e.g. an enum-member rename) are acceptable. The sdk_vendor policy
+      downgrades them to COMPATIBLE (exit 0) where strict_abi reports an API
+      break (exit 2).
+    flow:
+      - abicheck compare old.json new.json --policy sdk_vendor
+    expected:
+      exit_code: 0
+      strict_exit_code: 2
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_policy_profile
