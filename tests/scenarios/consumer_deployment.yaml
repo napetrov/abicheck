@@ -1,0 +1,69 @@
+# Scenario group: consumer & deployment flows (planned — need real
+# binaries/toolchains, so they are defined now and automated later).
+#
+# See tests/scenarios/README.md for the catalog format and how it is validated.
+schema_version: 1
+
+scenarios:
+  - id: SC-PACKAGE-RELEASE-SCAN
+    title: Scan two distro releases (RPM/deb/wheel) for ABI drift
+    persona: Distro packager
+    narrative: >
+      A packager compares two release artifacts (packages or directories of
+      shared objects) and gets a per-library verdict plus bundle-level findings.
+    flow:
+      - abicheck compare-release old-release/ new-release/ -H include/
+    expected:
+      exit_code: 4
+    validates: UC-WF-bundle
+    automated: false
+    status: planned
+    plan: docs/development/plans/g2-build-config-and-bundle.md
+
+  - id: SC-APP-IMPACT
+    title: "Answer: will my application break with the new library?"
+    persona: Application developer
+    narrative: >
+      A consumer checks whether a library upgrade affects the specific symbols
+      their app actually uses, filtering out irrelevant library churn.
+    flow:
+      - abicheck appcompat ./myapp libfoo.so.1 libfoo.so.2 -H include/
+    expected:
+      exit_code: 4
+    validates: UC-WF-appcompat
+    automated: false
+    status: planned
+    plan: docs/development/plans/g3-workflow-examples-and-reporting.md
+
+  - id: SC-SYSROOT-MIGRATION
+    title: Validate a binary still loads after a full-stack sysroot bump
+    persona: Platform / embedded engineer
+    narrative: >
+      An integrator compares a binary's entire resolved dependency stack across
+      two sysroots to confirm it still loads and binds before shipping an image.
+    flow:
+      - abicheck stack-check usr/bin/myapp --baseline old-root/ --candidate new-root/
+    expected:
+      exit_code: 4
+    validates: UC-WF-stack-deps
+    automated: false
+    status: planned
+    plan: docs/development/plans/g3-workflow-examples-and-reporting.md
+
+  - id: SC-AGENT-MCP
+    title: An AI agent inspects ABI changes through the MCP server
+    persona: AI agent / automation
+    narrative: >
+      An agent (Claude Code, Cursor, …) calls abicheck's MCP tools (abi_dump,
+      abi_compare, abi_explain_change) to analyse and explain changes
+      programmatically.
+    flow:
+      - python -m abicheck.mcp_server   # agent calls the exposed tools
+    expected:
+      tools: [abi_dump, abi_compare, abi_explain_change]
+    validates: UC-WF-mcp
+    automated: false
+    status: planned
+    note: >
+      The MCP tools are unit-tested (tests/test_mcp_server_unit.py); a live
+      client↔server end-to-end scenario is not yet automated.

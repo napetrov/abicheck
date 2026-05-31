@@ -12,13 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""End-to-end driver for the user-scenario catalog (scenarios/scenarios.yaml).
+"""End-to-end driver for the user-scenario catalog (tests/scenarios/*.yaml).
 
 Each `automated` scenario is exercised here by invoking the abicheck CLI through
 Click's CliRunner against JSON snapshots — proving abicheck works as a *scanner
 tool* (exit codes, public-surface scoping, SARIF, gating, offline snapshots),
 not only as an ABI/API-change detector. The catalog is also structurally
 validated and kept in sync with the use-case registry.
+
+The catalog is an *internal validation* asset (it drives these tests), split
+into grouped YAML files under ``tests/scenarios/`` that are merged by globbing —
+so it scales to many scenarios without one giant file. See
+``tests/scenarios/README.md``.
 
 Adding a missed usage scenario (e.g. issue #235) here makes it a permanent
 end-to-end regression guard.
@@ -48,7 +53,7 @@ from abicheck.model import (
 from abicheck.serialization import save_snapshot
 
 _REPO = Path(__file__).parent.parent
-_CATALOG = _REPO / "scenarios" / "scenarios.yaml"
+_CATALOG_DIR = Path(__file__).parent / "scenarios"
 _REGISTRY = _REPO / "docs" / "development" / "usecase-registry.yaml"
 _ID_RE = re.compile(r"^SC-[A-Z0-9-]+$")
 
@@ -57,10 +62,20 @@ _ID_RE = re.compile(r"^SC-[A-Z0-9-]+$")
 
 
 def _scenarios() -> list[dict]:
-    data = yaml.safe_load(_CATALOG.read_text(encoding="utf-8"))
-    assert isinstance(data, dict) and "scenarios" in data, "catalog needs scenarios"
-    items = data["scenarios"]
-    assert isinstance(items, list) and items, "scenarios must be a non-empty list"
+    """Merge every grouped catalog file under tests/scenarios/*.yaml."""
+    files = sorted(_CATALOG_DIR.glob("*.yaml"))
+    assert files, "no scenario catalog files found under tests/scenarios/"
+    items: list[dict] = []
+    for fp in files:
+        data = yaml.safe_load(fp.read_text(encoding="utf-8"))
+        assert isinstance(data, dict) and "scenarios" in data, (
+            f"{fp.name}: needs a top-level 'scenarios' list"
+        )
+        group = data["scenarios"]
+        assert isinstance(group, list) and group, f"{fp.name}: scenarios must be non-empty"
+        for sc in group:
+            sc["_source"] = fp.name
+            items.append(sc)
     return items
 
 

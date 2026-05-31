@@ -39,7 +39,6 @@ TESTS = ROOT / "tests"
 DOCS = ROOT / "docs"
 EXAMPLES = ROOT / "examples"
 SCRIPTS = ROOT / "scripts"
-SCENARIOS = ROOT / "scenarios"
 
 # ---------------------------------------------------------------------------
 # Tunables
@@ -63,7 +62,6 @@ REQUIRED_CLAUDE_MD_DIRS: tuple[Path, ...] = (
     DOCS,
     EXAMPLES,
     SCRIPTS,
-    SCENARIOS,
 )
 
 # Minimum test-file ratio (test files / source files).

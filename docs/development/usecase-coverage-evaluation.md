@@ -11,8 +11,8 @@ scenarios*.
 
 Three related artifacts, kept distinct: the **examples catalog** (`examples/`)
 demonstrates ABI/API *change types*; the **user-scenario catalog**
-([User Scenarios & Flows](user-scenarios.md), `scenarios/`) defines *how users
-work with abicheck* and drives end-to-end *tool* validation; and the
+([User Scenarios & Flows](user-scenarios.md), `tests/scenarios/`) defines *how
+users work with abicheck* and drives end-to-end *tool* validation; and the
 [plans](plans/index.md) track the *capability backlog*. This document is the
 map across all three.
 

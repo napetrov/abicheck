@@ -1,0 +1,60 @@
+# Scenario group: compliance scanning (persona: library maintainer / AppSec)
+#
+# See tests/scenarios/README.md for the catalog format and how it is validated.
+schema_version: 1
+
+scenarios:
+  # The missed scenario from issue #235.
+  - id: SC-PUBLIC-SURFACE-SCOPE
+    title: Public-header scoping suppresses private/internal ABI breaks
+    persona: Library maintainer
+    issue: 235
+    narrative: >
+      A maintainer ships a stable public API and changes only a private/internal
+      type that is not reachable from any public declaration. Run as a
+      compliance scanner with public headers and --scope-public-headers, abicheck
+      must NOT raise compliance errors for the private break (matching the
+      default behaviour of libabigail and abicc). The private change is recorded
+      as filtered (visible under --show-filtered), never as a verdict-affecting
+      finding.
+    flow:
+      - abicheck compare old.json new.json --scope-public-headers
+      - abicheck compare old.json new.json --scope-public-headers --show-filtered
+    expected:
+      exit_code: 0
+      verdict: NO_CHANGE   # the only change was to a private type → filtered
+      without_scope_exit_code: 4
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_public_surface_scope
+
+  - id: SC-ACCEPT-KNOWN-BREAK
+    title: Accept a known, intentional break via a suppression file
+    persona: Library maintainer
+    narrative: >
+      A maintainer intentionally removed a deprecated symbol and recorded a
+      justified, time-boxed suppression. The gate must pass (exit 0) while the
+      suppression is live, and the change is tracked as suppressed (audit trail).
+    flow:
+      - abicheck compare old.json new.json --suppress suppressions.yaml
+    expected:
+      exit_code: 0
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_accept_known_break
+
+  - id: SC-SCAN-SARIF
+    title: Produce SARIF for GitHub Code Scanning
+    persona: AppSec / security engineer
+    narrative: >
+      A security team runs abicheck as a scanner in CI and uploads SARIF to
+      GitHub Code Scanning. The tool must emit valid SARIF 2.1.0 with one result
+      per finding, so breaks surface as code-scanning alerts.
+    flow:
+      - abicheck compare old.json new.json --format sarif -o abi.sarif
+    expected:
+      exit_code: 4
+      sarif: true
+    validates: UC-REP-sarif
+    automated: true
+    test: test_sc_scan_sarif

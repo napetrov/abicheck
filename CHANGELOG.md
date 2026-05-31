@@ -28,17 +28,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   host↔plugin load contract, policy-scoped decision).
 
 #### User-Scenario / Flow Catalog (end-to-end scanner validation)
-- New first-class **`scenarios/`** entity: `scenarios/scenarios.yaml` defines
-  real-world *user flows* (CI gate, public-surface compliance scan, SARIF for
-  code scanning, release recommendation, suppression, offline snapshots, …) —
+- New internal **user-scenario catalog** under `tests/scenarios/*.yaml` (grouped
+  by theme, merged by globbing so it scales past one file): defines real-world
+  *user flows* (CI gate, public-surface compliance scan, SARIF for code
+  scanning, release recommendation, suppression, offline snapshots, …) —
   distinct from `examples/` (change-type fixtures) and `plans/` (backlog).
 - `tests/test_scenarios.py` drives each automated scenario through the abicheck
   **CLI end-to-end** (CliRunner on JSON snapshots) and asserts the documented
   outcome, validating abicheck as a *scanner tool*, not only a change detector.
+  Every scenario's `validates:` is checked against the use-case registry.
 - Captures the missed usage scenario from **issue #235** (public-header scoping
   must suppress private ABI breaks) as `SC-PUBLIC-SURFACE-SCOPE`, now an
-  end-to-end regression guard. `scenarios/` is registered in the AI-readiness
-  CLAUDE.md coverage gate.
+  end-to-end regression guard.
 
 #### Use-Case Coverage Evaluation + machine-checked registry
 - New `docs/development/usecase-coverage-evaluation.md` maps abicheck against
