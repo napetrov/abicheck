@@ -133,6 +133,22 @@ class ParamKind(str, Enum):
     RVALUE_REF = "rvalue_ref"
 
 
+class ScopeOrigin(str, Enum):
+    """Where a declaration's defining header sits relative to the
+    user-provided public-header set (ADR-015, schema v6).
+
+    Classification is opt-in: it is only meaningful when the caller
+    supplies a public-header set (``--public-header`` / ``--public-header-dir``).
+    Without one, every declaration is ``UNKNOWN`` and downstream behaviour
+    is unchanged.
+    """
+
+    PUBLIC_HEADER = "public_header"    # defined in a provided public header
+    PRIVATE_HEADER = "private_header"  # project header outside the public set
+    SYSTEM_HEADER = "system_header"    # toolchain/system header (/usr/include, ...)
+    UNKNOWN = "unknown"                # no public set, or no source location
+
+
 @dataclass
 class Param:
     name: str
@@ -184,6 +200,12 @@ class Function:
     # - None  → dumper/loader could not determine (older snapshots, DWARF-
     #           only path). Diff detectors skip when either side is None.
     is_hidden_friend: bool | None = None
+    # Provenance (ADR-015, schema v6). source_header is the defining header
+    # (source_location with the line/col stripped); origin classifies it
+    # against the provided public-header set. Both are additive: missing on
+    # older snapshots and default to None / UNKNOWN.
+    source_header: str | None = None
+    origin: ScopeOrigin = ScopeOrigin.UNKNOWN
 
 
 @dataclass
@@ -197,6 +219,9 @@ class Variable:
     value: str | None = None       # initial value (compile-time constant, if known)
     access: AccessLevel = AccessLevel.PUBLIC  # public/protected/private
     elf_visibility: ElfVisibility | None = None  # ELF st_other (populated from .dynsym)
+    # Provenance (ADR-015, schema v6) — see Function.source_header.
+    source_header: str | None = None
+    origin: ScopeOrigin = ScopeOrigin.UNKNOWN
 
 
 @dataclass
@@ -226,6 +251,9 @@ class RecordType:
     source_location: str | None = None
     is_union: bool = False
     is_opaque: bool = False       # incomplete type (forward-decl only; was complete → BREAKING)
+    # Provenance (ADR-015, schema v6) — see Function.source_header.
+    source_header: str | None = None
+    origin: ScopeOrigin = ScopeOrigin.UNKNOWN
 
 
 @dataclass
@@ -239,6 +267,10 @@ class EnumType:
     name: str
     members: list[EnumMember] = field(default_factory=list)
     underlying_type: str = "int"
+    source_location: str | None = None
+    # Provenance (ADR-015, schema v6) — see Function.source_header.
+    source_header: str | None = None
+    origin: ScopeOrigin = ScopeOrigin.UNKNOWN
 
 
 @dataclass

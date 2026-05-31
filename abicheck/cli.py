@@ -415,6 +415,14 @@ def _populate_dependency_info(
               help="Public header file or directory (repeat for multiple).")
 @click.option("-I", "--include", "includes", multiple=True, type=click.Path(path_type=Path),
               help="Extra include directory for castxml.")
+# ── Declaration provenance (ADR-015) ─────────────────────────────────────────
+@click.option("--public-header", "public_headers", multiple=True, type=click.Path(path_type=Path),
+              help="Header treated as public for provenance classification (repeat for "
+                   "multiple). Declarations are tagged public/private/system in the snapshot. "
+                   "Opt-in: omitting this leaves every origin UNKNOWN.")
+@click.option("--public-header-dir", "public_header_dirs", multiple=True, type=click.Path(path_type=Path),
+              help="Directory whose headers are treated as public for provenance "
+                   "classification (repeat for multiple).")
 @click.option("--version", "version", default="unknown", show_default=True,
               help="Library version string to embed in snapshot.")
 @click.option("--lang", default="c++", show_default=True,
@@ -487,6 +495,7 @@ def _populate_dependency_info(
 @click.option("--no-git", "no_git", is_flag=True, default=False,
               help="Do not auto-detect git commit SHA.")
 def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...],
+             public_headers: tuple[Path, ...], public_header_dirs: tuple[Path, ...],
              version: str, lang: str, output: Path | None,
              gcc_path: str | None, gcc_prefix: str | None, gcc_options: str | None,
              sysroot: Path | None, nostdinc: bool, pdb_path: Path | None,
@@ -580,6 +589,8 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             lang=lang if lang == "c" else None,
             dwarf_only=dwarf_only,
             debug_format=debug_format,
+            public_headers=list(public_headers),
+            public_header_dirs=list(public_header_dirs),
         )
     except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc

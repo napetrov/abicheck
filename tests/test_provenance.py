@@ -1,0 +1,235 @@
+# Copyright 2026 Nikolay Petrov
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Unit tests for declaration provenance (ADR-015, schema v6)."""
+
+from __future__ import annotations
+
+import pytest
+
+from abicheck.model import (
+    AbiSnapshot,
+    EnumMember,
+    EnumType,
+    Function,
+    RecordType,
+    ScopeOrigin,
+    Variable,
+)
+from abicheck.provenance import (
+    apply_provenance,
+    build_public_set,
+    classify_origin,
+    header_from_location,
+)
+from abicheck.serialization import snapshot_from_dict, snapshot_to_dict
+
+# ── header_from_location ──────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "loc,expected",
+    [
+        ("include/api.h:42", "include/api.h"),
+        ("include/api.h:42:9", "include/api.h"),
+        ("/build/src/foo.hpp:1", "/build/src/foo.hpp"),
+        ("plain.h", "plain.h"),
+        ("C:\\proj\\inc\\api.h:10", "C:\\proj\\inc\\api.h"),  # drive letter colon kept
+        (None, None),
+        ("", None),
+    ],
+)
+def test_header_from_location(loc, expected):
+    assert header_from_location(loc) == expected
+
+
+# ── classify_origin ───────────────────────────────────────────────────────────
+
+
+def _classify(header, public_headers=None, public_dirs=None):
+    hs, ds, have = build_public_set(public_headers, public_dirs)
+    return classify_origin(header, hs, ds, have_public_set=have)
+
+
+def test_no_public_set_is_always_unknown():
+    # Decision D4: without a public set, everything is UNKNOWN regardless of path.
+    assert _classify("/usr/include/stdio.h") is ScopeOrigin.UNKNOWN
+    assert _classify("include/api.h") is ScopeOrigin.UNKNOWN
+
+
+def test_none_header_is_unknown_even_with_public_set():
+    assert _classify(None, public_headers=["include/api.h"]) is ScopeOrigin.UNKNOWN
+
+
+def test_exact_public_header_suffix_match_through_build_prefix():
+    # Build path carries an absolute prefix the user never typed.
+    origin = _classify(
+        "/build/abc123/src/include/api.h",
+        public_headers=["include/api.h"],
+    )
+    assert origin is ScopeOrigin.PUBLIC_HEADER
+
+
+def test_basename_fallback_match():
+    origin = _classify(
+        "/wherever/it/landed/api.h",
+        public_headers=["api.h"],
+    )
+    assert origin is ScopeOrigin.PUBLIC_HEADER
+
+
+def test_public_header_dir_containment():
+    origin = _classify(
+        "/build/proj/include/sub/widget.h",
+        public_dirs=["include"],
+    )
+    assert origin is ScopeOrigin.PUBLIC_HEADER
+
+
+def test_system_header_classified_when_set_present():
+    origin = _classify("/usr/include/stdio.h", public_headers=["include/api.h"])
+    assert origin is ScopeOrigin.SYSTEM_HEADER
+
+
+def test_system_header_with_sysroot_prefix():
+    origin = _classify(
+        "/opt/sysroot/usr/include/bits/types.h",
+        public_headers=["include/api.h"],
+    )
+    assert origin is ScopeOrigin.SYSTEM_HEADER
+
+
+def test_private_header_when_not_public_and_not_system():
+    origin = _classify(
+        "/build/proj/src/internal/impl.h",
+        public_headers=["include/api.h"],
+        public_dirs=["include"],
+    )
+    assert origin is ScopeOrigin.PRIVATE_HEADER
+
+
+def test_public_takes_precedence_over_system_path():
+    # A header that both matches the public set and lives under usr/include
+    # should classify PUBLIC (public check runs first).
+    origin = _classify(
+        "/usr/include/mylib/api.h",
+        public_dirs=["mylib"],
+    )
+    assert origin is ScopeOrigin.PUBLIC_HEADER
+
+
+# ── apply_provenance ──────────────────────────────────────────────────────────
+
+
+def _snapshot() -> AbiSnapshot:
+    return AbiSnapshot(
+        library="libfoo.so.1",
+        version="1.0",
+        functions=[
+            Function(
+                name="pub",
+                mangled="pub",
+                return_type="void",
+                source_location="/build/include/api.h:10",
+            ),
+            Function(
+                name="priv",
+                mangled="priv",
+                return_type="void",
+                source_location="/build/src/impl.h:20",
+            ),
+            Function(name="noloc", mangled="noloc", return_type="void"),
+        ],
+        variables=[
+            Variable(
+                name="g",
+                mangled="g",
+                type="int",
+                source_location="/build/include/api.h:5",
+            ),
+        ],
+        types=[
+            RecordType(
+                name="S", kind="struct", source_location="/build/include/api.h:30"
+            ),
+        ],
+        enums=[
+            EnumType(
+                name="E",
+                members=[EnumMember(name="A", value=0)],
+                source_location="/build/include/api.h:40",
+            ),
+        ],
+    )
+
+
+def test_apply_provenance_opt_in_classification():
+    snap = apply_provenance(_snapshot(), public_headers=["include/api.h"])
+    by_name = {f.name: f for f in snap.functions}
+    assert by_name["pub"].source_header == "/build/include/api.h"
+    assert by_name["pub"].origin is ScopeOrigin.PUBLIC_HEADER
+    assert by_name["priv"].origin is ScopeOrigin.PRIVATE_HEADER
+    # No source location → no header, UNKNOWN origin.
+    assert by_name["noloc"].source_header is None
+    assert by_name["noloc"].origin is ScopeOrigin.UNKNOWN
+    assert snap.variables[0].origin is ScopeOrigin.PUBLIC_HEADER
+    assert snap.types[0].origin is ScopeOrigin.PUBLIC_HEADER
+    assert snap.enums[0].origin is ScopeOrigin.PUBLIC_HEADER
+
+
+def test_apply_provenance_no_set_keeps_unknown_but_fills_header():
+    # source_header is descriptive metadata and is always populated; origin
+    # stays UNKNOWN without a public set (decision D4).
+    snap = apply_provenance(_snapshot())
+    assert snap.functions[0].source_header == "/build/include/api.h"
+    assert snap.functions[0].origin is ScopeOrigin.UNKNOWN
+    assert snap.types[0].origin is ScopeOrigin.UNKNOWN
+
+
+# ── serialization round-trip (schema v6) ──────────────────────────────────────
+
+
+def test_serialization_round_trip_preserves_provenance():
+    snap = apply_provenance(_snapshot(), public_headers=["include/api.h"])
+    d = snapshot_to_dict(snap)
+    assert d["schema_version"] == 6
+    # Enum value serialized as a plain string.
+    assert d["functions"][0]["origin"] == "public_header"
+    assert d["functions"][0]["source_header"] == "/build/include/api.h"
+
+    back = snapshot_from_dict(d)
+    assert back.functions[0].origin is ScopeOrigin.PUBLIC_HEADER
+    assert back.functions[0].source_header == "/build/include/api.h"
+    assert back.enums[0].origin is ScopeOrigin.PUBLIC_HEADER
+    assert back.enums[0].source_header == "/build/include/api.h"
+    assert back.types[0].origin is ScopeOrigin.PUBLIC_HEADER
+    assert back.variables[0].origin is ScopeOrigin.PUBLIC_HEADER
+
+
+def test_old_snapshot_without_provenance_loads_as_unknown():
+    # A pre-v6 snapshot dict has no source_header / origin keys.
+    legacy = {
+        "library": "libold.so",
+        "version": "1.0",
+        "functions": [{"name": "f", "mangled": "f", "return_type": "void"}],
+        "variables": [{"name": "v", "mangled": "v", "type": "int"}],
+        "types": [{"name": "T", "kind": "struct"}],
+        "enums": [{"name": "E", "members": []}],
+    }
+    snap = snapshot_from_dict(legacy)
+    assert snap.functions[0].origin is ScopeOrigin.UNKNOWN
+    assert snap.functions[0].source_header is None
+    assert snap.variables[0].origin is ScopeOrigin.UNKNOWN
+    assert snap.types[0].origin is ScopeOrigin.UNKNOWN
+    assert snap.enums[0].origin is ScopeOrigin.UNKNOWN
