@@ -391,6 +391,49 @@ def test_sc_policy_profile(tmp_path: Path) -> None:
     assert _compare(tmp_path, old, new, "--no-scope-public-headers", "--policy", "sdk_vendor").exit_code == 0
 
 
+def test_sc_probe_matrix_into_compare(tmp_path: Path) -> None:
+    # G2: build-config findings (here a raised C++ standard floor) need a
+    # multi-config probe matrix that plain compare does not have. Passing the
+    # matrices folds those findings into the mainline gate: a comparison that is
+    # NO_CHANGE on the binary surface becomes API_BREAK once the matrix raises
+    # the floor 17 -> 20.
+    from abicheck.probe_harness import (
+        MatrixSnapshot,
+        ProbeResult,
+        write_matrix_snapshot,
+    )
+
+    same = [_fn("a")]
+    o = _save(_lib("1", list(same)), tmp_path / "o.json")
+    n = _save(_lib("2", list(same)), tmp_path / "n.json")
+    # Baseline: identical surfaces → NO_CHANGE.
+    assert _cli("compare", o, n).exit_code == 0
+
+    def _matrix(version: str, std: int) -> MatrixSnapshot:
+        return MatrixSnapshot(
+            library="libfoo", version=version, spec_name="t",
+            cxx_stds={"a": std},
+            results=[ProbeResult(
+                configuration_id="a", probe_id="p0",
+                snapshot=_lib(version, list(same)),
+            )],
+        )
+
+    om = str(tmp_path / "om.json")
+    nm = str(tmp_path / "nm.json")
+    write_matrix_snapshot(_matrix("1", 17), om)
+    write_matrix_snapshot(_matrix("2", 20), nm)
+
+    res = _cli(
+        "compare", o, n, "--format", "json",
+        "--probe-matrix-old", om, "--probe-matrix-new", nm,
+    )
+    assert res.exit_code == 2  # API_BREAK from the build-config finding
+    doc = json.loads(res.stdout)
+    assert doc["verdict"] == "API_BREAK"
+    assert any(c["kind"] == "cxx_standard_floor_raised" for c in doc["changes"])
+
+
 def test_sc_review_digest(tmp_path: Path) -> None:
     # The review digest is the GitHub-facing presentation layer: verdict +
     # merge effect, a counts table, and the release recommendation.

@@ -34,6 +34,17 @@ class TestReviewDigest:
         assert "Public additions" in out
         assert "Filtered (internal/private)" in out
 
+    def test_top_impacted_symbols_truncated(self):
+        changes = [
+            Change(ChangeKind.FUNC_REMOVED, f"sym{i}", f"removed sym{i}")
+            for i in range(13)
+        ]
+        out = to_review_digest(_result(Verdict.BREAKING, changes=changes))
+        # Only the first 10 are listed, with a "… and N more" line.
+        assert "and 3 more" in out
+        assert "`sym0`" in out
+        assert "`sym12`" not in out
+
 
 def _result(verdict: Verdict, changes=None) -> DiffResult:
     return DiffResult(

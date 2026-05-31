@@ -179,6 +179,7 @@ def compare(
     policy_file: PolicyFile | None = None,
     scope_to_public_surface: bool = True,
     force_public_symbols: set[str] | None = None,
+    extra_changes: list[Change] | None = None,
 ) -> DiffResult:
     """Diff two AbiSnapshots and return a DiffResult with verdict.
 
@@ -197,6 +198,13 @@ def compare(
 
     # Run all registered detectors via the self-registering registry.
     changes, detector_results = _detector_registry.run_all(old, new)
+
+    # Merge externally-computed findings (e.g. build-configuration / probe-matrix
+    # findings from diff_matrix(), which need multi-config inputs compare() does
+    # not have). They join the normal pipeline so suppression, reporting, and
+    # verdict composition treat them uniformly (G2: probe → compare).
+    if extra_changes:
+        changes.extend(extra_changes)
 
     # Post-detector: SONAME bump policy check (needs full change list).
     # Uses the module-level import of check_soname_bump_policy.

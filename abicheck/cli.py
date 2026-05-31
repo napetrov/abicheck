@@ -31,7 +31,7 @@ from .errors import AbicheckError
 from .serialization import load_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
-    from .checker_types import DiffResult
+    from .checker_types import Change, DiffResult
     from .debug_resolver import DebugArtifact
     from .policy_file import PolicyFile
     from .severity import SeverityConfig
@@ -886,6 +886,29 @@ def _collect_additions(result: DiffResult) -> list[object]:
     return [c for c in result.changes if c.kind in addition_kinds]
 
 
+def _load_probe_matrix_changes(
+    probe_matrix_old: Path | None, probe_matrix_new: Path | None,
+) -> list[Change] | None:
+    """Load build-config matrix snapshots and return diff_matrix() findings.
+
+    These findings (CXX_STANDARD_FLOOR_RAISED, API_DEPENDS_ON_CONSUMER_ENV,
+    BEHAVIOURAL_DEFAULT_CHANGED) need multi-configuration inputs the plain
+    compare() does not have, so they are computed here and merged in (G2).
+    """
+    if probe_matrix_old is None and probe_matrix_new is None:
+        return None
+    if probe_matrix_old is None or probe_matrix_new is None:
+        raise click.UsageError(
+            "--probe-matrix-old and --probe-matrix-new must be given together."
+        )
+    from .diff_build_config import diff_matrix
+    from .probe_harness import load_matrix_snapshot
+
+    old_matrix = load_matrix_snapshot(probe_matrix_old)
+    new_matrix = load_matrix_snapshot(probe_matrix_new)
+    return list(diff_matrix(old_matrix, new_matrix))
+
+
 def _run_compare_pair(
     old_input: Path,
     new_input: Path,
@@ -1379,6 +1402,16 @@ def _finalize_compare_result(
               help="File of symbols to force public (one per line; '#' comments and blank "
                    "lines ignored), à la abi-compliance-checker -symbols-list. "
                    "Merged with --public-symbol.")
+@click.option("--probe-matrix-old", "probe_matrix_old", type=click.Path(exists=True, path_type=Path),
+              default=None,
+              help="Old build-configuration matrix snapshot (from 'abicheck probe run'). "
+                   "When given with --probe-matrix-new, build-config findings "
+                   "(CXX_STANDARD_FLOOR_RAISED, API_DEPENDS_ON_CONSUMER_ENV, "
+                   "BEHAVIOURAL_DEFAULT_CHANGED) are folded into this comparison's "
+                   "verdict and report (G2: probe -> compare).")
+@click.option("--probe-matrix-new", "probe_matrix_new", type=click.Path(exists=True, path_type=Path),
+              default=None,
+              help="New build-configuration matrix snapshot (pairs with --probe-matrix-old).")
 @click.option("--show-only", "show_only", default=None,
               callback=_validate_show_only, expose_value=True, is_eager=False,
               help="Comma-separated filter tokens to limit displayed changes. "
@@ -1457,6 +1490,8 @@ def compare_cmd(
     debuginfod: bool,
     debuginfod_url: str | None,
     verbose: bool,
+    probe_matrix_old: Path | None = None,
+    probe_matrix_new: Path | None = None,
 ) -> None:
     """Compare two ABI surfaces and report changes.
 
@@ -1561,10 +1596,13 @@ def compare_cmd(
             err=True,
         )
 
+    extra_changes = _load_probe_matrix_changes(probe_matrix_old, probe_matrix_new)
+
     result = compare(
         old, new, suppression=suppression, policy=policy, policy_file=pf,
         scope_to_public_surface=scope_public_headers,
         force_public_symbols=force_public,
+        extra_changes=extra_changes,
     )
 
     _finalize_compare_result(
