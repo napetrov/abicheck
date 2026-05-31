@@ -354,7 +354,10 @@ def classify_change_surface(
     """
     if change.kind.value in _NEVER_FILTER_KIND_NAMES:
         return True, None
-    if not (surf_old.resolvable or surf_new.resolvable):
+    if not (surf_old.resolvable and surf_new.resolvable):
+        # If either side lacks a resolvable surface we cannot confidently
+        # place a finding as private on *both* versions — keep everything
+        # rather than risk hiding a real change from the unresolved side.
         return True, None
 
     public_symbols = surf_old.public_symbols | surf_new.public_symbols

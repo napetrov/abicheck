@@ -269,3 +269,60 @@ def test_old_snapshot_without_provenance_loads_as_unknown():
     assert snap.variables[0].origin is ScopeOrigin.UNKNOWN
     assert snap.types[0].origin is ScopeOrigin.UNKNOWN
     assert snap.enums[0].origin is ScopeOrigin.UNKNOWN
+
+
+# ── castxml dumper wires source_location onto records/variables/enums ─────────
+# (regression guard for the dumper fix; uses synthetic XML, no castxml binary)
+
+
+def _castxml_root():
+    from xml.etree.ElementTree import Element, SubElement
+
+    root = Element("CastXML")
+    f = SubElement(root, "File")
+    f.set("id", "f1")
+    f.set("name", "/build/inc/api.h")
+    # Direct file/line form on a struct.
+    s = SubElement(root, "Struct")
+    s.set("id", "_s")
+    s.set("name", "Widget")
+    s.set("size", "64")
+    s.set("align", "32")
+    s.set("file", "f1")
+    s.set("line", "12")
+    # Location-ref form on a variable.
+    loc = SubElement(root, "Location")
+    loc.set("id", "l1")
+    loc.set("file", "f1")
+    loc.set("line", "20")
+    fund = SubElement(root, "FundamentalType")
+    fund.set("id", "_int")
+    fund.set("name", "int")
+    v = SubElement(root, "Variable")
+    v.set("id", "_v")
+    v.set("name", "g_count")
+    v.set("mangled", "g_count")
+    v.set("type", "_int")
+    v.set("location", "l1")
+    # Enumeration with direct file/line.
+    e = SubElement(root, "Enumeration")
+    e.set("id", "_e")
+    e.set("name", "Color")
+    e.set("file", "f1")
+    e.set("line", "30")
+    return root
+
+
+def test_castxml_populates_source_location_on_types_vars_enums():
+    from abicheck.dumper import _CastxmlParser
+
+    root = _castxml_root()
+    parser = _CastxmlParser(
+        root, exported_dynamic={"g_count"}, exported_static={"g_count"}
+    )
+    rec = next(t for t in parser.parse_types() if t.name == "Widget")
+    assert rec.source_location == "/build/inc/api.h:12"
+    var = next(v for v in parser.parse_variables() if v.name == "g_count")
+    assert var.source_location == "/build/inc/api.h:20"
+    enum = next(e for e in parser.parse_enums() if e.name == "Color")
+    assert enum.source_location == "/build/inc/api.h:30"

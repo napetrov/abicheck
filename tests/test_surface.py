@@ -246,6 +246,20 @@ class TestSurfaceExclusionReason:
         c = Change(kind=ChangeKind.FUNC_RETURN_CHANGED, symbol="api", description="")
         assert classify_change_surface(c, s, s) == (True, None)
 
+    def test_one_sided_unresolvable_keeps_everything(self):
+        # Both sides must be resolvable before scoping demotes anything; an
+        # unresolved side means we keep the finding (anti-hiding).
+        resolvable = self._surf(
+            AbiSnapshot(
+                library="l", version="1",
+                functions=[_fn("api"), _fn("internal", vis=Visibility.ELF_ONLY)],
+            )
+        )
+        unresolvable = PublicSurface()  # resolvable defaults to False
+        c = Change(kind=ChangeKind.FUNC_RETURN_CHANGED, symbol="internal", description="")
+        assert classify_change_surface(c, resolvable, unresolvable) == (True, None)
+        assert classify_change_surface(c, unresolvable, resolvable) == (True, None)
+
     def test_not_exported_symbol_reason(self):
         snap = AbiSnapshot(
             library="l",
@@ -444,6 +458,10 @@ class TestScopeCli:
         op, np_ = self._make_pair(tmp_path)
         runner = CliRunner()
         result = runner.invoke(main, ["compare", str(op), str(np_)])
+        # The internal struct's size change is breaking, so compare exits
+        # non-zero (2/4) — assert that so a crash (exit 1, no real output)
+        # can't masquerade as a pass.
+        assert result.exit_code in (2, 4), result.output
         # Without scoping, the internal change is a reported finding.
         assert "InternalCache" in result.stdout
 

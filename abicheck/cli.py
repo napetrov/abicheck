@@ -416,11 +416,13 @@ def _populate_dependency_info(
 @click.option("-I", "--include", "includes", multiple=True, type=click.Path(path_type=Path),
               help="Extra include directory for castxml.")
 # ── Declaration provenance (ADR-015) ─────────────────────────────────────────
-@click.option("--public-header", "public_headers", multiple=True, type=click.Path(path_type=Path),
+@click.option("--public-header", "public_headers", multiple=True,
+              type=click.Path(exists=True, dir_okay=False, path_type=Path),
               help="Header treated as public for provenance classification (repeat for "
                    "multiple). Declarations are tagged public/private/system in the snapshot. "
                    "Opt-in: omitting this leaves every origin UNKNOWN.")
-@click.option("--public-header-dir", "public_header_dirs", multiple=True, type=click.Path(path_type=Path),
+@click.option("--public-header-dir", "public_header_dirs", multiple=True,
+              type=click.Path(exists=True, file_okay=False, path_type=Path),
               help="Directory whose headers are treated as public for provenance "
                    "classification (repeat for multiple).")
 @click.option("--version", "version", default="unknown", show_default=True,
@@ -543,6 +545,11 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             f"--{debug_format} is only supported for ELF binaries, not {binary_fmt.upper()}."
         )
     if binary_fmt in ("pe", "macho"):
+        if public_headers or public_header_dirs:
+            raise click.BadParameter(
+                "--public-header / --public-header-dir provenance classification is "
+                f"currently only supported for ELF inputs, not {binary_fmt.upper()}."
+            )
         _handle_non_elf_dump(
             so_path,
             binary_fmt,

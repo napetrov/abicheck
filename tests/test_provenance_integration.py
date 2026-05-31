@@ -79,7 +79,7 @@ def test_dump_tags_public_and_private_origin(tmp_path: Path) -> None:
     so = _compile_so(tmp_path)
     pub = tmp_path / "api.h"
 
-    snap = dump(so, headers=[pub], public_headers=[pub])
+    snap = dump(so, headers=[pub], compiler="cc", lang="C", public_headers=[pub])
 
     fns = {f.name: f for f in snap.functions}
     assert "public_fn" in fns, "castxml/DWARF did not surface the public function"
@@ -102,7 +102,7 @@ def test_dump_without_public_set_leaves_origin_unknown(tmp_path: Path) -> None:
     so = _compile_so(tmp_path)
     pub = tmp_path / "api.h"
 
-    snap = dump(so, headers=[pub])  # no public_headers / public_header_dirs
+    snap = dump(so, headers=[pub], compiler="cc", lang="C")  # no public set
 
     pf = {f.name: f for f in snap.functions}.get("public_fn")
     assert pf is not None

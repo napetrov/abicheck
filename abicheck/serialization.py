@@ -119,6 +119,17 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     return converted
 
 
+def _scope_origin_or_unknown(raw: Any) -> ScopeOrigin:
+    """Deserialize a ScopeOrigin, defaulting unknown/invalid values to UNKNOWN.
+
+    A hand-edited or newer-schema snapshot may carry an origin string this
+    build does not recognize; that must not abort the whole load."""
+    try:
+        return ScopeOrigin(raw if raw is not None else "unknown")
+    except ValueError:
+        return ScopeOrigin.UNKNOWN
+
+
 def _enum_type_from_dict(e: dict[str, Any]) -> EnumType:
     return EnumType(
         name=e["name"],
@@ -126,7 +137,7 @@ def _enum_type_from_dict(e: dict[str, Any]) -> EnumType:
         underlying_type=e.get("underlying_type", "int"),
         source_location=e.get("source_location"),
         source_header=e.get("source_header"),
-        origin=ScopeOrigin(e.get("origin", "unknown")),
+        origin=_scope_origin_or_unknown(e.get("origin")),
     )
 
 
@@ -367,7 +378,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             is_hidden_friend=f.get("is_hidden_friend"),
             # Provenance (v6) — missing on older snapshots → None / UNKNOWN.
             source_header=f.get("source_header"),
-            origin=ScopeOrigin(f.get("origin", "unknown")),
+            origin=_scope_origin_or_unknown(f.get("origin")),
         )
         for f in d.get("functions", [])
     ]
@@ -381,7 +392,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             access=AccessLevel(v.get("access", "public")),
             elf_visibility=ElfVisibility(v["elf_visibility"]) if v.get("elf_visibility") else None,
             source_header=v.get("source_header"),
-            origin=ScopeOrigin(v.get("origin", "unknown")),
+            origin=_scope_origin_or_unknown(v.get("origin")),
         )
         for v in d.get("variables", [])
     ]
@@ -410,7 +421,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             is_union=t.get("is_union", t.get("kind") == "union"),
             is_opaque=t.get("is_opaque", False),
             source_header=t.get("source_header"),
-            origin=ScopeOrigin(t.get("origin", "unknown")),
+            origin=_scope_origin_or_unknown(t.get("origin")),
         )
         for t in d.get("types", [])
     ]
