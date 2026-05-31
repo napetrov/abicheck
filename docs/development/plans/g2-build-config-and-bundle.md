@@ -18,16 +18,24 @@ Two capabilities exist but are not reachable from the mainline gate:
 
 ## Goal & acceptance criteria
 
-- [ ] `compare`/`compare-release` accept `--probe-spec <spec.yaml>`; when given,
-      the matrix findings are merged into the change list and folded into the
-      verdict (worst-of), with the matrix ChangeKinds appearing in JSON/SARIF.
-- [ ] Case 98 (`CXX_STANDARD_FLOOR_RAISED`) and case 97
-      (`API_DEPENDS_ON_CONSUMER_ENV`) reach their intended verdict through the
-      mainline command with `--probe-spec`, not only through `probe compare`.
-- [ ] `compare-release` emits `bundle_soname_skew`; case84 loses `skip: true`
-      and is validated against `ground_truth.json`.
-- [ ] ≥2 additional probe specs under `examples/probes/` (a feature-macro C
-      library; a compiler/standard matrix) with an end-to-end test.
+- [x] `compare`/`compare-release` merge matrix findings into the change list and
+      fold them into the verdict (worst-of), with the matrix ChangeKinds
+      appearing in JSON/SARIF. **Shipped as `--probe-matrix-old` /
+      `--probe-matrix-new`** (pre-built matrix snapshots from `abicheck probe
+      run`) rather than an inline `--probe-spec`: running a matrix needs
+      compilers, so it stays a separate `probe run` step that feeds `compare`,
+      keeping `compare` itself hermetic. Verified in `tests/test_probe_examples.py`.
+- [x] Case 98 (`CXX_STANDARD_FLOOR_RAISED`) reaches its intended verdict through
+      the mainline command (JSON + SARIF), not only `probe compare`. Case 97
+      (`API_DEPENDS_ON_CONSUMER_ENV`) — detector unit-tested; end-to-end is
+      blocked by a separate harness gap (the dumper reads `.dynsym`, which a
+      relocatable probe `.o` lacks, so a probe's symbol surface is not yet
+      captured). Tracked in the registry `next_steps` for `UC-WF-probe-matrix`.
+- [x] `compare-release` emits `bundle_soname_skew`; case84 lost `skip: true`
+      and is validated end-to-end (`tests/test_bundle.py::TestCompareReleaseBundleE2E`).
+- [x] Two additional self-contained probe specs under `examples/probes/`
+      (`feature_macro.yaml`, `cxx_standard.yaml`) with an end-to-end test
+      (stock `cc`/`c++`, no external toolchain).
 
 ## Design
 

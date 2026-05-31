@@ -1331,3 +1331,103 @@ class TestCompareReleaseBundleE2E:
         )
         assert "Bundle (Cross-Library) Findings" in result.stdout
         assert "bundle_intra_dep_removed" in result.stdout
+
+    def _build_versioned_so(
+        self, release_dir: Path, src: Path, soname: str,
+    ) -> None:
+        """Compile *src* into ``release_dir`` with an explicit ``-soname``.
+
+        The output filename matches the soname (e.g. ``libfoo.so.2``) so the
+        cohort detector sees the on-disk versioned name. Skips on missing gcc.
+        """
+        import shutil
+        import subprocess
+        gcc = shutil.which("gcc")
+        if gcc is None:
+            pytest.skip("gcc unavailable; cannot build bundle E2E fixture")
+        out = release_dir / soname
+        res = subprocess.run(
+            [gcc, "-shared", "-fPIC", "-g", "-O0", str(src),
+             "-o", str(out), f"-Wl,-soname,{soname}"],
+            capture_output=True, text=True,
+        )
+        if res.returncode != 0:
+            pytest.fail(f"gcc failed for {soname}: {res.stderr}")
+
+    def test_compare_release_emits_soname_skew_for_case84(
+        self, tmp_path: Path,
+    ) -> None:
+        # Reproduce examples/case84_bundle_soname_skew end-to-end: core+dpc
+        # bump SONAME .so.1 -> .so.2 while thread (deliberately) lags at .so.1.
+        # Each library passes its own per-library check; the cohort invariant
+        # fails. compare-release must surface BUNDLE_SONAME_SKEW and BREAK.
+        import json as _json
+
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        case_dir = (
+            Path(__file__).parent.parent
+            / "examples" / "case84_bundle_soname_skew"
+        )
+        old = tmp_path / "v1"
+        new = tmp_path / "v2"
+        old.mkdir()
+        new.mkdir()
+        # v1: all three at .so.1
+        self._build_versioned_so(old, case_dir / "onedal_core.c", "libonedal_core.so.1")
+        self._build_versioned_so(old, case_dir / "onedal_thread.c", "libonedal_thread.so.1")
+        self._build_versioned_so(old, case_dir / "onedal_dpc.c", "libonedal_dpc.so.1")
+        # v2: core + dpc bumped to .so.2, thread lags at .so.1
+        self._build_versioned_so(new, case_dir / "onedal_core.c", "libonedal_core.so.2")
+        self._build_versioned_so(new, case_dir / "onedal_thread.c", "libonedal_thread.so.1")
+        self._build_versioned_so(new, case_dir / "onedal_dpc.c", "libonedal_dpc.so.2")
+
+        result = CliRunner().invoke(
+            main, ["compare-release", str(old), str(new), "--format", "json"],
+        )
+        # Bundle BREAKING → exit 4 (matches ground_truth.json case84 == BREAKING).
+        assert result.exit_code == 4, result.output
+        data = _json.loads(result.stdout)
+        assert data["bundle_verdict"] == "BREAKING"
+        kinds = {f["kind"] for f in data["bundle_findings"]}
+        assert "bundle_soname_skew" in kinds
+        skew = next(
+            f for f in data["bundle_findings"]
+            if f["kind"] == "bundle_soname_skew"
+        )
+        # The lagging member must be attributed.
+        assert any("libonedal_thread" in lib for lib in skew["affected_libraries"])
+
+    def test_compare_release_lockstep_bump_has_no_skew(
+        self, tmp_path: Path,
+    ) -> None:
+        # Negative control: when the whole cohort bumps in lockstep there is
+        # no skew finding (the detector must not fire on a clean release).
+        import json as _json
+
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        case_dir = (
+            Path(__file__).parent.parent
+            / "examples" / "case84_bundle_soname_skew"
+        )
+        old = tmp_path / "v1"
+        new = tmp_path / "v2"
+        old.mkdir()
+        new.mkdir()
+        self._build_versioned_so(old, case_dir / "onedal_core.c", "libonedal_core.so.1")
+        self._build_versioned_so(old, case_dir / "onedal_thread.c", "libonedal_thread.so.1")
+        # v2: BOTH bump to .so.2 — lockstep, no skew.
+        self._build_versioned_so(new, case_dir / "onedal_core.c", "libonedal_core.so.2")
+        self._build_versioned_so(new, case_dir / "onedal_thread.c", "libonedal_thread.so.2")
+
+        result = CliRunner().invoke(
+            main, ["compare-release", str(old), str(new), "--format", "json"],
+        )
+        data = _json.loads(result.stdout)
+        kinds = {f["kind"] for f in data.get("bundle_findings", [])}
+        assert "bundle_soname_skew" not in kinds

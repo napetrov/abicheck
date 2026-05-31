@@ -61,9 +61,21 @@ the cross-library aggregator.
 
 **Severity: BREAKING / RELEASE BUNDLE SKEW**
 
-This fixture is a directory-level failure, not a single app swap. Rebuild the
-three shared libraries and run the cohort detector directly: two siblings bump
-to SONAME `.so.2`, while `libonedal_thread` stays on `.so.1`.
+This fixture is a directory-level failure, not a single app swap. Build the
+`v1/` and `v2/` directories and run `compare-release`: two siblings bump to
+SONAME `.so.2`, while `libonedal_thread` stays on `.so.1`.
+
+```bash
+bash examples/case84_bundle_soname_skew/gen_bundle.sh
+abicheck compare-release \
+    examples/case84_bundle_soname_skew/v1 \
+    examples/case84_bundle_soname_skew/v2 \
+    --format json
+# -> "bundle_verdict": "BREAKING", bundle_findings include "bundle_soname_skew"
+# -> exit code 4
+```
+
+The underlying cohort detector can also be driven directly:
 
 ```bash
 python3 - <<'PY'
@@ -71,9 +83,9 @@ from abicheck.diff_onedal import bundle_members_from_directory, detect_bundle_so
 old = bundle_members_from_directory('examples/case84_bundle_soname_skew/v1')
 new = bundle_members_from_directory('examples/case84_bundle_soname_skew/v2')
 for finding in detect_bundle_soname_skew(old, new, cohort_prefix='libonedal_'):
-    print(finding.kind.value, finding.severity.value)
+    print(finding.kind.value)
 PY
-# bundle_soname_skew BREAKING
+# bundle_soname_skew
 ```
 
 ## Why this is its own ChangeKind
@@ -86,15 +98,18 @@ one did not."
 
 ## How abicheck detects it
 
-`abicheck/bundle_soname.py` runs after `compare-release` collects per-pair
-results. It extracts each library's SONAME major from both releases,
-clusters libraries by a configurable cohort prefix (default: longest
-common prefix among bundle members), and emits one `BUNDLE_SONAME_SKEW`
-finding when a cohort has mixed soname deltas (some bumped, some not).
+`compare-release` builds a bundle snapshot of each release directory and
+runs the bundle layer (`abicheck/bundle.py`). Among the cross-library
+detectors, `_detect_soname_skew` delegates to
+`abicheck.diff_onedal.detect_bundle_soname_skew`, which extracts each
+library's SONAME major from both releases, clusters libraries by cohort
+key, and emits one `BUNDLE_SONAME_SKEW` finding when a cohort has mixed
+soname deltas (some bumped, some not). The finding is classified
+`BREAKING`, so the bundle (and therefore the overall) verdict is BREAKING.
 
 Source files for the example: see `gen_bundle.sh` for the script that
-produces the `.so` files. The CMake integration wires this up under the
-`abicheck_add_bundle_case` macro.
+produces the `.so` files. The end-to-end path is covered by
+`tests/test_bundle.py::TestCompareReleaseBundleE2E`.
 
 ---
 

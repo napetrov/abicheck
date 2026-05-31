@@ -623,7 +623,13 @@ def compare_bundle(
     #    different gnu.version_d between old and new providers.
     findings.extend(_detect_version_drift(old, new))
 
-    # 7. Manifest enforcement
+    # 7. bundle_soname_skew: co-versioned cohort members bumped their major
+    #    SONAME inconsistently (some bumped, some lagged). A cohort-level
+    #    invariant: no individual library is wrong, but the set is. See
+    #    examples/case84_bundle_soname_skew/.
+    findings.extend(_detect_soname_skew(old, new))
+
+    # 8. Manifest enforcement
     if manifest is not None:
         findings.extend(_detect_manifest_drift(old, new, manifest))
 
@@ -993,6 +999,44 @@ def _detect_version_drift(
             ),
         )
 
+    return findings
+
+
+def _detect_soname_skew(
+    old: BundleSnapshot,
+    new: BundleSnapshot,
+) -> list[BundleFinding]:
+    """Detect inconsistent SONAME major bumps across a co-versioned cohort.
+
+    Delegates to :func:`abicheck.diff_onedal.detect_bundle_soname_skew`,
+    which clusters the bundle's libraries by cohort key and emits a single
+    :class:`ChangeKind.BUNDLE_SONAME_SKEW` finding when some siblings bumped
+    their major SONAME while others lagged. The members are read from the
+    release directories (``BundleSnapshot.root``) so the on-disk SONAME of
+    each ``.so`` is what drives the decision.
+
+    Returns an empty list when either side has no recognisable versioned
+    members (e.g. unversioned ``libfoo.so`` files), so the common case adds
+    no findings and cannot raise a false positive.
+    """
+    from .diff_onedal import bundle_members_from_directory, detect_bundle_soname_skew
+
+    old_members = bundle_members_from_directory(str(old.root))
+    new_members = bundle_members_from_directory(str(new.root))
+    if not old_members or not new_members:
+        return []
+    findings: list[BundleFinding] = []
+    for change in detect_bundle_soname_skew(old_members, new_members):
+        findings.append(
+            BundleFinding(
+                kind=change.kind,
+                symbol=change.symbol,
+                description=change.description,
+                old_value=change.old_value,
+                new_value=change.new_value,
+                affected_libraries=list(change.affected_symbols or []),
+            )
+        )
     return findings
 
 
