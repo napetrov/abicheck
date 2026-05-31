@@ -523,6 +523,9 @@ def _to_json_leaf(
     if result.coverage_warnings:
         d["coverage_warnings"] = list(result.coverage_warnings)
     _add_surface_scope(d, result)
+    scope = _scope_dict(result)
+    if scope is not None:
+        d["scope"] = scope
     return json.dumps(d, indent=indent)
 
 
@@ -537,6 +540,35 @@ def _metadata_dict(meta: object | None) -> dict[str, object] | None:
         "path": getattr(meta, "path", ""),
         "sha256": getattr(meta, "sha256", ""),
         "size_bytes": getattr(meta, "size_bytes", 0),
+    }
+
+
+def _scope_dict(result: DiffResult) -> dict[str, object] | None:
+    """Machine-readable public-surface scoping block (ADR-024, issue #235).
+
+    Only emitted when ``--scope-public-headers`` was requested, so default
+    reports are unchanged. Records whether scoping resolved or fell back to the
+    full export table (``manual_review_required``), the public additions count,
+    and the audit ledger of findings filtered as internal/private.
+    """
+    if not result.scope_to_public_surface:
+        return None
+    summary = build_summary(result)
+    return {
+        "public_headers_applied": True,
+        "resolved": result.scope_resolved,
+        "fell_back": not result.scope_resolved,
+        "manual_review_required": not result.scope_resolved,
+        "public_additions": summary.compatible_additions,
+        "filtered_internal_count": result.out_of_surface_count,
+        "filtered_internal_changes": [
+            {
+                "kind": c.kind.value,
+                "symbol": c.symbol,
+                "description": c.description,
+            }
+            for c in result.out_of_surface_changes
+        ],
     }
 
 
@@ -646,6 +678,9 @@ def to_json(
             d["policy_file"] = str(result.policy_file.source_path)
     if show_impact:
         d["show_only_applied"] = show_only is not None
+    scope = _scope_dict(result)
+    if scope is not None:
+        d["scope"] = scope
     return json.dumps(d, indent=indent)
 
 
@@ -954,6 +989,89 @@ def _build_severity_sections(
             lines.append("")
 
     return lines
+
+
+# Verdict -> short merge-effect phrase for the reviewer digest.
+_VERDICT_MERGE_EFFECT = {
+    Verdict.NO_CHANGE: "no ABI/API change — safe to merge",
+    Verdict.COMPATIBLE: "backward-compatible — safe to merge",
+    Verdict.COMPATIBLE_WITH_RISK: "compatible but carries deployment risk — review advised",
+    Verdict.API_BREAK: "source-level (API) break — consumers must recompile",
+    Verdict.BREAKING: "binary (ABI) break — blocks merge under a strict gate",
+}
+
+
+def to_review_digest(result: DiffResult) -> str:
+    """Compact GitHub-facing review digest (Markdown).
+
+    A single, reviewer-oriented summary suitable for a job summary
+    ($GITHUB_STEP_SUMMARY) or a PR comment body: verdict + merge effect, a
+    counts table that separates breaking / API / risk / public additions /
+    filtered-internal, the release recommendation, a manual-review banner when
+    public-header scoping fell back (issue #235), and the top impacted symbols.
+    Distinct from to_markdown (the full report) — this is the "presentation"
+    layer over the same machine-readable decision contract.
+    """
+    summary = build_summary(result)
+    v = result.verdict
+    emoji = _VERDICT_EMOJI.get(v, "?")
+    label = _VERDICT_LABEL.get(v, v.value)
+    effect = _VERDICT_MERGE_EFFECT.get(v, "")
+
+    lines: list[str] = [
+        f"## ABI review — `{result.library}` {result.old_version} → {result.new_version}",
+        "",
+        f"**Verdict:** {emoji} `{label}` — {effect}",
+        "",
+    ]
+
+    # Manual-review banner: scoping requested but the public surface could not
+    # be confirmed, so compatibility is unconfirmed (don't overclaim).
+    if result.scope_to_public_surface and not result.scope_resolved:
+        lines += [
+            "> ⚠️ **Manual review required.** `--scope-public-headers` could not "
+            "resolve the public surface, so analysis fell back to the full export "
+            "table. Treat this result as *unconfirmed*, not a clean public surface.",
+            "",
+        ]
+
+    scoped = result.scope_to_public_surface
+    additions_label = "Public additions" if scoped else "Additions"
+    lines += [
+        "| Category | Count |",
+        "|---|---|",
+        f"| ❌ Breaking (ABI) | {summary.breaking} |",
+        f"| ⚠️ API breaks (source) | {summary.source_breaks} |",
+        f"| ⚠️ Risk findings | {summary.risk_count} |",
+        f"| ✅ {additions_label} | {summary.compatible_additions} |",
+    ]
+    if scoped:
+        lines.append(f"| 🔒 Filtered (internal/private) | {result.out_of_surface_count} |")
+    lines.append("")
+
+    rec = recommend_release(result)
+    lines += [
+        f"**Release recommendation:** `{rec.bump.value}` version bump · "
+        f"SONAME `{rec.soname.value}`",
+        "",
+    ]
+
+    # Top impacted symbols (breaking + API), capped for readability.
+    breaking_set, api_break_set, _, _ = result._effective_kind_sets()
+    impacted = [
+        c for c in result.changes
+        if c.kind in breaking_set or c.kind in api_break_set
+    ]
+    if impacted:
+        lines += ["**Top impacted symbols:**", ""]
+        for c in impacted[:10]:
+            sym = c.symbol or "?"
+            lines.append(f"- `{sym}` — {c.kind.value}")
+        if len(impacted) > 10:
+            lines.append(f"- … and {len(impacted) - 10} more")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def to_markdown(

@@ -2,7 +2,48 @@
 import json
 
 from abicheck.checker import Change, ChangeKind, DiffResult, Verdict
-from abicheck.reporter import to_json, to_markdown
+from abicheck.reporter import to_json, to_markdown, to_review_digest
+
+
+class TestReviewDigest:
+    def test_breaking_digest_has_verdict_and_recommendation(self):
+        c = Change(ChangeKind.FUNC_REMOVED, "_Z3foov", "Public function removed: foo")
+        out = to_review_digest(_result(Verdict.BREAKING, changes=[c]))
+        assert "ABI review" in out
+        assert "`BREAKING`" in out
+        assert "Release recommendation:" in out
+        assert "_Z3foov" in out  # top impacted symbol
+
+    def test_manual_review_banner_on_scope_fallback(self):
+        r = _result(Verdict.BREAKING, changes=[
+            Change(ChangeKind.FUNC_REMOVED, "x", "removed"),
+        ])
+        r.scope_to_public_surface = True
+        r.scope_resolved = False
+        out = to_review_digest(r)
+        assert "Manual review required" in out
+        assert "unconfirmed" in out.lower()
+
+    def test_no_banner_when_scope_resolved(self):
+        r = _result(Verdict.COMPATIBLE)
+        r.scope_to_public_surface = True
+        r.scope_resolved = True
+        out = to_review_digest(r)
+        assert "Manual review required" not in out
+        # Scoped reports label additions as public and show the filtered row.
+        assert "Public additions" in out
+        assert "Filtered (internal/private)" in out
+
+    def test_top_impacted_symbols_truncated(self):
+        changes = [
+            Change(ChangeKind.FUNC_REMOVED, f"sym{i}", f"removed sym{i}")
+            for i in range(13)
+        ]
+        out = to_review_digest(_result(Verdict.BREAKING, changes=changes))
+        # Only the first 10 are listed, with a "… and N more" line.
+        assert "and 3 more" in out
+        assert "`sym0`" in out
+        assert "`sym12`" not in out
 
 
 def _result(verdict: Verdict, changes=None) -> DiffResult:
