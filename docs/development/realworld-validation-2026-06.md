@@ -79,14 +79,16 @@ check.
   66,266 exported functions, not stripped of the symbol table but carrying **no
   DWARF**). This is the user's headline target.
 * **100 distinct system shared libraries** from `/usr/lib/x86_64-linux-gnu`
-  (stratified: 20 smallest, 20 largest, 60 random-middle), incl. `libLLVM`,
+  (filtered to genuine ELF binaries by magic — GNU ld linker scripts excluded;
+  stratified: 20 smallest, 20 largest, 60 random-middle), incl. `libLLVM`,
   `libclang`, `liblldb`, `libpoppler`, `libicu`, `libabsl_*`, `libgallium`.
 
 **Procedures.**
 
 * **Self-comparison sweep** (`selfsweep.py`): each library compared against
   itself. Ground truth = identical bytes ⇒ no real ABI change. *Any* non-clean
-  verdict, breaking finding, crash, or traceback is a defect. 100 libraries.
+  verdict, breaking finding, crash, or traceback is a defect. 100 ELF libraries
+  (filtered by ELF magic so the corpus excludes linker scripts).
 * **Cross-version oneDAL** (`harness.py`): `compare` over every matched
   library across version pairs (adjacent `.so.3→.so.4`, mid `.so.2→.so.3`, far
   `.so.2→.so.4`), capturing verdict, summary counts, change-kind histogram,
@@ -103,19 +105,22 @@ check.
 ### 3.1 Self-comparison sweep (100 real libraries)
 
 ```json
-{ "total": 100, "nonzero_rc": 2, "tracebacks": 0, "no_output": 2,
+{ "total": 100, "nonzero_rc": 0, "tracebacks": 0, "no_output": 0,
   "non_compatible_verdict": 0, "fp_breaks": 0,
-  "kind_histogram": { "visibility_leak": 46 } }
+  "kind_histogram": { "visibility_leak": 55 } }
 ```
 
-* **0 tracebacks, 0 wrong verdicts, 0 false-positive breaks.** Deterministic and
-  precise on identical input — strong result on a heterogeneous 477 MB corpus.
-* **46/100** libraries flagged `visibility_leak` (a *quality* finding, not a
+* **0 failures, 0 tracebacks, 0 wrong verdicts, 0 false-positive breaks.**
+  Deterministic and precise on identical input — strong result on a
+  heterogeneous, ELF-only 477 MB corpus.
+* **55/100** libraries flagged `visibility_leak` (a *quality* finding, not a
   diff) — expected; many distro libs do leak internal symbols.
-* **The 2 "failures" are correct rejections, not bugs:** `libncurses.so` and
-  `libncursesw.so` are 31-byte **GNU ld linker scripts**
-  (`INPUT(libncurses.so.6 -ltinfo)`), not ELF. abicheck correctly emits
-  "Cannot detect format" + exit 2. See §5.4 for the usability angle.
+* **Corpus construction surfaced a usability nuance.** The sweep filters to ELF
+  magic; an earlier unfiltered pass had pulled in `libncurses.so` /
+  `libncursesw.so`, which are 31-byte **GNU ld linker scripts**
+  (`INPUT(libncurses.so.6 -ltinfo)`), not ELF. abicheck correctly rejects them
+  with "Cannot detect format" + exit 2 — see §5.6 for the usability angle on the
+  `.so` dev-symlink path a user would naturally supply.
 
 ### 3.2 Cross-version oneDAL verdicts (all 14 pairs)
 
@@ -281,8 +286,8 @@ suppressing single-snapshot findings when `old == new`.
 | Metric | Value |
 |---|---|
 | Self-compare median (100 libs) | **0.25 s** |
-| Self-compare max | 19.9 s (`libLLVM.so.20.1`, 136 MB) |
-| 477 MB / 98 libs self-compared in | 119 s total |
+| Self-compare max | 19.1 s (`libLLVM.so.20.1`, 136 MB) |
+| 477 MB / 100 libs self-compared in | 113 s total |
 | oneDAL core, 10.5 k changes | 12.7 s |
 | oneDAL core, 109 k changes | **84.9 s** |
 

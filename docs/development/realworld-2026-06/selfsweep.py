@@ -11,23 +11,42 @@ Any of the following is a finding worth reporting:
 """
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import random
 import subprocess
 import time
 from collections import Counter
 from pathlib import Path
 
-REPORTS = Path("/tmp/val/reports")
+# Output directory is overridable so the sweep is reproducible outside the
+# original container (mirrors harness.py). Defaults to the layout used for the
+# committed artifacts.
+REPORTS = Path(os.environ.get("ABICHECK_VAL_OUT", "/tmp/val/reports"))
 SEARCH = ["/usr/lib/x86_64-linux-gnu", "/lib/x86_64-linux-gnu"]
 
 
+def is_elf(p: Path) -> bool:
+    """True if the file starts with the ELF magic.
+
+    Skips GNU ld linker scripts (e.g. ``libncurses.so`` is the ASCII text
+    ``INPUT(libncurses.so.6 -ltinfo)``) and any other non-ELF ``*.so*`` file so
+    the sweep is a genuine ELF-only corpus.
+    """
+    try:
+        with p.open("rb") as fh:
+            return fh.read(4) == b"\x7fELF"
+    except OSError:
+        return False
+
+
 def collect() -> list[Path]:
-    """Stratified sample: 20 smallest, 20 largest, 60 random-middle libraries."""
+    """Stratified sample of ELF libraries: 20 smallest, 20 largest, 60 mid."""
     seen: dict[str, Path] = {}
     for root in SEARCH:
         for p in Path(root).glob("*.so*"):
-            if p.is_file() and not p.is_symlink():
+            if p.is_file() and not p.is_symlink() and is_elf(p):
                 # one per soname stem
                 stem = p.name.split(".so")[0]
                 seen.setdefault(stem, p)
@@ -43,12 +62,21 @@ def collect() -> list[Path]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "-o", "--out", type=Path, default=REPORTS,
+        help="Output directory for reports (default: $ABICHECK_VAL_OUT or "
+             "/tmp/val/reports).")
+    args = parser.parse_args()
+    out_dir: Path = args.out
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     libs = collect()
     results = []
     kind_global: Counter = Counter()
     for i, lib in enumerate(libs):
         tag = f"self_{lib.name}"
-        out_json = REPORTS / "self" / f"{tag}.json"
+        out_json = out_dir / "self" / f"{tag}.json"
         out_json.parent.mkdir(parents=True, exist_ok=True)
         cmd = ["abicheck", "compare", str(lib), str(lib),
                "--format", "json", "-o", str(out_json)]
@@ -107,9 +135,9 @@ def main() -> None:
                          if r.get("breaking") or r.get("source_breaks") or r.get("risk")),
         "kind_histogram": dict(kind_global),
     }
-    (REPORTS / "selfsweep_results.jsonl").write_text(
+    (out_dir / "selfsweep_results.jsonl").write_text(
         "\n".join(json.dumps(r) for r in results) + "\n")
-    (REPORTS / "selfsweep_summary.json").write_text(json.dumps(summary, indent=2))
+    (out_dir / "selfsweep_summary.json").write_text(json.dumps(summary, indent=2))
     print("\nSUMMARY:", json.dumps(summary, indent=2), flush=True)
 
 
