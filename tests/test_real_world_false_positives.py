@@ -53,11 +53,8 @@ def _elf_snapshot(
 
 
 def _breaking_symbols(result) -> set[str]:
-    return {
-        c.symbol
-        for c in result.changes
-        if getattr(c.severity, "value", c.severity) == "breaking"
-    }
+    from abicheck.checker_policy import BREAKING_KINDS
+    return {c.symbol for c in result.changes if c.kind in BREAKING_KINDS}
 
 
 # ---------------------------------------------------------------------------
@@ -317,3 +314,31 @@ def test_stdlib_enum_member_change_is_breaking_when_target_is_the_runtime():
         EnumMember(name="_S_a", value=0)])]
     result = compare(old, new)
     assert result.verdict == Verdict.BREAKING
+
+
+def test_stdlib_qualified_typedef_churn_is_filtered_for_a_normal_library():
+    """A namespace-qualified std:: typedef (as the DWARF extractor now emits,
+    e.g. ``std::size_type``) must be filtered for a non-runtime library — the
+    extractor qualifies typedefs with their scope so the FP-1 filter sees the
+    ``std::`` prefix (Codex review on PR #273)."""
+    old = _elf_snapshot(name="libtbb.so.12")
+    old.typedefs = {"std::vector<int>::size_type": "unsigned long"}
+    new = _elf_snapshot(name="libtbb.so.12")
+    new.typedefs = {}  # std:: typedef "removed" by toolchain churn
+    result = compare(old, new)
+    assert result.verdict not in (Verdict.BREAKING,), (
+        f"qualified std:: typedef churn must stay filtered for a non-runtime "
+        f"library; breaking symbols: {_breaking_symbols(result)}"
+    )
+
+
+def test_qualified_public_typedef_removal_still_breaking():
+    """A genuine, non-std public typedef removal must still be reported."""
+    old = _elf_snapshot(name="libtbb.so.12")
+    old.typedefs = {"tbb::concurrent_vector<int>::handle": "void *"}
+    new = _elf_snapshot(name="libtbb.so.12")
+    new.typedefs = {}
+    result = compare(old, new)
+    assert _breaking_symbols(result) or result.verdict in (
+        Verdict.BREAKING, Verdict.API_BREAK,
+    ), "removing a genuine public typedef must still be reported"

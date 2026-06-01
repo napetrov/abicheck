@@ -294,7 +294,7 @@ class _DwarfSnapshotBuilder:
             elif tag == "DW_TAG_enumeration_type":
                 self._process_enum(die, CU, scope)
             elif tag == "DW_TAG_typedef":
-                self._process_typedef(die, CU)
+                self._process_typedef(die, CU, scope)
 
             for child in reversed(list(die.iter_children())):
                 stack.append((child, next_scope))
@@ -703,17 +703,23 @@ class _DwarfSnapshotBuilder:
     # Typedef extraction
     # -------------------------------------------------------------------
 
-    def _process_typedef(self, die: Any, CU: Any) -> None:
+    def _process_typedef(self, die: Any, CU: Any, scope: str = "") -> None:
         """Extract a typedef from DWARF.
 
         Also registers anonymous structs/enums under the typedef name
         (e.g. ``typedef struct { int x; } Point;``).
+
+        The typedef is keyed by its *namespace-qualified* name (consistent with
+        records and enums) so that standard-library typedefs nested under ``std``
+        (e.g. ``std::vector<…>::size_type``) carry their ``std::`` scope and the
+        non-ABI-surface filter can recognise them (validation/REPORT.md FP-1).
         """
         name = _attr_str(die, "DW_AT_name")
         if not name:
             return
         if _is_compiler_internal(name):
             return
+        qualified = f"{scope}::{name}" if scope else name
 
         # Check if this typedef points to an anonymous struct/enum
         if "DW_AT_type" in die.attributes:
@@ -734,14 +740,14 @@ class _DwarfSnapshotBuilder:
             except Exception:  # noqa: BLE001
                 log.debug("Failed to process typedef target for %s", name)
 
-        if name in self.typedefs:
+        if qualified in self.typedefs:
             return  # first wins
 
         underlying = "?"
         if "DW_AT_type" in die.attributes:
             underlying = self._resolve_underlying_type(die, CU, depth=0)
 
-        self.typedefs[name] = underlying
+        self.typedefs[qualified] = underlying
 
     def _resolve_underlying_type(
         self, die: Any, CU: Any, depth: int

@@ -39,7 +39,11 @@ type-kind, reserved-field, **enum**, **enum-rename**, and **typedef** diffs
 (which consume the separate `old.enums`/`old.typedefs` collections) — so the
 filter cannot be bypassed by an alternate map-construction path (Codex reviews on
 PR #273). One predicate keeps "what is surface" consistent across the whole
-differ.
+differ. The DWARF extractor (`dwarf_snapshot._process_typedef`) was also keying
+typedefs by their **unqualified** `DW_AT_name` while records/enums were already
+namespace-qualified; it now qualifies typedefs with their scope too, so
+`std`-nested typedefs (e.g. `std::vector<int>::size_type`) carry their `std::`
+prefix and the filter recognises them.
 
 **Guard rail.** The std:: exclusion is scoped: when the inspected DSO *is* the
 C++ runtime (`libstdc++`/`libc++`/`libc++abi`/`libsupc++`, via
