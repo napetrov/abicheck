@@ -550,6 +550,18 @@ class TestCompareReleaseErrorPaths:
             new_value="cxx17",
         )
 
+    @classmethod
+    def _matrix_result(cls):
+        """A DiffResult carrying the matrix change (via the real pipeline)."""
+        from abicheck.checker import compare
+        from abicheck.model import AbiSnapshot
+        return compare(
+            AbiSnapshot(library="<build-config matrix>", version="1.0"),
+            AbiSnapshot(library="<build-config matrix>", version="2.0"),
+            extra_changes=[cls._matrix_change()],
+            scope_to_public_surface=False,
+        )
+
     def test_format_release_summary_json_matrix_findings(self, tmp_path: Path) -> None:
         """Release-global matrix findings surface in the JSON summary."""
         from abicheck.cli_compare_release import _format_release_summary
@@ -565,9 +577,10 @@ class TestCompareReleaseErrorPaths:
             old_map={},
             new_map={},
             warning_msgs=[],
-            matrix_changes=[self._matrix_change()],
+            matrix_result=self._matrix_result(),
         )
         payload = json.loads(text)
+        assert payload["matrix_verdict"] == "API_BREAK"
         assert payload["matrix_findings"] == [
             {
                 "kind": "cxx_standard_floor_raised",
@@ -593,19 +606,40 @@ class TestCompareReleaseErrorPaths:
             old_map={},
             new_map={},
             warning_msgs=[],
-            matrix_changes=[self._matrix_change()],
+            matrix_result=self._matrix_result(),
         )
         assert "Build-Configuration (Matrix) Findings" in text
         assert "cxx_standard_floor_raised" in text
 
+    def test_format_release_summary_junit_matrix_findings(self, tmp_path: Path) -> None:
+        """JUnit output includes a testsuite for the matrix finding so CI
+        dashboards reading the report see the ABI failure (Codex review)."""
+        from abicheck.cli_compare_release import _format_release_summary
+
+        text = _format_release_summary(
+            fmt="junit",
+            worst_verdict="API_BREAK",
+            old_dir=tmp_path / "old",
+            new_dir=tmp_path / "new",
+            library_results=[],
+            removed_keys=[],
+            added_keys=[],
+            old_map={},
+            new_map={},
+            warning_msgs=[],
+            matrix_result=self._matrix_result(),
+        )
+        assert "cxx_standard_floor_raised" in text
+        assert "<testsuite" in text
+
     def test_collect_matrix_result_no_snapshots(self) -> None:
-        """Without matrix snapshots the verdict is unchanged and changes None."""
+        """Without matrix snapshots the result is None and verdict unchanged."""
         from abicheck.cli_compare_release import _collect_matrix_result
 
-        changes, verdict = _collect_matrix_result(
+        result, verdict = _collect_matrix_result(
             None, None, "strict_abi", "COMPATIBLE",
         )
-        assert changes is None
+        assert result is None
         assert verdict == "COMPATIBLE"
 
     def test_collect_matrix_result_folds_verdict(self, tmp_path: Path) -> None:
@@ -617,13 +651,14 @@ class TestCompareReleaseErrorPaths:
         with patch(
             "abicheck.cli._load_probe_matrix_changes", return_value=fake,
         ):
-            changes, verdict = cli_compare_release._collect_matrix_result(
+            result, verdict = cli_compare_release._collect_matrix_result(
                 old_m, new_m, "strict_abi", "COMPATIBLE",
             )
-        assert changes == fake
         # CXX_STANDARD_FLOOR_RAISED is a source-level break → API_BREAK,
         # which is worse than the incoming COMPATIBLE.
         assert verdict == "API_BREAK"
+        assert result is not None
+        assert [c.kind.value for c in result.changes] == ["cxx_standard_floor_raised"]
 
     def test_collect_matrix_result_respects_policy_file_override(self, tmp_path: Path) -> None:
         """A --policy-file override (e.g. ignore) applies to matrix findings,
@@ -642,14 +677,42 @@ class TestCompareReleaseErrorPaths:
         with patch(
             "abicheck.cli._load_probe_matrix_changes", return_value=fake,
         ):
-            changes, verdict = cli_compare_release._collect_matrix_result(
+            _, verdict = cli_compare_release._collect_matrix_result(
                 old_m, new_m, "strict_abi", "COMPATIBLE",
                 policy_file_path=policy_file,
             )
-        assert changes == fake
         # The override downgrades the finding, so it must NOT escalate the
         # incoming COMPATIBLE verdict to API_BREAK.
         assert verdict == "COMPATIBLE"
+
+    def test_collect_matrix_result_respects_suppression(self, tmp_path: Path) -> None:
+        """A --suppress rule applies to matrix findings, matching the compare
+        path (which routes extra_changes through checker.compare). (Codex P2)"""
+        from abicheck import cli_compare_release
+
+        supp = tmp_path / "supp.yaml"
+        supp.write_text(
+            "version: 1\n"
+            "suppressions:\n"
+            "  - symbol: cxx14\n"
+            "    change_kind: cxx_standard_floor_raised\n"
+            "    reason: intentional floor raise\n",
+            encoding="utf-8",
+        )
+        fake = [self._matrix_change()]
+        old_m, new_m = tmp_path / "o.json", tmp_path / "n.json"
+        with patch(
+            "abicheck.cli._load_probe_matrix_changes", return_value=fake,
+        ):
+            result, verdict = cli_compare_release._collect_matrix_result(
+                old_m, new_m, "strict_abi", "COMPATIBLE",
+                suppress=supp,
+            )
+        # Suppressed → no kept finding and the verdict is not escalated.
+        assert verdict == "COMPATIBLE"
+        assert result is not None
+        assert result.changes == []
+        assert result.suppressed_count == 1
 
     def test_exit_compare_release_breaking(self) -> None:
         """_exit_compare_release maps BREAKING verdict to exit 4."""

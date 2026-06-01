@@ -25,10 +25,14 @@ Two capabilities exist but are not reachable from the mainline gate:
       `--probe-spec`: running a matrix needs compilers, so it stays a separate
       `probe run` step that feeds the comparison, keeping the compare commands
       hermetic. On `compare` the findings join the change list (JSON + SARIF);
-      on `compare-release` they are release-global, so they fold into the
-      worst-of release verdict and surface as a `matrix_findings` section in
-      the JSON/markdown summary. Verified end-to-end for both commands in
-      `tests/test_probe_examples.py`.
+      on `compare-release` they are release-global, so they run through the
+      same `checker.compare` pipeline (over empty snapshots) — `--suppress`
+      rules and `--policy-file` overrides apply identically to both commands —
+      then fold into the worst-of release verdict and surface as a
+      `matrix_findings` section in the JSON/markdown summary and as a
+      dedicated testsuite in JUnit output. Verified end-to-end for both
+      commands in `tests/test_probe_examples.py` and at the unit level in
+      `tests/test_cli_split_modules.py`.
 - [x] Case 98 (`CXX_STANDARD_FLOOR_RAISED`) reaches its intended verdict through
       the mainline command (JSON + SARIF), not only `probe compare`. Case 97
       (`API_DEPENDS_ON_CONSUMER_ENV`) — detector unit-tested; end-to-end is
