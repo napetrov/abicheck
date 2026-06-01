@@ -1086,15 +1086,24 @@ def to_markdown(
     stat: bool = False,
     severity_config: SeverityConfig | None = None,
     show_recommendation: bool = False,
+    demangle: bool = False,
 ) -> str:
+    # Human-facing only: optionally demangle Itanium C++ symbols in the rendered
+    # output. Machine formats (JSON/SARIF/JUnit) keep the raw mangled symbols.
+    def _out(text: str) -> str:
+        if not demangle:
+            return text
+        from .demangle import demangle_text
+        return demangle_text(text)
+
     if stat:
-        return to_stat(result)
+        return _out(to_stat(result))
 
     if report_mode == "leaf":
-        return _to_markdown_leaf(
+        return _out(_to_markdown_leaf(
             result, show_impact=show_impact, show_only=show_only,
             show_recommendation=show_recommendation,
-        )
+        ))
 
     v = result.verdict
     emoji = _VERDICT_EMOJI[v]
@@ -1169,7 +1178,7 @@ def to_markdown(
         lines += _build_impact_table(result, displayed_changes=changes)
 
     lines += _footer_lines()
-    return "\n".join(lines)
+    return _out("\n".join(lines))
 
 
 def _append_confidence_section(lines: list[str], result: DiffResult) -> None:

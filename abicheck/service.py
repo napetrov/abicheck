@@ -680,11 +680,16 @@ def render_output(
     stat: bool = False,
     severity_config: SeverityConfig | None = None,
     show_recommendation: bool = False,
+    demangle: bool = False,
 ) -> str:
     """Render comparison result in the requested output format.
 
     Supported formats: ``'json'``, ``'markdown'``, ``'sarif'``, ``'html'``,
     ``'junit'``.
+
+    ``demangle`` only affects human-facing formats (markdown, review); machine
+    formats (json/sarif/junit) always keep raw mangled symbols so downstream
+    tooling can match on them.
 
     Raises:
         ValidationError: For unrecognised output format.
@@ -726,7 +731,11 @@ def render_output(
 
     if fmt == "review":
         from .reporter import to_review_digest
-        return to_review_digest(result)
+        txt = to_review_digest(result)
+        if demangle:
+            from .demangle import demangle_text
+            txt = demangle_text(txt)
+        return txt
 
     _SUPPORTED_FORMATS = {"json", "sarif", "html", "junit", "markdown", "md", "review"}
     if fmt not in _SUPPORTED_FORMATS:
@@ -740,6 +749,9 @@ def render_output(
     )
     if follow_deps and (old.dependency_info or (new and new.dependency_info)):
         md += _render_deps_section_md(old, new)
+    if demangle:
+        from .demangle import demangle_text
+        md = demangle_text(md)
     return md
 
 

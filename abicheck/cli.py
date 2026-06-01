@@ -978,6 +978,7 @@ def _render_output(
     stat: bool = False,
     severity_config: SeverityConfig | None = None,
     show_recommendation: bool = False,
+    demangle: bool = False,
 ) -> str:
     """Render comparison result in the requested output format."""
     from .service import render_output
@@ -987,6 +988,7 @@ def _render_output(
         report_mode=report_mode, show_impact=show_impact,
         stat=stat, severity_config=severity_config,
         show_recommendation=show_recommendation,
+        demangle=demangle,
     )
 
 
@@ -1440,6 +1442,10 @@ def _finalize_compare_result(
               help="Output format. 'review' emits a compact GitHub-facing digest "
                    "(verdict + counts + release recommendation + manual-review banner) "
                    "suitable for a job summary or PR comment.")
+@click.option("--demangle/--no-demangle", default=False, show_default=True,
+              help="Demangle C++ symbol names in human-facing output (markdown, "
+                   "review). Recommended for C++ libraries; machine formats "
+                   "(json/sarif/junit) always keep raw mangled symbols.")
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
               help="Suppression file (YAML) to filter known/intentional changes.")
@@ -1579,7 +1585,7 @@ def compare_cmd(
     old_headers_only: tuple[Path, ...], new_headers_only: tuple[Path, ...],
     old_includes_only: tuple[Path, ...], new_includes_only: tuple[Path, ...],
     old_version: str, new_version: str,
-    fmt: str, output: Path | None,
+    fmt: str, demangle: bool, output: Path | None,
     suppress: Path | None, strict_suppressions: bool, require_justification: bool,
     policy: str, policy_file_path: Path | None,
     pdb_path: Path | None, old_pdb_path: Path | None, new_pdb_path: Path | None,
@@ -1732,6 +1738,7 @@ def compare_cmd(
         show_impact=show_impact, stat=stat,
         severity_config=sev_config if severity_explicitly_set else None,
         show_recommendation=recommend,
+        demangle=demangle,
     )
 
     _write_or_echo(output, text)

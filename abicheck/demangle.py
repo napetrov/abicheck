@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import re
 import subprocess
 
 _log = logging.getLogger(__name__)
@@ -208,3 +209,32 @@ def base_name(symbol: str) -> str:
     prefix = demangled[:paren] if paren != -1 else demangled
     parts = prefix.rsplit("::", 1)
     return parts[-1].strip()
+
+
+# Itanium-mangled tokens use only this restricted alphabet, so we can find them
+# inside free-form report text (descriptions, additions lists, leaked-symbol
+# messages) without disturbing surrounding prose. ``.``-separated suffixes
+# (GCC clone markers like ``.cold`` / ``.part.0``) are matched only when
+# followed by more name characters, so a trailing sentence period is not eaten.
+_MANGLED_TOKEN_RE = re.compile(r"_Z[A-Za-z0-9_$]+(?:\.[A-Za-z0-9_$]+)*")
+
+
+def demangle_text(text: str) -> str:
+    """Demangle every Itanium-mangled symbol token embedded in *text*.
+
+    Tokens that are not valid C++ mangled names, or that cannot be demangled
+    because no demangler is available, are left unchanged. Intended for
+    human-facing report output only — machine formats (JSON/SARIF/JUnit) keep
+    the raw mangled symbols so downstream tooling can match on them.
+    """
+    tokens = set(_MANGLED_TOKEN_RE.findall(text))
+    if not tokens:
+        return text
+    mapping = demangle_batch(sorted(tokens))
+
+    def _repl(m: re.Match[str]) -> str:
+        tok = m.group(0)
+        demangled = mapping.get(tok)
+        return demangled if demangled and demangled != tok else tok
+
+    return _MANGLED_TOKEN_RE.sub(_repl, text)

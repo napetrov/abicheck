@@ -98,6 +98,18 @@ class TestMarkdownReporter:
         assert "COMPATIBLE" in md
         assert "Quality Issues" in md
 
+    def test_demangle_rewrites_mangled_names_when_enabled(self, monkeypatch):
+        import abicheck.demangle as dm
+        monkeypatch.setattr(dm, "demangle_batch", lambda syms: {"_Z3foov": "foo()"})
+        c = Change(ChangeKind.FUNC_REMOVED, "_Z3foov", "Public function removed: _Z3foov")
+        result = _result(Verdict.BREAKING, [c])
+        md_on = to_markdown(result, demangle=True)
+        assert "foo()" in md_on
+        assert "_Z3foov" not in md_on
+        # Default leaves mangled names untouched (machine-stable).
+        md_off = to_markdown(result, demangle=False)
+        assert "_Z3foov" in md_off
+
     def test_legend_always_present(self):
         md = to_markdown(_result(Verdict.NO_CHANGE))
         assert "Legend" in md
