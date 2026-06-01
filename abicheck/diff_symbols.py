@@ -65,14 +65,27 @@ def _type_unknown(type_name: str | None) -> bool:
     return type_name is None or type_name.strip() == _UNKNOWN_TYPE
 
 
-def _params_unknown(f: Function) -> bool:
-    """True when a function's *parameter* evidence is absent, not merely its
-    return type. A stripped, symbols-only export has an unknown return ("?") and
-    no parameter DIEs at all; a DWARF/header snapshot resolves the return and
-    each parameter independently, so an unresolved return with recorded params
-    is NOT unknown params (RD2-5; Codex review on PR #275 — int→long param
-    changes under an unresolved return must still be diffed)."""
-    return _type_unknown(f.return_type) and not f.params
+def _is_stripped_symbols_only(snap: AbiSnapshot) -> bool:
+    """True when *snap* is a stripped, symbols-only dump: it exports symbols but
+    carries no type-level evidence (no records/enums/typedefs, no DWARF content)
+    and was flagged ``elf_only_mode`` by the dumper.
+
+    Used to gate *parameter* comparison (RD2-5; Codex reviews on PR #275). The
+    bare ``"?"`` sentinel is **not** a reliable per-function signal — castxml and
+    dwarf_snapshot also emit ``"?"`` for an individually unresolved return/param
+    while resolving the rest — so an empty parameter list only means "unknown
+    params" when the whole snapshot is a symbols-only stub. In a real
+    DWARF/header snapshot an empty list means "takes no arguments", and changes
+    like ``f(void)`` → ``f(int)`` must still be diffed.
+    """
+    if not getattr(snap, "elf_only_mode", False):
+        return False
+    if snap.types or snap.enums or snap.typedefs:
+        return False
+    dwarf = getattr(snap, "dwarf", None)
+    if dwarf is not None and (dwarf.structs or dwarf.enums):
+        return False
+    return bool(snap.functions or snap.variables)
 
 
 def _is_local_type_rtti(mangled: str) -> bool:
@@ -163,13 +176,20 @@ def _check_return_type_change(mangled: str, f_old: Function, f_new: Function) ->
     )]
 
 
-def _check_params_change(mangled: str, f_old: Function, f_new: Function) -> list[Change]:
+def _check_params_change(
+    mangled: str, f_old: Function, f_new: Function, *, params_unconfirmed: bool = False,
+) -> list[Change]:
     """Emit a change if the parameter list was modified."""
-    # RD2-5: skip only when a side's *parameter* evidence is absent (stripped
-    # ELF export: unknown return AND no param DIEs). A DWARF/header side with an
-    # unresolved return but recorded params still has comparable params, so an
-    # int→long param change must not be dropped (Codex review on PR #275).
-    if _params_unknown(f_old) or _params_unknown(f_new):
+    # RD2-5: suppress only when one side is a stripped symbols-only stub (its
+    # empty param list is "unknown", not "zero args"), or when an individual
+    # parameter type is the unresolved "?" sentinel — diffing against unknown is
+    # meaningless. A DWARF/header side with resolved params is always compared,
+    # so int→long and f(void)→f(int) are still detected (Codex reviews, PR #275).
+    if params_unconfirmed:
+        return []
+    if any(_type_unknown(p.type) for p in f_old.params) or any(
+        _type_unknown(p.type) for p in f_new.params
+    ):
         return []
     old_params = [(canonicalize_type_name(p.type), p.kind) for p in f_old.params]
     new_params = [(canonicalize_type_name(p.type), p.kind) for p in f_new.params]
@@ -274,11 +294,13 @@ def _check_explicit_change(mangled: str, f_old: Function, f_new: Function) -> li
     )
 
 
-def _check_function_signature(mangled: str, f_old: Function, f_new: Function) -> list[Change]:
+def _check_function_signature(
+    mangled: str, f_old: Function, f_new: Function, *, params_unconfirmed: bool = False,
+) -> list[Change]:
     """Compare signatures and qualifiers of two matched functions."""
     changes: list[Change] = []
     changes.extend(_check_return_type_change(mangled, f_old, f_new))
-    changes.extend(_check_params_change(mangled, f_old, f_new))
+    changes.extend(_check_params_change(mangled, f_old, f_new, params_unconfirmed=params_unconfirmed))
     changes.extend(_check_ref_qualifier_change(mangled, f_old, f_new))
     changes.extend(_check_linkage_change(mangled, f_old, f_new))
     changes.extend(_check_noexcept_change(mangled, f_old, f_new))
@@ -333,10 +355,11 @@ def _match_old_function(
     new_all: dict[str, Function],
     matched_by_name: set[str],
     elf_only_mode: bool,
+    params_unconfirmed: bool = False,
 ) -> list[Change]:
     """Classify a single old function: matched by mangled, extern-C fallback, or removed."""
     if mangled in new_map:
-        return list(_check_function_signature(mangled, f_old, new_map[mangled]))
+        return list(_check_function_signature(mangled, f_old, new_map[mangled], params_unconfirmed=params_unconfirmed))
 
     # Fallback by plain name when either side uses extern "C".
     # The name->Function mapping is a MULTIMAP: only fall back when there is
@@ -349,7 +372,7 @@ def _match_old_function(
         extern_c_candidates = candidates  # any single candidate is acceptable
     if len(extern_c_candidates) == 1:
         f_new = extern_c_candidates[0]
-        result = list(_check_function_signature(f_old.name, f_old, f_new))
+        result = list(_check_function_signature(f_old.name, f_old, f_new, params_unconfirmed=params_unconfirmed))
         matched_by_name.add(f_old.name)
         return result
 
@@ -396,6 +419,9 @@ def _detect_newly_deleted_functions(
 @registry.detector("functions")
 def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     elf_only_mode = getattr(old, "elf_only_mode", False)
+    # RD2-5: when one side is a stripped symbols-only stub, its parameter lists
+    # are unknown (not "zero args"), so parameter diffs are unconfirmed.
+    params_unconfirmed = _is_stripped_symbols_only(old) or _is_stripped_symbols_only(new)
     changes: list[Change] = []
     old_map = {k: v for k, v in old.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
     new_map = {k: v for k, v in new.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
@@ -414,7 +440,10 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
     for mangled, f_old in old_map.items():
         changes.extend(
-            _match_old_function(mangled, f_old, new_map, new_by_name, new_all, matched_by_name, elf_only_mode)
+            _match_old_function(
+                mangled, f_old, new_map, new_by_name, new_all, matched_by_name,
+                elf_only_mode, params_unconfirmed,
+            )
         )
 
     for mangled, f_new in new_map.items():
@@ -592,17 +621,16 @@ def _diff_pointer_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
     old_map = _public_functions(old)
     new_map = _public_functions(new)
+    # RD2-5: param depths from a stripped symbols-only stub default to 0 and
+    # would read as phantom level changes; suppress them. The return depth is
+    # guarded independently by the unknown-return ("?") check below.
+    params_unconfirmed = _is_stripped_symbols_only(old) or _is_stripped_symbols_only(new)
 
     for mangled, f_old in old_map.items():
         f_new = new_map.get(mangled)
         if f_new is None:
             continue
 
-        # RD2-5: guard each axis independently — a stripped ELF export reports
-        # an unknown return ("?") and no params, where depths default to 0 and
-        # would read as phantom level changes. Skip the return-depth check only
-        # when the return is unknown, and the param-depth loop only when the
-        # parameter evidence is absent (Codex review on PR #275).
         return_known = not (
             _type_unknown(f_old.return_type) or _type_unknown(f_new.return_type)
         )
@@ -618,7 +646,7 @@ def _diff_pointer_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 new_value=str(f_new.return_pointer_depth),
             ))
 
-        if _params_unknown(f_old) or _params_unknown(f_new):
+        if params_unconfirmed:
             continue
 
         # Param pointer depths

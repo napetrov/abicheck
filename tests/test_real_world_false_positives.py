@@ -310,26 +310,39 @@ def test_stripped_suppression_with_only_variable_exports():
 
 
 def test_unknown_signature_not_flagged_as_change():
-    """A stripped ELF export reports return_type/type '?' — diffing a known type
-    against '?' must not fabricate func_return/params/var_type changes (RD2-5)."""
+    """When the NEW side is a stripped symbols-only stub (return/type '?', no
+    params, no type evidence), diffing a known old signature against it must not
+    fabricate func_return/params/var_type changes (RD2-5)."""
     from abicheck.checker_policy import ChangeKind
     from abicheck.model import Function, Param
+    # old: a resolved (DWARF/header) snapshot — NOT stripped.
     old = _elf_snapshot(
         functions=[Function(name="f", mangled="_Z1fi", return_type="int",
                             params=[Param(name="a", type="int")], visibility=Visibility.PUBLIC)],
         variables=[Variable(name="g", mangled="g", type="int", visibility=Visibility.PUBLIC)],
+        types=[RecordType(name="Cfg", kind="struct", size_bits=32)],
     )
-    # new side: same symbols, but signature/type unknown (stripped).
+    old.elf_only_mode = False
+    # new: stripped symbols-only — same symbols, signatures unknown, no types.
     new = _elf_snapshot(
         functions=[Function(name="f", mangled="_Z1fi", return_type="?",
                             params=[], visibility=Visibility.PUBLIC)],
         variables=[Variable(name="g", mangled="g", type="?", visibility=Visibility.PUBLIC)],
     )
+    new.dwarf = None
     result = compare(old, new)
     phantom = {ChangeKind.FUNC_RETURN_CHANGED, ChangeKind.FUNC_PARAMS_CHANGED,
                ChangeKind.VAR_TYPE_CHANGED, ChangeKind.RETURN_POINTER_LEVEL_CHANGED}
     offenders = [c.kind.value for c in result.changes if c.kind in phantom]
     assert offenders == [], f"unknown ('?') signatures must not be diffed: {offenders}"
+
+
+def _resolved_snapshot(**kw):
+    """A resolved (DWARF/header) snapshot — elf_only_mode False, so its empty
+    parameter lists mean 'zero args', not 'unknown'."""
+    snap = _elf_snapshot(**kw)
+    snap.elf_only_mode = False
+    return snap
 
 
 def test_param_change_still_detected_when_only_return_is_unknown():
@@ -338,15 +351,53 @@ def test_param_change_still_detected_when_only_return_is_unknown():
     unknown-return guard must not swallow it (Codex review on PR #275)."""
     from abicheck.checker_policy import ChangeKind
     from abicheck.model import Function, Param
-    old = _elf_snapshot(functions=[Function(
+    old = _resolved_snapshot(functions=[Function(
         name="f", mangled="_Z1fi", return_type="?",
         params=[Param(name="a", type="int")], visibility=Visibility.PUBLIC)])
-    new = _elf_snapshot(functions=[Function(
+    new = _resolved_snapshot(functions=[Function(
         name="f", mangled="_Z1fi", return_type="?",
         params=[Param(name="a", type="long")], visibility=Visibility.PUBLIC)])
     result = compare(old, new)
     assert any(c.kind == ChangeKind.FUNC_PARAMS_CHANGED for c in result.changes), (
         "param int->long under an unresolved return must still be detected; "
+        f"changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
+    )
+
+
+def test_individually_unresolved_param_type_not_diffed():
+    """In a resolved snapshot, a single parameter whose type DWARF left as '?'
+    must not be diffed against a known type (diffing against unknown is
+    meaningless), even though the function is otherwise comparable (RD2-5)."""
+    from abicheck.checker_policy import ChangeKind
+    from abicheck.model import Function, Param
+    old = _resolved_snapshot(functions=[Function(
+        name="f", mangled="_Z1fi", return_type="int",
+        params=[Param(name="a", type="int")], visibility=Visibility.PUBLIC)])
+    new = _resolved_snapshot(functions=[Function(
+        name="f", mangled="_Z1fi", return_type="int",
+        params=[Param(name="a", type="?")], visibility=Visibility.PUBLIC)])
+    result = compare(old, new)
+    assert not any(c.kind == ChangeKind.FUNC_PARAMS_CHANGED for c in result.changes), (
+        "a parameter with an unresolved '?' type must not be diffed; "
+        f"changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
+    )
+
+
+def test_zero_arg_to_one_arg_detected_under_unknown_return():
+    """f(void) -> f(int) with an unresolved ('?') return in a resolved snapshot
+    must still be a parameter change: an empty list there means zero args, not
+    'unknown params' (Codex review on PR #275)."""
+    from abicheck.checker_policy import ChangeKind
+    from abicheck.model import Function, Param
+    old = _resolved_snapshot(functions=[Function(
+        name="f", mangled="_Z1fv", return_type="?", params=[],
+        visibility=Visibility.PUBLIC)])
+    new = _resolved_snapshot(functions=[Function(
+        name="f", mangled="_Z1fv", return_type="?",
+        params=[Param(name="a", type="int")], visibility=Visibility.PUBLIC)])
+    result = compare(old, new)
+    assert any(c.kind == ChangeKind.FUNC_PARAMS_CHANGED for c in result.changes), (
+        "f(void)->f(int) under an unresolved return must still be detected; "
         f"changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
     )
 
