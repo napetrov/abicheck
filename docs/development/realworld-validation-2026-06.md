@@ -357,7 +357,7 @@ cd ..
 # harness.py auto-discovers `daal-*` dirs in the args (or cwd / /tmp/val/work);
 # pass the wheel roots explicitly for reproducibility, and choose an output dir:
 python docs/development/realworld-2026-06/harness.py wheels --out reports   # cross-version oneDAL
-python docs/development/realworld-2026-06/selfsweep.py                      # 100-lib self-compare
+python docs/development/realworld-2026-06/selfsweep.py --out reports        # 100-lib self-compare
 ```
 
 Artifacts in [`realworld-2026-06/`](realworld-2026-06/README.md): `harness.py`,
