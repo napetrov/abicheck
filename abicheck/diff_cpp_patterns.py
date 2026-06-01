@@ -51,10 +51,11 @@ from typing import TYPE_CHECKING
 from .checker_policy import ChangeKind
 from .checker_types import Change
 
-# Re-exports for backwards compatibility — the generic detectors were
-# extracted to dedicated modules in PR-D. Existing tests / external
-# callers that import from this module keep
-# working unchanged.
+# Re-exports — the generic detectors were extracted to dedicated modules
+# in PR-D, but are re-exported here so callers that import them from this
+# module keep working unchanged. (This module is internal: it is not
+# exported from ``abicheck/__init__`` and has no documented public-API
+# import path.)
 from .diff_serialization import (  # noqa: F401
     _TAG_EXACT_LEAVES,
     _TAG_SUFFIX_PATTERNS,
