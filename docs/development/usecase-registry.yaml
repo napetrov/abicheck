@@ -231,8 +231,10 @@ use_cases:
     note: >
       Linux/ELF only by design (ADR-018/ADR-023 — no DT_NEEDED/.gnu.version_*
       equivalent elsewhere); cross-platform bundle analysis is tracked under
-      G1 / UC-PLAT-*. All bundle detectors — including bundle_soname_skew —
-      now run through compare-release; case84 is validated end-to-end.
+      G1 / UC-PLAT-*. All bundle detectors run through compare-release; case84
+      is validated end-to-end. bundle_soname_skew is opt-in via
+      --bundle-cohort PREFIX so independent libraries are never inferred to be
+      co-versioned from their filenames.
     evidence:
       modules: [abicheck/bundle.py, abicheck/diff_onedal.py]
       tests: [tests/test_bundle.py, tests/test_onedal_detectors.py]

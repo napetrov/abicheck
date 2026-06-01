@@ -575,6 +575,7 @@ def compare_bundle(
     *,
     manifest: InstantiationManifest | None = None,
     system_providers: Iterable[str] | None = None,
+    cohorts: list[str] | None = None,
 ) -> BundleDiffResult:
     """Compute bundle-level findings from per-library diffs and bundle snapshots.
 
@@ -588,6 +589,9 @@ def compare_bundle(
             ``BUNDLE_MANIFEST_INSTANTIATION_REMOVED`` findings.
         system_providers: Sonames to treat as system-provided (extends
             :data:`DEFAULT_SYSTEM_PROVIDERS`).
+        cohorts: Explicit co-versioned cohort prefixes (e.g. ``"libonedal_"``)
+            for the opt-in ``BUNDLE_SONAME_SKEW`` check. When empty/None the
+            skew check is disabled — cohorts are never inferred from filenames.
     """
     sys_libs = set(DEFAULT_SYSTEM_PROVIDERS) | set(system_providers or ())
     findings: list[BundleFinding] = []
@@ -626,11 +630,12 @@ def compare_bundle(
     #    different gnu.version_d between old and new providers.
     findings.extend(_detect_version_drift(old, new))
 
-    # 7. bundle_soname_skew: co-versioned cohort members bumped their major
-    #    SONAME inconsistently (some bumped, some lagged). A cohort-level
-    #    invariant: no individual library is wrong, but the set is. See
-    #    examples/case84_bundle_soname_skew/.
-    findings.extend(_detect_soname_skew(old, new))
+    # 7. bundle_soname_skew: declared co-versioned cohort members bumped
+    #    their major SONAME inconsistently (some bumped, some lagged). A
+    #    cohort-level invariant: no individual library is wrong, but the set
+    #    is. Opt-in only — runs solely for the cohorts the caller declares
+    #    (compare-release --bundle-cohort). See examples/case84_bundle_soname_skew/.
+    findings.extend(_detect_soname_skew(old, new, cohorts))
 
     # 8. Manifest enforcement
     if manifest is not None:
@@ -1005,52 +1010,31 @@ def _detect_version_drift(
     return findings
 
 
-def _soname_cohort_family(library: str) -> str:
-    """Derive a co-versioned *family* key from a library filename.
-
-    The family is the cohort stem (everything before the first dot) with
-    the trailing ``_<component>`` segment stripped, so the oneDAL siblings
-    ``libonedal_core``/``libonedal_thread``/``libonedal_dpc`` collapse to a
-    single ``libonedal`` family while unrelated libraries (``libfoo`` vs
-    ``libbar``) stay in their own families. A name without an underscore is
-    its own family.
-    """
-    stem = library.split(".", 1)[0]
-    return stem.rsplit("_", 1)[0] if "_" in stem else stem
-
-
 def _soname_skew_findings(
     old_members: list[BundleMember],
     new_members: list[BundleMember],
+    cohorts: list[str],
 ) -> list[BundleFinding]:
     """Pure cohort-skew logic over already-read bundle members.
 
-    Libraries are first grouped into co-versioned families
-    (:func:`_soname_cohort_family`); skew is only evaluated **within** a
-    family that has at least two co-versioned members. This is the
-    correctness boundary: a normal release that bumps an independent
-    ``libfoo.so.1 → libfoo.so.2`` while an unrelated ``libbar.so.1`` stays
-    put must NOT be reported as a bundle invariant violation — the two are
-    different families, so they are never compared against each other.
+    SONAME skew is **only** evaluated within explicitly declared cohorts —
+    each entry of *cohorts* is a cohort-key prefix (e.g. ``"libonedal_"``)
+    naming a set of libraries the release engineer asserts are co-versioned.
+    Libraries that match no declared cohort are never compared, so a normal
+    release that bumps an independent ``libfoo.so.1 → libfoo.so.2`` while an
+    unrelated ``libbar.so.1`` stays put is never reported. With an empty
+    *cohorts* list this returns nothing: there is no implicit lockstep
+    invariant to infer from filenames alone.
     """
+    if not cohorts:
+        return []
     from .diff_onedal import detect_bundle_soname_skew
 
-    by_family_old: dict[str, list[BundleMember]] = {}
-    by_family_new: dict[str, list[BundleMember]] = {}
-    for member in old_members:
-        by_family_old.setdefault(_soname_cohort_family(member.library), []).append(member)
-    for member in new_members:
-        by_family_new.setdefault(_soname_cohort_family(member.library), []).append(member)
-
     findings: list[BundleFinding] = []
-    for family in sorted(set(by_family_old) & set(by_family_new)):
-        cohort_old = by_family_old[family]
-        cohort_new = by_family_new[family]
-        # A lone library bumping its own SONAME is an ordinary major bump,
-        # not a cohort skew. Require a genuine co-versioned set.
-        if len(cohort_old) < 2 and len(cohort_new) < 2:
-            continue
-        for change in detect_bundle_soname_skew(cohort_old, cohort_new):
+    for prefix in cohorts:
+        for change in detect_bundle_soname_skew(
+            old_members, new_members, cohort_prefix=prefix,
+        ):
             findings.append(
                 BundleFinding(
                     kind=change.kind,
@@ -1067,17 +1051,26 @@ def _soname_skew_findings(
 def _detect_soname_skew(
     old: BundleSnapshot,
     new: BundleSnapshot,
+    cohorts: list[str] | None,
 ) -> list[BundleFinding]:
-    """Detect inconsistent SONAME major bumps within a co-versioned cohort.
+    """Detect inconsistent SONAME major bumps within declared cohorts.
+
+    *cohorts* is the explicit opt-in: a list of cohort-key prefixes naming
+    co-versioned library sets (from ``compare-release --bundle-cohort``).
+    When it is empty/None nothing is emitted — there is no auto-grouping of
+    independent libraries by filename, which avoids false positives on
+    normal multi-library releases.
 
     Members are derived from the *matched* release libraries
     (``BundleSnapshot.libraries`` / ``.metadata``) rather than by rescanning
     a single directory — release discovery is recursive, so a cohort member
     living in another subdirectory must still participate. The authoritative
     major comes from each library's DT_SONAME, falling back to the on-disk
-    filename. Libraries with no derivable major (unversioned ``libfoo.so``)
-    are dropped, so the common case adds no findings.
+    filename; libraries with no derivable major (unversioned ``libfoo.so``)
+    are dropped.
     """
+    if not cohorts:
+        return []
     from .diff_onedal import BundleMember, _extract_soname_major
 
     def _members(snap: BundleSnapshot) -> list[BundleMember]:
@@ -1099,7 +1092,7 @@ def _detect_soname_skew(
     new_members = _members(new)
     if not old_members or not new_members:
         return []
-    return _soname_skew_findings(old_members, new_members)
+    return _soname_skew_findings(old_members, new_members, cohorts)
 
 
 def _entry_targets(entry: ManifestEntry) -> list[tuple[str, str]]:

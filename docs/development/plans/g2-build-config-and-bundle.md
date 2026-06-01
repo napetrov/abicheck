@@ -33,6 +33,9 @@ Two capabilities exist but are not reachable from the mainline gate:
       captured). Tracked in the registry `next_steps` for `UC-WF-probe-matrix`.
 - [x] `compare-release` emits `bundle_soname_skew`; case84 lost `skip: true`
       and is validated end-to-end (`tests/test_bundle.py::TestCompareReleaseBundleE2E`).
+      The check is **opt-in** via `--bundle-cohort PREFIX` (repeatable): cohorts
+      are declared, never inferred from filenames, so an ordinary release that
+      bumps one independent library while a sibling lags is not a false positive.
 - [x] Two additional self-contained probe specs under `examples/probes/`
       (`feature_macro.yaml`, `cxx_standard.yaml`) with an end-to-end test
       (stock `cc`/`c++`, no external toolchain).

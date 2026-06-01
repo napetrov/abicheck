@@ -1385,7 +1385,9 @@ class TestCompareReleaseBundleE2E:
         self._build_versioned_so(new, case_dir / "onedal_dpc.c", "libonedal_dpc.so.2")
 
         result = CliRunner().invoke(
-            main, ["compare-release", str(old), str(new), "--format", "json"],
+            main,
+            ["compare-release", str(old), str(new), "--format", "json",
+             "--bundle-cohort", "libonedal_"],
         )
         # Bundle BREAKING → exit 4 (matches ground_truth.json case84 == BREAKING).
         assert result.exit_code == 4, result.output
@@ -1426,6 +1428,37 @@ class TestCompareReleaseBundleE2E:
         self._build_versioned_so(new, case_dir / "onedal_thread.c", "libonedal_thread.so.2")
 
         result = CliRunner().invoke(
+            main,
+            ["compare-release", str(old), str(new), "--format", "json",
+             "--bundle-cohort", "libonedal_"],
+        )
+        data = _json.loads(result.stdout)
+        kinds = {f["kind"] for f in data.get("bundle_findings", [])}
+        assert "bundle_soname_skew" not in kinds
+
+    def test_compare_release_skew_is_opt_in(self, tmp_path: Path) -> None:
+        # Without --bundle-cohort the skew check never runs: the case84 skew
+        # layout must produce NO bundle_soname_skew finding (opt-in default).
+        import json as _json
+
+        from click.testing import CliRunner
+
+        from abicheck.cli import main
+
+        case_dir = (
+            Path(__file__).parent.parent
+            / "examples" / "case84_bundle_soname_skew"
+        )
+        old = tmp_path / "v1"
+        new = tmp_path / "v2"
+        old.mkdir()
+        new.mkdir()
+        self._build_versioned_so(old, case_dir / "onedal_core.c", "libonedal_core.so.1")
+        self._build_versioned_so(old, case_dir / "onedal_thread.c", "libonedal_thread.so.1")
+        self._build_versioned_so(new, case_dir / "onedal_core.c", "libonedal_core.so.2")
+        self._build_versioned_so(new, case_dir / "onedal_thread.c", "libonedal_thread.so.1")
+
+        result = CliRunner().invoke(
             main, ["compare-release", str(old), str(new), "--format", "json"],
         )
         data = _json.loads(result.stdout)
@@ -1438,12 +1471,11 @@ class TestCompareReleaseBundleE2E:
 # ---------------------------------------------------------------------------
 
 class TestSonameSkewCohortScoping:
-    """Unit tests for `_soname_skew_findings` / `_soname_cohort_family`.
+    """Unit tests for the opt-in `_soname_skew_findings` / `_detect_soname_skew`.
 
-    These exercise the cohort-grouping correctness boundary directly (no
-    ELF I/O): skew is only flagged *within* a co-versioned family, so a
-    normal release of an independent library alongside an unrelated,
-    unchanged one is never reported.
+    Skew is only evaluated within explicitly declared cohorts (prefixes). With
+    no declared cohort nothing is emitted — independent libraries are never
+    inferred to be co-versioned from their filenames.
     """
 
     @staticmethod
@@ -1451,14 +1483,21 @@ class TestSonameSkewCohortScoping:
         from abicheck.diff_onedal import BundleMember
         return BundleMember(library=library, soname=library, soname_major=major)
 
-    def test_cohort_family_grouping(self) -> None:
-        from abicheck.bundle import _soname_cohort_family
-        assert _soname_cohort_family("libonedal_core.so.2") == "libonedal"
-        assert _soname_cohort_family("libonedal_thread.so.1") == "libonedal"
-        assert _soname_cohort_family("libfoo.so.1") == "libfoo"
-        assert _soname_cohort_family("libbar.so.2") == "libbar"
+    def test_no_cohort_declared_emits_nothing(self) -> None:
+        # The opt-in default: even a real skew layout produces no finding when
+        # no cohort prefix is declared.
+        from abicheck.bundle import _soname_skew_findings
+        old = [
+            self._member("libonedal_core.so.1", 1),
+            self._member("libonedal_thread.so.1", 1),
+        ]
+        new = [
+            self._member("libonedal_core.so.2", 2),
+            self._member("libonedal_thread.so.1", 1),  # laggard
+        ]
+        assert _soname_skew_findings(old, new, []) == []
 
-    def test_skew_within_cohort_is_flagged(self) -> None:
+    def test_skew_within_declared_cohort_is_flagged(self) -> None:
         from abicheck.bundle import _soname_skew_findings
         old = [
             self._member("libonedal_core.so.1", 1),
@@ -1470,19 +1509,28 @@ class TestSonameSkewCohortScoping:
             self._member("libonedal_thread.so.1", 1),  # laggard
             self._member("libonedal_dpc.so.2", 2),
         ]
-        findings = _soname_skew_findings(old, new)
+        findings = _soname_skew_findings(old, new, ["libonedal_"])
         assert len(findings) == 1
         assert findings[0].kind == ChangeKind.BUNDLE_SONAME_SKEW
         assert any("libonedal_thread" in lib for lib in findings[0].affected_libraries)
 
-    def test_independent_libraries_are_not_flagged(self) -> None:
-        # Regression for the P1 false positive: a normal libfoo bump next to
-        # an unrelated, unchanged libbar must NOT be a bundle skew — they are
-        # different families and are never compared against each other.
+    def test_independent_libraries_outside_cohort_are_not_flagged(self) -> None:
+        # The reviewer's case: libfoo_core bumps while libfoo_plugin stays.
+        # Declaring only the libfoo_core cohort must not drag libfoo_plugin in,
+        # and declaring nothing emits nothing.
         from abicheck.bundle import _soname_skew_findings
-        old = [self._member("libfoo.so.1", 1), self._member("libbar.so.1", 1)]
-        new = [self._member("libfoo.so.2", 2), self._member("libbar.so.1", 1)]
-        assert _soname_skew_findings(old, new) == []
+        old = [
+            self._member("libfoo_core.so.1", 1),
+            self._member("libfoo_plugin.so.1", 1),
+        ]
+        new = [
+            self._member("libfoo_core.so.2", 2),
+            self._member("libfoo_plugin.so.1", 1),  # independent, unchanged
+        ]
+        assert _soname_skew_findings(old, new, []) == []
+        # A cohort that matches only the (single) bumped library: no skew,
+        # because there is no lagging sibling inside that declared cohort.
+        assert _soname_skew_findings(old, new, ["libfoo_core"]) == []
 
     def test_lockstep_bump_within_cohort_is_clean(self) -> None:
         from abicheck.bundle import _soname_skew_findings
@@ -1494,19 +1542,12 @@ class TestSonameSkewCohortScoping:
             self._member("libonedal_core.so.2", 2),
             self._member("libonedal_thread.so.2", 2),
         ]
-        assert _soname_skew_findings(old, new) == []
+        assert _soname_skew_findings(old, new, ["libonedal_"]) == []
 
-    def test_single_member_family_never_flags(self) -> None:
-        from abicheck.bundle import _soname_skew_findings
-        old = [self._member("libsolo.so.1", 1)]
-        new = [self._member("libsolo.so.2", 2)]
-        assert _soname_skew_findings(old, new) == []
-
-    def test_skew_uses_snapshot_libraries_across_directories(self) -> None:
-        # Regression for the P2 review: cohort members may live in different
-        # subdirectories (recursive release discovery). _detect_soname_skew
-        # must derive members from snapshot.libraries/.metadata — not rescan
-        # a single root — so a skew split across directories is still caught.
+    def test_detect_skew_requires_cohort_and_uses_snapshot_libraries(self) -> None:
+        # P2 regression: members come from snapshot.libraries/.metadata (so a
+        # cohort split across directories is still caught), and the check is
+        # opt-in (no cohort → nothing).
         from abicheck.bundle import _detect_soname_skew
 
         def _snap(core_soname: str, thread_soname: str) -> BundleSnapshot:
@@ -1527,5 +1568,6 @@ class TestSonameSkewCohortScoping:
 
         old = _snap("libonedal_core.so.1", "libonedal_thread.so.1")
         new = _snap("libonedal_core.so.2", "libonedal_thread.so.1")  # thread lags
-        findings = _detect_soname_skew(old, new)
+        assert _detect_soname_skew(old, new, None) == []
+        findings = _detect_soname_skew(old, new, ["libonedal_"])
         assert [f.kind for f in findings] == [ChangeKind.BUNDLE_SONAME_SKEW]

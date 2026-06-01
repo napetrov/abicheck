@@ -398,6 +398,7 @@ def _run_bundle_analysis(
     *,
     manifest_path: Path | None,
     bundle_system_providers: str,
+    bundle_cohorts: tuple[str, ...] = (),
 ) -> BundleDiffResult | None:
     """Run bundle-level (ADR-023) analysis on a compare-release run.
 
@@ -449,6 +450,7 @@ def _run_bundle_analysis(
             old_snap, new_snap, per_lib_results,
             manifest=manifest,
             system_providers=system_extra or None,
+            cohorts=list(bundle_cohorts) or None,
         )
     except Exception as exc:
         # Analysis-engine bugs should not block the per-library report;
@@ -661,6 +663,7 @@ def _collect_bundle_result(
     worst_verdict: str,
     manifest_path: Path | None,
     bundle_system_providers: str,
+    bundle_cohorts: tuple[str, ...] = (),
 ) -> tuple[BundleDiffResult | None, str]:
     """Extract stashed DiffResults, run bundle analysis, update worst verdict."""
     stashed_diffs: list[DiffResult] = []
@@ -672,6 +675,7 @@ def _collect_bundle_result(
         old_map, new_map, stashed_diffs,
         manifest_path=manifest_path,
         bundle_system_providers=bundle_system_providers,
+        bundle_cohorts=bundle_cohorts,
     )
     if bundle_result is not None:
         bv = bundle_result.bundle_verdict.value
@@ -849,6 +853,12 @@ def _strip_diff_results_and_adjust_verdict(
 @click.option("--bundle-system-providers", "bundle_system_providers", default="",
               help="Comma-separated extra sonames to treat as system-provided "
                    "(extends the built-in libc/libstdc++/libgcc/libtbb allow-list).")
+@click.option("--bundle-cohort", "bundle_cohorts", multiple=True, metavar="PREFIX",
+              help="Declare a co-versioned library cohort by name prefix (e.g. "
+                   "'libonedal_'). Repeatable. Enables the BUNDLE_SONAME_SKEW check, "
+                   "which flags when some members of the cohort bump their major SONAME "
+                   "while siblings lag. Opt-in: with no --bundle-cohort, SONAME skew is "
+                   "never inferred from filenames (independent libraries are not compared).")
 @click.option("--no-bundle-analysis", "no_bundle_analysis", is_flag=True, default=False,
               help="Skip bundle-level cross-library analysis (debug/parity escape hatch). "
                    "Bundle findings catch intra-bundle symbol removals, signature drift "
@@ -892,6 +902,7 @@ def compare_release_cmd(
     jobs: int,
     manifest_path: Path | None,
     bundle_system_providers: str,
+    bundle_cohorts: tuple[str, ...],
     no_bundle_analysis: bool,
     scope_public_headers: bool,
 ) -> None:
@@ -992,6 +1003,7 @@ def compare_release_cmd(
                 library_results, old_map, new_map, worst_verdict,
                 manifest_path=manifest_path,
                 bundle_system_providers=bundle_system_providers,
+                bundle_cohorts=bundle_cohorts,
             )
 
         # Strip _diff_result from entries and bump verdict for removed libraries.
