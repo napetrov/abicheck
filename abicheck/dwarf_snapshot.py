@@ -730,15 +730,17 @@ class _DwarfSnapshotBuilder:
 
                 if target_tag in ("DW_TAG_structure_type", "DW_TAG_class_type",
                                   "DW_TAG_union_type"):
-                    if not target_name and name not in self._seen_type_names:
-                        # Anonymous struct/union — register under typedef name
-                        self._process_record_type_named(target, CU, name)
+                    if not target_name and qualified not in self._seen_type_names:
+                        # Anonymous struct/union — register under the qualified
+                        # typedef name so same-named typedefs in different
+                        # namespaces don't collide on the bare alias.
+                        self._process_record_type_named(target, CU, qualified)
                 elif target_tag == "DW_TAG_enumeration_type":
-                    if not target_name and name not in self._seen_enum_names:
-                        # Anonymous enum — register under typedef name
-                        self._process_enum_named(target, CU, name)
+                    if not target_name and qualified not in self._seen_enum_names:
+                        # Anonymous enum — register under the qualified typedef name
+                        self._process_enum_named(target, CU, qualified)
             except Exception:  # noqa: BLE001
-                log.debug("Failed to process typedef target for %s", name)
+                log.debug("Failed to process typedef target for %s", qualified)
 
         if qualified in self.typedefs:
             return  # first wins
