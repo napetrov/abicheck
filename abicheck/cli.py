@@ -171,6 +171,66 @@ def _sniff_text_format(path: Path) -> str:
     return "unknown"
 
 
+# GNU ld linker-script directives. The conventional ``libfoo.so`` development
+# symlink is frequently a tiny ASCII script such as ``INPUT(libfoo.so.1)`` or
+# ``GROUP ( /usr/lib/libfoo.so.1 AS_NEEDED ( ... ) )`` rather than an ELF file.
+_LD_SCRIPT_RE = re.compile(r"\b(?:INPUT|GROUP|OUTPUT_FORMAT)\s*\(")
+# Keywords that may appear as bare tokens inside INPUT()/GROUP() — never files.
+_LD_KEYWORDS = frozenset({"AS_NEEDED", "INPUT", "GROUP", "OUTPUT_FORMAT"})
+
+
+def _resolve_linker_script(path: Path) -> tuple[Path | None, bool]:
+    """Resolve a GNU ld linker script to the shared library it points at.
+
+    Returns ``(resolved_path, is_linker_script)``. ``is_linker_script`` is True
+    when *path* looks like a GNU ld script (so callers can emit a targeted hint
+    even when no target file could be located); ``resolved_path`` is the first
+    ``INPUT()``/``GROUP()`` member that exists next to the script, or *None*.
+    """
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(8192)
+        text = raw.decode("utf-8", errors="replace")
+    except OSError:
+        return None, False
+    # Strip C-style comments (real scripts start with ``/* GNU ld script */``).
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
+    if not _LD_SCRIPT_RE.search(text):
+        return None, False
+    # Collect candidate file tokens from inside INPUT()/GROUP() groups.
+    for group in re.findall(r"(?:INPUT|GROUP)\s*\(([^)]*)\)", text):
+        for tok in group.replace(",", " ").split():
+            if tok in _LD_KEYWORDS or tok.startswith(("-l", "-L", "(")):
+                continue
+            # Only consider tokens that name a library file.
+            if ".so" not in tok and not tok.endswith(".a"):
+                continue
+            candidate = Path(tok)
+            for cand in (candidate, path.parent / tok, path.parent / candidate.name):
+                if cand.is_file():
+                    return cand, True
+    return None, True
+
+
+def _maybe_follow_linker_script(path: Path) -> Path:
+    """Return the linker-script target if *path* is a resolvable GNU ld script.
+
+    Emits a one-line note when it follows a script; otherwise returns *path*
+    unchanged. Used by entry points that dispatch on binary format directly
+    (e.g. ``dump``) rather than through :func:`_resolve_input`.
+    """
+    target, is_ld = _resolve_linker_script(path)
+    if is_ld and target is not None and target.resolve() != path.resolve():
+        click.echo(
+            f"Note: '{path}' is a GNU ld linker script; following its "
+            f"INPUT()/GROUP() directive to '{target}'.",
+            err=True,
+        )
+        return target
+    return path
+
+
+
 def _dump_elf(
     path: Path, headers: list[Path], includes: list[Path],
     version: str, lang: str, *, dwarf_only: bool = False,
@@ -345,6 +405,26 @@ def _resolve_input(
             raise click.ClickException(
                 f"Failed to load JSON snapshot '{path}': {exc}"
             ) from exc
+
+    # GNU ld linker script (e.g. the ``libfoo.so`` dev symlink is the text
+    # ``INPUT(libfoo.so.1)``): follow it to the real shared library.
+    target, is_ld_script = _resolve_linker_script(path)
+    if is_ld_script:
+        if target is not None and target.resolve() != path.resolve():
+            click.echo(
+                f"Note: '{path}' is a GNU ld linker script; following its "
+                f"INPUT()/GROUP() directive to '{target}'.",
+                err=True,
+            )
+            return _resolve_input(
+                target, headers, includes, version, lang,
+                dwarf_only=dwarf_only, debug_format=debug_format,
+            )
+        raise click.UsageError(
+            f"'{path}' is a GNU ld linker script (INPUT/GROUP), not a binary, "
+            "and its target could not be located next to it. Pass the actual "
+            "shared library named in its INPUT(...) directive directly."
+        )
 
     raise click.UsageError(
         f"Cannot detect format of '{path}'. "
@@ -563,6 +643,13 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
 
     # Auto-detect binary format — PE/Mach-O skip the ELF/castxml path
     binary_fmt = _detect_binary_format(so_path)
+    if binary_fmt is None:
+        # The conventional ``libfoo.so`` dev symlink is often a GNU ld linker
+        # script; follow it to the real shared library before dispatching.
+        resolved = _maybe_follow_linker_script(so_path)
+        if resolved != so_path:
+            so_path = resolved
+            binary_fmt = _detect_binary_format(so_path)
     if debug_format is not None and binary_fmt in ("pe", "macho"):
         raise click.BadParameter(
             f"--{debug_format} is only supported for ELF binaries, not {binary_fmt.upper()}."

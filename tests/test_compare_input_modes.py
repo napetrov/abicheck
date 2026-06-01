@@ -135,6 +135,77 @@ class TestResolveInput:
             )
 
 
+# ── GNU ld linker-script inputs (the libfoo.so dev symlink case) ─────────
+
+
+class TestLinkerScriptInput:
+    """The conventional ``libfoo.so`` dev symlink is often a GNU ld linker
+    script (``INPUT(libfoo.so.1)``) rather than an ELF file. abicheck should
+    follow it to the real shared library instead of failing."""
+
+    def test_follows_input_directive(self, tmp_path):
+        from abicheck.cli import _resolve_linker_script
+        target = _write_fake_elf(tmp_path / "libfoo.so.1")
+        script = tmp_path / "libfoo.so"
+        script.write_text("INPUT(libfoo.so.1)\n", encoding="utf-8")
+        resolved, is_ld = _resolve_linker_script(script)
+        assert is_ld is True
+        assert resolved == target
+
+    def test_follows_group_with_comment_and_as_needed(self, tmp_path):
+        from abicheck.cli import _resolve_linker_script
+        target = _write_fake_elf(tmp_path / "libbar.so.6")
+        script = tmp_path / "libbar.so"
+        script.write_text(
+            "/* GNU ld script */\nGROUP ( libbar.so.6 AS_NEEDED ( ld.so ) )\n",
+            encoding="utf-8",
+        )
+        resolved, is_ld = _resolve_linker_script(script)
+        assert is_ld is True
+        assert resolved == target
+
+    def test_follows_absolute_path_target(self, tmp_path):
+        from abicheck.cli import _resolve_linker_script
+        target = _write_fake_elf(tmp_path / "libabs.so.2")
+        script = tmp_path / "libabs.so"
+        script.write_text(f"INPUT({target})\n", encoding="utf-8")
+        resolved, is_ld = _resolve_linker_script(script)
+        assert is_ld is True
+        assert resolved == target
+
+    def test_plain_text_is_not_a_linker_script(self, tmp_path):
+        from abicheck.cli import _resolve_linker_script
+        p = tmp_path / "notes.txt"
+        p.write_text("this is just text, not a script", encoding="utf-8")
+        resolved, is_ld = _resolve_linker_script(p)
+        assert is_ld is False
+        assert resolved is None
+
+    def test_maybe_follow_returns_original_for_non_script(self, tmp_path):
+        from abicheck.cli import _maybe_follow_linker_script
+        p = _write_fake_elf(tmp_path / "real.so.1")
+        assert _maybe_follow_linker_script(p) == p
+
+    def test_resolve_input_follows_script_to_elf_path(self, tmp_path):
+        # Following the script must reach the ELF parser (error references the
+        # resolved target) rather than a generic "Cannot detect format".
+        _write_fake_elf(tmp_path / "libfollow.so.1")
+        script = tmp_path / "libfollow.so"
+        script.write_text("INPUT(libfollow.so.1)\n", encoding="utf-8")
+        with pytest.raises(Exception, match="libfollow.so.1"):
+            _resolve_input(
+                script, headers=[], includes=[], version="1.0", lang="c++",
+            )
+
+    def test_unresolvable_script_gives_targeted_error(self, tmp_path):
+        script = tmp_path / "libmissing.so"
+        script.write_text("INPUT(libmissing.so.9)\n", encoding="utf-8")
+        with pytest.raises(Exception, match="linker script"):
+            _resolve_input(
+                script, headers=[], includes=[], version="1.0", lang="c++",
+            )
+
+
 # ── compare with .json + .json (backward compat) ────────────────────────
 
 
