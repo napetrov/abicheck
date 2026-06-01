@@ -203,13 +203,22 @@ def test_stripped_new_side_does_not_fabricate_type_removals():
 @pytest.mark.parametrize(
     "library,expected",
     [
+        # SONAMEs / paths
         ("libstdc++.so.6", True),
         ("/opt/gcc/lib64/libstdc++.so.6", True),
         ("libc++.so.1", True),
         ("libc++abi.so.1", True),
         ("libsupc++.a", True),
+        # ABICC short names (abicheck compat dump writes the -lib value)
+        ("stdc++", True),
+        ("c++", True),
+        ("c++abi", True),
+        ("supc++", True),
+        # non-runtime libraries must NOT match
         ("libtbb.so.12", False),
         ("libfoo.so.1", False),
+        ("libcurl.so.4", False),  # starts with 'lib' but 'curl' != runtime stem
+        ("Qt5Core", False),
         (None, False),
         ("", False),
     ],
