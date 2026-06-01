@@ -63,11 +63,25 @@ def discover_versions(roots: list[Path]) -> dict[str, Path]:
 
 
 def build_pairs(versions: list[str]) -> list[tuple[str, str, str]]:
-    """Adjacent pairs plus first->last ('far') for >=3 versions."""
+    """Adjacent pairs plus first->last ('far') for >=3 versions.
+
+    Labels match the committed artifacts and the report's methodology for the
+    canonical three-version run: the newest adjacent pair is ``adjacent``, the
+    older adjacent pair is ``mid``, and first->last is ``far``. Other version
+    counts fall back to ``stepN`` for the non-newest adjacent pairs.
+    """
     ordered = sorted(versions, key=lambda v: [int(x) for x in v.split(".")])
-    pairs = [(ordered[i], ordered[i + 1], "adjacent" if i + 2 == len(ordered)
-              else f"step{i}") for i in range(len(ordered) - 1)]
-    if len(ordered) >= 3:
+    n = len(ordered)
+    pairs: list[tuple[str, str, str]] = []
+    for i in range(n - 1):
+        if i == n - 2:
+            label = "adjacent"          # newest adjacent pair
+        elif n == 3 and i == 0:
+            label = "mid"               # matches committed onedal_mid_* tags
+        else:
+            label = f"step{i}"
+        pairs.append((ordered[i], ordered[i + 1], label))
+    if n >= 3:
         pairs.append((ordered[0], ordered[-1], "far"))
     return pairs
 
