@@ -44,6 +44,37 @@ _log = logging.getLogger(__name__)
 # Visibility levels that constitute the public ABI surface.
 _PUBLIC_VIS = (Visibility.PUBLIC, Visibility.ELF_ONLY)
 
+# Itanium RTTI artifact prefixes (typeinfo, typeinfo-name, vtable, VTT) followed
+# immediately by ``Z`` — the Itanium "local-name" production ``Z <encoding> E``.
+# An RTTI symbol of this shape belongs to a *function-local* type (a lambda
+# closure, or any class/struct declared inside a function body). Such a type can
+# never be named in a public header, so the presence/absence of its typeinfo is
+# build-dependent churn, not a public-ABI break. Filtering it here mirrors how
+# anonymous/lambda *types* are excluded from type diffing (model.is_non_abi_surface_type).
+_LOCAL_RTTI_PREFIXES = ("_ZTIZ", "_ZTSZ", "_ZTVZ", "_ZTTZ")
+
+
+# Sentinel the dumper writes for the type/return type of a symbol whose
+# signature is unknown — e.g. an ELF export from a stripped binary with no DWARF
+# or header info. Diffing a known type against "?" yields a phantom change
+# ("void → ?"), so type-bearing comparisons must treat "?" as "no evidence".
+_UNKNOWN_TYPE = "?"
+
+
+def _type_unknown(type_name: str | None) -> bool:
+    return type_name is None or type_name.strip() == _UNKNOWN_TYPE
+
+
+def _is_local_type_rtti(mangled: str) -> bool:
+    """True for typeinfo/vtable symbols of a function-local type (e.g. a lambda).
+
+    Regression: RD2-4 (validation) — protobuf patch releases churn
+    ``_ZTIZN…EUl…E_`` / ``_ZTSZN…`` typeinfo symbols for anonymous lambdas nested
+    in ``Printer::WithDefs/WithVars``; they were scored as public ``var_removed``
+    and drove a false ``BREAKING`` verdict on an ABI-compatible bump.
+    """
+    return mangled.startswith(_LOCAL_RTTI_PREFIXES)
+
 
 def _public_functions(snap: AbiSnapshot) -> dict[str, Function]:
     """Return public/ELF-only functions from *snap*."""
@@ -51,8 +82,16 @@ def _public_functions(snap: AbiSnapshot) -> dict[str, Function]:
 
 
 def _public_variables(snap: AbiSnapshot) -> dict[str, Variable]:
-    """Return public/ELF-only variables from *snap*."""
-    return {k: v for k, v in snap.variable_map.items() if v.visibility in _PUBLIC_VIS}
+    """Return public/ELF-only variables from *snap*.
+
+    Excludes RTTI/vtable symbols of function-local types (lambda closures and
+    other in-function types): they are not nameable public ABI and only churn
+    across builds (RD2-4).
+    """
+    return {
+        k: v for k, v in snap.variable_map.items()
+        if v.visibility in _PUBLIC_VIS and not _is_local_type_rtti(k)
+    }
 
 
 
@@ -100,6 +139,9 @@ def _check_removed_function(
 
 def _check_return_type_change(mangled: str, f_old: Function, f_new: Function) -> list[Change]:
     """Emit a change if the return type was modified."""
+    # RD2-5: a stripped side reports return_type "?"; that is unknown, not a change.
+    if _type_unknown(f_old.return_type) or _type_unknown(f_new.return_type):
+        return []
     if canonicalize_type_name(f_old.return_type) == canonicalize_type_name(f_new.return_type):
         return []
     return [Change(
@@ -113,6 +155,11 @@ def _check_return_type_change(mangled: str, f_old: Function, f_new: Function) ->
 
 def _check_params_change(mangled: str, f_old: Function, f_new: Function) -> list[Change]:
     """Emit a change if the parameter list was modified."""
+    # RD2-5: when either side's return type is the unknown sentinel ("?"), its
+    # whole signature (including params) is unresolved — a stripped ELF export.
+    # An empty param list there means "unknown", not "takes no arguments".
+    if _type_unknown(f_old.return_type) or _type_unknown(f_new.return_type):
+        return []
     old_params = [(canonicalize_type_name(p.type), p.kind) for p in f_old.params]
     new_params = [(canonicalize_type_name(p.type), p.kind) for p in f_new.params]
     if old_params == new_params:
@@ -424,6 +471,9 @@ def _diff_inline_hidden_friends(
 
 def _check_variable(mangled: str, v_old: Variable, v_new: Variable) -> list[Change]:
     """Compare a matched pair of public variables."""
+    # RD2-5: a stripped side reports type "?"; unknown is not a type change.
+    if _type_unknown(v_old.type) or _type_unknown(v_new.type):
+        return []
     if canonicalize_type_name(v_old.type) != canonicalize_type_name(v_new.type):
         return [Change(
             kind=ChangeKind.VAR_TYPE_CHANGED,
@@ -535,6 +585,10 @@ def _diff_pointer_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     for mangled, f_old in old_map.items():
         f_new = new_map.get(mangled)
         if f_new is None:
+            continue
+        # RD2-5: skip when either signature is unknown (stripped ELF export):
+        # pointer depths default to 0 and would read as phantom level changes.
+        if _type_unknown(f_old.return_type) or _type_unknown(f_new.return_type):
             continue
 
         # Return pointer depth

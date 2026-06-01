@@ -59,18 +59,14 @@ def _breaking_symbols(result) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
-# FP-3 — RTTI/typeinfo of an anonymous lambda must not be a breaking var_removed
+# FP-3 / RD2-4 — RTTI/typeinfo of an anonymous lambda must not be a breaking var_removed
 #   Real case: Protobuf 6.33.2 -> 6.33.5 (a *patch*) flagged BREAKING because
 #   `_ZTIZN6google8protobuf2io7Printer8WithDefs...EUlSt17basic_string...E_`
 #   (typeinfo for an internal lambda) "disappeared".  Lambda identity is not
-#   stable ABI.  Root cause: dumper._elf_classify_symbols() does not apply
-#   _is_abi_relevant_symbol(), and diff_symbols._var_removed has no _ZTI/_ZTS
-#   guard, so the symbol becomes a public Variable -> VAR_REMOVED (breaking).
+#   stable ABI.  Fixed in diff_symbols._public_variables: RTTI/vtable symbols of
+#   function-local types (Itanium ``_ZTIZ``/``_ZTSZ``/``_ZTVZ``/``_ZTTZ`` local-name
+#   production) are excluded from the public-variable surface.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(
-    strict=True,
-    reason=f"known FP-3: lambda RTTI removal scored as breaking; see {REPORT}",
-)
 def test_lambda_rtti_removal_is_not_breaking():
     lambda_rtti = "_ZTIZN3foo3barEvEUlvE_"  # typeinfo of a lambda defined in foo::bar()
     lambda_rtti_name = "_ZTSZN3foo3barEvEUlvE_"
@@ -95,6 +91,28 @@ def test_lambda_rtti_removal_is_not_breaking():
     assert result.verdict not in (Verdict.BREAKING,), (
         f"removing RTTI of an anonymous lambda must not read as an ABI break; "
         f"breaking symbols: {_breaking_symbols(result)}"
+    )
+    # The lambda RTTI symbols must not surface as findings at all.
+    assert lambda_rtti not in _breaking_symbols(result)
+    assert lambda_rtti_name not in _breaking_symbols(result)
+
+
+def test_public_type_rtti_removal_is_still_breaking():
+    """Guard against over-filtering: typeinfo/vtable of a NON-local (public,
+    nameable) type must still count as a break when removed (RD2-4)."""
+    public_rtti = "_ZTIN3foo3BarE"   # typeinfo for foo::Bar (not function-local)
+    public_vtable = "_ZTVN3foo3BarE"  # vtable for foo::Bar
+    old = _elf_snapshot(
+        variables=[
+            Variable(name=public_rtti, mangled=public_rtti, type="?", visibility=Visibility.ELF_ONLY),
+            Variable(name=public_vtable, mangled=public_vtable, type="?", visibility=Visibility.ELF_ONLY),
+        ]
+    )
+    new = _elf_snapshot(variables=[])
+    result = compare(old, new)
+    breaking = _breaking_symbols(result)
+    assert public_rtti in breaking or public_vtable in breaking, (
+        "removing typeinfo/vtable of a public, nameable type must still be a break"
     )
 
 
@@ -165,16 +183,22 @@ def test_anonymous_type_removal_is_not_breaking():
 #   removals.  Real case: libxml2 2.9.7 (DWARF) -> 2.9.9 (stripped) reported
 #   1149 breaks incl. `type_removed: _xmlNode` — a core public type that still
 #   exists.  Absence of debug info on the new side is absence of *evidence*, not
-#   evidence of removal.  Root cause: diff_types emits TYPE_REMOVED whenever a
-#   type is absent from new_map, with no guard for asymmetric type coverage.
+#   evidence of removal.  Fixed in diff_types._removals_are_unconfirmed:
+#   TYPE_REMOVED/TYPEDEF_REMOVED are suppressed when the new side is a stripped
+#   binary (elf_only_mode, exports symbols, no type evidence) while the old side
+#   has type info. The dwarf detector still emits DWARF_INFO_MISSING so the
+#   coverage gap is disclosed.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(
-    strict=True,
-    reason=f"known FP-4: mixed DWARF/stripped fabricates removals; see {REPORT}",
-)
+def _exported_func(mangled: str):
+    from abicheck.model import Function
+    return Function(name=mangled, mangled=mangled, return_type="?",
+                    visibility=Visibility.ELF_ONLY)
+
+
 def test_stripped_new_side_does_not_fabricate_type_removals():
-    # old: rich DWARF types
+    # old: rich DWARF types + exported symbols
     old = _elf_snapshot(
+        functions=[_exported_func("xmlNewNode"), _exported_func("xmlFreeDoc")],
         types=[
             RecordType(
                 name="_xmlNode",
@@ -183,16 +207,64 @@ def test_stripped_new_side_does_not_fabricate_type_removals():
                 fields=[TypeField(name="type", type="int", offset_bits=0)],
             ),
             RecordType(name="_xmlDoc", kind="struct", size_bits=512),
-        ]
+        ],
     )
-    # new: same library, but the binary is stripped -> zero type DWARF
-    new = _elf_snapshot(types=[])
+    # new: same library, but the binary is stripped -> exports the same symbols,
+    # zero type DWARF (a real stripped .so still has a dynamic symbol table).
+    new = _elf_snapshot(
+        functions=[_exported_func("xmlNewNode"), _exported_func("xmlFreeDoc")],
+        types=[],
+    )
     new.dwarf = None
     result = compare(old, new)
     assert result.verdict not in (Verdict.BREAKING,), (
         f"types absent only because the new side is stripped must not read as "
         f"removals; breaking symbols: {_breaking_symbols(result)}"
     )
+    from abicheck.checker_policy import ChangeKind
+    assert not any(c.kind == ChangeKind.TYPE_REMOVED for c in result.changes)
+
+
+def test_real_removal_still_reported_when_symbols_also_dropped():
+    """The stripped-side guard must NOT hide a genuine class removal: when the
+    removed type's exported methods are also gone, symbol retention is low and
+    the removal is real (validation RD2-5; examples/case107)."""
+    from abicheck.checker_policy import BREAKING_KINDS
+    old = _elf_snapshot(
+        functions=[_exported_func("_ZN5mylib3Foo3barEv"), _exported_func("_ZN5mylib3FooC1Ev")],
+        types=[RecordType(name="mylib::Foo", kind="class", size_bits=64)],
+    )
+    # new: class and ALL its methods gone (retention 0%), only a new free fn.
+    new = _elf_snapshot(functions=[_exported_func("_ZN5mylib5otherEv")], types=[])
+    new.dwarf = None
+    result = compare(old, new)
+    assert any(c.kind in BREAKING_KINDS for c in result.changes), (
+        "removing a class together with its exported methods must still break; "
+        f"changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
+    )
+
+
+def test_unknown_signature_not_flagged_as_change():
+    """A stripped ELF export reports return_type/type '?' — diffing a known type
+    against '?' must not fabricate func_return/params/var_type changes (RD2-5)."""
+    from abicheck.checker_policy import ChangeKind
+    from abicheck.model import Function, Param
+    old = _elf_snapshot(
+        functions=[Function(name="f", mangled="_Z1fi", return_type="int",
+                            params=[Param(name="a", type="int")], visibility=Visibility.PUBLIC)],
+        variables=[Variable(name="g", mangled="g", type="int", visibility=Visibility.PUBLIC)],
+    )
+    # new side: same symbols, but signature/type unknown (stripped).
+    new = _elf_snapshot(
+        functions=[Function(name="f", mangled="_Z1fi", return_type="?",
+                            params=[], visibility=Visibility.PUBLIC)],
+        variables=[Variable(name="g", mangled="g", type="?", visibility=Visibility.PUBLIC)],
+    )
+    result = compare(old, new)
+    phantom = {ChangeKind.FUNC_RETURN_CHANGED, ChangeKind.FUNC_PARAMS_CHANGED,
+               ChangeKind.VAR_TYPE_CHANGED, ChangeKind.RETURN_POINTER_LEVEL_CHANGED}
+    offenders = [c.kind.value for c in result.changes if c.kind in phantom]
+    assert offenders == [], f"unknown ('?') signatures must not be diffed: {offenders}"
 
 
 # ---------------------------------------------------------------------------
