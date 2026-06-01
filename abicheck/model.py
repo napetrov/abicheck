@@ -55,7 +55,7 @@ def is_compiler_internal_type(name: str) -> bool:
 # varies by compiler/LTO, so diffing them produces toolchain-artifact false
 # positives rather than real ABI changes (validation/REPORT.md FP-1).
 _STDLIB_TYPE_NAMESPACE_PREFIXES: tuple[str, ...] = (
-    "std::", "__gnu_cxx::", "__cxxabiv1::", "__cxx11::",
+    "std::", "__gnu_cxx::", "__gnu_debug::", "__cxxabiv1::", "__cxx11::",
 )
 
 # Substrings that mark an anonymous / local type with no stable cross-version
