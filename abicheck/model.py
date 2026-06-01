@@ -47,6 +47,99 @@ def is_compiler_internal_type(name: str) -> bool:
     """Return True if *name* is a compiler internal type that should be excluded."""
     return bool(name) and name in COMPILER_INTERNAL_TYPES
 
+
+# Standard-library / runtime namespaces whose *type layout* is owned by the
+# toolchain (libstdc++ / libc++ / Itanium C++ ABI), not by the library under
+# inspection.  These types leak into DWARF when a library inlines STL usage; the
+# layout the compiler happens to emit (and which static-member DIEs it keeps)
+# varies by compiler/LTO, so diffing them produces toolchain-artifact false
+# positives rather than real ABI changes (validation/REPORT.md FP-1).
+_STDLIB_TYPE_NAMESPACE_PREFIXES: tuple[str, ...] = (
+    "std::", "__gnu_cxx::", "__gnu_debug::", "__cxxabiv1::", "__cxx11::",
+)
+
+# Substrings that mark an anonymous / local type with no stable cross-version
+# ABI identity — lambdas and unnamed struct/union/enum (validation/REPORT.md
+# FP-2). gcc renders these as "<lambda...>", "{lambda...}", "(anonymous ...)";
+# clang/llvm uses "(unnamed ...)".
+_ANONYMOUS_TYPE_MARKERS: tuple[str, ...] = (
+    "<lambda", "{lambda", "(anonymous", "(unnamed", "<unnamed",
+)
+
+
+def is_non_abi_surface_type(name: str, *, exclude_stdlib_namespaces: bool = True) -> bool:
+    """Return True if *name* is a type that is never the inspected library's own
+    ABI surface and must be excluded from type diffing.
+
+    Superset of :func:`is_compiler_internal_type`, additionally covering
+    standard-library / runtime namespaces and anonymous (lambda / unnamed)
+    types.  Single source of truth so the DWARF extractor and the type differ
+    agree on what counts as surface.
+
+    *exclude_stdlib_namespaces* must be set to ``False`` when the inspected DSO
+    is itself the C++ runtime (libstdc++ / libc++): there ``std::`` /
+    ``__gnu_cxx::`` records ARE the library's own ABI surface, so suppressing
+    them would hide real breaks (see :func:`is_cxx_runtime_library`).
+    """
+    if not name:
+        return False
+    if name in COMPILER_INTERNAL_TYPES:
+        return True
+    if exclude_stdlib_namespaces and name.startswith(_STDLIB_TYPE_NAMESPACE_PREFIXES):
+        return True
+    return any(marker in name for marker in _ANONYMOUS_TYPE_MARKERS)
+
+
+# Core stems of the C++ runtime / standard-library DSOs (without the ``lib``
+# prefix).  When abicheck is pointed at one of *these* libraries, std::/
+# __gnu_cxx:: types are the surface under test and must NOT be filtered out
+# (Codex review on PR #273).  Order matters: longer stems first so the
+# startswith check is unambiguous.
+_CXX_RUNTIME_CORE_STEMS: tuple[str, ...] = (
+    "stdc++", "c++abi", "supc++", "c++",
+)
+
+
+def is_cxx_runtime_library(library: str | None) -> bool:
+    """Return True if *library* names a C++ runtime / standard-library DSO that
+    owns the ``std::`` namespace.
+
+    Accepts both SONAMEs (``libstdc++.so.6``, ``/usr/lib/libc++.so.1``) and the
+    short names that ``abicheck compat dump`` writes from the ABICC ``-lib``
+    flag (``stdc++``, ``c++``): the optional ``lib`` prefix is stripped before
+    matching the core stems.
+    """
+    if not library:
+        return False
+    base = library.rsplit("/", 1)[-1]
+    if base.startswith("lib"):
+        base = base[3:]
+    return base.startswith(_CXX_RUNTIME_CORE_STEMS)
+
+
+def stdlib_namespaces_excluded(old: AbiSnapshot, new: AbiSnapshot) -> bool:
+    """Return True when ``std::``/runtime namespaces should be filtered out of
+    type diffing as leaked dependencies.
+
+    False only when *either* side IS the C++ runtime (libstdc++ / libc++), where
+    those types are the surface under test.  Single source of truth so every
+    registered detector that consumes ``snapshot.types`` agrees on whether to
+    keep std:: records (validation/REPORT.md FP-1; Codex reviews on PR #273).
+    """
+    return not (
+        is_cxx_runtime_library(old.library) or is_cxx_runtime_library(new.library)
+    )
+
+
+def is_abi_surface_type_name(name: str, *, exclude_stdlib: bool) -> bool:
+    """Return True if a type *name* belongs to the inspected library's ABI
+    surface (i.e. is NOT filtered as std::/anonymous/compiler-internal).
+
+    Convenience inverse of :func:`is_non_abi_surface_type` for use in the
+    ``{t.name: t for t in snap.types if is_abi_surface_type_name(...)}`` idiom
+    shared across detector modules."""
+    return not is_non_abi_surface_type(name, exclude_stdlib_namespaces=exclude_stdlib)
+
 # ---------------------------------------------------------------------------
 # Type name canonicalization — normalise type names for reliable matching.
 # ---------------------------------------------------------------------------
