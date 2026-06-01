@@ -704,3 +704,70 @@ def test_sc_toolchain_flag_drift(tmp_path: Path) -> None:
     doc = json.loads(res.output)
     assert doc["verdict"] == "COMPATIBLE"
     assert any(c["kind"] == "toolchain_flag_drift" for c in doc["changes"])
+
+
+def test_sc_cxx_std_floor(tmp_path: Path) -> None:
+    # The toolchain use case behind the probe matrix: identical binary surfaces,
+    # but the build raises the C++ standard floor 17 → 20. A per-binary diff is
+    # NO_CHANGE; passing the probe matrices folds CXX_STANDARD_FLOOR_RAISED into
+    # the verdict, surfacing the per-consumer source break (API_BREAK, exit 2).
+    from abicheck.probe_harness import (
+        MatrixSnapshot,
+        ProbeResult,
+        write_matrix_snapshot,
+    )
+
+    same = [_fn("a")]
+    o = _save(_lib("1", list(same)), tmp_path / "o.json")
+    n = _save(_lib("2", list(same)), tmp_path / "n.json")
+    assert _cli("compare", o, n).exit_code == 0  # binary surface unchanged
+
+    def _matrix(version: str, std: int) -> MatrixSnapshot:
+        return MatrixSnapshot(
+            library="libfoo",
+            version=version,
+            spec_name="t",
+            cxx_stds={"a": std},
+            results=[
+                ProbeResult(
+                    configuration_id="a",
+                    probe_id="p0",
+                    snapshot=_lib(version, list(same)),
+                )
+            ],
+        )
+
+    om, nm = str(tmp_path / "om.json"), str(tmp_path / "nm.json")
+    write_matrix_snapshot(_matrix("1", 17), om)
+    write_matrix_snapshot(_matrix("2", 20), nm)
+    res = _cli(
+        "compare",
+        o,
+        n,
+        "--format",
+        "json",
+        "--probe-matrix-old",
+        om,
+        "--probe-matrix-new",
+        nm,
+    )
+    assert res.exit_code == 2
+    doc = json.loads(res.stdout)
+    assert doc["verdict"] == "API_BREAK"
+    assert any(c["kind"] == "cxx_standard_floor_raised" for c in doc["changes"])
+
+
+def test_sc_linux_elf_baseline(tmp_path: Path) -> None:
+    # The validated baseline platform: an explicit ELF compare (platform="elf",
+    # SONAME-versioned) where a public symbol is removed → binary break (exit 4)
+    # with a major-bump recommendation, as a consumer would hit at load time.
+    from abicheck.elf_metadata import ElfMetadata
+
+    elf = ElfMetadata(soname="libfoo.so.1")
+    old = _lib("1", [_fn("a"), _fn("b")], platform="elf", elf=elf)
+    new = _lib("2", [_fn("a")], platform="elf", elf=ElfMetadata(soname="libfoo.so.1"))
+    res = _compare(tmp_path, old, new, "--format", "json")
+    assert res.exit_code == 4
+    doc = json.loads(res.output)
+    assert doc["verdict"] == "BREAKING"
+    assert doc["release_recommendation"]["version_bump"] == "major"

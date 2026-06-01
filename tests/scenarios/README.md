@@ -21,10 +21,10 @@ file. `tests/test_scenarios.py` merges every `tests/scenarios/*.yaml`:
 | `reporting.yaml` | report formats — JSON contract, SARIF, JUnit, HTML, review digest |
 | `release_management.yaml` | release recommendation, offline snapshots, baseline registry |
 | `consumer_deployment.yaml` | compare-release, appcompat, stack-check/deps, ABICC, Debian, MCP (planned) |
-| `platform_coverage.yaml` | native Windows PE/macOS Mach-O compare, plugin host↔plugin contract (planned) |
+| `platform_coverage.yaml` | Linux ELF baseline (automated); native Windows PE/macOS Mach-O, plugin host↔plugin contract (planned) |
 | `archetype_coverage.yaml` | kernel-BTF, SYCL plugin, static library, header-only (planned) |
 
-There are currently **42 scenarios** (26 automated end-to-end + 16 planned).
+There are currently **44 scenarios** (28 automated end-to-end + 16 planned).
 
 Add a new group by dropping in a new `*.yaml`; add a scenario by appending to an
 existing group. Scenario ids must be unique across all files.

@@ -1,12 +1,31 @@
-# Scenario group: platform & archetype coverage (planned — need native
-# PE/Mach-O binaries or a host/plugin pair, so they are defined now and
-# automated once the cross-platform e2e lanes land). These close the
-# documented G1 (Windows/macOS e2e) and G5 (plugin contract) gaps.
+# Scenario group: platform coverage. The Linux ELF baseline is automated (it is
+# the CI-validated reference platform); the native PE/Mach-O and host/plugin
+# lanes are planned — they need native binaries, so they are defined now and
+# automated once the cross-platform e2e lanes land. These close the documented
+# G1 (Windows/macOS e2e) and G5 (plugin contract) gaps.
 #
 # See tests/scenarios/README.md for the catalog format and how it is validated.
 schema_version: 1
 
 scenarios:
+  - id: SC-LINUX-ELF-BASELINE
+    title: Linux ELF compare — the CI-validated reference platform
+    persona: Library maintainer (Linux)
+    narrative: >
+      Linux ELF is abicheck's validated baseline platform. A SONAME-versioned
+      shared object drops a public symbol; comparing the two ELF snapshots must
+      report a binary break (exit 4) and recommend a major bump / SONAME action,
+      exactly as every consumer would experience at load time. This anchors the
+      platform axis with an automated end-to-end ELF flow.
+    flow:
+      - abicheck compare old.json new.json
+    expected:
+      exit_code: 4
+      verdict: BREAKING
+    validates: UC-PLAT-linux-elf
+    automated: true
+    test: test_sc_linux_elf_baseline
+
   - id: SC-WINDOWS-PE-COMPARE
     title: Compare two native Windows PE/COFF DLLs (MSVC + PDB)
     persona: Windows library maintainer

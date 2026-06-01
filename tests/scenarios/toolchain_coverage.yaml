@@ -63,3 +63,24 @@ scenarios:
     validates: UC-TC-flag-drift
     automated: true
     test: test_sc_toolchain_flag_drift
+
+  - id: SC-CXX-STD-FLOOR
+    title: Raised C++ standard floor is a per-consumer source break
+    persona: Library maintainer (header-driven C++ contract)
+    narrative: >
+      The binary surface is unchanged, but a build raises the minimum C++
+      standard a consumer must compile with (17 → 20). That is invisible to a
+      per-binary diff yet breaks every consumer still on the old standard. Feeding
+      the build-config probe matrices to compare folds CXX_STANDARD_FLOOR_RAISED
+      into the verdict, turning a NO_CHANGE binary diff into an API_BREAK (exit 2).
+      (Companion to SC-PROBE-MATRIX-GATE, which validates the probe-matrix
+      *workflow*; this scenario validates the *toolchain* use case it surfaces.)
+    flow:
+      - abicheck compare old.json new.json --probe-matrix-old old.matrix.json --probe-matrix-new new.matrix.json
+    expected:
+      exit_code: 2
+      verdict: API_BREAK
+      contains_kind: cxx_standard_floor_raised
+    validates: UC-TC-cxx-standard-floor
+    automated: true
+    test: test_sc_cxx_std_floor
