@@ -1,0 +1,11 @@
+{
+  "total": 100,
+  "nonzero_rc": 2,
+  "tracebacks": 0,
+  "no_output": 2,
+  "non_compatible_verdict": 0,
+  "fp_breaks": 0,
+  "kind_histogram": {
+    "visibility_leak": 46
+  }
+}
