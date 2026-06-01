@@ -30,17 +30,8 @@ from .model import (
     TypeField,
     canonicalize_type_name,
 )
-from .model import is_cxx_runtime_library as _is_cxx_runtime_library
 from .model import is_non_abi_surface_type as _is_non_abi_surface_type
-
-
-def _exclude_stdlib_namespaces(old: AbiSnapshot, new: AbiSnapshot) -> bool:
-    """Whether ``std::``/runtime namespaces are leaked dependencies (filter them)
-    rather than the library's own surface.  False only when the inspected DSO IS
-    the C++ runtime (libstdc++ / libc++), where those types ARE the surface."""
-    return not (
-        _is_cxx_runtime_library(old.library) or _is_cxx_runtime_library(new.library)
-    )
+from .model import stdlib_namespaces_excluded as _exclude_stdlib_namespaces
 
 
 def _is_abi_surface_type(t: RecordType, *, exclude_stdlib: bool) -> bool:

@@ -29,7 +29,13 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from .model import AbiSnapshot, Function, Visibility
+from .model import (
+    AbiSnapshot,
+    Function,
+    Visibility,
+    is_abi_surface_type_name,
+    stdlib_namespaces_excluded,
+)
 
 
 @dataclass(frozen=True)
@@ -109,8 +115,9 @@ def _match_record_fields(
     old: AbiSnapshot, new: AbiSnapshot
 ) -> Iterator[TypeSlotChange]:
     """Yield field-spelling changes for record types present in both snapshots."""
-    old_types = {t.name: t for t in old.types}
-    new_types = {t.name: t for t in new.types}
+    excl = stdlib_namespaces_excluded(old, new)
+    old_types = {t.name: t for t in old.types if is_abi_surface_type_name(t.name, exclude_stdlib=excl)}
+    new_types = {t.name: t for t in new.types if is_abi_surface_type_name(t.name, exclude_stdlib=excl)}
     for name in set(old_types) & set(new_types):
         nt = new_types[name]
         new_fields = {f.name: f for f in nt.fields}

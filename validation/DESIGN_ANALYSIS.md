@@ -45,6 +45,14 @@ namespace-qualified; it now qualifies typedefs with their scope too, so
 `std`-nested typedefs (e.g. `std::vector<int>::size_type`) carry their `std::`
 prefix and the filter recognises them.
 
+To stop the filter being re-bypassed by detectors in *other* modules, the
+predicate now lives in `model.py` as the shared `stdlib_namespaces_excluded()` /
+`is_abi_surface_type_name()` (single source of truth, no import cycle — `model`
+is a leaf). It is applied in `diff_types`, **and** in the cross-module type-map
+detectors `diff_symbols._diff_access_levels` / `_diff_anon_fields` and
+`diff_type_spellings._match_record_fields` — which previously still emitted e.g.
+`FIELD_ACCESS_CHANGED` (`API_BREAK`) on leaked `std::` records.
+
 **Guard rail.** The std:: exclusion is scoped: when the inspected DSO *is* the
 C++ runtime (`libstdc++`/`libc++`/`libc++abi`/`libsupc++`, via
 `model.is_cxx_runtime_library`), `std::` records are that library's own surface

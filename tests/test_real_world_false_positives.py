@@ -22,6 +22,7 @@ from abicheck.checker import compare
 from abicheck.checker_policy import Verdict
 from abicheck.model import (
     AbiSnapshot,
+    AccessLevel,
     EnumMember,
     EnumType,
     RecordType,
@@ -342,3 +343,34 @@ def test_qualified_public_typedef_removal_still_breaking():
     assert _breaking_symbols(result) or result.verdict in (
         Verdict.BREAKING, Verdict.API_BREAK,
     ), "removing a genuine public typedef must still be reported"
+
+
+def _record_field_access(library, old_access, new_access):
+    tname = "std::__detail::_Node"
+    old = _elf_snapshot(name=library, types=[
+        RecordType(name=tname, kind="class",
+                   fields=[TypeField(name="x", type="int", access=old_access)])])
+    new = _elf_snapshot(name=library, types=[
+        RecordType(name=tname, kind="class",
+                   fields=[TypeField(name="x", type="int", access=new_access)])])
+    return compare(old, new)
+
+
+def test_stdlib_field_access_change_is_filtered_for_a_normal_library():
+    """A std:: record reached by a cross-module detector (FIELD_ACCESS_CHANGED in
+    diff_symbols) must also be filtered — the surface predicate is shared across
+    detector modules, not just diff_types (Codex review on PR #273)."""
+    result = _record_field_access("libtbb.so.12", AccessLevel.PUBLIC, AccessLevel.PRIVATE)
+    assert result.verdict not in (Verdict.BREAKING, Verdict.API_BREAK), (
+        f"std:: field access churn in a non-runtime library must stay filtered; "
+        f"kinds: {[c.kind.value for c in result.changes]}"
+    )
+
+
+def test_stdlib_field_access_change_is_breaking_when_target_is_the_runtime():
+    """The same std:: field access narrowing IS a source break for libstdc++."""
+    result = _record_field_access("libstdc++.so.6", AccessLevel.PUBLIC, AccessLevel.PRIVATE)
+    assert result.verdict in (Verdict.BREAKING, Verdict.API_BREAK), (
+        f"std:: field access narrowing in libstdc++ itself must still be reported; "
+        f"kinds: {[c.kind.value for c in result.changes]}"
+    )

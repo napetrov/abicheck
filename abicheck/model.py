@@ -116,6 +116,30 @@ def is_cxx_runtime_library(library: str | None) -> bool:
         base = base[3:]
     return base.startswith(_CXX_RUNTIME_CORE_STEMS)
 
+
+def stdlib_namespaces_excluded(old: AbiSnapshot, new: AbiSnapshot) -> bool:
+    """Return True when ``std::``/runtime namespaces should be filtered out of
+    type diffing as leaked dependencies.
+
+    False only when *either* side IS the C++ runtime (libstdc++ / libc++), where
+    those types are the surface under test.  Single source of truth so every
+    registered detector that consumes ``snapshot.types`` agrees on whether to
+    keep std:: records (validation/REPORT.md FP-1; Codex reviews on PR #273).
+    """
+    return not (
+        is_cxx_runtime_library(old.library) or is_cxx_runtime_library(new.library)
+    )
+
+
+def is_abi_surface_type_name(name: str, *, exclude_stdlib: bool) -> bool:
+    """Return True if a type *name* belongs to the inspected library's ABI
+    surface (i.e. is NOT filtered as std::/anonymous/compiler-internal).
+
+    Convenience inverse of :func:`is_non_abi_surface_type` for use in the
+    ``{t.name: t for t in snap.types if is_abi_surface_type_name(...)}`` idiom
+    shared across detector modules."""
+    return not is_non_abi_surface_type(name, exclude_stdlib_namespaces=exclude_stdlib)
+
 # ---------------------------------------------------------------------------
 # Type name canonicalization — normalise type names for reliable matching.
 # ---------------------------------------------------------------------------
