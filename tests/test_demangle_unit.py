@@ -415,3 +415,35 @@ class TestFindingB_Phase3NoPoisonOnFailure:
                 _mod.demangle_batch([sym])
         # c++filt ran successfully but couldn't demangle → FAIL cache entry is correct.
         assert sym in _mod._BATCH_CACHE_FAIL
+
+
+class TestDemangleText:
+    """``demangle_text`` rewrites mangled tokens embedded in free-form text,
+    leaving prose (and unresolvable tokens) untouched. Deterministic via a
+    stubbed batch demangler so it passes where no c++filt/cxxfilt exists."""
+
+    def test_replaces_known_tokens(self, monkeypatch):
+        monkeypatch.setattr(_mod, "demangle_batch", lambda syms: {"_Z3foov": "foo()"})
+        out = _mod.demangle_text("New public function: _Z3foov; see also _Z3foov.")
+        assert out == "New public function: foo(); see also foo()."
+
+    def test_leaves_unresolved_tokens_unchanged(self, monkeypatch):
+        monkeypatch.setattr(_mod, "demangle_batch", lambda syms: {})
+        assert _mod.demangle_text("_ZUnresolved stays as-is") == "_ZUnresolved stays as-is"
+
+    def test_noop_and_no_batch_call_without_tokens(self, monkeypatch):
+        calls = {"n": 0}
+
+        def _fake(syms):
+            calls["n"] += 1
+            return {}
+
+        monkeypatch.setattr(_mod, "demangle_batch", _fake)
+        assert _mod.demangle_text("just plain prose, no symbols") == "just plain prose, no symbols"
+        assert calls["n"] == 0
+
+    def test_real_demangler_when_available(self):
+        # Integration with whatever demangler exists; skip if none is present.
+        if _mod.demangle("_Z3foov") is None:
+            pytest.skip("no c++filt/cxxfilt demangler available")
+        assert "foo()" in _mod.demangle_text("call _Z3foov now")

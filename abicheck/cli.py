@@ -171,6 +171,82 @@ def _sniff_text_format(path: Path) -> str:
     return "unknown"
 
 
+# GNU ld linker-script directives. The conventional ``libfoo.so`` development
+# symlink is frequently a tiny ASCII script such as ``INPUT(libfoo.so.1)`` or
+# ``GROUP ( /usr/lib/libfoo.so.1 AS_NEEDED ( ... ) )`` rather than an ELF file.
+_LD_SCRIPT_RE = re.compile(r"\b(?:INPUT|GROUP|OUTPUT_FORMAT)\s*\(")
+# Keywords that may appear as bare tokens inside INPUT()/GROUP() — never files.
+_LD_KEYWORDS = frozenset({"AS_NEEDED", "INPUT", "GROUP", "OUTPUT_FORMAT"})
+
+
+def _resolve_linker_script(path: Path) -> tuple[Path | None, bool]:
+    """Resolve a GNU ld linker script to the shared library it points at.
+
+    Returns ``(resolved_path, is_linker_script)``. ``is_linker_script`` is True
+    when *path* looks like a GNU ld script (so callers can emit a targeted hint
+    even when no target file could be located); ``resolved_path`` is the first
+    ``INPUT()``/``GROUP()`` member that exists next to the script, or *None*.
+    """
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(8192)
+        text = raw.decode("utf-8", errors="replace")
+    except OSError:
+        return None, False
+    # Strip C-style comments (real scripts start with ``/* GNU ld script */``).
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
+    if not _LD_SCRIPT_RE.search(text):
+        return None, False
+    # Collect candidate file tokens from inside INPUT()/GROUP() groups.
+    for group in re.findall(r"(?:INPUT|GROUP)\s*\(([^)]*)\)", text):
+        for tok in group.replace(",", " ").split():
+            if tok in _LD_KEYWORDS or tok.startswith(("-l", "-L", "(")):
+                continue
+            # Only consider tokens that name a library file.
+            if ".so" not in tok and not tok.endswith(".a"):
+                continue
+            candidate = Path(tok)
+            for cand in (candidate, path.parent / tok, path.parent / candidate.name):
+                if cand.is_file():
+                    return cand, True
+    return None, True
+
+
+def _maybe_follow_linker_script(path: Path) -> Path:
+    """Return the linker-script target if *path* is a resolvable GNU ld script.
+
+    Emits a one-line note when it follows a script; otherwise returns *path*
+    unchanged. Used by entry points that dispatch on binary format directly
+    (e.g. ``dump``) rather than through :func:`_resolve_input`.
+    """
+    target, is_ld = _resolve_linker_script(path)
+    if is_ld and target is not None and target.resolve() != path.resolve():
+        click.echo(
+            f"Note: '{path}' is a GNU ld linker script; following its "
+            f"INPUT()/GROUP() directive to '{target}'.",
+            err=True,
+        )
+        return target
+    return path
+
+
+def _normalize_binary_input(path: Path) -> tuple[Path, str | None]:
+    """Detect a binary input's format, following GNU ld linker scripts.
+
+    Returns ``(resolved_path, format)``. When *path* is a linker script that
+    resolves to a real shared library, the resolved path and *its* format are
+    returned so downstream metadata collection and dependency analysis operate
+    on the actual DSO rather than the text script.
+    """
+    fmt = _detect_binary_format(path)
+    if fmt is None:
+        resolved = _maybe_follow_linker_script(path)
+        if resolved != path:
+            return resolved, _detect_binary_format(resolved)
+    return path, fmt
+
+
+
 def _dump_elf(
     path: Path, headers: list[Path], includes: list[Path],
     version: str, lang: str, *, dwarf_only: bool = False,
@@ -345,6 +421,26 @@ def _resolve_input(
             raise click.ClickException(
                 f"Failed to load JSON snapshot '{path}': {exc}"
             ) from exc
+
+    # GNU ld linker script (e.g. the ``libfoo.so`` dev symlink is the text
+    # ``INPUT(libfoo.so.1)``): follow it to the real shared library.
+    target, is_ld_script = _resolve_linker_script(path)
+    if is_ld_script:
+        if target is not None and target.resolve() != path.resolve():
+            click.echo(
+                f"Note: '{path}' is a GNU ld linker script; following its "
+                f"INPUT()/GROUP() directive to '{target}'.",
+                err=True,
+            )
+            return _resolve_input(
+                target, headers, includes, version, lang,
+                dwarf_only=dwarf_only, debug_format=debug_format,
+            )
+        raise click.UsageError(
+            f"'{path}' is a GNU ld linker script (INPUT/GROUP), not a binary, "
+            "and its target could not be located next to it. Pass the actual "
+            "shared library named in its INPUT(...) directive directly."
+        )
 
     raise click.UsageError(
         f"Cannot detect format of '{path}'. "
@@ -561,8 +657,10 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
         _print_data_sources(so_path, bool(headers))
         return
 
-    # Auto-detect binary format — PE/Mach-O skip the ELF/castxml path
-    binary_fmt = _detect_binary_format(so_path)
+    # Auto-detect binary format — PE/Mach-O skip the ELF/castxml path. The
+    # conventional ``libfoo.so`` dev symlink is often a GNU ld linker script;
+    # follow it to the real shared library before dispatching.
+    so_path, binary_fmt = _normalize_binary_input(so_path)
     if debug_format is not None and binary_fmt in ("pe", "macho"):
         raise click.BadParameter(
             f"--{debug_format} is only supported for ELF binaries, not {binary_fmt.upper()}."
@@ -891,6 +989,7 @@ def _render_output(
     stat: bool = False,
     severity_config: SeverityConfig | None = None,
     show_recommendation: bool = False,
+    demangle: bool = False,
 ) -> str:
     """Render comparison result in the requested output format."""
     from .service import render_output
@@ -900,6 +999,7 @@ def _render_output(
         report_mode=report_mode, show_impact=show_impact,
         stat=stat, severity_config=severity_config,
         show_recommendation=show_recommendation,
+        demangle=demangle,
     )
 
 
@@ -951,8 +1051,10 @@ def _run_compare_pair(
     scope_to_public_surface: bool = False,
 ) -> tuple[DiffResult, AbiSnapshot, AbiSnapshot]:
     """Run compare for one old/new pair and return result + resolved snapshots."""
-    old_fmt = _detect_binary_format(old_input)
-    new_fmt = _detect_binary_format(new_input)
+    # Follow GNU ld linker scripts up front so metadata/dependency analysis use
+    # the resolved DSO, not the text script.
+    old_input, old_fmt = _normalize_binary_input(old_input)
+    new_input, new_fmt = _normalize_binary_input(new_input)
 
     old = _resolve_input(
         old_input,
@@ -1353,6 +1455,10 @@ def _finalize_compare_result(
               help="Output format. 'review' emits a compact GitHub-facing digest "
                    "(verdict + counts + release recommendation + manual-review banner) "
                    "suitable for a job summary or PR comment.")
+@click.option("--demangle/--no-demangle", default=False, show_default=True,
+              help="Demangle C++ symbol names in human-facing output (markdown, "
+                   "review). Recommended for C++ libraries; machine formats "
+                   "(json/sarif/junit) always keep raw mangled symbols.")
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
               help="Suppression file (YAML) to filter known/intentional changes.")
@@ -1492,7 +1598,7 @@ def compare_cmd(
     old_headers_only: tuple[Path, ...], new_headers_only: tuple[Path, ...],
     old_includes_only: tuple[Path, ...], new_includes_only: tuple[Path, ...],
     old_version: str, new_version: str,
-    fmt: str, output: Path | None,
+    fmt: str, demangle: bool, output: Path | None,
     suppress: Path | None, strict_suppressions: bool, require_justification: bool,
     policy: str, policy_file_path: Path | None,
     pdb_path: Path | None, old_pdb_path: Path | None, new_pdb_path: Path | None,
@@ -1582,8 +1688,10 @@ def compare_cmd(
         old_includes_only, new_includes_only,
     )
 
-    old_fmt = _detect_binary_format(old_input)
-    new_fmt = _detect_binary_format(new_input)
+    # Follow GNU ld linker scripts up front so the resolved DSO (not the text
+    # script) drives format detection, metadata, and dependency analysis.
+    old_input, old_fmt = _normalize_binary_input(old_input)
+    new_input, new_fmt = _normalize_binary_input(new_input)
     _warn_ignored_flags(
         old_fmt is not None, new_fmt is not None,
         headers, includes,
@@ -1645,6 +1753,7 @@ def compare_cmd(
         show_impact=show_impact, stat=stat,
         severity_config=sev_config if severity_explicitly_set else None,
         show_recommendation=recommend,
+        demangle=demangle,
     )
 
     _write_or_echo(output, text)
