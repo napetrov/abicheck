@@ -1544,6 +1544,18 @@ class TestSonameSkewCohortScoping:
         ]
         assert _soname_skew_findings(old, new, ["libonedal_"]) == []
 
+    def test_blank_cohort_prefix_is_rejected(self) -> None:
+        # An empty/whitespace prefix (e.g. --bundle-cohort "" from an unset
+        # var) must NOT degrade into "compare every DSO": independent libfoo
+        # bumping while libbar stays must stay clean.
+        from abicheck.bundle import _soname_skew_findings
+        old = [self._member("libfoo.so.1", 1), self._member("libbar.so.1", 1)]
+        new = [self._member("libfoo.so.2", 2), self._member("libbar.so.1", 1)]
+        assert _soname_skew_findings(old, new, [""]) == []
+        assert _soname_skew_findings(old, new, ["  "]) == []
+        # A blank mixed with a real cohort still honours the real one only.
+        assert _soname_skew_findings(old, new, ["", "libqux_"]) == []
+
     def test_detect_skew_requires_cohort_and_uses_snapshot_libraries(self) -> None:
         # P2 regression: members come from snapshot.libraries/.metadata (so a
         # cohort split across directories is still caught), and the check is

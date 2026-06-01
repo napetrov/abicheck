@@ -1026,12 +1026,17 @@ def _soname_skew_findings(
     *cohorts* list this returns nothing: there is no implicit lockstep
     invariant to infer from filenames alone.
     """
-    if not cohorts:
+    # An empty prefix (e.g. --bundle-cohort "" from an unset shell var) would
+    # be treated as "no filter" by the detector and compare every DSO —
+    # reintroducing the global false positive the opt-in exists to prevent.
+    # Strip and drop blanks so only genuine cohort prefixes are honoured.
+    prefixes = [p.strip() for p in cohorts if p and p.strip()]
+    if not prefixes:
         return []
     from .diff_onedal import detect_bundle_soname_skew
 
     findings: list[BundleFinding] = []
-    for prefix in cohorts:
+    for prefix in prefixes:
         for change in detect_bundle_soname_skew(
             old_members, new_members, cohort_prefix=prefix,
         ):
@@ -1069,6 +1074,7 @@ def _detect_soname_skew(
     filename; libraries with no derivable major (unversioned ``libfoo.so``)
     are dropped.
     """
+    cohorts = [c.strip() for c in (cohorts or []) if c and c.strip()]
     if not cohorts:
         return []
     from .diff_onedal import BundleMember, _extract_soname_major
