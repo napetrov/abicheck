@@ -205,6 +205,40 @@ class TestLinkerScriptInput:
                 script, headers=[], includes=[], version="1.0", lang="c++",
             )
 
+    def test_normalize_binary_input_follows_script_and_reports_elf(self, tmp_path):
+        # Resolving at the caller is what lets downstream metadata/dependency
+        # analysis use the real DSO instead of the text script.
+        from abicheck.cli import _normalize_binary_input
+        _write_fake_elf(tmp_path / "libn.so.1")
+        script = tmp_path / "libn.so"
+        script.write_text("INPUT(libn.so.1)\n", encoding="utf-8")
+        resolved, fmt = _normalize_binary_input(script)
+        assert resolved == tmp_path / "libn.so.1"
+        assert fmt == "elf"
+
+    def test_normalize_binary_input_passthrough_for_elf(self, tmp_path):
+        from abicheck.cli import _normalize_binary_input
+        p = _write_fake_elf(tmp_path / "plain.so.1")
+        assert _normalize_binary_input(p) == (p, "elf")
+
+    def test_normalize_binary_input_unknown_text(self, tmp_path):
+        from abicheck.cli import _normalize_binary_input
+        p = tmp_path / "notes.txt"
+        p.write_text("just prose", encoding="utf-8")
+        assert _normalize_binary_input(p) == (p, None)
+
+    def test_dump_cli_follows_linker_script(self, tmp_path):
+        # `dump` should follow the script (note on stderr) and then fail at the
+        # ELF parser for the (fake) target — not "Cannot detect format".
+        _write_fake_elf(tmp_path / "libd.so.1")
+        script = tmp_path / "libd.so"
+        script.write_text("INPUT(libd.so.1)\n", encoding="utf-8")
+        runner = CliRunner()
+        result = runner.invoke(main, ["dump", str(script), "--dwarf-only"])
+        assert result.exit_code != 0
+        assert "GNU ld linker script" in result.output
+        assert "Cannot detect format" not in result.output
+
 
 # ── compare with .json + .json (backward compat) ────────────────────────
 

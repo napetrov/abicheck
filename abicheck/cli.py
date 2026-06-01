@@ -230,6 +230,22 @@ def _maybe_follow_linker_script(path: Path) -> Path:
     return path
 
 
+def _normalize_binary_input(path: Path) -> tuple[Path, str | None]:
+    """Detect a binary input's format, following GNU ld linker scripts.
+
+    Returns ``(resolved_path, format)``. When *path* is a linker script that
+    resolves to a real shared library, the resolved path and *its* format are
+    returned so downstream metadata collection and dependency analysis operate
+    on the actual DSO rather than the text script.
+    """
+    fmt = _detect_binary_format(path)
+    if fmt is None:
+        resolved = _maybe_follow_linker_script(path)
+        if resolved != path:
+            return resolved, _detect_binary_format(resolved)
+    return path, fmt
+
+
 
 def _dump_elf(
     path: Path, headers: list[Path], includes: list[Path],
@@ -641,15 +657,10 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
         _print_data_sources(so_path, bool(headers))
         return
 
-    # Auto-detect binary format — PE/Mach-O skip the ELF/castxml path
-    binary_fmt = _detect_binary_format(so_path)
-    if binary_fmt is None:
-        # The conventional ``libfoo.so`` dev symlink is often a GNU ld linker
-        # script; follow it to the real shared library before dispatching.
-        resolved = _maybe_follow_linker_script(so_path)
-        if resolved != so_path:
-            so_path = resolved
-            binary_fmt = _detect_binary_format(so_path)
+    # Auto-detect binary format — PE/Mach-O skip the ELF/castxml path. The
+    # conventional ``libfoo.so`` dev symlink is often a GNU ld linker script;
+    # follow it to the real shared library before dispatching.
+    so_path, binary_fmt = _normalize_binary_input(so_path)
     if debug_format is not None and binary_fmt in ("pe", "macho"):
         raise click.BadParameter(
             f"--{debug_format} is only supported for ELF binaries, not {binary_fmt.upper()}."
@@ -1040,8 +1051,10 @@ def _run_compare_pair(
     scope_to_public_surface: bool = False,
 ) -> tuple[DiffResult, AbiSnapshot, AbiSnapshot]:
     """Run compare for one old/new pair and return result + resolved snapshots."""
-    old_fmt = _detect_binary_format(old_input)
-    new_fmt = _detect_binary_format(new_input)
+    # Follow GNU ld linker scripts up front so metadata/dependency analysis use
+    # the resolved DSO, not the text script.
+    old_input, old_fmt = _normalize_binary_input(old_input)
+    new_input, new_fmt = _normalize_binary_input(new_input)
 
     old = _resolve_input(
         old_input,
@@ -1675,8 +1688,10 @@ def compare_cmd(
         old_includes_only, new_includes_only,
     )
 
-    old_fmt = _detect_binary_format(old_input)
-    new_fmt = _detect_binary_format(new_input)
+    # Follow GNU ld linker scripts up front so the resolved DSO (not the text
+    # script) drives format detection, metadata, and dependency analysis.
+    old_input, old_fmt = _normalize_binary_input(old_input)
+    new_input, new_fmt = _normalize_binary_input(new_input)
     _warn_ignored_flags(
         old_fmt is not None, new_fmt is not None,
         headers, includes,

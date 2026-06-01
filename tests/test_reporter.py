@@ -110,6 +110,19 @@ class TestMarkdownReporter:
         md_off = to_markdown(result, demangle=False)
         assert "_Z3foov" in md_off
 
+    def test_service_review_format_honors_demangle(self, monkeypatch):
+        import abicheck.demangle as dm
+        from abicheck.model import AbiSnapshot
+        from abicheck.service import render_output
+        monkeypatch.setattr(dm, "demangle_batch", lambda syms: {"_Z3foov": "foo()"})
+        result = _result(Verdict.BREAKING,
+                         [Change(ChangeKind.FUNC_REMOVED, "_Z3foov", "removed _Z3foov")])
+        old = AbiSnapshot(library="libtest.so.1", version="1.0")
+        out_on = render_output("review", result, old, demangle=True)
+        assert "foo()" in out_on and "_Z3foov" not in out_on
+        out_off = render_output("review", result, old, demangle=False)
+        assert "_Z3foov" in out_off
+
     def test_legend_always_present(self):
         md = to_markdown(_result(Verdict.NO_CHANGE))
         assert "Legend" in md
