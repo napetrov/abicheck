@@ -139,12 +139,19 @@ jobs:
         if: runner.os != 'Windows'
         # ABICHECK_MIN_EXECUTED guards against a silent toolchain-install failure
         # turning the whole lane into 0-ran-but-green (see tests/conftest.py).
+        # macOS runs a smaller Mach-O subset than Linux's ELF set, so it gets a
+        # lower floor; both are well below the healthy count, the point is just
+        # to catch ~0.
         env:
-          ABICHECK_MIN_EXECUTED: '20'
+          ABICHECK_MIN_EXECUTED: ${{ runner.os == 'macOS' && '5' || '20' }}
         run: |
           pytest tests/ -v -m integration --tb=short --cov=abicheck --cov-report=xml:coverage-integration.xml --ignore=tests/test_abi_examples.py
       - name: Run integration tests (Windows — parallel, no coverage)
         if: runner.os == 'Windows'
+        # Same silent-skip guard: the xdist controller aggregates every worker's
+        # reports, so the session-finish check in conftest.py works under -n auto.
+        env:
+          ABICHECK_MIN_EXECUTED: '5'
         run: |
           pytest tests/ -v -m integration --tb=short -n auto --dist worksteal --ignore=tests/test_abi_examples.py
       - name: Upload integration coverage to Codecov
