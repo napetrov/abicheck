@@ -1318,7 +1318,7 @@ def _announce_exit_scheme(
     one-line ``--stat`` summary are consumed by tooling that treats the whole
     captured stream as data, so the banner is suppressed there.
     """
-    if stat or fmt not in {"markdown", "html", "text", "review"}:
+    if stat or fmt not in {"markdown", "html", "review"}:
         return
     if severity_explicitly_set:
         click.echo(
@@ -1499,7 +1499,8 @@ def _finalize_compare_result(
                    "suitable for a job summary or PR comment.")
 @click.option("--demangle/--no-demangle", default=None,
               help="Demangle C++ symbol names in human-readable output. Defaults "
-                   "ON for markdown/html/text/review, OFF for json/sarif; override "
+                   "ON for markdown/review, OFF for json/sarif/html (HTML symbols "
+                   "are rendered structurally and not demangled); override "
                    "explicitly with --demangle/--no-demangle.")
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
@@ -1736,10 +1737,13 @@ def compare_cmd(
     else:
         effective_debug_format = debug_format
 
-    # Tri-state --demangle: default ON for human-readable formats, OFF for the
-    # machine formats (json/sarif), unless the user set the flag explicitly.
+    # Tri-state --demangle: default ON for the text formats whose renderer
+    # post-processes symbols through demangle_text (markdown/review), OFF for
+    # machine formats (json/sarif/junit) and HTML — the HTML renderer emits
+    # symbols structurally and demangling its string would inject unescaped
+    # '<'/'>'/'&' from C++ names and corrupt the markup. Explicit flag wins.
     if demangle is None:
-        demangle = fmt in {"markdown", "html", "text", "review"}
+        demangle = fmt in {"markdown", "review"}
 
     # --report-mode impact is sugar for "full" report with the impact table on.
     if report_mode == "impact":

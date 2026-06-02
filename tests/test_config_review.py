@@ -93,6 +93,18 @@ class TestDemangleTriState:
         )
         assert "_Z3foov" in result.output
 
+    def test_html_keeps_mangled_by_default(self, tmp_path, monkeypatch):
+        # HTML is NOT in the demangle default set: its renderer emits symbols
+        # structurally and demangling the HTML string would inject unescaped
+        # C++ '<'/'>'/'&'. Even with the demangler stubbed, html stays mangled.
+        self._patch_demangler(monkeypatch)
+        old_p, new_p = _write_removed_cpp_symbol(tmp_path)
+        result = CliRunner().invoke(
+            main, ["compare", str(old_p), str(new_p), "--format", "html"],
+        )
+        assert "_Z3foov" in result.output
+        assert "foo()" not in result.output
+
     def test_no_demangle_override_on_markdown(self, tmp_path, monkeypatch):
         self._patch_demangler(monkeypatch)
         old_p, new_p = _write_removed_cpp_symbol(tmp_path)
