@@ -15,10 +15,11 @@
 "Platform-specific ABI diff detectors (ELF, PE, Mach-O, DWARF)."
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .checker_policy import ChangeKind
-from .checker_types import Change
+from .checker_types import SYMBOL_VERSION_ALIAS_NOT_RETAINED_MARKER, Change
 from .detector_registry import registry
 from .diff_platform_templates import (
     _diff_template_inner_types as _diff_template_inner_types,
@@ -781,7 +782,7 @@ def _diff_symbol_version_aliases(old: AbiSnapshot, new: AbiSnapshot) -> list[Cha
             f"(@@{old_ver} → @@{new_ver})"
         )
         if not retained:
-            desc += " — old version NOT retained as alias"
+            desc += f" — {SYMBOL_VERSION_ALIAS_NOT_RETAINED_MARKER}"
         changes.append(Change(
             kind=ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED,
             symbol=sym_name,
@@ -1162,6 +1163,16 @@ def _diff_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+# Synthesized placeholder names for anonymous/unnamed aggregate member types,
+# which differ across DWARF / castxml / PDB readers (``<unnamed-tag>``,
+# ``<unnamed-type-u>``, ``<anonymous union>``, ``<unnamed struct at …>``, …).
+# The aggregate *kind* (when the placeholder names one) is captured so a real
+# union→struct change is preserved while the unstable identifier suffix is not.
+_ANON_TYPE_RE = re.compile(
+    r"<\s*(?:unnamed|anonymous)(?:\s+(union|struct|class|enum)\b)?", re.IGNORECASE
+)
+
+
 def _normalize_type_name(name: str) -> str:
     """Normalize a C/C++ type name for stable DWARF↔castxml comparison.
 
@@ -1186,8 +1197,27 @@ def _normalize_type_name(name: str) -> str:
     s = _re.sub(r"[\s*&]+$", "", s).strip()
     # Remove leading CV-qualifiers
     s = _re.sub(r"^(const|volatile)(\s+(const|volatile))?\s+", "", s).strip()
-    # Remove struct/class/union tag keyword
-    s = _re.sub(r"^(struct|class|union)\s+", "", s).strip()
+    # Remove struct/class/union tag keyword, remembering it: for an anonymous
+    # placeholder spelled with a *leading* tag ("union <anonymous>") the tag
+    # carries the aggregate kind, which must survive the collapse below.
+    lead = _re.match(r"^(struct|class|union)\s+", s)
+    lead_kind = lead.group(1) if lead else None
+    if lead:
+        s = s[lead.end():].strip()
+    # Anonymous/unnamed member types have no stable *name* across DWARF / castxml
+    # / PDB extraction — the same anonymous union can be spelled "<unnamed-tag>"
+    # by one reader and "Parent::<unnamed-type-u>" by another (observed on the
+    # Windows SDK _TP_CALLBACK_ENVIRON_V3::u between two MSVC builds). Collapse
+    # those placeholders to a token keyed on the aggregate *kind* — taken from
+    # the placeholder itself ("<anonymous union>") or the leading tag ("union
+    # <anonymous>") — so the unstable identifier suffix no longer drives a false
+    # positive while a genuine kind change (anonymous union → anonymous struct)
+    # is still reported. Size drift remains caught by the separate byte_size
+    # comparison.
+    anon = _ANON_TYPE_RE.search(s)
+    if anon is not None:
+        kind = anon.group(1) or lead_kind
+        return f"<anonymous {kind.lower()}>" if kind else "<anonymous>"
     return s
 
 

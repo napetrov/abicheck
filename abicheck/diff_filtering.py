@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 
 from .checker_policy import ChangeKind, Confidence, EvidenceTier
-from .checker_types import Change
+from .checker_types import SYMBOL_VERSION_ALIAS_NOT_RETAINED_MARKER, Change
 from .detectors import DetectorResult
 from .diff_symbols import _PUBLIC_VIS, _public_functions
 from .model import AbiSnapshot, Function
@@ -889,9 +889,42 @@ def _deduplicate_cross_detector(changes: list[Change]) -> list[Change]:
         ChangeKind.SYMBOL_VERSION_NODE_REMOVED: "version_def_removal",
         ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED: "version_def_removal",
     }
+    # A symbol-version-node bump (e.g. LLVM_17 -> LLVM_18.1 applied to every
+    # symbol during a major release) makes BOTH version detectors fire per
+    # symbol with the same old->new transition: SYMBOL_MOVED_VERSION_NODE (the
+    # node label moved) and SYMBOL_VERSION_ALIAS_CHANGED (the default version
+    # changed, old not retained as an alias). They describe one event; drop the
+    # alias-change duplicate where a node move already covers the same
+    # (symbol, old -> new), keeping the node-level change. Halves the
+    # version-bump noise on real libraries (libLLVM 17->18: ~46k instead of
+    # ~92k risk findings).
+    #
+    # The match keys on (symbol, old_value, new_value): both detectors live in
+    # diff_versioning.py and populate old_value/new_value with the same version
+    # node labels for one bump, so the tuples coincide. If that ever diverges
+    # the dedup simply no-ops (both findings are kept) — a missed dedup, never a
+    # dropped real change — so this stays a safe, best-effort filter.
+    moved_transitions: set[tuple[str, str | None, str | None]] = {
+        (c.symbol, c.old_value, c.new_value)
+        for c in changes
+        if c.kind is ChangeKind.SYMBOL_MOVED_VERSION_NODE
+    }
+
     seen: set[tuple[str, str]] = set()
     result: list[Change] = []
     for c in changes:
+        # Only collapse the alias-change into a co-reported node-move when the
+        # old default version is NOT retained as an alias — that is the case the
+        # node-move already fully describes. When the old alias IS retained the
+        # alias-change carries distinct, *compatible* information (old consumers
+        # still resolve) that the node-move's "will not find this symbol"
+        # wording would otherwise misrepresent, so it must survive.
+        if (
+            c.kind is ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED
+            and SYMBOL_VERSION_ALIAS_NOT_RETAINED_MARKER in (c.description or "")
+            and (c.symbol, c.old_value, c.new_value) in moved_transitions
+        ):
+            continue
         cat = _DEDUP_CATEGORIES.get(c.kind)
         if cat is not None:
             key = (cat, c.symbol)

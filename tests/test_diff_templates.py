@@ -239,6 +239,77 @@ class TestOverloadSetRerouted:
         ])
         assert detect_overload_set_rerouted(old, new) == []
 
+    def test_volatile_and_ref_qualifiers_rendered(self) -> None:
+        """Overloads differing by volatile / ref-qualifier are distinct members
+        and the rendered old/new values surface those qualifiers."""
+        f_vol = _fn("lib::g", mangled="_ZVo", params=[("a", "int")])
+        f_vol.is_volatile = True
+        f_ref = _fn("lib::g", mangled="_ZRo", params=[("a", "int")])
+        f_ref.ref_qualifier = "&"
+        old = _snap(funcs=[
+            _fn("lib::g", mangled="_Zo", params=[("a", "int")]),
+            f_vol,
+            f_ref,
+        ])
+        new = _snap(funcs=[_fn("lib::g", mangled="_Zn", params=[("a", "long")])])
+        changes = detect_overload_set_rerouted(old, new)
+        assert len(changes) == 1
+        assert "volatile" in changes[0].old_value
+        assert "&" in changes[0].old_value
+
+    def test_cv_ref_only_overload_set_still_fires(self) -> None:
+        """Overloads that differ only in implicit-object cv/ref qualifiers share
+        a parameter-type tuple but are distinct overloads. A genuine overload
+        set (e.g. `f(int)` + `f(int) const`) replaced by `f(long)` must still
+        fire OVERLOAD_SET_REROUTED — the guard counts actual overloads, not
+        distinct parameter-type tuples."""
+        f_const = _fn("lib::f", mangled="_ZNK3lib1fEi", params=[("a", "int")])
+        f_const.is_const = True
+        old = _snap(funcs=[
+            _fn("lib::f", mangled="_ZN3lib1fEi", params=[("a", "int")]),
+            f_const,
+        ])
+        new = _snap(funcs=[
+            _fn("lib::f", mangled="_ZN3lib1fEl", params=[("a", "long")]),
+        ])
+        changes = detect_overload_set_rerouted(old, new)
+        assert len(changes) == 1
+        assert changes[0].kind == ChangeKind.OVERLOAD_SET_REROUTED
+
+    def test_cv_ref_only_removal_in_mixed_change_fires(self) -> None:
+        """Membership diff must use the cv/ref-aware overload key, not just
+        parameter-type tuples. {f(int), f(int) const} -> {f(int), f(long)}
+        removes the `const` overload and adds `f(long)`; with a param-only key
+        the shared `(int)` tuple would hide the removal and the reroute would be
+        missed. The const overload's disappearance must be detected."""
+        f_const = _fn("lib::f", mangled="_ZNK3lib1fEi", params=[("a", "int")])
+        f_const.is_const = True
+        old = _snap(funcs=[
+            _fn("lib::f", mangled="_ZN3lib1fEi", params=[("a", "int")]),
+            f_const,
+        ])
+        new = _snap(funcs=[
+            _fn("lib::f", mangled="_ZN3lib1fEi", params=[("a", "int")]),
+            _fn("lib::f", mangled="_ZN3lib1fEl", params=[("a", "long")]),
+        ])
+        changes = detect_overload_set_rerouted(old, new)
+        assert len(changes) == 1
+        assert changes[0].kind == ChangeKind.OVERLOAD_SET_REROUTED
+
+    def test_single_function_signature_change_no_finding(self) -> None:
+        """A name that maps to exactly one function on both sides is not an
+        overload set — a 1→1 signature change cannot re-route to a different
+        overload, so it must not produce a spurious OVERLOAD_SET_REROUTED
+        finding (it is already reported as FUNC_PARAMS_CHANGED). This also
+        covers every plain C function, which can never be overloaded."""
+        old = _snap(funcs=[
+            _fn("add", mangled="add", params=[("a", "int"), ("b", "int")]),
+        ])
+        new = _snap(funcs=[
+            _fn("add", mangled="add", params=[("a", "long"), ("b", "int")]),
+        ])
+        assert detect_overload_set_rerouted(old, new) == []
+
 
 # ---------------------------------------------------------------------------
 # MANDATORY_TEMPLATE_PARAM_ADDED

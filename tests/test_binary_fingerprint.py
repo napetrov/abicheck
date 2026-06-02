@@ -18,6 +18,15 @@ from abicheck.binary_fingerprint import (
     match_renamed_functions,
 )
 from abicheck.checker import ChangeKind, compare
+from abicheck.diff_symbols import (
+    _ctor_dtor_variant,
+    _param_signature_of,
+    _plausible_rename,
+    _return_type_of,
+    _strip_template_args,
+    _unqualified_name,
+    _unqualified_name_of,
+)
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import AbiSnapshot, Function, Visibility
 
@@ -287,6 +296,27 @@ class TestMatchRenamedFunctions:
         assert result[0].old_name == "a"
         assert result[0].new_name == "c"
 
+    def test_name_filter_participates_in_selection(self) -> None:
+        """When a size bucket has one added symbol and several removed symbols,
+        the name filter must steer candidate *selection*, not just discard a
+        greedily-chosen pair afterward. An unrelated removed name that sorts
+        first must not consume the partner a plausible rename should claim."""
+        old = {
+            # 'aaa_unrelated' sorts before 'foo_v1' and shares the size bucket
+            "aaa_unrelated": _fp("aaa_unrelated", 256),
+            "foo_v1": _fp("foo_v1", 256),
+        }
+        new = {"foo_v2": _fp("foo_v2", 256)}
+
+        def plausible(o: str, n: str) -> bool:
+            import difflib
+            return difflib.SequenceMatcher(None, o, n).ratio() >= 0.5
+
+        result = match_renamed_functions(old, new, name_filter=plausible)
+        assert len(result) == 1
+        assert result[0].old_name == "foo_v1"
+        assert result[0].new_name == "foo_v2"
+
     def test_empty_inputs(self) -> None:
         assert match_renamed_functions({}, {}) == []
         assert match_renamed_functions({"a": _fp("a", 100)}, {}) == []
@@ -370,6 +400,266 @@ class TestComputeSectionSummary:
             pass
         result = compute_section_summary(p)
         assert result.sections == {}
+
+
+# ---------------------------------------------------------------------------
+# Unqualified-name extraction and rename plausibility
+# ---------------------------------------------------------------------------
+
+class TestUnqualifiedName:
+    @pytest.mark.parametrize("symbol,expected", [
+        ("add", "add"),                                  # plain C name
+        ("ns::Class::method", "method"),                 # qualified
+        ("ns::Class::method(int, long)", "method"),      # with params
+        ("ns::foo<bar::baz>::run()", "run"),             # '::' inside template args
+        ("ns::make<a::b, c::d>", "make<a::b, c::d>"),    # template args kept
+        ("ns::foo<bar<int>>", "foo<bar<int>>"),          # nested template args kept
+        ("void get<int>()", "get<int>"),                 # return type dropped, args kept
+        ("std::ostream::operator<<(int)", "operator<<(int)"),  # operator kept whole
+        ("Widget::operator()(int)", "operator()(int)"),        # call operator
+        ("cooperator_v1", "cooperator_v1"),              # 'operator' substring, not keyword
+        ("myoperator::foo_v1()", "foo_v1"),              # 'operator' inside qualifier
+    ])
+    def test_extraction(self, symbol: str, expected: str) -> None:
+        assert _unqualified_name(symbol) == expected
+
+    @pytest.mark.parametrize("leaf,expected", [
+        ("get<int>", "get"),                 # simple template args
+        ("foo<bar<int>>", "foo"),            # nested template args
+        ("plain", "plain"),                  # no template args
+        ("a>", "a>"),                        # unbalanced '>' left as-is
+    ])
+    def test_strip_template_args(self, leaf: str, expected: str) -> None:
+        assert _strip_template_args(leaf) == expected
+
+
+class TestPlausibleRename:
+    def test_identical_symbol(self) -> None:
+        assert _plausible_rename("foo", "foo") is True
+
+    def test_namespace_move_same_leaf(self) -> None:
+        # Different qualifier, same leaf → plausible.
+        assert _plausible_rename("a::b::run()", "a::c::d::run()") is True
+
+    def test_same_scope_different_leaf_rejected(self) -> None:
+        # Shared qualifier must not inflate the score: unrelated leaves under a
+        # common scope (begin/end) are not a rename.
+        assert _plausible_rename(
+            "std::vector<int>::begin()", "std::vector<int>::end()"
+        ) is False
+
+    def test_unrelated_rejected(self) -> None:
+        assert _plausible_rename("fixupIndexV4(X)", "SmallVectorImpl<X>::erase(X*)") is False
+
+    def test_same_scope_short_leaves_rejected(self) -> None:
+        # get/set share only an incidental 2-char suffix once the qualifier is
+        # stripped, below the shared-affix floor.
+        assert _plausible_rename("Class::get()", "Class::set()") is False
+
+    def test_template_specializations_rejected(self) -> None:
+        # foo<int> and foo<long> are distinct ABI symbols (different mangled
+        # names), so swapping one for the other is not a rename.
+        assert _plausible_rename("void get<int>()", "void get<long>()") is False
+
+    def test_unrelated_templates_same_return_rejected(self) -> None:
+        # Shared return type and template args must not inflate the score.
+        assert _plausible_rename("void get<int>()", "void set<int>()") is False
+
+    def test_same_name_param_change_rejected(self) -> None:
+        # foo(int) and foo(long) are distinct mangled symbols (different
+        # parameters), so a same-size collision is a signature change, not a
+        # rename — a consumer of foo(int) still fails to link against foo(long).
+        assert _plausible_rename("foo(int)", "foo(long)") is False
+        assert _plausible_rename("ns::Cls::run(int)", "ns::Cls::run(double)") is False
+
+    def test_namespace_move_same_params_accepted(self) -> None:
+        # Same function (name + parameters), different scope → a relocation.
+        assert _plausible_rename("ns1::foo(int)", "ns2::foo(int)") is True
+
+    def test_version_suffix_rename_accepted(self) -> None:
+        assert _plausible_rename("libfoo_v1_create", "libfoo_create") is True
+
+    def test_distinct_operators_rejected(self) -> None:
+        # The shared 'operator' token must not count as a similarity affix.
+        assert _plausible_rename("C::operator+()", "C::operator-()") is False
+        assert _plausible_rename("C::operator<<(int)", "C::operator>>(int)") is False
+
+    def test_same_operator_accepted(self) -> None:
+        # Identical operator spelling is an exact-leaf match.
+        assert _plausible_rename("A::operator==(int)", "B::operator==(int)") is True
+
+    def test_undemangleable_mangled_names_rejected(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Force the no-demangler branch so the raw "_Z..." fallback is actually
+        # exercised: without a demangler the leaf is the raw mangled spelling,
+        # whose shared boilerplate must not be affix-scored into a false rename.
+        import abicheck.demangle as demangle_mod
+        monkeypatch.setattr(demangle_mod, "demangle", lambda _sym: None)
+        assert _plausible_rename("_ZN1A3fooEv", "_ZN1B3barEv") is False
+
+    def test_ctor_dtor_variant_pairs_rejected(self) -> None:
+        # Itanium ctor/dtor variants demangle to the same leaf but are distinct
+        # exported symbols; a size collision between them is not a rename.
+        # Deterministic regardless of demangler availability (checked on the
+        # raw mangled name).
+        assert _plausible_rename("_ZN6WidgetC1Ev", "_ZN6WidgetC2Ev") is False
+        assert _plausible_rename("_ZN6WidgetD1Ev", "_ZN6WidgetD0Ev") is False
+
+    def test_free_function_with_ctor_like_name_not_a_ctor_variant(self) -> None:
+        # A free function whose identifier merely contains 'C1E'/'C2E'
+        # (_Z6fooC1Ev = fooC1E()) is NOT a constructor variant — it is a
+        # non-nested (_Z, not _ZN) mangling, so the variant guard must not fire.
+        # (Asserted on _ctor_dtor_variant directly so the check is independent
+        # of demangler availability; a real ctor IS a nested _ZN name.)
+        assert _ctor_dtor_variant("_Z6fooC1Ev") is None
+        assert _ctor_dtor_variant("_Z6fooC2Ev") is None
+        assert _ctor_dtor_variant("_ZN6WidgetC1Ev") == "C1"
+        # A nested MEMBER named fooC1E (_ZN1A6fooC1EEv = A::fooC1E()) is also not
+        # a constructor — the length-prefix parser must not be fooled by the
+        # 'C1E' substring inside the source-name component.
+        assert _ctor_dtor_variant("_ZN1A6fooC1EEv") is None
+        assert _ctor_dtor_variant("_ZN1A6fooC2EEv") is None
+        # Namespaced constructor is still detected.
+        assert _ctor_dtor_variant("_ZN2ns6WidgetC1Ev") == "C1"
+
+    def test_templated_class_ctor_variant_detected(self) -> None:
+        # A templated class places its <template-args> (I…E) between the class
+        # name and the ctor/dtor code; the parser must skip the balanced block.
+        # _ZN3FooIiEC1Ev = Foo<int>::Foo().
+        assert _ctor_dtor_variant("_ZN3FooIiEC1Ev") == "C1"
+        assert _ctor_dtor_variant("_ZN3FooIiEC2Ev") == "C2"
+        assert _ctor_dtor_variant("_ZN3FooIiED1Ev") == "D1"
+        # Nested template args and non-type (literal) params still balance.
+        assert _ctor_dtor_variant("_ZN3FooIN2ns1XEEC1Ev") == "C1"
+        assert _ctor_dtor_variant("_ZN3FooILi5EEC1Ev") == "C1"
+        # A class-type template argument whose identifier *contains* 'E'
+        # (Foo<Err> = _ZN3FooI3ErrEC1Ev): the 'E' inside the 3-char source-name
+        # 'Err' must not close the template-args block early.
+        assert _ctor_dtor_variant("_ZN3FooI3ErrEC1Ev") == "C1"
+        assert _ctor_dtor_variant("_ZN3FooI3ErrEC2Ev") == "C2"
+        # Substitution and special-substitution template arguments balance too.
+        assert _ctor_dtor_variant("_ZN3FooIS_EC1Ev") == "C1"
+        assert _ctor_dtor_variant("_ZN3FooISsEC1Ev") == "C1"
+
+    def test_std_substitution_prefix_ctor_variant_detected(self) -> None:
+        # A standard-substitution abbreviation can open the prefix: St = std::,
+        # so std::vector<int>::vector() = _ZNSt6vectorIiEC1Ev. The variant code
+        # must still be found after consuming the substitution.
+        assert _ctor_dtor_variant("_ZNSt6vectorIiEC1Ev") == "C1"
+        assert _ctor_dtor_variant("_ZNSt6vectorIiEC2Ev") == "C2"
+        assert _ctor_dtor_variant("_ZNSsC1Ev") == "C1"  # Ss = std::string
+        # A non-ctor std:: member is still not a variant.
+        assert _ctor_dtor_variant("_ZNSt6vectorIiE3fooEv") is None
+        # C1 vs C2 of a std container are distinct ABI symbols, not a rename.
+        assert _plausible_rename("_ZNSt6vectorIiEC1Ev", "_ZNSt6vectorIiEC2Ev") is False
+
+    def test_abi_tag_prefix_ctor_variant_detected(self) -> None:
+        # An ABI-tag component B<source-name> sits on the class name before the
+        # ctor/dtor code: Foo[abi:x]::Foo() = _ZN3FooB1xC1Ev. The variant must
+        # still be found after consuming the tag, so C1/C2 are not a rename.
+        assert _ctor_dtor_variant("_ZN3FooB1xC1Ev") == "C1"
+        assert _ctor_dtor_variant("_ZN3FooB1xC2Ev") == "C2"
+        assert _plausible_rename("_ZN3FooB1xC1Ev", "_ZN3FooB1xC2Ev") is False
+
+    def test_return_type_only_template_change_rejected(self) -> None:
+        # Function templates encode the return type in the ABI symbol, so a
+        # same-leaf/same-params return-type change (int foo<int>() ->
+        # long foo<int>()) is a distinct symbol, not a rename. Demangled-style
+        # inputs keep the test independent of c++filt availability.
+        assert _plausible_rename("int foo<int>()", "long foo<int>()") is False
+        assert _plausible_rename("void g<int>()", "int g<int>()") is False
+        # An ordinary (non-template) rename has no return type either side, so
+        # the check is a no-op and a genuine relocation still matches.
+        assert _plausible_rename("ns::Widget::run()", "ns2::Widget::run()") is True
+
+    def test_return_type_of_extraction(self) -> None:
+        assert _return_type_of("int foo<int>()") == "int"
+        assert _return_type_of("unsigned int g<int>()") == "unsigned int"
+        assert _return_type_of("std::vector<int> bar()") == "std::vector<int>"
+        assert _return_type_of("foo(int)") == ""           # ordinary function
+        assert _return_type_of("ns::Class::method()") == ""
+        assert _return_type_of("operator<<(int)") == ""
+
+    def test_templated_class_ctor_variant_pair_rejected(self) -> None:
+        # C1 vs C2 of the same templated class are distinct ABI symbols, not a
+        # rename — the variant guard must fire even with template args present.
+        assert _plausible_rename("_ZN3FooIiEC1Ev", "_ZN3FooIiEC2Ev") is False
+        # Same, for a class-type argument containing an 'E' in its identifier.
+        assert _plausible_rename("_ZN3FooI3ErrEC1Ev", "_ZN3FooI3ErrEC2Ev") is False
+
+    def test_one_sided_ctor_match_rejected(self) -> None:
+        # Only one side is a ctor/dtor: a removed constructor A::A()
+        # (_ZN1AC1Ev) vs an added ordinary member B::A() (_ZN1B1AEv) both
+        # reduce to leaf 'A()', but a constructor ABI symbol cannot be
+        # satisfied by an ordinary method — reject rather than call it a rename.
+        assert _plausible_rename("_ZN1AC1Ev", "_ZN1B1AEv") is False
+        assert _plausible_rename("_ZN1B1AEv", "_ZN1AC1Ev") is False
+        # Likewise a destructor vs an ordinary same-leaf member.
+        assert _plausible_rename("_ZN1AD1Ev", "_ZN1B1AEv") is False
+
+    def test_funcptr_return_declarator_name_extracted(self) -> None:
+        # A function returning a function pointer demangles to declarator syntax
+        # (int (*foo<int>())()) where the first top-level '(' opens the
+        # declarator group, not the parameter list. The real name must be
+        # recovered for leaf/param extraction (demangled-style inputs keep the
+        # test independent of c++filt availability).
+        assert _unqualified_name_of("int (*foo_v1<int>())()") == "foo_v1<int>"
+        assert _param_signature_of("int (*foo_v1<int>())()") == "()"
+        # A function that merely *takes* a function-pointer parameter must be
+        # left intact (the '(' there is the real parameter list).
+        assert _unqualified_name_of("void foo(int (*)())") == "foo"
+        assert _param_signature_of("void foo(int (*)())") == "(int (*)())"
+
+    def test_funcptr_return_rename_detected(self) -> None:
+        # End-to-end: a versioned rename of a function-pointer-returning template
+        # (foo_v1<int> -> foo_v2<int>) is a plausible rename, not removed/added.
+        assert _plausible_rename(
+            "int (*foo_v1<int>())()", "int (*foo_v2<int>())()"
+        ) is True
+
+    def test_same_variant_ctor_relocation_accepted(self) -> None:
+        # A genuine constructor relocation to a new enclosing scope
+        # (A::A() -> ns::A::A()) is still a plausible rename — the tightened
+        # guard must not reject same-kind ctors. Demangled-style names are used
+        # so the test is independent of c++filt/cxxfilt availability (raw _Z
+        # names without a demangler fall to the conservative exact-only gate).
+        assert _plausible_rename("A::A()", "ns::A::A()") is True
+
+    def test_ctor_dtor_variant_malformed_symbols_yield_none(self) -> None:
+        # Defensive bail-outs: a malformed nested-name must never raise or
+        # mis-report; it yields None (no suppression — the safe direction).
+        assert _ctor_dtor_variant("_ZN99FooC1Ev") is None     # length overruns
+        assert _ctor_dtor_variant("_ZN3FooIiC1Ev") is None    # template never closed
+        assert _ctor_dtor_variant("_ZN3FooI") is None         # truncated at 'I'
+        assert _ctor_dtor_variant("_ZN3FooILiC1Ev") is None   # L-literal never closed
+        assert _ctor_dtor_variant("_ZNK1A3fooEv") is None     # const member, not a ctor
+        assert _ctor_dtor_variant("not_mangled") is None      # not an _ZN name
+
+    def test_operator_substring_not_treated_as_operator(self) -> None:
+        # Identifiers that merely contain 'operator' are ordinary names and
+        # must still match on affix, not be forced to exact-only.
+        assert _plausible_rename("cooperator_v1", "cooperator_v2") is True
+        assert _plausible_rename("myoperator::run_v1()", "myoperator::run_v2()") is True
+
+    def test_constructor_destructor_pair_rejected(self) -> None:
+        # ctor leaf 'Widget' and dtor leaf '~Widget' share the class-name
+        # affix but are different ABI functions, not a rename. (Demangled forms
+        # are used so the test is independent of c++filt availability.)
+        assert _plausible_rename("Widget::Widget()", "Widget::~Widget()") is False
+
+    def test_destructor_namespace_move_accepted(self) -> None:
+        # The same destructor under a different scope is still a move.
+        assert _plausible_rename("ns::Widget::~Widget()", "ns2::Widget::~Widget()") is True
+
+    def test_plain_unqualified_names(self) -> None:
+        # No '::', no template, no return type, no operator.
+        assert _plausible_rename("process_request", "process_reply") is True
+        assert _plausible_rename("alpha", "omega") is False
+
+    def test_prefix_of_other_accepted(self) -> None:
+        # One leaf is a full prefix of the other (shared run spans the shorter).
+        assert _plausible_rename("init", "initialize") is True
 
 
 # ---------------------------------------------------------------------------
@@ -477,6 +767,58 @@ class TestFingerprintRenameDetector:
         assert len(rename_changes) == 1
         assert rename_changes[0].old_value == "old_only"
         assert rename_changes[0].new_value == "new_only"
+
+    def test_unrelated_names_same_size_not_renamed(self) -> None:
+        """Two unrelated functions that merely share a byte size must NOT be
+        reported as a rename when no code hash is available.
+
+        Regression for false renames observed on real libLLVM diffs, where
+        size-only matching paired completely unrelated mangled symbols (e.g.
+        ``fixupIndexV4`` -> ``SmallVectorImpl<...>``) purely because they hit a
+        unique size bucket. Without code-identity evidence, dissimilar names are
+        a coincidence, not a rename."""
+        old = _snap_elf_only("1.0", [
+            _func_sym("_Z12fixupIndexV4RKN4llvm11DWARFObjectE", 256),
+        ])
+        new = _snap_elf_only("2.0", [
+            _func_sym("_ZN4llvm15SmallVectorImplINS_11CompileUnitEE5eraseEPS2_", 256),
+        ])
+        result = compare(old, new)
+        rename_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_LIKELY_RENAMED]
+        assert rename_changes == []
+
+    def test_collision_does_not_hide_plausible_rename(self) -> None:
+        """A real rename in a crowded size bucket is still found even when an
+        unrelated same-size symbol sorts earlier — the similarity check drives
+        selection, so the unrelated symbol cannot consume the partner."""
+        old = _snap_elf_only("1.0", [
+            _func_sym("aaa_unrelated_function", 256),
+            _func_sym("foo_v1_dosomething", 256),
+        ])
+        new = _snap_elf_only("2.0", [
+            _func_sym("foo_v2_dosomething", 256),
+        ])
+        result = compare(old, new)
+        renames = [c for c in result.changes if c.kind == ChangeKind.FUNC_LIKELY_RENAMED]
+        assert len(renames) == 1
+        assert renames[0].old_value == "foo_v1_dosomething"
+        assert renames[0].new_value == "foo_v2_dosomething"
+
+    def test_namespace_relocation_detected(self) -> None:
+        """A genuine namespace move keeps the unqualified base name, so a
+        hash-less size match is still reported as a rename. Uses already-
+        demangled spellings so the test is independent of c++filt/cxxfilt
+        availability (without a demangler, raw _Z names are treated
+        conservatively and a real move can't be inferred — by design)."""
+        old = _snap_elf_only("1.0", [
+            _func_sym("llvm::CompileUnit::markEverythingAsKept()", 256),
+        ])
+        new = _snap_elf_only("2.0", [
+            _func_sym("llvm::dwarf_linker::classic::CompileUnit::markEverythingAsKept()", 256),
+        ])
+        result = compare(old, new)
+        rename_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_LIKELY_RENAMED]
+        assert len(rename_changes) == 1
 
     def test_fuzzy_match_appears_in_compare_output(self) -> None:
         """A fuzzy size match (within 5%) makes it through the full pipeline."""

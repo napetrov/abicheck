@@ -35,6 +35,15 @@ from .detectors import DetectorResult
 from .model import AbiSnapshot
 from .policy_file import PolicyFile
 
+# Marker appended to a ``SYMBOL_VERSION_ALIAS_CHANGED`` description when the old
+# default symbol version is NOT retained as a non-default alias (so consumers of
+# the old version fail to resolve). Shared between the producer
+# (``diff_platform._diff_symbol_version_aliases``) and the cross-detector dedup
+# (``diff_filtering._deduplicate_cross_detector``), which only collapses an
+# alias-change into a co-reported node-move in this not-retained case — when the
+# old alias IS retained the alias-change is compatible and must survive.
+SYMBOL_VERSION_ALIAS_NOT_RETAINED_MARKER = "old version NOT retained as alias"
+
 
 @dataclass
 class Change:

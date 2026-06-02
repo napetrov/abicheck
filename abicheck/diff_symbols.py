@@ -1,4 +1,5 @@
 # Copyright 2026 Nikolay Petrov
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from .binary_fingerprint import (
@@ -160,12 +162,153 @@ def _check_removed_function(
     )
 
 
-def _check_return_type_change(mangled: str, f_old: Function, f_new: Function) -> list[Change]:
+# Integer spellings whose width is *fixed* regardless of data model, mapped to
+# (bit-width, is_signed). A name-only change between two spellings with the same
+# representation is not a binary ABI break — storage and calling convention are
+# identical.
+_FIXED_SCALAR_REPR: dict[str, tuple[object, bool]] = {
+    "int": (32, True), "signed int": (32, True), "signed": (32, True),
+    "int32_t": (32, True),
+    "unsigned int": (32, False), "unsigned": (32, False), "uint32_t": (32, False),
+    "long long": (64, True), "long long int": (64, True),
+    "signed long long": (64, True), "int64_t": (64, True),
+    "unsigned long long": (64, False), "long long unsigned int": (64, False),
+    "uint64_t": (64, False),
+    "short": (16, True), "short int": (16, True), "int16_t": (16, True),
+    "unsigned short": (16, False), "short unsigned int": (16, False),
+    "uint16_t": (16, False),
+    "signed char": (8, True), "int8_t": (8, True),
+    "unsigned char": (8, False), "uint8_t": (8, False),
+}
+# Data-model-dependent spellings. On LP64 (Linux/macOS 64-bit) the ``long``
+# family and the pointer-width types are all 64-bit; on ILP32 they are all
+# 32-bit; on LLP64 (Windows) ``long`` is 32-bit while the pointer-width types
+# stay 64-bit. The snapshot does not record target bitness, so for non-LLP64
+# targets we cannot tell LP64 from ILP32 — but the ``long`` family and the
+# pointer-width family *co-vary* there (both equal the pointer size), so they
+# are equivalent to each other yet NOT to a fixed-width spelling (e.g. ``long``
+# vs ``long long`` is a real width change on ILP32 and must not be suppressed).
+# A shared ``"long"`` width sentinel captures exactly that: it is equal to
+# itself (same sign) but never to a concrete bit-width, so ``size_t`` ↔
+# ``unsigned long`` is suppressed on non-LLP64 while ``int`` ↔ ``long`` and
+# ``long`` ↔ ``long long`` stay reportable everywhere.
+_LONG_SIGNED_SPELLINGS = frozenset({"long", "long int", "signed long"})
+_LONG_UNSIGNED_SPELLINGS = frozenset({"unsigned long", "long unsigned int"})
+_PTR_SIGNED_SPELLINGS = frozenset({"ssize_t", "ptrdiff_t", "intptr_t"})
+_PTR_UNSIGNED_SPELLINGS = frozenset({"size_t", "uintptr_t"})
+
+# The words that make up a C integer built-in's declaration specifiers. A
+# spelling composed *only* of these can be reordered freely by the language
+# (``unsigned long int`` ≡ ``long unsigned int`` ≡ ``unsigned long``), and
+# different toolchains/headers emit different orderings, so they are normalized
+# to one canonical form before lookup. Typedefs (``size_t``) and fixed-width
+# names (``uint32_t``) contain other words and pass through unchanged.
+_INT_SPECIFIER_WORDS = frozenset({"signed", "unsigned", "short", "long", "int", "char"})
+
+
+def _canonical_int_spelling(t: str) -> str:
+    """Canonicalize a bare integer built-in spelling (specifier order and the
+    redundant trailing ``int`` are not significant), or return ``t`` unchanged
+    when it is not a pure specifier spelling (typedef, fixed-width, …)."""
+    words = t.split()
+    if not words or any(w not in _INT_SPECIFIER_WORDS for w in words):
+        return t
+    unsigned = "unsigned" in words
+    if "char" in words:
+        if unsigned:
+            return "unsigned char"
+        if "signed" in words:
+            return "signed char"
+        return t  # bare ``char`` — sign is implementation-defined, leave as-is
+    if "short" in words:
+        return "unsigned short" if unsigned else "short"
+    longs = words.count("long")
+    if longs >= 2:
+        return "unsigned long long" if unsigned else "long long"
+    if longs == 1:
+        return "unsigned long" if unsigned else "long"
+    return "unsigned int" if unsigned else "int"
+
+
+def _scalar_repr(type_name: str, is_llp64: bool) -> tuple[object, bool] | None:
+    """Map a *bare* integer spelling to (width, is_signed), or None.
+
+    Width is an ``int`` (fixed bit count) or one of two abstract sentinels for
+    data-model-dependent spellings whose absolute width the snapshot does not
+    record:
+
+    * ``"ptr"`` — pointer-width types (``size_t``, ``ptrdiff_t``, …). Their
+      absolute width is unknown (64-bit on LP64/LLP64, 32-bit on ILP32 and
+      32-bit Windows), so they must never be equated with a *fixed* width such
+      as ``uint64_t``. Used on every platform.
+    * ``"long"`` — the ``long`` family on LLP64 only, where ``long`` is 32-bit
+      and thus a distinct representation from the 64-bit pointer-width types.
+
+    On non-LLP64 the ``long`` family co-varies with the pointer-width types
+    (``size_t`` *is* ``unsigned long`` there), so it shares the ``"ptr"``
+    sentinel — making ``size_t`` ↔ ``unsigned long`` a non-break while keeping
+    ``long`` ↔ ``long long`` (sentinel vs fixed 64) reportable. Neither
+    sentinel ever equals a fixed width, so a distinct built-in change such as
+    ``int`` vs ``long`` is reported even where the widths coincide. Returns
+    None for anything that is not a plain integer scalar (pointers, references,
+    templates, cv-qualified or unknown spellings).
+    """
+    t = " ".join(type_name.split())
+    if not t or any(c in t for c in "*&<>([,") or "const" in t or "volatile" in t:
+        return None
+    # Fold legal specifier-order variants (``unsigned long int`` -> ``unsigned
+    # long``) so a toolchain's spelling choice is not mistaken for an ABI change.
+    t = _canonical_int_spelling(t)
+    fixed = _FIXED_SCALAR_REPR.get(t)
+    if fixed is not None:
+        return fixed
+    # The ``long`` family is its own distinct built-in. On LLP64 it is 32-bit
+    # and must stay distinct from both fixed widths and the 64-bit pointer-width
+    # types, so it gets its own ``"long"`` sentinel. Elsewhere it co-varies with
+    # the pointer-width types and shares the ``"ptr"`` sentinel.
+    if t in _LONG_SIGNED_SPELLINGS:
+        return ("long", True) if is_llp64 else ("ptr", True)
+    if t in _LONG_UNSIGNED_SPELLINGS:
+        return ("long", False) if is_llp64 else ("ptr", False)
+    # Pointer-width typedefs have an unknown absolute width on every platform
+    # (64-bit on LP64/LLP64, 32-bit on ILP32 and 32-bit Windows), so they map to
+    # the ``"ptr"`` sentinel and are never equated with a fixed width such as
+    # ``uint64_t``.
+    if t in _PTR_SIGNED_SPELLINGS:
+        return ("ptr", True)
+    if t in _PTR_UNSIGNED_SPELLINGS:
+        return ("ptr", False)
+    return None
+
+
+def _abi_equivalent_scalar(old_type: str, new_type: str, is_llp64: bool) -> bool:
+    """Whether two integer spellings have identical binary representation.
+
+    True only when both resolve to the same width *and* signedness on the
+    target data model — i.e. the change is a spelling/typedef difference, not a
+    binary ABI break (e.g. ``size_t`` ↔ ``unsigned long``). A signedness
+    difference (``long`` ↔ ``unsigned long``) is not equivalent, and a
+    data-model-dependent spelling is never equated with a fixed width
+    (``long`` ↔ ``long long`` stays a reportable change, since it is a real
+    width change on ILP32 and the snapshot does not record target bitness).
+    """
+    old_r = _scalar_repr(old_type, is_llp64)
+    return old_r is not None and old_r == _scalar_repr(new_type, is_llp64)
+
+
+def _check_return_type_change(
+    mangled: str, f_old: Function, f_new: Function, *, is_llp64: bool = False,
+) -> list[Change]:
     """Emit a change if the return type was modified."""
     # RD2-5: a stripped side reports return_type "?"; that is unknown, not a change.
     if _type_unknown(f_old.return_type) or _type_unknown(f_new.return_type):
         return []
     if canonicalize_type_name(f_old.return_type) == canonicalize_type_name(f_new.return_type):
+        return []
+    # A name-only change between ABI-equivalent integer spellings (e.g.
+    # long -> long long, size_t -> unsigned long on LP64) is not a binary ABI
+    # break: same width, signedness, and calling convention.
+    if _abi_equivalent_scalar(f_old.return_type, f_new.return_type, is_llp64):
         return []
     return [Change(
         kind=ChangeKind.FUNC_RETURN_CHANGED,
@@ -176,8 +319,22 @@ def _check_return_type_change(mangled: str, f_old: Function, f_new: Function) ->
     )]
 
 
+def _params_differ(p_old: Param, p_new: Param, is_llp64: bool) -> bool:
+    """Whether two positionally-matched parameters differ in an ABI-relevant way."""
+    if _type_unknown(p_old.type) or _type_unknown(p_new.type):
+        return False  # diffing a known type against unknown is meaningless
+    if p_old.kind != p_new.kind:
+        return True
+    if canonicalize_type_name(p_old.type) == canonicalize_type_name(p_new.type):
+        return False
+    # Same kind, different spelling: not a change if the integer types are
+    # ABI-equivalent (long -> long long, size_t -> unsigned long on LP64).
+    return not _abi_equivalent_scalar(p_old.type, p_new.type, is_llp64)
+
+
 def _check_params_change(
-    mangled: str, f_old: Function, f_new: Function, *, params_unconfirmed: bool = False,
+    mangled: str, f_old: Function, f_new: Function, *,
+    params_unconfirmed: bool = False, is_llp64: bool = False,
 ) -> list[Change]:
     """Emit a change if the parameter list was modified."""
     # RD2-5: suppress only when one side is a stripped symbols-only stub (its
@@ -194,9 +351,7 @@ def _check_params_change(
         changed = True
     else:
         changed = any(
-            not _type_unknown(p_old.type) and not _type_unknown(p_new.type)
-            and (canonicalize_type_name(p_old.type), p_old.kind)
-            != (canonicalize_type_name(p_new.type), p_new.kind)
+            _params_differ(p_old, p_new, is_llp64)
             for p_old, p_new in zip(f_old.params, f_new.params)
         )
     if not changed:
@@ -301,12 +456,14 @@ def _check_explicit_change(mangled: str, f_old: Function, f_new: Function) -> li
 
 
 def _check_function_signature(
-    mangled: str, f_old: Function, f_new: Function, *, params_unconfirmed: bool = False,
+    mangled: str, f_old: Function, f_new: Function, *,
+    params_unconfirmed: bool = False, is_llp64: bool = False,
 ) -> list[Change]:
     """Compare signatures and qualifiers of two matched functions."""
     changes: list[Change] = []
-    changes.extend(_check_return_type_change(mangled, f_old, f_new))
-    changes.extend(_check_params_change(mangled, f_old, f_new, params_unconfirmed=params_unconfirmed))
+    changes.extend(_check_return_type_change(mangled, f_old, f_new, is_llp64=is_llp64))
+    changes.extend(_check_params_change(
+        mangled, f_old, f_new, params_unconfirmed=params_unconfirmed, is_llp64=is_llp64))
     changes.extend(_check_ref_qualifier_change(mangled, f_old, f_new))
     changes.extend(_check_linkage_change(mangled, f_old, f_new))
     changes.extend(_check_noexcept_change(mangled, f_old, f_new))
@@ -362,10 +519,13 @@ def _match_old_function(
     matched_by_name: set[str],
     elf_only_mode: bool,
     params_unconfirmed: bool = False,
+    is_llp64: bool = False,
 ) -> list[Change]:
     """Classify a single old function: matched by mangled, extern-C fallback, or removed."""
     if mangled in new_map:
-        return list(_check_function_signature(mangled, f_old, new_map[mangled], params_unconfirmed=params_unconfirmed))
+        return list(_check_function_signature(
+            mangled, f_old, new_map[mangled],
+            params_unconfirmed=params_unconfirmed, is_llp64=is_llp64))
 
     # Fallback by plain name when either side uses extern "C".
     # The name->Function mapping is a MULTIMAP: only fall back when there is
@@ -378,7 +538,9 @@ def _match_old_function(
         extern_c_candidates = candidates  # any single candidate is acceptable
     if len(extern_c_candidates) == 1:
         f_new = extern_c_candidates[0]
-        result = list(_check_function_signature(f_old.name, f_old, f_new, params_unconfirmed=params_unconfirmed))
+        result = list(_check_function_signature(
+            f_old.name, f_old, f_new,
+            params_unconfirmed=params_unconfirmed, is_llp64=is_llp64))
         matched_by_name.add(f_old.name)
         return result
 
@@ -428,6 +590,10 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     # RD2-5: when one side is a stripped symbols-only stub, its parameter lists
     # are unknown (not "zero args"), so parameter diffs are unconfirmed.
     params_unconfirmed = _is_stripped_symbols_only(old) or _is_stripped_symbols_only(new)
+    # LLP64 (Windows/PE): ``long`` is 32-bit, so e.g. long<->long long is a real
+    # width change there; under LP64 (ELF/Mach-O) it is not. Resolves the
+    # data-model-dependent integer ABI-equivalence checks below.
+    is_llp64 = "pe" in (getattr(old, "platform", None), getattr(new, "platform", None))
     changes: list[Change] = []
     old_map = {k: v for k, v in old.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
     new_map = {k: v for k, v in new.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
@@ -448,7 +614,7 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         changes.extend(
             _match_old_function(
                 mangled, f_old, new_map, new_by_name, new_all, matched_by_name,
-                elf_only_mode, params_unconfirmed,
+                elf_only_mode, params_unconfirmed, is_llp64,
             )
         )
 
@@ -1012,6 +1178,461 @@ def _diff_var_access(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 _FUNC_LIKE_TYPES = frozenset({SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTYPE})
 
+# Minimum shared leading/trailing run (in characters) between two unqualified
+# leaf names for a *hash-less* (size-only / fuzzy) match to count as a rename.
+# When no code hash is available — the only mode the snapshot/elf_only path can
+# reach — a "rename" is inferred purely from a coincidental symbol-size
+# collision, which on a large library pairs completely unrelated functions that
+# merely share a byte size (observed on real libLLVM diffs: e.g. fixupIndexV4 ->
+# SmallVectorImpl<...>). A genuine rename or namespace relocation keeps a
+# substantial common prefix or suffix token in the *unqualified* leaf name
+# (foo_v1->foo_v2, old_only->new_only), whereas distinct leaves — even under a
+# shared scope (Class::get vs Class::set, ::begin vs ::end, get<int> vs
+# set<int>) — share at most one or two incidental characters. Requiring a
+# >=3-char shared affix cleanly separates the two on measured data (genuine
+# renames share 4-20, unrelated pairs 0-2).
+_RENAME_MIN_SHARED_AFFIX = 3
+
+# The C++ ``operator`` keyword as a whole token: not preceded or followed by an
+# identifier character, so substrings like ``cooperator`` or ``operator_v1``
+# (ordinary identifiers) and ``myoperator::foo`` (operator inside a qualifier)
+# are not mistaken for an operator function name.
+_OPERATOR_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_])operator(?![A-Za-z0-9_])")
+
+# Itanium constructor/destructor variant codes: ``C1``/``C2``/``C3`` (complete /
+# base / allocating constructor) and ``D0``/``D1``/``D2`` (deleting / complete /
+# base destructor). These variants demangle to the *same* leaf yet are distinct
+# exported symbols. A ``<ctor-dtor-name>`` is a real grammar production — it is
+# NOT a length-prefixed ``<source-name>`` — so it must be located by parsing the
+# nested-name's length-prefixed components, not by substring search (an ordinary
+# identifier such as ``fooC1E`` would otherwise match).
+_CTOR_DTOR_CODE_RE = re.compile(r"^(C[123]|D[012])E")
+
+
+def _ctor_dtor_variant(symbol: str) -> str | None:
+    """Return the Itanium ctor/dtor variant code (e.g. ``C1``) for a mangled
+    name, or None when the symbol is not a constructor/destructor.
+
+    Parses the ``_ZN`` nested-name: skips implicit-object cv/ref qualifiers,
+    consumes the ``<len><identifier>`` ``<source-name>`` components (skipping any
+    balanced ``I…E`` ``<template-args>`` block that follows a templated class
+    name), then checks whether the remainder *begins* with a ``<ctor-dtor-name>``
+    code. This distinguishes a real constructor (``_ZN6WidgetC1Ev`` -> ``C1``,
+    ``_ZN3FooIiEC1Ev`` = ``Foo<int>::Foo()`` -> ``C1``, ``_ZN3FooI3ErrEC1Ev`` =
+    ``Foo<Err>::Foo()`` -> ``C1``) from an ordinary member whose identifier
+    merely contains the characters (``_ZN1A6fooC1EEv`` = ``A::fooC1E()`` ->
+    None). Encodings this simple parser does not model (exotic template
+    arguments) yield None — safe, since the only consequence is not suppressing
+    a (rare) templated-ctor variant pair.
+    """
+    if not symbol.startswith("_ZN"):
+        return None
+    i = 3
+    # Skip implicit-object cv-/ref-qualifiers (K const, V volatile, r restrict,
+    # R lvalue-ref, O rvalue-ref).
+    while i < len(symbol) and symbol[i] in "KVrRO":
+        i += 1
+    # Consume <prefix> components: <source-name> (<decimal-length><identifier>),
+    # each optionally followed by a <template-args> block ``I…E``. A templated
+    # class name (``_ZN3FooIiEC1Ev``) places the args before the ctor/dtor code.
+    while i < len(symbol):
+        if symbol[i].isdigit():
+            i = _skip_source_name(symbol, i)
+            if i < 0:
+                return None  # malformed length — bail out
+        elif symbol[i] == "I":
+            i = _skip_template_args(symbol, i)
+            if i < 0:
+                return None  # unbalanced / unmodeled — bail out
+        elif symbol[i] == "S":
+            # A standard/standard-library substitution can open the prefix, e.g.
+            # ``_ZNSt6vectorIiEC1Ev`` (St = std::) — consume it before the
+            # source-name components so the ctor/dtor code is still found.
+            i = _skip_substitution(symbol, i)
+        elif symbol[i] == "B":
+            # ABI-tag component ``B<source-name>`` on the class name, e.g.
+            # ``_ZN3FooB1xC1Ev`` (Foo[abi:x]). Consume it so the ctor/dtor code
+            # that follows is still reached.
+            i += 1
+            if i < len(symbol) and symbol[i].isdigit():
+                i = _skip_source_name(symbol, i)
+                if i < 0:
+                    return None  # malformed ABI tag — bail out
+            else:
+                break  # not a well-formed ABI tag
+        else:
+            break
+    m = _CTOR_DTOR_CODE_RE.match(symbol[i:])
+    return m.group(1) if m else None
+
+
+def _skip_source_name(symbol: str, i: int) -> int:
+    """Skip an Itanium ``<source-name>`` (``<decimal-length><identifier>``)
+    starting at ``symbol[i]``; return the index past it, or -1 if malformed."""
+    j = i
+    while j < len(symbol) and symbol[j].isdigit():
+        j += 1
+    end = j + int(symbol[i:j])
+    return end if end <= len(symbol) else -1
+
+
+def _skip_substitution(symbol: str, i: int) -> int:
+    """Skip an Itanium ``<substitution>`` starting at ``symbol[i]`` (an ``S``);
+    return the index past it.
+
+    Handles ``S_``, ``S<seq-id>_`` (seq-id is base-36 ``[0-9A-Z]``), and the
+    special two-character abbreviations (``St`` std, ``Ss`` std::string, ``Sa``,
+    ``Sb``, ``Si``, ``So``, ``Sd``). Consuming it whole keeps any digits in a
+    seq-id from being misread as a ``<source-name>`` length.
+    """
+    n = len(symbol)
+    i += 1  # consume 'S'
+    if i < n and (symbol[i].isdigit() or symbol[i].isupper()):
+        while i < n and symbol[i] != "_":
+            i += 1
+        return i + 1  # consume the closing '_'
+    return i + 1  # special two-char abbreviation (St, Ss, …) or bare 'S_'
+
+
+def _skip_template_args(symbol: str, i: int) -> int:
+    """Skip a balanced Itanium ``<template-args>`` block (``I…E``) starting at
+    ``symbol[i]`` (an ``I``); return the index past the matching ``E``, or -1.
+
+    The block content must be parsed, not merely scanned for ``E``: a
+    length-prefixed ``<source-name>`` argument (``Foo<Err>`` = ``...I3ErrE...``)
+    contains an ``E`` *inside* its identifier that would otherwise close the
+    block early, and an expr-primary literal (``Foo<5>`` = ``...ILi5EE...``)
+    carries its own terminating ``E``. So source-names, substitutions, and
+    literals are consumed whole; only ``I``/``N``/``F`` openers and their ``E``
+    terminators move the nesting depth. Constructs this does not model yield -1.
+    """
+    n = len(symbol)
+    depth = 0
+    while i < n:
+        c = symbol[i]
+        if c.isdigit():
+            # <source-name>: consume the identifier whole so its characters
+            # (which may include E/I/N/F/L) are not read as structure.
+            i = _skip_source_name(symbol, i)
+            if i < 0:
+                return -1
+        elif c == "S":
+            # <substitution>: consume whole so its digits are not mistaken for a
+            # source-name length.
+            i = _skip_substitution(symbol, i)
+        elif c == "L":
+            # <expr-primary> literal: ``L<type><value>E``. Scan to its own
+            # terminating ``E`` literally — its value digits are not lengths.
+            i += 1
+            while i < n and symbol[i] != "E":
+                i += 1
+            if i >= n:
+                return -1
+            i += 1  # consume the literal's 'E'
+        elif c in "INF":
+            depth += 1
+            i += 1
+        elif c == "E":
+            depth -= 1
+            i += 1
+            if depth == 0:
+                return i
+        else:
+            i += 1
+    return -1  # unbalanced
+
+
+def _unqualified_name(symbol: str) -> str:
+    """Extract the unqualified (leaf) function name from a symbol, robustly.
+
+    Matching-safe alternative to ``demangle.base_name`` (which is documented
+    display-only and mis-parses operators / templates). Demangles when a
+    demangler is available, then, using *bracket-depth tracking* so that ``::``,
+    ``(`` and spaces inside template arguments are ignored:
+
+    * keeps the whole ``operator...`` token intact;
+    * drops the parameter list;
+    * drops the namespace/class qualifier (segment after the last top-level
+      ``::``);
+    * drops a leading return type (global function templates demangle as
+      ``ret name<args>(...)``).
+
+    Trailing template arguments are *kept*: a specialization like ``foo<int>``
+    is a distinct ABI symbol from ``foo<long>``, so they must not collapse to a
+    shared leaf (that would mis-report a specialization swap as a rename).
+    """
+    from .demangle import demangle
+
+    return _unqualified_name_of(demangle(symbol) or symbol)
+
+
+def _unwrap_funcptr_declarator(s: str) -> str:
+    """Unwrap a function-pointer/-reference *return* declarator so the real
+    function name is visible.
+
+    A C++ function that returns a function pointer demangles to declarator
+    syntax — ``RET (*name(args))(fnptr-args)``, e.g. ``int (*foo<int>())()`` —
+    where the first top-level ``(`` opens the declarator group, *not* the
+    parameter list. Left as-is, leaf extraction would stop at that ``(`` and
+    collapse the name to the return type. When ``s`` has this shape (the first
+    top-level ``(`` is immediately followed by ``*``/``&``), return the inner
+    ``name(args)`` so the normal leaf/parameter logic sees the real name;
+    otherwise return ``s`` unchanged. Ordinary parameter lists (whose first char
+    is a type or ``)``, never ``*``/``&`` at the very front) are left intact, as
+    are functions that merely *take* a function-pointer parameter.
+    """
+    depth = 0  # <> template depth — ignore '(' inside template arguments
+    for i, ch in enumerate(s):
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth = max(0, depth - 1)
+        elif ch == "(" and depth == 0:
+            j = i + 1
+            while j < len(s) and s[j] == " ":
+                j += 1
+            if j >= len(s) or s[j] not in "*&":
+                return s  # ordinary parameter list, not a pointer declarator
+            # Find the ')' matching this declarator-group '(' (bracket-aware).
+            pdepth = 0
+            tdepth = 0
+            for k in range(i, len(s)):
+                c = s[k]
+                if c == "<":
+                    tdepth += 1
+                elif c == ">":
+                    tdepth = max(0, tdepth - 1)
+                elif c == "(" and tdepth == 0:
+                    pdepth += 1
+                elif c == ")" and tdepth == 0:
+                    pdepth -= 1
+                    if pdepth == 0:
+                        return s[i + 1:k].lstrip("*& ")
+            return s  # unbalanced — leave alone
+    return s
+
+
+def _unqualified_name_of(s: str) -> str:
+    """Leaf-name core of ``_unqualified_name`` operating on an already-demangled
+    (or raw, when no demangler is available) string. Split out so callers that
+    need both the leaf and the parameter signature can demangle once."""
+    s = _unwrap_funcptr_declarator(s)
+    # An operator name encodes punctuation (``<<``, ``()``, ``[]``) that defeats
+    # bracket tracking, so handle it first: keep everything from the ``operator``
+    # token to the end. It is stable and symmetric, which is all the matcher
+    # needs. Match ``operator`` only as a whole token so ordinary identifiers
+    # that merely contain the substring (``cooperator``, ``operator_v1``) are
+    # not misclassified.
+    op = _OPERATOR_TOKEN_RE.search(s)
+    if op is not None:
+        return s[op.start():].strip()
+    # Truncate at the parameter-list '(' that sits at template depth 0.
+    depth = 0
+    for i, ch in enumerate(s):
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth = max(0, depth - 1)
+        elif ch == "(" and depth == 0:
+            s = s[:i]
+            break
+    # Take the segment after the last '::' that sits at template depth 0.
+    depth = 0
+    last = 0
+    i = 0
+    while i < len(s) - 1:
+        ch = s[i]
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth = max(0, depth - 1)
+        elif ch == ":" and s[i + 1] == ":" and depth == 0:
+            last = i + 2
+            i += 2
+            continue
+        i += 1
+    s = s[last:].strip()
+    # Drop a leading return type: take the part after the last top-level space
+    # (e.g. ``void get<int>`` -> ``get<int>``).
+    depth = 0
+    sp = -1
+    for i, ch in enumerate(s):
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth = max(0, depth - 1)
+        elif ch == " " and depth == 0:
+            sp = i
+    if sp != -1:
+        s = s[sp + 1:]
+    return s.strip()
+
+
+def _strip_template_args(leaf: str) -> str:
+    """Drop trailing template arguments from a leaf (``get<int>`` -> ``get``)."""
+    if leaf.endswith(">"):
+        depth = 0
+        for i in range(len(leaf) - 1, -1, -1):
+            if leaf[i] == ">":
+                depth += 1
+            elif leaf[i] == "<":
+                depth -= 1
+                if depth == 0:
+                    return leaf[:i]
+    return leaf
+
+
+def _shared_affix_len(a: str, b: str) -> int:
+    """Length of the longer of the common leading / common trailing run."""
+    def common_prefix(x: str, y: str) -> int:
+        n = 0
+        for cx, cy in zip(x, y):
+            if cx != cy:
+                break
+            n += 1
+        return n
+    return max(common_prefix(a, b), common_prefix(a[::-1], b[::-1]))
+
+
+def _param_signature(symbol: str) -> str:
+    """The parameter-list portion of a symbol (``foo(int)`` -> ``(int)``).
+
+    Empty when there is no parameter list — a plain C symbol, a variable, or a
+    mangled C++ symbol with no demangler available. A genuine rename or
+    namespace relocation keeps the parameters; a parameter change is a distinct
+    ABI symbol, so comparing this lets the gate reject ``foo(int)`` -> ``foo(long)``.
+    """
+    from .demangle import demangle
+
+    return _param_signature_of(demangle(symbol) or symbol)
+
+
+def _param_signature_of(s: str) -> str:
+    """Parameter-signature core of ``_param_signature`` operating on an
+    already-demangled (or raw) string."""
+    s = _unwrap_funcptr_declarator(s)
+    depth = 0
+    for i, ch in enumerate(s):
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth = max(0, depth - 1)
+        elif ch == "(" and depth == 0:
+            return s[i:]
+    return ""
+
+
+def _return_type_of(s: str) -> str:
+    """The leading return type of a demangled name, or "" when there is none.
+
+    A return type appears in demangled output only when it is part of the
+    mangled ABI symbol — chiefly C++ function-template instantiations
+    (``int foo<int>()``) — so for ordinary functions this is empty and the
+    comparison in ``_plausible_rename`` is a no-op. It is the run before the
+    last top-level space that precedes the (qualified) function name, with
+    template ``<…>`` and ``::`` kept intact (``unsigned int foo<int>()`` ->
+    ``unsigned int``; ``std::vector<int> bar()`` -> ``std::vector<int>``).
+    """
+    s = _unwrap_funcptr_declarator(s)
+    if _OPERATOR_TOKEN_RE.search(s):
+        return ""  # operator spellings carry no separable leading return type
+    # Truncate at the parameter-list '(' at template depth 0.
+    depth = 0
+    for i, ch in enumerate(s):
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth = max(0, depth - 1)
+        elif ch == "(" and depth == 0:
+            s = s[:i]
+            break
+    # The return type, if any, is everything before the last top-level space.
+    depth = 0
+    sp = -1
+    for i, ch in enumerate(s):
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth = max(0, depth - 1)
+        elif ch == " " and depth == 0:
+            sp = i
+    return s[:sp].strip() if sp != -1 else ""
+
+
+def _plausible_rename(old_name: str, new_name: str) -> bool:
+    """Whether two symbol names are similar enough to credibly be a rename.
+
+    Compares the *unqualified* leaf names (see ``_unqualified_name``). A rename
+    or namespace relocation keeps the leaf name (identical leaf, template
+    arguments included) or a substantial common prefix/suffix token **and** the
+    same parameter list; unrelated functions that merely share a byte size are
+    rejected. Rejected cases include different methods under a common scope
+    (``Class::get`` vs ``Class::set``), different template specializations of
+    one name (``foo<int>`` vs ``foo<long>``), and same-name parameter changes
+    (``foo(int)`` vs ``foo(long)``) — all of which are distinct ABI symbols.
+    Used only to gate hash-less matches, where size alone is not evidence of
+    identity.
+    """
+    if old_name == new_name:
+        return True
+    # Itanium ctor/dtor variants (C1/C2/C3, D0/D1/D2) demangle to the same leaf
+    # but are distinct exported symbols. A pair is a plausible ctor/dtor rename
+    # only when BOTH sides are the *same* variant (a genuine relocation keeps
+    # it). Any mismatch is rejected: differing variants (complete-object C1 vs
+    # base-object C2), and — crucially — a one-sided match where only one side
+    # is a ctor/dtor (e.g. removed ctor ``A::A()`` vs added ordinary method
+    # ``B::A()`` both reduce to leaf ``A()``), since a constructor ABI symbol
+    # cannot be satisfied by an ordinary member. (Checked on the raw mangled
+    # name, so it catches the case the demangler collapses to an identical leaf.)
+    ov, nv = _ctor_dtor_variant(old_name), _ctor_dtor_variant(new_name)
+    if (ov is not None or nv is not None) and ov != nv:
+        return False
+    # Demangle each name exactly once and reuse the result for both the leaf and
+    # the parameter signature (rather than relying on the demangle LRU cache,
+    # which can thrash on libraries with > 16k symbols).
+    from .demangle import demangle
+
+    da = demangle(old_name) or old_name
+    db = demangle(new_name) or new_name
+    a = _unqualified_name_of(da)
+    b = _unqualified_name_of(db)
+    # Undemangleable mangled names: when no demangler is available the leaf is
+    # the raw Itanium spelling, whose shared boilerplate (``_ZN``, type codes,
+    # …) would inflate the affix score and pair unrelated symbols. Demangling is
+    # optional for this package, so treat such names conservatively — accept
+    # only an exact match (rejected here, since removed/added names differ).
+    if a.startswith("_Z") or b.startswith("_Z"):
+        return a == b
+    # Operator leaves include their parameters and share the literal
+    # ``operator`` token; a destructor leaf (``~Widget``) shares the class name
+    # with that class's constructor leaf (``Widget``). For both, an affix match
+    # would pair genuinely different ABI functions (operator+ vs operator-, ctor
+    # vs dtor), so accept only an exact leaf match.
+    for leaf in (a, b):
+        if _OPERATOR_TOKEN_RE.match(leaf) is not None or leaf.startswith("~"):
+            return a == b
+    # A rename/relocation preserves the full signature: parameters AND — for
+    # the function templates whose mangling encodes it — the return type. A
+    # change to either is a distinct ABI symbol (foo(int) -> foo(long), or
+    # int foo<int>() -> long foo<int>()), not a rename. Ordinary (non-template)
+    # functions demangle without a return type, so that check is a no-op there.
+    sig_match = (
+        _param_signature_of(da) == _param_signature_of(db)
+        and _return_type_of(da) == _return_type_of(db)
+    )
+    if a == b:
+        # Same unqualified name + template args: a rename only if the signature
+        # also matches (else it is a signature change).
+        return sig_match
+    base_a = _strip_template_args(a)
+    base_b = _strip_template_args(b)
+    # Same base name but different leaves means the template arguments differ:
+    # distinct specializations are distinct ABI symbols, not a rename — a
+    # consumer of foo<int> still fails to link against foo<long>.
+    if base_a == base_b:
+        return False
+    return sig_match and _shared_affix_len(base_a, base_b) >= _RENAME_MIN_SHARED_AFFIX
+
 
 def _fingerprints_from_elf(snap: AbiSnapshot) -> dict[str, FunctionFingerprint]:
     """Build FunctionFingerprint dict from ELF metadata (size-only, no code hash).
@@ -1065,7 +1686,12 @@ def _diff_fingerprint_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change
     if not old_fps or not new_fps:
         return changes
 
-    candidates = match_renamed_functions(old_fps, new_fps)
+    # Matches in this path are hash-less (size-only), inferred from symbol size
+    # alone since _fingerprints_from_elf has no code bytes. Pass the name-
+    # similarity predicate into the matcher so it participates in candidate
+    # *selection*: a coincidental same-size symbol can neither be reported as a
+    # rename nor greedily consume a partner that a plausible rename should claim.
+    candidates = match_renamed_functions(old_fps, new_fps, name_filter=_plausible_rename)
     for c in candidates:
         conf_pct = int(c.confidence * 100)
         changes.append(Change(

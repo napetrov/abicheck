@@ -1,4 +1,5 @@
 # Copyright 2026 Nikolay Petrov
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +20,7 @@ import logging
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
 
@@ -121,11 +122,18 @@ def _stamp_provenance(
     build_id: str | None,
     no_git: bool,
 ) -> None:
-    """Fill provenance metadata on a snapshot (mutates in place)."""
-    import datetime
+    """Fill provenance metadata on a snapshot (mutates in place).
+
+    ``created_at`` honours ``SOURCE_DATE_EPOCH`` (the reproducible-builds
+    standard): when set to a Unix timestamp, that fixed time is used instead of
+    the wall clock, so two dumps of an identical library are byte-identical —
+    enabling content-addressable caching and reproducible-build verification.
+    An unset or malformed value falls back to the current time.
+    """
+    import os
     import subprocess
 
-    snap.created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    snap.created_at = _provenance_timestamp(os.environ.get("SOURCE_DATE_EPOCH"))
     snap.git_tag = git_tag
     snap.build_id = build_id
 
@@ -139,6 +147,23 @@ def _stamp_provenance(
                 snap.git_commit = result.stdout.strip()
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass  # git not available or not a repo — leave as None
+
+
+def _provenance_timestamp(source_date_epoch: str | None) -> str:
+    """ISO-8601 UTC timestamp, honouring ``SOURCE_DATE_EPOCH`` when valid."""
+    import datetime
+
+    if source_date_epoch:
+        try:
+            epoch = int(source_date_epoch.strip())
+            return datetime.datetime.fromtimestamp(
+                epoch, tz=datetime.timezone.utc
+            ).isoformat()
+        except (ValueError, OverflowError, OSError):
+            # Non-numeric or out-of-range epoch — fall back to wall clock
+            # rather than aborting the dump.
+            pass
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
 def _write_snapshot_output(
@@ -468,7 +493,45 @@ def _collect_metadata(path: Path) -> LibraryMetadata | None:
     )
 
 
-@click.group()
+# Exit code for an invalid invocation (bad arguments, unknown option, invalid
+# option value, unreadable/unrecognised input path). Chosen as sysexits.h
+# ``EX_USAGE`` so it sits *outside* the compare/compat result space
+# {0, 1, 2, 4} — a CI script can therefore tell "you called me wrong" apart
+# from a real ABI verdict. Click defaults ``UsageError`` to exit 2, which
+# collides with ``compare``'s documented "2 = source break"; this remaps it.
+_EXIT_USAGE_ERROR = 64
+
+
+class _AbicheckGroup(click.Group):
+    """Root group that maps Click *usage* errors to a dedicated exit code.
+
+    Click exits 2 for ``UsageError`` / ``BadParameter`` (bad arguments, unknown
+    options, invalid option values, missing/unreadable input paths), which
+    collides with ``compare``'s documented ``2 = source break`` result. Remap
+    just that code to ``_EXIT_USAGE_ERROR`` so an invalid invocation is never
+    mistaken for an ABI verdict. Other ``ClickException``s (exit 1, used for
+    operational failures such as malformed input or an expired strict waiver),
+    verdict exits (``SystemExit`` 2/4), and the ``compat`` error scheme (3–11)
+    are deliberately left untouched.
+    """
+
+    def main(self, *args: Any, standalone_mode: bool = True, **kwargs: Any) -> Any:  # type: ignore[override]
+        if not standalone_mode:
+            return super().main(*args, standalone_mode=False, **kwargs)  # type: ignore[call-overload]
+        try:
+            super().main(*args, standalone_mode=False, **kwargs)  # type: ignore[call-overload]
+        except click.exceptions.Abort:
+            click.echo("Aborted!", err=True)
+            sys.exit(1)
+        except click.exceptions.ClickException as exc:
+            exc.show()
+            # Only Click's usage-error code (2) collides with a compare verdict.
+            sys.exit(_EXIT_USAGE_ERROR if exc.exit_code == 2 else exc.exit_code)
+        else:
+            sys.exit(0)
+
+
+@click.group(cls=_AbicheckGroup)
 @click.version_option(
     version=_abicheck_version,
     prog_name="abicheck",
@@ -1647,6 +1710,10 @@ def compare_cmd(
       1  Error-level findings in addition or quality_issues only
       2  Error-level findings in potential_breaking (but not abi_breaking)
       4  Error-level findings in abi_breaking
+    \b
+    Invalid invocation (bad arguments/options, unreadable or unrecognised
+    input) exits 64, outside the result space above, so it is never mistaken
+    for an ABI verdict.
 
     \b
     Examples:
