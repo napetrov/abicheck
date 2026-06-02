@@ -546,6 +546,21 @@ class TestPlausibleRename:
         # Same, for a class-type argument containing an 'E' in its identifier.
         assert _plausible_rename("_ZN3FooI3ErrEC1Ev", "_ZN3FooI3ErrEC2Ev") is False
 
+    def test_one_sided_ctor_match_rejected(self) -> None:
+        # Only one side is a ctor/dtor: a removed constructor A::A()
+        # (_ZN1AC1Ev) vs an added ordinary member B::A() (_ZN1B1AEv) both
+        # reduce to leaf 'A()', but a constructor ABI symbol cannot be
+        # satisfied by an ordinary method — reject rather than call it a rename.
+        assert _plausible_rename("_ZN1AC1Ev", "_ZN1B1AEv") is False
+        assert _plausible_rename("_ZN1B1AEv", "_ZN1AC1Ev") is False
+        # Likewise a destructor vs an ordinary same-leaf member.
+        assert _plausible_rename("_ZN1AD1Ev", "_ZN1B1AEv") is False
+
+    def test_same_variant_ctor_relocation_accepted(self) -> None:
+        # A genuine constructor relocation keeps the same variant code, so a
+        # move to a new enclosing scope (A::A() -> ns::A::A()) still matches.
+        assert _plausible_rename("_ZN1AC1Ev", "_ZN2ns1AC1Ev") is True
+
     def test_ctor_dtor_variant_malformed_symbols_yield_none(self) -> None:
         # Defensive bail-outs: a malformed nested-name must never raise or
         # mis-report; it yields None (no suppression — the safe direction).

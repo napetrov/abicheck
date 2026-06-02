@@ -1464,13 +1464,16 @@ def _plausible_rename(old_name: str, new_name: str) -> bool:
     if old_name == new_name:
         return True
     # Itanium ctor/dtor variants (C1/C2/C3, D0/D1/D2) demangle to the same leaf
-    # but are distinct exported symbols. A pair whose variant codes differ
-    # (e.g. complete-object C1 vs base-object C2) is never a rename, even if
-    # sizes collide; a genuine ctor/dtor relocation keeps the same variant.
-    # (Checked on the raw mangled name, so it catches the case the demangler
-    # would otherwise collapse to an identical leaf.)
+    # but are distinct exported symbols. A pair is a plausible ctor/dtor rename
+    # only when BOTH sides are the *same* variant (a genuine relocation keeps
+    # it). Any mismatch is rejected: differing variants (complete-object C1 vs
+    # base-object C2), and — crucially — a one-sided match where only one side
+    # is a ctor/dtor (e.g. removed ctor ``A::A()`` vs added ordinary method
+    # ``B::A()`` both reduce to leaf ``A()``), since a constructor ABI symbol
+    # cannot be satisfied by an ordinary member. (Checked on the raw mangled
+    # name, so it catches the case the demangler collapses to an identical leaf.)
     ov, nv = _ctor_dtor_variant(old_name), _ctor_dtor_variant(new_name)
-    if ov is not None and nv is not None and ov != nv:
+    if (ov is not None or nv is not None) and ov != nv:
         return False
     # Demangle each name exactly once and reuse the result for both the leaf and
     # the parameter signature (rather than relying on the demangle LRU cache,
