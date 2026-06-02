@@ -239,6 +239,24 @@ class TestOverloadSetRerouted:
         ])
         assert detect_overload_set_rerouted(old, new) == []
 
+    def test_volatile_and_ref_qualifiers_rendered(self) -> None:
+        """Overloads differing by volatile / ref-qualifier are distinct members
+        and the rendered old/new values surface those qualifiers."""
+        f_vol = _fn("lib::g", mangled="_ZVo", params=[("a", "int")])
+        f_vol.is_volatile = True
+        f_ref = _fn("lib::g", mangled="_ZRo", params=[("a", "int")])
+        f_ref.ref_qualifier = "&"
+        old = _snap(funcs=[
+            _fn("lib::g", mangled="_Zo", params=[("a", "int")]),
+            f_vol,
+            f_ref,
+        ])
+        new = _snap(funcs=[_fn("lib::g", mangled="_Zn", params=[("a", "long")])])
+        changes = detect_overload_set_rerouted(old, new)
+        assert len(changes) == 1
+        assert "volatile" in changes[0].old_value
+        assert "&" in changes[0].old_value
+
     def test_cv_ref_only_overload_set_still_fires(self) -> None:
         """Overloads that differ only in implicit-object cv/ref qualifiers share
         a parameter-type tuple but are distinct overloads. A genuine overload

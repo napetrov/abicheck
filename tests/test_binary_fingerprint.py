@@ -18,6 +18,7 @@ from abicheck.binary_fingerprint import (
     match_renamed_functions,
 )
 from abicheck.checker import ChangeKind, compare
+from abicheck.diff_symbols import _plausible_rename, _unqualified_name
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import AbiSnapshot, Function, Visibility
 
@@ -391,6 +392,46 @@ class TestComputeSectionSummary:
             pass
         result = compute_section_summary(p)
         assert result.sections == {}
+
+
+# ---------------------------------------------------------------------------
+# Unqualified-name extraction and rename plausibility
+# ---------------------------------------------------------------------------
+
+class TestUnqualifiedName:
+    @pytest.mark.parametrize("symbol,expected", [
+        ("add", "add"),                                  # plain C name
+        ("ns::Class::method", "method"),                 # qualified
+        ("ns::Class::method(int, long)", "method"),      # with params
+        ("ns::foo<bar::baz>::run()", "run"),             # '::' inside template args
+        ("ns::make<a::b, c::d>", "make<a::b, c::d>"),    # no params, template tail kept
+        ("std::ostream::operator<<(int)", "operator<<(int)"),  # operator kept whole
+        ("Widget::operator()(int)", "operator()(int)"),        # call operator
+    ])
+    def test_extraction(self, symbol: str, expected: str) -> None:
+        assert _unqualified_name(symbol) == expected
+
+
+class TestPlausibleRename:
+    def test_identical_symbol(self) -> None:
+        assert _plausible_rename("foo", "foo") is True
+
+    def test_namespace_move_same_leaf(self) -> None:
+        # Different qualifier, same leaf → plausible.
+        assert _plausible_rename("a::b::run()", "a::c::d::run()") is True
+
+    def test_same_scope_different_leaf_rejected(self) -> None:
+        # Shared qualifier must not inflate the score: unrelated leaves under a
+        # common scope (begin/end) are not a rename.
+        assert _plausible_rename(
+            "std::vector<int>::begin()", "std::vector<int>::end()"
+        ) is False
+
+    def test_unrelated_rejected(self) -> None:
+        assert _plausible_rename("fixupIndexV4(X)", "SmallVectorImpl<X>::erase(X*)") is False
+
+    def test_version_suffix_rename_accepted(self) -> None:
+        assert _plausible_rename("libfoo_v1_create", "libfoo_create") is True
 
 
 # ---------------------------------------------------------------------------

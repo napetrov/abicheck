@@ -1012,42 +1012,88 @@ def _diff_var_access(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 _FUNC_LIKE_TYPES = frozenset({SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTYPE})
 
-# Minimum base-name similarity required to accept a *hash-less* (size-only /
-# fuzzy) rename match. When no code hash is available — the only mode the
+# Minimum unqualified-name similarity required to accept a *hash-less* (size-only
+# / fuzzy) rename match. When no code hash is available — the only mode the
 # snapshot/elf_only path can reach — a "rename" is inferred purely from a
 # coincidental symbol-size collision. On a large library that produces nonsense
 # pairings of completely unrelated functions that merely happen to share a byte
 # size (observed on real libLLVM release-to-release diffs: e.g. fixupIndexV4 ->
-# SmallVectorImpl<...>). A genuine rename or namespace relocation preserves most
-# of the qualified spelling (e.g. llvm::CompileUnit::markEverythingAsKept ->
-# llvm::dwarf_linker::classic::CompileUnit::markEverythingAsKept), so requiring
-# whole-name similarity discriminates real renames from coincidences. Measured
-# on real libLLVM 17->18 symbols: genuine namespace moves score ~0.75-1.0,
-# unrelated same-size pairs <=0.48.
-_RENAME_NAME_SIMILARITY_MIN = 0.5
+# SmallVectorImpl<...>). A genuine rename or namespace relocation preserves the
+# function's *unqualified* leaf name, so comparing leaf names (not whole
+# qualified spellings, whose shared namespace/class prefix would dominate the
+# score and let e.g. std::vector<int>::begin vs ::end pass) discriminates real
+# renames from coincidences. Measured on real libLLVM 17->18: genuine moves
+# score ~1.0, unrelated same-size pairs <=0.13. The 0.6 floor also rejects
+# distinct short leaves under a shared scope (e.g. begin/end at 0.5).
+_RENAME_NAME_SIMILARITY_MIN = 0.6
+
+
+def _unqualified_name(symbol: str) -> str:
+    """Extract the unqualified (leaf) function name from a symbol, robustly.
+
+    Matching-safe alternative to ``demangle.base_name`` (which is documented
+    display-only and mis-parses operators / templates). Demangles when a
+    demangler is available, then strips the parameter list and the
+    namespace/class qualifier using *bracket-depth tracking* so that ``::`` and
+    ``(`` inside template arguments are ignored, and keeps the whole
+    ``operator...`` token intact.
+    """
+    from .demangle import demangle
+
+    s = demangle(symbol) or symbol
+    # An operator name encodes punctuation (``<<``, ``()``, ``[]``) that defeats
+    # bracket tracking, so handle it first: keep everything from ``operator`` to
+    # the end. It is stable and symmetric, which is all the matcher needs.
+    op = s.find("operator")
+    if op != -1:
+        return s[op:].strip()
+    # Truncate at the parameter-list '(' that sits at template depth 0.
+    depth = 0
+    for i, ch in enumerate(s):
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth = max(0, depth - 1)
+        elif ch == "(" and depth == 0:
+            s = s[:i]
+            break
+    # Take the segment after the last '::' that sits at template depth 0.
+    depth = 0
+    last = 0
+    i = 0
+    while i < len(s) - 1:
+        ch = s[i]
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth = max(0, depth - 1)
+        elif ch == ":" and s[i + 1] == ":" and depth == 0:
+            last = i + 2
+            i += 2
+            continue
+        i += 1
+    return s[last:].strip()
 
 
 def _plausible_rename(old_name: str, new_name: str) -> bool:
     """Whether two symbol names are similar enough to credibly be a rename.
 
-    Compares the *whole* names — demangled when a demangler is available,
-    otherwise the raw (mangled) spelling. Both are matching-safe representations:
-    unlike ``demangle.base_name`` (a display-only, best-effort unqualified-name
-    extractor that is explicitly unreliable for ``operator<<``, ``operator()``,
-    and templates containing ``::``), the full spelling has no parser to mislead
-    it. A namespace move keeps most of the string; an unrelated function that
-    merely shares a byte size does not. Used only to gate hash-less matches,
-    where size alone is not evidence of identity.
+    Compares the *unqualified* leaf names (see ``_unqualified_name``). A rename
+    or namespace relocation keeps the leaf name (identical leaf → score 1.0),
+    while unrelated functions that merely share a byte size — including
+    different methods under a common scope such as ``Class::get`` vs
+    ``Class::set`` — score low because the shared qualifier is discounted. Used
+    only to gate hash-less matches, where size alone is not evidence of identity.
     """
     if old_name == new_name:
         return True
 
     import difflib
 
-    from .demangle import demangle
-
-    a = demangle(old_name) or old_name
-    b = demangle(new_name) or new_name
+    a = _unqualified_name(old_name)
+    b = _unqualified_name(new_name)
+    if a == b:
+        return True
     return difflib.SequenceMatcher(None, a, b).ratio() >= _RENAME_NAME_SIMILARITY_MIN
 
 
