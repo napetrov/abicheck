@@ -60,12 +60,27 @@ import sys
 # same discipline as MYPY_ERROR_BASELINE.
 SURVIVOR_BASELINE: int | None = None
 
-# mutmut summary lines use emoji status markers; 🙁 is the "survived" bucket in
-# mutmut 2.x/3.x. We also accept plain-text forms so the parser is resilient to
+# mutmut summary lines use emoji status markers (the legend is the same in
+# 2.x/3.x): 🎉 killed, 🙁 survived, ⏰ timeout, 🤔 suspicious, 🫥 skipped,
+# 🔇 no-tests. We also accept plain-text forms so the parser is resilient to
 # version and locale differences.
+#
+# The gate only ever acts on an *explicit* parsed count — it never infers a
+# result from an exit code or from progress text. That is deliberate: mutmut's
+# run can exit 0 while still having unresolved (timeout/suspicious/no-tests)
+# mutants, and a non-zero exit can mean either survivors or an abort, so neither
+# the exit code nor a "309/464" progress token is trustworthy evidence of a
+# clean zero-survivor measurement.
 _EMOJI_SURVIVED = re.compile(r"🙁\s*(\d+)")
 _WORD_SURVIVED_COUNT = re.compile(r"(\d+)\s+survived\b", re.IGNORECASE)
 _LINE_SURVIVED = re.compile(r":\s*survived\b", re.IGNORECASE)
+
+# Non-killed, non-survived statuses that mean the measurement is *incomplete*:
+# the mutant was neither killed nor confirmed surviving. Accepting these as
+# "zero survivors" would let an under-resolved run pass a zero baseline.
+_EMOJI_TIMEOUT = re.compile(r"⏰\s*(\d+)")
+_EMOJI_SUSPICIOUS = re.compile(r"🤔\s*(\d+)")
+_EMOJI_NO_TESTS = re.compile(r"🔇\s*(\d+)")
 
 
 def parse_survivors(text: str) -> int | None:
@@ -73,7 +88,8 @@ def parse_survivors(text: str) -> int | None:
 
     Returns ``None`` when the text carries no recognizable survivor signal
     (e.g. mutmut errored or produced an unexpected format), so callers can tell
-    "zero survivors" apart from "could not measure".
+    "zero survivors" apart from "could not measure". A clean run still prints an
+    explicit ``🙁 0`` in its summary, so zero is detected as zero — not inferred.
     """
     if not text or not text.strip():
         return None
@@ -90,32 +106,39 @@ def parse_survivors(text: str) -> int | None:
     return None
 
 
-def _run(cmd: list[str]) -> tuple[str, int]:
-    """Run *cmd*, returning ``(combined_output, returncode)``."""
+def count_unresolved(text: str) -> int:
+    """Number of mutants that are neither killed nor survived (timeout /
+    suspicious / no-tests). A run with these did not fully resolve, so it must
+    not be accepted as a clean zero-survivor measurement."""
+    total = 0
+    for pat in (_EMOJI_TIMEOUT, _EMOJI_SUSPICIOUS, _EMOJI_NO_TESTS):
+        m = pat.search(text)
+        if m:
+            total += int(m.group(1))
+    return total
+
+
+def _run(cmd: list[str]) -> str:
     proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
         cmd, capture_output=True, text=True, timeout=7200
     )
-    return proc.stdout + proc.stderr, proc.returncode
+    return proc.stdout + proc.stderr
 
 
-def _gather_results(args: argparse.Namespace) -> tuple[str, int | None] | None:
-    """Return ``(output_text, run_exit_code)``.
+def _gather_results(args: argparse.Namespace) -> str | None:
+    """Return mutmut's output text, or ``None`` if none could be obtained.
 
-    ``run_exit_code`` is the exit status of ``mutmut run`` when we invoked it,
-    else ``None`` (results-file / no ``--run``). A ``None`` *return* means no
-    output could be obtained at all.
-
-    Using the run's exit code — rather than scraping progress text — is what
-    lets the caller tell a clean, complete run (mutmut exits 0 only when every
-    mutant was killed) apart from a run that was interrupted after printing
-    progress like ``309/464`` but before finishing.
+    Under ``--run`` we combine ``mutmut run``'s summary (which carries the
+    🙁/⏰/🤔 counts, including an explicit ``🙁 0`` on a clean run) with
+    ``mutmut results``. The run's exit code is intentionally not used as a
+    success signal — see the parsing-comment above.
     """
     if args.results_file:
         if args.results_file == "-":
-            return sys.stdin.read(), None
+            return sys.stdin.read()
         try:
             with open(args.results_file, encoding="utf-8") as fh:
-                return fh.read(), None
+                return fh.read()
         except OSError as e:
             print(f"ERROR: cannot read --results-file: {e}")
             return None
@@ -125,14 +148,11 @@ def _gather_results(args: argparse.Namespace) -> tuple[str, int | None] | None:
         return None
 
     combined = ""
-    run_exit: int | None = None
     if args.run:
         print("mutation-score: running `mutmut run` (this is slow)…")
-        run_text, run_exit = _run(["mutmut", "run"])
-        combined += run_text + "\n"
-    results_text, _ = _run(["mutmut", "results"])
-    combined += results_text
-    return combined, run_exit
+        combined += _run(["mutmut", "run"]) + "\n"
+    combined += _run(["mutmut", "results"])
+    return combined
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,8 +172,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    gathered = _gather_results(args)
-    if gathered is None:
+    text = _gather_results(args)
+    if text is None:
         # No output at all (mutmut missing / file unreadable). When --run was
         # requested the job's whole purpose is to produce a measurement, so this
         # is a failure, not a silent no-op. Otherwise (report-only / file modes)
@@ -167,24 +187,30 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
 
-    text, run_exit = gathered
     survivors = parse_survivors(text)
-    if survivors is None and args.run and run_exit == 0:
-        # mutmut exits 0 only when a *complete* run killed every mutant. A
-        # perfect run prints no survivor rows, so parse_survivors is None — but
-        # the zero exit proves it finished cleanly: that is zero survivors, not
-        # a failure to measure. (An interrupted run exits non-zero, so progress
-        # text like "309/464" can never be mistaken for completion.)
-        survivors = 0
     if survivors is None:
         print("mutation-score: could not parse survivor count from mutmut output")
-        # Under --run, no parseable count and a non-zero/unknown run exit means
-        # the run did not yield a usable measurement (aborted/interrupted) —
-        # fail so the gate is not a silent no-op. Only skip without --run.
+        # No explicit count means we did not get a usable measurement — an
+        # aborted/interrupted run, never an inferred zero. Fail under --run;
+        # only skip when we were merely reading a file / reporting.
         return 1 if args.run else 0
 
+    unresolved = count_unresolved(text)
     baseline = args.baseline if args.baseline is not None else SURVIVOR_BASELINE
-    print(f"mutation-score: {survivors} surviving mutant(s)")
+    msg = f"mutation-score: {survivors} surviving mutant(s)"
+    if unresolved:
+        msg += f", {unresolved} unresolved (timeout/suspicious/no-tests)"
+    print(msg)
+
+    # Unresolved mutants mean the run did not fully resolve, so even zero
+    # survivors is not a clean pass once we are gating against a baseline.
+    if baseline is not None and unresolved > 0:
+        print(
+            f"ERROR: {unresolved} mutant(s) did not resolve (timeout/suspicious/"
+            "no-tests) — the measurement is incomplete; fix or silence them so "
+            "the survivor count is trustworthy."
+        )
+        return 1
 
     if baseline is None:
         print(

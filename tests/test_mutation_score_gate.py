@@ -97,37 +97,65 @@ def test_run_mode_fails_when_mutmut_missing(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_run_mode_fails_when_run_aborts_unparseable(monkeypatch: pytest.MonkeyPatch) -> None:
-    """--run where the run aborts (non-zero exit, unparseable results) must fail."""
+    """--run where the run aborts (no parseable count) must fail — never an
+    inferred zero."""
     monkeypatch.setattr(gate.shutil, "which", lambda name: "/usr/bin/mutmut")
-    monkeypatch.setattr(gate, "_run", lambda cmd: ("config error: nothing to mutate", 1))
+    monkeypatch.setattr(gate, "_run", lambda cmd: "config error: nothing to mutate")
     assert gate.main(["--run", "--baseline", "0"]) == 1
 
 
 def test_run_mode_fails_on_interrupted_progress(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An interrupted run that printed only progress ("309/464") but exited
-    non-zero must NOT be mistaken for a clean zero-survivor run."""
+    """An interrupted run that printed only progress ("309/464") with no explicit
+    survivor count must NOT be mistaken for a clean zero-survivor run."""
     monkeypatch.setattr(gate.shutil, "which", lambda name: "/usr/bin/mutmut")
-    # Progress text present, no survivor rows, non-zero exit (interrupted).
-    monkeypatch.setattr(gate, "_run", lambda cmd: ("309/464  🎉 300", 2))
+    monkeypatch.setattr(gate, "_run", lambda cmd: "309/464  🎉 300")  # no 🙁 count
     assert gate.main(["--run", "--baseline", "0"]) == 1
 
 
 def test_run_mode_counts_survivors(monkeypatch: pytest.MonkeyPatch) -> None:
-    """--run with a parseable survivor count is gated normally (not failed just
-    because mutmut's own exit code is non-zero when mutants survive)."""
+    """--run with an explicit survivor count is gated normally."""
     monkeypatch.setattr(gate.shutil, "which", lambda name: "/usr/bin/mutmut")
-    monkeypatch.setattr(gate, "_run", lambda cmd: ("🙁 2", 1))
+    monkeypatch.setattr(gate, "_run", lambda cmd: "🙁 2")
     assert gate.main(["--run", "--baseline", "5"]) == 0   # within baseline
     assert gate.main(["--run", "--baseline", "1"]) == 1   # exceeds baseline
 
 
 def test_run_mode_clean_run_zero_survivors_passes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A complete run (mutmut exit 0) with no survivor rows counts as 0, not as
-    'could not measure' — so baseline 0 passes regardless of progress text."""
+    """A clean run prints an explicit '🙁 0' in its summary → parsed as 0 → passes
+    baseline 0. Zero is detected, never inferred."""
     monkeypatch.setattr(gate.shutil, "which", lambda name: "/usr/bin/mutmut")
-    # Exit 0 == every mutant killed; no 🙁 / survivor rows in the text.
-    monkeypatch.setattr(gate, "_run", lambda cmd: ("12/12 done", 0))
+    monkeypatch.setattr(gate, "_run", lambda cmd: "12/12  🎉 12  🙁 0  ⏰ 0  🤔 0")
     assert gate.main(["--run", "--baseline", "0"]) == 0
+
+
+def test_run_mode_fails_on_unresolved_mutants(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zero survivors but unresolved (timeout/suspicious) mutants is an
+    incomplete measurement — it must not pass a zero baseline."""
+    monkeypatch.setattr(gate.shutil, "which", lambda name: "/usr/bin/mutmut")
+    monkeypatch.setattr(gate, "_run", lambda cmd: "🙁 0  ⏰ 2  🤔 1")
+    assert gate.main(["--run", "--baseline", "0"]) == 1
+
+
+def test_unresolved_does_not_fail_report_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """In report-only mode (no baseline) unresolved mutants are surfaced but the
+    gate does not fail — it is only reporting."""
+    monkeypatch.setattr(gate.shutil, "which", lambda name: "/usr/bin/mutmut")
+    monkeypatch.setattr(gate, "_run", lambda cmd: "🙁 0  ⏰ 2")
+    assert gate.main(["--run"]) == 0  # SURVIVOR_BASELINE is None → report-only
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("🙁 0  ⏰ 2  🤔 1", 3),
+        ("🙁 5", 0),
+        ("⏰ 4", 4),
+        ("🔇 2", 2),
+        ("no markers", 0),
+    ],
+)
+def test_count_unresolved(text: str, expected: int) -> None:
+    assert gate.count_unresolved(text) == expected
 
 
 def test_no_run_unparseable_is_still_a_skip(tmp_path: Path) -> None:
