@@ -546,6 +546,16 @@ class TestPlausibleRename:
         # Same, for a class-type argument containing an 'E' in its identifier.
         assert _plausible_rename("_ZN3FooI3ErrEC1Ev", "_ZN3FooI3ErrEC2Ev") is False
 
+    def test_ctor_dtor_variant_malformed_symbols_yield_none(self) -> None:
+        # Defensive bail-outs: a malformed nested-name must never raise or
+        # mis-report; it yields None (no suppression — the safe direction).
+        assert _ctor_dtor_variant("_ZN99FooC1Ev") is None     # length overruns
+        assert _ctor_dtor_variant("_ZN3FooIiC1Ev") is None    # template never closed
+        assert _ctor_dtor_variant("_ZN3FooI") is None         # truncated at 'I'
+        assert _ctor_dtor_variant("_ZN3FooILiC1Ev") is None   # L-literal never closed
+        assert _ctor_dtor_variant("_ZNK1A3fooEv") is None     # const member, not a ctor
+        assert _ctor_dtor_variant("not_mangled") is None      # not an _ZN name
+
     def test_operator_substring_not_treated_as_operator(self) -> None:
         # Identifiers that merely contain 'operator' are ordinary names and
         # must still match on affix, not be forced to exact-only.

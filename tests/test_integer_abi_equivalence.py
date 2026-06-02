@@ -26,8 +26,32 @@ from __future__ import annotations
 import pytest
 
 from abicheck.checker import ChangeKind, Verdict, compare
-from abicheck.diff_symbols import _abi_equivalent_scalar
+from abicheck.diff_symbols import _abi_equivalent_scalar, _canonical_int_spelling
 from abicheck.model import AbiSnapshot, Function, Param, Visibility
+
+
+@pytest.mark.parametrize("spelling,expected", [
+    # Specifier-order / redundant-int variants fold to one canonical form.
+    ("unsigned long int", "unsigned long"),
+    ("long unsigned int", "unsigned long"),
+    ("int long unsigned", "unsigned long"),
+    ("signed long int", "long"),
+    ("long long unsigned int", "unsigned long long"),
+    ("signed long long int", "long long"),
+    ("unsigned short int", "unsigned short"),
+    ("signed int", "int"),
+    ("unsigned", "unsigned int"),
+    # char keeps its three distinct forms; bare ``char`` sign is impl-defined.
+    ("signed char", "signed char"),
+    ("unsigned char", "unsigned char"),
+    ("char", "char"),
+    # Non-specifier spellings (typedefs, fixed-width) pass through untouched.
+    ("size_t", "size_t"),
+    ("uint32_t", "uint32_t"),
+    ("", ""),
+])
+def test_canonical_int_spelling(spelling: str, expected: str) -> None:
+    assert _canonical_int_spelling(spelling) == expected
 
 
 @pytest.mark.parametrize("a,b", [
