@@ -405,6 +405,8 @@ class TestUnqualifiedName:
         ("ns::Class::method(int, long)", "method"),      # with params
         ("ns::foo<bar::baz>::run()", "run"),             # '::' inside template args
         ("ns::make<a::b, c::d>", "make"),                # trailing template args dropped
+        ("ns::foo<bar<int>>", "foo"),                    # nested trailing template args
+        ("a>", "a>"),                                    # unbalanced '>' left as-is
         ("void get<int>()", "get"),                      # return type + template dropped
         ("std::ostream::operator<<(int)", "operator<<(int)"),  # operator kept whole
         ("Widget::operator()(int)", "operator()(int)"),        # call operator
@@ -446,6 +448,24 @@ class TestPlausibleRename:
 
     def test_version_suffix_rename_accepted(self) -> None:
         assert _plausible_rename("libfoo_v1_create", "libfoo_create") is True
+
+    def test_distinct_operators_rejected(self) -> None:
+        # The shared 'operator' token must not count as a similarity affix.
+        assert _plausible_rename("C::operator+()", "C::operator-()") is False
+        assert _plausible_rename("C::operator<<(int)", "C::operator>>(int)") is False
+
+    def test_same_operator_accepted(self) -> None:
+        # Identical operator spelling is an exact-leaf match.
+        assert _plausible_rename("A::operator==(int)", "B::operator==(int)") is True
+
+    def test_plain_unqualified_names(self) -> None:
+        # No '::', no template, no return type, no operator.
+        assert _plausible_rename("process_request", "process_reply") is True
+        assert _plausible_rename("alpha", "omega") is False
+
+    def test_prefix_of_other_accepted(self) -> None:
+        # One leaf is a full prefix of the other (shared run spans the shorter).
+        assert _plausible_rename("init", "initialize") is True
 
 
 # ---------------------------------------------------------------------------

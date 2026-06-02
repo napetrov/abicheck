@@ -1136,6 +1136,13 @@ def _plausible_rename(old_name: str, new_name: str) -> bool:
     b = _unqualified_name(new_name)
     if a == b:
         return True
+    # Operator names all share the literal ``operator`` token, which would
+    # otherwise count as a similarity affix and pair distinct operators
+    # (``operator+`` vs ``operator-``). Require an exact spelling match for
+    # operators — handled by the ``a == b`` check above, so anything reaching
+    # here with an operator leaf is a genuinely different operator.
+    if a.startswith("operator") or b.startswith("operator"):
+        return False
     return _shared_affix_len(a, b) >= _RENAME_MIN_SHARED_AFFIX
 
 
