@@ -393,10 +393,15 @@ def _compare_release_parallel(
     old_map: dict[str, Path],
     max_workers: int,
 ) -> list[dict[str, object]]:
-    """Run per-library release comparisons in parallel."""
+    """Run per-library release comparisons in parallel.
+
+    Results are collected by key and returned in *matched_keys* order so the
+    report is deterministic regardless of completion timing (parallel is now the
+    default via ``-j 0``); CI snapshots and downstream diffs depend on this.
+    """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    results: list[dict[str, object]] = []
+    results_by_key: dict[str, dict[str, object]] = {}
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(_compare_one_library, key, *common_args): key
@@ -405,13 +410,13 @@ def _compare_release_parallel(
         for future in as_completed(futures):
             key = futures[future]
             try:
-                results.append(future.result())
+                results_by_key[key] = future.result()
             except Exception as exc:
                 click.echo(f"Error comparing {old_map[key].name}: {exc}", err=True)
-                results.append(
-                    {"library": old_map[key].name, "verdict": "ERROR", "error": str(exc)},
-                )
-    return results
+                results_by_key[key] = {
+                    "library": old_map[key].name, "verdict": "ERROR", "error": str(exc),
+                }
+    return [results_by_key[key] for key in matched_keys if key in results_by_key]
 
 
 def _compare_release_sequential(

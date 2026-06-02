@@ -517,3 +517,35 @@ class TestReleaseSeverityPolicyAndGlobal:
 
         assert _resolve_release_severity_config(
             "strict", None, None, None, None) is not None
+
+
+# ── §6 follow-ups: debug-format auto override + parallel determinism ─────────
+
+
+class TestDebugFormatAutoOverride:
+    def test_auto_overrides_legacy_flag(self, tmp_path):
+        # --debug-format auto must supersede a legacy --dwarf and run in
+        # auto-detect mode (on JSON snapshots this is a smoke check: it must
+        # not error and must exit 0 on identical input).
+        old_p, new_p = _write_identical(tmp_path)
+        result = CliRunner().invoke(
+            main, ["compare", str(old_p), str(new_p), "--debug-format", "auto", "--dwarf"],
+        )
+        assert result.exit_code == 0
+
+
+class TestCompareReleaseParallelOrdering:
+    def test_parallel_results_in_matched_keys_order(self, monkeypatch):
+        from pathlib import Path as _P
+
+        import abicheck.cli_compare_release as _cr
+
+        monkeypatch.setattr(
+            _cr, "_compare_one_library",
+            lambda key, *a: {"library": key, "key": key},
+        )
+        keys = ["libc", "liba", "libb"]
+        old_map = {k: _P(k) for k in keys}
+        out = _cr._compare_release_parallel(keys, (), old_map, max_workers=4)
+        # Deterministic: emitted in matched_keys order, not completion order.
+        assert [r["key"] for r in out] == keys

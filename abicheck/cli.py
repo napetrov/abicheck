@@ -651,10 +651,13 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
     _setup_verbosity(verbose)
 
     # Reconcile the --debug-format selector with the legacy --btf/--ctf/--dwarf
-    # flags. The selector wins unless it is unset or "auto" (auto-detect).
-    effective_debug_format = (
-        debug_format_opt if debug_format_opt and debug_format_opt != "auto" else None
-    ) or debug_format
+    # flags. The selector supersedes the legacy flags whenever it is given:
+    # an explicit "auto" returns to auto-detection (None) even if a legacy flag
+    # is also present; only when the selector is absent do the legacy flags apply.
+    if debug_format_opt is not None:
+        effective_debug_format = None if debug_format_opt.lower() == "auto" else debug_format_opt
+    else:
+        effective_debug_format = debug_format
 
     # Resolve -p / --compile-db aliases
     effective_compile_db = compile_db_path or compile_db_path_alt
@@ -1725,10 +1728,13 @@ def compare_cmd(
         raise click.UsageError("--annotate-additions requires --annotate")
 
     # Reconcile the --debug-format selector with the legacy --btf/--ctf/--dwarf
-    # flags. The selector wins unless it is unset or "auto" (auto-detect).
-    effective_debug_format = (
-        debug_format_opt if debug_format_opt and debug_format_opt != "auto" else None
-    ) or debug_format
+    # flags. The selector supersedes the legacy flags whenever it is given:
+    # an explicit "auto" returns to auto-detection (None) even if a legacy flag
+    # is also present; only when the selector is absent do the legacy flags apply.
+    if debug_format_opt is not None:
+        effective_debug_format = None if debug_format_opt.lower() == "auto" else debug_format_opt
+    else:
+        effective_debug_format = debug_format
 
     # Tri-state --demangle: default ON for human-readable formats, OFF for the
     # machine formats (json/sarif), unless the user set the flag explicitly.
