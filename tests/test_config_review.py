@@ -185,6 +185,20 @@ class TestDebugFormatSelector:
         )
         assert result.exit_code == 0
 
+    def test_debug_format_rejected_on_non_elf(self, tmp_path):
+        # --debug-format dwarf/btf/ctf is ELF-only; compare must reject (not
+        # silently ignore) it for a PE/Mach-O binary input, like dump does.
+        old = tmp_path / "old.dll"
+        new = tmp_path / "new.dll"
+        old.write_bytes(b"MZ\x90\x00\x03\x00\x00\x00")  # PE magic
+        new.write_bytes(b"MZ\x90\x00\x03\x00\x00\x00")
+        result = CliRunner().invoke(
+            main, ["compare", str(old), str(new), "--debug-format", "dwarf"],
+        )
+        assert result.exit_code != 0
+        combined = result.output + (result.stderr or "")
+        assert "ELF" in combined
+
 
 # ── §6 --report-mode impact ─────────────────────────────────────────────────
 

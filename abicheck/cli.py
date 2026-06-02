@@ -1764,6 +1764,17 @@ def compare_cmd(
     # script) drives format detection, metadata, and dependency analysis.
     old_input, old_fmt = _normalize_binary_input(old_input)
     new_input, new_fmt = _normalize_binary_input(new_input)
+    # --debug-format / legacy --btf/--ctf/--dwarf force an ELF debug format and
+    # are silently ignored by the PE/Mach-O dump paths. Reject them up front for
+    # non-ELF binary inputs (mirrors dump_cmd) so the flag is never accepted but
+    # ignored. JSON-snapshot / dump inputs have *_fmt == None and are unaffected.
+    if effective_debug_format is not None:
+        for side, bfmt in (("old", old_fmt), ("new", new_fmt)):
+            if bfmt in ("pe", "macho"):
+                raise click.BadParameter(
+                    f"--debug-format {effective_debug_format} is only supported "
+                    f"for ELF binaries, but the {side} input is {bfmt.upper()}."
+                )
     _warn_ignored_flags(
         old_fmt is not None, new_fmt is not None,
         headers, includes,
