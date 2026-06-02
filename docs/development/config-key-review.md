@@ -85,9 +85,14 @@ severity scheme. Users cannot tell from the command which scheme they're in.
 **Recommendation:** Either (a) promote severity config to a shared option group
 used by `compare`, `compare-release`, and `appcompat`, or (b) if severity is
 meant to be the *one true* gating mechanism, deprecate the legacy verdict-exit
-path and always run severity-aware (defaulting to the `default` preset, which
-reproduces 0/2/4). Today's "implicit mode switch on first `--severity-*` flag"
-is the worst of both worlds.
+path and always run severity-aware. Note that this requires a **new
+legacy-equivalent preset** — the existing `default` preset leaves
+`potential_breaking` at `warning`, and `compute_exit_code()` only emits a
+non-zero code for categories set to `error` (`severity.py:185`, the
+`compute_exit_code` docstring), so `default` would map API_BREAK to exit **0**,
+not the legacy **2**. Reproducing 0/2/4 needs `abi_breaking=error` **and**
+`potential_breaking=error` (with quality/addition below error). Today's
+"implicit mode switch on first `--severity-*` flag" is the worst of both worlds.
 
 ### 🟠 2.3 Policy availability is uneven
 
@@ -179,13 +184,17 @@ existing info-notes already prevent the "silent no-op" correctness trap. The onl
 optional polish would be pointing users at `appcompat` (for `-app`) and
 `--suppress` (for `-filter`) in those note strings.
 
-### 3.2 `--compile-db` is a pure alias of `-p/--build-dir`
+### 3.2 `--compile-db` is a documented alias of `-p/--build-dir`
 
-`cli.py` defines both for the same target (`dump`). Aliases add doc surface for
-no capability.
+`cli.py` defines both for the same target (`dump`). It is **not** purely
+internal — `--compile-db` is documented as the explicit `compile_commands.json`
+path (`cli-usage.md:125`) and appears in ADR examples, so it's part of the
+public surface.
 
-**Recommendation:** Keep `-p/--build-dir` (the documented form), demote
-`--compile-db` to a hidden alias or drop it.
+**Recommendation:** Don't remove it (that would break documented command lines).
+The most you'd want is to **deprecate/hide it from `--help`** in favor of the
+canonical `-p/--build-dir`, keeping it functional as an accepted alias. Low
+priority — the redundancy is cosmetic.
 
 ### 3.3 The report-content "show-*" family overlaps
 
@@ -306,7 +315,7 @@ categories. Coherent. The only issue is reach (§2.2), not the schema.
    (§3.4).
 4. Fold `--show-impact` into `--report-mode`; document the three "what's shown"
    axes (§3.3).
-5. Hide/drop `--compile-db` alias (§3.2).
+5. Deprecate/hide (don't remove) the documented `--compile-db` alias (§3.2).
 
 **Do later (defaults polish):**
 6. `compare-release -j` default `0` (auto) (§4).
