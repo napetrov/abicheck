@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import pytest
 from _detector_mutations import (
+    ASYMMETRIC,
     CTX_PREFIX,
     MUTATIONS,
     build_snapshot,
@@ -97,7 +98,12 @@ def test_known_mutation_does_not_flag_context(mutation) -> None:
 
 @pytest.mark.parametrize("mutation", MUTATIONS, ids=lambda m: m.__name__)
 def test_known_mutation_is_direction_symmetric(mutation) -> None:
-    """The edited symbol surfaces in both compare directions."""
+    """The edited symbol surfaces in both compare directions.
+
+    Skips mutations whose reverse is legitimately a non-change (see ASYMMETRIC).
+    """
+    if mutation.__name__ in ASYMMETRIC:
+        pytest.skip("reverse edit is ABI-compatible; symmetry intentionally N/A")
     old_extra, new_extra, _, _ = mutation(tag=4)
     old = build_snapshot("1.0", _CONTEXT, old_extra)
     new = build_snapshot("2.0", _CONTEXT, new_extra)

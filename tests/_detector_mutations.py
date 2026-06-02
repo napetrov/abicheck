@@ -37,6 +37,7 @@ from collections.abc import Callable
 from abicheck.checker_policy import ChangeKind
 from abicheck.model import (
     AbiSnapshot,
+    AccessLevel,
     EnumMember,
     EnumType,
     Function,
@@ -159,6 +160,56 @@ def _m_var_removed(tag: int):
     return {"variables": [v]}, {"variables": []}, ChangeKind.VAR_REMOVED, True
 
 
+# --- C++ vtable / inheritance edits (real ABI breaks the flat C cases miss) ---
+
+def _m_vtable_method_added(tag: int):
+    name = f"Tgt{tag}"
+    api = _api(tag, ret=f"{name} *")
+
+    def cls(vtable: list[str]) -> RecordType:
+        return RecordType(name=name, kind="class", size_bits=64, vtable=vtable)
+
+    return ({"functions": [api], "types": [cls(["foo()"])]},
+            {"functions": [api], "types": [cls(["foo()", "bar()"])]},
+            ChangeKind.TYPE_VTABLE_CHANGED, True)
+
+
+def _m_base_class_added(tag: int):
+    name, base = f"Tgt{tag}", f"Base{tag}"
+    api = _api(tag, ret=f"{name} *")
+    base_t = RecordType(name=base, kind="class", size_bits=8)  # present both sides
+
+    def cls(bases: list[str]) -> RecordType:
+        return RecordType(name=name, kind="class", size_bits=64, vtable=["foo()"], bases=bases)
+
+    return ({"functions": [api], "types": [cls([]), base_t]},
+            {"functions": [api], "types": [cls([base]), base_t]},
+            ChangeKind.TYPE_BASE_CHANGED, True)
+
+
+def _m_method_became_virtual(tag: int):
+    base = dict(name=f"C{tag}::foo", mangled=f"_ZN1C{tag}3fooEv", return_type="void",
+                visibility=Visibility.PUBLIC, access=AccessLevel.PUBLIC)
+    return ({"functions": [Function(is_virtual=False, **base)]},
+            {"functions": [Function(is_virtual=True, **base)]},
+            ChangeKind.FUNC_VIRTUAL_ADDED, True)
+
+
+def _m_method_became_pure(tag: int):
+    base = dict(name=f"C{tag}::foo", mangled=f"_ZN1C{tag}3fooEv", return_type="void",
+                visibility=Visibility.PUBLIC, access=AccessLevel.PUBLIC, is_virtual=True)
+    return ({"functions": [Function(is_pure_virtual=False, **base)]},
+            {"functions": [Function(is_pure_virtual=True, **base)]},
+            ChangeKind.FUNC_VIRTUAL_BECAME_PURE, True)
+
+
+# Mutations whose reverse is legitimately a non-change, so touched-symbol
+# direction-symmetry does NOT hold and must not be asserted: making a virtual
+# method pure is a break, but the reverse (providing a concrete implementation)
+# is ABI-compatible and emits nothing.
+ASYMMETRIC = {"_m_method_became_pure"}
+
+
 MUTATIONS: list[Mutation] = [
     _m_func_param_changed,
     _m_func_return_changed,
@@ -170,6 +221,10 @@ MUTATIONS: list[Mutation] = [
     _m_enum_value_changed,
     _m_enum_member_added,
     _m_var_removed,
+    _m_vtable_method_added,
+    _m_base_class_added,
+    _m_method_became_virtual,
+    _m_method_became_pure,
 ]
 
 

@@ -46,12 +46,13 @@ from pathlib import Path
 
 import pytest
 from _detector_mutations import (
+    ASYMMETRIC,
     CTX_PREFIX,
     MUTATIONS,
     build_snapshot,
     context_identifiers,
 )
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
 from abicheck.checker import compare
@@ -273,6 +274,7 @@ def test_known_mutation_is_direction_symmetric(
 ) -> None:
     """A *modification* must surface in both directions (this is the real
     asymmetry guard — the independent-pair version mostly tests add/remove)."""
+    assume(MUTATIONS[idx].__name__ not in ASYMMETRIC)
     old_extra, new_extra, _kind, _ = MUTATIONS[idx](tag)
     old = build_snapshot("1.0", context, old_extra)
     new = build_snapshot("2.0", context, new_extra)
