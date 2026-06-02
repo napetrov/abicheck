@@ -56,12 +56,26 @@ def _write_identical(tmp_path: Path) -> tuple[Path, Path]:
 
 
 class TestDemangleTriState:
-    def test_markdown_demangles_by_default(self, tmp_path):
+    @staticmethod
+    def _patch_demangler(monkeypatch):
+        """Stub the demangler so the test is independent of whether the host has
+        a working C++ demangler (cxxfilt / c++filt) — macOS CI runners do not.
+        The reporter imports ``demangle_text`` at call time, so patching the
+        module attribute is sufficient. This verifies the *wiring* (which formats
+        request demangling), not the platform demangler itself."""
+        import abicheck.demangle as _dem
+        monkeypatch.setattr(
+            _dem, "demangle_text",
+            lambda text: text.replace("_Z3foov", "foo()"),
+        )
+
+    def test_markdown_demangles_by_default(self, tmp_path, monkeypatch):
+        self._patch_demangler(monkeypatch)
         old_p, new_p = _write_removed_cpp_symbol(tmp_path)
         result = CliRunner().invoke(
             main, ["compare", str(old_p), str(new_p), "--format", "markdown"],
         )
-        # Demangled "foo()" should appear; raw "_Z3foov" should not.
+        # markdown requests demangling by default -> stub rewrites the symbol.
         assert "foo()" in result.output
         assert "_Z3foov" not in result.output
 
@@ -79,12 +93,14 @@ class TestDemangleTriState:
         )
         assert "_Z3foov" in result.output
 
-    def test_no_demangle_override_on_markdown(self, tmp_path):
+    def test_no_demangle_override_on_markdown(self, tmp_path, monkeypatch):
+        self._patch_demangler(monkeypatch)
         old_p, new_p = _write_removed_cpp_symbol(tmp_path)
         result = CliRunner().invoke(
             main,
             ["compare", str(old_p), str(new_p), "--format", "markdown", "--no-demangle"],
         )
+        # --no-demangle suppresses demangling even on markdown -> stub not run.
         assert "_Z3foov" in result.output
 
     def test_json_stays_mangled_even_with_demangle(self, tmp_path):
@@ -283,3 +299,138 @@ class TestValidateAppcompatArgs:
                 old_includes_only=(), new_includes_only=(),
                 headers=(), includes=(),
             )
+
+
+# ── §2.2 severity-exit floors (Codex P1 fixes) ──────────────────────────────
+
+
+def _breaking_diff():
+    """A real DiffResult with one BREAKING change (func removed)."""
+    from abicheck.checker import compare
+    old = AbiSnapshot(
+        library="libtest.so", version="1.0",
+        functions=[Function(name="_Z3foov", mangled="_Z3foov", return_type="int",
+                             visibility=Visibility.PUBLIC)],
+    )
+    new = AbiSnapshot(library="libtest.so", version="2.0", functions=[])
+    return compare(old, new)
+
+
+class TestCompareReleaseExitFloors:
+    """_exit_compare_release: severity must not downgrade operational failures."""
+
+    def test_error_verdict_floors_severity_exit(self):
+        import pytest
+
+        from abicheck.cli_compare_release import _exit_compare_release
+
+        # A per-library ERROR (failed dump/extract) produces no changes, so the
+        # severity aggregation sees 0 — but it must still exit 4, not 0.
+        with pytest.raises(SystemExit) as exc:
+            _exit_compare_release("ERROR", False, [], severity_exit_code=0)
+        assert exc.value.code == 4
+
+    def test_removed_library_precedence_under_severity(self):
+        import pytest
+
+        from abicheck.cli_compare_release import _exit_compare_release
+
+        with pytest.raises(SystemExit) as exc:
+            _exit_compare_release("BREAKING", True, ["libgone"], severity_exit_code=0)
+        assert exc.value.code == 8
+
+    def test_severity_code_passthrough(self):
+        import pytest
+
+        from abicheck.cli_compare_release import _exit_compare_release
+
+        with pytest.raises(SystemExit) as exc:
+            _exit_compare_release("API_BREAK", False, [], severity_exit_code=2)
+        assert exc.value.code == 2
+
+    def test_clean_severity_does_not_exit(self):
+        from abicheck.cli_compare_release import _exit_compare_release
+
+        # severity says clean and no operational error -> returns without exiting.
+        assert _exit_compare_release("COMPATIBLE", False, [], severity_exit_code=0) is None
+
+
+class TestComputeReleaseSeverityExitCode:
+    def test_none_without_flags(self):
+        from abicheck.cli_compare_release import _compute_release_severity_exit_code
+
+        assert _compute_release_severity_exit_code(
+            [], None, None, None, None, None) is None
+
+    def test_zero_with_flag_and_no_changes(self):
+        from abicheck.cli_compare_release import _compute_release_severity_exit_code
+
+        assert _compute_release_severity_exit_code(
+            [], "info-only", None, None, None, None) == 0
+
+    def test_aggregates_breaking_change(self):
+        from abicheck.cli_compare_release import _compute_release_severity_exit_code
+
+        entry = {"library": "libtest.so", "_diff_result": _breaking_diff()}
+        # default preset: abi_breaking == error -> exit 4.
+        assert _compute_release_severity_exit_code(
+            [entry], "default", None, None, None, None) == 4
+        # info-only downgrades everything below error -> exit 0.
+        assert _compute_release_severity_exit_code(
+            [entry], "info-only", None, None, None, None) == 0
+
+
+class TestAppcompatSeverityExit:
+    """Full-mode appcompat severity exit, via a stubbed check_appcompat."""
+
+    def _dummy_libs(self, tmp_path):
+        app = tmp_path / "app"
+        old = tmp_path / "old.so"
+        new = tmp_path / "new.so"
+        for p in (app, old, new):
+            p.write_bytes(b"\x7fELF")
+        return app, old, new
+
+    def _patch_result(self, monkeypatch, *, missing=None, with_break=False):
+        import abicheck.appcompat as _ac
+        from abicheck.appcompat import AppCompatResult
+        from abicheck.checker import Verdict
+
+        res = AppCompatResult(
+            app_path="app", old_lib_path="old.so", new_lib_path="new.so",
+            missing_symbols=list(missing or []),
+            full_diff=_breaking_diff() if with_break else None,
+            verdict=Verdict.BREAKING if (missing or with_break) else Verdict.COMPATIBLE,
+        )
+        monkeypatch.setattr(_ac, "check_appcompat", lambda *a, **k: res)
+        return res
+
+    def test_info_only_downgrades_library_break(self, tmp_path, monkeypatch):
+        app, old, new = self._dummy_libs(tmp_path)
+        self._patch_result(monkeypatch, with_break=True)
+        result = CliRunner().invoke(
+            main, ["appcompat", str(app), str(old), str(new),
+                   "--severity-preset", "info-only"],
+        )
+        # A library-diff break is governed by severity -> info-only exits 0.
+        assert result.exit_code == 0
+
+    def test_default_preset_exits_breaking(self, tmp_path, monkeypatch):
+        app, old, new = self._dummy_libs(tmp_path)
+        self._patch_result(monkeypatch, with_break=True)
+        result = CliRunner().invoke(
+            main, ["appcompat", str(app), str(old), str(new),
+                   "--severity-preset", "default"],
+        )
+        assert result.exit_code == 4
+
+    def test_missing_symbols_floor_not_downgraded(self, tmp_path, monkeypatch):
+        app, old, new = self._dummy_libs(tmp_path)
+        # No library-diff changes, but the app is missing a required symbol:
+        # info-only must NOT downgrade this hard runtime break below 4.
+        self._patch_result(monkeypatch, missing=["_Z3barv"])
+        result = CliRunner().invoke(
+            main, ["appcompat", str(app), str(old), str(new),
+                   "--severity-preset", "info-only"],
+        )
+        assert result.exit_code == 4

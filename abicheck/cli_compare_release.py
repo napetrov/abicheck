@@ -1392,7 +1392,10 @@ def _exit_compare_release(
 
     When *severity_exit_code* is not None, the severity-aware scheme is in
     effect: that code replaces the verdict-based 2/4 mapping, except that
-    a removed library still exits 8 in preference to the severity code.
+    (a) a removed library still exits 8 in preference to the severity code, and
+    (b) an operational ERROR verdict (a library failed to dump/extract/compare)
+    still floors the exit at 4 — such failures produce no ``DiffResult.changes``
+    so the severity aggregation cannot see them, and must never be downgraded.
     When None, the legacy verdict-based mapping is unchanged.
     """
     if severity_exit_code is not None:
@@ -1400,8 +1403,11 @@ def _exit_compare_release(
         # severity code, otherwise emit the aggregated severity exit code.
         if fail_on_removed and removed_keys:
             sys.exit(8)
-        if severity_exit_code != 0:
-            sys.exit(severity_exit_code)
+        code = severity_exit_code
+        if worst_verdict == "ERROR":
+            code = max(code, 4)
+        if code != 0:
+            sys.exit(code)
         return
     if worst_verdict in ("BREAKING", "ERROR"):
         sys.exit(4)

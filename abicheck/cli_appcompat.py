@@ -345,6 +345,12 @@ def appcompat_cmd(
             diff.changes, resolved_config,
             kind_sets=diff._effective_kind_sets(),
         )
+        # Missing required symbols/versions are a hard runtime break (the app
+        # won't load) that is NOT represented in the library diff's changes, so
+        # compute_exit_code() can't see it. Never let a severity preset (e.g.
+        # info-only) downgrade that below BREAKING.
+        if result.missing_symbols or result.missing_versions:
+            exit_code = max(exit_code, 4)
         if exit_code != 0:
             sys.exit(exit_code)
         return
