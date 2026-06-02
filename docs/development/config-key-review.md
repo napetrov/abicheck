@@ -114,15 +114,12 @@ on exit `1` is avoidable. At minimum, the [exit-codes reference] should carry a
 single decision-tree, and `1` should not mean both "tool crashed" and "a real
 finding" within the comparison family.
 
-### 🟡 2.5 `--annotate` writes to different streams
+### ✅ 2.5 `--annotate` stream is already consistent (verified — non-issue)
 
-`compare` emits GitHub annotations to **stderr** (`cli.py:1574`,
-`_maybe_emit_annotations`); `compare-release` emits to **stdout**
-(`cli_compare_release.py:384`). CI consumers piping output will see different
-behavior.
-
-**Recommendation:** Standardize on stderr (annotations are diagnostics, not the
-report payload).
+Both `compare` (`cli.py:1255`, `_maybe_emit_annotations`) and `compare-release`
+(`cli_compare_release.py:384`) emit GitHub annotations to **stderr**
+(`click.echo(..., err=True)`). No divergence; no action needed. (An earlier draft
+of this review incorrectly claimed `compare-release` used stdout.)
 
 ### 🟡 2.6 Suppression input formats differ
 
@@ -279,7 +276,6 @@ categories. Coherent. The only issue is reach (§2.2), not the schema.
 2. Make the legacy-vs-severity exit-code switch explicit, or always run
    severity-aware (§2.2).
 3. Warn (don't silently ignore) on `compat -app`/`-filter`/`-params` (§3.1).
-4. Standardize `--annotate` on stderr (§2.5).
 
 **Do next (consolidation):**
 5. Collapse `--btf/--ctf/--dwarf` into `--debug-format`; rename `--dwarf-only`
