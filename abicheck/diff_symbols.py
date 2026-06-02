@@ -651,6 +651,10 @@ def _diff_pointer_levels(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
         # Param pointer depths
         for i, (p_old, p_new) in enumerate(zip(f_old.params, f_new.params)):
+            # Skip individually unresolved params ("?"): depth falls back to 0
+            # and would read as a phantom level change (matches _check_params_change).
+            if _type_unknown(p_old.type) or _type_unknown(p_new.type):
+                continue
             if p_old.pointer_depth != p_new.pointer_depth and (
                 p_old.pointer_depth > 0 or p_new.pointer_depth > 0
             ):

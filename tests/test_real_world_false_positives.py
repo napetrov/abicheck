@@ -6,10 +6,13 @@ binaries (oneTBB, Protobuf, libxml2, …). They drive the public
 :func:`abicheck.checker.compare` pipeline with minimal synthetic snapshots that
 isolate the responsible mechanism.
 
-The four scenarios correspond to FP-1…FP-4 in ``validation/DESIGN_ANALYSIS.md``.
-Tests asserting behaviour that abicheck does **not** yet implement are marked
-``xfail(strict=True)`` so they flip to PASS the moment the architectural fix
-lands (and fail loudly if someone "fixes" them without removing the marker).
+These cover the FP-1…FP-4 families from ``validation/DESIGN_ANALYSIS.md`` plus
+the RD2-* refinements (std:: leaks via the DWARF struct/enum detector, lambda
+RTTI churn, mixed DWARF→stripped phantom removals, and unknown-``"?"`` signature
+handling). Each now asserts the implemented behaviour directly — the scenarios
+that were previously ``xfail(strict=True)`` placeholders are live assertions —
+and several guard-rail tests ensure the suppressions do not hide genuine breaks
+(public-type RTTI removal, low-retention class removal, real param changes).
 
 No external tools or binaries are required — these run in the default fast lane.
 """
@@ -379,6 +382,95 @@ def test_individually_unresolved_param_type_not_diffed():
     result = compare(old, new)
     assert not any(c.kind == ChangeKind.FUNC_PARAMS_CHANGED for c in result.changes), (
         "a parameter with an unresolved '?' type must not be diffed; "
+        f"changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
+    )
+
+
+def test_stripped_suppression_with_no_exported_surface():
+    """When the old side has type evidence but no exported functions or
+    variables to corroborate, a stripped new side is treated as pure stripping
+    and removals are suppressed (covers the 'no exported surface' branch)."""
+    from abicheck.checker_policy import ChangeKind
+    old = _elf_snapshot(types=[RecordType(name="_xmlNode", kind="struct", size_bits=960)])
+    # new: stripped — exports a symbol (so it is recognised as a real binary)
+    # but carries no type evidence; old has no exported symbols to compare.
+    new = _elf_snapshot(
+        functions=[_exported_func("xmlNewNode")],
+        types=[],
+    )
+    new.dwarf = None
+    result = compare(old, new)
+    assert not any(c.kind == ChangeKind.TYPE_REMOVED for c in result.changes)
+
+
+def test_param_pointer_depth_not_diffed_for_unresolved_param():
+    """An individually unresolved ('?') parameter must not produce a phantom
+    PARAM_POINTER_LEVEL_CHANGED (depth falls back to 0) (CodeRabbit, PR #275)."""
+    from abicheck.checker_policy import ChangeKind
+    from abicheck.model import Function, Param
+    old = _resolved_snapshot(functions=[Function(
+        name="f", mangled="_Z1fPi", return_type="void",
+        params=[Param(name="p", type="int *", pointer_depth=1)],
+        visibility=Visibility.PUBLIC)])
+    new = _resolved_snapshot(functions=[Function(
+        name="f", mangled="_Z1fPi", return_type="void",
+        params=[Param(name="p", type="?", pointer_depth=0)],
+        visibility=Visibility.PUBLIC)])
+    result = compare(old, new)
+    assert not any(c.kind == ChangeKind.PARAM_POINTER_LEVEL_CHANGED for c in result.changes), (
+        "unresolved '?' param must not yield a phantom pointer-level change; "
+        f"changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
+    )
+
+
+def test_data_only_library_removal_still_reported_when_variables_change():
+    """For a data-only DSO (no exported functions), a stripped new side must not
+    auto-suppress removals when the exported *variable* surface also shrank — the
+    retention corroboration falls back to variables (CodeRabbit, PR #275)."""
+    from abicheck.checker_policy import ChangeKind
+    old = _elf_snapshot(
+        variables=[
+            Variable(name=f"v{i}", mangled=f"v{i}", type="int", visibility=Visibility.ELF_ONLY)
+            for i in range(10)
+        ],
+        types=[RecordType(name="Cfg", kind="struct", size_bits=64)],
+    )
+    # new: stripped of types AND most variables gone (only 1 of 10 retained) →
+    # the library genuinely changed, so the type removal must still be reported.
+    new = _elf_snapshot(
+        variables=[Variable(name="v0", mangled="v0", type="?", visibility=Visibility.ELF_ONLY)],
+        types=[],
+    )
+    new.dwarf = None
+    result = compare(old, new)
+    assert any(c.kind == ChangeKind.TYPE_REMOVED and c.symbol == "Cfg" for c in result.changes), (
+        "low variable retention must not auto-suppress a real type removal; "
+        f"changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
+    )
+
+
+def test_data_only_library_stripped_suppresses_when_variables_retained():
+    """Mirror of the above: a data-only DSO that is merely stripped (all exported
+    variables retained) must still suppress phantom type removals."""
+    from abicheck.checker_policy import ChangeKind
+    old = _elf_snapshot(
+        variables=[
+            Variable(name=f"v{i}", mangled=f"v{i}", type="int", visibility=Visibility.ELF_ONLY)
+            for i in range(10)
+        ],
+        types=[RecordType(name="Cfg", kind="struct", size_bits=64)],
+    )
+    new = _elf_snapshot(
+        variables=[
+            Variable(name=f"v{i}", mangled=f"v{i}", type="?", visibility=Visibility.ELF_ONLY)
+            for i in range(10)
+        ],
+        types=[],
+    )
+    new.dwarf = None
+    result = compare(old, new)
+    assert not any(c.kind == ChangeKind.TYPE_REMOVED for c in result.changes), (
+        "a merely-stripped data-only DSO must not fabricate type removals; "
         f"changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
     )
 

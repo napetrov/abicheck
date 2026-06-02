@@ -87,26 +87,25 @@ def _removals_are_unconfirmed(old: AbiSnapshot, new: AbiSnapshot) -> bool:
     )
     if not new_stripped_of_types:
         return False
-    # Corroborate with symbol retention: a stripped-but-intact binary keeps
-    # (almost) all of the old side's exported functions. If most of them are
-    # gone, the library genuinely changed and removals are real.
+    # Corroborate with exported-symbol retention: a stripped-but-intact binary
+    # keeps (almost) all of the old side's exports; if most are gone, the library
+    # genuinely changed and removals are real.
     #
-    # Only count *exported* old functions. A DWARF-primary old snapshot also
-    # records internal/static subprograms, but the stripped new side carries
-    # dynamic exports only — counting internals would deflate retention and
-    # defeat the suppression for a genuinely intact DWARF→stripped comparison.
-    old_funcs = {
-        f.mangled for f in old.functions
-        if f.mangled and f.visibility in _PUBLIC_VIS
-    }
-    if not old_funcs:
-        return True  # no exported functions to corroborate; absence of types is just stripping
-    new_funcs = {
-        f.mangled for f in new.functions
-        if f.mangled and f.visibility in _PUBLIC_VIS
-    }
-    retained = len(old_funcs & new_funcs) / len(old_funcs)
-    return retained >= 0.9
+    # Only count *exported* symbols (PUBLIC/ELF_ONLY). A DWARF-primary old
+    # snapshot also records internal/static subprograms, but the stripped new
+    # side carries dynamic exports only — counting internals would deflate
+    # retention and defeat the suppression for a genuinely intact comparison.
+    # Prefer functions; fall back to variables for data-only DSOs so a changed
+    # variable surface still surfaces removals (CodeRabbit review on PR #275).
+    old_funcs = {k for k, v in old.function_map.items() if v.visibility in _PUBLIC_VIS}
+    if old_funcs:
+        new_funcs = {k for k, v in new.function_map.items() if v.visibility in _PUBLIC_VIS}
+        return len(old_funcs & new_funcs) / len(old_funcs) >= 0.9
+    old_vars = {k for k, v in old.variable_map.items() if v.visibility in _PUBLIC_VIS}
+    if not old_vars:
+        return True  # no exported surface to corroborate; absence of types is just stripping
+    new_vars = {k for k, v in new.variable_map.items() if v.visibility in _PUBLIC_VIS}
+    return len(old_vars & new_vars) / len(old_vars) >= 0.9
 
 
 @registry.detector("types")
