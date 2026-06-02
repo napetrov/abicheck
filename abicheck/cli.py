@@ -1498,10 +1498,10 @@ def _finalize_compare_result(
                    "(verdict + counts + release recommendation + manual-review banner) "
                    "suitable for a job summary or PR comment.")
 @click.option("--demangle/--no-demangle", default=None,
-              help="Demangle C++ symbol names in human-readable output. Defaults "
-                   "ON for markdown/review, OFF for json/sarif/html (HTML symbols "
-                   "are rendered structurally and not demangled); override "
-                   "explicitly with --demangle/--no-demangle.")
+              help="Demangle C++ symbol names in markdown/review output (default "
+                   "ON; use --no-demangle to turn off). json/sarif always keep raw "
+                   "mangled names, and HTML is rendered structurally and is never "
+                   "demangled regardless of this flag.")
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
               help="Suppression file (YAML) to filter known/intentional changes.")
