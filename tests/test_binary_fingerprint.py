@@ -404,7 +404,8 @@ class TestUnqualifiedName:
         ("ns::Class::method", "method"),                 # qualified
         ("ns::Class::method(int, long)", "method"),      # with params
         ("ns::foo<bar::baz>::run()", "run"),             # '::' inside template args
-        ("ns::make<a::b, c::d>", "make<a::b, c::d>"),    # no params, template tail kept
+        ("ns::make<a::b, c::d>", "make"),                # trailing template args dropped
+        ("void get<int>()", "get"),                      # return type + template dropped
         ("std::ostream::operator<<(int)", "operator<<(int)"),  # operator kept whole
         ("Widget::operator()(int)", "operator()(int)"),        # call operator
     ])
@@ -429,6 +430,19 @@ class TestPlausibleRename:
 
     def test_unrelated_rejected(self) -> None:
         assert _plausible_rename("fixupIndexV4(X)", "SmallVectorImpl<X>::erase(X*)") is False
+
+    def test_same_scope_short_leaves_rejected(self) -> None:
+        # get/set share only an incidental 2-char suffix once the qualifier is
+        # stripped, below the shared-affix floor.
+        assert _plausible_rename("Class::get()", "Class::set()") is False
+
+    def test_template_instantiations_same_leaf_accepted(self) -> None:
+        # Same function template, different instantiation → same leaf.
+        assert _plausible_rename("void get<int>()", "void get<long>()") is True
+
+    def test_unrelated_templates_same_return_rejected(self) -> None:
+        # Shared return type and template args must not inflate the score.
+        assert _plausible_rename("void get<int>()", "void set<int>()") is False
 
     def test_version_suffix_rename_accepted(self) -> None:
         assert _plausible_rename("libfoo_v1_create", "libfoo_create") is True

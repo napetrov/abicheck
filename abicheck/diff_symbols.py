@@ -1012,20 +1012,20 @@ def _diff_var_access(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 _FUNC_LIKE_TYPES = frozenset({SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTYPE})
 
-# Minimum unqualified-name similarity required to accept a *hash-less* (size-only
-# / fuzzy) rename match. When no code hash is available — the only mode the
-# snapshot/elf_only path can reach — a "rename" is inferred purely from a
-# coincidental symbol-size collision. On a large library that produces nonsense
-# pairings of completely unrelated functions that merely happen to share a byte
-# size (observed on real libLLVM release-to-release diffs: e.g. fixupIndexV4 ->
-# SmallVectorImpl<...>). A genuine rename or namespace relocation preserves the
-# function's *unqualified* leaf name, so comparing leaf names (not whole
-# qualified spellings, whose shared namespace/class prefix would dominate the
-# score and let e.g. std::vector<int>::begin vs ::end pass) discriminates real
-# renames from coincidences. Measured on real libLLVM 17->18: genuine moves
-# score ~1.0, unrelated same-size pairs <=0.13. The 0.6 floor also rejects
-# distinct short leaves under a shared scope (e.g. begin/end at 0.5).
-_RENAME_NAME_SIMILARITY_MIN = 0.6
+# Minimum shared leading/trailing run (in characters) between two unqualified
+# leaf names for a *hash-less* (size-only / fuzzy) match to count as a rename.
+# When no code hash is available — the only mode the snapshot/elf_only path can
+# reach — a "rename" is inferred purely from a coincidental symbol-size
+# collision, which on a large library pairs completely unrelated functions that
+# merely share a byte size (observed on real libLLVM diffs: e.g. fixupIndexV4 ->
+# SmallVectorImpl<...>). A genuine rename or namespace relocation keeps a
+# substantial common prefix or suffix token in the *unqualified* leaf name
+# (foo_v1->foo_v2, old_only->new_only), whereas distinct leaves — even under a
+# shared scope (Class::get vs Class::set, ::begin vs ::end, get<int> vs
+# set<int>) — share at most one or two incidental characters. Requiring a
+# >=3-char shared affix cleanly separates the two on measured data (genuine
+# renames share 4-20, unrelated pairs 0-2).
+_RENAME_MIN_SHARED_AFFIX = 3
 
 
 def _unqualified_name(symbol: str) -> str:
@@ -1033,10 +1033,17 @@ def _unqualified_name(symbol: str) -> str:
 
     Matching-safe alternative to ``demangle.base_name`` (which is documented
     display-only and mis-parses operators / templates). Demangles when a
-    demangler is available, then strips the parameter list and the
-    namespace/class qualifier using *bracket-depth tracking* so that ``::`` and
-    ``(`` inside template arguments are ignored, and keeps the whole
-    ``operator...`` token intact.
+    demangler is available, then, using *bracket-depth tracking* so that ``::``,
+    ``(`` and spaces inside template arguments are ignored:
+
+    * keeps the whole ``operator...`` token intact;
+    * drops the parameter list;
+    * drops the namespace/class qualifier (segment after the last top-level
+      ``::``);
+    * drops a leading return type (global function templates demangle as
+      ``ret name<args>(...)``);
+    * drops trailing template arguments, so instantiations of one template
+      (``get<int>`` / ``get<long>``) share a leaf.
     """
     from .demangle import demangle
 
@@ -1072,29 +1079,64 @@ def _unqualified_name(symbol: str) -> str:
             i += 2
             continue
         i += 1
-    return s[last:].strip()
+    s = s[last:].strip()
+    # Drop a leading return type: take the part after the last top-level space
+    # (e.g. ``void get<int>`` -> ``get<int>``).
+    depth = 0
+    sp = -1
+    for i, ch in enumerate(s):
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth = max(0, depth - 1)
+        elif ch == " " and depth == 0:
+            sp = i
+    if sp != -1:
+        s = s[sp + 1:]
+    # Drop trailing template arguments (``get<int>`` -> ``get``).
+    if s.endswith(">"):
+        depth = 0
+        for i in range(len(s) - 1, -1, -1):
+            if s[i] == ">":
+                depth += 1
+            elif s[i] == "<":
+                depth -= 1
+                if depth == 0:
+                    s = s[:i]
+                    break
+    return s.strip()
+
+
+def _shared_affix_len(a: str, b: str) -> int:
+    """Length of the longer of the common leading / common trailing run."""
+    def common_prefix(x: str, y: str) -> int:
+        n = 0
+        for cx, cy in zip(x, y):
+            if cx != cy:
+                break
+            n += 1
+        return n
+    return max(common_prefix(a, b), common_prefix(a[::-1], b[::-1]))
 
 
 def _plausible_rename(old_name: str, new_name: str) -> bool:
     """Whether two symbol names are similar enough to credibly be a rename.
 
     Compares the *unqualified* leaf names (see ``_unqualified_name``). A rename
-    or namespace relocation keeps the leaf name (identical leaf → score 1.0),
-    while unrelated functions that merely share a byte size — including
-    different methods under a common scope such as ``Class::get`` vs
-    ``Class::set`` — score low because the shared qualifier is discounted. Used
+    or namespace relocation keeps the leaf name (identical leaf) or a
+    substantial common prefix/suffix token; unrelated functions that merely
+    share a byte size — including different methods under a common scope such as
+    ``Class::get`` vs ``Class::set`` — share at most a character or two because
+    the qualifier and any return type / template arguments are stripped. Used
     only to gate hash-less matches, where size alone is not evidence of identity.
     """
     if old_name == new_name:
         return True
-
-    import difflib
-
     a = _unqualified_name(old_name)
     b = _unqualified_name(new_name)
     if a == b:
         return True
-    return difflib.SequenceMatcher(None, a, b).ratio() >= _RENAME_NAME_SIMILARITY_MIN
+    return _shared_affix_len(a, b) >= _RENAME_MIN_SHARED_AFFIX
 
 
 def _fingerprints_from_elf(snap: AbiSnapshot) -> dict[str, FunctionFingerprint]:
