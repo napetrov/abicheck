@@ -152,14 +152,15 @@ the shared YAML path exists.
 - `dump` without `-H`: DWARF-only if debug info present.
 - `appcompat --check-against` / `--list-required-symbols`: the per-side
   `--old-*`/`--new-*` header & include flags are **rejected** with a
-  `UsageError` (`cli_appcompat.py:61-73`), but plain `-H/--header` and
-  `-I/--include` are accepted by Click and then **silently ignored** by the
-  weak/list branches.
+  `UsageError` (`cli_appcompat.py`), and plain `-H/--header` / `-I/--include`
+  are accepted but not used (the library ABI is not extracted in these modes).
 
-**Recommendation:** Unify the help text and emit a consistent one-line note on
-each path describing what surface is actually analyzed. In particular, the
-weak/list `appcompat` branches should *warn* that any supplied `-H`/`-I` are
-ignored, rather than accepting them silently.
+**Resolution (implemented, see §7 do-later #3):** the weak/list `appcompat`
+branches now **warn** on stderr when `-H`/`-I` are supplied (instead of silently
+ignoring them), so users aren't misled about what surface is analyzed. The
+remaining inconsistency — that "no headers" means symbols-only fallback in
+`compare` vs DWARF-only in `dump` — is documentation-only and surfaced in the
+respective `--help`.
 
 ---
 
@@ -249,7 +250,7 @@ opaque `"old"`/`"new"` — more useful in reports for zero extra typing.
 |------|-----------------|------------------|-----------|
 | `compare --scope-public-headers` | **ON** | Findings are silently filtered out of the report | Keep ON, but always print the filtered count (it does on resolve-fail only) |
 | `compare-release -j/--jobs` | **1 (serial)** | Multi-library releases are slow by default; `0` = auto exists but isn't the default | Default to `0` (auto) or document prominently |
-| `compare --demangle` | **OFF** | Human-readable output shows mangled `_ZN…` names by default | Default ON for `markdown`/`html`/`text`; keep mangled for `json`/`sarif` |
+| `compare --demangle` | **OFF** | Human-readable output shows mangled `_ZN…` names by default | ✅ Implemented: default ON for `markdown`/`review`; `json`/`sarif`/`html` keep mangled (HTML can't be safely string-demangled) |
 | `--lang` | **`c++`** | C libraries parsed as C++ can mis-parse | Reasonable default; add autodetect note |
 | `compat -report-format` | **`html`** | A CLI invocation writes an HTML file by default | ABICC parity — keep, but document |
 | `suggest-suppressions --expiry-days` | **180** | Generated suppressions silently expire in ~6 months | Fine, but state it in the generated file header |
@@ -329,8 +330,10 @@ categories. Coherent. The only issue is reach (§2.2), not the schema.
 
 **Do later (defaults polish):**
 6. ✅ **Done.** `compare-release -j` defaults to `0` (auto-detect CPUs). (§4)
-7. ✅ **Done.** `compare --demangle` defaults ON for markdown/html/text/review,
-   OFF for json/sarif. (§4)
+7. ✅ **Done.** `compare --demangle` defaults ON for `markdown`/`review` (the
+   formats whose renderer post-processes symbols through `demangle_text`), OFF
+   for `json`/`sarif` and `html` (HTML is rendered structurally and is never
+   demangled — demangling its string would inject unescaped `<`/`>`/`&`). (§4)
 8. ✅ **Done.** The weak/list `appcompat` branches now warn when `-H`/`-I` are
    supplied (instead of silently ignoring them). (§2.7)
 
