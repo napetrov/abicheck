@@ -254,8 +254,12 @@ guide.
 **Policy file** (`--policy-file`, `policy_file.py`): `base_policy`
 (default `strict_abi`), `overrides` (ChangeKind → `break|warn|risk|ignore`),
 `frozen_namespaces` (glob patterns that block downgrades). Clean, minimal, no
-redundancy. Unknown `base_policy` falls back to `strict_abi` **silently**
-(`checker_policy.py:715`) — recommend warning on unknown values.
+redundancy. Unknown `base_policy` values are **rejected** with a `PolicyError`
+listing the valid names (`policy_file.py:150-154`); unknown `overrides` slugs are
+warned-and-skipped (`policy_file.py:177-182`, intentional typo tolerance). The
+silent `strict_abi` fallback that exists in the low-level `get_policy()` helper
+(`checker_policy.py:715`) is **not** reachable through `--policy-file`, because
+`PolicyFile.load()` validates the name first. No change needed here.
 
 **Suppression file** (`--suppress`, `suppression.py`): selectors `symbol`,
 `symbol_pattern`, `type_pattern`, `member_name`, `change_kind`, `namespace`,
@@ -278,16 +282,16 @@ categories. Coherent. The only issue is reach (§2.2), not the schema.
 3. Warn (don't silently ignore) on `compat -app`/`-filter`/`-params` (§3.1).
 
 **Do next (consolidation):**
-5. Collapse `--btf/--ctf/--dwarf` into `--debug-format`; rename `--dwarf-only`
+4. Collapse `--btf/--ctf/--dwarf` into `--debug-format`; rename `--dwarf-only`
    (§3.4).
-6. Fold `--show-impact` into `--report-mode`; document the three "what's shown"
+5. Fold `--show-impact` into `--report-mode`; document the three "what's shown"
    axes (§3.3).
-7. Hide/drop `--compile-db` alias (§3.2).
+6. Hide/drop `--compile-db` alias (§3.2).
 
 **Do later (defaults polish):**
-8. `compare-release -j` default `0` (auto) (§4).
-9. `--demangle` default ON for human formats (§4).
-10. Warn on unknown `base_policy` (§6); document `ABICHECK_MCP_*` (§5).
+7. `compare-release -j` default `0` (auto) (§4).
+8. `--demangle` default ON for human formats (§4).
+9. Document `ABICHECK_MCP_*` env vars in the MCP guide (§5).
 
 **Keep as-is (don't remove):**
 - ABICC P2 no-op stubs (hidden, harmless, real drop-in value).
