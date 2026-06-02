@@ -162,12 +162,81 @@ def _check_removed_function(
     )
 
 
-def _check_return_type_change(mangled: str, f_old: Function, f_new: Function) -> list[Change]:
+# Scalar integer spellings whose width/signedness are data-model *independent*,
+# mapped to (bit-width, is_signed). Used to recognise ABI-equivalent integer
+# type changes (e.g. ``long`` ↔ ``long long`` on LP64, ``size_t`` ↔
+# ``unsigned long``): a name-only change between two spellings with the same
+# width and signedness is not a binary ABI break — the calling convention and
+# storage are identical. ``size_t``/``ptrdiff_t``/pointer-width types are 64-bit
+# on every supported 64-bit target (LP64 and LLP64).
+_FIXED_SCALAR_REPR: dict[str, tuple[int, bool]] = {
+    "int": (32, True), "signed int": (32, True), "signed": (32, True),
+    "int32_t": (32, True),
+    "unsigned int": (32, False), "unsigned": (32, False), "uint32_t": (32, False),
+    "long long": (64, True), "long long int": (64, True),
+    "signed long long": (64, True), "int64_t": (64, True),
+    "unsigned long long": (64, False), "long long unsigned int": (64, False),
+    "uint64_t": (64, False),
+    "short": (16, True), "short int": (16, True), "int16_t": (16, True),
+    "unsigned short": (16, False), "short unsigned int": (16, False),
+    "uint16_t": (16, False),
+    "signed char": (8, True), "int8_t": (8, True),
+    "unsigned char": (8, False), "uint8_t": (8, False),
+    "size_t": (64, False), "uintptr_t": (64, False),
+    "ssize_t": (64, True), "ptrdiff_t": (64, True), "intptr_t": (64, True),
+}
+# The ``long`` family: 64-bit under LP64 (Linux/macOS), 32-bit under LLP64
+# (Windows) — resolved against the snapshot's data model.
+_LONG_SIGNED_SPELLINGS = frozenset({"long", "long int", "signed long"})
+_LONG_UNSIGNED_SPELLINGS = frozenset({"unsigned long", "long unsigned int"})
+
+
+def _scalar_repr(type_name: str, is_llp64: bool) -> tuple[int, bool] | None:
+    """Map a *bare* integer spelling to (bit-width, is_signed), or None.
+
+    Returns None for anything that is not a plain integer scalar (pointers,
+    references, templates, cv-qualified or unknown spellings), so equivalence is
+    only ever asserted between two unambiguous integer names.
+    """
+    t = " ".join(type_name.split())
+    if not t or any(c in t for c in "*&<>([,") or "const" in t or "volatile" in t:
+        return None
+    fixed = _FIXED_SCALAR_REPR.get(t)
+    if fixed is not None:
+        return fixed
+    if t in _LONG_SIGNED_SPELLINGS:
+        return (32 if is_llp64 else 64, True)
+    if t in _LONG_UNSIGNED_SPELLINGS:
+        return (32 if is_llp64 else 64, False)
+    return None
+
+
+def _abi_equivalent_scalar(old_type: str, new_type: str, is_llp64: bool) -> bool:
+    """Whether two integer spellings have identical binary representation.
+
+    True only when both resolve to the same width *and* signedness on the
+    target data model — i.e. the change is a spelling/typedef difference, not a
+    binary ABI break (``size_t`` ↔ ``unsigned long``, ``long`` ↔ ``long long``
+    on LP64). A signedness difference (``long`` ↔ ``unsigned long``) is *not*
+    equivalent and is still reported.
+    """
+    old_r = _scalar_repr(old_type, is_llp64)
+    return old_r is not None and old_r == _scalar_repr(new_type, is_llp64)
+
+
+def _check_return_type_change(
+    mangled: str, f_old: Function, f_new: Function, *, is_llp64: bool = False,
+) -> list[Change]:
     """Emit a change if the return type was modified."""
     # RD2-5: a stripped side reports return_type "?"; that is unknown, not a change.
     if _type_unknown(f_old.return_type) or _type_unknown(f_new.return_type):
         return []
     if canonicalize_type_name(f_old.return_type) == canonicalize_type_name(f_new.return_type):
+        return []
+    # A name-only change between ABI-equivalent integer spellings (e.g.
+    # long -> long long, size_t -> unsigned long on LP64) is not a binary ABI
+    # break: same width, signedness, and calling convention.
+    if _abi_equivalent_scalar(f_old.return_type, f_new.return_type, is_llp64):
         return []
     return [Change(
         kind=ChangeKind.FUNC_RETURN_CHANGED,
@@ -178,8 +247,22 @@ def _check_return_type_change(mangled: str, f_old: Function, f_new: Function) ->
     )]
 
 
+def _params_differ(p_old: Param, p_new: Param, is_llp64: bool) -> bool:
+    """Whether two positionally-matched parameters differ in an ABI-relevant way."""
+    if _type_unknown(p_old.type) or _type_unknown(p_new.type):
+        return False  # diffing a known type against unknown is meaningless
+    if p_old.kind != p_new.kind:
+        return True
+    if canonicalize_type_name(p_old.type) == canonicalize_type_name(p_new.type):
+        return False
+    # Same kind, different spelling: not a change if the integer types are
+    # ABI-equivalent (long -> long long, size_t -> unsigned long on LP64).
+    return not _abi_equivalent_scalar(p_old.type, p_new.type, is_llp64)
+
+
 def _check_params_change(
-    mangled: str, f_old: Function, f_new: Function, *, params_unconfirmed: bool = False,
+    mangled: str, f_old: Function, f_new: Function, *,
+    params_unconfirmed: bool = False, is_llp64: bool = False,
 ) -> list[Change]:
     """Emit a change if the parameter list was modified."""
     # RD2-5: suppress only when one side is a stripped symbols-only stub (its
@@ -196,9 +279,7 @@ def _check_params_change(
         changed = True
     else:
         changed = any(
-            not _type_unknown(p_old.type) and not _type_unknown(p_new.type)
-            and (canonicalize_type_name(p_old.type), p_old.kind)
-            != (canonicalize_type_name(p_new.type), p_new.kind)
+            _params_differ(p_old, p_new, is_llp64)
             for p_old, p_new in zip(f_old.params, f_new.params)
         )
     if not changed:
@@ -303,12 +384,14 @@ def _check_explicit_change(mangled: str, f_old: Function, f_new: Function) -> li
 
 
 def _check_function_signature(
-    mangled: str, f_old: Function, f_new: Function, *, params_unconfirmed: bool = False,
+    mangled: str, f_old: Function, f_new: Function, *,
+    params_unconfirmed: bool = False, is_llp64: bool = False,
 ) -> list[Change]:
     """Compare signatures and qualifiers of two matched functions."""
     changes: list[Change] = []
-    changes.extend(_check_return_type_change(mangled, f_old, f_new))
-    changes.extend(_check_params_change(mangled, f_old, f_new, params_unconfirmed=params_unconfirmed))
+    changes.extend(_check_return_type_change(mangled, f_old, f_new, is_llp64=is_llp64))
+    changes.extend(_check_params_change(
+        mangled, f_old, f_new, params_unconfirmed=params_unconfirmed, is_llp64=is_llp64))
     changes.extend(_check_ref_qualifier_change(mangled, f_old, f_new))
     changes.extend(_check_linkage_change(mangled, f_old, f_new))
     changes.extend(_check_noexcept_change(mangled, f_old, f_new))
@@ -364,10 +447,13 @@ def _match_old_function(
     matched_by_name: set[str],
     elf_only_mode: bool,
     params_unconfirmed: bool = False,
+    is_llp64: bool = False,
 ) -> list[Change]:
     """Classify a single old function: matched by mangled, extern-C fallback, or removed."""
     if mangled in new_map:
-        return list(_check_function_signature(mangled, f_old, new_map[mangled], params_unconfirmed=params_unconfirmed))
+        return list(_check_function_signature(
+            mangled, f_old, new_map[mangled],
+            params_unconfirmed=params_unconfirmed, is_llp64=is_llp64))
 
     # Fallback by plain name when either side uses extern "C".
     # The name->Function mapping is a MULTIMAP: only fall back when there is
@@ -380,7 +466,9 @@ def _match_old_function(
         extern_c_candidates = candidates  # any single candidate is acceptable
     if len(extern_c_candidates) == 1:
         f_new = extern_c_candidates[0]
-        result = list(_check_function_signature(f_old.name, f_old, f_new, params_unconfirmed=params_unconfirmed))
+        result = list(_check_function_signature(
+            f_old.name, f_old, f_new,
+            params_unconfirmed=params_unconfirmed, is_llp64=is_llp64))
         matched_by_name.add(f_old.name)
         return result
 
@@ -430,6 +518,10 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     # RD2-5: when one side is a stripped symbols-only stub, its parameter lists
     # are unknown (not "zero args"), so parameter diffs are unconfirmed.
     params_unconfirmed = _is_stripped_symbols_only(old) or _is_stripped_symbols_only(new)
+    # LLP64 (Windows/PE): ``long`` is 32-bit, so e.g. long<->long long is a real
+    # width change there; under LP64 (ELF/Mach-O) it is not. Resolves the
+    # data-model-dependent integer ABI-equivalence checks below.
+    is_llp64 = "pe" in (getattr(old, "platform", None), getattr(new, "platform", None))
     changes: list[Change] = []
     old_map = {k: v for k, v in old.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
     new_map = {k: v for k, v in new.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
@@ -450,7 +542,7 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         changes.extend(
             _match_old_function(
                 mangled, f_old, new_map, new_by_name, new_all, matched_by_name,
-                elf_only_mode, params_unconfirmed,
+                elf_only_mode, params_unconfirmed, is_llp64,
             )
         )
 
