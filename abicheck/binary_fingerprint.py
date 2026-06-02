@@ -374,14 +374,18 @@ def _fuzzy_partners(
     for new_name, new_fp in new_candidates.items():
         if new_name in used_new or new_fp.size == 0:
             continue
-        if name_filter is not None and not name_filter(old_fp.name, new_name):
-            continue
         # If both have code hashes but they differ, skip
         if old_fp.code_hash and new_fp.code_hash and old_fp.code_hash != new_fp.code_hash:
             continue
         size_diff = abs(old_fp.size - new_fp.size) / max(old_fp.size, new_fp.size)
-        if size_diff <= _SIZE_TOLERANCE_RATIO:
-            partners.append((new_name, new_fp))
+        if size_diff > _SIZE_TOLERANCE_RATIO:
+            continue
+        # Name similarity is the most expensive gate (demangle + bracket scan),
+        # so apply it last — only to size-eligible partners, not the whole
+        # cross-product.
+        if name_filter is not None and not name_filter(old_fp.name, new_name):
+            continue
+        partners.append((new_name, new_fp))
     return partners
 
 

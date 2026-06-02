@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from .binary_fingerprint import (
@@ -1027,6 +1028,12 @@ _FUNC_LIKE_TYPES = frozenset({SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTY
 # renames share 4-20, unrelated pairs 0-2).
 _RENAME_MIN_SHARED_AFFIX = 3
 
+# The C++ ``operator`` keyword as a whole token: not preceded or followed by an
+# identifier character, so substrings like ``cooperator`` or ``operator_v1``
+# (ordinary identifiers) and ``myoperator::foo`` (operator inside a qualifier)
+# are not mistaken for an operator function name.
+_OPERATOR_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_])operator(?![A-Za-z0-9_])")
+
 
 def _unqualified_name(symbol: str) -> str:
     """Extract the unqualified (leaf) function name from a symbol, robustly.
@@ -1051,11 +1058,14 @@ def _unqualified_name(symbol: str) -> str:
 
     s = demangle(symbol) or symbol
     # An operator name encodes punctuation (``<<``, ``()``, ``[]``) that defeats
-    # bracket tracking, so handle it first: keep everything from ``operator`` to
-    # the end. It is stable and symmetric, which is all the matcher needs.
-    op = s.find("operator")
-    if op != -1:
-        return s[op:].strip()
+    # bracket tracking, so handle it first: keep everything from the ``operator``
+    # token to the end. It is stable and symmetric, which is all the matcher
+    # needs. Match ``operator`` only as a whole token so ordinary identifiers
+    # that merely contain the substring (``cooperator``, ``operator_v1``) are
+    # not misclassified.
+    op = _OPERATOR_TOKEN_RE.search(s)
+    if op is not None:
+        return s[op.start():].strip()
     # Truncate at the parameter-list '(' that sits at template depth 0.
     depth = 0
     for i, ch in enumerate(s):
@@ -1150,7 +1160,7 @@ def _plausible_rename(old_name: str, new_name: str) -> bool:
     # check above, so anything of this kind reaching here is a different
     # operator/destructor and must be rejected.
     for leaf in (a, b):
-        if leaf.startswith("operator") or leaf.startswith("~"):
+        if _OPERATOR_TOKEN_RE.match(leaf) is not None or leaf.startswith("~"):
             return False
     base_a = _strip_template_args(a)
     base_b = _strip_template_args(b)

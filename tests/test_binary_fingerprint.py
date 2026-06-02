@@ -413,6 +413,8 @@ class TestUnqualifiedName:
         ("void get<int>()", "get<int>"),                 # return type dropped, args kept
         ("std::ostream::operator<<(int)", "operator<<(int)"),  # operator kept whole
         ("Widget::operator()(int)", "operator()(int)"),        # call operator
+        ("cooperator_v1", "cooperator_v1"),              # 'operator' substring, not keyword
+        ("myoperator::foo_v1()", "foo_v1"),              # 'operator' inside qualifier
     ])
     def test_extraction(self, symbol: str, expected: str) -> None:
         assert _unqualified_name(symbol) == expected
@@ -470,6 +472,12 @@ class TestPlausibleRename:
     def test_same_operator_accepted(self) -> None:
         # Identical operator spelling is an exact-leaf match.
         assert _plausible_rename("A::operator==(int)", "B::operator==(int)") is True
+
+    def test_operator_substring_not_treated_as_operator(self) -> None:
+        # Identifiers that merely contain 'operator' are ordinary names and
+        # must still match on affix, not be forced to exact-only.
+        assert _plausible_rename("cooperator_v1", "cooperator_v2") is True
+        assert _plausible_rename("myoperator::run_v1()", "myoperator::run_v2()") is True
 
     def test_constructor_destructor_pair_rejected(self) -> None:
         # ctor leaf 'Widget' and dtor leaf '~Widget' share the class-name
