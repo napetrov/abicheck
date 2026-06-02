@@ -67,6 +67,13 @@ _EMOJI_SURVIVED = re.compile(r"🙁\s*(\d+)")
 _WORD_SURVIVED_COUNT = re.compile(r"(\d+)\s+survived\b", re.IGNORECASE)
 _LINE_SURVIVED = re.compile(r":\s*survived\b", re.IGNORECASE)
 
+# Evidence that a mutmut run actually *finished* (as opposed to aborting before
+# producing any measurement): the legend emojis from its summary line, a
+# "killed N" phrase, or a "<done>/<total>" progress fraction. Used to tell a
+# clean run with zero survivors (legitimately little/no `results` output) apart
+# from a run that crashed and produced nothing.
+_RUN_COMPLETED = re.compile(r"🎉|🫥|⏰|🤔|🔇|\bkilled\b|\b\d+/\d+\b", re.IGNORECASE)
+
 
 def parse_survivors(text: str) -> int | None:
     """Extract the number of surviving mutants from ``mutmut`` output.
@@ -88,6 +95,18 @@ def parse_survivors(text: str) -> int | None:
     if line_hits:
         return len(line_hits)
     return None
+
+
+def run_completed_clean(text: str) -> bool:
+    """True if *text* shows mutmut finished a run that has **no** survivors.
+
+    A perfect run can legitimately print no ``: survived`` rows (often almost no
+    output), so ``parse_survivors`` returns ``None`` for it. When the output
+    still carries mutmut's completion markers, that ``None`` means "zero
+    survivors", not "could not measure" — distinguishing a clean run from a run
+    that aborted before producing anything.
+    """
+    return bool(text) and _RUN_COMPLETED.search(text) is not None
 
 
 def _run(cmd: list[str]) -> str:
@@ -112,10 +131,15 @@ def _gather_results(args: argparse.Namespace) -> str | None:
         print("mutation-score: mutmut not installed, skipping")
         return None
 
+    combined = ""
     if args.run:
         print("mutation-score: running `mutmut run` (this is slow)…")
-        _run(["mutmut", "run"])  # exit code is non-zero when mutants survive
-    return _run(["mutmut", "results"])
+        # Capture the run's own summary (it carries the 🙁 count and completion
+        # markers) — `mutmut run` exits non-zero merely because mutants survive,
+        # so its output, not its return code, is the measurement.
+        combined += _run(["mutmut", "run"]) + "\n"
+    combined += _run(["mutmut", "results"])
+    return combined
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,11 +176,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     survivors = parse_survivors(text)
+    if survivors is None and run_completed_clean(text):
+        # The run finished with no surviving-mutant rows — that is zero
+        # survivors, not a failure to measure (a perfect run prints little).
+        survivors = 0
     if survivors is None:
         print("mutation-score: could not parse survivor count from mutmut output")
-        # Same reasoning: an unparseable result under --run means the run did
-        # not yield a usable measurement; only treat it as a skip when we were
-        # not asked to run mutmut ourselves.
+        # An unparseable result with no completion markers under --run means the
+        # run aborted before yielding a usable measurement; fail so the gate is
+        # not a silent no-op. Only skip when we were not asked to run mutmut.
         return 1 if args.run else 0
 
     baseline = args.baseline if args.baseline is not None else SURVIVOR_BASELINE

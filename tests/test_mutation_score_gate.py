@@ -112,6 +112,30 @@ def test_run_mode_counts_survivors(monkeypatch: pytest.MonkeyPatch) -> None:
     assert gate.main(["--run", "--baseline", "1"]) == 1   # exceeds baseline
 
 
+def test_run_mode_clean_run_zero_survivors_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A perfect run (completion markers, no survivor rows) counts as 0, not as
+    'could not measure' — so baseline 0 passes."""
+    monkeypatch.setattr(gate.shutil, "which", lambda name: "/usr/bin/mutmut")
+    # Completed summary with no 🙁 and no ': survived' rows.
+    monkeypatch.setattr(gate, "_run", lambda cmd: "12/12  🎉 12  🫥 0  ⏰ 0")
+    assert gate.main(["--run", "--baseline", "0"]) == 0
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("12/12  🎉 12", True),
+        ("Killed 30 mutants", True),
+        ("🤔 2", True),
+        ("ImportError: no module named foo", False),
+        ("", False),
+        ("config error: nothing to mutate", False),
+    ],
+)
+def test_run_completed_clean(text: str, expected: bool) -> None:
+    assert gate.run_completed_clean(text) is expected
+
+
 def test_no_run_unparseable_is_still_a_skip(tmp_path: Path) -> None:
     """Without --run, an unparseable/empty result stays a graceful skip."""
     results = tmp_path / "garbage.txt"
