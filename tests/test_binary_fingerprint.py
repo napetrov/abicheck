@@ -530,11 +530,21 @@ class TestPlausibleRename:
         # Nested template args and non-type (literal) params still balance.
         assert _ctor_dtor_variant("_ZN3FooIN2ns1XEEC1Ev") == "C1"
         assert _ctor_dtor_variant("_ZN3FooILi5EEC1Ev") == "C1"
+        # A class-type template argument whose identifier *contains* 'E'
+        # (Foo<Err> = _ZN3FooI3ErrEC1Ev): the 'E' inside the 3-char source-name
+        # 'Err' must not close the template-args block early.
+        assert _ctor_dtor_variant("_ZN3FooI3ErrEC1Ev") == "C1"
+        assert _ctor_dtor_variant("_ZN3FooI3ErrEC2Ev") == "C2"
+        # Substitution and special-substitution template arguments balance too.
+        assert _ctor_dtor_variant("_ZN3FooIS_EC1Ev") == "C1"
+        assert _ctor_dtor_variant("_ZN3FooISsEC1Ev") == "C1"
 
     def test_templated_class_ctor_variant_pair_rejected(self) -> None:
         # C1 vs C2 of the same templated class are distinct ABI symbols, not a
         # rename — the variant guard must fire even with template args present.
         assert _plausible_rename("_ZN3FooIiEC1Ev", "_ZN3FooIiEC2Ev") is False
+        # Same, for a class-type argument containing an 'E' in its identifier.
+        assert _plausible_rename("_ZN3FooI3ErrEC1Ev", "_ZN3FooI3ErrEC2Ev") is False
 
     def test_operator_substring_not_treated_as_operator(self) -> None:
         # Identifiers that merely contain 'operator' are ordinary names and

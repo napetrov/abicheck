@@ -1183,11 +1183,12 @@ def _ctor_dtor_variant(symbol: str) -> str | None:
     balanced ``I…E`` ``<template-args>`` block that follows a templated class
     name), then checks whether the remainder *begins* with a ``<ctor-dtor-name>``
     code. This distinguishes a real constructor (``_ZN6WidgetC1Ev`` -> ``C1``,
-    ``_ZN3FooIiEC1Ev`` = ``Foo<int>::Foo()`` -> ``C1``) from an ordinary member
-    whose identifier merely contains the characters (``_ZN1A6fooC1EEv`` =
-    ``A::fooC1E()`` -> None). Encodings this simple parser does not model
-    (substitutions, exotic template arguments) yield None — safe, since the only
-    consequence is not suppressing a (rare) templated-ctor variant pair.
+    ``_ZN3FooIiEC1Ev`` = ``Foo<int>::Foo()`` -> ``C1``, ``_ZN3FooI3ErrEC1Ev`` =
+    ``Foo<Err>::Foo()`` -> ``C1``) from an ordinary member whose identifier
+    merely contains the characters (``_ZN1A6fooC1EEv`` = ``A::fooC1E()`` ->
+    None). Encodings this simple parser does not model (exotic template
+    arguments) yield None — safe, since the only consequence is not suppressing
+    a (rare) templated-ctor variant pair.
     """
     if not symbol.startswith("_ZN"):
         return None
@@ -1201,35 +1202,82 @@ def _ctor_dtor_variant(symbol: str) -> str | None:
     # class name (``_ZN3FooIiEC1Ev``) places the args before the ctor/dtor code.
     while i < len(symbol):
         if symbol[i].isdigit():
-            j = i
-            while j < len(symbol) and symbol[j].isdigit():
-                j += 1
-            length = int(symbol[i:j])
-            i = j + length
-            if i > len(symbol):
+            i = _skip_source_name(symbol, i)
+            if i < 0:
                 return None  # malformed length — bail out
         elif symbol[i] == "I":
-            # Skip a balanced <template-args> block. Productions that open with a
-            # trailing ``E`` — I template-args, N nested-name, F function-type,
-            # L expr-primary literal — count as openers; ``E`` closes one.
-            depth = 0
-            while i < len(symbol):
-                c = symbol[i]
-                if c in "INFL":
-                    depth += 1
-                elif c == "E":
-                    depth -= 1
-                    i += 1
-                    if depth == 0:
-                        break
-                    continue
-                i += 1
-            if depth != 0:
-                return None  # unbalanced — bail out
+            i = _skip_template_args(symbol, i)
+            if i < 0:
+                return None  # unbalanced / unmodeled — bail out
         else:
             break
     m = _CTOR_DTOR_CODE_RE.match(symbol[i:])
     return m.group(1) if m else None
+
+
+def _skip_source_name(symbol: str, i: int) -> int:
+    """Skip an Itanium ``<source-name>`` (``<decimal-length><identifier>``)
+    starting at ``symbol[i]``; return the index past it, or -1 if malformed."""
+    j = i
+    while j < len(symbol) and symbol[j].isdigit():
+        j += 1
+    end = j + int(symbol[i:j])
+    return end if end <= len(symbol) else -1
+
+
+def _skip_template_args(symbol: str, i: int) -> int:
+    """Skip a balanced Itanium ``<template-args>`` block (``I…E``) starting at
+    ``symbol[i]`` (an ``I``); return the index past the matching ``E``, or -1.
+
+    The block content must be parsed, not merely scanned for ``E``: a
+    length-prefixed ``<source-name>`` argument (``Foo<Err>`` = ``...I3ErrE...``)
+    contains an ``E`` *inside* its identifier that would otherwise close the
+    block early, and an expr-primary literal (``Foo<5>`` = ``...ILi5EE...``)
+    carries its own terminating ``E``. So source-names, substitutions, and
+    literals are consumed whole; only ``I``/``N``/``F`` openers and their ``E``
+    terminators move the nesting depth. Constructs this does not model yield -1.
+    """
+    n = len(symbol)
+    depth = 0
+    while i < n:
+        c = symbol[i]
+        if c.isdigit():
+            # <source-name>: consume the identifier whole so its characters
+            # (which may include E/I/N/F/L) are not read as structure.
+            i = _skip_source_name(symbol, i)
+            if i < 0:
+                return -1
+        elif c == "S":
+            # <substitution>: ``S_`` / ``S<seq-id>_`` (seq-id is base-36) or a
+            # special two-char form (``St``, ``Ss``, …). Consume so its digits
+            # are not mistaken for a source-name length.
+            i += 1
+            if i < n and (symbol[i].isdigit() or symbol[i].isupper()):
+                while i < n and symbol[i] != "_":
+                    i += 1
+                i += 1  # consume the closing '_'
+            else:
+                i += 1  # special two-char substitution
+        elif c == "L":
+            # <expr-primary> literal: ``L<type><value>E``. Scan to its own
+            # terminating ``E`` literally — its value digits are not lengths.
+            i += 1
+            while i < n and symbol[i] != "E":
+                i += 1
+            if i >= n:
+                return -1
+            i += 1  # consume the literal's 'E'
+        elif c in "INF":
+            depth += 1
+            i += 1
+        elif c == "E":
+            depth -= 1
+            i += 1
+            if depth == 0:
+                return i
+        else:
+            i += 1
+    return -1  # unbalanced
 
 
 def _unqualified_name(symbol: str) -> str:
