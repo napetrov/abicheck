@@ -629,3 +629,71 @@ class TestCheckerIntegration:
         result = compare(old, new)
         kinds = {c.kind for c in result.changes}
         assert ChangeKind.VERSION_SCRIPT_MISSING in kinds
+
+
+class TestVersionNodeBumpDeduplication:
+    """A version-node bump must not be double-counted per symbol."""
+
+    def test_moved_node_and_alias_change_deduplicated(self) -> None:
+        from abicheck.diff_filtering import _deduplicate_cross_detector
+
+        changes = [
+            Change(
+                kind=ChangeKind.SYMBOL_MOVED_VERSION_NODE,
+                symbol="foo",
+                description="moved",
+                old_value="LLVM_17",
+                new_value="LLVM_18.1",
+            ),
+            Change(
+                kind=ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED,
+                symbol="foo",
+                description="default version changed",
+                old_value="LLVM_17",
+                new_value="LLVM_18.1",
+            ),
+        ]
+        kept = _deduplicate_cross_detector(changes)
+        kinds = [c.kind for c in kept]
+        # The alias-change duplicate is dropped; the node-level change is kept
+        # (one finding for one version-node bump, not two).
+        assert kinds == [ChangeKind.SYMBOL_MOVED_VERSION_NODE]
+
+    def test_moved_node_kept_without_matching_alias(self) -> None:
+        from abicheck.diff_filtering import _deduplicate_cross_detector
+
+        # No alias change for this transition → the node move stands on its own.
+        changes = [
+            Change(
+                kind=ChangeKind.SYMBOL_MOVED_VERSION_NODE,
+                symbol="foo",
+                description="moved",
+                old_value="LIBA_1",
+                new_value="LIBA_2",
+            ),
+        ]
+        kept = _deduplicate_cross_detector(changes)
+        assert [c.kind for c in kept] == [ChangeKind.SYMBOL_MOVED_VERSION_NODE]
+
+    def test_moved_node_kept_when_alias_transition_differs(self) -> None:
+        from abicheck.diff_filtering import _deduplicate_cross_detector
+
+        # Alias change exists for the symbol but a different transition → keep both.
+        changes = [
+            Change(
+                kind=ChangeKind.SYMBOL_MOVED_VERSION_NODE,
+                symbol="foo",
+                description="moved",
+                old_value="LIBA_1",
+                new_value="LIBA_2",
+            ),
+            Change(
+                kind=ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED,
+                symbol="foo",
+                description="alias",
+                old_value="LIBA_1",
+                new_value="LIBA_3",
+            ),
+        ]
+        kept = _deduplicate_cross_detector(changes)
+        assert ChangeKind.SYMBOL_MOVED_VERSION_NODE in {c.kind for c in kept}

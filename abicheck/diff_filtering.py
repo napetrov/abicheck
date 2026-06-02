@@ -889,9 +889,29 @@ def _deduplicate_cross_detector(changes: list[Change]) -> list[Change]:
         ChangeKind.SYMBOL_VERSION_NODE_REMOVED: "version_def_removal",
         ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED: "version_def_removal",
     }
+    # A symbol-version-node bump (e.g. LLVM_17 -> LLVM_18.1 applied to every
+    # symbol during a major release) makes BOTH version detectors fire per
+    # symbol with the same old->new transition: SYMBOL_MOVED_VERSION_NODE (the
+    # node label moved) and SYMBOL_VERSION_ALIAS_CHANGED (the default version
+    # changed, old not retained as an alias). They describe one event; drop the
+    # alias-change duplicate where a node move already covers the same
+    # (symbol, old -> new), keeping the node-level change. Halves the
+    # version-bump noise on real libraries (libLLVM 17->18: ~46k instead of
+    # ~92k risk findings).
+    moved_transitions: set[tuple[str, object, object]] = {
+        (c.symbol, c.old_value, c.new_value)
+        for c in changes
+        if c.kind is ChangeKind.SYMBOL_MOVED_VERSION_NODE
+    }
+
     seen: set[tuple[str, str]] = set()
     result: list[Change] = []
     for c in changes:
+        if (
+            c.kind is ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED
+            and (c.symbol, c.old_value, c.new_value) in moved_transitions
+        ):
+            continue
         cat = _DEDUP_CATEGORIES.get(c.kind)
         if cat is not None:
             key = (cat, c.symbol)
