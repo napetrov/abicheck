@@ -120,3 +120,43 @@ def test_generator_source_section_uses_code_literals() -> None:
 
     assert "- `v1.c`" in source_section
     assert "](" not in source_section
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        # Leading caseNN prefix (various separators) is stripped for table rows.
+        (
+            "case101 — inline namespace version bumped (BREAKING)",
+            "inline namespace version bumped (BREAKING)",
+        ),
+        (
+            "Case 17 — Template Instantiation ABI Change",
+            "Template Instantiation ABI Change",
+        ),
+        (
+            "Case 26b — Union Field Added (No Size Change)",
+            "Union Field Added (No Size Change)",
+        ),
+        ("Case 01: Symbol Removal", "Symbol Removal"),
+        # Regression guard: a title with internal colons keeps the trailing text
+        # (the old `split(':', 1)[-1]` heuristic mangled these).
+        (
+            "case98 — C++ standard floor raised (per-binary: NO_CHANGE)",
+            "C++ standard floor raised (per-binary: NO_CHANGE)",
+        ),
+        (
+            "case100 — experimental:: removed without replacement (API break)",
+            "experimental:: removed without replacement (API break)",
+        ),
+        # Titles without a caseNN prefix are left untouched, even if they start
+        # with the word "case" (no trailing number) or contain a colon.
+        ("Symbol Removal", "Symbol Removal"),
+        ("Case-insensitive lookup changed", "Case-insensitive lookup changed"),
+    ],
+)
+def test_short_title_strips_case_prefix_but_keeps_inner_colons(
+    title: str, expected: str
+) -> None:
+    mod = _load_generator_module()
+    assert mod._short_title(title) == expected
