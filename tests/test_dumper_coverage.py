@@ -559,3 +559,40 @@ class TestDumpRoutingMachoPe:
         with patch.object(dumper, "_detect_format", return_value="unknown"):
             with pytest.raises(ValueError, match="(?i)unknown|unrecogni"):
                 dump(f, headers=[], version="1.0")
+
+
+# ── from_headers provenance flag ─────────────────────────────────────────────
+
+class TestFromHeadersProvenance:
+    """dump() sets AbiSnapshot.from_headers only when castxml actually parses
+    headers. The --dwarf-only skip applies to ELF only; PE/Mach-O ignore it
+    and still parse supplied headers (issue: Codex P2)."""
+
+    @pytest.mark.parametrize(
+        "fmt,dumper_attr,headers,dwarf_only,expected",
+        [
+            ("elf", "_dump_elf", True, False, True),    # header-parsed ELF
+            ("elf", "_dump_elf", True, True, False),    # ELF --dwarf-only skips castxml
+            ("elf", "_dump_elf", False, False, False),  # no headers → DWARF/symbols
+            ("pe", "_dump_pe", True, True, True),        # PE ignores dwarf_only → still header-aware
+            ("pe", "_dump_pe", False, False, False),
+            ("macho", "_dump_macho", True, True, True),  # Mach-O ignores dwarf_only → still header-aware
+            ("macho", "_dump_macho", False, False, False),
+        ],
+    )
+    def test_from_headers(self, tmp_path: Path, fmt, dumper_attr, headers, dwarf_only, expected) -> None:
+        from unittest.mock import patch
+
+        from abicheck import dumper
+        from abicheck.model import AbiSnapshot
+
+        lib = tmp_path / "lib.bin"
+        lib.write_bytes(b"\x00\x00\x00\x00")
+        header_list = [tmp_path / "foo.h"] if headers else []
+
+        with patch.object(dumper, "_detect_format", return_value=fmt), \
+             patch.object(dumper, dumper_attr,
+                          side_effect=lambda *a, **k: AbiSnapshot(library="lib", version="1.0")):
+            snap = dump(lib, headers=header_list, dwarf_only=dwarf_only)
+
+        assert snap.from_headers is expected

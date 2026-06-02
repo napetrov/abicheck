@@ -649,9 +649,12 @@ def dump(
     # (castxml/AST). This is the only honest signal for the HEADER_AWARE
     # evidence tier: DWARF-only and symbols-only modes also populate the
     # functions/types lists, so "has declarations" cannot stand in for
-    # "headers were parsed". castxml runs iff headers are supplied and DWARF
-    # mode was not forced; otherwise dump falls back to DWARF/symbols.
-    snapshot.from_headers = bool(headers) and not dwarf_only
+    # "headers were parsed". castxml runs whenever headers are supplied, with
+    # one exception: ELF in forced --dwarf-only mode skips castxml and uses
+    # DWARF. PE and Mach-O ignore dwarf_only (it is unsupported there) and
+    # always parse supplied headers, so a header-parsed PE/Mach-O dump is still
+    # header-aware even under --dwarf-only.
+    snapshot.from_headers = bool(headers) and not (dwarf_only and fmt == "elf")
 
     # Tag declaration provenance (source_header + origin). Always derives
     # source_header from the parsed source location; origin is only
