@@ -357,6 +357,87 @@ def check_changekind_docs(f: Findings) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Check: headline counts in docs stay in sync with source-of-truth
+# ---------------------------------------------------------------------------
+
+
+def check_doc_count_sync(f: Findings) -> None:
+    """Keep hand-written headline counts in sync with their source of truth.
+
+    Two numbers historically drifted across the docs: the number of `ChangeKind`
+    values ("N change types") and the size of the example catalog
+    (`examples/ground_truth.json`). Each anchor below pins a specific sentence to
+    a computed value:
+
+    - ERROR if the anchor sentence is present but the number is wrong (the real
+      drift bug — forces docs to be updated when a ChangeKind or case is added).
+    - WARN if the anchor sentence can no longer be found (wording changed, so the
+      guard silently stopped covering that spot — update the regex here).
+    """
+    try:
+        from abicheck.checker_policy import ChangeKind
+    except Exception:
+        # Package not importable (e.g. pre-install lane) — skip silently, like
+        # the other ChangeKind checks.
+        return
+
+    n_kinds = len(list(ChangeKind))
+
+    gt_path = EXAMPLES / "ground_truth.json"
+    try:
+        verdicts = json.loads(_read(gt_path))["verdicts"]
+    except Exception:
+        return
+    n_catalog = len(verdicts)
+
+    # (file, human label, expected value, regex capturing the documented number)
+    anchors = [
+        (
+            ROOT / "README.md",
+            "ChangeKind count",
+            n_kinds,
+            r"\*\*(\d+) ABI/API change types\*\*",
+        ),
+        (
+            DOCS / "index.md",
+            "ChangeKind count",
+            n_kinds,
+            r"\*\*(\d+) detection rules\*\*",
+        ),
+        (
+            ROOT / "README.md",
+            "catalog size",
+            n_catalog,
+            r"contains \*\*(\d+) real-world ABI/API scenarios",
+        ),
+        (
+            DOCS / "getting-started.md",
+            "catalog size",
+            n_catalog,
+            r"repo includes (\d+) ABI scenario examples",
+        ),
+    ]
+
+    for path, label, expected, pattern in anchors:
+        text = _read(path)
+        m = re.search(pattern, text)
+        if m is None:
+            f.warn(
+                "doc-count-sync",
+                f"{_rel(path)}: {label} anchor not found (pattern {pattern!r}); "
+                "update the regex in check_doc_count_sync if the wording changed.",
+            )
+            continue
+        found = int(m.group(1))
+        if found != expected:
+            f.err(
+                "doc-count-sync",
+                f"{_rel(path)}: {label} says {found}, but source of truth is {expected}. "
+                "Update the doc (or the source) so they agree.",
+            )
+
+
+# ---------------------------------------------------------------------------
 # Check: import-cycle detection
 # ---------------------------------------------------------------------------
 
@@ -795,6 +876,7 @@ CHECKS: dict[str, Callable[[Findings], None]] = {
     "changekind-partition": check_changekind_partition,
     "changekind-detector": check_changekind_detector_crossref,
     "changekind-docs": check_changekind_docs,
+    "doc-count-sync": check_doc_count_sync,
     "import-cycles": check_import_cycles,
     "mypy-baseline": check_mypy_baseline,
     "examples-ground-truth": check_examples_ground_truth,
