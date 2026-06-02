@@ -11,7 +11,10 @@ Covers:
 from __future__ import annotations
 
 from abicheck.checker_policy import ChangeKind
-from abicheck.checker_types import Change
+from abicheck.checker_types import (
+    SYMBOL_VERSION_ALIAS_NOT_RETAINED_MARKER,
+    Change,
+)
 from abicheck.diff_versioning import (
     _build_version_node_map,
     check_soname_bump_policy,
@@ -648,7 +651,12 @@ class TestVersionNodeBumpDeduplication:
             Change(
                 kind=ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED,
                 symbol="foo",
-                description="default version changed",
+                # Not-retained case (old default gone): genuinely redundant with
+                # the node move, so it carries the marker and is collapsed.
+                description=(
+                    "default version changed — "
+                    + SYMBOL_VERSION_ALIAS_NOT_RETAINED_MARKER
+                ),
                 old_value="LLVM_17",
                 new_value="LLVM_18.1",
             ),
@@ -658,6 +666,34 @@ class TestVersionNodeBumpDeduplication:
         # The alias-change duplicate is dropped; the node-level change is kept
         # (one finding for one version-node bump, not two).
         assert kinds == [ChangeKind.SYMBOL_MOVED_VERSION_NODE]
+
+    def test_retained_alias_change_survives_matching_node_move(self) -> None:
+        from abicheck.diff_filtering import _deduplicate_cross_detector
+
+        # Old default is RETAINED as a non-default alias: the alias-change is
+        # compatible and distinct from the node move's "will not find" wording,
+        # so it must NOT be collapsed even though the transition matches.
+        changes = [
+            Change(
+                kind=ChangeKind.SYMBOL_MOVED_VERSION_NODE,
+                symbol="foo",
+                description="moved",
+                old_value="LIBA_1",
+                new_value="LIBA_2",
+            ),
+            Change(
+                kind=ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED,
+                symbol="foo",
+                description="Default symbol version changed: foo (@@LIBA_1 → @@LIBA_2)",
+                old_value="LIBA_1",
+                new_value="LIBA_2",
+            ),
+        ]
+        kept = _deduplicate_cross_detector(changes)
+        kinds = {c.kind for c in kept}
+        assert ChangeKind.SYMBOL_MOVED_VERSION_NODE in kinds
+        assert ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED in kinds
+        assert len(kept) == 2
 
     def test_moved_node_kept_without_matching_alias(self) -> None:
         from abicheck.diff_filtering import _deduplicate_cross_detector

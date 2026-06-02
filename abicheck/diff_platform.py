@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from .checker_policy import ChangeKind
-from .checker_types import Change
+from .checker_types import SYMBOL_VERSION_ALIAS_NOT_RETAINED_MARKER, Change
 from .detector_registry import registry
 from .diff_platform_templates import (
     _diff_template_inner_types as _diff_template_inner_types,
@@ -781,7 +781,7 @@ def _diff_symbol_version_aliases(old: AbiSnapshot, new: AbiSnapshot) -> list[Cha
             f"(@@{old_ver} → @@{new_ver})"
         )
         if not retained:
-            desc += " — old version NOT retained as alias"
+            desc += f" — {SYMBOL_VERSION_ALIAS_NOT_RETAINED_MARKER}"
         changes.append(Change(
             kind=ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED,
             symbol=sym_name,
