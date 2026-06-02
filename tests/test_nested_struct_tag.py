@@ -193,6 +193,24 @@ class TestNestedStructTagNormalization:
             "anonymous union → anonymous struct must still be a field type change"
         )
 
+    def test_anonymous_kind_change_with_leading_tag_still_detected(self) -> None:
+        """The aggregate kind may sit *before* the placeholder ("union
+        <anonymous>"); the leading tag, stripped by the tag-keyword
+        normalization, must still drive the kind so union → struct is reported."""
+        from abicheck.checker import (
+            ChangeKind,
+            _diff_struct_layouts,  # type: ignore[attr-defined]
+        )
+
+        old_meta = self._make_meta("Outer", "u", "union <anonymous>")
+        new_meta = self._make_meta("Outer", "u", "struct <anonymous>")
+
+        changes = _diff_struct_layouts(old_meta, new_meta)
+        kinds = {c.kind for c in changes}
+        assert ChangeKind.STRUCT_FIELD_TYPE_CHANGED in kinds, (
+            "leading-tag 'union <anonymous>' → 'struct <anonymous>' must be detected"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Reserved-field reuse: type matching (architecture review fix #4)

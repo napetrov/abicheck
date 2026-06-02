@@ -1197,20 +1197,26 @@ def _normalize_type_name(name: str) -> str:
     s = _re.sub(r"[\s*&]+$", "", s).strip()
     # Remove leading CV-qualifiers
     s = _re.sub(r"^(const|volatile)(\s+(const|volatile))?\s+", "", s).strip()
-    # Remove struct/class/union tag keyword
-    s = _re.sub(r"^(struct|class|union)\s+", "", s).strip()
+    # Remove struct/class/union tag keyword, remembering it: for an anonymous
+    # placeholder spelled with a *leading* tag ("union <anonymous>") the tag
+    # carries the aggregate kind, which must survive the collapse below.
+    lead = _re.match(r"^(struct|class|union)\s+", s)
+    lead_kind = lead.group(1) if lead else None
+    if lead:
+        s = s[lead.end():].strip()
     # Anonymous/unnamed member types have no stable *name* across DWARF / castxml
     # / PDB extraction — the same anonymous union can be spelled "<unnamed-tag>"
     # by one reader and "Parent::<unnamed-type-u>" by another (observed on the
     # Windows SDK _TP_CALLBACK_ENVIRON_V3::u between two MSVC builds). Collapse
-    # those placeholders to a token keyed on the aggregate *kind* when the
-    # placeholder names one, so the unstable identifier suffix no longer drives a
-    # false positive while a genuine kind change (anonymous union → anonymous
-    # struct) is still reported. Size drift remains caught by the separate
-    # byte_size comparison.
+    # those placeholders to a token keyed on the aggregate *kind* — taken from
+    # the placeholder itself ("<anonymous union>") or the leading tag ("union
+    # <anonymous>") — so the unstable identifier suffix no longer drives a false
+    # positive while a genuine kind change (anonymous union → anonymous struct)
+    # is still reported. Size drift remains caught by the separate byte_size
+    # comparison.
     anon = _ANON_TYPE_RE.search(s)
     if anon is not None:
-        kind = anon.group(1)
+        kind = anon.group(1) or lead_kind
         return f"<anonymous {kind.lower()}>" if kind else "<anonymous>"
     return s
 
