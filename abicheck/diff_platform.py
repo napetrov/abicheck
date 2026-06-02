@@ -15,6 +15,7 @@
 "Platform-specific ABI diff detectors (ELF, PE, Mach-O, DWARF)."
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .checker_policy import ChangeKind
@@ -1162,6 +1163,12 @@ def _diff_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+# Synthesized placeholder names for anonymous/unnamed aggregate member types,
+# which differ across DWARF / castxml / PDB readers (``<unnamed-tag>``,
+# ``<unnamed-type-u>``, ``<anonymous union>``, ``<unnamed struct at …>``, …).
+_ANON_TYPE_RE = re.compile(r"<\s*(?:unnamed|anonymous)\b", re.IGNORECASE)
+
+
 def _normalize_type_name(name: str) -> str:
     """Normalize a C/C++ type name for stable DWARF↔castxml comparison.
 
@@ -1188,6 +1195,15 @@ def _normalize_type_name(name: str) -> str:
     s = _re.sub(r"^(const|volatile)(\s+(const|volatile))?\s+", "", s).strip()
     # Remove struct/class/union tag keyword
     s = _re.sub(r"^(struct|class|union)\s+", "", s).strip()
+    # Anonymous/unnamed member types have no stable name across DWARF / castxml /
+    # PDB extraction — the same anonymous union can be spelled "<unnamed-tag>" by
+    # one reader and "Parent::<unnamed-type-u>" by another (observed on the
+    # Windows SDK _TP_CALLBACK_ENVIRON_V3::u between two MSVC builds). Comparing
+    # those placeholders is meaningless, so collapse any of them to one token.
+    # A genuine change to a *differently sized* anonymous type is still caught by
+    # the separate byte_size comparison, so this does not mask real drift.
+    if _ANON_TYPE_RE.search(s):
+        return "<anonymous>"
     return s
 
 

@@ -128,6 +128,53 @@ class TestNestedStructTagNormalization:
         kinds = {c.kind for c in changes}
         assert ChangeKind.STRUCT_FIELD_TYPE_CHANGED not in kinds
 
+    def test_anonymous_member_type_name_mismatch_not_a_change(self) -> None:
+        """An anonymous union member named "<unnamed-tag>" by one reader and
+        "Parent::<unnamed-type-u>" by another (same size) must NOT emit
+        STRUCT_FIELD_TYPE_CHANGED — the placeholder names have no stable
+        identity. (Mirrors the Windows SDK _TP_CALLBACK_ENVIRON_V3::u case that
+        differs between two MSVC builds.)"""
+        from abicheck.checker import (
+            ChangeKind,
+            _diff_struct_layouts,  # type: ignore[attr-defined]
+        )
+
+        old_meta = self._make_meta("_TP_CALLBACK_ENVIRON_V3", "u", "<unnamed-tag>")
+        new_meta = self._make_meta(
+            "_TP_CALLBACK_ENVIRON_V3", "u", "_TP_CALLBACK_ENVIRON_V3::<unnamed-type-u>"
+        )
+
+        changes = _diff_struct_layouts(old_meta, new_meta)
+        kinds = {c.kind for c in changes}
+        assert ChangeKind.STRUCT_FIELD_TYPE_CHANGED not in kinds, (
+            "anonymous-member placeholder rename must not be a field type change"
+        )
+
+    def test_anonymous_member_size_drift_still_detected(self) -> None:
+        """A genuine size change of an anonymous member is still caught (the
+        name collapse only suppresses unstable-name noise, not real drift)."""
+        from abicheck.checker import (
+            ChangeKind,
+            _diff_struct_layouts,  # type: ignore[attr-defined]
+        )
+
+        old_meta = DwarfMetadata(
+            structs={"Outer": StructLayout(name="Outer", byte_size=8, fields=[
+                FieldInfo(name="u", type_name="<unnamed-tag>", byte_offset=0, byte_size=4)])},
+            has_dwarf=True,
+        )
+        new_meta = DwarfMetadata(
+            structs={"Outer": StructLayout(name="Outer", byte_size=8, fields=[
+                FieldInfo(name="u", type_name="<unnamed-type-u>", byte_offset=0, byte_size=8)])},
+            has_dwarf=True,
+        )
+
+        changes = _diff_struct_layouts(old_meta, new_meta)
+        kinds = {c.kind for c in changes}
+        assert ChangeKind.STRUCT_FIELD_TYPE_CHANGED in kinds, (
+            "size drift of an anonymous member must still be reported"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Reserved-field reuse: type matching (architecture review fix #4)
