@@ -1136,13 +1136,16 @@ def _plausible_rename(old_name: str, new_name: str) -> bool:
     b = _unqualified_name(new_name)
     if a == b:
         return True
-    # Operator names all share the literal ``operator`` token, which would
-    # otherwise count as a similarity affix and pair distinct operators
-    # (``operator+`` vs ``operator-``). Require an exact spelling match for
-    # operators — handled by the ``a == b`` check above, so anything reaching
-    # here with an operator leaf is a genuinely different operator.
-    if a.startswith("operator") or b.startswith("operator"):
-        return False
+    # Operator leaves all share the literal ``operator`` token, and a
+    # destructor leaf (``~Widget``) shares the class name with that class's
+    # constructor leaf (``Widget``); in both cases an affix match would pair
+    # genuinely different ABI functions (operator+ vs operator-, ctor vs dtor).
+    # Require an exact spelling match for these — handled by the ``a == b``
+    # check above, so anything of this kind reaching here is a different
+    # operator/destructor and must be rejected.
+    for leaf in (a, b):
+        if leaf.startswith("operator") or leaf.startswith("~"):
+            return False
     return _shared_affix_len(a, b) >= _RENAME_MIN_SHARED_AFFIX
 
 

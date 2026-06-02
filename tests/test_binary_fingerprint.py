@@ -458,6 +458,16 @@ class TestPlausibleRename:
         # Identical operator spelling is an exact-leaf match.
         assert _plausible_rename("A::operator==(int)", "B::operator==(int)") is True
 
+    def test_constructor_destructor_pair_rejected(self) -> None:
+        # ctor leaf 'Widget' and dtor leaf '~Widget' share the class-name
+        # affix but are different ABI functions, not a rename. (Demangled forms
+        # are used so the test is independent of c++filt availability.)
+        assert _plausible_rename("Widget::Widget()", "Widget::~Widget()") is False
+
+    def test_destructor_namespace_move_accepted(self) -> None:
+        # The same destructor under a different scope is still a move.
+        assert _plausible_rename("ns::Widget::~Widget()", "ns2::Widget::~Widget()") is True
+
     def test_plain_unqualified_names(self) -> None:
         # No '::', no template, no return type, no operator.
         assert _plausible_rename("process_request", "process_reply") is True
