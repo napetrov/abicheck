@@ -221,6 +221,30 @@ def test_stdlib_struct_layout_kept_when_target_is_cxx_runtime() -> None:
     assert ChangeKind.STRUCT_FIELD_REMOVED in kinds
 
 
+def test_anonymous_dwarf_types_filtered_even_for_cxx_runtime() -> None:
+    """Even when the target IS the C++ runtime (std:: kept), anonymous/lambda
+    types are never stable ABI and must still be filtered from the DWARF layout
+    diff (regression for the Codex review: the filter must run for runtimes too,
+    just with std:: preserved)."""
+    old = AbiSnapshot(library="libstdc++.so.6", version="v1")
+    new = AbiSnapshot(library="libstdc++.so.6", version="v2")
+    old.dwarf = _meta(structs={  # type: ignore[attr-defined]
+        "std::vector<int>": _struct("std::vector<int>", 24, fields=[_field("_M_start", "int*", 0, 8)]),
+        "<lambda(int)>": _struct("<lambda(int)>", 8, fields=[_field("__captured", "int", 0, 4)]),
+    })
+    new.dwarf = _meta(structs={  # type: ignore[attr-defined]
+        # std:: kept and unchanged; the lambda closure type "lost" its field.
+        "std::vector<int>": _struct("std::vector<int>", 24, fields=[_field("_M_start", "int*", 0, 8)]),
+        "<lambda(int)>": _struct("<lambda(int)>", 8, fields=[]),
+    })
+    result = compare(old, new)
+    offenders = [
+        c for c in result.changes
+        if c.kind == ChangeKind.STRUCT_FIELD_REMOVED and "lambda" in c.symbol
+    ]
+    assert offenders == [], f"anonymous/lambda DWARF churn must be filtered for runtimes too: {[c.symbol for c in offenders]}"
+
+
 def test_field_type_size_changed() -> None:
     # int → long (size 4 → 8)
     old_s = _struct("Foo", 8, fields=[_field("n", "int", 0, 4)])
