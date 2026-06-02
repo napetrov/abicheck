@@ -1,9 +1,11 @@
 # Configuration Key & Default-Value Review
 
-> **Status:** Review / proposal (2026-06). Audit of every CLI flag, config-file
-> key, and environment variable across all operating modes, with an opinionated
-> assessment of redundancy, inconsistency, and surprising defaults. Nothing here
-> changes behavior on its own — it is a decision input for trimming the surface.
+> **Status:** Review (2026-06), **largely implemented**. Audit of every CLI
+> flag, config-file key, and environment variable across all operating modes,
+> with an opinionated assessment of redundancy, inconsistency, and surprising
+> defaults. The "Do first / Do next / Do later" action list at the end has been
+> implemented (see §7 for the per-item status); this document remains the
+> rationale of record.
 
 This document answers three questions:
 
@@ -304,26 +306,37 @@ categories. Coherent. The only issue is reach (§2.2), not the schema.
 
 ---
 
-## 7. Prioritized action list
+## 7. Prioritized action list — implementation status
 
 **Do first (correctness / least-surprise):**
-1. Unify `--scope-public-headers` default + flag form across `compare`,
-   `compare-release`, `appcompat` (§2.1).
-2. Make the legacy-vs-severity exit-code switch explicit, or always run
-   severity-aware (§2.2).
+1. ✅ **Done.** `--scope-public-headers/--no-scope-public-headers` toggle is now
+   on `compare`, `compare-release` (flipped to **default ON**), and `appcompat`
+   (which previously had no toggle); the Python API default is unchanged (ON).
+   (§2.1)
+2. ✅ **Done (explicit-messaging form).** `compare` now prints the active
+   exit-code scheme to stderr instead of switching silently, and `--severity-*`
+   /`--severity-preset` were added to `compare-release` and `appcompat`. Exit
+   numbers are unchanged: a literal "legacy preset" can't be reproduced through
+   the severity engine because API_BREAK and RISK share `POTENTIAL_BREAKING`
+   while the verdict path maps `COMPATIBLE_WITH_RISK`→0, so forcing
+   always-severity-aware would change RISK handling. (§2.2)
 
 **Do next (consolidation):**
-3. Collapse `--btf/--ctf/--dwarf` into `--debug-format`; rename `--dwarf-only`
-   (§3.4).
-4. Fold `--show-impact` into `--report-mode`; document the three "what's shown"
-   axes (§3.3).
-5. Deprecate/hide (don't remove) the documented `--compile-db` alias (§3.2).
+3. ✅ **Done (additive).** Added `--debug-format {auto,dwarf,btf,ctf}` to
+   `compare`/`dump`; the legacy `--btf/--ctf/--dwarf` flags are hidden but still
+   functional. `--dwarf-only` was **not** renamed (a rename breaks documented
+   command lines; left as-is). (§3.4)
+4. ✅ **Done.** `--report-mode` gained `impact` (sugar for `full` +
+   `--show-impact`); `--show-impact` still works standalone. (§3.3)
+5. ✅ **Done.** `--compile-db` is hidden from `--help` but still functional as an
+   alias of `-p/--build-dir`. (§3.2)
 
 **Do later (defaults polish):**
-6. `compare-release -j` default `0` (auto) (§4).
-7. `--demangle` default ON for human formats (§4).
-8. Warn (don't silently ignore) on `-H`/`-I` in the weak/list `appcompat`
-   branches (§2.7).
+6. ✅ **Done.** `compare-release -j` defaults to `0` (auto-detect CPUs). (§4)
+7. ✅ **Done.** `compare --demangle` defaults ON for markdown/html/text/review,
+   OFF for json/sarif. (§4)
+8. ✅ **Done.** The weak/list `appcompat` branches now warn when `-H`/`-I` are
+   supplied (instead of silently ignoring them). (§2.7)
 
 **Keep as-is (don't remove):**
 - ABICC P2 no-op stubs (hidden, harmless, real drop-in value).
