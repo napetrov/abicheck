@@ -121,11 +121,18 @@ def _stamp_provenance(
     build_id: str | None,
     no_git: bool,
 ) -> None:
-    """Fill provenance metadata on a snapshot (mutates in place)."""
-    import datetime
+    """Fill provenance metadata on a snapshot (mutates in place).
+
+    ``created_at`` honours ``SOURCE_DATE_EPOCH`` (the reproducible-builds
+    standard): when set to a Unix timestamp, that fixed time is used instead of
+    the wall clock, so two dumps of an identical library are byte-identical —
+    enabling content-addressable caching and reproducible-build verification.
+    An unset or malformed value falls back to the current time.
+    """
+    import os
     import subprocess
 
-    snap.created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    snap.created_at = _provenance_timestamp(os.environ.get("SOURCE_DATE_EPOCH"))
     snap.git_tag = git_tag
     snap.build_id = build_id
 
@@ -139,6 +146,22 @@ def _stamp_provenance(
                 snap.git_commit = result.stdout.strip()
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass  # git not available or not a repo — leave as None
+
+
+def _provenance_timestamp(source_date_epoch: str | None) -> str:
+    """ISO-8601 UTC timestamp, honouring ``SOURCE_DATE_EPOCH`` when valid."""
+    import datetime
+
+    if source_date_epoch:
+        try:
+            epoch = int(source_date_epoch.strip())
+        except ValueError:
+            pass
+        else:
+            return datetime.datetime.fromtimestamp(
+                epoch, tz=datetime.timezone.utc
+            ).isoformat()
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
 def _write_snapshot_output(
