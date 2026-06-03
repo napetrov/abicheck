@@ -206,15 +206,6 @@ def compare(
     if extra_changes:
         changes.extend(extra_changes)
 
-    # Post-detector: SONAME bump policy check (needs full change list).
-    # Uses the module-level import of check_soname_bump_policy.
-    from .elf_metadata import ElfMetadata as _ElfMetadata
-
-    _old_elf = getattr(old, "elf", None) or _ElfMetadata()
-    _new_elf = getattr(new, "elf", None) or _ElfMetadata()
-    soname_changes = check_soname_bump_policy(changes, _old_elf, _new_elf)
-    changes.extend(soname_changes)
-
     # Run the post-processing pipeline (filtering, dedup, enrichment, suppression).
     # PolicyFile.frozen_namespaces is threaded in so the late-stage
     # EscalateFrozenNamespaceViolations step can tag matching findings.
@@ -238,7 +229,27 @@ def compare(
     # Verdict computed on unsuppressed semantic changes.
     # NOTE: opaque_filtered changes are intentionally excluded from verdict
     # (they are compatibility-preserving noise, e.g. opaque handle size drift).
-    all_unsuppressed = kept + redundant
+    verdict_redundant = [
+        c for c in redundant
+        if not (c.caused_by_type or "").startswith("rename:")
+    ]
+    all_unsuppressed = kept + verdict_redundant
+
+    # Post-detector: SONAME bump policy check.  It needs the full semantic
+    # change list, but that list must already have passed through
+    # post-processing.  Raw detector findings can be downgraded or made
+    # redundant there (for example FUNC_REMOVED/FUNC_ADDED collapsed into
+    # FUNC_LIKELY_RENAMED); evaluating SONAME policy too early leaves stale
+    # bump recommendations on non-breaking results.
+    from .elf_metadata import ElfMetadata as _ElfMetadata
+
+    _old_elf = getattr(old, "elf", None) or _ElfMetadata()
+    _new_elf = getattr(new, "elf", None) or _ElfMetadata()
+    soname_changes = check_soname_bump_policy(all_unsuppressed, _old_elf, _new_elf)
+    if soname_changes:
+        kept.extend(soname_changes)
+        all_unsuppressed = kept + verdict_redundant
+
     verdict = policy_file.compute_verdict(all_unsuppressed) if policy_file is not None else compute_verdict(all_unsuppressed, policy=policy)
     effective_policy = policy_file.base_policy if policy_file is not None else policy
 
