@@ -49,9 +49,20 @@ _STDLIB_PREFIXES = (
     "_ZnaSt",             # operator new[](std::size_t)
     "_ZdaPv",             # operator delete[](void*)
     "_ZTVN10__cxxabiv",   # vtables for RTTI (typeinfo infrastructure)
-    "_ZTI",               # typeinfo objects
-    "_ZTS",               # typeinfo strings
     "_ZSt",               # std:: global symbols (e.g. _ZSt4cout)
+)
+
+_STDLIB_RTTI_PREFIXES = (
+    "_ZTISt",             # typeinfo for std::* / std::exception, etc.
+    "_ZTSSt",             # typeinfo name for std::* / std::exception, etc.
+    "_ZTINSt",            # typeinfo for nested std::* names
+    "_ZTSNSt",            # typeinfo name for nested std::* names
+    "_ZTIN9__gnu_cxx",
+    "_ZTSN9__gnu_cxx",
+    "_ZTIN10__cxxabiv",
+    "_ZTSN10__cxxabiv",
+    "_ZTIN7__cxx11",
+    "_ZTSN7__cxx11",
 )
 
 
@@ -71,6 +82,10 @@ def is_abi_relevant_elf_symbol(name: str) -> bool:
             return False
 
     for prefix in _STDLIB_PREFIXES:
+        if name.startswith(prefix):
+            return False
+
+    for prefix in _STDLIB_RTTI_PREFIXES:
         if name.startswith(prefix):
             return False
 

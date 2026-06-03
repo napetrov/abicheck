@@ -122,6 +122,8 @@ def test_stdlib_transitive_symbols_are_filtered(name: str) -> None:
     "_ZN3Foo3barEv",
     "_ZN6MyLib4CoreC1Ev",
     "_ZNK6MyLib4Core4nameEv",
+    "_ZTIN3foo3BarE",   # typeinfo for foo::Bar
+    "_ZTSN3foo3BarE",   # typeinfo name for foo::Bar
     # Regular single-underscore prefixed symbols (not double)
     "_init",
     "_fini",
