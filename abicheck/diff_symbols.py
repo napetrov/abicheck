@@ -103,7 +103,18 @@ def _is_local_type_rtti(mangled: str) -> bool:
 
 def _public_functions(snap: AbiSnapshot) -> dict[str, Function]:
     """Return public/ELF-only functions from *snap*."""
-    return {k: v for k, v in snap.function_map.items() if v.visibility in _PUBLIC_VIS}
+    funcs = {k: v for k, v in snap.function_map.items() if v.visibility in _PUBLIC_VIS}
+    elf = getattr(snap, "elf", None)
+    if elf is None or not elf.symbols:
+        return funcs
+    exported = {
+        sym.name
+        for sym in elf.symbols
+        if getattr(sym.sym_type, "value", sym.sym_type) in {"func", "ifunc"}
+    }
+    if not exported:
+        return funcs
+    return {k: v for k, v in funcs.items() if k in exported}
 
 
 def _public_variables(snap: AbiSnapshot) -> dict[str, Variable]:
@@ -595,8 +606,8 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     # data-model-dependent integer ABI-equivalence checks below.
     is_llp64 = "pe" in (getattr(old, "platform", None), getattr(new, "platform", None))
     changes: list[Change] = []
-    old_map = {k: v for k, v in old.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
-    new_map = {k: v for k, v in new.function_map.items() if v.visibility in (Visibility.PUBLIC, Visibility.ELF_ONLY)}
+    old_map = _public_functions(old)
+    new_map = _public_functions(new)
 
     # Build a lookup of ALL functions in new snapshot (including hidden).
     new_all = new.function_map
@@ -1712,4 +1723,3 @@ def _diff_fingerprint_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change
         )
 
     return changes
-

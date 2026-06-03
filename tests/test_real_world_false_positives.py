@@ -23,6 +23,7 @@ import pytest
 
 from abicheck.checker import compare
 from abicheck.checker_policy import Verdict
+from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolType
 from abicheck.model import (
     AbiSnapshot,
     AccessLevel,
@@ -198,6 +199,10 @@ def _exported_func(mangled: str):
                     visibility=Visibility.ELF_ONLY)
 
 
+def _elf_exports(*names: str, sym_type: SymbolType = SymbolType.FUNC) -> ElfMetadata:
+    return ElfMetadata(symbols=[ElfSymbol(name=name, sym_type=sym_type) for name in names])
+
+
 def test_stripped_new_side_does_not_fabricate_type_removals():
     # old: rich DWARF types + exported symbols
     old = _elf_snapshot(
@@ -275,6 +280,125 @@ def test_stripped_suppression_counts_only_exported_functions():
     assert not any(c.kind == ChangeKind.TYPE_REMOVED for c in result.changes), (
         "internal DWARF functions must not deflate retention and re-enable the "
         f"phantom avalanche; changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
+    )
+
+
+def test_stripped_suppression_prefers_elf_exports_over_dwarf_public_functions():
+    """A DWARF snapshot may mark non-exported subprogram DIEs as PUBLIC.
+
+    The mixed-coverage retention guard must use the dynamic export table when it
+    exists, not the broader DWARF-derived function list.  This is the minimized
+    shape of the oneTBB allocator/proxy false positives from the real-world cron
+    campaign: old side has DWARF types plus public-looking internal helpers, new
+    side is symbols-only, and the real dynamic export surface is unchanged.
+    """
+    from abicheck.checker_policy import ChangeKind
+    from abicheck.model import Function
+
+    old = _elf_snapshot(
+        functions=[
+            _exported_func("stable_api"),
+            Function(
+                name="internal_helper",
+                mangled="_ZN3tbb6detail8internalEv",
+                return_type="void",
+                visibility=Visibility.PUBLIC,
+            ),
+            Function(
+                name="atomic_helper",
+                mangled="_ZNVSt6atomicIbEaSERKS0_",
+                return_type="void",
+                visibility=Visibility.PUBLIC,
+            ),
+        ],
+        types=[RecordType(name="tbb::detail::Internal", kind="class", size_bits=64)],
+    )
+    old.elf = _elf_exports("stable_api")
+    old.elf_only_mode = False
+
+    new = _elf_snapshot(functions=[_exported_func("stable_api")], types=[])
+    new.elf = _elf_exports("stable_api")
+    new.dwarf = None
+
+    result = compare(old, new)
+    assert not any(c.kind == ChangeKind.TYPE_REMOVED for c in result.changes), (
+        "unchanged ELF exports must suppress DWARF-only phantom type removals "
+        f"even when old DWARF lists non-exported public-looking helpers: "
+        f"{[(c.kind.value, c.symbol) for c in result.changes]}"
+    )
+
+
+def test_stripped_suppression_with_elf_exports_still_reports_real_symbol_loss():
+    """Using ELF metadata for retention must not hide real dynamic ABI removal."""
+    from abicheck.checker_policy import BREAKING_KINDS
+
+    old = _elf_snapshot(
+        functions=[_exported_func("removed_api"), _exported_func("stable_api")],
+        types=[RecordType(name="PublicType", kind="class", size_bits=64)],
+    )
+    old.elf = _elf_exports("removed_api", "stable_api")
+    old.elf_only_mode = False
+
+    new = _elf_snapshot(functions=[_exported_func("stable_api")], types=[])
+    new.elf = _elf_exports("stable_api")
+    new.dwarf = None
+
+    result = compare(old, new)
+    assert any(c.kind in BREAKING_KINDS for c in result.changes), (
+        "real dynamic export removal must still be reported; "
+        f"changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
+    )
+
+
+def test_function_diff_prefers_elf_exports_over_dwarf_public_helpers():
+    """DWARF-public helper functions are not binary ABI if absent from dynsym."""
+    from abicheck.checker_policy import ChangeKind
+    from abicheck.model import Function
+
+    old = _elf_snapshot(
+        functions=[
+            _exported_func("stable_api"),
+            Function(
+                name="tbb::detail::d0::atomic_backoff::atomic_backoff",
+                mangled="_ZN3tbb6detail2d014atomic_backoffC4ERKS2_",
+                return_type="void",
+                visibility=Visibility.PUBLIC,
+            ),
+        ],
+        types=[RecordType(name="tbb::detail::d0::atomic_backoff", kind="class", size_bits=64)],
+    )
+    old.elf = _elf_exports("stable_api")
+    old.elf_only_mode = False
+
+    new = _elf_snapshot(functions=[_exported_func("stable_api")], types=[])
+    new.elf = _elf_exports("stable_api")
+    new.dwarf = None
+
+    result = compare(old, new)
+    assert not any(c.kind == ChangeKind.FUNC_REMOVED for c in result.changes), (
+        "DWARF-only public-looking helpers absent from ELF exports must not be "
+        f"reported as removed dynamic ABI: {[(c.kind.value, c.symbol) for c in result.changes]}"
+    )
+
+
+def test_function_diff_with_elf_exports_still_reports_real_export_loss():
+    """The ELF export filter must not hide genuine removed dynamic functions."""
+    from abicheck.checker_policy import ChangeKind
+
+    old = _elf_snapshot(functions=[_exported_func("removed_api"), _exported_func("stable_api")])
+    old.elf = _elf_exports("removed_api", "stable_api")
+
+    new = _elf_snapshot(functions=[_exported_func("stable_api")])
+    new.elf = _elf_exports("stable_api")
+
+    result = compare(old, new)
+    assert any(
+        c.kind in (ChangeKind.FUNC_REMOVED, ChangeKind.FUNC_REMOVED_ELF_ONLY)
+        and c.symbol == "removed_api"
+        for c in result.changes
+    ), (
+        "removing a real dynamic function export must still be reported; "
+        f"changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
     )
 
 
