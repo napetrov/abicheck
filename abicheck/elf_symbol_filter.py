@@ -16,6 +16,19 @@
 """ELF ABI-relevance filtering shared by symbol and DWARF paths."""
 from __future__ import annotations
 
+from collections.abc import Collection
+from typing import Any
+
+# ELF symbol types (STT_*) that represent a callable function surface and a
+# data/variable surface respectively. ``STT_NOTYPE`` is deliberately accepted by
+# *both*: assembly stubs, IFUNC resolvers and stripped dynamic entries are
+# frequently emitted as NOTYPE, so excluding them would drop real ABI. The minor
+# over-inclusion (a NOTYPE name counting toward both sets) is harmless for the
+# membership / retention checks these sets feed. ``SymbolType`` is a ``str``
+# enum, so these string values compare equal to its members.
+FUNCTION_SYMBOL_TYPES: frozenset[str] = frozenset({"func", "ifunc", "notype"})
+VARIABLE_SYMBOL_TYPES: frozenset[str] = frozenset({"object", "tls", "common", "notype"})
+
 # Prefixes that identify GCC/compiler-internal symbols which may leak into
 # .dynsym through statically-linked runtime (e.g. libgcc_s, SVML).
 _GCC_INTERNAL_PREFIXES = (
@@ -96,3 +109,35 @@ def is_abi_relevant_elf_symbol(name: str) -> bool:
         return False
 
     return True
+
+
+def exported_symbol_names(
+    elf: Any,
+    symbol_types: Collection[str],
+    *,
+    abi_relevant_only: bool = False,
+) -> set[str]:
+    """Return dynamic-export names of the requested ``symbol_types`` from *elf*.
+
+    *elf* is an :class:`~abicheck.elf_metadata.ElfMetadata` (or ``None``).
+    Returns an empty set when no ELF symbol table is present, so callers can use
+    ``if not exported`` to fall back to a DWARF-derived view.
+
+    ``getattr(sym.sym_type, "value", sym.sym_type)`` accepts both a ``SymbolType``
+    enum member and a raw string (e.g. from a serialized snapshot). When
+    *abi_relevant_only* is set, transitive runtime / compiler-internal exports
+    are dropped via :func:`is_abi_relevant_elf_symbol`.
+    """
+    if elf is None or not getattr(elf, "symbols", None):
+        return set()
+    names: set[str] = set()
+    for sym in elf.symbols:
+        if not sym.name:
+            continue
+        sym_type = getattr(sym.sym_type, "value", sym.sym_type)
+        if sym_type not in symbol_types:
+            continue
+        if abi_relevant_only and not is_abi_relevant_elf_symbol(sym.name):
+            continue
+        names.add(sym.name)
+    return names

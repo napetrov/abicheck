@@ -17,12 +17,17 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Collection
 
 from .checker_policy import ChangeKind
 from .checker_types import Change
 from .detector_registry import registry
 from .diff_symbols import _PUBLIC_VIS, _public_functions, _public_variables
-from .elf_symbol_filter import is_abi_relevant_elf_symbol
+from .elf_symbol_filter import (
+    FUNCTION_SYMBOL_TYPES,
+    VARIABLE_SYMBOL_TYPES,
+    exported_symbol_names,
+)
 from .model import (
     AbiSnapshot,
     EnumType,
@@ -35,23 +40,18 @@ from .model import is_non_abi_surface_type as _is_non_abi_surface_type
 from .model import stdlib_namespaces_excluded as _exclude_stdlib_namespaces
 
 
-def _exported_elf_symbol_names(snap: AbiSnapshot, *, symbol_types: set[str]) -> set[str]:
+def _exported_elf_symbol_names(snap: AbiSnapshot, *, symbol_types: Collection[str]) -> set[str]:
     """Return dynamic-export names from ELF metadata when available.
 
     DWARF-primary snapshots can contain public-looking subprogram DIEs that are
     not dynamic exports.  For stripped-side retention checks, the real question
     is whether the dynamic ABI surface stayed intact, so prefer ``snap.elf`` over
-    the DWARF-derived Function/Variable lists.
+    the DWARF-derived Function/Variable lists. Transitive runtime/compiler
+    exports are excluded so they can't inflate retention.
     """
-    elf = getattr(snap, "elf", None)
-    if elf is None or not elf.symbols:
-        return set()
-    return {
-        sym.name
-        for sym in elf.symbols
-        if getattr(sym.sym_type, "value", sym.sym_type) in symbol_types
-        and is_abi_relevant_elf_symbol(sym.name)
-    }
+    return exported_symbol_names(
+        getattr(snap, "elf", None), symbol_types, abi_relevant_only=True
+    )
 
 
 def _is_abi_surface_type(t: RecordType, *, exclude_stdlib: bool) -> bool:
@@ -117,15 +117,15 @@ def _removals_are_unconfirmed(old: AbiSnapshot, new: AbiSnapshot) -> bool:
     # retention and defeat the suppression for a genuinely intact comparison.
     # Prefer functions; fall back to variables for data-only DSOs so a changed
     # variable surface still surfaces removals (CodeRabbit review on PR #275).
-    old_funcs = _exported_elf_symbol_names(old, symbol_types={"func", "ifunc", "notype"})
-    new_funcs = _exported_elf_symbol_names(new, symbol_types={"func", "ifunc", "notype"})
+    old_funcs = _exported_elf_symbol_names(old, symbol_types=FUNCTION_SYMBOL_TYPES)
+    new_funcs = _exported_elf_symbol_names(new, symbol_types=FUNCTION_SYMBOL_TYPES)
     if not old_funcs or not new_funcs:
         old_funcs = {k for k, v in old.function_map.items() if v.visibility in _PUBLIC_VIS}
         new_funcs = {k for k, v in new.function_map.items() if v.visibility in _PUBLIC_VIS}
     if old_funcs:
         return len(old_funcs & new_funcs) / len(old_funcs) >= 0.9
-    old_vars = _exported_elf_symbol_names(old, symbol_types={"object", "tls", "common", "notype"})
-    new_vars = _exported_elf_symbol_names(new, symbol_types={"object", "tls", "common", "notype"})
+    old_vars = _exported_elf_symbol_names(old, symbol_types=VARIABLE_SYMBOL_TYPES)
+    new_vars = _exported_elf_symbol_names(new, symbol_types=VARIABLE_SYMBOL_TYPES)
     if not old_vars or not new_vars:
         old_vars = {k for k, v in old.variable_map.items() if v.visibility in _PUBLIC_VIS}
         new_vars = {k for k, v in new.variable_map.items() if v.visibility in _PUBLIC_VIS}
