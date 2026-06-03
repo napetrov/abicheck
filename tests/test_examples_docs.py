@@ -93,11 +93,11 @@ def test_generator_rewrites_source_links_without_mkdocs_broken_links() -> None:
     mod = _load_generator_module()
 
     rewritten = mod._rewrite_links(
-        "[v1 header](v1.h) [guide](../docs/concepts/abi-stability-guide.md)"
+        "[v1 header](v1.h) [guide](../docs/concepts/abi-api-handling.md)"
     )
 
     assert "`v1 header`" in rewritten
-    assert "[guide](../concepts/abi-stability-guide.md)" in rewritten
+    assert "[guide](../concepts/abi-api-handling.md)" in rewritten
     assert "../../examples/" not in rewritten
 
 

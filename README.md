@@ -172,7 +172,7 @@ Per-case matrix, methodology, full-catalog notes, and the pinned cross-tool comp
 
 - **Start here:** [Getting Started](https://napetrov.github.io/abicheck/getting-started/)
 - **User guide:** [CLI Usage](https://napetrov.github.io/abicheck/user-guide/cli-usage/) · [Application compatibility](https://napetrov.github.io/abicheck/user-guide/appcompat/) · [Output formats](https://napetrov.github.io/abicheck/user-guide/output-formats/) · [GitHub Action](https://napetrov.github.io/abicheck/user-guide/github-action/)
-- **Concepts:** [Verdicts](https://napetrov.github.io/abicheck/concepts/verdicts/) · [Architecture](https://napetrov.github.io/abicheck/concepts/architecture/) · [ABI Breaks Explained](https://napetrov.github.io/abicheck/concepts/abi-breaks-explained/) · [Limitations](https://napetrov.github.io/abicheck/concepts/limitations/)
+- **Concepts:** [Verdicts](https://napetrov.github.io/abicheck/concepts/verdicts/) · [Architecture](https://napetrov.github.io/abicheck/concepts/architecture/) · [ABI/API Handling & Recommendations](https://napetrov.github.io/abicheck/concepts/abi-api-handling/) · [Limitations](https://napetrov.github.io/abicheck/concepts/limitations/)
 - **Reference:** [Change Kinds](https://napetrov.github.io/abicheck/reference/change-kinds/) · [Exit Codes](https://napetrov.github.io/abicheck/reference/exit-codes/) · [Platforms](https://napetrov.github.io/abicheck/reference/platforms/) · [Tool Comparison](https://napetrov.github.io/abicheck/reference/tool-comparison/)
 - **Troubleshooting:** [Troubleshooting guide](https://napetrov.github.io/abicheck/troubleshooting/)
 
