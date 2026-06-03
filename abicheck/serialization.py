@@ -463,6 +463,21 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
     # leave as None so build-mode-aware detectors fall back to "unknown".
     build_mode = _build_mode_from_dict(d.get("build_mode"))
 
+    # from_headers provenance (added alongside the HEADER_AWARE tier-honesty
+    # fix). An absent key means a legacy snapshot dumped before the field
+    # existed: preserve the prior evidence-tier behavior by inferring header
+    # provenance from a populated, non-elf-only surface, so saved baselines
+    # (e.g. `abicheck compare libfoo-1.0.json libfoo-2.0.json`) do not silently
+    # downgrade from HEADER_AWARE. A present key — including a legitimate False
+    # for DWARF-only/symbols-only dumps — is honored verbatim.
+    elf_only_mode = bool(d.get("elf_only_mode", False))
+    if "from_headers" in d:
+        from_headers = bool(d["from_headers"])
+    else:
+        from_headers = (not elf_only_mode) and bool(
+            funcs or variables or types or enums or typedefs
+        )
+
     return AbiSnapshot(
         library=d["library"], version=d["version"],
         source_path=d.get("source_path"),
@@ -470,7 +485,8 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         enums=enums, typedefs=typedefs,
         elf=elf, pe=pe, macho=macho,
         dwarf=dwarf, dwarf_advanced=dwarf_advanced, sycl=sycl,
-        elf_only_mode=bool(d.get("elf_only_mode", False)),
+        elf_only_mode=elf_only_mode,
+        from_headers=from_headers,
         constants=d.get("constants", {}),
         platform=d.get("platform"),
         language_profile=d.get("language_profile"),

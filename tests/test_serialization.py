@@ -244,3 +244,40 @@ class TestSerializationRoundtripExtended:
         assert d["functions"][0]["params"][0]["default"] is None
         snap2 = snapshot_from_dict(d)
         assert snap2.functions[0].params[0].default is None
+
+
+class TestFromHeadersBackCompat:
+    """from_headers provenance loading, incl. legacy snapshots without the key."""
+
+    def test_present_key_true_is_honored(self):
+        d = {"library": "libfoo.so", "version": "1.0", "from_headers": True}
+        assert snapshot_from_dict(d).from_headers is True
+
+    def test_present_key_false_is_honored(self):
+        # A current DWARF-only/symbols-only dump legitimately carries False.
+        d = {
+            "library": "libfoo.so", "version": "1.0", "from_headers": False,
+            "functions": [{"name": "f", "mangled": "f", "return_type": "int"}],
+        }
+        assert snapshot_from_dict(d).from_headers is False
+
+    def test_legacy_no_key_with_surface_infers_header_aware(self):
+        # Legacy snapshot (no from_headers key) that was dumped with headers:
+        # a populated, non-elf-only surface must keep prior HEADER_AWARE behavior.
+        d = {
+            "library": "libfoo.so", "version": "1.0",
+            "functions": [{"name": "f", "mangled": "f", "return_type": "int"}],
+        }
+        assert "from_headers" not in d
+        assert snapshot_from_dict(d).from_headers is True
+
+    def test_legacy_no_key_elf_only_mode_stays_false(self):
+        d = {
+            "library": "libfoo.so", "version": "1.0", "elf_only_mode": True,
+            "functions": [{"name": "f", "mangled": "f", "return_type": "int"}],
+        }
+        assert snapshot_from_dict(d).from_headers is False
+
+    def test_legacy_no_key_empty_surface_stays_false(self):
+        d = {"library": "libfoo.so", "version": "1.0"}
+        assert snapshot_from_dict(d).from_headers is False

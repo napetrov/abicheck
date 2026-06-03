@@ -645,6 +645,13 @@ def dump(
             f"Ensure the file is a valid shared library."
         )
 
+    # Note: from_headers (the HEADER_AWARE evidence-tier signal) is set by the
+    # format-specific builders (_dump_elf / _dump_pe / _dump_macho) at the point
+    # castxml actually parses headers, so every entry point — including the CLI
+    # and service native-binary paths that call those builders directly (e.g.
+    # service._try_header_scoped_dump), bypassing this function — records it
+    # correctly. DWARF-only and symbols-only builds leave it False.
+
     # Tag declaration provenance (source_header + origin). Always derives
     # source_header from the parsed source location; origin is only
     # classified when a public-header set is supplied (ADR-015, D4).
@@ -1007,6 +1014,9 @@ def _dump_elf(
         elf=elf_meta,
         dwarf=dwarf_meta,
         dwarf_advanced=dwarf_adv,
+        # Reached only when headers were supplied and castxml ran (the no-header
+        # and DWARF-only branches return earlier): this surface is header-parsed.
+        from_headers=True,
         platform="elf",
         language_profile=profile_hint,
     )
@@ -1136,6 +1146,9 @@ def _dump_macho(
         enums=parser.parse_enums(),
         typedefs=parser.parse_typedefs(),
         macho=macho_meta,
+        # Reached only when headers were supplied and castxml ran (the no-header
+        # branch returns earlier): this surface is header-parsed.
+        from_headers=True,
         platform="macho",
         language_profile=profile_hint,
     )
@@ -1215,6 +1228,9 @@ def _dump_pe(
         enums=parser.parse_enums(),
         typedefs=parser.parse_typedefs(),
         pe=pe_meta,
+        # Reached only when headers were supplied and castxml ran (the no-header
+        # branch returns earlier): this surface is header-parsed.
+        from_headers=True,
         platform="pe",
         language_profile=profile_hint,
     )
