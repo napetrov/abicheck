@@ -206,15 +206,6 @@ def compare(
     if extra_changes:
         changes.extend(extra_changes)
 
-    # Post-detector: SONAME bump policy check (needs full change list).
-    # Uses the module-level import of check_soname_bump_policy.
-    from .elf_metadata import ElfMetadata as _ElfMetadata
-
-    _old_elf = getattr(old, "elf", None) or _ElfMetadata()
-    _new_elf = getattr(new, "elf", None) or _ElfMetadata()
-    soname_changes = check_soname_bump_policy(changes, _old_elf, _new_elf)
-    changes.extend(soname_changes)
-
     # Run the post-processing pipeline (filtering, dedup, enrichment, suppression).
     # PolicyFile.frozen_namespaces is threaded in so the late-stage
     # EscalateFrozenNamespaceViolations step can tag matching findings.
@@ -238,7 +229,51 @@ def compare(
     # Verdict computed on unsuppressed semantic changes.
     # NOTE: opaque_filtered changes are intentionally excluded from verdict
     # (they are compatibility-preserving noise, e.g. opaque handle size drift).
-    all_unsuppressed = kept + redundant
+    #
+    # rename: redundant changes are excluded too. When SuppressRenamedPairs
+    # collapses a FUNC_REMOVED/FUNC_ADDED pair into a FUNC_LIKELY_RENAMED, it
+    # moves the removed/added halves into `redundant` tagged "rename:…". The
+    # surviving FUNC_LIKELY_RENAMED (a RISK kind, in `kept`) is what should
+    # drive the verdict; counting the redundant FUNC_REMOVED would re-escalate
+    # the downgraded rename back to BREAKING. They stay in redundant_changes
+    # for audit (--show-redundant); they just don't drive the verdict.
+    verdict_redundant = [
+        c for c in redundant
+        if not (c.caused_by_type or "").startswith("rename:")
+    ]
+
+    # Post-detector: SONAME bump policy check.  It needs the full semantic
+    # change list, but that list must already have passed through
+    # post-processing.  Raw detector findings can be downgraded or made
+    # redundant there (for example FUNC_REMOVED/FUNC_ADDED collapsed into
+    # FUNC_LIKELY_RENAMED); evaluating SONAME policy too early leaves stale
+    # bump recommendations on non-breaking results.
+    #
+    # The advisory is a synthetic, library-level meta-finding (symbol
+    # "DT_SONAME"), not a per-symbol diff, so it deliberately bypasses the rest
+    # of the post-processing pipeline: its breaking-change *input* is already
+    # surface-scoped/deduped (it comes from `kept`), and the only pipeline step
+    # that meaningfully applies to the advisory itself — user suppression — is
+    # re-applied explicitly below. Surface scoping, dedup and enrichment steps
+    # have nothing to act on for a DT_SONAME advisory.
+    from .elf_metadata import ElfMetadata as _ElfMetadata
+
+    _old_elf = getattr(old, "elf", None) or _ElfMetadata()
+    _new_elf = getattr(new, "elf", None) or _ElfMetadata()
+    soname_changes = check_soname_bump_policy(kept + verdict_redundant, _old_elf, _new_elf)
+    if suppression is not None and soname_changes:
+        visible_soname_changes: list[Change] = []
+        for c in soname_changes:
+            if suppression.is_suppressed(c):
+                suppressed.append(c)
+            else:
+                visible_soname_changes.append(c)
+        soname_changes = visible_soname_changes
+    if soname_changes:
+        kept.extend(soname_changes)
+
+    all_unsuppressed = kept + verdict_redundant
+
     verdict = policy_file.compute_verdict(all_unsuppressed) if policy_file is not None else compute_verdict(all_unsuppressed, policy=policy)
     effective_policy = policy_file.base_policy if policy_file is not None else policy
 
