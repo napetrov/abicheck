@@ -6,7 +6,7 @@ This directory contains **121 cases** numbered contiguously (`01–120` + `26b`)
 - A consumer `app.c` / `app.cpp` that demonstrates the actual failure at runtime.
 - A per-case `README.md` explaining what breaks and why.
 
-The catalog drives abicheck's benchmark and serves as an encyclopedia of ABI pitfalls. For conceptual background on what ABI stability means and how to reason about it, see [ABI Breaks Explained](../docs/concepts/abi-breaks-explained.md).
+The catalog drives abicheck's benchmark and serves as an encyclopedia of ABI pitfalls. For conceptual background on what ABI stability means and how to reason about it, see [ABI/API Handling & Recommendations](../docs/concepts/abi-api-handling.md).
 
 > **Authoritative expected verdicts for benchmarking** live in [`ground_truth.json`](ground_truth.json).
 > If a per-case README and `ground_truth.json` disagree, `ground_truth.json` is the source of truth.
@@ -189,6 +189,6 @@ cmake --build build
 
 - **Unified 77-case accuracy table** (all configurations, FP/FN): [`../README.md#validation-snapshot`](../README.md#validation-snapshot)
 - **Per-case accuracy matrix and methodology:** [Tool Comparison & Benchmarks](../docs/reference/tool-comparison.md)
-- **What counts as an ABI break (with code):** [ABI Breaks Explained](../docs/concepts/abi-breaks-explained.md)
+- **What counts as an ABI break (with code):** [ABI/API Handling & Recommendations](../docs/concepts/abi-api-handling.md)
 - **Dependency ABI leaks** (case 18 background): [`case18_dependency_leak/README.md`](case18_dependency_leak/README.md)
 - **Local build & snapshot workflow:** [Local Compare](../docs/user-guide/local-compare.md)
