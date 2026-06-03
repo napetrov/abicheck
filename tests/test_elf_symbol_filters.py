@@ -192,3 +192,18 @@ def test_dwarf_export_index_uses_same_abi_relevance_filter(tmp_path) -> None:
     assert "_ZN6MyLib4CoreC1Ev" in builder._exported_names
     assert builder._is_exported("_ZNSt10unique_ptrINSt6thread6_StateEEC1Ev", "std::unique_ptr") is False
     assert builder._is_exported("_ZNVSt6atomicIiEaSERKi", "std::atomic<int>::operator=") is False
+
+
+def test_dwarf_export_index_preserves_runtime_owned_stdlib_exports(tmp_path) -> None:
+    """libstdc++/libc++ own std:: symbols, so DWARF mode must not filter them."""
+    meta = ElfMetadata(
+        soname="libstdc++.so.6",
+        symbols=[
+            ElfSymbol(name="_ZNSt6vectorIiSaIiEE4sizeEv"),
+            ElfSymbol(name="_ZSt4cout"),
+        ],
+    )
+    builder = _DwarfSnapshotBuilder(tmp_path / "libstdc++.so.6", meta)
+
+    assert "_ZNSt6vectorIiSaIiEE4sizeEv" in builder._exported_names
+    assert "_ZSt4cout" in builder._exported_names

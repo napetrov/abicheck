@@ -55,6 +55,7 @@ from .model import (
     TypeField,
     Variable,
     Visibility,
+    is_cxx_runtime_library,
 )
 from .model import (
     is_compiler_internal_type as _is_compiler_internal,
@@ -183,8 +184,13 @@ class _DwarfSnapshotBuilder:
     """
 
     def __init__(self, elf_path: Path, elf_meta: ElfMetadata) -> None:
+        elf_path = Path(elf_path)
         self._elf_path = elf_path
         self._elf_meta = elf_meta
+        self._filter_transitive_runtime_symbols = not (
+            is_cxx_runtime_library(elf_path.name)
+            or is_cxx_runtime_library(elf_meta.soname)
+        )
 
         # Build exported symbol sets from ELF metadata, excluding
         # hidden/internal visibility symbols (not part of the public ABI)
@@ -195,7 +201,7 @@ class _DwarfSnapshotBuilder:
                 if (
                     sym.name
                     and sym.visibility not in _HIDDEN_VIS
-                    and is_abi_relevant_elf_symbol(sym.name)
+                    and self._is_abi_relevant_export(sym.name)
                 ):
                     self._exported_names.add(sym.name)
 
@@ -320,12 +326,16 @@ class _DwarfSnapshotBuilder:
         if not linkage_name:
             linkage_name = _attr_str(die, "DW_AT_MIPS_linkage_name")
         mangled = linkage_name or name
+        qualified_name = f"{scope}::{name}" if scope else name
 
         # Deleted functions intentionally bypass the exported-symbol check below
         # so a public API that becomes ``= delete`` is still observable. Do not
         # let that bypass re-admit transitive stdlib/runtime subprograms into a
         # non-runtime library's public surface.
-        if not is_abi_relevant_elf_symbol(mangled):
+        if (
+            not self._is_abi_relevant_export(mangled)
+            or not self._is_abi_relevant_export(qualified_name)
+        ):
             return
 
         # DWARF5 DW_AT_deleted: function marked as = delete by the compiler.
@@ -389,9 +399,6 @@ class _DwarfSnapshotBuilder:
         if "DW_AT_vtable_elem_location" in die.attributes:
             vtable_index = _attr_int(die, "DW_AT_vtable_elem_location")
 
-        # Build qualified name for methods
-        qualified_name = f"{scope}::{name}" if scope else name
-
         self.functions.append(Function(
             name=qualified_name if scope else name,
             mangled=mangled,
@@ -409,6 +416,12 @@ class _DwarfSnapshotBuilder:
             deleted_from_dwarf=is_deleted,
             is_explicit=is_explicit,
         ))
+
+    def _is_abi_relevant_export(self, name: str) -> bool:
+        """Return True when *name* belongs to this DSO's own ABI surface."""
+        if not self._filter_transitive_runtime_symbols:
+            return bool(name)
+        return is_abi_relevant_elf_symbol(name)
 
     def _process_param(self, die: Any, CU: Any) -> Param | None:
         """Extract a parameter from DW_TAG_formal_parameter."""

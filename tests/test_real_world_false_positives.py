@@ -350,6 +350,60 @@ def test_stripped_suppression_with_elf_exports_still_reports_real_symbol_loss():
     )
 
 
+def test_stripped_suppression_falls_back_when_new_side_lacks_elf_metadata():
+    """Mixed inputs can have ELF exports on one side only; use snapshot maps then."""
+    from abicheck.checker_policy import ChangeKind
+
+    old = _elf_snapshot(
+        functions=[_exported_func("stable_api")],
+        types=[RecordType(name="PublicType", kind="class", size_bits=64)],
+    )
+    old.elf = _elf_exports("stable_api")
+    old.elf_only_mode = False
+
+    new = _elf_snapshot(functions=[_exported_func("stable_api")], types=[])
+    new.elf = None
+    new.dwarf = None
+
+    result = compare(old, new)
+    assert not any(c.kind == ChangeKind.TYPE_REMOVED for c in result.changes), (
+        "when either side lacks ELF metadata, retention must fall back to the "
+        f"public function map; changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
+    )
+
+
+def test_stripped_suppression_ignores_transitive_stdlib_exports_in_retention():
+    """Weak stdlib/runtime leaks must not deflate stripped-side retention math."""
+    from abicheck.checker_policy import ChangeKind
+    from abicheck.model import Function
+
+    std_leak = "_ZNSt6vectorIiSaIiEE4sizeEv"
+    old = _elf_snapshot(
+        functions=[
+            _exported_func("stable_api"),
+            Function(
+                name="std::vector<int>::size",
+                mangled=std_leak,
+                return_type="unsigned long",
+                visibility=Visibility.PUBLIC,
+            ),
+        ],
+        types=[RecordType(name="PublicType", kind="class", size_bits=64)],
+    )
+    old.elf = _elf_exports("stable_api", std_leak)
+    old.elf_only_mode = False
+
+    new = _elf_snapshot(functions=[_exported_func("stable_api")], types=[])
+    new.elf = _elf_exports("stable_api")
+    new.dwarf = None
+
+    result = compare(old, new)
+    assert not any(c.kind == ChangeKind.TYPE_REMOVED for c in result.changes), (
+        "transitive stdlib exports are not the inspected library's retained "
+        f"surface; changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
+    )
+
+
 def test_function_diff_prefers_elf_exports_over_dwarf_public_helpers():
     """DWARF-public helper functions are not binary ABI if absent from dynsym."""
     from abicheck.checker_policy import ChangeKind
@@ -399,6 +453,53 @@ def test_function_diff_with_elf_exports_still_reports_real_export_loss():
     ), (
         "removing a real dynamic function export must still be reported; "
         f"changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
+    )
+
+
+def test_function_diff_with_elf_exports_keeps_notype_function_exports():
+    """STT_NOTYPE assembly/alias entry points are function-like dynamic ABI."""
+    from abicheck.checker_policy import ChangeKind
+
+    old = _elf_snapshot(functions=[_exported_func("asm_entry"), _exported_func("stable_api")])
+    old.elf = _elf_exports("asm_entry", "stable_api", sym_type=SymbolType.NOTYPE)
+
+    new = _elf_snapshot(functions=[_exported_func("stable_api")])
+    new.elf = _elf_exports("stable_api", sym_type=SymbolType.NOTYPE)
+
+    result = compare(old, new)
+    assert any(c.kind == ChangeKind.FUNC_REMOVED_ELF_ONLY and c.symbol == "asm_entry" for c in result.changes), (
+        "removing a NOTYPE dynamic entry point must not be hidden by the ELF "
+        f"intersection; changes: {[(c.kind.value, c.symbol) for c in result.changes]}"
+    )
+
+
+def test_function_diff_preserves_deleted_functions_missing_from_elf_exports():
+    """A newly deleted API has no new ELF export, but should be FUNC_DELETED only."""
+    from abicheck.checker_policy import ChangeKind
+    from abicheck.model import Function
+
+    old = _elf_snapshot(functions=[_exported_func("process"), _exported_func("stable_api")])
+    old.elf = _elf_exports("process", "stable_api")
+
+    new = _elf_snapshot(
+        functions=[
+            Function(
+                name="process",
+                mangled="process",
+                return_type="void",
+                visibility=Visibility.PUBLIC,
+                is_deleted=True,
+            ),
+            _exported_func("stable_api"),
+        ]
+    )
+    new.elf = _elf_exports("stable_api")
+
+    result = compare(old, new)
+    kinds_by_symbol = [(c.kind, c.symbol) for c in result.changes]
+    assert (ChangeKind.FUNC_DELETED, "process") in kinds_by_symbol
+    assert not any(c.kind == ChangeKind.FUNC_REMOVED and c.symbol == "process" for c in result.changes), (
+        f"deleted APIs must not also be reported as removed: {[(c.kind.value, c.symbol) for c in result.changes]}"
     )
 
 

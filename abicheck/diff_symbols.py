@@ -110,11 +110,14 @@ def _public_functions(snap: AbiSnapshot) -> dict[str, Function]:
     exported = {
         sym.name
         for sym in elf.symbols
-        if getattr(sym.sym_type, "value", sym.sym_type) in {"func", "ifunc"}
+        if getattr(sym.sym_type, "value", sym.sym_type) in {"func", "ifunc", "notype"}
     }
     if not exported:
         return funcs
-    return {k: v for k, v in funcs.items() if k in exported}
+    return {
+        k: v for k, v in funcs.items()
+        if k in exported or v.is_deleted
+    }
 
 
 def _public_variables(snap: AbiSnapshot) -> dict[str, Variable]:

@@ -22,6 +22,7 @@ from .checker_policy import ChangeKind
 from .checker_types import Change
 from .detector_registry import registry
 from .diff_symbols import _PUBLIC_VIS, _public_functions, _public_variables
+from .elf_symbol_filter import is_abi_relevant_elf_symbol
 from .model import (
     AbiSnapshot,
     EnumType,
@@ -49,6 +50,7 @@ def _exported_elf_symbol_names(snap: AbiSnapshot, *, symbol_types: set[str]) -> 
         sym.name
         for sym in elf.symbols
         if getattr(sym.sym_type, "value", sym.sym_type) in symbol_types
+        and is_abi_relevant_elf_symbol(sym.name)
     }
 
 
@@ -115,16 +117,16 @@ def _removals_are_unconfirmed(old: AbiSnapshot, new: AbiSnapshot) -> bool:
     # retention and defeat the suppression for a genuinely intact comparison.
     # Prefer functions; fall back to variables for data-only DSOs so a changed
     # variable surface still surfaces removals (CodeRabbit review on PR #275).
-    old_funcs = _exported_elf_symbol_names(old, symbol_types={"func", "ifunc"})
-    new_funcs = _exported_elf_symbol_names(new, symbol_types={"func", "ifunc"})
-    if not old_funcs:
+    old_funcs = _exported_elf_symbol_names(old, symbol_types={"func", "ifunc", "notype"})
+    new_funcs = _exported_elf_symbol_names(new, symbol_types={"func", "ifunc", "notype"})
+    if not old_funcs or not new_funcs:
         old_funcs = {k for k, v in old.function_map.items() if v.visibility in _PUBLIC_VIS}
         new_funcs = {k for k, v in new.function_map.items() if v.visibility in _PUBLIC_VIS}
     if old_funcs:
         return len(old_funcs & new_funcs) / len(old_funcs) >= 0.9
     old_vars = _exported_elf_symbol_names(old, symbol_types={"object", "tls", "common", "notype"})
     new_vars = _exported_elf_symbol_names(new, symbol_types={"object", "tls", "common", "notype"})
-    if not old_vars:
+    if not old_vars or not new_vars:
         old_vars = {k for k, v in old.variable_map.items() if v.visibility in _PUBLIC_VIS}
         new_vars = {k for k, v in new.variable_map.items() if v.visibility in _PUBLIC_VIS}
     if not old_vars:

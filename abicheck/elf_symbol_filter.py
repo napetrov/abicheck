@@ -1,4 +1,5 @@
 # Copyright 2026 Nikolay Petrov
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,6 +32,11 @@ _GCC_INTERNAL_PREFIXES = (
 # Prefixes that identify transitive C++ standard-library symbols which may
 # appear in .dynsym via weak linkage (libstdc++ / libc++).
 _STDLIB_PREFIXES = (
+    "std::",
+    "__gnu_cxx::",
+    "__gnu_debug::",
+    "__cxxabiv1::",
+    "__cxx11::",
     "_ZNSt",              # std:: namespace members (libstdc++)
     "_ZNKSt",             # const std:: methods
     "_ZNVSt",             # volatile std:: methods
