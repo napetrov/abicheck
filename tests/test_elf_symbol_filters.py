@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from abicheck.dumper import _is_abi_relevant_symbol
+from abicheck.diff_symbols import _public_functions
+from abicheck.dumper import _is_abi_relevant_symbol, _is_macho_abi_relevant_symbol
 from abicheck.dwarf_snapshot import _DwarfSnapshotBuilder
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolType
 from abicheck.elf_symbol_filter import (
@@ -17,6 +18,7 @@ from abicheck.elf_symbol_filter import (
     VARIABLE_SYMBOL_TYPES,
     exported_symbol_names,
 )
+from abicheck.model import AbiSnapshot, Function, Visibility
 
 # ---------------------------------------------------------------------------
 # Bug 1: GCC / compiler-internal symbols — must be filtered
@@ -123,6 +125,15 @@ def test_elf_lifecycle_stubs_are_filtered(name: str) -> None:
     assert _is_abi_relevant_symbol(name) is False, (
         f"ELF lifecycle stub {name!r} should be filtered out"
     )
+
+
+@pytest.mark.parametrize("name", [
+    # Mach-O C exports keep a leading underscore before abicheck normalizes them.
+    "_init",
+    "_fini",
+])
+def test_macho_init_style_exports_are_not_elf_filtered(name: str) -> None:
+    assert _is_macho_abi_relevant_symbol(name) is True
 
 
 @pytest.mark.parametrize("name", [
@@ -278,3 +289,60 @@ def test_exported_symbol_names_abi_relevant_only_drops_transitive_runtime() -> N
         "_ZN6MyLib4CoreC1Ev",
         "lib_init",
     }
+
+
+def _function(name: str) -> Function:
+    return Function(
+        name=name,
+        mangled=name,
+        return_type="void",
+        visibility=Visibility.PUBLIC,
+    )
+
+
+def test_public_functions_falls_back_without_elf_metadata() -> None:
+    snap = AbiSnapshot(
+        library="libfoo.so",
+        version="1",
+        functions=[_function("_init"), _function("lib_init")],
+        elf=None,
+    )
+
+    assert set(_public_functions(snap)) == {"_init", "lib_init"}
+
+
+def test_public_functions_keeps_empty_filtered_elf_exports_empty() -> None:
+    snap = AbiSnapshot(
+        library="libfoo.so",
+        version="1",
+        functions=[_function("_init"), _function("_fini")],
+        elf=ElfMetadata(
+            symbols=[
+                ElfSymbol(name="_init", sym_type=SymbolType.FUNC),
+                ElfSymbol(name="_fini", sym_type=SymbolType.FUNC),
+            ]
+        ),
+    )
+
+    assert _public_functions(snap) == {}
+
+
+def test_public_functions_uses_abi_relevant_export_filter() -> None:
+    snap = AbiSnapshot(
+        library="libfoo.so",
+        version="1",
+        functions=[
+            _function("_init"),
+            _function("_ZNSt6vectorIiSaIiEE4sizeEv"),
+            _function("lib_init"),
+        ],
+        elf=ElfMetadata(
+            symbols=[
+                ElfSymbol(name="_init", sym_type=SymbolType.FUNC),
+                ElfSymbol(name="_ZNSt6vectorIiSaIiEE4sizeEv", sym_type=SymbolType.FUNC),
+                ElfSymbol(name="lib_init", sym_type=SymbolType.FUNC),
+            ]
+        ),
+    )
+
+    assert set(_public_functions(snap)) == {"lib_init"}

@@ -84,6 +84,11 @@ def _is_abi_relevant_symbol(name: str) -> bool:
     return is_abi_relevant_elf_symbol(name)
 
 
+def _is_macho_abi_relevant_symbol(name: str) -> bool:
+    """Return whether a raw Mach-O export should enter the ABI surface."""
+    return bool(name)
+
+
 def _pyelftools_exported_symbols(so_path: Path) -> tuple[set[str], set[str]]:
     """Return (exported_dynamic, exported_static) sets of mangled symbol names.
 
@@ -997,7 +1002,7 @@ def _dump_macho(
     # Build exported symbol set from Mach-O export table
     exported_dynamic: set[str] = {
         exp.name for exp in macho_meta.exports
-        if exp.name and _is_abi_relevant_symbol(exp.name)
+        if _is_macho_abi_relevant_symbol(exp.name)
     }
 
     profile_hint: str | None = None
@@ -1025,7 +1030,7 @@ def _dump_macho(
         # using section classification from Mach-O nlist entries.
         _relevant = [
             exp for exp in macho_meta.exports
-            if exp.name and _is_abi_relevant_symbol(exp.name)
+            if _is_macho_abi_relevant_symbol(exp.name)
         ]
         macho_funcs = [exp for exp in _relevant if not exp.is_data]
         macho_vars = [exp for exp in _relevant if exp.is_data]
