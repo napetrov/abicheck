@@ -105,6 +105,12 @@ def test_pointer_cv_only_difference_is_detected(old_t, new_t):
     # field_qualifiers detector — must NOT be neutralised here.
     ("int", "const int"),
     ("volatile int", "int"),
+    # Nested ``*``/``&`` inside a template argument or function-parameter list is
+    # NOT a top-level pointer/reference: the type is passed/stored by value, so a
+    # top-level const change on it must remain reported (reviewer edge case).
+    ("Box<int *>", "const Box<int *>"),
+    ("std::function<void(const int&)>", "std::function<void(int&)>"),
+    ("std::array<char *, 4>", "const std::array<char *, 4>"),
     # Genuine type substitutions remain real differences.
     ("int *", "long *"),
     ("char *", "char **"),
@@ -115,6 +121,11 @@ def test_pointer_cv_only_difference_is_detected(old_t, new_t):
 ])
 def test_non_cv_only_difference_is_not_neutralised(old_t, new_t):
     assert cv_qualifiers_only_differ(old_t, new_t) is False
+
+
+def test_top_level_reference_const_is_neutralised():
+    # A reference whose top-level declarator is `&` is binary-neutral under const.
+    assert cv_qualifiers_only_differ("vector<int> &", "const vector<int> &") is True
 
 
 # ── parameters (ISSUE-29 / ISSUE-52) ──────────────────────────────────────────

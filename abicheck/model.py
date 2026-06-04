@@ -219,6 +219,33 @@ def _strip_cv_qualifiers(name: str) -> str:
     return _MULTI_SPACE_RE.sub(" ", stripped).strip()
 
 
+def _has_top_level_ptr_or_ref(type_name: str) -> bool:
+    """Return True if *type_name* has a ``*`` or ``&`` at top level (depth 0).
+
+    Sigils nested inside template arguments, function-parameter lists, or array
+    subscripts (e.g. ``Box<int *>``, ``std::function<void(int&)>``) are NOT
+    top-level declarators — the type itself is passed/stored by value. Only a
+    depth-0 ``*``/``&`` means the value is a pointer/reference.
+    """
+    angle = paren = bracket = 0
+    for ch in type_name:
+        if ch == "<":
+            angle += 1
+        elif ch == ">":
+            angle = max(0, angle - 1)
+        elif ch == "(":
+            paren += 1
+        elif ch == ")":
+            paren = max(0, paren - 1)
+        elif ch == "[":
+            bracket += 1
+        elif ch == "]":
+            bracket = max(0, bracket - 1)
+        elif ch in "*&" and angle == 0 and paren == 0 and bracket == 0:
+            return True
+    return False
+
+
 def cv_qualifiers_only_differ(old_type: str, new_type: str) -> bool:
     """Return True when two *pointer/reference* spellings differ only by ``const`` / ``volatile``.
 
@@ -230,32 +257,36 @@ def cv_qualifiers_only_differ(old_type: str, new_type: str) -> bool:
     most a source/API-signature difference, not a binary break (ISSUE-29/52,
     ISSUE-30/35/65).
 
-    The check is deliberately restricted to types containing a pointer (``*``)
-    or reference (``&``) sigil. A *by-value* cv change such as
-    ``int`` → ``const int`` is intentionally **not** neutralised here: although
-    it too is binary-layout-neutral, abicheck treats top-level field/variable
+    The check is deliberately restricted to types whose *top-level* declarator
+    is a pointer (``*``) or reference (``&``). A *by-value* cv change such as
+    ``int`` → ``const int`` — or one on a template type like
+    ``Box<int *>`` → ``const Box<int *>``, where the only sigil is nested inside
+    a template argument — is intentionally **not** neutralised here: although it
+    too is binary-layout-neutral, abicheck treats top-level field/variable
     const/volatile as a source-level contract change (see the ``field_qualifiers``
     detector and the ``case30_field_qualifiers`` example), reported through its
     own dedicated change kinds.
 
     Returns ``False`` when the canonical forms are already identical (no
     difference), when stripping cv-qualifiers still leaves a genuine type
-    difference (a real ABI-relevant change), or when neither spelling is a
-    pointer/reference type.
+    difference (a real ABI-relevant change), or when either spelling is not a
+    top-level pointer/reference type.
 
     >>> cv_qualifiers_only_differ("char *", "const char *")
     True
     >>> cv_qualifiers_only_differ("int", "const int")
+    False
+    >>> cv_qualifiers_only_differ("Box<int *>", "const Box<int *>")
     False
     >>> cv_qualifiers_only_differ("int *", "long *")
     False
     >>> cv_qualifiers_only_differ("Foo *", "Foo *")
     False
     """
-    if "*" not in old_type and "&" not in old_type:
-        return False
     co = canonicalize_type_name(old_type)
     cn = canonicalize_type_name(new_type)
+    if not (_has_top_level_ptr_or_ref(co) and _has_top_level_ptr_or_ref(cn)):
+        return False
     if co == cn:
         return False
     return _strip_cv_qualifiers(co) == _strip_cv_qualifiers(cn)
