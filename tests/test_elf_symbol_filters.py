@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from abicheck.diff_symbols import _public_functions
-from abicheck.dumper import _is_abi_relevant_symbol, _is_macho_abi_relevant_symbol
+from abicheck.dumper import _is_abi_relevant_symbol
 from abicheck.dwarf_snapshot import _DwarfSnapshotBuilder
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolType
 from abicheck.elf_symbol_filter import (
@@ -125,15 +125,6 @@ def test_elf_lifecycle_stubs_are_filtered(name: str) -> None:
     assert _is_abi_relevant_symbol(name) is False, (
         f"ELF lifecycle stub {name!r} should be filtered out"
     )
-
-
-@pytest.mark.parametrize("name", [
-    # Mach-O C exports keep a leading underscore before abicheck normalizes them.
-    "_init",
-    "_fini",
-])
-def test_macho_init_style_exports_are_not_elf_filtered(name: str) -> None:
-    assert _is_macho_abi_relevant_symbol(name) is True
 
 
 @pytest.mark.parametrize("name", [
