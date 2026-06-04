@@ -768,6 +768,28 @@ class TestFingerprintRenameDetector:
         assert rename_changes[0].old_value == "old_only"
         assert rename_changes[0].new_value == "new_only"
 
+    def test_retained_wrapper_not_reported_as_rename(self) -> None:
+        """A retained ABI symbol that shrinks to a wrapper is not a rename.
+
+        Real libssh2 1.11.0 -> 1.11.1 keeps libssh2_session_callback_set as a
+        tiny compatibility wrapper and adds libssh2_session_callback_set2 with
+        the old implementation size. The old symbol must not be reported as a
+        loader-breaking rename because existing binaries can still resolve it.
+        """
+        old = _snap_elf_only("1.0", [
+            _func_sym("libssh2_session_callback_set", 185),
+        ])
+        new = _snap_elf_only("2.0", [
+            _func_sym("libssh2_session_callback_set", _TINY_SIZE),
+            _func_sym("libssh2_session_callback_set2", 185),
+        ])
+        result = compare(old, new)
+
+        rename_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_LIKELY_RENAMED]
+        assert rename_changes == []
+        kinds = {c.kind for c in result.changes}
+        assert ChangeKind.FUNC_ADDED in kinds
+
     def test_unrelated_names_same_size_not_renamed(self) -> None:
         """Two unrelated functions that merely share a byte size must NOT be
         reported as a rename when no code hash is available.

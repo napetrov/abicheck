@@ -1713,6 +1713,19 @@ def _diff_fingerprint_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change
     if not old_fps or not new_fps:
         return changes
 
+    new_exported_funcs = {
+        sym.name
+        for sym in new.elf.symbols
+        if sym.sym_type in _FUNC_LIKE_TYPES
+    }
+    old_fps = {
+        name: fp
+        for name, fp in old_fps.items()
+        if name not in new_exported_funcs
+    }
+    if not old_fps:
+        return changes
+
     # Matches in this path are hash-less (size-only), inferred from symbol size
     # alone since _fingerprints_from_elf has no code bytes. Pass the name-
     # similarity predicate into the matcher so it participates in candidate
