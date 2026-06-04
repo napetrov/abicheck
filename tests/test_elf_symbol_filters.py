@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from abicheck.diff_symbols import _public_functions
+from abicheck.diff_symbols import _public_functions, _public_variables
 from abicheck.dumper import _is_abi_relevant_symbol
 from abicheck.dwarf_snapshot import _DwarfSnapshotBuilder
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolType
@@ -18,7 +18,7 @@ from abicheck.elf_symbol_filter import (
     VARIABLE_SYMBOL_TYPES,
     exported_symbol_names,
 )
-from abicheck.model import AbiSnapshot, Function, Visibility
+from abicheck.model import AbiSnapshot, Function, Variable, Visibility
 
 # ---------------------------------------------------------------------------
 # Bug 1: GCC / compiler-internal symbols — must be filtered
@@ -355,3 +355,27 @@ def test_public_functions_uses_abi_relevant_export_filter() -> None:
     )
 
     assert set(_public_functions(snap)) == {"lib_init"}
+
+
+def _variable(name: str) -> Variable:
+    return Variable(
+        name=name,
+        mangled=name,
+        type="int",
+        visibility=Visibility.ELF_ONLY,
+    )
+
+
+def test_public_variables_filters_elf_only_linker_artifacts() -> None:
+    snap = AbiSnapshot(
+        library="libfoo.so",
+        version="1",
+        variables=[
+            _variable("__bss_start"),
+            _variable("_edata"),
+            _variable("_end"),
+            _variable("public_table"),
+        ],
+    )
+
+    assert set(_public_variables(snap)) == {"public_table"}

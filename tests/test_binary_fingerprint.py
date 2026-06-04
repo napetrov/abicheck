@@ -20,6 +20,7 @@ from abicheck.binary_fingerprint import (
 from abicheck.checker import ChangeKind, compare
 from abicheck.diff_symbols import (
     _ctor_dtor_variant,
+    _fingerprints_from_elf,
     _param_signature_of,
     _plausible_rename,
     _return_type_of,
@@ -668,6 +669,24 @@ class TestPlausibleRename:
 
 class TestFingerprintRenameDetector:
     """Test the fingerprint_renames detector via the full compare() pipeline."""
+
+    def test_fingerprints_from_elf_handles_missing_metadata(self) -> None:
+        snap = AbiSnapshot(
+            library="libtest.so.1",
+            version="1.0",
+            elf=None,
+            elf_only_mode=True,
+        )
+
+        assert _fingerprints_from_elf(snap) == {}
+
+    def test_fingerprints_from_elf_skips_non_function_symbols(self) -> None:
+        snap = _snap_elf_only("1.0", [
+            ElfSymbol(name="global_table", sym_type=SymbolType.OBJECT, size=_NORMAL_SIZE),
+            _func_sym("public_func", _NORMAL_SIZE),
+        ])
+
+        assert set(_fingerprints_from_elf(snap)) == {"public_func"}
 
     def test_likely_renamed_detected_in_elf_only_mode(self) -> None:
         """Renamed function with same size is detected as FUNC_LIKELY_RENAMED."""
