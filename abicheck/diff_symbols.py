@@ -1696,6 +1696,8 @@ def _fingerprints_from_elf(snap: AbiSnapshot) -> dict[str, FunctionFingerprint]:
     for sym in snap.elf.symbols:
         if sym.sym_type not in _FUNC_LIKE_TYPES:
             continue
+        if not is_abi_relevant_elf_symbol(sym.name):
+            continue
         if sym.size < _MIN_SYMBOL_SIZE:
             continue
         result[sym.name] = FunctionFingerprint(
@@ -1733,18 +1735,30 @@ def _diff_fingerprint_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change
     if not old_fps or not new_fps:
         return changes
 
+    old_elf = getattr(old, "elf", None)
     new_elf = getattr(new, "elf", None)
+    old_exported_funcs = {
+        sym.name
+        for sym in (old_elf.symbols if old_elf is not None else [])
+        if sym.sym_type in _FUNC_LIKE_TYPES and is_abi_relevant_elf_symbol(sym.name)
+    }
     new_exported_funcs = {
         sym.name
         for sym in (new_elf.symbols if new_elf is not None else [])
-        if sym.sym_type in _FUNC_LIKE_TYPES
+        if sym.sym_type in _FUNC_LIKE_TYPES and is_abi_relevant_elf_symbol(sym.name)
     }
+    retained_exported_funcs = old_exported_funcs & new_exported_funcs
     old_fps = {
         name: fp
         for name, fp in old_fps.items()
-        if name not in new_exported_funcs
+        if name not in retained_exported_funcs
     }
-    if not old_fps:
+    new_fps = {
+        name: fp
+        for name, fp in new_fps.items()
+        if name not in retained_exported_funcs
+    }
+    if not old_fps or not new_fps:
         return changes
 
     # Matches in this path are hash-less (size-only), inferred from symbol size

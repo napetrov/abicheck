@@ -790,6 +790,33 @@ class TestFingerprintRenameDetector:
         kinds = {c.kind for c in result.changes}
         assert ChangeKind.FUNC_ADDED in kinds
 
+    def test_retained_export_not_used_as_rename_target(self) -> None:
+        """An unchanged exported function cannot be consumed as a rename target."""
+        old = _snap_elf_only("1.0", [
+            _func_sym("foo_v1", 128),
+            _func_sym("foo_v2", 128),
+        ])
+        new = _snap_elf_only("2.0", [
+            _func_sym("foo_v1", 128),
+        ])
+        result = compare(old, new)
+
+        rename_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_LIKELY_RENAMED]
+        assert rename_changes == []
+
+    def test_elf_linker_artifact_not_reported_as_rename(self) -> None:
+        """Filtered linker artifacts must not participate in fingerprint renames."""
+        old = _snap_elf_only("1.0", [
+            _func_sym("_init", 128),
+        ])
+        new = _snap_elf_only("2.0", [
+            _func_sym("lib_init", 128),
+        ])
+        result = compare(old, new)
+
+        rename_changes = [c for c in result.changes if c.kind == ChangeKind.FUNC_LIKELY_RENAMED]
+        assert rename_changes == []
+
     def test_unrelated_names_same_size_not_renamed(self) -> None:
         """Two unrelated functions that merely share a byte size must NOT be
         reported as a rename when no code hash is available.
