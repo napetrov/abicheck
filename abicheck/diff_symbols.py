@@ -1733,9 +1733,10 @@ def _diff_fingerprint_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change
     if not old_fps or not new_fps:
         return changes
 
+    new_elf = getattr(new, "elf", None)
     new_exported_funcs = {
         sym.name
-        for sym in new.elf.symbols
+        for sym in (new_elf.symbols if new_elf is not None else [])
         if sym.sym_type in _FUNC_LIKE_TYPES
     }
     old_fps = {
