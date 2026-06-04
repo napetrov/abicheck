@@ -646,16 +646,37 @@ class DemoteUnreachableInternalChurn:
         self._namespaces = namespaces
 
     def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        import fnmatch
+
         from .checker_policy import ChangeKind
         from .internal_leak import (
             _LEAK_TRIGGERING_KINDS,
             DEFAULT_INTERNAL_NAMESPACES,
             _root_type_name_for_change,
+            _strip_template_args,
             is_internal_type,
         )
         from .surface import REASON_PRIVATE_INTERNAL_UNREACHABLE
 
         namespaces = self._namespaces or DEFAULT_INTERNAL_NAMESPACES
+        frozen = list(ctx.frozen_namespaces)
+
+        def _is_frozen(type_name: str) -> bool:
+            # A contractually frozen namespace (PolicyFile.frozen_namespaces) is
+            # an explicit user declaration that changes there must NOT be
+            # downgraded. Keep such a finding in-surface so the later
+            # EscalateFrozenNamespaceViolations step can tag it and the verdict
+            # honours the contract, even when it is otherwise unreachable.
+            if not frozen:
+                return False
+            cand = _strip_template_args(type_name)
+            while True:
+                if any(fnmatch.fnmatchcase(cand, pat) for pat in frozen):
+                    return True
+                if "::" not in cand:
+                    return False
+                cand = cand.rsplit("::", 1)[0]
+
         # Internal types the leak detector confirmed DO leak through public API.
         leaked_types = {
             c.symbol
@@ -669,6 +690,7 @@ class DemoteUnreachableInternalChurn:
                 c.kind in _LEAK_TRIGGERING_KINDS
                 and is_internal_type(root, namespaces)
                 and root not in leaked_types
+                and not _is_frozen(root)
             ):
                 c.surface_exclusion_reason = REASON_PRIVATE_INTERNAL_UNREACHABLE
                 ctx.out_of_surface.append(c)

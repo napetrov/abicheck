@@ -87,6 +87,27 @@ def test_public_struct_layout_change_still_breaks():
     assert r.verdict == Verdict.BREAKING
 
 
+def test_frozen_namespace_churn_is_not_demoted():
+    # A contractually frozen namespace is an explicit user declaration that
+    # changes there must not be downgraded — even when unreachable. The
+    # demotion step must defer to it so the frozen-namespace policy can act.
+    from abicheck.policy_file import PolicyFile
+
+    old = AbiSnapshot(library="lib.so.1", version="1")
+    new = AbiSnapshot(library="lib.so.1", version="2")
+    old.dwarf = DwarfMetadata(has_dwarf=True, structs={  # type: ignore[attr-defined]
+        "ns::detail::r1::Impl": _layout("ns::detail::r1::Impl", 8, [FieldInfo("a", "int", 0, 4)]),
+    })
+    new.dwarf = DwarfMetadata(has_dwarf=True, structs={  # type: ignore[attr-defined]
+        "ns::detail::r1::Impl": _layout("ns::detail::r1::Impl", 16, [FieldInfo("a", "long", 0, 8)]),
+    })
+    pf = PolicyFile(base_policy="strict_abi", frozen_namespaces=["**::detail::r1::*"])
+    r = compare(old, new, policy_file=pf)
+    # The change is kept (not demoted to the ledger) and drives a verdict.
+    assert r.verdict == Verdict.BREAKING
+    assert any("detail::r1" in (c.symbol or "") for c in r.changes)
+
+
 def test_reachable_internal_type_still_leaks_and_breaks():
     # When the internal type IS reachable from the public API (embedded by value
     # in a public struct returned by a public function), the leak detector keeps
