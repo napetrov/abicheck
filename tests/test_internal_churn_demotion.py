@@ -108,6 +108,41 @@ def test_frozen_namespace_churn_is_not_demoted():
     assert any("detail::r1" in (c.symbol or "") for c in r.changes)
 
 
+def _frozen_dwarf_pair(type_name: str):
+    old = AbiSnapshot(library="lib.so.1", version="1")
+    new = AbiSnapshot(library="lib.so.1", version="2")
+    old.dwarf = DwarfMetadata(has_dwarf=True, structs={  # type: ignore[attr-defined]
+        type_name: _layout(type_name, 8, [FieldInfo("a", "int", 0, 4)]),
+    })
+    new.dwarf = DwarfMetadata(has_dwarf=True, structs={  # type: ignore[attr-defined]
+        type_name: _layout(type_name, 16, [FieldInfo("a", "long", 0, 8)]),
+    })
+    return old, new
+
+
+def test_frozen_namespace_matches_via_ancestor_prefix():
+    # The pattern names the namespace, not the leaf type, so it only matches
+    # after walking up the ``::`` prefixes of ``ns::detail::r1::Impl``.
+    from abicheck.policy_file import PolicyFile
+
+    old, new = _frozen_dwarf_pair("ns::detail::r1::Impl")
+    pf = PolicyFile(base_policy="strict_abi", frozen_namespaces=["**::detail::r1"])
+    r = compare(old, new, policy_file=pf)
+    assert r.verdict == Verdict.BREAKING
+
+
+def test_non_matching_frozen_namespace_still_demotes():
+    # A frozen namespace that does not match the internal type must not prevent
+    # demotion (exercises the full prefix walk that ends without a match).
+    from abicheck.policy_file import PolicyFile
+
+    old, new = _frozen_dwarf_pair("ns::detail::Impl")
+    pf = PolicyFile(base_policy="strict_abi", frozen_namespaces=["**::other::frozen::*"])
+    r = compare(old, new, policy_file=pf)
+    assert r.verdict in (Verdict.NO_CHANGE, Verdict.COMPATIBLE)
+    assert r.out_of_surface_count >= 1
+
+
 def test_reachable_internal_type_still_leaks_and_breaks():
     # When the internal type IS reachable from the public API (embedded by value
     # in a public struct returned by a public function), the leak detector keeps
