@@ -188,6 +188,9 @@ _BINARY_ONLY_KINDS: frozenset[ChangeKind] = frozenset({
     ChangeKind.SYMBOL_BINDING_STRENGTHENED,
     ChangeKind.SYMBOL_TYPE_CHANGED,
     ChangeKind.SYMBOL_SIZE_CHANGED,
+    # ELF st_size signal on an internal-looking data symbol — binary-only, just
+    # like SYMBOL_SIZE_CHANGED, so it is filtered from source-only views too.
+    ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL,
     ChangeKind.IFUNC_INTRODUCED,
     ChangeKind.IFUNC_REMOVED,
     ChangeKind.COMMON_SYMBOL_RISK,

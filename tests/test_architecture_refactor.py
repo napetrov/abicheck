@@ -273,6 +273,7 @@ class TestPostProcessingPipeline:
             "filter_redundant",
             "enrich_affected_symbols",
             "detect_internal_leaks",
+            "demote_unreachable_internal_churn",
             "detect_cpp_patterns",
             "detect_namespace_patterns",
             "detect_template_patterns",

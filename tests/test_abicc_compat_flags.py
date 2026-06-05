@@ -129,6 +129,16 @@ class TestFilterSourceOnly:
         for kind in _BINARY_ONLY_KINDS:
             assert kind in ChangeKind
 
+    def test_internal_symbol_size_change_is_binary_only(self):
+        """symbol_size_changed_internal is a pure-ELF signal — filtered from
+        source-only views just like symbol_size_changed (Codex review)."""
+        assert ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL in _BINARY_ONLY_KINDS
+        from abicheck.compat.cli import _filter_source_only
+        r = _result(Verdict.COMPATIBLE_WITH_RISK,
+                    [ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL])
+        filtered = _filter_source_only(r)
+        assert ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL not in {c.kind for c in filtered.changes}
+
 
 # ── _build_skip_suppression ───────────────────────────────────────────────────
 

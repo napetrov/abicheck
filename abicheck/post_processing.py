@@ -618,6 +618,91 @@ class DetectInternalLeaks:
         return changes
 
 
+class DemoteUnreachableInternalChurn:
+    """Demote internal-namespace layout churn that is unreachable from the public API.
+
+    The surface-scoping anti-hiding rule (``surface.classify_change_surface``)
+    deliberately keeps every internal-namespace (``detail::``, ``impl::``,
+    ``internal::``) type-level finding in-surface so :class:`DetectInternalLeaks`
+    — which runs just before this step and seeds from a broader root set — can
+    decide whether the type actually leaks through the public ABI.
+
+    When that detector finds NO leak path for an internal type (no
+    ``INTERNAL_TYPE_LEAKS_VIA_PUBLIC_API`` finding for it), the raw layout churn
+    on that type is truly private: it cannot be observed by any public consumer,
+    so it must not drive a hard binary ABI verdict. This is the oneTBB case
+    (ISSUE-15): ``tbb::detail::*`` / ``rml::internal::*`` DWARF-only churn with
+    no exported-symbol impact, which libabigail also reports as ABI-clean.
+
+    The demoted findings are recorded in ``ctx.out_of_surface`` (ADR-024 §D4/D5,
+    audit ledger) — never silently dropped — and a genuine leak is still
+    surfaced through the separate ``INTERNAL_TYPE_LEAKS_VIA_PUBLIC_API`` finding,
+    so this can only ever remove confirmed-private noise.
+    """
+
+    name = "demote_unreachable_internal_churn"
+
+    def __init__(self, namespaces: tuple[str, ...] | None = None) -> None:
+        self._namespaces = namespaces
+
+    def run(self, changes: list[Change], ctx: PipelineContext) -> list[Change]:
+        import fnmatch
+
+        from .checker_policy import ChangeKind
+        from .internal_leak import (
+            _LEAK_TRIGGERING_KINDS,
+            DEFAULT_INTERNAL_NAMESPACES,
+            _root_type_name_for_change,
+            _strip_template_args,
+            is_internal_type,
+        )
+        from .surface import REASON_PRIVATE_INTERNAL_UNREACHABLE
+
+        namespaces = self._namespaces or DEFAULT_INTERNAL_NAMESPACES
+        frozen = list(ctx.frozen_namespaces)
+
+        def _is_frozen(type_name: str) -> bool:
+            # A contractually frozen namespace (PolicyFile.frozen_namespaces) is
+            # an explicit user declaration that changes there must NOT be
+            # downgraded. Keep such a finding in-surface so the later
+            # EscalateFrozenNamespaceViolations step can tag it and the verdict
+            # honours the contract, even when it is otherwise unreachable.
+            if not frozen:
+                return False
+            cand = _strip_template_args(type_name)
+            while True:
+                if any(fnmatch.fnmatchcase(cand, pat) for pat in frozen):
+                    return True
+                if "::" not in cand:
+                    return False
+                cand = cand.rsplit("::", 1)[0]
+
+        # Internal types the leak detector confirmed DO leak through public API.
+        leaked_types = {
+            c.symbol
+            for c in changes
+            if c.kind == ChangeKind.INTERNAL_TYPE_LEAKS_VIA_PUBLIC_API
+        }
+        kept: list[Change] = []
+        for c in changes:
+            root = _root_type_name_for_change(c)
+            if (
+                c.kind in _LEAK_TRIGGERING_KINDS
+                and is_internal_type(root, namespaces)
+                and root not in leaked_types
+                and not _is_frozen(root)
+            ):
+                c.surface_exclusion_reason = REASON_PRIVATE_INTERNAL_UNREACHABLE
+                ctx.out_of_surface.append(c)
+                continue
+            kept.append(c)
+        # Mutate in place: ``ctx.kept`` aliases this list (set by FilterRedundant
+        # and appended to by DetectInternalLeaks), so rebinding would lose the
+        # demotion. See DetectCppPatterns for the same in-place contract.
+        changes[:] = kept
+        return changes
+
+
 class EscalateFrozenNamespaceViolations:
     """Tag findings whose symbol / caused_by_type lies in a contractually
     frozen namespace (e.g. ``**::detail::r1``).
@@ -804,6 +889,9 @@ DEFAULT_PIPELINE = PostProcessingPipeline(
         FilterRedundant(),
         EnrichAffectedSymbols(),
         DetectInternalLeaks(),
+        # Must run immediately after DetectInternalLeaks: it consumes that step's
+        # leak verdict to demote confirmed-unreachable internal-namespace churn.
+        DemoteUnreachableInternalChurn(),
         DetectCppPatterns(),
         DetectNamespacePatterns(),
         DetectTemplatePatterns(),

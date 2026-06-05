@@ -137,6 +137,9 @@ class ChangeKind(str, Enum):
     )
     SYMBOL_TYPE_CHANGED = "symbol_type_changed"  # FUNC→OBJECT, etc.
     SYMBOL_SIZE_CHANGED = "symbol_size_changed"  # st_size changed
+    # st_size changed on an internal-looking (reserved/underscore-prefixed)
+    # exported data symbol — usually private state, so risk not hard break.
+    SYMBOL_SIZE_CHANGED_INTERNAL = "symbol_size_changed_internal"
     IFUNC_INTRODUCED = "ifunc_introduced"  # → STT_GNU_IFUNC
     IFUNC_REMOVED = "ifunc_removed"  # STT_GNU_IFUNC →
     COMMON_SYMBOL_RISK = "common_symbol_risk"  # STT_COMMON exported

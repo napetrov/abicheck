@@ -475,6 +475,11 @@ REASON_SYSTEM_HEADER = "system-header"  # decl originates in a toolchain/system 
 # snapshot but not for this type — the demotion is reachability-based, not
 # provenance-confirmed (reduced confidence; ADR-024 §D5.1 / §D5.3).
 REASON_NO_PROVENANCE = "no-provenance"
+# An internal-namespace (``detail::``/``impl::``/``internal::``) type's layout
+# churn that the internal-leak detector confirmed is NOT reachable from any
+# public API root, so it is truly private and must not drive a hard ABI verdict
+# (ISSUE-15: oneTBB ``tbb::detail::*`` / ``rml::internal::*`` DWARF-only churn).
+REASON_PRIVATE_INTERNAL_UNREACHABLE = "private-internal-unreachable"
 
 # Map a demotable origin to its ledger reason code.
 _ORIGIN_REASON: dict[ScopeOrigin, str] = {

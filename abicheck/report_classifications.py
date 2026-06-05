@@ -47,7 +47,7 @@ BINARY_ONLY_KINDS: frozenset[str] = frozenset({
     "soname_changed", "needed_added", "needed_removed",
     "rpath_changed", "runpath_changed",
     "symbol_binding_changed", "symbol_binding_strengthened",
-    "symbol_type_changed", "symbol_size_changed",
+    "symbol_type_changed", "symbol_size_changed", "symbol_size_changed_internal",
     "ifunc_introduced", "ifunc_removed", "common_symbol_risk",
     "symbol_version_defined_removed",
     "symbol_version_required_added", "symbol_version_required_removed",

@@ -199,6 +199,99 @@ def canonicalize_type_name(name: str) -> str:
     return result.strip()
 
 
+# Matches whole-word ``const`` / ``volatile`` qualifier tokens. Word boundaries
+# keep identifiers such as ``std::integral_constant`` or ``ConstIterator``
+# untouched — only the standalone cv keywords are stripped.
+_CV_TOKEN_RE = _re.compile(r"\b(?:const|volatile)\b")
+
+
+def _strip_cv_qualifiers(name: str) -> str:
+    """Return *name* with all ``const`` / ``volatile`` tokens removed.
+
+    Whitespace introduced by the removal is collapsed, and spaces adjacent to
+    pointer/reference sigils are normalised so that ``const char *`` and
+    ``char *`` reduce to the same string.
+    """
+    stripped = _CV_TOKEN_RE.sub(" ", name)
+    stripped = _MULTI_SPACE_RE.sub(" ", stripped)
+    # Normalise spacing around pointer/reference sigils so "char  *" == "char *".
+    stripped = _re.sub(r"\s*([*&])\s*", r" \1", stripped)
+    return _MULTI_SPACE_RE.sub(" ", stripped).strip()
+
+
+def _has_top_level_ptr_or_ref(type_name: str) -> bool:
+    """Return True if *type_name* has a ``*`` or ``&`` at top level (depth 0).
+
+    Sigils nested inside template arguments, function-parameter lists, or array
+    subscripts (e.g. ``Box<int *>``, ``std::function<void(int&)>``) are NOT
+    top-level declarators — the type itself is passed/stored by value. Only a
+    depth-0 ``*``/``&`` means the value is a pointer/reference.
+    """
+    angle = paren = bracket = 0
+    for ch in type_name:
+        if ch == "<":
+            angle += 1
+        elif ch == ">":
+            angle = max(0, angle - 1)
+        elif ch == "(":
+            paren += 1
+        elif ch == ")":
+            paren = max(0, paren - 1)
+        elif ch == "[":
+            bracket += 1
+        elif ch == "]":
+            bracket = max(0, bracket - 1)
+        elif ch in "*&" and angle == 0 and paren == 0 and bracket == 0:
+            return True
+    return False
+
+
+def cv_qualifiers_only_differ(old_type: str, new_type: str) -> bool:
+    """Return True when two *pointer/reference* spellings differ only by ``const`` / ``volatile``.
+
+    ``const`` / ``volatile`` qualifiers on (or behind) a pointer or reference
+    never change the parameter's calling convention, the pointer's width, or a
+    struct field's size/offset. Adding ``const`` to a pointed-to type
+    (``char *`` → ``const char *``), or to the pointer value itself
+    (``int *`` → ``int * const``), leaves the binary ABI identical — it is at
+    most a source/API-signature difference, not a binary break (ISSUE-29/52,
+    ISSUE-30/35/65).
+
+    The check is deliberately restricted to types whose *top-level* declarator
+    is a pointer (``*``) or reference (``&``). A *by-value* cv change such as
+    ``int`` → ``const int`` — or one on a template type like
+    ``Box<int *>`` → ``const Box<int *>``, where the only sigil is nested inside
+    a template argument — is intentionally **not** neutralised here: although it
+    too is binary-layout-neutral, abicheck treats top-level field/variable
+    const/volatile as a source-level contract change (see the ``field_qualifiers``
+    detector and the ``case30_field_qualifiers`` example), reported through its
+    own dedicated change kinds.
+
+    Returns ``False`` when the canonical forms are already identical (no
+    difference), when stripping cv-qualifiers still leaves a genuine type
+    difference (a real ABI-relevant change), or when either spelling is not a
+    top-level pointer/reference type.
+
+    >>> cv_qualifiers_only_differ("char *", "const char *")
+    True
+    >>> cv_qualifiers_only_differ("int", "const int")
+    False
+    >>> cv_qualifiers_only_differ("Box<int *>", "const Box<int *>")
+    False
+    >>> cv_qualifiers_only_differ("int *", "long *")
+    False
+    >>> cv_qualifiers_only_differ("Foo *", "Foo *")
+    False
+    """
+    co = canonicalize_type_name(old_type)
+    cn = canonicalize_type_name(new_type)
+    if not (_has_top_level_ptr_or_ref(co) and _has_top_level_ptr_or_ref(cn)):
+        return False
+    if co == cn:
+        return False
+    return _strip_cv_qualifiers(co) == _strip_cv_qualifiers(cn)
+
+
 class Visibility(str, Enum):
     PUBLIC = "public"       # default visibility / exported
     HIDDEN = "hidden"       # __attribute__((visibility("hidden")))

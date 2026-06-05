@@ -40,6 +40,7 @@ from .elf_symbol_filter import is_abi_relevant_elf_symbol
 from .model import (
     AbiSnapshot,
     Visibility,
+    cv_qualifiers_only_differ,
     is_non_abi_surface_type,
     stdlib_namespaces_excluded,
 )
@@ -272,6 +273,25 @@ def _looks_internal(name: str) -> bool:
     """Heuristic: True if symbol name looks like internal implementation detail."""
     lower = name.lower()
     return any(pat in lower for pat in _INTERNAL_NAME_PATTERNS)
+
+
+def _is_internal_data_symbol(name: str) -> bool:
+    """True if an exported *data* symbol name looks reserved/internal.
+
+    A leading underscore on a file/global-scope identifier is reserved for the
+    implementation (C standard) and is the convention real libraries use for
+    private exported data (``_XkeyTable``, ``_pcre2_ucd_records_8``,
+    ``_UCD_accessors``, ``_rl_*``). Such symbols are not part of the intended
+    public ABI, so a size change on them is treated as risk rather than a hard
+    break. Linker artifacts (``_init``/``_edata``/…) are filtered earlier.
+
+    Mangled C++ (``_Z…`` / ``__Z…``) symbols are excluded: their leading
+    underscore is part of the Itanium mangling, not a reserved-identifier
+    marker — they denote real (public) C++ objects whose size change IS a break.
+    """
+    if name.startswith(("_Z", "__Z")):
+        return False
+    return name.startswith("_")
 
 
 def _diff_visibility_leak(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
@@ -637,8 +657,18 @@ def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]
         and s_old.size != s_new.size
         and s_new.sym_type in (SymbolType.OBJECT, SymbolType.COMMON, SymbolType.TLS)
     ):
+        # An internal-looking (reserved/underscore-prefixed) exported data
+        # symbol's size change is usually private implementation state, so it is
+        # downgraded to a risk finding rather than a hard break (ISSUE-45/54/55/56:
+        # _XkeyTable, _pcre2_ucd_*, _UCD_/_UPT_accessors, _rl_*). A public-looking
+        # data symbol keeps the hard-breaking copy-relocation classification.
+        size_kind = (
+            ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL
+            if _is_internal_data_symbol(sym_name)
+            else ChangeKind.SYMBOL_SIZE_CHANGED
+        )
         changes.append(Change(
-            kind=ChangeKind.SYMBOL_SIZE_CHANGED,
+            kind=size_kind,
             symbol=sym_name,
             description=f"Symbol size changed: {sym_name} ({s_old.size} → {s_new.size} bytes)",
             old_value=str(s_old.size),
@@ -1323,7 +1353,15 @@ def _diff_struct_layouts(o: object, n: object) -> list[Change]:
             # - catches same-size type substitutions (int→float, Foo*→Bar*)
             # - strip "struct "/"class "/"union " prefixes for stable comparison
             # - still includes explicit size drift when known on both sides
-            type_name_changed = _normalize_type_name(old_f.type_name) != _normalize_type_name(new_f.type_name)
+            # A pointee/by-value cv-qualifier change (``char *`` ->
+            # ``const char *``) keeps the field's size and offset identical, so
+            # it is not a binary layout break (ISSUE-30/35/65: libuv
+            # ``uv_cpu_info_s::model`` const-pointer churn). A genuine size
+            # change is still reported via ``type_size_changed`` below.
+            type_name_changed = (
+                _normalize_type_name(old_f.type_name) != _normalize_type_name(new_f.type_name)
+                and not cv_qualifiers_only_differ(old_f.type_name, new_f.type_name)
+            )
             type_size_changed = (
                 old_f.byte_size > 0
                 and new_f.byte_size > 0
