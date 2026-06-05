@@ -143,7 +143,7 @@ def _public_functions(snap: AbiSnapshot) -> dict[str, Function]:
     )
     return {
         k: v for k, v in funcs.items()
-        if k in exported or v.is_deleted
+        if k in exported or (v.is_deleted and not v.deleted_from_dwarf)
     }
 
 
