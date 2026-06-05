@@ -843,6 +843,8 @@ def _diff_param_defaults(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 def _diff_param_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect parameter renames (same type+position, different name)."""
     changes: list[Change] = []
+    if not (old.from_headers and new.from_headers):
+        return changes
     old_map = _public_functions(old)
     new_map = _public_functions(new)
 
