@@ -591,6 +591,9 @@ def _has_interp_segment(f: IO[bytes], ei_class: int, byte_order: str) -> bool | 
 
         if e_phoff == 0 or e_phnum == 0:
             return False
+        expected_phentsize = 32 if ei_class == 1 else 56
+        if e_phentsize < expected_phentsize:
+            return None
 
         for i in range(e_phnum):
             f.seek(e_phoff + i * e_phentsize)

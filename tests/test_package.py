@@ -100,6 +100,22 @@ def _make_malformed_elf_dso_with_missing_phdr(path: Path) -> None:
     path.write_bytes(bytes(elf))
 
 
+def _make_malformed_elf_dso_with_invalid_phentsize(path: Path) -> None:
+    """Write ET_DYN ELF with an invalid program-header entry size."""
+    elf = bytearray(64)
+    elf[0:4] = b"\x7fELF"
+    elf[4] = 2  # EI_CLASS = ELFCLASS64
+    elf[5] = 1  # EI_DATA = ELFDATA2LSB
+    elf[6] = 1  # EI_VERSION = EV_CURRENT
+    struct.pack_into("<H", elf, 16, 3)  # e_type = ET_DYN
+    struct.pack_into("<H", elf, 18, 0x3E)  # e_machine = EM_X86_64
+    struct.pack_into("<I", elf, 20, 1)  # e_version
+    struct.pack_into("<Q", elf, 32, 64)  # e_phoff
+    struct.pack_into("<H", elf, 54, 0)  # e_phentsize = invalid
+    struct.pack_into("<H", elf, 56, 1)  # e_phnum
+    path.write_bytes(bytes(elf) + b"\x00" * 4)
+
+
 def _make_tar(archive_path: Path, files: dict[str, bytes]) -> None:
     """Create a tar.gz archive with given file contents."""
     with tarfile.open(archive_path, "w:gz") as tf:
@@ -454,6 +470,11 @@ class TestIsElfSharedObject:
     def test_malformed_program_header_table_is_rejected(self, tmp_path: Path) -> None:
         f = tmp_path / "libbad.so"
         _make_malformed_elf_dso_with_missing_phdr(f)
+        assert _is_elf_shared_object(f) is False
+
+    def test_invalid_program_header_entry_size_is_rejected(self, tmp_path: Path) -> None:
+        f = tmp_path / "libbad.so"
+        _make_malformed_elf_dso_with_invalid_phentsize(f)
         assert _is_elf_shared_object(f) is False
 
     def test_non_elf(self, tmp_path: Path) -> None:
