@@ -75,10 +75,16 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     d.pop("_func_by_mangled", None)
     d.pop("_var_by_mangled", None)
     d.pop("_type_by_name", None)
-    # Runtime-only provenance qualifier — never persisted. ``from_headers`` is
-    # written verbatim, so a reloaded snapshot carries explicit (non-inferred)
-    # provenance.
+    # Runtime-only provenance qualifier — never persisted.
     d.pop("from_headers_inferred", None)
+    # If ``from_headers`` was only *inferred* (a legacy snapshot loaded without
+    # the explicit key), do not persist it as explicit provenance: drop the key
+    # so a reload re-runs the same inference and re-marks it inferred. Writing
+    # ``from_headers: true`` here would promote a guess to explicit header
+    # provenance on the next load, re-enabling source-level param-rename
+    # detection on DWARF-only baselines this is meant to suppress.
+    if snap.from_headers_inferred:
+        d.pop("from_headers", None)
 
     # Serialize ElfMetadata enums to strings for JSON compatibility
     if d.get("elf"):
