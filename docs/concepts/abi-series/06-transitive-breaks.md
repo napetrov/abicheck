@@ -90,23 +90,36 @@ abicheck traces the layout through DWARF's anonymous-member rules and reports
 
 ## 3. Type-kind changes
 
-Swapping `struct` for `union`, `enum` for plain `int`, or `class` for `struct`
-at the same name — **even when the size happens to match** — is always an ABI
-break, because the *semantics* of member storage differ.
+Swapping the *kind* of a named type is dangerous — but not uniformly, and the
+distinction matters for what you do about it. The dividing line is **whether the
+storage model changes**:
 
-[case55](../../examples/case55_type_kind_changed.md) changes `Data` from a struct
-with sequential fields `x, y` (size 8) to a union where `x` and `y` overlap at
-offset 0 (size 4): `sizeof` shrinks, `y`'s offset moves, and writing one member
-now clobbers the other. Even a *same-size* swap — `enum E : int` → plain `int`
-in a C++ API — breaks overload resolution and name mangling (`E` and `int`
-mangle differently), so function symbols vanish from the new `.so`.
+- Anything **involving a `union`** — `struct`→`union` or the reverse — changes
+  how members are laid out (sequential vs overlapping at offset 0), so it is a
+  genuine **binary** break even when the size happens to match.
+- A bare **`struct`↔`class` keyword swap** with the same members is
+  **binary-identical**: under the Itanium ABI the two keywords differ only in
+  *default member access* and *default inheritance* — both source-level concepts.
+  Nothing about layout or mangling changes, so existing binaries keep working;
+  only fresh compiles can be affected (e.g. code that relied on the old default
+  access).
+
+[case55](../../examples/case55_type_kind_changed.md) is the breaking kind:
+`Data` goes from a struct with sequential fields `x, y` (size 8) to a union where
+`x` and `y` overlap at offset 0 (size 4): `sizeof` shrinks, `y`'s offset moves,
+and writing one member now clobbers the other. (Separately, swapping `enum E :
+int` for plain `int` in a C++ API is breaking for a different reason — `E` and
+`int` mangle differently, so function symbols that took `E` vanish from the new
+`.so`.)
 
 !!! note "How abicheck sees it"
-    abicheck reads DWARF's `DW_TAG_structure_type` vs `DW_TAG_union_type` vs
-    `DW_TAG_enumeration_type` and classifies any transition as
-    `type_kind_changed` → 🔴 **BREAKING**, regardless of byte-for-byte size
-    equality — because a consumer's *code generation* assumes the kind, not
-    just the footprint.
+    abicheck reads DWARF's `DW_TAG_structure_type` / `DW_TAG_union_type` /
+    `DW_TAG_class_type` and splits the verdict by storage model:
+
+    - **union involved** → `type_kind_changed` → 🔴 **BREAKING** (layout changes).
+    - **`struct`↔`class`, no union** → `source_level_kind_changed` → 🟠
+      **API_BREAK** — binary-identical, source-level only. Don't bump the SONAME
+      for this one; it needs at most a recompile.
 
 ---
 
