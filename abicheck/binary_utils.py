@@ -31,10 +31,13 @@ _MACHO_MAGICS: frozenset[bytes] = frozenset({
     b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca",  # fat archive 64
 })
 
-# Unix `ar` archive magic — shared by static libraries (`.a`) and MSVC/COFF
-# import/static libraries (`.lib`). Both are member archives, not the kind of
-# single linkable image abicheck analyses (see detect_archive / G8).
-_ARCHIVE_MAGIC: bytes = b"!<arch>\n"
+# Unix `ar` archive magics — shared by static libraries (`.a`) and MSVC/COFF
+# import/static libraries (`.lib`). `!<arch>\n` is the standard archive;
+# `!<thin>\n` is a GNU thin archive (`ar rcT`, members referenced by path).
+# Both are member archives, not the kind of single linkable image abicheck
+# analyses (see detect_archive / G8). Both magics are 8 bytes.
+_ARCHIVE_MAGICS: frozenset[bytes] = frozenset({b"!<arch>\n", b"!<thin>\n"})
+_ARCHIVE_MAGIC_LEN: int = 8
 
 
 def classify_magic(magic: bytes) -> str | None:
@@ -69,13 +72,14 @@ def detect_archive(path: str | Path) -> bool:
     """Return True if ``path`` is a Unix `ar` archive (`.a` / `.lib`).
 
     Static libraries and COFF import libraries are member archives sharing the
-    ``!<arch>\\n`` magic. abicheck analyses single linkable images (shared
-    libraries / objects), so the service layer uses this to fail deliberately
-    with guidance rather than late with a misleading "unknown format" error.
+    ``!<arch>\\n`` magic; GNU *thin* archives (``ar rcT``) use ``!<thin>\\n``.
+    abicheck analyses single linkable images (shared libraries / objects), so
+    the service layer uses this to fail deliberately with guidance rather than
+    late with a misleading "unknown format" error.
     """
     try:
         with open(path, "rb") as f:
-            magic = f.read(len(_ARCHIVE_MAGIC))
+            magic = f.read(_ARCHIVE_MAGIC_LEN)
     except OSError:
         return False
-    return magic == _ARCHIVE_MAGIC
+    return magic in _ARCHIVE_MAGICS

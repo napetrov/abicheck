@@ -117,6 +117,12 @@ class TestDetectArchive:
         p.write_bytes(b"!<arch>\n" + b"\x00" * 64)
         assert detect_archive(p) is True
 
+    def test_gnu_thin_archive_detected(self, tmp_path):
+        # GNU thin archives (`ar rcT`) use the `!<thin>\n` magic.
+        p = tmp_path / "libfoo.a"
+        p.write_bytes(b"!<thin>\n" + b"\x00" * 64)
+        assert detect_archive(p) is True
+
     def test_elf_is_not_archive(self, tmp_path):
         p = _write_fake_elf(tmp_path / "lib.so")
         assert detect_archive(p) is False
