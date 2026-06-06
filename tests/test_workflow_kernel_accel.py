@@ -289,3 +289,42 @@ def test_committed_btf_example_matches_ground_truth() -> None:
     emitted = {c.kind.value for c in result.changes}
     for kind in entry["expected_kinds"]:
         assert kind in emitted, f"expected {kind} in {sorted(emitted)}"
+
+
+def test_resolve_input_ingests_raw_btf_blob() -> None:
+    """resolve_input() detects a bare BTF blob by magic and parses it (no ELF)."""
+    from abicheck.service import resolve_input
+    case = _REPO / "examples" / "case121_kernel_btf_struct_field_added"
+    snap = resolve_input(case / "v1.btf")
+    assert snap.dwarf is not None and snap.dwarf.has_dwarf
+    assert "task_state" in (snap.dwarf.structs or {})
+
+
+def test_resolve_input_ingests_raw_ctf_blob() -> None:
+    """resolve_input() detects a bare CTF blob by magic and parses it."""
+    import tempfile
+
+    from abicheck.service import resolve_input
+    with tempfile.TemporaryDirectory() as td:
+        blob = Path(td) / "types.ctf"
+        blob.write_bytes(_CtfBlob().build_struct("task_state", n_fields=2))
+        snap = resolve_input(blob)
+    assert snap.dwarf is not None and snap.dwarf.has_dwarf
+    assert "task_state" in (snap.dwarf.structs or {})
+
+
+def test_resolve_input_non_typeinfo_file_is_not_misdetected() -> None:
+    """A plain non-binary file is not mistaken for a BTF/CTF blob."""
+    import tempfile
+
+    from abicheck.errors import ValidationError
+    from abicheck.service import resolve_input
+    with tempfile.TemporaryDirectory() as td:
+        f = Path(td) / "notes.txt"
+        f.write_text("just some text, not a type-info blob\n")
+        try:
+            resolve_input(f)
+        except (ValidationError, Exception) as exc:  # noqa: BLE001
+            assert "detect" in str(exc).lower() or "format" in str(exc).lower()
+        else:
+            raise AssertionError("expected a detection error for a plain text file")

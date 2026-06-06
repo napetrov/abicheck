@@ -227,3 +227,27 @@ def test_builtin_security_policy_gates_hardening_to_break() -> None:
 def test_unknown_builtin_policy_name_returns_none() -> None:
     from abicheck.policy_file import builtin_policy_path
     assert builtin_policy_path("does-not-exist") is None
+
+
+# ── cli_params.PolicyFileParam (Click type) ───────────────────────────────
+
+def test_policy_file_param_accepts_builtin_name() -> None:
+    from abicheck.cli_params import POLICY_FILE_PARAM
+    out = POLICY_FILE_PARAM.convert("security", None, None)
+    assert Path(out).name == "security"
+
+
+def test_policy_file_param_accepts_existing_path(tmp_path: Path) -> None:
+    from abicheck.cli_params import POLICY_FILE_PARAM
+    p = tmp_path / "my.yaml"
+    p.write_text("base_policy: strict_abi\n", encoding="utf-8")
+    out = POLICY_FILE_PARAM.convert(str(p), None, None)
+    assert Path(out) == p
+
+
+def test_policy_file_param_rejects_unknown_name() -> None:
+    import click
+
+    from abicheck.cli_params import POLICY_FILE_PARAM
+    with pytest.raises(click.BadParameter):
+        POLICY_FILE_PARAM.convert("does-not-exist.yaml", None, None)

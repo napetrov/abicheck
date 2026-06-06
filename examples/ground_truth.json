@@ -1833,6 +1833,8 @@
       "abi_break": true,
       "api_break": false,
       "bad_practice": false,
+      "skip": true,
+      "reason": "committed BTF blobs (not compilable C/C++ source); validated end-to-end via tests/test_workflow_kernel_accel.py::test_committed_btf_example_matches_ground_truth and the gcc -gbtf integration fixture",
       "expected_kinds": [
         "struct_size_changed"
       ]

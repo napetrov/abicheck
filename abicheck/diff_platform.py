@@ -438,20 +438,19 @@ def _diff_elf_dynamic_section(old_elf: Any, new_elf: Any) -> list[Change]:
             new_value=new_elf.runpath,
         ))
 
-    # PT_GNU_STACK executable stack detection (security bad practice)
+    # PT_GNU_STACK executable stack detection (security bad practice).
+    # Report ONLY the regression direction (stack becomes executable); making
+    # the stack non-executable is a hardening improvement, not a finding — and
+    # emitting it would let the shipped `security` policy fail an improvement.
     old_exec = getattr(old_elf, "has_executable_stack", False)
     new_exec = getattr(new_elf, "has_executable_stack", False)
-    if old_exec != new_exec:
+    if new_exec and not old_exec:
         changes.append(Change(
             kind=ChangeKind.EXECUTABLE_STACK,
             symbol="PT_GNU_STACK",
-            description=(
-                "Executable stack detected: library linked with -Wl,-z,execstack — NX protection disabled (security risk)"
-                if new_exec
-                else "Executable stack removed: library now uses non-executable stack (good practice)"
-            ),
-            old_value="RWE" if old_exec else "RW",
-            new_value="RWE" if new_exec else "RW",
+            description="Executable stack detected: library linked with -Wl,-z,execstack — NX protection disabled (security risk)",
+            old_value="RW",
+            new_value="RWE",
         ))
 
     changes.extend(_diff_security_hardening(old_elf, new_elf))
