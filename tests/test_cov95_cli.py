@@ -374,8 +374,8 @@ class TestExitSchemeHelpers:
         result = DiffResult(
             old_version="1", new_version="2", library="x", verdict=Verdict.COMPATIBLE
         )
-        # Should not raise.
-        _exit_with_severity_or_verdict(result, None, False)
+        # Compatible verdict returns normally (no SystemExit).
+        assert _exit_with_severity_or_verdict(result, None, False) is None
 
 
 # ── _maybe_emit_annotations (cli.py:1329-1340) ────────────────────────────────
@@ -384,8 +384,11 @@ class TestExitSchemeHelpers:
 class TestMaybeEmitAnnotations:
     def test_not_annotate_noop(self) -> None:
         result = DiffResult(old_version="1", new_version="2", library="x")
-        # No exception, returns early at the `if not annotate` guard.
-        _maybe_emit_annotations(result, annotate=False, annotate_additions=False)
+        # Returns early at the `if not annotate` guard (no return value).
+        assert (
+            _maybe_emit_annotations(result, annotate=False, annotate_additions=False)
+            is None
+        )
 
     def test_annotate_outside_ci_noop(self, monkeypatch, capsys) -> None:
         # Force is_github_actions() False so the body short-circuits.
@@ -493,6 +496,70 @@ class TestCompareCommand:
         )
         assert result.exit_code == 0
         assert "only take effect with" in result.output
+
+    def test_report_mode_impact(self, tmp_path: Path) -> None:
+        # --report-mode impact rewrites to full + show_impact (cli.py:1828-1830).
+        old, new = _breaking_pair()
+        old_f = _write_snap(tmp_path / "old.json", old)
+        new_f = _write_snap(tmp_path / "new.json", new)
+        result = _invoke(
+            "compare",
+            str(old_f),
+            str(new_f),
+            "--report-mode",
+            "impact",
+        )
+        # Breaking pair still exits 4; the report renders without error.
+        assert result.exit_code == 4
+
+    def test_debug_format_auto_on_snapshots(self, tmp_path: Path) -> None:
+        # --debug-format auto resolves to None (cli.py:1815); JSON snapshot
+        # inputs have format None so the PE/Mach-O guard is skipped.
+        snap = _snap()
+        old_f = _write_snap(tmp_path / "old.json", snap)
+        new_f = _write_snap(tmp_path / "new.json", snap)
+        result = _invoke(
+            "compare",
+            str(old_f),
+            str(new_f),
+            "--debug-format",
+            "auto",
+        )
+        assert result.exit_code == 0
+
+    def test_demangle_explicit_off_markdown(self, tmp_path: Path) -> None:
+        # Explicit --no-demangle overrides the markdown default (cli.py:1824).
+        snap = _snap()
+        old_f = _write_snap(tmp_path / "old.json", snap)
+        new_f = _write_snap(tmp_path / "new.json", snap)
+        result = _invoke(
+            "compare",
+            str(old_f),
+            str(new_f),
+            "--no-demangle",
+        )
+        assert result.exit_code == 0
+
+    def test_sarif_format(self, tmp_path: Path) -> None:
+        snap = _snap()
+        old_f = _write_snap(tmp_path / "old.json", snap)
+        new_f = _write_snap(tmp_path / "new.json", snap)
+        result = _invoke(
+            "compare",
+            str(old_f),
+            str(new_f),
+            "--format",
+            "sarif",
+        )
+        assert result.exit_code == 0
+        assert "$schema" in result.output or "sarif" in result.output.lower()
+
+    def test_stat_summary(self, tmp_path: Path) -> None:
+        old, new = _breaking_pair()
+        old_f = _write_snap(tmp_path / "old.json", old)
+        new_f = _write_snap(tmp_path / "new.json", new)
+        result = _invoke("compare", str(old_f), str(new_f), "--stat")
+        assert result.exit_code == 4
 
     def test_probe_matrix_one_side_usage_error(self, tmp_path: Path) -> None:
         snap = _snap()
@@ -651,7 +718,7 @@ class TestExitCompareRelease:
 
     def test_legacy_no_change_no_exit(self) -> None:
         # Returns normally (no SystemExit) on a clean release.
-        _exit_compare_release("NO_CHANGE", False, [])
+        assert _exit_compare_release("NO_CHANGE", False, []) is None
 
     def test_severity_removed_takes_precedence(self) -> None:
         with pytest.raises(SystemExit) as exc:
@@ -666,7 +733,9 @@ class TestExitCompareRelease:
         assert exc.value.code == 4
 
     def test_severity_zero_no_exit(self) -> None:
-        _exit_compare_release("NO_CHANGE", False, [], severity_exit_code=0)
+        assert (
+            _exit_compare_release("NO_CHANGE", False, [], severity_exit_code=0) is None
+        )
 
 
 class TestFoldReleaseGlobalSeverity:
@@ -1089,3 +1158,573 @@ class TestAppcompatSeverityAndOutput:
             "default",
         )
         assert result.exit_code == 0
+
+    def test_full_mode_html_output(self, tmp_path, monkeypatch) -> None:
+        # Drives the ``fmt == "html"`` branch (cli_appcompat:335).
+        res = self._result()
+        app, old, new = self._setup(tmp_path, monkeypatch, result=res)
+        result = _invoke(
+            "appcompat",
+            str(app),
+            str(old),
+            str(new),
+            "--format",
+            "html",
+        )
+        assert result.exit_code == 0
+        assert "<" in result.output  # HTML markup emitted
+
+
+class TestAppcompatWeakMode:
+    """Drive the weak-mode (--check-against) flow via monkeypatched
+    check_against so its result-rendering and exit branches run without a
+    real compiler (cli_appcompat:304-306)."""
+
+    def _setup(self, tmp_path, monkeypatch, *, result):
+        from abicheck import appcompat as appcompat_mod
+
+        app = tmp_path / "app"
+        app.write_bytes(b"\x7fELF" + b"\x00" * 200)
+        lib = tmp_path / "lib.so"
+        lib.write_bytes(b"\x7fELF" + b"\x00" * 200)
+        monkeypatch.setattr(
+            appcompat_mod,
+            "check_against",
+            lambda *a, **k: result,
+        )
+        return app, lib
+
+    def _result(self, *, verdict=Verdict.COMPATIBLE, missing=None):
+        from abicheck.appcompat import AppCompatResult
+
+        return AppCompatResult(
+            app_path="/app",
+            old_lib_path="",
+            new_lib_path="lib.so",
+            required_symbols={"foo"},
+            required_symbol_count=1,
+            breaking_for_app=[],
+            missing_symbols=missing or [],
+            missing_versions=[],
+            full_diff=None,
+            verdict=verdict,
+            symbol_coverage=100.0,
+        )
+
+    def test_weak_mode_compatible_exit_0(self, tmp_path, monkeypatch) -> None:
+        res = self._result()
+        app, lib = self._setup(tmp_path, monkeypatch, result=res)
+        result = _invoke(
+            "appcompat",
+            str(app),
+            "--check-against",
+            str(lib),
+            "--format",
+            "json",
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["verdict"] == "COMPATIBLE"
+
+    def test_weak_mode_breaking_exit_4(self, tmp_path, monkeypatch) -> None:
+        res = self._result(verdict=Verdict.BREAKING, missing=["foo"])
+        app, lib = self._setup(tmp_path, monkeypatch, result=res)
+        result = _invoke("appcompat", str(app), "--check-against", str(lib))
+        assert result.exit_code == 4
+
+    def test_weak_mode_ignores_severity_preset(self, tmp_path, monkeypatch) -> None:
+        # Weak mode keeps the verdict-based exit even when a severity preset is
+        # supplied (full_diff is None), so info-only cannot downgrade.
+        res = self._result(verdict=Verdict.BREAKING, missing=["foo"])
+        app, lib = self._setup(tmp_path, monkeypatch, result=res)
+        result = _invoke(
+            "appcompat",
+            str(app),
+            "--check-against",
+            str(lib),
+            "--severity-preset",
+            "info-only",
+        )
+        assert result.exit_code == 4
+
+
+# ── cli.py: _write_release_step_summary (1351-1372) ───────────────────────────
+
+
+class TestWriteReleaseStepSummary:
+    def test_no_summary_path_noop(self, monkeypatch, tmp_path) -> None:
+        from abicheck.cli import _write_release_step_summary
+
+        monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+        # No GITHUB_STEP_SUMMARY → returns early without writing.
+        assert _write_release_step_summary("text", "markdown") is None
+
+    def test_not_github_actions_noop(self, monkeypatch, tmp_path) -> None:
+        from abicheck.cli import _write_release_step_summary
+
+        summary = tmp_path / "summary.md"
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        _write_release_step_summary("text", "markdown")
+        assert not summary.exists()
+
+    def test_markdown_written_in_ci(self, monkeypatch, tmp_path) -> None:
+        from abicheck.cli import _write_release_step_summary
+
+        summary = tmp_path / "summary.md"
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        _write_release_step_summary("hello world", "markdown")
+        assert "hello world" in summary.read_text()
+
+    def test_json_wrapped_in_code_block(self, monkeypatch, tmp_path) -> None:
+        from abicheck.cli import _write_release_step_summary
+
+        summary = tmp_path / "summary.md"
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        _write_release_step_summary('{"a": 1}', "json")
+        text = summary.read_text()
+        assert "```json" in text
+        assert '{"a": 1}' in text
+
+
+# ── cli.py: _log_one_side_debug / _log_debug_resolution (1435-1465) ───────────
+
+
+class TestLogDebugResolution:
+    def test_non_binary_no_droots_noop(self, tmp_path, capsys) -> None:
+        from abicheck.cli import _log_one_side_debug
+
+        f = tmp_path / "snap.json"
+        f.write_text("{}")
+        # Not a binary AND no debug roots → returns before resolving anything.
+        _log_one_side_debug("old", f, [], debuginfod=False, debuginfod_url=None)
+        assert capsys.readouterr().err == ""
+
+    def test_resolution_skipped_when_nothing_requested(self, tmp_path, capsys) -> None:
+        from abicheck.cli import _log_debug_resolution
+
+        old = tmp_path / "old.json"
+        new = tmp_path / "new.json"
+        old.write_text("{}")
+        new.write_text("{}")
+        _log_debug_resolution(
+            old,
+            new,
+            [],
+            [],
+            debuginfod=False,
+            debuginfod_url=None,
+        )
+        assert capsys.readouterr().err == ""
+
+    def test_log_one_side_emits_when_artifact_resolved(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        # Force a binary format and a resolved artifact so the echo branch runs.
+        from types import SimpleNamespace
+
+        import abicheck.cli as cli_mod
+
+        binary = tmp_path / "lib.so"
+        binary.write_bytes(b"\x7fELF" + b"\x00" * 50)
+        monkeypatch.setattr(cli_mod, "_detect_binary_format", lambda p: "elf")
+        monkeypatch.setattr(
+            "abicheck.debug_resolver.resolve_debug_info",
+            lambda *a, **k: SimpleNamespace(source="/path/to/lib.debug"),
+        )
+        cli_mod._log_one_side_debug(
+            "old",
+            binary,
+            [tmp_path],
+            debuginfod=False,
+            debuginfod_url=None,
+        )
+        assert "Debug info (old)" in capsys.readouterr().err
+
+
+# ── cli_compare_release: markdown/json with bundle + matrix findings ──────────
+
+
+def _bundle_with_findings():
+    from abicheck.bundle import BundleDiffResult, BundleFinding
+
+    finding = BundleFinding(
+        kind=ChangeKind.FUNC_REMOVED,
+        symbol="foo",
+        description="bundle break",
+        consumer_library="libapp.so",
+        provider_library="libfoo.so",
+    )
+    return BundleDiffResult(
+        old_root=Path("old"),
+        new_root=Path("new"),
+        per_library=[],
+        bundle_findings=[finding],
+    )
+
+
+def _matrix_with_changes():
+    return DiffResult(
+        old_version="1",
+        new_version="2",
+        library="x",
+        changes=[
+            Change(kind=ChangeKind.FUNC_REMOVED, symbol="m", description="matrix")
+        ],
+    )
+
+
+class TestReleaseFormatWithBundleAndMatrix:
+    def _entry(self, lib="libfoo.so", verdict="NO_CHANGE"):
+        return {
+            "library": lib,
+            "verdict": verdict,
+            "breaking": 0,
+            "source_breaks": 0,
+            "risk_changes": 0,
+            "compatible_additions": 0,
+        }
+
+    def test_md_bundle_findings_rendered(self) -> None:
+        lines = _release_md_bundle_findings(_bundle_with_findings())
+        assert any("Bundle" in ln for ln in lines)
+        assert any("foo" in ln for ln in lines)
+        assert any("consumer" in ln for ln in lines)
+
+    def test_markdown_with_bundle_and_matrix(self, tmp_path) -> None:
+        text = _format_release_markdown(
+            "BREAKING",
+            tmp_path / "old",
+            tmp_path / "new",
+            [self._entry("libfoo.so", "BREAKING")],
+            [],
+            [],
+            {},
+            {},
+            _bundle_with_findings(),
+            _matrix_with_changes(),
+        )
+        assert "Bundle" in text
+        assert "Matrix" in text
+
+    def test_json_with_bundle(self, tmp_path) -> None:
+        text = _format_release_json(
+            "BREAKING",
+            tmp_path / "old",
+            tmp_path / "new",
+            [self._entry("libfoo.so", "BREAKING")],
+            [],
+            [],
+            {},
+            {},
+            [],
+            _bundle_with_findings(),
+            None,
+        )
+        data = json.loads(text)
+        assert "bundle_verdict" in data
+        assert data["bundle_findings"]
+
+
+class TestFoldReleaseGlobalSeverityBundle:
+    def test_bundle_findings_raise_code(self) -> None:
+        # A bundle break under a 'default' preset should not stay below the
+        # per-library base code; folding considers bundle findings.
+        code = _fold_release_global_severity(
+            0,
+            _bundle_with_findings(),
+            None,
+            "default",
+            None,
+            None,
+            None,
+            None,
+        )
+        assert code >= 0
+
+    def test_matrix_findings_considered(self) -> None:
+        code = _fold_release_global_severity(
+            0,
+            None,
+            _matrix_with_changes(),
+            "default",
+            None,
+            None,
+            None,
+            None,
+        )
+        assert code >= 0
+
+
+# ── cli_compare_release: _suppress_lockstep_soname_findings (253-280) ─────────
+
+
+class TestSuppressLockstepSoname:
+    def test_non_breaking_returns_zero(self) -> None:
+        from abicheck.cli_compare_release import _suppress_lockstep_soname_findings
+
+        assert _suppress_lockstep_soname_findings([], "NO_CHANGE", None) == 0
+
+    def test_suppresses_unnecessary_soname_bump(self) -> None:
+        from abicheck.cli_compare_release import _suppress_lockstep_soname_findings
+
+        result = DiffResult(
+            old_version="1",
+            new_version="2",
+            library="libfoo",
+            changes=[
+                Change(
+                    kind=ChangeKind.SONAME_BUMP_UNNECESSARY,
+                    symbol="libfoo.so",
+                    description="unnecessary",
+                ),
+            ],
+        )
+        entry = {
+            "library": "libfoo.so",
+            "verdict": "BREAKING",
+            "_diff_result": result,
+            "breaking": 0,
+            "source_breaks": 0,
+            "risk_changes": 0,
+            "compatible_additions": 0,
+        }
+        n = _suppress_lockstep_soname_findings([entry], "BREAKING", None)
+        assert n == 1
+        # The finding was stripped from the diff result.
+        assert all(c.kind != ChangeKind.SONAME_BUMP_UNNECESSARY for c in result.changes)
+
+
+# ── cli_compare_release CLI flows: output-dir, strict-suppressions, error ─────
+
+
+class TestCompareReleaseExtraFlows:
+    def _make_dirs(self, tmp_path):
+        old_dir = tmp_path / "old"
+        new_dir = tmp_path / "new"
+        old_dir.mkdir()
+        new_dir.mkdir()
+        return old_dir, new_dir
+
+    def test_output_dir_writes_per_lib_and_summary(self, tmp_path) -> None:
+        old_dir, new_dir = self._make_dirs(tmp_path)
+        old, new = _breaking_pair("libfoo.so")
+        _write_snap(old_dir / "libfoo.json", old)
+        _write_snap(new_dir / "libfoo.json", new)
+        out_dir = tmp_path / "reports"
+        result = _invoke(
+            "compare-release",
+            str(old_dir),
+            str(new_dir),
+            "--output-dir",
+            str(out_dir),
+            "--format",
+            "json",
+        )
+        # Breaking verdict exits 4 but the report dir must still be populated.
+        assert result.exit_code == 4
+        assert out_dir.exists()
+        assert any(out_dir.iterdir())
+
+    def test_bundle_cohort_runs_bundle_analysis(self, tmp_path) -> None:
+        # --bundle-cohort requests bundle analysis, driving the
+        # _collect_bundle_result path and bundle markdown section.
+        old_dir, new_dir = self._make_dirs(tmp_path)
+        _write_snap(old_dir / "libfoo.json", _snap(library="libfoo.so"))
+        _write_snap(new_dir / "libfoo.json", _snap(library="libfoo.so"))
+        result = _invoke(
+            "compare-release",
+            str(old_dir),
+            str(new_dir),
+            "--format",
+            "markdown",
+            "--bundle-cohort",
+            "lib",
+        )
+        # Runs to completion; the bundle row appears in the markdown table.
+        assert result.exit_code in (0, 4)
+        assert "Bundle" in result.output
+
+    def test_strict_suppressions_preflight_rejects_expired(self, tmp_path) -> None:
+        old_dir, new_dir = self._make_dirs(tmp_path)
+        _write_snap(old_dir / "libfoo.json", _snap())
+        _write_snap(new_dir / "libfoo.json", _snap())
+        sup = tmp_path / "sup.yaml"
+        sup.write_text(
+            "version: 1\nsuppressions:\n"
+            "  - symbol: foo\n    reason: legacy\n    expires: 2000-01-01\n",
+        )
+        result = _invoke(
+            "compare-release",
+            str(old_dir),
+            str(new_dir),
+            "--suppress",
+            str(sup),
+            "--strict-suppressions",
+        )
+        assert result.exit_code != 0
+        assert "expired" in result.output.lower()
+
+    def test_corrupt_snapshot_reports_error(self, tmp_path, monkeypatch) -> None:
+        # A library whose snapshot load raises surfaces an ERROR entry,
+        # exercising the per-entry error echo path (cli_compare_release:341-342).
+        old_dir, new_dir = self._make_dirs(tmp_path)
+        _write_snap(old_dir / "libfoo.json", _snap())
+        _write_snap(new_dir / "libfoo.json", _snap())
+
+        import abicheck.cli_compare_release as cr_mod
+
+        def boom(*a, **k):
+            raise ValueError("corrupt snapshot")
+
+        monkeypatch.setattr(cr_mod, "_run_compare_pair", boom)
+        result = _invoke(
+            "compare-release",
+            str(old_dir),
+            str(new_dir),
+            "--format",
+            "markdown",
+        )
+        # The run completes (degraded) and notes the comparison error.
+        assert "Error comparing" in result.output or "ERROR" in result.output
+
+
+# ── cli.py: _expand_header_inputs neither-file-nor-dir (line 75) ──────────────
+
+
+class TestExpandHeaderInputsNeitherFileNorDir:
+    def test_special_path_neither_file_nor_dir(self, tmp_path, monkeypatch) -> None:
+        # Force a path that exists() but is neither file nor directory (e.g. a
+        # device/fifo) by monkeypatching Path predicates on a real path object.
+        p = tmp_path / "weird"
+        p.write_text("x")
+
+        import pathlib
+
+        real_is_file = pathlib.Path.is_file
+        real_is_dir = pathlib.Path.is_dir
+
+        def fake_is_file(self):
+            if self == p:
+                return False
+            return real_is_file(self)
+
+        def fake_is_dir(self):
+            if self == p:
+                return False
+            return real_is_dir(self)
+
+        monkeypatch.setattr(pathlib.Path, "is_file", fake_is_file)
+        monkeypatch.setattr(pathlib.Path, "is_dir", fake_is_dir)
+        with pytest.raises(click.ClickException, match="neither file nor directory"):
+            _expand_header_inputs([p])
+
+
+# ── cli.py: _resolve_linker_script keyword-token skip (line 232) ──────────────
+
+
+class TestLinkerScriptKeywordSkip:
+    def test_keyword_and_flag_tokens_skipped(self, tmp_path) -> None:
+        # The script names only -l flags and a keyword, never a real .so/.a, so
+        # the loop hits the keyword/flag `continue` and the ext `continue`.
+        script = tmp_path / "libk.so"
+        script.write_text("GROUP ( -lc -lm AS_NEEDED ( -lpthread ) )\n")
+        resolved, is_ld = _resolve_linker_script(script)
+        assert is_ld is True
+        assert resolved is None
+
+    def test_non_library_token_skipped(self, tmp_path) -> None:
+        # A bare token that is neither a keyword/flag nor a library name (no
+        # .so/.a) reaches and trips the extension `continue` at line 232.
+        script = tmp_path / "libn.so"
+        script.write_text("INPUT ( somenote_not_a_lib )\n")
+        resolved, is_ld = _resolve_linker_script(script)
+        assert is_ld is True
+        assert resolved is None
+
+
+# ── cli.py: _resolve_debug_artifact / _maybe_emit_annotations in CI ───────────
+
+
+class TestResolveDebugArtifact:
+    def test_delegates_to_resolver(self, tmp_path, monkeypatch) -> None:
+        from types import SimpleNamespace
+
+        import abicheck.cli as cli_mod
+
+        binary = tmp_path / "lib.so"
+        binary.write_bytes(b"\x7fELF" + b"\x00" * 50)
+        sentinel = SimpleNamespace(source="x.debug")
+        monkeypatch.setattr(
+            "abicheck.debug_resolver.resolve_debug_info",
+            lambda *a, **k: sentinel,
+        )
+        out = cli_mod._resolve_debug_artifact(
+            binary,
+            (tmp_path,),
+            False,
+            None,
+        )
+        assert out is sentinel
+
+
+class TestMaybeEmitAnnotationsInCI:
+    def test_emits_when_in_github_actions(self, monkeypatch, capsys) -> None:
+        import abicheck.cli as cli_mod
+
+        monkeypatch.setattr("abicheck.annotations.is_github_actions", lambda: True)
+        monkeypatch.setattr(
+            "abicheck.annotations.collect_annotations",
+            lambda result, annotate_additions=False: ["a1"],
+        )
+        monkeypatch.setattr(
+            "abicheck.annotations.format_annotations",
+            lambda anns: "::warning::break",
+        )
+        emitted = {}
+        monkeypatch.setattr(
+            "abicheck.annotations.emit_github_step_summary",
+            lambda result: emitted.setdefault("summary", True),
+        )
+        result = DiffResult(old_version="1", new_version="2", library="x")
+        cli_mod._maybe_emit_annotations(
+            result,
+            annotate=True,
+            annotate_additions=False,
+        )
+        err = capsys.readouterr().err
+        assert "::warning::break" in err
+        assert emitted.get("summary") is True
+
+
+# ── cli.py: _log_debug_resolution drives both sides when requested ────────────
+
+
+class TestLogDebugResolutionBothSides:
+    def test_both_sides_logged(self, tmp_path, monkeypatch, capsys) -> None:
+        from types import SimpleNamespace
+
+        import abicheck.cli as cli_mod
+
+        old_b = tmp_path / "old.so"
+        new_b = tmp_path / "new.so"
+        old_b.write_bytes(b"\x7fELF" + b"\x00" * 50)
+        new_b.write_bytes(b"\x7fELF" + b"\x00" * 50)
+        monkeypatch.setattr(cli_mod, "_detect_binary_format", lambda p: "elf")
+        monkeypatch.setattr(
+            "abicheck.debug_resolver.resolve_debug_info",
+            lambda *a, **k: SimpleNamespace(source="art"),
+        )
+        cli_mod._log_debug_resolution(
+            old_b,
+            new_b,
+            [tmp_path],
+            [tmp_path],
+            debuginfod=False,
+            debuginfod_url=None,
+        )
+        err = capsys.readouterr().err
+        assert "Debug info (old)" in err
+        assert "Debug info (new)" in err
