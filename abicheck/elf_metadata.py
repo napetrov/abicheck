@@ -203,6 +203,7 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
     # _correlate_symbol_versions does not need to re-iterate all sections.
     ver_sym_section: GNUVerSymSection | None = None
     dynsym_section: SymbolTableSection | None = None
+    symtab_section: SymbolTableSection | None = None
 
     for section in elf.iter_sections():
         try:
@@ -219,10 +220,26 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
             elif isinstance(section, SymbolTableSection) and section.name == ".dynsym":
                 _parse_dynsym(section, meta)
                 dynsym_section = section
+            elif isinstance(section, SymbolTableSection) and section.name == ".symtab":
+                # Captured but not parsed yet — only used as a fallback for
+                # relocatable objects (.o) that have no .dynsym (see below).
+                symtab_section = section
         except Exception as exc:  # noqa: BLE001
             # Partial-success: log malformed section, keep results from other sections.
             log.warning("parse_elf_metadata: skipping malformed section %r in %s: %s",
                         section.name, so_path, exc)
+
+    # Relocatable objects (ET_REL `.o`, e.g. a probe-built object) carry no
+    # `.dynsym` — their symbol surface lives in `.symtab`. Fall back to it so the
+    # defined GLOBAL/WEAK symbols of a `.o` are captured (the same classification
+    # `_parse_dynsym` applies to a `.dynsym`). A normal shared library always has
+    # `.dynsym`, so this never alters DSO parsing.
+    if dynsym_section is None and symtab_section is not None:
+        try:
+            _parse_dynsym(symtab_section, meta)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("parse_elf_metadata: skipping malformed .symtab in %s: %s",
+                        so_path, exc)
 
     # Merge: verdef entries take priority over verneed on index collision.
     ver_index_map: dict[int, tuple[str, str, bool]] = {**verneed_index_map, **verdef_index_map}

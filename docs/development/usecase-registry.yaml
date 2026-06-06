@@ -270,20 +270,21 @@ use_cases:
   - id: UC-WF-probe-matrix
     axis: workflow
     name: Build-configuration matrix (probe harness)
-    status: partial
-    gap: G2
-    plan: docs/development/plans/g2-build-config-and-bundle.md
+    status: complete
+    note: >
+      G2 closed. Matrix findings fold into `compare`/`compare-release` via
+      --probe-matrix-old/--probe-matrix-new. Both build-config kinds are now
+      proven end-to-end through the mainline command:
+      CXX_STANDARD_FLOOR_RAISED and — after the relocatable-object symbol-surface
+      fix — API_DEPENDS_ON_CONSUMER_ENV. parse_elf_metadata now falls back to
+      `.symtab` when a `.o` has no `.dynsym`, so a probe object's defined global
+      symbols are captured and the env-dependence detector fires over the real
+      compiled surface (tests/test_probe_examples.py +
+      tests/test_elf_object_surface.py).
     evidence:
-      modules: [abicheck/probe_harness.py, abicheck/diff_build_config.py]
-      tests: [tests/test_probe_harness.py, tests/test_probe_examples.py]
+      modules: [abicheck/probe_harness.py, abicheck/diff_build_config.py, abicheck/elf_metadata.py]
+      tests: [tests/test_probe_harness.py, tests/test_probe_examples.py, tests/test_elf_object_surface.py]
       examples: [examples/probes/onedpl.yaml, examples/probes/cxx_standard.yaml, examples/probes/feature_macro.yaml]
-    next_steps: >
-      Matrix findings now fold into `compare`/`compare-release` via
-      --probe-matrix-old/--probe-matrix-new (CXX_STANDARD_FLOOR_RAISED is proven
-      end-to-end through the mainline command in tests/test_probe_examples.py).
-      Remaining gap: capturing a probe's *symbol surface* from a relocatable .o
-      so API_DEPENDS_ON_CONSUMER_ENV fires end-to-end too (the dumper currently
-      reads .dynsym, which a .o lacks); the detector itself is unit-tested.
 
   # ── reporting ─────────────────────────────────────────────────────────────
   - id: UC-REP-json
