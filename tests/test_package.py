@@ -971,6 +971,34 @@ class TestDiscoverSharedLibrariesExtended:
         assert "libfoo.so" in names
         assert "libfoo.so.1.0" in names
 
+    def test_symlink_to_interp_executable_is_skipped(self, tmp_path: Path) -> None:
+        """A .so symlink to a PT_INTERP executable should not be included."""
+        bin_dir = tmp_path / "usr" / "bin"
+        lib_dir = tmp_path / "usr" / "lib"
+        bin_dir.mkdir(parents=True)
+        lib_dir.mkdir(parents=True)
+        app = bin_dir / "app"
+        _make_minimal_elf_dso_with_interp(app)
+        link = lib_dir / "libapp.so"
+        link.symlink_to("../bin/app")
+
+        result = discover_shared_libraries(tmp_path)
+        assert link not in result
+
+    def test_symlink_to_interp_dso_is_included(self, tmp_path: Path) -> None:
+        """A .so symlink to a PT_INTERP DSO should still be included."""
+        lib_dir = tmp_path / "usr" / "lib"
+        lib_dir.mkdir(parents=True)
+        real = lib_dir / "libcap.so.2.66"
+        _make_minimal_elf_dso_with_interp(real)
+        link = lib_dir / "libcap.so"
+        link.symlink_to("libcap.so.2.66")
+
+        result = discover_shared_libraries(tmp_path)
+        names = [p.name for p in result]
+        assert "libcap.so" in names
+        assert "libcap.so.2.66" in names
+
     def test_usr_local_lib(self, tmp_path: Path) -> None:
         """DSOs in usr/local/lib should be found."""
         lib_dir = tmp_path / "usr" / "local" / "lib"

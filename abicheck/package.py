@@ -656,6 +656,7 @@ def discover_shared_libraries(
     for dirpath, _dirnames, filenames in os.walk(extract_dir, followlinks=False):
         for fn in filenames:
             fp = Path(dirpath) / fn
+            elf_path = fp
             if fp.is_symlink():
                 # Follow symlinks only to check the target, don't add symlinks themselves
                 # unless the target is a real shared object
@@ -663,10 +664,11 @@ def discover_shared_libraries(
                     real = fp.resolve()
                     if not real.exists():
                         continue
+                    elf_path = real
                 except OSError:
                     continue
 
-            if not _is_elf_shared_object(fp):
+            if not _is_elf_shared_object(elf_path):
                 continue
 
             # Filter by path convention unless --include-private-dso
