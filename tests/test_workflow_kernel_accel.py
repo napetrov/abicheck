@@ -313,6 +313,27 @@ def test_resolve_input_ingests_raw_ctf_blob() -> None:
     assert "task_state" in (snap.dwarf.structs or {})
 
 
+def test_resolve_input_rejects_truncated_btf_blob() -> None:
+    """A file with the BTF magic but a truncated/garbage body parses to empty
+    metadata; resolve_input must reject it (not accept an empty baseline)."""
+    import struct
+    import tempfile
+
+    from abicheck.errors import ValidationError
+    from abicheck.service import resolve_input
+    # BTF magic (little-endian 0xEB9F) + version, then a truncated/garbage body.
+    bad = struct.pack("<HBB", BTF_MAGIC, BTF_VERSION, 0) + b"\x00\x00\x00"
+    with tempfile.TemporaryDirectory() as td:
+        blob = Path(td) / "truncated.btf"
+        blob.write_bytes(bad)
+        try:
+            resolve_input(blob)
+        except (ValidationError, Exception) as exc:  # noqa: BLE001
+            assert "detect" in str(exc).lower() or "format" in str(exc).lower()
+        else:
+            raise AssertionError("expected detection error for a truncated BTF blob")
+
+
 def test_resolve_input_non_typeinfo_file_is_not_misdetected() -> None:
     """A plain non-binary file is not mistaken for a BTF/CTF blob."""
     import tempfile

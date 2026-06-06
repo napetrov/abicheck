@@ -152,10 +152,19 @@ def _resolve_raw_typeinfo(path: Path, version: str) -> AbiSnapshot | None:
     try:
         if magic_le == BTF_MAGIC:
             btf = parse_btf_from_bytes(data)
+            # A truncated/unsupported blob parses to empty metadata rather than
+            # raising; treat that as "not detected" so it fails cleanly instead
+            # of becoming a silent empty baseline that hides all type changes.
+            if not btf.has_btf:
+                _logger.warning("raw BTF blob %s parsed to empty metadata; ignoring", path)
+                return None
             return AbiSnapshot(library=path.name, version=version,
                                dwarf=btf.to_dwarf_metadata())
         if magic_le == CTF_MAGIC:
             ctf = parse_ctf_from_bytes(data)
+            if not ctf.has_ctf:
+                _logger.warning("raw CTF blob %s parsed to empty metadata; ignoring", path)
+                return None
             return AbiSnapshot(library=path.name, version=version,
                                dwarf=ctf.to_dwarf_metadata())
     except (ValueError, OSError) as exc:
