@@ -638,11 +638,20 @@ def _detect_newly_deleted_functions(
     produce spurious BREAKING findings.
     """
     changes: list[Change] = []
-    exported = exported_symbol_names(getattr(new_snapshot, "elf", None), FUNCTION_SYMBOL_TYPES)
+    new_elf = getattr(new_snapshot, "elf", None)
+    exported = exported_symbol_names(new_elf, FUNCTION_SYMBOL_TYPES)
+    # Whether the new side has an ELF symbol table at all. This tells "no ELF
+    # evidence available" apart from "ELF table present but this function is not
+    # exported": when a table exists, an empty *function* export set (e.g. the
+    # library exports only data, or every function is hidden) is authoritative —
+    # a DWARF-only DW_AT_deleted internal member is genuinely not exported and
+    # must not be reported. Keying on ``exported`` truthiness instead would only
+    # apply the filter when some *other* function happened to be exported.
+    has_elf_symbol_table = bool(getattr(new_elf, "symbols", None))
     for mangled, f_new in new_all.items():
         if not f_new.is_deleted:
             continue
-        if f_new.deleted_from_dwarf and exported and mangled not in exported:
+        if f_new.deleted_from_dwarf and has_elf_symbol_table and mangled not in exported:
             continue
         # Skip functions that are not part of the public ABI surface.
         if f_new.visibility not in _PUBLIC_VIS:
