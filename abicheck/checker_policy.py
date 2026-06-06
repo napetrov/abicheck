@@ -128,7 +128,8 @@ class ChangeKind(str, Enum):
     )
 
     # ELF security / bad practice
-    EXECUTABLE_STACK = "executable_stack"  # PT_GNU_STACK has PF_X — NX protection disabled (bad practice)
+    EXECUTABLE_STACK = "executable_stack"  # PT_GNU_STACK gains PF_X — NX disabled (regression; gateable)
+    EXECUTABLE_STACK_REMOVED = "executable_stack_removed"  # PT_GNU_STACK loses PF_X — hardening improvement (informational)
     # checksec-equivalent hardening regressions (see G12). RISK by default;
     # gateable to break via the shipped security policy.
     RELRO_WEAKENED = "relro_weakened"  # full→partial / →none RELRO

@@ -217,13 +217,18 @@ class TestExecutableStack:
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
         assert ChangeKind.EXECUTABLE_STACK in _kinds(r)
 
-    def test_executable_stack_removal_is_not_a_finding(self):
-        """Removing an executable stack is a hardening *improvement*, not a
-        finding — so the shipped `security` policy can't fail it (Codex P2)."""
+    def test_executable_stack_removal_uses_distinct_kind(self):
+        """Removing an executable stack is a hardening *improvement*: it emits
+        the distinct EXECUTABLE_STACK_REMOVED kind (COMPATIBLE), never the
+        regression kind — so the shipped `security` policy can't fail it
+        (Codex P2). The default verdict stays COMPATIBLE (matches case49)."""
         old_elf = ElfMetadata(has_executable_stack=True)
         new_elf = ElfMetadata(has_executable_stack=False)
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
-        assert ChangeKind.EXECUTABLE_STACK not in _kinds(r)
+        kinds = _kinds(r)
+        assert ChangeKind.EXECUTABLE_STACK_REMOVED in kinds
+        assert ChangeKind.EXECUTABLE_STACK not in kinds
+        assert r.verdict == Verdict.COMPATIBLE
 
 
 class TestSecurityHardeningDrift:

@@ -30,10 +30,16 @@ A regression (and only a regression — improvements are never findings) emits:
 - `stack_canary_removed` — `-fstack-protector` no longer referenced
 - `fortify_source_weakened` — `_FORTIFY_SOURCE` wrappers no longer referenced
 - `writable_executable_segment` — a W^X segment was introduced
-- `executable_stack` — executable stack introduced
+- `executable_stack` — executable stack introduced (regression)
 
 All of these are `COMPATIBLE_WITH_RISK` by default, so they surface in the
 report without failing a standard compatibility gate.
+
+The opposite, improving transition — removing an executable stack — is reported
+as the distinct `executable_stack_removed` kind (`COMPATIBLE`, informational).
+Keeping the two directions as separate kinds is what lets the `security` policy
+gate the regression (`executable_stack`) without ever failing a hardening
+*improvement*.
 
 ## Turnkey gating: the shipped `security` policy
 

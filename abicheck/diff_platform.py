@@ -452,6 +452,16 @@ def _diff_elf_dynamic_section(old_elf: Any, new_elf: Any) -> list[Change]:
             old_value="RW",
             new_value="RWE",
         ))
+    elif old_exec and not new_exec:
+        # Improvement direction — a distinct kind so the `security` policy can
+        # gate the regression (executable_stack) without failing this fix.
+        changes.append(Change(
+            kind=ChangeKind.EXECUTABLE_STACK_REMOVED,
+            symbol="PT_GNU_STACK",
+            description="Executable stack removed: library now uses a non-executable stack — NX protection restored (good practice)",
+            old_value="RWE",
+            new_value="RW",
+        ))
 
     changes.extend(_diff_security_hardening(old_elf, new_elf))
 

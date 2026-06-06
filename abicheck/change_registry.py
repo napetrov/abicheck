@@ -241,6 +241,8 @@ REGISTRY = ChangeKindRegistry([
     # ── ELF security / bad practice ────────────────────────────────────────
     _E("executable_stack", _C,
        impact="Library has executable stack (PT_GNU_STACK RWE); NX protection disabled — security risk."),
+    _E("executable_stack_removed", _C,
+       impact="Executable stack removed (PT_GNU_STACK RWE→RW); NX protection restored — a hardening improvement, not a regression."),
     # checksec-equivalent hardening regressions (G12). RISK by default so they
     # surface without failing a normal compatibility gate; the shipped
     # `security` policy (policies/security.yaml) flips them to break.

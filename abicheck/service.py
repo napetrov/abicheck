@@ -142,14 +142,19 @@ def _resolve_raw_typeinfo(path: Path, version: str) -> AbiSnapshot | None:
     if len(head) < 2:
         return None
 
-    magics = (int.from_bytes(head, "little"), int.from_bytes(head, "big"))
+    # Only detect the little-endian byte order that parse_btf_from_bytes /
+    # parse_ctf_from_bytes actually support: a big-endian-target blob (first
+    # bytes EB 9F / CF F1) would otherwise enter the branch but parse to empty
+    # metadata, silently dropping all type changes. Falling through to the
+    # "cannot detect format" error is the honest outcome for those.
+    magic_le = int.from_bytes(head, "little")
     data = path.read_bytes()
     try:
-        if BTF_MAGIC in magics:
+        if magic_le == BTF_MAGIC:
             btf = parse_btf_from_bytes(data)
             return AbiSnapshot(library=path.name, version=version,
                                dwarf=btf.to_dwarf_metadata())
-        if CTF_MAGIC in magics:
+        if magic_le == CTF_MAGIC:
             ctf = parse_ctf_from_bytes(data)
             return AbiSnapshot(library=path.name, version=version,
                                dwarf=ctf.to_dwarf_metadata())
