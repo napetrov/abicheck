@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -189,7 +190,7 @@ class TarExtractor:
             try:
                 import zstandard
             except ImportError:
-                zstandard = None
+                zstandard = None  # type: ignore[assignment]
             if zstandard is not None:
                 dctx = zstandard.ZstdDecompressor()
                 with open(zst_path, "rb") as compressed, open(tar_path, "wb") as out:
@@ -562,6 +563,12 @@ _ELF_MAGIC = b"\x7fELF"
 _ET_DYN = 3
 # Program header type PT_INTERP (interpreter segment — present in executables, absent in DSOs)
 _PT_INTERP = 3
+_SO_NAME_RE = re.compile(r"\.so(?:\.|$)", re.IGNORECASE)
+
+
+def _has_shared_object_name(path: Path | str) -> bool:
+    """Return True for .so or versioned .so.N filenames."""
+    return _SO_NAME_RE.search(Path(path).name) is not None
 
 
 def _has_interp_segment(f: IO[bytes], ei_class: int, byte_order: str) -> bool:
@@ -622,7 +629,7 @@ def _is_elf_shared_object(path: Path) -> bool:
                 # directly (for example Ubuntu's libcap.so.2.66).  Keep the
                 # PIE-executable guard for app-like filenames, but do not drop
                 # real versioned .so files from package discovery.
-                return ".so" in path.name.lower()
+                return _has_shared_object_name(path)
             return True
     except (OSError, struct.error):
         return False
@@ -674,10 +681,9 @@ def discover_shared_libraries(
                     rel_parts == d or rel_parts.startswith(d + "/")
                     for d in _PUBLIC_LIB_DIRS
                 )
-                # Also accept files with .so in name at any depth as a fallback
-                # for flat directory layouts (e.g. plain tar archives)
-                name_lower = fn.lower()
-                has_so_ext = ".so" in name_lower
+                # Also accept files with a .so suffix/versioned SONAME at any
+                # depth as a fallback for flat directory layouts.
+                has_so_ext = _has_shared_object_name(fn)
                 if not in_public and not has_so_ext:
                     continue
 

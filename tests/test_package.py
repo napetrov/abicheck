@@ -419,6 +419,11 @@ class TestIsElfSharedObject:
         _make_minimal_elf_dso_with_interp(f)
         assert _is_elf_shared_object(f) is False
 
+    def test_pie_name_containing_so_without_boundary_is_rejected(self, tmp_path: Path) -> None:
+        f = tmp_path / "app.solver"
+        _make_minimal_elf_dso_with_interp(f)
+        assert _is_elf_shared_object(f) is False
+
     def test_non_elf(self, tmp_path: Path) -> None:
         f = tmp_path / "text.txt"
         f.write_text("hello")
@@ -491,6 +496,13 @@ class TestDiscoverSharedLibraries:
         result = discover_shared_libraries(tmp_path)
         assert len(result) == 1
         assert result[0].name == "libfoo.so"
+
+    def test_skips_flat_layout_name_containing_so_without_boundary(
+        self, tmp_path: Path
+    ) -> None:
+        _make_minimal_elf_so(tmp_path / "tool.something")
+        result = discover_shared_libraries(tmp_path)
+        assert result == []
 
     def test_empty_directory(self, tmp_path: Path) -> None:
         result = discover_shared_libraries(tmp_path)
