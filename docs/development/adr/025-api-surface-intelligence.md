@@ -277,9 +277,11 @@ classification — structurally the same insertion point and the same
 
 #### D4.1 Modulation rules
 
-Each rule takes a `Change` + both `SurfaceGraph`s and may adjust `confidence`
-(`checker_types.Change.confidence`) and/or move the finding between
-categories, **always** writing a `modulation_reason` and the rule id:
+Each rule takes a `Change` + both `SurfaceGraph`s and may adjust the finding's
+**own** `confidence` (a *new* per-finding `Change.confidence` field — see the
+data-model table; this is distinct from the existing verdict-level
+`DiffResult.confidence`) and/or move the finding between categories, **always**
+writing a `modulation_reason` and the rule id:
 
 | Rule | Effect | Guard (anti-hiding) |
 |------|--------|---------------------|
@@ -320,7 +322,7 @@ Every modulation is disclosed exactly like the ADR-024 surface ledger:
 | Surface | Change | Compatibility |
 |---------|--------|---------------|
 | `model.py` | `AbiSnapshot.idioms`, `.conventions`; helper `RecordType` opaque/handle flags if not already derivable. | Additive; schema bump (ADR-015). Old snapshots → empty → safe no-op. |
-| `checker_types.py` | `Change.modulation_reason: str \| None`, `.modulation_rule: str \| None`. | Additive dataclass fields with defaults. |
+| `checker_types.py` | `Change.confidence: Confidence` (reusing the existing `checker_policy.Confidence` enum, default `HIGH`) — a **per-finding** trust level, distinct from the existing **verdict-level** `DiffResult.confidence`; plus `Change.modulation_reason: str \| None`, `.modulation_rule: str \| None`. | Additive dataclass fields with defaults; A4 (D4.1) reads/writes the per-finding `confidence`, reporters surface it alongside the existing `DiffResult` one. |
 | `checker_policy.py` | New `ChangeKind`s (A1.2, A2.2, A3.2) each placed in exactly one of `BREAKING/API_BREAK/COMPATIBLE/RISK` (import-time partition assertion enforces it). | Enum grows; follow the 4-step `/CLAUDE.md` procedure. |
 | `surface.py` | Extract reachability helper into `surface_graph.py`, import back. | Internal refactor, no behaviour change. |
 | New modules | `surface_graph.py`, `idioms.py`, `pattern_verdicts.py`, `cli_surface.py`. | All < 600 lines (AI-readiness file-size gate). |
