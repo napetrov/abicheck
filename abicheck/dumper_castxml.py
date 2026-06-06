@@ -35,10 +35,12 @@ from .model import (
     Function,
     Param,
     RecordType,
+    ScopeOrigin,
     TypeField,
     Variable,
     Visibility,
 )
+from .provenance import build_public_set, classify_origin, header_from_location
 
 
 def _parse_vtable_index(vi_str: str | None) -> int | None:
@@ -71,7 +73,6 @@ class _CastxmlParser:
         # reached via an umbrella header or a public include dir are kept, while
         # transitively-included system/private-header constants are excluded.
         # Empty → constant extraction is skipped (provenance is opt-in).
-        from .provenance import build_public_set
         (self._pub_header_segs, self._pub_dir_segs,
          self._have_public_set) = build_public_set(
             public_header_paths, public_dir_paths,
@@ -513,8 +514,6 @@ class _CastxmlParser:
         containment), so build-prefixed paths and umbrella-included public
         headers match while system/private headers do not.
         """
-        from .model import ScopeOrigin
-        from .provenance import classify_origin, header_from_location
         sh = header_from_location(self._source_location(el))
         if not sh:
             return False

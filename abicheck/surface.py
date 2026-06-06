@@ -65,8 +65,8 @@ _NEVER_FILTER_KIND_NAMES: frozenset[str] = frozenset(
         # Preprocessor / const-constant findings. Their ``symbol`` is a
         # constant name, not an exported symbol or a reachable type, so the
         # normal symbol/type reachability classifier would always demote them.
-        # The dumper only extracts constants declared in the user-provided
-        # public headers (dumper_castxml._decl_in_provided_header), so they are
+        # The dumper only extracts constants whose declaring header classifies
+        # as PUBLIC_HEADER (dumper_castxml._decl_is_public), so they are
         # public-contract by construction and must not be scoped out.
         "constant_changed",
         "constant_removed",
