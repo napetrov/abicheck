@@ -174,6 +174,18 @@ break for callers (they never embed it), so the finding is demoted with reason
 new snapshots (a type that *stops* being opaque is itself a real change, see
 D2.2).
 
+**PIMPL is *not* the same as opaque-pointer, and is treated differently.** A
+PIMPL wrapper is a **complete** public type: callers can `sizeof` it, embed it,
+or stack-allocate it, so its **own** layout (its size and its single
+impl-pointer field) is part of the ABI and a change to it is a real break. Only
+the *pointee* — the private/incomplete `struct Impl` behind the pointer — is
+hidden from callers. The recogniser therefore records, for a `PIMPL` type, both
+the wrapper's own layout signature and the identity of the hidden pointee, so
+A4's `PIMPL pointee-only` rule (D4.1) can demote a change to the pointee while
+keeping any change to the wrapper itself breaking. Conflating the two (demoting
+a wrapper that gains a second member) would hide a genuine layout break — the
+explicit failure mode this split avoids.
+
 #### D2.2 Anti-pattern detectors (new ChangeKinds)
 
 Anti-patterns are graph properties that are *findings in their own right*,
@@ -296,7 +308,8 @@ mechanism below), **always** writing a `modulation_reason` and the rule id:
 
 | Rule | Effect | Guard (anti-hiding) |
 |------|--------|---------------------|
-| **Opaque-aware layout** | `TYPE_SIZE_CHANGED` / `TYPE_FIELD_*` on an `OPAQUE_POINTER`/`PIMPL` type → demote to compatible, reason `opaque-by-construction`. | Idiom must hold on **both** snapshots; if opaqueness was *lost*, emit `OPAQUE_INVARIANT_BROKEN` (D2.2) instead — never silent. |
+| **Opaque-pointer layout** | `TYPE_SIZE_CHANGED` / `TYPE_FIELD_*` on an `OPAQUE_POINTER` type (callers only ever hold `T*`, never a complete `T`) → demote to compatible, reason `opaque-by-construction`. | Idiom must hold on **both** snapshots; if opaqueness was *lost* (a by-value public use appears), emit `OPAQUE_INVARIANT_BROKEN` (D2.2) instead — never silent. |
+| **PIMPL pointee-only** | A layout change to the *private/incomplete impl pointee* of a `PIMPL` type → demote, reason `pimpl-impl-hidden`. | **Strictly scoped:** the public wrapper is itself a complete type callers can `sizeof`/embed/stack-allocate, so a change to the **wrapper's own** layout (its size, or its single impl-pointer field) is **never** demoted — it stays breaking. Demotion fires only when the wrapper's own layout is byte-identical across both snapshots **and** only the hidden pointee changed. A wrapper gaining a second data member is a real break (and likely also `OPAQUE_INVARIANT_BROKEN`). |
 | **Versioned-addition** | A near-duplicate symbol matching the inferred version scheme (D2.3) → treat as managed addition, not accidental churn. | Only suppresses the *noise* classification; the addition is still reported as `FUNC_ADDED`. |
 | **Anti-pattern raise** | A change *on* a `POLYMORPHIC_TYPE_NON_VIRTUAL_DTOR` / STL-by-value surface → raise confidence / annotate elevated risk. | Pure raise; cannot hide. |
 | **Confidence floor by tier** | Modulation that *demotes* is only permitted at `HEADER_AWARE` evidence tier (idioms need the AST). At `ELF_ONLY`/`DWARF_AWARE`, demotion is disabled; the finding stands. | Demotion requires the evidence that justified it. |
@@ -313,10 +326,23 @@ would be cosmetic. This ADR therefore adds a **per-finding override**:
 
 - New field `Change.effective_verdict: Verdict | None = None` (default `None` =
   "classify by `kind`", i.e. today's behaviour exactly).
-- The four `DiffResult` classification properties and `compute_verdict()` (the
-  exit-code source) are changed to bucket each `Change` by
-  `change.effective_verdict` **when set**, else fall back to kind-set
-  membership. This is the per-finding analogue of the existing kind-level
+- A single shared helper — `effective_category(change, kind_sets) -> Verdict`
+  (returns `change.effective_verdict` when set, else derives the category from
+  `change.kind ∈ kind_sets`) — becomes the **one** place category is decided.
+  **Every** site that today buckets by `c.kind in <set>` must route through it,
+  not just the `DiffResult` properties. Concretely that is: the four
+  `DiffResult.breaking`/`source_breaks`/`compatible`/`risk` properties and
+  `compute_verdict()` (exit code); **`reporter.py`** — `_change_to_dict`, the
+  `filtered_summary` counts, and the type/non-type category splits (all
+  currently keyed on `c.kind in eff_breaking`, etc.); and **`severity.py`** —
+  `categorize_changes` and `compute_exit_code`, which classify with kind sets
+  for the severity-aware exit codes. If any one of these is missed, a demoted
+  `TYPE_SIZE_CHANGED` could still serialize or count as `breaking` and emit exit
+  code 4 under `--severity-*` options — so honouring the override is a
+  **completeness requirement across all classification sites**, enforced by the
+  validation matrix below (a demoted finding must read compatible in *every*
+  output: text, JSON `changes` + `filtered_summary`, SARIF, JUnit, and both
+  exit-code paths). This is the per-finding analogue of the existing kind-level
   `_effective_kind_sets()` move, evaluated *after* it.
 - Precedence / anti-hiding: the existing `frozen_namespace_violation` guard
   (`checker_types.Change`) and any policy that blocks downgrades take
@@ -364,7 +390,8 @@ Every modulation is disclosed exactly like the ADR-024 surface ledger:
 | Surface | Change | Compatibility |
 |---------|--------|---------------|
 | `model.py` | `AbiSnapshot.idioms`, `.conventions`; helper `RecordType` opaque/handle flags if not already derivable. | Additive; schema bump (ADR-015). Old snapshots → empty → safe no-op. |
-| `checker_types.py` | `Change.confidence: Confidence` (reusing `checker_policy.Confidence`, default `HIGH`) — per-finding trust, distinct from verdict-level `DiffResult.confidence`; `Change.effective_verdict: Verdict \| None = None` — per-finding category override (default `None` = classify by `kind`); plus `Change.modulation_reason: str \| None`, `.modulation_rule: str \| None`. **Behavioural change:** the `DiffResult.breaking`/`source_breaks`/`compatible`/`risk` properties and `compute_verdict()` must bucket by `effective_verdict` when set, else by kind-set membership (D4.1 mechanism). | Additive dataclass fields with safe defaults; the classification change is a no-op while every `effective_verdict` is `None` (i.e. with `--no-pattern-verdicts` or pre-Phase-3). Covered by the anti-hiding tests (§Validation). |
+| `checker_types.py` | `Change.confidence: Confidence` (reusing `checker_policy.Confidence`, default `HIGH`) — per-finding trust, distinct from verdict-level `DiffResult.confidence`; `Change.effective_verdict: Verdict \| None = None` — per-finding category override (default `None` = classify by `kind`); plus `Change.modulation_reason: str \| None`, `.modulation_rule: str \| None`. Add the shared `effective_category(change, kind_sets)` helper (D4.1 mechanism). | Additive dataclass fields with safe defaults; classification is a no-op while every `effective_verdict` is `None` (`--no-pattern-verdicts` / pre-Phase-3). |
+| `checker_policy.py` / `reporter.py` / `severity.py` | **Behavioural change:** every kind-based classification site must route through `effective_category(...)` instead of bare `c.kind in <set>` — `compute_verdict()`; `reporter._change_to_dict` + `filtered_summary` + type/non-type splits; `severity.categorize_changes` + `compute_exit_code`. | No-op while no finding carries an override; otherwise demoted findings read compatible in **all** outputs and both exit-code paths (enforced by the cross-output validation matrix). |
 | `checker_policy.py` | New `ChangeKind`s (A1.2, A2.2, A3.2) each placed in exactly one of `BREAKING/API_BREAK/COMPATIBLE/RISK` (import-time partition assertion enforces it). | Enum grows; follow the 4-step `/CLAUDE.md` procedure. |
 | `surface.py` | Extract reachability helper into `surface_graph.py`, import back. | Internal refactor, no behaviour change. |
 | New modules | `surface_graph.py`, `idioms.py`, `pattern_verdicts.py`, `cli_surface.py`. | Each *targeted* at < 600 lines; the AI-readiness file-size gate warns at 1500 / errors at 2000, so `idioms.py` (7 recognisers + convention inference) and `pattern_verdicts.py` (4 rules + ledger) should be split (e.g. one recogniser-registry module + a rules module) before they approach the soft limit, the same way `diff_platform.py` spun out `diff_platform_templates.py`. |
@@ -396,7 +423,17 @@ over- nor under-fire, and that modulation can never hide a real break.
      severity (modulation must not touch it).
    - A type that *loses* opaqueness emits `OPAQUE_INVARIANT_BROKEN`, not a
      silent demotion.
+   - **PIMPL wrapper vs pointee:** a change to the *impl pointee* is demoted,
+     but a change to the **wrapper's own** layout (gaining a member, the
+     impl-pointer field changing) stays breaking — assert both directions on
+     the same fixture (D4.1 `PIMPL pointee-only` guard).
    - Demotion is refused below `HEADER_AWARE` tier.
+   - **Cross-output completeness:** for one demoted finding, assert it reads
+     `compatible` in **every** sink — text report, JSON `changes` *and*
+     `filtered_summary`, SARIF, JUnit — and contributes to **neither**
+     exit-code path (`compute_verdict` and the severity-aware
+     `severity.compute_exit_code`). This is the regression guard that every
+     `c.kind in <set>` site was migrated to `effective_category(...)`.
 3. **Property-based** (`slow`, hypothesis, extends
    `tests/test_detector_properties.py`):
    - *Modulation subset:* the pattern-aware finding set, projected back to
