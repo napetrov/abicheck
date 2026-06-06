@@ -120,6 +120,43 @@ changes that don't affect exported symbols will not be detected.
 
 ---
 
+## Static / import library archives (`.a`, `.lib`)
+
+`abicheck` analyses **single linkable images** — shared libraries (`.so`,
+`.dll`, `.dylib`) and individual object files. It does **not** analyse static
+or import library archives (`.a` on Unix, `.lib` on Windows). This is a
+deliberate non-goal (see [Project Goals → Non-goals](../development/goals.md#non-goals)),
+for two reasons:
+
+- A static library has **no runtime ABI surface**: no `SONAME`, no dynamic
+  symbol table, no symbol versioning — the very signals abicheck's verdict
+  semantics are built on. Only object-level symbol/type information would
+  apply, and a link-time API check over the union of members is a different
+  tool with different semantics.
+- Archives are **member containers** (`ar` format, magic `!<arch>\n`), not a
+  single image; both `.a` and MSVC `.lib` share this format.
+
+Handing a `.a`/`.lib` to `dump` or `compare` produces a **clear, actionable
+error** rather than a misleading "unknown format" message or a traceback:
+
+```text
+'libfoo.a' is a static/import library archive (.a/.lib), which abicheck does
+not analyse — it compares single linkable images (shared libraries and
+objects). Extract the members (e.g. `ar x lib.a`) and compare the resulting
+object files or the shared library built from them instead.
+```
+
+**Mitigation:** extract the archive members and compare the resulting object
+files, or compare the shared library built from the same sources:
+
+```bash
+ar x libfoo-old.a && ar x libfoo-new.a   # then compare the .o members
+# or, preferred:
+abicheck compare libfoo-old.so libfoo-new.so -H include/foo.h
+```
+
+---
+
 ## Dependency Limitations & Known Bugs
 
 Known issues in third-party dependencies that affect `abicheck` behavior.

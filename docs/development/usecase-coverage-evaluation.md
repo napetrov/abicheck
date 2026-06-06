@@ -80,7 +80,7 @@ A real invocation is a point in this space:
 | Plugin (host↔plugin) | `partial` | policy + scenario tests; no bidirectional CLI/fixture (G5) |
 | Header-only / inline-only | `planned` | castxml can't emit concept bodies / ctor mangled names (G4; cases 78/105/106/111 dormant) |
 | Kernel / eBPF (BTF/CTF) | `modeled` | parsers exist; no workflow/example (G6) |
-| Static libraries (`.a`/`.lib`) | `planned` | scope decision pending (G8) |
+| Static libraries (`.a`/`.lib`) | `by_design_excluded` | **G8 decided (option A)**: non-goal; CLI rejects archives with guidance |
 | FFI consumers (Rust/Go/Python) | `by_design_excluded` | C ABI covered; other languages a stated non-goal |
 
 ---
@@ -96,7 +96,7 @@ A real invocation is a point in this space:
 | **G5** | Plugin host↔plugin contract is one-directional | optional host-contract check | bidirectional scenario | host/plugin fixture |
 | **G6** | Kernel/eBPF use case is parser-only | small workflow glue | BTF compare scenario | vmlinux/module fixture |
 | **G7** | No semver-bump recommendation | recommender + report wiring | mapping + integration | reuse cases |
-| **G8** | Static libraries undocumented | (optional `ar` iteration) | — | document the stance |
+| **G8** | Static libraries undocumented | ✅ archive detection + clear error path | ✅ unit (archive → guidance error) | ✅ documented non-goal (goals + limitations) |
 
 ### Answer to the four driving questions
 
@@ -169,5 +169,10 @@ Summary (see the plans for detail):
   78/105/106/111).
 - **G6:** a BTF fixture pair (kernel struct gains a field) exercised through
   `compare`, plus a documented "module vs `vmlinux` BTF" workflow.
-- **G8:** decide whether `.a`/`.lib` archive iteration is in scope; document the
-  outcome either way.
+
+**G8 is now decided (option A — done):** static/import library archives are a
+non-goal. `abicheck/binary_utils.py::detect_archive` recognises the `!<arch>\n`
+magic and `service.resolve_input` rejects `.a`/`.lib` inputs with actionable
+guidance; the stance is documented in [`goals.md`](goals.md) (Non-goals) and
+[`concepts/limitations.md`](../concepts/limitations.md), and the registry entry
+is `by_design_excluded`.

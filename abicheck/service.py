@@ -185,6 +185,19 @@ def resolve_input(
         except (ValueError, KeyError, UnicodeDecodeError, OSError) as exc:
             raise SnapshotError(f"Failed to load JSON snapshot '{path}': {exc}") from exc
 
+    # Static / import libraries (`.a`, `.lib`) are member archives, not single
+    # linkable images. abicheck does not analyse archives (by design — see
+    # docs/concepts/limitations.md); fail with actionable guidance rather than a
+    # generic "unknown format" error.
+    from .binary_utils import detect_archive
+    if detect_archive(path):
+        raise ValidationError(
+            f"'{path}' is a static/import library archive (.a/.lib), which abicheck "
+            "does not analyse — it compares single linkable images (shared libraries "
+            "and objects). Extract the members (e.g. `ar x lib.a`) and compare the "
+            "resulting object files or the shared library built from them instead."
+        )
+
     raise ValidationError(
         f"Cannot detect format of '{path}'. "
         "Expected: ELF (.so), PE (.dll), Mach-O (.dylib), JSON snapshot, or ABICC Perl dump."

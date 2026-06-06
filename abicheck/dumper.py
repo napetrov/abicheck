@@ -583,6 +583,15 @@ def dump(
             debug_format=debug_format,
         )
     else:
+        from .binary_utils import detect_archive
+        if detect_archive(so_path):
+            raise ValidationError(
+                f"'{so_path}' is a static/import library archive (.a/.lib), which "
+                "abicheck does not analyse — it compares single linkable images "
+                "(shared libraries and objects). Extract the members (e.g. "
+                "`ar x lib.a`) and compare the resulting object files or the shared "
+                "library built from them instead."
+            )
         raise ValidationError(
             f"Unrecognised binary format for {so_path}: "
             f"expected ELF, Mach-O, or PE but detected {fmt!r}. "

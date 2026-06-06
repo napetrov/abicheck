@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from abicheck.binary_utils import detect_binary_format
+from abicheck.binary_utils import detect_archive, detect_binary_format
 from abicheck.cli import _resolve_input, main
 from abicheck.model import AbiSnapshot, Function, Visibility
 from abicheck.serialization import snapshot_to_json
@@ -97,6 +97,38 @@ class TestDetectBinaryFormat:
         p.write_bytes(b"\xfe\xed\xfa\xce" + b"\x00" * 64)
         assert detect_binary_format(p) == "macho"
 
+    def test_ar_archive_is_not_a_binary_format(self, tmp_path):
+        """ar archives (.a/.lib) are not single linkable images — detect_binary_format
+        returns None for them (they are handled separately via detect_archive)."""
+        p = tmp_path / "libfoo.a"
+        p.write_bytes(b"!<arch>\n" + b"\x00" * 64)
+        assert detect_binary_format(p) is None
+
+
+class TestDetectArchive:
+    def test_static_archive_detected(self, tmp_path):
+        p = tmp_path / "libfoo.a"
+        p.write_bytes(b"!<arch>\n" + b"\x00" * 64)
+        assert detect_archive(p) is True
+
+    def test_coff_import_library_detected(self, tmp_path):
+        # MSVC .lib import/static libraries share the ar magic.
+        p = tmp_path / "foo.lib"
+        p.write_bytes(b"!<arch>\n" + b"\x00" * 64)
+        assert detect_archive(p) is True
+
+    def test_elf_is_not_archive(self, tmp_path):
+        p = _write_fake_elf(tmp_path / "lib.so")
+        assert detect_archive(p) is False
+
+    def test_nonexistent_is_not_archive(self, tmp_path):
+        assert detect_archive(tmp_path / "missing") is False
+
+    def test_short_file_is_not_archive(self, tmp_path):
+        p = tmp_path / "short"
+        p.write_bytes(b"!<ar")
+        assert detect_archive(p) is False
+
 
 # ── _resolve_input tests ────────────────────────────────────────────────
 
@@ -118,6 +150,14 @@ class TestResolveInput:
         p = tmp_path / "mystery.dat"
         p.write_text("not json, not perl, not elf", encoding="utf-8")
         with pytest.raises(Exception, match="Cannot detect format"):
+            _resolve_input(p, headers=[], includes=[], version="1.0", lang="c++")
+
+    def test_static_archive_raises_with_guidance(self, tmp_path):
+        """A `.a`/`.lib` archive is rejected with actionable guidance at the CLI
+        layer (G8 non-goal), not the generic 'Cannot detect format' error."""
+        p = tmp_path / "libfoo.a"
+        p.write_bytes(b"!<arch>\n" + b"\x00" * 16)
+        with pytest.raises(Exception, match="static/import library archive"):
             _resolve_input(p, headers=[], includes=[], version="1.0", lang="c++")
 
     def test_malformed_json_raises_click_exception(self, tmp_path):

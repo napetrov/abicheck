@@ -116,12 +116,21 @@ use_cases:
   - id: UC-ARCH-static-lib
     axis: archetype
     name: Static libraries (.a / .lib)
-    status: planned
-    gap: G8
-    plan: docs/development/plans/g8-static-libraries.md
-    next_steps: >
-      Decide scope: either iterate `ar` archive members for link-time API
-      checking, or document static libraries as an explicit non-goal.
+    status: by_design_excluded
+    note: >
+      G8 decision (option A): static/import library archives are a non-goal.
+      abicheck compares single linkable images (shared libraries + objects); an
+      `ar` archive (.a / .lib, magic `!<arch>\n`) has no runtime ABI surface
+      (no SONAME, no dynamic symbol table, no symbol versioning). The CLI now
+      detects archives and fails with actionable guidance (extract members or
+      compare the shared library) instead of a misleading "unknown format"
+      error. See docs/development/goals.md (Non-goals),
+      docs/concepts/limitations.md, and the plan
+      docs/development/plans/g8-static-libraries.md.
+    evidence:
+      modules: [abicheck/binary_utils.py, abicheck/service.py]
+      tests: [tests/test_compare_input_modes.py, tests/test_service_unit.py]
+      docs: [docs/concepts/limitations.md]
 
   - id: UC-ARCH-ffi-consumers
     axis: archetype
