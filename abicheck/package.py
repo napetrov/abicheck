@@ -188,11 +188,11 @@ class TarExtractor:
         tar_path = staging / "payload.tar"
         try:
             try:
-                import zstandard
+                import zstandard as zstandard_mod
             except ImportError:
-                zstandard = None  # type: ignore[assignment]
-            if zstandard is not None:
-                dctx = zstandard.ZstdDecompressor()
+                zstandard_mod = None
+            if zstandard_mod is not None:
+                dctx = zstandard_mod.ZstdDecompressor()
                 with open(zst_path, "rb") as compressed, open(tar_path, "wb") as out:
                     with dctx.stream_reader(compressed) as reader:
                         shutil.copyfileobj(reader, out)
@@ -604,7 +604,12 @@ def _has_interp_segment(f: IO[bytes], ei_class: int, byte_order: str) -> bool | 
         if e_phoff == 0 or e_phnum == 0:
             return False
         expected_phentsize = 32 if ei_class == 1 else 56
-        if e_phentsize < expected_phentsize:
+        # The program-header entry size is fixed by ELF class (32 bytes for
+        # ELFCLASS32, 56 for ELFCLASS64). Any mismatch — undersized *or*
+        # oversized — means the layout we read p_type from at fixed offsets is
+        # not trustworthy, so treat it as inconclusive rather than risk
+        # misclassifying the file.
+        if e_phentsize != expected_phentsize:
             return None
 
         for i in range(e_phnum):
