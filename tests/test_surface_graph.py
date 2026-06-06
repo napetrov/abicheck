@@ -260,6 +260,44 @@ def test_fan_in_not_double_counted_for_namespaced_record() -> None:
     assert "A" not in names  # the short alias is not listed as a separate type
 
 
+def test_fan_in_matches_unqualified_field_reference() -> None:
+    # ns::B has a field written with the UNQUALIFIED name "A" (common inside a
+    # namespace), so type_refs stores only "A". fan_in("ns::A") must still be 1.
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="use",
+                mangled="use",
+                return_type="void",
+                params=[Param(name="b", type="ns::B*", pointer_depth=1)],
+                visibility=Visibility.PUBLIC,
+                source_header="h.h",
+                origin=ScopeOrigin.PUBLIC_HEADER,
+            ),
+        ],
+        types=[
+            RecordType(
+                name="ns::B",
+                kind="class",
+                fields=[TypeField(name="a", type="A")],  # unqualified
+                source_header="h.h",
+                origin=ScopeOrigin.PUBLIC_HEADER,
+            ),
+            RecordType(
+                name="ns::A",
+                kind="class",
+                source_header="h.h",
+                origin=ScopeOrigin.PUBLIC_HEADER,
+            ),
+        ],
+    )
+    g = build_surface_graph(snap)
+    assert g.fan_in("ns::A") == 1  # the unqualified "A" reference still counts
+
+
 def test_header_coverage_counts_overloads() -> None:
     # foo(int) and foo(double) in the same header are two declared functions.
     snap = AbiSnapshot(

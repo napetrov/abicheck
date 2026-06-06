@@ -87,15 +87,33 @@ class SurfaceGraph:
                     queue.append(ref)
         return frozenset(n for n in seen if n in self.types_by_name)
 
+    def _aliases(self, type_name: str) -> frozenset[str]:
+        """All names a reference may use for *type_name*: full + trailing segment.
+
+        A field written ``A`` inside ``ns`` yields the ref ``A``; written
+        ``ns::A`` it yields both ``ns::A`` and ``A``. Matching on either form
+        keeps fan-in/out consistent with ``reachable_types``'s canonicalisation.
+        """
+        names = {type_name}
+        rec = self.types_by_name.get(type_name)
+        full = rec.name if rec is not None else type_name
+        names.add(full)
+        if "::" in full:
+            names.add(full.rsplit("::", 1)[1])
+        return frozenset(names)
+
     def fan_out(self, type_name: str) -> int:
         """Number of distinct types *type_name* directly references."""
-        return len(self.type_refs.get(type_name, frozenset()))
+        rec = self.types_by_name.get(type_name)
+        key = rec.name if rec is not None else type_name
+        return len(self.type_refs.get(key, frozenset()))
 
     def fan_in(self, type_name: str) -> int:
         """Number of distinct types that directly reference *type_name*."""
+        aliases = self._aliases(type_name)
         count = 0
         for refs in self.type_refs.values():
-            if type_name in refs:
+            if aliases & refs:
                 count += 1
         return count
 
