@@ -44,6 +44,7 @@ from .cli import (
     _write_release_step_summary,
     main,
 )
+from .cli_params import POLICY_FILE_PARAM
 from .model import AbiSnapshot
 from .reporter import to_json
 
@@ -1080,7 +1081,7 @@ def _strip_diff_results_and_adjust_verdict(
               type=click.Choice(["strict_abi", "sdk_vendor", "plugin_abi"], case_sensitive=True),
               default="strict_abi", show_default=True)
 @click.option("--policy-file", "policy_file_path",
-              type=click.Path(exists=True, path_type=Path), default=None)
+              type=POLICY_FILE_PARAM, default=None)
 @click.option("--fail-on-removed-library/--no-fail-on-removed-library",
               "fail_on_removed", default=False,
               help="Exit 8 when a library present in old_dir is absent in new_dir.")

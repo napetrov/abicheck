@@ -39,6 +39,7 @@ from .cli import (
     _setup_verbosity,
     main,
 )
+from .cli_params import POLICY_FILE_PARAM
 
 
 def _load_required_entrypoints(
@@ -130,7 +131,7 @@ def _render_plugin_result_json(result: object) -> str:
               help="Verdict policy; plugin_abi is the natural default for "
                    "in-process host/plugin builds.")
 @click.option("--policy-file", "policy_file_path",
-              type=click.Path(exists=True, path_type=Path), default=None)
+              type=POLICY_FILE_PARAM, default=None)
 @click.option("-v", "--verbose", is_flag=True, default=False)
 def plugin_check_cmd(
     old_plugin: Path,

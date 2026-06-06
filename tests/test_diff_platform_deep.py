@@ -218,6 +218,80 @@ class TestExecutableStack:
         assert ChangeKind.EXECUTABLE_STACK in _kinds(r)
 
 
+class TestSecurityHardeningDrift:
+    """checksec-equivalent hardening regressions (G12).
+
+    All hardening kinds are COMPATIBLE_WITH_RISK by default and only fire on a
+    *weakening* transition; an improvement is never a finding.
+    """
+
+    def test_relro_weakened_full_to_partial(self):
+        old_elf = ElfMetadata(relro="full", bind_now=True)
+        new_elf = ElfMetadata(relro="partial", bind_now=False)
+        r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
+        assert ChangeKind.RELRO_WEAKENED in _kinds(r)
+        assert r.verdict == Verdict.COMPATIBLE_WITH_RISK
+
+    def test_relro_weakened_partial_to_none(self):
+        r = compare(_snap(elf=ElfMetadata(relro="partial")),
+                    _snap(elf=ElfMetadata(relro="none")))
+        assert ChangeKind.RELRO_WEAKENED in _kinds(r)
+
+    def test_relro_strengthened_is_not_a_finding(self):
+        r = compare(_snap(elf=ElfMetadata(relro="partial")),
+                    _snap(elf=ElfMetadata(relro="full", bind_now=True)))
+        assert ChangeKind.RELRO_WEAKENED not in _kinds(r)
+
+    def test_pie_disabled(self):
+        r = compare(_snap(elf=ElfMetadata(is_pie=True)),
+                    _snap(elf=ElfMetadata(is_pie=False)))
+        assert ChangeKind.PIE_DISABLED in _kinds(r)
+
+    def test_pie_enabled_is_not_a_finding(self):
+        r = compare(_snap(elf=ElfMetadata(is_pie=False)),
+                    _snap(elf=ElfMetadata(is_pie=True)))
+        assert ChangeKind.PIE_DISABLED not in _kinds(r)
+
+    def test_stack_canary_removed(self):
+        r = compare(_snap(elf=ElfMetadata(has_stack_canary=True)),
+                    _snap(elf=ElfMetadata(has_stack_canary=False)))
+        assert ChangeKind.STACK_CANARY_REMOVED in _kinds(r)
+
+    def test_fortify_source_weakened(self):
+        r = compare(_snap(elf=ElfMetadata(has_fortify_source=True)),
+                    _snap(elf=ElfMetadata(has_fortify_source=False)))
+        assert ChangeKind.FORTIFY_SOURCE_WEAKENED in _kinds(r)
+
+    def test_writable_executable_segment_introduced(self):
+        r = compare(_snap(elf=ElfMetadata(has_writable_executable_segment=False)),
+                    _snap(elf=ElfMetadata(has_writable_executable_segment=True)))
+        assert ChangeKind.WRITABLE_EXECUTABLE_SEGMENT in _kinds(r)
+
+    def test_unchanged_hardening_is_silent(self):
+        elf = ElfMetadata(relro="full", bind_now=True, is_pie=True,
+                          has_stack_canary=True, has_fortify_source=True)
+        r = compare(_snap(elf=elf), _snap(elf=elf))
+        hardening = {
+            ChangeKind.RELRO_WEAKENED, ChangeKind.PIE_DISABLED,
+            ChangeKind.STACK_CANARY_REMOVED, ChangeKind.FORTIFY_SOURCE_WEAKENED,
+            ChangeKind.WRITABLE_EXECUTABLE_SEGMENT,
+        }
+        assert not (hardening & _kinds(r))
+
+    def test_security_policy_gates_relro_to_breaking(self):
+        from pathlib import Path
+
+        from abicheck.policy_file import PolicyFile
+        pf = PolicyFile.load(Path("security"))
+        old_elf = ElfMetadata(relro="full", bind_now=True)
+        new_elf = ElfMetadata(relro="none")
+        r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
+        relro_changes = [c for c in r.changes if c.kind == ChangeKind.RELRO_WEAKENED]
+        assert relro_changes, "expected a relro_weakened change"
+        # Default verdict is RISK; the shipped security policy promotes to break.
+        assert pf.compute_verdict(relro_changes) == Verdict.BREAKING
+
+
 class TestCommonSymbolRisk:
     """STT_COMMON symbol detection (3 refs)."""
 

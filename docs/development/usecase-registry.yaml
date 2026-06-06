@@ -29,7 +29,7 @@ use_cases:
   # ── change_class ──────────────────────────────────────────────────────────
   - id: UC-CHANGE-taxonomy
     axis: change_class
-    name: ABI/API change taxonomy (145 ChangeKinds, 5-tier policy)
+    name: ABI/API change taxonomy (189 ChangeKinds, 5-tier policy)
     status: complete
     evidence:
       modules: [abicheck/change_registry.py, abicheck/checker_policy.py]
@@ -344,18 +344,23 @@ use_cases:
   - id: UC-WF-security-hardening
     axis: workflow
     name: Security-hardening drift scan (checksec across releases)
-    status: partial
-    gap: G12
-    plan: docs/development/plans/g12-security-hardening.md
+    status: complete
+    note: >
+      G12 closed. The ELF snapshot now captures the full checksec-equivalent
+      surface — RELRO (none/partial/full), BIND_NOW, PIE, stack-canary,
+      FORTIFY_SOURCE, and writable+executable (W^X) segments — alongside the
+      pre-existing executable_stack. Weakening transitions emit dedicated
+      COMPATIBLE_WITH_RISK kinds (relro_weakened, pie_disabled,
+      stack_canary_removed, fortify_source_weakened, writable_executable_segment).
+      A shipped, turnkey policy (abicheck/policies/security.yaml) is referenced
+      by name as `--policy-file security` and promotes all hardening kinds to
+      break. Validated end-to-end: real hardened-vs-unhardened .so parsing
+      (integration), the diff detectors and policy gating (unit), and the
+      built-in policy resolution.
     evidence:
-      modules: [abicheck/elf_metadata.py, abicheck/diff_platform.py, abicheck/checker_policy.py]
-      tests: [tests/test_diff_platform_deep.py]
-    next_steps: >
-      Detection of executable_stack / runpath_changed and per-kind policy gating
-      already exist (verified: executable_stack: break -> BREAKING). Remaining:
-      capture the rest of the checksec surface (RELRO/BIND_NOW/PIE/stack-canary/
-      FORTIFY/W^X) so it can be diffed, and ship a turnkey security preset /
-      policies/security.yaml so gating is discoverable rather than hand-rolled (F5).
+      modules: [abicheck/elf_metadata.py, abicheck/diff_platform.py, abicheck/checker_policy.py, abicheck/policies/security.yaml]
+      tests: [tests/test_diff_platform_deep.py, tests/test_elf_metadata_unit.py, tests/test_policy_file.py, tests/test_elf_parse_integration.py]
+      docs: [docs/user-guide/security-hardening.md]
 
   - id: UC-WF-probe-matrix
     axis: workflow

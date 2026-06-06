@@ -21,7 +21,7 @@ map across all three.
 ## Headline
 
 abicheck is **exceptionally deep on the change-taxonomy axis and comparatively
-thin on the breadth axes.** The "what changed" dimension — **183 `ChangeKind`s**
+thin on the breadth axes.** The "what changed" dimension — **189 `ChangeKind`s**
 in a 5-tier policy model, **121 calibrated example cases**, ABICC + libabigail
 parity — is essentially complete and has diminishing returns.
 
@@ -65,7 +65,7 @@ A real invocation is a point in this space:
 
 | Use case | Status | Notes |
 |---|---|---|
-| Change taxonomy | `complete` | 183 kinds; 121 cases; parity tests |
+| Change taxonomy | `complete` | 189 kinds; 121 cases; parity tests |
 | **Release recommendation (semver + SONAME)** | `complete` | **added in this change** |
 | C / C++ archetypes | `complete` | 35 C + 52 C++ example pairs |
 | Linux ELF platform | `complete` | the CI-validated baseline |
@@ -78,6 +78,7 @@ A real invocation is a point in this space:
 | Build-config matrix (`probe`) | `complete` | **G2 closed**: wired into `compare`; both CXX floor and API_DEPENDS proven e2e (`.o` `.symtab` surface capture fixed) |
 | Bundle / multi-library | `complete` | all detectors run via `compare-release`; case84 validated e2e (Linux-only by design; cross-platform → G1) |
 | Plugin (host↔plugin) | `complete` | **G5 closed**: `plugin-check` CLI + `check_plugin_host_contract` API + plugin_abi policy |
+| Security-hardening drift | `complete` | **G12 closed**: full checksec surface (RELRO/BIND_NOW/PIE/canary/FORTIFY/W^X) diffed; shipped `--policy-file security` gate |
 | Header-only / inline-only | `planned` | castxml can't emit concept bodies / ctor mangled names (G4; cases 78/105/106/111 dormant) |
 | Kernel / eBPF (BTF/CTF) | `partial` | **G6 advanced**: BTF struct-change + SYCL entrypoint-drop run through `compare` end-to-end; example fixture pending |
 | Static libraries (`.a`/`.lib`) | `by_design_excluded` | **G8 decided (option A)**: non-goal; CLI rejects archives with guidance |
@@ -110,7 +111,7 @@ manylinux wheels + their vendored stack, static archives) and surfaced these
 | **G9** | auditwheel/manylinux vendored libs never pair (content-hash sonames change every rebuild) | `UC-WF-wheel-vendored` | [g9](plans/g9-wheel-vendored-matching.md) |
 | **G10** | no manylinux glibc-floor / platform-baseline check (data captured, no detector) | `UC-TC-glibc-floor` | [g10](plans/g10-glibc-floor-check.md) |
 | **G11** | no single-binary audit/lint mode (every command is comparative) | `UC-WF-audit` | [g11](plans/g11-single-binary-audit.md) |
-| **G12** | hardening-drift detected + gateable, but thin captured surface and no security preset | `UC-WF-security-hardening` | [g12](plans/g12-security-hardening.md) |
+| **G12** | ✅ **closed** — full checksec surface (RELRO/BIND_NOW/PIE/canary/FORTIFY/W^X) captured + diffed; shipped `--policy-file security` gate | `UC-WF-security-hardening` | [g12](plans/g12-security-hardening.md) |
 | **G13** | no cross-architecture guardrail (x86-64 vs aarch64 reports false-green) | `UC-PLAT-arch-guard` | [g13](plans/g13-arch-mismatch-guard.md) |
 | **G14** | abi3 wheel compatibility lives in *imported* CPython symbols, not exports — never checked (cryptography 42→43 stays COMPATIBLE while +7 `Py*` imports appear) | `UC-WF-stable-abi-subset` | [g14](plans/g14-stable-abi-subset.md) |
 | **G15** | inline-namespace version stamp makes every symbol churn (ICU 73→74: 6288 phantom changes vs a real +34/−0) | `UC-CHANGE-inline-ns-version` | [g15](plans/g15-inline-namespace-version.md) |

@@ -155,6 +155,13 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.SYMBOL_ELF_VISIBILITY_CHANGED,
     # ELF visibility, executable stack, symbol rename batch
     ChangeKind.EXECUTABLE_STACK,
+    # Security-hardening drift (G12) — see TestSecurityHardeningDrift in
+    # tests/test_diff_platform_deep.py.
+    ChangeKind.RELRO_WEAKENED,
+    ChangeKind.PIE_DISABLED,
+    ChangeKind.STACK_CANARY_REMOVED,
+    ChangeKind.FORTIFY_SOURCE_WEAKENED,
+    ChangeKind.WRITABLE_EXECUTABLE_SEGMENT,
     ChangeKind.SYMBOL_RENAMED_BATCH,
     ChangeKind.FUNC_LIKELY_RENAMED,
     # Gap analysis: new checks

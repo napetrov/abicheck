@@ -241,6 +241,19 @@ REGISTRY = ChangeKindRegistry([
     # ── ELF security / bad practice ────────────────────────────────────────
     _E("executable_stack", _C,
        impact="Library has executable stack (PT_GNU_STACK RWE); NX protection disabled — security risk."),
+    # checksec-equivalent hardening regressions (G12). RISK by default so they
+    # surface without failing a normal compatibility gate; the shipped
+    # `security` policy (policies/security.yaml) flips them to break.
+    _E("relro_weakened", _R,
+       impact="RELRO protection weakened (e.g. full→partial); the GOT is no longer fully read-only, widening the GOT-overwrite attack surface."),
+    _E("pie_disabled", _R,
+       impact="Position-independent executable disabled; the image loads at a fixed address, defeating ASLR."),
+    _E("stack_canary_removed", _R,
+       impact="Stack-smashing protector (-fstack-protector) no longer referenced; stack-buffer overflows are no longer detected at runtime."),
+    _E("fortify_source_weakened", _R,
+       impact="_FORTIFY_SOURCE fortified libc wrappers no longer referenced; compile-time/runtime buffer-overflow checks were dropped."),
+    _E("writable_executable_segment", _R,
+       impact="A loadable segment is now both writable and executable (W^X violation); injected code in that page becomes executable."),
 
     # ── Symbol metadata drift ──────────────────────────────────────────────
     _E("symbol_binding_changed", _C,

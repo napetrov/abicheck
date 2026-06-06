@@ -248,6 +248,13 @@ library from loading in some deployment environments. Manual review is required.
 | `vtable_symbol_identity_changed` | A vtable or `typeinfo` symbol's identity changed (e.g. via a visibility or version-script change) while the class layout is stable. Cross-DSO `dynamic_cast` and exception matching can silently fail because they compare RTTI pointers, not contents. |
 | `overload_set_rerouted` | The overload set under a public name changed in a way where some overloads were removed and others added. Existing call sites that previously resolved to a removed overload now resolve to a different one (often via implicit conversion or a templated catch-all) — compiles, links, runs, but runs **different** code. |
 | `behavioural_default_changed` | A documented default value changed without altering any signature — e.g. the default device selector, the default execution backend, or the default policy. Source compiles and links unchanged; runtime behaviour silently differs. Read from the probe manifest's `defaults:` section. |
+| `relro_weakened` | RELRO protection was weakened (e.g. **full → partial** or **→ none**). The GOT is no longer fully read-only after relocation, widening the GOT-overwrite attack surface. Captured from `PT_GNU_RELRO` + `BIND_NOW`. Not a binary-compatibility break, but a hardening regression. Gate it via the shipped `security` policy (`--policy-file security`). |
+| `pie_disabled` | A position-independent **executable** became non-PIE (`DF_1_PIE` dropped on an `ET_DYN` image), so it loads at a fixed address and ASLR no longer randomizes it. Hardening regression; gate via `--policy-file security`. |
+| `stack_canary_removed` | The stack-smashing protector (`-fstack-protector`) is no longer referenced (`__stack_chk_fail` / `__stack_chk_guard` absent). Stack-buffer overflows are no longer detected at runtime. Gate via `--policy-file security`. |
+| `fortify_source_weakened` | `_FORTIFY_SOURCE` fortified libc wrappers (the `*_chk` family, e.g. `__memcpy_chk`) are no longer referenced, dropping compile-time/runtime buffer-overflow checks. Gate via `--policy-file security`. |
+| `writable_executable_segment` | A loadable segment is now simultaneously writable **and** executable (a W^X violation). Injected code in that page becomes executable. Gate via `--policy-file security`. |
+
+See the [Security-hardening drift](../user-guide/security-hardening.md) guide for how to scan for these across releases.
 
 ---
 

@@ -36,6 +36,7 @@ from .cli import (
     _setup_verbosity,
     main,
 )
+from .cli_params import POLICY_FILE_PARAM
 
 if TYPE_CHECKING:
     from .appcompat import AppRequirements
@@ -185,7 +186,7 @@ def _handle_list_required_symbols(
               type=click.Choice(["strict_abi", "sdk_vendor", "plugin_abi"], case_sensitive=True),
               default="strict_abi", show_default=True)
 @click.option("--policy-file", "policy_file_path",
-              type=click.Path(exists=True, path_type=Path), default=None)
+              type=POLICY_FILE_PARAM, default=None)
 @click.option("--scope-public-headers/--no-scope-public-headers", "scope_public_headers",
               default=True, show_default=True,
               help="Restrict findings to the public-header ABI surface (ADR-024). "

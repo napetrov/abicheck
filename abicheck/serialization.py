@@ -196,6 +196,12 @@ def _elf_from_dict(e: dict[str, Any]) -> Any:
         imports=imports,
         interpreter=e.get("interpreter", ""),
         has_executable_stack=e.get("has_executable_stack", False),
+        relro=e.get("relro", "none"),
+        bind_now=e.get("bind_now", False),
+        is_pie=e.get("is_pie", False),
+        has_stack_canary=e.get("has_stack_canary", False),
+        has_fortify_source=e.get("has_fortify_source", False),
+        has_writable_executable_segment=e.get("has_writable_executable_segment", False),
     )
 
 

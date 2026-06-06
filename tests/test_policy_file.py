@@ -194,3 +194,36 @@ def test_policy_file_symbol_version_required_added_is_risk_by_default(tmp_path: 
     assert result == Verdict.COMPATIBLE_WITH_RISK, (
         f"SYMBOL_VERSION_REQUIRED_ADDED must be COMPATIBLE_WITH_RISK, got {result}"
     )
+
+
+# ── Built-in shipped policies (G12) ───────────────────────────────────────
+
+def test_builtin_security_policy_resolves_by_name() -> None:
+    """`--policy-file security` resolves to the packaged security.yaml."""
+    from abicheck.policies import builtin_policy_names
+    from abicheck.policy_file import builtin_policy_path
+
+    assert "security" in builtin_policy_names()
+    resolved = builtin_policy_path("security")
+    assert resolved is not None and resolved.is_file()
+    assert resolved.name == "security.yaml"
+
+
+def test_builtin_security_policy_gates_hardening_to_break() -> None:
+    pf = PolicyFile.load(Path("security"))
+    assert pf.base_policy == "strict_abi"
+    for kind in (
+        ChangeKind.RELRO_WEAKENED,
+        ChangeKind.PIE_DISABLED,
+        ChangeKind.STACK_CANARY_REMOVED,
+        ChangeKind.FORTIFY_SOURCE_WEAKENED,
+        ChangeKind.WRITABLE_EXECUTABLE_SEGMENT,
+        ChangeKind.EXECUTABLE_STACK,
+    ):
+        assert pf.overrides.get(kind) == Verdict.BREAKING, kind
+        assert pf.compute_verdict([_change(kind)]) == Verdict.BREAKING
+
+
+def test_unknown_builtin_policy_name_returns_none() -> None:
+    from abicheck.policy_file import builtin_policy_path
+    assert builtin_policy_path("does-not-exist") is None
