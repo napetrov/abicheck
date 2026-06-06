@@ -186,6 +186,37 @@ def test_overloaded_functions_union_seed_types() -> None:
     assert {"A", "B"} <= reached  # neither overload's type is lost
 
 
+def test_closure_follows_unqualified_reference_to_namespaced_record() -> None:
+    # A signature names the record unqualified ("A"), but the record is defined
+    # as "ns::A". The closure must still follow ns::A's fields via the short key.
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="entry",
+                mangled="entry",
+                return_type="void",
+                params=[Param(name="a", type="A*", pointer_depth=1)],
+                visibility=Visibility.PUBLIC,
+            ),
+        ],
+        types=[
+            RecordType(
+                name="ns::A",
+                kind="class",
+                fields=[TypeField(name="inner", type="Inner")],
+            ),
+            RecordType(name="Inner", kind="struct"),
+        ],
+    )
+    g = build_surface_graph(snap)
+    reached = g.reachable_types("entry")
+    # Inner is only reachable if "A" resolves ns::A's field refs.
+    assert "Inner" in reached
+
+
 def test_virtual_bases_counted_in_public_types() -> None:
     # D : virtual B. B is reachable through D's public use, so it must be a
     # public type even though it appears only as a virtual base.

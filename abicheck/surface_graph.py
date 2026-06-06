@@ -118,7 +118,13 @@ def build_surface_graph(snap: AbiSnapshot) -> SurfaceGraph:
             refs |= _type_identifiers(base)
         for base in rec.virtual_bases:
             refs |= _type_identifiers(base)
-        type_refs[rec.name] = frozenset(refs)
+        frozen = frozenset(refs)
+        type_refs[rec.name] = frozen
+        # Index under the trailing ``::`` segment too, so a signature/typedef
+        # that names the record unqualified (``A`` inside ``ns``) can still
+        # follow its fields/bases in the closure (mirrors types_by_name).
+        if "::" in rec.name:
+            type_refs.setdefault(rec.name.rsplit("::", 1)[1], frozen)
     for alias, target in snap.typedefs.items():
         type_refs.setdefault(alias, frozenset(_type_identifiers(target)))
 
