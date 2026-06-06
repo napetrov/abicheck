@@ -251,3 +251,14 @@ def test_policy_file_param_rejects_unknown_name() -> None:
     from abicheck.cli_params import POLICY_FILE_PARAM
     with pytest.raises(click.BadParameter):
         POLICY_FILE_PARAM.convert("does-not-exist.yaml", None, None)
+
+
+def test_builtin_policy_name_not_shadowed_by_directory(tmp_path: Path, monkeypatch) -> None:
+    """A directory named like a builtin (e.g. ``security/``) in CWD must not
+    shadow the shipped policy and cause IsADirectoryError (Codex P2)."""
+    (tmp_path / "security").mkdir()
+    monkeypatch.chdir(tmp_path)
+    pf = PolicyFile.load(Path("security"))
+    # Resolved to the packaged policy, not the local directory.
+    assert pf.base_policy == "strict_abi"
+    assert pf.overrides.get(ChangeKind.RELRO_WEAKENED) == Verdict.BREAKING

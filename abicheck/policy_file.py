@@ -147,9 +147,11 @@ class PolicyFile:
                 "Install it with: pip install pyyaml"
             ) from exc
 
-        # Allow a bare built-in policy name (e.g. "security") that is not an
-        # on-disk file to resolve to the packaged policy of that name.
-        if not path.exists():
+        # Allow a bare built-in policy name (e.g. "security") to resolve to the
+        # packaged policy of that name. Gate on is_file() (not exists()) so a
+        # *directory* named e.g. "security/" in the CWD doesn't shadow the
+        # builtin and then make read_text() raise IsADirectoryError.
+        if not path.is_file():
             builtin = builtin_policy_path(str(path))
             if builtin is not None:
                 path = builtin
