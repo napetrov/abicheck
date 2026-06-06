@@ -248,6 +248,65 @@ def test_callback_abi_param() -> None:
     assert any(t.idiom == Idiom.CALLBACK_ABI for t in _tags(snap).get("set_cb", []))
 
 
+def test_callback_abi_castxml_functiontype_encoding() -> None:
+    # castxml records a direct function-pointer param as "FunctionType*".
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="set_cb",
+                mangled="set_cb",
+                return_type="void",
+                params=[Param(name="cb", type="FunctionType*", pointer_depth=1)],
+                visibility=Visibility.PUBLIC,
+            ),
+        ],
+    )
+    assert any(t.idiom == Idiom.CALLBACK_ABI for t in _tags(snap).get("set_cb", []))
+
+
+def test_callback_abi_typedefed_callback() -> None:
+    # A typedef'd callback: the param names the alias; its target is a fn ptr.
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="on_event",
+                mangled="on_event",
+                return_type="void",
+                params=[Param(name="h", type="Handler")],
+                visibility=Visibility.PUBLIC,
+            ),
+        ],
+        typedefs={"Handler": "FunctionType*"},
+    )
+    assert any(t.idiom == Idiom.CALLBACK_ABI for t in _tags(snap).get("on_event", []))
+
+
+def test_plain_pointer_param_is_not_callback() -> None:
+    # An ordinary non-const pointer param must NOT be tagged as a callback.
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="lookup",
+                mangled="lookup",
+                return_type="int",
+                params=[Param(name="key", type="Foo*", pointer_depth=1)],
+                visibility=Visibility.PUBLIC,
+            ),
+        ],
+        types=[RecordType(name="Foo", kind="struct")],
+    )
+    assert not any(t.idiom == Idiom.CALLBACK_ABI for t in _tags(snap).get("lookup", []))
+
+
 def test_recognition_is_deterministic() -> None:
     snap = AbiSnapshot(
         library="l",

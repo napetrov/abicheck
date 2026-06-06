@@ -256,14 +256,39 @@ def _recognise_create_destroy(graph: SurfaceGraph) -> dict[str, IdiomTag]:
     return out
 
 
+def _is_callback_type(type_str: str, typedefs: dict[str, str]) -> bool:
+    """True when *type_str* is (or resolves to) a function-pointer parameter.
+
+    Handles three encodings:
+    - C declarator text ``void (*)(int)`` (hand-written / non-castxml dumpers),
+    - castxml's ``FunctionType*`` rendering (``dumper_castxml._type_name`` emits
+      the bare ``FunctionType`` tag for an unnamed function type behind a
+      pointer), and
+    - a typedef'd callback, where the parameter names an alias whose target is
+      itself a function pointer (resolved through the typedef map).
+    """
+    if _FUNC_PTR_RE.search(type_str) or "FunctionType" in type_str:
+        return True
+    base = _strip_ptr(type_str)
+    seen: set[str] = set()
+    while base in typedefs and base not in seen:
+        seen.add(base)
+        target = typedefs[base]
+        if _FUNC_PTR_RE.search(target) or "FunctionType" in target:
+            return True
+        base = _strip_ptr(target)
+    return False
+
+
 def _recognise_callbacks(graph: SurfaceGraph) -> dict[str, IdiomTag]:
     out: dict[str, IdiomTag] = {}
+    typedefs = graph.snapshot.typedefs
     for fn in graph.snapshot.functions:
         if fn.name not in graph.public_roots():
             continue
         for p in fn.params:
             ptype = getattr(p, "type", "") or ""
-            if _FUNC_PTR_RE.search(ptype):
+            if _is_callback_type(ptype, typedefs):
                 out.setdefault(
                     fn.name,
                     IdiomTag(
