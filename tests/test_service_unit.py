@@ -195,6 +195,17 @@ class TestResolveInput:
                 with pytest.raises(ValidationError, match="Cannot detect format"):
                     resolve_input(p, is_elf=False)
 
+    def test_static_archive_raises_with_guidance(self, tmp_path):
+        """A `.a`/`.lib` ar archive fails deliberately with actionable guidance
+        (G8 — static libraries are a by-design non-goal), not a generic
+        'Cannot detect format' error."""
+        p = tmp_path / "libfoo.a"
+        # Minimal ar archive: magic + an (empty) member header is not required —
+        # the magic alone is what resolve_input branches on.
+        p.write_bytes(b"!<arch>\n" + b"\x00" * 16)
+        with pytest.raises(ValidationError, match="static/import library archive"):
+            resolve_input(p)
+
 
 # ── run_dump() ──────────────────────────────────────────────────────────────
 

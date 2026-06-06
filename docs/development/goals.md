@@ -117,3 +117,10 @@ Public documentation at <https://napetrov.github.io/abicheck/>:
 - Runtime instrumentation or dynamic analysis — abicheck is a static offline tool.
 - Source-level refactoring suggestions — it reports *what* broke, not how to fix your code.
 - Support for languages other than C/C++ (Rust, Go, etc.) — out of scope for now.
+- Static / import library archives (`.a`, `.lib`) — abicheck compares single
+  linkable images (shared libraries and objects), not `ar` member archives. A
+  static library has no runtime ABI surface (no SONAME, no dynamic symbol
+  table); link-time API checking over archive members is a deliberate non-goal.
+  Extract members (`ar x lib.a`) and compare the resulting objects, or the
+  shared library built from them, instead. See
+  [limitations](../concepts/limitations.md#static-import-library-archives-a-lib).

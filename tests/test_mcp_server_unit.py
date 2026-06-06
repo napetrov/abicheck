@@ -1151,6 +1151,15 @@ class TestResolveInput:
         with pytest.raises(AbicheckError, match="Cannot detect input format"):
             _resolve_input(f, [], [], "1.0", "c++")
 
+    def test_static_archive_raises_with_guidance(self, tmp_path: Path):
+        """A `.a`/`.lib` archive is rejected with the static-archive guidance
+        through the MCP resolver too (G8), not the generic 'Cannot detect input
+        format' fallback."""
+        f = tmp_path / "libfoo.a"
+        f.write_bytes(b"!<arch>\n" + b"\x00" * 16)
+        with pytest.raises(AbicheckError, match="static/import library archive"):
+            _resolve_input(f, [], [], "1.0", "c++")
+
 
 # ===================================================================
 # main()

@@ -467,6 +467,18 @@ def _resolve_input(
             "shared library named in its INPUT(...) directive directly."
         )
 
+    # Static / import library archives (.a / .lib) are member containers, not a
+    # single linkable image — a deliberate non-goal (see
+    # docs/concepts/limitations.md). Reject with actionable guidance.
+    from .binary_utils import detect_archive
+    if detect_archive(path):
+        raise click.UsageError(
+            f"'{path}' is a static/import library archive (.a/.lib), which abicheck "
+            "does not analyse — it compares single linkable images (shared libraries "
+            "and objects). Extract the members (e.g. `ar x lib.a`) and compare the "
+            "resulting object files or the shared library built from them instead."
+        )
+
     raise click.UsageError(
         f"Cannot detect format of '{path}'. "
         "Expected: ELF (.so), PE (.dll), Mach-O (.dylib), JSON snapshot, or ABICC Perl dump."
@@ -1963,6 +1975,7 @@ from . import (  # noqa: E402  — must run after `main` and helpers are defined
     cli_baseline,  # noqa: F401  — registers baseline
     cli_compare_release,  # noqa: F401  — registers compare-release
     cli_debian_symbols,  # noqa: F401  — registers debian-symbols
+    cli_plugin,  # noqa: F401  — registers plugin-check
     cli_probe,  # noqa: F401  — registers probe (run, compare)
     cli_stack,  # noqa: F401  — registers deps, stack-check
     cli_suggest,  # noqa: F401  — registers suggest-suppressions

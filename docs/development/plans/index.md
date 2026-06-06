@@ -13,18 +13,23 @@ scope**.
 | Gap | Plan | Registry use cases | Effort |
 |---|---|---|---|
 | **G1** | [Cross-platform end-to-end validation](g1-cross-platform-e2e.md) | `UC-PLAT-windows-pe`, `UC-PLAT-macos-macho` | L |
-| **G2** | [Build-config matrix → `compare`, and bundle completion](g2-build-config-and-bundle.md) | `UC-WF-probe-matrix`, `UC-WF-bundle`, `UC-TC-cxx-standard-floor` | M |
 | **G4** | [libclang header-AST extractor](g4-header-ast-extractor.md) | `UC-ARCH-header-only` | XL |
-| **G5** | [Plugin host↔plugin contract](g5-plugin-bidirectional-contract.md) | `UC-ARCH-plugin` | M |
 | **G6** | [Kernel BTF & accelerator workflows](g6-kernel-btf-and-accelerator.md) | `UC-ARCH-kernel-btf`, `UC-ARCH-sycl` | M |
-| **G8** | [Static-library stance](g8-static-libraries.md) | `UC-ARCH-static-lib` | S (decision) |
 
 > **G3** (workflow-scenario examples & Markdown/HTML coverage) is **done** —
 > see [`g3-workflow-examples-and-reporting.md`](g3-workflow-examples-and-reporting.md)
-> and the evaluation doc. **G2** is largely done: the matrix folds into
-> `compare`/`compare-release` and the bundle soname-skew is wired + validated;
-> the one residual is end-to-end `API_DEPENDS_ON_CONSUMER_ENV` (probe `.o`
-> surface capture). **G7** (release recommendation) is **done** too.
+> and the evaluation doc. **G2** ([build-config matrix](g2-build-config-and-bundle.md))
+> is **done**: the matrix folds into `compare`/`compare-release`, the bundle
+> soname-skew is wired + validated, and both `CXX_STANDARD_FLOOR_RAISED` and
+> `API_DEPENDS_ON_CONSUMER_ENV` fire end-to-end (the latter unblocked by the
+> relocatable-object `.symtab` surface capture). **G7** (release recommendation)
+> is **done** too.
+> **G8** ([static-library stance](g8-static-libraries.md)) is **decided**
+> (option A — non-goal): the CLI now detects `.a`/`.lib` archives and rejects
+> them with guidance, and `UC-ARCH-static-lib` is `by_design_excluded`.
+> **G5** ([plugin host↔plugin contract](g5-plugin-bidirectional-contract.md)) is
+> **done**: the `plugin-check` CLI + `check_plugin_host_contract` API close the
+> dlopen direction, and `UC-ARCH-plugin` is `complete`.
 
 ## How to pick up a plan
 

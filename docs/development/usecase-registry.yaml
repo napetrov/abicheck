@@ -64,16 +64,23 @@ use_cases:
   - id: UC-ARCH-plugin
     axis: archetype
     name: Plugin host↔plugin load contract (dlopen)
-    status: partial
-    gap: G5
-    plan: docs/development/plans/g5-plugin-bidirectional-contract.md
+    status: complete
+    note: >
+      G5 closed: first-class host-contract check
+      (appcompat.check_plugin_host_contract) answers "does plugin v2 still
+      satisfy host H's required entrypoints?" — the plugin-load mirror of
+      appcompat, reusing its consumer-scoping. Exposed via the `plugin-check`
+      CLI (binary or JSON-snapshot inputs, --require / --host-contract manifest)
+      and the Python API, with the plugin_abi policy as the default. Validated
+      end-to-end through snapshot-driven scenario tests and CLI tests; the
+      host-safe-vs-host-breaking distinction (a library-wide BREAKING drop the
+      host never resolves stays COMPATIBLE for the host) is asserted. A compiled
+      host/plugin binary demo in examples/ remains optional (needs the
+      integration toolchain) and is not required for the capability.
     evidence:
-      modules: [abicheck/appcompat.py]
-      tests: [tests/test_workflow_scenarios.py]
-    next_steps: >
-      Add a bidirectional host/plugin example fixture and an optional
-      host-contract check (host's required entrypoints vs plugin exports);
-      today only the plugin_abi policy + consumer-scoped scenario tests exist.
+      modules: [abicheck/appcompat.py, abicheck/cli_plugin.py]
+      tests: [tests/test_workflow_scenarios.py, tests/test_cli_plugin.py]
+      docs: [docs/user-guide/plugin-systems.md]
 
   - id: UC-ARCH-header-only
     axis: archetype
@@ -91,15 +98,20 @@ use_cases:
   - id: UC-ARCH-kernel-btf
     axis: archetype
     name: Kernel / eBPF modules (BTF/CTF)
-    status: modeled
+    status: partial
     gap: G6
     plan: docs/development/plans/g6-kernel-btf-and-accelerator.md
     evidence:
       modules: [abicheck/btf_metadata.py, abicheck/ctf_metadata.py]
-      tests: [tests/test_btf_metadata.py]
+      tests: [tests/test_btf_metadata.py, tests/test_workflow_kernel_accel.py]
+      docs: [docs/user-guide/kernel-btf.md]
     next_steps: >
-      Add a BTF compare scenario (kernel struct gains a field) and a documented
-      "module vs vmlinux BTF" workflow; parsers exist but no end-to-end flow.
+      The "module vs vmlinux BTF" workflow is now exercised end-to-end through
+      compare (real BTF bytes → parse_btf_from_bytes → layout detectors →
+      BREAKING) in tests/test_workflow_kernel_accel.py, and documented in
+      docs/user-guide/kernel-btf.md. Remaining: a committed BTF-blob example
+      under examples/ with a ground_truth.json entry and a pahole/bpftool-based
+      integration fixture; CTF has no workflow scenario yet.
 
   - id: UC-ARCH-sycl
     axis: archetype
@@ -109,19 +121,34 @@ use_cases:
     plan: docs/development/plans/g6-kernel-btf-and-accelerator.md
     evidence:
       modules: [abicheck/sycl_metadata.py, abicheck/diff_sycl.py]
-      tests: [tests/test_diff_sycl.py]
+      tests: [tests/test_diff_sycl.py, tests/test_workflow_kernel_accel.py]
       examples: [examples/case82_sycl_overload_set_removed]
-    next_steps: Wire SYCL plugin detection into a workflow-level scenario; CUDA deferred.
+      docs: [docs/user-guide/kernel-btf.md]
+    next_steps: >
+      SYCL plugin-interface detection is now driven through the standard
+      compare + report path at the workflow level (a dropped PI entrypoint →
+      BREAKING, reaching the JSON/Markdown reports) in
+      tests/test_workflow_kernel_accel.py. Remaining: a UR-adapter workflow
+      fixture; CUDA device code (.cubin/PTX) stays deferred.
 
   - id: UC-ARCH-static-lib
     axis: archetype
     name: Static libraries (.a / .lib)
-    status: planned
-    gap: G8
-    plan: docs/development/plans/g8-static-libraries.md
-    next_steps: >
-      Decide scope: either iterate `ar` archive members for link-time API
-      checking, or document static libraries as an explicit non-goal.
+    status: by_design_excluded
+    note: >
+      G8 decision (option A): static/import library archives are a non-goal.
+      abicheck compares single linkable images (shared libraries + objects); an
+      `ar` archive (.a / .lib, magic `!<arch>\n`) has no runtime ABI surface
+      (no SONAME, no dynamic symbol table, no symbol versioning). The CLI now
+      detects archives and fails with actionable guidance (extract members or
+      compare the shared library) instead of a misleading "unknown format"
+      error. See docs/development/goals.md (Non-goals),
+      docs/concepts/limitations.md, and the plan
+      docs/development/plans/g8-static-libraries.md.
+    evidence:
+      modules: [abicheck/binary_utils.py, abicheck/service.py]
+      tests: [tests/test_compare_input_modes.py, tests/test_service_unit.py]
+      docs: [docs/concepts/limitations.md]
 
   - id: UC-ARCH-ffi-consumers
     axis: archetype
@@ -243,20 +270,21 @@ use_cases:
   - id: UC-WF-probe-matrix
     axis: workflow
     name: Build-configuration matrix (probe harness)
-    status: partial
-    gap: G2
-    plan: docs/development/plans/g2-build-config-and-bundle.md
+    status: complete
+    note: >
+      G2 closed. Matrix findings fold into `compare`/`compare-release` via
+      --probe-matrix-old/--probe-matrix-new. Both build-config kinds are now
+      proven end-to-end through the mainline command:
+      CXX_STANDARD_FLOOR_RAISED and — after the relocatable-object symbol-surface
+      fix — API_DEPENDS_ON_CONSUMER_ENV. parse_elf_metadata now falls back to
+      `.symtab` when a `.o` has no `.dynsym`, so a probe object's defined global
+      symbols are captured and the env-dependence detector fires over the real
+      compiled surface (tests/test_probe_examples.py +
+      tests/test_elf_object_surface.py).
     evidence:
-      modules: [abicheck/probe_harness.py, abicheck/diff_build_config.py]
-      tests: [tests/test_probe_harness.py, tests/test_probe_examples.py]
+      modules: [abicheck/probe_harness.py, abicheck/diff_build_config.py, abicheck/elf_metadata.py]
+      tests: [tests/test_probe_harness.py, tests/test_probe_examples.py, tests/test_elf_object_surface.py]
       examples: [examples/probes/onedpl.yaml, examples/probes/cxx_standard.yaml, examples/probes/feature_macro.yaml]
-    next_steps: >
-      Matrix findings now fold into `compare`/`compare-release` via
-      --probe-matrix-old/--probe-matrix-new (CXX_STANDARD_FLOOR_RAISED is proven
-      end-to-end through the mainline command in tests/test_probe_examples.py).
-      Remaining gap: capturing a probe's *symbol surface* from a relocatable .o
-      so API_DEPENDS_ON_CONSUMER_ENV fires end-to-end too (the dumper currently
-      reads .dynsym, which a .o lacks); the detector itself is unit-tested.
 
   # ── reporting ─────────────────────────────────────────────────────────────
   - id: UC-REP-json

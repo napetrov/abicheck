@@ -430,8 +430,30 @@ class TestParseFull:
         assert len(meta.symbols) == 1
         assert meta.symbols[0].name == "good_fn"
 
-    def test_symtab_section_not_dynsym_ignored(self):
-        """SymbolTableSection with name != '.dynsym' is not parsed."""
+    def test_symtab_ignored_when_dynsym_present(self):
+        """When a `.dynsym` exists (a normal DSO), `.symtab` is not parsed —
+        `.dynsym` is the authoritative export surface."""
+        from elftools.elf.sections import SymbolTableSection
+
+        dynsym = MagicMock(spec=SymbolTableSection)
+        dynsym.name = ".dynsym"
+        dynsym.iter_symbols.return_value = []
+        symtab = MagicMock(spec=SymbolTableSection)
+        symtab.name = ".symtab"
+        symtab.iter_symbols.return_value = []
+
+        elf = MagicMock()
+        elf.iter_sections.return_value = [dynsym, symtab]
+
+        f = MagicMock()
+        with patch("abicheck.elf_metadata.ELFFile", return_value=elf):
+            _parse(f, Path("test.so"))
+
+        symtab.iter_symbols.assert_not_called()  # .dynsym wins
+
+    def test_symtab_parsed_as_fallback_without_dynsym(self):
+        """A relocatable `.o` has no `.dynsym`; `.symtab` is parsed as the
+        fallback symbol surface (G2 — probe object-file capture)."""
         from elftools.elf.sections import SymbolTableSection
 
         symtab = MagicMock(spec=SymbolTableSection)
@@ -443,10 +465,10 @@ class TestParseFull:
 
         f = MagicMock()
         with patch("abicheck.elf_metadata.ELFFile", return_value=elf):
-            meta = _parse(f, Path("test.so"))
+            meta = _parse(f, Path("probe.o"))
 
-        symtab.iter_symbols.assert_not_called()
-        assert meta.symbols == []
+        symtab.iter_symbols.assert_called()  # fallback parses .symtab
+        assert meta.symbols == []  # the mock yields no symbols
 
 
 # ── Constant correctness ────────────────────────────────────────────────

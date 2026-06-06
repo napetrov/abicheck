@@ -31,8 +31,11 @@ from typing import TYPE_CHECKING
 
 from .checker import Change, DiffResult, compare
 from .checker_policy import ChangeKind, Verdict, compute_verdict
+from .model import AbiSnapshot, Visibility
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from .policy_file import PolicyFile
     from .suppression import SuppressionList
 
@@ -78,6 +81,33 @@ class AppCompatResult:
 
     # Coverage
     symbol_coverage: float = 100.0  # % of app's required symbols present in new lib
+
+
+@dataclass
+class PluginHostContractResult:
+    """Result of checking a plugin upgrade against a host's load contract.
+
+    The dlopen() failure mode is two-sided: a host resolves a fixed set of
+    entry-point symbols (``dlsym``) from each plugin it loads. This is the
+    plugin-load direction of :class:`AppCompatResult` — "does plugin v2 still
+    satisfy host H's required entrypoints?" (ADR-005 / gap G5).
+    """
+
+    old_plugin: str
+    new_plugin: str
+
+    #: entry-point symbols the host resolves from the plugin (the contract).
+    required_entrypoints: set[str] = field(default_factory=set)
+    #: required entrypoints the *new* plugin no longer exports → host load break.
+    missing_entrypoints: list[str] = field(default_factory=list)
+    #: library diff changes that touch a required entrypoint.
+    breaking_for_host: list[Change] = field(default_factory=list)
+    #: full plugin v1→v2 diff (for reference / reporting).
+    full_diff: DiffResult | None = None
+    #: host-scoped verdict (BREAKING when an entrypoint is dropped/incompatible).
+    verdict: Verdict = Verdict.COMPATIBLE
+    #: % of the host's required entrypoints still provided by the new plugin.
+    coverage: float = 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -790,4 +820,110 @@ def check_against(
         full_diff=None,
         verdict=verdict,
         symbol_coverage=coverage,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Plugin host↔plugin load contract (the dlopen direction) — gap G5
+# ---------------------------------------------------------------------------
+
+def _resolvable_symbol_names(name: str, mangled: str | None) -> set[str]:
+    """The names ``dlsym`` could actually resolve for one exported entity.
+
+    ``dlsym`` resolves the *linker* symbol — the mangled name. The source
+    ``name`` is only resolvable when it *is* the linker symbol (``extern "C"``
+    or C, where ``mangled == name``); a demangled C++ name like ``foo(int)`` is
+    NOT a dlsym key and must not count as satisfying a host contract. When no
+    mangled name is recorded, fall back to ``name`` as the best available key.
+    """
+    if mangled:
+        names = {mangled}
+        if name == mangled:
+            names.add(name)
+        return names
+    return {name}
+
+
+#: Visibilities that correspond to a symbol actually exported from the binary.
+#: PUBLIC is the header/DWARF-aware default; ELF_ONLY is how a symbols-only dump
+#: (a stripped binary with no headers/DWARF — the common `plugin-check old.so
+#: new.so` case) represents an exported `.dynsym` entry. HIDDEN is not exported.
+_EXPORTED_VISIBILITIES: frozenset[Visibility] = frozenset(
+    {Visibility.PUBLIC, Visibility.ELF_ONLY}
+)
+
+
+def _snapshot_export_names(snap: AbiSnapshot) -> set[str]:
+    """Linker-symbol names a host could resolve from a plugin via ``dlsym``.
+
+    Exported functions and variables, keyed by their mangled (linker) symbol —
+    plus the plain source name only for ``extern "C"`` / C symbols where it
+    equals the mangled name. A demangled C++ name is deliberately excluded so a
+    contract listing it is reported as *missing*, matching ``dlsym`` reality.
+
+    Both header/DWARF-aware (``PUBLIC``) and symbols-only (``ELF_ONLY``) exports
+    count: running ``plugin-check`` on real stripped binaries without headers is
+    the common case, and there every export is ``ELF_ONLY``.
+    """
+    names: set[str] = set()
+    for fn in snap.functions:
+        if fn.visibility in _EXPORTED_VISIBILITIES:
+            names |= _resolvable_symbol_names(fn.name, fn.mangled)
+    for var in snap.variables:
+        if var.visibility in _EXPORTED_VISIBILITIES:
+            names |= _resolvable_symbol_names(var.name, getattr(var, "mangled", None))
+    return names
+
+
+def check_plugin_host_contract(
+    old_plugin: AbiSnapshot,
+    new_plugin: AbiSnapshot,
+    required_entrypoints: Iterable[str],
+    *,
+    suppression: SuppressionList | None = None,
+    policy: str = "strict_abi",
+    policy_file: PolicyFile | None = None,
+) -> PluginHostContractResult:
+    """Check whether a plugin upgrade still satisfies a host's load contract.
+
+    Given two snapshots of a plugin (old/new) and the set of entry-point
+    symbols a *host* resolves from it (a manifest, or symbols a host binary
+    exports back to the plugin), report whether the new plugin still satisfies
+    the host — the plugin-load mirror of :func:`check_appcompat`.
+
+    The host's required entrypoints are exactly the "undefined symbols" it
+    resolves from the plugin, so this reuses appcompat's consumer-scoping
+    (:func:`_partition_app_changes`) and verdict logic
+    (:func:`_compute_appcompat_verdict`): a dropped or incompatible entrypoint
+    is ``BREAKING`` for the host even when the wider library verdict differs.
+    """
+    required = set(required_entrypoints)
+
+    diff = compare(
+        old_plugin, new_plugin,
+        suppression=suppression, policy=policy, policy_file=policy_file,
+    )
+
+    new_exports = _snapshot_export_names(new_plugin)
+    missing = sorted(e for e in required if e not in new_exports)
+
+    # Reuse the app-scoping machinery: the contract is a set of required
+    # ("undefined") symbols, identical in shape to an app's symbol needs.
+    host_reqs = AppRequirements(undefined_symbols=set(required))
+    breaking_for_host, _ = _partition_app_changes(diff, host_reqs)
+
+    verdict = _compute_appcompat_verdict(
+        missing, [], breaking_for_host, len(required), policy, policy_file,
+    )
+    coverage = _compute_symbol_coverage(new_exports, len(required), len(missing))
+
+    return PluginHostContractResult(
+        old_plugin=old_plugin.library or "old",
+        new_plugin=new_plugin.library or "new",
+        required_entrypoints=required,
+        missing_entrypoints=missing,
+        breaking_for_host=breaking_for_host,
+        full_diff=diff,
+        verdict=verdict,
+        coverage=coverage,
     )

@@ -75,12 +75,12 @@ A real invocation is a point in this space:
 | MCP server | `complete` | unit-tested (mocks, Linux) |
 | Reporting: JSON/SARIF/JUnit | `complete` | versioned schema + 34 SARIF / 55 JUnit tests |
 | Reporting: Markdown/HTML | `complete` | structural coverage across verdict tiers + sections + escaping (G3 done) |
-| Build-config matrix (`probe`) | `partial` | wired into `compare` via `--probe-matrix-old/new`; CXX floor proven e2e; API_DEPENDS still blocked on `.o` surface capture (G2) |
+| Build-config matrix (`probe`) | `complete` | **G2 closed**: wired into `compare`; both CXX floor and API_DEPENDS proven e2e (`.o` `.symtab` surface capture fixed) |
 | Bundle / multi-library | `complete` | all detectors run via `compare-release`; case84 validated e2e (Linux-only by design; cross-platform → G1) |
-| Plugin (host↔plugin) | `partial` | policy + scenario tests; no bidirectional CLI/fixture (G5) |
+| Plugin (host↔plugin) | `complete` | **G5 closed**: `plugin-check` CLI + `check_plugin_host_contract` API + plugin_abi policy |
 | Header-only / inline-only | `planned` | castxml can't emit concept bodies / ctor mangled names (G4; cases 78/105/106/111 dormant) |
-| Kernel / eBPF (BTF/CTF) | `modeled` | parsers exist; no workflow/example (G6) |
-| Static libraries (`.a`/`.lib`) | `planned` | scope decision pending (G8) |
+| Kernel / eBPF (BTF/CTF) | `partial` | **G6 advanced**: BTF struct-change + SYCL entrypoint-drop run through `compare` end-to-end; example fixture pending |
+| Static libraries (`.a`/`.lib`) | `by_design_excluded` | **G8 decided (option A)**: non-goal; CLI rejects archives with guidance |
 | FFI consumers (Rust/Go/Python) | `by_design_excluded` | C ABI covered; other languages a stated non-goal |
 
 ---
@@ -90,13 +90,13 @@ A real invocation is a point in this space:
 | ID | Gap | Code | Tests | Examples |
 |---|---|:--:|:--:|:--:|
 | **G1** | Cross-platform is aspirational, not validated (Win/macOS) | ARM64 AAPCS, MSVC mangling fidelity | PE/Mach-O **e2e** in CI | label tags honestly |
-| **G2** | Build-config matrix siloed in `probe` | ✅ folded into `compare`/`compare-release` (`--probe-matrix-old/new`); bundle soname-skew wired | ✅ CXX floor e2e + case84 bundle e2e (`API_DEPENDS` e2e still pending `.o` surface capture) | ✅ `feature_macro.yaml`, `cxx_standard.yaml` |
+| **G2** | Build-config matrix siloed in `probe` | ✅ folded into `compare`/`compare-release` (`--probe-matrix-old/new`); bundle soname-skew wired; `.o` `.symtab` surface capture | ✅ CXX floor + API_DEPENDS e2e + case84 bundle e2e | ✅ `feature_macro.yaml`, `cxx_standard.yaml` |
 | **G3** | Catalog only exercises `compare`; Markdown/HTML test coverage thin | — | ✅ appcompat-from-catalog + stack-check sysroot e2e + Markdown/HTML structural coverage | scenarios asserted in new tests |
 | **G4** | Header-only / inline-only (detector frontier) | libclang header-AST extractor | unblock cases 78/105/106/111 | reuse dormant fixtures |
-| **G5** | Plugin host↔plugin contract is one-directional | optional host-contract check | bidirectional scenario | host/plugin fixture |
-| **G6** | Kernel/eBPF use case is parser-only | small workflow glue | BTF compare scenario | vmlinux/module fixture |
+| **G5** | Plugin host↔plugin contract is one-directional | ✅ `check_plugin_host_contract` + `plugin-check` CLI | ✅ scenario + CLI tests | compiled host/plugin demo optional |
+| **G6** | Kernel/eBPF use case is parser-only | ✅ BTF/SYCL run through `compare` | ✅ workflow scenarios (real BTF parse) | committed BTF-blob example pending |
 | **G7** | No semver-bump recommendation | recommender + report wiring | mapping + integration | reuse cases |
-| **G8** | Static libraries undocumented | (optional `ar` iteration) | — | document the stance |
+| **G8** | Static libraries undocumented | ✅ archive detection + clear error path | ✅ unit (archive → guidance error) | ✅ documented non-goal (goals + limitations) |
 
 ### Answer to the four driving questions
 
@@ -161,13 +161,26 @@ Summary (see the plans for detail):
 - **G1 (CI):** add Windows (MinGW) and macOS smoke jobs that run `compare` /
   `appcompat` on a handful of native PE/Mach-O fixtures; promote the most
   reliable `known_gap` cases to validated once green.
-- **G2:** an opt-in `compare --probe-spec spec.yaml` that runs the matrix
-  harness and folds `API_DEPENDS_ON_CONSUMER_ENV` /
-  `CXX_STANDARD_FLOOR_RAISED` / `BEHAVIOURAL_DEFAULT_CHANGED` into the verdict.
+- **G2 (closed):** matrix findings fold into `compare`/`compare-release` via
+  `--probe-matrix-old/--probe-matrix-new`. Both `CXX_STANDARD_FLOOR_RAISED` and
+  `API_DEPENDS_ON_CONSUMER_ENV` now fire end-to-end through the mainline command
+  — the latter unblocked by capturing a relocatable probe `.o`'s symbol surface
+  (`parse_elf_metadata` falls back to `.symtab` when there is no `.dynsym`).
 - **G4:** a libclang-based header-AST extractor alongside castxml to unblock
   concept tightening, hidden friends, and user-ctor mangled names (cases
   78/105/106/111).
-- **G6:** a BTF fixture pair (kernel struct gains a field) exercised through
-  `compare`, plus a documented "module vs `vmlinux` BTF" workflow.
-- **G8:** decide whether `.a`/`.lib` archive iteration is in scope; document the
-  outcome either way.
+- **G6 (advanced):** the BTF struct-change and SYCL entrypoint-drop workflows
+  now run through `compare` end-to-end (real BTF bytes parsed by
+  `parse_btf_from_bytes`; SYCL findings reach the JSON/Markdown reports) in
+  `tests/test_workflow_kernel_accel.py`, documented in
+  [`user-guide/kernel-btf.md`](../user-guide/kernel-btf.md). Remaining: a
+  committed BTF-blob example under `examples/` with a `ground_truth.json` entry
+  (and a `pahole`/`bpftool` integration fixture); CTF and a UR-adapter workflow
+  are still open.
+
+**G8 is now decided (option A — done):** static/import library archives are a
+non-goal. `abicheck/binary_utils.py::detect_archive` recognises the `!<arch>\n`
+magic and `service.resolve_input` rejects `.a`/`.lib` inputs with actionable
+guidance; the stance is documented in [`goals.md`](goals.md) (Non-goals) and
+[`concepts/limitations.md`](../concepts/limitations.md), and the registry entry
+is `by_design_excluded`.
