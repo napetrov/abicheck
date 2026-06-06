@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -187,11 +188,11 @@ class TarExtractor:
         tar_path = staging / "payload.tar"
         try:
             try:
-                import zstandard
+                import zstandard as zstandard_mod
             except ImportError:
-                zstandard = None
-            if zstandard is not None:
-                dctx = zstandard.ZstdDecompressor()
+                zstandard_mod = None
+            if zstandard_mod is not None:
+                dctx = zstandard_mod.ZstdDecompressor()
                 with open(zst_path, "rb") as compressed, open(tar_path, "wb") as out:
                     with dctx.stream_reader(compressed) as reader:
                         shutil.copyfileobj(reader, out)
@@ -562,9 +563,27 @@ _ELF_MAGIC = b"\x7fELF"
 _ET_DYN = 3
 # Program header type PT_INTERP (interpreter segment — present in executables, absent in DSOs)
 _PT_INTERP = 3
+_SO_NAME_RE = re.compile(r"^(?P<stem>.+)\.so(?P<version>(?:\.[A-Za-z0-9]+)*)$", re.IGNORECASE)
+_NUMERIC_SO_VERSION_RE = re.compile(r"(?:\.\d+)+$")
+_ALNUM_SO_VERSION_RE = re.compile(r"(?:\.[A-Za-z0-9]+)+$")
 
 
-def _has_interp_segment(f: IO[bytes], ei_class: int, byte_order: str) -> bool:
+def _has_shared_object_name(path: Path | str) -> bool:
+    """Return True for .so or versioned SONAME-style filenames."""
+    match = _SO_NAME_RE.match(Path(path).name)
+    if match is None:
+        return False
+    version = match.group("version")
+    if not version:
+        return True
+    if _NUMERIC_SO_VERSION_RE.fullmatch(version):
+        return True
+    return match.group("stem").lower().startswith("lib") and (
+        _ALNUM_SO_VERSION_RE.fullmatch(version) is not None
+    )
+
+
+def _has_interp_segment(f: IO[bytes], ei_class: int, byte_order: str) -> bool | None:
     """Check if an ELF file has a PT_INTERP program header (i.e. is an executable)."""
     try:
         if ei_class == 1:  # 32-bit
@@ -584,6 +603,14 @@ def _has_interp_segment(f: IO[bytes], ei_class: int, byte_order: str) -> bool:
 
         if e_phoff == 0 or e_phnum == 0:
             return False
+        expected_phentsize = 32 if ei_class == 1 else 56
+        # The program-header entry size is fixed by ELF class (32 bytes for
+        # ELFCLASS32, 56 for ELFCLASS64). Any mismatch — undersized *or*
+        # oversized — means the layout we read p_type from at fixed offsets is
+        # not trustworthy, so treat it as inconclusive rather than risk
+        # misclassifying the file.
+        if e_phentsize != expected_phentsize:
+            return None
 
         for i in range(e_phnum):
             f.seek(e_phoff + i * e_phentsize)
@@ -592,7 +619,7 @@ def _has_interp_segment(f: IO[bytes], ei_class: int, byte_order: str) -> bool:
                 return True
         return False
     except (OSError, struct.error):
-        return False
+        return None
 
 
 def _is_elf_shared_object(path: Path) -> bool:
@@ -615,7 +642,17 @@ def _is_elf_shared_object(path: Path) -> bool:
 
             # Distinguish PIE executables from true shared objects:
             # executables have a PT_INTERP segment, shared objects don't.
-            return not _has_interp_segment(f, ei_class, byte_order)
+            has_interp = _has_interp_segment(f, ei_class, byte_order)
+            if has_interp is None:
+                return False
+            if has_interp:
+                # A few distro runtime DSOs are ET_DYN, named like libraries,
+                # and intentionally carry PT_INTERP so they can be invoked
+                # directly (for example Ubuntu's libcap.so.2.66).  Keep the
+                # PIE-executable guard for app-like filenames, but do not drop
+                # real versioned .so files from package discovery.
+                return _has_shared_object_name(path)
+            return True
     except (OSError, struct.error):
         return False
 
@@ -641,6 +678,7 @@ def discover_shared_libraries(
     for dirpath, _dirnames, filenames in os.walk(extract_dir, followlinks=False):
         for fn in filenames:
             fp = Path(dirpath) / fn
+            elf_path = fp
             if fp.is_symlink():
                 # Follow symlinks only to check the target, don't add symlinks themselves
                 # unless the target is a real shared object
@@ -648,10 +686,11 @@ def discover_shared_libraries(
                     real = fp.resolve()
                     if not real.exists():
                         continue
+                    elf_path = real
                 except OSError:
                     continue
 
-            if not _is_elf_shared_object(fp):
+            if not _is_elf_shared_object(elf_path):
                 continue
 
             # Filter by path convention unless --include-private-dso
@@ -666,10 +705,9 @@ def discover_shared_libraries(
                     rel_parts == d or rel_parts.startswith(d + "/")
                     for d in _PUBLIC_LIB_DIRS
                 )
-                # Also accept files with .so in name at any depth as a fallback
-                # for flat directory layouts (e.g. plain tar archives)
-                name_lower = fn.lower()
-                has_so_ext = ".so" in name_lower
+                # Also accept files with a .so suffix/versioned SONAME at any
+                # depth as a fallback for flat directory layouts.
+                has_so_ext = _has_shared_object_name(fn)
                 if not in_public and not has_so_ext:
                     continue
 

@@ -276,6 +276,23 @@ class TestBug5PieDetection:
         _make_elf_pie_with_interp(exe)
         assert _is_elf_shared_object(exe) is False
 
+    def test_oversized_phentsize_is_inconclusive(self, tmp_path: Path):
+        """A mismatched (oversized) e_phentsize must reject, not misclassify.
+
+        The program-header entry size is fixed by ELF class (56 for ELFCLASS64).
+        An oversized value means the fixed-offset p_type reads are unreliable, so
+        _has_interp_segment returns None and _is_elf_shared_object returns False
+        rather than guessing.
+        """
+        from abicheck.package import _is_elf_shared_object
+        so = tmp_path / "libweird.so"
+        _make_elf_pie_with_interp(so)
+        data = bytearray(so.read_bytes())
+        # e_phentsize is a 2-byte field at offset 54 in a 64-bit ELF header.
+        struct.pack_into("<H", data, 54, 64)  # oversized (should be 56)
+        so.write_bytes(bytes(data))
+        assert _is_elf_shared_object(so) is False
+
     def test_static_exec_et_exec_is_not_shared_object(self, tmp_path: Path):
         from abicheck.package import _is_elf_shared_object
         exe = tmp_path / "app"
