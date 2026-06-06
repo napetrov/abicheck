@@ -197,19 +197,32 @@ saw `noexcept`, so it omitted exception landing pads, cleanup frames, and
 into a frame with no unwinding metadata and `std::terminate()` fires
 unconditionally — every destructor skipped, every `catch` bypassed.
 
-The `_WITH_RISK` tier exists for exactly this shape: binary-linkable,
-source-recompilable, but **semantically unsafe** for binaries built under the
-stricter old contract.
+This is the deployment-risk shape: binary-linkable, source-recompilable, but
+**semantically unsafe** for binaries built under the stricter old contract — the
+kind of change that merits review rather than a silent pass.
+
+!!! note "How abicheck sees it"
+    abicheck classifies the bare change kinds `func_noexcept_removed` /
+    `func_noexcept_added` as 🟢 **COMPATIBLE** — on an ordinary member or free
+    function they alter neither layout nor the mangled symbol. case15 reaches
+    🟡 **COMPATIBLE_WITH_RISK** because *introducing `throw`* also raises a
+    libstdc++ version requirement, reported separately as
+    `symbol_version_required_added` (a RISK-tier deployment signal). So the risk
+    verdict is driven by that version-requirement finding, **not** by the
+    `noexcept` kind itself: a pure toggle with no new version requirement
+    classifies COMPATIBLE. The unwinding hazard described above is the *reason*
+    the deployment signal is worth heeding — not something abicheck infers from
+    the `noexcept` change alone.
 
 !!! note "The C++17 subtlety"
     C++17 made `noexcept` part of the function *type*, but under Itanium that
     only changes mangling where the *full function-type* is encoded — function
     pointers, references to functions, and templates parameterized by function
     type — **not** the `<bare-function-type>` used for ordinary member/free
-    symbols. So toggling `noexcept` on a plain declaration stays `_WITH_RISK`
-    for those direct symbols, but the **same change escalates to 🔴 BREAKING**
-    for callers that pass the function through a pointer or template where the
-    `E` tag now participates in the mangled name.
+    symbols. So toggling `noexcept` on a plain declaration leaves the direct
+    symbol unchanged (abicheck: 🟢 COMPATIBLE), but the **same change escalates
+    to 🔴 BREAKING** for callers that pass the function through a pointer or
+    template where the `E` tag now participates in the mangled name.
 
 ---
 
