@@ -291,8 +291,8 @@ classification — structurally the same insertion point and the same
 Each rule takes a `Change` + both `SurfaceGraph`s and may adjust the finding's
 **own** `confidence` (a *new* per-finding `Change.confidence` field — see the
 data-model table; this is distinct from the existing verdict-level
-`DiffResult.confidence`) and/or move the finding between categories, **always**
-writing a `modulation_reason` and the rule id:
+`DiffResult.confidence`) and/or change its **effective category** (see the
+mechanism below), **always** writing a `modulation_reason` and the rule id:
 
 | Rule | Effect | Guard (anti-hiding) |
 |------|--------|---------------------|
@@ -300,6 +300,37 @@ writing a `modulation_reason` and the rule id:
 | **Versioned-addition** | A near-duplicate symbol matching the inferred version scheme (D2.3) → treat as managed addition, not accidental churn. | Only suppresses the *noise* classification; the addition is still reported as `FUNC_ADDED`. |
 | **Anti-pattern raise** | A change *on* a `POLYMORPHIC_TYPE_NON_VIRTUAL_DTOR` / STL-by-value surface → raise confidence / annotate elevated risk. | Pure raise; cannot hide. |
 | **Confidence floor by tier** | Modulation that *demotes* is only permitted at `HEADER_AWARE` evidence tier (idioms need the AST). At `ELF_ONLY`/`DWARF_AWARE`, demotion is disabled; the finding stands. | Demotion requires the evidence that justified it. |
+
+**Mechanism — per-finding effective category (the missing link).** Today a
+finding's category is derived *purely from its `kind`*: the
+`DiffResult.breaking`/`source_breaks`/`compatible`/`risk` properties filter
+`c.kind in <set>` against `_effective_kind_sets()`, and the existing
+`policy_file.overrides` path can only move a **whole `ChangeKind`** between
+sets, policy-wide — it cannot demote *one* `TYPE_SIZE_CHANGED` finding while
+leaving its siblings breaking. So a modulation that merely sets a confidence
+field would **not** change reports or the exit code; the opaque-layout demotion
+would be cosmetic. This ADR therefore adds a **per-finding override**:
+
+- New field `Change.effective_verdict: Verdict | None = None` (default `None` =
+  "classify by `kind`", i.e. today's behaviour exactly).
+- The four `DiffResult` classification properties and `compute_verdict()` (the
+  exit-code source) are changed to bucket each `Change` by
+  `change.effective_verdict` **when set**, else fall back to kind-set
+  membership. This is the per-finding analogue of the existing kind-level
+  `_effective_kind_sets()` move, evaluated *after* it.
+- Precedence / anti-hiding: the existing `frozen_namespace_violation` guard
+  (`checker_types.Change`) and any policy that blocks downgrades take
+  precedence — a pattern demotion can **never** override a frozen-namespace
+  break. A demotion that would lower an `abi_breaking` finding requires the
+  idiom to hold on both snapshots, is gated to `HEADER_AWARE`, and is logged at
+  WARN in the `pattern_modulations` ledger (D4.3). The demoted finding stays in
+  `DiffResult.changes` (visible in every report) with its `effective_verdict`,
+  `modulation_reason`, and `modulation_rule` recorded — it is re-categorised in
+  place, never moved to a hidden list or silently dropped.
+
+This keeps the demotion **auditable and reversible** (`--no-pattern-verdicts`
+restores pure kind-based classification) and avoids doubling the `ChangeKind`
+enum with `*_OPAQUE` compatible-variant kinds (see Alternatives).
 
 #### D4.2 Idiom-aware rename detection
 
@@ -333,7 +364,7 @@ Every modulation is disclosed exactly like the ADR-024 surface ledger:
 | Surface | Change | Compatibility |
 |---------|--------|---------------|
 | `model.py` | `AbiSnapshot.idioms`, `.conventions`; helper `RecordType` opaque/handle flags if not already derivable. | Additive; schema bump (ADR-015). Old snapshots → empty → safe no-op. |
-| `checker_types.py` | `Change.confidence: Confidence` (reusing the existing `checker_policy.Confidence` enum, default `HIGH`) — a **per-finding** trust level, distinct from the existing **verdict-level** `DiffResult.confidence`; plus `Change.modulation_reason: str \| None`, `.modulation_rule: str \| None`. | Additive dataclass fields with defaults; A4 (D4.1) reads/writes the per-finding `confidence`, reporters surface it alongside the existing `DiffResult` one. |
+| `checker_types.py` | `Change.confidence: Confidence` (reusing `checker_policy.Confidence`, default `HIGH`) — per-finding trust, distinct from verdict-level `DiffResult.confidence`; `Change.effective_verdict: Verdict \| None = None` — per-finding category override (default `None` = classify by `kind`); plus `Change.modulation_reason: str \| None`, `.modulation_rule: str \| None`. **Behavioural change:** the `DiffResult.breaking`/`source_breaks`/`compatible`/`risk` properties and `compute_verdict()` must bucket by `effective_verdict` when set, else by kind-set membership (D4.1 mechanism). | Additive dataclass fields with safe defaults; the classification change is a no-op while every `effective_verdict` is `None` (i.e. with `--no-pattern-verdicts` or pre-Phase-3). Covered by the anti-hiding tests (§Validation). |
 | `checker_policy.py` | New `ChangeKind`s (A1.2, A2.2, A3.2) each placed in exactly one of `BREAKING/API_BREAK/COMPATIBLE/RISK` (import-time partition assertion enforces it). | Enum grows; follow the 4-step `/CLAUDE.md` procedure. |
 | `surface.py` | Extract reachability helper into `surface_graph.py`, import back. | Internal refactor, no behaviour change. |
 | New modules | `surface_graph.py`, `idioms.py`, `pattern_verdicts.py`, `cli_surface.py`. | Each *targeted* at < 600 lines; the AI-readiness file-size gate warns at 1500 / errors at 2000, so `idioms.py` (7 recognisers + convention inference) and `pattern_verdicts.py` (4 rules + ledger) should be split (e.g. one recogniser-registry module + a rules module) before they approach the soft limit, the same way `diff_platform.py` spun out `diff_platform_templates.py`. |
@@ -414,6 +445,8 @@ before Phase 5 changes a default verdict.
 | Modulate verdicts inline inside each detector | Scatters pattern logic across the `diff_*` detector modules; couples detection to inference. Chosen: a single post-processing pass with a ledger, mirroring `FilterNonPublicSurface`. |
 | Require libclang (richer AST) for idioms | Heavyweight, violates the lightweight-core posture; castxml + DWARF already expose pointer-depth, fields, bases, vtables — enough for the conservative recognisers here. libclang (G4) would *extend* recall later, not gate this. |
 | Push cross-library logic into ADR-023 bundle layer only | ADR-023 is symbol-level; A3 needs the *type-level* reachability graph this ADR introduces. A3 builds **on** ADR-023's edges rather than duplicating them. |
+| Demote by re-tagging to compatible *variant* `ChangeKind`s (e.g. `TYPE_SIZE_CHANGED_OPAQUE`) instead of a per-finding override | This is how `*_ELF_ONLY` variants already work, so it was the obvious first idea. Rejected: it would roughly **double** the layout/field `ChangeKind` family (one compatible twin per demotable kind), inflate the `doc-count-sync` headline count, and bury the original kind so reports lose "what actually changed." The per-finding `effective_verdict` override (D4.1) re-categorises **in place**, keeps the original `kind` for the reader, and needs no new enum values. |
+| Demote by moving findings to a separate ledger list (à la ADR-024 `out_of_surface_changes`) | Works for *scoping* (the finding genuinely isn't about the public surface), but here the finding **is** about the public surface — it's still a real, reportable change, just ABI-compatible *for this idiom*. Keeping it in `changes` with a downgraded `effective_verdict` is more honest than hiding it in a side list. |
 
 ---
 
