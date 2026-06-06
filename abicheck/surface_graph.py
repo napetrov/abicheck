@@ -130,7 +130,11 @@ def build_surface_graph(snap: AbiSnapshot) -> SurfaceGraph:
         seeds = set(_type_identifiers(fn.return_type))
         for p in fn.params:
             seeds |= _type_identifiers(getattr(p, "type", None))
-        root_seed_types[fn.name] = frozenset(seeds)
+        # C++ overloads share a demangled name but reference different types;
+        # union their seeds so an overload's types are never lost by overwrite.
+        root_seed_types[fn.name] = root_seed_types.get(
+            fn.name, frozenset()
+        ) | frozenset(seeds)
     for var in snap.variables:
         if var.visibility != Visibility.PUBLIC:
             continue

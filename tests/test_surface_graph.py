@@ -153,6 +153,77 @@ def test_metrics_counts_and_undocumented_ratio() -> None:
     assert abs(m.undocumented_export_ratio - (1 / 3)) < 1e-9
 
 
+def test_overloaded_functions_union_seed_types() -> None:
+    # Two C++ overloads share the demangled name "process" but reference
+    # different types; both type sets must be reachable from the shared root.
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="process",
+                mangled="_Z7processP1A",
+                return_type="void",
+                params=[Param(name="a", type="A*", pointer_depth=1)],
+                visibility=Visibility.PUBLIC,
+            ),
+            Function(
+                name="process",
+                mangled="_Z7processP1B",
+                return_type="void",
+                params=[Param(name="b", type="B*", pointer_depth=1)],
+                visibility=Visibility.PUBLIC,
+            ),
+        ],
+        types=[
+            RecordType(name="A", kind="struct"),
+            RecordType(name="B", kind="struct"),
+        ],
+    )
+    g = build_surface_graph(snap)
+    reached = g.reachable_types("process")
+    assert {"A", "B"} <= reached  # neither overload's type is lost
+
+
+def test_virtual_bases_counted_in_public_types() -> None:
+    # D : virtual B. B is reachable through D's public use, so it must be a
+    # public type even though it appears only as a virtual base.
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="use_d",
+                mangled="use_d",
+                return_type="void",
+                params=[Param(name="d", type="D*", pointer_depth=1)],
+                visibility=Visibility.PUBLIC,
+                source_header="h.h",
+                origin=ScopeOrigin.PUBLIC_HEADER,
+            ),
+        ],
+        types=[
+            RecordType(
+                name="D",
+                kind="class",
+                virtual_bases=["B"],
+                source_header="h.h",
+                origin=ScopeOrigin.PUBLIC_HEADER,
+            ),
+            RecordType(
+                name="B",
+                kind="class",
+                source_header="h.h",
+                origin=ScopeOrigin.PUBLIC_HEADER,
+            ),
+        ],
+    )
+    m = compute_surface_metrics(snap)
+    assert m.public_types == 2  # both D and its virtual base B
+
+
 def test_public_type_count_falls_back_when_unresolvable() -> None:
     # An ELF-only snapshot (no header-derived visibility) cannot resolve a
     # public surface, so the raw parsed counts are used (nothing was scoped).

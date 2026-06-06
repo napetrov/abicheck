@@ -275,7 +275,9 @@ def _record_origin(surface: PublicSurface, keys: set[str], origin: ScopeOrigin) 
         surface.origin_by_key[k] = _merge_origin(surface.origin_by_key.get(k), origin)
 
 
-def _index_surface_types(snap: AbiSnapshot, surface: PublicSurface) -> dict[str, RecordType]:
+def _index_surface_types(
+    snap: AbiSnapshot, surface: PublicSurface
+) -> dict[str, RecordType]:
     """Populate ``surface.all_types`` and return a name -> record index.
 
     Records are indexed by both their full name and (for namespaced types) the
@@ -299,7 +301,9 @@ def _index_surface_types(snap: AbiSnapshot, surface: PublicSurface) -> dict[str,
     return record_by_name
 
 
-def _seed_public_roots(snap: AbiSnapshot, surface: PublicSurface) -> tuple[set[str], bool]:
+def _seed_public_roots(
+    snap: AbiSnapshot, surface: PublicSurface
+) -> tuple[set[str], bool]:
     """Record public symbols on *surface*; return (seed type names, has_public).
 
     Seeds the type-closure work-list from the return/parameter/variable types of
@@ -365,7 +369,10 @@ def _walk_type_closure(
             for ident in _type_identifiers(f.type):
                 if ident not in seen:
                     queue.append(ident)
-        for base in rec_node.bases:
+        # Both direct and virtual bases are ABI-reachable through the derived
+        # type (virtual inheritance still embeds the base subobject + vtable
+        # path), so the public closure must follow both (ADR-025 A3 review).
+        for base in (*rec_node.bases, *rec_node.virtual_bases):
             for ident in _type_identifiers(base):
                 if ident not in seen:
                     queue.append(ident)
@@ -409,9 +416,9 @@ def compute_public_surface(snap: AbiSnapshot) -> PublicSurface:
 # exclusion reasons below, these qualify the *whole* surface resolution: they
 # flag that the resolved surface (and therefore every demotion decision made
 # against it) is less trustworthy than a clean header-scoped run.
-SCOPE_NOTE_MANGLING_FALLBACK = "mangling-fallback"      # MSVC C++ name-mangling gap
+SCOPE_NOTE_MANGLING_FALLBACK = "mangling-fallback"  # MSVC C++ name-mangling gap
 SCOPE_NOTE_CASTXML_UNAVAILABLE = "castxml-unavailable"  # castxml missing / parse failed
-SCOPE_NOTE_NO_PROVENANCE = "no-provenance"              # surface resolved without provenance
+SCOPE_NOTE_NO_PROVENANCE = "no-provenance"  # surface resolved without provenance
 
 
 def surface_scope_confidence(
@@ -567,13 +574,21 @@ def classify_change_surface(
     # symbol — that is exactly the leaked-private-header case scoping targets.
     if not type_level_finding:
         verdict = _classify_symbol_level(
-            sym, all_symbols, public_symbols, surf_old, surf_new,
+            sym,
+            all_symbols,
+            public_symbols,
+            surf_old,
+            surf_new,
         )
         if verdict is not None:
             return verdict
 
     return _classify_type_level(
-        candidates, all_types, public_types, surf_old, surf_new,
+        candidates,
+        all_types,
+        public_types,
+        surf_old,
+        surf_new,
     )
 
 
@@ -638,7 +653,9 @@ def _classify_type_level(
 
 
 def _confident_header_reason(
-    known: set[str], surf_old: PublicSurface, surf_new: PublicSurface,
+    known: set[str],
+    surf_old: PublicSurface,
+    surf_new: PublicSurface,
 ) -> str | None:
     """Reason when every implicated type confidently originates from a
     private/system header, else None."""
@@ -653,7 +670,9 @@ def _confident_header_reason(
 
 
 def _demote_by_reachability(
-    known: set[str], surf_old: PublicSurface, surf_new: PublicSurface,
+    known: set[str],
+    surf_old: PublicSurface,
+    surf_new: PublicSurface,
 ) -> tuple[bool, str | None]:
     """Final demotion stage: the only remaining basis is type-reachability."""
     # That is trustworthy *only* when the surface has real typed roots to walk
@@ -667,10 +686,15 @@ def _demote_by_reachability(
     # Reachability demotion. If provenance was available for the snapshot but
     # none of the implicated types carried it, disclose the reduced confidence
     # (ADR-024 §D5.3) rather than implying a provenance-confirmed verdict.
-    if surf_old.has_provenance and surf_new.has_provenance and all(
-        surf_old.origin_by_key.get(c, ScopeOrigin.UNKNOWN) == ScopeOrigin.UNKNOWN
-        and surf_new.origin_by_key.get(c, ScopeOrigin.UNKNOWN) == ScopeOrigin.UNKNOWN
-        for c in known
+    if (
+        surf_old.has_provenance
+        and surf_new.has_provenance
+        and all(
+            surf_old.origin_by_key.get(c, ScopeOrigin.UNKNOWN) == ScopeOrigin.UNKNOWN
+            and surf_new.origin_by_key.get(c, ScopeOrigin.UNKNOWN)
+            == ScopeOrigin.UNKNOWN
+            for c in known
+        )
     ):
         return False, REASON_NO_PROVENANCE
     return False, REASON_NON_PUBLIC_TYPE
