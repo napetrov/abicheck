@@ -43,6 +43,7 @@ nav:
     - Severity Configuration: user-guide/severity.md
     - Output Formats: user-guide/output-formats.md
     - Multi-Binary Releases: user-guide/multi-binary.md
+    - Kernel & eBPF (BTF): user-guide/kernel-btf.md
     - Probe Harness: user-guide/probe-harness.md
     - Baseline Management: user-guide/baseline-management.md
     - Local Compare: user-guide/local-compare.md

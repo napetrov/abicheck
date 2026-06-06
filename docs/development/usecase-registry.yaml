@@ -98,15 +98,20 @@ use_cases:
   - id: UC-ARCH-kernel-btf
     axis: archetype
     name: Kernel / eBPF modules (BTF/CTF)
-    status: modeled
+    status: partial
     gap: G6
     plan: docs/development/plans/g6-kernel-btf-and-accelerator.md
     evidence:
       modules: [abicheck/btf_metadata.py, abicheck/ctf_metadata.py]
-      tests: [tests/test_btf_metadata.py]
+      tests: [tests/test_btf_metadata.py, tests/test_workflow_kernel_accel.py]
+      docs: [docs/user-guide/kernel-btf.md]
     next_steps: >
-      Add a BTF compare scenario (kernel struct gains a field) and a documented
-      "module vs vmlinux BTF" workflow; parsers exist but no end-to-end flow.
+      The "module vs vmlinux BTF" workflow is now exercised end-to-end through
+      compare (real BTF bytes → parse_btf_from_bytes → layout detectors →
+      BREAKING) in tests/test_workflow_kernel_accel.py, and documented in
+      docs/user-guide/kernel-btf.md. Remaining: a committed BTF-blob example
+      under examples/ with a ground_truth.json entry and a pahole/bpftool-based
+      integration fixture; CTF has no workflow scenario yet.
 
   - id: UC-ARCH-sycl
     axis: archetype
@@ -116,9 +121,15 @@ use_cases:
     plan: docs/development/plans/g6-kernel-btf-and-accelerator.md
     evidence:
       modules: [abicheck/sycl_metadata.py, abicheck/diff_sycl.py]
-      tests: [tests/test_diff_sycl.py]
+      tests: [tests/test_diff_sycl.py, tests/test_workflow_kernel_accel.py]
       examples: [examples/case82_sycl_overload_set_removed]
-    next_steps: Wire SYCL plugin detection into a workflow-level scenario; CUDA deferred.
+      docs: [docs/user-guide/kernel-btf.md]
+    next_steps: >
+      SYCL plugin-interface detection is now driven through the standard
+      compare + report path at the workflow level (a dropped PI entrypoint →
+      BREAKING, reaching the JSON/Markdown reports) in
+      tests/test_workflow_kernel_accel.py. Remaining: a UR-adapter workflow
+      fixture; CUDA device code (.cubin/PTX) stays deferred.
 
   - id: UC-ARCH-static-lib
     axis: archetype

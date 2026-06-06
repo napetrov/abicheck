@@ -79,7 +79,7 @@ A real invocation is a point in this space:
 | Bundle / multi-library | `complete` | all detectors run via `compare-release`; case84 validated e2e (Linux-only by design; cross-platform → G1) |
 | Plugin (host↔plugin) | `complete` | **G5 closed**: `plugin-check` CLI + `check_plugin_host_contract` API + plugin_abi policy |
 | Header-only / inline-only | `planned` | castxml can't emit concept bodies / ctor mangled names (G4; cases 78/105/106/111 dormant) |
-| Kernel / eBPF (BTF/CTF) | `modeled` | parsers exist; no workflow/example (G6) |
+| Kernel / eBPF (BTF/CTF) | `partial` | **G6 advanced**: BTF struct-change + SYCL entrypoint-drop run through `compare` end-to-end; example fixture pending |
 | Static libraries (`.a`/`.lib`) | `by_design_excluded` | **G8 decided (option A)**: non-goal; CLI rejects archives with guidance |
 | FFI consumers (Rust/Go/Python) | `by_design_excluded` | C ABI covered; other languages a stated non-goal |
 
@@ -94,7 +94,7 @@ A real invocation is a point in this space:
 | **G3** | Catalog only exercises `compare`; Markdown/HTML test coverage thin | — | ✅ appcompat-from-catalog + stack-check sysroot e2e + Markdown/HTML structural coverage | scenarios asserted in new tests |
 | **G4** | Header-only / inline-only (detector frontier) | libclang header-AST extractor | unblock cases 78/105/106/111 | reuse dormant fixtures |
 | **G5** | Plugin host↔plugin contract is one-directional | ✅ `check_plugin_host_contract` + `plugin-check` CLI | ✅ scenario + CLI tests | compiled host/plugin demo optional |
-| **G6** | Kernel/eBPF use case is parser-only | small workflow glue | BTF compare scenario | vmlinux/module fixture |
+| **G6** | Kernel/eBPF use case is parser-only | ✅ BTF/SYCL run through `compare` | ✅ workflow scenarios (real BTF parse) | committed BTF-blob example pending |
 | **G7** | No semver-bump recommendation | recommender + report wiring | mapping + integration | reuse cases |
 | **G8** | Static libraries undocumented | ✅ archive detection + clear error path | ✅ unit (archive → guidance error) | ✅ documented non-goal (goals + limitations) |
 
@@ -167,8 +167,14 @@ Summary (see the plans for detail):
 - **G4:** a libclang-based header-AST extractor alongside castxml to unblock
   concept tightening, hidden friends, and user-ctor mangled names (cases
   78/105/106/111).
-- **G6:** a BTF fixture pair (kernel struct gains a field) exercised through
-  `compare`, plus a documented "module vs `vmlinux` BTF" workflow.
+- **G6 (advanced):** the BTF struct-change and SYCL entrypoint-drop workflows
+  now run through `compare` end-to-end (real BTF bytes parsed by
+  `parse_btf_from_bytes`; SYCL findings reach the JSON/Markdown reports) in
+  `tests/test_workflow_kernel_accel.py`, documented in
+  [`user-guide/kernel-btf.md`](../user-guide/kernel-btf.md). Remaining: a
+  committed BTF-blob example under `examples/` with a `ground_truth.json` entry
+  (and a `pahole`/`bpftool` integration fixture); CTF and a UR-adapter workflow
+  are still open.
 
 **G8 is now decided (option A — done):** static/import library archives are a
 non-goal. `abicheck/binary_utils.py::detect_archive` recognises the `!<arch>\n`
