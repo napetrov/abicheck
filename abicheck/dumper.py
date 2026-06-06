@@ -962,7 +962,10 @@ def _dump_elf(
         gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
         sysroot=sysroot, nostdinc=nostdinc, lang=lang,
     )
-    parser = _CastxmlParser(xml_root, exported_dynamic, exported_static)
+    parser = _CastxmlParser(
+        xml_root, exported_dynamic, exported_static,
+        header_files={str(h.resolve()) for h in headers},
+    )
 
     snapshot = AbiSnapshot(
         library=so_path.name,
@@ -973,6 +976,7 @@ def _dump_elf(
         types=parser.parse_types(),
         enums=parser.parse_enums(),
         typedefs=parser.parse_typedefs(),
+        constants=parser.parse_constants(),
         elf=elf_meta,
         dwarf=dwarf_meta,
         dwarf_advanced=dwarf_adv,
@@ -1095,6 +1099,7 @@ def _dump_macho(
             exported_no_underscore.add(sym)
     parser = _CastxmlParser(
         xml_root, exported_no_underscore, exported_no_underscore,
+        header_files={str(h.resolve()) for h in headers},
     )
 
     return AbiSnapshot(
@@ -1106,6 +1111,7 @@ def _dump_macho(
         types=parser.parse_types(),
         enums=parser.parse_enums(),
         typedefs=parser.parse_typedefs(),
+        constants=parser.parse_constants(),
         macho=macho_meta,
         # Reached only when headers were supplied and castxml ran (the no-header
         # branch returns earlier): this surface is header-parsed.
@@ -1177,7 +1183,10 @@ def _dump_pe(
         gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
         sysroot=sysroot, nostdinc=nostdinc, lang=lang,
     )
-    parser = _CastxmlParser(xml_root, exported_dynamic, exported_static)
+    parser = _CastxmlParser(
+        xml_root, exported_dynamic, exported_static,
+        header_files={str(h.resolve()) for h in headers},
+    )
 
     return AbiSnapshot(
         library=dll_path.name,
@@ -1188,6 +1197,7 @@ def _dump_pe(
         types=parser.parse_types(),
         enums=parser.parse_enums(),
         typedefs=parser.parse_typedefs(),
+        constants=parser.parse_constants(),
         pe=pe_meta,
         # Reached only when headers were supplied and castxml ran (the no-header
         # branch returns earlier): this surface is header-parsed.

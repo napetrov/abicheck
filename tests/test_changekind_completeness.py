@@ -221,6 +221,10 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     # Explicit specifier transitions — exercised in tests/test_explicit_ctor.py
     ChangeKind.CTOR_EXPLICIT_ADDED,
     ChangeKind.CTOR_EXPLICIT_REMOVED,
+    # Class `final`-specifier transitions — exercised in
+    # tests/test_new_detectors.py::TestTypeFinalityChanged
+    ChangeKind.TYPE_BECAME_FINAL,
+    ChangeKind.TYPE_LOST_FINAL,
     # Namespace-shape patterns — exercised in tests/test_diff_namespaces.py
     ChangeKind.EXPERIMENTAL_GRADUATED,
     ChangeKind.EXPERIMENTAL_REMOVED_WITHOUT_REPLACEMENT,

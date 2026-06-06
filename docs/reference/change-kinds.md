@@ -174,6 +174,12 @@ These breaks come from language-standard features or build-model choices (oneAPI
 
 These changes break the source-level API contract but do not affect already-compiled binaries.
 
+### Class specifiers
+
+| Kind | Description |
+|------|-------------|
+| `type_became_final` | A class/struct gained the `final` specifier. Consumers that derive from it no longer compile; layout and mangled names are unchanged so binaries keep running. **Header/castxml-mode only** — `final` is not recorded in DWARF or the object file, so this is invisible to object-only comparison (see `case125_class_became_final`). |
+
 ### Naming and Renaming
 
 | Kind | Description |
@@ -270,6 +276,7 @@ These changes are safe: they add new capabilities or carry diagnostic informatio
 | `var_added` | A new public global variable was exported. Existing binaries are unaffected. |
 | `type_added` | A new type was added to the public API. Additive — existing consumers are unchanged. |
 | `type_field_added_compatible` | A field was appended to a standard-layout, non-polymorphic struct. Size increases but no existing field offsets shift. Compatible only for types meeting the standard-layout criteria. |
+| `type_lost_final` | A class/struct lost the `final` specifier. Strictly more permissive — deriving from it is now allowed and previously-valid code still compiles. Header/castxml-mode only. |
 
 ### Enum Additions
 

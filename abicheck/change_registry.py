@@ -686,6 +686,21 @@ REGISTRY = ChangeKindRegistry([
               "function now do, potentially selecting a different overload "
               "than before and causing silent behavioral drift."),
 
+    # ── Class `final`-specifier transitions (header/castxml only) ────────
+    _E("type_became_final", _A,
+       impact="A class/struct gained the `final` specifier. Any consumer that "
+              "derives from it (`class D : public C`) no longer compiles. The "
+              "type layout and mangled names are unchanged so already-built "
+              "binaries keep running, but recompilation against the new header "
+              "fails — a source/API break. Invisible to binary analysis: "
+              "`final` is not recorded in DWARF or the object file, so this is "
+              "detected only in header (castxml) mode."),
+    _E("type_lost_final", _C,
+       impact="A class/struct lost the `final` specifier. This is strictly "
+              "more permissive — code that compiled before still compiles, and "
+              "deriving from the type is now allowed. Reported as a compatible "
+              "change for surface-tracking completeness."),
+
     # ── Namespace-shape patterns (PR follow-up to #238) ─────────────────
     # Generic detectors for template / header-only libraries (the patterns
     # show up in libraries such as oneDPL, but are not library-specific).

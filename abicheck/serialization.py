@@ -442,6 +442,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             source_location=t.get("source_location"),
             is_union=t.get("is_union", t.get("kind") == "union"),
             is_opaque=t.get("is_opaque", False),
+            is_final=t.get("is_final"),  # tri-state; absent on pre-v? snapshots → None
             source_header=t.get("source_header"),
             origin=_scope_origin_or_unknown(t.get("origin")),
         )

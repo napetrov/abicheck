@@ -104,6 +104,32 @@ pipeline works, and [Verdicts](verdicts.md) for the exit-code semantics.
 
 ---
 
+### Feed abicheck `.so` + debug info + headers for the best result
+
+abicheck's three analysis tiers are additive, and the highest-coverage setup is
+a single comparison of **debug-enabled libraries with their public headers
+supplied**:
+
+```bash
+abicheck compare libfoo_v1.so libfoo_v2.so \
+    --old-header include/v1/foo.h --new-header include/v2/foo.h   # both built with -g
+```
+
+- **`.so` + DWARF (`-g` / `/Zi`)** gives the ground-truth *emitted* ABI — struct
+  layout, field offsets, alignment/packing, enum values, calling convention.
+- **public headers (castxml)** add the source-level API surface the binary cannot
+  carry — `final`, access, ref-qualifiers, `noexcept`/`explicit`, default-argument
+  values, and `const`/`constexpr` constant values (the last two have *no symbol*,
+  so only header analysis can reach them).
+
+Comparing a **stripped binary with no headers** yields only symbol add/remove
+coverage and silently misses every layout and source-level break. If you ship
+stripped, build a debug copy purely as an analysis input and compare *that* with
+headers. A handful of changes remain invisible to any artifact comparison
+(`#define` macros, inline/template **bodies**, uninstantiated templates) — see
+[Limitations → Source-only changes](limitations.md#source-only-changes-invisible-to-binaryobject-analysis)
+for the full per-change detectability matrix.
+
 ## Detection coverage and roadmap
 
 abicheck detects **190 change kinds** today (see the

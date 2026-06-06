@@ -202,6 +202,11 @@ class ChangeKind(str, Enum):
     VAR_BECAME_CONST = "var_became_const"  # non-const → const: writes → SIGSEGV
     VAR_LOST_CONST = "var_lost_const"  # const → non-const: BREAKING (ODR / inlining)
     TYPE_BECAME_OPAQUE = "type_became_opaque"  # complete → forward-decl only → BREAKING
+    # `final` class-key specifier transitions (header/castxml only — DWARF and
+    # the binary carry no `final` information). Source-level: gaining `final`
+    # breaks any consumer that derives from the class.
+    TYPE_BECAME_FINAL = "type_became_final"  # gained `final` → derivation no longer compiles → API_BREAK
+    TYPE_LOST_FINAL = "type_lost_final"      # lost `final` → strictly more permissive → COMPATIBLE
     BASE_CLASS_POSITION_CHANGED = (
         "base_class_position_changed"  # base reorder → this-ptr offset change
     )

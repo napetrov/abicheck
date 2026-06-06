@@ -21,6 +21,7 @@ soft cap. Re-exported from ``abicheck.dumper`` so existing imports of
 """
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -58,10 +59,16 @@ class _CastxmlParser:
     """Parse castxml XML into ABI model objects."""
 
     def __init__(self, root: Element, exported_dynamic: set[str],
-                 exported_static: set[str]):
+                 exported_static: set[str],
+                 header_files: set[str] | None = None):
         self._root = root
         self._exported_dynamic = exported_dynamic
         self._exported_static = exported_static
+        # Realpaths of the user-provided public headers. Used to restrict
+        # constant extraction (parse_constants) to the public API surface so
+        # constants from transitively-included system/private headers do not
+        # leak in. None / empty → constant extraction is skipped.
+        self._header_files = {os.path.realpath(h) for h in (header_files or set())}
         self._id_map: dict[str, Element] = {}
         self._virtual_methods_by_class: dict[str, list[Element]] = {}
         self._source_lines_cache: dict[str, list[str]] = {}
@@ -283,7 +290,15 @@ class _CastxmlParser:
                     p_type_id = arg.get("type", "")
                     p_type = self._type_name(p_type_id)
                     p_depth = self._pointer_depth(p_type_id)
-                    params.append(Param(name=p_name, type=p_type, pointer_depth=p_depth))
+                    # castxml emits default="<expr>" on Arguments that carry a
+                    # default value. Removing/changing a default is a source-API
+                    # (and silent-behaviour) concern even though the mangled name
+                    # is unchanged; capture it so the param_defaults detector can
+                    # fire. Absent attribute → None (no default).
+                    params.append(Param(
+                        name=p_name, type=p_type, pointer_depth=p_depth,
+                        default=arg.get("default"),
+                    ))
 
             vis = self._visibility(el.get("mangled", ""), name)
             is_virtual = el.get("virtual") == "1"
@@ -406,6 +421,92 @@ class _CastxmlParser:
             ))
         return variables
 
+    def parse_constants(self) -> dict[str, str]:
+        """Extract ``const`` / ``constexpr`` constant *values* declared in the
+        provided public headers.
+
+        These have a compile-time initializer (castxml emits ``init="..."``) and
+        their value is baked into every consumer that ``#include``s the header —
+        so a value change is a real source/ABI compatibility hazard. Yet a
+        namespace-scope ``const``/``constexpr`` has internal linkage and emits no
+        exported symbol, so it is invisible to DWARF/object comparison; only the
+        header (castxml) tier can see it.
+
+        Restricted to declarations in the user-provided headers (``self._header_files``)
+        so constants pulled in transitively from system/private headers do not
+        leak in — keeping the resulting CONSTANT_* findings provenance-clean.
+        Returns ``name -> value``; empty when no public headers were provided
+        (e.g. DWARF/symbols-only mode).
+        """
+        if not self._header_files:
+            return {}
+        constants: dict[str, str] = {}
+        for el in self._root:
+            if el.tag != "Variable":
+                continue
+            init = el.get("init")
+            if not init:
+                continue
+            if self._is_builtin_element(el):
+                continue
+            name = el.get("name", "")
+            if not name:
+                continue
+            # Skip private/protected class-scope members: a consumer cannot
+            # name them, so a value change to such an implementation detail is
+            # not an API contract change. (Namespace-scope constants carry no
+            # `access` attribute, so they pass through as public.)
+            if el.get("access") in ("private", "protected"):
+                continue
+            # Only const / constexpr: the initializer is a baked-in contract.
+            # (constexpr implies const, so this captures both.)
+            type_name = self._type_name(el.get("type", ""))
+            is_const = (
+                el.get("const") == "1"
+                or bool(re.search(r"\bconst\b", type_name))
+            )
+            if not is_const:
+                continue
+            if not self._decl_in_provided_header(el):
+                continue
+            # Qualify the key with its namespace/class context so that
+            # constants sharing an unqualified name in different scopes
+            # (``A::kLimit`` vs ``B::kLimit``) don't alias and overwrite each
+            # other — which would mask or misreport a CONSTANT_CHANGED.
+            constants[self._qualified_name(el)] = init
+        return constants
+
+    def _qualified_name(self, el: Any) -> str:
+        """Build a namespace/class-qualified name by walking ``context``.
+
+        ``A::kLimit`` for a constant in namespace ``A``; ``C::kLimit`` for a
+        static data member of ``C``; the bare name for a global. Stops at the
+        global namespace (castxml name ``"::"``).
+        """
+        parts = [el.get("name", "")]
+        ctx_id = el.get("context", "")
+        seen: set[str] = set()
+        while ctx_id and ctx_id not in seen:
+            seen.add(ctx_id)
+            ctx = self._id_map.get(ctx_id)
+            if ctx is None:
+                break
+            cname = ctx.get("name", "")
+            if cname and cname != "::":
+                parts.append(cname)
+            ctx_id = ctx.get("context", "")
+        return "::".join(reversed(parts))
+
+    def _decl_in_provided_header(self, el: Any) -> bool:
+        """True if *el* is declared in one of the user-provided public headers."""
+        loc = self._source_location(el)
+        if not loc:
+            return False
+        fname = loc.rsplit(":", 1)[0]
+        if not fname:
+            return False
+        return os.path.realpath(fname) in self._header_files
+
     def parse_types(self) -> list[RecordType]:
         # Build reverse mapping: struct/union ID → typedef name for anonymous types.
         # This allows us to include `typedef struct { ... } Foo;` where the struct
@@ -481,6 +582,13 @@ class _CastxmlParser:
             vtable=[] if is_opaque else self._build_vtable(el.get("id", "")),
             is_union=el.tag == "Union",
             is_opaque=is_opaque,
+            # castxml records the `final` class-key specifier as a `final`
+            # token inside the compound ``attributes`` string (e.g.
+            # ``attributes="final"``), the same channel used for noexcept.
+            # Header mode always knows the answer, so this is a concrete bool
+            # (never None on the castxml path); DWARF/symbols mode leaves the
+            # model default of None since the binary carries no `final` info.
+            is_final=bool(re.search(r"\bfinal\b", el.get("attributes", ""))),
             source_location=self._source_location(el),
         )
 

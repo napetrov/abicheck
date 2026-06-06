@@ -16,10 +16,11 @@ from abicheck.dumper import _CastxmlParser
 def _make_parser(
     xml_str: str,
     exported: set[str] | None = None,
+    header_files: set[str] | None = None,
 ) -> _CastxmlParser:
     root = fromstring(xml_str)  # noqa: S314  # nosec B314 (trusted test data)
     exp = exported or set()
-    return _CastxmlParser(root, exp, exp)
+    return _CastxmlParser(root, exp, exp, header_files=header_files)
 
 
 # ── fixtures ─────────────────────────────────────────────────────────────
@@ -137,3 +138,50 @@ class TestMembersAttributeLayout:
         types = p.parse_types()
         assert len(types) == 1
         assert types[0].fields == []
+
+
+# ── constant extraction (qualified names) ────────────────────────────────────
+
+_CONSTANTS_XML = """<?xml version="1.0"?>
+<CastXML>
+  <Variable id="_10" name="kLimit" type="_6" init="4" context="_1" file="f1" line="1"/>
+  <Variable id="_16" name="kLimit" type="_6" init="1" context="_7" file="f1" line="2"/>
+  <Variable id="_17" name="kLimit" type="_6" init="2" context="_8" file="f1" line="3"/>
+  <Variable id="_18" name="kLimit" type="_6" init="3" context="_9" file="f1" line="4"/>
+  <FundamentalType id="_6" name="const int" size="32"/>
+  <Namespace id="_1" name="::"/>
+  <Namespace id="_7" name="A" context="_1"/>
+  <Namespace id="_8" name="B" context="_1"/>
+  <Struct id="_9" name="C" context="_1" file="f1" line="4"/>
+  <File id="f1" name="test.h"/>
+</CastXML>"""
+
+
+_PRIVATE_CONST_XML = """<?xml version="1.0"?>
+<CastXML>
+  <Variable id="_13" name="kPublic" type="_6" init="1" context="_9" access="public" file="f1" line="3" static="1"/>
+  <Variable id="_14" name="kPrivate" type="_6" init="2" context="_9" access="private" file="f1" line="5" static="1"/>
+  <FundamentalType id="_6" name="const int" size="32"/>
+  <Namespace id="_1" name="::"/>
+  <Struct id="_9" name="Widget" context="_1" file="f1" line="2"/>
+  <File id="f1" name="test.h"/>
+</CastXML>"""
+
+
+class TestConstantExtraction:
+    def test_private_static_constants_are_not_extracted(self) -> None:
+        # A private static constexpr member is an implementation detail a
+        # consumer cannot name — its value must not be reported as an API
+        # constant. Only the public member is extracted.
+        p = _make_parser(_PRIVATE_CONST_XML, header_files={"test.h"})
+        assert p.parse_constants() == {"Widget::kPublic": "1"}
+
+    def test_same_named_constants_in_different_scopes_do_not_alias(self) -> None:
+        # Regression: bare-name keys would collapse A::kLimit/B::kLimit/C::kLimit
+        # into one entry (last-wins), masking a real change. Keys must qualify by
+        # namespace/class context (and a global constant stays bare).
+        p = _make_parser(_CONSTANTS_XML, header_files={"test.h"})
+        consts = p.parse_constants()
+        assert consts == {
+            "kLimit": "4", "A::kLimit": "1", "B::kLimit": "2", "C::kLimit": "3",
+        }
