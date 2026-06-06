@@ -563,12 +563,24 @@ _ELF_MAGIC = b"\x7fELF"
 _ET_DYN = 3
 # Program header type PT_INTERP (interpreter segment — present in executables, absent in DSOs)
 _PT_INTERP = 3
-_SO_NAME_RE = re.compile(r"\.so(?:$|\.\d+(?:\.\d+)*)$", re.IGNORECASE)
+_SO_NAME_RE = re.compile(r"^(?P<stem>.+)\.so(?P<version>(?:\.[A-Za-z0-9]+)*)$", re.IGNORECASE)
+_NUMERIC_SO_VERSION_RE = re.compile(r"(?:\.\d+)+$")
+_ALNUM_SO_VERSION_RE = re.compile(r"(?:\.[A-Za-z0-9]+)+$")
 
 
 def _has_shared_object_name(path: Path | str) -> bool:
-    """Return True for .so or numeric-versioned .so.N filenames."""
-    return _SO_NAME_RE.search(Path(path).name) is not None
+    """Return True for .so or versioned SONAME-style filenames."""
+    match = _SO_NAME_RE.match(Path(path).name)
+    if match is None:
+        return False
+    version = match.group("version")
+    if not version:
+        return True
+    if _NUMERIC_SO_VERSION_RE.fullmatch(version):
+        return True
+    return match.group("stem").lower().startswith("lib") and (
+        _ALNUM_SO_VERSION_RE.fullmatch(version) is not None
+    )
 
 
 def _has_interp_segment(f: IO[bytes], ei_class: int, byte_order: str) -> bool | None:

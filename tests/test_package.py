@@ -446,6 +446,12 @@ class TestIsElfSharedObject:
         _make_minimal_elf_dso_with_interp(f)
         assert _is_elf_shared_object(f) is True
 
+    def test_alphanumeric_versioned_lib_dso_with_interp(self, tmp_path: Path) -> None:
+        for name in ("libtidy.so.5deb1.6.0", "libstemmer.so.0d.0.0"):
+            f = tmp_path / name
+            _make_minimal_elf_dso_with_interp(f)
+            assert _is_elf_shared_object(f) is True
+
     def test_pie_like_name_with_interp(self, tmp_path: Path) -> None:
         f = tmp_path / "capsh"
         _make_minimal_elf_dso_with_interp(f)
@@ -549,6 +555,16 @@ class TestDiscoverSharedLibraries:
         result = discover_shared_libraries(tmp_path)
         assert len(result) == 1
         assert result[0].name == "libfoo.so"
+
+    def test_finds_alphanumeric_versioned_libs_in_flat_layout(
+        self, tmp_path: Path
+    ) -> None:
+        _make_minimal_elf_so(tmp_path / "libtidy.so.5deb1.6.0")
+        _make_minimal_elf_so(tmp_path / "libstemmer.so.0d.0.0")
+        result = discover_shared_libraries(tmp_path)
+        names = [p.name for p in result]
+        assert "libtidy.so.5deb1.6.0" in names
+        assert "libstemmer.so.0d.0.0" in names
 
     def test_skips_flat_layout_name_containing_so_without_boundary(
         self, tmp_path: Path
