@@ -64,6 +64,9 @@ struct Widget {
 };
 
 extern "C" FOO_API int widget_area(struct Widget w);
+#ifndef WIDGET_V2
+extern "C" FOO_API int legacy_fn(void);  /* dropped in v2 */
+#endif
 """
 
 _SRC = """
@@ -73,6 +76,9 @@ _SRC = """
 extern "C" FOO_API int widget_area(struct Widget w) {
     return w.x * w.y;
 }
+#ifndef WIDGET_V2
+extern "C" FOO_API int legacy_fn(void) { return 7; }
+#endif
 """
 
 
@@ -176,3 +182,27 @@ class TestMsvcPdbEndToEnd:
             f"expected BREAKING for struct growth, got {result.verdict.value}; "
             f"changes={[c.kind.value for c in result.changes]}"
         )
+
+    def test_exported_function_removed_is_breaking(self, tmp_path: Path) -> None:
+        """Dropping an exported function is BREAKING via the PE export table.
+
+        Unlike struct layout (which needs PDB extraction), symbol removal is
+        visible from the DLL export table alone, so this is a robust MSVC
+        end-to-end signal independent of PDB parser capability.
+        """
+        _require_msvc()
+        dll1, pdb1 = _build_dll(tmp_path / "v1", "foo", v2=False)
+        dll2, pdb2 = _build_dll(tmp_path / "v2", "foo", v2=True)
+        old = _snapshot(dll1, pdb1, "1.0")
+        new = _snapshot(dll2, pdb2, "2.0")
+        old_exports = {f.name for f in old.functions}
+        new_exports = {f.name for f in new.functions}
+        assert "legacy_fn" in old_exports, f"v1 exports={sorted(old_exports)}"
+        assert "legacy_fn" not in new_exports, f"v2 exports={sorted(new_exports)}"
+        result = compare(old, new)
+        assert result.verdict == Verdict.BREAKING, (
+            f"expected BREAKING for removed export, got {result.verdict.value}; "
+            f"changes={[c.kind.value for c in result.changes]}"
+        )
+        assert any("legacy_fn" in (c.symbol or "") or "legacy_fn" in (c.description or "")
+                   for c in result.changes), "legacy_fn removal not reported"

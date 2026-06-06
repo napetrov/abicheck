@@ -438,20 +438,94 @@ def _diff_elf_dynamic_section(old_elf: Any, new_elf: Any) -> list[Change]:
             new_value=new_elf.runpath,
         ))
 
-    # PT_GNU_STACK executable stack detection (security bad practice)
+    # PT_GNU_STACK executable stack detection (security bad practice).
+    # Report ONLY the regression direction (stack becomes executable); making
+    # the stack non-executable is a hardening improvement, not a finding — and
+    # emitting it would let the shipped `security` policy fail an improvement.
     old_exec = getattr(old_elf, "has_executable_stack", False)
     new_exec = getattr(new_elf, "has_executable_stack", False)
-    if old_exec != new_exec:
+    if new_exec and not old_exec:
         changes.append(Change(
             kind=ChangeKind.EXECUTABLE_STACK,
             symbol="PT_GNU_STACK",
-            description=(
-                "Executable stack detected: library linked with -Wl,-z,execstack — NX protection disabled (security risk)"
-                if new_exec
-                else "Executable stack removed: library now uses non-executable stack (good practice)"
-            ),
-            old_value="RWE" if old_exec else "RW",
-            new_value="RWE" if new_exec else "RW",
+            description="Executable stack detected: library linked with -Wl,-z,execstack — NX protection disabled (security risk)",
+            old_value="RW",
+            new_value="RWE",
+        ))
+    elif old_exec and not new_exec:
+        # Improvement direction — a distinct kind so the `security` policy can
+        # gate the regression (executable_stack) without failing this fix.
+        changes.append(Change(
+            kind=ChangeKind.EXECUTABLE_STACK_REMOVED,
+            symbol="PT_GNU_STACK",
+            description="Executable stack removed: library now uses a non-executable stack — NX protection restored (good practice)",
+            old_value="RWE",
+            new_value="RW",
+        ))
+
+    changes.extend(_diff_security_hardening(old_elf, new_elf))
+
+    return changes
+
+
+#: RELRO levels ordered weakest → strongest, for regression detection.
+_RELRO_RANK: dict[str, int] = {"none": 0, "partial": 1, "full": 2}
+
+
+def _diff_security_hardening(old_elf: Any, new_elf: Any) -> list[Change]:
+    """Detect checksec-style hardening regressions between two ELF snapshots.
+
+    Only *weakening* transitions are reported (a release that improves
+    hardening is not a finding). All kinds are RISK by default; the shipped
+    ``security`` policy gates them to break.
+    """
+    changes: list[Change] = []
+
+    old_relro = getattr(old_elf, "relro", "none")
+    new_relro = getattr(new_elf, "relro", "none")
+    if _RELRO_RANK.get(new_relro, 0) < _RELRO_RANK.get(old_relro, 0):
+        changes.append(Change(
+            kind=ChangeKind.RELRO_WEAKENED,
+            symbol="GNU_RELRO",
+            description=f"RELRO weakened: {old_relro} → {new_relro}",
+            old_value=old_relro,
+            new_value=new_relro,
+        ))
+
+    if getattr(old_elf, "is_pie", False) and not getattr(new_elf, "is_pie", False):
+        changes.append(Change(
+            kind=ChangeKind.PIE_DISABLED,
+            symbol="DF_1_PIE",
+            description="PIE disabled: executable is no longer position-independent (ASLR defeated)",
+            old_value="PIE",
+            new_value="no-PIE",
+        ))
+
+    if getattr(old_elf, "has_stack_canary", False) and not getattr(new_elf, "has_stack_canary", False):
+        changes.append(Change(
+            kind=ChangeKind.STACK_CANARY_REMOVED,
+            symbol="__stack_chk_fail",
+            description="Stack canary removed: -fstack-protector no longer referenced",
+            old_value="canary",
+            new_value="none",
+        ))
+
+    if getattr(old_elf, "has_fortify_source", False) and not getattr(new_elf, "has_fortify_source", False):
+        changes.append(Change(
+            kind=ChangeKind.FORTIFY_SOURCE_WEAKENED,
+            symbol="_FORTIFY_SOURCE",
+            description="FORTIFY_SOURCE weakened: fortified libc wrappers (*_chk) no longer referenced",
+            old_value="fortified",
+            new_value="none",
+        ))
+
+    if not getattr(old_elf, "has_writable_executable_segment", False) and getattr(new_elf, "has_writable_executable_segment", False):
+        changes.append(Change(
+            kind=ChangeKind.WRITABLE_EXECUTABLE_SEGMENT,
+            symbol="PT_LOAD",
+            description="Writable + executable segment introduced (W^X violation)",
+            old_value="W^X",
+            new_value="W+X",
         ))
 
     return changes

@@ -128,7 +128,15 @@ class ChangeKind(str, Enum):
     )
 
     # ELF security / bad practice
-    EXECUTABLE_STACK = "executable_stack"  # PT_GNU_STACK has PF_X — NX protection disabled (bad practice)
+    EXECUTABLE_STACK = "executable_stack"  # PT_GNU_STACK gains PF_X — NX disabled (regression; gateable)
+    EXECUTABLE_STACK_REMOVED = "executable_stack_removed"  # PT_GNU_STACK loses PF_X — hardening improvement (informational)
+    # checksec-equivalent hardening regressions (see G12). RISK by default;
+    # gateable to break via the shipped security policy.
+    RELRO_WEAKENED = "relro_weakened"  # full→partial / →none RELRO
+    PIE_DISABLED = "pie_disabled"  # PIE executable → non-PIE
+    STACK_CANARY_REMOVED = "stack_canary_removed"  # -fstack-protector dropped
+    FORTIFY_SOURCE_WEAKENED = "fortify_source_weakened"  # _FORTIFY_SOURCE dropped
+    WRITABLE_EXECUTABLE_SEGMENT = "writable_executable_segment"  # W^X violation introduced
 
     # Symbol metadata drift (ELF .dynsym)
     SYMBOL_BINDING_CHANGED = "symbol_binding_changed"  # GLOBAL→WEAK (breaking)

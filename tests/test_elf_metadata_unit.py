@@ -107,6 +107,75 @@ class TestParseDynamic:
         _parse_dynamic(section, meta)
         assert meta.runpath == "$ORIGIN"
 
+    def _val_tag(self, d_tag: str, d_val: int):
+        tag = MagicMock()
+        tag.entry = MagicMock()
+        tag.entry.d_tag = d_tag
+        tag.entry.d_val = d_val
+        return tag
+
+    def test_dt_bind_now_sets_bind_now(self):
+        meta = ElfMetadata()
+        section = MagicMock()
+        section.iter_tags.return_value = [self._make_tag("DT_BIND_NOW")]
+        _parse_dynamic(section, meta)
+        assert meta.bind_now is True
+
+    def test_df_bind_now_flag_sets_bind_now(self):
+        meta = ElfMetadata()
+        section = MagicMock()
+        section.iter_tags.return_value = [self._val_tag("DT_FLAGS", 0x8)]  # DF_BIND_NOW
+        _parse_dynamic(section, meta)
+        assert meta.bind_now is True
+
+    def test_df_1_now_and_pie_flags(self):
+        meta = ElfMetadata()
+        section = MagicMock()
+        # DF_1_NOW (0x1) | DF_1_PIE (0x08000000)
+        section.iter_tags.return_value = [self._val_tag("DT_FLAGS_1", 0x1 | 0x08000000)]
+        _parse_dynamic(section, meta)
+        assert meta.bind_now is True
+        assert meta.is_pie is True  # tentative; gated on ET_DYN by caller
+
+
+# ── _finalize_hardening ──────────────────────────────────────────────────
+
+class TestFinalizeHardening:
+    def test_relro_full_requires_bind_now(self):
+        from abicheck.elf_metadata import _finalize_hardening
+        meta = ElfMetadata(bind_now=True)
+        _finalize_hardening(meta, has_relro_segment=True, is_et_dyn=True)
+        assert meta.relro == "full"
+
+    def test_relro_partial_without_bind_now(self):
+        from abicheck.elf_metadata import _finalize_hardening
+        meta = ElfMetadata(bind_now=False)
+        _finalize_hardening(meta, has_relro_segment=True, is_et_dyn=True)
+        assert meta.relro == "partial"
+
+    def test_relro_none_without_segment(self):
+        from abicheck.elf_metadata import _finalize_hardening
+        meta = ElfMetadata(bind_now=True)
+        _finalize_hardening(meta, has_relro_segment=False, is_et_dyn=True)
+        assert meta.relro == "none"
+
+    def test_pie_gated_on_et_dyn(self):
+        from abicheck.elf_metadata import _finalize_hardening
+        meta = ElfMetadata(is_pie=True)  # DF_1_PIE was set
+        _finalize_hardening(meta, has_relro_segment=False, is_et_dyn=False)
+        assert meta.is_pie is False
+
+    def test_canary_and_fortify_from_imports(self):
+        from abicheck.elf_metadata import ElfImport, _finalize_hardening
+        meta = ElfMetadata(imports=[
+            ElfImport(name="__stack_chk_fail"),
+            ElfImport(name="__memcpy_chk"),
+            ElfImport(name="malloc"),
+        ])
+        _finalize_hardening(meta, has_relro_segment=False, is_et_dyn=True)
+        assert meta.has_stack_canary is True
+        assert meta.has_fortify_source is True
+
 
 # ── _parse_version_def ──────────────────────────────────────────────────
 

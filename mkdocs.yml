@@ -41,6 +41,7 @@ nav:
     - Policy Profiles: user-guide/policies.md
     - Suppressions: user-guide/suppressions.md
     - Severity Configuration: user-guide/severity.md
+    - Security Hardening: user-guide/security-hardening.md
     - Output Formats: user-guide/output-formats.md
     - Multi-Binary Releases: user-guide/multi-binary.md
     - Kernel & eBPF (BTF): user-guide/kernel-btf.md

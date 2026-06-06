@@ -44,17 +44,21 @@ accordingly:
 | Platform | Binary/metadata parsing | Workflow end-to-end (compare / appcompat / …) |
 |----------|:-----------------------:|:---------------------------------------------:|
 | **Linux / ELF** | Unit **and** integration tests | **Validated in CI** (the baseline) |
-| **Windows / PE+PDB** | Unit tests for the PE/PDB parsers | **Not validated end-to-end in CI** (MinGW experimental; MSVC untested) |
-| **macOS / Mach-O** | Unit tests for the Mach-O/ARM64 layer | **Not validated end-to-end in CI** (ARM64 HFA/HVA not yet tracked) |
+| **Windows / PE+PDB** | Unit tests for the PE/PDB parsers | **Validated in CI**: `cross-platform-e2e` lane runs `compare` on MinGW-built DLLs; `windows-msvc` lane asserts MSVC+PDB verdicts (PDB layout depth best-effort) |
+| **macOS / Mach-O** | Unit tests for the Mach-O/ARM64 layer | **Validated in CI**: `cross-platform-e2e` lane runs `compare` on Apple-clang-built dylibs; AArch64 AAPCS64 HFA/HVA + 16-byte boundary modeled and unit-tested |
 
-Concretely: every entry in [`examples/ground_truth.json`](https://github.com/napetrov/abicheck/blob/main/examples/ground_truth.json)
+Concretely: the core `compare` workflow is now exercised end-to-end on native
+PE and Mach-O binaries (built by the platform's own toolchain) in the
+`cross-platform-e2e` CI lane (gap **G1** closed). What remains a deliberate
+Linux-anchored subset is the **example catalog**: every entry in
+[`examples/ground_truth.json`](https://github.com/napetrov/abicheck/blob/main/examples/ground_truth.json)
 is validated on Linux, and a `platforms` tag of `macos`/`windows` expresses
-*intended* portability rather than a CI-validated result — 20 cases carry an
+*intended* portability rather than a per-case CI result — some cases carry an
 explicit `known_gap` describing where the non-Linux path diverges. This
 invariant (Linux = universal baseline; macOS/Windows = strict subset) is guarded
 by `tests/test_platform_coverage_honesty.py`. See
 [Use-Case Coverage Evaluation](../development/usecase-coverage-evaluation.md)
-(gap **G1**) for the roadmap to closing this.
+(gap **G1**) for context.
 
 ### Castxml-free validation (no external tools)
 

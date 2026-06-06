@@ -75,6 +75,19 @@ _SEVERITY_MAP: dict[str, Verdict] = {
 
 _VALID_BASE_POLICIES = VALID_BASE_POLICIES  # re-export alias for backward compat
 
+
+def builtin_policy_path(name: str) -> Path | None:
+    """Resolve a bare built-in policy name (e.g. ``"security"``) to its file.
+
+    Returns the packaged ``abicheck/policies/<name>.yaml`` path if it exists,
+    else ``None``. Used so ``--policy-file security`` is turnkey without the
+    user shipping their own YAML.
+    """
+    from .policies import POLICIES_DIR
+
+    candidate = POLICIES_DIR / f"{name}.yaml"
+    return candidate if candidate.is_file() else None
+
 # Kinds that are especially dangerous to downgrade — removing a function
 # or changing its signature always causes hard crashes.
 _CRITICAL_BREAKING_KINDS: frozenset[ChangeKind] = frozenset({
@@ -133,6 +146,15 @@ class PolicyFile:
                 "PyYAML is required for --policy-file support. "
                 "Install it with: pip install pyyaml"
             ) from exc
+
+        # Allow a bare built-in policy name (e.g. "security") to resolve to the
+        # packaged policy of that name. Gate on is_file() (not exists()) so a
+        # *directory* named e.g. "security/" in the CWD doesn't shadow the
+        # builtin and then make read_text() raise IsADirectoryError.
+        if not path.is_file():
+            builtin = builtin_policy_path(str(path))
+            if builtin is not None:
+                path = builtin
 
         raw: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
         if raw is None:

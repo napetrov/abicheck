@@ -29,7 +29,7 @@ use_cases:
   # ── change_class ──────────────────────────────────────────────────────────
   - id: UC-CHANGE-taxonomy
     axis: change_class
-    name: ABI/API change taxonomy (145 ChangeKinds, 5-tier policy)
+    name: ABI/API change taxonomy (190 ChangeKinds, 5-tier policy)
     status: complete
     evidence:
       modules: [abicheck/change_registry.py, abicheck/checker_policy.py]
@@ -114,38 +114,40 @@ use_cases:
   - id: UC-ARCH-kernel-btf
     axis: archetype
     name: Kernel / eBPF modules (BTF/CTF)
-    status: partial
-    gap: G6
-    plan: docs/development/plans/g6-kernel-btf-and-accelerator.md
+    status: complete
+    note: >
+      G6 (kernel half) closed. The "module vs vmlinux BTF" workflow runs
+      end-to-end through compare: real BTF bytes → parse_btf_from_bytes →
+      layout detectors → BREAKING, with a CTF mirror scenario
+      (parse_ctf_from_bytes). A committed BTF-blob example
+      (examples/case121_kernel_btf_struct_field_added) carries v1.btf/v2.btf and
+      a ground_truth.json entry; resolve_input now ingests bare BTF/CTF blobs by
+      magic so `abicheck compare a.btf b.btf` works toolchain-free. A real
+      `.BTF`-section fixture is validated via `gcc -gbtf`
+      (tests/test_btf_integration.py, integration-marked). Full kernel-module
+      __ksymtab namespace analysis beyond BTF type layout stays out of scope.
     evidence:
-      modules: [abicheck/btf_metadata.py, abicheck/ctf_metadata.py]
-      tests: [tests/test_btf_metadata.py, tests/test_workflow_kernel_accel.py]
+      modules: [abicheck/btf_metadata.py, abicheck/ctf_metadata.py, abicheck/service.py]
+      tests: [tests/test_btf_metadata.py, tests/test_workflow_kernel_accel.py, tests/test_btf_integration.py]
+      examples: [examples/case121_kernel_btf_struct_field_added]
       docs: [docs/user-guide/kernel-btf.md]
-    next_steps: >
-      The "module vs vmlinux BTF" workflow is now exercised end-to-end through
-      compare (real BTF bytes → parse_btf_from_bytes → layout detectors →
-      BREAKING) in tests/test_workflow_kernel_accel.py, and documented in
-      docs/user-guide/kernel-btf.md. Remaining: a committed BTF-blob example
-      under examples/ with a ground_truth.json entry and a pahole/bpftool-based
-      integration fixture; CTF has no workflow scenario yet.
 
   - id: UC-ARCH-sycl
     axis: archetype
     name: SYCL / heterogeneous accelerator stacks (PI/UR)
-    status: partial
-    gap: G6
-    plan: docs/development/plans/g6-kernel-btf-and-accelerator.md
+    status: complete
+    note: >
+      G6 (accelerator half) closed. SYCL plugin-interface detection is driven
+      through the standard compare + report path at the workflow level for BOTH
+      interface generations: a dropped PI entrypoint (libpi_*.so) and a dropped
+      UR adapter entrypoint (libur_adapter_*.so) each → BREAKING and reach the
+      JSON/Markdown reports (tests/test_workflow_kernel_accel.py). CUDA device
+      code (.cubin/PTX) stays deferred by design.
     evidence:
       modules: [abicheck/sycl_metadata.py, abicheck/diff_sycl.py]
       tests: [tests/test_diff_sycl.py, tests/test_workflow_kernel_accel.py]
       examples: [examples/case82_sycl_overload_set_removed]
       docs: [docs/user-guide/kernel-btf.md]
-    next_steps: >
-      SYCL plugin-interface detection is now driven through the standard
-      compare + report path at the workflow level (a dropped PI entrypoint →
-      BREAKING, reaching the JSON/Markdown reports) in
-      tests/test_workflow_kernel_accel.py. Remaining: a UR-adapter workflow
-      fixture; CUDA device code (.cubin/PTX) stays deferred.
 
   - id: UC-ARCH-static-lib
     axis: archetype
@@ -186,28 +188,44 @@ use_cases:
   - id: UC-PLAT-windows-pe
     axis: platform
     name: Windows PE/COFF + PDB (MSVC / MinGW)
-    status: partial
-    gap: G1
-    plan: docs/development/plans/g1-cross-platform-e2e.md
+    status: complete
+    note: >
+      G1 (Windows half) closed. The `compare` workflow is validated end-to-end
+      on native PE binaries in CI: the `cross-platform-e2e` lane builds DLLs
+      with MinGW gcc and drives `abicheck compare` directly (binary↔binary),
+      asserting BREAKING on a removed export and COMPATIBLE on identical builds
+      (tests/test_cross_platform_integration.py). The MSVC+PDB lane
+      (windows-msvc) now asserts both struct-growth (PDB layout) and
+      exported-function removal (PE export table) verdicts. PDB struct-layout
+      extraction depth on some MSVC versions remains best-effort (tests skip
+      rather than fail when a layout can't be parsed), and the example-catalog
+      platform tags stay a deliberate subset of Linux (see
+      tests/test_platform_coverage_honesty.py).
     evidence:
       modules: [abicheck/pe_metadata.py, abicheck/pdb_metadata.py]
-      tests: [tests/test_pe_metadata_unit.py, tests/test_pdb_metadata.py, tests/test_msvc_pdb_e2e.py]
-    next_steps: >
-      Broaden the MSVC+PDB e2e lane beyond smoke coverage and run a subset of
-      the example catalog on native PE binaries; MinGW remains experimental.
+      tests: [tests/test_pe_metadata_unit.py, tests/test_pdb_metadata.py, tests/test_msvc_pdb_e2e.py, tests/test_cross_platform_integration.py]
+      docs: [docs/reference/platforms.md]
 
   - id: UC-PLAT-macos-macho
     axis: platform
     name: macOS Mach-O (x86-64 / ARM64)
-    status: modeled
-    gap: G1
-    plan: docs/development/plans/g1-cross-platform-e2e.md
+    status: complete
+    note: >
+      G1 (macOS half) closed. The `cross-platform-e2e` CI lane (macos-latest)
+      builds .dylib files with Apple clang and drives `abicheck compare`
+      directly on native Mach-O binaries, asserting BREAKING on a removed
+      export and COMPATIBLE on identical builds
+      (tests/test_cross_platform_integration.py). AArch64 AAPCS64 by-value
+      aggregate passing (HFA/HVA, the 16-byte small-struct → indirect boundary)
+      is modeled by macho_metadata.classify_aapcs64_aggregate and unit-tested in
+      tests/test_macos_arm64_abi.py; the calling-convention divergence from SysV
+      x86-64 is documented in docs/reference/platforms.md. Example-catalog
+      platform tags remain a deliberate subset of Linux
+      (tests/test_platform_coverage_honesty.py).
     evidence:
       modules: [abicheck/macho_metadata.py]
-      tests: [tests/test_macho_metadata_unit.py, tests/test_macos_arm64_abi.py]
-    next_steps: >
-      Add a macOS e2e CI lane running compare/appcompat on native dylibs and
-      track ARM64 AAPCS HFA/HVA / small-struct calling convention.
+      tests: [tests/test_macho_metadata_unit.py, tests/test_macos_arm64_abi.py, tests/test_cross_platform_integration.py]
+      docs: [docs/reference/platforms.md]
 
   - id: UC-PLAT-arch-guard
     axis: platform
@@ -344,18 +362,23 @@ use_cases:
   - id: UC-WF-security-hardening
     axis: workflow
     name: Security-hardening drift scan (checksec across releases)
-    status: partial
-    gap: G12
-    plan: docs/development/plans/g12-security-hardening.md
+    status: complete
+    note: >
+      G12 closed. The ELF snapshot now captures the full checksec-equivalent
+      surface — RELRO (none/partial/full), BIND_NOW, PIE, stack-canary,
+      FORTIFY_SOURCE, and writable+executable (W^X) segments — alongside the
+      pre-existing executable_stack. Weakening transitions emit dedicated
+      COMPATIBLE_WITH_RISK kinds (relro_weakened, pie_disabled,
+      stack_canary_removed, fortify_source_weakened, writable_executable_segment).
+      A shipped, turnkey policy (abicheck/policies/security.yaml) is referenced
+      by name as `--policy-file security` and promotes all hardening kinds to
+      break. Validated end-to-end: real hardened-vs-unhardened .so parsing
+      (integration), the diff detectors and policy gating (unit), and the
+      built-in policy resolution.
     evidence:
-      modules: [abicheck/elf_metadata.py, abicheck/diff_platform.py, abicheck/checker_policy.py]
-      tests: [tests/test_diff_platform_deep.py]
-    next_steps: >
-      Detection of executable_stack / runpath_changed and per-kind policy gating
-      already exist (verified: executable_stack: break -> BREAKING). Remaining:
-      capture the rest of the checksec surface (RELRO/BIND_NOW/PIE/stack-canary/
-      FORTIFY/W^X) so it can be diffed, and ship a turnkey security preset /
-      policies/security.yaml so gating is discoverable rather than hand-rolled (F5).
+      modules: [abicheck/elf_metadata.py, abicheck/diff_platform.py, abicheck/checker_policy.py, abicheck/policies/security.yaml]
+      tests: [tests/test_diff_platform_deep.py, tests/test_elf_metadata_unit.py, tests/test_policy_file.py, tests/test_elf_parse_integration.py]
+      docs: [docs/user-guide/security-hardening.md]
 
   - id: UC-WF-probe-matrix
     axis: workflow

@@ -194,3 +194,71 @@ def test_policy_file_symbol_version_required_added_is_risk_by_default(tmp_path: 
     assert result == Verdict.COMPATIBLE_WITH_RISK, (
         f"SYMBOL_VERSION_REQUIRED_ADDED must be COMPATIBLE_WITH_RISK, got {result}"
     )
+
+
+# ── Built-in shipped policies (G12) ───────────────────────────────────────
+
+def test_builtin_security_policy_resolves_by_name() -> None:
+    """`--policy-file security` resolves to the packaged security.yaml."""
+    from abicheck.policies import builtin_policy_names
+    from abicheck.policy_file import builtin_policy_path
+
+    assert "security" in builtin_policy_names()
+    resolved = builtin_policy_path("security")
+    assert resolved is not None and resolved.is_file()
+    assert resolved.name == "security.yaml"
+
+
+def test_builtin_security_policy_gates_hardening_to_break() -> None:
+    pf = PolicyFile.load(Path("security"))
+    assert pf.base_policy == "strict_abi"
+    for kind in (
+        ChangeKind.RELRO_WEAKENED,
+        ChangeKind.PIE_DISABLED,
+        ChangeKind.STACK_CANARY_REMOVED,
+        ChangeKind.FORTIFY_SOURCE_WEAKENED,
+        ChangeKind.WRITABLE_EXECUTABLE_SEGMENT,
+        ChangeKind.EXECUTABLE_STACK,
+    ):
+        assert pf.overrides.get(kind) == Verdict.BREAKING, kind
+        assert pf.compute_verdict([_change(kind)]) == Verdict.BREAKING
+
+
+def test_unknown_builtin_policy_name_returns_none() -> None:
+    from abicheck.policy_file import builtin_policy_path
+    assert builtin_policy_path("does-not-exist") is None
+
+
+# ── cli_params.PolicyFileParam (Click type) ───────────────────────────────
+
+def test_policy_file_param_accepts_builtin_name() -> None:
+    from abicheck.cli_params import POLICY_FILE_PARAM
+    out = POLICY_FILE_PARAM.convert("security", None, None)
+    assert Path(out).name == "security"
+
+
+def test_policy_file_param_accepts_existing_path(tmp_path: Path) -> None:
+    from abicheck.cli_params import POLICY_FILE_PARAM
+    p = tmp_path / "my.yaml"
+    p.write_text("base_policy: strict_abi\n", encoding="utf-8")
+    out = POLICY_FILE_PARAM.convert(str(p), None, None)
+    assert Path(out) == p
+
+
+def test_policy_file_param_rejects_unknown_name() -> None:
+    import click
+
+    from abicheck.cli_params import POLICY_FILE_PARAM
+    with pytest.raises(click.BadParameter):
+        POLICY_FILE_PARAM.convert("does-not-exist.yaml", None, None)
+
+
+def test_builtin_policy_name_not_shadowed_by_directory(tmp_path: Path, monkeypatch) -> None:
+    """A directory named like a builtin (e.g. ``security/``) in CWD must not
+    shadow the shipped policy and cause IsADirectoryError (Codex P2)."""
+    (tmp_path / "security").mkdir()
+    monkeypatch.chdir(tmp_path)
+    pf = PolicyFile.load(Path("security"))
+    # Resolved to the packaged policy, not the local directory.
+    assert pf.base_policy == "strict_abi"
+    assert pf.overrides.get(ChangeKind.RELRO_WEAKENED) == Verdict.BREAKING

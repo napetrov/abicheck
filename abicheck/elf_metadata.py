@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -114,6 +115,27 @@ class ElfMetadata:
     # This is a security bad practice (disables NX protection).
     has_executable_stack: bool = False
 
+    # ── checksec-equivalent hardening surface ────────────────────────────
+    # These mirror what `checksec`/`hardening-check` report so a release that
+    # silently weakens a hardening property can be diffed (see G12).
+    #
+    # RELRO level: "none" | "partial" | "full".
+    #   partial = PT_GNU_RELRO segment present (GOT moved to a read-only page
+    #             after relocation), full = partial + BIND_NOW (eager binding,
+    #             so the whole GOT is read-only).
+    relro: str = "none"
+    # BIND_NOW eager binding (DT_BIND_NOW, DF_BIND_NOW, or DF_1_NOW).
+    bind_now: bool = False
+    # Position-independent executable (ET_DYN + DF_1_PIE). Shared libraries are
+    # always position-independent; this flags PIE *executables* specifically.
+    is_pie: bool = False
+    # Stack-smashing protector: references __stack_chk_fail / __stack_chk_guard.
+    has_stack_canary: bool = False
+    # _FORTIFY_SOURCE: references at least one fortified libc wrapper (*_chk).
+    has_fortify_source: bool = False
+    # W^X violation: a loadable segment is simultaneously writable + executable.
+    has_writable_executable_segment: bool = False
+
     @cached_property
     def symbol_map(self) -> dict[str, ElfSymbol]:
         """Name → ElfSymbol mapping (built once, cached on first access).
@@ -180,18 +202,39 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
     meta = ElfMetadata()
     elf = ELFFile(f)
 
-    # Extract PT_INTERP (ELF interpreter path).
+    # Extract PT_INTERP (ELF interpreter path) and the segment-level hardening
+    # surface (PT_GNU_STACK, PT_GNU_RELRO, W^X loadable segments).
+    _PF_X = 0x1
+    _PF_W = 0x2
+    has_relro_segment = False
     try:
         for seg in elf.iter_segments():
-            if seg.header.p_type == "PT_INTERP":
+            p_type = seg.header.p_type
+            if p_type == "PT_INTERP":
                 # PT_INTERP contains a null-terminated path string.
                 meta.interpreter = seg.get_interp_name()
-            elif seg.header.p_type == "PT_GNU_STACK":
-                # PF_X (0x1) = executable. Executable stack is a security risk.
-                if seg.header.p_flags & 0x1:
+            elif p_type == "PT_GNU_STACK":
+                # PF_X = executable. Executable stack is a security risk.
+                if seg.header.p_flags & _PF_X:
                     meta.has_executable_stack = True
+            elif p_type == "PT_GNU_RELRO":
+                has_relro_segment = True
+            elif p_type == "PT_LOAD":
+                # A loadable segment that is both writable and executable
+                # violates W^X (memory should never be both at once).
+                if (seg.header.p_flags & _PF_W) and (seg.header.p_flags & _PF_X):
+                    meta.has_writable_executable_segment = True
     except Exception as exc:  # noqa: BLE001
-        log.warning("parse_elf_metadata: failed to read PT_INTERP/PT_GNU_STACK from %s: %s", so_path, exc)
+        log.warning("parse_elf_metadata: failed to read program headers from %s: %s", so_path, exc)
+
+    # PIE = position-independent *executable* (ET_DYN with the DF_1_PIE flag).
+    # _parse_dynamic sets meta.is_pie tentatively from DF_1_PIE; gate it on
+    # ET_DYN here so a non-PIE object never claims PIE.
+    is_et_dyn = False
+    try:
+        is_et_dyn = elf.header.e_type == "ET_DYN"
+    except Exception as exc:  # noqa: BLE001
+        log.warning("parse_elf_metadata: failed to read e_type from %s: %s", so_path, exc)
 
     # Build separate version-index maps from .gnu.version_d and .gnu.version_r.
     # Verdef and verneed indices are normally non-overlapping, but separating
@@ -249,7 +292,42 @@ def _parse(f: IO[bytes], so_path: Path) -> ElfMetadata:
 
     _postprocess_metadata(meta, ver_index_map, ver_sym_section, dynsym_section, so_path)
 
+    # Finalize derived hardening properties now that segments, dynamic flags,
+    # and the symbol table have all been parsed.
+    _finalize_hardening(meta, has_relro_segment=has_relro_segment, is_et_dyn=is_et_dyn)
+
     return meta
+
+
+# Fortified libc wrappers are named ``__<func>_chk`` (e.g. __memcpy_chk,
+# __printf_chk); their presence as undefined references means the object was
+# built with -D_FORTIFY_SOURCE.
+_CANARY_SYMS = frozenset({"__stack_chk_fail", "__stack_chk_guard"})
+_FORTIFY_RE = re.compile(r"^__\w+_chk$")
+
+
+def _finalize_hardening(
+    meta: ElfMetadata, *, has_relro_segment: bool, is_et_dyn: bool
+) -> None:
+    """Derive RELRO level, PIE, stack-canary, and FORTIFY from parsed data."""
+    # RELRO: a PT_GNU_RELRO segment gives partial RELRO; combined with eager
+    # binding (BIND_NOW) the whole GOT is read-only → full RELRO.
+    if has_relro_segment:
+        meta.relro = "full" if meta.bind_now else "partial"
+    else:
+        meta.relro = "none"
+
+    # PIE only applies to ET_DYN images flagged DF_1_PIE.
+    meta.is_pie = meta.is_pie and is_et_dyn
+
+    # Stack canary / FORTIFY are observed via referenced libc symbols. Check
+    # both the imported (undefined) set and any defined symbols.
+    names = [s.name for s in meta.imports] + [s.name for s in meta.symbols]
+    for name in names:
+        if name in _CANARY_SYMS:
+            meta.has_stack_canary = True
+        elif _FORTIFY_RE.match(name):
+            meta.has_fortify_source = True
 
 
 def _postprocess_metadata(
@@ -291,16 +369,34 @@ def _postprocess_metadata(
                 sym.origin_lib = new_origin
 
 
+# Dynamic-flag bit constants (elf.h).
+_DF_BIND_NOW = 0x8        # DT_FLAGS
+_DF_1_NOW = 0x1           # DT_FLAGS_1
+_DF_1_PIE = 0x08000000    # DT_FLAGS_1
+
+
 def _parse_dynamic(section: DynamicSection, meta: ElfMetadata) -> None:
     for tag in section.iter_tags():
-        if tag.entry.d_tag == "DT_SONAME":
+        d_tag = tag.entry.d_tag
+        if d_tag == "DT_SONAME":
             meta.soname = tag.soname
-        elif tag.entry.d_tag == "DT_NEEDED":
+        elif d_tag == "DT_NEEDED":
             meta.needed.append(tag.needed)
-        elif tag.entry.d_tag == "DT_RPATH":
+        elif d_tag == "DT_RPATH":
             meta.rpath = tag.rpath
-        elif tag.entry.d_tag == "DT_RUNPATH":
+        elif d_tag == "DT_RUNPATH":
             meta.runpath = tag.runpath
+        elif d_tag == "DT_BIND_NOW":
+            meta.bind_now = True
+        elif d_tag == "DT_FLAGS":
+            if tag.entry.d_val & _DF_BIND_NOW:
+                meta.bind_now = True
+        elif d_tag == "DT_FLAGS_1":
+            if tag.entry.d_val & _DF_1_NOW:
+                meta.bind_now = True
+            if tag.entry.d_val & _DF_1_PIE:
+                # Tentative; gated on ET_DYN by the caller.
+                meta.is_pie = True
 
 
 def _parse_version_def(section: GNUVerDefSection, meta: ElfMetadata) -> None:

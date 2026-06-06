@@ -214,6 +214,46 @@ jobs:
       - name: Run MSVC + PDB end-to-end tests
         run: pytest tests/test_msvc_pdb_e2e.py -v -m msvc --tb=short
 
+  cross-platform-e2e:
+    # G1: native PE/Mach-O `compare` workflows + AArch64 AAPCS modeling.
+    # Drives `abicheck compare` over binaries built by the *platform's own*
+    # toolchain (Apple clang → .dylib, MinGW gcc → .dll) and asserts verdicts,
+    # so the core workflow is validated end-to-end off the Linux baseline.
+    #
+    # Kept always-on (not path-gated): the jobs are short (~1 min) and a
+    # path-filtered "skipped" status complicates branch-protection required
+    # checks; the modest runner cost buys a reliable platform signal on every PR.
+    name: Native PE/Mach-O compare workflows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW gcc (Windows — PE/DWARF)
+        if: runner.os == 'Windows'
+        run: choco install mingw --no-progress --yes
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+      - name: Install package
+        run: pip install -e ".[dev]"
+      - name: Native PE/Mach-O compare workflow tests
+        # Run ONLY the native, compiler-gated integration tests here. Every test
+        # in this file is @pytest.mark.integration and needs clang/MinGW, so if
+        # the native compiler is missing they all skip and the
+        # ABICHECK_MIN_EXECUTED floor fails the lane — closing the silent-skip
+        # hole where always-run unit tests could keep it green. (The AArch64
+        # AAPCS64 unit tests run in the regular unit-tests lane on all OSes.)
+        # Floor 5: each platform contributes ~7-8 native tests when the compiler
+        # is present, so 5 is comfortably reachable yet 0 (all-skipped) fails.
+        env:
+          ABICHECK_MIN_EXECUTED: '5'
+        run: pytest tests/test_cross_platform_integration.py -v -m integration --tb=short
+
   heavy-parity-gate:
     runs-on: ubuntu-latest
     outputs:

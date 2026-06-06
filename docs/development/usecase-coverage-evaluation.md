@@ -21,17 +21,18 @@ map across all three.
 ## Headline
 
 abicheck is **exceptionally deep on the change-taxonomy axis and comparatively
-thin on the breadth axes.** The "what changed" dimension — **183 `ChangeKind`s**
+thin on the breadth axes.** The "what changed" dimension — **190 `ChangeKind`s**
 in a 5-tier policy model, **121 calibrated example cases**, ABICC + libabigail
 parity — is essentially complete and has diminishing returns.
 
 The remaining gaps are **not in detecting more change types**. They are in
 **breadth across platforms, workflows, and consumption topologies**:
 
-1. Cross-platform support is *modeled but unvalidated end-to-end* — ~95% of
-   workflow tests are Linux; there are **no Windows/macOS workflow integration
-   tests**, and 20 example cases carry platform `known_gap` notes concentrated
-   on Windows/macOS.
+1. Cross-platform support: the core `compare` workflow is now **validated
+   end-to-end on native PE/Mach-O** in the `cross-platform-e2e` CI lane (G1
+   closed). What remains Linux-anchored is the *example catalog* — most
+   workflow fixtures run on Linux, and `macos`/`windows` `platforms` tags mark
+   intended portability rather than a per-case CI result.
 2. The build-configuration matrix is **siloed in a separate `probe` command**
    disconnected from `compare` / `compare-release`.
 3. The example catalog is **almost entirely single-pair `compare` fixtures** —
@@ -65,12 +66,12 @@ A real invocation is a point in this space:
 
 | Use case | Status | Notes |
 |---|---|---|
-| Change taxonomy | `complete` | 183 kinds; 121 cases; parity tests |
+| Change taxonomy | `complete` | 190 kinds; 121 cases; parity tests |
 | **Release recommendation (semver + SONAME)** | `complete` | **added in this change** |
 | C / C++ archetypes | `complete` | 35 C + 52 C++ example pairs |
 | Linux ELF platform | `complete` | the CI-validated baseline |
-| Windows PE/MSVC | `partial` | MSVC+PDB e2e lane (`test_msvc_pdb_e2e.py`); MinGW experimental |
-| macOS Mach-O/ARM64 | `modeled` | parsers + unit tests; no e2e; ARM64 HFA/HVA not tracked |
+| Windows PE/MSVC | `complete` | **G1 closed**: `cross-platform-e2e` lane runs `compare` on MinGW DLLs; MSVC+PDB lane asserts struct-growth + removed-export verdicts |
+| macOS Mach-O/ARM64 | `complete` | **G1 closed**: `cross-platform-e2e` lane runs `compare` on Apple-clang dylibs; AAPCS64 HFA/HVA + 16-byte boundary modeled + unit-tested |
 | `compare`/release/baseline/Debian/ABICC | `complete` | dedicated CLIs + tests |
 | MCP server | `complete` | unit-tested (mocks, Linux) |
 | Reporting: JSON/SARIF/JUnit | `complete` | versioned schema + 34 SARIF / 55 JUnit tests |
@@ -78,8 +79,10 @@ A real invocation is a point in this space:
 | Build-config matrix (`probe`) | `complete` | **G2 closed**: wired into `compare`; both CXX floor and API_DEPENDS proven e2e (`.o` `.symtab` surface capture fixed) |
 | Bundle / multi-library | `complete` | all detectors run via `compare-release`; case84 validated e2e (Linux-only by design; cross-platform → G1) |
 | Plugin (host↔plugin) | `complete` | **G5 closed**: `plugin-check` CLI + `check_plugin_host_contract` API + plugin_abi policy |
+| Security-hardening drift | `complete` | **G12 closed**: full checksec surface (RELRO/BIND_NOW/PIE/canary/FORTIFY/W^X) diffed; shipped `--policy-file security` gate |
 | Header-only / inline-only | `planned` | castxml can't emit concept bodies / ctor mangled names (G4; cases 78/105/106/111 dormant) |
-| Kernel / eBPF (BTF/CTF) | `partial` | **G6 advanced**: BTF struct-change + SYCL entrypoint-drop run through `compare` end-to-end; example fixture pending |
+| Kernel / eBPF (BTF/CTF) | `complete` | **G6 closed**: BTF + CTF struct-change run through `compare`; committed `case121` BTF blobs + bare-blob CLI ingestion + `gcc -gbtf` integration fixture |
+| SYCL / accelerator (PI/UR) | `complete` | **G6 closed**: PI *and* UR adapter entrypoint-drop driven through `compare` + reports |
 | Static libraries (`.a`/`.lib`) | `by_design_excluded` | **G8 decided (option A)**: non-goal; CLI rejects archives with guidance |
 | FFI consumers (Rust/Go/Python) | `by_design_excluded` | C ABI covered; other languages a stated non-goal |
 
@@ -89,12 +92,12 @@ A real invocation is a point in this space:
 
 | ID | Gap | Code | Tests | Examples |
 |---|---|:--:|:--:|:--:|
-| **G1** | Cross-platform is aspirational, not validated (Win/macOS) | ARM64 AAPCS, MSVC mangling fidelity | PE/Mach-O **e2e** in CI | label tags honestly |
+| **G1** | ✅ **closed** — native PE/Mach-O `compare` validated in CI (`cross-platform-e2e` lane) + AAPCS64 modeling | ✅ `classify_aapcs64_aggregate`; broadened MSVC+PDB lane | ✅ native binary↔binary compare verdicts (clang/MinGW) | catalog tags stay a Linux subset (by design) |
 | **G2** | Build-config matrix siloed in `probe` | ✅ folded into `compare`/`compare-release` (`--probe-matrix-old/new`); bundle soname-skew wired; `.o` `.symtab` surface capture | ✅ CXX floor + API_DEPENDS e2e + case84 bundle e2e | ✅ `feature_macro.yaml`, `cxx_standard.yaml` |
 | **G3** | Catalog only exercises `compare`; Markdown/HTML test coverage thin | — | ✅ appcompat-from-catalog + stack-check sysroot e2e + Markdown/HTML structural coverage | scenarios asserted in new tests |
 | **G4** | Header-only / inline-only (detector frontier) | libclang header-AST extractor | unblock cases 78/105/106/111 | reuse dormant fixtures |
 | **G5** | Plugin host↔plugin contract is one-directional | ✅ `check_plugin_host_contract` + `plugin-check` CLI | ✅ scenario + CLI tests | compiled host/plugin demo optional |
-| **G6** | Kernel/eBPF use case is parser-only | ✅ BTF/SYCL run through `compare` | ✅ workflow scenarios (real BTF parse) | committed BTF-blob example pending |
+| **G6** | ✅ **closed** — kernel/eBPF + accelerator workflows | ✅ BTF/CTF/SYCL(PI+UR) run through `compare`; bare-blob CLI ingestion | ✅ workflow scenarios + `gcc -gbtf` integration | ✅ committed `case121` BTF-blob example |
 | **G7** | No semver-bump recommendation | recommender + report wiring | mapping + integration | reuse cases |
 | **G8** | Static libraries undocumented | ✅ archive detection + clear error path | ✅ unit (archive → guidance error) | ✅ documented non-goal (goals + limitations) |
 
@@ -110,7 +113,7 @@ manylinux wheels + their vendored stack, static archives) and surfaced these
 | **G9** | auditwheel/manylinux vendored libs never pair (content-hash sonames change every rebuild) | `UC-WF-wheel-vendored` | [g9](plans/g9-wheel-vendored-matching.md) |
 | **G10** | no manylinux glibc-floor / platform-baseline check (data captured, no detector) | `UC-TC-glibc-floor` | [g10](plans/g10-glibc-floor-check.md) |
 | **G11** | no single-binary audit/lint mode (every command is comparative) | `UC-WF-audit` | [g11](plans/g11-single-binary-audit.md) |
-| **G12** | hardening-drift detected + gateable, but thin captured surface and no security preset | `UC-WF-security-hardening` | [g12](plans/g12-security-hardening.md) |
+| **G12** | ✅ **closed** — full checksec surface (RELRO/BIND_NOW/PIE/canary/FORTIFY/W^X) captured + diffed; shipped `--policy-file security` gate | `UC-WF-security-hardening` | [g12](plans/g12-security-hardening.md) |
 | **G13** | no cross-architecture guardrail (x86-64 vs aarch64 reports false-green) | `UC-PLAT-arch-guard` | [g13](plans/g13-arch-mismatch-guard.md) |
 | **G14** | abi3 wheel compatibility lives in *imported* CPython symbols, not exports — never checked (cryptography 42→43 stays COMPATIBLE while +7 `Py*` imports appear) | `UC-WF-stable-abi-subset` | [g14](plans/g14-stable-abi-subset.md) |
 | **G15** | inline-namespace version stamp makes every symbol churn (ICU 73→74: 6288 phantom changes vs a real +34/−0) | `UC-CHANGE-inline-ns-version` | [g15](plans/g15-inline-namespace-version.md) |

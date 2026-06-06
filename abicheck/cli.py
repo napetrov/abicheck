@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 import click
 
 from .checker import DiffResult, LibraryMetadata, compare
+from .cli_params import POLICY_FILE_PARAM
 from .compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_dump
 from .compat.cli import compat_group
 from .dumper import dump
@@ -427,6 +428,13 @@ def _resolve_input(
             dwarf_only=dwarf_only,
             debug_format=debug_format,
         )
+
+    # Raw kernel type-info blob (a bare BTF/CTF section, e.g. from
+    # `bpftool btf dump file <elf> format raw`): parse directly.
+    from .service import _resolve_raw_typeinfo
+    raw_typeinfo = _resolve_raw_typeinfo(path, version)
+    if raw_typeinfo is not None:
+        return raw_typeinfo
 
     # Text-based formats: detect by sniffing only a small header chunk
     fmt = _sniff_text_format(path)
@@ -1589,8 +1597,8 @@ def _finalize_compare_result(
               default="strict_abi", show_default=True,
               help="Built-in policy profile for verdict classification. Ignored when --policy-file is given.")
 @click.option("--policy-file", "policy_file_path",
-              type=click.Path(exists=True, path_type=Path), default=None,
-              help="YAML policy file with per-kind verdict overrides. Overrides --policy.")
+              type=POLICY_FILE_PARAM, default=None,
+              help="YAML policy file with per-kind verdict overrides, or a built-in name (e.g. 'security'). Overrides --policy.")
 @click.option("--pdb-path", "pdb_path", type=click.Path(path_type=Path), default=None,
               help="Explicit PDB file path for Windows PE debug info (applied to both sides). "
                    "Overrides automatic PDB discovery.")
