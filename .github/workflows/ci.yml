@@ -214,6 +214,37 @@ jobs:
       - name: Run MSVC + PDB end-to-end tests
         run: pytest tests/test_msvc_pdb_e2e.py -v -m msvc --tb=short
 
+  cross-platform-e2e:
+    # G1: native PE/Mach-O `compare` workflows + AArch64 AAPCS modeling.
+    # Drives `abicheck compare` over binaries built by the *platform's own*
+    # toolchain (Apple clang → .dylib, MinGW gcc → .dll) and asserts verdicts,
+    # so the core workflow is validated end-to-end off the Linux baseline.
+    name: Native PE/Mach-O compare workflows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW gcc (Windows — PE/DWARF)
+        if: runner.os == 'Windows'
+        run: choco install mingw --no-progress --yes
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+      - name: Install package
+        run: pip install -e ".[dev]"
+      - name: Native compare workflow + AAPCS64 tests
+        # The AArch64 AAPCS unit tests (18) always run, so a floor of 12 catches
+        # a silently-missing native compiler without risking a false failure
+        # from platform subsetting of the integration-marked compare tests.
+        env:
+          ABICHECK_MIN_EXECUTED: '12'
+        run: pytest tests/test_cross_platform_integration.py tests/test_macos_arm64_abi.py -v --tb=short
+
   heavy-parity-gate:
     runs-on: ubuntu-latest
     outputs:

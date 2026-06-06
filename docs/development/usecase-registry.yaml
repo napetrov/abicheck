@@ -188,28 +188,44 @@ use_cases:
   - id: UC-PLAT-windows-pe
     axis: platform
     name: Windows PE/COFF + PDB (MSVC / MinGW)
-    status: partial
-    gap: G1
-    plan: docs/development/plans/g1-cross-platform-e2e.md
+    status: complete
+    note: >
+      G1 (Windows half) closed. The `compare` workflow is validated end-to-end
+      on native PE binaries in CI: the `cross-platform-e2e` lane builds DLLs
+      with MinGW gcc and drives `abicheck compare` directly (binary↔binary),
+      asserting BREAKING on a removed export and COMPATIBLE on identical builds
+      (tests/test_cross_platform_integration.py). The MSVC+PDB lane
+      (windows-msvc) now asserts both struct-growth (PDB layout) and
+      exported-function removal (PE export table) verdicts. PDB struct-layout
+      extraction depth on some MSVC versions remains best-effort (tests skip
+      rather than fail when a layout can't be parsed), and the example-catalog
+      platform tags stay a deliberate subset of Linux (see
+      tests/test_platform_coverage_honesty.py).
     evidence:
       modules: [abicheck/pe_metadata.py, abicheck/pdb_metadata.py]
-      tests: [tests/test_pe_metadata_unit.py, tests/test_pdb_metadata.py, tests/test_msvc_pdb_e2e.py]
-    next_steps: >
-      Broaden the MSVC+PDB e2e lane beyond smoke coverage and run a subset of
-      the example catalog on native PE binaries; MinGW remains experimental.
+      tests: [tests/test_pe_metadata_unit.py, tests/test_pdb_metadata.py, tests/test_msvc_pdb_e2e.py, tests/test_cross_platform_integration.py]
+      docs: [docs/reference/platforms.md]
 
   - id: UC-PLAT-macos-macho
     axis: platform
     name: macOS Mach-O (x86-64 / ARM64)
-    status: modeled
-    gap: G1
-    plan: docs/development/plans/g1-cross-platform-e2e.md
+    status: complete
+    note: >
+      G1 (macOS half) closed. The `cross-platform-e2e` CI lane (macos-latest)
+      builds .dylib files with Apple clang and drives `abicheck compare`
+      directly on native Mach-O binaries, asserting BREAKING on a removed
+      export and COMPATIBLE on identical builds
+      (tests/test_cross_platform_integration.py). AArch64 AAPCS64 by-value
+      aggregate passing (HFA/HVA, the 16-byte small-struct → indirect boundary)
+      is modeled by macho_metadata.classify_aapcs64_aggregate and unit-tested in
+      tests/test_macos_arm64_abi.py; the calling-convention divergence from SysV
+      x86-64 is documented in docs/reference/platforms.md. Example-catalog
+      platform tags remain a deliberate subset of Linux
+      (tests/test_platform_coverage_honesty.py).
     evidence:
       modules: [abicheck/macho_metadata.py]
-      tests: [tests/test_macho_metadata_unit.py, tests/test_macos_arm64_abi.py]
-    next_steps: >
-      Add a macOS e2e CI lane running compare/appcompat on native dylibs and
-      track ARM64 AAPCS HFA/HVA / small-struct calling convention.
+      tests: [tests/test_macho_metadata_unit.py, tests/test_macos_arm64_abi.py, tests/test_cross_platform_integration.py]
+      docs: [docs/reference/platforms.md]
 
   - id: UC-PLAT-arch-guard
     axis: platform

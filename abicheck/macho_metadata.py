@@ -336,3 +336,51 @@ def _parse_macho_symbols(
     except Exception as exc:  # noqa: BLE001
         # SymbolTable may fail on binaries without LC_SYMTAB (stripped, .tbd stubs, etc.)
         log.debug("parse_macho_metadata: SymbolTable failed for %s: %s", dylib_path, exc)
+
+
+# ---------------------------------------------------------------------------
+# AArch64 AAPCS64 aggregate passing classification
+# ---------------------------------------------------------------------------
+#: Fundamental floating-point member types that can form an HFA (Homogeneous
+#: Floating-point Aggregate) under AAPCS64 §5.9.5.
+_AAPCS64_HFA_BASE_TYPES = frozenset({
+    "float", "double", "long double",
+    "__fp16", "_Float16", "__bf16",
+})
+
+#: AArch64 passes an aggregate in general registers only when it is <= 16 bytes;
+#: larger aggregates are passed indirectly (by reference to a caller copy).
+AAPCS64_AGGREGATE_REGISTER_LIMIT = 16
+
+
+def classify_aapcs64_aggregate(byte_size: int, member_base_types: list[str]) -> str:
+    """Classify how AArch64 (AAPCS64) passes an aggregate *by value*.
+
+    This is the calling-convention dimension that differs from the SysV
+    x86-64 path and is otherwise invisible to a size-only diff. Crossing one
+    of these boundaries (e.g. growing past 16 bytes, or ceasing to be an HFA)
+    is a real ARM64 ABI change for by-value parameters/returns.
+
+    Args:
+        byte_size: ``sizeof`` of the aggregate.
+        member_base_types: fundamental type names of the aggregate's members
+            (flattened). An HFA requires 1..4 members all of the same
+            floating-point fundamental type.
+
+    Returns:
+        - ``"hfa<N>"`` — Homogeneous Floating-point Aggregate of N members,
+          passed in N SIMD/FP registers (v0..v3).
+        - ``"register"`` — aggregate <= 16 bytes, passed in up to two GP
+          registers (x0/x1).
+        - ``"indirect"`` — aggregate > 16 bytes, passed by reference.
+    """
+    members = [m for m in member_base_types if m]
+    if (
+        1 <= len(members) <= 4
+        and all(m in _AAPCS64_HFA_BASE_TYPES for m in members)
+        and len(set(members)) == 1
+    ):
+        return f"hfa{len(members)}"
+    if byte_size > AAPCS64_AGGREGATE_REGISTER_LIMIT:
+        return "indirect"
+    return "register"

@@ -28,10 +28,11 @@ parity — is essentially complete and has diminishing returns.
 The remaining gaps are **not in detecting more change types**. They are in
 **breadth across platforms, workflows, and consumption topologies**:
 
-1. Cross-platform support is *modeled but unvalidated end-to-end* — ~95% of
-   workflow tests are Linux; there are **no Windows/macOS workflow integration
-   tests**, and 20 example cases carry platform `known_gap` notes concentrated
-   on Windows/macOS.
+1. Cross-platform support: the core `compare` workflow is now **validated
+   end-to-end on native PE/Mach-O** in the `cross-platform-e2e` CI lane (G1
+   closed). What remains Linux-anchored is the *example catalog* — most
+   workflow fixtures run on Linux, and `macos`/`windows` `platforms` tags mark
+   intended portability rather than a per-case CI result.
 2. The build-configuration matrix is **siloed in a separate `probe` command**
    disconnected from `compare` / `compare-release`.
 3. The example catalog is **almost entirely single-pair `compare` fixtures** —
@@ -69,8 +70,8 @@ A real invocation is a point in this space:
 | **Release recommendation (semver + SONAME)** | `complete` | **added in this change** |
 | C / C++ archetypes | `complete` | 35 C + 52 C++ example pairs |
 | Linux ELF platform | `complete` | the CI-validated baseline |
-| Windows PE/MSVC | `partial` | MSVC+PDB e2e lane (`test_msvc_pdb_e2e.py`); MinGW experimental |
-| macOS Mach-O/ARM64 | `modeled` | parsers + unit tests; no e2e; ARM64 HFA/HVA not tracked |
+| Windows PE/MSVC | `complete` | **G1 closed**: `cross-platform-e2e` lane runs `compare` on MinGW DLLs; MSVC+PDB lane asserts struct-growth + removed-export verdicts |
+| macOS Mach-O/ARM64 | `complete` | **G1 closed**: `cross-platform-e2e` lane runs `compare` on Apple-clang dylibs; AAPCS64 HFA/HVA + 16-byte boundary modeled + unit-tested |
 | `compare`/release/baseline/Debian/ABICC | `complete` | dedicated CLIs + tests |
 | MCP server | `complete` | unit-tested (mocks, Linux) |
 | Reporting: JSON/SARIF/JUnit | `complete` | versioned schema + 34 SARIF / 55 JUnit tests |
@@ -91,7 +92,7 @@ A real invocation is a point in this space:
 
 | ID | Gap | Code | Tests | Examples |
 |---|---|:--:|:--:|:--:|
-| **G1** | Cross-platform is aspirational, not validated (Win/macOS) | ARM64 AAPCS, MSVC mangling fidelity | PE/Mach-O **e2e** in CI | label tags honestly |
+| **G1** | ✅ **closed** — native PE/Mach-O `compare` validated in CI (`cross-platform-e2e` lane) + AAPCS64 modeling | ✅ `classify_aapcs64_aggregate`; broadened MSVC+PDB lane | ✅ native binary↔binary compare verdicts (clang/MinGW) | catalog tags stay a Linux subset (by design) |
 | **G2** | Build-config matrix siloed in `probe` | ✅ folded into `compare`/`compare-release` (`--probe-matrix-old/new`); bundle soname-skew wired; `.o` `.symtab` surface capture | ✅ CXX floor + API_DEPENDS e2e + case84 bundle e2e | ✅ `feature_macro.yaml`, `cxx_standard.yaml` |
 | **G3** | Catalog only exercises `compare`; Markdown/HTML test coverage thin | — | ✅ appcompat-from-catalog + stack-check sysroot e2e + Markdown/HTML structural coverage | scenarios asserted in new tests |
 | **G4** | Header-only / inline-only (detector frontier) | libclang header-AST extractor | unblock cases 78/105/106/111 | reuse dormant fixtures |
