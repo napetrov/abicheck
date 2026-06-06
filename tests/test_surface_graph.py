@@ -144,11 +144,36 @@ def test_metrics_counts_and_undocumented_ratio() -> None:
     assert m.evidence_tier == "header_aware"
     assert m.public_functions == 2  # foo_open + foo_undocumented
     assert m.public_variables == 1
-    assert m.public_types == 4
+    # Island is parsed but unreachable from any public root, so it is excluded
+    # from the public-type count (only Handle/Detail/Widget remain).
+    assert m.public_types == 3
     assert m.public_enums == 1
     # 1 EXPORT_ONLY symbol out of 3 exported (2 fns + 1 var).
     assert m.undocumented_exports == 1
     assert abs(m.undocumented_export_ratio - (1 / 3)) < 1e-9
+
+
+def test_public_type_count_falls_back_when_unresolvable() -> None:
+    # An ELF-only snapshot (no header-derived visibility) cannot resolve a
+    # public surface, so the raw parsed counts are used (nothing was scoped).
+    from abicheck.surface_graph import _public_type_counts
+
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        elf_only_mode=True,
+        functions=[
+            Function(
+                name="f",
+                mangled="f",
+                return_type="void",
+                visibility=Visibility.ELF_ONLY,
+            ),
+        ],
+        types=[RecordType(name="Internal", kind="struct")],
+        enums=[EnumType(name="E")],
+    )
+    assert _public_type_counts(snap) == (1, 1)
 
 
 def test_metrics_header_coverage_and_cohesion() -> None:

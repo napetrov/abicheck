@@ -27,10 +27,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
 from .cli import _write_or_echo, main
+
+if TYPE_CHECKING:
+    from .idioms import IdiomTag
 
 
 @main.command("surface-report")
@@ -68,6 +72,13 @@ from .cli import _write_or_echo, main
     help="How many highest-fan-in types to list.",
 )
 @click.option(
+    "--idioms/--no-idioms",
+    default=False,
+    show_default=True,
+    help="Recognise and report API idioms (opaque pointer, PIMPL, handle, "
+    "factory, create/destroy, callback).",
+)
+@click.option(
     "-o",
     "--output",
     type=click.Path(path_type=Path),
@@ -80,6 +91,7 @@ def surface_report_cmd(
     includes: tuple[Path, ...],
     fmt: str,
     top: int,
+    idioms: bool,
     output: Path | None,
 ) -> None:
     """Report structural metrics for a library's public ABI surface.
@@ -105,14 +117,39 @@ def surface_report_cmd(
 
     metrics = compute_surface_metrics(snap, top_n=top)
 
+    idiom_tags: dict[str, list[IdiomTag]] = {}
+    if idioms:
+        from .idioms import recognise_idioms
+        from .surface_graph import build_surface_graph
+
+        idiom_tags = recognise_idioms(build_surface_graph(snap))
+
     if fmt == "json":
-        _write_or_echo(output, json.dumps(metrics.to_dict(), indent=2))
+        payload = metrics.to_dict()
+        if idioms:
+            payload["idioms"] = {
+                name: [
+                    {
+                        "idiom": t.idiom.value,
+                        "confidence": t.confidence.value,
+                        "evidence": t.evidence,
+                        "layout_signature": t.layout_signature,
+                        "hidden_pointee": t.hidden_pointee,
+                        "definition_hidden": t.definition_hidden,
+                    }
+                    for t in tags
+                ]
+                for name, tags in idiom_tags.items()
+            }
+        _write_or_echo(output, json.dumps(payload, indent=2))
         return
 
-    _write_or_echo(output, _render_text(metrics))
+    _write_or_echo(output, _render_text(metrics, idiom_tags if idioms else None))
 
 
-def _render_text(metrics: object) -> str:
+def _render_text(
+    metrics: object, idiom_tags: dict[str, list[IdiomTag]] | None = None
+) -> str:
     from .surface_graph import SurfaceMetrics
 
     assert isinstance(metrics, SurfaceMetrics)
@@ -140,4 +177,11 @@ def _render_text(metrics: object) -> str:
                 f"    {hc.declared:>4} / {hc.exported:>4} / {hc.cohesion_clusters:>2}  "
                 f"{hc.header}"
             )
+    if idiom_tags:
+        lines.append("  idioms recognised:")
+        for name in sorted(idiom_tags):
+            for tag in idiom_tags[name]:
+                lines.append(
+                    f"    {tag.idiom.value:<16} {name}  [{tag.confidence.value}]"
+                )
     return "\n".join(lines) + "\n"

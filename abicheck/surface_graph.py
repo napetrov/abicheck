@@ -239,6 +239,26 @@ def _evidence_tier(snap: AbiSnapshot) -> str:
     return EvidenceTier.ELF_ONLY.value
 
 
+def _public_type_counts(snap: AbiSnapshot) -> tuple[int, int]:
+    """Count public record types and enums via the reachability+provenance closure.
+
+    ``snap.types``/``snap.enums`` is the *full parsed universe* — when headers
+    are scoped it includes private and transitively-included declarations, so
+    raw ``len()`` would inflate the public-surface counts (ADR-025 A1). Reuse
+    the ADR-024 public-surface resolver: when it cannot resolve a surface (no
+    header-derived visibility, e.g. ELF-only), fall back to the raw counts,
+    which are then correct because nothing was scoped.
+    """
+    from .surface import compute_public_surface
+
+    psurf = compute_public_surface(snap)
+    if not psurf.resolvable:
+        return len(snap.types), len(snap.enums)
+    public_records = sum(1 for r in snap.types if r.name in psurf.public_types)
+    public_enums = sum(1 for e in snap.enums if e.name in psurf.public_types)
+    return public_records, public_enums
+
+
 def _header_cohesion_clusters(graph: SurfaceGraph, decls: frozenset[str]) -> int:
     """Connected components of the type-reference graph restricted to *decls*.
 
@@ -317,14 +337,16 @@ def compute_surface_metrics(snap: AbiSnapshot, *, top_n: int = 10) -> SurfaceMet
             )
         )
 
+    public_types, public_enums = _public_type_counts(snap)
+
     return SurfaceMetrics(
         library=snap.library,
         version=snap.version,
         evidence_tier=_evidence_tier(snap),
         public_functions=public_functions,
         public_variables=public_variables,
-        public_types=len(snap.types),
-        public_enums=len(snap.enums),
+        public_types=public_types,
+        public_enums=public_enums,
         exported_symbols=exported_symbols,
         undocumented_exports=undocumented,
         undocumented_export_ratio=ratio,
