@@ -27,6 +27,7 @@ See docs/development/usecase-coverage-evaluation.md (gap G3 / G5).
 
 from __future__ import annotations
 
+from abicheck.appcompat import check_plugin_host_contract
 from abicheck.checker import compare
 from abicheck.checker_policy import ChangeKind, Verdict
 from abicheck.model import AbiSnapshot, EnumMember, EnumType, Function, Visibility
@@ -130,6 +131,56 @@ def test_plugin_drop_outside_host_contract_is_library_breaking_but_host_safe() -
     assert removed & HOST_REQUIRED_ENTRYPOINTS == set()  # host unaffected
     # Library-wide verdict is still breaking for whoever *did* use plugin_debug.
     assert result.verdict is Verdict.BREAKING
+
+
+# ── Scenario C2: first-class host-contract check (gap G5) ─────────────────────
+#
+# The same insight as Scenario C, but driven through the first-class
+# `check_plugin_host_contract` API rather than re-deriving removed-symbol sets
+# inline — the plugin-load mirror of `appcompat`.
+
+
+def test_host_contract_check_breaks_when_required_entrypoint_dropped() -> None:
+    plugin_v1 = _lib("1.0", ["plugin_init", "plugin_run", "plugin_debug"])
+    plugin_v2 = _lib("2.0", ["plugin_init", "plugin_debug"])  # drops plugin_run
+
+    result = check_plugin_host_contract(
+        plugin_v1, plugin_v2, HOST_REQUIRED_ENTRYPOINTS,
+    )
+
+    assert result.verdict is Verdict.BREAKING
+    assert result.missing_entrypoints == ["plugin_run"]
+    assert result.coverage == 50.0
+    # The drop shows up as a host-relevant change, not just a library-wide one.
+    assert any(c.symbol == "plugin_run" for c in result.breaking_for_host)
+
+
+def test_host_contract_check_safe_when_drop_outside_contract() -> None:
+    """A library-BREAKING drop the host never resolves leaves the host intact."""
+    plugin_v1 = _lib("1.0", ["plugin_init", "plugin_run", "plugin_debug"])
+    plugin_v2 = _lib("2.0", ["plugin_init", "plugin_run"])  # drops plugin_debug only
+
+    # The library-wide verdict is BREAKING …
+    assert compare(plugin_v1, plugin_v2).verdict is Verdict.BREAKING
+    # … but the host's load contract is fully satisfied.
+    result = check_plugin_host_contract(
+        plugin_v1, plugin_v2, HOST_REQUIRED_ENTRYPOINTS,
+    )
+    assert result.verdict is Verdict.COMPATIBLE
+    assert result.missing_entrypoints == []
+    assert result.coverage == 100.0
+
+
+def test_host_contract_check_additive_plugin_is_compatible() -> None:
+    plugin_v1 = _lib("1.0", ["plugin_init", "plugin_run"])
+    plugin_v2 = _lib("1.1", ["plugin_init", "plugin_run", "plugin_extra"])
+
+    result = check_plugin_host_contract(
+        plugin_v1, plugin_v2, HOST_REQUIRED_ENTRYPOINTS,
+    )
+    assert result.verdict is Verdict.COMPATIBLE
+    assert result.missing_entrypoints == []
+    assert result.coverage == 100.0
 
 
 # ── Scenario D: policy-scoped release decision ───────────────────────────────

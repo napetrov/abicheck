@@ -64,16 +64,23 @@ use_cases:
   - id: UC-ARCH-plugin
     axis: archetype
     name: Plugin host↔plugin load contract (dlopen)
-    status: partial
-    gap: G5
-    plan: docs/development/plans/g5-plugin-bidirectional-contract.md
+    status: complete
+    note: >
+      G5 closed: first-class host-contract check
+      (appcompat.check_plugin_host_contract) answers "does plugin v2 still
+      satisfy host H's required entrypoints?" — the plugin-load mirror of
+      appcompat, reusing its consumer-scoping. Exposed via the `plugin-check`
+      CLI (binary or JSON-snapshot inputs, --require / --host-contract manifest)
+      and the Python API, with the plugin_abi policy as the default. Validated
+      end-to-end through snapshot-driven scenario tests and CLI tests; the
+      host-safe-vs-host-breaking distinction (a library-wide BREAKING drop the
+      host never resolves stays COMPATIBLE for the host) is asserted. A compiled
+      host/plugin binary demo in examples/ remains optional (needs the
+      integration toolchain) and is not required for the capability.
     evidence:
-      modules: [abicheck/appcompat.py]
-      tests: [tests/test_workflow_scenarios.py]
-    next_steps: >
-      Add a bidirectional host/plugin example fixture and an optional
-      host-contract check (host's required entrypoints vs plugin exports);
-      today only the plugin_abi policy + consumer-scoped scenario tests exist.
+      modules: [abicheck/appcompat.py, abicheck/cli_plugin.py]
+      tests: [tests/test_workflow_scenarios.py, tests/test_cli_plugin.py]
+      docs: [docs/user-guide/plugin-systems.md]
 
   - id: UC-ARCH-header-only
     axis: archetype

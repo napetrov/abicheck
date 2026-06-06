@@ -37,6 +37,7 @@ nav:
     - CLI Usage: user-guide/cli-usage.md
     - Tool Modes: user-guide/tool-modes.md
     - Application Compatibility: user-guide/appcompat.md
+    - Plugin Systems: user-guide/plugin-systems.md
     - Policy Profiles: user-guide/policies.md
     - Suppressions: user-guide/suppressions.md
     - Severity Configuration: user-guide/severity.md

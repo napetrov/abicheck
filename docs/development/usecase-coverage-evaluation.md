@@ -77,7 +77,7 @@ A real invocation is a point in this space:
 | Reporting: Markdown/HTML | `complete` | structural coverage across verdict tiers + sections + escaping (G3 done) |
 | Build-config matrix (`probe`) | `partial` | wired into `compare` via `--probe-matrix-old/new`; CXX floor proven e2e; API_DEPENDS still blocked on `.o` surface capture (G2) |
 | Bundle / multi-library | `complete` | all detectors run via `compare-release`; case84 validated e2e (Linux-only by design; cross-platform → G1) |
-| Plugin (host↔plugin) | `partial` | policy + scenario tests; no bidirectional CLI/fixture (G5) |
+| Plugin (host↔plugin) | `complete` | **G5 closed**: `plugin-check` CLI + `check_plugin_host_contract` API + plugin_abi policy |
 | Header-only / inline-only | `planned` | castxml can't emit concept bodies / ctor mangled names (G4; cases 78/105/106/111 dormant) |
 | Kernel / eBPF (BTF/CTF) | `modeled` | parsers exist; no workflow/example (G6) |
 | Static libraries (`.a`/`.lib`) | `by_design_excluded` | **G8 decided (option A)**: non-goal; CLI rejects archives with guidance |
@@ -93,7 +93,7 @@ A real invocation is a point in this space:
 | **G2** | Build-config matrix siloed in `probe` | ✅ folded into `compare`/`compare-release` (`--probe-matrix-old/new`); bundle soname-skew wired | ✅ CXX floor e2e + case84 bundle e2e (`API_DEPENDS` e2e still pending `.o` surface capture) | ✅ `feature_macro.yaml`, `cxx_standard.yaml` |
 | **G3** | Catalog only exercises `compare`; Markdown/HTML test coverage thin | — | ✅ appcompat-from-catalog + stack-check sysroot e2e + Markdown/HTML structural coverage | scenarios asserted in new tests |
 | **G4** | Header-only / inline-only (detector frontier) | libclang header-AST extractor | unblock cases 78/105/106/111 | reuse dormant fixtures |
-| **G5** | Plugin host↔plugin contract is one-directional | optional host-contract check | bidirectional scenario | host/plugin fixture |
+| **G5** | Plugin host↔plugin contract is one-directional | ✅ `check_plugin_host_contract` + `plugin-check` CLI | ✅ scenario + CLI tests | compiled host/plugin demo optional |
 | **G6** | Kernel/eBPF use case is parser-only | small workflow glue | BTF compare scenario | vmlinux/module fixture |
 | **G7** | No semver-bump recommendation | recommender + report wiring | mapping + integration | reuse cases |
 | **G8** | Static libraries undocumented | ✅ archive detection + clear error path | ✅ unit (archive → guidance error) | ✅ documented non-goal (goals + limitations) |
