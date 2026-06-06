@@ -62,6 +62,15 @@ _NEVER_FILTER_KIND_NAMES: frozenset[str] = frozenset(
         "internal_type_leaks_via_public_api",
         "internal_template_leaks_via_public_api",
         "visibility_leak",
+        # Preprocessor / const-constant findings. Their ``symbol`` is a
+        # constant name, not an exported symbol or a reachable type, so the
+        # normal symbol/type reachability classifier would always demote them.
+        # The dumper only extracts constants whose declaring header classifies
+        # as PUBLIC_HEADER (dumper_castxml._decl_is_public), so they are
+        # public-contract by construction and must not be scoped out.
+        "constant_changed",
+        "constant_removed",
+        "constant_added",
     }
 )
 
@@ -102,6 +111,8 @@ _TYPE_LEVEL_KIND_NAMES: frozenset[str] = frozenset(
         "struct_packing_changed",
         "type_visibility_changed",
         "value_abi_trait_changed",
+        "type_became_final",
+        "type_lost_final",
     }
 )
 

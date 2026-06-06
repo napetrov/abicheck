@@ -1,6 +1,13 @@
 # Case 32 — Parameter Default Value Changes (C++)
 
-**Category:** C++ Defaults | **Verdict:** 🟢 NO_CHANGE (binary ABI unchanged)
+**Category:** C++ Defaults | **Verdict:** 🟠 API_BREAK (with headers) / NO_CHANGE (object/ELF-only)
+
+> A parameter default is removed (`configure(verbose, ...)`), which is a
+> source-level break — callers relying on the default no longer compile. The
+> mangled symbol is unchanged, so the binary ABI is intact. Default-argument
+> values live only in the header, so this is detected only in header
+> (castxml) mode (`param_default_value_removed` / `param_default_value_changed`);
+> object/DWARF comparison reports NO_CHANGE.
 
 ## What changes
 

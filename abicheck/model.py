@@ -451,6 +451,15 @@ class RecordType:
     source_location: str | None = None
     is_union: bool = False
     is_opaque: bool = False       # incomplete type (forward-decl only; was complete → BREAKING)
+    # `final` class-key specifier. Tri-state to keep "unknown" distinct from
+    # "not final":
+    # - True  → declared `class C final { ... }` (castxml `final` attribute).
+    # - False → declared without `final`.
+    # - None  → dumper/loader could not determine (DWARF/symbols-only mode,
+    #           which carries no `final` information; older snapshots). The
+    #           diff skips the finality detector when either side is None to
+    #           avoid false findings from schema evolution / tier downgrade.
+    is_final: bool | None = None
     # Provenance (ADR-015, schema v6) — see Function.source_header.
     source_header: str | None = None
     origin: ScopeOrigin = ScopeOrigin.UNKNOWN

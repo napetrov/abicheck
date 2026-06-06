@@ -19,17 +19,18 @@ from abicheck.model import (
     AbiSnapshot,
     Function,
     Param,
+    RecordType,
     Visibility,
 )
 
 
 def _snap(version="1.0", functions=None, variables=None, types=None,
-          enums=None, typedefs=None, elf=None):
+          enums=None, typedefs=None, elf=None, from_headers=False):
     return AbiSnapshot(
         library="libtest.so.1", version=version,
         functions=functions or [], variables=variables or [],
         types=types or [], enums=enums or [],
-        typedefs=typedefs or {}, elf=elf,
+        typedefs=typedefs or {}, elf=elf, from_headers=from_headers,
     )
 
 
@@ -520,6 +521,148 @@ class TestFuncRefQualChanged:
         f_new = _pub_func("Foo::bar", "_ZNO3Foo3barEv", ref_qualifier="&&")
         r = compare(_snap(functions=[f_old]), _snap(functions=[f_new]))
         assert _has_kind(r, ChangeKind.FUNC_REF_QUAL_CHANGED)
+
+
+# ── TYPE_BECAME_FINAL / TYPE_LOST_FINAL ──────────────────────────────────────
+
+def _rec(name, *, is_final, size_bits=64):
+    # class with a field so it is a concrete record (not opaque).
+    return RecordType(name=name, kind="class", size_bits=size_bits,
+                      is_final=is_final)
+
+
+class TestTypeFinalityChanged:
+    # scope_to_public_surface=False isolates the detector from reachability
+    # scoping (a class exposed only via its own methods is scoped out — a
+    # separate, pre-existing behaviour; the example fixtures exercise the
+    # reachable-from-a-public-function path end to end).
+    def test_class_became_final(self):
+        r = compare(_snap(types=[_rec("Widget", is_final=False)]),
+                    _snap(types=[_rec("Widget", is_final=True)]),
+                    scope_to_public_surface=False)
+        assert _has_kind(r, ChangeKind.TYPE_BECAME_FINAL)
+        assert not _has_kind(r, ChangeKind.TYPE_LOST_FINAL)
+
+    def test_class_lost_final(self):
+        r = compare(_snap(types=[_rec("Widget", is_final=True)]),
+                    _snap(types=[_rec("Widget", is_final=False)]),
+                    scope_to_public_surface=False)
+        assert _has_kind(r, ChangeKind.TYPE_LOST_FINAL)
+        assert not _has_kind(r, ChangeKind.TYPE_BECAME_FINAL)
+
+    def test_same_finality_no_change(self):
+        r = compare(_snap(types=[_rec("Widget", is_final=True)]),
+                    _snap(types=[_rec("Widget", is_final=True)]),
+                    scope_to_public_surface=False)
+        assert not _has_kind(r, ChangeKind.TYPE_BECAME_FINAL)
+        assert not _has_kind(r, ChangeKind.TYPE_LOST_FINAL)
+
+    def test_unknown_finality_skipped_tristate(self):
+        # None on either side (DWARF/symbols-only mode, or older snapshot) must
+        # never produce a finding — avoids false positives on a tier downgrade.
+        for old_f, new_f in ((None, True), (False, None), (None, None)):
+            r = compare(_snap(types=[_rec("Widget", is_final=old_f)]),
+                        _snap(types=[_rec("Widget", is_final=new_f)]),
+                        scope_to_public_surface=False)
+            assert not _has_kind(r, ChangeKind.TYPE_BECAME_FINAL)
+            assert not _has_kind(r, ChangeKind.TYPE_LOST_FINAL)
+
+
+# ── PARAM_DEFAULT_VALUE_* (default-argument values) ──────────────────────────
+
+def _func_with_default(default):
+    return _pub_func("f", "_Z1fii", params=[
+        Param(name="x", type="int"),
+        Param(name="y", type="int", default=default),
+    ])
+
+
+def _hsnap(**kw):
+    # Header-aware snapshot: default-arg values and constants are header-tier
+    # signals, so the detectors only run when both sides are from_headers.
+    return _snap(from_headers=True, **kw)
+
+
+class TestParamDefaultValue:
+    def test_default_removed_is_api_break(self):
+        r = compare(_hsnap(functions=[_func_with_default("1")]),
+                    _hsnap(functions=[_func_with_default(None)]))
+        assert _has_kind(r, ChangeKind.PARAM_DEFAULT_VALUE_REMOVED)
+
+    def test_default_value_changed(self):
+        r = compare(_hsnap(functions=[_func_with_default("1")]),
+                    _hsnap(functions=[_func_with_default("2")]))
+        assert _has_kind(r, ChangeKind.PARAM_DEFAULT_VALUE_CHANGED)
+
+    def test_same_default_no_change(self):
+        r = compare(_hsnap(functions=[_func_with_default("1")]),
+                    _hsnap(functions=[_func_with_default("1")]))
+        assert not _has_kind(r, ChangeKind.PARAM_DEFAULT_VALUE_CHANGED)
+        assert not _has_kind(r, ChangeKind.PARAM_DEFAULT_VALUE_REMOVED)
+
+    def test_adding_default_is_not_a_break(self):
+        # Adding a default is source-compatible; no removal/changed finding.
+        r = compare(_hsnap(functions=[_func_with_default(None)]),
+                    _hsnap(functions=[_func_with_default("1")]))
+        assert not _has_kind(r, ChangeKind.PARAM_DEFAULT_VALUE_REMOVED)
+        assert not _has_kind(r, ChangeKind.PARAM_DEFAULT_VALUE_CHANGED)
+
+    def test_skipped_when_one_side_lacks_headers(self):
+        # Mixed-tier: baseline has headers, candidate is DWARF/symbols-only.
+        # The bare None default on the headerless side must NOT read as removed.
+        r = compare(_hsnap(functions=[_func_with_default("1")]),
+                    _snap(functions=[_func_with_default(None)], from_headers=False))
+        assert not _has_kind(r, ChangeKind.PARAM_DEFAULT_VALUE_REMOVED)
+
+    def test_skipped_when_header_provenance_only_inferred(self):
+        # A legacy snapshot rehydrated with from_headers=True but
+        # from_headers_inferred=True is only a guess — its missing defaults must
+        # not read as removed against a confirmed-header baseline.
+        old = _hsnap(functions=[_func_with_default("1")])
+        new = _hsnap(functions=[_func_with_default(None)])
+        new.from_headers_inferred = True
+        r = compare(old, new)
+        assert not _has_kind(r, ChangeKind.PARAM_DEFAULT_VALUE_REMOVED)
+
+
+# ── CONSTANT_* (const / constexpr header constant values) ─────────────────────
+
+class TestHeaderConstants:
+    def test_constant_value_changed(self):
+        # constants survive public-surface scoping (default on) because they are
+        # extracted only from provided public headers — see surface._NEVER_FILTER.
+        r = compare(_snap_with_constants({"kLimit": "100"}),
+                    _snap_with_constants({"kLimit": "200"}))
+        assert _has_kind(r, ChangeKind.CONSTANT_CHANGED)
+
+    def test_constant_removed(self):
+        r = compare(_snap_with_constants({"kLimit": "100"}),
+                    _snap_with_constants({}))
+        assert _has_kind(r, ChangeKind.CONSTANT_REMOVED)
+
+    def test_constant_added_is_compatible(self):
+        r = compare(_snap_with_constants({}),
+                    _snap_with_constants({"kNew": "1"}))
+        assert _has_kind(r, ChangeKind.CONSTANT_ADDED)
+
+    def test_same_constant_no_change(self):
+        r = compare(_snap_with_constants({"kLimit": "100"}),
+                    _snap_with_constants({"kLimit": "100"}))
+        assert not _has_kind(r, ChangeKind.CONSTANT_CHANGED)
+        assert not _has_kind(r, ChangeKind.CONSTANT_REMOVED)
+
+    def test_skipped_when_one_side_lacks_headers(self):
+        # Mixed-tier: a header baseline vs a DWARF/symbols-only candidate (empty
+        # constants because unavailable, not removed) must not report removals.
+        r = compare(_snap_with_constants({"kLimit": "100"}),
+                    _snap_with_constants({}, from_headers=False))
+        assert not _has_kind(r, ChangeKind.CONSTANT_REMOVED)
+
+
+def _snap_with_constants(constants, from_headers=True):
+    s = _snap(from_headers=from_headers)
+    s.constants = dict(constants)
+    return s
 
 
 # ── FUNC_LANGUAGE_LINKAGE_CHANGED ─────────────────────────────────────────────

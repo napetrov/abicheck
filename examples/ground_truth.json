@@ -417,16 +417,21 @@
       ]
     },
     "case32_param_defaults": {
-      "expected": "NO_CHANGE",
-      "category": "no_change",
+      "expected": "API_BREAK",
+      "category": "api_break",
+      "expected_compat": "NO_CHANGE",
       "platforms": [
-        "linux",
-        "macos",
-        "windows"
+        "linux"
       ],
       "abi_break": false,
-      "api_break": false,
-      "bad_practice": false
+      "api_break": true,
+      "bad_practice": false,
+      "description": "Parameter default-value changes: connect() default 30->60 (changed), configure()'s verbose loses its default (removed -> source break), disconnect() gains a default (compatible). The mangled symbols are unchanged so binaries keep running; the break is source-only and detectable only in header mode (castxml Argument `default` attribute). Previously a documented gap (NO_CHANGE) until default-arg extraction was wired up.",
+      "expected_kinds": [
+        "param_default_value_changed",
+        "param_default_value_removed"
+      ],
+      "note": "castxml on macOS/Homebrew does not emit the `default=` attribute on <Argument> elements, so the param_default_value_* detection only fires with the Linux castxml build. Scoped to linux to avoid a platform-dependent castxml gap (constant/finality extraction is unaffected and stays cross-platform)."
     },
     "case33_pointer_level": {
       "expected": "BREAKING",
@@ -1826,7 +1831,7 @@
     "case121_kernel_btf_struct_field_added": {
       "expected": "BREAKING",
       "category": "breaking",
-      "description": "Linux kernel BTF: a vmlinux struct (task_state) grows from 2 to 3 fields between kernel releases, changing sizeof 8→12. An out-of-tree module / eBPF CO-RE program built against the old layout accesses wrong offsets. Committed BTF blobs (v1.btf/v2.btf) are parsed by parse_btf_from_bytes and diffed through the same layout detectors as DWARF.",
+      "description": "Linux kernel BTF: a vmlinux struct (task_state) grows from 2 to 3 fields between kernel releases, changing sizeof 8\u219212. An out-of-tree module / eBPF CO-RE program built against the old layout accesses wrong offsets. Committed BTF blobs (v1.btf/v2.btf) are parsed by parse_btf_from_bytes and diffed through the same layout detectors as DWARF.",
       "platforms": [
         "linux"
       ],
@@ -1837,6 +1842,76 @@
       "reason": "committed BTF blobs (not compilable C/C++ source); validated end-to-end via tests/test_workflow_kernel_accel.py::test_committed_btf_example_matches_ground_truth and the gcc -gbtf integration fixture",
       "expected_kinds": [
         "struct_size_changed"
+      ]
+    },
+    "case122_template_signature_uninstantiated": {
+      "expected": "NO_CHANGE",
+      "category": "no_change",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": false,
+      "api_break": false,
+      "bad_practice": false,
+      "known_gap": "The library ships the function template header-only and instantiates nothing, so no symbol is emitted and the v1/v2 binaries are byte-identical. castxml also does not emit uninstantiated template declarations into its AST output, so the parameter-type change (int -> long) is invisible in BOTH object/DWARF mode and header/castxml mode. This is the fundamental boundary of comparing built artifacts: code that never becomes a symbol leaves no trace a binary or castxml comparison can observe. A pure source-AST (header-diff) tool can see it; the approaches are complementary.",
+      "description": "An uninstantiated function template's parameter types change (int -> long). A real source/API break for consumers of the template, but undetectable by abicheck in any mode \u2014 documented limitation demonstrating that some C++-only changes leave nothing in the objects to compare.",
+      "expected_kinds": [],
+      "expected_absent_kinds": [
+        "func_params_changed",
+        "func_added",
+        "func_removed"
+      ]
+    },
+    "case123_default_argument_removed": {
+      "expected": "API_BREAK",
+      "category": "api_break",
+      "expected_compat": "NO_CHANGE",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": false,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "A function's default argument is removed in v2. The mangled symbol is identical (defaults don't affect mangling), so binaries keep running, but callers relying on the default no longer compile. Detected only in header mode via the param_default_value_removed ChangeKind (castxml exposes the Argument `default` attribute); invisible in object/DWARF mode.",
+      "expected_kinds": [
+        "param_default_value_removed"
+      ],
+      "note": "castxml on macOS/Homebrew does not emit the `default=` attribute on <Argument> elements, so the param_default_value_* detection only fires with the Linux castxml build. Scoped to linux to avoid a platform-dependent castxml gap (constant/finality extraction is unaffected and stays cross-platform)."
+    },
+    "case124_header_constant_value_changed": {
+      "expected": "API_BREAK",
+      "category": "api_break",
+      "expected_compat": "NO_CHANGE",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": false,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "A public constexpr constant changes value (8 -> 16). The value is baked into consumers at compile time, so mixing header versions disagrees on sizes; yet the constant has internal linkage (no symbol), so the binaries are identical and object/DWARF comparison sees nothing. Detected only in header mode via constant_changed: the dumper extracts const/constexpr initializers declared in the provided public headers (castxml `init` attribute). Plain #define macros remain invisible (castxml emits no macros).",
+      "expected_kinds": [
+        "constant_changed"
+      ]
+    },
+    "case125_class_became_final": {
+      "expected": "API_BREAK",
+      "category": "api_break",
+      "expected_compat": "NO_CHANGE",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "abi_break": false,
+      "api_break": true,
+      "bad_practice": false,
+      "description": "A public, extensible base class gains the `final` specifier in v2. Layout, vtable and mangled names are unchanged, so already-compiled binaries keep running, but any consumer that derives from it no longer compiles. Detected via the new TYPE_BECAME_FINAL ChangeKind, which reads the `final` class-key from castxml header analysis. Invisible in object/DWARF mode (the binaries are ABI-identical), demonstrating why source/header analysis is required for the full API picture.",
+      "expected_kinds": [
+        "type_became_final"
       ]
     }
   }

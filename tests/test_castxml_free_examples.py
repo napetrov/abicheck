@@ -69,7 +69,6 @@ CASTXML_FREE_CASES = [
     "case28_typedef_opaque",
     "case30_field_qualifiers",
     "case31_enum_rename",
-    "case32_param_defaults",
     "case33_pointer_level",
     "case35_field_rename",
     "case36_anon_struct",

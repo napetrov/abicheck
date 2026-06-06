@@ -567,12 +567,14 @@ def dump(
             gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
             sysroot=sysroot, nostdinc=nostdinc, lang=lang,
             dwarf_only=dwarf_only,
+            public_headers=public_headers, public_header_dirs=public_header_dirs,
         )
     elif fmt == "pe":
         snapshot = _dump_pe(
             so_path, headers, extra_includes or [], version, compiler,
             gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
             sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+            public_headers=public_headers, public_header_dirs=public_header_dirs,
         )
     elif fmt == "elf":
         snapshot = _dump_elf(
@@ -581,6 +583,7 @@ def dump(
             sysroot=sysroot, nostdinc=nostdinc, lang=lang,
             dwarf_only=dwarf_only,
             debug_format=debug_format,
+            public_headers=public_headers, public_header_dirs=public_header_dirs,
         )
     else:
         from .binary_utils import detect_archive
@@ -924,6 +927,8 @@ def _dump_elf(
     lang: str | None = None,
     dwarf_only: bool = False,
     debug_format: str | None = None,
+    public_headers: list[Path] | None = None,
+    public_header_dirs: list[Path] | None = None,
 ) -> AbiSnapshot:
     """ELF-specific dump: pyelftools + debug info (DWARF/BTF/CTF) + castxml."""
     exported_dynamic, exported_static = _pyelftools_exported_symbols(so_path)
@@ -962,7 +967,11 @@ def _dump_elf(
         gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
         sysroot=sysroot, nostdinc=nostdinc, lang=lang,
     )
-    parser = _CastxmlParser(xml_root, exported_dynamic, exported_static)
+    parser = _CastxmlParser(
+        xml_root, exported_dynamic, exported_static,
+        public_header_paths=[str(h) for h in headers] + [str(h) for h in (public_headers or [])],
+        public_dir_paths=[str(d) for d in (public_header_dirs or [])],
+    )
 
     snapshot = AbiSnapshot(
         library=so_path.name,
@@ -973,6 +982,7 @@ def _dump_elf(
         types=parser.parse_types(),
         enums=parser.parse_enums(),
         typedefs=parser.parse_typedefs(),
+        constants=parser.parse_constants(),
         elf=elf_meta,
         dwarf=dwarf_meta,
         dwarf_advanced=dwarf_adv,
@@ -1000,6 +1010,8 @@ def _dump_macho(
     nostdinc: bool = False,
     lang: str | None = None,
     dwarf_only: bool = False,
+    public_headers: list[Path] | None = None,
+    public_header_dirs: list[Path] | None = None,
 ) -> AbiSnapshot:
     """Mach-O dump: export table from macholib + castxml header analysis."""
     if dwarf_only:
@@ -1095,6 +1107,8 @@ def _dump_macho(
             exported_no_underscore.add(sym)
     parser = _CastxmlParser(
         xml_root, exported_no_underscore, exported_no_underscore,
+        public_header_paths=[str(h) for h in headers] + [str(h) for h in (public_headers or [])],
+        public_dir_paths=[str(d) for d in (public_header_dirs or [])],
     )
 
     return AbiSnapshot(
@@ -1106,6 +1120,7 @@ def _dump_macho(
         types=parser.parse_types(),
         enums=parser.parse_enums(),
         typedefs=parser.parse_typedefs(),
+        constants=parser.parse_constants(),
         macho=macho_meta,
         # Reached only when headers were supplied and castxml ran (the no-header
         # branch returns earlier): this surface is header-parsed.
@@ -1128,6 +1143,8 @@ def _dump_pe(
     sysroot: Path | None = None,
     nostdinc: bool = False,
     lang: str | None = None,
+    public_headers: list[Path] | None = None,
+    public_header_dirs: list[Path] | None = None,
 ) -> AbiSnapshot:
     """PE dump: export table from pefile + castxml header analysis."""
     from .pe_metadata import parse_pe_metadata
@@ -1177,7 +1194,11 @@ def _dump_pe(
         gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
         sysroot=sysroot, nostdinc=nostdinc, lang=lang,
     )
-    parser = _CastxmlParser(xml_root, exported_dynamic, exported_static)
+    parser = _CastxmlParser(
+        xml_root, exported_dynamic, exported_static,
+        public_header_paths=[str(h) for h in headers] + [str(h) for h in (public_headers or [])],
+        public_dir_paths=[str(d) for d in (public_header_dirs or [])],
+    )
 
     return AbiSnapshot(
         library=dll_path.name,
@@ -1188,6 +1209,7 @@ def _dump_pe(
         types=parser.parse_types(),
         enums=parser.parse_enums(),
         typedefs=parser.parse_typedefs(),
+        constants=parser.parse_constants(),
         pe=pe_meta,
         # Reached only when headers were supplied and castxml ran (the no-header
         # branch returns earlier): this surface is header-parsed.
