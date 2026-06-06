@@ -76,7 +76,13 @@ class SurfaceGraph:
             if name in seen:
                 continue
             seen.add(name)
-            for ref in self.type_refs.get(name, frozenset()):
+            # Canonicalise an unqualified name (``A``) to the record's full key
+            # (``ns::A``) before following its adjacency, so ``type_refs`` can
+            # stay keyed only by the full name (no duplicated alias entries that
+            # would inflate fan-in).
+            rec = self.types_by_name.get(name)
+            key = rec.name if rec is not None else name
+            for ref in self.type_refs.get(key, frozenset()):
                 if ref not in seen:
                     queue.append(ref)
         return frozenset(n for n in seen if n in self.types_by_name)
@@ -118,13 +124,10 @@ def build_surface_graph(snap: AbiSnapshot) -> SurfaceGraph:
             refs |= _type_identifiers(base)
         for base in rec.virtual_bases:
             refs |= _type_identifiers(base)
-        frozen = frozenset(refs)
-        type_refs[rec.name] = frozen
-        # Index under the trailing ``::`` segment too, so a signature/typedef
-        # that names the record unqualified (``A`` inside ``ns``) can still
-        # follow its fields/bases in the closure (mirrors types_by_name).
-        if "::" in rec.name:
-            type_refs.setdefault(rec.name.rsplit("::", 1)[1], frozen)
+        # Keyed only by the canonical full name. An unqualified reference is
+        # resolved to this key by reachable_types()/cohesion via types_by_name,
+        # so there are no duplicate alias entries to double-count in fan-in.
+        type_refs[rec.name] = frozenset(refs)
     for alias, target in snap.typedefs.items():
         type_refs.setdefault(alias, frozenset(_type_identifiers(target)))
 
@@ -322,28 +325,50 @@ def compute_surface_metrics(snap: AbiSnapshot, *, top_n: int = 10) -> SurfaceMet
     )
     ratio = (undocumented / exported_symbols) if exported_symbols else 0.0
 
+    # Iterate canonical record names (each real record once, by full name) so a
+    # namespaced record is not listed twice under both ``ns::A`` and ``A``.
+    canonical_type_names = sorted({rec.name for rec in snap.types})
     fan_in = sorted(
-        ((name, graph.fan_in(name)) for name in graph.types_by_name),
+        ((name, graph.fan_in(name)) for name in canonical_type_names),
         key=lambda kv: (-kv[1], kv[0]),
     )
     top_fan_in = [(n, c) for n, c in fan_in[:top_n] if c > 0]
 
-    exported_names = {
-        f.name for f in snap.functions if f.visibility == Visibility.PUBLIC
-    }
-    exported_names |= {
-        v.name for v in snap.variables if v.visibility == Visibility.PUBLIC
-    }
+    # Per-header declared/exported counts with *overload-preserving* identity:
+    # functions are counted by mangled name (so foo(int) and foo(double) count
+    # as two), not by the collapsed set of demangled names in graph.by_header.
+    declared_counts: dict[str, int] = {}
+    exported_counts: dict[str, int] = {}
+
+    def _bump(table: dict[str, int], header: str | None) -> None:
+        if header:
+            table[header] = table.get(header, 0) + 1
+
+    for fn in snap.functions:
+        _bump(declared_counts, fn.source_header)
+        if fn.visibility == Visibility.PUBLIC:
+            _bump(exported_counts, fn.source_header)
+    for var in snap.variables:
+        _bump(declared_counts, var.source_header)
+        if var.visibility == Visibility.PUBLIC:
+            _bump(exported_counts, var.source_header)
+    for rec in snap.types:
+        _bump(declared_counts, rec.source_header)
+    for en in snap.enums:
+        _bump(declared_counts, en.source_header)
+
     coverage: list[HeaderCoverage] = []
-    for header, decls in graph.by_header.items():
-        declared = len(decls)
-        exported_count = sum(1 for d in decls if d in exported_names)
+    for header in sorted(declared_counts):
         coverage.append(
             HeaderCoverage(
                 header=header,
-                declared=declared,
-                exported=exported_count,
-                cohesion_clusters=_header_cohesion_clusters(graph, decls),
+                declared=declared_counts[header],
+                exported=exported_counts.get(header, 0),
+                # Cohesion is over the *type* declarations in the header, which
+                # do not overload, so the by_header name set is exact here.
+                cohesion_clusters=_header_cohesion_clusters(
+                    graph, graph.by_header.get(header, frozenset())
+                ),
             )
         )
 

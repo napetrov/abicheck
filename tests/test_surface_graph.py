@@ -217,6 +217,81 @@ def test_closure_follows_unqualified_reference_to_namespaced_record() -> None:
     assert "Inner" in reached
 
 
+def test_fan_in_not_double_counted_for_namespaced_record() -> None:
+    # ns::B has one field of type ns::A. fan_in(ns::A) must be 1, not 2 — the
+    # alias key A must not be counted as a second referrer.
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="use",
+                mangled="use",
+                return_type="void",
+                params=[Param(name="b", type="ns::B*", pointer_depth=1)],
+                visibility=Visibility.PUBLIC,
+                source_header="h.h",
+                origin=ScopeOrigin.PUBLIC_HEADER,
+            ),
+        ],
+        types=[
+            RecordType(
+                name="ns::B",
+                kind="class",
+                fields=[TypeField(name="a", type="ns::A")],
+                source_header="h.h",
+                origin=ScopeOrigin.PUBLIC_HEADER,
+            ),
+            RecordType(
+                name="ns::A",
+                kind="class",
+                source_header="h.h",
+                origin=ScopeOrigin.PUBLIC_HEADER,
+            ),
+        ],
+    )
+    g = build_surface_graph(snap)
+    assert g.fan_in("ns::A") == 1
+    m = compute_surface_metrics(snap)
+    # ns::A appears at most once in the top-fan-in listing (not as both A/ns::A).
+    names = [n for n, _ in m.top_fan_in]
+    assert names.count("ns::A") <= 1
+    assert "A" not in names  # the short alias is not listed as a separate type
+
+
+def test_header_coverage_counts_overloads() -> None:
+    # foo(int) and foo(double) in the same header are two declared functions.
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="foo",
+                mangled="_Z3fooi",
+                return_type="void",
+                params=[Param(name="x", type="int")],
+                visibility=Visibility.PUBLIC,
+                source_header="api.h",
+            ),
+            Function(
+                name="foo",
+                mangled="_Z3food",
+                return_type="void",
+                params=[Param(name="x", type="double")],
+                visibility=Visibility.PUBLIC,
+                source_header="api.h",
+            ),
+        ],
+    )
+    m = compute_surface_metrics(snap)
+    api = next(hc for hc in m.header_coverage if hc.header == "api.h")
+    assert api.declared == 2  # both overloads, not collapsed to 1
+    assert api.exported == 2
+    assert m.public_functions == 2
+
+
 def test_virtual_bases_counted_in_public_types() -> None:
     # D : virtual B. B is reachable through D's public use, so it must be a
     # public type even though it appears only as a virtual base.
