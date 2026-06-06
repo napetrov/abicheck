@@ -387,14 +387,33 @@ enum with `*_OPAQUE` compatible-variant kinds (see Alternatives).
 
 #### D4.2 Idiom-aware rename detection
 
-`binary_fingerprint.py` detects renames via code-hash on stripped binaries.
-A4 adds a **type-signature fingerprint**: two functions whose
-parameter/return *type-reference closure* is identical (modulo the renamed
-symbol) across old/new are rename candidates even when the code hash differs
-(e.g. recompiled with different flags). This raises rename-detection recall
-without new false positives, because it requires structural type-graph
-equality, not just name similarity. Emitted as the existing rename
-ChangeKind with elevated confidence, not a new kind.
+`binary_fingerprint.py` detects renames via size + code-hash, gated by
+uniqueness and `_plausible_rename`; a confirmed rename **suppresses** the paired
+`FUNC_REMOVED`/`FUNC_ADDED` as redundant. A4 adds a **type-signature
+fingerprint** (the parameter/return *type-reference closure*) as *one more
+corroborating signal*, **never a standalone matcher** — because a type closure
+is emphatically **not unique** (a library may have many `int(void)` accessors),
+so pairing on it alone could marry an unrelated removal to an unrelated
+addition and, via that suppression, **hide a real breaking removal** as a
+compatible rename. The guards are therefore:
+
+- **Uniqueness required.** The fingerprint may only promote a pair when the
+  closure is unique on *both* sides — exactly one removed and one added function
+  carry it. Any ambiguity (≥2 candidates either side) ⇒ no rename.
+- **Corroboration required.** It is additive evidence layered on the existing
+  gates (size proximity / code-hash / name similarity via `_plausible_rename`),
+  not a replacement for them — it raises a *borderline* pair's confidence, it
+  does not manufacture a pair from type-equality alone.
+- **Never suppress a break on weak evidence.** When the *only* signal is the
+  type fingerprint (no size/hash/name corroboration), the pair is emitted as a
+  low-confidence rename **hint** and the `FUNC_REMOVED`/`FUNC_ADDED` are **kept
+  unsuppressed** — so a genuine removal can never be downgraded to compatible by
+  a speculative rename. Suppression stays reserved for the existing
+  size/hash-corroborated path.
+
+Emitted as the existing rename ChangeKind (no new kind); the fingerprint only
+ever *raises recall on already-plausible pairs*, bounded by the anti-hiding
+guard above and the FP-rate gate (§Validation).
 
 #### D4.3 Auditability (inherited contract)
 
