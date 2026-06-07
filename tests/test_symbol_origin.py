@@ -153,6 +153,11 @@ class TestGuessSymbolOrigin:
         result = _guess_symbol_origin("_ZGVnN4v_sin", [])
         assert result == "libmvec.so.1"
 
+    def test_cxx_guard_variable_ZGVZ_is_native(self):
+        """_ZGVZ... is an Itanium C++ guard variable, not a libmvec symbol."""
+        result = _guess_symbol_origin("_ZGVZN4YAML3Exp9AmpersandEvE1e", [])
+        assert result is None
+
     def test_gcc_runtime_cpu_model(self):
         """__cpu_model → libgcc_s.so.1."""
         result = _guess_symbol_origin("__cpu_model", [])
@@ -490,6 +495,11 @@ class TestUpdatedAttributions:
         for name in ("_ZGVbN4v_sin", "_ZGVdN2v_cos", "_ZGVeN8v_exp"):
             result = _guess_symbol_origin(name, [])
             assert result == "libmvec.so.1", f"Expected libmvec.so.1 for {name}"
+
+    def test_ZGVN_guard_variable_not_libmvec(self):
+        """M1: Namespace-scope Itanium C++ guard variables are project-owned."""
+        result = _guess_symbol_origin("_ZGVN4test7MyClassE", [])
+        assert result is None
 
     # --- M2: operator new/delete ---
 
