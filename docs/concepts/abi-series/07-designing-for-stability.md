@@ -117,6 +117,7 @@ years through deep internal refactors. It also closes off
 [trivial→non-trivial](04-cpp-abi.md) surprises, because the public class's
 special members are declared once and pinned.
 
+<!-- markdownlint-disable MD046 -->
 !!! warning "Pimpl gotcha"
     `std::unique_ptr<Impl>` is **not** an automatic ABI firewall. Three things
     must hold:
@@ -161,6 +162,7 @@ special members are declared once and pinned.
         Impl* p_;   // layout depends on nothing but pointer size
     };
     ```
+<!-- markdownlint-enable MD046 -->
 
 ---
 
