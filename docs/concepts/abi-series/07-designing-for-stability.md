@@ -117,11 +117,52 @@ years through deep internal refactors. It also closes off
 [trivial→non-trivial](04-cpp-abi.md) surprises, because the public class's
 special members are declared once and pinned.
 
+<!-- markdownlint-disable MD046 -->
 !!! warning "Pimpl gotcha"
-    Declare and *out-of-line define* the destructor (and move operations) in
-    the `.cpp` where `Impl` is complete. A defaulted destructor in the header
-    forces the compiler to see `Impl`'s definition there — defeating the
-    firewall.
+    `std::unique_ptr<Impl>` is **not** an automatic ABI firewall. Three things
+    must hold:
+
+    1. **Out-of-line special members.** Declare and *define in the `.cpp`* the
+       destructor, move constructor, and move assignment (where `Impl` is
+       complete). A defaulted destructor in the header forces the compiler to
+       see `Impl`'s definition there — defeating the firewall.
+    2. **No custom deleter / completeness leak.** The default `unique_ptr`
+       deleter requires a complete type at the point of destruction; keep that
+       point out-of-line.
+    3. **Don't leak standard-library ABI.** If the public class still exposes
+       `std::string`, `std::vector`, etc. by value in its interface, you've
+       re-exported the stdlib's ABI (and its dual-ABI flips — see
+       [case104](../../examples/case104_glibcxx_dual_abi_flip.md)) through the
+       firewall. Keep standard-library types behind the `Impl` boundary too.
+    4. **The wrapper itself is still a commitment.** Pimpl keeps `Impl`'s
+       layout *out* of the public ABI — that's the whole point, so `Impl` is free
+       to change. What stays frozen is `Widget`'s *own* size/alignment and the
+       representation of its pointer member. Switching `std::unique_ptr<Impl>` to a
+       raw pointer, a `shared_ptr`, or a different deleter, or adding an inline
+       member function / changing a special member, is itself ABI-relevant
+       ([case80](../../examples/case80_pimpl_shared_to_unique.md) shows a
+       `shared_ptr`→`unique_ptr` flip detected as breaking).
+
+!!! tip "Stricter variant: hide even the smart pointer"
+    For the most conservative C++ ABI, hold a **raw** `Impl*` so the public
+    class layout doesn't depend on the standard library's smart-pointer ABI at
+    all — at the cost of writing lifetime management by hand:
+
+    ```cpp
+    class Widget {
+    public:
+        Widget();
+        ~Widget();
+        Widget(Widget&&) noexcept;
+        Widget& operator=(Widget&&) noexcept;
+        Widget(const Widget&) = delete;
+        Widget& operator=(const Widget&) = delete;
+    private:
+        struct Impl;
+        Impl* p_;   // layout depends on nothing but pointer size
+    };
+    ```
+<!-- markdownlint-enable MD046 -->
 
 ---
 
@@ -192,6 +233,57 @@ names you listed enter `.dynsym` — closing off the accidental-leak hazard from
 [Part 5](05-linker-elf.md). When you genuinely need a breaking change, add a new
 node (`LIBFOO_2.0 { ... } LIBFOO_1.0;`) and keep the old symbols exported, so old
 binaries keep resolving the old implementation.
+
+### The same surface control on Windows and macOS
+
+The *principle* — export exactly what you intend, version your identity — is
+universal; only the spelling changes. (Loader-level details are in
+[Part 5 §PE/COFF and Mach-O parallels](05-linker-elf.md#pecoff-and-mach-o-parallels).)
+
+| Goal | Linux / ELF | Windows / PE | macOS / Mach-O |
+|------|-------------|--------------|----------------|
+| **Hide everything by default** | `-fvisibility=hidden` | nothing is exported unless marked | `-fvisibility=hidden` |
+| **Mark a public export** | `__attribute__((visibility("default")))` | `__declspec(dllexport)` (and `dllimport` in consumers) | `__attribute__((visibility("default")))` |
+| **Authoritative export list** | version script (`--version-script`) | a **`.def`** file (`EXPORTS`) — and pin **ordinals** so a rebuild can't renumber | `-exported_symbols_list file.txt` |
+| **Library identity / epoch** | `-Wl,-soname,libfoo.so.1` | the **DLL file name** + its **import library** | **install name** + `-compatibility_version` / `-current_version` |
+| **Generational ABI** (incompatible, must coexist) | new version node, keep old symbols | side-by-side DLL (new name) | **new install name / path** (e.g. `libfoo.2.dylib`) — the install name *is* the epoch¹ |
+
+```text
+; libfoo.def — stable Windows export surface (pin ordinals!)
+LIBRARY libfoo
+EXPORTS
+    foo_compute   @1
+    foo_create    @2
+    foo_destroy   @3
+```
+
+```bash
+# macOS — explicit export list + versioned install name
+clang -dynamiclib -fvisibility=hidden *.c \
+    -exported_symbols_list exports.txt \
+    -install_name @rpath/libfoo.1.dylib \
+    -compatibility_version 1.0 -current_version 1.2 -o libfoo.1.dylib
+```
+
+!!! warning "¹ macOS: `compatibility_version` is a floor, not an epoch"
+    Clients select a dylib by its **install name**, and `compatibility_version`
+    is only a *minimum* check — the loader rejects a runtime dylib whose
+    compatibility version is *lower* than what the client recorded at link time,
+    but a *higher* one still loads. So bumping `compatibility_version` under the
+    **same install name** does **not** let an old and a new ABI coexist: an old
+    client will happily load the new, incompatible dylib. For a breaking change
+    where both must coexist, ship under a **new install name / path** (e.g.
+    `@rpath/libfoo.2.dylib`) — that change of identity is the real epoch bump,
+    the Mach-O analog of an ELF SONAME-major or a side-by-side Windows DLL.
+    Reserve `compatibility_version` for *backward-compatible* additions within
+    one generation.
+
+!!! warning "Windows: the CRT allocation boundary"
+    A DLL with its own statically-linked CRT must not hand out memory the caller
+    `free`s (or vice versa) — `malloc`/`free` and `new`/`delete` must pair within
+    the **same** module. Expose explicit `foo_create()`/`foo_destroy()` instead
+    of letting callers `delete` your objects; this has no ELF equivalent but is a
+    hard rule on Windows.
 
 ---
 
