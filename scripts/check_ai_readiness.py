@@ -670,6 +670,93 @@ def check_examples_ground_truth(f: Findings) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Check: examples/README.md catalog stays in sync with ground_truth.json
+# ---------------------------------------------------------------------------
+
+
+def check_examples_readme_sync(f: Findings) -> None:
+    """The hand-facing examples/README.md catalog must agree with ground_truth.
+
+    Unlike the generated docs/examples/ tree (gated by gen_examples_docs.py
+    --check), the top-level examples/README.md is GitHub-rendered and was
+    historically hand-maintained, so its headline count, per-verdict
+    distribution, and case-index rows drifted (missing newly-added cases and
+    showing stale verdicts). This check pins all three to ground_truth.json so
+    the drift can't recur silently.
+    """
+    gt_path = EXAMPLES / "ground_truth.json"
+    readme = EXAMPLES / "README.md"
+    if not gt_path.is_file() or not readme.is_file():
+        return
+    try:
+        verdicts = json.loads(_read(gt_path))["verdicts"]
+    except Exception:
+        return
+    text = _read(readme)
+
+    single = {k: v for k, v in verdicts.items() if v.get("category") != "bundle"}
+    n_bundle = len(verdicts) - len(single)
+    n_total = len(verdicts)
+
+    # Headline total.
+    m = re.search(r"contains \*\*(\d+) cases\*\*", text)
+    if m is None:
+        f.warn(
+            "examples-readme-sync",
+            "examples/README.md: headline 'contains **N cases**' anchor not found; "
+            "update the regex in check_examples_readme_sync if the wording changed.",
+        )
+    elif int(m.group(1)) != n_total:
+        f.err(
+            "examples-readme-sync",
+            f"examples/README.md: headline says {int(m.group(1))} cases, "
+            f"but ground_truth.json has {n_total}.",
+        )
+
+    # Per-verdict distribution rows (single-library cases only).
+    expected_counts: dict[str, int] = {}
+    for v in single.values():
+        expected_counts[v["expected"]] = expected_counts.get(v["expected"], 0) + 1
+    # Map the README's distribution rows to ground_truth expected verdicts.
+    # COMPATIBLE is split into addition/quality rows in the README, so sum them.
+    cat_counts: dict[str, int] = {}
+    for v in single.values():
+        cat_counts[v.get("category")] = cat_counts.get(v.get("category"), 0) + 1
+    dist_anchors = [
+        (r"\| BREAKING \| (\d+) \|", expected_counts.get("BREAKING", 0)),
+        (r"\| API_BREAK \| (\d+) \|", expected_counts.get("API_BREAK", 0)),
+        (r"\| COMPATIBLE_WITH_RISK \| (\d+) \|", expected_counts.get("COMPATIBLE_WITH_RISK", 0)),
+        (r"\| COMPATIBLE \(addition\) \| (\d+) \|", cat_counts.get("addition", 0)),
+        (r"\| COMPATIBLE \(quality\) \| (\d+) \|", cat_counts.get("quality", 0)),
+        (r"\| NO_CHANGE \| (\d+) \|", expected_counts.get("NO_CHANGE", 0)),
+        (r"\| Bundle \(multi-binary\) \| (\d+) \|", n_bundle),
+    ]
+    for pattern, expected in dist_anchors:
+        mm = re.search(pattern, text)
+        if mm is None:
+            f.warn(
+                "examples-readme-sync",
+                f"examples/README.md: distribution row {pattern!r} not found; "
+                "update check_examples_readme_sync if the table changed.",
+            )
+        elif int(mm.group(1)) != expected:
+            f.err(
+                "examples-readme-sync",
+                f"examples/README.md: distribution row {pattern!r} says "
+                f"{int(mm.group(1))}, but ground_truth.json has {expected}.",
+            )
+
+    # Every case must appear as a row linking to its per-case README.
+    for name in sorted(verdicts):
+        if f"]({name}/README.md)" not in text:
+            f.err(
+                "examples-readme-sync",
+                f"examples/README.md: case '{name}' has no index row "
+                f"(expected a link to {name}/README.md).",
+            )
+
+
+# ---------------------------------------------------------------------------
 # Check: mkdocs nav coverage
 # ---------------------------------------------------------------------------
 
@@ -987,6 +1074,7 @@ CHECKS: dict[str, Callable[[Findings], None]] = {
     "import-cycles": check_import_cycles,
     "mypy-baseline": check_mypy_baseline,
     "examples-ground-truth": check_examples_ground_truth,
+    "examples-readme-sync": check_examples_readme_sync,
     "mkdocs-nav-coverage": check_mkdocs_nav_coverage,
     "banned-imports": check_banned_imports,
     "license-header": check_license_header,
