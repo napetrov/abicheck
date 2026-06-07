@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from abicheck.idioms import Idiom, recognise_idioms
+from abicheck.checker_policy import ChangeKind
+from abicheck.idioms import Idiom, detect_antipatterns, recognise_idioms
 from abicheck.model import (
     AbiSnapshot,
     AccessLevel,
@@ -487,6 +488,83 @@ def test_opaque_ignores_hidden_functions() -> None:
     assert any(t.idiom == Idiom.OPAQUE_POINTER for t in _tags(snap).get("Ctx", []))
 
 
+def _antipatterns(snap: AbiSnapshot) -> list:
+    return detect_antipatterns(build_surface_graph(snap))
+
+
+def test_detect_stl_by_value_parameter() -> None:
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="sink",
+                mangled="_Z4sinkNSt6stringE",
+                return_type="void",
+                params=[Param(name="s", type="std::string", pointer_depth=0)],
+                visibility=Visibility.PUBLIC,
+            )
+        ],
+    )
+    aps = _antipatterns(snap)
+    assert any(
+        a.kind == ChangeKind.PUBLIC_API_EXPOSES_STL_BY_VALUE and a.symbol == "sink"
+        for a in aps
+    )
+
+
+def test_stl_by_pointer_is_not_flagged() -> None:
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="ok",
+                mangled="ok",
+                return_type="void",
+                params=[Param(name="s", type="std::string*", pointer_depth=1)],
+                visibility=Visibility.PUBLIC,
+            )
+        ],
+    )
+    assert not _antipatterns(snap)
+
+
+def test_detect_non_virtual_dtor_base() -> None:
+    base = RecordType(
+        name="Base",
+        kind="class",
+        vtable=["_ZN4Base3fooEv"],  # a virtual method, but no D0/D1/D2 dtor slot
+    )
+    derived = RecordType(name="Derived", kind="class", bases=["Base"])
+    snap = AbiSnapshot(
+        library="l", version="1", from_headers=True, types=[base, derived]
+    )
+    aps = _antipatterns(snap)
+    assert any(
+        a.kind == ChangeKind.POLYMORPHIC_TYPE_NON_VIRTUAL_DTOR and a.symbol == "Base"
+        for a in aps
+    )
+
+
+def test_virtual_dtor_base_not_flagged() -> None:
+    base = RecordType(
+        name="Base",
+        kind="class",
+        vtable=["_ZN4BaseD0Ev", "_ZN4Base3fooEv"],  # has a destructor slot
+    )
+    derived = RecordType(name="Derived", kind="class", bases=["Base"])
+    snap = AbiSnapshot(
+        library="l", version="1", from_headers=True, types=[base, derived]
+    )
+    assert not any(
+        a.kind == ChangeKind.POLYMORPHIC_TYPE_NON_VIRTUAL_DTOR
+        for a in _antipatterns(snap)
+    )
+
+
 def test_surface_report_idioms_json(tmp_path) -> None:
     import json as _json
 
@@ -505,3 +583,37 @@ def test_surface_report_idioms_json(tmp_path) -> None:
     assert "Ctx" in data["idioms"]
     assert data["idioms"]["Ctx"][0]["idiom"] == "opaque_pointer"
     assert data["idioms"]["Ctx"][0]["definition_hidden"] is True
+
+
+def test_surface_report_antipatterns_json(tmp_path) -> None:
+    import json as _json
+
+    from click.testing import CliRunner
+
+    from abicheck.cli import main
+    from abicheck.serialization import save_snapshot
+
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="sink",
+                mangled="_Z4sinkNSt6stringE",
+                return_type="void",
+                params=[Param(name="s", type="std::string", pointer_depth=0)],
+                visibility=Visibility.PUBLIC,
+            )
+        ],
+    )
+    p = tmp_path / "lib.abi.json"
+    save_snapshot(snap, p)
+    result = CliRunner().invoke(
+        main, ["surface-report", str(p), "--anti-patterns", "--format", "json"]
+    )
+    assert result.exit_code == 0, result.output
+    data = _json.loads(result.output)
+    assert any(
+        a["kind"] == "public_api_exposes_stl_by_value" for a in data["anti_patterns"]
+    )

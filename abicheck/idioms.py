@@ -36,8 +36,8 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 
-from .checker_policy import Confidence
-from .model import RecordType, Visibility
+from .checker_policy import ChangeKind, Confidence
+from .model import ParamKind, RecordType, Visibility
 from .surface_graph import SurfaceGraph
 
 
@@ -303,6 +303,121 @@ def _recognise_callbacks(graph: SurfaceGraph) -> dict[str, IdiomTag]:
                     ),
                 )
     return out
+
+
+@dataclass(frozen=True)
+class AntiPattern:
+    """A single-snapshot anti-pattern finding (ADR-027 D2.2).
+
+    ``kind`` is the :class:`ChangeKind` the finding maps to; ``evidence`` lists
+    the graph edges that matched (for ``surface-report`` and the A4 ledger).
+    """
+
+    symbol: str
+    kind: ChangeKind
+    description: str
+    evidence: list[str] = field(default_factory=list)
+
+
+def _is_std_by_value(type_str: str, pointer_depth: int, kind: ParamKind) -> bool:
+    """True when *type_str* names a ``std::`` type crossed **by value**.
+
+    A pointer/reference to a ``std::`` type is fine (only the pointer crosses
+    the boundary); it is passing/returning the container itself that is fragile.
+    """
+    if "std::" not in type_str:
+        return False
+    if pointer_depth >= 1 or _is_pointer(type_str) or "&" in type_str:
+        return False
+    if kind in (ParamKind.POINTER, ParamKind.REFERENCE, ParamKind.RVALUE_REF):
+        return False
+    return True
+
+
+def _has_virtual_destructor(rec: RecordType) -> bool:
+    """Heuristic: does *rec*'s vtable carry a destructor slot?
+
+    Itanium mangles destructors with ``D0``/``D1``/``D2`` suffixes; MSVC uses
+    ``??1`` / ``vector deleting destructor``. A polymorphic type whose vtable
+    has no destructor slot has a non-virtual destructor — deleting through a
+    base pointer is UB.
+    """
+    for entry in rec.vtable:
+        if re.search(r"D[012]\b|D[012]Ev|\?\?1|deleting destructor", entry):
+            return True
+    return False
+
+
+def detect_antipatterns(graph: SurfaceGraph) -> list[AntiPattern]:
+    """Recognise single-snapshot anti-patterns over *graph* (ADR-027 D2.2).
+
+    Returns the deterministic, order-stable list of RISK-level anti-patterns:
+    public functions exposing ``std::`` types by value, and polymorphic types
+    (used as a base or factory return) lacking a virtual destructor.
+    """
+    found: list[AntiPattern] = []
+
+    # PUBLIC_API_EXPOSES_STL_BY_VALUE — per public function.
+    for fn in graph.snapshot.functions:
+        if fn.visibility != Visibility.PUBLIC:
+            continue
+        hits: list[str] = []
+        if _is_std_by_value(fn.return_type, fn.return_pointer_depth, ParamKind.VALUE):
+            hits.append(f"returns {fn.return_type} by value")
+        for p in fn.params:
+            ptype = getattr(p, "type", "") or ""
+            if _is_std_by_value(ptype, getattr(p, "pointer_depth", 0), p.kind):
+                hits.append(f"parameter {p.name!r} is {ptype} by value")
+        if hits:
+            found.append(
+                AntiPattern(
+                    symbol=fn.name,
+                    kind=ChangeKind.PUBLIC_API_EXPOSES_STL_BY_VALUE,
+                    description=(
+                        f"public function {fn.name} crosses the ABI boundary with "
+                        f"a std:: type by value ({'; '.join(hits)})"
+                    ),
+                    evidence=hits,
+                )
+            )
+
+    # POLYMORPHIC_TYPE_NON_VIRTUAL_DTOR — polymorphic types used as base/factory.
+    base_names: set[str] = set()
+    for rec in graph.snapshot.types:
+        for b in rec.bases:
+            base_names.add(b)
+            base_names.add(b.rsplit("::", 1)[-1])
+    factory_returns: set[str] = set()
+    for fn in graph.snapshot.functions:
+        if fn.visibility != Visibility.PUBLIC:
+            continue
+        if fn.return_pointer_depth >= 1 or _is_pointer(fn.return_type):
+            factory_returns.add(_strip_ptr(fn.return_type))
+            factory_returns.add(_strip_ptr(fn.return_type).rsplit("::", 1)[-1])
+    for rec in graph.snapshot.types:
+        if not rec.vtable:
+            continue
+        short = rec.name.rsplit("::", 1)[-1]
+        used_as_base = rec.name in base_names or short in base_names
+        used_as_factory = rec.name in factory_returns or short in factory_returns
+        if not (used_as_base or used_as_factory):
+            continue
+        if _has_virtual_destructor(rec):
+            continue
+        role = "base class" if used_as_base else "factory return"
+        found.append(
+            AntiPattern(
+                symbol=rec.name,
+                kind=ChangeKind.POLYMORPHIC_TYPE_NON_VIRTUAL_DTOR,
+                description=(
+                    f"polymorphic type {rec.name} (used as {role}) has a vtable "
+                    f"but no virtual destructor — delete through base is UB"
+                ),
+                evidence=[f"{rec.name} has vtable, no destructor slot; role={role}"],
+            )
+        )
+
+    return sorted(found, key=lambda a: (a.kind.value, a.symbol))
 
 
 def recognise_idioms(graph: SurfaceGraph) -> dict[str, list[IdiomTag]]:

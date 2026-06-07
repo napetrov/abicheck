@@ -1,0 +1,477 @@
+# Copyright 2026 Nikolay Petrov
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Tests for ADR-027 A4 pattern-aware verdict modulation.
+
+Focus is the anti-hiding contract: a modulation may demote-with-reason or
+raise, never silently delete a real break. Includes the cross-output
+completeness regression guard (a demoted finding must read compatible in every
+sink and contribute to neither exit-code path).
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from abicheck import checker
+from abicheck.checker_policy import ChangeKind, EvidenceTier, Verdict
+from abicheck.checker_types import Change
+from abicheck.model import (
+    AbiSnapshot,
+    AccessLevel,
+    Function,
+    Param,
+    RecordType,
+    TypeField,
+    Visibility,
+)
+from abicheck.pattern_verdicts import apply_pattern_verdicts
+
+# ---------------------------------------------------------------------------
+# Snapshot builders
+# ---------------------------------------------------------------------------
+
+
+def _opaque_snapshot(
+    *, opaque: bool, size: int | None, by_value: bool = False
+) -> AbiSnapshot:
+    fields = (
+        []
+        if opaque
+        else [TypeField(name="x", type="int", offset_bits=0, access=AccessLevel.PUBLIC)]
+    )
+    use_param = (
+        Param(name="c", type="Ctx", pointer_depth=0)
+        if by_value
+        else Param(name="c", type="Ctx*", pointer_depth=1)
+    )
+    return AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="open",
+                mangled="open",
+                return_type="Ctx*",
+                params=[],
+                visibility=Visibility.PUBLIC,
+                return_pointer_depth=1,
+            ),
+            Function(
+                name="use",
+                mangled="use",
+                return_type="void",
+                params=[use_param],
+                visibility=Visibility.PUBLIC,
+            ),
+        ],
+        types=[
+            RecordType(
+                name="Ctx",
+                kind="struct",
+                is_opaque=opaque,
+                size_bits=size,
+                fields=fields,
+            )
+        ],
+    )
+
+
+def _layout_change(symbol: str = "Ctx") -> Change:
+    return Change(
+        kind=ChangeKind.TYPE_SIZE_CHANGED,
+        symbol=symbol,
+        description="size changed",
+        old_value="64",
+        new_value="128",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Opaque-pointer demote (D4.1)
+# ---------------------------------------------------------------------------
+
+
+def test_opaque_layout_demoted_at_header_tier() -> None:
+    old = _opaque_snapshot(opaque=True, size=None)
+    new = _opaque_snapshot(opaque=True, size=None)
+    changes = [_layout_change()]
+    ledger = apply_pattern_verdicts(
+        changes, old, new, evidence_tier=EvidenceTier.HEADER_AWARE
+    )
+    assert changes[0].effective_verdict == Verdict.COMPATIBLE
+    assert changes[0].modulation_reason == "opaque-by-construction"
+    assert changes[0].modulation_rule == "opaque-pointer-layout"
+    assert any(m["rule_id"] == "opaque-pointer-layout" for m in ledger)
+    assert ledger[0]["original_category"] == "breaking"
+    assert ledger[0]["new_category"] == "compatible"
+
+
+@pytest.mark.parametrize("tier", [EvidenceTier.ELF_ONLY, EvidenceTier.DWARF_AWARE])
+def test_demotion_refused_below_header_tier(tier: EvidenceTier) -> None:
+    # Confidence floor by tier (D4.1): idiom demotion needs the AST.
+    old = _opaque_snapshot(opaque=True, size=None)
+    new = _opaque_snapshot(opaque=True, size=None)
+    changes = [_layout_change()]
+    ledger = apply_pattern_verdicts(changes, old, new, evidence_tier=tier)
+    assert changes[0].effective_verdict is None
+    assert not any(m["rule_id"] == "opaque-pointer-layout" for m in ledger)
+
+
+def test_disabled_is_noop() -> None:
+    old = _opaque_snapshot(opaque=True, size=None)
+    new = _opaque_snapshot(opaque=True, size=None)
+    changes = [_layout_change()]
+    ledger = apply_pattern_verdicts(
+        changes, old, new, evidence_tier=EvidenceTier.HEADER_AWARE, enabled=False
+    )
+    assert ledger == []
+    assert changes[0].effective_verdict is None
+
+
+def test_frozen_namespace_never_demoted() -> None:
+    old = _opaque_snapshot(opaque=True, size=None)
+    new = _opaque_snapshot(opaque=True, size=None)
+    c = _layout_change()
+    c.frozen_namespace_violation = "myns::*"
+    apply_pattern_verdicts([c], old, new, evidence_tier=EvidenceTier.HEADER_AWARE)
+    assert c.effective_verdict is None
+
+
+# ---------------------------------------------------------------------------
+# Lost opaque invariant → OPAQUE_INVARIANT_BROKEN (D2.2, never silent)
+# ---------------------------------------------------------------------------
+
+
+def test_lost_opaqueness_emits_break_not_silent_demotion() -> None:
+    old = _opaque_snapshot(opaque=True, size=None)
+    new = _opaque_snapshot(opaque=False, size=128)  # definition now visible
+    changes: list[Change] = [_layout_change()]
+    ledger = apply_pattern_verdicts(
+        changes, old, new, evidence_tier=EvidenceTier.HEADER_AWARE
+    )
+    kinds = {c.kind for c in changes}
+    assert ChangeKind.OPAQUE_INVARIANT_BROKEN in kinds
+    broken = next(c for c in changes if c.kind == ChangeKind.OPAQUE_INVARIANT_BROKEN)
+    assert broken.effective_verdict is None  # a real BREAKING kind, not demoted
+    # The layout change itself must NOT have been silently demoted.
+    layout = next(c for c in changes if c.kind == ChangeKind.TYPE_SIZE_CHANGED)
+    assert layout.effective_verdict is None
+    assert any(m["rule_id"] == "lost-opaque-invariant" for m in ledger)
+
+
+def test_lost_opaqueness_by_value_use() -> None:
+    old = _opaque_snapshot(opaque=True, size=None)
+    # Still incomplete, but now crossed by value publicly → opacity lost.
+    new = _opaque_snapshot(opaque=False, size=128, by_value=True)
+    changes: list[Change] = []
+    apply_pattern_verdicts(changes, old, new, evidence_tier=EvidenceTier.HEADER_AWARE)
+    assert any(c.kind == ChangeKind.OPAQUE_INVARIANT_BROKEN for c in changes)
+
+
+# ---------------------------------------------------------------------------
+# PIMPL pointee-only vs wrapper layout (D4.1 guard)
+# ---------------------------------------------------------------------------
+
+
+def _pimpl_snapshot(*, wrapper_size: int, impl_size: int | None) -> AbiSnapshot:
+    wrapper = RecordType(
+        name="Widget",
+        kind="class",
+        is_opaque=False,
+        size_bits=wrapper_size,
+        alignment_bits=64,
+        fields=[
+            TypeField(
+                name="impl", type="Impl*", offset_bits=0, access=AccessLevel.PRIVATE
+            )
+        ],
+    )
+    impl = RecordType(name="Impl", kind="class", is_opaque=True, size_bits=impl_size)
+    return AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="make",
+                mangled="make",
+                return_type="Widget*",
+                params=[],
+                visibility=Visibility.PUBLIC,
+                return_pointer_depth=1,
+            )
+        ],
+        types=[wrapper, impl],
+    )
+
+
+def test_pimpl_pointee_change_demoted() -> None:
+    old = _pimpl_snapshot(wrapper_size=64, impl_size=None)
+    new = _pimpl_snapshot(wrapper_size=64, impl_size=None)
+    change = Change(
+        kind=ChangeKind.TYPE_SIZE_CHANGED, symbol="Impl", description="impl grew"
+    )
+    apply_pattern_verdicts([change], old, new, evidence_tier=EvidenceTier.HEADER_AWARE)
+    assert change.effective_verdict == Verdict.COMPATIBLE
+    assert change.modulation_rule == "pimpl-pointee-only"
+
+
+def test_pimpl_wrapper_layout_change_not_demoted() -> None:
+    # The wrapper's own layout changed (64 -> 128): callers can sizeof it, so a
+    # change to the wrapper is a real break and must NOT be demoted.
+    old = _pimpl_snapshot(wrapper_size=64, impl_size=None)
+    new = _pimpl_snapshot(wrapper_size=128, impl_size=None)
+    change = Change(
+        kind=ChangeKind.TYPE_SIZE_CHANGED, symbol="Widget", description="wrapper grew"
+    )
+    apply_pattern_verdicts([change], old, new, evidence_tier=EvidenceTier.HEADER_AWARE)
+    assert change.effective_verdict is None
+
+
+# ---------------------------------------------------------------------------
+# Handle token change → HANDLE_TYPE_CHANGED
+# ---------------------------------------------------------------------------
+
+
+def _handle_snapshot(target: str) -> AbiSnapshot:
+    return AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="use",
+                mangled="use",
+                return_type="void",
+                params=[Param(name="h", type="my_handle_t", pointer_depth=0)],
+                visibility=Visibility.PUBLIC,
+            )
+        ],
+        typedefs={"my_handle_t": target},
+    )
+
+
+def test_new_antipattern_emitted_as_risk() -> None:
+    # Old has no by-value std param; new introduces one → RISK finding emitted.
+    def snap(by_value: bool) -> AbiSnapshot:
+        ptype = "std::string" if by_value else "std::string*"
+        depth = 0 if by_value else 1
+        return AbiSnapshot(
+            library="l",
+            version="1",
+            from_headers=True,
+            functions=[
+                Function(
+                    name="sink",
+                    mangled="sink",
+                    return_type="void",
+                    params=[Param(name="s", type=ptype, pointer_depth=depth)],
+                    visibility=Visibility.PUBLIC,
+                )
+            ],
+        )
+
+    changes: list[Change] = []
+    ledger = apply_pattern_verdicts(
+        changes, snap(False), snap(True), evidence_tier=EvidenceTier.HEADER_AWARE
+    )
+    assert any(c.kind == ChangeKind.PUBLIC_API_EXPOSES_STL_BY_VALUE for c in changes)
+    assert any(m["rule_id"] == "new-anti-pattern" for m in ledger)
+
+
+def test_preexisting_antipattern_not_re_emitted() -> None:
+    # Present in BOTH snapshots → pre-existing debt, not nagged about.
+    def snap() -> AbiSnapshot:
+        return AbiSnapshot(
+            library="l",
+            version="1",
+            from_headers=True,
+            functions=[
+                Function(
+                    name="sink",
+                    mangled="sink",
+                    return_type="void",
+                    params=[Param(name="s", type="std::string", pointer_depth=0)],
+                    visibility=Visibility.PUBLIC,
+                )
+            ],
+        )
+
+    changes: list[Change] = []
+    apply_pattern_verdicts(
+        changes, snap(), snap(), evidence_tier=EvidenceTier.HEADER_AWARE
+    )
+    assert not any(
+        c.kind == ChangeKind.PUBLIC_API_EXPOSES_STL_BY_VALUE for c in changes
+    )
+
+
+def test_handle_token_change_emits_break() -> None:
+    old = _handle_snapshot("struct Foo *")
+    new = _handle_snapshot("struct Bar *")
+    changes: list[Change] = []
+    ledger = apply_pattern_verdicts(
+        changes, old, new, evidence_tier=EvidenceTier.HEADER_AWARE
+    )
+    assert any(c.kind == ChangeKind.HANDLE_TYPE_CHANGED for c in changes)
+    assert any(m["rule_id"] == "handle-token-changed" for m in ledger)
+
+
+def test_antipattern_annotation_on_existing_change() -> None:
+    # A change sitting on an STL-by-value surface gets an annotation (raise),
+    # never a demotion: category unchanged, but disclosed in the ledger.
+    def snap() -> AbiSnapshot:
+        return AbiSnapshot(
+            library="l",
+            version="1",
+            from_headers=True,
+            functions=[
+                Function(
+                    name="sink",
+                    mangled="sink",
+                    return_type="void",
+                    params=[Param(name="s", type="std::string", pointer_depth=0)],
+                    visibility=Visibility.PUBLIC,
+                )
+            ],
+        )
+
+    change = Change(
+        kind=ChangeKind.FUNC_PARAMS_CHANGED, symbol="sink", description="params changed"
+    )
+    ledger = apply_pattern_verdicts(
+        [change], snap(), snap(), evidence_tier=EvidenceTier.HEADER_AWARE
+    )
+    assert change.effective_verdict is None  # raise never demotes
+    assert change.modulation_reason == "anti-pattern-elevated-risk"
+    assert any(m["rule_id"] == "anti-pattern-raise" for m in ledger)
+
+
+def _save(snap: AbiSnapshot, path) -> None:
+    from abicheck.serialization import save_snapshot
+
+    save_snapshot(snap, path)
+
+
+def test_cli_explain_patterns(tmp_path) -> None:
+    from click.testing import CliRunner
+
+    from abicheck.cli import main
+
+    old = _handle_snapshot("struct Foo *")
+    new = _handle_snapshot("struct Bar *")
+    op = tmp_path / "old.abi.json"
+    np = tmp_path / "new.abi.json"
+    out = tmp_path / "report.json"
+    _save(old, op)
+    _save(new, np)
+    res = CliRunner().invoke(
+        main,
+        [
+            "compare",
+            str(op),
+            str(np),
+            "--pattern-verdicts",
+            "--explain-patterns",
+            "--format",
+            "json",
+            "-o",
+            str(out),
+        ],
+    )
+    assert res.exit_code in (0, 2, 4), res.output
+    payload = json.loads(out.read_text())
+    assert any(
+        m["rule_id"] == "handle-token-changed" for m in payload["pattern_modulations"]
+    )
+    # --explain-patterns prints the ledger (with evidence edges).
+    combined = res.output + (res.stderr if res.stderr_bytes else "")
+    assert "Pattern-aware modulations" in combined
+    assert "handle-token-changed" in combined
+
+
+def test_cli_no_modulations_message(tmp_path) -> None:
+    from click.testing import CliRunner
+
+    from abicheck.cli import main
+
+    # Identical snapshots → no changes, no modulations → the "none" branch.
+    snap = _handle_snapshot("struct Foo *")
+    p = tmp_path / "s.abi.json"
+    _save(snap, p)
+    res = CliRunner().invoke(main, ["compare", str(p), str(p), "--explain-patterns"])
+    assert res.exit_code == 0, res.output
+    combined = res.output + (res.stderr if res.stderr_bytes else "")
+    assert "No pattern-aware modulations applied." in combined
+
+
+# ---------------------------------------------------------------------------
+# Cross-output completeness (validation matrix §2)
+# ---------------------------------------------------------------------------
+
+
+def test_cross_output_completeness_for_demoted_finding() -> None:
+    from abicheck.junit_report import to_junit_xml
+    from abicheck.reporter import to_json
+    from abicheck.sarif import to_sarif_str
+    from abicheck.severity import PRESET_DEFAULT, compute_exit_code
+
+    old = _opaque_snapshot(opaque=True, size=None)
+    new = _opaque_snapshot(opaque=True, size=None)
+    result = checker.compare(
+        old, new, scope_to_public_surface=False, pattern_verdicts=True
+    )
+    # Force a demoted layout finding into the result so every sink is exercised
+    # even though the existing opaque filter also handles pure size drift.
+    demoted = _layout_change()
+    demoted.effective_verdict = Verdict.COMPATIBLE
+    demoted.modulation_reason = "opaque-by-construction"
+    demoted.modulation_rule = "opaque-pointer-layout"
+    result.changes.append(demoted)
+
+    # 1. verdict / compute_verdict exit path
+    assert demoted in result.compatible
+    assert demoted not in result.breaking
+
+    # 2. JSON `changes` + severity field
+    payload = json.loads(to_json(result))
+    entry = next(c for c in payload["changes"] if c["kind"] == "type_size_changed")
+    assert entry["severity"] == "compatible"
+    assert entry["effective_verdict"] == "COMPATIBLE"
+    assert entry["modulation_reason"] == "opaque-by-construction"
+
+    # 3. JSON filtered_summary (show_only path)
+    payload2 = json.loads(to_json(result, show_only="breaking"))
+    # the demoted finding must not be counted as breaking
+    assert payload2["filtered_summary"]["breaking"] == 0
+
+    # 4. severity-aware exit code path
+    assert compute_exit_code([demoted], PRESET_DEFAULT) == 0
+
+    # 5. SARIF level = note, not error
+    sarif = json.loads(to_sarif_str(result))
+    results = sarif["runs"][0]["results"]
+    size_results = [r for r in results if r["ruleId"] == "type_size_changed"]
+    assert size_results and all(r["level"] == "note" for r in size_results)
+
+    # 6. JUnit: demoted finding is not a failure
+    xml = to_junit_xml(result)
+    assert (
+        "type_size_changed" not in xml
+        or "<failure" not in xml.split("type_size_changed")[1][:200]
+    )

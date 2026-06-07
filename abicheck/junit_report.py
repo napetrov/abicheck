@@ -44,7 +44,7 @@ import io
 import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING
 
-from .checker_policy import ChangeKind, policy_for
+from .checker_policy import ChangeKind, Verdict, policy_for
 from .checker_types import Change, DiffResult
 from .reporter import apply_show_only
 
@@ -100,6 +100,15 @@ def _is_failure(
     ``--severity-*`` overrides), its level takes precedence so that
     the JUnit output honours user-configured severity escalations.
     """
+    # Honour an A4 per-finding effective_verdict (ADR-027): a demoted opaque/
+    # PIMPL layout change reads compatible and must not be a JUnit failure.
+    eff = getattr(change, "effective_verdict", None)
+    if isinstance(eff, Verdict):
+        if eff in (Verdict.BREAKING, Verdict.API_BREAK):
+            return True
+        if eff == Verdict.COMPATIBLE_WITH_RISK:
+            return policy_for(change.kind).severity == "error"
+        return False  # COMPATIBLE / NO_CHANGE → not a failure
     if change.kind in breaking_set or change.kind in api_break_set:
         return True
     if severity_config is not None:
@@ -119,6 +128,13 @@ def _failure_type(
     risk_set: frozenset[ChangeKind],
 ) -> str:
     """Return the ``type`` attribute for a ``<failure>`` element."""
+    eff = getattr(change, "effective_verdict", None)
+    if isinstance(eff, Verdict):
+        return {
+            Verdict.BREAKING: "BREAKING",
+            Verdict.API_BREAK: "API_BREAK",
+            Verdict.COMPATIBLE_WITH_RISK: "COMPATIBLE_WITH_RISK",
+        }.get(eff, "COMPATIBLE")
     if change.kind in breaking_set:
         return "BREAKING"
     if change.kind in api_break_set:

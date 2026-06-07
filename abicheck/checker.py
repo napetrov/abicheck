@@ -180,6 +180,7 @@ def compare(
     scope_to_public_surface: bool = True,
     force_public_symbols: set[str] | None = None,
     extra_changes: list[Change] | None = None,
+    pattern_verdicts: bool = False,
 ) -> DiffResult:
     """Diff two AbiSnapshots and return a DiffResult with verdict.
 
@@ -304,6 +305,25 @@ def compare(
         surf_old=pp_ctx.surf_old, surf_new=pp_ctx.surf_new,
     )
 
+    # ADR-027 A4: pattern-aware verdict modulation. Runs after post-processing
+    # and before the (recomputed) verdict so a demotion/raise reaches both the
+    # reported findings and the exit code. Off by default (opt-in via
+    # --pattern-verdicts); a no-op that leaves `kept`/`verdict` untouched
+    # otherwise.
+    pattern_modulations: list[dict[str, object]] = []
+    if pattern_verdicts:
+        from .pattern_verdicts import apply_pattern_verdicts
+        pattern_modulations = apply_pattern_verdicts(
+            kept, old, new, evidence_tier=evidence_tier
+        )
+        if pattern_modulations:
+            all_unsuppressed = kept + verdict_redundant
+            verdict = (
+                policy_file.compute_verdict(all_unsuppressed)
+                if policy_file is not None
+                else compute_verdict(all_unsuppressed, policy=policy)
+            )
+
     return DiffResult(
         old_version=old.version,
         new_version=new.version,
@@ -329,4 +349,5 @@ def compare(
         surface_scope_confidence=scope_confidence,
         surface_scope_notes=scope_notes,
         evidence_tier=evidence_tier,
+        pattern_modulations=pattern_modulations,
     )

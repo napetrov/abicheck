@@ -4,6 +4,18 @@
 **Status:** Accepted
 **Decision maker:** Nikolay Petrov
 
+> **Implementation status (2026-06-07).** Phase 0 (`surface_graph.py`),
+> Phase 1 (`surface-report` / A1 metrics), Phase 2 (`idioms.py` recognisers +
+> the four D2.2 anti-pattern `ChangeKind`s), and Phase 3 (A4 pattern-aware
+> verdicts: `pattern_verdicts.py`, the per-finding `effective_verdict` override
+> threaded through every classification site, `--pattern-verdicts` /
+> `--explain-patterns`, and the `pattern_modulations` ledger) have shipped.
+> Idiom evidence is recomputed at diff time from the persisted declaration
+> graph rather than serialized as bare tag names (D2.4 intent), so no schema
+> bump was required. **Pending:** A3 cross-library reasoning (D3, Phase 4) and
+> the metric-drift `ChangeKind`s (D1.2, Phase 5) — `--pattern-verdicts` remains
+> opt-in until the FP-rate corpus and parity lanes validate a default flip.
+
 ---
 
 ## Context

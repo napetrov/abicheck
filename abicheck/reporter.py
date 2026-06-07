@@ -33,6 +33,7 @@ from .checker import (
 )
 from .checker_policy import (
     ChangeKind,
+    effective_category,
     impact_for,
 )
 from .checker_policy import (
@@ -41,6 +42,50 @@ from .checker_policy import (
 from .report_summary import build_summary, surface_breakdown
 from .schemas import REPORT_SCHEMA_VERSION
 from .semver import recommend_release
+
+_VERDICT_TO_SEVERITY_LABEL = {
+    Verdict.BREAKING: "breaking",
+    Verdict.API_BREAK: "api_break",
+    Verdict.COMPATIBLE_WITH_RISK: "risk",
+    Verdict.COMPATIBLE: "compatible",
+}
+
+
+def _effective_severity_label(
+    c: object,
+    kind_sets: tuple[
+        frozenset[ChangeKind],
+        frozenset[ChangeKind],
+        frozenset[ChangeKind],
+        frozenset[ChangeKind],
+    ],
+) -> str:
+    """Severity label for a change, honouring its A4 ``effective_verdict``.
+
+    The one place the reporter decides a finding's severity bucket: routes
+    through :func:`effective_category` so an ADR-027 pattern-aware demotion reads
+    ``compatible`` in the JSON ``severity`` field and the ``filtered_summary``
+    counts, consistent with the verdict and exit code.
+    """
+    kind = getattr(c, "kind", None)
+    if kind is None:
+        return "unknown"
+    # An explicit A4 override wins; otherwise fall back to the exact set-based
+    # logic (which yields "unknown" for a kind moved out of every set, e.g. an
+    # override to NO_CHANGE) rather than effective_category's BREAKING fail-safe.
+    eff = getattr(c, "effective_verdict", None)
+    if isinstance(eff, Verdict):
+        return _VERDICT_TO_SEVERITY_LABEL.get(eff, "unknown")
+    breaking, api_break, compatible, risk = kind_sets
+    if kind in breaking:
+        return "breaking"
+    if kind in api_break:
+        return "api_break"
+    if kind in risk:
+        return "risk"
+    if kind in compatible:
+        return "compatible"
+    return "unknown"
 
 
 def _kind_to_severity(kind: ChangeKind, policy: str) -> str:
@@ -468,24 +513,12 @@ def _to_json_leaf(
     effective_policy = result.policy or "strict_abi"
     eff_sets = result._effective_kind_sets()
 
-    def _severity_from_sets(kind: object) -> str:
-        breaking, api_break, compatible, risk = eff_sets
-        if kind in breaking:
-            return "breaking"
-        if kind in api_break:
-            return "api_break"
-        if kind in risk:
-            return "risk"
-        if kind in compatible:
-            return "compatible"
-        return "unknown"
-
     leaf_changes_list = [
         {
             "kind": c.kind.value,
             "symbol": c.symbol,
             "description": c.description,
-            "severity": _severity_from_sets(c.kind),
+            "severity": _effective_severity_label(c, eff_sets),
             "affected_count": len(c.affected_symbols) if c.affected_symbols else 0,
             "affected_symbols": c.affected_symbols or [],
             "caused_count": c.caused_count,
@@ -633,12 +666,23 @@ def to_json(
     eff_sets = result._effective_kind_sets()
 
     if show_only:
-        eff_breaking, eff_api_break, _, eff_risk = eff_sets
         d["show_only_filter"] = show_only
         d["filtered_summary"] = {
-            "breaking": sum(1 for c in changes if c.kind in eff_breaking),
-            "source_breaks": sum(1 for c in changes if c.kind in eff_api_break),
-            "risk_changes": sum(1 for c in changes if c.kind in eff_risk),
+            "breaking": sum(
+                1
+                for c in changes
+                if effective_category(c, *eff_sets) == Verdict.BREAKING
+            ),
+            "source_breaks": sum(
+                1
+                for c in changes
+                if effective_category(c, *eff_sets) == Verdict.API_BREAK
+            ),
+            "risk_changes": sum(
+                1
+                for c in changes
+                if effective_category(c, *eff_sets) == Verdict.COMPATIBLE_WITH_RISK
+            ),
             "total_changes": len(changes),
         }
 
@@ -653,6 +697,9 @@ def to_json(
     d["changes"] = [_change_to_dict(c, policy=effective_policy, kind_sets=eff_sets) for c in changes]
     if result.redundant_count > 0:
         d["redundant_count"] = result.redundant_count
+    # ADR-027 A4 — pattern-aware modulation ledger (disclosed, reversible).
+    if result.pattern_modulations:
+        d["pattern_modulations"] = result.pattern_modulations
     d["suppression"] = {
         "file_provided": result.suppression_file_provided,
         "suppressed_count": result.suppressed_count,
@@ -707,17 +754,9 @@ def _change_to_dict(
     """Convert a Change to a JSON-serializable dict with impact and metadata."""
     kind = getattr(c, "kind", None)
     if kind and kind_sets:
-        breaking, api_break, compatible, risk = kind_sets
-        if kind in breaking:
-            severity = "breaking"
-        elif kind in api_break:
-            severity = "api_break"
-        elif kind in risk:
-            severity = "risk"
-        elif kind in compatible:
-            severity = "compatible"
-        else:
-            severity = "unknown"
+        # Route through effective_category so a per-finding A4 override (a
+        # demoted opaque/PIMPL layout change) reads compatible here too.
+        severity = _effective_severity_label(c, kind_sets)
     elif kind:
         severity = _kind_to_severity(kind, policy)
     else:
@@ -750,6 +789,14 @@ def _change_to_dict(
     caused_count = getattr(c, "caused_count", 0)
     if caused_count > 0:
         d["caused_count"] = caused_count
+    # ADR-027 A4 — disclose a pattern-aware modulation on the finding itself.
+    mod_reason = getattr(c, "modulation_reason", None)
+    if mod_reason:
+        d["modulation_reason"] = mod_reason
+        d["modulation_rule"] = getattr(c, "modulation_rule", None)
+        eff = getattr(c, "effective_verdict", None)
+        if isinstance(eff, Verdict):
+            d["effective_verdict"] = eff.value
     return d
 
 
@@ -1092,12 +1139,22 @@ def _classify_changes_by_kind(
     changes: list[Change], result: DiffResult,
 ) -> tuple[list[Change], list[Change], list[Change], list[Change]]:
     """Split *changes* into (breaking, source_breaks, risk, compatible) using the
-    effective kind sets (respects PolicyFile overrides)."""
-    breaking_set, api_break_set, compat_set, risk_set = result._effective_kind_sets()
-    breaking = [c for c in changes if c.kind in breaking_set]
-    source_breaks = [c for c in changes if c.kind in api_break_set]
-    risk = [c for c in changes if c.kind in risk_set]
-    compatible = [c for c in changes if c.kind in compat_set]
+    effective kind sets (respects PolicyFile overrides) and per-finding A4
+    ``effective_verdict`` overrides (ADR-027), so a demoted opaque/PIMPL layout
+    change lands in the compatible bucket of the text report too."""
+    sets = result._effective_kind_sets()
+    breaking = [c for c in changes if effective_category(c, *sets) == Verdict.BREAKING]
+    source_breaks = [
+        c for c in changes if effective_category(c, *sets) == Verdict.API_BREAK
+    ]
+    risk = [
+        c
+        for c in changes
+        if effective_category(c, *sets) == Verdict.COMPATIBLE_WITH_RISK
+    ]
+    compatible = [
+        c for c in changes if effective_category(c, *sets) == Verdict.COMPATIBLE
+    ]
     return breaking, source_breaks, risk, compatible
 
 
