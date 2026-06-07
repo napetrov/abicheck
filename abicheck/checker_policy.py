@@ -483,6 +483,14 @@ class ChangeKind(str, Enum):
     OPAQUE_INVARIANT_BROKEN = "opaque_invariant_broken"
     HANDLE_TYPE_CHANGED = "handle_type_changed"
 
+    # ── API-surface metric drift (ADR-027 A1 / D1.2) ────────────────────────
+    # Aggregate, informational signals emitted only with --surface-metrics.
+    # COMPATIBLE: never breaking on their own; useful for CI dashboards and
+    # release notes.
+    PUBLIC_SURFACE_GREW = "public_surface_grew"
+    PUBLIC_SURFACE_SHRANK = "public_surface_shrank"
+    UNDOCUMENTED_EXPORT_RATIO_INCREASED = "undocumented_export_ratio_increased"
+
 
 class HasKind(Protocol):
     kind: ChangeKind

@@ -26,6 +26,7 @@ import click
 
 from .checker import DiffResult, LibraryMetadata, compare
 from .cli_audit import echo_filtered_surface, echo_pattern_modulations
+from .cli_options import adr027_compare_options
 from .cli_params import POLICY_FILE_PARAM
 from .compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_dump
 from .compat.cli import compat_group
@@ -1711,16 +1712,7 @@ def _finalize_compare_result(
               help="Enable debuginfod network resolution for debug info (opt-in).")
 @click.option("--debuginfod-url", "debuginfod_url", default=None,
               help="debuginfod server URL (overrides DEBUGINFOD_URLS env var).")
-# ── Pattern-aware verdicts (ADR-027 A4) ──────────────────────────────────────
-@click.option("--pattern-verdicts/--no-pattern-verdicts", "pattern_verdicts",
-              default=False,
-              help="Modulate verdicts with idiom/anti-pattern evidence (ADR-027): "
-                   "demote opaque-pointer/PIMPL-hidden layout changes (header-aware "
-                   "only) and raise breaks when an opacity/handle guarantee is lost. "
-                   "Disclosed in the pattern_modulations ledger; reversible.")
-@click.option("--explain-patterns", "explain_patterns", is_flag=True, default=False,
-              help="Print idiom evidence behind each modulation (implies "
-                   "--pattern-verdicts).")
+@adr027_compare_options  # ADR-027: --pattern-verdicts/--explain-patterns/--surface-metrics
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def compare_cmd(
@@ -1756,6 +1748,7 @@ def compare_cmd(
     debuginfod_url: str | None,
     pattern_verdicts: bool,
     explain_patterns: bool,
+    surface_metrics: bool,
     verbose: bool,
     probe_matrix_old: Path | None = None,
     probe_matrix_new: Path | None = None,
@@ -1911,6 +1904,7 @@ def compare_cmd(
         force_public_symbols=force_public,
         extra_changes=extra_changes,
         pattern_verdicts=apply_patterns,
+        surface_metrics=surface_metrics,
     )
 
     if explain_patterns:

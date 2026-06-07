@@ -888,4 +888,22 @@ REGISTRY = ChangeKindRegistry([
               "forward-declared struct) changed its underlying token type in a way "
               "callers can observe. Code that stored or compared the old handle "
               "representation now operates on an incompatible token."),
+
+    # ── API-surface metric drift (ADR-027 A1 / D1.2) ────────────────────────
+    _E("public_surface_grew", _C,
+       impact="The aggregate count of public declarations (functions, variables, "
+              "types, enums) increased between versions. Informational only — the "
+              "individual additions are reported separately; this is the net "
+              "signal for CI dashboards and release notes. Emitted only with "
+              "--surface-metrics."),
+    _E("public_surface_shrank", _C,
+       impact="The aggregate count of public declarations decreased between "
+              "versions. Informational roll-up only — individual removals are "
+              "reported (and may be breaking) on their own. Emitted only with "
+              "--surface-metrics."),
+    _E("undocumented_export_ratio_increased", _C,
+       impact="The fraction of exported symbols with no public-header declaration "
+              "(EXPORT_ONLY origin) rose between versions — a packaging-hygiene "
+              "regression: a symbol was exported without a corresponding public "
+              "header. Informational; emitted only with --surface-metrics."),
 ])

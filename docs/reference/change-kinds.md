@@ -357,6 +357,16 @@ These changes are safe: they add new capabilities or carry diagnostic informatio
 | `glibcxx_dual_abi_flip_detected` | Mass symbol churn matches a libstdc++ dual ABI toggle (`_GLIBCXX_USE_CXX11_ABI`). Individual removed/added symbols are likely caused by this single root cause rather than intentional API changes — the underlying per-symbol findings are reported separately. |
 | `abi_surface_explosion` | The public ABI surface grew or shrank dramatically (e.g. a lost `-fvisibility=hidden` flag). This is a configuration/packaging signal, not a per-symbol break, but may indicate an unintended visibility regression. |
 
+### Surface-metric drift (ADR-027, opt-in `--surface-metrics`)
+
+Aggregate roll-up signals computed from the [API surface metrics](../concepts/api-surface-intelligence.md). Informational only — the individual additions/removals are reported per-symbol; these never drive a verdict on their own and are emitted only with `--surface-metrics`.
+
+| Kind | Description |
+|------|-------------|
+| `public_surface_grew` | The net count of public declarations (functions, variables, types, enums) increased between versions. A trendable signal for CI dashboards and release notes. |
+| `public_surface_shrank` | The net count of public declarations decreased between versions. A roll-up signal; the individual removals (which may be breaking) are reported separately. |
+| `undocumented_export_ratio_increased` | The fraction of exported symbols with no public-header declaration (EXPORT_ONLY origin) rose — a packaging-hygiene regression where a symbol was exported without a corresponding public header. |
+
 ### Field Qualifier Changes
 
 | Kind | Description |

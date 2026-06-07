@@ -256,6 +256,11 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.POLYMORPHIC_TYPE_NON_VIRTUAL_DTOR,
     ChangeKind.OPAQUE_INVARIANT_BROKEN,
     ChangeKind.HANDLE_TYPE_CHANGED,
+    # API-surface metric drift (ADR-027 D1.2) — exercised in
+    # tests/test_surface_metrics_drift.py.
+    ChangeKind.PUBLIC_SURFACE_GREW,
+    ChangeKind.PUBLIC_SURFACE_SHRANK,
+    ChangeKind.UNDOCUMENTED_EXPORT_RATIO_INCREASED,
 }
 
 

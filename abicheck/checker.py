@@ -181,6 +181,7 @@ def compare(
     force_public_symbols: set[str] | None = None,
     extra_changes: list[Change] | None = None,
     pattern_verdicts: bool = False,
+    surface_metrics: bool = False,
 ) -> DiffResult:
     """Diff two AbiSnapshots and return a DiffResult with verdict.
 
@@ -304,6 +305,17 @@ def compare(
         old, new, scope_enabled=scope_to_public_surface,
         surf_old=pp_ctx.surf_old, surf_new=pp_ctx.surf_new,
     )
+
+    # ADR-027 A1/D1.2: aggregate surface-metric drift (opt-in --surface-metrics).
+    # COMPATIBLE informational roll-ups; suppressible like any finding and never
+    # breaking, so they leave the verdict unchanged.
+    if surface_metrics:
+        from .diff_surface_metrics import diff_surface_metrics
+        for c in diff_surface_metrics(old, new):
+            if suppression is not None and suppression.is_suppressed(c):
+                suppressed.append(c)
+            else:
+                kept.append(c)
 
     # ADR-027 A4: pattern-aware verdict modulation. Runs after post-processing
     # and before the (recomputed) verdict so a demotion/raise reaches both the
