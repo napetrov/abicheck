@@ -100,7 +100,7 @@ def test_surface_metrics_off_by_default() -> None:
     )
 
 
-def test_metric_findings_suppressible(tmp_path) -> None:
+def test_metric_findings_suppressible() -> None:
     from abicheck.suppression import Suppression, SuppressionList
 
     old = _snap(["a"])

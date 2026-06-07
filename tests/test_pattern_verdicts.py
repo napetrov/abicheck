@@ -229,10 +229,66 @@ def test_lost_opaqueness_emits_break_not_silent_demotion() -> None:
     assert any(m["rule_id"] == "lost-opaque-invariant" for m in ledger)
 
 
+def test_removed_opaque_with_same_short_name_not_flagged() -> None:
+    # Codex P2: old ns1::Ctx is opaque and removed; new has an unrelated
+    # ns2::Ctx (single, same short name). The lost-invariant transition must
+    # require exact qualified identity, so no OPAQUE_INVARIANT_BROKEN fires for
+    # ns1::Ctx (the removal is covered by normal type-removed handling).
+    old = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="open",
+                mangled="open",
+                return_type="ns1::Ctx*",
+                params=[],
+                visibility=Visibility.PUBLIC,
+                return_pointer_depth=1,
+            ),
+        ],
+        types=[RecordType(name="ns1::Ctx", kind="struct", is_opaque=True)],
+    )
+    new = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="other",
+                mangled="other",
+                return_type="void",
+                params=[Param(name="c", type="ns2::Ctx", pointer_depth=0)],
+                visibility=Visibility.PUBLIC,
+            ),
+        ],
+        types=[
+            RecordType(
+                name="ns2::Ctx",
+                kind="struct",
+                is_opaque=False,
+                size_bits=64,
+                fields=[
+                    TypeField(
+                        name="x", type="int", offset_bits=0, access=AccessLevel.PUBLIC
+                    )
+                ],
+            )
+        ],
+    )
+    changes: list[Change] = []
+    apply_pattern_verdicts(changes, old, new, evidence_tier=EvidenceTier.HEADER_AWARE)
+    assert not any(c.kind == ChangeKind.OPAQUE_INVARIANT_BROKEN for c in changes)
+
+
 def test_lost_opaqueness_by_value_use() -> None:
     old = _opaque_snapshot(opaque=True, size=None)
-    # Still incomplete, but now crossed by value publicly → opacity lost.
-    new = _opaque_snapshot(opaque=False, size=128, by_value=True)
+    # Still incomplete (opaque=True), but now crossed by value publicly → opacity
+    # lost. Keeping it incomplete isolates the *by-value* detection path: the
+    # break must fire even though the definition is still hidden (Codex/CodeRabbit
+    # review — opaque=False would let it pass via visibility instead).
+    new = _opaque_snapshot(opaque=True, size=None, by_value=True)
     changes: list[Change] = []
     apply_pattern_verdicts(changes, old, new, evidence_tier=EvidenceTier.HEADER_AWARE)
     assert any(c.kind == ChangeKind.OPAQUE_INVARIANT_BROKEN for c in changes)
@@ -648,6 +704,20 @@ def test_cross_output_completeness_for_demoted_finding() -> None:
     assert leaf_entry["effective_verdict"] == "COMPATIBLE"
     assert leaf_entry["modulation_reason"] == "opaque-by-construction"
     assert "pattern_modulations" in leaf
+
+    # 5c. Element filter (--show-only) must not drop ADR-027 kinds that don't
+    # match the prefix table (Codex P2). A type-level invariant break is kept
+    # under --show-only=types.
+    from abicheck.reporter import ShowOnlyFilter
+
+    inv = Change(
+        kind=ChangeKind.OPAQUE_INVARIANT_BROKEN, symbol="Ctx", description="lost"
+    )
+    assert ShowOnlyFilter.parse("types").matches(inv)
+    stl = Change(
+        kind=ChangeKind.PUBLIC_API_EXPOSES_STL_BY_VALUE, symbol="f", description="stl"
+    )
+    assert ShowOnlyFilter.parse("functions").matches(stl)
 
     # 6. JUnit: demoted finding is not a failure
     xml = to_junit_xml(result)

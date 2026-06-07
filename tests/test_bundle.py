@@ -625,6 +625,31 @@ class TestIntraTypeReachability:
         # Disclosed, never dropped.
         assert f in result.bundle_findings
 
+    def test_internal_only_demotion_not_a_junit_failure(self) -> None:
+        # A risk-demoted BUNDLE_INTRA_TYPE_CHANGED must follow its EFFECTIVE risk
+        # category in JUnit, not the original breaking kind's severity — so by
+        # default it is NOT a <failure> (Codex review).
+        from abicheck.checker_policy import (
+            API_BREAK_KINDS,
+            BREAKING_KINDS,
+            RISK_KINDS,
+        )
+        from abicheck.junit_report import _is_failure
+
+        demoted = Change(
+            kind=ChangeKind.BUNDLE_INTRA_TYPE_CHANGED,
+            symbol="DataCollection",
+            description="internal-only cross-DSO change",
+            effective_verdict=Verdict.COMPATIBLE_WITH_RISK,
+            modulation_reason="consumer-internal-use",
+        )
+        assert not _is_failure(
+            demoted,
+            frozenset(BREAKING_KINDS),
+            frozenset(API_BREAK_KINDS),
+            frozenset(RISK_KINDS),
+        )
+
 
 # ---------------------------------------------------------------------------
 # bundle_intra_dep_resolved_to_different_version (gnu.version_d drift)

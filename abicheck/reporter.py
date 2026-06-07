@@ -179,6 +179,11 @@ class ShowOnlyFilter:
         # leak a demoted finding it was meant to exclude.
         eff = getattr(change, "effective_verdict", None)
         if isinstance(eff, Verdict):
+            # NB: this maps to the CLI --show-only token vocabulary (hyphenated
+            # "api-break"), which intentionally differs from the JSON-field
+            # labels in _VERDICT_TO_SEVERITY_LABEL (underscored "api_break").
+            # The two are deliberately separate label spaces — keep them in sync
+            # by intent, not by sharing a dict.
             label = {
                 Verdict.BREAKING: "breaking",
                 Verdict.API_BREAK: "api-break",
@@ -233,6 +238,15 @@ class ShowOnlyFilter:
                 "anon_field_changed",
                 "used_reserved_field",
                 "frame_register_changed",
+                # ADR-027 anti-pattern: a function exposing std:: by value.
+                "public_api_exposes_stl_by_value",
+            ),
+            "types": (
+                # ADR-027 type-level idiom transitions / anti-patterns whose
+                # kind names don't match the type_/struct_/... prefixes.
+                "opaque_invariant_broken",
+                "polymorphic_type_non_virtual_dtor",
+                "handle_type_changed",
             ),
             "elf": (
                 "toolchain_flag_drift",

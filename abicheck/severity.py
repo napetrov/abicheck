@@ -187,8 +187,10 @@ def classify_change_object(
         return IssueCategory.ABI_BREAKING
     if verdict in (Verdict.API_BREAK, Verdict.COMPATIBLE_WITH_RISK):
         return IssueCategory.POTENTIAL_BREAKING
-    # COMPATIBLE: an addition keeps its ADDITION bucket; everything else
-    # (including a demoted break) is a quality issue, never an addition.
+    # COMPATIBLE (and the unreachable NO_CHANGE — effective_category only ever
+    # returns BREAKING/API_BREAK/RISK/COMPATIBLE): an addition keeps its
+    # ADDITION bucket; everything else (including a demoted break, or a
+    # hypothetical NO_CHANGE) is a quality issue, never an addition.
     if change.kind in ADDITION_KINDS and change.kind in sets[2]:
         return IssueCategory.ADDITION
     return IssueCategory.QUALITY_ISSUES

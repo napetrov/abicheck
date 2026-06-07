@@ -60,8 +60,7 @@ if TYPE_CHECKING:
 _FUNC_KINDS = frozenset(k for k in ChangeKind if k.value.startswith("func_"))
 _VAR_KINDS = frozenset(k for k in ChangeKind if k.value.startswith("var_"))
 _TYPE_KINDS = frozenset(
-    k for k in ChangeKind
-    if k.value.startswith("type_") or k.value.startswith("union_")
+    k for k in ChangeKind if k.value.startswith("type_") or k.value.startswith("union_")
 )
 _ENUM_KINDS = frozenset(k for k in ChangeKind if k.value.startswith("enum_"))
 
@@ -82,6 +81,7 @@ def _classname_for(change: Change) -> str:
 # ---------------------------------------------------------------------------
 # Verdict → failure classification
 # ---------------------------------------------------------------------------
+
 
 def _is_failure(
     change: Change,
@@ -107,7 +107,19 @@ def _is_failure(
         if eff in (Verdict.BREAKING, Verdict.API_BREAK):
             return True
         if eff == Verdict.COMPATIBLE_WITH_RISK:
-            return policy_for(change.kind).severity == "error"
+            # A risk-*demoted* finding (e.g. the A3 bundle reachability demotion
+            # of a breaking BUNDLE_INTRA_TYPE_CHANGED) must follow its EFFECTIVE
+            # risk category, not the original breaking kind's severity. It fails
+            # only when the user escalated potential_breaking to error; by
+            # default risk is a warning, not a JUnit failure.
+            if severity_config is not None:
+                from .severity import IssueCategory, SeverityLevel
+
+                return (
+                    severity_config.level_for(IssueCategory.POTENTIAL_BREAKING)
+                    == SeverityLevel.ERROR
+                )
+            return False
         return False  # COMPATIBLE / NO_CHANGE → not a failure
     if change.kind in breaking_set or change.kind in api_break_set:
         return True
@@ -147,6 +159,7 @@ def _failure_type(
 # ---------------------------------------------------------------------------
 # Single DiffResult → <testsuite>
 # ---------------------------------------------------------------------------
+
 
 def _partition_changes(
     changes: list[Change],
@@ -231,8 +244,11 @@ def _emit_testcases(
             tc.set("classname", classname)
             if sym in change_by_symbol:
                 _maybe_add_failure(
-                    tc, change_by_symbol[sym],
-                    breaking_set, api_break_set, risk_set,
+                    tc,
+                    change_by_symbol[sym],
+                    breaking_set,
+                    api_break_set,
+                    risk_set,
                     severity_config,
                 )
     else:
@@ -242,7 +258,12 @@ def _emit_testcases(
             tc.set("name", sym)
             tc.set("classname", _classname_for(c))
             _maybe_add_failure(
-                tc, c, breaking_set, api_break_set, risk_set, severity_config,
+                tc,
+                c,
+                breaking_set,
+                api_break_set,
+                risk_set,
+                severity_config,
             )
 
 
@@ -292,7 +313,9 @@ def _build_testsuite(
 
     change_by_symbol, extra_changes = _partition_changes(changes)
     all_symbols = _collect_all_symbols(old_snapshot, show_only, change_by_symbol)
-    failure_count = _count_failures(changes, breaking_set, api_break_set, risk_set, severity_config)
+    failure_count = _count_failures(
+        changes, breaking_set, api_break_set, risk_set, severity_config
+    )
 
     total = len(all_symbols) if all_symbols else len(change_by_symbol)
 
@@ -302,8 +325,18 @@ def _build_testsuite(
     ts.set("failures", str(failure_count))
     ts.set("errors", "0")
 
-    _emit_testcases(ts, all_symbols, change_by_symbol, breaking_set, api_break_set, risk_set, severity_config)
-    _append_extra_failures(ts, extra_changes, breaking_set, api_break_set, risk_set, severity_config)
+    _emit_testcases(
+        ts,
+        all_symbols,
+        change_by_symbol,
+        breaking_set,
+        api_break_set,
+        risk_set,
+        severity_config,
+    )
+    _append_extra_failures(
+        ts, extra_changes, breaking_set, api_break_set, risk_set, severity_config
+    )
 
     return ts
 
@@ -352,6 +385,7 @@ def _add_failure(
 # Error testsuite — represent failed compare-release pairs
 # ---------------------------------------------------------------------------
 
+
 def _build_error_testsuite(library: str, error_msg: str) -> ET.Element:
     """Build a ``<testsuite>`` with a single errored testcase.
 
@@ -380,6 +414,7 @@ def _build_error_testsuite(library: str, error_msg: str) -> ET.Element:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def to_junit_xml(
     result: DiffResult,
@@ -414,8 +449,10 @@ def to_junit_xml(
     root.set("name", "abicheck")
 
     ts = _build_testsuite(
-        result, old_snapshot,
-        show_only=show_only, severity_config=severity_config,
+        result,
+        old_snapshot,
+        show_only=show_only,
+        severity_config=severity_config,
     )
     root.append(ts)
 
@@ -452,8 +489,10 @@ def to_junit_xml_multi(
 
     for result, old_snap in results:
         ts = _build_testsuite(
-            result, old_snap,
-            show_only=show_only, severity_config=severity_config,
+            result,
+            old_snap,
+            show_only=show_only,
+            severity_config=severity_config,
         )
         root.append(ts)
         total_tests += int(ts.get("tests", "0"))

@@ -1,4 +1,5 @@
 # Copyright 2026 Nikolay Petrov
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -153,11 +154,17 @@ def _verdict_label(v: Verdict) -> str:
     return v.value.lower()
 
 
-def _record_by_name(snap: AbiSnapshot, name: str) -> object | None:
-    by_name = {rec.name: rec for rec in snap.types}
-    key = _resolve_name(by_name.keys(), name)
-    return by_name.get(key) if key is not None else None
-    return None
+def _exact_record(snap: AbiSnapshot, name: str) -> object | None:
+    """Return the type record whose name matches *name* exactly, else None.
+
+    The lost-invariant transition (D2.2) must use the **same** qualified type
+    identity across snapshots — never a short-name fallback. Otherwise a removed
+    or renamed old type (e.g. ``ns1::Ctx``) could resolve to an unrelated new
+    type sharing its short name (``ns2::Ctx``) and wrongly raise
+    ``OPAQUE_INVARIANT_BROKEN`` instead of letting the normal removed/renamed
+    handling cover it (ADR-027 review).
+    """
+    return next((rec for rec in snap.types if rec.name == name), None)
 
 
 def apply_pattern_verdicts(
@@ -197,9 +204,7 @@ def apply_pattern_verdicts(
 
     # 1. Lost-invariant transitions (raises) — emitted before demotion so a type
     #    that *lost* opaqueness is never both demoted and flagged.
-    transitions = _emit_lost_invariants(
-        changes, old, new, new_graph, old_idioms, tier
-    )
+    transitions = _emit_lost_invariants(changes, old, new, new_graph, old_idioms, tier)
     changes.extend(t for t, _ in transitions)
     ledger.extend(m for _, m in transitions)
 
@@ -281,7 +286,7 @@ def _emit_lost_invariants(
     for name, tags in old_idioms.items():
         if not any(t.idiom == Idiom.OPAQUE_POINTER for t in tags):
             continue
-        new_rec = _record_by_name(new, name)
+        new_rec = _exact_record(new, name)
         if new_rec is None:
             continue  # removed entirely → handled by TYPE_REMOVED, not this
         # Opacity is lost only when callers can now observe the layout: either
