@@ -22,9 +22,9 @@ The catalog drives abicheck's benchmark and serves as an encyclopedia of ABI pit
 |---------|-------|-------------------------|------|
 | BREAKING | 85 | `BREAKING_KINDS` | 🔴 |
 | API_BREAK | 8 | `API_BREAK_KINDS` | 🟠 |
-| COMPATIBLE_WITH_RISK | 2 | `RISK_KINDS` | 🟡 |
+| COMPATIBLE_WITH_RISK | 3 | `RISK_KINDS` | 🟡 |
 | COMPATIBLE (addition) | 10 | `ADDITION_KINDS` | 🟢 |
-| COMPATIBLE (quality) | 10 | `QUALITY_KINDS` | 🟡 |
+| COMPATIBLE (quality) | 9 | `QUALITY_KINDS` | 🟡 |
 | NO_CHANGE | 6 | — | ✅ |
 | Bundle (multi-binary) | 5 | see [ADR-023](../docs/development/adr/023-bundle-aware-multi-binary-analysis.md) | 🔵 |
 <!-- END GENERATED: verdict-distribution -->
@@ -97,7 +97,7 @@ Some policy-escalated source/contract breaks (notably case30, case35) may keep i
 | [47](case47_inline_to_outlined/README.md) | Inline Function Moved to Outlined | Addition | 🟢 COMPATIBLE |
 | [48](case48_leaf_struct_through_pointer/README.md) | Leaf Struct Change Propagated Through Pointer | Breaking | 🔴 BREAKING |
 | [49](case49_executable_stack/README.md) | Executable Stack (GNU_STACK RWX) | Quality | 🟢 COMPATIBLE (bad practice) |
-| [50](case50_soname_inconsistent/README.md) | SONAME Inconsistent (Wrong Major Version) | Quality | 🟢 COMPATIBLE (bad practice) |
+| [50](case50_soname_inconsistent/README.md) | SONAME Inconsistent (Wrong Major Version) | Risk | 🟡 COMPATIBLE_WITH_RISK (bad practice) |
 | [51](case51_protected_visibility/README.md) | Protected Visibility (DEFAULT to PROTECTED) | Quality | 🟢 COMPATIBLE |
 | [52](case52_rpath_leak/README.md) | RPATH Leak (Hardcoded Build Directory) | Quality | 🟢 COMPATIBLE (bad practice) |
 | [53](case53_namespace_pollution/README.md) | Namespace Pollution (Generic Symbol Names) | Breaking | 🔴 BREAKING (bad practice) |
