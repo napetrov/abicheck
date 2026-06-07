@@ -450,7 +450,27 @@ _ORIGIN_PREFIX_TABLE: list[tuple[tuple[str, ...], _FinderFn | None, str]] = [
     # libc++ inline namespace __1 — must be checked BEFORE generic _ZNSt
     (("_ZNSt3__1", "_ZNKSt3__1"), _find_libcxx, "libc++.so.1"),
     # C++ stdlib symbols (libstdc++ / libc++)
-    (("_ZNSt", "_ZNKSt", "_ZSt", "_ZTI", "_ZTS", "_ZTVN10__cxxabiv"), _find_cxx_stdlib, "libstdc++.so.6"),
+    (
+        (
+            "_ZNSt",
+            "_ZNKSt",
+            "_ZSt",
+            "_ZTISt",
+            "_ZTSSt",
+            "_ZTVSt",
+            "_ZTINSt",
+            "_ZTSNSt",
+            "_ZTVNSt",
+            "_ZTIN9__gnu_cxx",
+            "_ZTSN9__gnu_cxx",
+            "_ZTVN9__gnu_cxx",
+            "_ZTIN10__cxxabiv",
+            "_ZTSN10__cxxabiv",
+            "_ZTVN10__cxxabiv",
+        ),
+        _find_cxx_stdlib,
+        "libstdc++.so.6",
+    ),
     # C++ operator new / delete (Itanium ABI)
     (("_Znwm", "_Znwj", "_Znam", "_Znaj", "_ZdlPv", "_ZdaPv", "_ZnwmSt", "_ZnamSt"), _find_cxx_stdlib, "libstdc++.so.6"),
     # Intel SVML

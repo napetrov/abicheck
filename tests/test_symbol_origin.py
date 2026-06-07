@@ -56,6 +56,16 @@ class TestGuessSymbolOrigin:
         result = _guess_symbol_origin("_ZTSSt11logic_error", [])
         assert result == "libstdc++.so.6"
 
+    def test_native_project_typeinfo_returns_none(self):
+        """Project-owned RTTI symbols must not be attributed to libstdc++."""
+        result = _guess_symbol_origin("_ZTIN11flatbuffers13FileNameSaverE", ["libstdc++.so.6"])
+        assert result is None
+
+    def test_native_project_typeinfo_name_returns_none(self):
+        """Project-owned typeinfo-name symbols must not be attributed to libstdc++."""
+        result = _guess_symbol_origin("_ZTSN11flatbuffers13FileNameSaverE", ["libstdc++.so.6"])
+        assert result is None
+
     def test_cxx_abi_vtable_returns_libstdcxx(self):
         """_ZTVN10__cxxabiv... → libstdc++ (C++ ABI vtable)."""
         result = _guess_symbol_origin("_ZTVN10__cxxabiv117__class_type_infoE", [])
