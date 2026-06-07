@@ -103,18 +103,32 @@ def test_public_data_symbol_size_change_is_still_breaking():
     assert r.verdict == Verdict.BREAKING
 
 
-def test_public_const_unbounded_string_size_change_preserves_copy_reloc_break():
+def test_public_const_unbounded_string_growth_preserves_copy_reloc_break():
     # PROJ exposes pj_release as: extern char const pj_release[].
     # Even without a fixed header bound, old non-PIE consumers can still carry
     # copy relocations sized from the old DSO symbol.
     r = compare(
-        _header_snap_with_object("pj_release", 31, variable=_const_string_var("pj_release")),
         _header_snap_with_object("pj_release", 29, variable=_const_string_var("pj_release")),
+        _header_snap_with_object("pj_release", 31, variable=_const_string_var("pj_release")),
     )
     kinds = {c.kind for c in r.changes}
     assert ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT in kinds
     assert ChangeKind.SYMBOL_SIZE_CHANGED not in kinds
     assert r.verdict == Verdict.BREAKING
+
+
+def test_public_const_unbounded_string_shrink_is_compatible():
+    # A non-PIE consumer linked to the old DSO gets a copy-relocation slot sized
+    # for the old symbol. If the new string is shorter, that old slot is still
+    # large enough, so this is not the truncation/overflow hazard that growth is.
+    r = compare(
+        _header_snap_with_object("pj_release", 31, variable=_const_string_var("pj_release")),
+        _header_snap_with_object("pj_release", 29, variable=_const_string_var("pj_release")),
+    )
+    kinds = {c.kind for c in r.changes}
+    assert ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT not in kinds
+    assert ChangeKind.SYMBOL_SIZE_CHANGED not in kinds
+    assert r.verdict == Verdict.NO_CHANGE
 
 
 def test_dwarf_const_unbounded_string_keeps_internal_risk_without_header_evidence():

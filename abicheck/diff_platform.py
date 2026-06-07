@@ -792,20 +792,24 @@ def _diff_elf_symbol_pair(
             _is_const_unbounded_string_object(old, sym_name)
             and _is_const_unbounded_string_object(new, sym_name)
         ):
-            size_kind = ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT
+            if s_new.size <= s_old.size:
+                size_kind = None
+            else:
+                size_kind = ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT
         else:
             size_kind = (
                 ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL
                 if _is_internal_data_symbol(sym_name)
                 else ChangeKind.SYMBOL_SIZE_CHANGED
             )
-        changes.append(Change(
-            kind=size_kind,
-            symbol=sym_name,
-            description=f"Symbol size changed: {sym_name} ({s_old.size} → {s_new.size} bytes)",
-            old_value=str(s_old.size),
-            new_value=str(s_new.size),
-        ))
+        if size_kind is not None:
+            changes.append(Change(
+                kind=size_kind,
+                symbol=sym_name,
+                description=f"Symbol size changed: {sym_name} ({s_old.size} → {s_new.size} bytes)",
+                old_value=str(s_old.size),
+                new_value=str(s_new.size),
+            ))
 
     # case51: ELF visibility default→protected (or vice-versa) — function symbols only.
     # Data symbols with default→protected break copy relocations (real ABI break).
