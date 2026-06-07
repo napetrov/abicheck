@@ -749,14 +749,63 @@ def check_examples_readme_sync(f: Findings) -> None:
                 f"{int(mm.group(1))}, but ground_truth.json has {expected}.",
             )
 
-    # Every case must appear as a row linking to its per-case README.
-    for name in sorted(verdicts):
-        if f"]({name}/README.md)" not in text:
+    # Every case must appear as a case-index row, AND that row's category +
+    # verdict must match ground_truth — not merely link to the README. Parsing
+    # the row contents is what catches per-row drift the aggregate counts miss
+    # (e.g. two cases swapping verdicts while the distribution totals stay put).
+    category_label = {
+        "breaking": "Breaking",
+        "api_break": "API Break",
+        "risk": "Risk",
+        "addition": "Addition",
+        "quality": "Quality",
+        "no_change": "No Change",
+        "bundle": "Bundle",
+    }
+    # | [NN](caseXXX/README.md) | Title | Category | <icon> VERDICT (notes) |
+    row_re = re.compile(
+        r"^\|\s*\[[^\]]*\]\((case[A-Za-z0-9_]+)/README\.md\)\s*"
+        r"\|([^|\n]*)\|([^|\n]*)\|([^|\n]*)\|\s*$",
+        re.MULTILINE,
+    )
+    seen: set[str] = set()
+    for match in row_re.finditer(text):
+        name = match.group(1)
+        cat_cell = match.group(3).strip()
+        verdict_cell = match.group(4).strip()
+        meta = verdicts.get(name)
+        if meta is None:
             f.err(
                 "examples-readme-sync",
-                f"examples/README.md: case '{name}' has no index row "
-                f"(expected a link to {name}/README.md).",
+                f"examples/README.md: index row for '{name}' has no "
+                "ground_truth.json entry.",
             )
+            continue
+        seen.add(name)
+        is_bundle = meta.get("category") == "bundle"
+        want_verdict = "BUNDLE" if is_bundle else meta["expected"]
+        want_cat = category_label.get(meta.get("category"), meta.get("category"))
+        token = re.search(r"[A-Z_]{3,}", verdict_cell)
+        got_verdict = token.group(0) if token else verdict_cell
+        if got_verdict != want_verdict:
+            f.err(
+                "examples-readme-sync",
+                f"examples/README.md: case '{name}' row shows verdict "
+                f"{got_verdict!r}, but ground_truth.json says {want_verdict!r}.",
+            )
+        if cat_cell != want_cat:
+            f.err(
+                "examples-readme-sync",
+                f"examples/README.md: case '{name}' row shows category "
+                f"{cat_cell!r}, but ground_truth.json says {want_cat!r}.",
+            )
+
+    for name in sorted(set(verdicts) - seen):
+        f.err(
+            "examples-readme-sync",
+            f"examples/README.md: case '{name}' has no parseable index row "
+            f"(expected '| [..]({name}/README.md) | Title | Category | Verdict |').",
+        )
 
 
 # ---------------------------------------------------------------------------
