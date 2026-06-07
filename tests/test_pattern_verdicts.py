@@ -547,6 +547,17 @@ def test_cross_output_completeness_for_demoted_finding() -> None:
     demoted.modulation_reason = "opaque-by-construction"
     demoted.modulation_rule = "opaque-pointer-layout"
     result.changes.append(demoted)
+    result.pattern_modulations = [
+        {
+            "symbol": "Ctx",
+            "original_category": "breaking",
+            "new_category": "compatible",
+            "rule_id": "opaque-pointer-layout",
+            "reason": "opaque-by-construction",
+            "evidence_tier": "header_aware",
+            "edges_matched": [],
+        }
+    ]
 
     # 1. verdict / compute_verdict exit path
     assert demoted in result.compatible
@@ -578,6 +589,18 @@ def test_cross_output_completeness_for_demoted_finding() -> None:
     results = sarif["runs"][0]["results"]
     size_results = [r for r in results if r["ruleId"] == "type_size_changed"]
     assert size_results and all(r["level"] == "note" for r in size_results)
+
+    # 5b. Leaf-mode JSON keeps the modulation audit trail (Codex P2): the
+    # demoted root type change carries effective_verdict/modulation_reason and
+    # the top-level pattern_modulations ledger is present.
+    leaf = json.loads(to_json(result, report_mode="leaf"))
+    leaf_entry = next(
+        c for c in leaf["leaf_changes"] if c["kind"] == "type_size_changed"
+    )
+    assert leaf_entry["severity"] == "compatible"
+    assert leaf_entry["effective_verdict"] == "COMPATIBLE"
+    assert leaf_entry["modulation_reason"] == "opaque-by-construction"
+    assert "pattern_modulations" in leaf
 
     # 6. JUnit: demoted finding is not a failure
     xml = to_junit_xml(result)

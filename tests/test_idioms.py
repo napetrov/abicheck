@@ -549,6 +549,37 @@ def test_detect_non_virtual_dtor_base() -> None:
     )
 
 
+def test_antipattern_ambiguous_short_name_not_cross_matched() -> None:
+    # Codex P2: a factory returns ns1::Base*; ns2::Base is a different
+    # polymorphic type with no virtual dtor. The short name "Base" must NOT make
+    # ns2::Base look like a factory return → no false RISK finding.
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        functions=[
+            Function(
+                name="make",
+                mangled="make",
+                return_type="ns1::Base*",
+                visibility=Visibility.PUBLIC,
+                return_pointer_depth=1,
+            ),
+        ],
+        types=[
+            RecordType(name="ns1::Base", kind="class", vtable=["_ZN3ns14BaseD0Ev"]),
+            RecordType(name="ns2::Base", kind="class", vtable=["_ZN3ns24Base3fooEv"]),
+        ],
+    )
+    aps = _antipatterns(snap)
+    # ns2::Base is unrelated to the ns1::Base factory and must not be flagged.
+    assert not any(
+        a.kind == ChangeKind.POLYMORPHIC_TYPE_NON_VIRTUAL_DTOR
+        and a.symbol == "ns2::Base"
+        for a in aps
+    )
+
+
 def test_virtual_dtor_base_not_flagged() -> None:
     base = RecordType(
         name="Base",

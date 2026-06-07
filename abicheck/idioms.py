@@ -382,24 +382,40 @@ def detect_antipatterns(graph: SurfaceGraph) -> list[AntiPattern]:
             )
 
     # POLYMORPHIC_TYPE_NON_VIRTUAL_DTOR — polymorphic types used as base/factory.
-    base_names: set[str] = set()
+    # Resolve every base/factory target spelling to a *specific* snapshot type
+    # (exact qualified name, or short name only when unambiguous), so a factory
+    # returning ns1::Base* never tags an unrelated ns2::Base that merely shares a
+    # short name (ADR-027 review). Unresolvable / ambiguous targets are dropped.
+    all_type_names = {rec.name for rec in graph.snapshot.types}
+    by_short: dict[str, list[str]] = {}
+    for n in all_type_names:
+        by_short.setdefault(n.rsplit("::", 1)[-1], []).append(n)
+
+    def _resolve(spelling: str) -> str | None:
+        if spelling in all_type_names:
+            return spelling
+        cands = by_short.get(spelling.rsplit("::", 1)[-1], [])
+        return cands[0] if len(cands) == 1 else None
+
+    base_targets: set[str] = set()
     for rec in graph.snapshot.types:
         for b in rec.bases:
-            base_names.add(b)
-            base_names.add(b.rsplit("::", 1)[-1])
-    factory_returns: set[str] = set()
+            resolved = _resolve(b)
+            if resolved is not None:
+                base_targets.add(resolved)
+    factory_targets: set[str] = set()
     for fn in graph.snapshot.functions:
         if fn.visibility != Visibility.PUBLIC:
             continue
         if fn.return_pointer_depth >= 1 or _is_pointer(fn.return_type):
-            factory_returns.add(_strip_ptr(fn.return_type))
-            factory_returns.add(_strip_ptr(fn.return_type).rsplit("::", 1)[-1])
+            resolved = _resolve(_strip_ptr(fn.return_type))
+            if resolved is not None:
+                factory_targets.add(resolved)
     for rec in graph.snapshot.types:
         if not rec.vtable:
             continue
-        short = rec.name.rsplit("::", 1)[-1]
-        used_as_base = rec.name in base_names or short in base_names
-        used_as_factory = rec.name in factory_returns or short in factory_returns
+        used_as_base = rec.name in base_targets
+        used_as_factory = rec.name in factory_targets
         if not (used_as_base or used_as_factory):
             continue
         if _has_virtual_destructor(rec):

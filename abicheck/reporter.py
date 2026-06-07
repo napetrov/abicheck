@@ -567,8 +567,8 @@ def _to_json_leaf(
     effective_policy = result.policy or "strict_abi"
     eff_sets = result._effective_kind_sets()
 
-    leaf_changes_list = [
-        {
+    def _leaf_entry(c: Change) -> dict[str, object]:
+        entry: dict[str, object] = {
             "kind": c.kind.value,
             "symbol": c.symbol,
             "description": c.description,
@@ -579,8 +579,18 @@ def _to_json_leaf(
             "old_value": getattr(c, "old_value", None),
             "new_value": getattr(c, "new_value", None),
         }
-        for c in type_changes
-    ]
+        # ADR-027 A4: keep the modulation audit trail in leaf mode too, so a
+        # demoted root type change still explains *why* it reads compatible.
+        mod_reason = getattr(c, "modulation_reason", None)
+        if mod_reason:
+            entry["modulation_reason"] = mod_reason
+            entry["modulation_rule"] = getattr(c, "modulation_rule", None)
+            eff = getattr(c, "effective_verdict", None)
+            if isinstance(eff, Verdict):
+                entry["effective_verdict"] = eff.value
+        return entry
+
+    leaf_changes_list = [_leaf_entry(c) for c in type_changes]
     non_type_list = [
         _change_to_dict(c, policy=effective_policy, kind_sets=eff_sets)
         for c in non_type_changes
@@ -609,6 +619,9 @@ def _to_json_leaf(
     d["release_recommendation"] = recommend_release(result).to_dict()
     if result.redundant_count > 0:
         d["redundant_count"] = result.redundant_count
+    # ADR-027 A4 — pattern-aware modulation ledger, carried in leaf mode too.
+    if result.pattern_modulations:
+        d["pattern_modulations"] = result.pattern_modulations
     # Confidence & evidence metadata
     d["confidence"] = result.confidence.value
     d["evidence_tier"] = result.evidence_tier.value
