@@ -106,21 +106,23 @@ def _is_failure(
     if isinstance(eff, Verdict):
         if eff in (Verdict.BREAKING, Verdict.API_BREAK):
             return True
-        if eff == Verdict.COMPATIBLE_WITH_RISK:
-            # A risk-*demoted* finding (e.g. the A3 bundle reachability demotion
-            # of a breaking BUNDLE_INTRA_TYPE_CHANGED) must follow its EFFECTIVE
-            # risk category, not the original breaking kind's severity. It fails
-            # only when the user escalated potential_breaking to error; by
-            # default risk is a warning, not a JUnit failure.
-            if severity_config is not None:
-                from .severity import IssueCategory, SeverityLevel
+        # COMPATIBLE_WITH_RISK / COMPATIBLE / NO_CHANGE are not hard breaks, so a
+        # JUnit failure here happens only when the user's severity preset
+        # escalates the finding's EFFECTIVE category to error. Route through the
+        # same classifier the severity-aware exit code uses
+        # (``classify_change_object``, which honours ``effective_verdict``) so the
+        # JUnit file never disagrees with the exit status — e.g. a
+        # ``--pattern-verdicts`` demotion to compatible, or the A3 bundle
+        # reachability demotion to risk, still fails under
+        # ``--severity-preset strict`` (ADR-027 review).
+        if severity_config is not None:
+            from .severity import SeverityLevel, classify_change_object
 
-                return (
-                    severity_config.level_for(IssueCategory.POTENTIAL_BREAKING)
-                    == SeverityLevel.ERROR
-                )
-            return False
-        return False  # COMPATIBLE / NO_CHANGE → not a failure
+            return (
+                severity_config.level_for(classify_change_object(change))
+                == SeverityLevel.ERROR
+            )
+        return False
     if change.kind in breaking_set or change.kind in api_break_set:
         return True
     if severity_config is not None:
