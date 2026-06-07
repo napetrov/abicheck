@@ -185,6 +185,37 @@ def test_handle_typedef() -> None:
     assert any(t.idiom == Idiom.HANDLE for t in tags.get("ImplPtr", []))
 
 
+def test_handle_ambiguous_short_pointee_not_tagged() -> None:
+    # ADR-027 review: when an unqualified handle pointee short name matches
+    # several namespaced types — one incomplete, one complete — the typedef is
+    # not provably opaque (it may point at the complete one), so it must not be
+    # tagged HANDLE (which would drive a synthetic handle_type_changed break).
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        typedefs={"h": "Ctx *"},
+        types=[
+            RecordType(name="ns1::Ctx", kind="struct", is_opaque=True),
+            RecordType(name="ns2::Ctx", kind="struct", is_opaque=False),
+        ],
+    )
+    assert not any(t.idiom == Idiom.HANDLE for t in _tags(snap).get("h", []))
+
+
+def test_handle_unambiguous_short_pointee_still_tagged() -> None:
+    # Control: a single incomplete type with that short name is unambiguous, so
+    # the short-name fallback still recognises the opaque handle.
+    snap = AbiSnapshot(
+        library="l",
+        version="1",
+        from_headers=True,
+        typedefs={"h": "Ctx *"},
+        types=[RecordType(name="ns1::Ctx", kind="struct", is_opaque=True)],
+    )
+    assert any(t.idiom == Idiom.HANDLE for t in _tags(snap).get("h", []))
+
+
 def test_factory_returns_polymorphic_pointer() -> None:
     snap = AbiSnapshot(
         library="l",

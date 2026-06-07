@@ -224,6 +224,30 @@ def _recognise_pimpl(graph: SurfaceGraph, rec: RecordType) -> IdiomTag | None:
     )
 
 
+def _resolve_pointee(
+    graph: SurfaceGraph, pointee: str
+) -> tuple[RecordType | None, bool]:
+    """Resolve a pointee type name to a record, flagging short-name ambiguity.
+
+    Exact qualified identity wins. Otherwise the unqualified short name binds
+    only when exactly one snapshot type carries it; if several types share the
+    short name (e.g. ``ns1::Ctx`` + ``ns2::Ctx``), the reference is ambiguous —
+    return ``(None, True)`` so callers never bind to whichever record
+    ``types_by_name`` happened to store first (a typedef ``Ctx *`` might point
+    at the complete ``ns2::Ctx``, not the incomplete ``ns1::Ctx`` — ADR-027
+    review). A name no snapshot type carries is unknown / forward-declared:
+    ``(None, False)``.
+    """
+    exact = graph.types_by_name.get(pointee)
+    if exact is not None and exact.name == pointee:
+        return exact, False
+    short = pointee.rsplit("::", 1)[-1]
+    matches = [r for r in graph.snapshot.types if r.name.rsplit("::", 1)[-1] == short]
+    if len(matches) == 1:
+        return matches[0], False
+    return (None, True) if matches else (None, False)
+
+
 def _recognise_handle(graph: SurfaceGraph) -> dict[str, IdiomTag]:
     out: dict[str, IdiomTag] = {}
     for alias, target in sorted(graph.snapshot.typedefs.items()):
@@ -232,17 +256,20 @@ def _recognise_handle(graph: SurfaceGraph) -> dict[str, IdiomTag]:
             continue
         pointee = _strip_ptr(t)
         # void* token, or a pointer to a forward-declared / unknown struct.
-        rec = graph.types_by_name.get(pointee) or graph.types_by_name.get(
-            pointee.rsplit("::", 1)[-1]
-        )
+        # Resolve by qualified identity; an ambiguous short name does not bind.
+        rec, ambiguous = _resolve_pointee(graph, pointee)
         # A handle is an opaque *token*: void*, or a pointer to a type that is
         # genuinely incomplete (a known opaque record, or an unknown user type —
         # a forward-declared struct). A pointer to a builtin/primitive (e.g.
         # ``int *``, ``int32_t *``) is NOT an opaque handle, so excluding it
         # avoids a false ``handle_type_changed`` when its pointee width changes
-        # (ADR-027 review). A *known but complete* record is likewise not a token.
+        # (ADR-027 review). A *known but complete* record is likewise not a token,
+        # and an ambiguous short-name pointee is not provably opaque so it is not
+        # tagged (it may resolve to a complete type — ADR-027 review).
         is_token = pointee in ("void", "") or (
-            _record_is_incomplete(rec) and not _is_builtin_type(pointee)
+            not ambiguous
+            and _record_is_incomplete(rec)
+            and not _is_builtin_type(pointee)
         )
         if is_token:
             out[alias] = IdiomTag(
