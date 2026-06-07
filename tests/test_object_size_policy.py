@@ -57,6 +57,17 @@ def _snap_with_object(name: str, size: int, *, variable: Variable | None = None)
     return s
 
 
+def _header_snap_with_object(
+    name: str,
+    size: int,
+    *,
+    variable: Variable | None = None,
+) -> AbiSnapshot:
+    s = _snap_with_object(name, size, variable=variable)
+    s.from_headers = True
+    return s
+
+
 def _const_string_var(name: str) -> Variable:
     return Variable(
         name=name,
@@ -97,13 +108,24 @@ def test_public_const_unbounded_string_size_change_preserves_copy_reloc_break():
     # Even without a fixed header bound, old non-PIE consumers can still carry
     # copy relocations sized from the old DSO symbol.
     r = compare(
-        _snap_with_object("pj_release", 31, variable=_const_string_var("pj_release")),
-        _snap_with_object("pj_release", 29, variable=_const_string_var("pj_release")),
+        _header_snap_with_object("pj_release", 31, variable=_const_string_var("pj_release")),
+        _header_snap_with_object("pj_release", 29, variable=_const_string_var("pj_release")),
     )
     kinds = {c.kind for c in r.changes}
     assert ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT in kinds
     assert ChangeKind.SYMBOL_SIZE_CHANGED not in kinds
     assert r.verdict == Verdict.BREAKING
+
+
+def test_dwarf_const_unbounded_string_keeps_internal_risk_without_header_evidence():
+    r = compare(
+        _snap_with_object("_private_release", 31, variable=_const_string_var("_private_release")),
+        _snap_with_object("_private_release", 29, variable=_const_string_var("_private_release")),
+    )
+    kinds = {c.kind for c in r.changes}
+    assert ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL in kinds
+    assert ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT not in kinds
+    assert r.verdict == Verdict.COMPATIBLE_WITH_RISK
 
 
 def test_policy_override_can_escalate_internal_size_change():

@@ -54,6 +54,8 @@ _COPY_RELOC_TYPES = (SymbolType.OBJECT, SymbolType.COMMON)
 
 def _is_const_unbounded_string_object(snap: AbiSnapshot, sym_name: str) -> bool:
     """Return True for header-visible const char string objects without a bound."""
+    if not snap.from_headers or snap.from_headers_inferred:
+        return False
     var = snap.variable_map.get(sym_name)
     if var is None:
         var = next(
