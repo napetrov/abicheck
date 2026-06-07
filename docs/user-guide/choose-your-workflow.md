@@ -21,7 +21,7 @@ artifact layout, accuracy target, or CI policy.
 | Your situation | Recommended workflow | Minimum command | Stronger / production command |
 |---|---|---|---|
 | I maintain one shared library and want to know if v2 breaks v1 consumers | Single-library ABI compare | `abicheck compare libv1.so libv2.so` | `abicheck compare libv1.so libv2.so --old-header include/v1/ --new-header include/v2/` |
-| Headers are unchanged between releases | Same-header compare | `abicheck compare libv1.so libv2.so -H include/foo.h` | Add `-p build/` or `--compile-db` when compiler flags matter |
+| Headers are unchanged between releases | Same-header compare | `abicheck compare libv1.so libv2.so -H include/foo.h` | When compiler flags affect the ABI, capture build context at dump time (`abicheck dump … -H include/foo.h -p build/`) and compare the snapshots |
 | I have no headers | Binary-only quick check | `abicheck compare libv1.so libv2.so` | Provide debug info via `--debug-root1/2` — this is weaker (see [the input-quality ladder](#2-how-much-accuracy-do-you-need)) |
 | I have stripped production binaries | Debug-assisted compare | `abicheck compare old.so new.so --debug-root1 old-debug --debug-root2 new-debug` | Also pass public headers (`-H`) for highest confidence |
 | I want a CI baseline | Snapshot workflow | `abicheck dump libfoo.so -H include/ -o baseline.json` then `abicheck compare baseline.json build/libfoo.so --new-header include/` | Store baselines in GitHub Releases, the repo, the Actions cache, or artifact storage — see [Baseline Management](baseline-management.md) |
@@ -71,8 +71,10 @@ explanation of why headers and debug info change what abicheck can prove.
   `--debuginfod`. See [CLI Usage → Debug-info
   resolution](cli-usage.md#debug-artifact-resolution).
 - **Compiler flags affect the ABI** (e.g. `-D` macros that change struct
-  layout)? Capture the build context with `-p build/` / `--compile-db` so the
-  header AST is parsed the way it was actually compiled.
+  layout)? Capture the build context at **dump** time with
+  `abicheck dump … -p build/` / `--compile-db` so the header AST is parsed the
+  way it was actually compiled, then compare the resulting snapshots. (These
+  build-context flags live on `dump`, not `compare`.)
 
 ---
 
@@ -124,6 +126,13 @@ verdict or exit code.
 | Fail on ABI **and** source/API breaks | default verdict gate, or explicit `--severity-*` | `fail-on-breaking: true`, `fail-on-api-break: true` |
 | Fail on accidental **API additions** too | `--severity-addition error` | `severity-addition: error` |
 | Everything is an error (strictest) | `--severity-preset strict` | `severity-preset: strict` |
+
+> **GitHub Action note:** the `severity-preset` / `severity-addition` inputs are
+> wired into **`compare` mode only**. For `compare-release` (package/release
+> workflows) and other modes, pass the equivalent CLI flags through
+> [`extra-args`](github-action.md) instead — e.g.
+> `extra-args: '--severity-addition error'`. The `fail-on-breaking` /
+> `fail-on-api-break` inputs apply to both `compare` and `compare-release`.
 
 ```bash
 # Report everything, fail ONLY on binary ABI breaks
