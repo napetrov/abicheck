@@ -243,7 +243,7 @@ universal; only the spelling changes. (Loader-level details are in
 | **Mark a public export** | `__attribute__((visibility("default")))` | `__declspec(dllexport)` (and `dllimport` in consumers) | `__attribute__((visibility("default")))` |
 | **Authoritative export list** | version script (`--version-script`) | a **`.def`** file (`EXPORTS`) — and pin **ordinals** so a rebuild can't renumber | `-exported_symbols_list file.txt` |
 | **Library identity / epoch** | `-Wl,-soname,libfoo.so.1` | the **DLL file name** + its **import library** | **install name** + `-compatibility_version` / `-current_version` |
-| **Generational ABI** | new version node, keep old symbols | side-by-side DLL (new name) | bump compatibility version; ship alongside |
+| **Generational ABI** (incompatible, must coexist) | new version node, keep old symbols | side-by-side DLL (new name) | **new install name / path** (e.g. `libfoo.2.dylib`) — the install name *is* the epoch¹ |
 
 ```text
 ; libfoo.def — stable Windows export surface (pin ordinals!)
@@ -261,6 +261,19 @@ clang -dynamiclib -fvisibility=hidden *.c \
     -install_name @rpath/libfoo.1.dylib \
     -compatibility_version 1.0 -current_version 1.2 -o libfoo.1.dylib
 ```
+
+!!! warning "¹ macOS: `compatibility_version` is a floor, not an epoch"
+    Clients select a dylib by its **install name**, and `compatibility_version`
+    is only a *minimum* check — the loader rejects a runtime dylib whose
+    compatibility version is *lower* than what the client recorded at link time,
+    but a *higher* one still loads. So bumping `compatibility_version` under the
+    **same install name** does **not** let an old and a new ABI coexist: an old
+    client will happily load the new, incompatible dylib. For a breaking change
+    where both must coexist, ship under a **new install name / path** (e.g.
+    `@rpath/libfoo.2.dylib`) — that change of identity is the real epoch bump,
+    the Mach-O analog of an ELF SONAME-major or a side-by-side Windows DLL.
+    Reserve `compatibility_version` for *backward-compatible* additions within
+    one generation.
 
 !!! warning "Windows: the CRT allocation boundary"
     A DLL with its own statically-linked CRT must not hand out memory the caller
