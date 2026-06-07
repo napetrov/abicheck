@@ -133,9 +133,10 @@ special members are declared once and pinned.
        re-exported the stdlib's ABI (and its dual-ABI flips — see
        [case104](../../examples/case104_glibcxx_dual_abi_flip.md)) through the
        firewall. Keep standard-library types behind the `Impl` boundary too.
-    4. **The wrapper itself is still a commitment.** Pimpl freezes `Impl`'s
-       layout, but `Widget`'s *own* size/alignment is still public — and so is
-       the *type* of the pointer member. Switching `std::unique_ptr<Impl>` to a
+    4. **The wrapper itself is still a commitment.** Pimpl keeps `Impl`'s
+       layout *out* of the public ABI — that's the whole point, so `Impl` is free
+       to change. What stays frozen is `Widget`'s *own* size/alignment and the
+       representation of its pointer member. Switching `std::unique_ptr<Impl>` to a
        raw pointer, a `shared_ptr`, or a different deleter, or adding an inline
        member function / changing a special member, is itself ABI-relevant
        ([case80](../../examples/case80_pimpl_shared_to_unique.md) shows a
