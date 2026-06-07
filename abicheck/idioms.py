@@ -37,8 +37,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .checker_policy import ChangeKind, Confidence
-from .model import ParamKind, RecordType, Visibility
+from .model import ParamKind, RecordType, ScopeOrigin, Visibility
 from .surface_graph import SurfaceGraph
+
+# Provenance origins that are NOT part of the public ABI surface — a type defined
+# only in one of these is the library's private implementation (ADR-024/027).
+_NON_PUBLIC_ORIGINS = frozenset(
+    {ScopeOrigin.PRIVATE_HEADER, ScopeOrigin.SYSTEM_HEADER, ScopeOrigin.GENERATED}
+)
 
 
 class Idiom(str, Enum):
@@ -399,6 +405,15 @@ def detect_antipatterns(graph: SurfaceGraph) -> list[AntiPattern]:
 
     base_targets: set[str] = set()
     for rec in graph.snapshot.types:
+        # Only count a base when the *deriving* type is on the public surface
+        # (ADR-027 review). A polymorphic Base inherited solely by a private /
+        # system / generated record is not a public ABI risk; counting it would
+        # also let that private-inheritance evidence pre-exist in old and wrongly
+        # suppress a *newly introduced* public factory risk for the same Base in
+        # _emit_new_antipatterns(). When no public-header set was supplied every
+        # record is UNKNOWN, which is treated as in-surface (no behaviour change).
+        if rec.origin in _NON_PUBLIC_ORIGINS:
+            continue
         for b in rec.bases:
             resolved = _resolve(b)
             if resolved is not None:

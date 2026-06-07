@@ -483,6 +483,68 @@ def test_new_antipattern_emitted_as_risk() -> None:
     assert any(m["rule_id"] == "new-anti-pattern" for m in ledger)
 
 
+def test_private_inheritance_does_not_suppress_new_public_factory_risk() -> None:
+    # Codex P2: old has a polymorphic Base (no virtual dtor) inherited only by a
+    # PRIVATE_HEADER record (not a public risk). New adds the first public factory
+    # returning Base*. The new *public* risk must be emitted — the private-
+    # inheritance evidence must not pre-seed old_aps and suppress it.
+    from abicheck.model import RecordType as _RT
+    from abicheck.model import ScopeOrigin
+
+    base = _RT(name="Base", kind="class", vtable=["_ZN4Base3fooEv"])
+
+    def old_snap() -> AbiSnapshot:
+        return AbiSnapshot(
+            library="l",
+            version="1",
+            from_headers=True,
+            types=[
+                base,
+                _RT(
+                    name="Impl",
+                    kind="class",
+                    bases=["Base"],
+                    origin=ScopeOrigin.PRIVATE_HEADER,
+                ),
+            ],
+        )
+
+    def new_snap() -> AbiSnapshot:
+        return AbiSnapshot(
+            library="l",
+            version="1",
+            from_headers=True,
+            functions=[
+                Function(
+                    name="make",
+                    mangled="make",
+                    return_type="Base*",
+                    params=[],
+                    visibility=Visibility.PUBLIC,
+                    return_pointer_depth=1,
+                )
+            ],
+            types=[
+                base,
+                _RT(
+                    name="Impl",
+                    kind="class",
+                    bases=["Base"],
+                    origin=ScopeOrigin.PRIVATE_HEADER,
+                ),
+            ],
+        )
+
+    changes: list[Change] = []
+    apply_pattern_verdicts(
+        changes, old_snap(), new_snap(), evidence_tier=EvidenceTier.HEADER_AWARE
+    )
+    assert any(
+        c.kind == ChangeKind.POLYMORPHIC_TYPE_NON_VIRTUAL_DTOR and c.symbol == "Base"
+        for c in changes
+    )
+
+
 def test_preexisting_antipattern_not_re_emitted() -> None:
     # Present in BOTH snapshots → pre-existing debt, not nagged about.
     def snap() -> AbiSnapshot:
