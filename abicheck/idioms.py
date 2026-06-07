@@ -96,6 +96,49 @@ def _is_pointer(type_str: str) -> bool:
     return "*" in type_str
 
 
+# Primitive/builtin type words; a pointer to one of these is not an opaque
+# handle token. ``_strip_ptr`` already removes struct/class/union/cv keywords,
+# so the pointee is just the core type spelling here.
+_PRIMITIVE_WORDS = frozenset(
+    {
+        "void",
+        "bool",
+        "char",
+        "wchar_t",
+        "char8_t",
+        "char16_t",
+        "char32_t",
+        "short",
+        "int",
+        "long",
+        "float",
+        "double",
+        "signed",
+        "unsigned",
+        "_Bool",
+        "__int128",
+    }
+)
+_STDINT_RE = re.compile(
+    r"^(u?int(_least|_fast)?(8|16|32|64|max|ptr)_t|size_t|ssize_t|ptrdiff_t)$"
+)
+
+
+def _is_builtin_type(pointee: str) -> bool:
+    """True when *pointee* names a builtin/primitive (not an opaque user type).
+
+    A typedef like ``int *`` / ``int32_t *`` is a pointer to a primitive, not an
+    opaque handle token — so it must not be tagged HANDLE (ADR-027 review).
+    """
+    name = pointee.strip()
+    if not name:
+        return False
+    if _STDINT_RE.match(name):
+        return True
+    words = name.split()
+    return bool(words) and all(w in _PRIMITIVE_WORDS for w in words)
+
+
 def _record_is_incomplete(rec: RecordType | None) -> bool:
     """True when *rec* is unknown or an incomplete (forward-declared) type.
 
@@ -192,7 +235,16 @@ def _recognise_handle(graph: SurfaceGraph) -> dict[str, IdiomTag]:
         rec = graph.types_by_name.get(pointee) or graph.types_by_name.get(
             pointee.rsplit("::", 1)[-1]
         )
-        if pointee in ("void", "") or _record_is_incomplete(rec):
+        # A handle is an opaque *token*: void*, or a pointer to a type that is
+        # genuinely incomplete (a known opaque record, or an unknown user type —
+        # a forward-declared struct). A pointer to a builtin/primitive (e.g.
+        # ``int *``, ``int32_t *``) is NOT an opaque handle, so excluding it
+        # avoids a false ``handle_type_changed`` when its pointee width changes
+        # (ADR-027 review). A *known but complete* record is likewise not a token.
+        is_token = pointee in ("void", "") or (
+            _record_is_incomplete(rec) and not _is_builtin_type(pointee)
+        )
+        if is_token:
             out[alias] = IdiomTag(
                 idiom=Idiom.HANDLE,
                 confidence=Confidence.MEDIUM if pointee != "void" else Confidence.HIGH,

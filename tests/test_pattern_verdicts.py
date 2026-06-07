@@ -583,6 +583,16 @@ def test_handle_token_change_emits_break() -> None:
     assert any(m["rule_id"] == "handle-token-changed" for m in ledger)
 
 
+def test_builtin_pointer_typedef_is_not_a_handle() -> None:
+    # Codex P2: typedef int *ptr_t is a pointer to a builtin, NOT an opaque
+    # handle token. A width change int* -> long* must not emit handle_type_changed.
+    old = _handle_snapshot("int *")
+    new = _handle_snapshot("long *")
+    changes: list[Change] = []
+    apply_pattern_verdicts(changes, old, new, evidence_tier=EvidenceTier.HEADER_AWARE)
+    assert not any(c.kind == ChangeKind.HANDLE_TYPE_CHANGED for c in changes)
+
+
 def test_pattern_generated_change_respects_suppression() -> None:
     suppression = SuppressionList(
         [
@@ -635,6 +645,33 @@ def _save(snap: AbiSnapshot, path) -> None:
     from abicheck.serialization import save_snapshot
 
     save_snapshot(snap, path)
+
+
+def test_suppressed_synthetic_finding_pruned_from_ledger() -> None:
+    # Codex P2: when a synthetic pattern finding is suppressed, its
+    # pattern_modulations ledger row must be pruned too — otherwise the JSON /
+    # --explain-patterns ledger reports a raise that is absent from changes.
+    from abicheck.suppression import Suppression, SuppressionList
+
+    old = _handle_snapshot("struct Foo *")
+    new = _handle_snapshot("struct Bar *")
+    supp = SuppressionList(
+        [
+            Suppression(symbol="my_handle_t", change_kind="handle_type_changed"),
+            Suppression(symbol="my_handle_t", change_kind="typedef_base_changed"),
+        ]
+    )
+    result = checker.compare(
+        old, new, suppression=supp, scope_to_public_surface=False, pattern_verdicts=True
+    )
+    assert not any(c.kind == ChangeKind.HANDLE_TYPE_CHANGED for c in result.changes)
+    assert any(
+        c.kind == ChangeKind.HANDLE_TYPE_CHANGED for c in result.suppressed_changes
+    )
+    # The ledger row for the suppressed handle transition must be gone.
+    assert not any(
+        m["rule_id"] == "handle-token-changed" for m in result.pattern_modulations
+    )
 
 
 def test_cli_explain_patterns(tmp_path) -> None:
