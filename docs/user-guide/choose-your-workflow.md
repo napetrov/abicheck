@@ -30,7 +30,7 @@ artifact layout, accuracy target, or CI policy.
 | I am an application developer | App compatibility | `abicheck appcompat ./myapp libfoo.so.1 libfoo.so.2` | Add `-H include/`; use `--check-against` when no old library exists |
 | I have a host/plugin system | Plugin contract check | `abicheck plugin-check plugin.v1.so plugin.v2.so -r plugin_init` | Use `--host-contract host.syms --policy plugin_abi` |
 | I only want to fail CI on binary ABI breaks | Breakage-only gate | `abicheck compare old.json new.so --severity-preset info-only --severity-abi-breaking error` | In the GitHub Action, use `fail-on-breaking: true`, `fail-on-api-break: false` |
-| I want visibility into new ABI additions | Addition reporting | default report (Markdown / JSON / HTML / SARIF) | Use `--severity-addition error` if additions must fail CI |
+| I want visibility into new ABI additions | Addition reporting | `abicheck compare old.so new.so -H include/` | Additions show in the default report (any format); add `--severity-addition error` to also fail CI on them |
 | I need human reports | Markdown / HTML | `--format markdown` or `--format html` | Add `--report-mode leaf --show-impact` for large diffs |
 | I need machine / CI reports | JSON / SARIF / JUnit | `--format json`, `--format sarif`, or `--format junit` | SARIF for GitHub Code Scanning; JUnit for GitLab / Jenkins / Azure dashboards |
 | I only have a static archive (`.a` / `.lib`) | Not supported directly | — | Extract members (`ar x libfoo.a`) and compare the resulting `.o` objects, or compare a shared library built from the same sources — see [Limitations](../concepts/limitations.md#static-import-library-archives-a-lib) |
@@ -184,6 +184,12 @@ the `addition` category, which defaults to `info`.
 For large diffs, add `--report-mode leaf --show-impact` to group derived
 changes under their root cause. Full reference:
 [Output Formats](output-formats.md).
+
+> **`compare-release` formats are narrower:** the bundle/package command emits
+> only `markdown`, `json`, and `junit` — **not** `sarif` or `html`. Those two
+> formats apply to single-library `compare`. For a release bundle in GitHub Code
+> Scanning, run per-library `compare --format sarif` for the libraries you want
+> to surface there.
 
 ---
 
