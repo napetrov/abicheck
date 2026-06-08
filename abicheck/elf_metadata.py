@@ -1,4 +1,5 @@
 # Copyright 2026 Nikolay Petrov
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -443,6 +444,17 @@ def _find_cxx_stdlib(needed_libs: list[str]) -> str | None:
     return None
 
 
+def _find_fundamental_cxx_rtti_runtime(needed_libs: list[str]) -> str | None:
+    """Find the C++ runtime that owns fundamental RTTI, excluding libc++abi."""
+    for lib in needed_libs:
+        if "stdc++" in os.path.basename(lib):
+            return lib
+    for lib in needed_libs:
+        if os.path.basename(lib).startswith("libc++."):
+            return lib
+    return None
+
+
 # Lookup table: (prefix_tuple, finder_fn_or_None, default_if_no_finder_match)
 # When finder_fn is None, default is returned unconditionally.
 _FinderFn = Callable[[list[str]], str | None]
@@ -458,6 +470,9 @@ _ORIGIN_PREFIX_TABLE: list[tuple[tuple[str, ...], _FinderFn | None, str]] = [
             "_ZTISt",
             "_ZTSSt",
             "_ZTVSt",
+            "_ZTIS",
+            "_ZTSS",
+            "_ZTVS",
             "_ZTINSt",
             "_ZTSNSt",
             "_ZTVNSt",
@@ -523,6 +538,8 @@ _FUNDAMENTAL_CXX_RTTI_MULTI_CHAR_TYPE_CODES: frozenset[str] = frozenset({
     "De",  # decimal128
 })
 
+_CXX_SIZED_FLOAT_TYPE_CODE_RE = re.compile(r"DF[0-9]+_")
+
 _FUNDAMENTAL_CXX_RTTI_TYPE_MODIFIERS: frozenset[str] = frozenset({
     "P",  # pointer
     "R",  # lvalue reference
@@ -539,6 +556,8 @@ def _is_fundamental_cxx_type_encoding(encoding: str) -> bool:
         if encoding in _FUNDAMENTAL_CXX_RTTI_SINGLE_CHAR_TYPE_CODES:
             return True
         if encoding in _FUNDAMENTAL_CXX_RTTI_MULTI_CHAR_TYPE_CODES:
+            return True
+        if _CXX_SIZED_FLOAT_TYPE_CODE_RE.fullmatch(encoding):
             return True
         if encoding[0] not in _FUNDAMENTAL_CXX_RTTI_TYPE_MODIFIERS:
             return False
@@ -569,7 +588,7 @@ def _guess_symbol_origin(name: str, needed_libs: list[str]) -> str | None:
     :class:`ElfSymbol`; it is informational and never suppresses real changes.
     """
     if _is_fundamental_cxx_rtti_symbol(name):
-        return _find_cxx_stdlib(needed_libs) or "libstdc++.so.6"
+        return _find_fundamental_cxx_rtti_runtime(needed_libs) or "libstdc++.so.6"
 
     for prefixes, finder_fn, default in _ORIGIN_PREFIX_TABLE:
         if name.startswith(prefixes):

@@ -58,6 +58,12 @@ class TestGuessSymbolOrigin:
         result = _guess_symbol_origin("_ZTSSt11logic_error", [])
         assert result == "libstdc++.so.6"
 
+    @pytest.mark.parametrize("symbol", ["_ZTISi", "_ZTSSi", "_ZTVSi"])
+    def test_cxx_stdlib_substitution_rtti_returns_libstdcxx(self, symbol):
+        """RTTI/vtable symbols using Itanium std substitutions are stdlib-owned."""
+        result = _guess_symbol_origin(symbol, [])
+        assert result == "libstdc++.so.6"
+
     @pytest.mark.parametrize(
         "symbol",
         [
@@ -71,6 +77,9 @@ class TestGuessSymbolOrigin:
             "_ZTSDu",    # typeinfo-name for char8_t
             "_ZTIDh",    # typeinfo for half
             "_ZTIDf",    # typeinfo for decimal32
+            "_ZTIDF32_",      # typeinfo for _Float32
+            "_ZTIPDF16_",     # typeinfo for _Float16*
+            "_ZTIPKDF128_",   # typeinfo for _Float128 const*
         ],
     )
     def test_cxx_fundamental_rtti_returns_libstdcxx(self, symbol):
@@ -83,6 +92,11 @@ class TestGuessSymbolOrigin:
         """Fundamental RTTI attribution still honors the runtime in DT_NEEDED."""
         result = _guess_symbol_origin(symbol, ["libc++.so.1"])
         assert result == "libc++.so.1"
+
+    def test_cxx_fundamental_rtti_does_not_select_libcxxabi(self):
+        """libc++abi should not be reported as the C++ stdlib owner."""
+        result = _guess_symbol_origin("_ZTIi", ["libc++abi.so.1"])
+        assert result == "libstdc++.so.6"
 
     def test_native_project_typeinfo_returns_none(self):
         """Project-owned RTTI symbols must not be attributed to libstdc++."""
