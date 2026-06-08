@@ -1,4 +1,5 @@
 # Copyright 2026 Nikolay Petrov
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -443,6 +444,17 @@ def _find_cxx_stdlib(needed_libs: list[str]) -> str | None:
     return None
 
 
+def _find_fundamental_cxx_rtti_runtime(needed_libs: list[str]) -> str | None:
+    """Find the C++ runtime that owns fundamental RTTI, excluding libc++abi."""
+    for lib in needed_libs:
+        if "stdc++" in os.path.basename(lib):
+            return lib
+    for lib in needed_libs:
+        if os.path.basename(lib).startswith("libc++."):
+            return lib
+    return None
+
+
 # Lookup table: (prefix_tuple, finder_fn_or_None, default_if_no_finder_match)
 # When finder_fn is None, default is returned unconditionally.
 _FinderFn = Callable[[list[str]], str | None]
@@ -450,7 +462,30 @@ _ORIGIN_PREFIX_TABLE: list[tuple[tuple[str, ...], _FinderFn | None, str]] = [
     # libc++ inline namespace __1 — must be checked BEFORE generic _ZNSt
     (("_ZNSt3__1", "_ZNKSt3__1"), _find_libcxx, "libc++.so.1"),
     # C++ stdlib symbols (libstdc++ / libc++)
-    (("_ZNSt", "_ZNKSt", "_ZSt", "_ZTI", "_ZTS", "_ZTVN10__cxxabiv"), _find_cxx_stdlib, "libstdc++.so.6"),
+    (
+        (
+            "_ZNSt",
+            "_ZNKSt",
+            "_ZSt",
+            "_ZTISt",
+            "_ZTSSt",
+            "_ZTVSt",
+            "_ZTIS",
+            "_ZTSS",
+            "_ZTVS",
+            "_ZTINSt",
+            "_ZTSNSt",
+            "_ZTVNSt",
+            "_ZTIN9__gnu_cxx",
+            "_ZTSN9__gnu_cxx",
+            "_ZTVN9__gnu_cxx",
+            "_ZTIN10__cxxabiv",
+            "_ZTSN10__cxxabiv",
+            "_ZTVN10__cxxabiv",
+        ),
+        _find_cxx_stdlib,
+        "libstdc++.so.6",
+    ),
     # C++ operator new / delete (Itanium ABI)
     (("_Znwm", "_Znwj", "_Znam", "_Znaj", "_ZdlPv", "_ZdaPv", "_ZnwmSt", "_ZnamSt"), _find_cxx_stdlib, "libstdc++.so.6"),
     # Intel SVML
@@ -468,6 +503,75 @@ _ORIGIN_PREFIX_TABLE: list[tuple[tuple[str, ...], _FinderFn | None, str]] = [
 ]
 
 
+_FUNDAMENTAL_CXX_RTTI_SINGLE_CHAR_TYPE_CODES: frozenset[str] = frozenset({
+    "v",   # void
+    "w",   # wchar_t
+    "b",   # bool
+    "c",   # char
+    "a",   # signed char
+    "h",   # unsigned char
+    "s",   # short
+    "t",   # unsigned short
+    "i",   # int
+    "j",   # unsigned int
+    "l",   # long
+    "m",   # unsigned long
+    "x",   # long long
+    "y",   # unsigned long long
+    "n",   # __int128
+    "o",   # unsigned __int128
+    "f",   # float
+    "d",   # double
+    "e",   # long double
+    "g",   # __float128
+    "z",   # ellipsis
+})
+
+_FUNDAMENTAL_CXX_RTTI_MULTI_CHAR_TYPE_CODES: frozenset[str] = frozenset({
+    "Dn",  # std::nullptr_t
+    "Du",  # char8_t
+    "Di",  # char32_t
+    "Ds",  # char16_t
+    "Dh",  # half-precision floating point
+    "Df",  # decimal32
+    "Dd",  # decimal64
+    "De",  # decimal128
+})
+
+_CXX_SIZED_FLOAT_TYPE_CODE_RE = re.compile(r"DF[0-9]+(?:_|[A-Za-z]+)")
+
+_FUNDAMENTAL_CXX_RTTI_TYPE_MODIFIERS: frozenset[str] = frozenset({
+    "P",  # pointer
+    "R",  # lvalue reference
+    "O",  # rvalue reference
+    "K",  # const qualifier
+    "V",  # volatile qualifier
+    "r",  # restrict qualifier
+})
+
+
+def _is_fundamental_cxx_type_encoding(encoding: str) -> bool:
+    """Return True for builtin Itanium C++ type encodings and simple wrappers."""
+    while encoding:
+        if encoding in _FUNDAMENTAL_CXX_RTTI_SINGLE_CHAR_TYPE_CODES:
+            return True
+        if encoding in _FUNDAMENTAL_CXX_RTTI_MULTI_CHAR_TYPE_CODES:
+            return True
+        if _CXX_SIZED_FLOAT_TYPE_CODE_RE.fullmatch(encoding):
+            return True
+        if encoding[0] not in _FUNDAMENTAL_CXX_RTTI_TYPE_MODIFIERS:
+            return False
+        encoding = encoding[1:]
+    return False
+
+
+def _is_fundamental_cxx_rtti_symbol(name: str) -> bool:
+    """Return True for libstdc++ RTTI/typeinfo-name symbols for builtin types."""
+    if not (name.startswith("_ZTI") or name.startswith("_ZTS")):
+        return False
+    return _is_fundamental_cxx_type_encoding(name[4:])
+
+
 def _guess_symbol_origin(name: str, needed_libs: list[str]) -> str | None:
     """Guess which dependency library a symbol likely originates from.
 
@@ -483,6 +587,9 @@ def _guess_symbol_origin(name: str, needed_libs: list[str]) -> str | None:
     itself.  The result is used to annotate the ``origin_lib`` field of
     :class:`ElfSymbol`; it is informational and never suppresses real changes.
     """
+    if _is_fundamental_cxx_rtti_symbol(name):
+        return _find_fundamental_cxx_rtti_runtime(needed_libs) or "libstdc++.so.6"
+
     for prefixes, finder_fn, default in _ORIGIN_PREFIX_TABLE:
         if name.startswith(prefixes):
             if finder_fn is not None:
