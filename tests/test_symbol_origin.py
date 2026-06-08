@@ -80,6 +80,9 @@ class TestGuessSymbolOrigin:
             "_ZTIDF32_",      # typeinfo for _Float32
             "_ZTIPDF16_",     # typeinfo for _Float16*
             "_ZTIPKDF128_",   # typeinfo for _Float128 const*
+            "_ZTIDF16b",      # typeinfo for std::bfloat16_t
+            "_ZTIPDF32x",     # typeinfo for _Float32x*
+            "_ZTIPKDF64x",    # typeinfo for _Float64x const*
         ],
     )
     def test_cxx_fundamental_rtti_returns_libstdcxx(self, symbol):

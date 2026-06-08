@@ -538,7 +538,7 @@ _FUNDAMENTAL_CXX_RTTI_MULTI_CHAR_TYPE_CODES: frozenset[str] = frozenset({
     "De",  # decimal128
 })
 
-_CXX_SIZED_FLOAT_TYPE_CODE_RE = re.compile(r"DF[0-9]+_")
+_CXX_SIZED_FLOAT_TYPE_CODE_RE = re.compile(r"DF[0-9]+(?:_|[A-Za-z]+)")
 
 _FUNDAMENTAL_CXX_RTTI_TYPE_MODIFIERS: frozenset[str] = frozenset({
     "P",  # pointer
