@@ -8,6 +8,8 @@ Covers:
 """
 from __future__ import annotations
 
+import pytest
+
 from abicheck.checker_policy import (
     API_BREAK_KINDS,
     BREAKING_KINDS,
@@ -56,19 +58,30 @@ class TestGuessSymbolOrigin:
         result = _guess_symbol_origin("_ZTSSt11logic_error", [])
         assert result == "libstdc++.so.6"
 
-    def test_cxx_fundamental_typeinfo_returns_libstdcxx(self):
-        """_ZTIi → libstdc++ (typeinfo for int)."""
-        result = _guess_symbol_origin("_ZTIi", [])
+    @pytest.mark.parametrize(
+        "symbol",
+        [
+            "_ZTIi",     # typeinfo for int
+            "_ZTSi",     # typeinfo-name for int
+            "_ZTIPi",    # typeinfo for int*
+            "_ZTSPi",    # typeinfo-name for int*
+            "_ZTIPKi",   # typeinfo for int const*
+            "_ZTSPKi",   # typeinfo-name for int const*
+            "_ZTIDu",    # typeinfo for char8_t
+            "_ZTSDu",    # typeinfo-name for char8_t
+            "_ZTIDh",    # typeinfo for half
+            "_ZTIDf",    # typeinfo for decimal32
+        ],
+    )
+    def test_cxx_fundamental_rtti_returns_libstdcxx(self, symbol):
+        """Fundamental RTTI symbols are owned by the C++ runtime."""
+        result = _guess_symbol_origin(symbol, [])
         assert result == "libstdc++.so.6"
 
-    def test_cxx_fundamental_typeinfo_name_returns_libstdcxx(self):
-        """_ZTSi → libstdc++ (typeinfo-name for int)."""
-        result = _guess_symbol_origin("_ZTSi", [])
-        assert result == "libstdc++.so.6"
-
-    def test_cxx_fundamental_typeinfo_prefers_needed_libcxx(self):
+    @pytest.mark.parametrize("symbol", ["_ZTIi", "_ZTSi"])
+    def test_cxx_fundamental_rtti_prefers_needed_libcxx(self, symbol):
         """Fundamental RTTI attribution still honors the runtime in DT_NEEDED."""
-        result = _guess_symbol_origin("_ZTIi", ["libc++.so.1"])
+        result = _guess_symbol_origin(symbol, ["libc++.so.1"])
         assert result == "libc++.so.1"
 
     def test_native_project_typeinfo_returns_none(self):
@@ -79,6 +92,18 @@ class TestGuessSymbolOrigin:
     def test_native_project_typeinfo_name_returns_none(self):
         """Project-owned typeinfo-name symbols must not be attributed to libstdc++."""
         result = _guess_symbol_origin("_ZTSN11flatbuffers13FileNameSaverE", ["libstdc++.so.6"])
+        assert result is None
+
+    @pytest.mark.parametrize(
+        "symbol",
+        [
+            "_ZTIPN11flatbuffers13FileNameSaverE",
+            "_ZTSPN11flatbuffers13FileNameSaverE",
+        ],
+    )
+    def test_native_project_pointer_rtti_returns_none(self, symbol):
+        """Pointer RTTI for project types must not be attributed to libstdc++."""
+        result = _guess_symbol_origin(symbol, ["libstdc++.so.6"])
         assert result is None
 
     def test_cxx_abi_vtable_returns_libstdcxx(self):

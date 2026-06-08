@@ -488,7 +488,7 @@ _ORIGIN_PREFIX_TABLE: list[tuple[tuple[str, ...], _FinderFn | None, str]] = [
 ]
 
 
-_FUNDAMENTAL_CXX_RTTI_TYPE_CODES: frozenset[str] = frozenset({
+_FUNDAMENTAL_CXX_RTTI_SINGLE_CHAR_TYPE_CODES: frozenset[str] = frozenset({
     "v",   # void
     "w",   # wchar_t
     "b",   # bool
@@ -510,17 +510,47 @@ _FUNDAMENTAL_CXX_RTTI_TYPE_CODES: frozenset[str] = frozenset({
     "e",   # long double
     "g",   # __float128
     "z",   # ellipsis
+})
+
+_FUNDAMENTAL_CXX_RTTI_MULTI_CHAR_TYPE_CODES: frozenset[str] = frozenset({
     "Dn",  # std::nullptr_t
+    "Du",  # char8_t
     "Di",  # char32_t
     "Ds",  # char16_t
+    "Dh",  # half-precision floating point
+    "Df",  # decimal32
+    "Dd",  # decimal64
+    "De",  # decimal128
 })
+
+_FUNDAMENTAL_CXX_RTTI_TYPE_MODIFIERS: frozenset[str] = frozenset({
+    "P",  # pointer
+    "R",  # lvalue reference
+    "O",  # rvalue reference
+    "K",  # const qualifier
+    "V",  # volatile qualifier
+    "r",  # restrict qualifier
+})
+
+
+def _is_fundamental_cxx_type_encoding(encoding: str) -> bool:
+    """Return True for builtin Itanium C++ type encodings and simple wrappers."""
+    while encoding:
+        if encoding in _FUNDAMENTAL_CXX_RTTI_SINGLE_CHAR_TYPE_CODES:
+            return True
+        if encoding in _FUNDAMENTAL_CXX_RTTI_MULTI_CHAR_TYPE_CODES:
+            return True
+        if encoding[0] not in _FUNDAMENTAL_CXX_RTTI_TYPE_MODIFIERS:
+            return False
+        encoding = encoding[1:]
+    return False
 
 
 def _is_fundamental_cxx_rtti_symbol(name: str) -> bool:
     """Return True for libstdc++ RTTI/typeinfo-name symbols for builtin types."""
     if not (name.startswith("_ZTI") or name.startswith("_ZTS")):
         return False
-    return name[4:] in _FUNDAMENTAL_CXX_RTTI_TYPE_CODES
+    return _is_fundamental_cxx_type_encoding(name[4:])
 
 
 def _guess_symbol_origin(name: str, needed_libs: list[str]) -> str | None:
