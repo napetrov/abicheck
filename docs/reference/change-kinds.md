@@ -154,6 +154,7 @@ These changes are immediately incompatible with existing compiled binaries.
 | `soname_changed` | The library SONAME changed. Any binary linked against the old SONAME will fail to load at runtime — the dynamic linker cannot find the library. |
 | `symbol_type_changed` | Symbol type changed in the ELF `.dynsym` (e.g., `STT_FUNC` → `STT_OBJECT`). The dynamic linker may handle it incorrectly — undefined behavior at runtime. |
 | `symbol_size_changed` | Symbol size (`st_size`) changed in ELF `.dynsym`. In ELF-only analysis mode, this is the primary signal for variable or vtable layout changes. |
+| `symbol_size_changed_const_object` | Size changed for a public exported const object such as `extern char const name[]`. Even when headers do not expose a fixed bound, old non-PIE consumers can carry copy relocations sized from the old DSO symbol, so this remains a hard binary-compatibility break. |
 
 ---
 

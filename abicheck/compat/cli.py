@@ -191,6 +191,9 @@ _BINARY_ONLY_KINDS: frozenset[ChangeKind] = frozenset({
     # ELF st_size signal on an internal-looking data symbol — binary-only, just
     # like SYMBOL_SIZE_CHANGED, so it is filtered from source-only views too.
     ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL,
+    # Header evidence may name the const object precisely, but the changed
+    # value is still ELF st_size metadata rather than a source API delta.
+    ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT,
     ChangeKind.IFUNC_INTRODUCED,
     ChangeKind.IFUNC_REMOVED,
     ChangeKind.COMMON_SYMBOL_RISK,

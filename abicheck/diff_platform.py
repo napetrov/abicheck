@@ -51,6 +51,24 @@ _ELF_VIS_PROTECTED_PAIR: frozenset[str] = frozenset({"default", "protected"})
 # Data symbol types subject to copy relocations (OBJECT/COMMON).
 _COPY_RELOC_TYPES = (SymbolType.OBJECT, SymbolType.COMMON)
 
+
+def _is_const_unbounded_string_object(snap: AbiSnapshot, sym_name: str) -> bool:
+    """Return True for header-visible const char string objects without a bound."""
+    if not snap.from_headers or snap.from_headers_inferred:
+        return False
+    var = snap.variable_map.get(sym_name)
+    if var is None:
+        var = next(
+            (candidate for candidate in snap.variables if candidate.name == sym_name),
+            None,
+        )
+    if var is None:
+        return False
+    if not var.is_const:
+        return False
+    typ = re.sub(r"\s+", " ", var.type.replace("const char", "char const")).strip()
+    return typ in {"char const[]", "char const []", "const char[]", "const char []"}
+
 @registry.detector("elf")
 def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """ELF-only detectors (Sprint 2): no debug info required."""
@@ -69,7 +87,7 @@ def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     # detector deduplication over the simpler SYMBOL_VERSION_DEFINED_REMOVED.
     changes.extend(detect_version_node_changes(o, n))
     changes.extend(_diff_elf_symbol_versioning(o, n))
-    changes.extend(_diff_elf_symbol_metadata(o, n))
+    changes.extend(_diff_elf_symbol_metadata(old, new, o, n))
     changes.extend(_diff_visibility_leak(old, new))
     changes.extend(_diff_leaked_dependency_symbols(o, n))
     changes.extend(detect_version_script_missing(o, n))
@@ -661,7 +679,19 @@ def _is_unattached_private_version_node(elf: Any, version: str) -> bool:
     return _impl(elf, version)
 
 
-def _diff_elf_symbol_metadata(old_elf: Any, new_elf: Any) -> list[Change]:
+def _diff_elf_symbol_metadata(
+    old: AbiSnapshot | Any,
+    new: AbiSnapshot | Any,
+    old_elf: Any | None = None,
+    new_elf: Any | None = None,
+) -> list[Change]:
+    if old_elf is None and new_elf is None:
+        old_elf = old
+        new_elf = new
+        old = AbiSnapshot(library="", version="")
+        new = AbiSnapshot(library="", version="")
+    assert old_elf is not None
+    assert new_elf is not None
     changes: list[Change] = []
     old_syms = old_elf.symbol_map
     new_syms = new_elf.symbol_map
@@ -670,7 +700,7 @@ def _diff_elf_symbol_metadata(old_elf: Any, new_elf: Any) -> list[Change]:
         s_new = new_syms.get(sym_name)
         if s_new is None:
             continue
-        changes.extend(_diff_elf_symbol_pair(sym_name, s_old, s_new))
+        changes.extend(_diff_elf_symbol_pair(old, new, sym_name, s_old, s_new))
 
     for sym_name, s_new in new_syms.items():
         if s_new.sym_type != SymbolType.COMMON:
@@ -685,7 +715,13 @@ def _diff_elf_symbol_metadata(old_elf: Any, new_elf: Any) -> list[Change]:
     return changes
 
 
-def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]:
+def _diff_elf_symbol_pair(
+    old: AbiSnapshot,
+    new: AbiSnapshot,
+    sym_name: str,
+    s_old: Any,
+    s_new: Any,
+) -> list[Change]:
     changes: list[Change] = []
     if s_old.sym_type != SymbolType.IFUNC and s_new.sym_type == SymbolType.IFUNC:
         changes.append(Change(
@@ -749,19 +785,31 @@ def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]
         # symbol's size change is usually private implementation state, so it is
         # downgraded to a risk finding rather than a hard break (ISSUE-45/54/55/56:
         # _XkeyTable, _pcre2_ucd_*, _UCD_/_UPT_accessors, _rl_*). A public-looking
-        # data symbol keeps the hard-breaking copy-relocation classification.
-        size_kind = (
-            ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL
-            if _is_internal_data_symbol(sym_name)
-            else ChangeKind.SYMBOL_SIZE_CHANGED
-        )
-        changes.append(Change(
-            kind=size_kind,
-            symbol=sym_name,
-            description=f"Symbol size changed: {sym_name} ({s_old.size} → {s_new.size} bytes)",
-            old_value=str(s_old.size),
-            new_value=str(s_new.size),
-        ))
+        # data symbol keeps the hard-breaking copy-relocation classification,
+        # including const arrays declared without a fixed header bound: old
+        # non-PIE consumers can still carry copy relocations sized from st_size.
+        if (
+            _is_const_unbounded_string_object(old, sym_name)
+            and _is_const_unbounded_string_object(new, sym_name)
+        ):
+            if s_new.size <= s_old.size:
+                size_kind = None
+            else:
+                size_kind = ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT
+        else:
+            size_kind = (
+                ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL
+                if _is_internal_data_symbol(sym_name)
+                else ChangeKind.SYMBOL_SIZE_CHANGED
+            )
+        if size_kind is not None:
+            changes.append(Change(
+                kind=size_kind,
+                symbol=sym_name,
+                description=f"Symbol size changed: {sym_name} ({s_old.size} → {s_new.size} bytes)",
+                old_value=str(s_old.size),
+                new_value=str(s_new.size),
+            ))
 
     # case51: ELF visibility default→protected (or vice-versa) — function symbols only.
     # Data symbols with default→protected break copy relocations (real ABI break).

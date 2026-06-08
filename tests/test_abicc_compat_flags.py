@@ -139,6 +139,16 @@ class TestFilterSourceOnly:
         filtered = _filter_source_only(r)
         assert ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL not in {c.kind for c in filtered.changes}
 
+    def test_const_object_size_change_is_binary_only(self):
+        """symbol_size_changed_const_object is still ELF st_size metadata."""
+        assert ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT in _BINARY_ONLY_KINDS
+        from abicheck.compat.cli import _filter_source_only
+        r = _result(Verdict.BREAKING,
+                    [ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT])
+        filtered = _filter_source_only(r)
+        assert ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT not in {c.kind for c in filtered.changes}
+        assert filtered.verdict == Verdict.NO_CHANGE
+
 
 # ── _build_skip_suppression ───────────────────────────────────────────────────
 
