@@ -21,10 +21,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"  # consistent with main CI matrix
 
@@ -46,7 +46,7 @@ jobs:
           python -c "import abicheck; print('abicheck version:', abicheck.__version__)"
 
       - name: Upload dist artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
@@ -62,7 +62,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
@@ -74,7 +74,7 @@ jobs:
           sudo apt-get install -y abi-compliance-checker || true
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: 'pip'
@@ -86,7 +86,7 @@ jobs:
         run: python scripts/benchmark_comparison.py --suite pinned74 --abicc-timeout 60
 
       - name: Upload benchmark report (workflow artifact)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-report
           path: benchmark_reports/benchmark_report.json
@@ -102,7 +102,7 @@ jobs:
       contents: write
     steps:
       - name: Download benchmark report
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: benchmark-report
           path: benchmark_reports/
@@ -125,7 +125,7 @@ jobs:
       id-token: write  # required for Trusted Publishing (OIDC)
     steps:
       - name: Download dist artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
