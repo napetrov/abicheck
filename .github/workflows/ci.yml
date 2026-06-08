@@ -15,8 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
           cache: 'pip'
@@ -35,8 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
           cache: 'pip'
@@ -73,8 +73,8 @@ jobs:
             python-version: '3.13'
             allow-prereleases: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: ${{ matrix.allow-prereleases }}
@@ -105,7 +105,7 @@ jobs:
           pytest tests/ -v --tb=short -m "slow" --cov=abicheck --cov-report=xml:coverage-slow.xml --cov-append
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.13' && matrix.os == 'ubuntu-latest'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           use_oidc: true
           files: coverage.xml
@@ -123,7 +123,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install system deps (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -137,7 +137,7 @@ jobs:
         run: |
           choco install cmake --no-progress --yes
           pip install castxml
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
           cache: 'pip'
@@ -167,7 +167,7 @@ jobs:
           pytest tests/ -v -m integration --tb=short -n auto --dist worksteal --ignore=tests/test_abi_examples.py
       - name: Upload integration coverage to Codecov
         if: always() && matrix.os == 'ubuntu-latest'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           use_oidc: true
           files: coverage-integration.xml
@@ -178,12 +178,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install system deps
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y castxml zlib1g-dev
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
           cache: 'pip'
@@ -202,10 +202,10 @@ jobs:
     # genuine parser/toolchain breakage until the lane is proven stable.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up MSVC developer environment (cl.exe on PATH)
         uses: ilammy/msvc-dev-cmd@v1
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
           cache: 'pip'
@@ -231,11 +231,11 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install MinGW gcc (Windows — PE/DWARF)
         if: runner.os == 'Windows'
         run: choco install mingw --no-progress --yes
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
           cache: 'pip'
@@ -260,12 +260,12 @@ jobs:
       run-heavy: ${{ steps.resolve.outputs.run-heavy }}
       reason: ${{ steps.resolve.outputs.reason }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Detect changed files for parity jobs (PR only)
         id: changed
         if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             heavy:
@@ -294,13 +294,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install system deps
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y gcc g++ castxml
           sudo apt-get install -y abigail-tools || sudo apt-get install -y libabigail-tools
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
           cache: 'pip'
@@ -319,12 +319,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install system deps
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y gcc g++ castxml abi-compliance-checker
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
           cache: 'pip'
@@ -347,8 +347,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
           cache: 'pip'

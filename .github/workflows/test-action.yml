@@ -23,7 +23,7 @@ jobs:
     name: 'Compare: detect breaking change'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run abicheck (breaking case)
         id: abi
@@ -55,7 +55,7 @@ jobs:
     name: 'Compare: compatible (no change)'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run abicheck (compatible case)
         id: abi
@@ -80,7 +80,7 @@ jobs:
     name: 'Compare: SARIF output'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run abicheck (SARIF format)
         id: abi
@@ -124,7 +124,7 @@ jobs:
     name: 'Compare: JSON output'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run abicheck (JSON format)
         id: abi
@@ -154,7 +154,7 @@ jobs:
     name: 'Verify fail-on-breaking=true fails the step'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run abicheck (should fail)
         id: abi
@@ -181,7 +181,7 @@ jobs:
     name: 'Verify: action infrastructure with compare mode'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Test dump mode with a real ELF if castxml is available,
       # otherwise just verify the action doesn't crash with bad input
@@ -218,7 +218,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run abicheck
         id: abi
@@ -243,7 +243,7 @@ jobs:
     name: 'severity-addition error: detect unexpected API expansion'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run abicheck (compatible additions, should fail with severity)
         id: abi
@@ -280,7 +280,7 @@ jobs:
     name: 'Appcompat: detect breaking change affecting app'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build test binaries
         run: |
@@ -318,7 +318,7 @@ jobs:
     name: 'Appcompat: weak mode symbol check'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build test binaries
         run: |
@@ -349,7 +349,7 @@ jobs:
     name: 'additions pass through without severity-addition error'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run abicheck (additions allowed by default)
         id: abi
