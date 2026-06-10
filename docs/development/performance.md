@@ -100,17 +100,27 @@ largest data structures from the finding set:
 
 ## Measured scaling (after fixes)
 
-All scenarios are linear or bounded at the sizes a real library reaches
-(per-change cost roughly flat):
+Most scenarios are linear at the sizes a real library reaches (per-change cost
+roughly flat); `type_churn` and `enum_churn` are mildly super-linear (~1.7) but
+bounded and tracked:
 
-| Scenario | 4000 functions (or cap) | tail exponent |
-|----------|------------------------:|--------------:|
-| `add_remove`   | 0.32 s | ~0.9 (linear) |
-| `var_churn`    | 0.06 s | ~1.0 (linear) |
-| `elf_namespace`| 0.33 s | ~1.1 (linear) |
-| `type_churn`   | 1.39 s | ~1.7 (opaque filter residual) |
+Figures are indicative local timings (absolute seconds vary with runner speed —
+the **tail exponent** is the portable signal). The first group times
+`compare()`; the second group, added in PR #336, times the suppression and
+reporting stages (see [Coverage beyond `compare()`](#coverage-beyond-compare)).
+
+| Scenario | time @ size | tail exponent |
+|----------|------------:|--------------:|
+| `add_remove`   | 0.32 s @ n=4000 | ~0.9 (linear) |
+| `var_churn`    | 0.06 s @ n=4000 | ~1.0 (linear) |
+| `elf_namespace`| 0.33 s @ n=4000 | ~1.1 (linear) |
+| `type_churn`   | 1.39 s @ n=4000 | ~1.7 (opaque filter residual) |
+| `enum_churn`   | 1.76 s @ n=2000 | ~1.7 (enum diff residual) |
 | `rename_churn` | 2.1 s @ n=1000, capped above | bounded |
 | `nested_types` | 0.70 s @ n=400 | inherent for deep chains |
+| `suppression_audit` | 1.87 s @ n=2000 (fixed 40-rule set) | ~1.0 (linear in findings) |
+| `report_html`  | 0.02 s @ n=2000 | ~1.0 (linear) |
+| `report_sarif` | 0.03 s @ n=1000 | ~0.9 (linear) |
 
 ## CI integration
 
