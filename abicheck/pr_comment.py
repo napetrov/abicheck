@@ -40,6 +40,14 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from .checker_policy import ADDITION_KINDS
+
+# Kind value strings that constitute new public-API surface (the severity
+# "addition" category). Sourced from the authoritative ADDITION_KINDS so kinds
+# that don't end in "_added" (e.g. type_field_added_compatible,
+# experimental_graduated) are classified correctly.
+_ADDITION_KIND_VALUES = frozenset(k.value for k in ADDITION_KINDS)
+
 # Hidden marker used to find-and-update the sticky comment across runs.
 MARKER = "<!-- abicheck-sticky-report -->"
 
@@ -170,7 +178,7 @@ def _finding_category(severity: str, kind: str) -> str:
         return "abi_breaking"
     if severity in ("api_break", "risk"):
         return "potential_breaking"
-    if kind.endswith("_added"):
+    if kind in _ADDITION_KIND_VALUES:
         return "addition"
     return "quality_issues"
 

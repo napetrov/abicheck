@@ -349,6 +349,25 @@ def test_severity_addition_error_files_additions_as_breaking():
     assert build_model(plain).counts == (0, 0, 1)
 
 
+def test_severity_addition_error_classifies_non_added_kinds():
+    # Addition kinds that don't end in "_added" must still be treated as
+    # additions (sourced from ADDITION_KINDS), so severity-addition: error files
+    # them under Breaking rather than Safe/quality.
+    for kind in ("type_field_added_compatible", "experimental_graduated"):
+        report = _compare_report(
+            [
+                {
+                    "kind": kind,
+                    "symbol": "s",
+                    "description": "d",
+                    "severity": "compatible",
+                }
+            ]
+        )
+        report["severity"] = {"config": {"addition": "error"}, "exit_code": 1}
+        assert build_model(report).counts == (1, 0, 0), kind
+
+
 def test_severity_addition_error_release_additions_breaking():
     report = {
         "verdict": "COMPATIBLE",

@@ -586,6 +586,10 @@ _build_json_cmd() {
       --format | -o | --output | --output-file)
         ((i++))  # skip the flag's value too
         ;;
+      --stat)
+        : # display-only flag (no value); it suppresses the changes array in
+          # JSON, which the comment parser needs — drop it for the re-run.
+        ;;
       *)
         PR_CMD_JSON+=("${CMD[$i]}")
         ;;
