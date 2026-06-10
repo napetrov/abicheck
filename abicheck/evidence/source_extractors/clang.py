@@ -61,6 +61,7 @@ from ._argv import (
     pick_compiler_binary,
     replay_extra_flags,
     resolve_read_files,
+    split_public_roots,
     unredact_home,
 )
 from .base import SourceExtractionError
@@ -397,8 +398,13 @@ class _ClassifyContext:
     def __init__(self, public_header_roots: list[str]) -> None:
         from ...provenance import build_public_set
 
+        # A public root may be a *directory* (`--headers include/`). Feeding it to
+        # build_public_set as a header file would never match a decl under it
+        # (`include` vs `include/api.h`), dropping the whole public include tree;
+        # split file roots from directory roots first (Codex review #339, P2).
+        file_roots, dir_roots = split_public_roots(public_header_roots)
         self.header_segs, self.dir_segs, self.have_set = build_public_set(
-            list(public_header_roots), []
+            file_roots, dir_roots
         )
 
     def classify(self, file: str) -> tuple[str, str, bool]:

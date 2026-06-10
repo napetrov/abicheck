@@ -44,6 +44,7 @@ from ._argv import (
     pick_compiler_binary,
     replay_extra_flags,
     resolve_read_files,
+    split_public_roots,
     unredact_home,
 )
 from .base import SourceExtractionError, assemble_source_tu
@@ -218,12 +219,16 @@ class CastxmlSourceExtractor:
         from ...model import EnumType, Function, RecordType, ScopeOrigin, Variable
         from ...provenance import build_public_set, is_generated_header, tag_provenance
 
+        # A public root may be a directory (`--headers include/`); split it from
+        # file roots so a decl under the directory is classified public, not
+        # dropped (Codex review #339, P2).
+        file_roots, dir_roots = split_public_roots(public_header_roots)
         parser = _CastxmlParser(
             root,
             set(),
             set(),
-            public_header_paths=list(public_header_roots),
-            public_dir_paths=[],
+            public_header_paths=file_roots,
+            public_dir_paths=dir_roots,
         )
         functions = parser.parse_functions()
         records = parser.parse_types()
@@ -235,9 +240,7 @@ class CastxmlSourceExtractor:
         # classify here against the public-header set. Without this every public
         # declaration would map to api_relevant=False and the linker would drop
         # it, leaving L4 with only the self-scoped constants (ADR-024 D1).
-        header_segs, dir_segs, have_set = build_public_set(
-            list(public_header_roots), []
-        )
+        header_segs, dir_segs, have_set = build_public_set(file_roots, dir_roots)
         decls: list[Function | RecordType | EnumType | Variable] = [
             *functions,
             *records,

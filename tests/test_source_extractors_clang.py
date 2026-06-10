@@ -186,6 +186,39 @@ def test_ast_mapping_extracts_each_entity_kind() -> None:
     assert SourceAbiTu.from_dict(tu.to_dict()).tu_id == tu.tu_id
 
 
+def test_directory_header_root_classifies_decls_as_public(tmp_path: Path) -> None:
+    # Codex #339 P2: `--headers include/` (a directory root) must classify a decl
+    # reported under it (include/foo.h) as public, not drop the whole tree.
+    inc = tmp_path / "include"
+    inc.mkdir()
+    (inc / "foo.h").write_text("int x;\n")
+    ast = {
+        "kind": "TranslationUnitDecl",
+        "inner": [{
+            "kind": "FunctionDecl", "name": "pub",
+            "loc": {"file": str(inc / "foo.h")},
+            "mangledName": "_Z3pubv", "type": {"qualType": "void ()"},
+        }],
+    }
+    # The public root is the directory itself.
+    tu = source_abi_from_clang_ast(ast, _cu(), [str(inc)], "t")
+    assert any(e.qualified_name == "pub" for e in tu.functions)
+
+
+def test_trailing_slash_root_treated_as_directory() -> None:
+    # A root with a trailing separator is a directory even if it does not exist
+    # on disk, so a decl under it is public.
+    ast = {
+        "kind": "TranslationUnitDecl",
+        "inner": [{
+            "kind": "FunctionDecl", "name": "pub", "loc": {"file": "include/api.h"},
+            "mangledName": "_Z3pubv", "type": {"qualType": "void ()"},
+        }],
+    }
+    tu = source_abi_from_clang_ast(ast, _cu(), ["include/"], "t")
+    assert any(e.qualified_name == "pub" for e in tu.functions)
+
+
 def test_ast_mapping_excludes_private_header_decls() -> None:
     tu = source_abi_from_clang_ast(_ast(), _cu(), ["include/foo.h"], "target://libfoo")
     # `priv` lives in src/internal.h, not the public set → never emitted.

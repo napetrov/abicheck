@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Sequence
 
 from ..build_evidence import CompileUnit
 
@@ -94,6 +95,32 @@ def unredact_home(value: str) -> str:
     if not home or home == "~":
         return value
     return re.sub(r"~(?=[\\/]|$)", lambda _m: home, value)
+
+
+def split_public_roots(roots: Sequence[str]) -> tuple[list[str], list[str]]:
+    """Partition public-header roots into ``(file_roots, dir_roots)``.
+
+    The CLI accepts a public header *file or directory* (``--headers include/``).
+    ``provenance.build_public_set`` needs files and directories in separate
+    arguments — a directory passed as a "header" file never suffix-matches a decl
+    under it (``include`` vs ``include/api.h``), so the whole public include tree
+    would be classified non-public and dropped (Codex review #339, P2). A root is
+    a directory when it ends in a path separator or resolves to a directory on
+    disk (un-redacting a ``~`` home placeholder first, ADR-032 D7). The original
+    (unexpanded) root string is kept for segment matching, which compares against
+    the paths the compiler actually reports.
+    """
+    files: list[str] = []
+    dirs: list[str] = []
+    for root in roots:
+        if not root:
+            continue
+        expanded = os.path.expanduser(unredact_home(root))
+        if root.endswith(("/", "\\")) or os.path.isdir(expanded):
+            dirs.append(root)
+        else:
+            files.append(root)
+    return files, dirs
 
 
 def resolve_read_files(files: set[str], directory: str) -> list[str]:
