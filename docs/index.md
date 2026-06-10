@@ -20,7 +20,7 @@ It supports ELF (Linux), PE/COFF (Windows), and Mach-O (macOS) binaries, and it'
 ## Why abicheck
 
 - **Three-layer analysis** — ELF/PE/Mach-O symbol tables + Clang AST (via castxml) + DWARF/PDB cross-check. Each layer catches things the others miss.
-- **184 detection rules** — symbol removal, signature changes, struct/class layout drift, vtable reordering, enum value shifts, qualifier changes, calling conventions, and many more. See the [Change Kind Reference](reference/change-kinds.md).
+- **206 detection rules** — symbol removal, signature changes, struct/class layout drift, vtable reordering, enum value shifts, qualifier changes, calling conventions, and many more. See the [Change Kind Reference](reference/change-kinds.md).
 - **Multiple output formats** — Markdown, JSON, SARIF (GitHub Code Scanning), HTML.
 - **Policy profiles** — `strict_abi`, `sdk_vendor`, `plugin_abi`, or custom YAML overrides.
 - **ABICC drop-in** — full flag parity for migrating from `abi-compliance-checker`.
@@ -32,8 +32,9 @@ It supports ELF (Linux), PE/COFF (Windows), and Mach-O (macOS) binaries, and it'
 **New to abicheck?**
 
 1. [Getting Started](getting-started.md) — install, first check, CI setup.
-2. [Verdicts](concepts/verdicts.md) — what each verdict means and how to react.
-3. [CLI Usage](user-guide/cli-usage.md) — every command, every flag.
+2. [Choose Your Workflow](user-guide/choose-your-workflow.md) — a decision guide that maps your artifacts and CI policy to the exact command.
+3. [Verdicts](concepts/verdicts.md) — what each verdict means and how to react.
+4. [CLI Usage](user-guide/cli-usage.md) — every command, every flag.
 
 **Evaluating or comparing tools?**
 

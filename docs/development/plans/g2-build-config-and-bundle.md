@@ -1,20 +1,19 @@
 # G2 — Build-config matrix into `compare`, and bundle completion
 
-**Registry:** `UC-WF-probe-matrix` (`partial`), `UC-WF-bundle` (`partial`), `UC-TC-cxx-standard-floor` (`partial`)
+**Registry:** `UC-WF-probe-matrix` (`complete`), `UC-WF-bundle` (`complete`), `UC-TC-cxx-standard-floor` (`complete`)
 **Effort:** M · **Risk:** medium (verdict-composition semantics)
 
 ## Problem
 
-Two capabilities exist but are not reachable from the mainline gate:
+This plan is now complete. It originally tracked two capabilities that existed
+but were not reachable from the mainline gate:
 
 1. **Build-config matrix** — `abicheck/probe_harness.py` + `diff_build_config.py`
    detect `API_DEPENDS_ON_CONSUMER_ENV`, `CXX_STANDARD_FLOOR_RAISED`, and
    `BEHAVIOURAL_DEFAULT_CHANGED`, but only via the separate `abicheck probe`
-   command. A user running `compare`/`compare-release` never sees them — so
-   cases 97/98 come out `NO_CHANGE`/quality on a per-binary diff.
+   command. They now feed `compare`/`compare-release` via `--probe-matrix-old/new`.
 2. **Bundle analysis** — `abicheck/bundle.py` detects cross-DSO breakage, but
-   `compare-release` wiring is incomplete (case84 `bundle_soname_skew` is
-   `skip: true` in `ground_truth.json`) and the layer is Linux-only.
+   `compare-release` wiring is now complete for explicit cohorts, including case84.
 
 ## Goal & acceptance criteria
 
@@ -35,10 +34,12 @@ Two capabilities exist but are not reachable from the mainline gate:
       `tests/test_cli_split_modules.py`.
 - [x] Case 98 (`CXX_STANDARD_FLOOR_RAISED`) reaches its intended verdict through
       the mainline command (JSON + SARIF), not only `probe compare`. Case 97
-      (`API_DEPENDS_ON_CONSUMER_ENV`) — detector unit-tested; end-to-end is
-      blocked by a separate harness gap (the dumper reads `.dynsym`, which a
-      relocatable probe `.o` lacks, so a probe's symbol surface is not yet
-      captured). Tracked in the registry `next_steps` for `UC-WF-probe-matrix`.
+      (`API_DEPENDS_ON_CONSUMER_ENV`) now also fires end-to-end: the harness gap
+      is closed — `parse_elf_metadata` falls back to `.symtab` when a relocatable
+      probe `.o` has no `.dynsym`, so the object's defined global symbols are
+      captured and the detector fires over the real compiled surface, reaching
+      the mainline `compare` output (`tests/test_probe_examples.py`,
+      `tests/test_elf_object_surface.py`).
 - [x] `compare-release` emits `bundle_soname_skew`; case84 lost `skip: true`
       and is validated end-to-end (`tests/test_bundle.py::TestCompareReleaseBundleE2E`).
       The check is **opt-in** via `--bundle-cohort PREFIX` (repeatable): cohorts

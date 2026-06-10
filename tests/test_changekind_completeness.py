@@ -30,8 +30,10 @@ from abicheck.model import (
 # corresponding scenario) must be updated – the meta-test below will fail
 # until that happens.
 ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
+    ChangeKind.ABI_RELEVANT_BUILD_FLAG_CHANGED,
     ChangeKind.ANON_FIELD_CHANGED,
     ChangeKind.BASE_CLASS_POSITION_CHANGED,
+    ChangeKind.BUILD_CONTEXT_CHANGED,
     ChangeKind.BASE_CLASS_VIRTUAL_CHANGED,
     ChangeKind.CALLING_CONVENTION_CHANGED,
     ChangeKind.COMMON_SYMBOL_RISK,
@@ -69,8 +71,11 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.FUNC_VIRTUAL_BECAME_PURE,
     ChangeKind.FUNC_VIRTUAL_REMOVED,
     ChangeKind.FUNC_VISIBILITY_CHANGED,
+    ChangeKind.GENERATED_FILE_DEPENDENCY_UNSTABLE,
+    ChangeKind.HEADER_PARSE_CONTEXT_DRIFT,
     ChangeKind.IFUNC_INTRODUCED,
     ChangeKind.IFUNC_REMOVED,
+    ChangeKind.LINK_EXPORT_POLICY_CHANGED,
     ChangeKind.METHOD_ACCESS_CHANGED,
     ChangeKind.NEEDED_ADDED,
     ChangeKind.NEEDED_REMOVED,
@@ -99,6 +104,7 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.SYMBOL_BINDING_CHANGED,
     ChangeKind.SYMBOL_BINDING_STRENGTHENED,
     ChangeKind.SYMBOL_SIZE_CHANGED,
+    ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT,
     ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL,
     ChangeKind.SYMBOL_TYPE_CHANGED,
     ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
@@ -111,6 +117,7 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.VECTOR_ABI_CHANGED,
     ChangeKind.TYPEDEF_BASE_CHANGED,
     ChangeKind.TYPEDEF_REMOVED,
+    ChangeKind.TOOLCHAIN_VERSION_CHANGED,
     ChangeKind.TYPE_ADDED,
     ChangeKind.TYPE_ALIGNMENT_CHANGED,
     ChangeKind.TYPE_BASE_CHANGED,
@@ -155,6 +162,14 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.SYMBOL_ELF_VISIBILITY_CHANGED,
     # ELF visibility, executable stack, symbol rename batch
     ChangeKind.EXECUTABLE_STACK,
+    ChangeKind.EXECUTABLE_STACK_REMOVED,
+    # Security-hardening drift (G12) — see TestSecurityHardeningDrift in
+    # tests/test_diff_platform_deep.py.
+    ChangeKind.RELRO_WEAKENED,
+    ChangeKind.PIE_DISABLED,
+    ChangeKind.STACK_CANARY_REMOVED,
+    ChangeKind.FORTIFY_SOURCE_WEAKENED,
+    ChangeKind.WRITABLE_EXECUTABLE_SEGMENT,
     ChangeKind.SYMBOL_RENAMED_BATCH,
     ChangeKind.FUNC_LIKELY_RENAMED,
     # Gap analysis: new checks
@@ -167,7 +182,7 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.INLINE_NAMESPACE_MOVED,
     ChangeKind.VTABLE_SYMBOL_IDENTITY_CHANGED,
     ChangeKind.ABI_SURFACE_EXPLOSION,
-    # SYCL Plugin Interface (ADR-020)
+    # SYCL Plugin Interface (ADR-020b)
     ChangeKind.SYCL_IMPLEMENTATION_CHANGED,
     ChangeKind.SYCL_PI_VERSION_CHANGED,
     ChangeKind.SYCL_PI_ENTRYPOINT_REMOVED,
@@ -213,6 +228,10 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     # Explicit specifier transitions — exercised in tests/test_explicit_ctor.py
     ChangeKind.CTOR_EXPLICIT_ADDED,
     ChangeKind.CTOR_EXPLICIT_REMOVED,
+    # Class `final`-specifier transitions — exercised in
+    # tests/test_new_detectors.py::TestTypeFinalityChanged
+    ChangeKind.TYPE_BECAME_FINAL,
+    ChangeKind.TYPE_LOST_FINAL,
     # Namespace-shape patterns — exercised in tests/test_diff_namespaces.py
     ChangeKind.EXPERIMENTAL_GRADUATED,
     ChangeKind.EXPERIMENTAL_REMOVED_WITHOUT_REPLACEMENT,
@@ -237,6 +256,18 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.CHAR8T_MIGRATION,
     ChangeKind.BIT_INT_WIDTH_CHANGED,
     ChangeKind.ATOMIC_QUALIFIER_CHANGED,
+    # API-surface intelligence anti-patterns (ADR-027) — exercised in
+    # tests/test_idioms.py (detection) and tests/test_pattern_verdicts.py
+    # (diff-time transitions and modulation).
+    ChangeKind.PUBLIC_API_EXPOSES_STL_BY_VALUE,
+    ChangeKind.POLYMORPHIC_TYPE_NON_VIRTUAL_DTOR,
+    ChangeKind.OPAQUE_INVARIANT_BROKEN,
+    ChangeKind.HANDLE_TYPE_CHANGED,
+    # API-surface metric drift (ADR-027 D1.2) — exercised in
+    # tests/test_surface_metrics_drift.py.
+    ChangeKind.PUBLIC_SURFACE_GREW,
+    ChangeKind.PUBLIC_SURFACE_SHRANK,
+    ChangeKind.UNDOCUMENTED_EXPORT_RATIO_INCREASED,
 }
 
 

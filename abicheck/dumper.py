@@ -56,6 +56,7 @@ from .model import (
     RecordType,
     Variable,
     Visibility,
+    is_cxx_runtime_library,
 )
 
 log = logging.getLogger(__name__)
@@ -567,12 +568,14 @@ def dump(
             gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
             sysroot=sysroot, nostdinc=nostdinc, lang=lang,
             dwarf_only=dwarf_only,
+            public_headers=public_headers, public_header_dirs=public_header_dirs,
         )
     elif fmt == "pe":
         snapshot = _dump_pe(
             so_path, headers, extra_includes or [], version, compiler,
             gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
             sysroot=sysroot, nostdinc=nostdinc, lang=lang,
+            public_headers=public_headers, public_header_dirs=public_header_dirs,
         )
     elif fmt == "elf":
         snapshot = _dump_elf(
@@ -581,8 +584,18 @@ def dump(
             sysroot=sysroot, nostdinc=nostdinc, lang=lang,
             dwarf_only=dwarf_only,
             debug_format=debug_format,
+            public_headers=public_headers, public_header_dirs=public_header_dirs,
         )
     else:
+        from .binary_utils import detect_archive
+        if detect_archive(so_path):
+            raise ValidationError(
+                f"'{so_path}' is a static/import library archive (.a/.lib), which "
+                "abicheck does not analyse — it compares single linkable images "
+                "(shared libraries and objects). Extract the members (e.g. "
+                "`ar x lib.a`) and compare the resulting object files or the shared "
+                "library built from them instead."
+            )
         raise ValidationError(
             f"Unrecognised binary format for {so_path}: "
             f"expected ELF, Mach-O, or PE but detected {fmt!r}. "
@@ -720,6 +733,8 @@ def _populate_elf_visibility(snap: AbiSnapshot) -> None:
 def _elf_classify_symbols(
     elf_meta: ElfMetadata,
     exported_dynamic: set[str],
+    *,
+    library_name: str | None = None,
 ) -> tuple[set[str], set[str], set[str], set[str]]:
     """Split ELF metadata symbols into typed subsets for the no-header path.
 
@@ -732,17 +747,37 @@ def _elf_classify_symbols(
     exported_dynamic_objects: set[str] = set()
     exported_dynamic_tls: set[str] = set()
     if elf_meta.symbols:
+        runtime_name = elf_meta.soname or library_name
+        filter_transitive_runtime_symbols = not is_cxx_runtime_library(runtime_name)
+        # Apply the shared ABI-relevance filter here too: this no-header path
+        # rebuilds the exported sets directly from ``elf_meta.symbols`` rather
+        # than the already-filtered ``_pyelftools_exported_symbols`` result, so
+        # lifecycle stubs (``_init``/``_fini``) and transitive runtime symbols
+        # would otherwise re-enter the symbol-only ABI surface as ELF_ONLY
+        # functions. Keeping it consistent with the DWARF-backed path.
         exported_dynamic_funcs = {
             sym.name for sym in elf_meta.symbols
             if sym.sym_type in (SymbolType.FUNC, SymbolType.IFUNC, SymbolType.NOTYPE)
+            and is_abi_relevant_elf_symbol(
+                sym.name,
+                filter_transitive_runtime_symbols=filter_transitive_runtime_symbols,
+            )
         }
         exported_dynamic_objects = {
             sym.name for sym in elf_meta.symbols
             if sym.sym_type == SymbolType.OBJECT
+            and is_abi_relevant_elf_symbol(
+                sym.name,
+                filter_transitive_runtime_symbols=filter_transitive_runtime_symbols,
+            )
         }
         exported_dynamic_tls = {
             sym.name for sym in elf_meta.symbols
             if sym.sym_type == SymbolType.TLS
+            and is_abi_relevant_elf_symbol(
+                sym.name,
+                filter_transitive_runtime_symbols=filter_transitive_runtime_symbols,
+            )
         }
         # Full set for CastxmlParser: determines PUBLIC vs ELF_ONLY visibility
         exported_dynamic = exported_dynamic_funcs | exported_dynamic_objects | exported_dynamic_tls
@@ -906,6 +941,8 @@ def _dump_elf(
     lang: str | None = None,
     dwarf_only: bool = False,
     debug_format: str | None = None,
+    public_headers: list[Path] | None = None,
+    public_header_dirs: list[Path] | None = None,
 ) -> AbiSnapshot:
     """ELF-specific dump: pyelftools + debug info (DWARF/BTF/CTF) + castxml."""
     exported_dynamic, exported_static = _pyelftools_exported_symbols(so_path)
@@ -914,7 +951,7 @@ def _dump_elf(
 
     elf_meta = parse_elf_metadata(so_path)
     exported_dynamic, exported_dynamic_funcs, exported_dynamic_objects, exported_dynamic_tls = (
-        _elf_classify_symbols(elf_meta, exported_dynamic)
+        _elf_classify_symbols(elf_meta, exported_dynamic, library_name=so_path.name)
     )
     dwarf_meta, dwarf_adv = _resolve_debug_metadata(so_path, debug_format)
     profile_hint = _elf_lang_to_profile(lang)
@@ -944,7 +981,11 @@ def _dump_elf(
         gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
         sysroot=sysroot, nostdinc=nostdinc, lang=lang,
     )
-    parser = _CastxmlParser(xml_root, exported_dynamic, exported_static)
+    parser = _CastxmlParser(
+        xml_root, exported_dynamic, exported_static,
+        public_header_paths=[str(h) for h in headers] + [str(h) for h in (public_headers or [])],
+        public_dir_paths=[str(d) for d in (public_header_dirs or [])],
+    )
 
     snapshot = AbiSnapshot(
         library=so_path.name,
@@ -955,6 +996,7 @@ def _dump_elf(
         types=parser.parse_types(),
         enums=parser.parse_enums(),
         typedefs=parser.parse_typedefs(),
+        constants=parser.parse_constants(),
         elf=elf_meta,
         dwarf=dwarf_meta,
         dwarf_advanced=dwarf_adv,
@@ -982,6 +1024,8 @@ def _dump_macho(
     nostdinc: bool = False,
     lang: str | None = None,
     dwarf_only: bool = False,
+    public_headers: list[Path] | None = None,
+    public_header_dirs: list[Path] | None = None,
 ) -> AbiSnapshot:
     """Mach-O dump: export table from macholib + castxml header analysis."""
     if dwarf_only:
@@ -1077,6 +1121,8 @@ def _dump_macho(
             exported_no_underscore.add(sym)
     parser = _CastxmlParser(
         xml_root, exported_no_underscore, exported_no_underscore,
+        public_header_paths=[str(h) for h in headers] + [str(h) for h in (public_headers or [])],
+        public_dir_paths=[str(d) for d in (public_header_dirs or [])],
     )
 
     return AbiSnapshot(
@@ -1088,6 +1134,7 @@ def _dump_macho(
         types=parser.parse_types(),
         enums=parser.parse_enums(),
         typedefs=parser.parse_typedefs(),
+        constants=parser.parse_constants(),
         macho=macho_meta,
         # Reached only when headers were supplied and castxml ran (the no-header
         # branch returns earlier): this surface is header-parsed.
@@ -1110,6 +1157,8 @@ def _dump_pe(
     sysroot: Path | None = None,
     nostdinc: bool = False,
     lang: str | None = None,
+    public_headers: list[Path] | None = None,
+    public_header_dirs: list[Path] | None = None,
 ) -> AbiSnapshot:
     """PE dump: export table from pefile + castxml header analysis."""
     from .pe_metadata import parse_pe_metadata
@@ -1159,7 +1208,11 @@ def _dump_pe(
         gcc_path=gcc_path, gcc_prefix=gcc_prefix, gcc_options=gcc_options,
         sysroot=sysroot, nostdinc=nostdinc, lang=lang,
     )
-    parser = _CastxmlParser(xml_root, exported_dynamic, exported_static)
+    parser = _CastxmlParser(
+        xml_root, exported_dynamic, exported_static,
+        public_header_paths=[str(h) for h in headers] + [str(h) for h in (public_headers or [])],
+        public_dir_paths=[str(d) for d in (public_header_dirs or [])],
+    )
 
     return AbiSnapshot(
         library=dll_path.name,
@@ -1170,6 +1223,7 @@ def _dump_pe(
         types=parser.parse_types(),
         enums=parser.parse_enums(),
         typedefs=parser.parse_typedefs(),
+        constants=parser.parse_constants(),
         pe=pe_meta,
         # Reached only when headers were supplied and castxml ran (the no-header
         # branch returns earlier): this surface is header-parsed.

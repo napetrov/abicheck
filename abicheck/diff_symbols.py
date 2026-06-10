@@ -44,6 +44,7 @@ from .model import (
     canonicalize_type_name,
     cv_qualifiers_only_differ,
     is_abi_surface_type_name,
+    is_cxx_runtime_library,
     stdlib_namespaces_excluded,
 )
 
@@ -107,6 +108,19 @@ def _is_local_type_rtti(mangled: str) -> bool:
     return mangled.startswith(_LOCAL_RTTI_PREFIXES)
 
 
+def _should_filter_transitive_runtime_symbols(snap: AbiSnapshot) -> bool:
+    """Return True when transitive C++ runtime symbols should be filtered.
+
+    Returns False when ``snap.library`` or the ELF SONAME identifies *snap* as
+    the C++ runtime itself, where runtime-owned symbols are the inspected ABI.
+    """
+    elf = getattr(snap, "elf", None)
+    return not (
+        is_cxx_runtime_library(snap.library)
+        or is_cxx_runtime_library(getattr(elf, "soname", ""))
+    )
+
+
 def _public_functions(snap: AbiSnapshot) -> dict[str, Function]:
     """Return public/ELF-only functions from *snap*.
 
@@ -123,13 +137,17 @@ def _public_functions(snap: AbiSnapshot) -> dict[str, Function]:
     theory hide a genuine removal — but DWARF-primary snapshots carry the full
     ``.dynsym``, so in practice the export set is authoritative here.
     """
+    filter_transitive_runtime_symbols = _should_filter_transitive_runtime_symbols(snap)
     funcs = {
         k: v for k, v in snap.function_map.items()
         if (
             v.visibility in _PUBLIC_VIS
             and (
                 v.visibility != Visibility.ELF_ONLY
-                or is_abi_relevant_elf_symbol(k)
+                or is_abi_relevant_elf_symbol(
+                    k,
+                    filter_transitive_runtime_symbols=filter_transitive_runtime_symbols,
+                )
             )
         )
     }
@@ -140,10 +158,11 @@ def _public_functions(snap: AbiSnapshot) -> dict[str, Function]:
         elf,
         FUNCTION_SYMBOL_TYPES,
         abi_relevant_only=True,
+        filter_transitive_runtime_symbols=filter_transitive_runtime_symbols,
     )
     return {
         k: v for k, v in funcs.items()
-        if k in exported or v.is_deleted
+        if k in exported or (v.is_deleted and not v.deleted_from_dwarf)
     }
 
 
@@ -154,13 +173,17 @@ def _public_variables(snap: AbiSnapshot) -> dict[str, Variable]:
     other in-function types): they are not nameable public ABI and only churn
     across builds (RD2-4).
     """
+    filter_transitive_runtime_symbols = _should_filter_transitive_runtime_symbols(snap)
     return {
         k: v for k, v in snap.variable_map.items()
         if (
             v.visibility in _PUBLIC_VIS
             and (
                 v.visibility != Visibility.ELF_ONLY
-                or is_abi_relevant_elf_symbol(k)
+                or is_abi_relevant_elf_symbol(
+                    k,
+                    filter_transitive_runtime_symbols=filter_transitive_runtime_symbols,
+                )
             )
             and not _is_local_type_rtti(k)
         )
@@ -587,6 +610,22 @@ def _match_old_function(
             mangled, f_old, new_map[mangled],
             params_unconfirmed=params_unconfirmed, is_llp64=is_llp64))
 
+    # A function that still exists on the new side but is ``= delete``'d is a
+    # deletion, not a removal: _detect_newly_deleted_functions reports it once
+    # as FUNC_DELETED / FUNC_DELETED_DWARF from the full function map. When a
+    # DWARF-deleted member also drops out of .dynsym, _public_functions excludes
+    # it from new_map (it is no longer exported), so without this guard the old
+    # exported peer would additionally be flagged FUNC_REMOVED here, double-
+    # reporting the same symbol. The castxml-deleted path keeps such functions
+    # in new_map and is matched above; this aligns the deleted_from_dwarf path.
+    f_new_all = new_all.get(mangled)
+    if (
+        f_new_all is not None
+        and f_new_all.is_deleted
+        and f_new_all.visibility in _PUBLIC_VIS
+    ):
+        return []
+
     # Fallback by plain name when either side uses extern "C".
     # The name->Function mapping is a MULTIMAP: only fall back when there is
     # EXACTLY ONE extern-C candidate for this name, to avoid mis-pairing
@@ -610,6 +649,8 @@ def _match_old_function(
 def _detect_newly_deleted_functions(
     old_all: dict[str, Function],
     new_all: dict[str, Function],
+    old_snapshot: AbiSnapshot,
+    new_snapshot: AbiSnapshot,
 ) -> list[Change]:
     """Detect functions that gained ``= delete`` between snapshots.
 
@@ -621,8 +662,34 @@ def _detect_newly_deleted_functions(
     produce spurious BREAKING findings.
     """
     changes: list[Change] = []
+    new_elf = getattr(new_snapshot, "elf", None)
+    exported = exported_symbol_names(new_elf, FUNCTION_SYMBOL_TYPES)
+    old_exported = exported_symbol_names(
+        getattr(old_snapshot, "elf", None), FUNCTION_SYMBOL_TYPES
+    )
+    # Whether the new side has an ELF symbol table at all. This tells "no ELF
+    # evidence available" apart from "ELF table present but this function is not
+    # exported": when a table exists, an empty *function* export set (e.g. the
+    # library exports only data, or every function is hidden) is authoritative —
+    # a DWARF-only DW_AT_deleted internal member is genuinely not exported and
+    # must not be reported. Keying on ``exported`` truthiness instead would only
+    # apply the filter when some *other* function happened to be exported.
+    has_elf_symbol_table = bool(getattr(new_elf, "symbols", None))
     for mangled, f_new in new_all.items():
         if not f_new.is_deleted:
+            continue
+        # Suppress only a *genuinely internal* DWARF-deleted member: one that the
+        # new ELF table proves is not exported AND that was not exported in the
+        # old library either. A function that *was* an old export and is now
+        # ``= delete``'d + dropped from .dynsym is a real deletion of a public
+        # API and must still be reported (the removal-side path defers to this
+        # detector for it, so suppressing here would drop the finding entirely).
+        if (
+            f_new.deleted_from_dwarf
+            and has_elf_symbol_table
+            and mangled not in exported
+            and mangled not in old_exported
+        ):
             continue
         # Skip functions that are not part of the public ABI surface.
         if f_new.visibility not in _PUBLIC_VIS:
@@ -689,7 +756,7 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
     old_all = old.function_map
     new_all_map = new.function_map
-    changes.extend(_detect_newly_deleted_functions(old_all, new_all_map))
+    changes.extend(_detect_newly_deleted_functions(old_all, new_all_map, old, new))
 
     # FUNC_BECAME_INLINE / FUNC_LOST_INLINE: detect inline↔non-inline transitions
     changes.extend(_check_inline_transitions(old_map, new_map, new))
@@ -790,9 +857,35 @@ def _diff_variables(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     )
 
 
+def _both_header_aware(old: AbiSnapshot, new: AbiSnapshot) -> bool:
+    """True only when BOTH snapshots carry *confirmed* header-tier evidence.
+
+    ``from_headers_inferred`` is set when a legacy snapshot (one that predates
+    the explicit ``from_headers`` key) is rehydrated and its header-awareness was
+    only *guessed* — such a side may lack default-argument/constant data without
+    it meaning "removed". Header-only detectors must require non-inferred header
+    evidence on both sides so a mixed/legacy comparison never manufactures false
+    ``*_REMOVED`` findings.
+    """
+    return (
+        old.from_headers and not old.from_headers_inferred
+        and new.from_headers and not new.from_headers_inferred
+    )
+
+
 @registry.detector("param_defaults")
 def _diff_param_defaults(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
-    """Detect parameter default value changes/removals."""
+    """Detect parameter default value changes/removals.
+
+    Header-tier only: default-argument values are populated solely from castxml
+    header parsing. If either side was NOT (confirmed) parsed from headers
+    (DWARF/symbols mode, or a legacy/inferred headerless snapshot),
+    ``Param.default`` is ``None`` only because the value is *unavailable*, not
+    removed — comparing would report every defaulted parameter as
+    ``PARAM_DEFAULT_VALUE_REMOVED``. Skip unless both sides are header-aware.
+    """
+    if not _both_header_aware(old, new):
+        return []
     changes: list[Change] = []
     old_map = _public_functions(old)
     new_map = _public_functions(new)
@@ -827,6 +920,14 @@ def _diff_param_defaults(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 def _diff_param_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect parameter renames (same type+position, different name)."""
     changes: list[Change] = []
+    # Require *explicit* header provenance on both sides. A legacy snapshot
+    # predating the from_headers key has it inferred from a populated surface,
+    # which a DWARF-only dump also satisfies — trusting that inference here
+    # reintroduces PARAM_RENAMED/API_BREAK false positives on DWARF baselines.
+    if not (old.from_headers and new.from_headers):
+        return changes
+    if old.from_headers_inferred or new.from_headers_inferred:
+        return changes
     old_map = _public_functions(old)
     new_map = _public_functions(new)
 
@@ -1171,7 +1272,18 @@ def _diff_param_va_list(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
 @registry.detector("constants")
 def _diff_constants(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
-    """Detect preprocessor constant (#define) changes (ABICC: Changed/Added/Removed_Constant)."""
+    """Detect preprocessor / const-constant changes (ABICC: Changed/Added/Removed_Constant).
+
+    Header-tier only: ``AbiSnapshot.constants`` is populated solely from castxml
+    header parsing. If either side was NOT (confirmed) parsed from headers
+    (DWARF/symbols mode, a snapshot taken before constant extraction, or a
+    legacy/inferred headerless snapshot), its ``constants`` map is empty only
+    because the data is *unavailable* — comparing would report every constant as
+    removed (or added, depending on direction). Skip unless both sides are
+    header-aware.
+    """
+    if not _both_header_aware(old, new):
+        return []
     changes: list[Change] = []
     old_consts = old.constants
     new_consts = new.constants
@@ -1454,22 +1566,34 @@ def _unwrap_funcptr_declarator(s: str) -> str:
             if j >= len(s) or s[j] not in "*&":
                 return s  # ordinary parameter list, not a pointer declarator
             # Find the ')' matching this declarator-group '(' (bracket-aware).
-            pdepth = 0
-            tdepth = 0
-            for k in range(i, len(s)):
-                c = s[k]
-                if c == "<":
-                    tdepth += 1
-                elif c == ">":
-                    tdepth = max(0, tdepth - 1)
-                elif c == "(" and tdepth == 0:
-                    pdepth += 1
-                elif c == ")" and tdepth == 0:
-                    pdepth -= 1
-                    if pdepth == 0:
-                        return s[i + 1:k].lstrip("*& ")
-            return s  # unbalanced — leave alone
+            close = _match_declarator_group(s, i)
+            if close is None:
+                return s  # unbalanced — leave alone
+            return s[i + 1:close].lstrip("*& ")
     return s
+
+
+def _match_declarator_group(s: str, open_idx: int) -> int | None:
+    """Return the index of the ``)`` matching the ``(`` at *open_idx*, or None.
+
+    Bracket-aware: ``(``/``)`` nested inside template arguments (``<...>``) do
+    not affect the paren depth.
+    """
+    pdepth = 0
+    tdepth = 0
+    for k in range(open_idx, len(s)):
+        c = s[k]
+        if c == "<":
+            tdepth += 1
+        elif c == ">":
+            tdepth = max(0, tdepth - 1)
+        elif c == "(" and tdepth == 0:
+            pdepth += 1
+        elif c == ")" and tdepth == 0:
+            pdepth -= 1
+            if pdepth == 0:
+                return k
+    return None
 
 
 def _unqualified_name_of(s: str) -> str:
@@ -1486,7 +1610,14 @@ def _unqualified_name_of(s: str) -> str:
     op = _OPERATOR_TOKEN_RE.search(s)
     if op is not None:
         return s[op.start():].strip()
-    # Truncate at the parameter-list '(' that sits at template depth 0.
+    s = _truncate_at_param_list(s)
+    s = _after_last_top_level_scope(s).strip()
+    s = _drop_leading_return_type(s)
+    return s.strip()
+
+
+def _truncate_at_param_list(s: str) -> str:
+    """Drop everything from the parameter-list ``(`` at template depth 0 on."""
     depth = 0
     for i, ch in enumerate(s):
         if ch == "<":
@@ -1494,9 +1625,12 @@ def _unqualified_name_of(s: str) -> str:
         elif ch == ">":
             depth = max(0, depth - 1)
         elif ch == "(" and depth == 0:
-            s = s[:i]
-            break
-    # Take the segment after the last '::' that sits at template depth 0.
+            return s[:i]
+    return s
+
+
+def _after_last_top_level_scope(s: str) -> str:
+    """Return the segment after the last ``::`` that sits at template depth 0."""
     depth = 0
     last = 0
     i = 0
@@ -1511,9 +1645,12 @@ def _unqualified_name_of(s: str) -> str:
             i += 2
             continue
         i += 1
-    s = s[last:].strip()
-    # Drop a leading return type: take the part after the last top-level space
-    # (e.g. ``void get<int>`` -> ``get<int>``).
+    return s[last:]
+
+
+def _drop_leading_return_type(s: str) -> str:
+    """Drop a leading return type by taking the part after the last top-level
+    space (e.g. ``void get<int>`` -> ``get<int>``)."""
     depth = 0
     sp = -1
     for i, ch in enumerate(s):
@@ -1524,8 +1661,8 @@ def _unqualified_name_of(s: str) -> str:
         elif ch == " " and depth == 0:
             sp = i
     if sp != -1:
-        s = s[sp + 1:]
-    return s.strip()
+        return s[sp + 1:]
+    return s
 
 
 def _strip_template_args(leaf: str) -> str:
@@ -1705,11 +1842,15 @@ def _fingerprints_from_elf(snap: AbiSnapshot) -> dict[str, FunctionFingerprint]:
     """
     if snap.elf is None:
         return {}
+    filter_transitive_runtime_symbols = _should_filter_transitive_runtime_symbols(snap)
     result: dict[str, FunctionFingerprint] = {}
     for sym in snap.elf.symbols:
         if sym.sym_type not in _FUNC_LIKE_TYPES:
             continue
-        if not is_abi_relevant_elf_symbol(sym.name):
+        if not is_abi_relevant_elf_symbol(
+            sym.name,
+            filter_transitive_runtime_symbols=filter_transitive_runtime_symbols,
+        ):
             continue
         if sym.size < _MIN_SYMBOL_SIZE:
             continue
@@ -1750,15 +1891,25 @@ def _diff_fingerprint_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change
 
     old_elf = getattr(old, "elf", None)
     new_elf = getattr(new, "elf", None)
+    old_filter_transitive_runtime_symbols = _should_filter_transitive_runtime_symbols(old)
+    new_filter_transitive_runtime_symbols = _should_filter_transitive_runtime_symbols(new)
     old_exported_funcs = {
         sym.name
         for sym in (old_elf.symbols if old_elf is not None else [])
-        if sym.sym_type in _FUNC_LIKE_TYPES and is_abi_relevant_elf_symbol(sym.name)
+        if sym.sym_type in _FUNC_LIKE_TYPES
+        and is_abi_relevant_elf_symbol(
+            sym.name,
+            filter_transitive_runtime_symbols=old_filter_transitive_runtime_symbols,
+        )
     }
     new_exported_funcs = {
         sym.name
         for sym in (new_elf.symbols if new_elf is not None else [])
-        if sym.sym_type in _FUNC_LIKE_TYPES and is_abi_relevant_elf_symbol(sym.name)
+        if sym.sym_type in _FUNC_LIKE_TYPES
+        and is_abi_relevant_elf_symbol(
+            sym.name,
+            filter_transitive_runtime_symbols=new_filter_transitive_runtime_symbols,
+        )
     }
     retained_exported_funcs = old_exported_funcs & new_exported_funcs
     old_fps = {

@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from .dwarf_advanced import AdvancedDwarfMetadata
     from .dwarf_metadata import DwarfMetadata
     from .elf_metadata import ElfMetadata
+    from .evidence.model import EvidencePackRef
     from .macho_metadata import MachoMetadata
     from .pe_metadata import PeMetadata
     from .sycl_metadata import SyclMetadata
@@ -42,10 +43,21 @@ COMPILER_INTERNAL_TYPES: frozenset[str] = frozenset({
     "__NSConstantString_tag", "__NSConstantString",
 })
 
+_TYPEDEF_ALIAS_RE = _re.compile(r"^typedef\s+(.+?)\s+([A-Za-z_][\w:]*)$")
+
 
 def is_compiler_internal_type(name: str) -> bool:
     """Return True if *name* is a compiler internal type that should be excluded."""
-    return bool(name) and name in COMPILER_INTERNAL_TYPES
+    if not name:
+        return False
+    stripped = name.strip()
+    if stripped in COMPILER_INTERNAL_TYPES:
+        return True
+    m = _TYPEDEF_ALIAS_RE.match(stripped)
+    if not m:
+        return False
+    aliased, alias = m.groups()
+    return aliased.strip() in COMPILER_INTERNAL_TYPES and alias in COMPILER_INTERNAL_TYPES
 
 
 # Standard-library / runtime namespaces whose *type layout* is owned by the
@@ -83,7 +95,7 @@ def is_non_abi_surface_type(name: str, *, exclude_stdlib_namespaces: bool = True
     """
     if not name:
         return False
-    if name in COMPILER_INTERNAL_TYPES:
+    if is_compiler_internal_type(name):
         return True
     if exclude_stdlib_namespaces and name.startswith(_STDLIB_TYPE_NAMESPACE_PREFIXES):
         return True
@@ -126,8 +138,13 @@ def stdlib_namespaces_excluded(old: AbiSnapshot, new: AbiSnapshot) -> bool:
     registered detector that consumes ``snapshot.types`` agrees on whether to
     keep std:: records (validation/REPORT.md FP-1; Codex reviews on PR #273).
     """
+    old_elf = getattr(old, "elf", None)
+    new_elf = getattr(new, "elf", None)
     return not (
-        is_cxx_runtime_library(old.library) or is_cxx_runtime_library(new.library)
+        is_cxx_runtime_library(old.library)
+        or is_cxx_runtime_library(new.library)
+        or is_cxx_runtime_library(getattr(old_elf, "soname", ""))
+        or is_cxx_runtime_library(getattr(new_elf, "soname", ""))
     )
 
 
@@ -440,6 +457,15 @@ class RecordType:
     source_location: str | None = None
     is_union: bool = False
     is_opaque: bool = False       # incomplete type (forward-decl only; was complete → BREAKING)
+    # `final` class-key specifier. Tri-state to keep "unknown" distinct from
+    # "not final":
+    # - True  → declared `class C final { ... }` (castxml `final` attribute).
+    # - False → declared without `final`.
+    # - None  → dumper/loader could not determine (DWARF/symbols-only mode,
+    #           which carries no `final` information; older snapshots). The
+    #           diff skips the finality detector when either side is None to
+    #           avoid false findings from schema evolution / tier downgrade.
+    is_final: bool | None = None
     # Provenance (ADR-015, schema v6) — see Function.source_header.
     source_header: str | None = None
     origin: ScopeOrigin = ScopeOrigin.UNKNOWN
@@ -488,7 +514,7 @@ class AbiSnapshot:
     macho: MachoMetadata | None = field(default=None)  # Mach-O metadata (macOS dylib)
     dwarf: DwarfMetadata | None = field(default=None)           # DWARF layout metadata (Sprint 3)
     dwarf_advanced: AdvancedDwarfMetadata | None = field(default=None)  # Sprint 4
-    sycl: SyclMetadata | None = field(default=None)  # SYCL PI plugin metadata (ADR-020)
+    sycl: SyclMetadata | None = field(default=None)  # SYCL PI plugin metadata (ADR-020b)
     enums: list[EnumType] = field(default_factory=list)
     typedefs: dict[str, str] = field(default_factory=dict)  # alias -> underlying type name
     constants: dict[str, str] = field(default_factory=dict)  # #define / constexpr name -> value string
@@ -536,6 +562,31 @@ class AbiSnapshot:
     # Keyword-only (placed after all other fields) to prevent accidental positional binding.
     # Used by binary-only fallback detectors that need lightweight disassembly.
     source_path: str | None = field(default=None, kw_only=True)
+
+    # ADR-028 (schema v7) — optional reference to an out-of-band EvidencePack
+    # carrying L3/L4/L5 source/build/graph evidence. Only a lightweight
+    # reference (content hash + coverage summary) lives in the snapshot; the
+    # heavyweight pack is content-addressed on disk and versions independently
+    # (EVIDENCE_PACK_VERSION). None when no evidence was collected. Old readers
+    # ignore this optional field (ADR-015 backward-compatibility).
+    evidence_pack: EvidencePackRef | None = field(default=None, kw_only=True)
+
+    # ADR-029 — True when this snapshot's public-header AST was parsed using the
+    # real build context (a compile_commands.json supplied to `dump -p`), so the
+    # declared API facts reflect the build's ABI-relevant flags. Lets the
+    # build-evidence diff suppress HEADER_PARSE_CONTEXT_DRIFT when the headers
+    # were in fact parsed with that context. Defaults False (older snapshots and
+    # context-free dumps); ignored by old readers (additive optional field).
+    parsed_with_build_context: bool = field(default=False, kw_only=True)
+
+    # Runtime-only provenance qualifier (not serialized — popped in
+    # snapshot_to_dict). True when ``from_headers`` was *inferred* for a legacy
+    # snapshot that predates the explicit ``from_headers`` key, rather than set
+    # explicitly by the dumper or loaded verbatim. Source-level detectors that
+    # must only fire on genuine header evidence (e.g. parameter renames) require
+    # ``from_headers and not from_headers_inferred`` so ambiguous legacy
+    # DWARF-only baselines do not produce false API breaks.
+    from_headers_inferred: bool = field(default=False, repr=False, compare=False)
 
     # Indexes (built lazily)
     _func_by_mangled: dict[str, Function] | None = field(default=None, repr=False, compare=False)

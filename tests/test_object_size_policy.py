@@ -39,11 +39,11 @@ from abicheck.checker import ChangeKind, Verdict, compare
 from abicheck.checker_policy import BREAKING_KINDS
 from abicheck.checker_types import Change
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
-from abicheck.model import AbiSnapshot
+from abicheck.model import AbiSnapshot, Variable
 from abicheck.policy_file import PolicyFile
 
 
-def _snap_with_object(name: str, size: int) -> AbiSnapshot:
+def _snap_with_object(name: str, size: int, *, variable: Variable | None = None) -> AbiSnapshot:
     s = AbiSnapshot(library="libX11.so.6", version="1")
     s.elf = ElfMetadata(  # type: ignore[attr-defined]
         soname="libX11.so.6",
@@ -52,12 +52,35 @@ def _snap_with_object(name: str, size: int) -> AbiSnapshot:
             sym_type=SymbolType.OBJECT, size=size,
         )],
     )
+    if variable is not None:
+        s.variables.append(variable)
     return s
+
+
+def _header_snap_with_object(
+    name: str,
+    size: int,
+    *,
+    variable: Variable | None = None,
+) -> AbiSnapshot:
+    s = _snap_with_object(name, size, variable=variable)
+    s.from_headers = True
+    return s
+
+
+def _const_string_var(name: str) -> Variable:
+    return Variable(
+        name=name,
+        mangled=name,
+        type="char const []",
+        is_const=True,
+    )
 
 
 def test_partition_kinds():
     assert ChangeKind.SYMBOL_SIZE_CHANGED in BREAKING_KINDS
     assert ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL in BREAKING_KINDS
+    assert ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT in BREAKING_KINDS
 
 
 def test_internal_data_symbol_size_change_is_breaking_by_default():
@@ -77,6 +100,45 @@ def test_public_data_symbol_size_change_is_still_breaking():
     kinds = {c.kind for c in r.changes}
     assert ChangeKind.SYMBOL_SIZE_CHANGED in kinds
     assert ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL not in kinds
+    assert r.verdict == Verdict.BREAKING
+
+
+def test_public_const_unbounded_string_growth_preserves_copy_reloc_break():
+    # PROJ exposes pj_release as: extern char const pj_release[].
+    # Even without a fixed header bound, old non-PIE consumers can still carry
+    # copy relocations sized from the old DSO symbol.
+    r = compare(
+        _header_snap_with_object("pj_release", 29, variable=_const_string_var("pj_release")),
+        _header_snap_with_object("pj_release", 31, variable=_const_string_var("pj_release")),
+    )
+    kinds = {c.kind for c in r.changes}
+    assert ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT in kinds
+    assert ChangeKind.SYMBOL_SIZE_CHANGED not in kinds
+    assert r.verdict == Verdict.BREAKING
+
+
+def test_public_const_unbounded_string_shrink_is_compatible():
+    # A non-PIE consumer linked to the old DSO gets a copy-relocation slot sized
+    # for the old symbol. If the new string is shorter, that old slot is still
+    # large enough, so this is not the truncation/overflow hazard that growth is.
+    r = compare(
+        _header_snap_with_object("pj_release", 31, variable=_const_string_var("pj_release")),
+        _header_snap_with_object("pj_release", 29, variable=_const_string_var("pj_release")),
+    )
+    kinds = {c.kind for c in r.changes}
+    assert ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT not in kinds
+    assert ChangeKind.SYMBOL_SIZE_CHANGED not in kinds
+    assert r.verdict == Verdict.NO_CHANGE
+
+
+def test_dwarf_const_unbounded_string_is_breaking_without_header_evidence():
+    r = compare(
+        _snap_with_object("_private_release", 31, variable=_const_string_var("_private_release")),
+        _snap_with_object("_private_release", 29, variable=_const_string_var("_private_release")),
+    )
+    kinds = {c.kind for c in r.changes}
+    assert ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL in kinds
+    assert ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT not in kinds
     assert r.verdict == Verdict.BREAKING
 
 

@@ -489,6 +489,26 @@ class TestDetectFormat:
         from abicheck.dumper import _detect_format
         assert _detect_format(tmp_path / "nonexistent.so") == "unknown"
 
+    def test_ar_archive_is_unknown(self, tmp_path: Path) -> None:
+        # ar archives are not a single linkable image; _detect_format does not
+        # classify them (dump() rejects them separately with guidance — G8).
+        from abicheck.dumper import _detect_format
+        f = tmp_path / "libfoo.a"
+        f.write_bytes(b"!<arch>\n" + b"\x00" * 16)
+        assert _detect_format(f) == "unknown"
+
+
+class TestDumpRejectsArchive:
+    """dump() rejects static/import library archives with actionable guidance."""
+
+    def test_static_archive_raises(self, tmp_path: Path) -> None:
+        from abicheck.dumper import dump
+        from abicheck.errors import ValidationError
+        f = tmp_path / "libfoo.a"
+        f.write_bytes(b"!<arch>\n" + b"\x00" * 16)
+        with pytest.raises(ValidationError, match="static/import library archive"):
+            dump(f, [], None, "1.0", "c++")
+
 
 # ── _dump_macho / _dump_pe via dump() routing ───────────────────────────────
 

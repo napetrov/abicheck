@@ -21,8 +21,20 @@
 | [017](017-github-action.md) | GitHub Action Design | Accepted |
 | [018](018-cross-platform-support.md) | Cross-Platform Binary Format Support | Accepted |
 | [019](019-testing-strategy.md) | Testing Strategy and Parity Validation | Accepted |
-| [020](020-build-context-capture.md) | Build-Context Aware Header Extraction | Proposed |
-| [021](021-debug-artifact-resolution.md) | Debug Artifact Resolution Subsystem | Proposed |
-| [022](022-baseline-registry.md) | Baseline Registry and Snapshot Distribution | Proposed |
-| [023](023-bundle-aware-multi-binary-analysis.md) | Bundle-Aware Multi-Binary ABI Analysis | Proposed |
-| [024](024-public-abi-surface-resolution.md) | Public ABI Surface Resolution and False-Positive Traceability | Proposed |
+| [020a](020-build-context-capture.md) | Build-Context Aware Header Extraction | Accepted |
+| [020b](020-sycl-and-heterogeneous-stack-support.md) | SYCL and Heterogeneous Computing Stack Support | Accepted |
+| [021a](021-debug-artifact-resolution.md) | Debug Artifact Resolution Subsystem | Accepted |
+| [021b](021-mcp-security-model.md) | MCP Security Model | Accepted |
+| [022](022-baseline-registry.md) | Baseline Registry and Snapshot Distribution | Accepted |
+| [023](023-bundle-aware-multi-binary-analysis.md) | Bundle-Aware Multi-Binary ABI Analysis | Accepted |
+| [024](024-public-abi-surface-resolution.md) | Public ABI Surface Resolution and False-Positive Traceability | Accepted |
+| [025](025-pr-diff-source-evaluation.md) | PR-Diff-Aware ABI Evaluation (Source Diff as Trigger and Localizer) | Proposed |
+| [026](026-source-only-undetectable-changes.md) | Source-Only Changes and the Evidence-Tier Boundary | Accepted |
+| [027](027-api-surface-intelligence.md) | API Surface Intelligence — Structure Metrics, Idiom Detection, Cross-Library Reasoning, Pattern-Aware Verdicts | Accepted |
+| [028](028-source-build-evidence-pack.md) | Optional Source and Build Evidence Pack Architecture | Proposed |
+| [029](029-build-graph-toolchain-context-capture.md) | Build Graph and Toolchain Context Capture | Proposed |
+| [030](030-source-abi-replay-and-linked-source-surface.md) | Source ABI Replay and Linked Source Surface | Proposed |
+| [031](031-source-implementation-graph-augmentation.md) | Source and Implementation Graph Augmentation | Proposed |
+| [032](032-evidence-extractor-plugin-interface.md) | Evidence Extractor Plugin Interface and Security Model | Proposed |
+| [033](033-ci-rollout-performance-and-validation.md) | CI Rollout, Performance, Caching, and Validation Strategy | Proposed |
+| [Gap Analysis](adr-gap-analysis.md) | Decisions Needing Formal ADRs | Reference |

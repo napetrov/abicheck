@@ -26,7 +26,10 @@ from pathlib import Path
 
 import pytest
 
-from abicheck.diff_build_config import diff_matrix
+from abicheck.diff_build_config import (
+    detect_api_depends_on_consumer_env,
+    diff_matrix,
+)
 from abicheck.probe_harness import (
     load_probe_spec,
     run_probe_matrix,
@@ -193,15 +196,15 @@ def test_cxx_standard_floor_raised_through_compare_release(tmp_path: Path) -> No
     assert "matrix_findings" not in json.loads(res_clean.stdout)
 
 
-def test_feature_macro_spec_compiles_cleanly(tmp_path: Path) -> None:
-    """feature_macro.yaml compiles under stock ``cc`` for every config.
+def test_feature_macro_api_depends_fires_end_to_end(tmp_path: Path) -> None:
+    """feature_macro.yaml → API_DEPENDS_ON_CONSUMER_ENV fires end-to-end (G2).
 
-    This is the ``feature-macro C library`` manifest from plan G2. We
-    assert the matrix runs without per-configuration compile errors so the
-    shipped fixture cannot rot. The API_DEPENDS_ON_CONSUMER_ENV *detector*
-    is unit-tested in tests/test_diff_build_config.py; capturing a probe's
-    surface from a relocatable ``.o`` is a separate harness gap, so here we
-    only assert the diff machinery runs end-to-end without raising.
+    ``extra_api`` is compiled only under the ``with_extra`` configuration
+    (``-DENABLE_EXTRA``), so the probe harness sees it present in some
+    configurations and absent in others. This is the use case that was
+    previously blocked because a relocatable probe ``.o`` carries no
+    ``.dynsym`` — now captured via the ``.symtab`` fallback in
+    ``elf_metadata`` — so the detector fires over the real compiled surface.
     """
     if shutil.which("cc") is None:
         pytest.skip("cc unavailable; cannot compile probe matrix")
@@ -216,6 +219,48 @@ def test_feature_macro_spec_compiles_cleanly(tmp_path: Path) -> None:
     )
     compile_errors = [r.error for r in m_old.results if r.error]
     assert not compile_errors, compile_errors
-    # diff_matrix must run cleanly over real matrices (no exceptions).
-    changes = diff_matrix(m_old, m_new)
-    assert isinstance(changes, list)
+
+    # The relocatable .o surface is now captured, so the detector sees
+    # extra_api diverge across configurations.
+    findings = detect_api_depends_on_consumer_env(m_old)
+    assert "extra_api" in {c.symbol for c in findings}
+    # diff_matrix carries the same finding (no exceptions over real matrices).
+    assert isinstance(diff_matrix(m_old, m_new), list)
+
+
+def test_feature_macro_api_depends_reaches_mainline_compare(tmp_path: Path) -> None:
+    """The matrix finding reaches the mainline ``compare`` JSON via
+    ``--probe-matrix-old/--probe-matrix-new`` (not only ``probe compare``)."""
+    if shutil.which("cc") is None:
+        pytest.skip("cc unavailable; cannot compile probe matrix")
+    from click.testing import CliRunner
+
+    from abicheck.cli import main
+
+    spec = load_probe_spec(PROBES_DIR / "feature_macro.yaml")
+    m_old = run_probe_matrix(
+        spec, library_name="featuredemo", version="1.0", work_dir=tmp_path / "old",
+    )
+    m_new = run_probe_matrix(
+        spec, library_name="featuredemo", version="2.0", work_dir=tmp_path / "new",
+    )
+    old_matrix = tmp_path / "fm-1.0.json"
+    new_matrix = tmp_path / "fm-2.0.json"
+    write_matrix_snapshot(m_old, old_matrix)
+    write_matrix_snapshot(m_new, new_matrix)
+
+    old_so = tmp_path / "libfeaturedemo.so.1"
+    new_so = tmp_path / "libfeaturedemo.so.2"
+    _build_trivial_so(old_so, "libfeaturedemo.so.1")
+    _build_trivial_so(new_so, "libfeaturedemo.so.2")
+
+    res = CliRunner().invoke(
+        main,
+        ["compare", str(old_so), str(new_so),
+         "--probe-matrix-old", str(old_matrix),
+         "--probe-matrix-new", str(new_matrix),
+         "--format", "json"],
+    )
+    data = json.loads(res.stdout)
+    kinds = {c["kind"] for c in data.get("changes", [])}
+    assert "api_depends_on_consumer_env" in kinds

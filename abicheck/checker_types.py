@@ -17,6 +17,7 @@
 Extracted from ``checker.py`` to break the circular dependency between
 ``checker`` and ``suppression`` modules (architecture review Phase 1).
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -27,6 +28,7 @@ from .checker_policy import (
     Confidence,
     EvidenceTier,
     Verdict,
+    effective_category,
 )
 from .checker_policy import (
     policy_kind_sets as _policy_kind_sets,
@@ -48,14 +50,14 @@ SYMBOL_VERSION_ALIAS_NOT_RETAINED_MARKER = "old version NOT retained as alias"
 @dataclass
 class Change:
     kind: ChangeKind
-    symbol: str               # mangled name or type name
-    description: str          # human-readable
+    symbol: str  # mangled name or type name
+    description: str  # human-readable
     old_value: str | None = None
     new_value: str | None = None
-    source_location: str | None = None   # "header.h:42" if available
+    source_location: str | None = None  # "header.h:42" if available
     affected_symbols: list[str] | None = None  # exported functions using this type
-    caused_by_type: str | None = None    # root type that makes this change redundant
-    caused_count: int = 0                # number of derived changes collapsed into this root
+    caused_by_type: str | None = None  # root type that makes this change redundant
+    caused_count: int = 0  # number of derived changes collapsed into this root
     # Set by EscalateFrozenNamespaceViolations when the change's symbol /
     # caused_by_type matches a namespace declared as "frozen" in the policy
     # file (`frozen_namespaces:`). Carries the matching glob pattern so the
@@ -74,6 +76,20 @@ class Change:
     # (e.g. "not-exported", "non-public-type") for the audit ledger. None for
     # in-surface findings and when scoping is off.
     surface_exclusion_reason: str | None = None
+    # Per-finding pattern-aware modulation (ADR-025 A4/D4.1). All default to
+    # the no-op state, so a snapshot/diff with no modulation behaves exactly as
+    # before.
+    # - effective_verdict: when set, overrides this finding's *category* (the
+    #   verdict it contributes) — consulted by effective_category() at every
+    #   classification site. None = classify by ``kind``.
+    # - modulation_reason / modulation_rule: the disclosed reason code and the
+    #   rule id that produced the override, for the pattern-modulation ledger.
+    # - confidence: this finding's own trust level (distinct from the
+    #   verdict-level DiffResult.confidence).
+    effective_verdict: Verdict | None = None
+    modulation_reason: str | None = None
+    modulation_rule: str | None = None
+    confidence: Confidence = Confidence.HIGH
 
 
 @dataclass
@@ -90,9 +106,9 @@ class LibraryMetadata:
     None when the dumper did not see a TBB version header.
     """
 
-    path: str                     # file path as given on the CLI
-    sha256: str                   # hex digest
-    size_bytes: int               # file size in bytes
+    path: str  # file path as given on the CLI
+    sha256: str  # hex digest
+    size_bytes: int  # file size in bytes
     tbb_interface_version: int | None = None
 
 
@@ -105,21 +121,31 @@ class DiffResult:
     verdict: Verdict = Verdict.NO_CHANGE
     suppressed_count: int = 0
     suppressed_changes: list[Change] = field(default_factory=list)  # full audit trail
-    suppression_file_provided: bool = False  # True when --suppress was passed, even if 0 matched
+    suppression_file_provided: bool = (
+        False  # True when --suppress was passed, even if 0 matched
+    )
     detector_results: list[DetectorResult] = field(default_factory=list)
-    policy: str = "strict_abi"  # active policy profile; drives breaking/source_breaks/compatible
+    policy: str = (
+        "strict_abi"  # active policy profile; drives breaking/source_breaks/compatible
+    )
     policy_file: PolicyFile | None = None  # custom policy with overrides (Bug 4)
     old_metadata: LibraryMetadata | None = None
     new_metadata: LibraryMetadata | None = None
-    redundant_changes: list[Change] = field(default_factory=list)  # hidden by redundancy filter
+    redundant_changes: list[Change] = field(
+        default_factory=list
+    )  # hidden by redundancy filter
     redundant_count: int = 0
     old_symbol_count: int | None = None  # public exported symbol count in old library
     # Evidence tier and confidence — helps users assess how much trust to
     # place in the verdict.  "high" means multiple evidence sources agree;
     # "low" means key detectors were disabled (e.g., DWARF stripped).
     confidence: Confidence = Confidence.HIGH
-    evidence_tiers: list[str] = field(default_factory=list)  # e.g. ["elf", "dwarf", "header"]
-    coverage_warnings: list[str] = field(default_factory=list)  # human-readable coverage gaps
+    evidence_tiers: list[str] = field(
+        default_factory=list
+    )  # e.g. ["elf", "dwarf", "header"]
+    coverage_warnings: list[str] = field(
+        default_factory=list
+    )  # human-readable coverage gaps
     # ADR-024: findings excluded because they are not on the public-header
     # ABI surface (only populated when scope_to_public_surface is enabled).
     # Recorded for audit — surfaced under --show-filtered — never dropped.
@@ -144,10 +170,27 @@ class DiffResult:
     # Distinct from the raw ``evidence_tiers`` list above — this is the single
     # scalar consumers should key trust decisions off of. See EvidenceTier.
     evidence_tier: EvidenceTier = EvidenceTier.ELF_ONLY
+    # ADR-027 A4 — pattern-aware verdict modulation ledger. Each entry records a
+    # demotion/raise the pattern pass made (symbol, original→new category, the
+    # rule id, the disclosed reason, the evidence tier, and the graph edges that
+    # matched). Empty unless --pattern-verdicts was enabled. Findings themselves
+    # carry the override on Change.effective_verdict; this is the audit trail.
+    pattern_modulations: list[dict[str, object]] = field(default_factory=list)
+    # ADR-028 D7 — evidence-coverage rows (L0–L5) for the compare, when an
+    # EvidencePack was supplied. Each entry is a serialized LayerCoverage
+    # ({layer, status, confidence, detail}). Surfaced in the JSON report so
+    # machine consumers can tell artifact-proven from build-context-only
+    # findings; empty when no evidence was involved.
+    evidence_coverage: list[dict[str, object]] = field(default_factory=list)
 
     def _effective_kind_sets(
         self,
-    ) -> tuple[frozenset[ChangeKind], frozenset[ChangeKind], frozenset[ChangeKind], frozenset[ChangeKind]]:
+    ) -> tuple[
+        frozenset[ChangeKind],
+        frozenset[ChangeKind],
+        frozenset[ChangeKind],
+        frozenset[ChangeKind],
+    ]:
         """Return (breaking, api_break, compatible, risk) kind sets with overrides applied."""
         breaking, api_break, compatible, risk = _policy_kind_sets(self.policy)
         if not self.policy_file or not self.policy_file.overrides:
@@ -175,26 +218,38 @@ class DiffResult:
     @property
     def breaking(self) -> list[Change]:
         """Changes classified as BREAKING under the active policy."""
-        breaking_set, _, _, _ = self._effective_kind_sets()
-        return [c for c in self.changes if c.kind in breaking_set]
+        sets = self._effective_kind_sets()
+        return [
+            c for c in self.changes if effective_category(c, *sets) == Verdict.BREAKING
+        ]
 
     @property
     def source_breaks(self) -> list[Change]:
         """Changes classified as API_BREAK under the active policy."""
-        _, api_break_set, _, _ = self._effective_kind_sets()
-        return [c for c in self.changes if c.kind in api_break_set]
+        sets = self._effective_kind_sets()
+        return [
+            c for c in self.changes if effective_category(c, *sets) == Verdict.API_BREAK
+        ]
 
     @property
     def compatible(self) -> list[Change]:
         """Changes classified as COMPATIBLE under the active policy."""
-        _, _, compatible_set, _ = self._effective_kind_sets()
-        return [c for c in self.changes if c.kind in compatible_set]
+        sets = self._effective_kind_sets()
+        return [
+            c
+            for c in self.changes
+            if effective_category(c, *sets) == Verdict.COMPATIBLE
+        ]
 
     @property
     def risk(self) -> list[Change]:
         """Changes classified as COMPATIBLE_WITH_RISK under the active policy."""
-        _, _, _, risk_set = self._effective_kind_sets()
-        return [c for c in self.changes if c.kind in risk_set]
+        sets = self._effective_kind_sets()
+        return [
+            c
+            for c in self.changes
+            if effective_category(c, *sets) == Verdict.COMPATIBLE_WITH_RISK
+        ]
 
 
 @dataclass(frozen=True)
@@ -204,9 +259,12 @@ class DetectorSpec:
     Renamed from ``_DetectorSpec`` during architecture review Phase 1
     to serve as the official detector interface.
     """
+
     name: str
     run: Callable[[AbiSnapshot, AbiSnapshot], list[Change]]
-    is_supported: Callable[[AbiSnapshot, AbiSnapshot], tuple[bool, str | None]] | None = None
+    is_supported: (
+        Callable[[AbiSnapshot, AbiSnapshot], tuple[bool, str | None]] | None
+    ) = None
 
     def support(self, old: AbiSnapshot, new: AbiSnapshot) -> tuple[bool, str | None]:
         if self.is_supported is None:

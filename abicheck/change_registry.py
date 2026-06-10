@@ -217,12 +217,11 @@ REGISTRY = ChangeKindRegistry([
        impact="Bit-field width or offset changed; old code reads/writes wrong bits."),
 
     # ── ELF-only (Sprint 2) ───────────────────────────────────────────────
-    _E("soname_changed", _C,
-       impact="SONAME changed. This is a packaging/policy signal, not a binary ABI break: "
-              "the symbol table, types, and calling conventions are unchanged. "
-              "Deployment action may be required: update ldconfig symlinks or the "
-              "linker flag (-lfoo) in dependent packages. Already-compiled consumers "
-              "whose loader resolves the library by full path or DT_RPATH are unaffected."),
+    _E("soname_changed", _R,
+       impact="SONAME changed. Already-compiled consumers record the old SONAME "
+              "in DT_NEEDED and can fail to load unless the old SONAME remains "
+              "available. The exported ABI surface may still be compatible, but "
+              "deployment action is required."),
     _E("soname_missing", _C,
        impact="Library has no SONAME; package managers and ldconfig cannot track versions."),
     _E("visibility_leak", _C,
@@ -241,6 +240,21 @@ REGISTRY = ChangeKindRegistry([
     # ── ELF security / bad practice ────────────────────────────────────────
     _E("executable_stack", _C,
        impact="Library has executable stack (PT_GNU_STACK RWE); NX protection disabled — security risk."),
+    _E("executable_stack_removed", _C,
+       impact="Executable stack removed (PT_GNU_STACK RWE→RW); NX protection restored — a hardening improvement, not a regression."),
+    # checksec-equivalent hardening regressions (G12). RISK by default so they
+    # surface without failing a normal compatibility gate; the shipped
+    # `security` policy (policies/security.yaml) flips them to break.
+    _E("relro_weakened", _R,
+       impact="RELRO protection weakened (e.g. full→partial); the GOT is no longer fully read-only, widening the GOT-overwrite attack surface."),
+    _E("pie_disabled", _R,
+       impact="Position-independent executable disabled; the image loads at a fixed address, defeating ASLR."),
+    _E("stack_canary_removed", _R,
+       impact="Stack-smashing protector (-fstack-protector) no longer referenced; stack-buffer overflows are no longer detected at runtime."),
+    _E("fortify_source_weakened", _R,
+       impact="_FORTIFY_SOURCE fortified libc wrappers no longer referenced; compile-time/runtime buffer-overflow checks were dropped."),
+    _E("writable_executable_segment", _R,
+       impact="A loadable segment is now both writable and executable (W^X violation); injected code in that page becomes executable."),
 
     # ── Symbol metadata drift ──────────────────────────────────────────────
     _E("symbol_binding_changed", _C,
@@ -255,6 +269,10 @@ REGISTRY = ChangeKindRegistry([
        impact="ELF size changed on an internal-looking (reserved/underscore-prefixed) exported data symbol; "
               "exported data remains part of the dynamic ABI and size changes can break copy relocations "
               "or direct data consumers. Override severity via --policy-file only when the symbol is known private."),
+    _E("symbol_size_changed_const_object", _B,
+       impact="ELF size changed on a public const string-like object declared without a fixed bound in headers. "
+              "Old non-PIE consumers may have copy relocations sized from the old DSO symbol, so a later DSO can "
+              "truncate or otherwise mis-copy data at load time."),
     _E("ifunc_introduced", _C,
        impact="IFUNC resolver indirection added; transparent to well-behaved callers."),
     _E("ifunc_removed", _C,
@@ -397,7 +415,7 @@ REGISTRY = ChangeKindRegistry([
     _E("symbol_renamed_batch", _B,
        impact="Multiple symbols renamed (e.g. namespace prefix added/removed); "
               "old binaries reference the old names and will get undefined symbol errors at load time."),
-    _E("func_likely_renamed", _R,
+    _E("func_likely_renamed", _B,
        impact="Function likely renamed (binary fingerprint match: identical code size and hash, "
               "different symbol name). Old binaries reference the old name and will fail to "
               "resolve at load time. This is a heuristic signal — verify the rename is intentional."),
@@ -671,6 +689,21 @@ REGISTRY = ChangeKindRegistry([
               "function now do, potentially selecting a different overload "
               "than before and causing silent behavioral drift."),
 
+    # ── Class `final`-specifier transitions (header/castxml only) ────────
+    _E("type_became_final", _A,
+       impact="A class/struct gained the `final` specifier. Any consumer that "
+              "derives from it (`class D : public C`) no longer compiles. The "
+              "type layout and mangled names are unchanged so already-built "
+              "binaries keep running, but recompilation against the new header "
+              "fails — a source/API break. Invisible to binary analysis: "
+              "`final` is not recorded in DWARF or the object file, so this is "
+              "detected only in header (castxml) mode."),
+    _E("type_lost_final", _C,
+       impact="A class/struct lost the `final` specifier. This is strictly "
+              "more permissive — code that compiled before still compiles, and "
+              "deriving from the type is now allowed. Reported as a compatible "
+              "change for surface-tracking completeness."),
+
     # ── Namespace-shape patterns (PR follow-up to #238) ─────────────────
     # Generic detectors for template / header-only libraries (the patterns
     # show up in libraries such as oneDPL, but are not library-specific).
@@ -829,4 +862,87 @@ REGISTRY = ChangeKindRegistry([
               "_Atomic-qualified type may differ from the unqualified type and "
               "varies across compilers, so layout and calling convention "
               "diverge and old code is miscompiled."),
+
+    # ── API-surface intelligence anti-patterns (ADR-027 A2 / D2.2) ──────────
+    _E("public_api_exposes_stl_by_value", _R,
+       impact="A public function takes or returns a `std::` type by value across "
+              "the library boundary. Standard-library layouts (string, vector, "
+              "etc.) differ across toolchains, standard-library versions, and "
+              "the C++11 dual-ABI setting, so passing one by value at the ABI "
+              "boundary is fragile: a consumer built with a different STL silently "
+              "reads the wrong layout. Pass an opaque handle or a C-style view "
+              "instead."),
+    _E("polymorphic_type_non_virtual_dtor", _R,
+       impact="A type with virtual methods (it has a vtable) is used as a factory "
+              "return or base class but declares no virtual destructor. Deleting "
+              "a derived object through a base pointer is undefined behaviour: the "
+              "derived destructor never runs and the wrong amount of memory may be "
+              "freed. Declare the base destructor `virtual`."),
+    _E("opaque_invariant_broken", _B,
+       impact="A type that was opaque (its definition hidden from callers, crossed "
+              "only by pointer) or PIMPL now exposes its layout — its complete "
+              "definition became visible in the public include closure, or a "
+              "public function began passing it by value. Callers that relied on "
+              "never seeing the layout can now `sizeof`/embed it, so the type's "
+              "size and fields have joined the ABI and any later change to them is "
+              "a hard break."),
+    _E("handle_type_changed", _B,
+       impact="An opaque handle typedef (a `void*` token or a pointer to a "
+              "forward-declared struct) changed its underlying token type in a way "
+              "callers can observe. Code that stored or compared the old handle "
+              "representation now operates on an incompatible token."),
+
+    # ── API-surface metric drift (ADR-027 A1 / D1.2) ────────────────────────
+    _E("public_surface_grew", _C,
+       impact="The aggregate count of public declarations (functions, variables, "
+              "types, enums) increased between versions. Informational only — the "
+              "individual additions are reported separately; this is the net "
+              "signal for CI dashboards and release notes. Emitted only with "
+              "--surface-metrics."),
+    _E("public_surface_shrank", _C,
+       impact="The aggregate count of public declarations decreased between "
+              "versions. Informational roll-up only — individual removals are "
+              "reported (and may be breaking) on their own. Emitted only with "
+              "--surface-metrics."),
+    _E("undocumented_export_ratio_increased", _C,
+       impact="The fraction of exported symbols with no public-header declaration "
+              "(EXPORT_ONLY origin) rose between versions — a packaging-hygiene "
+              "regression: a symbol was exported without a corresponding public "
+              "header. Informational; emitted only with --surface-metrics."),
+
+    # ── Build-context evidence (ADR-028 L3 / ADR-029 D9) ────────────────────
+    # Produced by the build-evidence diff over two EvidencePacks. Per ADR-028
+    # D3 these are never BREAKING on their own: a build change that actually
+    # breaks the ABI is caught by the artifact diff (L0/L1/L2) as a separate,
+    # artifact-backed finding; these explain and localize it.
+    _E("build_context_changed", _C,
+       impact="Non-ABI-relevant build metadata changed between versions (e.g. "
+              "include-path ordering, output paths, or generator version). "
+              "Informational quality signal; no ABI impact on its own."),
+    _E("abi_relevant_build_flag_changed", _R,
+       impact="An ABI-affecting compiler/build option changed (e.g. -std, "
+              "-fabi-version, _GLIBCXX_USE_CXX11_ABI, -fvisibility, -fpack-struct, "
+              "--target/-mabi, sysroot). The artifact diff decides whether the "
+              "shipped ABI actually broke; this flags the elevated risk and "
+              "localizes the cause for review."),
+    _E("header_parse_context_drift", _R,
+       impact="The public-header AST was parsed under a different context (flags, "
+              "defines, include paths) than the real build used. Header-derived "
+              "API facts may be unreliable; align the parse context (e.g. via "
+              "compile_commands.json) to restore confidence."),
+    _E("toolchain_version_changed", _R,
+       impact="The compiler, standard library, or sysroot/SDK changed between "
+              "versions. Layout, mangling, and codegen can shift even with "
+              "identical sources; review for ABI-affecting toolchain drift."),
+    _E("generated_file_dependency_unstable", _R,
+       impact="The build graph indicates a generated-file dependency risk "
+              "(e.g. missing or unstable generator dependencies). Generated "
+              "public declarations may differ from what was analyzed; rebuild "
+              "determinism is not guaranteed."),
+    _E("link_export_policy_changed", _R,
+       impact="The export policy changed — version script, export map, or .def "
+              "file. The set of exported symbols may have shifted. When this "
+              "actually removes or alters exports, the artifact diff (L0) emits "
+              "the corresponding BREAKING findings separately; this kind explains "
+              "and localizes them and does not escalate on its own."),
 ])

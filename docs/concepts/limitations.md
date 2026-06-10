@@ -3,6 +3,11 @@
 `abicheck` is designed to catch real ABI and API breaks with high accuracy, but has specific
 limitations you should understand before relying on it in production.
 
+> **Conceptual companion.** This page is the *practical* boundary list. For the
+> *why* — which evidence (symbols, debug info, headers, source, runtime, bundle)
+> lets any tool see a given change at all, and what no artifact comparison can
+> prove — see [Evidence & Detectability](evidence-and-detectability.md).
+
 ---
 
 ## Platform support matrix
@@ -28,10 +33,13 @@ specify the PDB file location if automatic discovery fails.
 
 Windows support depends on the compiler/toolchain used for headers and binary production:
 
-| Toolchain | Status | Notes |
+Two distinct paths have different maturity — don't read "MSVC" as a single status:
+
+| Toolchain / path | Status | Notes |
 |----------|--------|-------|
 | MinGW (GCC) | **Experimental** | Covered by current CI smoke/integration jobs. |
-| MSVC (`cl.exe`) | **Untested in CI** | Expected to work in many cases, but not yet validated end-to-end in project CI. |
+| MSVC PE/COFF + PDB — *binary & verdicts* | **Parsers unit-tested; MSVC e2e non-blocking** | The PE/PDB parsers have (blocking) unit tests. The `windows-msvc` end-to-end lane asserts MSVC+PDB verdicts (PDB layout depth best-effort) but runs `continue-on-error` (informational, does **not** block CI) until proven stable — treat MSVC verdicts as experimental. |
+| MSVC `castxml` + `cl.exe` — *native header/type analysis* | **Untested in CI** | Expected to work in many cases, but this native header path is not yet validated end-to-end. |
 
 Tracked ABICC compatibility issues for this area: **#9, #50, #56, #121**.
 For detailed matrix + per-issue notes, see [Platform Support](../reference/platforms.md#windows-toolchain-support-matrix).
@@ -117,6 +125,116 @@ Use `abicheck compare --format json` for precise machine-readable `API_BREAK` ve
 Functions defined entirely in headers (inline, `constexpr`, template) may not appear
 in the `.so` symbol table. `abicheck` analyzes the public exported ABI — header-only
 changes that don't affect exported symbols will not be detected.
+
+---
+
+## Source-only changes invisible to binary/object analysis
+
+Some C++ changes are real source/API breaks that leave **no trace in the
+compiled object** — the two `.so` files are ABI-identical. Comparing only
+binaries (or stripped / DWARF-only builds) reports `NO_CHANGE` for them. This is
+intrinsic to comparing *built artifacts*, not a bug.
+
+abicheck addresses this with its layered model (see
+[Architecture](architecture.md)). Each layer recovers signals the layers below
+cannot see:
+
+| Tier | Data source | Recovers |
+|------|-------------|----------|
+| `elf_only` | symbol table only | symbol add/remove, versioning |
+| `dwarf_aware` | DWARF/PDB (needs `-g` / `/Zi`) | struct layout, field offsets, enum values, calling convention, struct packing |
+| `header_aware` | public headers via castxml | source-level qualifiers — `final`, access, ref-qualifiers, `inline`, `noexcept`, `explicit`, **default-argument values**, **`const`/`constexpr` constant values** |
+
+So whether a change is detectable depends on the tier you give abicheck:
+
+| Change | object/DWARF | header (castxml) | source-AST tool |
+|--------|:---:|:---:|:---:|
+| Class gains `final` ([`case121`](../examples/case125_class_became_final.md)) | ❌ invisible | ✅ `type_became_final` | ✅ |
+| Method access narrowed ([`case34`](../examples/case34_access_level.md)) | ❌ invisible | ✅ `method_access_changed` | ✅ |
+| Ref-qualifier change (`& → &&`) | ❌ (DWARF has no ref-qual) | ✅ `func_ref_qual_changed` | ✅ |
+| Default argument removed/changed ([`case123`](../examples/case123_default_argument_removed.md), [`case32`](../examples/case32_param_defaults.md)) | ❌ invisible | ✅ `param_default_value_removed` / `_changed` | ✅ |
+| `const`/`constexpr` constant value changed ([`case124`](../examples/case124_header_constant_value_changed.md)) | ❌ invisible (internal linkage, no symbol) | ✅ `constant_changed` | ✅ |
+| `#define` macro constant changed | ❌ invisible | ❌ (castxml emits no macros) | ✅ |
+| Inline/`constexpr`/template function *body* change (signature unchanged) | ❌ invisible | ❌ (declaration only; body not modelled) | ✅ |
+| Uninstantiated template signature ([`case122`](../examples/case122_template_signature_uninstantiated.md)) | ❌ invisible | ❌ (castxml omits uninstantiated templates) | ✅ |
+
+The upper rows are recovered by **supplying public headers** (header mode) — note
+that several (default-argument values, `const`/`constexpr` constant values) leave
+*no symbol at all* in the binary, so only header analysis can reach them. The
+lower three rows are the hard boundary: code that never becomes a symbol *and* is
+not modelled by castxml (`#define` macros, inline/template **bodies**,
+uninstantiated templates) is invisible to any artifact-based comparison. Only a
+pure source-AST tool that diffs the headers directly can observe those; binary
+and header analysis are complementary, not substitutes.
+
+> Constant extraction is deliberately scoped to the **user-provided public
+> headers** — `const`/`constexpr` values pulled in transitively from system or
+> private headers are *not* reported, so the finding stays a real public-API
+> contract change rather than third-party noise.
+
+### Recommendation: feed abicheck `.so` + debug info + headers for the best result
+
+The three tiers are additive, and the **maximum-coverage configuration is a
+single comparison of debug-enabled libraries with their public headers supplied**:
+
+```bash
+# Build (or obtain) BOTH versions with -g, then compare WITH headers:
+abicheck compare libfoo_v1.so libfoo_v2.so \
+    --old-header include/v1/foo.h --new-header include/v2/foo.h
+```
+
+This combination gives you all three tiers at once:
+
+- **`.so` + DWARF (`-g` / `/Zi`)** → ground-truth *emitted* ABI: struct layout,
+  field offsets, alignment/packing, enum values, calling convention — exactly as
+  the compiler produced them.
+- **public headers (castxml)** → source-level API surface the binary cannot carry:
+  `final`, access, ref-qualifiers, `noexcept`/`explicit`, **default-argument
+  values**, and **`const`/`constexpr` constant values** (which have no symbol).
+
+Comparing a **stripped release binary with no headers** gives only `elf_only`
+coverage (symbol add/remove) and will silently miss every layout and
+source-level break above. If you ship stripped, build a **debug copy purely as an
+analysis input** and compare that with headers — even though the shipped artifact
+stays stripped. (See [Stripped Production Binaries](#stripped-production-binaries)
+if you can only obtain debug info as separate files.)
+
+---
+
+## Static / import library archives (`.a`, `.lib`)
+
+`abicheck` analyses **single linkable images** — shared libraries (`.so`,
+`.dll`, `.dylib`) and individual object files. It does **not** analyse static
+or import library archives (`.a` on Unix, `.lib` on Windows). This is a
+deliberate non-goal (see [Project Goals → Non-goals](../development/goals.md#non-goals)),
+for two reasons:
+
+- A static library has **no runtime ABI surface**: no `SONAME`, no dynamic
+  symbol table, no symbol versioning — the very signals abicheck's verdict
+  semantics are built on. Only object-level symbol/type information would
+  apply, and a link-time API check over the union of members is a different
+  tool with different semantics.
+- Archives are **member containers** (`ar` format, magic `!<arch>\n`), not a
+  single image; both `.a` and MSVC `.lib` share this format.
+
+Handing a `.a`/`.lib` to `dump` or `compare` produces a **clear, actionable
+error** rather than a misleading "unknown format" message or a traceback:
+
+```text
+'libfoo.a' is a static/import library archive (.a/.lib), which abicheck does
+not analyse — it compares single linkable images (shared libraries and
+objects). Extract the members (e.g. `ar x lib.a`) and compare the resulting
+object files or the shared library built from them instead.
+```
+
+**Mitigation:** extract the archive members and compare the resulting object
+files, or compare the shared library built from the same sources:
+
+```bash
+ar x libfoo-old.a && ar x libfoo-new.a   # then compare the .o members
+# or, preferred:
+abicheck compare libfoo-old.so libfoo-new.so -H include/foo.h
+```
 
 ---
 

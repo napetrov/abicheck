@@ -1,0 +1,31 @@
+# abicheck built-in "security" policy — security-hardening drift gate.
+#
+# Turnkey usage (the name resolves to this shipped file):
+#
+#   abicheck compare libv1.so libv2.so --policy-file security
+#
+# or point at an explicit copy:
+#
+#   abicheck compare libv1.so libv2.so --policy-file path/to/security.yaml
+#
+# Purpose: fail the build when a release silently weakens a checksec-style
+# hardening property (RELRO, PIE, stack canary, FORTIFY_SOURCE, W^X, executable
+# stack). These kinds are COMPATIBLE_WITH_RISK by default so they don't break a
+# normal compatibility gate; this policy promotes them to hard breaks.
+base_policy: strict_abi
+
+overrides:
+  # NX / writable-executable memory
+  executable_stack: break
+  writable_executable_segment: break
+  # Relocation hardening
+  relro_weakened: break
+  # ASLR
+  pie_disabled: break
+  # Overflow mitigations
+  stack_canary_removed: break
+  fortify_source_weakened: break
+  # Loader search-path changes can be an injection vector — warn, don't break,
+  # since legitimate RUNPATH edits are common.
+  runpath_changed: warn
+  rpath_changed: warn

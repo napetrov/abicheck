@@ -33,7 +33,7 @@ from .diff_platform_templates import (
 from .diff_platform_templates import (
     _template_outer as _template_outer,
 )
-from .diff_symbols import _public_functions
+from .diff_symbols import _public_functions, _should_filter_transitive_runtime_symbols
 from .diff_types import _RESERVED_FIELD_RE
 from .elf_metadata import SymbolBinding, SymbolType
 from .elf_symbol_filter import is_abi_relevant_elf_symbol
@@ -50,6 +50,24 @@ _ELF_VIS_PROTECTED_PAIR: frozenset[str] = frozenset({"default", "protected"})
 
 # Data symbol types subject to copy relocations (OBJECT/COMMON).
 _COPY_RELOC_TYPES = (SymbolType.OBJECT, SymbolType.COMMON)
+
+
+def _is_const_unbounded_string_object(snap: AbiSnapshot, sym_name: str) -> bool:
+    """Return True for header-visible const char string objects without a bound."""
+    if not snap.from_headers or snap.from_headers_inferred:
+        return False
+    var = snap.variable_map.get(sym_name)
+    if var is None:
+        var = next(
+            (candidate for candidate in snap.variables if candidate.name == sym_name),
+            None,
+        )
+    if var is None:
+        return False
+    if not var.is_const:
+        return False
+    typ = re.sub(r"\s+", " ", var.type.replace("const char", "char const")).strip()
+    return typ in {"char const[]", "char const []", "const char[]", "const char []"}
 
 @registry.detector("elf")
 def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
@@ -69,7 +87,7 @@ def _diff_elf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     # detector deduplication over the simpler SYMBOL_VERSION_DEFINED_REMOVED.
     changes.extend(detect_version_node_changes(o, n))
     changes.extend(_diff_elf_symbol_versioning(o, n))
-    changes.extend(_diff_elf_symbol_metadata(o, n))
+    changes.extend(_diff_elf_symbol_metadata(old, new, o, n))
     changes.extend(_diff_visibility_leak(old, new))
     changes.extend(_diff_leaked_dependency_symbols(o, n))
     changes.extend(detect_version_script_missing(o, n))
@@ -301,11 +319,15 @@ def _diff_visibility_leak(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     if not getattr(old, "elf_only_mode", False):
         return []
 
+    filter_transitive_runtime_symbols = _should_filter_transitive_runtime_symbols(old)
     leaked = [
         f for f in old.functions
         if (
             f.visibility == Visibility.ELF_ONLY
-            and is_abi_relevant_elf_symbol(f.name)
+            and is_abi_relevant_elf_symbol(
+                f.name,
+                filter_transitive_runtime_symbols=filter_transitive_runtime_symbols,
+            )
             and _looks_internal(f.name)
         )
     ]
@@ -439,20 +461,94 @@ def _diff_elf_dynamic_section(old_elf: Any, new_elf: Any) -> list[Change]:
             new_value=new_elf.runpath,
         ))
 
-    # PT_GNU_STACK executable stack detection (security bad practice)
+    # PT_GNU_STACK executable stack detection (security bad practice).
+    # Report ONLY the regression direction (stack becomes executable); making
+    # the stack non-executable is a hardening improvement, not a finding — and
+    # emitting it would let the shipped `security` policy fail an improvement.
     old_exec = getattr(old_elf, "has_executable_stack", False)
     new_exec = getattr(new_elf, "has_executable_stack", False)
-    if old_exec != new_exec:
+    if new_exec and not old_exec:
         changes.append(Change(
             kind=ChangeKind.EXECUTABLE_STACK,
             symbol="PT_GNU_STACK",
-            description=(
-                "Executable stack detected: library linked with -Wl,-z,execstack — NX protection disabled (security risk)"
-                if new_exec
-                else "Executable stack removed: library now uses non-executable stack (good practice)"
-            ),
-            old_value="RWE" if old_exec else "RW",
-            new_value="RWE" if new_exec else "RW",
+            description="Executable stack detected: library linked with -Wl,-z,execstack — NX protection disabled (security risk)",
+            old_value="RW",
+            new_value="RWE",
+        ))
+    elif old_exec and not new_exec:
+        # Improvement direction — a distinct kind so the `security` policy can
+        # gate the regression (executable_stack) without failing this fix.
+        changes.append(Change(
+            kind=ChangeKind.EXECUTABLE_STACK_REMOVED,
+            symbol="PT_GNU_STACK",
+            description="Executable stack removed: library now uses a non-executable stack — NX protection restored (good practice)",
+            old_value="RWE",
+            new_value="RW",
+        ))
+
+    changes.extend(_diff_security_hardening(old_elf, new_elf))
+
+    return changes
+
+
+#: RELRO levels ordered weakest → strongest, for regression detection.
+_RELRO_RANK: dict[str, int] = {"none": 0, "partial": 1, "full": 2}
+
+
+def _diff_security_hardening(old_elf: Any, new_elf: Any) -> list[Change]:
+    """Detect checksec-style hardening regressions between two ELF snapshots.
+
+    Only *weakening* transitions are reported (a release that improves
+    hardening is not a finding). All kinds are RISK by default; the shipped
+    ``security`` policy gates them to break.
+    """
+    changes: list[Change] = []
+
+    old_relro = getattr(old_elf, "relro", "none")
+    new_relro = getattr(new_elf, "relro", "none")
+    if _RELRO_RANK.get(new_relro, 0) < _RELRO_RANK.get(old_relro, 0):
+        changes.append(Change(
+            kind=ChangeKind.RELRO_WEAKENED,
+            symbol="GNU_RELRO",
+            description=f"RELRO weakened: {old_relro} → {new_relro}",
+            old_value=old_relro,
+            new_value=new_relro,
+        ))
+
+    if getattr(old_elf, "is_pie", False) and not getattr(new_elf, "is_pie", False):
+        changes.append(Change(
+            kind=ChangeKind.PIE_DISABLED,
+            symbol="DF_1_PIE",
+            description="PIE disabled: executable is no longer position-independent (ASLR defeated)",
+            old_value="PIE",
+            new_value="no-PIE",
+        ))
+
+    if getattr(old_elf, "has_stack_canary", False) and not getattr(new_elf, "has_stack_canary", False):
+        changes.append(Change(
+            kind=ChangeKind.STACK_CANARY_REMOVED,
+            symbol="__stack_chk_fail",
+            description="Stack canary removed: -fstack-protector no longer referenced",
+            old_value="canary",
+            new_value="none",
+        ))
+
+    if getattr(old_elf, "has_fortify_source", False) and not getattr(new_elf, "has_fortify_source", False):
+        changes.append(Change(
+            kind=ChangeKind.FORTIFY_SOURCE_WEAKENED,
+            symbol="_FORTIFY_SOURCE",
+            description="FORTIFY_SOURCE weakened: fortified libc wrappers (*_chk) no longer referenced",
+            old_value="fortified",
+            new_value="none",
+        ))
+
+    if not getattr(old_elf, "has_writable_executable_segment", False) and getattr(new_elf, "has_writable_executable_segment", False):
+        changes.append(Change(
+            kind=ChangeKind.WRITABLE_EXECUTABLE_SEGMENT,
+            symbol="PT_LOAD",
+            description="Writable + executable segment introduced (W^X violation)",
+            old_value="W^X",
+            new_value="W+X",
         ))
 
     return changes
@@ -508,6 +604,8 @@ def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
     old_def = set(old_elf.versions_defined)
     new_def = set(new_elf.versions_defined)
     for ver in sorted(old_def - new_def):
+        if _is_unattached_private_version_node(old_elf, ver):
+            continue
         changes.append(Change(
             kind=ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
             symbol=ver,
@@ -574,7 +672,31 @@ def _diff_elf_symbol_versioning(old_elf: Any, new_elf: Any) -> list[Change]:
     return changes
 
 
-def _diff_elf_symbol_metadata(old_elf: Any, new_elf: Any) -> list[Change]:
+def _is_unattached_private_version_node(elf: Any, version: str) -> bool:
+    """Return True for private version-script marker nodes with no exports.
+
+    Thin wrapper around the canonical helper in :mod:`diff_versioning` so the
+    version-def removal path and the version-script-missing path agree on what
+    counts as an unattached private marker.
+    """
+    from .diff_versioning import _is_unattached_private_version_node as _impl
+
+    return _impl(elf, version)
+
+
+def _diff_elf_symbol_metadata(
+    old: AbiSnapshot | Any,
+    new: AbiSnapshot | Any,
+    old_elf: Any | None = None,
+    new_elf: Any | None = None,
+) -> list[Change]:
+    if old_elf is None and new_elf is None:
+        old_elf = old
+        new_elf = new
+        old = AbiSnapshot(library="", version="")
+        new = AbiSnapshot(library="", version="")
+    assert old_elf is not None
+    assert new_elf is not None
     changes: list[Change] = []
     old_syms = old_elf.symbol_map
     new_syms = new_elf.symbol_map
@@ -583,7 +705,7 @@ def _diff_elf_symbol_metadata(old_elf: Any, new_elf: Any) -> list[Change]:
         s_new = new_syms.get(sym_name)
         if s_new is None:
             continue
-        changes.extend(_diff_elf_symbol_pair(sym_name, s_old, s_new))
+        changes.extend(_diff_elf_symbol_pair(old, new, sym_name, s_old, s_new))
 
     for sym_name, s_new in new_syms.items():
         if s_new.sym_type != SymbolType.COMMON:
@@ -598,7 +720,13 @@ def _diff_elf_symbol_metadata(old_elf: Any, new_elf: Any) -> list[Change]:
     return changes
 
 
-def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]:
+def _diff_elf_symbol_pair(
+    old: AbiSnapshot,
+    new: AbiSnapshot,
+    sym_name: str,
+    s_old: Any,
+    s_new: Any,
+) -> list[Change]:
     changes: list[Change] = []
     if s_old.sym_type != SymbolType.IFUNC and s_new.sym_type == SymbolType.IFUNC:
         changes.append(Change(
@@ -662,18 +790,31 @@ def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]
         # exported data symbols so policy files can target them, but keep the
         # default severity breaking: exported OBJECT/COMMON/TLS size changes can
         # break copy relocations or direct data consumers regardless of spelling.
-        size_kind = (
-            ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL
-            if _is_internal_data_symbol(sym_name)
-            else ChangeKind.SYMBOL_SIZE_CHANGED
-        )
-        changes.append(Change(
-            kind=size_kind,
-            symbol=sym_name,
-            description=f"Symbol size changed: {sym_name} ({s_old.size} → {s_new.size} bytes)",
-            old_value=str(s_old.size),
-            new_value=str(s_new.size),
-        ))
+        # Const string-like objects without a fixed header bound get their own
+        # kind (SYMBOL_SIZE_CHANGED_CONST_OBJECT) when growing (shrinking is
+        # filtered because old consumers already sized from the smaller DSO).
+        if (
+            _is_const_unbounded_string_object(old, sym_name)
+            and _is_const_unbounded_string_object(new, sym_name)
+        ):
+            if s_new.size <= s_old.size:
+                size_kind = None
+            else:
+                size_kind = ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT
+        else:
+            size_kind = (
+                ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL
+                if _is_internal_data_symbol(sym_name)
+                else ChangeKind.SYMBOL_SIZE_CHANGED
+            )
+        if size_kind is not None:
+            changes.append(Change(
+                kind=size_kind,
+                symbol=sym_name,
+                description=f"Symbol size changed: {sym_name} ({s_old.size} → {s_new.size} bytes)",
+                old_value=str(s_old.size),
+                new_value=str(s_new.size),
+            ))
 
     # case51: ELF visibility default→protected (or vice-versa) — function symbols only.
     # Data symbols with default→protected break copy relocations (real ABI break).
@@ -973,8 +1114,24 @@ def _diff_vtable_identity(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     # Find vtable/typeinfo symbols by mangling convention (_ZTV, _ZTI, _ZTS)
     _RTTI_PREFIXES = ("_ZTV", "_ZTI", "_ZTS")
 
-    old_rtti = {s.name for s in o.symbols if any(s.name.startswith(p) for p in _RTTI_PREFIXES)}
-    new_rtti = {s.name for s in n.symbols if any(s.name.startswith(p) for p in _RTTI_PREFIXES)}
+    old_filter_transitive_runtime_symbols = _should_filter_transitive_runtime_symbols(old)
+    new_filter_transitive_runtime_symbols = _should_filter_transitive_runtime_symbols(new)
+    old_rtti = {
+        s.name for s in o.symbols
+        if any(s.name.startswith(p) for p in _RTTI_PREFIXES)
+        and is_abi_relevant_elf_symbol(
+            s.name,
+            filter_transitive_runtime_symbols=old_filter_transitive_runtime_symbols,
+        )
+    }
+    new_rtti = {
+        s.name for s in n.symbols
+        if any(s.name.startswith(p) for p in _RTTI_PREFIXES)
+        and is_abi_relevant_elf_symbol(
+            s.name,
+            filter_transitive_runtime_symbols=new_filter_transitive_runtime_symbols,
+        )
+    }
 
     removed_rtti = old_rtti - new_rtti
     added_rtti = new_rtti - old_rtti

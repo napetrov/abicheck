@@ -33,15 +33,19 @@ nav:
   - Home: index.md
   - User Guide:
     - Getting Started: getting-started.md
+    - Choose Your Workflow: user-guide/choose-your-workflow.md
     - GitHub Action: user-guide/github-action.md
     - CLI Usage: user-guide/cli-usage.md
     - Tool Modes: user-guide/tool-modes.md
     - Application Compatibility: user-guide/appcompat.md
+    - Plugin Systems: user-guide/plugin-systems.md
     - Policy Profiles: user-guide/policies.md
     - Suppressions: user-guide/suppressions.md
     - Severity Configuration: user-guide/severity.md
+    - Security Hardening: user-guide/security-hardening.md
     - Output Formats: user-guide/output-formats.md
     - Multi-Binary Releases: user-guide/multi-binary.md
+    - Kernel & eBPF (BTF): user-guide/kernel-btf.md
     - Probe Harness: user-guide/probe-harness.md
     - Baseline Management: user-guide/baseline-management.md
     - Local Compare: user-guide/local-compare.md
@@ -53,13 +57,26 @@ nav:
     - Verdicts: concepts/verdicts.md
     - Architecture: concepts/architecture.md
     - Limitations: concepts/limitations.md
+    - Evidence & Detectability: concepts/evidence-and-detectability.md
+    - Source & Build Evidence Packs: concepts/evidence-pack.md
     - Change Kinds: reference/change-kinds.md
+    - API Surface Intelligence: concepts/api-surface-intelligence.md
     - Exit Codes: reference/exit-codes.md
     - Platforms: reference/platforms.md
     - Tool Comparison: reference/tool-comparison.md
     - ABICC Format Compliance: reference/abicc-format-compliance.md
   - ABI/API Handling & Recommendations:
-    - Guide: concepts/abi-api-handling.md
+    - Overview: concepts/abi-api-handling.md
+    - Learning Series:
+      - "0. Compatibility as a Product Contract": concepts/abi-series/00-product-contract.md
+      - "1. Foundations": concepts/abi-series/01-foundations.md
+      - "2. Symbol Contracts": concepts/abi-series/02-symbol-contracts.md
+      - "3. Type Layout": concepts/abi-series/03-type-layout.md
+      - "4. C++ ABI": concepts/abi-series/04-cpp-abi.md
+      - "5. Linker & ELF": concepts/abi-series/05-linker-elf.md
+      - "6. Transitive Breaks": concepts/abi-series/06-transitive-breaks.md
+      - "7. Designing for Stability": concepts/abi-series/07-designing-for-stability.md
+      - "Glossary": concepts/abi-series/glossary.md
     - Examples Encyclopedia: examples/index.md
     - By Verdict:
       - "BREAKING": examples/by-verdict/breaking.md
@@ -98,6 +115,13 @@ nav:
       - "G5: Plugin contract": development/plans/g5-plugin-bidirectional-contract.md
       - "G6: Kernel BTF & accelerator": development/plans/g6-kernel-btf-and-accelerator.md
       - "G8: Static libraries": development/plans/g8-static-libraries.md
+      - "G9: Wheel vendored-library pairing": development/plans/g9-wheel-vendored-matching.md
+      - "G10: manylinux glibc-floor check": development/plans/g10-glibc-floor-check.md
+      - "G11: Single-binary audit / lint": development/plans/g11-single-binary-audit.md
+      - "G12: Security-hardening drift": development/plans/g12-security-hardening.md
+      - "G13: Cross-architecture guardrail": development/plans/g13-arch-mismatch-guard.md
+      - "G14: abi3 import-contract": development/plans/g14-stable-abi-subset.md
+      - "G15: Inline-namespace version stamp": development/plans/g15-inline-namespace-version.md
     - ADR:
       - Overview: development/adr/index.md
       - "001: Technology Stack": development/adr/001-technology-stack.md
@@ -119,7 +143,22 @@ nav:
       - "017: GitHub Action": development/adr/017-github-action.md
       - "018: Cross-Platform Support": development/adr/018-cross-platform-support.md
       - "019: Testing Strategy": development/adr/019-testing-strategy.md
-      - "020: SYCL & Heterogeneous Stack": development/adr/020-sycl-and-heterogeneous-stack-support.md
+      - "020a: Build-Context Capture": development/adr/020-build-context-capture.md
+      - "020b: SYCL & Heterogeneous Stack": development/adr/020-sycl-and-heterogeneous-stack-support.md
+      - "021a: Debug Artifact Resolution": development/adr/021-debug-artifact-resolution.md
+      - "021b: MCP Security Model": development/adr/021-mcp-security-model.md
+      - "022: Baseline Registry": development/adr/022-baseline-registry.md
+      - "023: Bundle-Aware Analysis": development/adr/023-bundle-aware-multi-binary-analysis.md
+      - "024: Public ABI Surface Resolution": development/adr/024-public-abi-surface-resolution.md
+      - "025: PR-Diff Source Evaluation": development/adr/025-pr-diff-source-evaluation.md
+      - "026: Source-Only Evidence Boundary": development/adr/026-source-only-undetectable-changes.md
+      - "027: API Surface Intelligence": development/adr/027-api-surface-intelligence.md
+      - "028: Source & Build Evidence Pack": development/adr/028-source-build-evidence-pack.md
+      - "029: Build Graph & Toolchain Context": development/adr/029-build-graph-toolchain-context-capture.md
+      - "030: Source ABI Replay": development/adr/030-source-abi-replay-and-linked-source-surface.md
+      - "031: Source Graph Augmentation": development/adr/031-source-implementation-graph-augmentation.md
+      - "032: Evidence Extractor Plugins": development/adr/032-evidence-extractor-plugin-interface.md
+      - "033: Evidence CI Rollout": development/adr/033-ci-rollout-performance-and-validation.md
       - Gap Analysis: development/adr/adr-gap-analysis.md
 
 plugins:

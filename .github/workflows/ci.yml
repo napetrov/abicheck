@@ -15,10 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
           cache: 'pip'
       - name: Install mypy (for baseline-drift check)
         run: |
@@ -35,10 +35,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
           cache: 'pip'
       - name: Install dependencies
         run: |
@@ -73,8 +73,8 @@ jobs:
             python-version: '3.13'
             allow-prereleases: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: ${{ matrix.allow-prereleases }}
@@ -83,10 +83,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev,mcp]"
-      - name: Run tests with coverage
-        if: runner.os != 'Windows'
+      - name: Run tests with coverage (Linux — enforces 95% floor)
+        # Linux is the canonical lane: the full unit suite runs here, so the
+        # 95% minimum-coverage floor is enforced on it. macOS/Windows skip the
+        # Linux-only ELF/DWARF parsing tests, structurally lowering coverage,
+        # so they run the same suite without the fail-under gate.
+        if: runner.os == 'Linux'
         run: |
-          pytest tests/ -v --tb=short -m "not integration and not libabigail and not abicc and not slow" -n auto --dist worksteal --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+          pytest tests/ -v --tb=short -m "not integration and not libabigail and not abicc and not slow" -n auto --dist worksteal --cov=abicheck --cov-report=term-missing --cov-report=xml --cov-fail-under=95
+      - name: Run tests with coverage (macOS — report only, platform tests skip)
+        if: runner.os == 'macOS'
+        run: |
+          pytest tests/ -v --tb=short -m "not integration and not libabigail and not abicc and not slow" -n auto --dist worksteal --cov=abicheck --cov-report=term-missing --cov-report=xml
       - name: Run tests (Windows — parallel, no coverage)
         if: runner.os == 'Windows'
         run: |
@@ -97,7 +105,7 @@ jobs:
           pytest tests/ -v --tb=short -m "slow" --cov=abicheck --cov-report=xml:coverage-slow.xml --cov-append
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.13' && matrix.os == 'ubuntu-latest'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           use_oidc: true
           files: coverage.xml
@@ -115,7 +123,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install system deps (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -129,9 +137,9 @@ jobs:
         run: |
           choco install cmake --no-progress --yes
           pip install castxml
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
           cache: 'pip'
       - name: Install package
         run: pip install -e ".[dev]"
@@ -159,7 +167,7 @@ jobs:
           pytest tests/ -v -m integration --tb=short -n auto --dist worksteal --ignore=tests/test_abi_examples.py
       - name: Upload integration coverage to Codecov
         if: always() && matrix.os == 'ubuntu-latest'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           use_oidc: true
           files: coverage-integration.xml
@@ -170,14 +178,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install system deps
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y castxml zlib1g-dev
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
           cache: 'pip'
       - name: Install package
         run: pip install -e ".[dev]"
@@ -194,17 +202,57 @@ jobs:
     # genuine parser/toolchain breakage until the lane is proven stable.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up MSVC developer environment (cl.exe on PATH)
         uses: ilammy/msvc-dev-cmd@v1
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
           cache: 'pip'
       - name: Install package
         run: pip install -e ".[dev]"
       - name: Run MSVC + PDB end-to-end tests
         run: pytest tests/test_msvc_pdb_e2e.py -v -m msvc --tb=short
+
+  cross-platform-e2e:
+    # G1: native PE/Mach-O `compare` workflows + AArch64 AAPCS modeling.
+    # Drives `abicheck compare` over binaries built by the *platform's own*
+    # toolchain (Apple clang → .dylib, MinGW gcc → .dll) and asserts verdicts,
+    # so the core workflow is validated end-to-end off the Linux baseline.
+    #
+    # Kept always-on (not path-gated): the jobs are short (~1 min) and a
+    # path-filtered "skipped" status complicates branch-protection required
+    # checks; the modest runner cost buys a reliable platform signal on every PR.
+    name: Native PE/Mach-O compare workflows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install MinGW gcc (Windows — PE/DWARF)
+        if: runner.os == 'Windows'
+        run: choco install mingw --no-progress --yes
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+      - name: Install package
+        run: pip install -e ".[dev]"
+      - name: Native PE/Mach-O compare workflow tests
+        # Run ONLY the native, compiler-gated integration tests here. Every test
+        # in this file is @pytest.mark.integration and needs clang/MinGW, so if
+        # the native compiler is missing they all skip and the
+        # ABICHECK_MIN_EXECUTED floor fails the lane — closing the silent-skip
+        # hole where always-run unit tests could keep it green. (The AArch64
+        # AAPCS64 unit tests run in the regular unit-tests lane on all OSes.)
+        # Floor 5: each platform contributes ~7-8 native tests when the compiler
+        # is present, so 5 is comfortably reachable yet 0 (all-skipped) fails.
+        env:
+          ABICHECK_MIN_EXECUTED: '5'
+        run: pytest tests/test_cross_platform_integration.py -v -m integration --tb=short
 
   heavy-parity-gate:
     runs-on: ubuntu-latest
@@ -212,12 +260,12 @@ jobs:
       run-heavy: ${{ steps.resolve.outputs.run-heavy }}
       reason: ${{ steps.resolve.outputs.reason }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Detect changed files for parity jobs (PR only)
         id: changed
         if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             heavy:
@@ -246,15 +294,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install system deps
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y gcc g++ castxml
           sudo apt-get install -y abigail-tools || sudo apt-get install -y libabigail-tools
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
           cache: 'pip'
       - name: Install package
         run: pip install -e ".[dev]"
@@ -271,14 +319,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install system deps
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y gcc g++ castxml abi-compliance-checker
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
           cache: 'pip'
       - name: Install package
         run: pip install -e ".[dev]"
@@ -299,10 +347,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
           cache: 'pip'
       - name: Build artifacts and validate metadata
         run: |

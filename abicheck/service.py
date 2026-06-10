@@ -124,6 +124,58 @@ def expand_header_inputs(inputs: list[Path]) -> list[Path]:
     return deduped
 
 
+def _resolve_raw_typeinfo(path: Path, version: str) -> AbiSnapshot | None:
+    """Parse a bare BTF or CTF blob into a snapshot, or return None.
+
+    BTF blobs start with magic ``0xEB9F`` and CTF with ``0xCFF1`` (either byte
+    order). The parsed type layout is converted to the checker's DWARF-shaped
+    metadata so the same struct/enum layout detectors apply.
+    """
+    from .btf_metadata import BTF_MAGIC, parse_btf_from_bytes
+    from .ctf_metadata import CTF_MAGIC, parse_ctf_from_bytes
+
+    try:
+        with open(path, "rb") as f:
+            head = f.read(2)
+    except OSError:
+        return None
+    if len(head) < 2:
+        return None
+
+    # Only detect the little-endian byte order that parse_btf_from_bytes /
+    # parse_ctf_from_bytes actually support: a big-endian-target blob (first
+    # bytes EB 9F / CF F1) would otherwise enter the branch but parse to empty
+    # metadata, silently dropping all type changes. Falling through to the
+    # "cannot detect format" error is the honest outcome for those.
+    magic_le = int.from_bytes(head, "little")
+    data = path.read_bytes()
+    try:
+        if magic_le == BTF_MAGIC:
+            btf = parse_btf_from_bytes(data)
+            # Require actual type records, not just a valid header. A
+            # truncated/unsupported blob parses to empty metadata, and a
+            # header-only blob (valid header, type_len=0) sets has_btf=True with
+            # type_count==0; either way, accepting it would yield a silent empty
+            # baseline that hides all layout changes. Fall through to the
+            # "cannot detect format" error instead.
+            if not btf.has_btf or btf.type_count <= 0:
+                _logger.warning("raw BTF blob %s has no type records; ignoring", path)
+                return None
+            return AbiSnapshot(library=path.name, version=version,
+                               dwarf=btf.to_dwarf_metadata())
+        if magic_le == CTF_MAGIC:
+            ctf = parse_ctf_from_bytes(data)
+            if not ctf.has_ctf or ctf.type_count <= 0:
+                _logger.warning("raw CTF blob %s has no type records; ignoring", path)
+                return None
+            return AbiSnapshot(library=path.name, version=version,
+                               dwarf=ctf.to_dwarf_metadata())
+    except (ValueError, OSError) as exc:
+        _logger.warning("failed to parse raw type-info blob %s: %s", path, exc)
+        return None
+    return None
+
+
 def resolve_input(
     path: Path,
     headers: list[Path] | None = None,
@@ -169,6 +221,14 @@ def resolve_input(
             debug_roots=debug_roots, enable_debuginfod=enable_debuginfod,
         )
 
+    # Raw kernel type-info blobs (a bare `.BTF` / CTF section extracted with
+    # `bpftool btf dump ... format raw` or `objcopy -O binary --only-section`).
+    # A real kernel carries BTF inside an ELF `.BTF` section, but the bare blob
+    # is a convenient, toolchain-free comparison input.
+    raw_typeinfo = _resolve_raw_typeinfo(path, version)
+    if raw_typeinfo is not None:
+        return raw_typeinfo
+
     # Text-based formats
     fmt = sniff_text_format(path)
 
@@ -184,6 +244,19 @@ def resolve_input(
             return load_snapshot(path)
         except (ValueError, KeyError, UnicodeDecodeError, OSError) as exc:
             raise SnapshotError(f"Failed to load JSON snapshot '{path}': {exc}") from exc
+
+    # Static / import libraries (`.a`, `.lib`) are member archives, not single
+    # linkable images. abicheck does not analyse archives (by design — see
+    # docs/concepts/limitations.md); fail with actionable guidance rather than a
+    # generic "unknown format" error.
+    from .binary_utils import detect_archive
+    if detect_archive(path):
+        raise ValidationError(
+            f"'{path}' is a static/import library archive (.a/.lib), which abicheck "
+            "does not analyse — it compares single linkable images (shared libraries "
+            "and objects). Extract the members (e.g. `ar x lib.a`) and compare the "
+            "resulting object files or the shared library built from them instead."
+        )
 
     raise ValidationError(
         f"Cannot detect format of '{path}'. "

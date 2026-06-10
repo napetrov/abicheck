@@ -49,7 +49,9 @@ from .change_registry import Verdict as Verdict
 class ChangeKind(str, Enum):
     # Function / variable changes
     FUNC_REMOVED = "func_removed"  # public symbol removed → BREAKING
-    FUNC_REMOVED_ELF_ONLY = "func_removed_elf_only"  # exported ELF-only function removed -> binary break
+    FUNC_REMOVED_ELF_ONLY = (
+        "func_removed_elf_only"  # exported ELF-only function removed -> binary break
+    )
     FUNC_ADDED = "func_added"  # new public symbol → COMPATIBLE
     FUNC_RETURN_CHANGED = "func_return_changed"  # return type changed → BREAKING
     FUNC_PARAMS_CHANGED = "func_params_changed"  # parameter types changed → BREAKING
@@ -128,7 +130,15 @@ class ChangeKind(str, Enum):
     )
 
     # ELF security / bad practice
-    EXECUTABLE_STACK = "executable_stack"  # PT_GNU_STACK has PF_X — NX protection disabled (bad practice)
+    EXECUTABLE_STACK = "executable_stack"  # PT_GNU_STACK gains PF_X — NX disabled (regression; gateable)
+    EXECUTABLE_STACK_REMOVED = "executable_stack_removed"  # PT_GNU_STACK loses PF_X — hardening improvement (informational)
+    # checksec-equivalent hardening regressions (see G12). RISK by default;
+    # gateable to break via the shipped security policy.
+    RELRO_WEAKENED = "relro_weakened"  # full→partial / →none RELRO
+    PIE_DISABLED = "pie_disabled"  # PIE executable → non-PIE
+    STACK_CANARY_REMOVED = "stack_canary_removed"  # -fstack-protector dropped
+    FORTIFY_SOURCE_WEAKENED = "fortify_source_weakened"  # _FORTIFY_SOURCE dropped
+    WRITABLE_EXECUTABLE_SEGMENT = "writable_executable_segment"  # W^X violation introduced
 
     # Symbol metadata drift (ELF .dynsym)
     SYMBOL_BINDING_CHANGED = "symbol_binding_changed"  # GLOBAL→WEAK (breaking)
@@ -140,6 +150,10 @@ class ChangeKind(str, Enum):
     # st_size changed on an internal-looking (reserved/underscore-prefixed)
     # exported data symbol; exported data size drift is breaking by default.
     SYMBOL_SIZE_CHANGED_INTERNAL = "symbol_size_changed_internal"
+    # st_size changed on a public const string-like object, e.g.
+    # extern char const version[]. Old non-PIE executables can still carry copy
+    # relocations sized from the old DSO symbol, so this remains breaking.
+    SYMBOL_SIZE_CHANGED_CONST_OBJECT = "symbol_size_changed_const_object"
     IFUNC_INTRODUCED = "ifunc_introduced"  # → STT_GNU_IFUNC
     IFUNC_REMOVED = "ifunc_removed"  # STT_GNU_IFUNC →
     COMMON_SYMBOL_RISK = "common_symbol_risk"  # STT_COMMON exported
@@ -194,6 +208,11 @@ class ChangeKind(str, Enum):
     VAR_BECAME_CONST = "var_became_const"  # non-const → const: writes → SIGSEGV
     VAR_LOST_CONST = "var_lost_const"  # const → non-const: BREAKING (ODR / inlining)
     TYPE_BECAME_OPAQUE = "type_became_opaque"  # complete → forward-decl only → BREAKING
+    # `final` class-key specifier transitions (header/castxml only — DWARF and
+    # the binary carry no `final` information). Source-level: gaining `final`
+    # breaks any consumer that derives from the class.
+    TYPE_BECAME_FINAL = "type_became_final"  # gained `final` → derivation no longer compiles → API_BREAK
+    TYPE_LOST_FINAL = "type_lost_final"      # lost `final` → strictly more permissive → COMPATIBLE
     BASE_CLASS_POSITION_CHANGED = (
         "base_class_position_changed"  # base reorder → this-ptr offset change
     )
@@ -349,7 +368,7 @@ class ChangeKind(str, Enum):
     # ── DWARF-based = delete detection (P3 gap) ─────────────────────────
     FUNC_DELETED_DWARF = "func_deleted_dwarf"  # DW_AT_deleted in DWARF5+, or absent from DWARF but present in headers
 
-    # SYCL Plugin Interface (PI) — ADR-020
+    # SYCL Plugin Interface (PI) — ADR-020b
     SYCL_IMPLEMENTATION_CHANGED = "sycl_implementation_changed"
     SYCL_PI_VERSION_CHANGED = "sycl_pi_version_changed"
     SYCL_PI_ENTRYPOINT_REMOVED = "sycl_pi_entrypoint_removed"
@@ -427,9 +446,7 @@ class ChangeKind(str, Enum):
 
     # ── Template / overload-set patterns (PR-B follow-up) ────────────────
     # See examples/case85_internal_template_signature_changed/README.md
-    INTERNAL_TEMPLATE_LEAKS_VIA_PUBLIC_API = (
-        "internal_template_leaks_via_public_api"
-    )
+    INTERNAL_TEMPLATE_LEAKS_VIA_PUBLIC_API = "internal_template_leaks_via_public_api"
     # See examples/case88_cpo_kind_changed/README.md
     CPO_KIND_CHANGED = "cpo_kind_changed"
     OVERLOAD_SET_REROUTED = "overload_set_rerouted"
@@ -457,6 +474,40 @@ class ChangeKind(str, Enum):
     CHAR8T_MIGRATION = "char8t_migration"
     BIT_INT_WIDTH_CHANGED = "bit_int_width_changed"
     ATOMIC_QUALIFIER_CHANGED = "atomic_qualifier_changed"
+
+    # ── API-surface intelligence anti-patterns (ADR-027 A2 / D2.2) ──────────
+    # Graph-shaped findings recognised from the declaration graph rather than a
+    # per-symbol diff. The two RISK kinds are single-snapshot anti-patterns
+    # (reported by `surface-report`, and at diff time only when newly
+    # introduced); the two BREAKING kinds are idiom *transitions* emitted by the
+    # A4 pattern-verdict pass when an opacity/handle guarantee callers relied on
+    # is lost.
+    PUBLIC_API_EXPOSES_STL_BY_VALUE = "public_api_exposes_stl_by_value"
+    POLYMORPHIC_TYPE_NON_VIRTUAL_DTOR = "polymorphic_type_non_virtual_dtor"
+    OPAQUE_INVARIANT_BROKEN = "opaque_invariant_broken"
+    HANDLE_TYPE_CHANGED = "handle_type_changed"
+
+    # ── API-surface metric drift (ADR-027 A1 / D1.2) ────────────────────────
+    # Aggregate, informational signals emitted only with --surface-metrics.
+    # COMPATIBLE: never breaking on their own; useful for CI dashboards and
+    # release notes.
+    PUBLIC_SURFACE_GREW = "public_surface_grew"
+    PUBLIC_SURFACE_SHRANK = "public_surface_shrank"
+    UNDOCUMENTED_EXPORT_RATIO_INCREASED = "undocumented_export_ratio_increased"
+
+    # ── Build-context evidence (ADR-028 L3 / ADR-029 D9) ────────────────────
+    # Emitted only by the build-evidence diff over two EvidencePacks. These are
+    # source/build-context findings, not artifact-backed ABI breaks: per
+    # ADR-028 D3 they default to COMPATIBLE (quality) or RISK and never to
+    # BREAKING. When a build-context change actually breaks the ABI, the
+    # artifact diff (L0/L1/L2) emits the BREAKING finding separately; these
+    # kinds explain and localize it.
+    BUILD_CONTEXT_CHANGED = "build_context_changed"  # non-ABI build metadata drift → COMPATIBLE (quality)
+    ABI_RELEVANT_BUILD_FLAG_CHANGED = "abi_relevant_build_flag_changed"  # ABI-affecting flag changed → RISK
+    HEADER_PARSE_CONTEXT_DRIFT = "header_parse_context_drift"  # headers parsed under different context than the build → RISK
+    TOOLCHAIN_VERSION_CHANGED = "toolchain_version_changed"  # compiler/stdlib/sysroot changed → RISK
+    GENERATED_FILE_DEPENDENCY_UNSTABLE = "generated_file_dependency_unstable"  # generated-file dependency risk → RISK
+    LINK_EXPORT_POLICY_CHANGED = "link_export_policy_changed"  # version script / export map / .def changed → RISK
 
 
 class HasKind(Protocol):
@@ -761,6 +812,44 @@ def policy_kind_sets(
     )
 
 
+def effective_category(
+    change: HasKind,
+    breaking: frozenset[ChangeKind],
+    api_break: frozenset[ChangeKind],
+    compatible: frozenset[ChangeKind],
+    risk: frozenset[ChangeKind],
+) -> Verdict:
+    """The verdict category a single *change* contributes (ADR-025 D4.1).
+
+    This is the **one** place a finding's category is decided. When the finding
+    carries a per-finding ``effective_verdict`` override (set by the A4
+    pattern-aware modulation pass), that wins; otherwise the category derives
+    from ``change.kind``'s membership in the policy kind sets — exactly today's
+    behaviour. Unclassified kinds fail safe to ``BREAKING``.
+
+    Every classification site (``compute_verdict``, the ``DiffResult``
+    properties, the reporter, the severity helpers, and the bundle verdict) must
+    route through this helper so a demotion is honoured consistently across all
+    outputs and both exit-code paths.
+    """
+    # Require a real Verdict: ``isinstance`` (not ``is not None``) rejects
+    # MagicMock test doubles whose attribute access auto-creates a truthy mock,
+    # mirroring the ``frozen_namespace_violation`` guard in policy_file.
+    override = getattr(change, "effective_verdict", None)
+    if isinstance(override, Verdict):
+        return override
+    kind = change.kind
+    if kind in breaking:
+        return Verdict.BREAKING
+    if kind in api_break:
+        return Verdict.API_BREAK
+    if kind in risk:
+        return Verdict.COMPATIBLE_WITH_RISK
+    if kind in compatible:
+        return Verdict.COMPATIBLE
+    return Verdict.BREAKING  # unclassified → fail-safe
+
+
 def compute_verdict(
     changes: Sequence[HasKind], *, policy: str = "strict_abi"
 ) -> Verdict:
@@ -780,21 +869,19 @@ def compute_verdict(
     if not changes:
         return Verdict.NO_CHANGE
 
-    breaking, api_break, compatible, risk = policy_kind_sets(policy)
-    kinds = {c.kind for c in changes}
-    if kinds & breaking:
+    sets = policy_kind_sets(policy)
+    # Per-finding effective category (ADR-025 D4.1): a finding's own
+    # ``effective_verdict`` override wins over its kind's category; the overall
+    # verdict is the worst contributed category. With no overrides this is
+    # identical to the historical kind-set intersection.
+    verdicts = {effective_category(c, *sets) for c in changes}
+    if Verdict.BREAKING in verdicts:
         return Verdict.BREAKING
-    if kinds & api_break:
+    if Verdict.API_BREAK in verdicts:
         return Verdict.API_BREAK
-    # At this point: no BREAKING, no API_BREAK kinds remain.
-    # All remaining kinds are in compatible ∪ risk.
-    # RISK + BREAKING → already returned BREAKING above; RISK + API_BREAK → API_BREAK above.
-    if kinds - compatible - risk == set():
-        if kinds & risk:
-            return Verdict.COMPATIBLE_WITH_RISK  # binary-compat, deployment risk only
-        return Verdict.COMPATIBLE
-    # Unclassified change kinds default to BREAKING (fail-safe)
-    return Verdict.BREAKING
+    if Verdict.COMPATIBLE_WITH_RISK in verdicts:
+        return Verdict.COMPATIBLE_WITH_RISK  # binary-compat, deployment risk only
+    return Verdict.COMPATIBLE
 
 
 # ---------------------------------------------------------------------------

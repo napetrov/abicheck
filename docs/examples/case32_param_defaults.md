@@ -3,14 +3,21 @@
 
 | Field | Value |
 |-------|-------|
-| **Verdict** | ✅ **NO_CHANGE** |
-| **Category** | No Change |
-| **Platforms** | Linux, macOS, Windows |
-| **Flags** | — |
-| **Detected `ChangeKind`s** | — |
+| **Verdict** | 🟠 **API_BREAK** |
+| **Category** | API Break |
+| **Platforms** | Linux |
+| **Flags** | API break |
+| **Detected `ChangeKind`s** | `param_default_value_changed`, `param_default_value_removed` |
 | **Source files** | `examples/case32_param_defaults/` |
 
-**Category:** C++ Defaults | **Verdict:** 🟢 NO_CHANGE (binary ABI unchanged)
+**Category:** C++ Defaults | **Verdict:** 🟠 API_BREAK (with headers) / NO_CHANGE (object/ELF-only)
+
+> A parameter default is removed (`configure(verbose, ...)`), which is a
+> source-level break — callers relying on the default no longer compile. The
+> mangled symbol is unchanged, so the binary ABI is intact. Default-argument
+> values live only in the header, so this is detected only in header
+> (castxml) mode (`param_default_value_removed` / `param_default_value_changed`);
+> object/DWARF comparison reports NO_CHANGE.
 
 ## What changes
 
@@ -145,4 +152,4 @@ No fix needed for binary compatibility. For source compatibility:
 - `v2.cpp`
 - `v2.hpp`
 
-_See also: [Examples overview](index.md) · [All NO_CHANGE cases](by-verdict/no-change.md) · [Category: No Change](by-category/no_change.md)._
+_See also: [Examples overview](index.md) · [All API_BREAK cases](by-verdict/api-break.md) · [Category: API Break](by-category/api_break.md)._

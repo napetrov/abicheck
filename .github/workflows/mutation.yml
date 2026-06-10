@@ -26,10 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
           cache: 'pip'
       - name: Install dependencies
         run: |
@@ -44,7 +44,7 @@ jobs:
         run: mutmut results > mutmut-results.txt 2>&1 || true
       - name: Upload mutmut results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mutmut-results
           path: mutmut-results.txt

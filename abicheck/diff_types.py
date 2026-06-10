@@ -22,7 +22,12 @@ from collections.abc import Collection
 from .checker_policy import ChangeKind
 from .checker_types import Change
 from .detector_registry import registry
-from .diff_symbols import _PUBLIC_VIS, _public_functions, _public_variables
+from .diff_symbols import (
+    _PUBLIC_VIS,
+    _public_functions,
+    _public_variables,
+    _should_filter_transitive_runtime_symbols,
+)
 from .elf_symbol_filter import (
     FUNCTION_SYMBOL_TYPES,
     VARIABLE_SYMBOL_TYPES,
@@ -50,8 +55,12 @@ def _exported_elf_symbol_names(snap: AbiSnapshot, *, symbol_types: Collection[st
     the DWARF-derived Function/Variable lists. Transitive runtime/compiler
     exports are excluded so they can't inflate retention.
     """
+    filter_transitive_runtime_symbols = _should_filter_transitive_runtime_symbols(snap)
     return exported_symbol_names(
-        getattr(snap, "elf", None), symbol_types, abi_relevant_only=True
+        getattr(snap, "elf", None),
+        symbol_types,
+        abi_relevant_only=True,
+        filter_transitive_runtime_symbols=filter_transitive_runtime_symbols,
     )
 
 
@@ -189,7 +198,41 @@ def _diff_type_pair(name: str, t_old: RecordType, t_new: RecordType) -> list[Cha
         changes.extend(_diff_type_fields(name, t_old, t_new))
     changes.extend(_diff_type_bases(name, t_old, t_new))
     changes.extend(_diff_type_vtable(name, t_old, t_new))
+    _append_type_finality_changes(changes, name, t_old, t_new)
     return changes
+
+
+def _append_type_finality_changes(
+    changes: list[Change], name: str, t_old: RecordType, t_new: RecordType,
+) -> None:
+    """Detect `final` class-key transitions.
+
+    Tri-state: only fire when BOTH sides record finality (header/castxml mode).
+    ``None`` means the dumper couldn't determine it — DWARF/symbols-only mode
+    carries no `final` information, and older snapshots predate the field —
+    so skipping avoids false findings from a tier downgrade or schema
+    evolution rather than a real source change.
+    """
+    if t_old.is_final is None or t_new.is_final is None:
+        return
+    if t_old.is_final == t_new.is_final:
+        return
+    if t_new.is_final:
+        changes.append(Change(
+            kind=ChangeKind.TYPE_BECAME_FINAL,
+            symbol=name,
+            description=f"Class gained `final` specifier: {name} — consumers that derive from it no longer compile",
+            old_value="non-final",
+            new_value="final",
+        ))
+    else:
+        changes.append(Change(
+            kind=ChangeKind.TYPE_LOST_FINAL,
+            symbol=name,
+            description=f"Class lost `final` specifier: {name}",
+            old_value="final",
+            new_value="non-final",
+        ))
 
 
 def _append_type_size_and_alignment_changes(

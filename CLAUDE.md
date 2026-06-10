@@ -3,7 +3,7 @@
 ## What is abicheck?
 
 ABI compatibility checker for C/C++ shared libraries. Pure Python (3.10+).
-Detects 184 ABI/API change types across ELF, PE/COFF, and Mach-O binaries,
+Detects 190 ABI/API change types across ELF, PE/COFF, and Mach-O binaries,
 categorized into `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, and `RISK_KINDS` (see `ChangeKind`).
 Drop-in replacement for abi-compliance-checker (ABICC).
 
@@ -104,7 +104,7 @@ Core pipeline (in order of data flow):
 
 - `AbiSnapshot` (`model.py`) — serializable snapshot of a library's ABI surface
 - `DiffResult` (`checker_types.py`) — single detected change with kind, severity, details
-- `ChangeKind` (`checker_policy.py`) — enum of 184 change types; categorized into `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, `RISK_KINDS`
+- `ChangeKind` (`checker_policy.py`) — enum of 190 change types; categorized into `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, `RISK_KINDS`
 - `Verdict` (`checker.py`) — overall comparison result (compatible/source_break/breaking)
 - `LibraryMetadata` (`checker.py`) — parsed library info
 
@@ -146,6 +146,7 @@ CI runs `mypy abicheck/` as a required gate. The baseline is currently **0 error
 | `import-cycles` | ERROR | No import cycles within `abicheck/` |
 | `mypy-baseline` | ERROR if drifted up | mypy error count ≤ documented baseline |
 | `examples-ground-truth` | ERROR | Every `examples/case*/` has a `README.md` and an entry in `ground_truth.json` |
+| `examples-readme-sync` | ERROR | `examples/README.md` headline count, verdict distribution, and case-index rows match `ground_truth.json` (catches missing/stale catalog rows) |
 | `mkdocs-nav-coverage` | WARN | Every `docs/**/*.md` is in `mkdocs.yml` nav or linked from another doc |
 | `banned-imports` | ERROR | No `print(...)` outside CLI/reporter modules; no `subprocess(..., shell=True)` |
 | `license-header` | WARN | Every `abicheck/**/*.py` carries the Apache-2.0 header / SPDX identifier |
@@ -175,6 +176,16 @@ Four mechanisms guard test quality so coverage can't be "filled" without verifyi
   `ABICHECK_MIN_EXECUTED=<n>`; the session fails unless at least `<n>` tests actually ran,
   so a missing external tool can't turn a lane green with zero work done. Wired into the
   `abicc`, `libabigail`, and `integration` CI lanes.
+
+## Line-coverage floor
+
+The fast lane enforces a **95%** line+branch coverage floor (`--cov-fail-under=95`),
+but **only on the Linux unit-test lane** in `.github/workflows/ci.yml` — that's where
+the full unit suite runs. macOS/Windows skip the Linux-only ELF/DWARF parsing tests,
+which structurally lowers their coverage (~93% on macOS), so those lanes run the same
+tests without the fail-under gate (macOS still emits a coverage report). If the macOS
+lane ever fails on coverage, the fix is to keep the gate Linux-scoped — **do not lower
+the global 95% floor** to make another platform pass.
 
 ## Files that are large — edit carefully
 

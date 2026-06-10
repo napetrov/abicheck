@@ -48,7 +48,8 @@ from .model import (
 # v4: provenance metadata (git_commit, git_tag, created_at, build_id)
 # v5: build_mode capture (compiler/stdlib/std normalization)
 # v6: declaration provenance (source_header + origin on functions/variables/types/enums; ADR-015)
-SCHEMA_VERSION: int = 6
+# v7: optional evidence_pack reference (ADR-028; lightweight ref to an out-of-band EvidencePack)
+SCHEMA_VERSION: int = 7
 
 
 def _sets_to_lists(obj: Any) -> Any:
@@ -75,6 +76,16 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     d.pop("_func_by_mangled", None)
     d.pop("_var_by_mangled", None)
     d.pop("_type_by_name", None)
+    # Runtime-only provenance qualifier — never persisted.
+    d.pop("from_headers_inferred", None)
+    # If ``from_headers`` was only *inferred* (a legacy snapshot loaded without
+    # the explicit key), do not persist it as explicit provenance: drop the key
+    # so a reload re-runs the same inference and re-marks it inferred. Writing
+    # ``from_headers: true`` here would promote a guess to explicit header
+    # provenance on the next load, re-enabling source-level param-rename
+    # detection on DWARF-only baselines this is meant to suppress.
+    if snap.from_headers_inferred:
+        d.pop("from_headers", None)
 
     # Serialize ElfMetadata enums to strings for JSON compatibility
     if d.get("elf"):
@@ -186,6 +197,12 @@ def _elf_from_dict(e: dict[str, Any]) -> Any:
         imports=imports,
         interpreter=e.get("interpreter", ""),
         has_executable_stack=e.get("has_executable_stack", False),
+        relro=e.get("relro", "none"),
+        bind_now=e.get("bind_now", False),
+        is_pie=e.get("is_pie", False),
+        has_stack_canary=e.get("has_stack_canary", False),
+        has_fortify_source=e.get("has_fortify_source", False),
+        has_writable_executable_segment=e.get("has_writable_executable_segment", False),
     )
 
 
@@ -362,6 +379,12 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             is_volatile=f.get("is_volatile", False),
             is_pure_virtual=f.get("is_pure_virtual", False),
             is_deleted=f.get("is_deleted", False),
+            # Provenance of is_deleted: True when set via DW_AT_deleted. Must be
+            # rehydrated (asdict writes it) so the public-map bypass in
+            # diff_symbols keeps DWARF-deleted unexported members out of the
+            # public surface after a dump-to-file → compare-files round-trip,
+            # rather than re-emitting FUNC_REMOVED against a stripped build.
+            deleted_from_dwarf=f.get("deleted_from_dwarf", False),
             is_inline=f.get("is_inline", False),
             is_extern_c=f.get("is_extern_c", False),
             access=AccessLevel(f.get("access", "public")),
@@ -420,6 +443,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             source_location=t.get("source_location"),
             is_union=t.get("is_union", t.get("kind") == "union"),
             is_opaque=t.get("is_opaque", False),
+            is_final=t.get("is_final"),  # tri-state; absent on pre-v? snapshots → None
             source_header=t.get("source_header"),
             origin=_scope_origin_or_unknown(t.get("origin")),
         )
@@ -463,6 +487,15 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
     # leave as None so build-mode-aware detectors fall back to "unknown".
     build_mode = _build_mode_from_dict(d.get("build_mode"))
 
+    # Evidence-pack reference (schema v7, ADR-028). Optional: a missing key on
+    # an older snapshot loads as None. A malformed (non-dict) value is ignored
+    # rather than aborting the load, consistent with the rest of this loader.
+    ep_raw = d.get("evidence_pack")
+    evidence_pack = None
+    if isinstance(ep_raw, dict):
+        from .evidence.model import EvidencePackRef
+        evidence_pack = EvidencePackRef.from_dict(ep_raw)
+
     # from_headers provenance (added alongside the HEADER_AWARE tier-honesty
     # fix). An absent key means a legacy snapshot dumped before the field
     # existed: preserve the prior evidence-tier behavior by inferring header
@@ -473,10 +506,16 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
     elf_only_mode = bool(d.get("elf_only_mode", False))
     if "from_headers" in d:
         from_headers = bool(d["from_headers"])
+        from_headers_inferred = False
     else:
         from_headers = (not elf_only_mode) and bool(
             funcs or variables or types or enums or typedefs
         )
+        # This provenance was guessed, not recorded. A legacy DWARF-only dump
+        # populates the same surface lists, so the inference cannot tell it
+        # apart from a header dump. Mark it inferred so source-level detectors
+        # that demand genuine header evidence (parameter renames) stay quiet.
+        from_headers_inferred = from_headers
 
     return AbiSnapshot(
         library=d["library"], version=d["version"],
@@ -487,6 +526,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         dwarf=dwarf, dwarf_advanced=dwarf_advanced, sycl=sycl,
         elf_only_mode=elf_only_mode,
         from_headers=from_headers,
+        from_headers_inferred=from_headers_inferred,
         constants=d.get("constants", {}),
         platform=d.get("platform"),
         language_profile=d.get("language_profile"),
@@ -499,6 +539,11 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         build_id=d.get("build_id"),
         # Build-mode capture (v5)
         build_mode=build_mode,
+        # Evidence-pack reference (v7)
+        evidence_pack=evidence_pack,
+        # Build-context parse provenance (v7, ADR-029) — absent on older
+        # snapshots loads as False.
+        parsed_with_build_context=bool(d.get("parsed_with_build_context", False)),
     )
 
 

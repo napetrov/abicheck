@@ -25,6 +25,13 @@ from typing import TYPE_CHECKING, Any
 import click
 
 from .checker import DiffResult, LibraryMetadata, compare
+from .cli_audit import echo_filtered_surface, echo_pattern_modulations
+from .cli_options import (
+    adr027_compare_options,
+    evidence_compare_options,
+    evidence_dump_option,
+)
+from .cli_params import POLICY_FILE_PARAM
 from .compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_dump
 from .compat.cli import compat_group
 from .dumper import dump
@@ -169,8 +176,15 @@ def _provenance_timestamp(source_date_epoch: str | None) -> str:
 def _write_snapshot_output(
     snap: AbiSnapshot,
     output: Path | None,
+    evidence_dir: Path | None = None,
 ) -> None:
-    """Serialize snapshot and write to file or stdout."""
+    """Serialize snapshot and write to file or stdout.
+
+    When *evidence_dir* is given, attach the EvidencePack reference first (D8).
+    """
+    if evidence_dir is not None:
+        from .cli_evidence import attach_evidence_pack
+        attach_evidence_pack(snap, evidence_dir)
     result = snapshot_to_json(snap)
     if output:
         _safe_write_output(output, result)
@@ -428,6 +442,13 @@ def _resolve_input(
             debug_format=debug_format,
         )
 
+    # Raw kernel type-info blob (a bare BTF/CTF section, e.g. from
+    # `bpftool btf dump file <elf> format raw`): parse directly.
+    from .service import _resolve_raw_typeinfo
+    raw_typeinfo = _resolve_raw_typeinfo(path, version)
+    if raw_typeinfo is not None:
+        return raw_typeinfo
+
     # Text-based formats: detect by sniffing only a small header chunk
     fmt = _sniff_text_format(path)
 
@@ -465,6 +486,18 @@ def _resolve_input(
             f"'{path}' is a GNU ld linker script (INPUT/GROUP), not a binary, "
             "and its target could not be located next to it. Pass the actual "
             "shared library named in its INPUT(...) directive directly."
+        )
+
+    # Static / import library archives (.a / .lib) are member containers, not a
+    # single linkable image — a deliberate non-goal (see
+    # docs/concepts/limitations.md). Reject with actionable guidance.
+    from .binary_utils import detect_archive
+    if detect_archive(path):
+        raise click.UsageError(
+            f"'{path}' is a static/import library archive (.a/.lib), which abicheck "
+            "does not analyse — it compares single linkable images (shared libraries "
+            "and objects). Extract the members (e.g. `ar x lib.a`) and compare the "
+            "resulting object files or the shared library built from them instead."
         )
 
     raise click.UsageError(
@@ -654,7 +687,7 @@ def _populate_dependency_info(
               help="Force CTF debug format (ELF only).")
 @click.option("--dwarf", "debug_format", flag_value="dwarf", hidden=True,
               help="Force DWARF debug format (ELF only).")
-# ── Build context capture (ADR-020) ──────────────────────────────────────────
+# ── Build context capture (ADR-020a) ──────────────────────────────────────────
 @click.option("-p", "--build-dir", "compile_db_path", type=click.Path(path_type=Path), default=None,
               help="Build directory containing compile_commands.json, or path to the "
                    "file itself. Enables deterministic header parsing with exact build "
@@ -665,7 +698,7 @@ def _populate_dependency_info(
 @click.option("--compile-db-filter", "compile_db_filter", default=None,
               help="Glob pattern to filter compile_commands.json entries by source file "
                    "(e.g. 'src/libfoo/**'). Useful for large databases.")
-# ── Debug artifact resolution (ADR-021) ──────────────────────────────────────
+# ── Debug artifact resolution (ADR-021a) ──────────────────────────────────────
 @click.option("--debug-root", "debug_roots", multiple=True, type=click.Path(path_type=Path),
               help="Directory containing separate debug files (build-id trees, "
                    "path-mirror debug files, or dSYM bundles). Can be repeated.")
@@ -683,6 +716,7 @@ def _populate_dependency_info(
               help="Opaque build identifier (CI run ID, build number, etc.).")
 @click.option("--no-git", "no_git", is_flag=True, default=False,
               help="Do not auto-detect git commit SHA.")
+@evidence_dump_option  # ADR-028: --evidence
 def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...],
              public_headers: tuple[Path, ...], public_header_dirs: tuple[Path, ...],
              version: str, lang: str, output: Path | None,
@@ -697,7 +731,8 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
              debug_roots: tuple[Path, ...],
              debuginfod: bool, debuginfod_url: str | None,
              verbose: bool,
-             git_tag: str | None, build_id: str | None, no_git: bool) -> None:
+             git_tag: str | None, build_id: str | None, no_git: bool,
+             evidence_dir: Path | None = None) -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
     \b
@@ -759,6 +794,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             output,
             public_headers,
             public_header_dirs,
+            evidence_dir,
         )
         return
 
@@ -767,7 +803,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
     )
     effective_gcc_options = _merge_gcc_options(build_context_flags, gcc_options)
 
-    # Debug artifact resolution (ADR-021): resolve before dump
+    # Debug artifact resolution (ADR-021a): resolve before dump
     if debug_roots or debuginfod:
         artifact = _resolve_debug_artifact(
             so_path, debug_roots, debuginfod, debuginfod_url,
@@ -798,11 +834,16 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
     except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
+    # Record that the header AST was parsed with the real build context (ADR-029),
+    # so a later compare can suppress header-parse-context drift for this side.
+    if effective_compile_db and resolved_headers:
+        snap.parsed_with_build_context = True
+
     if follow_deps:
         _populate_dependency_info(snap, so_path, list(search_paths), sysroot, ld_library_path)
 
     _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-    _write_snapshot_output(snap, output)
+    _write_snapshot_output(snap, output, evidence_dir)
 
 
 def _handle_non_elf_dump(
@@ -820,6 +861,7 @@ def _handle_non_elf_dump(
     output: Path | None,
     public_headers: tuple[Path, ...] = (),
     public_header_dirs: tuple[Path, ...] = (),
+    evidence_dir: Path | None = None,
 ) -> None:
     """Handle PE/Mach-O native dump path and output writing."""
     if follow_deps:
@@ -836,7 +878,7 @@ def _handle_non_elf_dump(
     except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-    _write_snapshot_output(snap, output)
+    _write_snapshot_output(snap, output, evidence_dir)
 
 
 def _resolve_build_context_flags(
@@ -1111,58 +1153,6 @@ def _load_probe_matrix_changes(
     return list(diff_matrix(old_matrix, new_matrix))
 
 
-def _run_compare_pair(
-    old_input: Path,
-    new_input: Path,
-    old_headers: list[Path],
-    new_headers: list[Path],
-    old_includes: list[Path],
-    new_includes: list[Path],
-    old_version: str,
-    new_version: str,
-    lang: str,
-    suppress: Path | None,
-    policy: str,
-    policy_file_path: Path | None,
-    old_pdb_path: Path | None,
-    new_pdb_path: Path | None,
-    scope_to_public_surface: bool = False,
-) -> tuple[DiffResult, AbiSnapshot, AbiSnapshot]:
-    """Run compare for one old/new pair and return result + resolved snapshots."""
-    # Follow GNU ld linker scripts up front so metadata/dependency analysis use
-    # the resolved DSO, not the text script.
-    old_input, old_fmt = _normalize_binary_input(old_input)
-    new_input, new_fmt = _normalize_binary_input(new_input)
-
-    old = _resolve_input(
-        old_input,
-        old_headers,
-        old_includes,
-        old_version,
-        lang,
-        is_elf=True if old_fmt == "elf" else None,
-        pdb_path=old_pdb_path,
-    )
-    new = _resolve_input(
-        new_input,
-        new_headers,
-        new_includes,
-        new_version,
-        lang,
-        is_elf=True if new_fmt == "elf" else None,
-        pdb_path=new_pdb_path,
-    )
-
-    suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
-    result = compare(
-        old, new, suppression=suppression, policy=policy, policy_file=pf,
-        scope_to_public_surface=scope_to_public_surface,
-    )
-    result.old_metadata = _collect_metadata(old_input)
-    result.new_metadata = _collect_metadata(new_input)
-    return result, old, new
-
-
 def _canonical_library_key(path: Path) -> str:
     """Canonical key used to match libraries across releases.
 
@@ -1279,20 +1269,6 @@ def _merge_redundant_changes(result: DiffResult) -> None:
     result.changes = result.changes + result.redundant_changes
     result.redundant_changes = []
     result.redundant_count = 0
-
-
-def _echo_filtered_surface(result: DiffResult) -> None:
-    """Print the public-surface audit ledger (ADR-024 §D5 traceability)."""
-    n = result.out_of_surface_count
-    click.echo(
-        f"\nFiltered as non-public ABI surface ({n} "
-        f"{'finding' if n == 1 else 'findings'}, --scope-public-headers):",
-        err=True,
-    )
-    for c in result.out_of_surface_changes:
-        loc = f" [{c.source_location}]" if c.source_location else ""
-        reason = f" ({c.surface_exclusion_reason})" if c.surface_exclusion_reason else ""
-        click.echo(f"  - {c.kind.value}: {c.symbol}{loc}{reason}", err=True)
 
 
 def _warn_all_suppressed(result: DiffResult) -> None:
@@ -1499,7 +1475,7 @@ def _finalize_compare_result(
     if show_redundant and result.redundant_changes:
         _merge_redundant_changes(result)
     if show_filtered and result.out_of_surface_changes:
-        _echo_filtered_surface(result)
+        echo_filtered_surface(result)
 
     # The scoping fallback warning goes to stderr so it never corrupts the
     # machine-readable payload on stdout (which carries scope_resolved /
@@ -1577,8 +1553,8 @@ def _finalize_compare_result(
               default="strict_abi", show_default=True,
               help="Built-in policy profile for verdict classification. Ignored when --policy-file is given.")
 @click.option("--policy-file", "policy_file_path",
-              type=click.Path(exists=True, path_type=Path), default=None,
-              help="YAML policy file with per-kind verdict overrides. Overrides --policy.")
+              type=POLICY_FILE_PARAM, default=None,
+              help="YAML policy file with per-kind verdict overrides, or a built-in name (e.g. 'security'). Overrides --policy.")
 @click.option("--pdb-path", "pdb_path", type=click.Path(path_type=Path), default=None,
               help="Explicit PDB file path for Windows PE debug info (applied to both sides). "
                    "Overrides automatic PDB discovery.")
@@ -1690,7 +1666,7 @@ def _finalize_compare_result(
 @click.option("--annotate-additions", is_flag=True, default=False,
               help="Include additions/compatible changes as ::notice annotations "
                    "(requires --annotate).")
-# ── Debug artifact resolution (ADR-021) ──────────────────────────────────────
+# ── Debug artifact resolution (ADR-021a) ──────────────────────────────────────
 @click.option("--debug-root", "debug_roots", multiple=True, type=click.Path(path_type=Path),
               help="Directory containing separate debug files (build-id trees, "
                    "path-mirror, dSYM bundles). Applied to both sides. Can be repeated.")
@@ -1702,6 +1678,8 @@ def _finalize_compare_result(
               help="Enable debuginfod network resolution for debug info (opt-in).")
 @click.option("--debuginfod-url", "debuginfod_url", default=None,
               help="debuginfod server URL (overrides DEBUGINFOD_URLS env var).")
+@evidence_compare_options  # ADR-028/029: --old-evidence/--new-evidence/--evidence-mode
+@adr027_compare_options  # ADR-027: --pattern-verdicts/--explain-patterns/--surface-metrics
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def compare_cmd(
@@ -1735,7 +1713,11 @@ def compare_cmd(
     debug_roots_new: tuple[Path, ...],
     debuginfod: bool,
     debuginfod_url: str | None,
+    pattern_verdicts: bool,
+    explain_patterns: bool,
+    surface_metrics: bool,
     verbose: bool,
+    old_evidence: Path | None = None, new_evidence: Path | None = None, evidence_mode: str = "off",
     probe_matrix_old: Path | None = None,
     probe_matrix_new: Path | None = None,
 ) -> None:
@@ -1883,12 +1865,31 @@ def compare_cmd(
 
     extra_changes = _load_probe_matrix_changes(probe_matrix_old, probe_matrix_new)
 
+    evidence_coverage_rows: list[dict[str, object]] = []
+    if old_evidence is not None or new_evidence is not None or evidence_mode != "off":
+        from .cli_evidence import collect_compare_evidence
+        # Header-parse-context drift is judged from the new snapshot's own
+        # provenance (parsed_with_build_context, set by `dump -p`); compare adds
+        # no build context of its own.
+        ev_changes, evidence_coverage_rows = collect_compare_evidence(
+            old_evidence, new_evidence, evidence_mode, new,
+        )
+        extra_changes = (extra_changes or []) + ev_changes if ev_changes else extra_changes
+
+    apply_patterns = pattern_verdicts or explain_patterns  # --explain implies on
     result = compare(
         old, new, suppression=suppression, policy=policy, policy_file=pf,
         scope_to_public_surface=scope_public_headers,
         force_public_symbols=force_public,
         extra_changes=extra_changes,
+        pattern_verdicts=apply_patterns,
+        surface_metrics=surface_metrics,
     )
+    if evidence_coverage_rows:
+        result.evidence_coverage = evidence_coverage_rows
+
+    if explain_patterns:
+        echo_pattern_modulations(result)
 
     _finalize_compare_result(
         result, old_input, new_input,
@@ -1910,7 +1911,6 @@ def compare_cmd(
 
     _announce_exit_scheme(severity_explicitly_set, sev_config, fmt=fmt, stat=stat)
     _exit_with_severity_or_verdict(result, sev_config, severity_explicitly_set)
-
 
 
 # ── ABICC compat subcommands (implementation in abicheck.compat) ─────────────
@@ -1951,8 +1951,6 @@ main.add_command(compat_group)
 
 
 
-
-
 # ---------------------------------------------------------------------------
 # Sub-command modules. Imported for side-effect so their @main.command(...)
 # decorators register the commands on the Click group above. They sit in
@@ -1963,9 +1961,12 @@ from . import (  # noqa: E402  — must run after `main` and helpers are defined
     cli_baseline,  # noqa: F401  — registers baseline
     cli_compare_release,  # noqa: F401  — registers compare-release
     cli_debian_symbols,  # noqa: F401  — registers debian-symbols
+    cli_evidence,  # noqa: F401  — registers collect-evidence
+    cli_plugin,  # noqa: F401  — registers plugin-check
     cli_probe,  # noqa: F401  — registers probe (run, compare)
     cli_stack,  # noqa: F401  — registers deps, stack-check
     cli_suggest,  # noqa: F401  — registers suggest-suppressions
+    cli_surface,  # noqa: F401  — registers surface-report
 )
 
 if __name__ == "__main__":

@@ -12,19 +12,26 @@ scope**.
 
 | Gap | Plan | Registry use cases | Effort |
 |---|---|---|---|
-| **G1** | [Cross-platform end-to-end validation](g1-cross-platform-e2e.md) | `UC-PLAT-windows-pe`, `UC-PLAT-macos-macho` | L |
-| **G2** | [Build-config matrix → `compare`, and bundle completion](g2-build-config-and-bundle.md) | `UC-WF-probe-matrix`, `UC-WF-bundle`, `UC-TC-cxx-standard-floor` | M |
 | **G4** | [libclang header-AST extractor](g4-header-ast-extractor.md) | `UC-ARCH-header-only` | XL |
-| **G5** | [Plugin host↔plugin contract](g5-plugin-bidirectional-contract.md) | `UC-ARCH-plugin` | M |
-| **G6** | [Kernel BTF & accelerator workflows](g6-kernel-btf-and-accelerator.md) | `UC-ARCH-kernel-btf`, `UC-ARCH-sycl` | M |
-| **G8** | [Static-library stance](g8-static-libraries.md) | `UC-ARCH-static-lib` | S (decision) |
+| **G9** | [manylinux/auditwheel vendored-library pairing](g9-wheel-vendored-matching.md) | `UC-WF-wheel-vendored` | M |
+| **G10** | [manylinux glibc-floor check](g10-glibc-floor-check.md) | `UC-TC-glibc-floor` | S |
+| **G11** | [Single-binary ABI audit / lint](g11-single-binary-audit.md) | `UC-WF-audit` | M |
+| **G13** | [Cross-architecture comparison guardrail](g13-arch-mismatch-guard.md) | `UC-PLAT-arch-guard` | S |
+| **G14** | [CPython Limited-API / `abi3` import-contract](g14-stable-abi-subset.md) | `UC-WF-stable-abi-subset` | M |
+| **G15** | [Inline-namespace version-stamp normalization](g15-inline-namespace-version.md) | `UC-CHANGE-inline-ns-version` | M |
 
-> **G3** (workflow-scenario examples & Markdown/HTML coverage) is **done** —
-> see [`g3-workflow-examples-and-reporting.md`](g3-workflow-examples-and-reporting.md)
-> and the evaluation doc. **G2** is largely done: the matrix folds into
-> `compare`/`compare-release` and the bundle soname-skew is wired + validated;
-> the one residual is end-to-end `API_DEPENDS_ON_CONSUMER_ENV` (probe `.o`
-> surface capture). **G7** (release recommendation) is **done** too.
+Completed or decided plans are retained for implementation history:
+
+| Gap | State | Reference |
+|---|---|---|
+| **G1** | Done — native PE/Mach-O compare validation and non-blocking MSVC+PDB lane | [g1](g1-cross-platform-e2e.md) |
+| **G2** | Done — build matrix folds into `compare`/`compare-release`; bundle soname-skew is wired | [g2](g2-build-config-and-bundle.md) |
+| **G3** | Done — workflow scenarios and Markdown/HTML coverage | [g3](g3-workflow-examples-and-reporting.md) |
+| **G5** | Done — `plugin-check` CLI and host↔plugin API | [g5](g5-plugin-bidirectional-contract.md) |
+| **G6** | Done — BTF/CTF and SYCL PI/UR workflows | [g6](g6-kernel-btf-and-accelerator.md) |
+| **G7** | Done — release recommendation | `abicheck/semver.py` |
+| **G8** | Decided — static/import archives are a by-design non-goal | [g8](g8-static-libraries.md) |
+| **G12** | Done — security-hardening drift surface and policy preset | [g12](g12-security-hardening.md) |
 
 ## How to pick up a plan
 

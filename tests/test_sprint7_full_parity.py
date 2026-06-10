@@ -35,7 +35,7 @@ from abicheck.model import (
 
 
 def _snap(**kwargs: object) -> AbiSnapshot:
-    defaults: dict[str, object] = dict(library="lib.so", version="1.0")
+    defaults: dict[str, object] = dict(library="lib.so", version="1.0", from_headers=True)
     defaults.update(kwargs)
     return AbiSnapshot(**defaults)  # type: ignore[arg-type]
 
@@ -509,6 +509,7 @@ class TestParamRenamed:
 
     def test_param_renamed_detected(self) -> None:
         old = _snap(
+            from_headers=True,
             functions=[
                 _func(
                     "draw",
@@ -518,6 +519,7 @@ class TestParamRenamed:
             ]
         )
         new = _snap(
+            from_headers=True,
             functions=[
                 _func(
                     "draw", "_Z4drawii", params=[Param("w", "int"), Param("h", "int")]
@@ -529,10 +531,57 @@ class TestParamRenamed:
         assert len(renames) == 2
 
     def test_param_renamed_is_source_break(self) -> None:
-        old = _snap(functions=[_func("f", "_Z1fi", params=[Param("count", "int")])])
-        new = _snap(functions=[_func("f", "_Z1fi", params=[Param("n", "int")])])
+        old = _snap(
+            from_headers=True,
+            functions=[_func("f", "_Z1fi", params=[Param("count", "int")])],
+        )
+        new = _snap(
+            from_headers=True,
+            functions=[_func("f", "_Z1fi", params=[Param("n", "int")])],
+        )
         result = compare(old, new)
         assert result.verdict == Verdict.API_BREAK
+
+    def test_dwarf_only_param_rename_is_not_source_break(self) -> None:
+        old = _snap(functions=[_func("f", "_Z1fi", params=[Param("arg_size", "int")])], from_headers=False)
+        new = _snap(functions=[_func("f", "_Z1fi", params=[Param("size", "int")])], from_headers=False)
+        result = compare(old, new)
+        assert ChangeKind.PARAM_RENAMED not in _kinds(result)
+        assert result.verdict == Verdict.NO_CHANGE
+
+    def test_legacy_snapshot_inferred_headers_param_rename_not_source_break(self) -> None:
+        """Legacy snapshots predating the from_headers key infer header
+        provenance from a populated surface — but a DWARF-only dump satisfies
+        that same inference, so param renames must stay suppressed.
+
+        Reproduces the load path: a snapshot dict with no ``from_headers`` key
+        and DWARF-derived functions deserializes to from_headers=True (for
+        evidence-tier continuity) but from_headers_inferred=True, which must
+        keep PARAM_RENAMED quiet.
+        """
+        from abicheck.serialization import snapshot_from_dict
+
+        def _legacy_dict(param_name: str) -> dict:
+            return {
+                "library": "lib.so",
+                "version": "1.0",
+                "functions": [
+                    {
+                        "name": "f",
+                        "mangled": "_Z1fi",
+                        "return_type": "void",
+                        "params": [{"name": param_name, "type": "int"}],
+                    }
+                ],
+                "dwarf": {"has_dwarf": True},
+            }
+
+        old = snapshot_from_dict(_legacy_dict("arg_size"))
+        new = snapshot_from_dict(_legacy_dict("size"))
+        assert old.from_headers is True and old.from_headers_inferred is True
+        result = compare(old, new)
+        assert ChangeKind.PARAM_RENAMED not in _kinds(result)
+        assert result.verdict == Verdict.NO_CHANGE
 
     def test_no_rename_when_unchanged(self) -> None:
         old = _snap(functions=[_func("f", "_Z1fi", params=[Param("x", "int")])])

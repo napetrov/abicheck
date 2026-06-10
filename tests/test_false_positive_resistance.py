@@ -37,6 +37,7 @@ def _snap(version="1.0", functions=None, variables=None, types=None,
         types=types or [], enums=enums or [],
         typedefs=typedefs or {}, elf=elf,
         constants=constants or {},
+        from_headers=True,
     )
 
 
@@ -257,11 +258,12 @@ class TestElfCompatibleChanges:
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
         assert not r.breaking
 
-    def test_soname_change_not_breaking(self):
-        """SONAME change without API changes → COMPATIBLE."""
+    def test_soname_change_is_deployment_risk(self):
+        """SONAME change without API changes still requires loader review."""
         old_elf = ElfMetadata(soname="libfoo.so.1")
         new_elf = ElfMetadata(soname="libfoo.so.2")
         r = compare(_snap(elf=old_elf), _snap(elf=new_elf))
+        assert r.verdict == Verdict.COMPATIBLE_WITH_RISK
         assert not r.breaking
 
     def test_func_code_size_change_not_breaking(self):

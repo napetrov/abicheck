@@ -32,18 +32,21 @@ from typing import TYPE_CHECKING
 import click
 
 from .bundle import BundleDiffResult
-from .checker import DiffResult
+from .checker import DiffResult, compare
 from .cli import (
     _build_match_map,
+    _collect_metadata,
     _collect_release_inputs,
     _load_suppression_and_policy,
-    _run_compare_pair,
+    _normalize_binary_input,
+    _resolve_input,
     _safe_write_output,
     _setup_verbosity,
     _write_or_echo,
     _write_release_step_summary,
     main,
 )
+from .cli_params import POLICY_FILE_PARAM
 from .model import AbiSnapshot
 from .reporter import to_json
 
@@ -54,6 +57,51 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # compare-release helpers
 # ---------------------------------------------------------------------------
+
+
+def _run_compare_pair(
+    old_input: Path,
+    new_input: Path,
+    old_headers: list[Path],
+    new_headers: list[Path],
+    old_includes: list[Path],
+    new_includes: list[Path],
+    old_version: str,
+    new_version: str,
+    lang: str,
+    suppress: Path | None,
+    policy: str,
+    policy_file_path: Path | None,
+    old_pdb_path: Path | None,
+    new_pdb_path: Path | None,
+    scope_to_public_surface: bool = False,
+    pattern_verdicts: bool = False,
+) -> tuple[DiffResult, AbiSnapshot, AbiSnapshot]:
+    """Run compare for one old/new pair and return result + resolved snapshots."""
+    # Follow GNU ld linker scripts up front so metadata/dependency analysis use
+    # the resolved DSO, not the text script.
+    old_input, old_fmt = _normalize_binary_input(old_input)
+    new_input, new_fmt = _normalize_binary_input(new_input)
+
+    old = _resolve_input(
+        old_input, old_headers, old_includes, old_version, lang,
+        is_elf=True if old_fmt == "elf" else None, pdb_path=old_pdb_path,
+    )
+    new = _resolve_input(
+        new_input, new_headers, new_includes, new_version, lang,
+        is_elf=True if new_fmt == "elf" else None, pdb_path=new_pdb_path,
+    )
+
+    suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
+    result = compare(
+        old, new, suppression=suppression, policy=policy, policy_file=pf,
+        scope_to_public_surface=scope_to_public_surface,
+        pattern_verdicts=pattern_verdicts,
+    )
+    result.old_metadata = _collect_metadata(old_input)
+    result.new_metadata = _collect_metadata(new_input)
+    return result, old, new
+
 
 _RELEASE_VERDICT_ORDER: dict[str, int] = {
     "NO_CHANGE": 0, "COMPATIBLE": 1, "COMPATIBLE_WITH_RISK": 2,
@@ -567,86 +615,132 @@ def _format_release_summary(
 ) -> str:
     """Format the release comparison summary as JSON, markdown, or JUnit XML."""
     if fmt == "junit":
-        from .junit_report import to_junit_xml_multi
-        pairs: list[tuple[DiffResult, AbiSnapshot | None]] = list(diff_pairs or [])
-        # Release-global matrix findings ride in as their own synthetic
-        # testsuite so CI dashboards reading the JUnit report see the failure.
-        if matrix_result is not None:
-            pairs.append((matrix_result, None))
-        error_libs = [
-            entry for entry in library_results
-            if entry.get("verdict") == "ERROR"
-        ]
-        return to_junit_xml_multi(
-            pairs, error_libraries=error_libs if error_libs else None,
-        )
-
+        return _format_release_junit(diff_pairs, matrix_result, library_results)
     if fmt == "json":
-        changed_libraries = [
-            str(lib["library"]) for lib in library_results
-            if str(lib.get("verdict")) not in ("NO_CHANGE", "ERROR")
-        ]
-        summary: dict[str, object] = {
-            "verdict": worst_verdict,
-            "old_dir": str(old_dir),
-            "new_dir": str(new_dir),
-            "libraries": library_results,
-            "changed_libraries": changed_libraries,
-            "unmatched_old": [old_map[k].name for k in removed_keys],
-            "unmatched_new": [new_map[k].name for k in added_keys],
-            "warnings": warning_msgs,
-        }
-        # Release-level public-surface scoping rollup (ADR-024, issue #235).
-        # Present only when --scope-public-headers was active (per-library
-        # entries then carry a "scope_resolved" key).
-        scoped_libs = [lib for lib in library_results if "scope_resolved" in lib]
-        if scoped_libs:
-            def _as_int(v: object) -> int:
-                return v if isinstance(v, int) else 0
-            summary["scope"] = {
-                "public_headers_applied": True,
-                "manual_review_required": any(
-                    not bool(lib.get("scope_resolved", True)) for lib in scoped_libs
-                ),
-                "public_additions": sum(
-                    _as_int(lib.get("compatible_additions", 0)) for lib in scoped_libs
-                ),
-                "filtered_internal_changes": sum(
-                    _as_int(lib.get("filtered_internal_count", 0)) for lib in scoped_libs
-                ),
-            }
-        if bundle_result is not None:
-            summary["bundle_verdict"] = bundle_result.bundle_verdict.value
-            summary["bundle_findings"] = [
-                {
-                    "kind": f.kind.value,
-                    "symbol": f.symbol,
-                    "consumer_library": f.consumer_library,
-                    "provider_library": f.provider_library,
-                    "description": f.description,
-                    "old_value": f.old_value,
-                    "new_value": f.new_value,
-                    "affected_libraries": list(f.affected_libraries),
-                }
-                for f in bundle_result.bundle_findings
-            ]
-        if matrix_result is not None:
-            # Release-global build-configuration findings (G2: probe matrix).
-            # `.changes` is post-suppression, so suppressed findings are
-            # excluded here just as they are from the verdict.
-            summary["matrix_verdict"] = matrix_result.verdict.value
-            summary["matrix_findings"] = [
-                {
-                    "kind": c.kind.value,
-                    "symbol": c.symbol,
-                    "description": c.description,
-                    "old_value": c.old_value,
-                    "new_value": c.new_value,
-                }
-                for c in matrix_result.changes
-            ]
-        return json.dumps(summary, indent=2)
+        return _format_release_json(
+            worst_verdict, old_dir, new_dir, library_results,
+            removed_keys, added_keys, old_map, new_map, warning_msgs,
+            bundle_result, matrix_result,
+        )
+    return _format_release_markdown(
+        worst_verdict, old_dir, new_dir, library_results,
+        removed_keys, added_keys, old_map, new_map, bundle_result, matrix_result,
+    )
 
+
+def _format_release_junit(
+    diff_pairs: list[tuple[DiffResult, AbiSnapshot]] | None,
+    matrix_result: DiffResult | None,
+    library_results: list[dict[str, object]],
+) -> str:
+    """Render the release summary as a JUnit XML report."""
+    from .junit_report import to_junit_xml_multi
+    pairs: list[tuple[DiffResult, AbiSnapshot | None]] = list(diff_pairs or [])
+    # Release-global matrix findings ride in as their own synthetic
+    # testsuite so CI dashboards reading the JUnit report see the failure.
+    if matrix_result is not None:
+        pairs.append((matrix_result, None))
+    error_libs = [
+        entry for entry in library_results
+        if entry.get("verdict") == "ERROR"
+    ]
+    return to_junit_xml_multi(
+        pairs, error_libraries=error_libs if error_libs else None,
+    )
+
+
+def _format_release_json(
+    worst_verdict: str,
+    old_dir: Path, new_dir: Path,
+    library_results: list[dict[str, object]],
+    removed_keys: list[str], added_keys: list[str],
+    old_map: dict[str, Path], new_map: dict[str, Path],
+    warning_msgs: list[str],
+    bundle_result: BundleDiffResult | None,
+    matrix_result: DiffResult | None,
+) -> str:
+    """Render the release summary as a JSON document."""
+    changed_libraries = [
+        str(lib["library"]) for lib in library_results
+        if str(lib.get("verdict")) not in ("NO_CHANGE", "ERROR")
+    ]
+    summary: dict[str, object] = {
+        "verdict": worst_verdict,
+        "old_dir": str(old_dir),
+        "new_dir": str(new_dir),
+        "libraries": library_results,
+        "changed_libraries": changed_libraries,
+        "unmatched_old": [old_map[k].name for k in removed_keys],
+        "unmatched_new": [new_map[k].name for k in added_keys],
+        "warnings": warning_msgs,
+    }
+    # Release-level public-surface scoping rollup (ADR-024, issue #235).
+    # Present only when --scope-public-headers was active (per-library
+    # entries then carry a "scope_resolved" key).
+    scoped_libs = [lib for lib in library_results if "scope_resolved" in lib]
+    if scoped_libs:
+        summary["scope"] = _release_json_scope(scoped_libs)
+    if bundle_result is not None:
+        summary["bundle_verdict"] = bundle_result.bundle_verdict.value
+        summary["bundle_findings"] = [
+            {
+                "kind": f.kind.value,
+                "symbol": f.symbol,
+                "consumer_library": f.consumer_library,
+                "provider_library": f.provider_library,
+                "description": f.description,
+                "old_value": f.old_value,
+                "new_value": f.new_value,
+                "affected_libraries": list(f.affected_libraries),
+            }
+            for f in bundle_result.bundle_findings
+        ]
+    if matrix_result is not None:
+        # Release-global build-configuration findings (G2: probe matrix).
+        # `.changes` is post-suppression, so suppressed findings are
+        # excluded here just as they are from the verdict.
+        summary["matrix_verdict"] = matrix_result.verdict.value
+        summary["matrix_findings"] = [
+            {
+                "kind": c.kind.value,
+                "symbol": c.symbol,
+                "description": c.description,
+                "old_value": c.old_value,
+                "new_value": c.new_value,
+            }
+            for c in matrix_result.changes
+        ]
+    return json.dumps(summary, indent=2)
+
+
+def _release_json_scope(scoped_libs: list[dict[str, object]]) -> dict[str, object]:
+    """Build the release-level public-surface scoping rollup for JSON output."""
+    def _as_int(v: object) -> int:
+        return v if isinstance(v, int) else 0
+    return {
+        "public_headers_applied": True,
+        "manual_review_required": any(
+            not bool(lib.get("scope_resolved", True)) for lib in scoped_libs
+        ),
+        "public_additions": sum(
+            _as_int(lib.get("compatible_additions", 0)) for lib in scoped_libs
+        ),
+        "filtered_internal_changes": sum(
+            _as_int(lib.get("filtered_internal_count", 0)) for lib in scoped_libs
+        ),
+    }
+
+
+def _format_release_markdown(
+    worst_verdict: str,
+    old_dir: Path, new_dir: Path,
+    library_results: list[dict[str, object]],
+    removed_keys: list[str], added_keys: list[str],
+    old_map: dict[str, Path], new_map: dict[str, Path],
+    bundle_result: BundleDiffResult | None,
+    matrix_result: DiffResult | None,
+) -> str:
+    """Render the release summary as a Markdown document."""
     _VERDICT_EMOJI = {
         "NO_CHANGE": "✅", "COMPATIBLE": "✅", "COMPATIBLE_WITH_RISK": "⚠️",
         "API_BREAK": "⚠️", "BREAKING": "❌", "ERROR": "💥",
@@ -665,49 +759,78 @@ def _format_release_summary(
             f"| **Bundle** | {bundle_em} `{bundle_result.bundle_verdict.value}` "
             f"({bundle_count} cross-library finding{'s' if bundle_count != 1 else ''}) |",
         )
-    lines += [
+    lines += _release_md_libraries_table(library_results, _VERDICT_EMOJI)
+    lines += _release_md_changed_libraries(removed_keys, added_keys, old_map, new_map)
+    lines += _release_md_bundle_findings(bundle_result)
+    lines += _release_md_matrix_findings(matrix_result)
+    return "\n".join(lines)
+
+
+def _release_md_libraries_table(
+    library_results: list[dict[str, object]], emoji: dict[str, str],
+) -> list[str]:
+    """Markdown per-library results table."""
+    lines = [
         "", "## Libraries", "",
         "| Library | Verdict | Breaking | Source | Risk | Additions |",
         "|---|---|---|---|---|---|",
     ]
     for lib in library_results:
-        em = _VERDICT_EMOJI.get(str(lib["verdict"]), "?")
+        em = emoji.get(str(lib["verdict"]), "?")
         lines.append(
             f"| `{lib['library']}` | {em} `{lib['verdict']}` "
             f"| {lib.get('breaking', '—')} | {lib.get('source_breaks', '—')} "
             f"| {lib.get('risk_changes', '—')} | {lib.get('compatible_additions', '—')} |"
         )
+    return lines
+
+
+def _release_md_changed_libraries(
+    removed_keys: list[str], added_keys: list[str],
+    old_map: dict[str, Path], new_map: dict[str, Path],
+) -> list[str]:
+    """Markdown sections listing removed/added libraries."""
+    lines: list[str] = []
     if removed_keys:
         lines += ["", "## ⚠️ Removed Libraries", ""]
-        for k in removed_keys:
-            lines.append(f"- `{old_map[k].name}`")
+        lines += [f"- `{old_map[k].name}`" for k in removed_keys]
     if added_keys:
         lines += ["", "## ℹ️ Added Libraries", ""]
-        for k in added_keys:
-            lines.append(f"- `{new_map[k].name}`")
-    if bundle_result is not None and bundle_result.bundle_findings:
-        lines += ["", "## 🔗 Bundle (Cross-Library) Findings", ""]
-        for f in bundle_result.bundle_findings:
-            # Library-scoped findings (bundle_library_added /
-            # bundle_library_removed) carry the library name in
-            # `symbol`; manifest/import findings carry the symbol.
-            # Both are non-empty in practice, but guard against future
-            # finding shapes with no symbol attribution.
-            lines.append(
-                f"- **{f.kind.value}**"
-                + (f" — `{f.symbol}`" if f.symbol else "")
-                + (f" (consumer: `{f.consumer_library}`)" if f.consumer_library else "")
-                + (f" (provider: `{f.provider_library}`)" if f.provider_library else ""),
-            )
-            lines.append(f"  - {f.description}")
-    if matrix_result is not None and matrix_result.changes:
-        lines += ["", "## 🛠️ Build-Configuration (Matrix) Findings", ""]
-        for c in matrix_result.changes:
-            lines.append(
-                f"- **{c.kind.value}**" + (f" — `{c.symbol}`" if c.symbol else ""),
-            )
-            lines.append(f"  - {c.description}")
-    return "\n".join(lines)
+        lines += [f"- `{new_map[k].name}`" for k in added_keys]
+    return lines
+
+
+def _release_md_bundle_findings(bundle_result: BundleDiffResult | None) -> list[str]:
+    """Markdown section for cross-library (bundle) findings."""
+    if bundle_result is None or not bundle_result.bundle_findings:
+        return []
+    lines = ["", "## 🔗 Bundle (Cross-Library) Findings", ""]
+    for f in bundle_result.bundle_findings:
+        # Library-scoped findings (bundle_library_added /
+        # bundle_library_removed) carry the library name in `symbol`;
+        # manifest/import findings carry the symbol. Both are non-empty in
+        # practice, but guard against future finding shapes with no attribution.
+        lines.append(
+            f"- **{f.kind.value}**"
+            + (f" — `{f.symbol}`" if f.symbol else "")
+            + (f" (consumer: `{f.consumer_library}`)" if f.consumer_library else "")
+            + (f" (provider: `{f.provider_library}`)" if f.provider_library else ""),
+        )
+        lines.append(f"  - {f.description}")
+    return lines
+
+
+def _release_md_matrix_findings(matrix_result: DiffResult | None) -> list[str]:
+    """Markdown section for build-configuration (matrix) findings."""
+    if matrix_result is None or not matrix_result.changes:
+        return []
+    lines = ["", "## 🛠️ Build-Configuration (Matrix) Findings", ""]
+    for c in matrix_result.changes:
+        lines.append(
+            f"- **{c.kind.value}**" + (f" — `{c.symbol}`" if c.symbol else ""),
+        )
+        lines.append(f"  - {c.description}")
+    return lines
 
 
 def _write_release_summary_file(
@@ -1005,7 +1128,7 @@ def _strip_diff_results_and_adjust_verdict(
               type=click.Choice(["strict_abi", "sdk_vendor", "plugin_abi"], case_sensitive=True),
               default="strict_abi", show_default=True)
 @click.option("--policy-file", "policy_file_path",
-              type=click.Path(exists=True, path_type=Path), default=None)
+              type=POLICY_FILE_PARAM, default=None)
 @click.option("--fail-on-removed-library/--no-fail-on-removed-library",
               "fail_on_removed", default=False,
               help="Exit 8 when a library present in old_dir is absent in new_dir.")
