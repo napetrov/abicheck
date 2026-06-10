@@ -153,6 +153,23 @@ def test_bazel_non_object_jsonproto_diagnostic():
     assert any("aquery jsonproto was not a JSON object" in d for d in ev.diagnostics)
 
 
+def test_bazel_forced_header_not_mistaken_for_source():
+    # `-include config.hpp` is a forced header, not the translation unit; the
+    # real source `foo.cc` must be selected even though config.hpp looks CXX.
+    aquery = json.dumps({
+        "artifacts": [{"id": "1", "pathFragmentId": "10"}],
+        "actions": [{
+            "mnemonic": "CppCompile",
+            "arguments": ["/usr/bin/gcc", "-include", "config.hpp", "-x", "c++",
+                          "-c", "foo.cc", "-o", "foo.o"],
+            "primaryOutputId": "1",
+        }],
+        "pathFragments": [{"id": "10", "label": "foo.o"}],
+    })
+    ev = BazelAdapter(aquery=aquery).collect()
+    assert ev.compile_units[0].source == "foo.cc"
+
+
 def test_bazel_compile_action_without_source_is_skipped():
     aquery = json.dumps({
         "actions": [{"mnemonic": "CppCompile", "arguments": ["/usr/bin/gcc", "-v"]}],
