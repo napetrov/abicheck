@@ -55,14 +55,20 @@ class RedactionPolicy:
                 self.home_replacements = {home: "~"}
 
     def path(self, value: str) -> str:
-        """Redact a single path-like string."""
+        """Redact home-prefix occurrences in a path-like or flag token.
+
+        Replaces the home prefix wherever it appears, not only at the start, so
+        combined compiler flags that embed a workspace path (``-I/home/u/inc``,
+        ``-DROOT=/home/u/sdk``) are redacted in the persisted ``argv`` just like
+        the standalone path fields.
+        """
         if not value:
             return value
         out = value
         if self.redact_home:
             for prefix, placeholder in self.home_replacements.items():
-                if prefix and out.startswith(prefix):
-                    out = placeholder + out[len(prefix):]
+                if prefix:
+                    out = out.replace(prefix, placeholder)
         return out
 
     def arg(self, value: str) -> str:

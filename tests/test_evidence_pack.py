@@ -378,6 +378,30 @@ def test_redaction_rewrites_home_prefix():
     assert pol.path("/home/alice/proj/foo.cpp") == "~/proj/foo.cpp"
 
 
+def test_redaction_rewrites_embedded_home_paths_in_argv():
+    """Combined flags that embed a home path are redacted in argv (Codex)."""
+    pol = RedactionPolicy(home_replacements={"/home/alice": "~"})
+    assert pol.path("-I/home/alice/proj/include") == "-I~/proj/include"
+    assert pol.path("-DMYROOT=/home/alice/sdk") == "-DMYROOT=~/sdk"
+    red = pol.argv(["c++", "-I/home/alice/inc", "-DMYROOT=/home/alice/sdk", "-c", "a.cpp"])
+    assert not any("/home/alice" in tok for tok in red)
+
+
+def test_compile_db_redacts_embedded_home_paths_in_argv(tmp_path):
+    """End-to-end: embedded home paths never reach CompileUnit.argv."""
+    from abicheck.evidence.adapters import CompileDbAdapter
+
+    cdb = tmp_path / "compile_commands.json"
+    cdb.write_text(json.dumps([{
+        "directory": str(tmp_path), "file": "a.cpp",
+        "arguments": ["c++", "-I/home/alice/proj/include", "-c", "a.cpp"],
+    }]))
+    ev = CompileDbAdapter(
+        cdb, redaction=RedactionPolicy(home_replacements={"/home/alice": "~"}),
+    ).collect()
+    assert not any("/home/alice" in tok for tok in ev.compile_units[0].argv)
+
+
 def test_redaction_define_value_redacts_secret_macro():
     pol = RedactionPolicy(home_replacements={"/home/bob": "~"})
     assert pol.define_value("API_TOKEN", "hunter2") == "<redacted>"
