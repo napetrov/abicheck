@@ -173,6 +173,11 @@ def _route_type(
         state.odr_conflicts.append(
             {
                 "qualified_name": entity.qualified_name,
+                # The declaring header is part of the conflict's identity (ODR is
+                # keyed by (name, header) above), so the diff can tell a new
+                # conflict for a same-named type in a *different* header apart
+                # from one already present elsewhere.
+                "header": header,
                 "old_type_hash": prev,
                 "new_type_hash": entity.type_hash,
             }

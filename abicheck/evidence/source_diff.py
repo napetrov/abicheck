@@ -364,12 +364,20 @@ def _diff_mappings(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change]
 
 
 def _diff_odr(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change]:
-    """Flag ODR conflicts newly introduced on the new side (D6)."""
-    old_names = {c.get("qualified_name", "") for c in old.odr_conflicts}
+    """Flag ODR conflicts newly introduced on the new side (D6).
+
+    Keyed by ``(qualified_name, header)`` — the same discriminator the linker
+    uses — so a new conflict for a same-named type in a *different* header is
+    not suppressed just because a same-name conflict already existed elsewhere.
+    """
+    old_keys = {
+        (c.get("qualified_name", ""), c.get("header", "")) for c in old.odr_conflicts
+    }
     changes: list[Change] = []
     for conflict in new.odr_conflicts:
         name = conflict.get("qualified_name", "")
-        if name and name not in old_names:
+        key = (name, conflict.get("header", ""))
+        if name and key not in old_keys:
             changes.append(
                 Change(
                     kind=ChangeKind.ODR_SOURCE_CONFLICT,

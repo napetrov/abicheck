@@ -28,6 +28,7 @@ context→argv builder is pure and unit-testable; only :meth:`extract` shells ou
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -48,6 +49,26 @@ CASTXML_EXTRACTOR_VERSION = "0.1"
 _CXX_LANGS = frozenset({"cxx", "c++", "cpp"})
 #: Compiler basenames that mean castxml should run in MSVC mode.
 _MSVC_BINARIES = frozenset({"cl", "cl.exe", "clang-cl", "clang-cl.exe"})
+
+
+def _unredact_home(value: str) -> str:
+    """Expand a redacted home placeholder (``~``) back to the real home dir.
+
+    The evidence redaction policy (ADR-032 D7) rewrites the user's home prefix to
+    ``~`` *wherever it appears* before persisting paths/argv. ``subprocess`` does
+    not expand ``~`` (no shell), so replaying a redacted ``CompileUnit`` would
+    treat ``~/...`` / ``-I~/...`` as literal paths and fail for any home-directory
+    build. Reverse the substitution for the *replay only* (persisted values stay
+    redacted) by mirroring how redaction applied it — replacing ``~`` with the
+    current home. A no-op when there is no ``~`` (live/unredacted units) or no
+    resolvable home.
+    """
+    if "~" not in value:
+        return value
+    home = os.path.expanduser("~")
+    if not home or home == "~":
+        return value
+    return value.replace("~", home)
 
 
 def _basename(path: str) -> str:
@@ -241,9 +262,13 @@ class CastxmlSourceExtractor:
             raise SourceExtractionError(
                 f"{self.castxml_bin} not found in PATH; cannot run source ABI replay."
             )
-        source = Path(compile_unit.source)
-        if not source.is_absolute() and compile_unit.directory:
-            source = Path(compile_unit.directory) / source
+        # The CompileUnit may carry redacted home placeholders (`~`) from the
+        # evidence adapters; expand them for the replay only (ADR-032 D7), since
+        # subprocess does not (see _unredact_home).
+        directory = _unredact_home(compile_unit.directory)
+        source = Path(_unredact_home(compile_unit.source))
+        if not source.is_absolute() and directory:
+            source = Path(directory) / source
 
         with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp:
             out_xml = Path(tmp.name)
@@ -255,6 +280,9 @@ class CastxmlSourceExtractor:
                 castxml_bin=self.castxml_bin,
                 compiler_binary=self.compiler_binary,
             )
+            # Expand any redacted `~` in the include/system/sysroot/argv flags the
+            # command builder emitted from the (possibly redacted) CompileUnit.
+            cmd = [_unredact_home(tok) for tok in cmd]
             try:
                 # Run in the compile unit's directory so relative -I/-isystem
                 # and forced-include paths resolve exactly as the real build did
@@ -265,7 +293,7 @@ class CastxmlSourceExtractor:
                     text=True,
                     timeout=self.timeout,
                     check=False,
-                    cwd=compile_unit.directory or None,
+                    cwd=directory or None,
                 )
             except subprocess.TimeoutExpired as exc:
                 raise SourceExtractionError(

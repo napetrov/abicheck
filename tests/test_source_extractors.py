@@ -259,6 +259,56 @@ def test_extract_runs_in_compile_unit_directory(tmp_path: Path, monkeypatch) -> 
     assert tu.extractor["name"] == "castxml-source"
 
 
+def test_unredact_home_expands_tilde() -> None:
+    # The evidence redaction policy rewrites the home prefix to `~`; the replay
+    # must expand it back since subprocess does not (Codex review #335, P2).
+    import os
+
+    from abicheck.evidence.source_extractors.castxml import _unredact_home
+
+    home = os.path.expanduser("~")
+    assert _unredact_home("~/build/foo.cpp") == f"{home}/build/foo.cpp"
+    assert _unredact_home("-I~/include") == f"-I{home}/include"  # joined flag
+    assert _unredact_home("-std=c++17") == "-std=c++17"  # no tilde → untouched
+
+
+def test_extract_unredacts_home_for_replay(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # A redacted CompileUnit (`~` placeholders) must be expanded before castxml
+    # runs: the cmd and cwd handed to subprocess carry no literal `~` (Codex P2).
+    import os
+
+    from abicheck.evidence.source_extractors import castxml as castxml_mod
+
+    extractor = CastxmlSourceExtractor()
+    monkeypatch.setattr(extractor, "available", lambda: True)
+    captured: dict[str, object] = {}
+
+    class _Result:
+        returncode = 0
+        stderr = ""
+
+    def _fake_run(cmd: list[str], **kw: object) -> _Result:
+        captured["cmd"] = cmd
+        captured["cwd"] = kw.get("cwd")
+        out = cmd[cmd.index("-o") + 1]
+        Path(out).write_text('<GCC_XML><File id="f1" name="foo.h"/></GCC_XML>')
+        return _Result()
+
+    monkeypatch.setattr(castxml_mod.subprocess, "run", _fake_run)
+    # Absolute (redacted) source + a `~`-redacted include path in the build.
+    cu = _cu(
+        source="~/proj/src/foo.cpp",
+        directory="~/proj",
+        include_paths=["~/proj/include"],
+    )
+    extractor.extract(cu, public_header_roots=["foo.h"], target_id="target://x")
+    home = os.path.expanduser("~")
+    assert "~" not in str(captured["cwd"])
+    assert captured["cwd"] == f"{home}/proj"
+    assert all("~" not in tok for tok in captured["cmd"])  # type: ignore[union-attr]
+    assert f"{home}/proj/include" in captured["cmd"]  # type: ignore[operator]
+
+
 # -- model → SourceEntity mapping (pure, D4) ---------------------------------
 
 

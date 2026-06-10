@@ -506,6 +506,19 @@ def test_diff_odr_source_conflict_only_when_new() -> None:
     assert [c.kind for c in new_only] == [ChangeKind.ODR_SOURCE_CONFLICT]
 
 
+def test_diff_odr_tracked_by_name_and_header() -> None:
+    # A new conflict for a same-named type in a *different* header must still be
+    # flagged even when a same-name conflict already exists elsewhere — the diff
+    # keys by (qualified_name, header), matching the linker (Codex review #335).
+    a = {"qualified_name": "Widget", "header": "a/widget.h", "new_type_hash": "x"}
+    b = {"qualified_name": "Widget", "header": "b/widget.h", "new_type_hash": "y"}
+    changes = diff_source_abi(
+        _surface(odr_conflicts=[a]), _surface(odr_conflicts=[a, b])
+    )
+    assert [c.kind for c in changes] == [ChangeKind.ODR_SOURCE_CONFLICT]
+    assert changes[0].new_value == "y"  # the b/widget.h conflict, not a/widget.h
+
+
 def test_diff_generated_header_changed() -> None:
     old = _surface(
         reachable_declarations=[
