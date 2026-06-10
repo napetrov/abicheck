@@ -189,6 +189,42 @@ def test_linker_keeps_overloads_distinct() -> None:
     assert surface.unmatched["decls_without_symbol"] == ["ns::f"]
 
 
+def test_linker_keeps_unmangled_overloads_distinct() -> None:
+    # castxml omits a mangled name for some decls (notably constructors), so two
+    # public overloads share the bare qualified_name "Widget". identity() folds
+    # in signature_hash so they stay distinct instead of collapsing onto one key
+    # and silently dropping an overload (Codex review #335, P2).
+    ctor_int = _entity("Widget", "function", mangled="", signature_hash="si", value="x=1")
+    ctor_dbl = _entity("Widget", "function", mangled="", signature_hash="sd", value="y=0")
+    assert ctor_int.identity() != ctor_dbl.identity()
+    tu = SourceAbiTu(functions=[ctor_int, ctor_dbl])
+    surface = link_source_abi([tu])
+    # Both overloads survive linking onto the public surface.
+    assert len(surface.reachable_declarations) == 2
+    # A constexpr/macro with no signature still keys on the bare name.
+    assert _entity("FOO", "constexpr", value="1").identity() == "FOO"
+
+
+def test_diff_default_arg_change_on_unmangled_overload() -> None:
+    # The default-arg change is on one of two unmangled overloads; folding
+    # signature_hash into identity keeps them apart so the change is detected on
+    # the right overload and not lost to a key collision (Codex review #335, P2).
+    old = _surface(
+        reachable_declarations=[
+            _entity("Widget", "function", mangled="", signature_hash="si", value="x=1"),
+            _entity("Widget", "function", mangled="", signature_hash="sd", value="y=0"),
+        ]
+    )
+    new = _surface(
+        reachable_declarations=[
+            _entity("Widget", "function", mangled="", signature_hash="si", value="x=2"),
+            _entity("Widget", "function", mangled="", signature_hash="sd", value="y=0"),
+        ]
+    )
+    kinds = [c.kind for c in diff_source_abi(old, new)]
+    assert kinds.count(ChangeKind.DEFAULT_ARGUMENT_CHANGED) == 1
+
+
 def test_linker_matches_unmangled_c_exports() -> None:
     # A C / extern "C" decl has no mangled_name; the export is the plain name.
     # It must still map, not be reported as unmatched (Codex review #335).

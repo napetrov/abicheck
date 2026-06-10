@@ -50,8 +50,10 @@ def _by_identity(entities: list[SourceEntity]) -> dict[str, SourceEntity]:
     Keying by ``qualified_name`` alone would collapse overloads (``f(int)`` and
     ``f(double)`` share a name), dropping all but the last and risking comparing
     two different overloads across versions. ``SourceEntity.identity()`` keys by
-    mangled name when present (falling back to the qualified name), so each
-    overload is matched to its own counterpart.
+    mangled name when present, falling back to ``qualified_name#signature_hash``
+    (or the bare qualified name when there is no signature), so each overload —
+    including unmangled ones like castxml's constructors — is matched to its own
+    counterpart.
     """
     return {e.identity(): e for e in entities if e.identity()}
 

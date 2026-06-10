@@ -126,11 +126,25 @@ class SourceEntity:
         The mangled name when available — it encodes the full signature, so
         overloads sharing one ``qualified_name`` (``f(int)`` vs ``f(double)``)
         get distinct keys, and it stays stable across body/default-argument
-        changes (which the diff detects via ``body_hash``/``value``). Falls back
-        to the qualified name for entities without mangling: macros, ``constexpr``
-        constants, ``extern "C"`` symbols, and extractors that omit it.
+        changes (which the diff detects via ``body_hash``/``value``).
+
+        When no mangled name is present, fold in the type-level
+        ``signature_hash`` so unmangled overloads stay distinct. castxml omits a
+        mangled name for some declarations — notably constructors — so
+        overloaded public constructors (``Widget(int)`` and ``Widget(double)``,
+        both bare-named ``Widget``) would otherwise collapse onto one key and
+        silently drop an overload from the linked surface / diff. The signature
+        hash is stable across body/default-argument edits, so those
+        modifications are still matched (and detected via ``body_hash``/
+        ``value``); a true signature change reads as add+remove, exactly as a
+        mangled-name change would. Entities with no signature (macros,
+        ``constexpr`` constants, types) fall back to the bare qualified name.
         """
-        return self.mangled_name or self.qualified_name
+        if self.mangled_name:
+            return self.mangled_name
+        if self.signature_hash:
+            return f"{self.qualified_name}#{self.signature_hash}"
+        return self.qualified_name
 
     def to_dict(self) -> dict[str, Any]:
         return {
