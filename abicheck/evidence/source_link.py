@@ -125,9 +125,11 @@ class _LinkState:
     identity_to_qname: dict[str, str] = field(
         default_factory=dict
     )  # identity -> qualified_name
-    type_by_name: dict[str, str] = field(
-        default_factory=dict
-    )  # qualified_name -> type_hash (ODR)
+    # (qualified_name, declaring header) -> type_hash, for ODR detection. The
+    # declaring header is part of the key because castxml reports a bare type
+    # name (namespace lives in the XML `context`), so a::Widget and b::Widget
+    # would otherwise collide into a false odr_source_conflict.
+    type_by_name: dict[tuple[str, str], str] = field(default_factory=dict)
     odr_conflicts: list[dict[str, str]] = field(default_factory=list)
     public_decl_ids: list[str] = field(default_factory=list)
     matched_symbols: set[str] = field(default_factory=set)
@@ -159,7 +161,14 @@ def _route_type(
     surface.reachable_types.append(entity)
     if not entity.qualified_name:
         return
-    prev = state.type_by_name.get(entity.qualified_name)
+    # Key ODR detection by (name, declaring header) so same-named types in
+    # different namespaces/headers (a::Widget vs b::Widget, which castxml emits
+    # with the bare name) don't conflate into a false odr_source_conflict. A
+    # genuine ODR conflict (one type, two TUs, divergent definitions) shares
+    # both name and header, so it still fires.
+    header = entity.source_location.path if entity.source_location else ""
+    key = (entity.qualified_name, header)
+    prev = state.type_by_name.get(key)
     if prev is not None and prev != entity.type_hash:
         state.odr_conflicts.append(
             {
@@ -169,7 +178,7 @@ def _route_type(
             }
         )
     else:
-        state.type_by_name[entity.qualified_name] = entity.type_hash
+        state.type_by_name[key] = entity.type_hash
     surface.mappings["source_type_to_debug_type"][entity.qualified_name] = (
         entity.type_hash
     )

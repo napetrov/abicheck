@@ -215,11 +215,39 @@ def test_linker_excludes_non_public_entities() -> None:
 
 
 def test_linker_detects_odr_conflict_across_tus() -> None:
+    # Same name AND same declaring header, divergent hashes → real ODR conflict.
     tu1 = SourceAbiTu(types=[_entity("Widget", "record", type_hash="hashA")])
     tu2 = SourceAbiTu(types=[_entity("Widget", "record", type_hash="hashB")])
     surface = link_source_abi([tu1, tu2])
     assert len(surface.odr_conflicts) == 1
     assert surface.odr_conflicts[0]["qualified_name"] == "Widget"
+
+
+def test_linker_no_odr_for_same_name_in_different_headers() -> None:
+    # castxml reports a bare type name (namespace lives in the XML context), so
+    # a::Widget (a.h) and b::Widget (b.h) both arrive as "Widget". Keying ODR by
+    # (name, header) keeps them distinct so no false odr_source_conflict fires
+    # even though their layouts differ (Codex review #335).
+    a_widget = SourceEntity(
+        id="t1",
+        kind="record",
+        qualified_name="Widget",
+        type_hash="hashA",
+        source_location=SourceLocation(path="a.h", origin="PUBLIC_HEADER"),
+        visibility="public_header",
+    )
+    b_widget = SourceEntity(
+        id="t2",
+        kind="record",
+        qualified_name="Widget",
+        type_hash="hashB",
+        source_location=SourceLocation(path="b.h", origin="PUBLIC_HEADER"),
+        visibility="public_header",
+    )
+    surface = link_source_abi(
+        [SourceAbiTu(types=[a_widget]), SourceAbiTu(types=[b_widget])]
+    )
+    assert surface.odr_conflicts == []
 
 
 def test_linker_forced_public_overrides_visibility() -> None:
