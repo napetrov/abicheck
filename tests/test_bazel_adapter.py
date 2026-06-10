@@ -242,6 +242,16 @@ def test_bazel_link_keeps_shared_library_inputs():
     assert "app/app.d" not in inputs              # non-library input dropped
 
 
+def test_bazel_binary_proto_file_diagnostic_no_crash(tmp_path):
+    # A binary `--output=proto` blob (not UTF-8): must not raise, and should
+    # surface the "pass --output=jsonproto" diagnostic instead.
+    pb = tmp_path / "aquery.pb"
+    pb.write_bytes(b"\x08\x96\x01\xff\xfe\x00proto\xc3\x28payload")
+    ev = BazelAdapter(aquery=pb).collect()
+    assert any("jsonproto" in d for d in ev.diagnostics)
+    assert not ev.compile_units and not ev.link_units
+
+
 def test_bazel_missing_precaptured_file_diagnostic(tmp_path):
     missing = tmp_path / "nope.json"
     ev = BazelAdapter(cquery=missing).collect()

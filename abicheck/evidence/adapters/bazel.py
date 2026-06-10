@@ -401,15 +401,21 @@ def _str_list(value: object) -> list[str]:
 
 
 def _as_text(value: str | Path | None) -> str | None:
-    """Return text content for a value that may be inline text or a file path."""
+    """Return text content for a value that may be inline text or a file path.
+
+    Files are decoded with ``errors="replace"`` so a binary ``--output=proto``
+    blob (a common mistyped-output mistake) does not raise ``UnicodeDecodeError``
+    but instead flows through as non-JSON text, letting ``_load_jsonproto`` emit
+    the "pass --output=jsonproto" diagnostic rather than crashing the command.
+    """
     if value is None:
         return None
-    if isinstance(value, Path):
-        return value.read_text(encoding="utf-8") if value.is_file() else None
-    candidate = Path(value)
+    candidate = value if isinstance(value, Path) else Path(value)
     try:
         if candidate.is_file():
-            return candidate.read_text(encoding="utf-8")
+            return candidate.read_text(encoding="utf-8", errors="replace")
     except OSError:
         pass
-    return value
+    # Not a readable file: a bare string is treated as inline text; a Path that
+    # does not point at a file yields nothing (handled as a missing input).
+    return None if isinstance(value, Path) else value
