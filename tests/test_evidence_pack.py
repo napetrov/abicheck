@@ -401,6 +401,32 @@ def test_compile_db_redacts_secret_define(tmp_path):
     assert defines["FOO"] == "1"
 
 
+def test_redaction_argv_redacts_split_define_secret():
+    """Split -D form ['-D', 'KEY=secret'] must redact the value token."""
+    pol = RedactionPolicy(redact_home=False)
+    out = pol.argv(["c++", "-D", "API_TOKEN=hunter2", "-D", "FOO=1", "-c", "a.cpp"])
+    assert "API_TOKEN=<redacted>" in out
+    assert "hunter2" not in " ".join(out)
+    assert "FOO=1" in out
+
+
+def test_compile_db_split_define_secret_not_leaked_in_argv(tmp_path):
+    """End-to-end: split-form secret never reaches CompileUnit.argv."""
+    from abicheck.evidence.adapters import CompileDbAdapter
+
+    cdb = tmp_path / "compile_commands.json"
+    cdb.write_text(json.dumps([{
+        "directory": str(tmp_path), "file": "a.cpp",
+        "arguments": ["c++", "-D", "API_TOKEN=hunter2", "-D", "_GLIBCXX_USE_CXX11_ABI=0", "-c", "a.cpp"],
+    }]))
+    ev = CompileDbAdapter(cdb).collect()
+    cu = ev.compile_units[0]
+    assert "hunter2" not in " ".join(cu.argv)
+    assert cu.defines["API_TOKEN"] == "<redacted>"
+    # The split-form ABI macro is still captured as a diffable option.
+    assert any(o.key == "define:_GLIBCXX_USE_CXX11_ABI" for o in ev.build_options)
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -423,6 +449,21 @@ def test_extract_abi_relevant_flags():
     assert "-fvisibility=hidden" in flags
     assert "-O2" not in flags
     assert "-DFOO=1" not in flags
+
+
+def test_extract_abi_relevant_flags_split_define_form():
+    """Split ['-D', 'KEY=VAL'] ABI macros are captured and normalized."""
+    flags = extract_abi_relevant_flags(
+        ["c++", "-D", "_GLIBCXX_USE_CXX11_ABI=0", "-D", "FOO=1", "-std=c++20"]
+    )
+    assert "-D_GLIBCXX_USE_CXX11_ABI=0" in flags  # normalized to combined form
+    assert "-std=c++20" in flags
+    assert not any("FOO" in f for f in flags)
+
+
+def test_extract_abi_relevant_flags_trailing_bare_define():
+    """A trailing bare -D with no following token does not crash."""
+    assert extract_abi_relevant_flags(["c++", "-D"]) == []
 
 
 # ── BuildEvidence merge ──────────────────────────────────────────────────────

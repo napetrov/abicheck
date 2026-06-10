@@ -97,16 +97,29 @@ def compile_unit_id(source: str, argv: list[str], output: str = "") -> str:
 
 
 def extract_abi_relevant_flags(argv: list[str]) -> list[str]:
-    """Return the subset of *argv* that is ABI/API-affecting (ADR-029 D9)."""
+    """Return the subset of *argv* that is ABI/API-affecting (ADR-029 D9).
+
+    Handles both the combined ``-DKEY=VALUE`` define form and the split
+    ``['-D', 'KEY=VALUE']`` form; split ABI macros are normalized to the
+    combined token so downstream option derivation parses them uniformly.
+    """
     out: list[str] = []
-    for arg in argv:
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
         if arg.startswith(ABI_RELEVANT_FLAG_PREFIXES):
             out.append(arg)
+        elif arg in ("-D", "/D") and i + 1 < len(argv):
+            # Split form: -D KEY[=VALUE]. Normalize to the combined token.
+            nxt = argv[i + 1]
+            if nxt.split("=", 1)[0] in _ABI_RELEVANT_DEFINES:
+                out.append(arg + nxt)
+            i += 2
+            continue
         elif arg.startswith(("-D", "/D")):
-            body = arg[2:]
-            key = body.split("=", 1)[0]
-            if key in _ABI_RELEVANT_DEFINES:
+            if arg[2:].split("=", 1)[0] in _ABI_RELEVANT_DEFINES:
                 out.append(arg)
+        i += 1
     return out
 
 

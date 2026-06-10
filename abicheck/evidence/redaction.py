@@ -91,7 +91,32 @@ class RedactionPolicy:
         return self.path(value)
 
     def argv(self, args: list[str]) -> list[str]:
-        return [self.arg(a) for a in args]
+        """Redact a full argument list, handling split ``-D KEY=VALUE`` form.
+
+        A secret macro may be passed as a single ``-DKEY=secret`` token (handled
+        by :meth:`arg`) or as two tokens ``['-D', 'KEY=secret']``; the latter
+        needs lookahead so the value token is redacted before it is persisted in
+        ``CompileUnit.argv``.
+        """
+        out: list[str] = []
+        i = 0
+        while i < len(args):
+            a = args[i]
+            if (
+                self.redact_secrets
+                and a in ("-D", "/D")
+                and i + 1 < len(args)
+                and "=" in args[i + 1]
+            ):
+                key, _, _ = args[i + 1].partition("=")
+                if _SECRET_DEFINE_RE.search(key):
+                    out.append(a)
+                    out.append(key + "=" + _REDACTED)
+                    i += 2
+                    continue
+            out.append(self.arg(a))
+            i += 1
+        return out
 
 
 #: Default policy used when an adapter is given no explicit policy.
