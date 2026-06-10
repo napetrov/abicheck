@@ -60,6 +60,11 @@ from .source_abi import (
     SourceLocation,
 )
 from .source_diff import diff_source_abi
+from .source_extractors import (
+    CastxmlSourceExtractor,
+    SourceAbiExtractor,
+    SourceExtractionError,
+)
 from .source_link import link_source_abi
 
 __all__ = [
@@ -67,6 +72,7 @@ __all__ = [
     "SOURCE_ABI_VERSION",
     "BuildEvidence",
     "BuildOption",
+    "CastxmlSourceExtractor",
     "CompileUnit",
     "EvidenceConfidence",
     "EvidenceEntity",
@@ -78,9 +84,11 @@ __all__ = [
     "Generator",
     "LayerCoverage",
     "LinkUnit",
+    "SourceAbiExtractor",
     "SourceAbiSurface",
     "SourceAbiTu",
     "SourceEntity",
+    "SourceExtractionError",
     "SourceLocation",
     "Target",
     "Toolchain",

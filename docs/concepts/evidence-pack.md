@@ -35,10 +35,11 @@ unless an artifact diff also proves the break. They flow through the normal
 | **L4** | per-TU source ABI replay | Source-visible ABI/API facts | API/source-risk evidence; never sole shipped-ABI authority |
 | **L5** | Clang/Kythe/CodeQL graph summaries | Include/type/call/build reasoning | Explanation, localization, impact |
 
-L3 is implemented today (ADR-029). L4's schema, linker, and source-replay diff
-are implemented (ADR-030 phases 1/3/4 — see [L4 findings](#source-abi-replay-findings-l4));
-the per-TU extractors (castxml/Clang/Android) that populate them are the
-remaining ADR-030 work. L5 is planned (ADR-031).
+L3 is implemented today (ADR-029). L4's schema, linker, source-replay diff, and
+the **castxml** per-TU extractor are implemented (ADR-030 phases 1–4 — see
+[L4 findings](#source-abi-replay-findings-l4)); the Clang and Android extractors
+(for inline/template body fingerprints) are the remaining ADR-030 work. L5 is
+planned (ADR-031).
 
 ## Workflow
 
