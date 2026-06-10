@@ -568,6 +568,47 @@ def test_non_public_origin_is_not_api_relevant() -> None:
     assert fn.visibility == "private_header"
 
 
+def test_private_member_of_public_class_is_not_api_relevant() -> None:
+    # A private/protected member of a public class is in a public header but not
+    # callable by consumers, so it must stay off the public source surface — a
+    # private default-arg edit must not produce an L4 finding (Codex review #335,
+    # P2). A public method (and a free function) stay api_relevant.
+    from abicheck.model import AccessLevel
+
+    private_method = entity_from_function(
+        Function(
+            name="Widget::impl",
+            mangled="_ZN6Widget4implEv",
+            return_type="void",
+            origin=ScopeOrigin.PUBLIC_HEADER,
+            access=AccessLevel.PRIVATE,
+        )
+    )
+    assert private_method.api_relevant is False
+
+    protected_method = entity_from_function(
+        Function(
+            name="Widget::hook",
+            mangled="_ZN6Widget4hookEv",
+            return_type="void",
+            origin=ScopeOrigin.PUBLIC_HEADER,
+            access=AccessLevel.PROTECTED,
+        )
+    )
+    assert protected_method.api_relevant is False
+
+    public_method = entity_from_function(
+        Function(
+            name="Widget::api",
+            mangled="_ZN6Widget3apiEv",
+            return_type="void",
+            origin=ScopeOrigin.PUBLIC_HEADER,
+            access=AccessLevel.PUBLIC,
+        )
+    )
+    assert public_method.api_relevant is True
+
+
 # -- assemble_source_tu (pure, D4) -------------------------------------------
 
 

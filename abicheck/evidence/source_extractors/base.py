@@ -34,6 +34,7 @@ import hashlib
 from typing import Protocol
 
 from ...model import (
+    AccessLevel,
     EnumType,
     Function,
     RecordType,
@@ -56,6 +57,11 @@ _ORIGIN_MAP: dict[ScopeOrigin, tuple[str, str]] = {
 }
 
 _PUBLIC_ORIGINS = frozenset({ScopeOrigin.PUBLIC_HEADER, ScopeOrigin.GENERATED})
+#: Class-member access levels that keep a member *off* the public source surface:
+#: a private/protected method or constructor of a public class is not callable by
+#: consumers, so a private default-arg edit must not produce an L4 finding. Free
+#: (namespace-scope) functions carry AccessLevel.PUBLIC, so they are unaffected.
+_NON_PUBLIC_ACCESS = frozenset({AccessLevel.PRIVATE, AccessLevel.PROTECTED})
 
 
 class SourceExtractionError(RuntimeError):
@@ -156,7 +162,9 @@ def entity_from_function(fn: Function) -> SourceEntity:
         value=default_repr,
         source_location=_location(fn.source_header, fn.source_location, fn.origin),
         visibility=_visibility(fn.origin),
-        api_relevant=fn.origin in _PUBLIC_ORIGINS,
+        # Private/protected members of a public class are not part of the callable
+        # public surface, so keep them off it (Codex review #335, P2).
+        api_relevant=fn.origin in _PUBLIC_ORIGINS and fn.access not in _NON_PUBLIC_ACCESS,
         confidence=EvidenceConfidence.HIGH,
     )
 
