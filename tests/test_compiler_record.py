@@ -203,3 +203,26 @@ def test_collect_evidence_read_compiler_record_requires_binary(tmp_path):
     result = CliRunner().invoke(main, ["collect-evidence", "--read-compiler-record", "-o", str(out)])
     assert result.exit_code != 0
     assert "requires --binary" in result.output
+
+
+def test_collect_evidence_preserves_option_only_compiler_record(tmp_path, monkeypatch):
+    # A stripped ELF whose only provenance is `.GCC.command.line` switches (no
+    # source TU, no DWARF producer) yields build_options but no units/toolchains.
+    # The pack must still persist that build evidence rather than drop it.
+    from abicheck.evidence.pack import EvidencePack
+
+    binpath = tmp_path / "switches.so"
+    binpath.write_bytes(b"\x7fELF")
+    section = _FakeSection(b"GNU C11 13.3.0 -std=c11 -D_GLIBCXX_USE_CXX11_ABI=0 -O2\x00")
+    monkeypatch.setattr(cr, "ELFFile", lambda _fh: _FakeELF(section=section, dwarf=None))
+
+    out = tmp_path / "e"
+    result = CliRunner().invoke(
+        main, ["collect-evidence", "--read-compiler-record", "--binary", str(binpath), "-o", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    pack = EvidencePack.load(out)
+    assert pack.build_evidence is not None  # option-only evidence not dropped
+    assert not pack.build_evidence.compile_units and not pack.build_evidence.toolchains
+    opts = {(o.key, o.value) for o in pack.build_evidence.build_options}
+    assert ("define:_GLIBCXX_USE_CXX11_ABI", "0") in opts
