@@ -282,8 +282,9 @@ def _is_internal_data_symbol(name: str) -> bool:
     implementation (C standard) and is the convention real libraries use for
     private exported data (``_XkeyTable``, ``_pcre2_ucd_records_8``,
     ``_UCD_accessors``, ``_rl_*``). Such symbols are not part of the intended
-    public ABI, so a size change on them is treated as risk rather than a hard
-    break. Linker artifacts (``_init``/``_edata``/…) are filtered earlier.
+    public ABI, but exported data still participates in the dynamic ABI, so the
+    kind remains breaking by default. Linker artifacts (``_init``/``_edata``/…)
+    are filtered earlier.
 
     Mangled C++ (``_Z…`` / ``__Z…``) symbols are excluded: their leading
     underscore is part of the Itanium mangling, not a reserved-identifier
@@ -657,11 +658,10 @@ def _diff_elf_symbol_pair(sym_name: str, s_old: Any, s_new: Any) -> list[Change]
         and s_old.size != s_new.size
         and s_new.sym_type in (SymbolType.OBJECT, SymbolType.COMMON, SymbolType.TLS)
     ):
-        # An internal-looking (reserved/underscore-prefixed) exported data
-        # symbol's size change is usually private implementation state, so it is
-        # downgraded to a risk finding rather than a hard break (ISSUE-45/54/55/56:
-        # _XkeyTable, _pcre2_ucd_*, _UCD_/_UPT_accessors, _rl_*). A public-looking
-        # data symbol keeps the hard-breaking copy-relocation classification.
+        # Use a distinct kind for internal-looking (reserved/underscore-prefixed)
+        # exported data symbols so policy files can target them, but keep the
+        # default severity breaking: exported OBJECT/COMMON/TLS size changes can
+        # break copy relocations or direct data consumers regardless of spelling.
         size_kind = (
             ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL
             if _is_internal_data_symbol(sym_name)
