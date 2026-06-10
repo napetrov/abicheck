@@ -110,6 +110,27 @@ def test_build_command_c_uses_gcc_and_no_target_for_msvc() -> None:
     assert not any(a.startswith("--target=") for a in msvc)
 
 
+def test_build_command_uses_build_action_compiler() -> None:
+    # The compiler recorded in the build action (argv[0]) is preferred over the
+    # g++/gcc fallback so clang TUs replay against clang's builtins (Codex #335).
+    clang = build_castxml_command(
+        _cu(argv=["clang++", "-c", "foo.cpp"]), Path("foo.cpp"), Path("o.xml")
+    )
+    assert "--castxml-cc-gnu" in clang
+    assert "clang++" in clang
+    # clang-cl is MSVC-mode.
+    clang_cl = build_castxml_command(
+        _cu(argv=["clang-cl", "/c", "foo.cpp"]), Path("foo.cpp"), Path("o.xml")
+    )
+    assert "--castxml-cc-msvc" in clang_cl
+    assert "clang-cl" in clang_cl
+    # An explicit override still wins over argv.
+    override = build_castxml_command(
+        _cu(argv=["clang++"]), Path("a.cpp"), Path("o.xml"), compiler_binary="g++"
+    )
+    assert "g++" in override and "clang++" not in override
+
+
 def test_build_command_carries_argv_only_options() -> None:
     # ABI-relevant flags and forced includes that live only in argv must be
     # carried through so castxml parses the same TU as the build (Codex review).
@@ -339,6 +360,39 @@ def test_parse_root_maps_castxml_xml_without_running_castxml() -> None:
     surface = link_source_abi([tu], target_id="target://libfoo")
     assert any("add" in e.qualified_name for e in surface.reachable_declarations)
     assert any("Widget" in e.qualified_name for e in surface.reachable_types)
+
+
+def test_parse_root_marks_generated_public_header_as_generated() -> None:
+    # A header that is both public and generated must keep the GENERATED marker
+    # so a generated public type change is caught by diff_source_abi's
+    # generated-header check, not merged into the plain public surface (Codex).
+    from xml.etree.ElementTree import Element, SubElement
+
+    root = Element("GCC_XML")
+    SubElement(root, "File", id="f1", name="generated/config_generated.h")
+    SubElement(root, "FundamentalType", id="t_int", name="int")
+    SubElement(root, "Location", id="loc1", file="f1", line="3")
+    cls = SubElement(
+        root, "Class", id="c1", name="Cfg", size="32", align="32", location="loc1"
+    )
+    SubElement(cls, "Field", name="flag", type="t_int", offset="0")
+
+    extractor = CastxmlSourceExtractor()
+    tu = extractor._parse_root(
+        root,
+        _cu(),
+        public_header_roots=["generated/config_generated.h"],
+        target_id="target://libfoo",
+    )
+    cfg = next(e for e in tu.types if "Cfg" in e.qualified_name)
+    assert cfg.visibility == "generated"
+    assert cfg.source_location is not None
+    assert cfg.source_location.origin == "GENERATED"
+    # It still survives linking onto the public surface (generated == public).
+    from abicheck.evidence import link_source_abi
+
+    surface = link_source_abi([tu], target_id="target://libfoo")
+    assert any("Cfg" in e.qualified_name for e in surface.reachable_types)
 
 
 # -- end-to-end via real castxml (integration) -------------------------------

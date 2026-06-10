@@ -141,6 +141,21 @@ def _is_generated_header(header_segs: tuple[str, ...]) -> bool:
     return bool(_GENERATED_BASENAME.match(header_segs[-1]))
 
 
+def is_generated_header(source_header: str | None) -> bool:
+    """Whether a header path looks machine-generated (``moc_*``, ``*.pb.h``,
+    a ``generated/`` directory, …).
+
+    Public wrapper around the segment-based heuristic. ``classify_origin``
+    checks the public-header set *before* this heuristic, so a header that is
+    both public and generated classifies as ``PUBLIC_HEADER``; callers that need
+    to preserve the generated marker (ADR-030 ``generated_header_changed``) can
+    consult this directly.
+    """
+    if not source_header:
+        return False
+    return _is_generated_header(_segments(source_header))
+
+
 def classify_origin(
     source_header: str | None,
     public_header_segs: list[tuple[str, ...]],

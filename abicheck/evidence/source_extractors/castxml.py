@@ -45,12 +45,24 @@ from .base import SourceExtractionError, assemble_source_tu
 CASTXML_EXTRACTOR_VERSION = "0.1"
 
 _CXX_LANGS = frozenset({"cxx", "c++", "cpp"})
+#: Compiler basenames that mean castxml should run in MSVC mode.
+_MSVC_BINARIES = frozenset({"cl", "cl.exe", "clang-cl", "clang-cl.exe"})
 
 
 def _compiler_binary(compile_unit: CompileUnit, override: str | None) -> str:
-    """Pick the compiler binary castxml should emulate for this TU."""
+    """Pick the compiler binary castxml should emulate for this TU.
+
+    Prefers the compiler actually recorded in the build action (``argv[0]``) so
+    a clang/clang-cl/cross TU is replayed against its real builtin include
+    paths, target defaults, and accepted flags — castxml invokes this binary to
+    discover them. Falls back to g++/gcc by language only when no command is
+    available (and an explicit ``override`` always wins).
+    """
     if override:
         return override
+    argv = compile_unit.argv
+    if argv and argv[0] and not argv[0].startswith("-"):
+        return argv[0]
     return "g++" if compile_unit.language.lower() in _CXX_LANGS else "gcc"
 
 
@@ -107,7 +119,7 @@ def build_castxml_command(
     headers the compiler actually saw under the flags it actually used.
     """
     cc_bin = _compiler_binary(compile_unit, compiler_binary)
-    cc_id = "msvc" if Path(cc_bin).name.lower() in ("cl", "cl.exe") else "gnu"
+    cc_id = "msvc" if Path(cc_bin).name.lower() in _MSVC_BINARIES else "gnu"
 
     cmd = [castxml_bin, "--castxml-output=1", f"--castxml-cc-{cc_id}", cc_bin]
     cmd += _std_flag(compile_unit.standard, cc_id)
@@ -224,7 +236,8 @@ class CastxmlSourceExtractor:
         # Imported lazily: the castxml parser pulls in the heavy dumper model
         # graph, which the lightweight evidence layer should not load eagerly.
         from ...dumper_castxml import _CastxmlParser
-        from ...provenance import build_public_set, tag_provenance
+        from ...model import EnumType, Function, RecordType, ScopeOrigin, Variable
+        from ...provenance import build_public_set, is_generated_header, tag_provenance
 
         parser = _CastxmlParser(
             root,
@@ -246,8 +259,23 @@ class CastxmlSourceExtractor:
         header_segs, dir_segs, have_set = build_public_set(
             list(public_header_roots), []
         )
-        for decl in (*functions, *records, *enums, *variables):
+        decls: list[Function | RecordType | EnumType | Variable] = [
+            *functions,
+            *records,
+            *enums,
+            *variables,
+        ]
+        for decl in decls:
             tag_provenance(decl, header_segs, dir_segs, have_set)
+            # classify_origin checks the public set before the generated
+            # heuristic, so a header that is both public and generated lands as
+            # PUBLIC_HEADER. Re-mark it GENERATED (still public) so a generated
+            # public type change is reported as generated_header_changed (D6),
+            # not silently merged into the plain public surface.
+            if decl.origin == ScopeOrigin.PUBLIC_HEADER and is_generated_header(
+                decl.source_header
+            ):
+                decl.origin = ScopeOrigin.GENERATED
 
         return assemble_source_tu(
             compile_unit,
