@@ -27,6 +27,8 @@ L3/L4/L5 are ordinary `ChangeKind` entries that default to `API_BREAK_KINDS`
 | `adapters/cmake_file_api.py` | CMake File API reply → targets/toolchains/fileSets | 029 D4 |
 | `adapters/ninja.py` | Ninja `-t compdb`/`graph` (live or pre-captured) | 029 D5 |
 | `adapters/bazel.py` | Bazel `cquery`/`aquery` jsonproto → targets/compile+link units (live or pre-captured) | 029 D6 |
+| `adapters/make.py` | Make `-n`/`--trace` dry-run transcript → reduced-confidence compile units | 029 D7 |
+| `compiler_record.py` | ELF `.GCC.command.line` + DWARF `DW_AT_producer` → toolchain/options (advisory) | 029 D8 |
 
 ## Versioning
 

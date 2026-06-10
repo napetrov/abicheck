@@ -30,6 +30,7 @@ from .base import (
 from .bazel import BazelAdapter
 from .cmake_file_api import CMakeFileApiAdapter
 from .compile_db import CompileDbAdapter
+from .make import MakeAdapter
 from .ninja import NinjaAdapter
 
 __all__ = [
@@ -38,6 +39,7 @@ __all__ = [
     "BuildAdapter",
     "CMakeFileApiAdapter",
     "CompileDbAdapter",
+    "MakeAdapter",
     "NinjaAdapter",
     "compile_unit_id",
     "detect_language",

@@ -1,0 +1,132 @@
+# Copyright 2026 Nikolay Petrov
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Make adapter coverage (ADR-029 D7)."""
+from __future__ import annotations
+
+from click.testing import CliRunner
+
+from abicheck.cli import main
+from abicheck.evidence.adapters import MakeAdapter
+from abicheck.evidence.pack import EvidencePack
+
+DRY_RUN = """\
+make: Entering directory '/home/user/proj'
+gcc -std=c11 -D_GLIBCXX_USE_CXX11_ABI=0 -Iinclude -c src/a.c -o build/a.o
+@g++ -std=c++20 -c src/b.cpp -o build/b.o
+cc -shared -o libfoo.so build/a.o build/b.o
+ar rcs libbar.a build/a.o
+make: Leaving directory '/home/user/proj'
+"""
+
+
+def test_make_dry_run_extracts_compile_units():
+    ev = MakeAdapter(dry_run=DRY_RUN).collect()
+    assert ev.generators[0].kind == "make"
+    units = {c.source: c for c in ev.compile_units}
+    # Only the two `-c` compile recipes become units; link/ar/info lines are skipped.
+    assert set(units) == {"src/a.c", "src/b.cpp"}
+    assert units["src/a.c"].standard == "c11"
+    assert units["src/b.cpp"].standard == "c++20"
+
+
+def test_make_reduced_confidence_diagnostic_and_options():
+    ev = MakeAdapter(dry_run=DRY_RUN).collect()
+    assert any("reduced confidence" in d for d in ev.diagnostics)
+    opts = {(o.key, o.value) for o in ev.build_options}
+    assert ("std:C", "c11") in opts
+    assert ("define:_GLIBCXX_USE_CXX11_ABI", "0") in opts
+
+
+def test_make_compound_recipe_with_cd():
+    ev = MakeAdapter(dry_run="cd sub && gcc -std=c17 -c sub/x.c -o sub/x.o").collect()
+    assert [c.source for c in ev.compile_units] == ["sub/x.c"]
+    assert ev.compile_units[0].standard == "c17"
+
+
+def test_make_no_compile_lines_yields_no_units():
+    ev = MakeAdapter(dry_run="echo hello\nrm -f *.o\nmake[1]: Nothing to be done").collect()
+    assert not ev.compile_units
+    assert not any("reduced confidence" in d for d in ev.diagnostics)
+
+
+def test_make_unbalanced_quotes_line_skipped():
+    ev = MakeAdapter(dry_run='gcc -c "unterminated.c').collect()
+    assert not ev.compile_units  # the malformed line is skipped, not a crash
+
+
+def test_make_missing_dry_run_file_diagnostic(tmp_path):
+    ev = MakeAdapter(dry_run=tmp_path / "nope.txt").collect()
+    assert any("not found or unreadable" in d for d in ev.diagnostics)
+
+
+def test_make_live_query_disabled_without_build_dir():
+    ev = MakeAdapter(allow_query=False).collect()
+    assert any("live query disabled" in d for d in ev.diagnostics)
+
+
+def test_make_live_query_invokes_subprocess(monkeypatch, tmp_path):
+    import subprocess as _sp
+
+    def fake_run(cmd, **kwargs):
+        return _sp.CompletedProcess(cmd, 0, stdout="gcc -std=c++17 -c m.cpp -o m.o", stderr="")
+
+    monkeypatch.setattr("abicheck.evidence.adapters.make.shutil.which", lambda _x: "/usr/bin/make")
+    monkeypatch.setattr("abicheck.evidence.adapters.make.subprocess.run", fake_run)
+    ev = MakeAdapter(build_dir=tmp_path).collect()
+    assert [c.source for c in ev.compile_units] == ["m.cpp"]
+
+
+def test_make_live_query_nonzero_exit_diagnostic(monkeypatch, tmp_path):
+    import subprocess as _sp
+
+    monkeypatch.setattr("abicheck.evidence.adapters.make.shutil.which", lambda _x: "/usr/bin/make")
+    monkeypatch.setattr("abicheck.evidence.adapters.make.subprocess.run",
+                        lambda cmd, **k: _sp.CompletedProcess(cmd, 2, stdout="", stderr="boom"))
+    ev = MakeAdapter(build_dir=tmp_path).collect()
+    assert any("exited 2" in d for d in ev.diagnostics)
+
+
+def test_make_executable_missing_diagnostic(monkeypatch, tmp_path):
+    monkeypatch.setattr("abicheck.evidence.adapters.make.shutil.which", lambda _x: None)
+    ev = MakeAdapter(build_dir=tmp_path).collect()
+    assert any("executable not found" in d for d in ev.diagnostics)
+
+
+def test_make_live_query_oserror_diagnostic(monkeypatch, tmp_path):
+    def boom(*_a, **_k):
+        raise OSError("no make")
+
+    monkeypatch.setattr("abicheck.evidence.adapters.make.shutil.which", lambda _x: "/usr/bin/make")
+    monkeypatch.setattr("abicheck.evidence.adapters.make.subprocess.run", boom)
+    ev = MakeAdapter(build_dir=tmp_path).collect()
+    assert any("dry-run failed" in d for d in ev.diagnostics)
+
+
+def test_make_compile_recipe_without_source_skipped():
+    # A `-c` line with no source token (e.g. a bare preprocessor probe).
+    ev = MakeAdapter(dry_run="gcc -c -x c -").collect()
+    assert not ev.compile_units
+
+
+def test_collect_evidence_make_dry_run_cli(tmp_path):
+    dr = tmp_path / "dry.txt"
+    dr.write_text(DRY_RUN)
+    out = tmp_path / "e"
+    result = CliRunner().invoke(main, ["collect-evidence", "--make-dry-run", str(dr), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    pack = EvidencePack.load(out)
+    assert pack.build_evidence is not None
+    assert len(pack.build_evidence.compile_units) == 2
+    assert any(e.name == "make" and e.status == "ok" for e in pack.manifest.extractors)

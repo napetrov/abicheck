@@ -1,9 +1,11 @@
 # ADR-029: Build Graph and Toolchain Context Capture
 
 **Date:** 2026-06-09
-**Status:** Accepted — MVP implemented (BuildEvidence model; compile DB,
-CMake File API, Ninja, and Bazel `cquery`/`aquery` adapters; build-evidence
-diff and the six D9 change kinds)
+**Status:** Accepted — implemented (BuildEvidence model; compile DB, CMake
+File API, Ninja, Bazel `cquery`/`aquery`, and Make dry-run adapters;
+compiler-recorded metadata extractor; build-evidence diff and the six D9
+change kinds). Only Phase 7 (CI rollout + baseline registry) remains, tracked
+under ADR-033.
 **Decision maker:** Nikolay Petrov
 
 ---
