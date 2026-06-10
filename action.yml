@@ -300,7 +300,8 @@ outputs:
       BREAKING, or ERROR. SEVERITY_ERROR is produced when
       --severity-addition=error detects new public API additions
       (compare mode only).
-      For compare-release: COMPATIBLE, API_BREAK, BREAKING,
+      For compare-release: COMPATIBLE, SEVERITY_ERROR (with --severity-*
+      via extra-args), API_BREAK, BREAKING,
       REMOVED_LIBRARY (when fail-on-removed-library is set), or ERROR.
       For appcompat: COMPATIBLE, API_BREAK, BREAKING, or ERROR.
       For dump: COMPATIBLE or ERROR.

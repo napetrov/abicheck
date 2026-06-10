@@ -413,8 +413,10 @@ elif [[ "$MODE" == "appcompat" ]]; then
   fi
 
 elif [[ "$MODE" == "compare-release" ]]; then
-  # compare-release exit codes: 0=compatible, 2=API_BREAK, 4=BREAKING, 8=REMOVED_LIBRARY
-  # No severity support — exit code 1 is always a CLI error.
+  # compare-release exit codes: 0=compatible, 2=API_BREAK, 4=BREAKING,
+  # 8=REMOVED_LIBRARY. With --severity-* options (e.g. via extra-args) the CLI
+  # follows the severity-aware scheme, where exit 1 is a severity error (not a
+  # CLI failure) — distinguish the two via stderr.
   if [[ $ABICHECK_EXIT -eq 2 ]] && echo "$STDERR_CONTENT" | grep -qE '(^Usage:|^Error:|^Try )'; then
     VERDICT="ERROR"
     echo "::error::abicheck compare-release failed due to a CLI argument or configuration error (exit code 2)."
@@ -422,6 +424,14 @@ elif [[ "$MODE" == "compare-release" ]]; then
   else
     case $ABICHECK_EXIT in
       0) VERDICT="COMPATIBLE" ;;
+      1)
+        if _is_cli_error; then
+          VERDICT="ERROR"
+          echo "::error::abicheck compare-release failed due to a CLI error (exit code 1)."
+        else
+          VERDICT="SEVERITY_ERROR"
+        fi
+        ;;
       2) VERDICT="API_BREAK" ;;
       4) VERDICT="BREAKING" ;;
       8) VERDICT="REMOVED_LIBRARY" ;;
@@ -775,6 +785,12 @@ elif [[ "$MODE" == "compare-release" ]]; then
 
   if [[ "$VERDICT" == "REMOVED_LIBRARY" ]]; then
     echo "::error::Library removed between old and new package. Set fail-on-removed-library: false to allow."
+    FINAL_EXIT=1
+  fi
+
+  # Severity-aware exit 1 (from --severity-* via extra-args), as in compare mode.
+  if [[ "$VERDICT" == "SEVERITY_ERROR" ]]; then
+    echo "::error::Severity-level error detected by abicheck."
     FINAL_EXIT=1
   fi
 
