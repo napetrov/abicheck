@@ -141,7 +141,8 @@ def collect_evidence_cmd(
         "build_dir": red.path(str(build_dir)) if build_dir else None,
     }
     has_build = bool(
-        merged.compile_units or merged.targets or merged.toolchains or merged.link_units
+        merged.compile_units or merged.targets or merged.toolchains
+        or merged.link_units or merged.build_options
     )
     if has_build:
         pack.build_evidence = merged
