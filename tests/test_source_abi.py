@@ -123,8 +123,10 @@ def test_source_abi_surface_roundtrip() -> None:
     )
     restored = SourceAbiSurface.from_dict(s.to_dict())
     assert restored.library == "libfoo.so"
+    # The decl→symbol map is keyed by the entity's stable identity (mangled name).
     assert (
-        restored.mappings["source_decl_to_binary_symbol"]["foo::bar"] == "_ZN3foo3barEv"
+        restored.mappings["source_decl_to_binary_symbol"]["_ZN3foo3barEv"]
+        == "_ZN3foo3barEv"
     )
     assert [e.qualified_name for e in restored.reachable_macros] == ["FOO_SIZE"]
 
@@ -143,13 +145,32 @@ def test_linker_maps_exported_decls_and_records_unmatched() -> None:
         [tu],
         exported_symbols=["_ZN3foo7shippedEv", "_ZN3foo9orphan_symEv"],
     )
+    # Map is keyed by stable identity (mangled name); value is the exported symbol.
     mapping = surface.mappings["source_decl_to_binary_symbol"]
-    assert mapping["foo::shipped"] == "_ZN3foo7shippedEv"
-    assert mapping["foo::header_only"] == ""
+    assert mapping["_ZN3foo7shippedEv"] == "_ZN3foo7shippedEv"
+    assert mapping["_ZN3foo11header_onlyEv"] == ""
     # exported symbol with no source decl is unmatched
     assert "_ZN3foo9orphan_symEv" in surface.unmatched["symbols_without_decl"]
-    # public decl with no exported symbol is unmatched
+    # public decl with no exported symbol is unmatched, reported by qualified name
     assert "foo::header_only" in surface.unmatched["decls_without_symbol"]
+
+
+def test_linker_keeps_overloads_distinct() -> None:
+    # Two overloads share a qualified_name but differ in mangled name. Dropping
+    # only one exported overload must stay visible (Codex review #335).
+    tu = SourceAbiTu(
+        functions=[
+            _entity("ns::f", "function", mangled="_ZN2ns1fEi"),  # f(int)
+            _entity("ns::f", "function", mangled="_ZN2ns1fEd"),  # f(double)
+        ],
+    )
+    surface = link_source_abi(
+        [tu], exported_symbols=["_ZN2ns1fEi"]
+    )  # only f(int) exported
+    mapping = surface.mappings["source_decl_to_binary_symbol"]
+    assert mapping["_ZN2ns1fEi"] == "_ZN2ns1fEi"
+    assert mapping["_ZN2ns1fEd"] == ""  # f(double) declared but not exported
+    assert surface.unmatched["decls_without_symbol"] == ["ns::f"]
 
 
 def test_linker_excludes_non_public_entities() -> None:
@@ -212,6 +233,27 @@ def test_diff_default_argument_changed_keeps_signature() -> None:
     )
     changes = diff_source_abi(old, new)
     assert [c.kind for c in changes] == [ChangeKind.DEFAULT_ARGUMENT_CHANGED]
+
+
+def test_diff_default_argument_change_on_non_last_overload() -> None:
+    # Two overloads share qualified_name "g"; the default-arg change is on the
+    # first one. Keying by qualified_name alone would drop it (Codex review #335).
+    old = _surface(
+        reachable_declarations=[
+            _entity("g", "function", mangled="_Z1gi", signature_hash="si", value="x=1"),
+            _entity("g", "function", mangled="_Z1gd", signature_hash="sd", value="y=0"),
+        ]
+    )
+    new = _surface(
+        reachable_declarations=[
+            _entity("g", "function", mangled="_Z1gi", signature_hash="si", value="x=2"),
+            _entity("g", "function", mangled="_Z1gd", signature_hash="sd", value="y=0"),
+        ]
+    )
+    changes = diff_source_abi(old, new)
+    assert [c.kind for c in changes] == [ChangeKind.DEFAULT_ARGUMENT_CHANGED]
+    # The display name is the readable qualified name, not the mangled identity.
+    assert changes[0].symbol == "g"
 
 
 def test_diff_constexpr_value_changed() -> None:

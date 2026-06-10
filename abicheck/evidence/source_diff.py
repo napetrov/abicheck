@@ -44,9 +44,16 @@ def _loc(entity: SourceEntity) -> str:
     return f"{base} [{EVIDENCE_TIER_L4}]" if base else f"[{EVIDENCE_TIER_L4}]"
 
 
-def _by_name(entities: list[SourceEntity]) -> dict[str, SourceEntity]:
-    """Index entities by qualified name (last write wins; ODR is detected at link)."""
-    return {e.qualified_name: e for e in entities if e.qualified_name}
+def _by_identity(entities: list[SourceEntity]) -> dict[str, SourceEntity]:
+    """Index entities by stable identity so C++ overloads stay distinct.
+
+    Keying by ``qualified_name`` alone would collapse overloads (``f(int)`` and
+    ``f(double)`` share a name), dropping all but the last and risking comparing
+    two different overloads across versions. ``SourceEntity.identity()`` keys by
+    mangled name when present (falling back to the qualified name), so each
+    overload is matched to its own counterpart.
+    """
+    return {e.identity(): e for e in entities if e.identity()}
 
 
 def diff_source_abi(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change]:
@@ -69,11 +76,12 @@ def diff_source_abi(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change
 
 
 def _diff_macros(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change]:
-    old_m = _by_name(old.reachable_macros)
-    new_m = _by_name(new.reachable_macros)
+    old_m = _by_identity(old.reachable_macros)
+    new_m = _by_identity(new.reachable_macros)
     changes: list[Change] = []
-    for name in sorted(set(old_m) & set(new_m)):
-        ov, nv = old_m[name], new_m[name]
+    for key in sorted(set(old_m) & set(new_m)):
+        ov, nv = old_m[key], new_m[key]
+        name = nv.qualified_name
         if ov.value != nv.value:
             changes.append(
                 Change(
@@ -96,11 +104,12 @@ def _diff_macros(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change]:
 
 
 def _diff_declarations(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change]:
-    old_d = _by_name(old.reachable_declarations)
-    new_d = _by_name(new.reachable_declarations)
+    old_d = _by_identity(old.reachable_declarations)
+    new_d = _by_identity(new.reachable_declarations)
     changes: list[Change] = []
-    for name in sorted(set(old_d) & set(new_d)):
-        ov, nv = old_d[name], new_d[name]
+    for key in sorted(set(old_d) & set(new_d)):
+        ov, nv = old_d[key], new_d[key]
+        name = nv.qualified_name
 
         # Generated public header content changed (any hash drift in a generated
         # entity). Reported once per declaration; policy may escalate (D6).
@@ -163,11 +172,12 @@ def _diff_declarations(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Cha
 
 
 def _diff_inline_bodies(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change]:
-    old_i = _by_name(old.reachable_inline_bodies)
-    new_i = _by_name(new.reachable_inline_bodies)
+    old_i = _by_identity(old.reachable_inline_bodies)
+    new_i = _by_identity(new.reachable_inline_bodies)
     changes: list[Change] = []
-    for name in sorted(set(old_i) & set(new_i)):
-        ov, nv = old_i[name], new_i[name]
+    for key in sorted(set(old_i) & set(new_i)):
+        ov, nv = old_i[key], new_i[key]
+        name = nv.qualified_name
         if ov.body_hash != nv.body_hash:
             changes.append(
                 Change(
@@ -190,11 +200,12 @@ def _diff_inline_bodies(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Ch
 
 
 def _diff_templates(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change]:
-    old_t = _by_name(old.reachable_templates)
-    new_t = _by_name(new.reachable_templates)
+    old_t = _by_identity(old.reachable_templates)
+    new_t = _by_identity(new.reachable_templates)
     changes: list[Change] = []
-    for name in sorted(set(old_t) - set(new_t)):
-        ov = old_t[name]
+    for key in sorted(set(old_t) - set(new_t)):
+        ov = old_t[key]
+        name = ov.qualified_name
         changes.append(
             Change(
                 kind=ChangeKind.UNINSTANTIATED_TEMPLATE_REMOVED,
@@ -207,8 +218,9 @@ def _diff_templates(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change
                 source_location=_loc(ov),
             )
         )
-    for name in sorted(set(old_t) & set(new_t)):
-        ov, nv = old_t[name], new_t[name]
+    for key in sorted(set(old_t) & set(new_t)):
+        ov, nv = old_t[key], new_t[key]
+        name = nv.qualified_name
         if ov.body_hash != nv.body_hash:
             changes.append(
                 Change(

@@ -101,6 +101,18 @@ class SourceEntity:
     api_relevant: bool = True
     confidence: EvidenceConfidence = EvidenceConfidence.UNKNOWN
 
+    def identity(self) -> str:
+        """Stable cross-version identity that keeps C++ overloads distinct.
+
+        The mangled name when available — it encodes the full signature, so
+        overloads sharing one ``qualified_name`` (``f(int)`` vs ``f(double)``)
+        get distinct keys, and it stays stable across body/default-argument
+        changes (which the diff detects via ``body_hash``/``value``). Falls back
+        to the qualified name for entities without mangling: macros, ``constexpr``
+        constants, ``extern "C"`` symbols, and extractors that omit it.
+        """
+        return self.mangled_name or self.qualified_name
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,

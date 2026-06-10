@@ -78,8 +78,12 @@ def link_source_abi(
     surface.roots["exported_symbols"] = sorted(exported)
     surface.roots["forced_public"] = sorted(forced)
 
+    # entity identity -> exported symbol ("" if none)
     decl_to_symbol: dict[str, str] = {}
-    type_by_name: dict[str, str] = {}  # qualified_name -> type_hash, for ODR detection
+    # identity -> qualified_name, for readable reports
+    identity_to_qname: dict[str, str] = {}
+    # qualified_name -> type_hash, for ODR detection
+    type_by_name: dict[str, str] = {}
     odr_conflicts: list[dict[str, str]] = []
     public_decl_ids: list[str] = []
     matched_symbols: set[str] = set()
@@ -121,13 +125,19 @@ def link_source_abi(
                 surface.reachable_inline_bodies.append(entity)
             else:
                 surface.reachable_declarations.append(entity)
-                # Map source declarations to exported binary symbols (D5).
-                if entity.qualified_name:
+                # Map source declarations to exported binary symbols (D5). Key by
+                # the entity's stable identity (mangled name when present), not the
+                # bare qualified name, so C++ overloads sharing one name (f(int) vs
+                # f(double)) keep independent mappings — dropping one exported
+                # overload is then visible instead of being hidden by the other.
+                key = entity.identity()
+                if key:
+                    identity_to_qname[key] = entity.qualified_name or key
                     if entity.mangled_name and entity.mangled_name in exported:
-                        decl_to_symbol[entity.qualified_name] = entity.mangled_name
+                        decl_to_symbol[key] = entity.mangled_name
                         matched_symbols.add(entity.mangled_name)
                     else:
-                        decl_to_symbol.setdefault(entity.qualified_name, "")
+                        decl_to_symbol.setdefault(key, "")
 
     surface.roots["public_header_declarations"] = sorted(set(public_decl_ids))
     surface.mappings["source_decl_to_binary_symbol"] = dict(
@@ -136,7 +146,9 @@ def link_source_abi(
     surface.odr_conflicts = odr_conflicts
     surface.unmatched["symbols_without_decl"] = sorted(exported - matched_symbols)
     surface.unmatched["decls_without_symbol"] = sorted(
-        name for name, sym in decl_to_symbol.items() if not sym
+        identity_to_qname.get(key, key)
+        for key, sym in decl_to_symbol.items()
+        if not sym
     )
     surface.coverage = {
         "reachable_declarations": len(surface.reachable_declarations),
