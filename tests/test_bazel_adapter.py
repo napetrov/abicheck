@@ -326,6 +326,36 @@ def test_bazel_live_aquery_includes_param_files(monkeypatch, tmp_path):
     assert "--include_param_files" not in cquery_cmd  # only meaningful for aquery
 
 
+def test_bazel_msvc_forced_include_not_mistaken_for_source():
+    # MSVC/clang-cl `/FI config.hpp` (forced header) and a combined `/Yustdafx.h`
+    # must not be picked as the source; the real `foo.cc` must win.
+    aquery = json.dumps({
+        "artifacts": [{"id": "1", "pathFragmentId": "10"}],
+        "actions": [{
+            "mnemonic": "CppCompile",
+            "arguments": ["cl.exe", "/FI", "config.hpp", "/Yustdafx.h", "/c", "foo.cc"],
+            "primaryOutputId": "1",
+        }],
+        "pathFragments": [{"id": "10", "label": "foo.obj"}],
+    })
+    cu = BazelAdapter(aquery=aquery).collect().compile_units[0]
+    assert cu.source == "foo.cc"
+
+
+def test_bazel_msvc_combined_forced_include_not_mistaken_for_source():
+    aquery = json.dumps({
+        "artifacts": [{"id": "1", "pathFragmentId": "10"}],
+        "actions": [{
+            "mnemonic": "CppCompile",
+            "arguments": ["clang-cl", "/FIconfig.hpp", "/c", "foo.cc"],
+            "primaryOutputId": "1",
+        }],
+        "pathFragments": [{"id": "10", "label": "foo.obj"}],
+    })
+    cu = BazelAdapter(aquery=aquery).collect().compile_units[0]
+    assert cu.source == "foo.cc"
+
+
 def test_bazel_compile_action_without_source_is_skipped():
     aquery = json.dumps({
         "actions": [{"mnemonic": "CppCompile", "arguments": ["/usr/bin/gcc", "-v"]}],

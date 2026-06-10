@@ -467,13 +467,16 @@ def _is_truthy(values: list[str] | None) -> bool:
 
 
 #: Space-separated flags whose *operand* is not the translation unit even if it
-#: looks source-like — e.g. ``-include config.hpp`` (forced header) or ``-x c++``.
+#: looks source-like — e.g. ``-include config.hpp`` (forced header) or ``-x c++``,
+#: plus the MSVC/clang-cl forced-include/forced-using flags ``/FI`` / ``/FU``.
 #: Skipping the operand keeps ``_source_from_argv`` from mistaking a forced or
-#: precompiled header for the real source.
+#: precompiled header for the real source. (Combined MSVC forms like
+#: ``/FIconfig.hpp`` are handled by the ``/``-prefix guard below.)
 _SOURCE_OPERAND_FLAGS = frozenset({
     "-include", "-imacros", "-include-pch", "-Xclang", "-x",
     "-o", "-MF", "-MT", "-MQ", "-MJ",
     "-I", "-isystem", "-iquote", "-idirafter", "-D", "-U",
+    "/FI", "/FU", "/Fi", "/Fu",
 })
 
 
@@ -523,8 +526,11 @@ def _action_argv(action: dict[str, object]) -> list[str]:
 def _source_from_argv(argv: list[str]) -> str:
     """Return the first argv token that names the compiled translation unit.
 
-    Operands of value-taking flags (e.g. ``-include foo.hpp``) are skipped so a
-    forced/precompiled header is never mistaken for the source TU.
+    Operands of value-taking flags (e.g. ``-include foo.hpp`` / ``/FI foo.hpp``)
+    are skipped so a forced/precompiled header is never mistaken for the source
+    TU. ``/``-prefixed tokens are MSVC/clang-cl options (never a Bazel relative
+    exec-path source), so they are never selected — this also covers combined
+    forms such as ``/FIconfig.hpp`` and ``/Yustdafx.h``.
     """
     i = 1
     while i < len(argv):
@@ -532,7 +538,7 @@ def _source_from_argv(argv: list[str]) -> str:
         if arg in _SOURCE_OPERAND_FLAGS:
             i += 2  # skip the flag and the operand it consumes
             continue
-        if not arg.startswith("-") and detect_language(arg):
+        if not arg.startswith(("-", "/")) and detect_language(arg):
             return arg
         i += 1
     return ""
