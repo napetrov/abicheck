@@ -221,8 +221,8 @@ def test_identity_is_build_root_independent() -> None:
             visibility="public_header",
         )
 
-    assert _ctor("/tmp/old/include/foo.h").identity() == _ctor(
-        "/tmp/new/include/foo.h"
+    assert _ctor("build/old/include/foo.h").identity() == _ctor(
+        "build/new/include/foo.h"
     ).identity()
 
 
