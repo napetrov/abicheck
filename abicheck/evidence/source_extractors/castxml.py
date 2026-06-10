@@ -405,6 +405,20 @@ class CastxmlSourceExtractor:
                 # / ODR / mapping findings for internal headers).
                 decl.origin = ScopeOrigin.PRIVATE_HEADER
 
+        # Constants come from parse_constants() as a bare name->value map; pair it
+        # with parse_constant_headers() so a constant declared in a *generated*
+        # public header is marked GENERATED (same re-marking as the decls above).
+        # Otherwise a constant removed from a generated config header is missed:
+        # _diff_generated wouldn't see it as generated and _diff_declarations only
+        # diffs common keys (Codex review #335, P2).
+        constants = parser.parse_constants()
+        constant_headers = parser.parse_constant_headers()
+        generated_constants = {
+            name
+            for name, header in constant_headers.items()
+            if is_generated_header(header)
+        }
+
         return assemble_source_tu(
             compile_unit,
             public_header_roots=public_header_roots,
@@ -415,7 +429,9 @@ class CastxmlSourceExtractor:
             records=records,
             enums=enums,
             variables=variables,
-            constants=parser.parse_constants(),
+            constants=constants,
+            constant_headers=constant_headers,
+            generated_constants=generated_constants,
             # parse_typedefs() returns a flat name->target map with no source
             # provenance, so — unlike parse_constants(), which scopes itself to
             # public headers — typedefs cannot be marked PUBLIC_HEADER without

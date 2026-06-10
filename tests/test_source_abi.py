@@ -571,6 +571,28 @@ def test_diff_generated_header_changed() -> None:
     assert [c.kind for c in changes] == [ChangeKind.GENERATED_HEADER_CHANGED]
 
 
+def test_diff_generated_constant_removed_detected() -> None:
+    # A constexpr declared in a *generated* header that is removed in the new
+    # version must surface as generated_header_changed. A namespace-scope
+    # constexpr has no exported symbol, so L0 can't see the removal; without the
+    # generated marker neither _diff_generated (sees it as non-generated) nor
+    # _diff_declarations (common keys only) would flag it (Codex review #335, P2).
+    old = _surface(
+        reachable_declarations=[
+            _entity(
+                "cfg::KMax",
+                "constexpr",
+                visibility="generated",
+                origin="GENERATED",
+                value="64",
+            )
+        ]
+    )
+    new = _surface()  # constant gone in the regenerated config header
+    changes = diff_source_abi(old, new)
+    assert [c.kind for c in changes] == [ChangeKind.GENERATED_HEADER_CHANGED]
+
+
 def test_diff_generated_type_change_detected() -> None:
     # A generated public *type* lives in reachable_types, not declarations; its
     # content change must still be flagged (Codex review #335).

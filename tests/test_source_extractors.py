@@ -466,9 +466,53 @@ def test_entity_from_enum_and_variable_and_constant_and_typedef() -> None:
         and const.value == "100"
         and const.api_relevant is True
     )
+    # A plain public constant stays PUBLIC_HEADER and carries no generated marker.
+    assert const.visibility == "public_header"
+    assert const.source_location and const.source_location.origin == "PUBLIC_HEADER"
 
     td = entity_from_typedef("Handle", "void*")
     assert td.kind == "typedef" and td.value == "void*"
+
+
+def test_entity_from_constant_marks_generated() -> None:
+    # A constexpr from a generated public header is stamped GENERATED (visibility
+    # + origin) and keeps its declaring-header path, so _diff_generated owns its
+    # removal instead of it being silently dropped (Codex review #335, P2).
+    gen = entity_from_constant(
+        "cfg::KMax", "64", source_header="build/gen/config_generated.h", generated=True
+    )
+    assert gen.kind == "constexpr"
+    assert gen.visibility == "generated"
+    assert gen.source_location is not None
+    assert gen.source_location.origin == "GENERATED"
+    assert gen.source_location.path == "build/gen/config_generated.h"
+
+
+def test_assemble_marks_generated_constants() -> None:
+    # assemble_source_tu threads per-constant header + generated set onto the
+    # constexpr entities (Codex review #335, P2).
+    cu = _cu()
+    tu = assemble_source_tu(
+        cu,
+        public_header_roots=["include/foo.h"],
+        target_id="",
+        extractor_name="castxml-source",
+        extractor_version=CASTXML_EXTRACTOR_VERSION,
+        functions=[],
+        records=[],
+        enums=[],
+        variables=[],
+        constants={"cfg::KMax": "64", "kPlain": "1"},
+        typedefs={},
+        constant_headers={
+            "cfg::KMax": "build/gen/config_generated.h",
+            "kPlain": "include/foo.h",
+        },
+        generated_constants={"cfg::KMax"},
+    )
+    by_name = {e.qualified_name: e for e in tu.constexpr_values}
+    assert by_name["cfg::KMax"].visibility == "generated"
+    assert by_name["kPlain"].visibility == "public_header"
 
 
 def test_non_public_origin_is_not_api_relevant() -> None:

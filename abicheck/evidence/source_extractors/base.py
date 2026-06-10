@@ -213,20 +213,28 @@ def entity_from_variable(var: Variable) -> SourceEntity:
     )
 
 
-def entity_from_constant(name: str, value: str) -> SourceEntity:
+def entity_from_constant(
+    name: str, value: str, *, source_header: str = "", generated: bool = False
+) -> SourceEntity:
     """Map a public ``const``/``constexpr`` constant (name→value) to a ``constexpr``
     entity, so a value change surfaces as ``constexpr_value_changed`` (ADR-030 D6).
 
     castxml resolves these from the public-header surface only (the parser scopes
-    ``parse_constants`` by provenance), so they are always API-relevant.
+    ``parse_constants`` by provenance), so they are always API-relevant. When the
+    declaring header is itself a *generated* public header the caller passes
+    ``generated=True`` (and the ``source_header`` path), which marks the entity
+    ``GENERATED`` so ``_diff_generated`` owns it — without this a constant
+    *removed* from a generated config header produces no L4 finding (the
+    value-change case is already covered for plain public constants).
     """
+    origin = "GENERATED" if generated else "PUBLIC_HEADER"
     return SourceEntity(
         id=_content_hash("constexpr", name, value),
         kind="constexpr",
         qualified_name=name,
         value=value,
-        source_location=SourceLocation(origin="PUBLIC_HEADER"),
-        visibility="public_header",
+        source_location=SourceLocation(path=source_header, origin=origin),
+        visibility="generated" if generated else "public_header",
         api_relevant=True,
         confidence=EvidenceConfidence.HIGH,
     )
@@ -267,6 +275,8 @@ def assemble_source_tu(
     variables: list[Variable],
     constants: dict[str, str],
     typedefs: dict[str, str],
+    constant_headers: dict[str, str] | None = None,
+    generated_constants: set[str] | None = None,
     diagnostics: list[str] | None = None,
 ) -> SourceAbiTu:
     """Assemble parsed model objects into a normalized :class:`SourceAbiTu` (D4).
@@ -299,7 +309,12 @@ def assemble_source_tu(
         ),
         variables=[entity_from_variable(v) for v in variables],
         constexpr_values=[
-            entity_from_constant(name, value)
+            entity_from_constant(
+                name,
+                value,
+                source_header=(constant_headers or {}).get(name, ""),
+                generated=name in (generated_constants or set()),
+            )
             for name, value in sorted(constants.items())
         ],
         diagnostics=list(diagnostics or []),
