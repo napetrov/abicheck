@@ -76,3 +76,75 @@ def test_kindless_overrides_are_real_cases() -> None:
         assert not kinds, (
             f"{case} has kinds {kinds}; remove its KINDLESS_CASE_TIER entry"
         )
+
+
+# ── detected_at crediting logic ──────────────────────────────────────────────
+# A "runnable" tier map keyed L0..L3 (L4 is n/a in the benchmark harness).
+def _verdicts(l0: str, l1: str, l2: str, l3: str = "n/a") -> dict[str, str]:
+    return {"L0": l0, "L1": l1, "L2": l2, "L3": l3}
+
+
+def test_detected_at_active_verdict_credits_on_verdict_alone() -> None:
+    """A BREAKING case is credited at the first tier returning BREAKING, even
+    when the emitted kind is a tier variant (L0 func_removed_elf_only)."""
+    got = evidence_tiers.detected_at(
+        _verdicts("BREAKING", "BREAKING", "BREAKING"),
+        {
+            "L0": ["func_removed_elf_only"],
+            "L1": ["func_removed"],
+            "L2": ["func_removed"],
+        },
+        expected="BREAKING",
+        expected_kinds=["func_removed"],
+        min_evidence="L0",
+    )
+    assert got == "L0"
+
+
+def test_detected_at_kinded_quiet_requires_the_kind() -> None:
+    """A COMPATIBLE case must emit its cataloged kind — a bare COMPATIBLE at a
+    weaker tier (no kind) is not credited."""
+    got = evidence_tiers.detected_at(
+        _verdicts("NO_CHANGE", "COMPATIBLE", "COMPATIBLE"),
+        {"L0": [], "L1": [], "L2": ["enum_member_added"]},
+        expected="COMPATIBLE",
+        expected_kinds=["enum_member_added"],
+        min_evidence="L2",
+    )
+    assert got == "L2"
+
+
+def test_detected_at_kindless_quiet_floored_at_min_evidence() -> None:
+    """An invisible-change NO_CHANGE (case122-style, min L4) is NOT credited at
+    L0 just because the stripped binary also returns NO_CHANGE."""
+    got = evidence_tiers.detected_at(
+        _verdicts("NO_CHANGE", "NO_CHANGE", "ERROR"),
+        {"L0": [], "L1": [], "L2": []},
+        expected="NO_CHANGE",
+        expected_kinds=[],
+        min_evidence="L4",
+    )
+    assert got is None  # no runnable tier (L0..L3) reaches the L4 floor
+
+
+def test_detected_at_kindless_quiet_at_l0_is_genuine() -> None:
+    """A genuine NO_CHANGE baseline (min L0) is still credited at L0."""
+    got = evidence_tiers.detected_at(
+        _verdicts("NO_CHANGE", "NO_CHANGE", "NO_CHANGE"),
+        {"L0": [], "L1": [], "L2": []},
+        expected="NO_CHANGE",
+        expected_kinds=[],
+        min_evidence="L0",
+    )
+    assert got == "L0"
+
+
+def test_detected_at_returns_none_when_no_tier_matches() -> None:
+    got = evidence_tiers.detected_at(
+        _verdicts("NO_CHANGE", "NO_CHANGE", "NO_CHANGE"),
+        {"L0": [], "L1": [], "L2": []},
+        expected="BREAKING",
+        expected_kinds=["type_size_changed"],
+        min_evidence="L1",
+    )
+    assert got is None

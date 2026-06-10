@@ -1473,37 +1473,8 @@ def _find_compile_db(bdir: Path) -> Path | None:
     return None
 
 
-# Verdicts a tier emits *by default when it finds nothing*. For these, a matching
-# verdict alone does not prove discovery, so we additionally require the cataloged
-# change kind (Codex review: a build-context-only L3 case must not look "found" at
-# L1 just because L1 also returns COMPATIBLE). Active BREAKING/API_BREAK verdicts
-# are genuine findings, so a verdict match suffices there — and avoids penalizing
-# tier-appropriate variant kinds (e.g. L0 emits `func_removed_elf_only`).
-_QUIET_VERDICTS = frozenset({"NO_CHANGE", "COMPATIBLE", "COMPATIBLE_WITH_RISK"})
-
-
-def _detected_at(
-    tier_verdicts: dict[str, str],
-    tier_kinds: dict[str, list[str]],
-    expected: str,
-    expected_kinds: list[str],
-) -> str | None:
-    """First tier (weakest evidence) that actually *discovers* the case.
-
-    A tier qualifies when its verdict matches *expected*; for the quiet default
-    verdicts it must additionally have emitted every cataloged ``expected_kind``,
-    so a tier that returns a bare COMPATIBLE/NO_CHANGE for unrelated reasons is
-    not miscredited.
-    """
-    want = set(expected_kinds)
-    require_kinds = bool(want) and expected in _QUIET_VERDICTS
-    for tier in EVIDENCE_TIERS:
-        if tier_verdicts.get(tier) != expected:
-            continue
-        if require_kinds and not want.issubset(set(tier_kinds.get(tier, []))):
-            continue
-        return tier
-    return None
+# Detection-crediting logic (kind-aware + kind-less-quiet floor) lives in the
+# pure, unit-tested evidence_tiers module: evidence_tiers.detected_at(...).
 
 
 def _run_case_evidence_tiers(case_dir: Path, args: Any) -> dict[str, Any] | None:
@@ -1552,15 +1523,21 @@ def _run_case_evidence_tiers(case_dir: Path, args: Any) -> dict[str, Any] | None
     tier("L3", br.v1_so, br.v2_so, v1_h, v2_h,
          compile_db.parent if compile_db else None, enabled=compile_db is not None)
 
-    expected_kinds = list(_gt_data["verdicts"].get(name, {}).get("expected_kinds", []))
+    gt_entry = _gt_data["verdicts"].get(name, {})
+    expected_kinds = list(gt_entry.get("expected_kinds", [])) + list(
+        gt_entry.get("expected_bundle_kinds", [])
+    )
+    min_evidence = gt_entry.get("min_evidence", "?")
     return {
         "case": name,
         "expected": expected,
         "expected_kinds": expected_kinds,
-        "min_evidence": _gt_data["verdicts"].get(name, {}).get("min_evidence", "?"),
+        "min_evidence": min_evidence,
         "tier_verdicts": verdicts,
         "tier_kinds": kinds,
-        "detected_at": _detected_at(verdicts, kinds, expected, expected_kinds),
+        "detected_at": evidence_tiers.detected_at(
+            verdicts, kinds, expected, expected_kinds, min_evidence
+        ),
     }
 
 
@@ -1602,15 +1579,14 @@ def _print_evidence_tier_summary(rows: list[dict]) -> None:
               "the case's L3/L4 drift can't be reproduced by building v1/v2 with "
               "identical flags in this harness.)")
     # Honesty check: empirical first-detection vs ground_truth min_evidence.
-    # NO_CHANGE cases whose change is *invisible* to artifacts (e.g. case122) are
-    # trivially correct at L0, so a higher declared min_evidence is expected, not
-    # drift — skip them.
+    # (evidence_tiers.detected_at already floors kind-less quiet cases at their
+    # designed tier, so an invisible-change NO_CHANGE like case122 reports a MISS
+    # rather than a spurious L0 match.)
     drift = [
         (r["case"], r["min_evidence"], r["detected_at"])
         for r in scored
         if r["detected_at"] is not None
         and r["min_evidence"] not in ("?", r["detected_at"])
-        and not (r["expected"] == "NO_CHANGE" and r["detected_at"] == "L0")
     ]
     if drift:
         print("\n  min_evidence vs empirical detect-tier differences "

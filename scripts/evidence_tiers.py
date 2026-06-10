@@ -215,3 +215,54 @@ def compute_min_evidence(case_name: str, info: dict[str, Any]) -> str:
 def min_evidence_for_ground_truth(verdicts: dict[str, Any]) -> dict[str, str]:
     """Compute ``{case: min_evidence}`` for a ground_truth ``verdicts`` map."""
     return {case: compute_min_evidence(case, info) for case, info in verdicts.items()}
+
+
+# Verdicts a tier emits *by default when it finds nothing*. A matching quiet
+# verdict alone does not prove a tier discovered a change.
+QUIET_VERDICTS = frozenset({"NO_CHANGE", "COMPATIBLE", "COMPATIBLE_WITH_RISK"})
+
+
+def detected_at(
+    tier_verdicts: dict[str, str],
+    tier_kinds: dict[str, list[str]],
+    expected: str,
+    expected_kinds: list[str],
+    min_evidence: str,
+) -> str | None:
+    """First tier (weakest evidence) that actually *discovers* a case.
+
+    A tier qualifies when its verdict matches *expected*, plus one of two guards
+    against crediting a tier that merely returned a quiet default:
+
+    - **Kinded quiet cases** (``expected_kinds`` set, quiet verdict): the tier
+      must have emitted every cataloged kind — a bare COMPATIBLE/NO_CHANGE for
+      unrelated reasons is not enough.
+    - **Kind-less quiet cases** (no ``expected_kinds``, quiet verdict): the tier
+      must be at least the case's designed ``min_evidence``. Below that, a
+      matching quiet verdict is the "found nothing yet" default, not a
+      discovery (e.g. an L4-only invisible change still returns NO_CHANGE at L0).
+
+    Active ``BREAKING``/``API_BREAK`` verdicts are genuine findings, so a verdict
+    match suffices — and the empirical tier is left free to fall *below* the
+    declared ``min_evidence`` so the drift report can flag a too-conservative map.
+    Iterates the tiers present in *tier_verdicts*, weakest first.
+    """
+    want = set(expected_kinds)
+    quiet = expected in QUIET_VERDICTS
+    require_kinds = bool(want) and quiet
+    floor = (
+        tier_rank(min_evidence)
+        if (quiet and not want and min_evidence in TIER_ORDER)
+        else 0
+    )
+    for tier in TIER_ORDER:
+        if tier not in tier_verdicts:
+            continue
+        if tier_rank(tier) < floor:
+            continue
+        if tier_verdicts.get(tier) != expected:
+            continue
+        if require_kinds and not want.issubset(set(tier_kinds.get(tier, []))):
+            continue
+        return tier
+    return None
