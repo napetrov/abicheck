@@ -368,6 +368,35 @@ def test_severity_addition_error_classifies_non_added_kinds():
         assert build_model(report).counts == (1, 0, 0), kind
 
 
+def test_severity_quality_error_release_quality_breaking():
+    # compatible_additions conflates additions + quality; a quality-only gate
+    # must move the quality subset (not the additions) to Breaking.
+    report = {
+        "verdict": "COMPATIBLE_WITH_RISK",
+        "old_dir": "/o",
+        "new_dir": "/n",
+        "libraries": [
+            {
+                "library": "lib.so",
+                "verdict": "COMPATIBLE_WITH_RISK",
+                "breaking": 0,
+                "source_breaks": 0,
+                "risk_changes": 0,
+                "compatible_additions": 5,
+                "quality_issues": 2,
+            },
+        ],
+        "severity": {
+            "config": {"quality_issues": "error", "addition": "info"},
+            "exit_code": 1,
+        },
+        "unmatched_old": [],
+        "unmatched_new": [],
+    }
+    # quality (2) → breaking, additions (5-2=3) → safe
+    assert build_model(report).counts == (2, 0, 3)
+
+
 def test_severity_addition_error_release_additions_breaking():
     report = {
         "verdict": "COMPATIBLE",

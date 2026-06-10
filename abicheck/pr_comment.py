@@ -318,21 +318,28 @@ def _release_lib_row(
 
     Source breaks count as breaking when fail-on-api-break is set or
     potential_breaking is gated to error; risk only when potential_breaking is
-    error; additions only when the addition category is error. Otherwise source
-    breaks + risk are review and additions are safe.
+    error; additions and quality issues only when their own category is gated to
+    error. Otherwise source breaks + risk are review and additions + quality are
+    safe.
     """
     src = _as_int(lib.get("source_breaks"))
     risk = _as_int(lib.get("risk_changes"))
-    add = _as_int(lib.get("compatible_additions"))
+    # compatible_additions is the *total* compatible count; quality_issues is the
+    # subset that is not an addition. Fall back to treating all as additions when
+    # the (older) report omits quality_issues.
+    quality = _as_int(lib.get("quality_issues"))
+    additions = max(_as_int(lib.get("compatible_additions")) - quality, 0)
     pot_err = levels.get("potential_breaking") == "error"
     add_err = levels.get("addition") == "error"
+    qual_err = levels.get("quality_issues") == "error"
 
     nb = _as_int(lib.get("breaking"))
     nr = 0
     ns = 0
     nb, nr = (nb + src, nr) if (gate_api_break or pot_err) else (nb, nr + src)
     nb, nr = (nb + risk, nr) if pot_err else (nb, nr + risk)
-    nb, ns = (nb + add, ns) if add_err else (nb, ns + add)
+    nb, ns = (nb + additions, ns) if add_err else (nb, ns + additions)
+    nb, ns = (nb + quality, ns) if qual_err else (nb, ns + quality)
     return str(lib.get("library", "?")), str(lib.get("verdict", "?")), nb, nr, ns
 
 
