@@ -76,7 +76,9 @@ def test_build_command_reflects_compile_context() -> None:
         sysroot="/sysroot",
         target_triple="aarch64-linux-gnu",
     )
-    cmd = build_castxml_command(cu, Path("/proj/src/foo.cpp"), Path("/tmp/o.xml"))
+    out = Path("build/out.xml")
+    src = Path("src/foo.cpp")
+    cmd = build_castxml_command(cu, src, out)
     assert cmd[:4] == ["castxml", "--castxml-output=1", "--castxml-cc-gnu", "g++"]
     assert "-std=c++20" in cmd
     assert "-DFOO=1" in cmd
@@ -86,7 +88,8 @@ def test_build_command_reflects_compile_context() -> None:
     assert cmd[cmd.index("-isystem") + 1] == "/opt/sdk/include"
     assert "--sysroot=/sysroot" in cmd
     assert "--target=aarch64-linux-gnu" in cmd
-    assert cmd[-3:] == ["-o", "/tmp/o.xml", "/proj/src/foo.cpp"]
+    # Compare via str(Path(...)) so the separator is OS-native (Windows uses \).
+    assert cmd[-3:] == ["-o", str(out), str(src)]
 
 
 def test_build_command_c_uses_gcc_and_no_target_for_msvc() -> None:
@@ -120,17 +123,28 @@ def test_entity_from_function_signature_stable_under_default_change() -> None:
         origin=ScopeOrigin.PUBLIC_HEADER,
     )
     no_default = entity_from_function(Function(params=[Param("x", "int")], **common))
-    with_default = entity_from_function(
+    default_1 = entity_from_function(
         Function(params=[Param("x", "int", default="1")], **common)
     )
-    # Same type signature → signature_hash unchanged; default presence in value.
-    assert no_default.signature_hash == with_default.signature_hash
+    default_2 = entity_from_function(
+        Function(params=[Param("x", "int", default="2")], **common)
+    )
+    # Same type signature → signature_hash unchanged across all three.
+    assert (
+        no_default.signature_hash
+        == default_1.signature_hash
+        == default_2.signature_hash
+    )
+    # value carries the default-argument expression so add/remove AND value
+    # changes are visible to default_argument_changed.
     assert no_default.value == ""
-    assert with_default.value == "x"
-    assert with_default.kind == "function"
-    assert with_default.api_relevant is True
-    assert with_default.source_location is not None
-    assert with_default.source_location.origin == "PUBLIC_HEADER"
+    assert default_1.value == "x=1"
+    assert default_2.value == "x=2"
+    assert default_1.value != default_2.value
+    assert default_1.kind == "function"
+    assert default_1.api_relevant is True
+    assert default_1.source_location is not None
+    assert default_1.source_location.origin == "PUBLIC_HEADER"
 
 
 def test_entity_from_function_signature_changes_with_param_type() -> None:
@@ -233,6 +247,44 @@ def test_assemble_source_tu_routes_entities_to_buckets() -> None:
     from abicheck.evidence.source_abi import SourceAbiTu
 
     assert SourceAbiTu.from_dict(tu.to_dict()).tu_id == tu.tu_id
+
+
+# -- extractor orchestration (no real castxml) -------------------------------
+
+
+def test_extract_raises_when_castxml_unavailable() -> None:
+    from abicheck.evidence.source_extractors import SourceExtractionError
+
+    extractor = CastxmlSourceExtractor(castxml_bin="castxml-does-not-exist-xyz")
+    assert extractor.available() is False
+    with pytest.raises(SourceExtractionError):
+        extractor.extract(_cu(), public_header_roots=["include/foo.h"])
+
+
+def test_parse_root_maps_castxml_xml_without_running_castxml() -> None:
+    # Drive the XML→SourceAbiTu path on a hand-built GCC_XML document, so the
+    # parser/assembly is covered without castxml installed.
+    from xml.etree.ElementTree import Element, SubElement
+
+    root = Element("GCC_XML")
+    SubElement(root, "File", id="f1", name="foo.h")
+    SubElement(root, "FundamentalType", id="t_int", name="int")
+    SubElement(root, "Location", id="loc1", file="f1", line="3")
+    cls = SubElement(root, "Class", id="c1", name="Widget", size="64", align="64")
+    SubElement(cls, "Field", name="a", type="t_int", offset="0")
+    fn = SubElement(
+        root, "Function", id="fn1", name="add", returns="t_int", location="loc1"
+    )
+    SubElement(fn, "Argument", name="x", type="t_int")
+
+    extractor = CastxmlSourceExtractor()
+    tu = extractor._parse_root(
+        root, _cu(), public_header_roots=["foo.h"], target_id="target://libfoo"
+    )
+    names = {e.qualified_name for e in tu.all_entities()}
+    assert any("add" in n for n in names)
+    assert any("Widget" in n for n in names)
+    assert tu.extractor["name"] == "castxml-source"
 
 
 # -- end-to-end via real castxml (integration) -------------------------------

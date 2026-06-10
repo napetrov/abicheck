@@ -120,9 +120,10 @@ def entity_from_function(fn: Function) -> SourceEntity:
 
     ``signature_hash`` covers the type-level signature (return + parameter types
     + cv/ref qualifiers) so it is stable across a pure default-argument edit.
-    ``value`` records *which* parameters carry a default — castxml preserves the
-    presence of a default but not its expression — so a default added/removed
-    surfaces as a value change (``default_argument_changed``).
+    ``value`` records each parameter's default-argument *expression* (castxml
+    emits ``default="<expr>"``), so both adding/removing a default and changing
+    its value (``x = 1`` → ``x = 2``) surface as a value change
+    (``default_argument_changed``).
     """
     qualifiers = []
     if fn.is_const:
@@ -134,7 +135,9 @@ def entity_from_function(fn: Function) -> SourceEntity:
     sig = (
         f"{fn.return_type}({','.join(p.type for p in fn.params)}){''.join(qualifiers)}"
     )
-    default_repr = ",".join(p.name for p in fn.params if p.default is not None)
+    default_repr = ",".join(
+        f"{p.name}={p.default}" for p in fn.params if p.default is not None
+    )
     return SourceEntity(
         id=_content_hash("function", fn.mangled or fn.name, sig),
         kind="function",

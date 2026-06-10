@@ -27,6 +27,7 @@ Linking is cheap relative to parsing, so it is recomputed rather than cached
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 
 from .source_abi import SourceAbiSurface, SourceAbiTu, SourceEntity
 
@@ -78,81 +79,27 @@ def link_source_abi(
     surface.roots["exported_symbols"] = sorted(exported)
     surface.roots["forced_public"] = sorted(forced)
 
-    # entity identity -> exported symbol ("" if none)
-    decl_to_symbol: dict[str, str] = {}
-    # identity -> qualified_name, for readable reports
-    identity_to_qname: dict[str, str] = {}
-    # qualified_name -> type_hash, for ODR detection
-    type_by_name: dict[str, str] = {}
-    odr_conflicts: list[dict[str, str]] = []
-    public_decl_ids: list[str] = []
-    matched_symbols: set[str] = set()
-
+    state = _LinkState()
     for tu in tus:
         for header in tu.public_header_roots:
             surface.mappings["public_header_to_target"][header] = (
                 tu.target_id or target_id
             )
-
         for entity in tu.all_entities():
-            public = _is_public(entity) or entity.qualified_name in forced
-            if not public:
+            if not (_is_public(entity) or entity.qualified_name in forced):
                 continue
-            public_decl_ids.append(entity.id)
+            state.public_decl_ids.append(entity.id)
+            _route_entity(entity, surface, state, exported)
 
-            if entity.kind in _TYPE_KINDS:
-                surface.reachable_types.append(entity)
-                if entity.qualified_name:
-                    prev = type_by_name.get(entity.qualified_name)
-                    if prev is not None and prev != entity.type_hash:
-                        odr_conflicts.append(
-                            {
-                                "qualified_name": entity.qualified_name,
-                                "old_type_hash": prev,
-                                "new_type_hash": entity.type_hash,
-                            }
-                        )
-                    else:
-                        type_by_name[entity.qualified_name] = entity.type_hash
-                    surface.mappings["source_type_to_debug_type"][
-                        entity.qualified_name
-                    ] = entity.type_hash
-            elif entity.kind in _MACRO_KINDS:
-                surface.reachable_macros.append(entity)
-            elif entity.kind in _TEMPLATE_KINDS:
-                surface.reachable_templates.append(entity)
-            elif entity.kind in _INLINE_KINDS:
-                surface.reachable_inline_bodies.append(entity)
-            else:
-                surface.reachable_declarations.append(entity)
-                # Map source declarations to exported binary symbols (D5). Key by
-                # the entity's stable identity (mangled name when present), not the
-                # bare qualified name, so C++ overloads sharing one name (f(int) vs
-                # f(double)) keep independent mappings — dropping one exported
-                # overload is then visible instead of being hidden by the other.
-                key = entity.identity()
-                if key:
-                    identity_to_qname[key] = entity.qualified_name or key
-                    # The exported binary symbol is the mangled name for C++, or
-                    # the plain qualified name for C / extern "C" declarations
-                    # whose extractor leaves mangled_name empty. Matching on
-                    # either avoids false "unmatched" evidence for C libraries.
-                    export_sym = entity.mangled_name or entity.qualified_name
-                    if export_sym and export_sym in exported:
-                        decl_to_symbol[key] = export_sym
-                        matched_symbols.add(export_sym)
-                    else:
-                        decl_to_symbol.setdefault(key, "")
-
-    surface.roots["public_header_declarations"] = sorted(set(public_decl_ids))
+    surface.roots["public_header_declarations"] = sorted(set(state.public_decl_ids))
     surface.mappings["source_decl_to_binary_symbol"] = dict(
-        sorted(decl_to_symbol.items())
+        sorted(state.decl_to_symbol.items())
     )
-    surface.odr_conflicts = odr_conflicts
-    surface.unmatched["symbols_without_decl"] = sorted(exported - matched_symbols)
+    surface.odr_conflicts = state.odr_conflicts
+    surface.unmatched["symbols_without_decl"] = sorted(exported - state.matched_symbols)
     surface.unmatched["decls_without_symbol"] = sorted(
-        identity_to_qname.get(key, key)
-        for key, sym in decl_to_symbol.items()
+        state.identity_to_qname.get(key, key)
+        for key, sym in state.decl_to_symbol.items()
         if not sym
     )
     surface.coverage = {
@@ -162,7 +109,94 @@ def link_source_abi(
         "reachable_templates": len(surface.reachable_templates),
         "reachable_inline_bodies": len(surface.reachable_inline_bodies),
         "exported_symbols": len(exported),
-        "matched_symbols": len(matched_symbols),
-        "odr_conflicts": len(odr_conflicts),
+        "matched_symbols": len(state.matched_symbols),
+        "odr_conflicts": len(state.odr_conflicts),
     }
     return surface
+
+
+@dataclass
+class _LinkState:
+    """Mutable accumulators threaded through the per-entity routing helpers."""
+
+    decl_to_symbol: dict[str, str] = field(
+        default_factory=dict
+    )  # identity -> symbol ("" if none)
+    identity_to_qname: dict[str, str] = field(
+        default_factory=dict
+    )  # identity -> qualified_name
+    type_by_name: dict[str, str] = field(
+        default_factory=dict
+    )  # qualified_name -> type_hash (ODR)
+    odr_conflicts: list[dict[str, str]] = field(default_factory=list)
+    public_decl_ids: list[str] = field(default_factory=list)
+    matched_symbols: set[str] = field(default_factory=set)
+
+
+def _route_entity(
+    entity: SourceEntity,
+    surface: SourceAbiSurface,
+    state: _LinkState,
+    exported: set[str],
+) -> None:
+    """Place one public entity into the right reachable bucket of the surface."""
+    if entity.kind in _TYPE_KINDS:
+        _route_type(entity, surface, state)
+    elif entity.kind in _MACRO_KINDS:
+        surface.reachable_macros.append(entity)
+    elif entity.kind in _TEMPLATE_KINDS:
+        surface.reachable_templates.append(entity)
+    elif entity.kind in _INLINE_KINDS:
+        surface.reachable_inline_bodies.append(entity)
+    else:
+        _route_declaration(entity, surface, state, exported)
+
+
+def _route_type(
+    entity: SourceEntity, surface: SourceAbiSurface, state: _LinkState
+) -> None:
+    """Record a type entity and detect same-name/different-hash ODR conflicts (D5)."""
+    surface.reachable_types.append(entity)
+    if not entity.qualified_name:
+        return
+    prev = state.type_by_name.get(entity.qualified_name)
+    if prev is not None and prev != entity.type_hash:
+        state.odr_conflicts.append(
+            {
+                "qualified_name": entity.qualified_name,
+                "old_type_hash": prev,
+                "new_type_hash": entity.type_hash,
+            }
+        )
+    else:
+        state.type_by_name[entity.qualified_name] = entity.type_hash
+    surface.mappings["source_type_to_debug_type"][entity.qualified_name] = (
+        entity.type_hash
+    )
+
+
+def _route_declaration(
+    entity: SourceEntity,
+    surface: SourceAbiSurface,
+    state: _LinkState,
+    exported: set[str],
+) -> None:
+    """Record a declaration and map it to its exported binary symbol (D5).
+
+    Keyed by the entity's stable identity (mangled name when present), not the
+    bare qualified name, so C++ overloads sharing one name (f(int) vs f(double))
+    keep independent mappings. The exported symbol is the mangled name for C++ or
+    the plain qualified name for C / extern "C" decls whose extractor leaves
+    mangled_name empty — matching on either avoids false "unmatched" evidence.
+    """
+    surface.reachable_declarations.append(entity)
+    key = entity.identity()
+    if not key:
+        return
+    state.identity_to_qname[key] = entity.qualified_name or key
+    export_sym = entity.mangled_name or entity.qualified_name
+    if export_sym and export_sym in exported:
+        state.decl_to_symbol[key] = export_sym
+        state.matched_symbols.add(export_sym)
+    else:
+        state.decl_to_symbol.setdefault(key, "")
