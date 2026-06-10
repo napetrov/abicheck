@@ -148,7 +148,7 @@ class ChangeKind(str, Enum):
     SYMBOL_TYPE_CHANGED = "symbol_type_changed"  # FUNC→OBJECT, etc.
     SYMBOL_SIZE_CHANGED = "symbol_size_changed"  # st_size changed
     # st_size changed on an internal-looking (reserved/underscore-prefixed)
-    # exported data symbol — usually private state, so risk not hard break.
+    # exported data symbol; exported data size drift is breaking by default.
     SYMBOL_SIZE_CHANGED_INTERNAL = "symbol_size_changed_internal"
     # st_size changed on a public const string-like object, e.g.
     # extern char const version[]. Old non-PIE executables can still carry copy

@@ -143,7 +143,7 @@ class TestReporterStat:
         changes = [
             _change(ChangeKind.FUNC_REMOVED, "rm"),
             _change(ChangeKind.METHOD_ACCESS_CHANGED, "ns::C::m"),
-            _change(ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL, "sym"),
+            _change(ChangeKind.ENUM_LAST_MEMBER_VALUE_CHANGED, "sym"),
             _change(ChangeKind.FUNC_ADDED, "added"),
         ]
         result = _diff_result(changes, verdict=Verdict.BREAKING)
@@ -185,7 +185,7 @@ class TestReporterChangeToDict:
 
         sev = {
             ChangeKind.METHOD_ACCESS_CHANGED: "api_break",
-            ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL: "risk",
+            ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL: "breaking",
             ChangeKind.FUNC_ADDED: "compatible",
         }
         for kind, expected in sev.items():

@@ -265,10 +265,10 @@ REGISTRY = ChangeKindRegistry([
        impact="Symbol type changed (e.g. FUNC→OBJECT); callers using wrong calling convention."),
     _E("symbol_size_changed", _B,
        impact="ELF symbol size changed; copy relocations or memcpy-based consumers get truncated/oversized data."),
-    _E("symbol_size_changed_internal", _R,
+    _E("symbol_size_changed_internal", _B,
        impact="ELF size changed on an internal-looking (reserved/underscore-prefixed) exported data symbol; "
-              "usually private implementation state not part of the intended ABI. Flagged as risk: public copy-reloc "
-              "consumers are unlikely, but verify the symbol is not relied upon. Override severity via --policy-file if needed."),
+              "exported data remains part of the dynamic ABI and size changes can break copy relocations "
+              "or direct data consumers. Override severity via --policy-file only when the symbol is known private."),
     _E("symbol_size_changed_const_object", _B,
        impact="ELF size changed on a public const string-like object declared without a fixed bound in headers. "
               "Old non-PIE consumers may have copy relocations sized from the old DSO symbol, so a later DSO can "

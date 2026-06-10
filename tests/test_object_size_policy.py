@@ -23,9 +23,9 @@ symbol looks like part of the intended public ABI:
 * An **internal-looking** one — reserved/underscore-prefixed, the convention for
   private exported state (``_XkeyTable``, ``_pcre2_ucd_records_8``,
   ``_UCD_accessors``, ``_rl_*``) — is reported as ``symbol_size_changed_internal``
-  at ``COMPATIBLE_WITH_RISK`` rather than a hard break, because libabigail
-  typically reports no ABI change for these and public copy-reloc consumers are
-  unlikely.
+  so policy files can target it, but remains a hard break by default because
+  exported data is part of the dynamic ABI and can be used by copy relocations
+  or direct data consumers.
 
 Either classification can be overridden via a ``--policy-file``.
 """
@@ -36,7 +36,7 @@ import textwrap
 from pathlib import Path
 
 from abicheck.checker import ChangeKind, Verdict, compare
-from abicheck.checker_policy import BREAKING_KINDS, RISK_KINDS
+from abicheck.checker_policy import BREAKING_KINDS
 from abicheck.checker_types import Change
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import AbiSnapshot, Variable
@@ -79,18 +79,18 @@ def _const_string_var(name: str) -> Variable:
 
 def test_partition_kinds():
     assert ChangeKind.SYMBOL_SIZE_CHANGED in BREAKING_KINDS
-    assert ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL in RISK_KINDS
+    assert ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL in BREAKING_KINDS
     assert ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT in BREAKING_KINDS
 
 
-def test_internal_data_symbol_size_change_is_risk_by_default():
+def test_internal_data_symbol_size_change_is_breaking_by_default():
     # _XkeyTable is internal-looking (reserved leading underscore).
     r = compare(_snap_with_object("_XkeyTable", 47318),
                 _snap_with_object("_XkeyTable", 48459))
     kinds = {c.kind for c in r.changes}
     assert ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL in kinds
     assert ChangeKind.SYMBOL_SIZE_CHANGED not in kinds
-    assert r.verdict == Verdict.COMPATIBLE_WITH_RISK
+    assert r.verdict == Verdict.BREAKING
 
 
 def test_public_data_symbol_size_change_is_still_breaking():
@@ -131,7 +131,7 @@ def test_public_const_unbounded_string_shrink_is_compatible():
     assert r.verdict == Verdict.NO_CHANGE
 
 
-def test_dwarf_const_unbounded_string_keeps_internal_risk_without_header_evidence():
+def test_dwarf_const_unbounded_string_is_breaking_without_header_evidence():
     r = compare(
         _snap_with_object("_private_release", 31, variable=_const_string_var("_private_release")),
         _snap_with_object("_private_release", 29, variable=_const_string_var("_private_release")),
@@ -139,18 +139,19 @@ def test_dwarf_const_unbounded_string_keeps_internal_risk_without_header_evidenc
     kinds = {c.kind for c in r.changes}
     assert ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL in kinds
     assert ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT not in kinds
-    assert r.verdict == Verdict.COMPATIBLE_WITH_RISK
+    assert r.verdict == Verdict.BREAKING
 
 
-def test_policy_override_can_escalate_internal_size_change():
-    # A user who relies on a private exported object can force it back to break.
+def test_policy_override_can_downgrade_internal_size_change():
+    # A user who has verified a private exported object is not public ABI can
+    # explicitly accept it as risk.
     pf = PolicyFile(
         base_policy="strict_abi",
-        overrides={ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL: Verdict.BREAKING},
+        overrides={ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL: Verdict.COMPATIBLE_WITH_RISK},
     )
     c = Change(kind=ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL, symbol="_XkeyTable",
                description="size 47318 -> 48459")
-    assert pf.compute_verdict([c]) == Verdict.BREAKING
+    assert pf.compute_verdict([c]) == Verdict.COMPATIBLE_WITH_RISK
 
 
 def test_policy_override_can_downgrade_public_size_change():
@@ -163,12 +164,12 @@ def test_policy_override_can_downgrade_public_size_change():
     assert pf.compute_verdict([c]) == Verdict.COMPATIBLE_WITH_RISK
 
 
-def test_policy_file_escalates_internal_size_change_end_to_end(tmp_path: Path):
+def test_policy_file_downgrades_internal_size_change_end_to_end(tmp_path: Path):
     policy = tmp_path / "policy.yaml"
     policy.write_text(textwrap.dedent("""
         base_policy: strict_abi
         overrides:
-          symbol_size_changed_internal: break
+          symbol_size_changed_internal: risk
     """).strip(), encoding="utf-8")
     pf = PolicyFile.load(policy)
 
@@ -178,4 +179,4 @@ def test_policy_file_escalates_internal_size_change_end_to_end(tmp_path: Path):
         policy_file=pf,
     )
     assert ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL in {c.kind for c in r.changes}
-    assert r.verdict == Verdict.BREAKING
+    assert r.verdict == Verdict.COMPATIBLE_WITH_RISK
