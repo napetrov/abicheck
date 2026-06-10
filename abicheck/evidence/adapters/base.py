@@ -102,7 +102,14 @@ def source_from_argv(argv: list[str]) -> str:
     are skipped so a forced/precompiled header is never mistaken for the source
     TU. The compiler at ``argv[0]`` carries no source extension, so scanning
     from the start is safe (and handles ``cd dir && cc …`` recipes).
+
+    Source recognition is dialect-aware: an MSVC/clang-cl command (``/c`` present
+    or a ``cl``/``clang-cl`` driver) treats every ``/``-prefixed token as an
+    option — including combined value-taking forms like ``/FIsrc/config.hpp`` —
+    so only bare, ``C:\\``-rooted, or ``/Tp``/``/Tc``-named tokens are sources.
+    A GNU command treats ``/abs/path.cc`` as a Unix absolute source path.
     """
+    msvc = _is_msvc_command(argv)
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -118,24 +125,48 @@ def source_from_argv(argv: list[str]) -> str:
             continue
         if arg[:3] in ("/Tp", "/Tc") and detect_language(arg[3:]):
             return arg[3:]
-        if _is_source_token(arg):
+        if _is_source_token(arg, msvc):
             return arg
         i += 1
     return ""
 
 
-def _is_source_token(arg: str) -> bool:
+#: Driver basenames that mark a command as MSVC-dialect (``/`` introduces an
+#: option, not a path). ``clang-cl`` mimics ``cl`` exactly.
+_MSVC_DRIVERS: frozenset[str] = frozenset({"cl", "cl.exe", "clang-cl", "clang-cl.exe"})
+
+
+def _is_msvc_command(argv: list[str]) -> bool:
+    """True if *argv* uses MSVC/clang-cl option syntax (``/opt`` not paths).
+
+    Detected either by the ``/c`` compile marker (GNU uses ``-c``) or by a
+    ``cl``/``clang-cl`` driver basename anywhere in the leading tokens (the
+    driver may be a full path, e.g. ``C:\\VS\\bin\\cl.exe``).
+    """
+    if "/c" in argv:
+        return True
+    for arg in argv:
+        if arg in ("&&", ";"):
+            break
+        base = arg.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        if base in _MSVC_DRIVERS:
+            return True
+    return False
+
+
+def _is_source_token(arg: str, msvc: bool) -> bool:
     """True if *arg* is a translation-unit source path, not a compiler option.
 
-    ``-``-prefixed tokens are always options. A ``/``-prefixed token is an
-    MSVC/clang-cl option (``/c``, ``/FIconfig.hpp``, ``/Fofoo.obj``) when it has
-    no embedded path separator; one that does (e.g. ``/work/src/foo.cc``) is a
-    Unix absolute source path and is kept.
+    ``-``-prefixed tokens are always options. In an MSVC/clang-cl command every
+    ``/``-prefixed token is an option (``/c``, ``/FIsrc/config.hpp``,
+    ``/Fofoo.obj``) regardless of an embedded ``/``. In a GNU command a
+    ``/``-prefixed token with a source extension is a Unix absolute source path
+    (e.g. ``/work/src/foo.cc``) and is kept.
     """
     if not arg or arg.startswith("-"):
         return False
-    if arg.startswith("/") and "/" not in arg[1:]:
-        return False  # MSVC/clang-cl option, not an absolute path
+    if arg.startswith("/") and msvc:
+        return False  # MSVC/clang-cl option (handled before us for /Tp,/Tc)
     return bool(detect_language(arg))
 
 

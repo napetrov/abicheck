@@ -74,8 +74,16 @@ def test_make_cd_prefixed_recipe_resolves_in_subdir():
     cu = ev.compile_units[0]
     assert cu.source == "foo.c"
     assert cu.standard == "c17"
-    assert cu.directory.endswith("sub")                      # advanced into cd target
-    assert any(p.endswith("sub/include") for p in cu.include_paths)  # -I resolved there
+    # Path separators differ across OSes (sub\include on Windows); normalize.
+    assert cu.directory.replace("\\", "/").endswith("sub")    # advanced into cd target
+    assert any(p.replace("\\", "/").endswith("sub/include") for p in cu.include_paths)
+
+
+def test_make_msvc_combined_forced_include_not_source():
+    # `/FIsrc/config.hpp` is a combined MSVC forced-include with an embedded
+    # path; despite the `.hpp` it must not be read as the TU — foo.cc wins.
+    ev = MakeAdapter(dry_run="cl.exe /FIsrc/config.hpp /std:c++17 /c foo.cc /Fofoo.obj").collect()
+    assert [c.source for c in ev.compile_units] == ["foo.cc"]
 
 
 def test_make_msvc_tp_explicit_source():
