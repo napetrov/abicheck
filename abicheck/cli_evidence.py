@@ -130,7 +130,9 @@ def collect_evidence_cmd(
         "headers": [red.path(str(h)) for h in headers],
         "build_dir": red.path(str(build_dir)) if build_dir else None,
     }
-    has_build = bool(merged.compile_units or merged.targets or merged.toolchains)
+    has_build = bool(
+        merged.compile_units or merged.targets or merged.toolchains or merged.link_units
+    )
     if has_build:
         pack.build_evidence = merged
     pack.manifest.coverage = _build_coverage(merged, has_build)
@@ -217,7 +219,7 @@ def _run_adapters(
         merged.merge(ev)
         inputs = [DEFAULT_REDACTION.path(str(p)) for p in (bazel_cquery, bazel_aquery) if p is not None]
         extractors.append(ExtractorRecord(
-            name="bazel", status="ok" if (ev.targets or ev.compile_units) else "partial",
+            name="bazel", status="ok" if (ev.targets or ev.compile_units or ev.link_units) else "partial",
             inputs=inputs,
             detail=(
                 f"{len(ev.targets)} targets, {len(ev.compile_units)} compile units, "

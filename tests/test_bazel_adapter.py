@@ -324,3 +324,22 @@ def test_collect_evidence_bazel_files(tmp_path):
     assert pack.build_evidence is not None
     assert any(t.build_system == "bazel" for t in pack.build_evidence.targets)
     assert any(e.name == "bazel" and e.status == "ok" for e in pack.manifest.extractors)
+
+
+def test_collect_evidence_bazel_link_only_pack_preserved(tmp_path):
+    # An aquery with only a link action (no targets/compile units) must still be
+    # written to the pack — link_units count toward build-evidence presence.
+    aq = tmp_path / "aquery.json"
+    aq.write_text(json.dumps({
+        "artifacts": [{"id": "1", "pathFragmentId": "10"}],
+        "actions": [{"mnemonic": "CppLink", "arguments": ["gcc", "-shared"],
+                     "primaryOutputId": "1"}],
+        "pathFragments": [{"id": "10", "label": "libfoo.so"}],
+    }))
+    out = tmp_path / "e"
+    result = CliRunner().invoke(main, ["collect-evidence", "--bazel-aquery", str(aq), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    pack = EvidencePack.load(out)
+    assert pack.build_evidence is not None
+    assert len(pack.build_evidence.link_units) == 1
+    assert any(e.name == "bazel" and e.status == "ok" for e in pack.manifest.extractors)
