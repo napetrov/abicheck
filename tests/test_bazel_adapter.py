@@ -211,6 +211,44 @@ def test_bazel_attr_string_value_fallback_and_executable_link():
     assert lu.inputs == ["app.o"]                # resolved through the transitive depset
 
 
+def test_bazel_link_keeps_shared_library_inputs():
+    # A binary linking against a shared lib: the .so input must be recorded,
+    # not dropped (ADR-029 D6 — aquery captures link action inputs).
+    aquery = json.dumps({
+        "artifacts": [
+            {"id": "1", "pathFragmentId": "10"},   # app/app.o
+            {"id": "2", "pathFragmentId": "11"},   # lib/libbar.so.1
+            {"id": "3", "pathFragmentId": "12"},   # app/app (output)
+            {"id": "4", "pathFragmentId": "13"},   # app/app.d (dropped)
+        ],
+        "actions": [{
+            "mnemonic": "CppLink", "arguments": ["gcc", "-o", "app/app"],
+            "primaryOutputId": "3", "inputDepSetIds": ["400"],
+        }],
+        "depSetOfFiles": [{"id": "400", "directArtifactIds": ["1", "2", "4"]}],
+        "pathFragments": [
+            {"id": "10", "label": "app.o", "parentId": "20"},
+            {"id": "11", "label": "libbar.so.1", "parentId": "21"},
+            {"id": "12", "label": "app", "parentId": "20"},
+            {"id": "13", "label": "app.d", "parentId": "20"},
+            {"id": "20", "label": "app"},
+            {"id": "21", "label": "lib"},
+        ],
+    })
+    ev = BazelAdapter(aquery=aquery).collect()
+    inputs = ev.link_units[0].inputs
+    assert "app/app.o" in inputs                  # object file
+    assert "lib/libbar.so.1" in inputs            # versioned shared library
+    assert "app/app.d" not in inputs              # non-library input dropped
+
+
+def test_bazel_missing_precaptured_file_diagnostic(tmp_path):
+    missing = tmp_path / "nope.json"
+    ev = BazelAdapter(cquery=missing).collect()
+    assert any("input not found or unreadable" in d for d in ev.diagnostics)
+    assert not ev.targets
+
+
 def test_bazel_live_query_oserror_diagnostic(monkeypatch, tmp_path):
     def boom(*_a, **_k):
         raise OSError("no bazel")

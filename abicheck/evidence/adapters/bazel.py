@@ -122,6 +122,14 @@ class BazelAdapter:
         text = _as_text(value)
         if text is not None:
             return text
+        if value is not None:
+            # A pre-captured path was supplied but could not be read (e.g. a
+            # mistyped --bazel-cquery path). Surface it rather than silently
+            # producing an empty, apparently-valid pack.
+            ev.diagnostics.append(
+                f"bazel: {kind} input not found or unreadable: {self.redaction.path(str(value))}"
+            )
+            return None
         if self.workspace is not None and self.target is not None and self.allow_query:
             return self._run_bazel(kind, ev)
         return None
@@ -237,7 +245,7 @@ class BazelAdapter:
         output = graph.path(action.get("primaryOutputId"))
         if not output:
             return None
-        inputs = [p for p in graph.input_paths(action) if p.endswith((".o", ".obj", ".a"))]
+        inputs = [p for p in graph.input_paths(action) if _is_link_input(p)]
         red_output = self.redaction.path(output)
         return LinkUnit(
             id=f"link://{red_output}",
@@ -316,6 +324,20 @@ class _AqueryGraph:
             artifacts.extend(_str_list(ds.get("directArtifactIds")))
             stack.extend(_str_list(ds.get("transitiveDepSetIds")))
         return artifacts
+
+
+def _is_link_input(path: str) -> bool:
+    """True for object files and libraries a link action consumes.
+
+    Keeps object files/archives *and* shared libraries (``.so``, versioned
+    ``.so.1.2``, ``.dylib``, ``.dll``) so a binary/library that links against a
+    shared lib still records that dependency (ADR-029 D6); drops everything else
+    (headers, command files, …).
+    """
+    low = path.lower()
+    if low.endswith((".o", ".obj", ".a", ".lib", ".so", ".dylib", ".dll")):
+        return True
+    return ".so." in low  # versioned shared object, e.g. libfoo.so.1.2
 
 
 def _link_kind(output: str) -> str:
