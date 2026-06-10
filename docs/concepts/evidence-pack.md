@@ -69,7 +69,10 @@ abicheck compare old.abi.json new.abi.json \
   output (live query or pre-captured for hermetic CI).
 - `--bazel-cquery FILE` / `--bazel-aquery FILE` — pre-captured
   `bazel cquery --output=jsonproto` (configured target graph) and
-  `bazel aquery --output=jsonproto` (compile/link action graph).
+  `bazel aquery --output=jsonproto` (compile/link action graph). Use the
+  textual `jsonproto` form: a binary `--output=proto` blob is reported with a
+  diagnostic rather than decoded (binary-proto ingestion is a documented
+  follow-up).
 
 ## Build-evidence findings (L3)
 
