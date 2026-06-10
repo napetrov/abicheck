@@ -308,6 +308,69 @@ def test_gate_api_break_release_source_breaks_count_as_breaking():
     assert ungated.counts == (0, 3, 0)  # source_breaks + risk → review
 
 
+def test_severity_addition_error_files_additions_as_breaking():
+    # With severity-addition: error the check goes red on additions, so the
+    # comment must file them under Breaking (auto-detected from the report's
+    # severity config), not Safe.
+    report = _compare_report(
+        [
+            {
+                "kind": "func_added",
+                "symbol": "foo_new",
+                "description": "new",
+                "severity": "compatible",
+            },
+        ]
+    )
+    report["severity"] = {
+        "config": {
+            "abi_breaking": "error",
+            "potential_breaking": "warning",
+            "quality_issues": "warning",
+            "addition": "error",
+        },
+        "categories": {},
+        "exit_code": 1,
+    }
+    gated = build_model(report)
+    assert gated.counts == (1, 0, 0)  # addition → breaking
+    assert "ABI BREAKING" in render_comment(gated, sha="x")
+    # without the severity config, the same addition stays safe
+    plain = _compare_report(
+        [
+            {
+                "kind": "func_added",
+                "symbol": "foo_new",
+                "description": "new",
+                "severity": "compatible",
+            }
+        ]
+    )
+    assert build_model(plain).counts == (0, 0, 1)
+
+
+def test_severity_addition_error_release_additions_breaking():
+    report = {
+        "verdict": "COMPATIBLE",
+        "old_dir": "/o",
+        "new_dir": "/n",
+        "libraries": [
+            {
+                "library": "lib.so",
+                "verdict": "COMPATIBLE",
+                "breaking": 0,
+                "source_breaks": 0,
+                "risk_changes": 0,
+                "compatible_additions": 4,
+            },
+        ],
+        "severity": {"config": {"addition": "error"}, "exit_code": 1},
+        "unmatched_old": [],
+        "unmatched_new": [],
+    }
+    assert build_model(report).counts == (4, 0, 0)
+
+
 def test_malformed_changes_are_skipped():
     model = build_model(
         {

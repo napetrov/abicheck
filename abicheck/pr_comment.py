@@ -148,32 +148,60 @@ def _detail_text(change: dict[str, object]) -> str:
     return desc
 
 
+def _severity_levels(report: dict[str, object]) -> dict[str, str]:
+    """Resolved per-category severity levels from the report, or ``{}``.
+
+    Present when the comparison ran with a severity config (``--severity-*`` /
+    preset). A category set to ``error`` turns the check red, so the comment
+    must file that category's findings under Breaking to match — this covers
+    ``severity-addition: error`` and any preset/extra-arg path uniformly.
+    """
+    sev = report.get("severity")
+    if isinstance(sev, dict):
+        cfg = sev.get("config")
+        if isinstance(cfg, dict):
+            return {str(k): str(v) for k, v in cfg.items()}
+    return {}
+
+
+def _finding_category(severity: str, kind: str) -> str:
+    """Map a finding's severity label + kind to a severity-config category."""
+    if severity == "breaking":
+        return "abi_breaking"
+    if severity in ("api_break", "risk"):
+        return "potential_breaking"
+    if kind.endswith("_added"):
+        return "addition"
+    return "quality_issues"
+
+
 def _bucket_changes(
     changes: object,
     gate_api_break: bool = False,
+    levels: dict[str, str] | None = None,
 ) -> tuple[list[Finding], list[Finding], list[Finding]]:
     breaking: list[Finding] = []
     review: list[Finding] = []
     safe: list[Finding] = []
     target = {"breaking": breaking, "review": review, "safe": safe}
-    # When the step gates on API breaks (fail-on-api-break), the check goes red
-    # on them, so the comment must file them under Breaking to match — risk
-    # findings are never gated and stay in review.
-    sev_map = (
-        {**_SEVERITY_BUCKET, "api_break": "breaking"}
-        if gate_api_break
-        else _SEVERITY_BUCKET
-    )
+    levels = levels or {}
     if isinstance(changes, list):
         for c in changes:
             if not isinstance(c, dict):
                 continue
             sev = str(c.get("severity", "unknown"))
-            bucket = sev_map.get(sev, "review")
+            kind = str(c.get("kind", ""))
+            bucket = _SEVERITY_BUCKET.get(sev, "review")
+            # fail-on-api-break turns the check red on API breaks (only) …
+            if gate_api_break and sev == "api_break":
+                bucket = "breaking"
+            # … and a severity category set to error turns it red too.
+            if levels.get(_finding_category(sev, kind)) == "error":
+                bucket = "breaking"
             loc = c.get("source_location")
             target[bucket].append(
                 Finding(
-                    kind=str(c.get("kind", "")),
+                    kind=kind,
                     symbol=str(c.get("symbol", "")),
                     detail=_detail_text(c),
                     location=str(loc) if loc else None,
@@ -185,7 +213,9 @@ def _bucket_changes(
 def _from_compare(
     report: dict[str, object], gate_api_break: bool = False
 ) -> CommentModel:
-    breaking, review, safe = _bucket_changes(report.get("changes"), gate_api_break)
+    breaking, review, safe = _bucket_changes(
+        report.get("changes"), gate_api_break, _severity_levels(report)
+    )
     return CommentModel(
         mode="compare",
         subject=str(report.get("library", "library")),
@@ -202,7 +232,7 @@ def _from_appcompat(
     report: dict[str, object], gate_api_break: bool = False
 ) -> CommentModel:
     breaking, review, safe = _bucket_changes(
-        report.get("relevant_changes"), gate_api_break
+        report.get("relevant_changes"), gate_api_break, _severity_levels(report)
     )
     missing = report.get("missing_symbols")
     if isinstance(missing, list):
@@ -273,29 +303,42 @@ def _append_release_global_row(
     )
 
 
+def _release_lib_row(
+    lib: dict[str, object], gate_api_break: bool, levels: dict[str, str]
+) -> tuple[str, str, int, int, int]:
+    """Per-library (name, verdict, breaking, review, safe) counts.
+
+    Source breaks count as breaking when fail-on-api-break is set or
+    potential_breaking is gated to error; risk only when potential_breaking is
+    error; additions only when the addition category is error. Otherwise source
+    breaks + risk are review and additions are safe.
+    """
+    src = _as_int(lib.get("source_breaks"))
+    risk = _as_int(lib.get("risk_changes"))
+    add = _as_int(lib.get("compatible_additions"))
+    pot_err = levels.get("potential_breaking") == "error"
+    add_err = levels.get("addition") == "error"
+
+    nb = _as_int(lib.get("breaking"))
+    nr = 0
+    ns = 0
+    nb, nr = (nb + src, nr) if (gate_api_break or pot_err) else (nb, nr + src)
+    nb, nr = (nb + risk, nr) if pot_err else (nb, nr + risk)
+    nb, ns = (nb + add, ns) if add_err else (nb, ns + add)
+    return str(lib.get("library", "?")), str(lib.get("verdict", "?")), nb, nr, ns
+
+
 def _from_release(
     report: dict[str, object], gate_api_break: bool = False
 ) -> CommentModel:
     rows: list[tuple[str, str, int, int, int]] = []
+    levels = _severity_levels(report)
     libraries = report.get("libraries")
     if isinstance(libraries, list):
         for lib in libraries:
             if not isinstance(lib, dict):
                 continue
-            # Review = source breaks + risk findings: a library that is
-            # COMPATIBLE_WITH_RISK with only risk_changes must still count as a
-            # change so `--on changes` posts the warning-tone comment. When the
-            # step gates on API breaks, source breaks count as breaking instead.
-            src = _as_int(lib.get("source_breaks"))
-            rows.append(
-                (
-                    str(lib.get("library", "?")),
-                    str(lib.get("verdict", "?")),
-                    _as_int(lib.get("breaking")) + (src if gate_api_break else 0),
-                    (0 if gate_api_break else src) + _as_int(lib.get("risk_changes")),
-                    _as_int(lib.get("compatible_additions")),
-                )
-            )
+            rows.append(_release_lib_row(lib, gate_api_break, levels))
     n_libs = len(rows)
     _append_release_global_row(
         rows,
