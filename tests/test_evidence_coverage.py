@@ -509,3 +509,129 @@ def test_compare_binary_only_skips_header_drift(tmp_path):
     ])
     assert result.exit_code in (0, 2, 4), result.output
     assert "header_parse_context_drift" not in result.stdout
+
+
+# ── coverage asymmetry: full base vs partial target (ADR-028 D7) ──────────────
+
+
+def _asym_snap(*, dwarf=False, headers=False, version="1.0"):
+    """Snapshot with selectable intrinsic coverage. ELF (L0) is always present
+    so the only differences exercised are L1 debug and L2 headers."""
+    from abicheck.dwarf_metadata import DwarfMetadata
+    from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
+    from abicheck.model import AbiSnapshot
+
+    elf = ElfMetadata(symbols=[ElfSymbol(
+        name="api", binding=SymbolBinding.GLOBAL, sym_type=SymbolType.FUNC,
+    )])
+    return AbiSnapshot(
+        library="libfoo.so", version=version, platform="elf",
+        elf=elf, dwarf=DwarfMetadata() if dwarf else None,
+        from_headers=headers,
+    )
+
+
+def _pack_with(tmp_path, name, *, build=False, source_abi=False):
+    """An in-memory EvidencePack with selectable L3/L4 coverage."""
+    from abicheck.evidence.build_evidence import BuildEvidence, BuildOption
+    from abicheck.evidence.model import (
+        CoverageStatus,
+        EvidenceLayer,
+        LayerCoverage,
+    )
+    from abicheck.evidence.pack import EvidencePack
+
+    pack = EvidencePack.empty(tmp_path / name)
+    if build:
+        pack.build_evidence = BuildEvidence(
+            build_options=[BuildOption("std:CXX", "c++20", abi_relevant=True)],
+        )
+    if source_abi:
+        pack.manifest.coverage = [LayerCoverage(
+            layer=EvidenceLayer.L4_SOURCE_ABI.value, status=CoverageStatus.PRESENT,
+        )]
+    return pack
+
+
+def test_detect_coverage_asymmetry_target_missing_debug_and_build(tmp_path):
+    """Full base (debug + headers + build + source) vs binary+headers target
+    yields ONE finding naming exactly the layers the target lacks."""
+    from abicheck.checker_policy import ChangeKind
+    from abicheck.cli_evidence import _detect_coverage_asymmetry
+
+    old_snap = _asym_snap(dwarf=True, headers=True)
+    new_snap = _asym_snap(dwarf=False, headers=True)  # target lost debug info
+    old_pack = _pack_with(tmp_path, "base", build=True, source_abi=True)
+    new_pack = _pack_with(tmp_path, "target")  # target has no build/source evidence
+
+    changes = _detect_coverage_asymmetry(old_snap, old_pack, new_snap, new_pack)
+    assert len(changes) == 1
+    c = changes[0]
+    assert c.kind is ChangeKind.EVIDENCE_COVERAGE_ASYMMETRIC
+    # Names every missing layer, in shallow→deep order.
+    assert "L1 debug info" in c.description
+    assert "L3 build context" in c.description
+    assert "L4 source ABI replay" in c.description
+    # Shared layers (L0 binary, L2 headers) are NOT reported as missing.
+    assert "L0 binary metadata" not in c.description
+    assert "L2 public header AST" not in c.description
+
+
+def test_detect_coverage_asymmetry_symmetric_is_silent(tmp_path):
+    """Equal coverage on both sides → no finding."""
+    from abicheck.cli_evidence import _detect_coverage_asymmetry
+
+    old_snap = _asym_snap(dwarf=True, headers=True)
+    new_snap = _asym_snap(dwarf=True, headers=True)
+    old_pack = _pack_with(tmp_path, "base", build=True)
+    new_pack = _pack_with(tmp_path, "target", build=True)
+    assert _detect_coverage_asymmetry(old_snap, old_pack, new_snap, new_pack) == []
+
+
+def test_detect_coverage_asymmetry_richer_target_is_silent(tmp_path):
+    """A target richer than the base does not undermine the compare → no finding
+    (only the base→target degradation direction is reported)."""
+    from abicheck.cli_evidence import _detect_coverage_asymmetry
+
+    old_snap = _asym_snap(dwarf=False, headers=False)
+    new_snap = _asym_snap(dwarf=True, headers=True)
+    old_pack = _pack_with(tmp_path, "base")
+    new_pack = _pack_with(tmp_path, "target", build=True, source_abi=True)
+    assert _detect_coverage_asymmetry(old_snap, old_pack, new_snap, new_pack) == []
+
+
+def test_coverage_asymmetry_is_risk_not_breaking():
+    """The finding is a RISK kind: it discloses degraded coverage without
+    flipping the verdict to breaking on its own (ADR-028 D3)."""
+    from abicheck.checker_policy import BREAKING_KINDS, RISK_KINDS, ChangeKind
+
+    assert ChangeKind.EVIDENCE_COVERAGE_ASYMMETRIC in RISK_KINDS
+    assert ChangeKind.EVIDENCE_COVERAGE_ASYMMETRIC not in BREAKING_KINDS
+
+
+def test_compare_cli_reports_coverage_asymmetry(tmp_path):
+    """End-to-end: a base evidence pack with build context compared against a
+    target that has none surfaces evidence_coverage_asymmetric in the report."""
+    from abicheck.model import AbiSnapshot
+    from abicheck.serialization import save_snapshot
+
+    base_cdb = tmp_path / "cc.json"
+    base_cdb.write_text(json.dumps([{"directory": str(tmp_path), "file": "a.cpp",
+                                     "arguments": ["c++", "-std=c++20", "-c", "a.cpp"]}]))
+    ev_base = tmp_path / "base.evidence"
+    runner = CliRunner()
+    runner.invoke(main, ["collect-evidence", "--compile-db", str(base_cdb), "-o", str(ev_base)])
+
+    # Base and target both header-aware; only the base carries build evidence.
+    save_snapshot(AbiSnapshot(library="libfoo.so", version="old", from_headers=True),
+                  tmp_path / "old.json")
+    save_snapshot(AbiSnapshot(library="libfoo.so", version="new", from_headers=True),
+                  tmp_path / "new.json")
+
+    result = runner.invoke(main, [
+        "compare", str(tmp_path / "old.json"), str(tmp_path / "new.json"),
+        "--old-evidence", str(ev_base), "--format", "json",
+    ])
+    assert result.exit_code in (0, 2, 4), result.output
+    assert "evidence_coverage_asymmetric" in result.stdout
+    assert "L3 build context" in result.stdout

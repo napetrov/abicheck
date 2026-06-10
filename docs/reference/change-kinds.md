@@ -349,6 +349,7 @@ These changes are safe: they add new capabilities or carry diagnostic informatio
 | Kind | Description |
 |------|-------------|
 | `dwarf_info_missing` | The new binary was stripped of debug info (`-g`). abicheck cannot perform DWARF-based comparison — this is a coverage gap warning, not a proven ABI break. |
+| `evidence_coverage_asymmetric` | The base snapshot was analyzed with evidence layers the target lacks (e.g. base scanned with binary + debug + headers + build + sources, target only with binary + headers). The comparison is scoped to the layers both sides share; changes only the missing layers could prove are not reported. Re-scan the target with the same inputs to restore full coverage. |
 | `toolchain_flag_drift` | Toolchain flags drifted between builds (e.g., `-fshort-enums`, `-fpack-struct`). Informational — may indicate a real break that other checks (size, alignment) would catch. |
 
 ### ABI Surface Diagnostics
