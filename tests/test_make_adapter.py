@@ -49,6 +49,12 @@ def test_make_reduced_confidence_diagnostic_and_options():
     assert ("define:_GLIBCXX_USE_CXX11_ABI", "0") in opts
 
 
+def test_make_forced_include_not_mistaken_for_source():
+    # `-include config.hpp` is a forced header, not the TU; foo.cc must win.
+    ev = MakeAdapter(dry_run="g++ -include config.hpp -std=c++17 -c src/foo.cc -o foo.o").collect()
+    assert [c.source for c in ev.compile_units] == ["src/foo.cc"]
+
+
 def test_make_compound_recipe_with_cd():
     ev = MakeAdapter(dry_run="cd sub && gcc -std=c17 -c sub/x.c -o sub/x.o").collect()
     assert [c.source for c in ev.compile_units] == ["sub/x.c"]

@@ -46,6 +46,7 @@ from .adapters.base import (
     derive_build_options,
     detect_language,
     extract_abi_relevant_flags,
+    source_from_argv,
 )
 from .build_evidence import BuildEvidence, CompileUnit, Toolchain
 from .redaction import DEFAULT_REDACTION, RedactionPolicy
@@ -148,11 +149,7 @@ def _collect_command_line(elf: Any, ev: BuildEvidence, red: RedactionPolicy) -> 
 
 def _command_to_unit(argv: list[str], red: RedactionPolicy) -> CompileUnit:
     """Build a CompileUnit from a recorded command; ``source`` is "" if absent."""
-    source = ""
-    for arg in argv[1:]:
-        if not arg.startswith(("-", "/")) and detect_language(arg):
-            source = arg
-            break
+    source = source_from_argv(argv)
     ctx = _extract_flags(argv, Path("."))
     red_argv = red.argv(argv)
     red_source = red.path(source) if source else ""

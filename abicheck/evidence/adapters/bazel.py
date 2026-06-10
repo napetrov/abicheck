@@ -57,6 +57,7 @@ from .base import (
     derive_build_options,
     detect_language,
     extract_abi_relevant_flags,
+    source_from_argv,
 )
 
 # Bazel rule class → normalized TargetKind. cc_library defaults to an archive;
@@ -247,7 +248,7 @@ class BazelAdapter:
 
     def _compile_unit(self, action: dict[str, object], graph: _AqueryGraph) -> CompileUnit | None:
         argv = _action_argv(action)
-        source = _source_from_argv(argv)
+        source = source_from_argv(argv)
         if not source:
             return None
         ctx = _extract_flags(argv, Path("."))
@@ -471,19 +472,6 @@ def _is_truthy(values: list[str] | None) -> bool:
 
 
 #: Space-separated flags whose *operand* is not the translation unit even if it
-#: looks source-like — e.g. ``-include config.hpp`` (forced header) or ``-x c++``,
-#: plus the MSVC/clang-cl forced-include/forced-using flags ``/FI`` / ``/FU``.
-#: Skipping the operand keeps ``_source_from_argv`` from mistaking a forced or
-#: precompiled header for the real source. (Combined MSVC forms like
-#: ``/FIconfig.hpp`` are handled by the ``/``-prefix guard below.)
-_SOURCE_OPERAND_FLAGS = frozenset({
-    "-include", "-imacros", "-include-pch", "-Xclang", "-x",
-    "-o", "-MF", "-MT", "-MQ", "-MJ",
-    "-I", "-isystem", "-iquote", "-idirafter", "-D", "-U",
-    "/FI", "/FU",
-})
-
-
 def _action_argv(action: dict[str, object]) -> list[str]:
     """Return an action's full argv, expanding ``@...params`` param files.
 
@@ -525,27 +513,6 @@ def _action_argv(action: dict[str, object]) -> list[str]:
             out.extend(args)
     out.extend(no_token)
     return out
-
-
-def _source_from_argv(argv: list[str]) -> str:
-    """Return the first argv token that names the compiled translation unit.
-
-    Operands of value-taking flags (e.g. ``-include foo.hpp`` / ``/FI foo.hpp``)
-    are skipped so a forced/precompiled header is never mistaken for the source
-    TU. ``/``-prefixed tokens are MSVC/clang-cl options (never a Bazel relative
-    exec-path source), so they are never selected — this also covers combined
-    forms such as ``/FIconfig.hpp`` and ``/Yustdafx.h``.
-    """
-    i = 1
-    while i < len(argv):
-        arg = argv[i]
-        if arg in _SOURCE_OPERAND_FLAGS:
-            i += 2  # skip the flag and the operand it consumes
-            continue
-        if not arg.startswith(("-", "/")) and detect_language(arg):
-            return arg
-        i += 1
-    return ""
 
 
 def _attr_map(attributes: object) -> dict[str, list[str]]:

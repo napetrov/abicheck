@@ -49,6 +49,7 @@ from .base import (
     derive_build_options,
     detect_language,
     extract_abi_relevant_flags,
+    source_from_argv,
 )
 
 
@@ -119,7 +120,7 @@ class MakeAdapter:
         # link/info/`Entering directory` lines lack one of those and are skipped.
         if "-c" not in argv:
             return None
-        source = _source_from_argv(argv)
+        source = source_from_argv(argv)
         if not source:
             return None
         ctx = _extract_flags(argv, directory)
@@ -151,14 +152,6 @@ def _split_recipe(line: str) -> list[str]:
         return shlex.split(stripped, posix=os.name != "nt")
     except ValueError:
         return []  # unbalanced quotes / non-command line — skip
-
-
-def _source_from_argv(argv: list[str]) -> str:
-    """Return the first argv token that names a compilable source file."""
-    for arg in argv:
-        if not arg.startswith(("-", "/")) and detect_language(arg):
-            return arg
-    return ""
 
 
 def _as_text(value: str | Path | None) -> str | None:

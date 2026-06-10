@@ -81,6 +81,42 @@ def detect_language(source: str) -> str:
     return ""
 
 
+#: Value-taking compiler flags whose *operand* is not the translation unit even
+#: when it looks source-like — e.g. ``-include config.hpp`` (GNU forced header),
+#: ``-x c++``, or the MSVC/clang-cl ``/FI`` / ``/FU`` forced-include/using flags.
+#: Skipping the operand keeps :func:`source_from_argv` from mistaking a forced or
+#: precompiled header for the real source. Combined MSVC forms like
+#: ``/FIconfig.hpp`` are handled by the ``/``-prefix guard.
+SOURCE_OPERAND_FLAGS: frozenset[str] = frozenset({
+    "-include", "-imacros", "-include-pch", "-Xclang", "-x",
+    "-o", "-MF", "-MT", "-MQ", "-MJ",
+    "-I", "-isystem", "-iquote", "-idirafter", "-D", "-U",
+    "/FI", "/FU",
+})
+
+
+def source_from_argv(argv: list[str]) -> str:
+    """Return the first argv token that names the compiled translation unit.
+
+    Operands of value-taking flags (e.g. ``-include foo.hpp`` / ``/FI foo.hpp``)
+    are skipped so a forced/precompiled header is never mistaken for the source
+    TU. ``-``/``/``-prefixed tokens are options (never a relative source path),
+    so they are never selected — this also covers combined forms such as
+    ``/FIconfig.hpp``. The compiler at ``argv[0]`` carries no source extension,
+    so scanning from the start is safe (and handles ``cd dir && cc …`` recipes).
+    """
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in SOURCE_OPERAND_FLAGS:
+            i += 2  # skip the flag and the operand it consumes
+            continue
+        if not arg.startswith(("-", "/")) and detect_language(arg):
+            return arg
+        i += 1
+    return ""
+
+
 def compile_unit_id(source: str, argv: list[str], output: str = "") -> str:
     """Derive a stable compile-unit id from source + normalized argv + output.
 
