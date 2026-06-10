@@ -16,6 +16,7 @@ from abicheck.cli import (
 from abicheck.cli_compare_release import (
     _discover_include_roots,
     _extract_if_package,
+    _format_release_json,
     _prepare_compare_release_inputs,
 )
 from abicheck.model import (
@@ -929,3 +930,26 @@ class TestLockstepSonameCoupling:
         _suppress_lockstep_soname_findings([umbrella, core], "BREAKING", tmp_path)
         data = json.loads((tmp_path / "libonedal.so.json").read_text())
         assert all(c["kind"] != "soname_bump_unnecessary" for c in data["changes"])
+
+
+def test_release_json_emits_severity_block() -> None:
+    """compare-release JSON carries a severity config block when --severity-* is
+    active, so the PR-comment renderer can mirror the gate (issue #342 follow-up).
+    """
+    from abicheck.severity import resolve_severity_config
+
+    cfg = resolve_severity_config("default", addition="error")
+    out = _format_release_json(
+        "COMPATIBLE", Path("/o"), Path("/n"), [], [], [], {}, {}, [], None, None,
+        severity_config=cfg, severity_exit_code=1,
+    )
+    data = json.loads(out)
+    assert data["severity"]["config"]["addition"] == "error"
+    assert data["severity"]["exit_code"] == 1
+
+
+def test_release_json_omits_severity_block_without_config() -> None:
+    out = _format_release_json(
+        "COMPATIBLE", Path("/o"), Path("/n"), [], [], [], {}, {}, [], None, None,
+    )
+    assert "severity" not in json.loads(out)
