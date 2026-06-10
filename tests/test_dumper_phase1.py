@@ -6,6 +6,7 @@ from xml.etree.ElementTree import Element
 import pytest
 
 from abicheck.dumper import dump
+from abicheck.elf_metadata import ElfMetadata
 from abicheck.model import Function, Visibility
 
 
@@ -14,7 +15,7 @@ def test_dump_without_headers_warns_and_returns_exported_symbols(tmp_path, monke
     so_path.write_bytes(b"\x7fELF")
 
     monkeypatch.setattr("abicheck.dumper._pyelftools_exported_symbols", lambda _p: ({"z_sym", "a_sym"}, {"z_sym", "a_sym"}))
-    monkeypatch.setattr("abicheck.elf_metadata.parse_elf_metadata", lambda _p: None)
+    monkeypatch.setattr("abicheck.elf_metadata.parse_elf_metadata", lambda _p: ElfMetadata())
     monkeypatch.setattr("abicheck.dwarf_metadata.parse_dwarf_metadata", lambda _p: None)
     monkeypatch.setattr("abicheck.dwarf_advanced.parse_advanced_dwarf", lambda _p: None)
 
@@ -28,7 +29,8 @@ def test_dump_without_headers_warns_and_returns_exported_symbols(tmp_path, monke
 
 
 class _FakeParser:
-    def __init__(self, root, exported_dynamic, exported_static):
+    def __init__(self, root, exported_dynamic, exported_static,
+                 public_header_paths=None, public_dir_paths=None):
         assert root.tag == "GCC_XML"
         assert exported_dynamic == {"pub"}
         assert exported_static == {"pub", "local"}
@@ -48,6 +50,9 @@ class _FakeParser:
     def parse_typedefs(self):
         return {"SizeT": "unsigned long"}
 
+    def parse_constants(self):
+        return {}
+
 
 def test_dump_with_headers_uses_castxml_parser_results(tmp_path, monkeypatch):
     so_path = tmp_path / "libfoo.so"
@@ -58,7 +63,7 @@ def test_dump_with_headers_uses_castxml_parser_results(tmp_path, monkeypatch):
     monkeypatch.setattr("abicheck.dumper._pyelftools_exported_symbols", lambda _p: ({"pub"}, {"pub", "local"}))
     monkeypatch.setattr("abicheck.dumper._castxml_dump", lambda *_args, **_kwargs: Element("GCC_XML"))
     monkeypatch.setattr("abicheck.dumper._CastxmlParser", _FakeParser)
-    monkeypatch.setattr("abicheck.elf_metadata.parse_elf_metadata", lambda _p: None)
+    monkeypatch.setattr("abicheck.elf_metadata.parse_elf_metadata", lambda _p: ElfMetadata())
     monkeypatch.setattr("abicheck.dwarf_metadata.parse_dwarf_metadata", lambda _p: None)
     monkeypatch.setattr("abicheck.dwarf_advanced.parse_advanced_dwarf", lambda _p: None)
 
@@ -78,7 +83,7 @@ def test_dump_with_headers_propagates_castxml_error(tmp_path, monkeypatch):
 
     monkeypatch.setattr("abicheck.dumper._pyelftools_exported_symbols", lambda _p: (set(), set()))
     monkeypatch.setattr("abicheck.dumper._castxml_dump", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("castxml failed")))
-    monkeypatch.setattr("abicheck.elf_metadata.parse_elf_metadata", lambda _p: None)
+    monkeypatch.setattr("abicheck.elf_metadata.parse_elf_metadata", lambda _p: ElfMetadata())
     monkeypatch.setattr("abicheck.dwarf_metadata.parse_dwarf_metadata", lambda _p: None)
     monkeypatch.setattr("abicheck.dwarf_advanced.parse_advanced_dwarf", lambda _p: None)
 

@@ -3,7 +3,7 @@
 ## What is abicheck?
 
 ABI compatibility checker for C/C++ shared libraries. Pure Python (3.10+).
-Detects 145 ABI/API change types across ELF, PE/COFF, and Mach-O binaries,
+Detects 215 ABI/API change types across ELF, PE/COFF, and Mach-O binaries,
 categorized into `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, and `RISK_KINDS` (see `ChangeKind`).
 Drop-in replacement for abi-compliance-checker (ABICC).
 
@@ -34,6 +34,7 @@ ruff format --check abicheck/ tests/
 | `integration` | castxml + gcc/g++ | Only if modifying DWARF/ELF parsing |
 | `libabigail` | abidiff + gcc/g++ | Only for parity testing |
 | `abicc` | abi-compliance-checker + gcc/g++ | Only for parity testing |
+| `msvc` | MSVC `cl.exe` (Windows) | Only for the MSVC+PDB end-to-end lane |
 | `slow` | varies | Hypothesis/perf benchmarks, skip in normal dev |
 | `golden` | golden files | Snapshot tests, skip unless changing output format |
 
@@ -103,7 +104,7 @@ Core pipeline (in order of data flow):
 
 - `AbiSnapshot` (`model.py`) — serializable snapshot of a library's ABI surface
 - `DiffResult` (`checker_types.py`) — single detected change with kind, severity, details
-- `ChangeKind` (`checker_policy.py`) — enum of 145 change types; categorized into `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, `RISK_KINDS`
+- `ChangeKind` (`checker_policy.py`) — enum of 215 change types; categorized into `BREAKING_KINDS`, `API_BREAK_KINDS`, `COMPATIBLE_KINDS`, `RISK_KINDS`
 - `Verdict` (`checker.py`) — overall comparison result (compatible/source_break/breaking)
 - `LibraryMetadata` (`checker.py`) — parsed library info
 
@@ -124,21 +125,97 @@ Core pipeline (in order of data flow):
 
 ## Known mypy issues
 
-CI runs `mypy abicheck/` as a required gate. It currently reports ~17 errors in:
-- `compat/cli.py` — Click's `Group` class typed as `Any` (4 errors)
-- `ctf_metadata.py`, `btf_metadata.py`, `dwarf_snapshot.py` — unused `type: ignore` comments (13 errors)
+CI runs `mypy abicheck/` as a required gate. The baseline is currently **0 errors** — the previously-documented 26 errors were all `unused-ignore` / `no-any-return` / `misc` warnings on third-party calls (pyelftools, click). They are suppressed in `pyproject.toml` via per-module `disable_error_code` overrides, which keeps the file portable across mypy releases without churning the underlying `# type: ignore` comments.
 
-These are upstream typing gaps or stale suppression comments, not bugs.
-**Your responsibility**: run `mypy abicheck/` after your changes and ensure you do not introduce *new* errors beyond the known baseline. Do not dismiss new mypy failures as "known issues".
+**Your responsibility**: run `mypy abicheck/` after your changes and ensure it stays clean. If a new third-party suppression is needed, extend the existing `disable_error_code` override for that module rather than scattering ad-hoc `# type: ignore` comments. If you legitimately reduce a real error to zero, leave `MYPY_ERROR_BASELINE = 0` in `scripts/check_ai_readiness.py` — it now warns on drift in either direction.
+
+## AI-readiness gate
+
+`scripts/check_ai_readiness.py` runs in CI as a fast structural gate. It checks:
+
+| Check | Severity | What it enforces |
+|-------|----------|------------------|
+| `file-size` | ERROR > 2000 lines, WARN > 1500 | Source files stay legible (no allowlist) |
+| `claude-md-coverage` | ERROR | `CLAUDE.md` exists in each major sub-tree |
+| `test-ratio` | WARN | At least 20% test-to-source file ratio |
+| `future-annotations` | WARN | `from __future__ import annotations` per CLAUDE.md convention |
+| `changekind-partition` | ERROR | Every `ChangeKind` is in exactly one of `BREAKING_KINDS` / `API_BREAK_KINDS` / `COMPATIBLE_KINDS` / `RISK_KINDS` |
+| `changekind-detector` | WARN | Every `ChangeKind` is produced somewhere (not orphaned) |
+| `changekind-docs` | WARN | Every `ChangeKind` is mentioned in `docs/` |
+| `doc-count-sync` | ERROR on drift, WARN if anchor moved | Headline counts in docs (ChangeKind count, example-catalog size) match their source of truth (`len(ChangeKind)`, `ground_truth.json`) |
+| `import-cycles` | ERROR | No import cycles within `abicheck/` |
+| `mypy-baseline` | ERROR if drifted up | mypy error count ≤ documented baseline |
+| `examples-ground-truth` | ERROR | Every `examples/case*/` has a `README.md` and an entry in `ground_truth.json` |
+| `examples-readme-sync` | ERROR | `examples/README.md` headline count, verdict distribution, and case-index rows match `ground_truth.json` (catches missing/stale catalog rows) |
+| `mkdocs-nav-coverage` | WARN | Every `docs/**/*.md` is in `mkdocs.yml` nav or linked from another doc |
+| `banned-imports` | ERROR | No `print(...)` outside CLI/reporter modules; no `subprocess(..., shell=True)` |
+| `license-header` | WARN | Every `abicheck/**/*.py` carries the Apache-2.0 header / SPDX identifier |
+| `test-assertion-density` | WARN | Every `test_*` function asserts something (directly or via a same-file helper) — flags zero-assertion smoke tests so coverage isn't "filled" without verification |
+
+Run locally: `python scripts/check_ai_readiness.py`. Errors fail; warnings print and pass.
+
+## Test-quality gates (beyond line coverage)
+
+Line coverage measures *reach*, not whether a test actually checks the result.
+Four mechanisms guard test quality so coverage can't be "filled" without verifying behaviour:
+
+- **FP-rate gate** — `scripts/check_fp_rate.py` (mirrored in `tests/test_fp_rate_gate.py`).
+  A labelled corpus of `(old, new)` snapshot pairs run under public-surface scoping:
+  internal-noise cases must stay non-breaking (no false positives), real-break cases
+  must stay breaking (no false negatives). Both baselines are 0; grow the corpus only
+  with cases the correct implementation already passes.
+- **Mutation testing** — `scripts/check_mutation_score.py` + `.github/workflows/mutation.yml`.
+  `mutmut` mutates the detector core (`diff_*`, `checker_policy`); a *surviving* mutant
+  is a covered-but-unverified line. Runs weekly / on the `mutation` PR label, gating on a
+  survivor baseline (`SURVIVOR_BASELINE`) once the first run establishes it.
+- **Metamorphic property tests** — `tests/test_detector_properties.py` (`slow`).
+  Hypothesis-generated snapshot pairs checked against invariants that hold for *any*
+  input (idempotence, determinism, direction-symmetry of touched symbols, emitted-kind
+  partition, additive monotonicity) — generalization guards, not example-shaped tests.
+- **Silent-skip guard** — `tests/conftest.py`. A marker lane can export
+  `ABICHECK_MIN_EXECUTED=<n>`; the session fails unless at least `<n>` tests actually ran,
+  so a missing external tool can't turn a lane green with zero work done. Wired into the
+  `abicc`, `libabigail`, and `integration` CI lanes.
+
+## Line-coverage floor
+
+The fast lane enforces a **95%** line+branch coverage floor (`--cov-fail-under=95`),
+but **only on the Linux unit-test lane** in `.github/workflows/ci.yml` — that's where
+the full unit suite runs. macOS/Windows skip the Linux-only ELF/DWARF parsing tests,
+which structurally lowers their coverage (~93% on macOS), so those lanes run the same
+tests without the fail-under gate (macOS still emits a coverage report). If the macOS
+lane ever fails on coverage, the fix is to keep the gate Linux-scoped — **do not lower
+the global 95% floor** to make another platform pass.
 
 ## Files that are large — edit carefully
 
-- `cli.py` (2,616 lines) — main CLI, many Click commands
-- `diff_platform.py` (1,618 lines) — all platform-specific detection
-- `dumper.py` (1,553 lines) — binary metadata extraction
-- `compat/cli.py` (1,389 lines) — ABICC compat CLI
+- `cli.py` (~1,500 lines) — main CLI, Click commands; sub-command modules below register on it
+- `cli_compare_release.py` (~950 lines) — `compare-release` command and helpers (split from `cli.py`)
+- `cli_appcompat.py` (~280 lines) — `appcompat` command and helpers (split from `cli.py`)
+- `cli_baseline.py` (~240 lines) — `baseline` command group (split from `cli.py`)
+- `cli_stack.py` (~190 lines) — `deps` and `stack-check` commands (split from `cli.py`)
+- `cli_debian_symbols.py` (~130 lines) — `debian-symbols` command group (split from `cli.py`)
+- `cli_suggest.py` (~80 lines) — `suggest-suppressions` command (split from `cli.py`)
+- `diff_platform.py` (~1,460 lines) — all platform-specific detection
+- `diff_platform_templates.py` (~180 lines) — template inner-type detectors (split from `diff_platform.py`)
+- `dumper.py` (~1,150 lines) — binary metadata extraction
+- `dumper_castxml.py` (~610 lines) — castxml XML parser (split from `dumper.py`)
+- `compat/cli.py` (~1,430 lines) — ABICC compat CLI
+- `compat/_errors.py` (~130 lines) — ABICC compat error classification helpers (split from `compat/cli.py`)
 
-These files work correctly but are large. When editing, read the specific section you need rather than the whole file.
+The 2000-line hard cap is enforced for every source file (no allowlist). Files above 1500 lines emit a WARN as a refactor signal. When editing, read the specific section you need rather than the whole file.
+
+### Adding a new top-level command
+
+Pick the right home:
+
+- **Small command (one function, no significant helpers)** — add to `cli.py` directly with `@main.command(...)`.
+- **Larger command or command group** — add as a sibling `abicheck/cli_<name>.py` module:
+  1. Top of module: `from .cli import main` (and any shared `_helpers`).
+  2. Decorate with `@main.command("foo")` or `@main.group("foo")` as usual.
+  3. At the bottom of `cli.py`, add `cli_<name>` to the side-effect `from . import (...)` block — that runs after `main` and helpers are defined, registering the new command.
+  4. If the new module uses `@click` decorators, add `abicheck.cli_<name>` to the `disallow_untyped_decorators = false` override in `pyproject.toml` (alongside the existing entries).
+  5. If `scripts/check_ai_readiness.py` flags a cycle, add `frozenset({"cli", "cli_<name>"})` to `IMPORT_CYCLE_ALLOWLIST` — this registration pattern is by design.
 
 ## Exit codes
 

@@ -15,7 +15,7 @@ Support everything ABICC currently does so existing users and pipelines can migr
 - JSON/HTML/Markdown reports with equivalent verdict semantics
 - Support for suppression files
 
-**Done:** 145 ChangeKinds implemented; YAML suppression files fully supported; ABICC compat CLI supports `-symbols-list` and `-types-list` whitelist flags (plain-text, one name per line); XML report generation for ABICC-compatible output; ABICC compat CLI with all major flags; auto-forwarding `abicheck compat <flags>` to `compat check`; test parity for ABICC 2.3.
+**Done:** 192 ChangeKinds implemented; YAML suppression files fully supported; ABICC compat CLI supports `-symbols-list` and `-types-list` whitelist flags (plain-text, one name per line); XML report generation for ABICC-compatible output; ABICC compat CLI with all major flags; auto-forwarding `abicheck compat <flags>` to `compat check`; test parity for ABICC 2.3.
 
 ---
 
@@ -30,7 +30,9 @@ Fix known ABICC / libabigail limitations and add new detection capability:
 
 **Done:** DWARF-aware struct/enum layout; calling convention, packing, toolchain flags detection; AST-DWARF deduplication; field qualifiers (const/volatile/mutable); enum/parameter rename heuristics; ELF_ONLY visibility tier used throughout detection; `Confidence` enum (high/medium/low) on `DiffResult` with `coverage_warnings` for disabled detectors (v0.2.0).
 
-**TODO:** Formalize HEADER_AWARE tier as distinct from DWARF_AWARE in JSON output schema.
+**Done:** Formalized the canonical `evidence_tier` scalar (`ELF_ONLY` / `DWARF_AWARE` / `HEADER_AWARE`, ordered by analysis depth) in the JSON output schema, alongside the existing raw `evidence_tiers` list. HEADER_AWARE is now distinct from DWARF_AWARE: the presence of a header/AST surface promotes the tier above DWARF-only debug info. See `EvidenceTier` in `checker_policy.py`.
+
+**Backlog (MSVC end-to-end hardening):** Windows CI includes a non-blocking MSVC + PDB lane, while MinGW/native cross-platform coverage is part of the regular validation story. Promoting the MSVC lane to blocking and broadening its fixture matrix are tracked in `docs/development/backlog.md`.
 
 ---
 
@@ -58,7 +60,7 @@ Make the tool convenient for AI agents and automation pipelines:
 - `--format json/markdown` output modes
 - Snapshot files for offline/async workflows (`abicheck dump` → `.abi.json`)
 
-**Done:** JSON output, snapshot format, exit codes (0/2/4), SARIF 2.1.0 output; MCP server for AI agent integration; GitHub Action (`napetrov/abicheck@v1`) for CI; report filtering (`--show-only`, `--stat`, `--show-impact`, `--report-mode leaf`) for CI gate pipelines.
+**Done:** JSON output, snapshot format, exit codes (0/2/4), SARIF 2.1.0 output; MCP server for AI agent integration; GitHub Action (`napetrov/abicheck@v0.3.0`) for CI; report filtering (`--show-only`, `--stat`, `--show-impact`, `--report-mode leaf`) for CI gate pipelines.
 
 ---
 
@@ -71,7 +73,7 @@ For each break type: what it is, how it appears in the real world, and which too
 - Comparison table: `abicheck` vs `abicc` vs `libabigail` vs `nm`-only
 - Coverage matrix showing evidence tier required (ELF-only / DWARF / Header / Runtime)
 
-**Done:** 74 example cases (`01–73` + `26b`) with per-case `README.md`; gap report with coverage matrix (abicheck vs ABICC vs libabigail vs `nm`); breaking-cases catalog in docs; cross-platform CMake build support for all example cases.
+**Done:** 126 example cases with per-case `README.md`; the original 74-case subset remains the release-pinned cross-tool benchmark; gap report with coverage matrix (abicheck vs ABICC vs libabigail vs `nm`); the consolidated [ABI/API Handling & Recommendations](../concepts/abi-api-handling.md) guide plus the generated [Examples Encyclopedia](../examples/index.md); cross-platform CMake build support for all single-library example cases.
 
 ---
 
@@ -103,11 +105,11 @@ Public documentation at <https://napetrov.github.io/abicheck/>:
 
 | Goal | Status |
 |------|--------|
-| G1: ABICC drop-in | Done — 145 ChangeKinds, compat CLI, suppression files, XML reports |
-| G2: Known gaps | DWARF layout, toolchain flags, AST-DWARF dedup, confidence tracking done; HEADER_AWARE tier TODO |
-| G3: libabigail tests | Done — ~54 parity test functions + 74 example cases |
+| G1: ABICC drop-in | Done — 192 ChangeKinds, compat CLI, suppression files, XML reports |
+| G2: Known gaps | DWARF layout, toolchain flags, AST-DWARF dedup, confidence tracking, canonical evidence tier (ELF_ONLY/DWARF_AWARE/HEADER_AWARE) done |
+| G3: libabigail tests | Done — ~54 parity test functions + 126 example cases |
 | G4: Agent-friendly | Done — JSON, SARIF, exit codes, snapshots, MCP server, GitHub Action |
-| G5: Break encyclopedia | Done — 74 example cases with docs + coverage matrix |
+| G5: Break encyclopedia | Done — 126 example cases + consolidated ABI/API handling guide + coverage matrix |
 | G6: Distribution & docs | Done — PyPI, conda-forge, MkDocs + GitHub Pages |
 
 ## Non-goals
@@ -115,3 +117,10 @@ Public documentation at <https://napetrov.github.io/abicheck/>:
 - Runtime instrumentation or dynamic analysis — abicheck is a static offline tool.
 - Source-level refactoring suggestions — it reports *what* broke, not how to fix your code.
 - Support for languages other than C/C++ (Rust, Go, etc.) — out of scope for now.
+- Static / import library archives (`.a`, `.lib`) — abicheck compares single
+  linkable images (shared libraries and objects), not `ar` member archives. A
+  static library has no runtime ABI surface (no SONAME, no dynamic symbol
+  table); link-time API checking over archive members is a deliberate non-goal.
+  Extract members (`ar x lib.a`) and compare the resulting objects, or the
+  shared library built from them, instead. See
+  [limitations](../concepts/limitations.md#static-import-library-archives-a-lib).

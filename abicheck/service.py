@@ -25,17 +25,20 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .checker import compare
 from .checker_types import DiffResult, LibraryMetadata
 from .errors import AbicheckError, SnapshotError, ValidationError
-from .model import AbiSnapshot, Function, Visibility
+from .model import AbiSnapshot, EnumType, Function, RecordType, Visibility
 from .reporter import to_json, to_markdown, to_stat, to_stat_json
 from .serialization import load_snapshot
 
 if TYPE_CHECKING:
+    from .dwarf_advanced import AdvancedDwarfMetadata
+    from .dwarf_metadata import DwarfMetadata
     from .policy_file import PolicyFile
     from .severity import SeverityConfig
     from .suppression import SuppressionList
@@ -121,6 +124,58 @@ def expand_header_inputs(inputs: list[Path]) -> list[Path]:
     return deduped
 
 
+def _resolve_raw_typeinfo(path: Path, version: str) -> AbiSnapshot | None:
+    """Parse a bare BTF or CTF blob into a snapshot, or return None.
+
+    BTF blobs start with magic ``0xEB9F`` and CTF with ``0xCFF1`` (either byte
+    order). The parsed type layout is converted to the checker's DWARF-shaped
+    metadata so the same struct/enum layout detectors apply.
+    """
+    from .btf_metadata import BTF_MAGIC, parse_btf_from_bytes
+    from .ctf_metadata import CTF_MAGIC, parse_ctf_from_bytes
+
+    try:
+        with open(path, "rb") as f:
+            head = f.read(2)
+    except OSError:
+        return None
+    if len(head) < 2:
+        return None
+
+    # Only detect the little-endian byte order that parse_btf_from_bytes /
+    # parse_ctf_from_bytes actually support: a big-endian-target blob (first
+    # bytes EB 9F / CF F1) would otherwise enter the branch but parse to empty
+    # metadata, silently dropping all type changes. Falling through to the
+    # "cannot detect format" error is the honest outcome for those.
+    magic_le = int.from_bytes(head, "little")
+    data = path.read_bytes()
+    try:
+        if magic_le == BTF_MAGIC:
+            btf = parse_btf_from_bytes(data)
+            # Require actual type records, not just a valid header. A
+            # truncated/unsupported blob parses to empty metadata, and a
+            # header-only blob (valid header, type_len=0) sets has_btf=True with
+            # type_count==0; either way, accepting it would yield a silent empty
+            # baseline that hides all layout changes. Fall through to the
+            # "cannot detect format" error instead.
+            if not btf.has_btf or btf.type_count <= 0:
+                _logger.warning("raw BTF blob %s has no type records; ignoring", path)
+                return None
+            return AbiSnapshot(library=path.name, version=version,
+                               dwarf=btf.to_dwarf_metadata())
+        if magic_le == CTF_MAGIC:
+            ctf = parse_ctf_from_bytes(data)
+            if not ctf.has_ctf or ctf.type_count <= 0:
+                _logger.warning("raw CTF blob %s has no type records; ignoring", path)
+                return None
+            return AbiSnapshot(library=path.name, version=version,
+                               dwarf=ctf.to_dwarf_metadata())
+    except (ValueError, OSError) as exc:
+        _logger.warning("failed to parse raw type-info blob %s: %s", path, exc)
+        return None
+    return None
+
+
 def resolve_input(
     path: Path,
     headers: list[Path] | None = None,
@@ -166,6 +221,14 @@ def resolve_input(
             debug_roots=debug_roots, enable_debuginfod=enable_debuginfod,
         )
 
+    # Raw kernel type-info blobs (a bare `.BTF` / CTF section extracted with
+    # `bpftool btf dump ... format raw` or `objcopy -O binary --only-section`).
+    # A real kernel carries BTF inside an ELF `.BTF` section, but the bare blob
+    # is a convenient, toolchain-free comparison input.
+    raw_typeinfo = _resolve_raw_typeinfo(path, version)
+    if raw_typeinfo is not None:
+        return raw_typeinfo
+
     # Text-based formats
     fmt = sniff_text_format(path)
 
@@ -181,6 +244,19 @@ def resolve_input(
             return load_snapshot(path)
         except (ValueError, KeyError, UnicodeDecodeError, OSError) as exc:
             raise SnapshotError(f"Failed to load JSON snapshot '{path}': {exc}") from exc
+
+    # Static / import libraries (`.a`, `.lib`) are member archives, not single
+    # linkable images. abicheck does not analyse archives (by design — see
+    # docs/concepts/limitations.md); fail with actionable guidance rather than a
+    # generic "unknown format" error.
+    from .binary_utils import detect_archive
+    if detect_archive(path):
+        raise ValidationError(
+            f"'{path}' is a static/import library archive (.a/.lib), which abicheck "
+            "does not analyse — it compares single linkable images (shared libraries "
+            "and objects). Extract the members (e.g. `ar x lib.a`) and compare the "
+            "resulting object files or the shared library built from them instead."
+        )
 
     raise ValidationError(
         f"Cannot detect format of '{path}'. "
@@ -223,9 +299,16 @@ def run_dump(
         _try_attach_sycl_metadata(snap, path)
         return snap
     if binary_fmt == "pe":
-        return _dump_pe(path, version, pdb_path=pdb_path)
+        return _dump_pe(
+            path, version,
+            headers=_headers, includes=_includes, lang=lang,
+            pdb_path=pdb_path,
+        )
     if binary_fmt == "macho":
-        return _dump_macho(path, version)
+        return _dump_macho(
+            path, version,
+            headers=_headers, includes=_includes, lang=lang,
+        )
     raise ValidationError(f"Unsupported binary format: {binary_fmt}")
 
 
@@ -297,13 +380,118 @@ def _dump_elf(
         raise SnapshotError(f"Failed to dump '{path}': {exc}") from exc
 
 
+def _has_matched_public_surface(snap: AbiSnapshot) -> bool:
+    """True if header parsing matched at least one exported symbol.
+
+    ``dumper._dump_pe`` / ``dumper._dump_macho`` mark a declaration ``PUBLIC``
+    only when its (mangled) name is present in the binary's export table.  When
+    no declaration matches — e.g. an MSVC-mangled C++ DLL parsed with a
+    Clang/GCC toolchain that emits Itanium names — every symbol collapses to
+    ``HIDDEN`` and header scoping has had no effect.
+    """
+    return any(f.visibility == Visibility.PUBLIC for f in snap.functions) or any(
+        v.visibility == Visibility.PUBLIC for v in snap.variables
+    )
+
+
+def _try_header_scoped_dump(
+    fmt: str,
+    path: Path,
+    headers: list[Path],
+    includes: list[Path],
+    version: str,
+    lang: str,
+) -> tuple[AbiSnapshot | None, str | None]:
+    """Attempt a castxml header-scoped dump for a PE/Mach-O binary.
+
+    Returns ``(snapshot, None)`` when castxml is available *and* at least one
+    declared symbol matched the export table.  Returns ``(None, reason)`` (after
+    emitting a ``UserWarning``) when scoping is unavailable or had no effect, so
+    the caller can fall back to export-table mode and record the structured
+    confidence signal (ADR-024 §D5.3).  ``reason`` is one of
+    ``"castxml-unavailable"`` / ``"mangling-fallback"``.  This mirrors the
+    public-API scoping that ``abidw --headers-dir`` / abi-dumper apply for ELF.
+    """
+    from .dumper import _dump_macho as _dumper_macho
+    from .dumper import _dump_pe as _dumper_pe
+
+    # Expand header directories into individual files (same as the ELF path),
+    # so `--header <dir>` scopes correctly instead of feeding a directory to
+    # castxml's `#include`. Done *outside* the broad except below so a genuinely
+    # bad/empty header path raises a clear ValidationError rather than silently
+    # falling back to the full export table.
+    resolved_headers = expand_header_inputs(headers)
+
+    compiler = "cc" if lang.lower() == "c" else "c++"
+    lang_arg = lang if lang.lower() == "c" else None
+    try:
+        if fmt == "pe":
+            snap = _dumper_pe(path, resolved_headers, includes, version, compiler, lang=lang_arg)
+        else:
+            snap = _dumper_macho(path, resolved_headers, includes, version, compiler, lang=lang_arg)
+    except Exception as exc:  # noqa: BLE001 — castxml missing / parse failure → fall back
+        warnings.warn(
+            f"Header-based ABI scoping unavailable for '{path.name}' "
+            f"({fmt.upper()}): {exc}. Falling back to export-table mode — "
+            f"--header/--include were ignored.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None, "castxml-unavailable"
+
+    if not _has_matched_public_surface(snap):
+        warnings.warn(
+            f"None of the provided headers matched exported symbols in "
+            f"'{path.name}'. This commonly happens when a C++ {fmt.upper()} binary "
+            f"uses a name-mangling scheme (e.g. MSVC) different from the compiler "
+            f"used to parse the headers. Falling back to export-table mode — "
+            f"header-based scoping had no effect.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None, "mangling-fallback"
+    return snap, None
+
+
+def _extract_pdb_debug(
+    path: Path, pdb_path: Path | None
+) -> tuple[DwarfMetadata | None, AdvancedDwarfMetadata | None]:
+    """Locate and parse a PDB for *path*.
+
+    Returns ``(dwarf_meta, dwarf_adv)`` or ``(None, None)`` when no PDB is found
+    or parsing fails.  PDB extraction is best-effort and never fatal.
+    """
+    try:
+        from .pdb_metadata import parse_pdb_debug_info
+        from .pdb_utils import locate_pdb
+
+        pdb_file = locate_pdb(path, pdb_path_override=pdb_path, allow_network=False)
+        if pdb_file is not None:
+            meta, adv = parse_pdb_debug_info(pdb_file)
+            _logger.info("PDB debug info loaded from %s", pdb_file)
+            return meta, adv
+        _logger.debug("No PDB file found for %s", path)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("PDB parsing failed for %s: %s", path, exc)
+    return None, None
+
+
 def _dump_pe(
     path: Path,
     version: str,
     *,
+    headers: list[Path] | None = None,
+    includes: list[Path] | None = None,
+    lang: str = "c++",
     pdb_path: Path | None = None,
 ) -> AbiSnapshot:
-    """Dump a PE binary (Windows DLL) to an ABI snapshot."""
+    """Dump a PE binary (Windows DLL) to an ABI snapshot.
+
+    When *headers* are supplied the ABI surface is scoped to declarations in
+    those public headers via castxml (mirroring ``abidw --headers-dir``).  If
+    castxml is unavailable or no header declaration matches an exported symbol,
+    scoping is skipped (with a warning) and the full export table is used.
+    """
     from .pe_metadata import parse_pe_metadata
 
     try:
@@ -324,6 +512,20 @@ def _dump_pe(
             "Verify the file is a valid DLL."
         )
 
+    dwarf_meta, dwarf_adv = _extract_pdb_debug(path, pdb_path)
+
+    scope_fallback: str | None = None
+    if headers:
+        scoped, scope_fallback = _try_header_scoped_dump(
+            "pe", path, headers, includes or [], version, lang,
+        )
+        if scoped is not None:
+            # Preserve any PDB debug info alongside the header-scoped surface.
+            if dwarf_meta is not None:
+                scoped.dwarf = dwarf_meta
+                scoped.dwarf_advanced = dwarf_adv
+            return scoped
+
     funcs = [
         Function(
             name=(exp.name or f"ordinal:{exp.ordinal}"),
@@ -335,36 +537,41 @@ def _dump_pe(
         for exp in pe_meta.exports
     ]
 
-    # PDB debug info extraction
-    dwarf_meta = None
-    dwarf_adv = None
-    try:
-        from .pdb_metadata import parse_pdb_debug_info
-        from .pdb_utils import locate_pdb
-
-        pdb_file = locate_pdb(
-            path, pdb_path_override=pdb_path,
-            allow_network=False,
-        )
-        if pdb_file is not None:
-            dwarf_meta, dwarf_adv = parse_pdb_debug_info(pdb_file)
-            _logger.info("PDB debug info loaded from %s", pdb_file)
-        else:
-            _logger.debug("No PDB file found for %s", path)
-    except Exception as exc:  # noqa: BLE001
-        _logger.warning("PDB parsing failed for %s: %s", path, exc)
+    # ADR-024 Phase 1 (PDB provenance): when header scoping was requested but
+    # castxml could not resolve a surface (commonly the MSVC C++-mangling gap),
+    # recover declared types — *with their defining source header* — from the
+    # PDB debug info so that --public-header scoping still has a provenance
+    # signal to classify against. Bounded to this fallback branch so default
+    # PE diffs (no --header) are unaffected.
+    pdb_types: list[RecordType] = []
+    pdb_enums: list[EnumType] = []
+    if headers and dwarf_meta is not None:
+        from .pdb_model import model_types_from_dwarf_metadata
+        pdb_types, pdb_enums = model_types_from_dwarf_metadata(dwarf_meta)
 
     return AbiSnapshot(
         library=path.name, version=version,
-        functions=funcs, pe=pe_meta,
+        functions=funcs, types=pdb_types, enums=pdb_enums, pe=pe_meta,
         dwarf=dwarf_meta,
         dwarf_advanced=dwarf_adv,
         platform="pe",
+        scope_fallback=scope_fallback,
     )
 
 
-def _dump_macho(path: Path, version: str) -> AbiSnapshot:
-    """Dump a Mach-O binary (macOS dylib) to an ABI snapshot."""
+def _dump_macho(
+    path: Path,
+    version: str,
+    *,
+    headers: list[Path] | None = None,
+    includes: list[Path] | None = None,
+    lang: str = "c++",
+) -> AbiSnapshot:
+    """Dump a Mach-O binary (macOS dylib) to an ABI snapshot.
+
+    When *headers* are supplied the ABI surface is scoped to declarations in
+    those public headers via castxml; otherwise the full export table is used.
+    """
     from .macho_metadata import parse_macho_metadata
 
     try:
@@ -378,6 +585,14 @@ def _dump_macho(path: Path, version: str) -> AbiSnapshot:
             "Verify the file is a valid dynamic library."
         )
 
+    scope_fallback: str | None = None
+    if headers:
+        scoped, scope_fallback = _try_header_scoped_dump(
+            "macho", path, headers, includes or [], version, lang,
+        )
+        if scoped is not None:
+            return scoped
+
     funcs = [
         Function(
             name=exp.name, mangled=exp.name, return_type="?",
@@ -390,6 +605,7 @@ def _dump_macho(path: Path, version: str) -> AbiSnapshot:
         library=path.name, version=version,
         functions=funcs, macho=macho_meta,
         platform="macho",
+        scope_fallback=scope_fallback,
     )
 
 
@@ -469,6 +685,8 @@ def run_compare(
     old_debug_roots: list[Path] | None = None,
     new_debug_roots: list[Path] | None = None,
     enable_debuginfod: bool = False,
+    scope_to_public_surface: bool = True,
+    force_public_symbols: set[str] | None = None,
 ) -> tuple[DiffResult, AbiSnapshot, AbiSnapshot]:
     """Compare two ABI inputs and return the classified diff result.
 
@@ -509,7 +727,11 @@ def run_compare(
     )
 
     suppression, pf = load_suppression_and_policy(suppress, policy, policy_file_path)
-    result = compare(old, new, suppression=suppression, policy=policy, policy_file=pf)
+    result = compare(
+        old, new, suppression=suppression, policy=policy, policy_file=pf,
+        scope_to_public_surface=scope_to_public_surface,
+        force_public_symbols=force_public_symbols,
+    )
     result.old_metadata = collect_metadata(old_input)
     result.new_metadata = collect_metadata(new_input)
     return result, old, new
@@ -530,11 +752,17 @@ def render_output(
     show_impact: bool = False,
     stat: bool = False,
     severity_config: SeverityConfig | None = None,
+    show_recommendation: bool = False,
+    demangle: bool = False,
 ) -> str:
     """Render comparison result in the requested output format.
 
     Supported formats: ``'json'``, ``'markdown'``, ``'sarif'``, ``'html'``,
     ``'junit'``.
+
+    ``demangle`` only affects human-facing formats (markdown, review); machine
+    formats (json/sarif/junit) always keep raw mangled symbols so downstream
+    tooling can match on them.
 
     Raises:
         ValidationError: For unrecognised output format.
@@ -574,7 +802,15 @@ def render_output(
             show_only=show_only, severity_config=severity_config,
         )
 
-    _SUPPORTED_FORMATS = {"json", "sarif", "html", "junit", "markdown", "md"}
+    if fmt == "review":
+        from .reporter import to_review_digest
+        txt = to_review_digest(result)
+        if demangle:
+            from .demangle import demangle_text
+            txt = demangle_text(txt)
+        return txt
+
+    _SUPPORTED_FORMATS = {"json", "sarif", "html", "junit", "markdown", "md", "review"}
     if fmt not in _SUPPORTED_FORMATS:
         raise ValidationError(f"Unsupported output format: {fmt!r} (expected one of {sorted(_SUPPORTED_FORMATS)})")
 
@@ -582,9 +818,13 @@ def render_output(
     md = to_markdown(
         result, show_only=show_only, report_mode=report_mode,
         show_impact=show_impact, severity_config=severity_config,
+        show_recommendation=show_recommendation,
     )
     if follow_deps and (old.dependency_info or (new and new.dependency_info)):
         md += _render_deps_section_md(old, new)
+    if demangle:
+        from .demangle import demangle_text
+        md = demangle_text(md)
     return md
 
 

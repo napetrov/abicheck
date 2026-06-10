@@ -51,7 +51,20 @@ def _tool_version() -> str:
         return "unknown"
 
 
+_VERDICT_TO_SARIF_LEVEL = {
+    Verdict.BREAKING: "error",
+    Verdict.API_BREAK: "error",
+    Verdict.COMPATIBLE_WITH_RISK: "warning",
+    Verdict.COMPATIBLE: "note",
+}
+
+
 def _severity(change: Change) -> str:
+    # Honour an A4 per-finding effective_verdict (ADR-027): a demoted opaque/
+    # PIMPL layout change reports as a SARIF "note", not an "error".
+    eff = getattr(change, "effective_verdict", None)
+    if isinstance(eff, Verdict):
+        return _VERDICT_TO_SARIF_LEVEL.get(eff, policy_for(change.kind).severity)
     return policy_for(change.kind).severity
 
 
@@ -221,6 +234,31 @@ def to_sarif(
                     **({"coverageWarnings": list(result.coverage_warnings)} if result.coverage_warnings else {}),
                     "policy": result.policy or "strict_abi",
                     **({"policyOverrides": {k.value: v.value for k, v in result.policy_file.overrides.items()}} if result.policy_file and result.policy_file.overrides else {}),
+                    # ADR-024 §D4/D5: header-scope ledger. Out-of-surface
+                    # findings are disclosed here for auditability (never
+                    # silently dropped) when --scope-public-headers is active.
+                    **(
+                        {
+                            "surfaceScope": {
+                                "enabled": True,
+                                "confidence": result.surface_scope_confidence,
+                                "notes": list(result.surface_scope_notes),
+                                "outOfSurfaceCount": result.out_of_surface_count,
+                                "outOfSurfaceChanges": [
+                                    {
+                                        "kind": c.kind.value,
+                                        "symbol": c.symbol,
+                                        "description": c.description,
+                                        **({"sourceLocation": c.source_location} if c.source_location else {}),
+                                        **({"reason": c.surface_exclusion_reason} if c.surface_exclusion_reason else {}),
+                                    }
+                                    for c in result.out_of_surface_changes
+                                ],
+                            }
+                        }
+                        if result.scope_to_public_surface
+                        else {}
+                    ),
                 },
             }
         ],

@@ -30,17 +30,33 @@ v2 renames `brute_force` → `search_brute`. Mechanically:
   mangled name. Consumer binaries linked against v1 request the old
   symbol at load time and get an unresolved-symbol error.
 
+## Real Failure Demo
+
+**Severity: BREAKING / LOAD-TIME FAILURE**
+
+```bash
+cmake -S examples -B /tmp/abicheck-examples-build -DCMAKE_BUILD_TYPE=Debug
+cmake --build /tmp/abicheck-examples-build --target case86_tag_struct_renamed_app case86_tag_struct_renamed_v2
+
+tmp=$(mktemp -d)
+cp /tmp/abicheck-examples-build/case86_tag_struct_renamed/app_v1 "$tmp/"
+cp /tmp/abicheck-examples-build/case86_tag_struct_renamed/libv2.so "$tmp/libv1.so"
+(cd "$tmp" && LD_LIBRARY_PATH=. ./app_v1)
+# ./app_v1: symbol lookup error: undefined symbol: descriptor<brute_force, classification>::descriptor()
+```
+
 ## Why this is its own ChangeKind
 
 Renaming a *non-empty* class is rare and would already trigger many
 layout-related findings. Renaming a tag struct — the *only* purpose of
-which is to participate in mangling — is uniquely a oneDAL/Boost/std-style
-risk, and no existing ChangeKind correlates the disappearance with the
+which is to participate in mangling — is a distinct risk of the
+empty-tag-struct idiom used by many C++ libraries (such as oneDAL, Boost,
+and the standard library), and no existing ChangeKind correlates the disappearance with the
 appearance. A new `TAG_TYPE_RENAMED` makes the correlation explicit.
 
 ## How abicheck detects it
 
-The new detector (`abicheck/diff_onedal.py::detect_tag_type_renamed`) runs after the
+The new detector (`abicheck/diff_cpp_patterns.py::detect_tag_type_renamed`) runs after the
 type-diff pass:
 
 1. Find every `TYPE_REMOVED` for a record type with zero fields and no

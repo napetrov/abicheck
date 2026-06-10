@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import re
 import subprocess
 
 _log = logging.getLogger(__name__)
@@ -66,51 +67,128 @@ def demangle(symbol: str) -> str | None:
     return None
 
 
+# Process-wide cache for demangle_batch. Two dicts so a symbol that
+# was passed once and known *not* to be demangleable is not re-queried
+# on subsequent calls. Bounded to avoid unbounded growth on long-lived
+# servers; the bound is intentionally large because the typical
+# working-set is a few thousand symbols per ABI snapshot.
+_BATCH_CACHE_OK: dict[str, str] = {}
+_BATCH_CACHE_FAIL: set[str] = set()
+_BATCH_CACHE_MAX = 65536
+
+
+def _batch_cache_record_ok(mangled: str, demangled: str) -> None:
+    if len(_BATCH_CACHE_OK) >= _BATCH_CACHE_MAX:
+        _BATCH_CACHE_OK.clear()
+    _BATCH_CACHE_OK[mangled] = demangled
+
+
+def _batch_cache_record_fail(mangled: str) -> None:
+    if len(_BATCH_CACHE_FAIL) >= _BATCH_CACHE_MAX:
+        _BATCH_CACHE_FAIL.clear()
+    _BATCH_CACHE_FAIL.add(mangled)
+
+
+def _batch_phase1_cache(cpp_syms: list[str]) -> tuple[dict[str, str], list[str]]:
+    """Return (already-resolved, uncached) from the process-wide cache."""
+    result: dict[str, str] = {}
+    uncached: list[str] = []
+    for s in cpp_syms:
+        if s in _BATCH_CACHE_OK:
+            result[s] = _BATCH_CACHE_OK[s]
+        elif s in _BATCH_CACHE_FAIL:
+            pass  # known non-demangleable; skip silently
+        else:
+            uncached.append(s)
+    return result, uncached
+
+
+def _batch_phase2_cxxfilt(uncached: list[str], result: dict[str, str]) -> list[str]:
+    """Try in-process cxxfilt for *uncached* symbols; return still-remaining list."""
+    remaining: list[str] = []
+    try:
+        import cxxfilt
+        for s in uncached:
+            try:
+                d = cxxfilt.demangle(s)
+                if d and d != s:
+                    result[s] = d
+                    _batch_cache_record_ok(s, d)
+                else:
+                    remaining.append(s)
+            except Exception:  # noqa: BLE001
+                remaining.append(s)
+    except Exception:  # noqa: BLE001
+        _log.debug("cxxfilt import or initialisation failed; falling back to c++filt")
+        remaining = list(uncached)
+    return remaining
+
+
+def _batch_phase3_cppfilt(remaining: list[str], result: dict[str, str]) -> None:
+    """Fall back to a single batched ``c++filt`` subprocess call."""
+    success_set: set[str] = set()
+    cppfilt_succeeded = False
+    try:
+        proc = subprocess.run(
+            ["c++filt"],
+            input="\n".join(remaining),
+            capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode == 0:
+            cppfilt_succeeded = True
+            lines = proc.stdout.strip().split("\n")
+            for mangled, demangled in zip(remaining, lines):
+                if demangled and demangled != mangled:
+                    result[mangled] = demangled
+                    _batch_cache_record_ok(mangled, demangled)
+                    success_set.add(mangled)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    # Only cache permanent FAILs when c++filt actually ran to completion
+    # (returncode 0). If the binary is missing, timed out, raised OSError,
+    # or returned non-zero, leave the symbols un-cached so a future call
+    # (e.g. after c++filt becomes available) can retry them.
+    if cppfilt_succeeded:
+        for s in remaining:
+            if s not in success_set:
+                _batch_cache_record_fail(s)
+
+
 def demangle_batch(symbols: list[str]) -> dict[str, str]:
     """Demangle a batch of symbols efficiently using a single ``c++filt`` call.
 
     Returns a mapping from mangled → demangled for symbols that were
     successfully demangled. Non-C++ symbols are excluded from the result.
+
+    Memoised per-process via module-level caches so that callers which
+    repeatedly demangle the same (or overlapping) symbol sets — common
+    when several detectors each call ``demangle_batch`` with their own
+    slice of a snapshot — do not pay the subprocess cost more than once
+    per unique symbol.
     """
     cpp_syms = [s for s in symbols if s and s.startswith("_Z")]
     if not cpp_syms:
         return {}
 
-    result: dict[str, str] = {}
-    remaining_syms: list[str] = []
+    # Phase 1 — serve from the process-wide cache (both hit and miss).
+    result, uncached = _batch_phase1_cache(cpp_syms)
+    if not uncached:
+        return result
 
-    # Try cxxfilt first (in-process, fastest)
-    try:
-        import cxxfilt
-        for s in cpp_syms:
-            try:
-                d = cxxfilt.demangle(s)
-                if d and d != s:
-                    result[s] = d
-                else:
-                    remaining_syms.append(s)
-            except Exception:  # noqa: BLE001
-                remaining_syms.append(s)
-    except ImportError:
-        remaining_syms = list(cpp_syms)
+    # Phase 2 — try cxxfilt (in-process, fastest) for the uncached set.
+    remaining = _batch_phase2_cxxfilt(uncached, result)
 
-    # Fallback: batch c++filt call for symbols cxxfilt couldn't handle
-    if remaining_syms:
-        try:
-            proc = subprocess.run(
-                ["c++filt"],
-                input="\n".join(remaining_syms),
-                capture_output=True, text=True, timeout=30,
-            )
-            if proc.returncode == 0:
-                lines = proc.stdout.strip().split("\n")
-                for mangled, demangled in zip(remaining_syms, lines):
-                    if demangled and demangled != mangled:
-                        result[mangled] = demangled
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+    # Phase 3 — fall back to a single batched c++filt call.
+    if remaining:
+        _batch_phase3_cppfilt(remaining, result)
 
     return result
+
+
+def _reset_demangle_batch_cache() -> None:
+    """Test helper — clear the process-wide cache."""
+    _BATCH_CACHE_OK.clear()
+    _BATCH_CACHE_FAIL.clear()
 
 
 def base_name(symbol: str) -> str:
@@ -131,3 +209,32 @@ def base_name(symbol: str) -> str:
     prefix = demangled[:paren] if paren != -1 else demangled
     parts = prefix.rsplit("::", 1)
     return parts[-1].strip()
+
+
+# Itanium-mangled tokens use only this restricted alphabet, so we can find them
+# inside free-form report text (descriptions, additions lists, leaked-symbol
+# messages) without disturbing surrounding prose. ``.``-separated suffixes
+# (GCC clone markers like ``.cold`` / ``.part.0``) are matched only when
+# followed by more name characters, so a trailing sentence period is not eaten.
+_MANGLED_TOKEN_RE = re.compile(r"_Z[A-Za-z0-9_$]+(?:\.[A-Za-z0-9_$]+)*")
+
+
+def demangle_text(text: str) -> str:
+    """Demangle every Itanium-mangled symbol token embedded in *text*.
+
+    Tokens that are not valid C++ mangled names, or that cannot be demangled
+    because no demangler is available, are left unchanged. Intended for
+    human-facing report output only — machine formats (JSON/SARIF/JUnit) keep
+    the raw mangled symbols so downstream tooling can match on them.
+    """
+    tokens = set(_MANGLED_TOKEN_RE.findall(text))
+    if not tokens:
+        return text
+    mapping = demangle_batch(sorted(tokens))
+
+    def _repl(m: re.Match[str]) -> str:
+        tok = m.group(0)
+        demangled = mapping.get(tok)
+        return demangled if demangled and demangled != tok else tok
+
+    return _MANGLED_TOKEN_RE.sub(_repl, text)

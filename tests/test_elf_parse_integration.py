@@ -141,3 +141,42 @@ def test_parse_non_elf_file_returns_empty(tmp_path: Path) -> None:
     meta = parse_elf_metadata(bad)
     assert isinstance(meta, ElfMetadata)
     assert meta.symbols == []
+
+
+# ── security-hardening surface (G12) ────────────────────────────────────────
+
+@pytest.mark.integration
+def test_parse_hardened_so_captures_relro_and_canary() -> None:
+    """A hardened .so reports full RELRO + BIND_NOW + stack canary."""
+    src = """
+    #include <string.h>
+    int copy_fn(const char *s, char *out) { strcpy(out, s); return (int)strlen(out); }
+    """
+    with tempfile.TemporaryDirectory() as td:
+        so = _compile_so(
+            src, "libhardened.so", Path(td),
+            extra_flags=["-O2", "-fstack-protector-all",
+                         "-Wl,-z,relro,-z,now"],
+        )
+        meta = parse_elf_metadata(so)
+    assert meta.relro == "full"
+    assert meta.bind_now is True
+    assert meta.has_stack_canary is True
+    assert meta.has_writable_executable_segment is False
+
+
+@pytest.mark.integration
+def test_parse_unhardened_so_drops_relro_and_canary() -> None:
+    """An unhardened .so reports no RELRO and no stack canary."""
+    src = """
+    int add_fn(int a, int b) { return a + b; }
+    """
+    with tempfile.TemporaryDirectory() as td:
+        so = _compile_so(
+            src, "libplain.so", Path(td),
+            extra_flags=["-O0", "-fno-stack-protector",
+                         "-Wl,-z,norelro,-z,lazy"],
+        )
+        meta = parse_elf_metadata(so)
+    assert meta.relro == "none"
+    assert meta.has_stack_canary is False

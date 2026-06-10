@@ -8,6 +8,8 @@ Covers:
 """
 from __future__ import annotations
 
+import pytest
+
 from abicheck.checker_policy import (
     API_BREAK_KINDS,
     BREAKING_KINDS,
@@ -56,6 +58,71 @@ class TestGuessSymbolOrigin:
         result = _guess_symbol_origin("_ZTSSt11logic_error", [])
         assert result == "libstdc++.so.6"
 
+    @pytest.mark.parametrize("symbol", ["_ZTISi", "_ZTSSi", "_ZTVSi"])
+    def test_cxx_stdlib_substitution_rtti_returns_libstdcxx(self, symbol):
+        """RTTI/vtable symbols using Itanium std substitutions are stdlib-owned."""
+        result = _guess_symbol_origin(symbol, [])
+        assert result == "libstdc++.so.6"
+
+    @pytest.mark.parametrize(
+        "symbol",
+        [
+            "_ZTIi",     # typeinfo for int
+            "_ZTSi",     # typeinfo-name for int
+            "_ZTIPi",    # typeinfo for int*
+            "_ZTSPi",    # typeinfo-name for int*
+            "_ZTIPKi",   # typeinfo for int const*
+            "_ZTSPKi",   # typeinfo-name for int const*
+            "_ZTIDu",    # typeinfo for char8_t
+            "_ZTSDu",    # typeinfo-name for char8_t
+            "_ZTIDh",    # typeinfo for half
+            "_ZTIDf",    # typeinfo for decimal32
+            "_ZTIDF32_",      # typeinfo for _Float32
+            "_ZTIPDF16_",     # typeinfo for _Float16*
+            "_ZTIPKDF128_",   # typeinfo for _Float128 const*
+            "_ZTIDF16b",      # typeinfo for std::bfloat16_t
+            "_ZTIPDF32x",     # typeinfo for _Float32x*
+            "_ZTIPKDF64x",    # typeinfo for _Float64x const*
+        ],
+    )
+    def test_cxx_fundamental_rtti_returns_libstdcxx(self, symbol):
+        """Fundamental RTTI symbols are owned by the C++ runtime."""
+        result = _guess_symbol_origin(symbol, [])
+        assert result == "libstdc++.so.6"
+
+    @pytest.mark.parametrize("symbol", ["_ZTIi", "_ZTSi"])
+    def test_cxx_fundamental_rtti_prefers_needed_libcxx(self, symbol):
+        """Fundamental RTTI attribution still honors the runtime in DT_NEEDED."""
+        result = _guess_symbol_origin(symbol, ["libc++.so.1"])
+        assert result == "libc++.so.1"
+
+    def test_cxx_fundamental_rtti_does_not_select_libcxxabi(self):
+        """libc++abi should not be reported as the C++ stdlib owner."""
+        result = _guess_symbol_origin("_ZTIi", ["libc++abi.so.1"])
+        assert result == "libstdc++.so.6"
+
+    def test_native_project_typeinfo_returns_none(self):
+        """Project-owned RTTI symbols must not be attributed to libstdc++."""
+        result = _guess_symbol_origin("_ZTIN11flatbuffers13FileNameSaverE", ["libstdc++.so.6"])
+        assert result is None
+
+    def test_native_project_typeinfo_name_returns_none(self):
+        """Project-owned typeinfo-name symbols must not be attributed to libstdc++."""
+        result = _guess_symbol_origin("_ZTSN11flatbuffers13FileNameSaverE", ["libstdc++.so.6"])
+        assert result is None
+
+    @pytest.mark.parametrize(
+        "symbol",
+        [
+            "_ZTIPN11flatbuffers13FileNameSaverE",
+            "_ZTSPN11flatbuffers13FileNameSaverE",
+        ],
+    )
+    def test_native_project_pointer_rtti_returns_none(self, symbol):
+        """Pointer RTTI for project types must not be attributed to libstdc++."""
+        result = _guess_symbol_origin(symbol, ["libstdc++.so.6"])
+        assert result is None
+
     def test_cxx_abi_vtable_returns_libstdcxx(self):
         """_ZTVN10__cxxabiv... → libstdc++ (C++ ABI vtable)."""
         result = _guess_symbol_origin("_ZTVN10__cxxabiv117__class_type_infoE", [])
@@ -82,9 +149,14 @@ class TestGuessSymbolOrigin:
         assert result == "libgcc.a (static)"
 
     def test_gcc_runtime_ZGV(self):
-        """_ZGV... → libmvec.so.1 (SIMD vectorized math, not libgcc_s)."""
+        """libmvec vector ABI symbol → libmvec.so.1 (not libgcc_s)."""
         result = _guess_symbol_origin("_ZGVnN4v_sin", [])
         assert result == "libmvec.so.1"
+
+    def test_cxx_guard_variable_ZGVZ_is_native(self):
+        """_ZGVZ... is an Itanium C++ guard variable, not a libmvec symbol."""
+        result = _guess_symbol_origin("_ZGVZN4YAML3Exp9AmpersandEvE1e", [])
+        assert result is None
 
     def test_gcc_runtime_cpu_model(self):
         """__cpu_model → libgcc_s.so.1."""
@@ -414,15 +486,25 @@ class TestUpdatedAttributions:
         assert result == "libgcc.a (static)"
 
     def test_ZGV_to_libmvec(self):
-        """M1: _ZGV* → libmvec.so.1 (vectorized math), not libgcc_s."""
+        """M1: libmvec vector ABI symbol → libmvec.so.1, not libgcc_s."""
         result = _guess_symbol_origin("_ZGVnN4v_sin", [])
         assert result == "libmvec.so.1"
 
     def test_ZGV_variants(self):
         """M1: Various _ZGV SIMD math variants."""
-        for name in ("_ZGVbN4v_sin", "_ZGVdN2v_cos", "_ZGVeN8v_exp"):
+        for name in ("_ZGVbN4v_sin", "_ZGVcN4v_sin", "_ZGVdN2v_cos", "_ZGVeN8v_exp"):
             result = _guess_symbol_origin(name, [])
             assert result == "libmvec.so.1", f"Expected libmvec.so.1 for {name}"
+
+    def test_ZGVs_sve_variant_to_libmvec(self):
+        """M1: AArch64 SVE libmvec symbols use the _ZGVs... ABI form."""
+        result = _guess_symbol_origin("_ZGVsMxv_sinf", [])
+        assert result == "libmvec.so.1"
+
+    def test_ZGVN_guard_variable_not_libmvec(self):
+        """M1: Namespace-scope Itanium C++ guard variables are project-owned."""
+        result = _guess_symbol_origin("_ZGVN4test7MyClassE", [])
+        assert result is None
 
     # --- M2: operator new/delete ---
 

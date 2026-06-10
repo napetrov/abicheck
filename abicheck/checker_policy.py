@@ -49,8 +49,9 @@ from .change_registry import Verdict as Verdict
 class ChangeKind(str, Enum):
     # Function / variable changes
     FUNC_REMOVED = "func_removed"  # public symbol removed → BREAKING
-    FUNC_REMOVED_ELF_ONLY = "func_removed_elf_only"  # ELF-only symbol removed (visibility cleanup, not hard break)
-    FUNC_REMOVED_FROM_BINARY = "func_removed_from_binary"  # header-declared function disappeared from .dynsym → BREAKING
+    FUNC_REMOVED_ELF_ONLY = (
+        "func_removed_elf_only"  # exported ELF-only function removed -> binary break
+    )
     FUNC_ADDED = "func_added"  # new public symbol → COMPATIBLE
     FUNC_RETURN_CHANGED = "func_return_changed"  # return type changed → BREAKING
     FUNC_PARAMS_CHANGED = "func_params_changed"  # parameter types changed → BREAKING
@@ -129,12 +130,15 @@ class ChangeKind(str, Enum):
     )
 
     # ELF security / bad practice
-    EXECUTABLE_STACK = "executable_stack"  # PT_GNU_STACK has PF_X — NX protection disabled (bad practice)
-
-    # ELF symbol visibility drift (.dynsym STV_*)
-    ELF_VISIBILITY_CHANGED = (
-        "elf_visibility_changed"  # DEFAULT→PROTECTED (interposition semantics change)
-    )
+    EXECUTABLE_STACK = "executable_stack"  # PT_GNU_STACK gains PF_X — NX disabled (regression; gateable)
+    EXECUTABLE_STACK_REMOVED = "executable_stack_removed"  # PT_GNU_STACK loses PF_X — hardening improvement (informational)
+    # checksec-equivalent hardening regressions (see G12). RISK by default;
+    # gateable to break via the shipped security policy.
+    RELRO_WEAKENED = "relro_weakened"  # full→partial / →none RELRO
+    PIE_DISABLED = "pie_disabled"  # PIE executable → non-PIE
+    STACK_CANARY_REMOVED = "stack_canary_removed"  # -fstack-protector dropped
+    FORTIFY_SOURCE_WEAKENED = "fortify_source_weakened"  # _FORTIFY_SOURCE dropped
+    WRITABLE_EXECUTABLE_SEGMENT = "writable_executable_segment"  # W^X violation introduced
 
     # Symbol metadata drift (ELF .dynsym)
     SYMBOL_BINDING_CHANGED = "symbol_binding_changed"  # GLOBAL→WEAK (breaking)
@@ -143,6 +147,13 @@ class ChangeKind(str, Enum):
     )
     SYMBOL_TYPE_CHANGED = "symbol_type_changed"  # FUNC→OBJECT, etc.
     SYMBOL_SIZE_CHANGED = "symbol_size_changed"  # st_size changed
+    # st_size changed on an internal-looking (reserved/underscore-prefixed)
+    # exported data symbol; exported data size drift is breaking by default.
+    SYMBOL_SIZE_CHANGED_INTERNAL = "symbol_size_changed_internal"
+    # st_size changed on a public const string-like object, e.g.
+    # extern char const version[]. Old non-PIE executables can still carry copy
+    # relocations sized from the old DSO symbol, so this remains breaking.
+    SYMBOL_SIZE_CHANGED_CONST_OBJECT = "symbol_size_changed_const_object"
     IFUNC_INTRODUCED = "ifunc_introduced"  # → STT_GNU_IFUNC
     IFUNC_REMOVED = "ifunc_removed"  # STT_GNU_IFUNC →
     COMMON_SYMBOL_RISK = "common_symbol_risk"  # STT_COMMON exported
@@ -184,12 +195,24 @@ class ChangeKind(str, Enum):
     FRAME_REGISTER_CHANGED = (
         "frame_register_changed"  # CFA/frame-pointer convention changed (#117)
     )
+    VECTOR_ABI_CHANGED = (
+        # Vector-function (SIMD clone) ABI selection drifted between versions:
+        # the vectorized call variants of a function resolve to a different
+        # ABI. Detected from vector-ABI compiler flags in DW_AT_producer
+        # (-mveclibabi= GCC, -fveclib= clang, -vecabi= Intel-style).
+        "vector_abi_changed"
+    )
 
     # Sprint 2 — gap detectors
     FUNC_DELETED = "func_deleted"  # = delete added → BREAKING (was callable)
     VAR_BECAME_CONST = "var_became_const"  # non-const → const: writes → SIGSEGV
     VAR_LOST_CONST = "var_lost_const"  # const → non-const: BREAKING (ODR / inlining)
     TYPE_BECAME_OPAQUE = "type_became_opaque"  # complete → forward-decl only → BREAKING
+    # `final` class-key specifier transitions (header/castxml only — DWARF and
+    # the binary carry no `final` information). Source-level: gaining `final`
+    # breaks any consumer that derives from the class.
+    TYPE_BECAME_FINAL = "type_became_final"  # gained `final` → derivation no longer compiles → API_BREAK
+    TYPE_LOST_FINAL = "type_lost_final"      # lost `final` → strictly more permissive → COMPATIBLE
     BASE_CLASS_POSITION_CHANGED = (
         "base_class_position_changed"  # base reorder → this-ptr offset change
     )
@@ -345,7 +368,7 @@ class ChangeKind(str, Enum):
     # ── DWARF-based = delete detection (P3 gap) ─────────────────────────
     FUNC_DELETED_DWARF = "func_deleted_dwarf"  # DW_AT_deleted in DWARF5+, or absent from DWARF but present in headers
 
-    # SYCL Plugin Interface (PI) — ADR-020
+    # SYCL Plugin Interface (PI) — ADR-020b
     SYCL_IMPLEMENTATION_CHANGED = "sycl_implementation_changed"
     SYCL_PI_VERSION_CHANGED = "sycl_pi_version_changed"
     SYCL_PI_ENTRYPOINT_REMOVED = "sycl_pi_entrypoint_removed"
@@ -359,12 +382,12 @@ class ChangeKind(str, Enum):
     # ── Internal-namespace leak via public API ───────────────────────────
     # A type that lives in an "internal" namespace (e.g. ::detail::, ::impl::,
     # ::internal::) has changed and is reachable from a public exported type
-    # or symbol. This is the oneDAL-style break where users of the public
-    # API still observe ABI differences because the public type inherits
+    # or symbol. This is the detail-namespace leak break where users of the
+    # public API still observe ABI differences because the public type inherits
     # from / embeds-by-value / uses-as-template-argument the internal type.
     INTERNAL_TYPE_LEAKS_VIA_PUBLIC_API = "internal_type_leaks_via_public_api"
 
-    # ── oneDAL-shaped breaks added in case77–case89 ──────────────────────
+    # ── library-family-shaped breaks added in case77–case89 ──────────────────────
     # See examples/case79_missing_template_instantiation/README.md
     INSTANTIATION_MISSING_FROM_BINARY = "instantiation_missing_from_binary"
     # See examples/case81_serialization_tag_reassigned/README.md
@@ -382,6 +405,127 @@ class ChangeKind(str, Enum):
     # See examples/case89_inline_accessor_renamed_pimpl_member/README.md
     INLINE_BODY_REFERENCES_RENAMED_MEMBER = "inline_body_references_renamed_member"
 
+    # ── Bundle / multi-library findings (ADR-023) ────────────────────────
+    # Reported by the bundle layer in addition to per-library changes.
+    # See abicheck/bundle.py.
+    BUNDLE_INTRA_DEP_REMOVED = "bundle_intra_dep_removed"
+    BUNDLE_INTRA_DEP_SIGNATURE_CHANGED = "bundle_intra_dep_signature_changed"
+    BUNDLE_INTRA_TYPE_CHANGED = "bundle_intra_type_changed"
+    BUNDLE_PROVIDER_CHANGED = "bundle_provider_changed"
+    BUNDLE_MANIFEST_INSTANTIATION_REMOVED = "bundle_manifest_instantiation_removed"
+    BUNDLE_MANIFEST_INSTANTIATION_ADDED = "bundle_manifest_instantiation_added"
+    BUNDLE_LIBRARY_REMOVED = "bundle_library_removed"
+    BUNDLE_LIBRARY_ADDED = "bundle_library_added"
+    BUNDLE_INTRA_DEP_VERSION_DRIFT = "bundle_intra_dep_resolved_to_different_version"
+
+    # ── Explicit specifier transitions on constructors / conversion ops ─
+    # Source-level contract: an `explicit` specifier added to a previously-
+    # implicit converting constructor invalidates user code that depended on
+    # implicit conversion (e.g. `Foo f = 42;` or pass-by-value at call site).
+    # Removing `explicit` is the dual; existing code keeps compiling, but
+    # implicit conversion may now select a different overload and cause
+    # behavioral drift. Neither change alters the mangled name.
+    CTOR_EXPLICIT_ADDED = "ctor_explicit_added"
+    CTOR_EXPLICIT_REMOVED = "ctor_explicit_removed"
+
+    # ── Namespace-shape patterns (oneDPL / header-only follow-up) ────────
+    # See examples/case99_experimental_graduated/README.md
+    EXPERIMENTAL_GRADUATED = "experimental_graduated"
+    # See examples/case100_experimental_removed_without_replacement/README.md
+    EXPERIMENTAL_REMOVED_WITHOUT_REPLACEMENT = (
+        "experimental_removed_without_replacement"
+    )
+    # Example case deferred — detector + unit tests live in PR #247.
+    STD_REEXPORT_REMOVED = "std_reexport_removed"
+    # Specialisation of INLINE_NAMESPACE_MOVED for header-declared
+    # symbols whose qualified name path explicitly carries a versioned
+    # inline namespace segment (``::_V1::`` → ``::_V2::``). Fires at the
+    # declaration level so it is detectable even when the library ships
+    # no .so (header-only / template libraries).
+    INLINE_NAMESPACE_VERSION_BUMPED = "inline_namespace_version_bumped"
+
+    # ── Template / overload-set patterns (PR-B follow-up) ────────────────
+    # See examples/case85_internal_template_signature_changed/README.md
+    INTERNAL_TEMPLATE_LEAKS_VIA_PUBLIC_API = "internal_template_leaks_via_public_api"
+    # See examples/case88_cpo_kind_changed/README.md
+    CPO_KIND_CHANGED = "cpo_kind_changed"
+    OVERLOAD_SET_REROUTED = "overload_set_rerouted"
+    MANDATORY_TEMPLATE_PARAM_ADDED = "mandatory_template_param_added"
+    UNSPECIFIED_RETURN_NOW_NAMED = "unspecified_return_now_named"
+
+    # ── Build-configuration / probe-harness patterns (PR-C) ──────────────
+    # See examples/case97_api_depends_on_consumer_env/README.md
+    API_DEPENDS_ON_CONSUMER_ENV = "api_depends_on_consumer_env"
+    CXX_STANDARD_FLOOR_RAISED = "cxx_standard_floor_raised"
+    BEHAVIOURAL_DEFAULT_CHANGED = "behavioural_default_changed"
+
+    # Hidden friends (in-class `friend` declarations, typically inline).
+    # Inline-defined hidden friends are findable only via ADL on one of
+    # their argument types; removing one is a source-level break for any
+    # consumer that wrote `a + b` (or similar operator/ADL usage). When
+    # the friend was also defined out-of-line, removal additionally fires
+    # FUNC_REMOVED at the binary level; the two findings are complementary.
+    HIDDEN_FRIEND_REMOVED = "hidden_friend_removed"
+    HIDDEN_FRIEND_ADDED = "hidden_friend_added"
+
+    # ── modern-C++ / numerical-library ABI hazards (gap analysis) ───────────
+    INTEGER_MODEL_CHANGED = "integer_model_changed"
+    ABI_TAG_CHANGED = "abi_tag_changed"
+    CHAR8T_MIGRATION = "char8t_migration"
+    BIT_INT_WIDTH_CHANGED = "bit_int_width_changed"
+    ATOMIC_QUALIFIER_CHANGED = "atomic_qualifier_changed"
+
+    # ── API-surface intelligence anti-patterns (ADR-027 A2 / D2.2) ──────────
+    # Graph-shaped findings recognised from the declaration graph rather than a
+    # per-symbol diff. The two RISK kinds are single-snapshot anti-patterns
+    # (reported by `surface-report`, and at diff time only when newly
+    # introduced); the two BREAKING kinds are idiom *transitions* emitted by the
+    # A4 pattern-verdict pass when an opacity/handle guarantee callers relied on
+    # is lost.
+    PUBLIC_API_EXPOSES_STL_BY_VALUE = "public_api_exposes_stl_by_value"
+    POLYMORPHIC_TYPE_NON_VIRTUAL_DTOR = "polymorphic_type_non_virtual_dtor"
+    OPAQUE_INVARIANT_BROKEN = "opaque_invariant_broken"
+    HANDLE_TYPE_CHANGED = "handle_type_changed"
+
+    # ── API-surface metric drift (ADR-027 A1 / D1.2) ────────────────────────
+    # Aggregate, informational signals emitted only with --surface-metrics.
+    # COMPATIBLE: never breaking on their own; useful for CI dashboards and
+    # release notes.
+    PUBLIC_SURFACE_GREW = "public_surface_grew"
+    PUBLIC_SURFACE_SHRANK = "public_surface_shrank"
+    UNDOCUMENTED_EXPORT_RATIO_INCREASED = "undocumented_export_ratio_increased"
+
+    # ── Build-context evidence (ADR-028 L3 / ADR-029 D9) ────────────────────
+    # Emitted only by the build-evidence diff over two EvidencePacks. These are
+    # source/build-context findings, not artifact-backed ABI breaks: per
+    # ADR-028 D3 they default to COMPATIBLE (quality) or RISK and never to
+    # BREAKING. When a build-context change actually breaks the ABI, the
+    # artifact diff (L0/L1/L2) emits the BREAKING finding separately; these
+    # kinds explain and localize it.
+    BUILD_CONTEXT_CHANGED = "build_context_changed"  # non-ABI build metadata drift → COMPATIBLE (quality)
+    ABI_RELEVANT_BUILD_FLAG_CHANGED = "abi_relevant_build_flag_changed"  # ABI-affecting flag changed → RISK
+    HEADER_PARSE_CONTEXT_DRIFT = "header_parse_context_drift"  # headers parsed under different context than the build → RISK
+    TOOLCHAIN_VERSION_CHANGED = "toolchain_version_changed"  # compiler/stdlib/sysroot changed → RISK
+    GENERATED_FILE_DEPENDENCY_UNSTABLE = "generated_file_dependency_unstable"  # generated-file dependency risk → RISK
+    LINK_EXPORT_POLICY_CHANGED = "link_export_policy_changed"  # version script / export map / .def changed → RISK
+
+    # ── Source ABI replay evidence (ADR-028 L4 / ADR-030 D6) ────────────────
+    # Emitted only by the source-replay diff over two linked source ABI
+    # surfaces (source/source_abi.json). These cover source/API facts weakly or
+    # not represented in final artifacts: macro constants, default arguments,
+    # inline/template bodies, constexpr values, uninstantiated templates. Per
+    # ADR-028 D3 / ADR-030 D6 they are source/API findings, never sole authority
+    # for a shipped-ABI BREAKING verdict — they default to API_BREAK or RISK.
+    PUBLIC_MACRO_VALUE_CHANGED = "public_macro_value_changed"  # public macro constant changed → API_BREAK
+    DEFAULT_ARGUMENT_CHANGED = "default_argument_changed"  # default argument value changed → API_BREAK
+    INLINE_BODY_CHANGED = "inline_body_changed"  # public inline body changed, no symbol change → RISK
+    CONSTEXPR_VALUE_CHANGED = "constexpr_value_changed"  # public constexpr value changed → API_BREAK
+    TEMPLATE_BODY_CHANGED = "template_body_changed"  # uninstantiated template body changed → RISK
+    UNINSTANTIATED_TEMPLATE_REMOVED = "uninstantiated_template_removed"  # public template removed → API_BREAK
+    SOURCE_DECL_BINARY_SYMBOL_MISMATCH = "source_decl_binary_symbol_mismatch"  # decl no longer maps to a symbol → RISK
+    ODR_SOURCE_CONFLICT = "odr_source_conflict"  # same type name differs across TUs → RISK
+    GENERATED_HEADER_CHANGED = "generated_header_changed"  # generated public header changed → RISK
+
 
 class HasKind(Protocol):
     kind: ChangeKind
@@ -396,6 +540,47 @@ class Confidence(str, Enum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
+
+
+class EvidenceTier(str, Enum):
+    """Canonical analysis tier achieved for a comparison.
+
+    Unlike :data:`DiffResult.evidence_tiers` — a list of the *raw* data
+    sources that were available (``"elf"``, ``"dwarf"``, ``"header"``,
+    ``"pe"``, ``"macho"``) — this is a single, ordered label summarizing
+    *how deep* the analysis could go. Consumers should key trust decisions
+    off this scalar rather than re-deriving depth from the raw list.
+
+    Ordering (shallow → deep):
+
+    - ``ELF_ONLY`` — symbol-table-only. Binary metadata is present
+      (ELF/PE/Mach-O export tables) but there is no DWARF debug info and no
+      header/AST surface. Only symbol add/remove and version changes are
+      observable; struct layout, enum values, and type changes are not.
+    - ``DWARF_AWARE`` — DWARF (or equivalent debug info) is present, enabling
+      struct layout, enum, and calling-convention analysis, but no
+      header/AST surface is available to cross-check declared API intent.
+    - ``HEADER_AWARE`` — header/AST information (functions/types/enums from a
+      parsed source surface) is present. This is the richest tier and the
+      only one that can reason about declared-but-not-emitted API,
+      inline/template changes, and macro contracts.
+    """
+
+    ELF_ONLY = "elf_only"
+    DWARF_AWARE = "dwarf_aware"
+    HEADER_AWARE = "header_aware"
+
+    @property
+    def rank(self) -> int:
+        """Numeric depth (higher = deeper analysis). Useful for comparisons."""
+        return _EVIDENCE_TIER_RANK[self]
+
+
+_EVIDENCE_TIER_RANK: dict[EvidenceTier, int] = {
+    EvidenceTier.ELF_ONLY: 0,
+    EvidenceTier.DWARF_AWARE: 1,
+    EvidenceTier.HEADER_AWARE: 2,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -644,6 +829,44 @@ def policy_kind_sets(
     )
 
 
+def effective_category(
+    change: HasKind,
+    breaking: frozenset[ChangeKind],
+    api_break: frozenset[ChangeKind],
+    compatible: frozenset[ChangeKind],
+    risk: frozenset[ChangeKind],
+) -> Verdict:
+    """The verdict category a single *change* contributes (ADR-025 D4.1).
+
+    This is the **one** place a finding's category is decided. When the finding
+    carries a per-finding ``effective_verdict`` override (set by the A4
+    pattern-aware modulation pass), that wins; otherwise the category derives
+    from ``change.kind``'s membership in the policy kind sets — exactly today's
+    behaviour. Unclassified kinds fail safe to ``BREAKING``.
+
+    Every classification site (``compute_verdict``, the ``DiffResult``
+    properties, the reporter, the severity helpers, and the bundle verdict) must
+    route through this helper so a demotion is honoured consistently across all
+    outputs and both exit-code paths.
+    """
+    # Require a real Verdict: ``isinstance`` (not ``is not None``) rejects
+    # MagicMock test doubles whose attribute access auto-creates a truthy mock,
+    # mirroring the ``frozen_namespace_violation`` guard in policy_file.
+    override = getattr(change, "effective_verdict", None)
+    if isinstance(override, Verdict):
+        return override
+    kind = change.kind
+    if kind in breaking:
+        return Verdict.BREAKING
+    if kind in api_break:
+        return Verdict.API_BREAK
+    if kind in risk:
+        return Verdict.COMPATIBLE_WITH_RISK
+    if kind in compatible:
+        return Verdict.COMPATIBLE
+    return Verdict.BREAKING  # unclassified → fail-safe
+
+
 def compute_verdict(
     changes: Sequence[HasKind], *, policy: str = "strict_abi"
 ) -> Verdict:
@@ -663,21 +886,19 @@ def compute_verdict(
     if not changes:
         return Verdict.NO_CHANGE
 
-    breaking, api_break, compatible, risk = policy_kind_sets(policy)
-    kinds = {c.kind for c in changes}
-    if kinds & breaking:
+    sets = policy_kind_sets(policy)
+    # Per-finding effective category (ADR-025 D4.1): a finding's own
+    # ``effective_verdict`` override wins over its kind's category; the overall
+    # verdict is the worst contributed category. With no overrides this is
+    # identical to the historical kind-set intersection.
+    verdicts = {effective_category(c, *sets) for c in changes}
+    if Verdict.BREAKING in verdicts:
         return Verdict.BREAKING
-    if kinds & api_break:
+    if Verdict.API_BREAK in verdicts:
         return Verdict.API_BREAK
-    # At this point: no BREAKING, no API_BREAK kinds remain.
-    # All remaining kinds are in compatible ∪ risk.
-    # RISK + BREAKING → already returned BREAKING above; RISK + API_BREAK → API_BREAK above.
-    if kinds - compatible - risk == set():
-        if kinds & risk:
-            return Verdict.COMPATIBLE_WITH_RISK  # binary-compat, deployment risk only
-        return Verdict.COMPATIBLE
-    # Unclassified change kinds default to BREAKING (fail-safe)
-    return Verdict.BREAKING
+    if Verdict.COMPATIBLE_WITH_RISK in verdicts:
+        return Verdict.COMPATIBLE_WITH_RISK  # binary-compat, deployment risk only
+    return Verdict.COMPATIBLE
 
 
 # ---------------------------------------------------------------------------

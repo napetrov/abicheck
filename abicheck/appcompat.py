@@ -31,8 +31,11 @@ from typing import TYPE_CHECKING
 
 from .checker import Change, DiffResult, compare
 from .checker_policy import ChangeKind, Verdict, compute_verdict
+from .model import AbiSnapshot, Visibility
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from .policy_file import PolicyFile
     from .suppression import SuppressionList
 
@@ -78,6 +81,33 @@ class AppCompatResult:
 
     # Coverage
     symbol_coverage: float = 100.0  # % of app's required symbols present in new lib
+
+
+@dataclass
+class PluginHostContractResult:
+    """Result of checking a plugin upgrade against a host's load contract.
+
+    The dlopen() failure mode is two-sided: a host resolves a fixed set of
+    entry-point symbols (``dlsym``) from each plugin it loads. This is the
+    plugin-load direction of :class:`AppCompatResult` — "does plugin v2 still
+    satisfy host H's required entrypoints?" (ADR-005 / gap G5).
+    """
+
+    old_plugin: str
+    new_plugin: str
+
+    #: entry-point symbols the host resolves from the plugin (the contract).
+    required_entrypoints: set[str] = field(default_factory=set)
+    #: required entrypoints the *new* plugin no longer exports → host load break.
+    missing_entrypoints: list[str] = field(default_factory=list)
+    #: library diff changes that touch a required entrypoint.
+    breaking_for_host: list[Change] = field(default_factory=list)
+    #: full plugin v1→v2 diff (for reference / reporting).
+    full_diff: DiffResult | None = None
+    #: host-scoped verdict (BREAKING when an entrypoint is dropped/incompatible).
+    verdict: Verdict = Verdict.COMPATIBLE
+    #: % of the host's required entrypoints still provided by the new plugin.
+    coverage: float = 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +166,8 @@ def _build_version_index(
         if isinstance(section, GNUVerNeedSection):
             for verneed, vernaux_iter in section.iter_versions():
                 lib = verneed.name
+                if not lib:
+                    continue
                 for vernaux in vernaux_iter:
                     ver_idx = vernaux.entry.vna_other
                     ver_idx_to_lib[ver_idx] = lib
@@ -144,6 +176,44 @@ def _build_version_index(
                     if ver and library_soname and lib == library_soname:
                         reqs.required_versions[ver] = lib
     return ver_idx_to_lib
+
+
+def _symbol_version_index(versym_section: object | None, idx: int) -> int:
+    """Return the .gnu.version index for symbol *idx* (1 = unversioned/global)."""
+    if versym_section is None:
+        return 1
+    try:
+        ver_entry = versym_section.get_symbol(idx)
+        ver_ndx = ver_entry.entry["ndx"]
+        if isinstance(ver_ndx, str):
+            return 0 if ver_ndx == "VER_NDX_LOCAL" else 1
+        return int(ver_ndx) & 0x7FFF  # Mask off hidden bit.
+    except (IndexError, KeyError):
+        return 1
+
+
+def _symbol_from_target_library(
+    sym_name: str,
+    binding: str,
+    ver_ndx: int,
+    reqs: AppRequirements,
+    library_soname: str,
+    ver_idx_to_lib: dict[int, str],
+    versym_section: object | None,
+) -> bool:
+    """Return whether an undefined symbol is imported from the target library."""
+    if not library_soname:
+        return True
+    from .elf_metadata import _guess_symbol_origin
+
+    # With versioning, a concrete version index (>= 2) maps directly to a lib.
+    if versym_section is not None and ver_ndx >= 2:
+        return ver_idx_to_lib.get(ver_ndx, "") == library_soname
+    # Otherwise fall back to a heuristic on the symbol name / weak binding.
+    origin = _guess_symbol_origin(sym_name, reqs.needed_libs)
+    if origin is not None:
+        return origin == library_soname
+    return binding != "STB_WEAK"
 
 
 def _collect_undefined_symbols(
@@ -156,52 +226,27 @@ def _collect_undefined_symbols(
     """Read undefined symbols from .dynsym, filtered by target library."""
     from elftools.elf.sections import SymbolTableSection
 
-    def _version_index_for_symbol(idx: int) -> int:
-        if versym_section is None:
-            return 1
-        try:
-            ver_entry = versym_section.get_symbol(idx)
-            ver_ndx = ver_entry.entry["ndx"]
-            if isinstance(ver_ndx, str):
-                return 0 if ver_ndx == "VER_NDX_LOCAL" else 1
-            return int(ver_ndx) & 0x7FFF  # Mask off hidden bit.
-        except (IndexError, KeyError):
-            return 1
-
-    def _is_symbol_from_target_library(sym_name: str, binding: str, ver_ndx: int) -> bool:
-        if not library_soname:
-            return True
-        from .elf_metadata import _guess_symbol_origin
-        if versym_section is None:
-            origin = _guess_symbol_origin(sym_name, reqs.needed_libs)
-            if origin is not None:
-                return origin == library_soname
-            return binding != "STB_WEAK"
-        if ver_ndx >= 2:
-            source_lib = ver_idx_to_lib.get(ver_ndx, "")
-            return source_lib == library_soname
-
-        origin = _guess_symbol_origin(sym_name, reqs.needed_libs)
-        if origin is not None:
-            return origin == library_soname
-        return binding != "STB_WEAK"
-
     for section in elf.iter_sections():
-        if isinstance(section, SymbolTableSection) and section.name == ".dynsym":
-            for idx, sym in enumerate(section.iter_symbols()):
-                if sym.entry.st_shndx != "SHN_UNDEF":
-                    continue
-                if not sym.name:
-                    continue
-                binding = sym.entry.st_info.bind
-                if binding not in ("STB_GLOBAL", "STB_WEAK"):
-                    continue
-
-                ver_ndx = _version_index_for_symbol(idx)
-                if not _is_symbol_from_target_library(sym.name, binding, ver_ndx):
-                    continue
-
-                reqs.undefined_symbols.add(sym.name)
+        if not (isinstance(section, SymbolTableSection) and section.name == ".dynsym"):
+            continue
+        for idx, sym in enumerate(section.iter_symbols()):
+            if sym.entry.st_shndx != "SHN_UNDEF" or not sym.name:
+                continue
+            binding = sym.entry.st_info.bind
+            if binding not in ("STB_GLOBAL", "STB_WEAK"):
+                continue
+            ver_ndx = _symbol_version_index(versym_section, idx)
+            if not _symbol_from_target_library(
+                sym.name,
+                binding,
+                ver_ndx,
+                reqs,
+                library_soname,
+                ver_idx_to_lib,
+                versym_section,
+            ):
+                continue
+            reqs.undefined_symbols.add(sym.name)
 
 
 def _parse_elf_app_requirements(
@@ -452,6 +497,12 @@ def _is_relevant_to_app(change: Change, app: AppRequirements) -> bool:
         if app.undefined_symbols & set(change.affected_symbols):
             return True
 
+    # ELF SONAME changes affect consumers that record the old SONAME in
+    # DT_NEEDED: even with the same exported symbols, the dynamic loader may
+    # fail unless the old SONAME remains available.
+    if change.kind == ChangeKind.SONAME_CHANGED:
+        return bool(change.old_value and change.old_value in app.needed_libs)
+
     # Mach-O compat version change affects all consumers
     if change.kind == ChangeKind.COMPAT_VERSION_CHANGED:
         return True
@@ -593,6 +644,43 @@ def _compute_appcompat_verdict(
     return Verdict.COMPATIBLE if required_count > 0 else Verdict.NO_CHANGE
 
 
+def _missing_app_versions(new_lib_path: Path, app_reqs: AppRequirements) -> list[str]:
+    """Return ELF version tags required by the app but absent from the new library."""
+    if _detect_app_format(new_lib_path) != "elf":
+        return []
+    from .elf_metadata import parse_elf_metadata
+
+    new_defined_versions = set(parse_elf_metadata(new_lib_path).versions_defined)
+    return [
+        ver_tag
+        for ver_tag in app_reqs.required_versions
+        if ver_tag not in new_defined_versions
+    ]
+
+
+def _partition_app_changes(
+    diff: DiffResult, app_reqs: AppRequirements,
+) -> tuple[list[Change], list[Change]]:
+    """Split diff changes into (relevant-to-app, irrelevant-to-app)."""
+    breaking_for_app: list[Change] = []
+    irrelevant_for_app: list[Change] = []
+    for change in diff.changes:
+        target = breaking_for_app if _is_relevant_to_app(change, app_reqs) else irrelevant_for_app
+        target.append(change)
+    return breaking_for_app, irrelevant_for_app
+
+
+def _compute_symbol_coverage(
+    new_exports: set[str], required_count: int, missing_count: int,
+) -> float:
+    """Percentage of required app symbols still available in the new library."""
+    if not new_exports:
+        return 0.0 if required_count > 0 else 100.0
+    if required_count == 0:
+        return 100.0
+    return (required_count - missing_count) / required_count * 100.0
+
+
 def check_appcompat(
     app_path: Path,
     old_lib_path: Path,
@@ -610,6 +698,7 @@ def check_appcompat(
     suppression: SuppressionList | None = None,
     policy: str = "strict_abi",
     policy_file: PolicyFile | None = None,
+    scope_to_public_surface: bool = True,
 ) -> AppCompatResult:
     """Check application compatibility with a library update.
 
@@ -655,7 +744,7 @@ def check_appcompat(
         lang="c" if lang == "c" else None,
     )
 
-    diff = compare(old_snap, new_snap, suppression=suppression, policy=policy, policy_file=policy_file)
+    diff = compare(old_snap, new_snap, suppression=suppression, policy=policy, policy_file=policy_file, scope_to_public_surface=scope_to_public_surface)
 
     # 3. Check symbol availability in new library
     new_exports = _get_new_lib_exports(new_lib_path)
@@ -665,33 +754,14 @@ def check_appcompat(
     )
 
     # Check version availability
-    missing_versions: list[str] = []
-    if _detect_app_format(new_lib_path) == "elf":
-        from .elf_metadata import parse_elf_metadata
-        new_elf_meta = parse_elf_metadata(new_lib_path)
-        new_defined_versions = set(new_elf_meta.versions_defined)
-        for ver_tag, _lib in app_reqs.required_versions.items():
-            if ver_tag not in new_defined_versions:
-                missing_versions.append(ver_tag)
+    missing_versions = _missing_app_versions(new_lib_path, app_reqs)
 
     # 4. Filter diff by app usage
-    breaking_for_app: list[Change] = []
-    irrelevant_for_app: list[Change] = []
-    for change in diff.changes:
-        if _is_relevant_to_app(change, app_reqs):
-            breaking_for_app.append(change)
-        else:
-            irrelevant_for_app.append(change)
+    breaking_for_app, irrelevant_for_app = _partition_app_changes(diff, app_reqs)
 
     # 5. Compute app-specific verdict
     required_count = len(app_reqs.undefined_symbols)
-    if new_exports:
-        coverage = (
-            (required_count - len(missing_symbols)) / required_count * 100.0
-            if required_count > 0 else 100.0
-        )
-    else:
-        coverage = 0.0 if required_count > 0 else 100.0
+    coverage = _compute_symbol_coverage(new_exports, required_count, len(missing_symbols))
 
     verdict = _compute_appcompat_verdict(
         missing_symbols, missing_versions, breaking_for_app,
@@ -736,23 +806,10 @@ def check_against(
     )
 
     # Check version availability for ELF
-    missing_versions: list[str] = []
-    if _detect_app_format(new_lib_path) == "elf":
-        from .elf_metadata import parse_elf_metadata
-        new_elf_meta = parse_elf_metadata(new_lib_path)
-        new_defined_versions = set(new_elf_meta.versions_defined)
-        for ver_tag, _lib in app_reqs.required_versions.items():
-            if ver_tag not in new_defined_versions:
-                missing_versions.append(ver_tag)
+    missing_versions = _missing_app_versions(new_lib_path, app_reqs)
 
     required_count = len(app_reqs.undefined_symbols)
-    if new_exports:
-        coverage = (
-            (required_count - len(missing_symbols)) / required_count * 100.0
-            if required_count > 0 else 100.0
-        )
-    else:
-        coverage = 0.0 if required_count > 0 else 100.0
+    coverage = _compute_symbol_coverage(new_exports, required_count, len(missing_symbols))
 
     verdict = Verdict.BREAKING if (missing_symbols or missing_versions) else Verdict.COMPATIBLE
 
@@ -769,4 +826,110 @@ def check_against(
         full_diff=None,
         verdict=verdict,
         symbol_coverage=coverage,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Plugin host↔plugin load contract (the dlopen direction) — gap G5
+# ---------------------------------------------------------------------------
+
+def _resolvable_symbol_names(name: str, mangled: str | None) -> set[str]:
+    """The names ``dlsym`` could actually resolve for one exported entity.
+
+    ``dlsym`` resolves the *linker* symbol — the mangled name. The source
+    ``name`` is only resolvable when it *is* the linker symbol (``extern "C"``
+    or C, where ``mangled == name``); a demangled C++ name like ``foo(int)`` is
+    NOT a dlsym key and must not count as satisfying a host contract. When no
+    mangled name is recorded, fall back to ``name`` as the best available key.
+    """
+    if mangled:
+        names = {mangled}
+        if name == mangled:
+            names.add(name)
+        return names
+    return {name}
+
+
+#: Visibilities that correspond to a symbol actually exported from the binary.
+#: PUBLIC is the header/DWARF-aware default; ELF_ONLY is how a symbols-only dump
+#: (a stripped binary with no headers/DWARF — the common `plugin-check old.so
+#: new.so` case) represents an exported `.dynsym` entry. HIDDEN is not exported.
+_EXPORTED_VISIBILITIES: frozenset[Visibility] = frozenset(
+    {Visibility.PUBLIC, Visibility.ELF_ONLY}
+)
+
+
+def _snapshot_export_names(snap: AbiSnapshot) -> set[str]:
+    """Linker-symbol names a host could resolve from a plugin via ``dlsym``.
+
+    Exported functions and variables, keyed by their mangled (linker) symbol —
+    plus the plain source name only for ``extern "C"`` / C symbols where it
+    equals the mangled name. A demangled C++ name is deliberately excluded so a
+    contract listing it is reported as *missing*, matching ``dlsym`` reality.
+
+    Both header/DWARF-aware (``PUBLIC``) and symbols-only (``ELF_ONLY``) exports
+    count: running ``plugin-check`` on real stripped binaries without headers is
+    the common case, and there every export is ``ELF_ONLY``.
+    """
+    names: set[str] = set()
+    for fn in snap.functions:
+        if fn.visibility in _EXPORTED_VISIBILITIES:
+            names |= _resolvable_symbol_names(fn.name, fn.mangled)
+    for var in snap.variables:
+        if var.visibility in _EXPORTED_VISIBILITIES:
+            names |= _resolvable_symbol_names(var.name, getattr(var, "mangled", None))
+    return names
+
+
+def check_plugin_host_contract(
+    old_plugin: AbiSnapshot,
+    new_plugin: AbiSnapshot,
+    required_entrypoints: Iterable[str],
+    *,
+    suppression: SuppressionList | None = None,
+    policy: str = "strict_abi",
+    policy_file: PolicyFile | None = None,
+) -> PluginHostContractResult:
+    """Check whether a plugin upgrade still satisfies a host's load contract.
+
+    Given two snapshots of a plugin (old/new) and the set of entry-point
+    symbols a *host* resolves from it (a manifest, or symbols a host binary
+    exports back to the plugin), report whether the new plugin still satisfies
+    the host — the plugin-load mirror of :func:`check_appcompat`.
+
+    The host's required entrypoints are exactly the "undefined symbols" it
+    resolves from the plugin, so this reuses appcompat's consumer-scoping
+    (:func:`_partition_app_changes`) and verdict logic
+    (:func:`_compute_appcompat_verdict`): a dropped or incompatible entrypoint
+    is ``BREAKING`` for the host even when the wider library verdict differs.
+    """
+    required = set(required_entrypoints)
+
+    diff = compare(
+        old_plugin, new_plugin,
+        suppression=suppression, policy=policy, policy_file=policy_file,
+    )
+
+    new_exports = _snapshot_export_names(new_plugin)
+    missing = sorted(e for e in required if e not in new_exports)
+
+    # Reuse the app-scoping machinery: the contract is a set of required
+    # ("undefined") symbols, identical in shape to an app's symbol needs.
+    host_reqs = AppRequirements(undefined_symbols=set(required))
+    breaking_for_host, _ = _partition_app_changes(diff, host_reqs)
+
+    verdict = _compute_appcompat_verdict(
+        missing, [], breaking_for_host, len(required), policy, policy_file,
+    )
+    coverage = _compute_symbol_coverage(new_exports, len(required), len(missing))
+
+    return PluginHostContractResult(
+        old_plugin=old_plugin.library or "old",
+        new_plugin=new_plugin.library or "new",
+        required_entrypoints=required,
+        missing_entrypoints=missing,
+        breaking_for_host=breaking_for_host,
+        full_diff=diff,
+        verdict=verdict,
+        coverage=coverage,
     )

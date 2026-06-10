@@ -9,7 +9,56 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+No changes yet.
+
+---
+
+## [0.3.0] — 2026-06-03
+
 ### Added
+
+#### Release Recommendation (semver + SONAME)
+- New `abicheck/semver.py` derives a **release recommendation** from the
+  policy-aware verdict + change set: a semantic-version bump
+  (`major`/`minor`/`patch`/`none`) and a SONAME action
+  (`bump_required`/`bump_performed`/`bump_missing`/`no_bump_needed`).
+- Always emitted in `abicheck compare --format json` under the additive
+  `release_recommendation` key (also in `--stat --format json` and leaf mode);
+  opt-in for Markdown via the new **`--recommend`** flag (works in leaf mode
+  too). Policy-aware (honours `--policy sdk_vendor`/`plugin_abi` and custom
+  policy files).
+- JSON schema bumped to **1.1** (additive): `release_recommendation` documented
+  as an optional object in `abicheck/schemas/compare_report.schema.json`.
+- New tests: `tests/test_semver_recommendation.py`,
+  `tests/test_workflow_scenarios.py` (drop-in upgrade, additive minor,
+  host↔plugin load contract, policy-scoped decision).
+
+#### User-Scenario / Flow Catalog (end-to-end scanner validation)
+- New internal **user-scenario catalog** under `tests/scenarios/*.yaml` (grouped
+  by theme, merged by globbing so it scales past one file): defines real-world
+  *user flows* (CI gate, public-surface compliance scan, SARIF for code
+  scanning, release recommendation, suppression, offline snapshots, …) —
+  distinct from `examples/` (change-type fixtures) and `plans/` (backlog).
+- `tests/test_scenarios.py` drives each automated scenario through the abicheck
+  **CLI end-to-end** (CliRunner on JSON snapshots) and asserts the documented
+  outcome, validating abicheck as a *scanner tool*, not only a change detector.
+  Every scenario's `validates:` is checked against the use-case registry.
+- Captures the missed usage scenario from **issue #235** (public-header scoping
+  must suppress private ABI breaks) as `SC-PUBLIC-SURFACE-SCOPE`, now an
+  end-to-end regression guard.
+
+#### Use-Case Coverage Evaluation + machine-checked registry
+- New `docs/development/usecase-coverage-evaluation.md` maps abicheck against
+  the full application/library ABI-API change use-case space and records the
+  code/test/example follow-ups (gaps G1–G8).
+- New `docs/development/usecase-registry.yaml` — the machine-checkable source of
+  truth for every use case (`status`, `axis`, `evidence`, `gap`, `next_steps`),
+  validated by `tests/test_usecase_registry.py`: coverage claims must cite
+  evidence paths that exist, and unfinished items must carry a gap + plan. This
+  makes the use cases first-class, extensible, and testable.
+- Cross-platform honesty: `docs/reference/platforms.md` now states the
+  validation reality (Linux = CI-validated baseline; macOS/Windows =
+  parser-level/partial), guarded by `tests/test_platform_coverage_honesty.py`.
 
 #### JUnit XML Output
 - **`--format junit`** for `compare` and `compare-release` commands — produces
@@ -65,6 +114,76 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Cross-detector deduplication for `SYMBOL_VERSION_NODE_REMOVED` vs
   `SYMBOL_VERSION_DEFINED_REMOVED`.
 - 35 new tests covering all version-policy scenarios and checker integration.
+
+#### Config-key consistency follow-ups
+- `--scope-public-headers/--no-scope-public-headers` toggle added to `appcompat`
+  (previously always-on with no control) and to `compare-release` (toggle form).
+- `--severity-preset`/`--severity-*` added to `compare-release` (aggregated across
+  per-library, bundle, and matrix findings, honoring per-library `--policy-file`
+  overrides; removed-library exit `8` still takes precedence) and `appcompat`
+  (full-compare mode only — weak/`--check-against` keeps the verdict-based exit;
+  app-scoped to `breaking_for_app`, with missing required symbols/versions floored
+  as hard breaks).
+- `--debug-format {auto,dwarf,btf,ctf}` selector on `compare`/`dump`; the legacy
+  `--btf`/`--ctf`/`--dwarf` flags are hidden from `--help` but remain functional.
+  `--compile-db` is likewise hidden (still an alias of `-p/--build-dir`).
+- `--report-mode impact` (sugar for `full` + `--show-impact`).
+- `appcompat` now warns (instead of silently ignoring) when `-H`/`-I` are supplied
+  in weak (`--check-against`) / `--list-required-symbols` mode.
+- New rationale doc `docs/development/config-key-review.md` (full CLI/config-key
+  surface audit with per-mode inconsistency analysis and implementation status).
+
+### Changed
+
+#### ELF-only function removals are now BREAKING
+- **Breaking (verdict change):** a removed *exported* function symbol with no
+  header/DWARF confirmation (`func_removed_elf_only`) is now classified
+  **BREAKING** instead of compatible. Removing a dynamic export breaks old
+  binaries that link or `dlsym()` it regardless of header evidence, matching
+  `abidiff`/ABICC. This can change a `compare`/`compat` run from compatible to
+  breaking (legacy `compare` exit `0`→`4`); the false-positive avalanche this
+  could otherwise cause is held back by the shared transitive-runtime symbol
+  filter below (those symbols no longer enter a non-runtime library's surface).
+
+### Fixed
+
+#### Windows example-platform metadata matches the validated build surface
+- Corrected the platform declarations for eight advanced C++/template example
+  fixtures (`case79`, `case85`, `case95`, `case100`, `case101`, `case102`,
+  `case110`, `case111`) from Linux/macOS/Windows to Linux/macOS. These cases
+  remain in the full catalog, but Windows CI no longer attempts CMake builds
+  for fixtures that are not validated on the Windows toolchain.
+
+#### Transitive stdlib/runtime symbols no longer leak into the ABI surface
+- Centralized ELF ABI-relevance filtering into `abicheck/elf_symbol_filter.py`
+  and shared it across the symbols-only dumper, DWARF snapshot extraction, and
+  symbol/type diffing. Previously a weak transitive libstdc++/libc++ export
+  could be filtered from symbols-only reports yet re-enter as a `PUBLIC` DWARF
+  function, producing phantom `FUNC_REMOVED` and type-reachability findings
+  (observed on oneTBB `libtbbmalloc` 2021.5→2021.9, where `abidiff` was clean).
+- DWARF export indexing and `DW_AT_deleted` subprograms now consult the same
+  filter; libstdc++/libc++ themselves are exempt (they *own* `std::`).
+- Project-owned RTTI (`_ZTI*`/`_ZTS*` for the library's own types) is preserved;
+  only standard-library RTTI prefixes are dropped.
+
+#### Cross-mode config-key consistency (CLI surface review)
+- **Breaking (default change):** `compare-release` now restricts findings to the
+  public-header ABI surface **by default** (`--scope-public-headers` on), matching
+  `compare` and the Python API. Previously it was off-by-default. Pass
+  `--no-scope-public-headers` to restore the old unscoped output. This can change
+  which findings (and therefore exit codes) a release surfaces in CI.
+- **Breaking (default change):** `compare-release -j/--jobs` now defaults to `0`
+  (auto-detect CPU count, i.e. parallel) instead of `1` (serial). Report ordering
+  is deterministic regardless of `-j` (results are emitted in matched-library
+  order), so this does not churn snapshots — but multi-library runs now parallelize
+  by default.
+- `compare --demangle` is now tri-state: it defaults **on** for the text
+  formats whose renderer demangles symbols (`markdown`/`review`) and **off**
+  for `json`/`sarif`/`html` (HTML symbols are rendered structurally);
+  explicit `--demangle`/`--no-demangle` still wins.
+- `compare` prints the active exit-code scheme (legacy verdict vs severity-aware)
+  to stderr for human formats, so the previously-silent switch on the first
+  `--severity-*` flag is now visible. Exit-code numbers are unchanged.
 
 ### Planned
 - `--policy-file` schema validation improvements
@@ -381,4 +500,5 @@ additional capabilities.
 
 [0.1.0]: https://github.com/napetrov/abicheck/releases/tag/v0.1.0
 [0.2.0]: https://github.com/napetrov/abicheck/releases/tag/v0.2.0
-[Unreleased]: https://github.com/napetrov/abicheck/compare/v0.2.0...HEAD
+[0.3.0]: https://github.com/napetrov/abicheck/releases/tag/v0.3.0
+[Unreleased]: https://github.com/napetrov/abicheck/compare/v0.3.0...HEAD

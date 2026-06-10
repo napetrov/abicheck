@@ -18,7 +18,10 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .build_mode import BuildMode
 
 from .model import (
     AbiSnapshot,
@@ -31,6 +34,7 @@ from .model import (
     Param,
     ParamKind,
     RecordType,
+    ScopeOrigin,
     TypeField,
     Variable,
     Visibility,
@@ -42,7 +46,10 @@ from .model import (
 # v2: schema_version field added (PR #89)
 # v3: pe/macho metadata fields added (multi-format support)
 # v4: provenance metadata (git_commit, git_tag, created_at, build_id)
-SCHEMA_VERSION: int = 4
+# v5: build_mode capture (compiler/stdlib/std normalization)
+# v6: declaration provenance (source_header + origin on functions/variables/types/enums; ADR-015)
+# v7: optional evidence_pack reference (ADR-028; lightweight ref to an out-of-band EvidencePack)
+SCHEMA_VERSION: int = 7
 
 
 def _sets_to_lists(obj: Any) -> Any:
@@ -69,6 +76,16 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     d.pop("_func_by_mangled", None)
     d.pop("_var_by_mangled", None)
     d.pop("_type_by_name", None)
+    # Runtime-only provenance qualifier — never persisted.
+    d.pop("from_headers_inferred", None)
+    # If ``from_headers`` was only *inferred* (a legacy snapshot loaded without
+    # the explicit key), do not persist it as explicit provenance: drop the key
+    # so a reload re-runs the same inference and re-marks it inferred. Writing
+    # ``from_headers: true`` here would promote a guess to explicit header
+    # provenance on the next load, re-enabling source-level param-rename
+    # detection on DWARF-only baselines this is meant to suppress.
+    if snap.from_headers_inferred:
+        d.pop("from_headers", None)
 
     # Serialize ElfMetadata enums to strings for JSON compatibility
     if d.get("elf"):
@@ -96,6 +113,16 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     # and ToolchainInfo.abi_flags; json.dumps raises TypeError on set objects)
     converted: dict[str, Any] = _sets_to_lists(d)
 
+    # BuildMode enums are (str, Enum), so dataclasses.asdict() carries
+    # them through as Enum instances rather than plain strings; normalize
+    # the build_mode subtree to bare strings for JSON serialization.
+    bm = converted.get("build_mode")
+    if isinstance(bm, dict):
+        for k in ("compiler_family", "language_std", "stdlib", "glibcxx_dual_abi"):
+            v = bm.get(k)
+            if v is not None and not isinstance(v, str):
+                bm[k] = v.value if hasattr(v, "value") else str(v)
+
     # Embed schema version for forward-compatibility.
     # Placed at top level so loaders can inspect it without parsing the full snapshot.
     converted["schema_version"] = SCHEMA_VERSION
@@ -103,11 +130,25 @@ def snapshot_to_dict(snap: AbiSnapshot) -> dict[str, Any]:
     return converted
 
 
+def _scope_origin_or_unknown(raw: Any) -> ScopeOrigin:
+    """Deserialize a ScopeOrigin, defaulting unknown/invalid values to UNKNOWN.
+
+    A hand-edited or newer-schema snapshot may carry an origin string this
+    build does not recognize; that must not abort the whole load."""
+    try:
+        return ScopeOrigin(raw if raw is not None else "unknown")
+    except ValueError:
+        return ScopeOrigin.UNKNOWN
+
+
 def _enum_type_from_dict(e: dict[str, Any]) -> EnumType:
     return EnumType(
         name=e["name"],
         members=[EnumMember(name=m["name"], value=m["value"]) for m in e.get("members", [])],
         underlying_type=e.get("underlying_type", "int"),
+        source_location=e.get("source_location"),
+        source_header=e.get("source_header"),
+        origin=_scope_origin_or_unknown(e.get("origin")),
     )
 
 
@@ -156,6 +197,12 @@ def _elf_from_dict(e: dict[str, Any]) -> Any:
         imports=imports,
         interpreter=e.get("interpreter", ""),
         has_executable_stack=e.get("has_executable_stack", False),
+        relro=e.get("relro", "none"),
+        bind_now=e.get("bind_now", False),
+        is_pie=e.get("is_pie", False),
+        has_stack_canary=e.get("has_stack_canary", False),
+        has_fortify_source=e.get("has_fortify_source", False),
+        has_writable_executable_segment=e.get("has_writable_executable_segment", False),
     )
 
 
@@ -254,6 +301,7 @@ def _dwarf_advanced_from_dict(d: dict[str, Any]) -> Any:
         compiler=tc.get("compiler", ""),
         version=tc.get("version", ""),
         abi_flags=set(tc.get("abi_flags", [])),
+        vector_abi_flags=set(tc.get("vector_abi_flags", [])),
     )
     return AdvancedDwarfMetadata(
         has_dwarf=d.get("has_dwarf", False),
@@ -331,12 +379,29 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             is_volatile=f.get("is_volatile", False),
             is_pure_virtual=f.get("is_pure_virtual", False),
             is_deleted=f.get("is_deleted", False),
+            # Provenance of is_deleted: True when set via DW_AT_deleted. Must be
+            # rehydrated (asdict writes it) so the public-map bypass in
+            # diff_symbols keeps DWARF-deleted unexported members out of the
+            # public surface after a dump-to-file → compare-files round-trip,
+            # rather than re-emitting FUNC_REMOVED against a stripped build.
+            deleted_from_dwarf=f.get("deleted_from_dwarf", False),
             is_inline=f.get("is_inline", False),
             is_extern_c=f.get("is_extern_c", False),
             access=AccessLevel(f.get("access", "public")),
             return_pointer_depth=f.get("return_pointer_depth", 0),
             elf_visibility=ElfVisibility(f["elf_visibility"]) if f.get("elf_visibility") else None,
             ref_qualifier=f.get("ref_qualifier", ""),
+            # Tri-state: a missing key (older snapshot) loads as None,
+            # which suppresses CTOR_EXPLICIT_ADDED/_REMOVED in the diff
+            # rather than producing spurious findings from schema evolution.
+            is_explicit=f.get("is_explicit"),
+            # Tri-state, same rationale as is_explicit — a missing key on
+            # an older snapshot loads as None and suppresses the
+            # HIDDEN_FRIEND_ADDED/_REMOVED transition detector.
+            is_hidden_friend=f.get("is_hidden_friend"),
+            # Provenance (v6) — missing on older snapshots → None / UNKNOWN.
+            source_header=f.get("source_header"),
+            origin=_scope_origin_or_unknown(f.get("origin")),
         )
         for f in d.get("functions", [])
     ]
@@ -349,6 +414,8 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             value=v.get("value"),
             access=AccessLevel(v.get("access", "public")),
             elf_visibility=ElfVisibility(v["elf_visibility"]) if v.get("elf_visibility") else None,
+            source_header=v.get("source_header"),
+            origin=_scope_origin_or_unknown(v.get("origin")),
         )
         for v in d.get("variables", [])
     ]
@@ -376,6 +443,9 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
             source_location=t.get("source_location"),
             is_union=t.get("is_union", t.get("kind") == "union"),
             is_opaque=t.get("is_opaque", False),
+            is_final=t.get("is_final"),  # tri-state; absent on pre-v? snapshots → None
+            source_header=t.get("source_header"),
+            origin=_scope_origin_or_unknown(t.get("origin")),
         )
         for t in d.get("types", [])
     ]
@@ -413,6 +483,40 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         else None
     )
 
+    # Rehydrate BuildMode (schema v5). Missing key = older snapshot →
+    # leave as None so build-mode-aware detectors fall back to "unknown".
+    build_mode = _build_mode_from_dict(d.get("build_mode"))
+
+    # Evidence-pack reference (schema v7, ADR-028). Optional: a missing key on
+    # an older snapshot loads as None. A malformed (non-dict) value is ignored
+    # rather than aborting the load, consistent with the rest of this loader.
+    ep_raw = d.get("evidence_pack")
+    evidence_pack = None
+    if isinstance(ep_raw, dict):
+        from .evidence.model import EvidencePackRef
+        evidence_pack = EvidencePackRef.from_dict(ep_raw)
+
+    # from_headers provenance (added alongside the HEADER_AWARE tier-honesty
+    # fix). An absent key means a legacy snapshot dumped before the field
+    # existed: preserve the prior evidence-tier behavior by inferring header
+    # provenance from a populated, non-elf-only surface, so saved baselines
+    # (e.g. `abicheck compare libfoo-1.0.json libfoo-2.0.json`) do not silently
+    # downgrade from HEADER_AWARE. A present key — including a legitimate False
+    # for DWARF-only/symbols-only dumps — is honored verbatim.
+    elf_only_mode = bool(d.get("elf_only_mode", False))
+    if "from_headers" in d:
+        from_headers = bool(d["from_headers"])
+        from_headers_inferred = False
+    else:
+        from_headers = (not elf_only_mode) and bool(
+            funcs or variables or types or enums or typedefs
+        )
+        # This provenance was guessed, not recorded. A legacy DWARF-only dump
+        # populates the same surface lists, so the inference cannot tell it
+        # apart from a header dump. Mark it inferred so source-level detectors
+        # that demand genuine header evidence (parameter renames) stay quiet.
+        from_headers_inferred = from_headers
+
     return AbiSnapshot(
         library=d["library"], version=d["version"],
         source_path=d.get("source_path"),
@@ -420,16 +524,96 @@ def snapshot_from_dict(d: dict[str, Any]) -> AbiSnapshot:
         enums=enums, typedefs=typedefs,
         elf=elf, pe=pe, macho=macho,
         dwarf=dwarf, dwarf_advanced=dwarf_advanced, sycl=sycl,
-        elf_only_mode=bool(d.get("elf_only_mode", False)),
+        elf_only_mode=elf_only_mode,
+        from_headers=from_headers,
+        from_headers_inferred=from_headers_inferred,
         constants=d.get("constants", {}),
         platform=d.get("platform"),
         language_profile=d.get("language_profile"),
+        scope_fallback=d.get("scope_fallback"),
         dependency_info=dep_info,
         # Provenance metadata (v4)
         git_commit=d.get("git_commit"),
         git_tag=d.get("git_tag"),
         created_at=d.get("created_at"),
         build_id=d.get("build_id"),
+        # Build-mode capture (v5)
+        build_mode=build_mode,
+        # Evidence-pack reference (v7)
+        evidence_pack=evidence_pack,
+        # Build-context parse provenance (v7, ADR-029) — absent on older
+        # snapshots loads as False.
+        parsed_with_build_context=bool(d.get("parsed_with_build_context", False)),
+    )
+
+
+def _build_mode_from_dict(raw: Any) -> BuildMode | None:
+    """Convert a serialized BuildMode dict (or None) back into the
+    typed dataclass. Returns None when the field is missing (older
+    snapshots) or malformed."""
+    if not isinstance(raw, dict):
+        return None
+    from .build_mode import (
+        BuildMode,
+        BuildModeProvenance,
+        CompilerFamily,
+        CxxStandard,
+        GlibcxxDualAbi,
+        StdlibFamily,
+    )
+
+    def _enum_or(cls: type, value: Any, default: Any) -> Any:
+        if value is None:
+            return default
+        try:
+            return cls(value)
+        except (ValueError, KeyError):
+            return default
+
+    # Validate provenance shape: a malformed snapshot may carry a
+    # non-dict value (string/list from hand-edited JSON, or a partial
+    # corruption). Per the function contract, return None for
+    # malformed inputs rather than raising at .get().
+    prov_raw = raw.get("provenance")
+    if prov_raw is None:
+        prov_raw = {}
+    if not isinstance(prov_raw, dict):
+        return None
+    provenance = BuildModeProvenance(
+        raw_producer=prov_raw.get("raw_producer"),
+        raw_comment=prov_raw.get("raw_comment"),
+        compiler_version=prov_raw.get("compiler_version"),
+    )
+
+    # Coerce libcpp_abi_version: int passes through; numeric string
+    # (some YAML/JSON producers emit "1" instead of 1) coerces; anything
+    # else (bool wraps as 0/1 which would be misleading; lists/dicts)
+    # falls back to None.
+    libcpp_raw = raw.get("libcpp_abi_version")
+    if isinstance(libcpp_raw, bool):
+        libcpp_abi_version: int | None = None
+    elif isinstance(libcpp_raw, int):
+        libcpp_abi_version = libcpp_raw
+    elif isinstance(libcpp_raw, str) and libcpp_raw.isdigit():
+        libcpp_abi_version = int(libcpp_raw)
+    else:
+        libcpp_abi_version = None
+
+    return BuildMode(
+        compiler_family=_enum_or(
+            CompilerFamily, raw.get("compiler_family"), CompilerFamily.UNKNOWN,
+        ),
+        language_std=_enum_or(
+            CxxStandard, raw.get("language_std"), CxxStandard.UNKNOWN,
+        ),
+        stdlib=_enum_or(StdlibFamily, raw.get("stdlib"), StdlibFamily.UNKNOWN),
+        glibcxx_dual_abi=_enum_or(
+            GlibcxxDualAbi,
+            raw.get("glibcxx_dual_abi"),
+            GlibcxxDualAbi.NOT_APPLICABLE,
+        ),
+        libcpp_abi_version=libcpp_abi_version,
+        provenance=provenance,
     )
 
 

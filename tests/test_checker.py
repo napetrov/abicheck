@@ -110,13 +110,26 @@ class TestReturnTypeChange:
 
 class TestParameterChanges:
     def test_param_type_change_is_breaking(self):
+        # A genuine pointee-type substitution (void* -> int*) is an ABI break.
+        old_f = _pub_func("send", "_Z4sendPv",
+                          params=[Param(name="buf", type="void*")])
+        new_f = _pub_func("send", "_Z4sendPv",
+                          params=[Param(name="buf", type="int*")])
+        r = compare(_snap("1.0", [old_f]), _snap("2.0", [new_f]))
+        assert r.verdict == Verdict.BREAKING
+        assert any(c.kind == ChangeKind.FUNC_PARAMS_CHANGED for c in r.changes)
+
+    def test_param_pointee_const_change_is_not_breaking(self):
+        # ISSUE-29/52: adding const to a pointed-to type (void* -> const void*)
+        # for a symbol that keeps the same name leaves the calling convention
+        # and binary parameter layout identical — not a binary ABI break.
         old_f = _pub_func("send", "_Z4sendPv",
                           params=[Param(name="buf", type="void*")])
         new_f = _pub_func("send", "_Z4sendPv",
                           params=[Param(name="buf", type="const void*")])
         r = compare(_snap("1.0", [old_f]), _snap("2.0", [new_f]))
-        assert r.verdict == Verdict.BREAKING
-        assert any(c.kind == ChangeKind.FUNC_PARAMS_CHANGED for c in r.changes)
+        assert not any(c.kind == ChangeKind.FUNC_PARAMS_CHANGED for c in r.changes)
+        assert r.verdict in (Verdict.NO_CHANGE, Verdict.COMPATIBLE)
 
     def test_param_added_is_breaking(self):
         old_f = _pub_func("open", "_Z4openv")
@@ -289,7 +302,7 @@ class TestVerdictPriority:
 
 
 
-def test_func_removed_elf_only_is_compatible_not_breaking() -> None:
+def test_func_removed_elf_only_is_breaking() -> None:
     old = AbiSnapshot(
         library="libfoo.so", version="1.0",
         functions=[Function(name="internal", mangled="internal", return_type="void", visibility=Visibility.ELF_ONLY)],
@@ -299,7 +312,7 @@ def test_func_removed_elf_only_is_compatible_not_breaking() -> None:
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.FUNC_REMOVED_ELF_ONLY in kinds
-    assert result.verdict == Verdict.COMPATIBLE
+    assert result.verdict == Verdict.BREAKING
 
 
 # ── WS-4a: ELF visibility tracking ─────────────────────────────────────────

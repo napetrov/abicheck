@@ -17,11 +17,22 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Collection
 
 from .checker_policy import ChangeKind
 from .checker_types import Change
 from .detector_registry import registry
-from .diff_symbols import _PUBLIC_VIS, _public_functions, _public_variables
+from .diff_symbols import (
+    _PUBLIC_VIS,
+    _public_functions,
+    _public_variables,
+    _should_filter_transitive_runtime_symbols,
+)
+from .elf_symbol_filter import (
+    FUNCTION_SYMBOL_TYPES,
+    VARIABLE_SYMBOL_TYPES,
+    exported_symbol_names,
+)
 from .model import (
     AbiSnapshot,
     EnumType,
@@ -29,8 +40,108 @@ from .model import (
     RecordType,
     TypeField,
     canonicalize_type_name,
+    cv_qualifiers_only_differ,
 )
-from .model import is_compiler_internal_type as _is_compiler_internal_type
+from .model import is_non_abi_surface_type as _is_non_abi_surface_type
+from .model import stdlib_namespaces_excluded as _exclude_stdlib_namespaces
+
+
+def _exported_elf_symbol_names(snap: AbiSnapshot, *, symbol_types: Collection[str]) -> set[str]:
+    """Return dynamic-export names from ELF metadata when available.
+
+    DWARF-primary snapshots can contain public-looking subprogram DIEs that are
+    not dynamic exports.  For stripped-side retention checks, the real question
+    is whether the dynamic ABI surface stayed intact, so prefer ``snap.elf`` over
+    the DWARF-derived Function/Variable lists. Transitive runtime/compiler
+    exports are excluded so they can't inflate retention.
+    """
+    filter_transitive_runtime_symbols = _should_filter_transitive_runtime_symbols(snap)
+    return exported_symbol_names(
+        getattr(snap, "elf", None),
+        symbol_types,
+        abi_relevant_only=True,
+        filter_transitive_runtime_symbols=filter_transitive_runtime_symbols,
+    )
+
+
+def _is_abi_surface_type(t: RecordType, *, exclude_stdlib: bool) -> bool:
+    """True if record *t* is part of the inspected library's ABI surface.
+
+    Shared by every type-level detector (records, unions, field/kind/reserved
+    diffs) so std::/anonymous filtering (FP-1/FP-2) is applied consistently and
+    cannot be bypassed via an alternate map-construction path.
+    """
+    return not _is_non_abi_surface_type(t.name, exclude_stdlib_namespaces=exclude_stdlib)
+
+
+def _has_type_evidence(snap: AbiSnapshot) -> bool:
+    """True if *snap* carries any type-level surface (records/enums/typedefs/DWARF).
+
+    A stripped, symbols-only snapshot has none of these.
+    """
+    if snap.types or snap.enums or snap.typedefs:
+        return True
+    dwarf = getattr(snap, "dwarf", None)
+    # has_dwarf alone is not enough: a stripped binary can carry an empty
+    # .debug_* section (has_dwarf=True, zero structs/enums). Require real content.
+    return bool(dwarf is not None and (dwarf.structs or dwarf.enums))
+
+
+def _removals_are_unconfirmed(old: AbiSnapshot, new: AbiSnapshot) -> bool:
+    """True when type-level *removals* must be suppressed because the new side
+    has no type evidence to confirm them (RD2-5).
+
+    When the old binary carries DWARF/header type info but the new one is
+    *stripped, symbols-only* (``elf_only_mode``), every old type/typedef/enum
+    appears "missing" — but that is absence of *evidence*, not evidence of
+    *removal*. Reporting hundreds of phantom ``type_removed``/``typedef_removed``
+    for types that obviously still exist (``_xmlNode``, ``_IO_FILE`` …) is a
+    false-positive avalanche on an otherwise compatible bump. The ``dwarf``
+    detector already emits ``DWARF_INFO_MISSING`` for this asymmetry, so the
+    coverage gap is still disclosed; here we simply decline to manufacture
+    removal findings from it.
+
+    Detecting a genuinely *stripped* new side (vs. a build that really removed
+    types) requires care: the dumper marks small DWARF libraries ``elf_only_mode``
+    too, so that flag alone is not enough. The distinguishing fact is that a
+    stripped binary is otherwise *intact* — it still exports essentially all of
+    the old side's symbols; only its debug info is gone. A build that genuinely
+    removed a class (e.g. examples/case107) also drops that class's exported
+    methods, so symbol retention is low and the removal is still reported.
+    """
+    new_stripped_of_types = (
+        getattr(new, "elf_only_mode", False)
+        and bool(new.functions or new.variables)
+        and not _has_type_evidence(new)
+        and _has_type_evidence(old)
+    )
+    if not new_stripped_of_types:
+        return False
+    # Corroborate with exported-symbol retention: a stripped-but-intact binary
+    # keeps (almost) all of the old side's exports; if most are gone, the library
+    # genuinely changed and removals are real.
+    #
+    # Only count *exported* symbols (PUBLIC/ELF_ONLY). A DWARF-primary old
+    # snapshot also records internal/static subprograms, but the stripped new
+    # side carries dynamic exports only — counting internals would deflate
+    # retention and defeat the suppression for a genuinely intact comparison.
+    # Prefer functions; fall back to variables for data-only DSOs so a changed
+    # variable surface still surfaces removals (CodeRabbit review on PR #275).
+    old_funcs = _exported_elf_symbol_names(old, symbol_types=FUNCTION_SYMBOL_TYPES)
+    new_funcs = _exported_elf_symbol_names(new, symbol_types=FUNCTION_SYMBOL_TYPES)
+    if not old_funcs or not new_funcs:
+        old_funcs = {k for k, v in old.function_map.items() if v.visibility in _PUBLIC_VIS}
+        new_funcs = {k for k, v in new.function_map.items() if v.visibility in _PUBLIC_VIS}
+    if old_funcs:
+        return len(old_funcs & new_funcs) / len(old_funcs) >= 0.9
+    old_vars = _exported_elf_symbol_names(old, symbol_types=VARIABLE_SYMBOL_TYPES)
+    new_vars = _exported_elf_symbol_names(new, symbol_types=VARIABLE_SYMBOL_TYPES)
+    if not old_vars or not new_vars:
+        old_vars = {k for k, v in old.variable_map.items() if v.visibility in _PUBLIC_VIS}
+        new_vars = {k for k, v in new.variable_map.items() if v.visibility in _PUBLIC_VIS}
+    if not old_vars:
+        return True  # no exported surface to corroborate; absence of types is just stripping
+    return len(old_vars & new_vars) / len(old_vars) >= 0.9
 
 
 @registry.detector("types")
@@ -38,12 +149,17 @@ def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
     # Include ALL types (including unions) for size/alignment/base/vtable checks.
     # TYPE_FIELD_* for unions is skipped below — handled by _diff_unions() instead.
-    old_map = {t.name: t for t in old.types if not _is_compiler_internal_type(t.name)}
-    new_map = {t.name: t for t in new.types if not _is_compiler_internal_type(t.name)}
+    excl = _exclude_stdlib_namespaces(old, new)
+    old_map = {t.name: t for t in old.types if _is_abi_surface_type(t, exclude_stdlib=excl)}
+    new_map = {t.name: t for t in new.types if _is_abi_surface_type(t, exclude_stdlib=excl)}
+    # RD2-5: don't manufacture phantom TYPE_REMOVED when the new side is stripped.
+    suppress_removed = _removals_are_unconfirmed(old, new)
 
     for name, t_old in old_map.items():
         t_new = new_map.get(name)
         if t_new is None:
+            if suppress_removed:
+                continue
             changes.append(Change(
                 kind=ChangeKind.TYPE_REMOVED,
                 symbol=name,
@@ -82,7 +198,41 @@ def _diff_type_pair(name: str, t_old: RecordType, t_new: RecordType) -> list[Cha
         changes.extend(_diff_type_fields(name, t_old, t_new))
     changes.extend(_diff_type_bases(name, t_old, t_new))
     changes.extend(_diff_type_vtable(name, t_old, t_new))
+    _append_type_finality_changes(changes, name, t_old, t_new)
     return changes
+
+
+def _append_type_finality_changes(
+    changes: list[Change], name: str, t_old: RecordType, t_new: RecordType,
+) -> None:
+    """Detect `final` class-key transitions.
+
+    Tri-state: only fire when BOTH sides record finality (header/castxml mode).
+    ``None`` means the dumper couldn't determine it — DWARF/symbols-only mode
+    carries no `final` information, and older snapshots predate the field —
+    so skipping avoids false findings from a tier downgrade or schema
+    evolution rather than a real source change.
+    """
+    if t_old.is_final is None or t_new.is_final is None:
+        return
+    if t_old.is_final == t_new.is_final:
+        return
+    if t_new.is_final:
+        changes.append(Change(
+            kind=ChangeKind.TYPE_BECAME_FINAL,
+            symbol=name,
+            description=f"Class gained `final` specifier: {name} — consumers that derive from it no longer compile",
+            old_value="non-final",
+            new_value="final",
+        ))
+    else:
+        changes.append(Change(
+            kind=ChangeKind.TYPE_LOST_FINAL,
+            symbol=name,
+            description=f"Class lost `final` specifier: {name}",
+            old_value="final",
+            new_value="non-final",
+        ))
 
 
 def _append_type_size_and_alignment_changes(
@@ -235,7 +385,14 @@ def _diff_type_field_pair(name: str, fname: str, f_old: TypeField, f_new: TypeFi
     changes: list[Change] = []
     # Use canonical form for type comparison to avoid false positives from
     # "struct Foo" vs "Foo" or "const int" vs "int const" differences.
-    if canonicalize_type_name(f_old.type) != canonicalize_type_name(f_new.type):
+    # A pointee/by-value cv-qualifier change (``char *`` -> ``const char *``)
+    # leaves the field's size and offset unchanged — it is source-level churn,
+    # not a binary layout break (ISSUE-30/35/65). Top-level field const/volatile
+    # is reported separately by the ``field_qualifiers`` detector.
+    if (
+        canonicalize_type_name(f_old.type) != canonicalize_type_name(f_new.type)
+        and not cv_qualifiers_only_differ(f_old.type, f_new.type)
+    ):
         changes.append(Change(
             kind=ChangeKind.TYPE_FIELD_TYPE_CHANGED,
             symbol=name,
@@ -417,8 +574,13 @@ def _diff_type_vtable(name: str, t_old: RecordType, t_new: RecordType) -> list[C
 @registry.detector("enums")
 def _diff_enums(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
-    old_map: dict[str, EnumType] = {e.name: e for e in old.enums}
-    new_map: dict[str, EnumType] = {e.name: e for e in new.enums}
+    excl = _exclude_stdlib_namespaces(old, new)
+    old_map: dict[str, EnumType] = {
+        e.name: e for e in old.enums if not _is_non_abi_surface_type(e.name, exclude_stdlib_namespaces=excl)
+    }
+    new_map: dict[str, EnumType] = {
+        e.name: e for e in new.enums if not _is_non_abi_surface_type(e.name, exclude_stdlib_namespaces=excl)
+    }
 
     for name, e_old in old_map.items():
         if name not in new_map:
@@ -608,8 +770,9 @@ def _diff_method_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 @registry.detector("unions")
 def _diff_unions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
-    old_unions = {t.name: t for t in old.types if t.is_union}
-    new_unions = {t.name: t for t in new.types if t.is_union}
+    excl = _exclude_stdlib_namespaces(old, new)
+    old_unions = {t.name: t for t in old.types if t.is_union and _is_abi_surface_type(t, exclude_stdlib=excl)}
+    new_unions = {t.name: t for t in new.types if t.is_union and _is_abi_surface_type(t, exclude_stdlib=excl)}
 
     for name, t_old in old_unions.items():
         if name not in new_unions:
@@ -626,7 +789,10 @@ def _diff_unions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                     description=f"Union field removed: {name}::{fname}",
                     old_value=f_old.type,
                 ))
-            elif canonicalize_type_name(f_old.type) != canonicalize_type_name(new_fields[fname].type):
+            elif (
+                canonicalize_type_name(f_old.type) != canonicalize_type_name(new_fields[fname].type)
+                and not cv_qualifiers_only_differ(f_old.type, new_fields[fname].type)
+            ):
                 changes.append(Change(
                     kind=ChangeKind.UNION_FIELD_TYPE_CHANGED,
                     symbol=name,
@@ -690,10 +856,15 @@ def _has_version_family_successor(name: str, new_typedefs: dict[str, str]) -> bo
 @registry.detector("typedefs")
 def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     changes: list[Change] = []
+    excl = _exclude_stdlib_namespaces(old, new)
+    # RD2-5: don't manufacture phantom TYPEDEF_REMOVED when the new side is stripped.
+    suppress_removed = _removals_are_unconfirmed(old, new)
     for alias, old_type in old.typedefs.items():
-        if _is_compiler_internal_type(alias):
+        if _is_non_abi_surface_type(alias, exclude_stdlib_namespaces=excl):
             continue
         new_type = new.typedefs.get(alias)
+        if new_type is None and suppress_removed:
+            continue
         if new_type is None:
             # Version-stamped typedefs (e.g. png_libpng_version_1_6_46) are
             # compile-time sentinels — their name encodes the version and
@@ -739,8 +910,13 @@ def _diff_typedefs(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 def _diff_enum_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect enum member renames: same value present under different name."""
     changes: list[Change] = []
-    old_map: dict[str, EnumType] = {e.name: e for e in old.enums}
-    new_map: dict[str, EnumType] = {e.name: e for e in new.enums}
+    excl = _exclude_stdlib_namespaces(old, new)
+    old_map: dict[str, EnumType] = {
+        e.name: e for e in old.enums if not _is_non_abi_surface_type(e.name, exclude_stdlib_namespaces=excl)
+    }
+    new_map: dict[str, EnumType] = {
+        e.name: e for e in new.enums if not _is_non_abi_surface_type(e.name, exclude_stdlib_namespaces=excl)
+    }
 
     for name, e_old in old_map.items():
         if name not in new_map:
@@ -841,8 +1017,9 @@ def _check_field_qualifier_pair(
 def _diff_field_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect field-level const/volatile/mutable qualifier changes."""
     changes: list[Change] = []
-    old_map = {t.name: t for t in old.types if not t.is_union}
-    new_map = {t.name: t for t in new.types if not t.is_union}
+    excl = _exclude_stdlib_namespaces(old, new)
+    old_map = {t.name: t for t in old.types if not t.is_union and _is_abi_surface_type(t, exclude_stdlib=excl)}
+    new_map = {t.name: t for t in new.types if not t.is_union and _is_abi_surface_type(t, exclude_stdlib=excl)}
 
     for name, t_old in old_map.items():
         t_new = new_map.get(name)
@@ -864,8 +1041,9 @@ def _diff_field_qualifiers(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 def _diff_field_renames(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect field renames: same offset+type, different name."""
     changes: list[Change] = []
-    old_map = {t.name: t for t in old.types if not t.is_union}
-    new_map = {t.name: t for t in new.types if not t.is_union}
+    excl = _exclude_stdlib_namespaces(old, new)
+    old_map = {t.name: t for t in old.types if not t.is_union and _is_abi_surface_type(t, exclude_stdlib=excl)}
+    new_map = {t.name: t for t in new.types if not t.is_union and _is_abi_surface_type(t, exclude_stdlib=excl)}
 
     for name, t_old in old_map.items():
         t_new = new_map.get(name)
@@ -937,8 +1115,9 @@ def _diff_var_values(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 def _diff_type_kind_changes(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """Detect struct↔union kind changes (ABICC: StructToUnion / DataType_Type)."""
     changes: list[Change] = []
-    old_map = {t.name: t for t in old.types}
-    new_map = {t.name: t for t in new.types}
+    excl = _exclude_stdlib_namespaces(old, new)
+    old_map = {t.name: t for t in old.types if _is_abi_surface_type(t, exclude_stdlib=excl)}
+    new_map = {t.name: t for t in new.types if _is_abi_surface_type(t, exclude_stdlib=excl)}
 
     for name, t_old in old_map.items():
         t_new = new_map.get(name)
@@ -969,8 +1148,9 @@ def _diff_reserved_fields(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     both offset AND type match to avoid false positives (M5 fix).
     """
     changes: list[Change] = []
-    old_map = {t.name: t for t in old.types if not t.is_union}
-    new_map = {t.name: t for t in new.types if not t.is_union}
+    excl = _exclude_stdlib_namespaces(old, new)
+    old_map = {t.name: t for t in old.types if not t.is_union and _is_abi_surface_type(t, exclude_stdlib=excl)}
+    new_map = {t.name: t for t in new.types if not t.is_union and _is_abi_surface_type(t, exclude_stdlib=excl)}
 
     for name, t_old in old_map.items():
         t_new = new_map.get(name)
@@ -1061,4 +1241,3 @@ def _diff_const_overloads(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 new_value="const overload removed",
             ))
     return changes
-

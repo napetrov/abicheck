@@ -10,11 +10,12 @@ from __future__ import annotations
 import argparse
 import filecmp
 import json
+import posixpath
 import re
 import shutil
 import sys
 import tempfile
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,7 +24,21 @@ ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES_DIR = ROOT / "examples"
 DOCS_EXAMPLES_DIR = ROOT / "docs" / "examples"
 GROUND_TRUTH = EXAMPLES_DIR / "ground_truth.json"
-REPO_BLOB = "https://github.com/napetrov/abicheck/blob/main"
+EXAMPLES_README = EXAMPLES_DIR / "README.md"
+REPO_ROOT_FROM_DOCS_EXAMPLES = "../.."
+
+# Short category labels used in the examples/README.md catalog index. These are
+# the exact strings the `examples-readme-sync` AI-readiness check asserts each
+# row against — keep the two in sync.
+README_CATEGORY_LABEL = {
+    "breaking": "Breaking",
+    "api_break": "API Break",
+    "risk": "Risk",
+    "addition": "Addition",
+    "quality": "Quality",
+    "no_change": "No Change",
+    "bundle": "Bundle",
+}
 
 VERDICT_META = {
     "BREAKING": {
@@ -108,6 +123,19 @@ WARNING = (
     "Source: examples/<case>/README.md + examples/ground_truth.json. -->\n"
 )
 
+# Strip a leading "caseNN" / "Case NN" / "caseNNb" token (and its trailing
+# separator) from a title for use in compact index tables. Anchored so it only
+# removes the case-number prefix — titles that legitimately contain a colon
+# (e.g. "... (per-binary: NO_CHANGE)" or "experimental:: removed ...") keep the
+# rest of the text intact.
+_CASE_PREFIX_RE = re.compile(r"^\s*case\s*\d+[a-z]?\s*(?:[-—:]\s*)?", re.IGNORECASE)
+
+
+def _short_title(title: str) -> str:
+    """Title with any leading caseNN prefix removed (for index table rows)."""
+    stripped = _CASE_PREFIX_RE.sub("", title, count=1).strip()
+    return stripped or title
+
 
 @dataclass
 class Case:
@@ -149,16 +177,21 @@ def _read_case(name: str, meta: dict) -> Case:
 
 
 def _rewrite_links(body: str) -> str:
-    # Rewrite repo-relative links like ../abicheck/... → GitHub blob URLs.
+    # Rewrite links from examples/<case>/README.md for generated docs. MkDocs
+    # strict mode validates Markdown links against files under docs/, so source
+    # files outside docs/ are rendered as code literals instead of links.
     def repl(m: re.Match) -> str:
         text, target = m.group(1), m.group(2)
         if target.startswith(("http://", "https://", "#", "mailto:")):
             return m.group(0)
-        # Bare filenames like v1.c, app.cpp → point to the case directory on GitHub.
-        if target.startswith("../"):
-            url = f"{REPO_BLOB}/{target.lstrip('./')}"
-        elif "/" not in target and "." in target:
-            url = f"{REPO_BLOB}/examples/__CASE__/{target}"
+        if target.startswith("../docs/"):
+            url = posixpath.normpath("../" + target.removeprefix("../docs/"))
+            return f"[{text}]({url})"
+        # Bare filenames like v1.c, app.cpp and ../ source-tree paths live
+        # outside docs/; keep the reference visible without creating a checked
+        # MkDocs link.
+        if target.startswith("../") or ("/" not in target and "." in target):
+            return f"`{text.strip('`')}`"
         else:
             url = target
         return f"[{text}]({url})"
@@ -193,7 +226,7 @@ def _meta_table(case: Case) -> str:
         f"| **Platforms** | {platforms} |\n"
         f"| **Flags** | {flag_str} |\n"
         f"| **Detected `ChangeKind`s** | {kinds} |\n"
-        f"| **Source files** | [browse on GitHub]({REPO_BLOB}/examples/{case.name}/) |\n"
+        f"| **Source files** | `examples/{case.name}/` |\n"
     )
 
 
@@ -204,7 +237,7 @@ def _source_links(case: Case) -> str:
     )
     if not files:
         return ""
-    lines = [f"- [`{f}`]({REPO_BLOB}/examples/{case.name}/{f})" for f in files]
+    lines = [f"- `{f}`" for f in files]
     return "## Source files\n\n" + "\n".join(lines) + "\n"
 
 
@@ -237,7 +270,7 @@ def _case_row(case: Case) -> str:
     vinfo = VERDICT_META[case.verdict]
     return (
         f"| [{case.name}]({case.name}.md) "
-        f"| {case.title.split(':', 1)[-1].strip()} "
+        f"| {_short_title(case.title)} "
         f"| {vinfo['icon']} {vinfo['label']} "
         f"| {CATEGORY_META[case.category]['label']} |"
     )
@@ -258,9 +291,9 @@ def _render_index(cases: list[Case]) -> str:
         "- Look up the **mitigation pattern** for a specific change.\n"
         "- Cross-reference detected [`ChangeKind`s](../reference/change-kinds.md) with concrete reproductions.\n\n",
         "> **Ground truth.** Expected verdicts and detected change kinds live in "
-        f"[`examples/ground_truth.json`]({REPO_BLOB}/examples/ground_truth.json) and are the "
+        "`examples/ground_truth.json` and are the "
         "single source of truth — these pages are generated from that file plus per-case "
-        f"`README.md` files under [`examples/`]({REPO_BLOB}/examples/).\n\n",
+        "`README.md` files under `examples/`.\n\n",
         "## Verdict distribution\n\n",
         "| Verdict | Count | What it means |\n",
         "|---------|-------|---------------|\n",
@@ -281,7 +314,7 @@ def _render_index(cases: list[Case]) -> str:
         "- **How to fix** — the mitigation pattern, where the README documents one.\n"
         "- **Real-world example** — historical occurrences in widely-used libraries.\n"
         "- **References** — links to relevant standards, manuals, and abicheck source.\n\n"
-        "Source files (`v1.*`, `v2.*`, `app.*`, `CMakeLists.txt`) are linked at the bottom of every page.\n\n"
+        "Source files (`v1.*`, `v2.*`, `app.*`, `CMakeLists.txt`) are listed at the bottom of every page.\n\n"
     )
     lines.append("## Browse by category\n\n")
     by_cat: dict[str, list[Case]] = defaultdict(list)
@@ -325,17 +358,172 @@ def _render_group_index(
         vinfo = VERDICT_META[c.verdict]
         lines.append(
             f"| [{c.name}](../{c.name}.md) "
-            f"| {c.title.split(':', 1)[-1].strip()} "
+            f"| {_short_title(c.title)} "
             f"| {vinfo['icon']} {vinfo['label']} "
             f"| {CATEGORY_META[c.category]['label']} |\n"
         )
     return "".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# examples/README.md catalog (the GitHub-facing index, not the docs site).
+#
+# Three regions are generated between sentinel comments so the headline count,
+# verdict distribution, and 126-row case index can't drift from ground_truth.
+# Bundle cases (skipped by the docs-site generator) ARE included here, since the
+# README indexes the whole catalog.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ReadmeEntry:
+    num: str  # case number as it appears in the dir name, e.g. "01", "26b", "110"
+    name: str
+    title: str
+    category: str
+    verdict: str  # ground_truth "expected", or "BUNDLE" for multi-library cases
+    bad_practice: bool
+
+
+def _case_title(name: str) -> str:
+    """Short H1 title of a per-case README (caseNN prefix stripped)."""
+    text = (EXAMPLES_DIR / name / "README.md").read_text(encoding="utf-8")
+    m = re.match(r"\s*#\s+(.+?)\n", text)
+    if not m:
+        raise ValueError(f"examples/{name}/README.md: first line must be an H1")
+    return _short_title(m.group(1).strip())
+
+
+def _load_readme_entries() -> list[ReadmeEntry]:
+    data = json.loads(GROUND_TRUTH.read_text(encoding="utf-8"))
+    entries: list[ReadmeEntry] = []
+    for name, meta in data["verdicts"].items():
+        m = re.match(r"case(\d+[a-z]?)", name)
+        if not m:
+            raise ValueError(f"unexpected case name {name!r}")
+        category = meta.get("category")
+        verdict = "BUNDLE" if category == "bundle" else meta["expected"]
+        entries.append(
+            ReadmeEntry(
+                num=m.group(1),
+                name=name,
+                title=_case_title(name),
+                category=category,
+                verdict=verdict,
+                bad_practice=bool(meta.get("bad_practice", False)),
+            )
+        )
+    entries.sort(key=lambda e: (int(re.match(r"(\d+)", e.num).group(1)), e.name))
+    return entries
+
+
+def _render_readme_headline(entries: list[ReadmeEntry]) -> str:
+    n_total = len(entries)
+    n_bundle = sum(1 for e in entries if e.category == "bundle")
+    n_single = n_total - n_bundle
+    return (
+        f"This directory contains **{n_total} cases** "
+        f"({n_single} single-library + {n_bundle} multi-library bundle cases, "
+        "the latter tracked under "
+        "[ADR-023](../docs/development/adr/023-bundle-aware-multi-binary-analysis.md)) "
+        "demonstrating real-world ABI/API break scenarios. Each case is a "
+        "minimal, compilable C/C++ example with:"
+    )
+
+
+def _render_readme_distribution(entries: list[ReadmeEntry]) -> str:
+    single = [e for e in entries if e.category != "bundle"]
+    n_bundle = len(entries) - len(single)
+    by_verdict = Counter(e.verdict for e in single)
+    by_category = Counter(e.category for e in single)
+    rows = [
+        ("BREAKING", by_verdict.get("BREAKING", 0), "`BREAKING_KINDS`", "🔴"),
+        ("API_BREAK", by_verdict.get("API_BREAK", 0), "`API_BREAK_KINDS`", "🟠"),
+        (
+            "COMPATIBLE_WITH_RISK",
+            by_verdict.get("COMPATIBLE_WITH_RISK", 0),
+            "`RISK_KINDS`",
+            "🟡",
+        ),
+        (
+            "COMPATIBLE (addition)",
+            by_category.get("addition", 0),
+            "`ADDITION_KINDS`",
+            "🟢",
+        ),
+        (
+            "COMPATIBLE (quality)",
+            by_category.get("quality", 0),
+            "`QUALITY_KINDS`",
+            "🟡",
+        ),
+        ("NO_CHANGE", by_verdict.get("NO_CHANGE", 0), "—", "✅"),
+        (
+            "Bundle (multi-binary)",
+            n_bundle,
+            "see [ADR-023](../docs/development/adr/023-bundle-aware-multi-binary-analysis.md)",
+            "🔵",
+        ),
+    ]
+    lines = [
+        "| Verdict | Count | `checker_policy.py` set | Icon |",
+        "|---------|-------|-------------------------|------|",
+    ]
+    lines += [
+        f"| {label} | {count} | {kset} | {icon} |" for label, count, kset, icon in rows
+    ]
+    return "\n".join(lines)
+
+
+def _render_readme_index(entries: list[ReadmeEntry]) -> str:
+    lines = [
+        "| # | Case | Category | abicheck verdict |",
+        "|---|------|----------|-----------------|",
+    ]
+    for e in entries:
+        icon = VERDICT_META[e.verdict]["icon"] if e.verdict in VERDICT_META else "🔵"
+        cell = f"{icon} {e.verdict}"
+        if e.bad_practice:
+            cell += " (bad practice)"
+        lines.append(
+            f"| [{e.num}]({e.name}/README.md) | {e.title} "
+            f"| {README_CATEGORY_LABEL[e.category]} | {cell} |"
+        )
+    return "\n".join(lines)
+
+
+def _splice_generated(text: str, marker: str, inner: str) -> str:
+    """Replace the text between BEGIN/END GENERATED sentinels for ``marker``."""
+    begin = re.search(rf"<!-- BEGIN GENERATED: {re.escape(marker)}[^\n]*-->\n", text)
+    end = re.search(rf"\n<!-- END GENERATED: {re.escape(marker)} -->", text)
+    if not begin or not end or begin.end() > end.start():
+        raise ValueError(
+            f"examples/README.md: missing/!ordered sentinels for {marker!r}"
+        )
+    return text[: begin.end()] + inner + text[end.start() :]
+
+
+def _render_examples_readme(text: str, entries: list[ReadmeEntry]) -> str:
+    text = _splice_generated(text, "catalog-headline", _render_readme_headline(entries))
+    text = _splice_generated(
+        text, "verdict-distribution", _render_readme_distribution(entries)
+    )
+    text = _splice_generated(text, "case-index", _render_readme_index(entries))
+    return text
+
+
 def _load_cases() -> list[Case]:
     data = json.loads(GROUND_TRUTH.read_text(encoding="utf-8"))
     cases = []
     for name, meta in data["verdicts"].items():
+        # Bundle cases (ADR-023) are multi-library and use a different
+        # ground-truth shape (expected=null, per-library verdicts under
+        # expected_libraries, bundle-level verdict under
+        # expected_combined_verdict). They have their own README files
+        # but don't map onto the per-case verdict-page generator; skip
+        # them here. The bundle index belongs in a follow-up doc page.
+        if meta.get("category") == "bundle" or meta.get("bundle") is True:
+            continue
         if meta["expected"] not in VERDICT_META:
             raise ValueError(f"{name}: unknown verdict {meta['expected']!r}")
         if meta["category"] not in CATEGORY_META:
@@ -439,8 +627,12 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     cases = _load_cases()
+    readme_entries = _load_readme_entries()
+    readme_current = EXAMPLES_README.read_text(encoding="utf-8")
+    readme_rendered = _render_examples_readme(readme_current, readme_entries)
 
     if args.check:
+        ok = True
         with tempfile.TemporaryDirectory() as tmp:
             tmp_out = Path(tmp) / "examples"
             _write_tree(tmp_out, cases)
@@ -453,13 +645,28 @@ def main(argv: Iterable[str] | None = None) -> int:
                 )
                 if DOCS_EXAMPLES_DIR.exists():
                     _print_diff(tmp_out, DOCS_EXAMPLES_DIR)
-                return 1
-        print(f"docs/examples/ is up to date ({len(cases)} cases).")
+                ok = False
+        if _normalize(readme_rendered.encode("utf-8")) != _normalize(
+            readme_current.encode("utf-8")
+        ):
+            print(
+                "examples/README.md generated regions are out of date. "
+                "Run: python scripts/gen_examples_docs.py",
+                file=sys.stderr,
+            )
+            ok = False
+        if not ok:
+            return 1
+        print(
+            f"docs/examples/ and examples/README.md are up to date ({len(cases)} cases)."
+        )
         return 0
 
     _write_tree(DOCS_EXAMPLES_DIR, cases)
+    _write(EXAMPLES_README, readme_rendered)
     print(
-        f"Generated {len(cases)} case pages in {DOCS_EXAMPLES_DIR.relative_to(ROOT)}/."
+        f"Generated {len(cases)} case pages in {DOCS_EXAMPLES_DIR.relative_to(ROOT)}/ "
+        f"and refreshed examples/README.md ({len(readme_entries)} catalog rows)."
     )
     return 0
 

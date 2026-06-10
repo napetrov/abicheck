@@ -1,4 +1,5 @@
 # Copyright 2026 Nikolay Petrov
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,27 +16,30 @@
 """CLI — abicheck dump | compare | compat (dump | check)."""
 from __future__ import annotations
 
-import json
 import logging
 import re
 import sys
-from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
 
-from .checker import DiffResult, LibraryMetadata, Verdict, compare
+from .checker import DiffResult, LibraryMetadata, compare
+from .cli_audit import echo_filtered_surface, echo_pattern_modulations
+from .cli_options import (
+    adr027_compare_options,
+    evidence_compare_options,
+    evidence_dump_option,
+)
+from .cli_params import POLICY_FILE_PARAM
 from .compat.abicc_dump_import import import_abicc_perl_dump, looks_like_perl_dump
 from .compat.cli import compat_group
 from .dumper import dump
 from .errors import AbicheckError
-from .reporter import to_json
 from .serialization import load_snapshot, snapshot_to_json
 
 if TYPE_CHECKING:
-    from .appcompat import AppRequirements
-    from .checker_types import DiffResult
+    from .checker_types import Change, DiffResult
     from .debug_resolver import DebugArtifact
     from .policy_file import PolicyFile
     from .severity import SeverityConfig
@@ -125,11 +129,18 @@ def _stamp_provenance(
     build_id: str | None,
     no_git: bool,
 ) -> None:
-    """Fill provenance metadata on a snapshot (mutates in place)."""
-    import datetime
+    """Fill provenance metadata on a snapshot (mutates in place).
+
+    ``created_at`` honours ``SOURCE_DATE_EPOCH`` (the reproducible-builds
+    standard): when set to a Unix timestamp, that fixed time is used instead of
+    the wall clock, so two dumps of an identical library are byte-identical —
+    enabling content-addressable caching and reproducible-build verification.
+    An unset or malformed value falls back to the current time.
+    """
+    import os
     import subprocess
 
-    snap.created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    snap.created_at = _provenance_timestamp(os.environ.get("SOURCE_DATE_EPOCH"))
     snap.git_tag = git_tag
     snap.build_id = build_id
 
@@ -145,11 +156,35 @@ def _stamp_provenance(
             pass  # git not available or not a repo — leave as None
 
 
+def _provenance_timestamp(source_date_epoch: str | None) -> str:
+    """ISO-8601 UTC timestamp, honouring ``SOURCE_DATE_EPOCH`` when valid."""
+    import datetime
+
+    if source_date_epoch:
+        try:
+            epoch = int(source_date_epoch.strip())
+            return datetime.datetime.fromtimestamp(
+                epoch, tz=datetime.timezone.utc
+            ).isoformat()
+        except (ValueError, OverflowError, OSError):
+            # Non-numeric or out-of-range epoch — fall back to wall clock
+            # rather than aborting the dump.
+            pass
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
 def _write_snapshot_output(
     snap: AbiSnapshot,
     output: Path | None,
+    evidence_dir: Path | None = None,
 ) -> None:
-    """Serialize snapshot and write to file or stdout."""
+    """Serialize snapshot and write to file or stdout.
+
+    When *evidence_dir* is given, attach the EvidencePack reference first (D8).
+    """
+    if evidence_dir is not None:
+        from .cli_evidence import attach_evidence_pack
+        attach_evidence_pack(snap, evidence_dir)
     result = snapshot_to_json(snap)
     if output:
         _safe_write_output(output, result)
@@ -173,6 +208,82 @@ def _sniff_text_format(path: Path) -> str:
     if head.startswith("{"):
         return "json"
     return "unknown"
+
+
+# GNU ld linker-script directives. The conventional ``libfoo.so`` development
+# symlink is frequently a tiny ASCII script such as ``INPUT(libfoo.so.1)`` or
+# ``GROUP ( /usr/lib/libfoo.so.1 AS_NEEDED ( ... ) )`` rather than an ELF file.
+_LD_SCRIPT_RE = re.compile(r"\b(?:INPUT|GROUP|OUTPUT_FORMAT)\s*\(")
+# Keywords that may appear as bare tokens inside INPUT()/GROUP() — never files.
+_LD_KEYWORDS = frozenset({"AS_NEEDED", "INPUT", "GROUP", "OUTPUT_FORMAT"})
+
+
+def _resolve_linker_script(path: Path) -> tuple[Path | None, bool]:
+    """Resolve a GNU ld linker script to the shared library it points at.
+
+    Returns ``(resolved_path, is_linker_script)``. ``is_linker_script`` is True
+    when *path* looks like a GNU ld script (so callers can emit a targeted hint
+    even when no target file could be located); ``resolved_path`` is the first
+    ``INPUT()``/``GROUP()`` member that exists next to the script, or *None*.
+    """
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(8192)
+        text = raw.decode("utf-8", errors="replace")
+    except OSError:
+        return None, False
+    # Strip C-style comments (real scripts start with ``/* GNU ld script */``).
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
+    if not _LD_SCRIPT_RE.search(text):
+        return None, False
+    # Collect candidate file tokens from inside INPUT()/GROUP() groups.
+    for group in re.findall(r"(?:INPUT|GROUP)\s*\(([^)]*)\)", text):
+        for tok in group.replace(",", " ").split():
+            if tok in _LD_KEYWORDS or tok.startswith(("-l", "-L", "(")):
+                continue
+            # Only consider tokens that name a library file.
+            if ".so" not in tok and not tok.endswith(".a"):
+                continue
+            candidate = Path(tok)
+            for cand in (candidate, path.parent / tok, path.parent / candidate.name):
+                if cand.is_file():
+                    return cand, True
+    return None, True
+
+
+def _maybe_follow_linker_script(path: Path) -> Path:
+    """Return the linker-script target if *path* is a resolvable GNU ld script.
+
+    Emits a one-line note when it follows a script; otherwise returns *path*
+    unchanged. Used by entry points that dispatch on binary format directly
+    (e.g. ``dump``) rather than through :func:`_resolve_input`.
+    """
+    target, is_ld = _resolve_linker_script(path)
+    if is_ld and target is not None and target.resolve() != path.resolve():
+        click.echo(
+            f"Note: '{path}' is a GNU ld linker script; following its "
+            f"INPUT()/GROUP() directive to '{target}'.",
+            err=True,
+        )
+        return target
+    return path
+
+
+def _normalize_binary_input(path: Path) -> tuple[Path, str | None]:
+    """Detect a binary input's format, following GNU ld linker scripts.
+
+    Returns ``(resolved_path, format)``. When *path* is a linker script that
+    resolves to a real shared library, the resolved path and *its* format are
+    returned so downstream metadata collection and dependency analysis operate
+    on the actual DSO rather than the text script.
+    """
+    fmt = _detect_binary_format(path)
+    if fmt is None:
+        resolved = _maybe_follow_linker_script(path)
+        if resolved != path:
+            return resolved, _detect_binary_format(resolved)
+    return path, fmt
+
 
 
 def _dump_elf(
@@ -213,34 +324,19 @@ def _dump_elf(
         raise click.ClickException(f"Failed to dump '{path}': {exc}") from exc
 
 
-def _dump_macho(path: Path, version: str) -> AbiSnapshot:
-    """Dump ABI snapshot from a Mach-O binary."""
-    from .macho_metadata import parse_macho_metadata
-    try:
-        macho_meta = parse_macho_metadata(path)
-    except (RuntimeError, OSError, ValueError) as exc:
-        raise click.ClickException(
-            f"Failed to parse Mach-O '{path}': {exc}"
-        ) from exc
-    if not macho_meta.exports and not macho_meta.install_name and not macho_meta.dependent_libs:
-        raise click.ClickException(
-            f"Mach-O file '{path}' has no exports or load-command metadata. "
-            "Verify the file is a valid dynamic library."
-        )
-    from .model import Function, Visibility
-    funcs = [
-        Function(
-            name=exp.name, mangled=exp.name, return_type="?",
-            visibility=Visibility.PUBLIC,
-            is_extern_c=not exp.name.startswith("_Z"),
-        )
-        for exp in macho_meta.exports if exp.name
-    ]
-    return AbiSnapshot(
-        library=path.name, version=version,
-        functions=funcs, macho=macho_meta,
-        platform="macho",
-    )
+def _apply_native_provenance(
+    snap: AbiSnapshot,
+    public_headers: list[Path] | None,
+    public_header_dirs: list[Path] | None,
+) -> AbiSnapshot:
+    """Tag declaration provenance on a PE/Mach-O snapshot (ADR-024 Phase 1).
+
+    Mirrors the ELF path (``dumper.create_snapshot``), which always runs
+    ``apply_provenance``. A no-op when no public-header set is supplied —
+    every origin stays ``UNKNOWN`` and behaviour is unchanged.
+    """
+    from .provenance import apply_provenance
+    return apply_provenance(snap, public_headers, public_header_dirs)
 
 
 def _dump_native_binary(
@@ -251,12 +347,20 @@ def _dump_native_binary(
     pdb_path: Path | None = None,
     dwarf_only: bool = False,
     debug_format: str | None = None,
+    public_headers: list[Path] | None = None,
+    public_header_dirs: list[Path] | None = None,
 ) -> AbiSnapshot:
     """Dump ABI snapshot from a native binary (ELF, PE, or Mach-O).
 
     For ELF, headers are required for full AST analysis unless dwarf_only
     is set or DWARF debug info is available (ADR-003 fallback chain).
-    For PE/Mach-O, headers are optional — export tables provide the symbol surface.
+    For PE/Mach-O, headers are optional: when supplied they scope the ABI
+    surface to declarations in those public headers (best-effort, via castxml),
+    otherwise the export table provides the symbol surface.
+
+    ``public_headers`` / ``public_header_dirs`` classify declaration provenance
+    (ADR-024 Phase 1). For PE they also let the PDB-derived types carry a
+    ``ScopeOrigin``; an empty set keeps every origin ``UNKNOWN`` (no-op).
     """
     if binary_fmt == "elf":
         return _dump_elf(path, headers, includes, version, lang,
@@ -265,12 +369,25 @@ def _dump_native_binary(
     if binary_fmt == "pe":
         from .service import _dump_pe
         try:
-            return _dump_pe(path, version, pdb_path=pdb_path)
+            snap = _dump_pe(
+                path, version,
+                headers=headers, includes=includes, lang=lang,
+                pdb_path=pdb_path,
+            )
         except AbicheckError as exc:
             raise click.ClickException(str(exc)) from exc
+        return _apply_native_provenance(snap, public_headers, public_header_dirs)
 
     if binary_fmt == "macho":
-        return _dump_macho(path, version)
+        from .service import _dump_macho
+        try:
+            snap = _dump_macho(
+                path, version,
+                headers=headers, includes=includes, lang=lang,
+            )
+        except AbicheckError as exc:
+            raise click.ClickException(str(exc)) from exc
+        return _apply_native_provenance(snap, public_headers, public_header_dirs)
 
     fmt_labels = {"elf": "ELF", "pe": "PE (Windows DLL)", "macho": "Mach-O (macOS dylib)"}
     raise click.ClickException(f"Unsupported binary format: {fmt_labels.get(binary_fmt, binary_fmt)}")
@@ -325,6 +442,13 @@ def _resolve_input(
             debug_format=debug_format,
         )
 
+    # Raw kernel type-info blob (a bare BTF/CTF section, e.g. from
+    # `bpftool btf dump file <elf> format raw`): parse directly.
+    from .service import _resolve_raw_typeinfo
+    raw_typeinfo = _resolve_raw_typeinfo(path, version)
+    if raw_typeinfo is not None:
+        return raw_typeinfo
+
     # Text-based formats: detect by sniffing only a small header chunk
     fmt = _sniff_text_format(path)
 
@@ -343,6 +467,38 @@ def _resolve_input(
             raise click.ClickException(
                 f"Failed to load JSON snapshot '{path}': {exc}"
             ) from exc
+
+    # GNU ld linker script (e.g. the ``libfoo.so`` dev symlink is the text
+    # ``INPUT(libfoo.so.1)``): follow it to the real shared library.
+    target, is_ld_script = _resolve_linker_script(path)
+    if is_ld_script:
+        if target is not None and target.resolve() != path.resolve():
+            click.echo(
+                f"Note: '{path}' is a GNU ld linker script; following its "
+                f"INPUT()/GROUP() directive to '{target}'.",
+                err=True,
+            )
+            return _resolve_input(
+                target, headers, includes, version, lang,
+                dwarf_only=dwarf_only, debug_format=debug_format,
+            )
+        raise click.UsageError(
+            f"'{path}' is a GNU ld linker script (INPUT/GROUP), not a binary, "
+            "and its target could not be located next to it. Pass the actual "
+            "shared library named in its INPUT(...) directive directly."
+        )
+
+    # Static / import library archives (.a / .lib) are member containers, not a
+    # single linkable image — a deliberate non-goal (see
+    # docs/concepts/limitations.md). Reject with actionable guidance.
+    from .binary_utils import detect_archive
+    if detect_archive(path):
+        raise click.UsageError(
+            f"'{path}' is a static/import library archive (.a/.lib), which abicheck "
+            "does not analyse — it compares single linkable images (shared libraries "
+            "and objects). Extract the members (e.g. `ar x lib.a`) and compare the "
+            "resulting object files or the shared library built from them instead."
+        )
 
     raise click.UsageError(
         f"Cannot detect format of '{path}'. "
@@ -370,7 +526,45 @@ def _collect_metadata(path: Path) -> LibraryMetadata | None:
     )
 
 
-@click.group()
+# Exit code for an invalid invocation (bad arguments, unknown option, invalid
+# option value, unreadable/unrecognised input path). Chosen as sysexits.h
+# ``EX_USAGE`` so it sits *outside* the compare/compat result space
+# {0, 1, 2, 4} — a CI script can therefore tell "you called me wrong" apart
+# from a real ABI verdict. Click defaults ``UsageError`` to exit 2, which
+# collides with ``compare``'s documented "2 = source break"; this remaps it.
+_EXIT_USAGE_ERROR = 64
+
+
+class _AbicheckGroup(click.Group):
+    """Root group that maps Click *usage* errors to a dedicated exit code.
+
+    Click exits 2 for ``UsageError`` / ``BadParameter`` (bad arguments, unknown
+    options, invalid option values, missing/unreadable input paths), which
+    collides with ``compare``'s documented ``2 = source break`` result. Remap
+    just that code to ``_EXIT_USAGE_ERROR`` so an invalid invocation is never
+    mistaken for an ABI verdict. Other ``ClickException``s (exit 1, used for
+    operational failures such as malformed input or an expired strict waiver),
+    verdict exits (``SystemExit`` 2/4), and the ``compat`` error scheme (3–11)
+    are deliberately left untouched.
+    """
+
+    def main(self, *args: Any, standalone_mode: bool = True, **kwargs: Any) -> Any:  # type: ignore[override]
+        if not standalone_mode:
+            return super().main(*args, standalone_mode=False, **kwargs)  # type: ignore[call-overload]
+        try:
+            super().main(*args, standalone_mode=False, **kwargs)  # type: ignore[call-overload]
+        except click.exceptions.Abort:
+            click.echo("Aborted!", err=True)
+            sys.exit(1)
+        except click.exceptions.ClickException as exc:
+            exc.show()
+            # Only Click's usage-error code (2) collides with a compare verdict.
+            sys.exit(_EXIT_USAGE_ERROR if exc.exit_code == 2 else exc.exit_code)
+        else:
+            sys.exit(0)
+
+
+@click.group(cls=_AbicheckGroup)
 @click.version_option(
     version=_abicheck_version,
     prog_name="abicheck",
@@ -436,6 +630,16 @@ def _populate_dependency_info(
               help="Public header file or directory (repeat for multiple).")
 @click.option("-I", "--include", "includes", multiple=True, type=click.Path(path_type=Path),
               help="Extra include directory for castxml.")
+# ── Declaration provenance (ADR-015) ─────────────────────────────────────────
+@click.option("--public-header", "public_headers", multiple=True,
+              type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="Header treated as public for provenance classification (repeat for "
+                   "multiple). Declarations are tagged public/private/system in the snapshot. "
+                   "Opt-in: omitting this leaves every origin UNKNOWN.")
+@click.option("--public-header-dir", "public_header_dirs", multiple=True,
+              type=click.Path(exists=True, file_okay=False, path_type=Path),
+              help="Directory whose headers are treated as public for provenance "
+                   "classification (repeat for multiple).")
 @click.option("--version", "version", default="unknown", show_default=True,
               help="Library version string to embed in snapshot.")
 @click.option("--lang", default="c++", show_default=True,
@@ -473,23 +677,28 @@ def _populate_dependency_info(
 @click.option("--show-data-sources", is_flag=True, default=False,
               help="Print which data layers (L0/L1/L2) are available for the "
                    "binary and exit.")
-@click.option("--btf", "debug_format", flag_value="btf", default=None,
+@click.option("--debug-format", "debug_format_opt",
+              type=click.Choice(["auto", "dwarf", "btf", "ctf"], case_sensitive=False), default=None,
+              help="Force the ELF debug format (auto=pick best available). "
+                   "Supersedes the individual --btf/--ctf/--dwarf flags.")
+@click.option("--btf", "debug_format", flag_value="btf", default=None, hidden=True,
               help="Force BTF debug format (ELF only).")
-@click.option("--ctf", "debug_format", flag_value="ctf",
+@click.option("--ctf", "debug_format", flag_value="ctf", hidden=True,
               help="Force CTF debug format (ELF only).")
-@click.option("--dwarf", "debug_format", flag_value="dwarf",
+@click.option("--dwarf", "debug_format", flag_value="dwarf", hidden=True,
               help="Force DWARF debug format (ELF only).")
-# ── Build context capture (ADR-020) ──────────────────────────────────────────
+# ── Build context capture (ADR-020a) ──────────────────────────────────────────
 @click.option("-p", "--build-dir", "compile_db_path", type=click.Path(path_type=Path), default=None,
               help="Build directory containing compile_commands.json, or path to the "
                    "file itself. Enables deterministic header parsing with exact build "
                    "flags. Requires -H/--header.")
 @click.option("--compile-db", "compile_db_path_alt", type=click.Path(path_type=Path), default=None,
+              hidden=True,
               help="Explicit path to compile_commands.json (alias for -p).")
 @click.option("--compile-db-filter", "compile_db_filter", default=None,
               help="Glob pattern to filter compile_commands.json entries by source file "
                    "(e.g. 'src/libfoo/**'). Useful for large databases.")
-# ── Debug artifact resolution (ADR-021) ──────────────────────────────────────
+# ── Debug artifact resolution (ADR-021a) ──────────────────────────────────────
 @click.option("--debug-root", "debug_roots", multiple=True, type=click.Path(path_type=Path),
               help="Directory containing separate debug files (build-id trees, "
                    "path-mirror debug files, or dSYM bundles). Can be repeated.")
@@ -507,19 +716,23 @@ def _populate_dependency_info(
               help="Opaque build identifier (CI run ID, build number, etc.).")
 @click.option("--no-git", "no_git", is_flag=True, default=False,
               help="Do not auto-detect git commit SHA.")
+@evidence_dump_option  # ADR-028: --evidence
 def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...],
+             public_headers: tuple[Path, ...], public_header_dirs: tuple[Path, ...],
              version: str, lang: str, output: Path | None,
              gcc_path: str | None, gcc_prefix: str | None, gcc_options: str | None,
              sysroot: Path | None, nostdinc: bool, pdb_path: Path | None,
              follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
              dwarf_only: bool, show_data_sources: bool,
+             debug_format_opt: str | None,
              debug_format: str | None,
              compile_db_path: Path | None, compile_db_path_alt: Path | None,
              compile_db_filter: str | None,
              debug_roots: tuple[Path, ...],
              debuginfod: bool, debuginfod_url: str | None,
              verbose: bool,
-             git_tag: str | None, build_id: str | None, no_git: bool) -> None:
+             git_tag: str | None, build_id: str | None, no_git: bool,
+             evidence_dir: Path | None = None) -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
     \b
@@ -535,6 +748,15 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
     """
     _setup_verbosity(verbose)
 
+    # Reconcile the --debug-format selector with the legacy --btf/--ctf/--dwarf
+    # flags. The selector supersedes the legacy flags whenever it is given:
+    # an explicit "auto" returns to auto-detection (None) even if a legacy flag
+    # is also present; only when the selector is absent do the legacy flags apply.
+    if debug_format_opt is not None:
+        effective_debug_format = None if debug_format_opt.lower() == "auto" else debug_format_opt
+    else:
+        effective_debug_format = debug_format
+
     # Resolve -p / --compile-db aliases
     effective_compile_db = compile_db_path or compile_db_path_alt
     if effective_compile_db and not headers:
@@ -548,11 +770,13 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
         _print_data_sources(so_path, bool(headers))
         return
 
-    # Auto-detect binary format — PE/Mach-O skip the ELF/castxml path
-    binary_fmt = _detect_binary_format(so_path)
-    if debug_format is not None and binary_fmt in ("pe", "macho"):
+    # Auto-detect binary format — PE/Mach-O skip the ELF/castxml path. The
+    # conventional ``libfoo.so`` dev symlink is often a GNU ld linker script;
+    # follow it to the real shared library before dispatching.
+    so_path, binary_fmt = _normalize_binary_input(so_path)
+    if effective_debug_format is not None and binary_fmt in ("pe", "macho"):
         raise click.BadParameter(
-            f"--{debug_format} is only supported for ELF binaries, not {binary_fmt.upper()}."
+            f"--{effective_debug_format} is only supported for ELF binaries, not {binary_fmt.upper()}."
         )
     if binary_fmt in ("pe", "macho"):
         _handle_non_elf_dump(
@@ -568,6 +792,9 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             build_id,
             no_git,
             output,
+            public_headers,
+            public_header_dirs,
+            evidence_dir,
         )
         return
 
@@ -576,7 +803,7 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
     )
     effective_gcc_options = _merge_gcc_options(build_context_flags, gcc_options)
 
-    # Debug artifact resolution (ADR-021): resolve before dump
+    # Debug artifact resolution (ADR-021a): resolve before dump
     if debug_roots or debuginfod:
         artifact = _resolve_debug_artifact(
             so_path, debug_roots, debuginfod, debuginfod_url,
@@ -600,16 +827,23 @@ def dump_cmd(so_path: Path, headers: tuple[Path, ...], includes: tuple[Path, ...
             nostdinc=nostdinc,
             lang=lang if lang == "c" else None,
             dwarf_only=dwarf_only,
-            debug_format=debug_format,
+            debug_format=effective_debug_format,
+            public_headers=list(public_headers),
+            public_header_dirs=list(public_header_dirs),
         )
     except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+    # Record that the header AST was parsed with the real build context (ADR-029),
+    # so a later compare can suppress header-parse-context drift for this side.
+    if effective_compile_db and resolved_headers:
+        snap.parsed_with_build_context = True
 
     if follow_deps:
         _populate_dependency_info(snap, so_path, list(search_paths), sysroot, ld_library_path)
 
     _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-    _write_snapshot_output(snap, output)
+    _write_snapshot_output(snap, output, evidence_dir)
 
 
 def _handle_non_elf_dump(
@@ -625,6 +859,9 @@ def _handle_non_elf_dump(
     build_id: str | None,
     no_git: bool,
     output: Path | None,
+    public_headers: tuple[Path, ...] = (),
+    public_header_dirs: tuple[Path, ...] = (),
+    evidence_dir: Path | None = None,
 ) -> None:
     """Handle PE/Mach-O native dump path and output writing."""
     if follow_deps:
@@ -633,13 +870,15 @@ def _handle_non_elf_dump(
         snap = _dump_native_binary(
             so_path, binary_fmt, list(headers), list(includes), version, lang,
             pdb_path=pdb_path,
+            public_headers=list(public_headers),
+            public_header_dirs=list(public_header_dirs),
         )
     except click.ClickException:
         raise
     except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-    _write_snapshot_output(snap, output)
+    _write_snapshot_output(snap, output, evidence_dir)
 
 
 def _resolve_build_context_flags(
@@ -825,6 +1064,24 @@ def _load_suppression_and_policy(
     return suppression, pf
 
 
+def _collect_force_public_symbols(
+    public_symbols: tuple[str, ...], symbols_list: Path | None,
+) -> set[str]:
+    """Merge --public-symbol values with a --public-symbols-list file.
+
+    The list file is one symbol per line; blank lines and ``#`` comments are
+    ignored (à la abi-compliance-checker -symbols-list). Inline trailing
+    comments are not stripped — a ``#`` must start the line to be a comment.
+    """
+    out: set[str] = {s.strip() for s in public_symbols if s.strip()}
+    if symbols_list is not None:
+        for raw in symbols_list.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if line and not line.startswith("#"):
+                out.add(line)
+    return out
+
+
 def _validate_show_only(
     ctx: click.Context, param: click.Parameter, value: str | None,
 ) -> str | None:
@@ -851,6 +1108,8 @@ def _render_output(
     show_impact: bool = False,
     stat: bool = False,
     severity_config: SeverityConfig | None = None,
+    show_recommendation: bool = False,
+    demangle: bool = False,
 ) -> str:
     """Render comparison result in the requested output format."""
     from .service import render_output
@@ -859,6 +1118,8 @@ def _render_output(
         follow_deps=follow_deps, show_only=show_only,
         report_mode=report_mode, show_impact=show_impact,
         stat=stat, severity_config=severity_config,
+        show_recommendation=show_recommendation,
+        demangle=demangle,
     )
 
 
@@ -869,50 +1130,27 @@ def _collect_additions(result: DiffResult) -> list[object]:
     return [c for c in result.changes if c.kind in addition_kinds]
 
 
-def _run_compare_pair(
-    old_input: Path,
-    new_input: Path,
-    old_headers: list[Path],
-    new_headers: list[Path],
-    old_includes: list[Path],
-    new_includes: list[Path],
-    old_version: str,
-    new_version: str,
-    lang: str,
-    suppress: Path | None,
-    policy: str,
-    policy_file_path: Path | None,
-    old_pdb_path: Path | None,
-    new_pdb_path: Path | None,
-) -> tuple[DiffResult, AbiSnapshot, AbiSnapshot]:
-    """Run compare for one old/new pair and return result + resolved snapshots."""
-    old_fmt = _detect_binary_format(old_input)
-    new_fmt = _detect_binary_format(new_input)
+def _load_probe_matrix_changes(
+    probe_matrix_old: Path | None, probe_matrix_new: Path | None,
+) -> list[Change] | None:
+    """Load build-config matrix snapshots and return diff_matrix() findings.
 
-    old = _resolve_input(
-        old_input,
-        old_headers,
-        old_includes,
-        old_version,
-        lang,
-        is_elf=True if old_fmt == "elf" else None,
-        pdb_path=old_pdb_path,
-    )
-    new = _resolve_input(
-        new_input,
-        new_headers,
-        new_includes,
-        new_version,
-        lang,
-        is_elf=True if new_fmt == "elf" else None,
-        pdb_path=new_pdb_path,
-    )
+    These findings (CXX_STANDARD_FLOOR_RAISED, API_DEPENDS_ON_CONSUMER_ENV,
+    BEHAVIOURAL_DEFAULT_CHANGED) need multi-configuration inputs the plain
+    compare() does not have, so they are computed here and merged in (G2).
+    """
+    if probe_matrix_old is None and probe_matrix_new is None:
+        return None
+    if probe_matrix_old is None or probe_matrix_new is None:
+        raise click.UsageError(
+            "--probe-matrix-old and --probe-matrix-new must be given together."
+        )
+    from .diff_build_config import diff_matrix
+    from .probe_harness import load_matrix_snapshot
 
-    suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
-    result = compare(old, new, suppression=suppression, policy=policy, policy_file=pf)
-    result.old_metadata = _collect_metadata(old_input)
-    result.new_metadata = _collect_metadata(new_input)
-    return result, old, new
+    old_matrix = load_matrix_snapshot(probe_matrix_old)
+    new_matrix = load_matrix_snapshot(probe_matrix_new)
+    return list(diff_matrix(old_matrix, new_matrix))
 
 
 def _canonical_library_key(path: Path) -> str:
@@ -1107,6 +1345,33 @@ def _write_or_echo(output: Path | None, text: str) -> None:
         click.echo(text)
 
 
+def _announce_exit_scheme(
+    severity_explicitly_set: bool, sev_config: SeverityConfig | None,
+    *, fmt: str = "markdown", stat: bool = False,
+) -> None:
+    """Announce (on stderr) which exit-code scheme the compare command uses.
+
+    Kept on stderr so it never pollutes the report on stdout. Emitted only by
+    the ``compare`` command (not compare-release / appcompat), and only for the
+    human-readable formats — machine formats (json/sarif/junit) and the
+    one-line ``--stat`` summary are consumed by tooling that treats the whole
+    captured stream as data, so the banner is suppressed there.
+    """
+    if stat or fmt not in {"markdown", "html", "review"}:
+        return
+    if severity_explicitly_set:
+        click.echo(
+            "Exit-code scheme: severity-aware (per-category --severity-* settings).",
+            err=True,
+        )
+    else:
+        click.echo(
+            "Exit-code scheme: legacy verdict (0=compatible, 2=API break, 4=ABI break). "
+            "Pass --severity-preset/--severity-* for the severity-aware scheme.",
+            err=True,
+        )
+
+
 def _exit_with_severity_or_verdict(
     result: DiffResult, sev_config: SeverityConfig | None, severity_explicitly_set: bool,
 ) -> None:
@@ -1125,6 +1390,111 @@ def _exit_with_severity_or_verdict(
             sys.exit(2)
 
 
+def _log_one_side_debug(
+    label: str, binary: Path, droots: list[Path],
+    *,
+    debuginfod: bool, debuginfod_url: str | None,
+) -> None:
+    """Resolve and log debug info for a single binary side, if applicable."""
+    if _detect_binary_format(binary) is None or not (droots or debuginfod):
+        return
+    from .debug_resolver import resolve_debug_info
+
+    artifact = resolve_debug_info(
+        binary,
+        debug_roots=droots or None,
+        enable_debuginfod=debuginfod,
+        debuginfod_urls=[debuginfod_url] if debuginfod_url else None,
+    )
+    if artifact:
+        click.echo(f"Debug info ({label}): {artifact.source}", err=True)
+
+
+def _log_debug_resolution(
+    old_input: Path, new_input: Path,
+    resolved_old_debug: list[Path], resolved_new_debug: list[Path],
+    *,
+    debuginfod: bool, debuginfod_url: str | None,
+) -> None:
+    """Resolve and log per-side debug info (debug roots / debuginfod), if any."""
+    if not (resolved_old_debug or resolved_new_debug or debuginfod):
+        return
+    _log_one_side_debug(
+        "old", old_input, resolved_old_debug,
+        debuginfod=debuginfod, debuginfod_url=debuginfod_url,
+    )
+    _log_one_side_debug(
+        "new", new_input, resolved_new_debug,
+        debuginfod=debuginfod, debuginfod_url=debuginfod_url,
+    )
+
+
+def _resolve_compare_snapshots(
+    old_input: Path, new_input: Path,
+    old_fmt: str | None, new_fmt: str | None,
+    old_h: list[Path], new_h: list[Path],
+    old_inc: list[Path], new_inc: list[Path],
+    old_version: str, new_version: str, lang: str,
+    pdb_path: Path | None, old_pdb_path: Path | None, new_pdb_path: Path | None,
+    dwarf_only: bool, debug_format: str | None,
+    follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
+) -> tuple[AbiSnapshot, AbiSnapshot]:
+    """Load both ABI snapshots and (optionally) populate ELF dependency info."""
+    old = _resolve_input(
+        old_input, old_h, old_inc, old_version, lang,
+        is_elf=True if old_fmt == "elf" else None,
+        pdb_path=old_pdb_path if old_pdb_path else pdb_path,
+        dwarf_only=dwarf_only,
+        debug_format=debug_format,
+    )
+    new = _resolve_input(
+        new_input, new_h, new_inc, new_version, lang,
+        is_elf=True if new_fmt == "elf" else None,
+        pdb_path=new_pdb_path if new_pdb_path else pdb_path,
+        dwarf_only=dwarf_only,
+        debug_format=debug_format,
+    )
+    if follow_deps:
+        if old_fmt == "elf":
+            _populate_dependency_info(old, old_input, list(search_paths), None, ld_library_path)
+        if new_fmt == "elf":
+            _populate_dependency_info(new, new_input, list(search_paths), None, ld_library_path)
+    return old, new
+
+
+def _finalize_compare_result(
+    result: DiffResult, old_input: Path, new_input: Path,
+    *,
+    show_redundant: bool, show_filtered: bool,
+    annotate: bool, annotate_additions: bool,
+) -> None:
+    """Attach metadata and emit redundancy/filter/suppression/annotation output."""
+    result.old_metadata = _collect_metadata(old_input)
+    result.new_metadata = _collect_metadata(new_input)
+
+    if show_redundant and result.redundant_changes:
+        _merge_redundant_changes(result)
+    if show_filtered and result.out_of_surface_changes:
+        echo_filtered_surface(result)
+
+    # The scoping fallback warning goes to stderr so it never corrupts the
+    # machine-readable payload on stdout (which carries scope_resolved /
+    # manual_review_required for programmatic consumers).
+    if result.scope_to_public_surface and not result.scope_resolved:
+        click.echo(
+            "Warning: --scope-public-headers could not resolve the public "
+            "surface (no header-derived public symbols); fell back to the full "
+            "export table. Compatibility is UNCONFIRMED — treat this result as "
+            "manual-review-required, not a clean public surface.",
+            err=True,
+        )
+
+    _warn_all_suppressed(result)
+    _maybe_emit_annotations(
+        result, annotate=annotate, annotate_additions=annotate_additions
+    )
+
+
 @main.command("compare")
 @click.argument("old_input", type=click.Path(exists=True, path_type=Path))
 @click.argument("new_input", type=click.Path(exists=True, path_type=Path))
@@ -1132,8 +1502,10 @@ def _exit_with_severity_or_verdict(
 @click.option("-H", "--header", "headers", multiple=True,
               type=click.Path(path_type=Path),
               help="Public header file or directory applied to both sides (repeat for multiple). "
-                   "Recommended for full ELF ABI analysis; without headers, ELF falls back to symbols-only mode. "
-                   "Validated when input is ELF; ignored for snapshots.")
+                   "Recommended for full ABI analysis; without headers, native binaries fall back to symbols-only mode. "
+                   "Scopes the ABI surface to declarations in these headers for ELF; on PE/Mach-O scoping is "
+                   "best-effort and falls back to the export table when castxml is unavailable or names don't match "
+                   "(e.g. MSVC C++ mangling). Validated for native binaries; ignored for snapshots.")
 @click.option("-I", "--include", "includes", multiple=True,
               type=click.Path(path_type=Path),
               help="Extra include directory for castxml (applied to both sides).")
@@ -1143,11 +1515,11 @@ def _exit_with_severity_or_verdict(
 @click.option("--old-header", "old_headers_only", multiple=True,
               type=click.Path(path_type=Path),
               help="Public header for old side only (overrides -H for old). "
-                   "Validated when input is ELF; ignored for snapshots.")
+                   "Validated for native binaries; ignored for snapshots.")
 @click.option("--new-header", "new_headers_only", multiple=True,
               type=click.Path(path_type=Path),
               help="Public header for new side only (overrides -H for new). "
-                   "Validated when input is ELF; ignored for snapshots.")
+                   "Validated for native binaries; ignored for snapshots.")
 @click.option("--old-include", "old_includes_only", multiple=True,
               type=click.Path(path_type=Path),
               help="Include dir for old side only (overrides -I for old).")
@@ -1159,8 +1531,16 @@ def _exit_with_severity_or_verdict(
 @click.option("--new-version", "new_version", default="new", show_default=True,
               help="Version label for new side (used when input is a .so file).")
 # ── Compare options (unchanged) ──────────────────────────────────────────────
-@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "sarif", "html", "junit"]),
-              default="markdown", show_default=True)
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "sarif", "html", "junit", "review"]),
+              default="markdown", show_default=True,
+              help="Output format. 'review' emits a compact GitHub-facing digest "
+                   "(verdict + counts + release recommendation + manual-review banner) "
+                   "suitable for a job summary or PR comment.")
+@click.option("--demangle/--no-demangle", default=None,
+              help="Demangle C++ symbol names in markdown/review output (default "
+                   "ON; use --no-demangle to turn off). json/sarif always keep raw "
+                   "mangled names, and HTML is rendered structurally and is never "
+                   "demangled regardless of this flag.")
 @click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
 @click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
               help="Suppression file (YAML) to filter known/intentional changes.")
@@ -1173,8 +1553,8 @@ def _exit_with_severity_or_verdict(
               default="strict_abi", show_default=True,
               help="Built-in policy profile for verdict classification. Ignored when --policy-file is given.")
 @click.option("--policy-file", "policy_file_path",
-              type=click.Path(exists=True, path_type=Path), default=None,
-              help="YAML policy file with per-kind verdict overrides. Overrides --policy.")
+              type=POLICY_FILE_PARAM, default=None,
+              help="YAML policy file with per-kind verdict overrides, or a built-in name (e.g. 'security'). Overrides --policy.")
 @click.option("--pdb-path", "pdb_path", type=click.Path(path_type=Path), default=None,
               help="Explicit PDB file path for Windows PE debug info (applied to both sides). "
                    "Overrides automatic PDB discovery.")
@@ -1218,6 +1598,35 @@ def _exit_with_severity_or_verdict(
 @click.option("--show-redundant", is_flag=True, default=False,
               help="Disable redundancy filtering and show all changes including those "
                    "derived from root type changes.")
+@click.option("--scope-public-headers/--no-scope-public-headers", "scope_public_headers",
+              default=True, show_default=True,
+              help="Restrict findings to the public-header ABI surface (ADR-024): "
+                   "changes to symbols/types not reachable from public-header-declared "
+                   "exported API are recorded as filtered, not reported. Internal-type "
+                   "leaks are never hidden. On by default; use --no-scope-public-headers "
+                   "to report every finding regardless of surface.")
+@click.option("--show-filtered", "show_filtered", is_flag=True, default=False,
+              help="List findings excluded by --scope-public-headers (audit trail).")
+@click.option("--public-symbol", "public_symbols", multiple=True,
+              help="Widening overlay (ADR-024 §D6): force a symbol (mangled or demangled "
+                   "name) into the public surface even when header provenance can't see it "
+                   "(asm stubs, .def exports, extern \"C\" shims, MSVC-mangling gaps). "
+                   "Repeatable. Only meaningful with --scope-public-headers.")
+@click.option("--public-symbols-list", "public_symbols_list",
+              type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None,
+              help="File of symbols to force public (one per line; '#' comments and blank "
+                   "lines ignored), à la abi-compliance-checker -symbols-list. "
+                   "Merged with --public-symbol.")
+@click.option("--probe-matrix-old", "probe_matrix_old", type=click.Path(exists=True, path_type=Path),
+              default=None,
+              help="Old build-configuration matrix snapshot (from 'abicheck probe run'). "
+                   "When given with --probe-matrix-new, build-config findings "
+                   "(CXX_STANDARD_FLOOR_RAISED, API_DEPENDS_ON_CONSUMER_ENV, "
+                   "BEHAVIOURAL_DEFAULT_CHANGED) are folded into this comparison's "
+                   "verdict and report (G2: probe -> compare).")
+@click.option("--probe-matrix-new", "probe_matrix_new", type=click.Path(exists=True, path_type=Path),
+              default=None,
+              help="New build-configuration matrix snapshot (pairs with --probe-matrix-old).")
 @click.option("--show-only", "show_only", default=None,
               callback=_validate_show_only, expose_value=True, is_eager=False,
               help="Comma-separated filter tokens to limit displayed changes. "
@@ -1229,17 +1638,26 @@ def _exit_with_severity_or_verdict(
               help="One-line summary output for CI gates. "
                    "With --format json, emits only the summary object.")
 @click.option("--report-mode", "report_mode",
-              type=click.Choice(["full", "leaf"], case_sensitive=True),
+              type=click.Choice(["full", "leaf", "impact"], case_sensitive=True),
               default="full", show_default=True,
               help="Report mode: 'full' lists all changes individually (default), "
-                   "'leaf' groups by root type changes with impact lists.")
+                   "'leaf' groups by root type changes with impact lists, "
+                   "'impact' behaves as 'full' with the impact summary table enabled "
+                   "(equivalent to --report-mode full --show-impact).")
 @click.option("--show-impact", is_flag=True, default=False,
               help="Append an impact summary table showing root changes and affected interfaces.")
-@click.option("--btf", "debug_format", flag_value="btf", default=None,
+@click.option("--recommend", is_flag=True, default=False,
+              help="Append a release recommendation (semver bump + SONAME action) to the "
+                   "report. Always present in --format json under 'release_recommendation'.")
+@click.option("--debug-format", "debug_format_opt",
+              type=click.Choice(["auto", "dwarf", "btf", "ctf"], case_sensitive=False), default=None,
+              help="Force the ELF debug format for both sides (auto=pick best available). "
+                   "Supersedes the individual --btf/--ctf/--dwarf flags.")
+@click.option("--btf", "debug_format", flag_value="btf", default=None, hidden=True,
               help="Force BTF debug format for both sides (ELF only).")
-@click.option("--ctf", "debug_format", flag_value="ctf",
+@click.option("--ctf", "debug_format", flag_value="ctf", hidden=True,
               help="Force CTF debug format for both sides (ELF only).")
-@click.option("--dwarf", "debug_format", flag_value="dwarf",
+@click.option("--dwarf", "debug_format", flag_value="dwarf", hidden=True,
               help="Force DWARF debug format for both sides (ELF only).")
 @click.option("--annotate", is_flag=True, default=False,
               help="Emit GitHub Actions workflow command annotations to stderr. "
@@ -1248,7 +1666,7 @@ def _exit_with_severity_or_verdict(
 @click.option("--annotate-additions", is_flag=True, default=False,
               help="Include additions/compatible changes as ::notice annotations "
                    "(requires --annotate).")
-# ── Debug artifact resolution (ADR-021) ──────────────────────────────────────
+# ── Debug artifact resolution (ADR-021a) ──────────────────────────────────────
 @click.option("--debug-root", "debug_roots", multiple=True, type=click.Path(path_type=Path),
               help="Directory containing separate debug files (build-id trees, "
                    "path-mirror, dSYM bundles). Applied to both sides. Can be repeated.")
@@ -1260,6 +1678,8 @@ def _exit_with_severity_or_verdict(
               help="Enable debuginfod network resolution for debug info (opt-in).")
 @click.option("--debuginfod-url", "debuginfod_url", default=None,
               help="debuginfod server URL (overrides DEBUGINFOD_URLS env var).")
+@evidence_compare_options  # ADR-028/029: --old-evidence/--new-evidence/--evidence-mode
+@adr027_compare_options  # ADR-027: --pattern-verdicts/--explain-patterns/--surface-metrics
 @click.option("-v", "--verbose", is_flag=True, default=False,
               help="Enable verbose/debug output.")
 def compare_cmd(
@@ -1268,7 +1688,7 @@ def compare_cmd(
     old_headers_only: tuple[Path, ...], new_headers_only: tuple[Path, ...],
     old_includes_only: tuple[Path, ...], new_includes_only: tuple[Path, ...],
     old_version: str, new_version: str,
-    fmt: str, output: Path | None,
+    fmt: str, demangle: bool | None, output: Path | None,
     suppress: Path | None, strict_suppressions: bool, require_justification: bool,
     policy: str, policy_file_path: Path | None,
     pdb_path: Path | None, old_pdb_path: Path | None, new_pdb_path: Path | None,
@@ -1280,7 +1700,11 @@ def compare_cmd(
     severity_addition: str | None,
     follow_deps: bool, search_paths: tuple[Path, ...], ld_library_path: str,
     show_redundant: bool, show_only: str | None, stat: bool,
+    scope_public_headers: bool, show_filtered: bool,
+    public_symbols: tuple[str, ...], public_symbols_list: Path | None,
     report_mode: str, show_impact: bool,
+    recommend: bool,
+    debug_format_opt: str | None,
     debug_format: str | None,
     annotate: bool,
     annotate_additions: bool,
@@ -1289,7 +1713,13 @@ def compare_cmd(
     debug_roots_new: tuple[Path, ...],
     debuginfod: bool,
     debuginfod_url: str | None,
+    pattern_verdicts: bool,
+    explain_patterns: bool,
+    surface_metrics: bool,
     verbose: bool,
+    old_evidence: Path | None = None, new_evidence: Path | None = None, evidence_mode: str = "off",
+    probe_matrix_old: Path | None = None,
+    probe_matrix_new: Path | None = None,
 ) -> None:
     """Compare two ABI surfaces and report changes.
 
@@ -1312,6 +1742,10 @@ def compare_cmd(
       1  Error-level findings in addition or quality_issues only
       2  Error-level findings in potential_breaking (but not abi_breaking)
       4  Error-level findings in abi_breaking
+    \b
+    Invalid invocation (bad arguments/options, unreadable or unrecognised
+    input) exits 64, outside the result space above, so it is never mistaken
+    for an ABI verdict.
 
     \b
     Examples:
@@ -1343,6 +1777,28 @@ def compare_cmd(
     if annotate_additions and not annotate:
         raise click.UsageError("--annotate-additions requires --annotate")
 
+    # Reconcile the --debug-format selector with the legacy --btf/--ctf/--dwarf
+    # flags. The selector supersedes the legacy flags whenever it is given:
+    # an explicit "auto" returns to auto-detection (None) even if a legacy flag
+    # is also present; only when the selector is absent do the legacy flags apply.
+    if debug_format_opt is not None:
+        effective_debug_format = None if debug_format_opt.lower() == "auto" else debug_format_opt
+    else:
+        effective_debug_format = debug_format
+
+    # Tri-state --demangle: default ON for the text formats whose renderer
+    # post-processes symbols through demangle_text (markdown/review), OFF for
+    # machine formats (json/sarif/junit) and HTML — the HTML renderer emits
+    # symbols structurally and demangling its string would inject unescaped
+    # '<'/'>'/'&' from C++ names and corrupt the markup. Explicit flag wins.
+    if demangle is None:
+        demangle = fmt in {"markdown", "review"}
+
+    # --report-mode impact is sugar for "full" report with the impact table on.
+    if report_mode == "impact":
+        report_mode = "full"
+        show_impact = True
+
     sev_config, severity_explicitly_set = _resolve_severity(
         severity_preset, severity_abi_breaking,
         severity_potential_breaking, severity_quality_issues, severity_addition,
@@ -1353,8 +1809,21 @@ def compare_cmd(
         old_includes_only, new_includes_only,
     )
 
-    old_fmt = _detect_binary_format(old_input)
-    new_fmt = _detect_binary_format(new_input)
+    # Follow GNU ld linker scripts up front so the resolved DSO (not the text
+    # script) drives format detection, metadata, and dependency analysis.
+    old_input, old_fmt = _normalize_binary_input(old_input)
+    new_input, new_fmt = _normalize_binary_input(new_input)
+    # --debug-format / legacy --btf/--ctf/--dwarf force an ELF debug format and
+    # are silently ignored by the PE/Mach-O dump paths. Reject them up front for
+    # non-ELF binary inputs (mirrors dump_cmd) so the flag is never accepted but
+    # ignored. JSON-snapshot / dump inputs have *_fmt == None and are unaffected.
+    if effective_debug_format is not None:
+        for side, bfmt in (("old", old_fmt), ("new", new_fmt)):
+            if bfmt in ("pe", "macho"):
+                raise click.BadParameter(
+                    f"--debug-format {effective_debug_format} is only supported "
+                    f"for ELF binaries, but the {side} input is {bfmt.upper()}."
+                )
     _warn_ignored_flags(
         old_fmt is not None, new_fmt is not None,
         headers, includes,
@@ -1362,46 +1831,22 @@ def compare_cmd(
         old_includes_only, new_includes_only,
     )
 
-    resolved_old_pdb = old_pdb_path if old_pdb_path else pdb_path
-    resolved_new_pdb = new_pdb_path if new_pdb_path else pdb_path
-
     # Resolve per-side debug roots: --debug-root1 overrides --debug-root for old, etc.
     resolved_old_debug = list(debug_roots_old) if debug_roots_old else list(debug_roots)
     resolved_new_debug = list(debug_roots_new) if debug_roots_new else list(debug_roots)
-
-    # Log debug resolution if roots are specified
-    if resolved_old_debug or resolved_new_debug or debuginfod:
-        from .debug_resolver import resolve_debug_info
-        for label, binary, droots in [
-            ("old", old_input, resolved_old_debug),
-            ("new", new_input, resolved_new_debug),
-        ]:
-            if _detect_binary_format(binary) is not None and (droots or debuginfod):
-                artifact = resolve_debug_info(
-                    binary,
-                    debug_roots=droots or None,
-                    enable_debuginfod=debuginfod,
-                    debuginfod_urls=[debuginfod_url] if debuginfod_url else None,
-                )
-                if artifact:
-                    click.echo(
-                        f"Debug info ({label}): {artifact.source}",
-                        err=True,
-                    )
-
-    old = _resolve_input(
-        old_input, old_h, old_inc, old_version, lang,
-        is_elf=True if old_fmt == "elf" else None,
-        pdb_path=resolved_old_pdb,
-        dwarf_only=dwarf_only,
-        debug_format=debug_format,
+    _log_debug_resolution(
+        old_input, new_input,
+        resolved_old_debug, resolved_new_debug,
+        debuginfod=debuginfod, debuginfod_url=debuginfod_url,
     )
-    new = _resolve_input(
-        new_input, new_h, new_inc, new_version, lang,
-        is_elf=True if new_fmt == "elf" else None,
-        pdb_path=resolved_new_pdb,
-        dwarf_only=dwarf_only,
-        debug_format=debug_format,
+
+    old, new = _resolve_compare_snapshots(
+        old_input, new_input, old_fmt, new_fmt,
+        old_h, new_h, old_inc, new_inc,
+        old_version, new_version, lang,
+        pdb_path, old_pdb_path, new_pdb_path,
+        dwarf_only, effective_debug_format,
+        follow_deps, search_paths, ld_library_path,
     )
 
     suppression, pf = _load_suppression_and_policy(
@@ -1410,23 +1855,47 @@ def compare_cmd(
         require_justification=require_justification,
     )
 
-    if follow_deps:
-        if old_fmt == "elf":
-            _populate_dependency_info(old, old_input, list(search_paths), None, ld_library_path)
-        if new_fmt == "elf":
-            _populate_dependency_info(new, new_input, list(search_paths), None, ld_library_path)
+    force_public = _collect_force_public_symbols(public_symbols, public_symbols_list)
+    if force_public and not scope_public_headers:
+        click.echo(
+            "Warning: --public-symbol/--public-symbols-list only take effect with "
+            "--scope-public-headers; ignoring the widening overlay.",
+            err=True,
+        )
 
-    result = compare(old, new, suppression=suppression, policy=policy, policy_file=pf)
+    extra_changes = _load_probe_matrix_changes(probe_matrix_old, probe_matrix_new)
 
-    result.old_metadata = _collect_metadata(old_input)
-    result.new_metadata = _collect_metadata(new_input)
+    evidence_coverage_rows: list[dict[str, object]] = []
+    if old_evidence is not None or new_evidence is not None or evidence_mode != "off":
+        from .cli_evidence import collect_compare_evidence
+        # Header-parse-context drift is judged from the new snapshot's own
+        # provenance (parsed_with_build_context, set by `dump -p`); compare adds
+        # no build context of its own.
+        ev_changes, evidence_coverage_rows = collect_compare_evidence(
+            old_evidence, new_evidence, evidence_mode, new,
+        )
+        extra_changes = (extra_changes or []) + ev_changes if ev_changes else extra_changes
 
-    if show_redundant and result.redundant_changes:
-        _merge_redundant_changes(result)
+    apply_patterns = pattern_verdicts or explain_patterns  # --explain implies on
+    result = compare(
+        old, new, suppression=suppression, policy=policy, policy_file=pf,
+        scope_to_public_surface=scope_public_headers,
+        force_public_symbols=force_public,
+        extra_changes=extra_changes,
+        pattern_verdicts=apply_patterns,
+        surface_metrics=surface_metrics,
+    )
+    if evidence_coverage_rows:
+        result.evidence_coverage = evidence_coverage_rows
 
-    _warn_all_suppressed(result)
+    if explain_patterns:
+        echo_pattern_modulations(result)
 
-    _maybe_emit_annotations(result, annotate=annotate, annotate_additions=annotate_additions)
+    _finalize_compare_result(
+        result, old_input, new_input,
+        show_redundant=show_redundant, show_filtered=show_filtered,
+        annotate=annotate, annotate_additions=annotate_additions,
+    )
 
     text = _render_output(
         fmt, result, old, new,
@@ -1434,1212 +1903,14 @@ def compare_cmd(
         show_only=show_only, report_mode=report_mode,
         show_impact=show_impact, stat=stat,
         severity_config=sev_config if severity_explicitly_set else None,
+        show_recommendation=recommend,
+        demangle=demangle,
     )
 
     _write_or_echo(output, text)
 
+    _announce_exit_scheme(severity_explicitly_set, sev_config, fmt=fmt, stat=stat)
     _exit_with_severity_or_verdict(result, sev_config, severity_explicitly_set)
-
-
-def _validate_appcompat_args(
-    weak_mode: bool,
-    old_lib: Path | None, new_lib: Path | None,
-    list_symbols: bool,
-    old_headers_only: tuple[Path, ...], new_headers_only: tuple[Path, ...],
-    old_includes_only: tuple[Path, ...], new_includes_only: tuple[Path, ...],
-) -> None:
-    """Validate appcompat CLI argument combinations."""
-    if weak_mode and (old_lib is not None or new_lib is not None):
-        raise click.UsageError(
-            "--check-against cannot be used with positional OLD_LIB/NEW_LIB arguments."
-        )
-    if not weak_mode and (old_lib is None or new_lib is None):
-        raise click.UsageError(
-            "Provide OLD_LIB and NEW_LIB arguments, or use --check-against for weak mode."
-        )
-    if weak_mode or list_symbols:
-        _rejected: list[str] = []
-        if old_headers_only:
-            _rejected.append("--old-header")
-        if new_headers_only:
-            _rejected.append("--new-header")
-        if old_includes_only:
-            _rejected.append("--old-include")
-        if new_includes_only:
-            _rejected.append("--new-include")
-        if _rejected:
-            mode_label = "--check-against" if weak_mode else "--list-required-symbols"
-            raise click.UsageError(
-                f"{', '.join(_rejected)} cannot be used with {mode_label}. "
-                f"Per-side header/include flags are only supported in full "
-                f"comparison mode (OLD_LIB NEW_LIB)."
-            )
-
-
-def _handle_list_required_symbols(
-    app_path: Path,
-    check_against_lib: Path | None,
-    old_lib: Path | None, new_lib: Path | None,
-    weak_mode: bool, fmt: str,
-    _get_lib_soname: Callable[[Path], str], parse_app_requirements: Callable[..., AppRequirements],
-) -> None:
-    """Handle the --list-required-symbols flow."""
-    target_lib = check_against_lib if weak_mode else (old_lib or new_lib)
-    if target_lib is None:
-        raise click.UsageError(
-            "--list-required-symbols requires a library path "
-            "(via positional args or --check-against)."
-        )
-    lib_name = _get_lib_soname(target_lib)
-    reqs = parse_app_requirements(app_path, lib_name)
-    if fmt == "json":
-        import json as _json
-        click.echo(_json.dumps({
-            "application": str(app_path),
-            "library": lib_name,
-            "needed_libs": reqs.needed_libs,
-            "required_symbols": sorted(reqs.undefined_symbols),
-            "required_versions": reqs.required_versions,
-        }, indent=2))
-    else:
-        click.echo(f"Application: {app_path}")
-        click.echo(f"Library filter: {lib_name}")
-        click.echo(f"Needed libraries: {', '.join(reqs.needed_libs) or '(none)'}")
-        click.echo(f"Required symbols ({len(reqs.undefined_symbols)}):")
-        for sym in sorted(reqs.undefined_symbols):
-            click.echo(f"  {sym}")
-        if reqs.required_versions:
-            click.echo(f"Required versions ({len(reqs.required_versions)}):")
-            for ver, lib in sorted(reqs.required_versions.items()):
-                click.echo(f"  {ver} (from {lib})")
-
-
-@main.command("appcompat")
-@click.argument("app_path", type=click.Path(exists=True, path_type=Path))
-@click.argument("old_lib", type=click.Path(exists=True, path_type=Path), required=False, default=None)
-@click.argument("new_lib", type=click.Path(exists=True, path_type=Path), required=False, default=None)
-# ── Weak mode ─────────────────────────────────────────────────────────────────
-@click.option("--check-against", "check_against_lib",
-              type=click.Path(exists=True, path_type=Path), default=None,
-              help="Weak mode: check if a library provides everything the app needs "
-                   "(no old library required).")
-# ── Dump options ──────────────────────────────────────────────────────────────
-@click.option("-H", "--header", "headers", multiple=True,
-              type=click.Path(path_type=Path),
-              help="Public header file or directory for library ABI extraction "
-                   "(applied to both sides).")
-@click.option("-I", "--include", "includes", multiple=True,
-              type=click.Path(path_type=Path),
-              help="Extra include directory for castxml (applied to both sides).")
-@click.option("--lang", default="c++", show_default=True,
-              type=click.Choice(["c++", "c"], case_sensitive=False),
-              help="Language mode for castxml.")
-@click.option("--old-header", "old_headers_only", multiple=True,
-              type=click.Path(path_type=Path),
-              help="Public header for old library only (overrides -H for old).")
-@click.option("--new-header", "new_headers_only", multiple=True,
-              type=click.Path(path_type=Path),
-              help="Public header for new library only (overrides -H for new).")
-@click.option("--old-include", "old_includes_only", multiple=True,
-              type=click.Path(path_type=Path),
-              help="Include dir for old library only (overrides -I for old).")
-@click.option("--new-include", "new_includes_only", multiple=True,
-              type=click.Path(path_type=Path),
-              help="Include dir for new library only (overrides -I for new).")
-@click.option("--old-version", "old_version", default="old", show_default=True)
-@click.option("--new-version", "new_version", default="new", show_default=True)
-# ── Output options ────────────────────────────────────────────────────────────
-@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "html"]),
-              default="markdown", show_default=True)
-@click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
-@click.option("--show-irrelevant", is_flag=True, default=False,
-              help="Include library changes that don't affect the application.")
-@click.option("--list-required-symbols", "list_symbols", is_flag=True, default=False,
-              help="List symbols the application requires and exit.")
-# ── Suppression + policy ─────────────────────────────────────────────────────
-@click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
-              help="Suppression file (YAML).")
-@click.option("--policy", "policy",
-              type=click.Choice(["strict_abi", "sdk_vendor", "plugin_abi"], case_sensitive=True),
-              default="strict_abi", show_default=True)
-@click.option("--policy-file", "policy_file_path",
-              type=click.Path(exists=True, path_type=Path), default=None)
-@click.option("-v", "--verbose", is_flag=True, default=False)
-def appcompat_cmd(
-    app_path: Path,
-    old_lib: Path | None,
-    new_lib: Path | None,
-    check_against_lib: Path | None,
-    headers: tuple[Path, ...],
-    includes: tuple[Path, ...],
-    lang: str,
-    old_headers_only: tuple[Path, ...],
-    new_headers_only: tuple[Path, ...],
-    old_includes_only: tuple[Path, ...],
-    new_includes_only: tuple[Path, ...],
-    old_version: str,
-    new_version: str,
-    fmt: str,
-    output: Path | None,
-    show_irrelevant: bool,
-    list_symbols: bool,
-    suppress: Path | None,
-    policy: str,
-    policy_file_path: Path | None,
-    verbose: bool,
-) -> None:
-    """Check if an application is compatible with a library update.
-
-    Answers: "Will my application still work with the new library version?"
-    by intersecting the app's required symbols with the library diff.
-
-    \b
-    Full check (with old and new library):
-      abicheck appcompat myapp libfoo.so.1 libfoo.so.2
-      abicheck appcompat myapp libfoo.so.1 libfoo.so.2 -H include/foo.h
-
-    \b
-    Weak mode (only new library — symbol availability check):
-      abicheck appcompat myapp --check-against libfoo.so.2
-
-    \b
-    List required symbols:
-      abicheck appcompat myapp --list-required-symbols --check-against libfoo.so.2
-
-    \b
-    Exit codes:
-      0  COMPATIBLE — application is safe with the new library
-      2  API_BREAK — source-level break affecting app's symbols
-      4  BREAKING — binary ABI break or missing symbols
-    """
-    _setup_verbosity(verbose)
-
-    from .appcompat import _get_lib_soname, check_appcompat, parse_app_requirements
-    from .appcompat import check_against as _check_against
-    from .reporter import appcompat_to_json, appcompat_to_markdown
-
-    weak_mode = check_against_lib is not None
-    _validate_appcompat_args(
-        weak_mode, old_lib, new_lib, list_symbols,
-        old_headers_only, new_headers_only,
-        old_includes_only, new_includes_only,
-    )
-
-    if list_symbols:
-        _handle_list_required_symbols(
-            app_path, check_against_lib, old_lib, new_lib,
-            weak_mode, fmt,
-            _get_lib_soname, parse_app_requirements,
-        )
-        return
-
-    if weak_mode:
-        assert check_against_lib is not None
-        result = _check_against(app_path, check_against_lib)
-    else:
-        assert old_lib is not None and new_lib is not None
-        suppression, pf = _load_suppression_and_policy(suppress, policy, policy_file_path)
-        old_h, new_h, old_inc, new_inc = _resolve_per_side_options(
-            headers, includes,
-            old_headers_only, new_headers_only,
-            old_includes_only, new_includes_only,
-        )
-        resolved_old_h = _expand_header_inputs(old_h) if old_h else []
-        resolved_new_h = _expand_header_inputs(new_h) if new_h else []
-        result = check_appcompat(
-            app_path, old_lib, new_lib,
-            old_headers=resolved_old_h,
-            new_headers=resolved_new_h,
-            old_includes=old_inc,
-            new_includes=new_inc,
-            old_version=old_version,
-            new_version=new_version,
-            lang=lang,
-            suppression=suppression,
-            policy=policy,
-            policy_file=pf,
-        )
-
-    if fmt == "json":
-        text = appcompat_to_json(result)
-    elif fmt == "html":
-        from .appcompat_html import appcompat_to_html
-        text = appcompat_to_html(result)
-    else:
-        text = appcompat_to_markdown(result, show_irrelevant=show_irrelevant)
-
-    if output:
-        output.write_text(text, encoding="utf-8")
-        click.echo(f"Report written to {output}", err=True)
-    else:
-        click.echo(text)
-
-    if result.verdict == Verdict.BREAKING:
-        sys.exit(4)
-    elif result.verdict == Verdict.API_BREAK:
-        sys.exit(2)
-
-
-# ---------------------------------------------------------------------------
-# compare-release helpers
-# ---------------------------------------------------------------------------
-
-_RELEASE_VERDICT_ORDER: dict[str, int] = {
-    "NO_CHANGE": 0, "COMPATIBLE": 1, "COMPATIBLE_WITH_RISK": 2,
-    "API_BREAK": 3, "BREAKING": 4, "ERROR": 5,
-}
-
-
-_CompareReleaseCommonArgs = tuple[
-    dict[str, Path], dict[str, Path],
-    Path | None, Path | None,
-    Callable[[Path, Path], Path | None],
-    list[Path], list[Path],
-    list[Path], list[Path],
-    str, str,
-    str, Path | None,
-    str, Path | None,
-    Path | None,
-]
-
-
-def _discover_files(
-    input_dir: Path, lib_dir: Path,
-    include_private: bool,
-    discover_shared_libraries: Callable[..., list[Path]], is_package: Callable[[Path], bool],
-) -> list[Path]:
-    """Discover library files from a directory or extracted package."""
-    if is_package(input_dir):
-        files = discover_shared_libraries(lib_dir, include_private=include_private)
-        if not files:
-            files = _collect_release_inputs(lib_dir)
-    else:
-        files = _collect_release_inputs(lib_dir)
-    return files
-
-
-def _resolve_release_headers(
-    headers: tuple[Path, ...],
-    old_headers_only: tuple[Path, ...],
-    new_headers_only: tuple[Path, ...],
-    old_header_dir: Path | None,
-    new_header_dir: Path | None,
-) -> tuple[list[Path], list[Path]]:
-    """Resolve per-side headers for compare-release."""
-    old_h: list[Path] = list(old_headers_only) if old_headers_only else list(headers)
-    new_h: list[Path] = list(new_headers_only) if new_headers_only else list(headers)
-    if old_header_dir and not old_headers_only:
-        old_h = [old_header_dir]
-    if new_header_dir and not new_headers_only:
-        new_h = [new_header_dir]
-    return old_h, new_h
-
-
-def _match_release_keys(
-    old_dir: Path, new_dir: Path,
-    old_map: dict[str, Path], new_map: dict[str, Path],
-    old_files: list[Path], new_files: list[Path],
-    is_package: Callable[[Path], bool],
-) -> tuple[list[str], list[str], list[str], dict[str, Path], dict[str, Path]]:
-    """Match library keys between old and new, handling direct file pairs."""
-    direct_file_pair = (
-        old_dir.is_file() and new_dir.is_file()
-        and not is_package(old_dir) and not is_package(new_dir)
-    )
-    if direct_file_pair:
-        matched_keys = ["__direct_pair__"]
-        old_map = {"__direct_pair__": old_files[0]}
-        new_map = {"__direct_pair__": new_files[0]}
-        return matched_keys, [], [], old_map, new_map
-
-    matched_keys = sorted(set(old_map) & set(new_map))
-    removed_keys = sorted(set(old_map) - set(new_map))
-    added_keys = sorted(set(new_map) - set(old_map))
-    return matched_keys, removed_keys, added_keys, old_map, new_map
-
-
-def _collect_release_warnings(
-    warning_msgs: list[str],
-    matched_keys: list[str], removed_keys: list[str], added_keys: list[str],
-    old_map: dict[str, Path], new_map: dict[str, Path],
-) -> None:
-    """Collect warning messages for unmatched libraries."""
-    for k in removed_keys:
-        warning_msgs.append(f"Warning: library removed: {old_map[k].name}")
-    for k in added_keys:
-        warning_msgs.append(f"Info: library added: {new_map[k].name}")
-    if not matched_keys:
-        warning_msgs.append(
-            "Warning: no matching library pairs found between OLD and NEW inputs."
-        )
-
-
-def _compare_one_library(
-    key: str,
-    old_map: dict[str, Path], new_map: dict[str, Path],
-    old_debug_dir: Path | None, new_debug_dir: Path | None,
-    resolve_debug_info: Callable[[Path, Path], Path | None],
-    old_h: list[Path], new_h: list[Path],
-    old_inc: list[Path], new_inc: list[Path],
-    old_version: str, new_version: str,
-    lang: str, suppress: Path | None,
-    policy: str, policy_file_path: Path | None,
-    output_dir: Path | None,
-) -> dict[str, object]:
-    """Compare one library pair — suitable for parallel dispatch.
-
-    The entire per-library flow (debug info resolution, comparison, output
-    writing) is wrapped so that *any* exception yields an ERROR entry
-    instead of aborting the whole release comparison.
-    """
-    old_path = old_map[key]
-    new_path = new_map[key]
-    try:
-        old_dbg = resolve_debug_info(old_path, old_debug_dir) if old_debug_dir else None
-        new_dbg = resolve_debug_info(new_path, new_debug_dir) if new_debug_dir else None
-        result, _, _ = _run_compare_pair(
-            old_path, new_path,
-            old_h, new_h, old_inc, new_inc,
-            old_version, new_version,
-            lang, suppress, policy, policy_file_path,
-            old_pdb_path=old_dbg, new_pdb_path=new_dbg,
-        )
-        v = result.verdict.value
-        entry: dict[str, object] = {
-            "library": old_path.name, "verdict": v,
-            "breaking": len(result.breaking),
-            "source_breaks": len(result.source_breaks),
-            "risk_changes": len(result.risk),
-            "compatible_additions": len(result.compatible),
-        }
-        if output_dir:
-            lib_report_path = output_dir / f"{old_path.stem}.json"
-            _safe_write_output(lib_report_path, to_json(result))
-        return entry
-    except (click.ClickException, click.UsageError) as exc:
-        return {"library": old_path.name, "verdict": "ERROR", "error": exc.format_message()}
-    except Exception as exc:
-        return {"library": old_path.name, "verdict": "ERROR", "error": str(exc)}
-
-
-def _compare_release_libraries(
-    matched_keys: list[str],
-    old_map: dict[str, Path], new_map: dict[str, Path],
-    old_debug_dir: Path | None, new_debug_dir: Path | None,
-    resolve_debug_info: Callable[[Path, Path], Path | None],
-    old_h: list[Path], new_h: list[Path],
-    old_inc: list[Path], new_inc: list[Path],
-    old_version: str, new_version: str,
-    lang: str, suppress: Path | None,
-    policy: str, policy_file_path: Path | None,
-    output_dir: Path | None,
-    collect_diff_results: bool = False,
-    *,
-    annotate: bool = False,
-    annotate_additions: bool = False,
-    jobs: int = 1,
-) -> tuple[list[dict[str, object]], str, list[tuple[DiffResult, AbiSnapshot]]]:
-    """Compare each matched library pair and collect results.
-
-    When *collect_diff_results* is True, ``(DiffResult, old_snapshot)``
-    pairs are collected and returned as the third element of the tuple
-    (used by the JUnit output format).
-
-    When *jobs* > 1, comparisons are dispatched in parallel via
-    :func:`_compare_one_library` using a :class:`ProcessPoolExecutor`.
-    """
-    import os as _os
-
-    effective_jobs = jobs if jobs > 0 else (_os.cpu_count() or 1)
-    library_results: list[dict[str, object]] = []
-    diff_pairs: list[tuple[DiffResult, AbiSnapshot]] = []
-    worst_verdict = "NO_CHANGE"
-    all_annotations: list[tuple[int, str]] = []
-
-    common_args = (
-        old_map, new_map, old_debug_dir, new_debug_dir, resolve_debug_info,
-        old_h, new_h, old_inc, new_inc,
-        old_version, new_version,
-        lang, suppress, policy, policy_file_path, output_dir,
-    )
-
-    if effective_jobs > 1 and len(matched_keys) > 1:
-        library_results.extend(
-            _compare_release_parallel(matched_keys, common_args, old_map, effective_jobs),
-        )
-    else:
-        library_results.extend(
-            _compare_release_sequential(matched_keys, common_args),
-        )
-
-    # Post-process all results: compute worst verdict, collect annotations,
-    # and optionally collect diff_pairs (for JUnit).
-    for entry in library_results:
-        v = str(entry["verdict"])
-        if v == "ERROR":
-            if "error" in entry:
-                click.echo(f"Error comparing {entry['library']}: {entry['error']}", err=True)
-        if _RELEASE_VERDICT_ORDER.get(v, 0) > _RELEASE_VERDICT_ORDER.get(worst_verdict, 0):
-            worst_verdict = v
-
-    # collect_diff_results and annotate require re-running comparison for
-    # affected libraries (only used for JUnit / GitHub annotations which
-    # are sequential-only features)
-    if collect_diff_results or annotate:
-        extra_pairs, extra_annotations = _collect_release_extras(
-            matched_keys, old_map, new_map,
-            old_debug_dir, new_debug_dir, resolve_debug_info,
-            old_h, new_h, old_inc, new_inc,
-            old_version, new_version, lang,
-            suppress, policy, policy_file_path,
-            annotate_additions=annotate_additions,
-            collect_diff_results=collect_diff_results,
-            annotate=annotate,
-        )
-        diff_pairs.extend(extra_pairs)
-        all_annotations.extend(extra_annotations)
-
-    # Emit annotations once: sort globally across all libraries by severity,
-    # then truncate to the cap.  This ensures the most important annotations
-    # (errors) are always visible regardless of which library they came from.
-    if all_annotations:
-        from .annotations import format_annotations
-
-        text = format_annotations(all_annotations)
-        if text:
-            click.echo(text, err=True)
-
-    return library_results, worst_verdict, diff_pairs
-
-
-def _compare_release_parallel(
-    matched_keys: list[str],
-    common_args: _CompareReleaseCommonArgs,
-    old_map: dict[str, Path],
-    max_workers: int,
-) -> list[dict[str, object]]:
-    """Run per-library release comparisons in parallel."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    results: list[dict[str, object]] = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(_compare_one_library, key, *common_args): key
-            for key in matched_keys
-        }
-        for future in as_completed(futures):
-            key = futures[future]
-            try:
-                results.append(future.result())
-            except Exception as exc:
-                click.echo(f"Error comparing {old_map[key].name}: {exc}", err=True)
-                results.append(
-                    {"library": old_map[key].name, "verdict": "ERROR", "error": str(exc)},
-                )
-    return results
-
-
-def _compare_release_sequential(
-    matched_keys: list[str],
-    common_args: _CompareReleaseCommonArgs,
-) -> list[dict[str, object]]:
-    """Run per-library release comparisons sequentially."""
-    return [_compare_one_library(key, *common_args) for key in matched_keys]
-
-
-def _collect_release_extras(
-    matched_keys: list[str],
-    old_map: dict[str, Path],
-    new_map: dict[str, Path],
-    old_debug_dir: Path | None,
-    new_debug_dir: Path | None,
-    resolve_debug_info: Callable[[Path, Path], Path | None],
-    old_h: list[Path],
-    new_h: list[Path],
-    old_inc: list[Path],
-    new_inc: list[Path],
-    old_version: str,
-    new_version: str,
-    lang: str,
-    suppress: Path | None,
-    policy: str,
-    policy_file_path: Path | None,
-    *,
-    annotate_additions: bool,
-    collect_diff_results: bool,
-    annotate: bool,
-) -> tuple[list[tuple[DiffResult, AbiSnapshot]], list[tuple[int, str]]]:
-    """Collect optional re-run artifacts for JUnit and annotations."""
-    diff_pairs: list[tuple[DiffResult, AbiSnapshot]] = []
-    annotations: list[tuple[int, str]] = []
-    for key in matched_keys:
-        old_path = old_map[key]
-        new_path = new_map[key]
-        old_dbg = resolve_debug_info(old_path, old_debug_dir) if old_debug_dir else None
-        new_dbg = resolve_debug_info(new_path, new_debug_dir) if new_debug_dir else None
-        try:
-            result, old_snap, _ = _run_compare_pair(
-                old_path, new_path,
-                old_h, new_h, old_inc, new_inc,
-                old_version, new_version,
-                lang, suppress, policy, policy_file_path,
-                old_pdb_path=old_dbg, new_pdb_path=new_dbg,
-            )
-        except Exception as exc:
-            click.echo(
-                f"Warning: failed to re-run comparison for {old_path.name}: {exc}",
-                err=True,
-            )
-            continue
-        if collect_diff_results:
-            diff_pairs.append((result, old_snap))
-        if annotate:
-            from .annotations import collect_annotations, is_github_actions
-
-            if is_github_actions():
-                annotations.extend(
-                    collect_annotations(result, annotate_additions=annotate_additions),
-                )
-    return diff_pairs, annotations
-
-
-def _format_release_summary(
-    fmt: str, worst_verdict: str,
-    old_dir: Path, new_dir: Path,
-    library_results: list[dict[str, object]],
-    removed_keys: list[str], added_keys: list[str],
-    old_map: dict[str, Path], new_map: dict[str, Path],
-    warning_msgs: list[str],
-    diff_pairs: list[tuple[DiffResult, AbiSnapshot]] | None = None,
-) -> str:
-    """Format the release comparison summary as JSON, markdown, or JUnit XML."""
-    if fmt == "junit":
-        from .junit_report import to_junit_xml_multi
-        pairs: list[tuple[DiffResult, AbiSnapshot | None]] = list(diff_pairs or [])
-        error_libs = [
-            entry for entry in library_results
-            if entry.get("verdict") == "ERROR"
-        ]
-        return to_junit_xml_multi(
-            pairs, error_libraries=error_libs if error_libs else None,
-        )
-
-    if fmt == "json":
-        summary: dict[str, object] = {
-            "verdict": worst_verdict,
-            "old_dir": str(old_dir),
-            "new_dir": str(new_dir),
-            "libraries": library_results,
-            "unmatched_old": [old_map[k].name for k in removed_keys],
-            "unmatched_new": [new_map[k].name for k in added_keys],
-            "warnings": warning_msgs,
-        }
-        return json.dumps(summary, indent=2)
-
-    _VERDICT_EMOJI = {
-        "NO_CHANGE": "✅", "COMPATIBLE": "✅", "COMPATIBLE_WITH_RISK": "⚠️",
-        "API_BREAK": "⚠️", "BREAKING": "❌", "ERROR": "💥",
-    }
-    lines: list[str] = [
-        "# ABI Release Comparison", "",
-        "| | |", "|---|---|",
-        f"| **Old** | `{old_dir}` |",
-        f"| **New** | `{new_dir}` |",
-        f"| **Verdict** | {_VERDICT_EMOJI.get(worst_verdict, '?')} `{worst_verdict}` |",
-        "", "## Libraries", "",
-        "| Library | Verdict | Breaking | Source | Risk | Additions |",
-        "|---|---|---|---|---|---|",
-    ]
-    for lib in library_results:
-        em = _VERDICT_EMOJI.get(str(lib["verdict"]), "?")
-        lines.append(
-            f"| `{lib['library']}` | {em} `{lib['verdict']}` "
-            f"| {lib.get('breaking', '—')} | {lib.get('source_breaks', '—')} "
-            f"| {lib.get('risk_changes', '—')} | {lib.get('compatible_additions', '—')} |"
-        )
-    if removed_keys:
-        lines += ["", "## ⚠️ Removed Libraries", ""]
-        for k in removed_keys:
-            lines.append(f"- `{old_map[k].name}`")
-    if added_keys:
-        lines += ["", "## ℹ️ Added Libraries", ""]
-        for k in added_keys:
-            lines.append(f"- `{new_map[k].name}`")
-    return "\n".join(lines)
-
-
-def _write_release_summary_file(
-    output_dir: Path, worst_verdict: str,
-    library_results: list[dict[str, object]],
-    removed_keys: list[str], added_keys: list[str],
-    old_map: dict[str, Path], new_map: dict[str, Path],
-) -> None:
-    """Write per-library summary JSON to output directory."""
-    summary_data: dict[str, object] = {
-        "verdict": worst_verdict,
-        "libraries": library_results,
-        "unmatched_old": [old_map[k].name for k in removed_keys],
-        "unmatched_new": [new_map[k].name for k in added_keys],
-    }
-    summary_path = output_dir / "summary.json"
-    _safe_write_output(summary_path, json.dumps(summary_data, indent=2))
-    click.echo(f"Per-library reports written to {output_dir}/", err=True)
-
-
-@main.command("compare-release")
-@click.argument("old_dir", type=click.Path(exists=True, path_type=Path))
-@click.argument("new_dir", type=click.Path(exists=True, path_type=Path))
-@click.option("-H", "--header", "headers", multiple=True,
-              type=click.Path(path_type=Path),
-              help="Public header file or directory applied to both sides.")
-@click.option("-I", "--include", "includes", multiple=True,
-              type=click.Path(path_type=Path),
-              help="Extra include directory for castxml.")
-@click.option("--old-header", "old_headers_only", multiple=True,
-              type=click.Path(path_type=Path),
-              help="Header for old side only (overrides -H for old).")
-@click.option("--new-header", "new_headers_only", multiple=True,
-              type=click.Path(path_type=Path),
-              help="Header for new side only (overrides -H for new).")
-@click.option("--old-version", "old_version", default="old", show_default=True,
-              help="Version label for old side.")
-@click.option("--new-version", "new_version", default="new", show_default=True,
-              help="Version label for new side.")
-@click.option("--lang", default="c++", show_default=True,
-              type=click.Choice(["c++", "c"], case_sensitive=False))
-@click.option("--format", "fmt",
-              type=click.Choice(["json", "markdown", "junit"]),
-              default="markdown", show_default=True)
-@click.option("-o", "--output", type=click.Path(path_type=Path), default=None,
-              help="Output file for summary report (default: stdout).")
-@click.option("--output-dir", "output_dir", type=click.Path(path_type=Path), default=None,
-              help="Directory to write per-library reports.")
-@click.option("--suppress", type=click.Path(exists=True, path_type=Path), default=None,
-              help="Suppression file (YAML).")
-@click.option("--strict-suppressions", is_flag=True, default=False,
-              help="Fail with exit code 1 if any suppression rule has expired.")
-@click.option("--require-justification", is_flag=True, default=False,
-              help="Require every suppression rule to have a non-empty 'reason' field.")
-@click.option("--policy", "policy",
-              type=click.Choice(["strict_abi", "sdk_vendor", "plugin_abi"], case_sensitive=True),
-              default="strict_abi", show_default=True)
-@click.option("--policy-file", "policy_file_path",
-              type=click.Path(exists=True, path_type=Path), default=None)
-@click.option("--fail-on-removed-library/--no-fail-on-removed-library",
-              "fail_on_removed", default=False,
-              help="Exit 8 when a library present in old_dir is absent in new_dir.")
-@click.option("--debug-info1", type=click.Path(exists=True, path_type=Path), default=None,
-              help="Debug info package for old side (RPM/Deb/tar).")
-@click.option("--debug-info2", type=click.Path(exists=True, path_type=Path), default=None,
-              help="Debug info package for new side (RPM/Deb/tar).")
-@click.option("--devel-pkg1", type=click.Path(exists=True, path_type=Path), default=None,
-              help="Development package with headers for old side.")
-@click.option("--devel-pkg2", type=click.Path(exists=True, path_type=Path), default=None,
-              help="Development package with headers for new side.")
-@click.option("--dso-only", is_flag=True, default=False,
-              help="Only compare shared objects, skip executables.")
-@click.option("--include-private-dso", is_flag=True, default=False,
-              help="Include private (non-public) shared objects from non-standard paths.")
-@click.option("--keep-extracted", is_flag=True, default=False,
-              help="Keep extracted temporary files for debugging.")
-@click.option("--annotate", is_flag=True, default=False,
-              help="Emit GitHub Actions workflow command annotations to stdout. "
-                   "Only effective when GITHUB_ACTIONS=true.")
-@click.option("--annotate-additions", is_flag=True, default=False,
-              help="Include additions/compatible changes as ::notice annotations "
-                   "(requires --annotate).")
-@click.option("-v", "--verbose", is_flag=True, default=False)
-@click.option("-j", "--jobs", "jobs", type=int, default=1, show_default=True,
-              help="Number of parallel library comparisons. "
-                   "Use 0 for auto-detect (CPU count).")
-def compare_release_cmd(
-    old_dir: Path,
-    new_dir: Path,
-    headers: tuple[Path, ...],
-    includes: tuple[Path, ...],
-    old_headers_only: tuple[Path, ...],
-    new_headers_only: tuple[Path, ...],
-    old_version: str,
-    new_version: str,
-    lang: str,
-    fmt: str,
-    output: Path | None,
-    output_dir: Path | None,
-    suppress: Path | None,
-    strict_suppressions: bool,
-    require_justification: bool,
-    policy: str,
-    policy_file_path: Path | None,
-    fail_on_removed: bool,
-    debug_info1: Path | None,
-    debug_info2: Path | None,
-    devel_pkg1: Path | None,
-    devel_pkg2: Path | None,
-    dso_only: bool,
-    include_private_dso: bool,
-    keep_extracted: bool,
-    annotate: bool,
-    annotate_additions: bool,
-    verbose: bool,
-    jobs: int,
-) -> None:
-    """Compare all libraries in two release directories or packages.
-
-    OLD_DIR and NEW_DIR may each be a file, directory, or package
-    (RPM, Deb, tar, conda, wheel). Package format is auto-detected.
-    When directories are given, libraries are matched by filename stem.
-
-    \b
-    Exit codes:
-      0  All libraries: NO_CHANGE, COMPATIBLE, or COMPATIBLE_WITH_RISK
-      2  At least one library: API_BREAK
-      4  At least one library: BREAKING
-      8  Library removed (only when --fail-on-removed-library)
-
-    \b
-    Examples:
-      abicheck compare-release release-1.0/ release-2.0/ -H include/
-      abicheck compare-release libfoo-1.0.rpm libfoo-1.1.rpm
-      abicheck compare-release libfoo_1.0.deb libfoo_1.1.deb
-      abicheck compare-release sdk-2.0.tar.gz sdk-2.1.tar.gz
-      abicheck compare-release pkg-v1.conda pkg-v2.conda
-      abicheck compare-release old.whl new.whl
-      abicheck compare-release libfoo-1.0.rpm libfoo-1.1.rpm \\
-          --debug-info1 libfoo-debuginfo-1.0.rpm \\
-          --debug-info2 libfoo-debuginfo-1.1.rpm
-    """
-    import tempfile
-
-    from .package import (
-        _is_elf_shared_object,
-        detect_extractor,
-        discover_shared_libraries,
-        is_package,
-        resolve_debug_info,
-    )
-
-    _setup_verbosity(verbose)
-
-    if annotate_additions and not annotate:
-        raise click.UsageError("--annotate-additions requires --annotate")
-
-    # Track temporary directory paths for cleanup
-    _temp_dir_paths: list[str] = []
-
-    def _make_temp_dir(prefix: str) -> Path:
-        """Create a temporary directory, tracking it for later cleanup."""
-        path = tempfile.mkdtemp(prefix=prefix)
-        _temp_dir_paths.append(path)
-        return Path(path)
-
-    def _extract_if_package(
-        input_path: Path,
-        debug_pkg: Path | None,
-        devel_pkg: Path | None,
-    ) -> tuple[Path, Path | None, Path | None]:
-        """Extract package to tempdir if needed, return (lib_dir, debug_dir, header_dir)."""
-        if not is_package(input_path):
-            return input_path, None, None
-
-        extractor = detect_extractor(input_path)
-        if extractor is None:
-            raise click.ClickException(f"Unrecognized package format: {input_path}")
-
-        target = _make_temp_dir("abicheck_pkg_")
-
-        result = extractor.extract(input_path, target)
-        lib_dir = result.lib_dir
-        debug_dir = result.debug_dir
-        header_dir = result.header_dir
-
-        # Extract debug info package if provided
-        if debug_pkg is not None:
-            dbg_ext = detect_extractor(debug_pkg)
-            if dbg_ext is None:
-                raise click.ClickException(f"Unrecognized debug package format: {debug_pkg}")
-            dbg_target = _make_temp_dir("abicheck_dbg_")
-            dbg_result = dbg_ext.extract(debug_pkg, dbg_target)
-            debug_dir = dbg_result.lib_dir
-
-        # Extract devel package if provided
-        if devel_pkg is not None:
-            dev_ext = detect_extractor(devel_pkg)
-            if dev_ext is None:
-                raise click.ClickException(f"Unrecognized devel package format: {devel_pkg}")
-            dev_target = _make_temp_dir("abicheck_dev_")
-            dev_result = dev_ext.extract(devel_pkg, dev_target)
-            header_dir = dev_result.lib_dir
-
-        return lib_dir, debug_dir, header_dir
-
-    # Validate suppression file early (before per-library loop)
-    if suppress is not None and (strict_suppressions or require_justification):
-        _load_suppression_and_policy(
-            suppress, policy, policy_file_path,
-            strict_suppressions=strict_suppressions,
-            require_justification=require_justification,
-        )
-
-    try:
-        prep = _prepare_compare_release_inputs(
-            old_dir, new_dir,
-            debug_info1, debug_info2, devel_pkg1, devel_pkg2,
-            include_private_dso, dso_only,
-            headers, old_headers_only, new_headers_only, includes,
-            _extract_if_package, discover_shared_libraries, is_package, _is_elf_shared_object,
-        )
-        (
-            old_debug_dir, new_debug_dir,
-            old_h, new_h, old_inc, new_inc,
-            old_map, new_map, warning_msgs,
-            matched_keys, removed_keys, added_keys,
-        ) = prep
-
-        if fmt != "json":
-            for msg in warning_msgs:
-                click.echo(msg, err=True)
-
-        if output_dir:
-            output_dir.mkdir(parents=True, exist_ok=True)
-
-        library_results, worst_verdict, diff_pairs = _compare_release_libraries(
-            matched_keys, old_map, new_map,
-            old_debug_dir, new_debug_dir, resolve_debug_info,
-            old_h, new_h, old_inc, new_inc,
-            old_version, new_version,
-            lang, suppress, policy, policy_file_path,
-            output_dir,
-            collect_diff_results=(fmt == "junit"),
-            annotate=annotate,
-            annotate_additions=annotate_additions,
-            jobs=jobs,
-        )
-
-        if removed_keys and _RELEASE_VERDICT_ORDER.get(worst_verdict, 0) < _RELEASE_VERDICT_ORDER.get("COMPATIBLE_WITH_RISK", 0):
-            worst_verdict = "COMPATIBLE_WITH_RISK"
-
-        text = _format_release_summary(
-            fmt, worst_verdict, old_dir, new_dir,
-            library_results, removed_keys, added_keys,
-            old_map, new_map, warning_msgs,
-            diff_pairs=diff_pairs if fmt == "junit" else None,
-        )
-        _write_or_echo(output, text)
-
-        # Write a single step summary for the entire release comparison.
-        if annotate:
-            _write_release_step_summary(text, fmt)
-
-        if output_dir:
-            _write_release_summary_file(
-                output_dir, worst_verdict, library_results,
-                removed_keys, added_keys, old_map, new_map,
-            )
-
-        _exit_compare_release(worst_verdict, fail_on_removed, removed_keys)
-    finally:
-        import shutil as _shutil
-        if not keep_extracted:
-            for td_path in _temp_dir_paths:
-                _shutil.rmtree(td_path, ignore_errors=True)
-        elif _temp_dir_paths:
-            kept_paths = ", ".join(_temp_dir_paths)
-            click.echo(
-                f"Extracted files kept in: {kept_paths}",
-                err=True,
-            )
-
-
-def _prepare_compare_release_inputs(
-    old_dir: Path,
-    new_dir: Path,
-    debug_info1: Path | None,
-    debug_info2: Path | None,
-    devel_pkg1: Path | None,
-    devel_pkg2: Path | None,
-    include_private_dso: bool,
-    dso_only: bool,
-    headers: tuple[Path, ...],
-    old_headers_only: tuple[Path, ...],
-    new_headers_only: tuple[Path, ...],
-    includes: tuple[Path, ...],
-    extract_if_package: Callable[[Path, Path | None, Path | None], tuple[Path, Path | None, Path | None]],
-    discover_shared_libraries: Callable[..., list[Path]],
-    is_package: Callable[[Path], bool],
-    is_elf_shared_object: Callable[[Path], bool],
-) -> tuple[
-    Path | None, Path | None,
-    list[Path], list[Path], list[Path], list[Path],
-    dict[str, Path], dict[str, Path], list[str],
-    list[str], list[str], list[str],
-]:
-    """Prepare inputs/maps/keys for compare-release command."""
-    old_lib_dir, old_debug_dir, old_header_dir = extract_if_package(
-        old_dir, debug_info1, devel_pkg1,
-    )
-    new_lib_dir, new_debug_dir, new_header_dir = extract_if_package(
-        new_dir, debug_info2, devel_pkg2,
-    )
-    old_files = _discover_files(
-        old_dir, old_lib_dir, include_private_dso, discover_shared_libraries, is_package,
-    )
-    new_files = _discover_files(
-        new_dir, new_lib_dir, include_private_dso, discover_shared_libraries, is_package,
-    )
-    if dso_only:
-        old_files = [f for f in old_files if is_elf_shared_object(f)]
-        new_files = [f for f in new_files if is_elf_shared_object(f)]
-    old_map, old_warns = _build_match_map(old_files)
-    new_map, new_warns = _build_match_map(new_files)
-    warning_msgs: list[str] = [f"Warning: {warning}" for warning in (old_warns + new_warns)]
-    old_h, new_h = _resolve_release_headers(
-        headers, old_headers_only, new_headers_only, old_header_dir, new_header_dir,
-    )
-    old_inc = list(includes)
-    new_inc = list(includes)
-    matched_keys, removed_keys, added_keys, old_map, new_map = _match_release_keys(
-        old_dir, new_dir, old_map, new_map, old_files, new_files, is_package,
-    )
-    _collect_release_warnings(
-        warning_msgs, matched_keys, removed_keys, added_keys, old_map, new_map,
-    )
-    return (
-        old_debug_dir, new_debug_dir,
-        old_h, new_h, old_inc, new_inc,
-        old_map, new_map, warning_msgs,
-        matched_keys, removed_keys, added_keys,
-    )
-
-
-def _exit_compare_release(
-    worst_verdict: str,
-    fail_on_removed: bool,
-    removed_keys: list[str],
-) -> None:
-    """Exit compare-release with ABI-compatible status code mapping."""
-    if worst_verdict in ("BREAKING", "ERROR"):
-        sys.exit(4)
-    if worst_verdict == "API_BREAK":
-        sys.exit(2)
-    if fail_on_removed and removed_keys:
-        sys.exit(8)
-
-
-# ── Suggest suppressions command ──────────────────────────────────────────────
-
-@main.command("suggest-suppressions")
-@click.argument("diff_json", type=click.Path(exists=True, path_type=Path))
-@click.option("-o", "--output", type=click.Path(path_type=Path), default=None,
-              help="Output file for candidate suppressions (default: stdout).")
-@click.option("--expiry-days", type=click.IntRange(min=0), default=180, show_default=True,
-              help="Number of days from today for the expires field.")
-def suggest_suppressions_cmd(
-    diff_json: Path,
-    output: Path | None,
-    expiry_days: int,
-) -> None:
-    """Generate candidate suppression rules from a JSON diff result.
-
-    DIFF_JSON is a JSON file produced by 'abicheck compare --format json'.
-
-    \b
-    Example:
-      abicheck compare old.so new.so -H include/ --format json -o diff.json
-      abicheck suggest-suppressions diff.json -o candidates.yml
-    """
-    import json
-
-    from .suppression import suggest_suppressions
-
-    try:
-        text = diff_json.read_text(encoding="utf-8")
-        data = json.loads(text)
-    except (OSError, json.JSONDecodeError) as e:
-        raise click.ClickException(f"Cannot read JSON diff: {e}") from e
-
-    if not isinstance(data, dict):
-        raise click.ClickException(
-            "JSON diff must be an object with a 'changes' key"
-        )
-    if "changes" not in data:
-        raise click.ClickException(
-            "JSON diff is missing required 'changes' key"
-        )
-    changes = data["changes"]
-    if not isinstance(changes, list):
-        raise click.ClickException("'changes' must be an array")
-    for i, entry in enumerate(changes):
-        if not isinstance(entry, dict):
-            raise click.ClickException(
-                f"changes[{i}] must be an object, got {type(entry).__name__}"
-            )
-
-    yaml_text = suggest_suppressions(changes, expiry_days=expiry_days)
-    _write_or_echo(output, yaml_text)
-
-
-# ── Full-stack dependency commands ────────────────────────────────────────────
-
-@main.command("deps")
-@click.argument("binary", type=click.Path(exists=True, path_type=Path))
-@click.option("--search-path", "search_paths", multiple=True,
-              type=click.Path(exists=True, path_type=Path),
-              help="Additional directory to search for shared libraries.")
-@click.option("--sysroot", type=click.Path(exists=True, path_type=Path), default=None,
-              help="Sysroot prefix for cross/container analysis.")
-@click.option("--ld-library-path", "ld_library_path", default="",
-              help="Simulated LD_LIBRARY_PATH (colon-separated).")
-@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "html"]),
-              default="markdown", show_default=True)
-@click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
-@click.option("-v", "--verbose", is_flag=True, default=False)
-def deps_cmd(
-    binary: Path, search_paths: tuple[Path, ...],
-    sysroot: Path | None, ld_library_path: str,
-    fmt: str, output: Path | None, verbose: bool,
-) -> None:
-    """Show the resolved dependency tree and symbol binding status.
-
-    Resolves the transitive closure of DT_NEEDED dependencies for BINARY
-    using loader-accurate search order (RPATH/RUNPATH, LD_LIBRARY_PATH,
-    default dirs) and reports symbol binding status.
-
-    \b
-    Exit codes:
-      0  All dependencies resolved, all required symbols bound
-      1  Missing dependencies or symbols (load would fail)
-
-    \b
-    Examples:
-      abicheck deps ./build/libfoo.so
-      abicheck deps /usr/bin/myapp --format json -o deps.json
-      abicheck deps ./app --sysroot /path/to/container/rootfs
-    """
-    _setup_verbosity(verbose)
-
-    fmt_detected = _detect_binary_format(binary)
-    if fmt_detected != "elf":
-        raise click.ClickException(
-            f"deps requires an ELF binary; got {fmt_detected or 'unknown format'}: {binary}"
-        )
-
-    from .stack_checker import check_single_env
-    from .stack_report import stack_to_json, stack_to_markdown
-
-    result = check_single_env(
-        binary,
-        search_paths=list(search_paths) or None,
-        sysroot=sysroot,
-        ld_library_path=ld_library_path,
-    )
-
-    if fmt == "json":
-        text = stack_to_json(result)
-    elif fmt == "html":
-        from .stack_html import stack_to_html
-        text = stack_to_html(result)
-    else:
-        text = stack_to_markdown(result)
-    if output:
-        _safe_write_output(output, text)
-        click.echo(f"Report written to {output}", err=True)
-    else:
-        click.echo(text)
-
-    if result.loadability.value == "fail":
-        sys.exit(1)
-
-
-@main.command("stack-check")
-@click.argument("binary", type=click.Path(path_type=Path))
-@click.option("--baseline", type=click.Path(exists=True, path_type=Path),
-              default=Path("/"), show_default=True,
-              help="Sysroot for the baseline environment.")
-@click.option("--candidate", type=click.Path(exists=True, path_type=Path),
-              default=Path("/"), show_default=True,
-              help="Sysroot for the candidate environment.")
-@click.option("--search-path", "search_paths", multiple=True,
-              type=click.Path(exists=True, path_type=Path),
-              help="Additional directory to search for shared libraries.")
-@click.option("--ld-library-path", "ld_library_path", default="",
-              help="Simulated LD_LIBRARY_PATH (colon-separated).")
-@click.option("--format", "fmt", type=click.Choice(["json", "markdown", "html"]),
-              default="markdown", show_default=True)
-@click.option("-o", "--output", type=click.Path(path_type=Path), default=None)
-@click.option("-v", "--verbose", is_flag=True, default=False)
-def stack_check_cmd(
-    binary: Path, baseline: Path, candidate: Path,
-    search_paths: tuple[Path, ...], ld_library_path: str,
-    fmt: str, output: Path | None, verbose: bool,
-) -> None:
-    """Compare a binary's full dependency stack across two environments.
-
-    Resolves all transitive dependencies in both BASELINE and CANDIDATE sysroots,
-    computes symbol bindings, detects changed DSOs, runs per-library ABI diffs,
-    and produces a stack-level compatibility verdict.
-
-    BINARY is the path relative to the sysroot (e.g. usr/bin/myapp).
-
-    \b
-    Exit codes:
-      0  PASS — binary loads and no harmful ABI changes
-      1  WARN — loads but ABI risk detected
-      4  FAIL — load failure or binary ABI break
-
-    \b
-    Examples:
-      abicheck stack-check usr/bin/myapp --baseline /old-root --candidate /new-root
-      abicheck stack-check usr/lib/libfoo.so.1 \\
-        --baseline ./image-v1 --candidate ./image-v2 --format json
-    """
-    _setup_verbosity(verbose)
-
-    # Guard against accidental no-op comparisons.
-    if baseline == candidate:
-        raise click.UsageError(
-            "--baseline and --candidate resolve to the same sysroot; "
-            "provide two different roots for stack comparison."
-        )
-
-    # Validate that every existing binary is ELF in both sysroots
-    for label, root in [("baseline", baseline), ("candidate", candidate)]:
-        resolved = root / binary
-        if resolved.exists():
-            fmt_detected = _detect_binary_format(resolved)
-            if fmt_detected != "elf":
-                raise click.ClickException(
-                    f"stack-check requires an ELF binary; got "
-                    f"{fmt_detected or 'unknown format'}: {resolved}"
-                )
-
-    from .stack_checker import check_stack
-    from .stack_report import stack_to_json, stack_to_markdown
-
-    result = check_stack(
-        binary,
-        baseline_root=baseline,
-        candidate_root=candidate,
-        ld_library_path=ld_library_path,
-        search_paths=list(search_paths) or None,
-    )
-
-    if fmt == "json":
-        text = stack_to_json(result)
-    elif fmt == "html":
-        from .stack_html import stack_to_html
-        text = stack_to_html(result)
-    else:
-        text = stack_to_markdown(result)
-    if output:
-        _safe_write_output(output, text)
-        click.echo(f"Report written to {output}", err=True)
-    else:
-        click.echo(text)
-
-    if result.loadability.value == "fail" or result.abi_risk.value == "fail":
-        sys.exit(4)
-    elif result.abi_risk.value == "warn" or result.loadability.value == "warn":
-        sys.exit(1)
 
 
 # ── ABICC compat subcommands (implementation in abicheck.compat) ─────────────
@@ -2678,317 +1949,25 @@ from .compat.cli import (  # noqa: E402,F401
 main.add_command(compat_group)
 
 
-# ── debian-symbols command group ──────────────────────────────────────────────
-
-@click.group("debian-symbols")
-def debian_symbols_group() -> None:
-    """Generate, validate, and diff Debian symbols files.
-
-    Integrates abicheck with Debian/Ubuntu packaging workflows where
-    dpkg-gensymbols and dpkg-shlibdeps use symbols files for fine-grained
-    dependency tracking.
-    """
-
-
-@debian_symbols_group.command("generate")
-@click.argument("so_path", type=click.Path(exists=True, path_type=Path))
-@click.option("-o", "--output", "output_path", type=click.Path(path_type=Path), default=None,
-              help="Output file path. Prints to stdout if not specified.")
-@click.option("--package", default="", help="Debian package name (derived from SONAME if empty).")
-@click.option("--version", "version", default="#MINVER#", show_default=True,
-              help="Minimum version string for symbols.")
-@click.option("--no-cpp", "no_cpp", is_flag=True, default=False,
-              help="Do not emit C++ demangled (c++) form; use mangled names only.")
-def debian_symbols_generate(
-    so_path: Path,
-    output_path: Path | None,
-    package: str,
-    version: str,
-    no_cpp: bool,
-) -> None:
-    """Generate a Debian symbols file from a shared library.
-
-    \b
-    Example:
-      abicheck debian-symbols generate libfoo.so -o debian/libfoo1.symbols
-    """
-    from .debian_symbols import generate_from_binary
-
-    symbols_file = generate_from_binary(
-        so_path,
-        package=package,
-        version=version,
-        use_cpp=not no_cpp,
-    )
-
-    text = symbols_file.format()
-    if output_path:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(text, encoding="utf-8")
-        click.echo(f"Symbols file written to {output_path}")
-    else:
-        click.echo(text, nl=False)
-
-
-@debian_symbols_group.command("validate")
-@click.argument("so_path", type=click.Path(exists=True, path_type=Path))
-@click.argument("symbols_path", type=click.Path(exists=True, path_type=Path))
-def debian_symbols_validate(so_path: Path, symbols_path: Path) -> None:
-    """Validate a Debian symbols file against a shared library binary.
-
-    \b
-    Exit codes:
-      0  symbols file matches the binary
-      2  mismatch (missing symbols)
-
-    \b
-    Example:
-      abicheck debian-symbols validate libfoo.so debian/libfoo1.symbols
-    """
-    from .debian_symbols import format_validation_report, validate_from_binary
-
-    result = validate_from_binary(so_path, symbols_path)
-    click.echo(format_validation_report(result), nl=False)
-
-    if not result.passed:
-        sys.exit(2)
-
-
-@debian_symbols_group.command("diff")
-@click.argument("old_symbols", type=click.Path(exists=True, path_type=Path))
-@click.argument("new_symbols", type=click.Path(exists=True, path_type=Path))
-def debian_symbols_diff(old_symbols: Path, new_symbols: Path) -> None:
-    """Diff two Debian symbols files.
-
-    \b
-    Example:
-      abicheck debian-symbols diff old/libfoo1.symbols new/libfoo1.symbols
-    """
-    from .debian_symbols import (
-        diff_symbols_files,
-        format_diff_report,
-        load_symbols_file,
-    )
-
-    old = load_symbols_file(old_symbols)
-    new = load_symbols_file(new_symbols)
-    diff = diff_symbols_files(old, new)
-
-    click.echo(format_diff_report(diff, str(old_symbols), str(new_symbols)), nl=False)
-
-
-main.add_command(debian_symbols_group)
 
 
 # ---------------------------------------------------------------------------
-# Baseline registry commands (ADR-022)
+# Sub-command modules. Imported for side-effect so their @main.command(...)
+# decorators register the commands on the Click group above. They sit in
+# sibling files to keep this module under the AI-readiness file-size limit.
 # ---------------------------------------------------------------------------
-
-@main.group("baseline")
-def baseline_group() -> None:
-    """Manage ABI baseline snapshots.
-
-    Push, pull, list, and delete baseline snapshots from a registry.
-    Default backend: filesystem (--registry file:///path/to/baselines).
-    """
-
-
-@baseline_group.command("push")
-@click.argument("library", type=str)
-@click.option("--version", "version", required=True,
-              help="Version or branch name for the baseline.")
-@click.option("--platform", "platform", required=False,
-              help="Target platform (e.g. 'linux-x86_64'). Use --auto-platform to detect.")
-@click.option("--variant", default="",
-              help="Build variant (e.g. 'debug', 'ssl-enabled').")
-@click.option("--snapshot", "snapshot_path", required=True,
-              type=click.Path(exists=True, path_type=Path),
-              help="Path to the ABI snapshot JSON file.")
-@click.option("--registry", "registry_path", type=click.Path(path_type=Path),
-              default=None,
-              help="Path to the baseline registry directory. "
-                   "Defaults to .abicheck/baselines in the current directory.")
-@click.option("--auto-platform", is_flag=True, default=False,
-              help="Auto-detect platform from the binary in the snapshot.")
-@click.option("--git-commit", default=None,
-              help="Source commit SHA to record in baseline metadata.")
-@click.option("-v", "--verbose", is_flag=True, default=False)
-def baseline_push(
-    library: str, version: str, platform: str, variant: str,
-    snapshot_path: Path, registry_path: Path | None,
-    auto_platform: bool, git_commit: str | None, verbose: bool,
-) -> None:
-    """Push an ABI baseline snapshot to the registry.
-
-    \b
-    Example:
-      abicheck baseline push libfoo --version 1.0.0 --platform linux-x86_64 \\
-        --snapshot build/abi-snapshot.json
-    """
-    _setup_verbosity(verbose)
-    from .baseline import BaselineKey, BaselineMetadata, FilesystemRegistry
-    from .serialization import load_snapshot as _load
-
-    reg_path = registry_path or Path(".abicheck/baselines")
-    registry = FilesystemRegistry(reg_path)
-
-    from .serialization import snapshot_to_json
-
-    snapshot = _load(snapshot_path)
-    # Compute checksum from canonical serialization (same form registry.push stores)
-    canonical_json = snapshot_to_json(snapshot)
-    meta = BaselineMetadata.create(canonical_json, git_commit=git_commit)
-
-    effective_platform: str | None = platform
-    if auto_platform and not platform:
-        # Detect platform from the library path embedded in the snapshot
-        if snapshot.library:
-            lib_path = Path(snapshot.library)
-            if lib_path.exists():
-                from .baseline import detect_platform_from_binary
-                effective_platform = detect_platform_from_binary(lib_path)
-                if effective_platform is None:
-                    raise click.UsageError(
-                        "--auto-platform: failed to detect binary architecture. "
-                        "Use --platform to specify the platform explicitly."
-                    )
-                click.echo(f"Auto-detected platform: {effective_platform}", err=True)
-            else:
-                raise click.UsageError(
-                    f"--auto-platform: binary '{snapshot.library}' not found on disk. "
-                    "Use --platform to specify the platform explicitly."
-                )
-        else:
-            raise click.UsageError(
-                "--auto-platform: snapshot has no library path. "
-                "Use --platform to specify the platform explicitly."
-            )
-
-    if effective_platform is None:
-        raise click.UsageError(
-            "Platform is required. Use --platform or --auto-platform with a detectable binary."
-        )
-
-    try:
-        key = BaselineKey(library=library, version=version, platform=effective_platform, variant=variant)
-    except (ValueError, AbicheckError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    ref = registry.push(key, snapshot, meta)
-    click.echo(f"Baseline pushed: {ref}", err=True)
-
-
-@baseline_group.command("pull")
-@click.argument("spec", type=str)
-@click.option("-o", "--output", type=click.Path(path_type=Path), required=True,
-              help="Output path for the snapshot JSON file.")
-@click.option("--registry", "registry_path", type=click.Path(path_type=Path),
-              default=None,
-              help="Path to the baseline registry directory.")
-@click.option("-v", "--verbose", is_flag=True, default=False)
-def baseline_pull(spec: str, output: Path, registry_path: Path | None, verbose: bool) -> None:
-    """Pull an ABI baseline snapshot from the registry.
-
-    SPEC is a colon-separated key: library:version:platform[:variant]
-
-    \b
-    Example:
-      abicheck baseline pull libfoo:1.0.0:linux-x86_64 -o baseline.json
-    """
-    _setup_verbosity(verbose)
-    from .baseline import BaselineKey, FilesystemRegistry
-
-    reg_path = registry_path or Path(".abicheck/baselines")
-    registry = FilesystemRegistry(reg_path)
-
-    try:
-        key = BaselineKey.from_spec(spec)
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
-
-    result = registry.pull(key)
-    if result is None:
-        raise click.ClickException(f"Baseline not found: {key.path}")
-
-    snapshot, meta = result
-    snap_json = snapshot_to_json(snapshot)
-    _safe_write_output(output, snap_json)
-    click.echo(
-        f"Baseline pulled: {key.path} (abicheck {meta.abicheck_version}, "
-        f"created {meta.created_at})",
-        err=True,
-    )
-
-
-@baseline_group.command("list")
-@click.argument("prefix", required=False, default=None)
-@click.option("--registry", "registry_path", type=click.Path(path_type=Path),
-              default=None,
-              help="Path to the baseline registry directory.")
-@click.option("--format", "fmt", type=click.Choice(["text", "json"]),
-              default="text", show_default=True)
-@click.option("-v", "--verbose", is_flag=True, default=False)
-def baseline_list(prefix: str | None, registry_path: Path | None, fmt: str, verbose: bool) -> None:
-    """List available ABI baselines in the registry.
-
-    \b
-    Example:
-      abicheck baseline list
-      abicheck baseline list libfoo
-      abicheck baseline list --format json
-    """
-    _setup_verbosity(verbose)
-    from .baseline import FilesystemRegistry
-
-    reg_path = registry_path or Path(".abicheck/baselines")
-    registry = FilesystemRegistry(reg_path)
-
-    keys = registry.list(prefix=prefix)
-    if not keys:
-        click.echo("No baselines found.", err=True)
-        return
-
-    if fmt == "json":
-        click.echo(json.dumps([
-            {"library": k.library, "version": k.version,
-             "platform": k.platform, "variant": k.variant, "path": k.path}
-            for k in keys
-        ], indent=2))
-    else:
-        for k in keys:
-            click.echo(k.path)
-
-
-@baseline_group.command("delete")
-@click.argument("spec", type=str)
-@click.option("--registry", "registry_path", type=click.Path(path_type=Path),
-              default=None,
-              help="Path to the baseline registry directory.")
-@click.option("-v", "--verbose", is_flag=True, default=False)
-def baseline_delete(spec: str, registry_path: Path | None, verbose: bool) -> None:
-    """Delete an ABI baseline from the registry.
-
-    SPEC is a colon-separated key: library:version:platform[:variant]
-
-    \b
-    Example:
-      abicheck baseline delete libfoo:0.9.0:linux-x86_64
-    """
-    _setup_verbosity(verbose)
-    from .baseline import BaselineKey, FilesystemRegistry
-
-    reg_path = registry_path or Path(".abicheck/baselines")
-    registry = FilesystemRegistry(reg_path)
-
-    try:
-        key = BaselineKey.from_spec(spec)
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
-
-    if registry.delete(key):
-        click.echo(f"Baseline deleted: {key.path}", err=True)
-    else:
-        raise click.ClickException(f"Baseline not found: {key.path}")
-
+from . import (  # noqa: E402  — must run after `main` and helpers are defined
+    cli_appcompat,  # noqa: F401  — registers appcompat
+    cli_baseline,  # noqa: F401  — registers baseline
+    cli_compare_release,  # noqa: F401  — registers compare-release
+    cli_debian_symbols,  # noqa: F401  — registers debian-symbols
+    cli_evidence,  # noqa: F401  — registers collect-evidence
+    cli_plugin,  # noqa: F401  — registers plugin-check
+    cli_probe,  # noqa: F401  — registers probe (run, compare)
+    cli_stack,  # noqa: F401  — registers deps, stack-check
+    cli_suggest,  # noqa: F401  — registers suggest-suppressions
+    cli_surface,  # noqa: F401  — registers surface-report
+)
 
 if __name__ == "__main__":
     main()

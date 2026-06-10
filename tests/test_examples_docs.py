@@ -13,6 +13,7 @@ Three guarantees enforced here:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import subprocess
@@ -25,6 +26,15 @@ ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES_DIR = ROOT / "examples"
 GROUND_TRUTH = EXAMPLES_DIR / "ground_truth.json"
 GEN_SCRIPT = ROOT / "scripts" / "gen_examples_docs.py"
+
+
+def _load_generator_module():
+    spec = importlib.util.spec_from_file_location("gen_examples_docs", GEN_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.pop("gen_examples_docs", None)
+    sys.modules["gen_examples_docs"] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _ground_truth_cases() -> list[str]:
@@ -77,3 +87,76 @@ def test_generator_check_passes() -> None:
         "docs/examples/ is out of date — run `python scripts/gen_examples_docs.py`.\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
+
+
+def test_generator_rewrites_source_links_without_mkdocs_broken_links() -> None:
+    mod = _load_generator_module()
+
+    rewritten = mod._rewrite_links(
+        "[v1 header](v1.h) [guide](../docs/concepts/abi-api-handling.md)"
+    )
+
+    assert "`v1 header`" in rewritten
+    assert "[guide](../concepts/abi-api-handling.md)" in rewritten
+    assert "../../examples/" not in rewritten
+
+
+def test_generator_source_section_uses_code_literals() -> None:
+    mod = _load_generator_module()
+    case = mod.Case(
+        name="case01_symbol_removal",
+        title="Case 01: Symbol Removal",
+        verdict="BREAKING",
+        category="breaking",
+        platforms=["linux"],
+        abi_break=True,
+        api_break=False,
+        bad_practice=False,
+        expected_kinds=[],
+        body="",
+    )
+
+    source_section = mod._source_links(case)
+
+    assert "- `v1.c`" in source_section
+    assert "](" not in source_section
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        # Leading caseNN prefix (various separators) is stripped for table rows.
+        (
+            "case101 — inline namespace version bumped (BREAKING)",
+            "inline namespace version bumped (BREAKING)",
+        ),
+        (
+            "Case 17 — Template Instantiation ABI Change",
+            "Template Instantiation ABI Change",
+        ),
+        (
+            "Case 26b — Union Field Added (No Size Change)",
+            "Union Field Added (No Size Change)",
+        ),
+        ("Case 01: Symbol Removal", "Symbol Removal"),
+        # Regression guard: a title with internal colons keeps the trailing text
+        # (the old `split(':', 1)[-1]` heuristic mangled these).
+        (
+            "case98 — C++ standard floor raised (per-binary: NO_CHANGE)",
+            "C++ standard floor raised (per-binary: NO_CHANGE)",
+        ),
+        (
+            "case100 — experimental:: removed without replacement (API break)",
+            "experimental:: removed without replacement (API break)",
+        ),
+        # Titles without a caseNN prefix are left untouched, even if they start
+        # with the word "case" (no trailing number) or contain a colon.
+        ("Symbol Removal", "Symbol Removal"),
+        ("Case-insensitive lookup changed", "Case-insensitive lookup changed"),
+    ],
+)
+def test_short_title_strips_case_prefix_but_keeps_inner_colons(
+    title: str, expected: str
+) -> None:
+    mod = _load_generator_module()
+    assert mod._short_title(title) == expected

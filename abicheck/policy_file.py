@@ -75,6 +75,23 @@ _SEVERITY_MAP: dict[str, Verdict] = {
 
 _VALID_BASE_POLICIES = VALID_BASE_POLICIES  # re-export alias for backward compat
 
+
+def builtin_policy_path(name: str) -> Path | None:
+    """Resolve a bare built-in policy name (e.g. ``"security"``) to its file.
+
+    Returns the packaged ``abicheck/policies/<name>.yaml`` path if *name*
+    exactly matches a shipped policy stem, else ``None``. Only bare names are
+    accepted so path-like values cannot traverse or accidentally resolve as
+    built-ins.
+    """
+    from .policies import POLICIES_DIR, builtin_policy_names
+
+    if name not in builtin_policy_names():
+        return None
+
+    candidate = POLICIES_DIR / f"{name}.yaml"
+    return candidate if candidate.is_file() else None
+
 # Kinds that are especially dangerous to downgrade — removing a function
 # or changing its signature always causes hard crashes.
 _CRITICAL_BREAKING_KINDS: frozenset[ChangeKind] = frozenset({
@@ -102,6 +119,14 @@ class PolicyFile:
     base_policy: str = "strict_abi"
     overrides: dict[ChangeKind, Verdict] = field(default_factory=dict)
     source_path: Path | None = None
+    # Glob patterns identifying namespaces whose symbols / types are
+    # contractually frozen (e.g. a versioned internal namespace such as
+    # `**::detail::r1` or `**::detail::v1`). Any finding whose symbol or caused_by_type lies in
+    # one of these namespaces is tagged via Change.frozen_namespace_violation
+    # and is exempt from policy_override downgrades. Patterns use fnmatch
+    # globbing against ``::``-joined namespace segments; ``**`` matches any
+    # number of leading segments. Empty list = no extra namespaces.
+    frozen_namespaces: list[str] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: Path) -> PolicyFile:
@@ -125,6 +150,14 @@ class PolicyFile:
                 "PyYAML is required for --policy-file support. "
                 "Install it with: pip install pyyaml"
             ) from exc
+
+        # A bare built-in policy name (e.g. "security") must resolve to the
+        # packaged policy before consulting the working directory. Otherwise an
+        # attacker-controlled checkout can shadow the built-in with a local file
+        # named "security" and silently downgrade security-hardening verdicts.
+        builtin = builtin_policy_path(str(path))
+        if builtin is not None:
+            path = builtin
 
         raw: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
         if raw is None:
@@ -178,7 +211,28 @@ class PolicyFile:
                 "Valid values: break, warn, risk, ignore"
             )
 
-        return cls(base_policy=base_policy, overrides=overrides, source_path=path)
+        # frozen_namespaces: optional list of glob patterns identifying
+        # contractually-frozen namespaces (e.g. a versioned detail::r1).
+        frozen_raw = raw.get("frozen_namespaces", [])
+        if not isinstance(frozen_raw, list):
+            raise PolicyError(
+                "'frozen_namespaces' must be a YAML list of glob patterns, got "
+                + type(frozen_raw).__name__
+            )
+        frozen_namespaces: list[str] = []
+        for i, pat in enumerate(frozen_raw):
+            if not isinstance(pat, str):
+                raise PolicyError(
+                    f"frozen_namespaces[{i}]: expected string, got {type(pat).__name__}"
+                )
+            frozen_namespaces.append(pat)
+
+        return cls(
+            base_policy=base_policy,
+            overrides=overrides,
+            source_path=path,
+            frozen_namespaces=frozen_namespaces,
+        )
 
     def compute_verdict(self, changes: list[Any]) -> Verdict:
         """Compute verdict for *changes* applying base_policy then overrides.
@@ -194,16 +248,6 @@ class PolicyFile:
 
         # Start from base policy verdict
         verdicts: list[Verdict] = []
-        for change in changes:
-            kind = change.kind
-            if kind in self.overrides:
-                verdicts.append(self.overrides[kind])
-            else:
-                # Delegate to base policy for this single change
-                single_verdict = compute_verdict([change], policy=self.base_policy)
-                verdicts.append(single_verdict)
-
-        # Worst verdict wins
         order = [
             Verdict.NO_CHANGE,
             Verdict.COMPATIBLE,
@@ -211,6 +255,31 @@ class PolicyFile:
             Verdict.API_BREAK,
             Verdict.BREAKING,
         ]
+        for change in changes:
+            kind = change.kind
+            base_v = compute_verdict([change], policy=self.base_policy)
+            if kind in self.overrides:
+                override_v = self.overrides[kind]
+                # A change that violates a frozen-namespace contract MUST
+                # NOT be downgraded by a policy override. The user's
+                # `overrides` block can still upgrade severity (e.g. mark
+                # something more severe than the base classification), but
+                # downgrades on tagged changes are silently rejected so
+                # users cannot accidentally mask a documented invariant.
+                # ``isinstance(..., str)`` guards against MagicMock-style
+                # test doubles where any attribute access returns a truthy
+                # mock; only a real glob-pattern string counts as a tag.
+                fnv = getattr(change, "frozen_namespace_violation", None)
+                if isinstance(fnv, str) and fnv and (
+                    order.index(override_v) < order.index(base_v)
+                ):
+                    verdicts.append(base_v)
+                else:
+                    verdicts.append(override_v)
+            else:
+                verdicts.append(base_v)
+
+        # Worst verdict wins (reuse the `order` list from above).
         return max(verdicts, key=lambda v: order.index(v) if v in order else 0)
 
     def describe(self) -> str:

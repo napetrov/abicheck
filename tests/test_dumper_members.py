@@ -16,10 +16,11 @@ from abicheck.dumper import _CastxmlParser
 def _make_parser(
     xml_str: str,
     exported: set[str] | None = None,
+    public_header_paths: list[str] | None = None,
 ) -> _CastxmlParser:
     root = fromstring(xml_str)  # noqa: S314  # nosec B314 (trusted test data)
     exp = exported or set()
-    return _CastxmlParser(root, exp, exp)
+    return _CastxmlParser(root, exp, exp, public_header_paths=public_header_paths)
 
 
 # ── fixtures ─────────────────────────────────────────────────────────────
@@ -137,3 +138,116 @@ class TestMembersAttributeLayout:
         types = p.parse_types()
         assert len(types) == 1
         assert types[0].fields == []
+
+
+# ── constant extraction (qualified names) ────────────────────────────────────
+
+_CONSTANTS_XML = """<?xml version="1.0"?>
+<CastXML>
+  <Variable id="_10" name="kLimit" type="_6" init="4" context="_1" file="f1" line="1"/>
+  <Variable id="_16" name="kLimit" type="_6" init="1" context="_7" file="f1" line="2"/>
+  <Variable id="_17" name="kLimit" type="_6" init="2" context="_8" file="f1" line="3"/>
+  <Variable id="_18" name="kLimit" type="_6" init="3" context="_9" file="f1" line="4"/>
+  <FundamentalType id="_6" name="const int" size="32"/>
+  <Namespace id="_1" name="::"/>
+  <Namespace id="_7" name="A" context="_1"/>
+  <Namespace id="_8" name="B" context="_1"/>
+  <Struct id="_9" name="C" context="_1" file="f1" line="4"/>
+  <File id="f1" name="test.h"/>
+</CastXML>"""
+
+
+_PRIVATE_CONST_XML = """<?xml version="1.0"?>
+<CastXML>
+  <Variable id="_13" name="kPublic" type="_6" init="1" context="_9" access="public" file="f1" line="3" static="1"/>
+  <Variable id="_14" name="kPrivate" type="_6" init="2" context="_9" access="private" file="f1" line="5" static="1"/>
+  <FundamentalType id="_6" name="const int" size="32"/>
+  <Namespace id="_1" name="::"/>
+  <Struct id="_9" name="Widget" context="_1" file="f1" line="2"/>
+  <File id="f1" name="test.h"/>
+</CastXML>"""
+
+
+class TestConstantExtraction:
+    def test_private_static_constants_are_not_extracted(self) -> None:
+        # A private static constexpr member is an implementation detail a
+        # consumer cannot name — its value must not be reported as an API
+        # constant. Only the public member is extracted.
+        p = _make_parser(_PRIVATE_CONST_XML, public_header_paths=["test.h"])
+        assert p.parse_constants() == {"Widget::kPublic": "1"}
+
+    def test_same_named_constants_in_different_scopes_do_not_alias(self) -> None:
+        # Regression: bare-name keys would collapse A::kLimit/B::kLimit/C::kLimit
+        # into one entry (last-wins), masking a real change. Keys must qualify by
+        # namespace/class context (and a global constant stays bare).
+        p = _make_parser(_CONSTANTS_XML, public_header_paths=["test.h"])
+        consts = p.parse_constants()
+        assert consts == {
+            "kLimit": "4", "A::kLimit": "1", "B::kLimit": "2", "C::kLimit": "3",
+        }
+
+    def test_no_public_set_skips_extraction(self) -> None:
+        # Without any public-header set (e.g. DWARF/symbols-only mode), constant
+        # extraction is a no-op (provenance is opt-in).
+        p = _make_parser(_CONSTANTS_XML)
+        assert p.parse_constants() == {}
+
+    def test_edge_branches_skip_non_constant_and_non_public(self) -> None:
+        # Exercises the per-variable filters: a non-const (mutable) global is
+        # skipped, a const without an initializer is skipped, and a const in a
+        # system header is excluded by provenance.
+        p = _make_parser(_CONST_EDGE_XML, public_header_paths=["api.h"])
+        assert p.parse_constants() == {"kKept": "7"}
+
+    def test_defensive_branches(self) -> None:
+        # Builtin var, unnamed var, and a const with no source location are all
+        # skipped; a const with an unresolved context still yields its bare name
+        # (the context walk stops cleanly).
+        p = _make_parser(_CONST_DEFENSIVE_XML, public_header_paths=["api.h"])
+        assert p.parse_constants() == {"kReal": "1"}
+
+
+def test_default_argument_value_is_parsed() -> None:
+    # parse_functions must capture the castxml Argument `default` attribute.
+    p = _make_parser(_DEFAULT_ARG_XML)
+    fns = {f.name: f for f in p.parse_functions()}
+    params = fns["connect"].params
+    assert [p.default for p in params] == [None, "5000"]
+
+
+_CONST_EDGE_XML = """<?xml version="1.0"?>
+<CastXML>
+  <Variable id="_2" name="kKept" type="_c" init="7" context="_1" file="f1" line="1"/>
+  <Variable id="_3" name="counter" type="_i" init="0" context="_1" file="f1" line="2"/>
+  <Variable id="_4" name="kNoInit" type="_c" context="_1" file="f1" line="3"/>
+  <Variable id="_5" name="kSys" type="_c" init="9" context="_1" file="f2" line="1"/>
+  <FundamentalType id="_c" name="const int" size="32"/>
+  <FundamentalType id="_i" name="int" size="32"/>
+  <Namespace id="_1" name="::"/>
+  <File id="f1" name="api.h"/>
+  <File id="f2" name="/usr/include/stdint.h"/>
+</CastXML>"""
+
+_CONST_DEFENSIVE_XML = """<?xml version="1.0"?>
+<CastXML>
+  <Variable id="_2" name="kReal" type="_c" init="1" context="_999" file="f1" line="1"/>
+  <Variable id="_3" type="_c" init="2" context="_1" file="f1" line="2"/>
+  <Variable id="_4" name="kBuiltin" type="_c" init="3" context="_1" file="f0" line="0"/>
+  <Variable id="_5" name="kNoLoc" type="_c" init="4" context="_1"/>
+  <FundamentalType id="_c" name="const int" size="32"/>
+  <Namespace id="_1" name="::"/>
+  <File id="f1" name="api.h"/>
+  <File id="f0" name="&lt;builtin&gt;"/>
+</CastXML>"""
+
+_DEFAULT_ARG_XML = """<?xml version="1.0"?>
+<CastXML>
+  <Function id="_2" name="connect" returns="_i" context="_1" mangled="_Z7connectPKci" file="f1" line="1">
+    <Argument name="host" type="_p"/>
+    <Argument name="timeout" type="_i" default="5000"/>
+  </Function>
+  <FundamentalType id="_i" name="int" size="32"/>
+  <PointerType id="_p" type="_i"/>
+  <Namespace id="_1" name="::"/>
+  <File id="f1" name="test.h"/>
+</CastXML>"""

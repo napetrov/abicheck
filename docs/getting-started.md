@@ -6,22 +6,28 @@ On all platforms it provides binary metadata analysis (exports, imports, depende
 
 > **Platforms:** Linux, Windows, macOS.
 
+> **In CI already?** Skip straight to the [GitHub Action](user-guide/github-action.md)
+> — it installs everything and runs the check in a few lines of YAML.
+
+> **Not sure which command or options fit your situation?** Jump to
+> [**Choose Your Workflow**](user-guide/choose-your-workflow.md) — a decision
+> guide that maps your artifacts (one library, a release bundle, a package, an
+> application, stripped binaries…) and your CI policy to the exact command to run.
+
 ---
 
-## Which command do I need?
+## What question are you asking?
 
-abicheck ships several commands. Pick the one that matches your question:
+abicheck answers three plain-language questions. Pick yours:
 
-| Your question | Command | See |
-|---------------|---------|-----|
-| Does upgrading this library break existing consumers? | `abicheck compare` | [§2 below](#2-first-check-using-repo-examples) |
-| Does **my application** still work with the new library version? | `abicheck appcompat` | [§5 below](#5-application-compatibility-check) |
-| Will this binary load and run correctly in this sysroot? | `abicheck stack-check` | [CLI Usage](user-guide/cli-usage.md) |
-| Does my library dependency tree resolve without unresolved symbols? | `abicheck deps` | [CLI Usage](user-guide/cli-usage.md) |
-| I'm migrating from `abi-compliance-checker` and want the same flags. | `abicheck compat` | [Migrating from ABICC](user-guide/from-abicc.md) |
-| Save a reusable ABI baseline for CI. | `abicheck dump` | [§4 below](#4-snapshot-workflow-for-ci-baselines) |
+| Your question | Start here |
+|---|---|
+| **Did my library break?** | [`abicheck compare`](#3-first-check-using-repo-examples) |
+| **Does my app still work?** | [`abicheck appcompat`](#6-application-compatibility-check) |
+| **Did my whole package / release break?** | [`abicheck compare-release`](user-guide/multi-binary.md) |
 
-If you're unsure, start with `abicheck compare` — it's the default workflow.
+For the full decision matrix — every artifact layout, accuracy tier, and CI
+policy — see [Choose Your Workflow](user-guide/choose-your-workflow.md).
 
 ---
 
@@ -36,10 +42,16 @@ conda install -c conda-forge abicheck
 ### Requirements
 
 - Python 3.10+
-- `castxml` + C/C++ compiler — for header AST analysis (optional but recommended, all platforms)
+- `castxml` + a C/C++ compiler — **required for header AST analysis** (all platforms)
 
-All Python dependencies (`pyelftools`, `pefile`, `macholib`) come with `abicheck` install.
-Without `castxml`, abicheck still works in binary-only mode.
+All Python dependencies (`pyelftools`, `pefile`, `macholib`) come with the `abicheck` install.
+
+> **Important:** `pip install abicheck` does **not** install `castxml`. Any command
+> that takes headers (`--old-header` / `--new-header` / `-H`) needs `castxml` on
+> your `PATH` — without it those commands fail with `castxml not found`. Install it
+> with the system/conda packages below (the conda-forge package pulls it in
+> automatically). If you have no `castxml`, run **binary-only mode** by omitting the
+> header flags — abicheck falls back to DWARF/symbols analysis (weaker, but works).
 
 #### Option A: system packages
 
@@ -52,6 +64,12 @@ sudo apt-get update && sudo apt-get install -y castxml gcc g++
 # macOS
 brew install castxml
 # plus Xcode Command Line Tools for clang
+```
+
+```powershell
+# Windows (PowerShell, as administrator)
+choco install castxml
+# plus MSVC Build Tools (cl.exe) for PE/PDB debug-info analysis
 ```
 
 #### Option B: conda-forge (recommended for reproducible envs)
@@ -75,11 +93,34 @@ pip install -e .
 
 ---
 
-## 2) First check (using repo examples)
+## 2) Which command do I need?
 
-The repo includes 74 ABI scenario examples with paired `v1`/`v2` sources and headers.
-Browse them in the [Examples & Case Encyclopedia](examples/index.md),
-or pick one and run it locally:
+abicheck ships several commands. Pick the one that matches your question:
+
+| Your question | Command | See |
+|---------------|---------|-----|
+| Does upgrading this library break existing consumers? | `abicheck compare` | [§3 below](#3-first-check-using-repo-examples) |
+| Does **my application** still work with the new library version? | `abicheck appcompat` | [§6 below](#6-application-compatibility-check) |
+| Will this binary load and run correctly in this sysroot? | `abicheck stack-check` | [CLI Usage](user-guide/cli-usage.md) |
+| Does my library dependency tree resolve without unresolved symbols? | `abicheck deps` | [CLI Usage](user-guide/cli-usage.md) |
+| I'm migrating from `abi-compliance-checker` and want the same flags. | `abicheck compat` | [Migrating from ABICC](user-guide/from-abicc.md) |
+| Save a reusable ABI baseline for CI. | `abicheck dump` | [§5 below](#5-snapshot-workflow-for-ci-baselines) |
+
+If you're unsure, start with `abicheck compare` — it's the default workflow.
+
+---
+
+## 3) First check (using repo examples)
+
+**Best first run:** compare two shared libraries with their public headers — it
+gives abicheck the most evidence to work with (see the
+[input-quality ladder](#input-quality-what-each-tier-catches) below).
+
+The repo includes 126 ABI scenario examples. Most are single-library cases with
+paired `v1`/`v2` sources and headers; bundle/release-level cases use
+release-style layouts.
+Browse the generated single-library pages in the
+[Examples & Case Encyclopedia](examples/index.md), or pick one and run it locally:
 
 ```bash
 cd examples/case01_symbol_removal
@@ -92,10 +133,19 @@ gcc -shared -fPIC -g v2.c -o libv2.so
 ```
 
 ```bash
-# Compare
+# Compare (header-aware — needs castxml; see Requirements above)
 abicheck compare libv1.so libv2.so --old-header v1.h --new-header v2.h
 # Verdict: BREAKING (symbol 'helper' was removed)
 ```
+
+> **No `castxml`?** The command above will fail with `castxml not found`. Either
+> install castxml (see [Requirements](#requirements)), or run the same comparison
+> in binary-only mode by dropping the header flags — it still catches the removed
+> symbol from the ELF/DWARF metadata:
+>
+> ```bash
+> abicheck compare libv1.so libv2.so   # binary-only fallback, no castxml needed
+> ```
 
 For your own library:
 
@@ -119,11 +169,32 @@ abicheck compare libfoo.so.1 libfoo.so.2 -H include/
 If no headers are provided for ELF inputs, abicheck falls back to **symbols-only** mode
 and prints a warning (weaker analysis: may miss type/signature ABI breaks).
 
+### Input quality: what each tier catches
+
+How much abicheck can *prove* depends on what you give it. More evidence catches
+more breaks — start at the tier your artifacts allow and add headers + debug info
+when you need more confidence:
+
+| Inputs | Confidence | What it catches |
+|---|---|---|
+| Binaries only | **Low** | Symbol add/remove, basic metadata |
+| Binaries + debug info | **Medium** | Layout, enum, calling convention, emitted ABI |
+| Binaries + headers | **High** | Public API surface, source-level API, inline/template surface |
+| Binaries + debug info + headers + build flags | **Best** | The most accurate practical setup |
+
+This is why the header flags matter. The
+[ABI/API Handling overview](concepts/abi-api-handling.md) explains the full
+picture: debug info **plus** headers is the highest-coverage setup, while
+stripped binaries without headers only give symbol-level coverage. For stripped
+production builds, point abicheck at separate debug files (`--debug-root1/2`) or
+fetch them with `--debuginfod` — see
+[CLI Usage](user-guide/cli-usage.md#debug-artifact-resolution).
+
 ---
 
-## 3) Output formats
+## 4) Output formats
 
-abicheck supports four output formats: `markdown` (default), `json`, `sarif`, `html`.
+abicheck supports five output formats: `markdown` (default), `json`, `sarif`, `html`, and `junit` (plus a compact `review` digest). See [Output Formats](user-guide/output-formats.md) for the full reference.
 
 Markdown (default, printed to stdout):
 
@@ -151,7 +222,7 @@ abicheck compare libfoo.so.1 libfoo.so.2 -H foo.h --format html -o report.html
 
 ---
 
-## 4) Snapshot workflow (for CI baselines)
+## 5) Snapshot workflow (for CI baselines)
 
 Save a snapshot once per release, then compare against new builds without re-dumping:
 
@@ -202,7 +273,7 @@ abicheck compare old.json new.json -v
 
 ---
 
-## 5) Application compatibility check
+## 6) Application compatibility check
 
 Check whether your **application** is affected by a library update — filtering out irrelevant changes:
 
@@ -222,7 +293,7 @@ See [Application Compatibility](user-guide/appcompat.md) for the full reference.
 
 ---
 
-## 6) Exit codes and CI
+## 7) Exit codes and CI
 
 | Exit code | Verdict | Meaning |
 |-----------|---------|---------|
@@ -233,9 +304,58 @@ See [Application Compatibility](user-guide/appcompat.md) for the full reference.
 
 Full reference (including `compat` mode): [Exit Codes](reference/exit-codes.md)
 
-### GitHub Actions example
+### Policy recipes — what should fail the build?
 
-Save a baseline once at release time, then compare every new build:
+abicheck separates *what fails CI* (severity → exit code) from *what shows up in
+the report* (display filtering). These three recipes cover the common cases; the
+[Choose Your Workflow → policy recipes](user-guide/choose-your-workflow.md#4-how-should-ci-behave-policy-recipes)
+and [Severity Configuration](user-guide/severity.md) pages have the rest.
+
+```bash
+# Breakage-only gate: report everything, fail ONLY on binary ABI breaks
+abicheck compare baseline.json build/libfoo.so \
+  --new-header include/ \
+  --severity-preset info-only \
+  --severity-abi-breaking error
+
+# Strict API-surface governance: also fail on new public ABI/API additions
+abicheck compare baseline.json build/libfoo.so \
+  --new-header include/ \
+  --severity-addition error
+
+# Show only additions in a review report — verdict and exit code unchanged
+abicheck compare baseline.json build/libfoo.so \
+  --new-header include/ \
+  --show-only compatible,added
+```
+
+The first maps to "just alert me on breakages"; the second to "fail when new
+public ABI/API appears." The third is **display-only** — `--show-only` filters
+what the report renders without changing the verdict or exit code.
+
+### GitHub Actions — the easy way
+
+The fastest way to gate ABI in CI is the **first-class
+[GitHub Action](user-guide/github-action.md)**. It installs Python, `castxml`,
+and abicheck for you, runs the comparison, sets the step exit code, and can
+upload SARIF — all in a few lines of YAML:
+
+```yaml
+- uses: napetrov/abicheck@v0.3.0
+  with:
+    old-library: abi-baseline.json   # committed or downloaded baseline
+    new-library: build/libfoo.so
+    new-header: include/foo.h
+    upload-sarif: true
+```
+
+See the [GitHub Action reference](user-guide/github-action.md) for every input,
+baseline workflows, package/`compare-release` mode, and multi-platform matrices.
+
+### GitHub Actions — raw CLI
+
+If you prefer to drive the CLI directly, save a baseline once at release time,
+then compare every new build:
 
 ```bash
 # Release step — save baseline as an artifact
@@ -268,8 +388,19 @@ steps:
 
 ## Next steps
 
-- [Verdicts](concepts/verdicts.md) — what each verdict means
-- [Policy Profiles](user-guide/policies.md) — control how changes are classified
-- [Examples & Breakage Guide](concepts/abi-breaks-explained.md) — real-world ABI/API break scenarios
-- [ABICC Compatibility](user-guide/from-abicc.md) — migrating from abi-compliance-checker
-- [Limitations](concepts/limitations.md)
+**Find your workflow:** [Choose Your Workflow](user-guide/choose-your-workflow.md)
+maps your artifacts and CI policy to the exact command. Or jump straight to your
+persona:
+
+- **Library maintainer** → [Verdicts](concepts/verdicts.md), [Policy Profiles](user-guide/policies.md)
+- **App developer** → [Application Compatibility](user-guide/appcompat.md)
+- **SDK / package maintainer** → [Multi-Binary Releases](user-guide/multi-binary.md), [Baseline Management](user-guide/baseline-management.md)
+- **CI owner** → [GitHub Action](user-guide/github-action.md), [Severity Configuration](user-guide/severity.md), [Output Formats](user-guide/output-formats.md)
+- **Plugin author** → [Plugin Systems](user-guide/plugin-systems.md)
+- **Distro / package maintainer** → [Multi-Binary Releases](user-guide/multi-binary.md)
+- **Migrating from ABICC / libabigail** → [from ABICC](user-guide/from-abicc.md), [from libabigail](user-guide/from-libabigail.md)
+
+Background reading:
+
+- [ABI/API Handling & Recommendations](concepts/abi-api-handling.md) — real-world ABI/API break scenarios and how to prevent them
+- [Limitations](concepts/limitations.md) — what abicheck does *not* catch

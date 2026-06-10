@@ -228,6 +228,48 @@ class TestMachoIntegration:
         )
         assert "api_fn" in cmp.stdout
 
+    def test_native_dylib_to_dylib_compare_breaking(self) -> None:
+        """compare two native .dylib files DIRECTLY (no JSON dump) → BREAKING.
+
+        Exercises the native Mach-O resolve_input → compare workflow end-to-end
+        on the export table, which needs no DWARF.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            old = _compile_dylib(
+                "int api_fn(void){return 1;}\nint other_fn(void){return 2;}",
+                "libold.dylib", td_path,
+            )
+            new = _compile_dylib("int other_fn(void){return 2;}", "libnew.dylib", td_path)
+            cmp = subprocess.run(
+                [sys.executable, "-m", "abicheck.cli", "compare", str(old), str(new)],
+                capture_output=True, text=True, check=False,
+            )
+        assert cmp.returncode == 4, (
+            f"Expected BREAKING (exit 4), got {cmp.returncode}\n{cmp.stderr}\n{cmp.stdout}"
+        )
+        assert "api_fn" in cmp.stdout
+
+    def test_native_identical_dylib_is_compatible(self) -> None:
+        """Identical native dylibs compare COMPATIBLE (exit 0)."""
+        src = "int api_fn(void){return 1;}\nint other_fn(void){return 2;}"
+        # Pin a *shared* install_name on both builds: without -install_name,
+        # clang derives LC_ID_DYLIB from the (differing) output path, which the
+        # Mach-O diff would report as SONAME_CHANGED → BREAKING and defeat this
+        # no-change control. Both being identical, their install_names must match.
+        same_id = ["-Wl,-install_name,@rpath/libidentical.dylib"]
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            a = _compile_dylib(src, "liba.dylib", td_path, extra_flags=same_id)
+            b = _compile_dylib(src, "libb.dylib", td_path, extra_flags=same_id)
+            cmp = subprocess.run(
+                [sys.executable, "-m", "abicheck.cli", "compare", str(a), str(b)],
+                capture_output=True, text=True, check=False,
+            )
+        assert cmp.returncode == 0, (
+            f"Expected COMPATIBLE (exit 0), got {cmp.returncode}\n{cmp.stderr}\n{cmp.stdout}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Windows / PE integration tests
@@ -357,3 +399,42 @@ class TestPeIntegration:
             f"stderr: {cmp.stderr}\nstdout: {cmp.stdout}"
         )
         assert "api_fn" in (cmp.stdout or "")
+
+    def test_native_dll_to_dll_compare_breaking(self) -> None:
+        """compare two native .dll files DIRECTLY (no JSON dump) → BREAKING."""
+        env = {**subprocess.os.environ, "PYTHONUTF8": "1"}
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            old = _compile_dll(
+                "__declspec(dllexport) int api_fn(void){return 1;}\n"
+                "__declspec(dllexport) int other_fn(void){return 2;}",
+                "old.dll", td_path,
+            )
+            new = _compile_dll(
+                "__declspec(dllexport) int other_fn(void){return 2;}", "new.dll", td_path,
+            )
+            cmp = subprocess.run(
+                [sys.executable, "-m", "abicheck.cli", "compare", str(old), str(new)],
+                capture_output=True, encoding="utf-8", check=False, env=env,
+            )
+        assert cmp.returncode == 4, (
+            f"Expected BREAKING (exit 4), got {cmp.returncode}\n{cmp.stderr}\n{cmp.stdout}"
+        )
+        assert "api_fn" in (cmp.stdout or "")
+
+    def test_native_identical_dll_is_compatible(self) -> None:
+        """Identical native DLLs compare COMPATIBLE (exit 0)."""
+        env = {**subprocess.os.environ, "PYTHONUTF8": "1"}
+        src = ("__declspec(dllexport) int api_fn(void){return 1;}\n"
+               "__declspec(dllexport) int other_fn(void){return 2;}")
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            a = _compile_dll(src, "a.dll", td_path)
+            b = _compile_dll(src, "b.dll", td_path)
+            cmp = subprocess.run(
+                [sys.executable, "-m", "abicheck.cli", "compare", str(a), str(b)],
+                capture_output=True, encoding="utf-8", check=False, env=env,
+            )
+        assert cmp.returncode == 0, (
+            f"Expected COMPATIBLE (exit 0), got {cmp.returncode}\n{cmp.stderr}\n{cmp.stdout}"
+        )

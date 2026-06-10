@@ -1,0 +1,197 @@
+# Scenario group: CI ABI gating (persona: CI engineer)
+#
+# See tests/scenarios/README.md for the catalog format and how it is validated.
+schema_version: 1
+
+scenarios:
+  - id: SC-CI-GATE-BREAKING
+    title: CI ABI gate fails the build on a removed public symbol
+    persona: CI engineer
+    narrative: >
+      A pull request drops a public function from a shared library. The ABI gate
+      in CI must fail (non-zero exit) so the breaking change cannot merge
+      silently.
+    flow:
+      - abicheck compare old.json new.json
+    expected:
+      exit_code: 4
+      verdict: BREAKING
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_ci_gate_breaking
+
+  - id: SC-CI-GATE-ADDITIVE
+    title: CI ABI gate passes a backward-compatible addition
+    persona: CI engineer
+    narrative: >
+      A release adds a new exported function and changes nothing else. The gate
+      must pass (exit 0) so additive work is not blocked.
+    flow:
+      - abicheck compare old.json new.json
+    expected:
+      exit_code: 0
+      verdict: COMPATIBLE
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_ci_gate_additive
+
+  - id: SC-EXIT-CONTRACT
+    title: Exit-code contract (0 / 2 / 4) is stable for tooling
+    persona: CI engineer
+    narrative: >
+      Build scripts gate on exit codes: 0 = compatible, 2 = source-level
+      (API) break, 4 = binary (ABI) break. This contract must hold so a
+      Makefile/pipeline can branch on it.
+    flow:
+      - abicheck compare old.json new.json   # exit code is the gate
+    expected:
+      exit_codes: {NO_CHANGE: 0, API_BREAK: 2, BREAKING: 4}
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_exit_contract
+
+  - id: SC-CI-SEVERITY-GATE
+    title: Severity policy turns an ABI break into a warning (custom gate)
+    persona: CI engineer
+    narrative: >
+      A team is mid-migration and wants ABI breaks reported but NOT
+      build-failing for one release. Passing a --severity-* flag switches to the
+      severity-aware exit scheme; downgrading abi_breaking to "warning" yields
+      exit 0 while the default gate still fails with exit 4.
+    flow:
+      - abicheck compare old.json new.json --severity-abi-breaking warning
+    expected:
+      exit_code: 0
+      default_exit_code: 4
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_ci_severity_gate
+
+  - id: SC-CI-STAT
+    title: One-line --stat summary for CI logs
+    persona: CI engineer
+    narrative: >
+      A pipeline wants a compact, greppable one-line result in the job log
+      instead of a full report.
+    flow:
+      - abicheck compare old.json new.json --stat
+    expected:
+      exit_code: 4
+      output_contains: total
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_ci_stat
+
+  - id: SC-MALFORMED-INPUT
+    title: Corrupt snapshot fails the run cleanly (degraded-mode contract)
+    persona: CI engineer
+    narrative: >
+      A gate is only trustworthy if its failure modes are predictable. When a
+      snapshot is corrupt or unreadable (truncated artifact, bad upload), the
+      scanner must not crash with a traceback or — worse — exit 0 and look clean.
+      It exits non-zero (1) with a clear "failed to load" diagnostic so the
+      pipeline distinguishes a tooling error from a compatibility verdict.
+    flow:
+      - abicheck compare good.json corrupt.json
+    expected:
+      exit_code: 1
+      output_contains: "Failed to load"
+    validates: UC-WF-compare
+    automated: true
+    test: test_sc_malformed_input
+
+  # G2: fold build-config (probe-matrix) findings into the mainline gate.
+  - id: SC-PROBE-MATRIX-GATE
+    title: Build-config findings (C++ floor) gate via probe matrices in compare
+    persona: CI engineer
+    narrative: >
+      A library's binary surface is unchanged, but a build raises the minimum
+      C++ standard floor (17 → 20) — a source-level break that a per-binary diff
+      cannot see. By passing the probe build-config matrices to compare
+      (--probe-matrix-old/--probe-matrix-new), the CXX_STANDARD_FLOOR_RAISED
+      finding is folded into the same verdict and report, turning a NO_CHANGE
+      binary diff into an API_BREAK gate (exit 2).
+    flow:
+      - abicheck compare old.json new.json --probe-matrix-old old.matrix.json --probe-matrix-new new.matrix.json
+    expected:
+      exit_code: 2
+      verdict: API_BREAK
+      contains_kind: cxx_standard_floor_raised
+    validates: UC-WF-probe-matrix
+    automated: true
+    test: test_sc_probe_matrix_into_compare
+
+  # Multi-library bundle PR gate: block confirmed public breaks, warn (don't
+  # block) when analysis could not confidently confirm the public surface.
+  - id: SC-BUNDLE-PR-GATE-STRICT
+    title: Block multi-library bundle PRs on public ABI/API break, warn on unconfirmed analysis
+    persona: numerical-library maintainer (e.g. oneDAL)
+    narrative: >
+      A pull request changes a co-versioned bundle's shared libraries or public
+      headers. CI must
+      stop merges for confirmed public BREAKING or API_BREAK findings, but must
+      only warn (not block) when compatibility cannot be confidently confirmed —
+      the public-surface scope fell back, or the verdict is COMPATIBLE_WITH_RISK.
+      Because exit 0 covers NO_CHANGE / COMPATIBLE / COMPATIBLE_WITH_RISK, the
+      gate inspects the JSON `verdict` field rather than relying on exit codes
+      alone, and uses compare-release so sibling-library relationships in the
+      bundle are analysed.
+    flow:
+      - abicheck compare-release baseline/ pr-build/ -H include/ --scope-public-headers --format json -o abi.json
+      - abicheck compare-release baseline/ pr-build/ -H include/ --scope-public-headers --format junit -o abi.xml
+    expected:
+      # Block only on CONFIRMED public breaks; when scoping fell back the result
+      # is unconfirmed and must be manual-review-only, never an auto-fail.
+      fail_when:
+        - verdict in [BREAKING, API_BREAK] and scope.manual_review_required == false
+      manual_review_when:
+        - scope.manual_review_required == true   # public surface could not be confirmed
+        - verdict == COMPATIBLE_WITH_RISK
+      require_public_surface_scope: true   # scope block present in JSON
+      require_bundle_analysis: true        # bundle_verdict/bundle_findings present
+    validates: UC-WF-bundle
+    automated: false
+    status: planned
+    plan: docs/development/plans/g2-build-config-and-bundle.md
+    note: >
+      The scoping rollup (scope.manual_review_required / public_additions /
+      filtered_internal_changes) and changed_libraries that this gate keys off
+      are unit-tested in tests/test_compare_release.py
+      (TestCompareReleaseScopeAndChangedLibraries). Full automation needs a real
+      multi-library bundle (multiple .so + public headers) so -H scoping is exercised
+      end-to-end rather than via JSON snapshots.
+
+  # Multi-library additive surface tracking: report growth, never gate on it.
+  - id: SC-BUNDLE-PR-ADDITION-TRACKING
+    title: Report bundle API/ABI additions without gating the PR
+    persona: numerical-library maintainer (e.g. oneDAL)
+    narrative: >
+      A pull request legitimately expands the bundle's surface. CI must not block the
+      merge on additions alone, but it must clearly separate public additions
+      from internal-only growth (using public-header scoping plus the
+      --show-filtered ledger) and communicate the release impact to reviewers via
+      a job summary / PR comment rather than raw JSON.
+    flow:
+      - abicheck compare-release baseline/ pr-build/ -H include/ --scope-public-headers --format json -o abi.json
+      - abicheck compare-release baseline/ pr-build/ -H include/ --scope-public-headers --output-dir reports/ --format markdown
+    expected:
+      fail_when:
+        - verdict in [BREAKING, API_BREAK]
+      do_not_fail_on: [COMPATIBLE]
+      # Real compare-release JSON keys (see _format_release_summary): the scope
+      # rollup separates public growth from internal-only growth.
+      require_summary_fields:
+        - changed_libraries
+        - scope.public_additions
+        - scope.filtered_internal_changes
+      github_presentation: [job_summary, pr_comment]
+    validates: UC-WF-bundle
+    automated: false
+    status: planned
+    plan: docs/development/plans/g3-workflow-examples-and-reporting.md
+    note: >
+      changed_libraries and the scope.public_additions / filtered_internal_changes
+      rollup are emitted today and unit-tested in tests/test_compare_release.py.
+      Per-library release_recommendation is available in the --output-dir reports
+      (single-library JSON). The job_summary / pr_comment digest is the G3
+      review-UX deliverable; full automation needs a real multi-library bundle.

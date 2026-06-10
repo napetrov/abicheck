@@ -21,6 +21,21 @@ signal under a wall of independent removals, making the suppression UX a
 mess (one rule per algorithm) and obscuring the deployment-level question
 ("did the SYCL surface go away?").
 
+## Real Failure Demo
+
+**Severity: BREAKING / LOAD-TIME FAILURE**
+
+```bash
+cmake -S examples -B /tmp/abicheck-examples-build -DCMAKE_BUILD_TYPE=Debug
+cmake --build /tmp/abicheck-examples-build --target case82_sycl_overload_set_removed_app case82_sycl_overload_set_removed_v2
+
+tmp=$(mktemp -d)
+cp /tmp/abicheck-examples-build/case82_sycl_overload_set_removed/app_v1 "$tmp/"
+cp /tmp/abicheck-examples-build/case82_sycl_overload_set_removed/libv2.so "$tmp/libv1.so"
+(cd "$tmp" && LD_LIBRARY_PATH=. ./app_v1)
+# ./app_v1: symbol lookup error: undefined symbol: _ZN5mylib7computeERN4sycl5queueERKNS_10descriptorERKNS_5tableE
+```
+
 ## Why this is its own ChangeKind
 
 A grouped finding — `SYCL_OVERLOAD_SET_REMOVED` — names the deployment
@@ -32,7 +47,7 @@ children.
 ## How abicheck detects it
 
 After the per-symbol removal pass, the new detector
-(`abicheck/diff_onedal.py::detect_sycl_overload_set_removal`) groups removed symbols by their
+(`abicheck/diff_cpp_patterns.py::detect_sycl_overload_set_removal`) groups removed symbols by their
 demangled *unqualified* name and parameter list-minus-first-arg.
 When ≥ K removed siblings share an unqualified name with a surviving
 non-SYCL overload AND the removed one's first parameter type contains

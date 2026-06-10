@@ -11,7 +11,10 @@ Covers:
 from __future__ import annotations
 
 from abicheck.checker_policy import ChangeKind
-from abicheck.checker_types import Change
+from abicheck.checker_types import (
+    SYMBOL_VERSION_ALIAS_NOT_RETAINED_MARKER,
+    Change,
+)
 from abicheck.diff_versioning import (
     _build_version_node_map,
     check_soname_bump_policy,
@@ -597,6 +600,186 @@ class TestCheckerIntegration:
         # The function removal is breaking; soname unchanged -> recommendation
         assert ChangeKind.SONAME_BUMP_RECOMMENDED in kinds
 
+    def test_compare_soname_policy_uses_postprocessed_changes(self):
+        """A breaking rename with unchanged SONAME should recommend a bump."""
+        from abicheck.checker import compare
+        from abicheck.checker_policy import Verdict
+        from abicheck.model import AbiSnapshot, Function, Visibility
+
+        old = AbiSnapshot(
+            library="libfoo.so.1",
+            version="1.0",
+            functions=[
+                Function(
+                    name="old_name",
+                    mangled="old_name",
+                    return_type="void",
+                    params=[],
+                    visibility=Visibility.PUBLIC,
+                ),
+            ],
+            elf=ElfMetadata(soname="libfoo.so.1", symbols=[_sym("old_name")]),
+        )
+        new = AbiSnapshot(
+            library="libfoo.so.1",
+            version="1.1",
+            functions=[
+                Function(
+                    name="new_name",
+                    mangled="new_name",
+                    return_type="void",
+                    params=[],
+                    visibility=Visibility.PUBLIC,
+                ),
+            ],
+            elf=ElfMetadata(soname="libfoo.so.1", symbols=[_sym("new_name")]),
+        )
+        result = compare(
+            old,
+            new,
+            extra_changes=[
+                Change(
+                    kind=ChangeKind.FUNC_REMOVED,
+                    symbol="old_name",
+                    description="Function removed: old_name",
+                    old_value="old_name",
+                ),
+                Change(
+                    kind=ChangeKind.FUNC_ADDED,
+                    symbol="new_name",
+                    description="Function added: new_name",
+                    new_value="new_name",
+                ),
+                Change(
+                    kind=ChangeKind.FUNC_LIKELY_RENAMED,
+                    symbol="old_name",
+                    description="Function likely renamed: old_name -> new_name",
+                    old_value="old_name",
+                    new_value="new_name",
+                ),
+            ],
+        )
+        kinds = {c.kind for c in result.changes}
+
+        assert result.verdict == Verdict.BREAKING
+        assert ChangeKind.FUNC_LIKELY_RENAMED in kinds
+        assert ChangeKind.SONAME_BUMP_RECOMMENDED in kinds
+
+    def test_compare_soname_bump_not_unnecessary_for_breaking_rename(self):
+        """SONAME bumped for a breaking rename must not read as unnecessary.
+
+        Exercises the second branch of check_soname_bump_policy through the
+        post-processed change set: the removed/added halves are rename-redundant
+        and excluded from the verdict input, but the collapsed rename remains a
+        binary-incompatible change.
+        """
+        from abicheck.checker import compare
+        from abicheck.checker_policy import Verdict
+        from abicheck.model import AbiSnapshot, Function, Visibility
+
+        old = AbiSnapshot(
+            library="libfoo.so.1",
+            version="1.0",
+            functions=[
+                Function(
+                    name="old_name",
+                    mangled="old_name",
+                    return_type="void",
+                    params=[],
+                    visibility=Visibility.PUBLIC,
+                ),
+            ],
+            elf=ElfMetadata(soname="libfoo.so.1", symbols=[_sym("old_name")]),
+        )
+        new = AbiSnapshot(
+            library="libfoo.so.2",
+            version="2.0",
+            functions=[
+                Function(
+                    name="new_name",
+                    mangled="new_name",
+                    return_type="void",
+                    params=[],
+                    visibility=Visibility.PUBLIC,
+                ),
+            ],
+            elf=ElfMetadata(soname="libfoo.so.2", symbols=[_sym("new_name")]),
+        )
+        result = compare(
+            old,
+            new,
+            extra_changes=[
+                Change(
+                    kind=ChangeKind.FUNC_REMOVED,
+                    symbol="old_name",
+                    description="Function removed: old_name",
+                    old_value="old_name",
+                ),
+                Change(
+                    kind=ChangeKind.FUNC_ADDED,
+                    symbol="new_name",
+                    description="Function added: new_name",
+                    new_value="new_name",
+                ),
+                Change(
+                    kind=ChangeKind.FUNC_LIKELY_RENAMED,
+                    symbol="old_name",
+                    description="Function likely renamed: old_name -> new_name",
+                    old_value="old_name",
+                    new_value="new_name",
+                ),
+            ],
+        )
+        kinds = {c.kind for c in result.changes}
+
+        assert result.verdict == Verdict.BREAKING
+        assert ChangeKind.FUNC_LIKELY_RENAMED in kinds
+        assert ChangeKind.SONAME_BUMP_UNNECESSARY not in kinds
+        assert ChangeKind.SONAME_BUMP_RECOMMENDED not in kinds
+
+    def test_compare_soname_bump_recommendation_honors_suppression(self):
+        """Late-generated SONAME advisories must still pass suppression."""
+        from abicheck.checker import compare
+        from abicheck.model import AbiSnapshot, Function, Visibility
+        from abicheck.suppression import Suppression, SuppressionList
+
+        old = AbiSnapshot(
+            library="libfoo.so.1",
+            version="1.0",
+            functions=[
+                Function(
+                    name="removed_func",
+                    mangled="removed_func",
+                    return_type="void",
+                    params=[],
+                    visibility=Visibility.PUBLIC,
+                ),
+            ],
+            elf=ElfMetadata(soname="libfoo.so.1", symbols=[_sym("removed_func")]),
+        )
+        new = AbiSnapshot(
+            library="libfoo.so.1",
+            version="2.0",
+            functions=[],
+            elf=ElfMetadata(soname="libfoo.so.1", symbols=[]),
+        )
+        suppression = SuppressionList([
+            Suppression(
+                symbol="DT_SONAME",
+                change_kind=ChangeKind.SONAME_BUMP_RECOMMENDED.value,
+                reason="tracked separately",
+            )
+        ])
+
+        result = compare(old, new, suppression=suppression)
+        kinds = {c.kind for c in result.changes}
+        suppressed_kinds = {c.kind for c in result.suppressed_changes}
+
+        assert ChangeKind.FUNC_REMOVED in kinds
+        assert ChangeKind.SONAME_BUMP_RECOMMENDED not in kinds
+        assert ChangeKind.SONAME_BUMP_RECOMMENDED in suppressed_kinds
+        assert result.suppressed_count == 1
+
     def test_compare_version_script_missing(self):
         """Full pipeline: version script dropped -> warning fires."""
         from abicheck.model import AbiSnapshot
@@ -629,3 +812,108 @@ class TestCheckerIntegration:
         result = compare(old, new)
         kinds = {c.kind for c in result.changes}
         assert ChangeKind.VERSION_SCRIPT_MISSING in kinds
+
+
+class TestVersionNodeBumpDeduplication:
+    """A version-node bump must not be double-counted per symbol."""
+
+    def test_moved_node_and_alias_change_deduplicated(self) -> None:
+        from abicheck.diff_filtering import _deduplicate_cross_detector
+
+        changes = [
+            Change(
+                kind=ChangeKind.SYMBOL_MOVED_VERSION_NODE,
+                symbol="foo",
+                description="moved",
+                old_value="LLVM_17",
+                new_value="LLVM_18.1",
+            ),
+            Change(
+                kind=ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED,
+                symbol="foo",
+                # Not-retained case (old default gone): genuinely redundant with
+                # the node move, so it carries the marker and is collapsed.
+                description=(
+                    "default version changed — "
+                    + SYMBOL_VERSION_ALIAS_NOT_RETAINED_MARKER
+                ),
+                old_value="LLVM_17",
+                new_value="LLVM_18.1",
+            ),
+        ]
+        kept = _deduplicate_cross_detector(changes)
+        kinds = [c.kind for c in kept]
+        # The alias-change duplicate is dropped; the node-level change is kept
+        # (one finding for one version-node bump, not two).
+        assert kinds == [ChangeKind.SYMBOL_MOVED_VERSION_NODE]
+
+    def test_retained_alias_change_survives_matching_node_move(self) -> None:
+        from abicheck.diff_filtering import _deduplicate_cross_detector
+
+        # Old default is RETAINED as a non-default alias: the alias-change is
+        # compatible and distinct from the node move's "will not find" wording,
+        # so it must NOT be collapsed even though the transition matches.
+        changes = [
+            Change(
+                kind=ChangeKind.SYMBOL_MOVED_VERSION_NODE,
+                symbol="foo",
+                description="moved",
+                old_value="LIBA_1",
+                new_value="LIBA_2",
+            ),
+            Change(
+                kind=ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED,
+                symbol="foo",
+                description="Default symbol version changed: foo (@@LIBA_1 → @@LIBA_2)",
+                old_value="LIBA_1",
+                new_value="LIBA_2",
+            ),
+        ]
+        kept = _deduplicate_cross_detector(changes)
+        kinds = {c.kind for c in kept}
+        assert ChangeKind.SYMBOL_MOVED_VERSION_NODE in kinds
+        assert ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED in kinds
+        assert len(kept) == 2
+
+    def test_moved_node_kept_without_matching_alias(self) -> None:
+        from abicheck.diff_filtering import _deduplicate_cross_detector
+
+        # No alias change for this transition → the node move stands on its own.
+        changes = [
+            Change(
+                kind=ChangeKind.SYMBOL_MOVED_VERSION_NODE,
+                symbol="foo",
+                description="moved",
+                old_value="LIBA_1",
+                new_value="LIBA_2",
+            ),
+        ]
+        kept = _deduplicate_cross_detector(changes)
+        assert [c.kind for c in kept] == [ChangeKind.SYMBOL_MOVED_VERSION_NODE]
+
+    def test_moved_node_kept_when_alias_transition_differs(self) -> None:
+        from abicheck.diff_filtering import _deduplicate_cross_detector
+
+        # Alias change exists for the symbol but a different transition → keep both.
+        changes = [
+            Change(
+                kind=ChangeKind.SYMBOL_MOVED_VERSION_NODE,
+                symbol="foo",
+                description="moved",
+                old_value="LIBA_1",
+                new_value="LIBA_2",
+            ),
+            Change(
+                kind=ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED,
+                symbol="foo",
+                description="alias",
+                old_value="LIBA_1",
+                new_value="LIBA_3",
+            ),
+        ]
+        kept = _deduplicate_cross_detector(changes)
+        kinds = {c.kind for c in kept}
+        # Transitions differ, so both findings are kept (no de-duplication).
+        assert ChangeKind.SYMBOL_MOVED_VERSION_NODE in kinds
+        assert ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED in kinds
+        assert len(kept) == 2

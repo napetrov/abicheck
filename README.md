@@ -9,7 +9,7 @@
 
 **abicheck** detects breaking changes in C/C++ shared libraries before they reach production. It compares two versions of a shared library — along with their public headers — and reports whether existing binaries will continue to work or break at runtime.
 
-It catches removed or renamed symbols, changed function signatures, struct layout drift, vtable reordering, enum value reassignment, and many more — **145 ABI/API change types** in total — that cause crashes, silent data corruption, or linker failures after a library upgrade.
+It catches removed or renamed symbols, changed function signatures, struct layout drift, vtable reordering, enum value reassignment, and many more — **215 ABI/API change types** in total — that cause crashes, silent data corruption, or linker failures after a library upgrade.
 
 > **Platforms:** Linux (ELF), Windows (PE/COFF), macOS (Mach-O). Binary and header AST analysis on all platforms; debug-info cross-check uses DWARF (Linux, macOS) and PDB (Windows).
 
@@ -47,7 +47,7 @@ abicheck dump libfoo.so -H include/foo.h --version 1.0 -o baseline.json
 abicheck compare baseline.json ./build/libfoo.so --new-header include/foo.h
 ```
 
-Supported output formats: `markdown` (default), `json`, `sarif`, `html`.
+Supported output formats: `markdown` (default), `json`, `sarif`, `html`, and `junit`.
 
 ```bash
 abicheck compare old.so new.so -H foo.h --format sarif -o report.sarif
@@ -62,6 +62,7 @@ See [Getting Started](https://napetrov.github.io/abicheck/getting-started/) for 
 | I want to… | Use |
 |------------|-----|
 | Check whether a library upgrade breaks existing consumers | [`abicheck compare`](https://napetrov.github.io/abicheck/user-guide/cli-usage/) |
+| Compare **a multi-library release** (a co-versioned bundle, e.g. oneDAL) as a single bundle | [`abicheck compare-release`](https://napetrov.github.io/abicheck/user-guide/multi-binary/) |
 | Check whether **my application** breaks with a new library version | [`abicheck appcompat`](https://napetrov.github.io/abicheck/user-guide/appcompat/) |
 | Validate a binary's full dependency stack across two sysroots | [`abicheck stack-check`](https://napetrov.github.io/abicheck/user-guide/cli-usage/) |
 | Drop-in replacement for `abi-compliance-checker` | [`abicheck compat`](https://napetrov.github.io/abicheck/user-guide/from-abicc/) |
@@ -88,7 +89,7 @@ Use these to gate CI pipelines.
 ## GitHub Action
 
 ```yaml
-- uses: napetrov/abicheck@v1
+- uses: napetrov/abicheck@v0.3.0
   with:
     old-library: abi-baseline.json
     new-library: build/libfoo.so
@@ -143,23 +144,27 @@ See `abicheck.service` for the full signature, plus the [MCP server integration]
 
 ## Examples
 
-The [`examples/`](examples/README.md) directory contains **74 real-world ABI scenarios** — each with paired `v1`/`v2` source, a consumer app that demonstrates the actual failure, and a ground-truth verdict. These drive the validation snapshot below.
+The [`examples/`](examples/README.md) directory contains **126 real-world ABI/API scenarios** (121 single-library cases plus 5 multi-library bundle cases) with ground-truth verdicts. Most are single-library `v1`/`v2` examples with a consumer app; bundle/release-level cases use release-style layouts. The full catalog is the development regression corpus; a smaller historical cross-tool subset is kept in the reference docs for release-to-release comparison with libabigail and ABICC.
 
 ---
 
 ## Validation snapshot
 
-Accuracy on the full 74-case catalog (`01–73` + `26b`):
+The main validation target is the full **125-case catalog**. To scan it for the current checkout:
 
-| Configuration | Exact verdict accuracy | FP | FN |
-|---|---:|---:|---:|
-| `abicheck compare` | **69/74 (93%)** | 0 | 1 |
-| `abicheck compat` | **68/74 (92%)** | 0 | 1 |
-| `abidiff` | **23/74 (31%)** | 0 | 39 |
+```bash
+python scripts/benchmark_comparison.py --suite all
+```
 
-\* FP/FN for breaking-signal detection (`BREAKING` + `API_BREAK` treated as positive).
+The command writes `benchmark_reports/benchmark_report.json` with the selected suite, abicheck version, git commit, tool versions, the `ground_truth.json` SHA-256, and per-tool accuracy. Cases that require bundle/release harnesses or unavailable compiler features are marked as unscored instead of being folded into single-library verdict accuracy.
 
-Per-case matrix, methodology, and the full comparison table: [Tool Comparison & Benchmarks](https://napetrov.github.io/abicheck/reference/tool-comparison/).
+For apples-to-apples comparison with libabigail and ABICC, release workflows also run the historical pinned cross-tool subset (`case01`-`case73` + `case26b`) and attach that report to GitHub Releases:
+
+```bash
+python scripts/benchmark_comparison.py --suite pinned74
+```
+
+Per-case matrix, methodology, full-catalog notes, and the pinned cross-tool comparison table: [Tool Comparison & Benchmarks](https://napetrov.github.io/abicheck/reference/tool-comparison/).
 
 ---
 
@@ -167,7 +172,7 @@ Per-case matrix, methodology, and the full comparison table: [Tool Comparison & 
 
 - **Start here:** [Getting Started](https://napetrov.github.io/abicheck/getting-started/)
 - **User guide:** [CLI Usage](https://napetrov.github.io/abicheck/user-guide/cli-usage/) · [Application compatibility](https://napetrov.github.io/abicheck/user-guide/appcompat/) · [Output formats](https://napetrov.github.io/abicheck/user-guide/output-formats/) · [GitHub Action](https://napetrov.github.io/abicheck/user-guide/github-action/)
-- **Concepts:** [Verdicts](https://napetrov.github.io/abicheck/concepts/verdicts/) · [Architecture](https://napetrov.github.io/abicheck/concepts/architecture/) · [ABI Breaks Explained](https://napetrov.github.io/abicheck/concepts/abi-breaks-explained/) · [Limitations](https://napetrov.github.io/abicheck/concepts/limitations/)
+- **Concepts:** [Verdicts](https://napetrov.github.io/abicheck/concepts/verdicts/) · [Architecture](https://napetrov.github.io/abicheck/concepts/architecture/) · [ABI/API Handling & Recommendations](https://napetrov.github.io/abicheck/concepts/abi-api-handling/) · [Limitations](https://napetrov.github.io/abicheck/concepts/limitations/)
 - **Reference:** [Change Kinds](https://napetrov.github.io/abicheck/reference/change-kinds/) · [Exit Codes](https://napetrov.github.io/abicheck/reference/exit-codes/) · [Platforms](https://napetrov.github.io/abicheck/reference/platforms/) · [Tool Comparison](https://napetrov.github.io/abicheck/reference/tool-comparison/)
 - **Troubleshooting:** [Troubleshooting guide](https://napetrov.github.io/abicheck/troubleshooting/)
 

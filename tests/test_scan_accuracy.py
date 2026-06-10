@@ -166,7 +166,9 @@ class TestSingleMutationDetection:
         old = _base_snap()
         new = copy.deepcopy(old)
         new.types[0].size_bits = 128
-        result = compare(old, new)
+        # Raw detector check: Config is not wired to a public function here, so
+        # disable surface scoping (orthogonal concern, default-on since ADR-024).
+        result = compare(old, new, scope_to_public_surface=False)
         assert result.verdict == Verdict.BREAKING
         assert any(c.kind == ChangeKind.TYPE_SIZE_CHANGED for c in result.changes)
 
@@ -174,7 +176,7 @@ class TestSingleMutationDetection:
         old = _base_snap()
         new = copy.deepcopy(old)
         new.types[0].fields = [new.types[0].fields[0]]  # keep only 'width'
-        result = compare(old, new)
+        result = compare(old, new, scope_to_public_surface=False)
         assert result.verdict == Verdict.BREAKING
         assert any(c.kind == ChangeKind.TYPE_FIELD_REMOVED for c in result.changes)
 
@@ -182,7 +184,9 @@ class TestSingleMutationDetection:
         old = _base_snap()
         new = copy.deepcopy(old)
         new.enums[0].members = [m for m in new.enums[0].members if m.name != "BLUE"]
-        result = compare(old, new)
+        # Raw detector check: Color is not wired to a public function here, so
+        # disable surface scoping (orthogonal concern, default-on since ADR-024).
+        result = compare(old, new, scope_to_public_surface=False)
         assert result.verdict == Verdict.BREAKING
         assert any(c.kind == ChangeKind.ENUM_MEMBER_REMOVED for c in result.changes)
 
@@ -190,7 +194,9 @@ class TestSingleMutationDetection:
         old = _base_snap()
         new = copy.deepcopy(old)
         new.enums[0].members[1] = EnumMember(name="GREEN", value=42)
-        result = compare(old, new)
+        # Raw detector check: Color is not wired to a public function here, so
+        # disable surface scoping (orthogonal concern, default-on since ADR-024).
+        result = compare(old, new, scope_to_public_surface=False)
         assert result.verdict == Verdict.BREAKING
         assert any(c.kind == ChangeKind.ENUM_MEMBER_VALUE_CHANGED for c in result.changes)
 
@@ -198,7 +204,9 @@ class TestSingleMutationDetection:
         old = _base_snap()
         new = copy.deepcopy(old)
         new.enums[0].members.append(EnumMember(name="YELLOW", value=3))
-        result = compare(old, new)
+        # Raw detector check: Color is not wired to a public function here, so
+        # disable surface scoping (orthogonal concern, default-on since ADR-024).
+        result = compare(old, new, scope_to_public_surface=False)
         assert result.verdict == Verdict.COMPATIBLE
         assert any(c.kind == ChangeKind.ENUM_MEMBER_ADDED for c in result.changes)
 
@@ -206,7 +214,7 @@ class TestSingleMutationDetection:
         old = _base_snap()
         new = copy.deepcopy(old)
         new.typedefs = {}
-        result = compare(old, new)
+        result = compare(old, new, scope_to_public_surface=False)
         assert result.verdict == Verdict.BREAKING
         assert any(c.kind == ChangeKind.TYPEDEF_REMOVED for c in result.changes)
 
@@ -214,7 +222,7 @@ class TestSingleMutationDetection:
         old = _base_snap()
         new = copy.deepcopy(old)
         new.typedefs["ColorType"] = "int"
-        result = compare(old, new)
+        result = compare(old, new, scope_to_public_surface=False)
         assert result.verdict == Verdict.BREAKING
         assert any(c.kind == ChangeKind.TYPEDEF_BASE_CHANGED for c in result.changes)
 

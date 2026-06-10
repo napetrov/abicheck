@@ -35,6 +35,46 @@ However, the depth of analysis depends on the **host platform** and whether head
 
 ---
 
+## Validation status (what is actually exercised in CI)
+
+The matrices above describe *intended* capability. The depth of **automated
+validation** differs sharply by platform, and you should calibrate trust
+accordingly:
+
+| Platform | Binary/metadata parsing | Workflow end-to-end (compare / appcompat / …) |
+|----------|:-----------------------:|:---------------------------------------------:|
+| **Linux / ELF** | Unit **and** integration tests | **Validated in CI** (the baseline) |
+| **Windows / PE+PDB** | Unit tests for the PE/PDB parsers | **Validated in CI** for MinGW: `cross-platform-e2e` lane runs `compare` on MinGW-built DLLs. The `windows-msvc` lane additionally asserts MSVC+PDB verdicts (PDB layout depth best-effort) but runs **non-blocking** (`continue-on-error`, informational) until proven stable |
+| **macOS / Mach-O** | Unit tests for the Mach-O/ARM64 layer | **Validated in CI**: `cross-platform-e2e` lane runs `compare` on Apple-clang-built dylibs; AArch64 AAPCS64 HFA/HVA + 16-byte boundary modeled and unit-tested |
+
+Concretely: the core `compare` workflow is now exercised end-to-end on native
+PE and Mach-O binaries (built by the platform's own toolchain) in the
+`cross-platform-e2e` CI lane (gap **G1** closed). What remains a deliberate
+Linux-anchored subset is the **example catalog**: every entry in
+[`examples/ground_truth.json`](https://github.com/napetrov/abicheck/blob/main/examples/ground_truth.json)
+is validated on Linux, and a `platforms` tag of `macos`/`windows` expresses
+*intended* portability rather than a per-case CI result — some cases carry an
+explicit `known_gap` describing where the non-Linux path diverges. This
+invariant (Linux = universal baseline; macOS/Windows = strict subset) is guarded
+by `tests/test_platform_coverage_honesty.py`. See
+[Use-Case Coverage Evaluation](../development/usecase-coverage-evaluation.md)
+(gap **G1**) for context.
+
+### Castxml-free validation (no external tools)
+
+While the full header-driven pipeline uses `castxml`, a large slice of the
+catalog needs **no castxml at all**: a plain `-g` build embeds DWARF in the
+shared object, and `abicheck` reads type/layout/calling-convention facts
+straight from it. `tests/test_castxml_free_examples.py` validates **40 catalog
+cases** end-to-end on the Linux baseline using only a C/C++ compiler — building
+v1/v2, dumping with no headers (DWARF + symbol table only), and asserting the
+`ground_truth.json` verdict. This guards the pure-Python, drop-in path that many
+CI environments and developer machines actually run (no castxml installed). The
+~11 cases that genuinely require castxml (concept tightening, explicit-ctor
+mangling, header-only scoping) remain covered by the castxml integration lane.
+
+---
+
 ## What "Symbols Only" Mode Means
 
 When scanning a binary **without headers**, or scanning a non-native binary cross-platform,

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from click.testing import CliRunner
 
@@ -12,7 +13,20 @@ from abicheck.cli import (
     _version_sort_key,
     main,
 )
-from abicheck.model import AbiSnapshot, Function, Param, Visibility
+from abicheck.cli_compare_release import (
+    _discover_include_roots,
+    _extract_if_package,
+    _prepare_compare_release_inputs,
+)
+from abicheck.model import (
+    AbiSnapshot,
+    Function,
+    Param,
+    RecordType,
+    TypeField,
+    Visibility,
+)
+from abicheck.package import ExtractResult
 from abicheck.serialization import snapshot_to_json
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -25,7 +39,7 @@ def _snap(
     if funcs is None:
         funcs = [Function(name="foo", mangled="_Z3foov", return_type="int",
                           visibility=Visibility.PUBLIC)]
-    return AbiSnapshot(library=library, version=version, functions=funcs)
+    return AbiSnapshot(library=library, version=version, functions=funcs, from_headers=True)
 
 
 def _write_snap(path: Path, snap: AbiSnapshot) -> Path:
@@ -356,6 +370,77 @@ class TestOutputDir:
         assert len(summary["libraries"]) == 1
 
 
+def _rec(name: str, size: int) -> RecordType:
+    return RecordType(name=name, kind="struct", size_bits=size,
+                      fields=[TypeField(name="x", type="int")])
+
+
+class TestCompareReleaseScopeAndChangedLibraries:
+    """compare-release: changed_libraries + public-header scoping rollup (#235)."""
+
+    def test_changed_libraries_lists_only_changed(self, tmp_path: Path) -> None:
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
+        # libfoo breaks; libbar is identical (NO_CHANGE).
+        old_foo, new_foo = _breaking_pair("libfoo.so")
+        _write_snap(old_dir / "libfoo.json", old_foo)
+        _write_snap(new_dir / "libfoo.json", new_foo)
+        _write_snap(old_dir / "libbar.json", _snap(library="libbar.so"))
+        _write_snap(new_dir / "libbar.json", _snap(library="libbar.so"))
+        code, out = _invoke("compare-release", str(old_dir), str(new_dir), "--format", "json")
+        assert code == 4
+        data = json.loads(out)
+        assert data["changed_libraries"] == ["libfoo.json"]
+
+    def test_scope_block_resolved_filters_internal(self, tmp_path: Path) -> None:
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
+        # Public api_call(Config*) -> int; InternalCache is private (unreachable).
+        # New side adds a public function and shrinks InternalCache: the private
+        # break is filtered, the public addition is reported.
+        pub_old = Function(name="api_call", mangled="api_call", return_type="int",
+                           params=[Param(name="c", type="Config *")], visibility=Visibility.PUBLIC)
+        pub_new = Function(name="new_api", mangled="new_api", return_type="int",
+                           visibility=Visibility.PUBLIC)
+        old = AbiSnapshot(library="libfoo.so", version="1", functions=[pub_old],
+                          types=[_rec("Config", 32), _rec("InternalCache", 64)])
+        new = AbiSnapshot(library="libfoo.so", version="2", functions=[pub_old, pub_new],
+                          types=[_rec("Config", 32), _rec("InternalCache", 128)])
+        _write_snap(old_dir / "libfoo.json", old)
+        _write_snap(new_dir / "libfoo.json", new)
+        code, out = _invoke("compare-release", str(old_dir), str(new_dir),
+                            "--scope-public-headers", "--format", "json")
+        data = json.loads(out)
+        assert data["scope"]["public_headers_applied"] is True
+        assert data["scope"]["manual_review_required"] is False
+        assert data["scope"]["filtered_internal_changes"] >= 1
+        assert data["scope"]["public_additions"] >= 1
+
+    def test_scope_fallback_flags_manual_review(self, tmp_path: Path) -> None:
+        old_dir = tmp_path / "old"
+        old_dir.mkdir()
+        new_dir = tmp_path / "new"
+        new_dir.mkdir()
+        # No public symbols -> surface unresolvable -> fall back to full export
+        # table and flag manual review (issue #235's "don't overclaim" half).
+        old = AbiSnapshot(library="libfoo.so", version="1", functions=[],
+                          types=[_rec("InternalCache", 64)])
+        new = AbiSnapshot(library="libfoo.so", version="2", functions=[],
+                          types=[_rec("InternalCache", 128)])
+        _write_snap(old_dir / "libfoo.json", old)
+        _write_snap(new_dir / "libfoo.json", new)
+        code, out = _invoke("compare-release", str(old_dir), str(new_dir),
+                            "--scope-public-headers", "--format", "json")
+        data = json.loads(out)
+        assert data["scope"]["manual_review_required"] is True
+        # The break is kept (fallback), so the library still shows as changed.
+        assert "libfoo.json" in data["changed_libraries"]
+
+
 # ── version-aware name matching ───────────────────────────────────────────────
 
 class TestMixedInputs:
@@ -488,3 +573,359 @@ class TestFilterOutNonABIFiles:
         pyd = tmp_path / "module.pyd"
         pyd.write_bytes(b"not-a-real-pe")
         assert _is_supported_compare_input(pyd)
+
+
+# ── _extract_if_package unit tests ───────────────────────────────────────────
+
+def _make_mock_extractor(lib_dir: Path, debug_dir: Path | None = None, header_dir: Path | None = None) -> MagicMock:
+    """Return a mock PackageExtractor whose extract() returns the given paths."""
+    result = ExtractResult(lib_dir=lib_dir, debug_dir=debug_dir, header_dir=header_dir)
+    extractor = MagicMock()
+    extractor.extract.return_value = result
+    return extractor
+
+
+class TestExtractIfPackage:
+    """Unit tests for _extract_if_package covering the directory-input bug fix."""
+
+    def _make_temp_dir(self, tmp_path: Path) -> Path:
+        """Simple make_temp_dir stub that returns a subdirectory."""
+        d = tmp_path / f"tmp_{id(self)}"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def test_directory_input_no_side_pkgs_returns_path_unchanged(self, tmp_path: Path) -> None:
+        """Plain directory with no side packages: lib_dir == input, debug/header None."""
+        lib_dir = tmp_path / "lib"
+        lib_dir.mkdir()
+
+        lib_out, debug_out, header_out = _extract_if_package(
+            input_path=lib_dir,
+            debug_pkg=None,
+            devel_pkg=None,
+            make_temp_dir=lambda p: tmp_path / p,
+            is_package=lambda _: False,
+            detect_extractor=lambda _: None,
+        )
+
+        assert lib_out == lib_dir
+        assert debug_out is None
+        assert header_out is None
+
+    def test_directory_input_with_debug_pkg_yields_debug_dir(self, tmp_path: Path) -> None:
+        """Directory input + standalone debug package: debug_dir must be non-None."""
+        lib_dir = tmp_path / "lib"
+        lib_dir.mkdir()
+        dbg_pkg = tmp_path / "debuginfo.rpm"
+        dbg_pkg.touch()
+        extracted_debug = tmp_path / "extracted_debug"
+        extracted_debug.mkdir()
+
+        counter = [0]
+        def _make_temp(prefix: str) -> Path:
+            d = tmp_path / f"{prefix}{counter[0]}"
+            counter[0] += 1
+            d.mkdir(exist_ok=True)
+            return d
+
+        dbg_extractor = _make_mock_extractor(lib_dir=extracted_debug, debug_dir=extracted_debug)
+
+        lib_out, debug_out, header_out = _extract_if_package(
+            input_path=lib_dir,
+            debug_pkg=dbg_pkg,
+            devel_pkg=None,
+            make_temp_dir=_make_temp,
+            is_package=lambda p: p != lib_dir,   # dir is not a package; debug pkg is
+            detect_extractor=lambda p: dbg_extractor if p == dbg_pkg else None,
+        )
+
+        assert lib_out == lib_dir
+        assert debug_out == extracted_debug   # debug_dir from ExtractResult
+        assert header_out is None
+
+    def test_directory_input_with_devel_pkg_yields_header_dir(self, tmp_path: Path) -> None:
+        """Directory input + standalone devel package: header_dir must be non-None."""
+        lib_dir = tmp_path / "lib"
+        lib_dir.mkdir()
+        dev_pkg = tmp_path / "devel.rpm"
+        dev_pkg.touch()
+        extracted_headers = tmp_path / "extracted_headers"
+        extracted_headers.mkdir()
+
+        counter = [0]
+        def _make_temp(prefix: str) -> Path:
+            d = tmp_path / f"{prefix}{counter[0]}"
+            counter[0] += 1
+            d.mkdir(exist_ok=True)
+            return d
+
+        dev_extractor = _make_mock_extractor(lib_dir=extracted_headers, header_dir=extracted_headers)
+
+        lib_out, debug_out, header_out = _extract_if_package(
+            input_path=lib_dir,
+            debug_pkg=None,
+            devel_pkg=dev_pkg,
+            make_temp_dir=_make_temp,
+            is_package=lambda p: p != lib_dir,
+            detect_extractor=lambda p: dev_extractor if p == dev_pkg else None,
+        )
+
+        assert lib_out == lib_dir
+        assert debug_out is None
+        assert header_out == extracted_headers   # header_dir from ExtractResult
+
+    def test_directory_input_with_both_side_pkgs(self, tmp_path: Path) -> None:
+        """Directory input + both debug and devel packages: both are returned."""
+        lib_dir = tmp_path / "lib"
+        lib_dir.mkdir()
+        dbg_pkg = tmp_path / "debuginfo.rpm"
+        dbg_pkg.touch()
+        dev_pkg = tmp_path / "devel.rpm"
+        dev_pkg.touch()
+        extracted_debug = tmp_path / "dbg"
+        extracted_debug.mkdir()
+        extracted_headers = tmp_path / "hdr"
+        extracted_headers.mkdir()
+
+        counter = [0]
+        def _make_temp(prefix: str) -> Path:
+            d = tmp_path / f"{prefix}{counter[0]}"
+            counter[0] += 1
+            d.mkdir(exist_ok=True)
+            return d
+
+        dbg_extractor = _make_mock_extractor(lib_dir=extracted_debug, debug_dir=extracted_debug)
+        dev_extractor = _make_mock_extractor(lib_dir=extracted_headers, header_dir=extracted_headers)
+
+        def _detect(p: Path) -> MagicMock | None:
+            if p == dbg_pkg:
+                return dbg_extractor
+            if p == dev_pkg:
+                return dev_extractor
+            return None
+
+        lib_out, debug_out, header_out = _extract_if_package(
+            input_path=lib_dir,
+            debug_pkg=dbg_pkg,
+            devel_pkg=dev_pkg,
+            make_temp_dir=_make_temp,
+            is_package=lambda p: p != lib_dir,
+            detect_extractor=_detect,
+        )
+
+        assert lib_out == lib_dir
+        assert debug_out == extracted_debug
+        assert header_out == extracted_headers
+
+    def test_debug_pkg_fallback_to_lib_dir_when_no_debug_dir(self, tmp_path: Path) -> None:
+        """When ExtractResult.debug_dir is None, fall back to lib_dir."""
+        lib_dir = tmp_path / "lib"
+        lib_dir.mkdir()
+        dbg_pkg = tmp_path / "debuginfo.rpm"
+        dbg_pkg.touch()
+        extracted = tmp_path / "extracted"
+        extracted.mkdir()
+
+        counter = [0]
+        def _make_temp(prefix: str) -> Path:
+            d = tmp_path / f"{prefix}{counter[0]}"
+            counter[0] += 1
+            d.mkdir(exist_ok=True)
+            return d
+
+        # debug_dir=None in ExtractResult: fallback must use lib_dir
+        dbg_extractor = _make_mock_extractor(lib_dir=extracted, debug_dir=None)
+
+        lib_out, debug_out, header_out = _extract_if_package(
+            input_path=lib_dir,
+            debug_pkg=dbg_pkg,
+            devel_pkg=None,
+            make_temp_dir=_make_temp,
+            is_package=lambda p: p != lib_dir,
+            detect_extractor=lambda p: dbg_extractor if p == dbg_pkg else None,
+        )
+
+        assert lib_out == lib_dir
+        assert debug_out == extracted  # fallback to lib_dir
+
+    def test_package_input_uses_result_debug_dir_not_lib_dir(self, tmp_path: Path) -> None:
+        """When input is a package, side-pkg debug_dir uses .debug_dir, not .lib_dir."""
+        pkg = tmp_path / "main.rpm"
+        pkg.touch()
+        dbg_pkg = tmp_path / "debuginfo.rpm"
+        dbg_pkg.touch()
+
+        main_lib = tmp_path / "main_lib"
+        main_lib.mkdir()
+        extracted_debug = tmp_path / "real_debug"
+        extracted_debug.mkdir()
+        extracted_lib_in_dbg = tmp_path / "dbg_lib"
+        extracted_lib_in_dbg.mkdir()
+
+        counter = [0]
+        def _make_temp(prefix: str) -> Path:
+            d = tmp_path / f"{prefix}{counter[0]}"
+            counter[0] += 1
+            d.mkdir(exist_ok=True)
+            return d
+
+        main_extractor = _make_mock_extractor(lib_dir=main_lib)
+        # debug_dir differs from lib_dir — must pick debug_dir
+        dbg_extractor = _make_mock_extractor(lib_dir=extracted_lib_in_dbg, debug_dir=extracted_debug)
+
+        def _detect(p: Path) -> MagicMock | None:
+            if p == pkg:
+                return main_extractor
+            if p == dbg_pkg:
+                return dbg_extractor
+            return None
+
+        lib_out, debug_out, header_out = _extract_if_package(
+            input_path=pkg,
+            debug_pkg=dbg_pkg,
+            devel_pkg=None,
+            make_temp_dir=_make_temp,
+            is_package=lambda _: True,
+            detect_extractor=_detect,
+        )
+
+        assert lib_out == main_lib
+        assert debug_out == extracted_debug  # .debug_dir preferred over .lib_dir
+        assert header_out is None
+
+
+class TestCompareReleaseIncludes:
+    def test_discover_include_roots_for_debian_layout(self, tmp_path: Path) -> None:
+        """Devel package roots include common distro include subroots."""
+        root = tmp_path / "dev"
+        (root / "usr" / "include" / "x86_64-linux-gnu").mkdir(parents=True)
+        (root / "usr" / "include" / "libxml2").mkdir()
+        roots = _discover_include_roots(root)
+        assert root in roots
+        assert root / "usr" / "include" in roots
+        assert root / "usr" / "include" / "x86_64-linux-gnu" in roots
+        assert root / "usr" / "include" / "libxml2" in roots
+
+    def test_prepare_inputs_accepts_side_specific_includes(self, tmp_path: Path) -> None:
+        """compare-release has compare-like --old-include/--new-include plumbing."""
+        old = tmp_path / "old"
+        new = tmp_path / "new"
+        old.mkdir()
+        new.mkdir()
+        old_lib = old / "libfoo.so"
+        new_lib = new / "libfoo.so"
+        old_lib.write_text("old")
+        new_lib.write_text("new")
+        old_inc_only = tmp_path / "old-include"
+        new_inc_only = tmp_path / "new-include"
+        old_inc_only.mkdir()
+        new_inc_only.mkdir()
+
+        result = _prepare_compare_release_inputs(
+            old, new,
+            None, None, None, None,
+            False, False,
+            (), (), (),
+            (),
+            (old_inc_only,), (new_inc_only,),
+            lambda p, _dbg, _dev: (p, None, None),
+            lambda *_args, **_kwargs: [],
+            lambda _p: False,
+            lambda _p: True,
+        )
+
+        old_inc = result[4]
+        new_inc = result[5]
+        assert old_inc == [old_inc_only]
+        assert new_inc == [new_inc_only]
+
+
+class TestLockstepSonameCoupling:
+    """A coordinated lockstep SONAME bump across a multi-library release should
+    not be flagged 'unnecessary' on members that had no break of their own when
+    a sibling/dependency genuinely broke (real-world: oneDAL bumps every
+    libonedal* SONAME together because libonedal_core breaks)."""
+
+    @staticmethod
+    def _entry(lib, changes, verdict):
+        from abicheck.checker import DiffResult
+        result = DiffResult(
+            old_version="1", new_version="2", library=lib,
+            changes=changes, verdict=verdict,
+        )
+        return {
+            "library": lib, "verdict": verdict.value,
+            "breaking": len(result.breaking),
+            "source_breaks": len(result.source_breaks),
+            "risk_changes": len(result.risk),
+            "compatible_additions": len(result.compatible),
+            "_diff_result": result,
+        }
+
+    def test_suppressed_when_sibling_breaks(self):
+        from abicheck.checker import Change, ChangeKind, Verdict
+        from abicheck.cli_compare_release import _suppress_lockstep_soname_findings
+
+        umbrella = self._entry(
+            "libonedal.so", [
+                Change(ChangeKind.SONAME_BUMP_UNNECESSARY, "DT_SONAME", "bump"),
+            ], Verdict.COMPATIBLE,
+        )
+        core = self._entry(
+            "libonedal_core.so",
+            [Change(ChangeKind.FUNC_REMOVED, "_Z3foov", "removed")],
+            Verdict.BREAKING,
+        )
+        n = _suppress_lockstep_soname_findings([umbrella, core], "BREAKING", None)
+        assert n == 1
+        kinds = [c.kind for c in umbrella["_diff_result"].changes]
+        assert ChangeKind.SONAME_BUMP_UNNECESSARY not in kinds
+        assert umbrella["compatible_additions"] == 0
+
+    def test_kept_when_no_real_break_in_release(self):
+        from abicheck.checker import Change, ChangeKind, Verdict
+        from abicheck.cli_compare_release import _suppress_lockstep_soname_findings
+
+        umbrella = self._entry(
+            "libonedal.so", [
+                Change(ChangeKind.SONAME_BUMP_UNNECESSARY, "DT_SONAME", "bump"),
+            ], Verdict.COMPATIBLE,
+        )
+        n = _suppress_lockstep_soname_findings([umbrella], "COMPATIBLE", None)
+        assert n == 0
+        kinds = [c.kind for c in umbrella["_diff_result"].changes]
+        assert ChangeKind.SONAME_BUMP_UNNECESSARY in kinds
+
+    def test_kept_when_release_worst_is_source_only_api_break(self):
+        # A SONAME bump is only justified by a *binary* ABI break; a source-only
+        # API_BREAK elsewhere must NOT suppress the relink-forcing warning.
+        from abicheck.checker import Change, ChangeKind, Verdict
+        from abicheck.cli_compare_release import _suppress_lockstep_soname_findings
+
+        umbrella = self._entry(
+            "libonedal.so", [
+                Change(ChangeKind.SONAME_BUMP_UNNECESSARY, "DT_SONAME", "bump"),
+            ], Verdict.COMPATIBLE,
+        )
+        n = _suppress_lockstep_soname_findings([umbrella], "API_BREAK", None)
+        assert n == 0
+        kinds = [c.kind for c in umbrella["_diff_result"].changes]
+        assert ChangeKind.SONAME_BUMP_UNNECESSARY in kinds
+
+    def test_rewrites_per_library_json(self, tmp_path):
+        from abicheck.checker import Change, ChangeKind, Verdict
+        from abicheck.cli_compare_release import _suppress_lockstep_soname_findings
+
+        umbrella = self._entry(
+            "libonedal.so.3", [
+                Change(ChangeKind.SONAME_BUMP_UNNECESSARY, "DT_SONAME", "bump"),
+            ], Verdict.COMPATIBLE,
+        )
+        core = self._entry(
+            "libonedal_core.so.3",
+            [Change(ChangeKind.FUNC_REMOVED, "_Z3foov", "removed")],
+            Verdict.BREAKING,
+        )
+        _suppress_lockstep_soname_findings([umbrella, core], "BREAKING", tmp_path)
+        data = json.loads((tmp_path / "libonedal.so.json").read_text())
+        assert all(c["kind"] != "soname_bump_unnecessary" for c in data["changes"])

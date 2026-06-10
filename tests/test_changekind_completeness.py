@@ -30,8 +30,10 @@ from abicheck.model import (
 # corresponding scenario) must be updated – the meta-test below will fail
 # until that happens.
 ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
+    ChangeKind.ABI_RELEVANT_BUILD_FLAG_CHANGED,
     ChangeKind.ANON_FIELD_CHANGED,
     ChangeKind.BASE_CLASS_POSITION_CHANGED,
+    ChangeKind.BUILD_CONTEXT_CHANGED,
     ChangeKind.BASE_CLASS_VIRTUAL_CHANGED,
     ChangeKind.CALLING_CONVENTION_CHANGED,
     ChangeKind.COMMON_SYMBOL_RISK,
@@ -69,8 +71,21 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.FUNC_VIRTUAL_BECAME_PURE,
     ChangeKind.FUNC_VIRTUAL_REMOVED,
     ChangeKind.FUNC_VISIBILITY_CHANGED,
+    ChangeKind.GENERATED_FILE_DEPENDENCY_UNSTABLE,
+    ChangeKind.HEADER_PARSE_CONTEXT_DRIFT,
     ChangeKind.IFUNC_INTRODUCED,
     ChangeKind.IFUNC_REMOVED,
+    ChangeKind.LINK_EXPORT_POLICY_CHANGED,
+    # Source ABI replay (ADR-030 D6) — exercised in tests/test_source_abi.py.
+    ChangeKind.PUBLIC_MACRO_VALUE_CHANGED,
+    ChangeKind.DEFAULT_ARGUMENT_CHANGED,
+    ChangeKind.INLINE_BODY_CHANGED,
+    ChangeKind.CONSTEXPR_VALUE_CHANGED,
+    ChangeKind.TEMPLATE_BODY_CHANGED,
+    ChangeKind.UNINSTANTIATED_TEMPLATE_REMOVED,
+    ChangeKind.SOURCE_DECL_BINARY_SYMBOL_MISMATCH,
+    ChangeKind.ODR_SOURCE_CONFLICT,
+    ChangeKind.GENERATED_HEADER_CHANGED,
     ChangeKind.METHOD_ACCESS_CHANGED,
     ChangeKind.NEEDED_ADDED,
     ChangeKind.NEEDED_REMOVED,
@@ -99,6 +114,8 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.SYMBOL_BINDING_CHANGED,
     ChangeKind.SYMBOL_BINDING_STRENGTHENED,
     ChangeKind.SYMBOL_SIZE_CHANGED,
+    ChangeKind.SYMBOL_SIZE_CHANGED_CONST_OBJECT,
+    ChangeKind.SYMBOL_SIZE_CHANGED_INTERNAL,
     ChangeKind.SYMBOL_TYPE_CHANGED,
     ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED,
     ChangeKind.SYMBOL_VERSION_DEFINED_ADDED,
@@ -107,8 +124,10 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.SYMBOL_VERSION_REQUIRED_REMOVED,
     ChangeKind.TOOLCHAIN_FLAG_DRIFT,
     ChangeKind.FRAME_REGISTER_CHANGED,
+    ChangeKind.VECTOR_ABI_CHANGED,
     ChangeKind.TYPEDEF_BASE_CHANGED,
     ChangeKind.TYPEDEF_REMOVED,
+    ChangeKind.TOOLCHAIN_VERSION_CHANGED,
     ChangeKind.TYPE_ADDED,
     ChangeKind.TYPE_ALIGNMENT_CHANGED,
     ChangeKind.TYPE_BASE_CHANGED,
@@ -151,11 +170,16 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.FUNC_VISIBILITY_PROTECTED_CHANGED,
     # WS-4a: ELF st_other visibility transitions (DEFAULT↔PROTECTED)
     ChangeKind.SYMBOL_ELF_VISIBILITY_CHANGED,
-    # WS-4c: mixed-mode function removed from binary (header-declared but gone from .dynsym)
-    ChangeKind.FUNC_REMOVED_FROM_BINARY,
     # ELF visibility, executable stack, symbol rename batch
-    ChangeKind.ELF_VISIBILITY_CHANGED,
     ChangeKind.EXECUTABLE_STACK,
+    ChangeKind.EXECUTABLE_STACK_REMOVED,
+    # Security-hardening drift (G12) — see TestSecurityHardeningDrift in
+    # tests/test_diff_platform_deep.py.
+    ChangeKind.RELRO_WEAKENED,
+    ChangeKind.PIE_DISABLED,
+    ChangeKind.STACK_CANARY_REMOVED,
+    ChangeKind.FORTIFY_SOURCE_WEAKENED,
+    ChangeKind.WRITABLE_EXECUTABLE_SEGMENT,
     ChangeKind.SYMBOL_RENAMED_BATCH,
     ChangeKind.FUNC_LIKELY_RENAMED,
     # Gap analysis: new checks
@@ -168,7 +192,7 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.INLINE_NAMESPACE_MOVED,
     ChangeKind.VTABLE_SYMBOL_IDENTITY_CHANGED,
     ChangeKind.ABI_SURFACE_EXPLOSION,
-    # SYCL Plugin Interface (ADR-020)
+    # SYCL Plugin Interface (ADR-020b)
     ChangeKind.SYCL_IMPLEMENTATION_CHANGED,
     ChangeKind.SYCL_PI_VERSION_CHANGED,
     ChangeKind.SYCL_PI_ENTRYPOINT_REMOVED,
@@ -188,10 +212,10 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.FLEXIBLE_ARRAY_MEMBER_CHANGED,
     # DWARF-based = delete detection (P3 gap)
     ChangeKind.FUNC_DELETED_DWARF,
-    # Internal-namespace leak via public API (oneDAL-style detail:: pattern)
+    # Internal-namespace leak via public API (detail:: leak pattern)
     # Exercised in tests/test_internal_leak.py.
     ChangeKind.INTERNAL_TYPE_LEAKS_VIA_PUBLIC_API,
-    # oneDAL-shaped detectors (case77–case89) — exercised in tests/test_onedal_detectors.py
+    # library-family pattern detectors (case77–case89) — exercised in tests/test_cpp_pattern_detectors.py
     ChangeKind.INSTANTIATION_MISSING_FROM_BINARY,
     ChangeKind.SERIALIZATION_TAG_CHANGED,
     ChangeKind.SYCL_OVERLOAD_SET_REMOVED,
@@ -200,6 +224,60 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.TAG_TYPE_RENAMED,
     ChangeKind.DEFAULT_TEMPLATE_ARG_CHANGED,
     ChangeKind.INLINE_BODY_REFERENCES_RENAMED_MEMBER,
+    # Bundle / multi-library findings (ADR-023).
+    # Exercised in tests/test_bundle.py.
+    ChangeKind.BUNDLE_INTRA_DEP_REMOVED,
+    ChangeKind.BUNDLE_INTRA_DEP_SIGNATURE_CHANGED,
+    ChangeKind.BUNDLE_INTRA_TYPE_CHANGED,
+    ChangeKind.BUNDLE_PROVIDER_CHANGED,
+    ChangeKind.BUNDLE_MANIFEST_INSTANTIATION_REMOVED,
+    ChangeKind.BUNDLE_MANIFEST_INSTANTIATION_ADDED,
+    ChangeKind.BUNDLE_LIBRARY_REMOVED,
+    ChangeKind.BUNDLE_LIBRARY_ADDED,
+    ChangeKind.BUNDLE_INTRA_DEP_VERSION_DRIFT,
+    # Explicit specifier transitions — exercised in tests/test_explicit_ctor.py
+    ChangeKind.CTOR_EXPLICIT_ADDED,
+    ChangeKind.CTOR_EXPLICIT_REMOVED,
+    # Class `final`-specifier transitions — exercised in
+    # tests/test_new_detectors.py::TestTypeFinalityChanged
+    ChangeKind.TYPE_BECAME_FINAL,
+    ChangeKind.TYPE_LOST_FINAL,
+    # Namespace-shape patterns — exercised in tests/test_diff_namespaces.py
+    ChangeKind.EXPERIMENTAL_GRADUATED,
+    ChangeKind.EXPERIMENTAL_REMOVED_WITHOUT_REPLACEMENT,
+    ChangeKind.STD_REEXPORT_REMOVED,
+    ChangeKind.INLINE_NAMESPACE_VERSION_BUMPED,
+    # Template / overload-set patterns — exercised in tests/test_diff_templates.py
+    ChangeKind.INTERNAL_TEMPLATE_LEAKS_VIA_PUBLIC_API,
+    ChangeKind.CPO_KIND_CHANGED,
+    ChangeKind.OVERLOAD_SET_REROUTED,
+    ChangeKind.MANDATORY_TEMPLATE_PARAM_ADDED,
+    ChangeKind.UNSPECIFIED_RETURN_NOW_NAMED,
+    # Build-config / probe-harness patterns — exercised in tests/test_diff_build_config.py
+    ChangeKind.API_DEPENDS_ON_CONSUMER_ENV,
+    ChangeKind.CXX_STANDARD_FLOOR_RAISED,
+    ChangeKind.BEHAVIOURAL_DEFAULT_CHANGED,
+    # Hidden friend transitions — exercised in tests/test_hidden_friends.py
+    ChangeKind.HIDDEN_FRIEND_ADDED,
+    ChangeKind.HIDDEN_FRIEND_REMOVED,
+    # Modern-C++/oneAPI ABI hazards — exercised in tests/test_new_detectors.py
+    ChangeKind.INTEGER_MODEL_CHANGED,
+    ChangeKind.ABI_TAG_CHANGED,
+    ChangeKind.CHAR8T_MIGRATION,
+    ChangeKind.BIT_INT_WIDTH_CHANGED,
+    ChangeKind.ATOMIC_QUALIFIER_CHANGED,
+    # API-surface intelligence anti-patterns (ADR-027) — exercised in
+    # tests/test_idioms.py (detection) and tests/test_pattern_verdicts.py
+    # (diff-time transitions and modulation).
+    ChangeKind.PUBLIC_API_EXPOSES_STL_BY_VALUE,
+    ChangeKind.POLYMORPHIC_TYPE_NON_VIRTUAL_DTOR,
+    ChangeKind.OPAQUE_INVARIANT_BROKEN,
+    ChangeKind.HANDLE_TYPE_CHANGED,
+    # API-surface metric drift (ADR-027 D1.2) — exercised in
+    # tests/test_surface_metrics_drift.py.
+    ChangeKind.PUBLIC_SURFACE_GREW,
+    ChangeKind.PUBLIC_SURFACE_SHRANK,
+    ChangeKind.UNDOCUMENTED_EXPORT_RATIO_INCREASED,
 }
 
 

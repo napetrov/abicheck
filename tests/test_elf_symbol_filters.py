@@ -9,7 +9,16 @@ from __future__ import annotations
 
 import pytest
 
-from abicheck.dumper import _is_abi_relevant_symbol
+from abicheck.diff_symbols import _public_functions, _public_variables
+from abicheck.dumper import _elf_classify_symbols, _is_abi_relevant_symbol
+from abicheck.dwarf_snapshot import _DwarfSnapshotBuilder
+from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolType
+from abicheck.elf_symbol_filter import (
+    FUNCTION_SYMBOL_TYPES,
+    VARIABLE_SYMBOL_TYPES,
+    exported_symbol_names,
+)
+from abicheck.model import AbiSnapshot, Function, Variable, Visibility
 
 # ---------------------------------------------------------------------------
 # Bug 1: GCC / compiler-internal symbols — must be filtered
@@ -76,8 +85,12 @@ def test_private_double_underscore_symbols_are_filtered(name: str) -> None:
     # libc++ inline namespace __1
     "_ZNSt3__16threadC1Ev",
     "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6assignEPKc",
-    # const std:: methods
+    # cv/ref-qualified std:: methods
     "_ZNKSt6vectorIiSaIiEE4sizeEv",
+    "_ZNVSt6atomicIiEaSERKi",
+    "_ZNRSt6atomicIiEaSERKi",
+    "_ZNKRSt6atomicIiEcviv",
+    "_ZNVRSt6atomicIiEaSERKi",
     # operator delete / new
     "_ZdlPv",
     "_ZdlPvSt11align_val_t",
@@ -89,6 +102,10 @@ def test_private_double_underscore_symbols_are_filtered(name: str) -> None:
     "_ZTVN10__cxxabiv121__vmi_class_type_infoE",
     "_ZTISt9exception",
     "_ZTSSt9bad_alloc",
+    "_ZTVSt23_Sp_counted_ptr_inplaceINSt13__future_base15_Deferred_stateE",
+    "_ZTVNSt13__future_base17_Async_state_implE",
+    "_ZTTSt23_Sp_counted_ptr_inplaceINSt13__future_base15_Deferred_stateE",
+    "_ZTTNSt13__future_base17_Async_state_implE",
     # std:: global symbols
     "_ZSt4cout",
     "_ZSt4cerr",
@@ -100,8 +117,46 @@ def test_stdlib_transitive_symbols_are_filtered(name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Bug 4: Linker-defined ELF boundary symbols — must be filtered
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name", [
+    "__bss_start",
+    "_edata",
+    "_end",
+])
+def test_linker_boundary_symbols_are_filtered(name: str) -> None:
+    assert _is_abi_relevant_symbol(name) is False, (
+        f"Linker boundary symbol {name!r} should be filtered out"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Legitimate public-API symbols — must NOT be filtered
 # ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name", [
+    # ELF lifecycle stubs emitted by the linker/toolchain, not library API.
+    "_init",
+    "_fini",
+])
+def test_elf_lifecycle_stubs_are_filtered(name: str) -> None:
+    assert _is_abi_relevant_symbol(name) is False, (
+        f"ELF lifecycle stub {name!r} should be filtered out"
+    )
+
+
+@pytest.mark.parametrize("name", [
+    # Linker-defined section boundary symbols, not callable library APIs.
+    "__bss_start",
+    "_edata",
+    "_end",
+])
+def test_elf_linker_boundary_symbols_are_filtered(name: str) -> None:
+    assert _is_abi_relevant_symbol(name) is False, (
+        f"ELF linker boundary symbol {name!r} should be filtered out"
+    )
+
 
 @pytest.mark.parametrize("name", [
     # mpfr public API
@@ -116,10 +171,9 @@ def test_stdlib_transitive_symbols_are_filtered(name: str) -> None:
     "_ZN3Foo3barEv",
     "_ZN6MyLib4CoreC1Ev",
     "_ZNK6MyLib4Core4nameEv",
-    # Regular single-underscore prefixed symbols (not double)
-    "_init",
-    "_fini",
-    # Symbol with single underscore separator — not private
+    "_ZTIN3foo3BarE",   # typeinfo for foo::Bar
+    "_ZTSN3foo3BarE",   # typeinfo name for foo::Bar
+    # Public initialization-style APIs must not be confused with lifecycle stubs.
     "my_function",
     "lib_init",
     # Empty-ish edge cases that are valid names
@@ -168,3 +222,409 @@ def test_double_underscore_boundary(name: str, expected: bool) -> None:
     assert _is_abi_relevant_symbol(name) is expected, (
         f"_is_abi_relevant_symbol({name!r}) expected {expected}"
     )
+
+
+def test_dwarf_export_index_uses_same_abi_relevance_filter(tmp_path) -> None:
+    """DWARF mode must not re-admit stdlib weak exports as public functions."""
+    meta = ElfMetadata(
+        symbols=[
+            ElfSymbol(name="_ZNSt10unique_ptrINSt6thread6_StateEEC1Ev"),
+            ElfSymbol(name="_ZNVSt6atomicIiEaSERKi"),
+            ElfSymbol(name="_ZN6MyLib4CoreC1Ev"),
+        ]
+    )
+    builder = _DwarfSnapshotBuilder(tmp_path / "libfoo.so", meta)
+
+    assert "_ZNSt10unique_ptrINSt6thread6_StateEEC1Ev" not in builder._exported_names
+    assert "_ZNVSt6atomicIiEaSERKi" not in builder._exported_names
+    assert "_ZN6MyLib4CoreC1Ev" in builder._exported_names
+    assert builder._is_exported("_ZNSt10unique_ptrINSt6thread6_StateEEC1Ev", "std::unique_ptr") is False
+    assert builder._is_exported("_ZNVSt6atomicIiEaSERKi", "std::atomic<int>::operator=") is False
+
+
+def test_dwarf_export_index_preserves_runtime_owned_stdlib_exports(tmp_path) -> None:
+    """libstdc++/libc++ own std:: symbols, so DWARF mode must not filter them."""
+    meta = ElfMetadata(
+        soname="libstdc++.so.6",
+        symbols=[
+            ElfSymbol(name="_ZNSt6vectorIiSaIiEE4sizeEv"),
+            ElfSymbol(name="_ZSt4cout"),
+            ElfSymbol(name="_init"),
+            ElfSymbol(name="__cpu_model"),
+        ],
+    )
+    builder = _DwarfSnapshotBuilder(tmp_path / "libstdc++.so.6", meta)
+
+    assert "_ZNSt6vectorIiSaIiEE4sizeEv" in builder._exported_names
+    assert "_ZSt4cout" in builder._exported_names
+    assert "_init" not in builder._exported_names
+    assert "__cpu_model" not in builder._exported_names
+
+
+# ---------------------------------------------------------------------------
+# Shared exported_symbol_names helper (used by diff_symbols / diff_types)
+# ---------------------------------------------------------------------------
+
+
+def test_exported_symbol_names_returns_empty_without_symbols() -> None:
+    """No ELF table (None or empty) yields an empty set so callers fall back."""
+    assert exported_symbol_names(None, FUNCTION_SYMBOL_TYPES) == set()
+    assert exported_symbol_names(ElfMetadata(symbols=[]), FUNCTION_SYMBOL_TYPES) == set()
+
+
+def test_exported_symbol_names_filters_by_symbol_type() -> None:
+    """Only the requested STT_* types are returned; empty names are skipped."""
+    meta = ElfMetadata(
+        symbols=[
+            ElfSymbol(name="do_work", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="resolver", sym_type=SymbolType.IFUNC),
+            ElfSymbol(name="g_table", sym_type=SymbolType.OBJECT),
+            ElfSymbol(name="", sym_type=SymbolType.FUNC),
+        ]
+    )
+    assert exported_symbol_names(meta, FUNCTION_SYMBOL_TYPES) == {"do_work", "resolver"}
+    assert exported_symbol_names(meta, VARIABLE_SYMBOL_TYPES) == {"g_table"}
+
+
+def test_exported_symbol_names_notype_counts_for_both_surfaces() -> None:
+    """STT_NOTYPE is intentionally accepted as both a func and a variable export."""
+    meta = ElfMetadata(symbols=[ElfSymbol(name="stub", sym_type=SymbolType.NOTYPE)])
+    assert "stub" in exported_symbol_names(meta, FUNCTION_SYMBOL_TYPES)
+    assert "stub" in exported_symbol_names(meta, VARIABLE_SYMBOL_TYPES)
+
+
+def test_exported_symbol_names_abi_relevant_only_drops_transitive_runtime() -> None:
+    """abi_relevant_only excludes transitive/toolchain exports but keeps own symbols."""
+    meta = ElfMetadata(
+        symbols=[
+            ElfSymbol(name="_ZN6MyLib4CoreC1Ev", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="_ZNSt6vectorIiSaIiEE4sizeEv", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="_init", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="_fini", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="__bss_start", sym_type=SymbolType.NOTYPE),
+            ElfSymbol(name="_edata", sym_type=SymbolType.NOTYPE),
+            ElfSymbol(name="_end", sym_type=SymbolType.NOTYPE),
+            ElfSymbol(name="lib_init", sym_type=SymbolType.FUNC),
+        ]
+    )
+    assert exported_symbol_names(meta, FUNCTION_SYMBOL_TYPES) == {
+        "_ZN6MyLib4CoreC1Ev",
+        "_ZNSt6vectorIiSaIiEE4sizeEv",
+        "_init",
+        "_fini",
+        "__bss_start",
+        "_edata",
+        "_end",
+        "lib_init",
+    }
+    assert exported_symbol_names(meta, FUNCTION_SYMBOL_TYPES, abi_relevant_only=True) == {
+        "_ZN6MyLib4CoreC1Ev",
+        "lib_init",
+    }
+
+
+def test_exported_symbol_names_can_preserve_runtime_owned_stdlib_exports() -> None:
+    """Symbols-only C++ runtime snapshots must keep their own stdlib exports."""
+    meta = ElfMetadata(
+        soname="libstdc++.so.6",
+        symbols=[
+            ElfSymbol(name="_ZNSt6vectorIiSaIiEE4sizeEv", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="_ZTVSt9exception", sym_type=SymbolType.OBJECT),
+            ElfSymbol(name="_ZTTSt23_Sp_counted_ptr_inplaceE", sym_type=SymbolType.OBJECT),
+            ElfSymbol(name="_init", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="__cpu_model", sym_type=SymbolType.OBJECT),
+        ],
+    )
+
+    assert exported_symbol_names(
+        meta,
+        FUNCTION_SYMBOL_TYPES,
+        abi_relevant_only=True,
+        filter_transitive_runtime_symbols=False,
+    ) == {"_ZNSt6vectorIiSaIiEE4sizeEv"}
+    assert exported_symbol_names(
+        meta,
+        VARIABLE_SYMBOL_TYPES,
+        abi_relevant_only=True,
+        filter_transitive_runtime_symbols=False,
+    ) == {"_ZTVSt9exception", "_ZTTSt23_Sp_counted_ptr_inplaceE"}
+
+
+def test_elf_classify_symbols_filters_lifecycle_stubs_at_dump_surface() -> None:
+    """The no-header dump path must drop lifecycle stubs from the ABI surface.
+
+    ``_elf_classify_symbols`` rebuilds the exported sets directly from
+    ``elf_meta.symbols`` (not the already-filtered
+    ``_pyelftools_exported_symbols`` result). Without the shared
+    ABI-relevance filter, ``_init``/``_fini`` and transitive runtime symbols
+    re-enter ELF-only snapshots as ``ELF_ONLY`` functions.
+    """
+    from abicheck.dumper import _elf_classify_symbols
+
+    meta = ElfMetadata(
+        symbols=[
+            ElfSymbol(name="_init", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="_fini", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="_ZNSt6vectorIiSaIiEE4sizeEv", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="api", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="g_table", sym_type=SymbolType.OBJECT),
+            ElfSymbol(name="__cpu_model", sym_type=SymbolType.OBJECT),
+            ElfSymbol(name="tls_var", sym_type=SymbolType.TLS),
+        ]
+    )
+
+    full, funcs, objects, tls = _elf_classify_symbols(meta, {"api"})
+
+    assert funcs == {"api"}
+    assert "_init" not in full and "_fini" not in full
+    assert objects == {"g_table"}
+    assert tls == {"tls_var"}
+    assert full == {"api", "g_table", "tls_var"}
+
+
+def test_elf_classify_symbols_preserves_runtime_owned_stdlib_exports() -> None:
+    """The no-header path must not hide libstdc++'s own vtables/VTT exports."""
+    from abicheck.dumper import _elf_classify_symbols
+
+    meta = ElfMetadata(
+        soname="libstdc++.so.6",
+        symbols=[
+            ElfSymbol(name="_ZNSt6vectorIiSaIiEE4sizeEv", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="_ZTVSt9exception", sym_type=SymbolType.OBJECT),
+            ElfSymbol(name="_ZTTSt23_Sp_counted_ptr_inplaceE", sym_type=SymbolType.OBJECT),
+            ElfSymbol(name="_init", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="__cpu_model", sym_type=SymbolType.OBJECT),
+        ],
+    )
+
+    full, funcs, objects, tls = _elf_classify_symbols(meta, set())
+
+    assert funcs == {"_ZNSt6vectorIiSaIiEE4sizeEv"}
+    assert objects == {"_ZTVSt9exception", "_ZTTSt23_Sp_counted_ptr_inplaceE"}
+    assert tls == set()
+    assert full == funcs | objects
+
+
+def test_elf_classify_symbols_uses_library_name_when_soname_is_missing() -> None:
+    """Symbols-only runtime dumps may need the input filename as owner context."""
+    from abicheck.dumper import _elf_classify_symbols
+
+    meta = ElfMetadata(
+        symbols=[
+            ElfSymbol(name="_ZNSt6vectorIiSaIiEE4sizeEv", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="_ZTVSt9exception", sym_type=SymbolType.OBJECT),
+            ElfSymbol(name="_init", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="__cpu_model", sym_type=SymbolType.OBJECT),
+        ],
+    )
+
+    full, funcs, objects, tls = _elf_classify_symbols(
+        meta,
+        set(),
+        library_name="libstdc++.so.6",
+    )
+
+    assert funcs == {"_ZNSt6vectorIiSaIiEE4sizeEv"}
+    assert objects == {"_ZTVSt9exception"}
+    assert tls == set()
+    assert full == funcs | objects
+
+
+def _function(name: str) -> Function:
+    return Function(
+        name=name,
+        mangled=name,
+        return_type="void",
+        visibility=Visibility.PUBLIC,
+    )
+
+
+def test_public_functions_falls_back_without_elf_metadata() -> None:
+    snap = AbiSnapshot(
+        library="libfoo.so",
+        version="1",
+        functions=[_function("_init"), _function("lib_init")],
+        elf=None,
+    )
+
+    assert set(_public_functions(snap)) == {"_init", "lib_init"}
+
+
+def test_public_functions_keeps_empty_filtered_elf_exports_empty() -> None:
+    snap = AbiSnapshot(
+        library="libfoo.so",
+        version="1",
+        functions=[_function("_init"), _function("_fini")],
+        elf=ElfMetadata(
+            symbols=[
+                ElfSymbol(name="_init", sym_type=SymbolType.FUNC),
+                ElfSymbol(name="_fini", sym_type=SymbolType.FUNC),
+            ]
+        ),
+    )
+
+    assert _public_functions(snap) == {}
+
+
+def test_public_functions_uses_abi_relevant_export_filter() -> None:
+    snap = AbiSnapshot(
+        library="libfoo.so",
+        version="1",
+        functions=[
+            _function("_init"),
+            _function("_ZNSt6vectorIiSaIiEE4sizeEv"),
+            _function("lib_init"),
+        ],
+        elf=ElfMetadata(
+            symbols=[
+                ElfSymbol(name="_init", sym_type=SymbolType.FUNC),
+                ElfSymbol(name="_ZNSt6vectorIiSaIiEE4sizeEv", sym_type=SymbolType.FUNC),
+                ElfSymbol(name="lib_init", sym_type=SymbolType.FUNC),
+            ]
+        ),
+    )
+
+    assert set(_public_functions(snap)) == {"lib_init"}
+
+
+def test_public_functions_preserves_runtime_owned_stdlib_exports() -> None:
+    snap = AbiSnapshot(
+        library="libstdc++.so.6",
+        version="1",
+        functions=[
+            _function("_ZNSt6vectorIiSaIiEE4sizeEv"),
+            _function("_init"),
+        ],
+        elf=ElfMetadata(
+            soname="libstdc++.so.6",
+            symbols=[
+                ElfSymbol(name="_ZNSt6vectorIiSaIiEE4sizeEv", sym_type=SymbolType.FUNC),
+                ElfSymbol(name="_init", sym_type=SymbolType.FUNC),
+            ],
+        ),
+    )
+
+    assert set(_public_functions(snap)) == {"_ZNSt6vectorIiSaIiEE4sizeEv"}
+
+
+def test_public_functions_uses_elf_soname_for_runtime_context() -> None:
+    snap = AbiSnapshot(
+        library="tmp-renamed-copy.so",
+        version="1",
+        functions=[
+            _function("_ZNSt6vectorIiSaIiEE4sizeEv"),
+            _function("_init"),
+        ],
+        elf=ElfMetadata(
+            soname="libstdc++.so.6",
+            symbols=[
+                ElfSymbol(name="_ZNSt6vectorIiSaIiEE4sizeEv", sym_type=SymbolType.FUNC),
+                ElfSymbol(name="_init", sym_type=SymbolType.FUNC),
+            ],
+        ),
+    )
+
+    assert set(_public_functions(snap)) == {"_ZNSt6vectorIiSaIiEE4sizeEv"}
+
+
+def _variable(name: str) -> Variable:
+    return Variable(
+        name=name,
+        mangled=name,
+        type="int",
+        visibility=Visibility.ELF_ONLY,
+    )
+
+
+def test_public_variables_filters_elf_only_linker_artifacts() -> None:
+    snap = AbiSnapshot(
+        library="libfoo.so",
+        version="1",
+        variables=[
+            _variable("__bss_start"),
+            _variable("_edata"),
+            _variable("_end"),
+            _variable("public_table"),
+        ],
+    )
+
+    assert set(_public_variables(snap)) == {"public_table"}
+
+
+def test_public_variables_preserves_runtime_owned_stdlib_vtables() -> None:
+    snap = AbiSnapshot(
+        library="libstdc++.so.6",
+        version="1",
+        variables=[
+            _variable("_ZTVSt9exception"),
+            _variable("_ZTTSt23_Sp_counted_ptr_inplaceE"),
+            _variable("__cpu_model"),
+        ],
+    )
+
+    assert set(_public_variables(snap)) == {
+        "_ZTVSt9exception",
+        "_ZTTSt23_Sp_counted_ptr_inplaceE",
+    }
+
+
+def test_public_variables_uses_elf_soname_for_runtime_context() -> None:
+    snap = AbiSnapshot(
+        library="tmp-renamed-copy.so",
+        version="1",
+        variables=[
+            _variable("_ZTVSt9exception"),
+            _variable("_ZTTSt23_Sp_counted_ptr_inplaceE"),
+            _variable("__cpu_model"),
+        ],
+        elf=ElfMetadata(soname="libstdc++.so.6"),
+    )
+
+    assert set(_public_variables(snap)) == {
+        "_ZTVSt9exception",
+        "_ZTTSt23_Sp_counted_ptr_inplaceE",
+    }
+
+
+def test_exported_symbol_names_abi_relevant_only_drops_linker_boundaries() -> None:
+    """abi_relevant_only excludes linker boundary markers but keeps real exports."""
+    meta = ElfMetadata(
+        symbols=[
+            ElfSymbol(name="ev_run", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="__bss_start", sym_type=SymbolType.NOTYPE),
+            ElfSymbol(name="_edata", sym_type=SymbolType.NOTYPE),
+            ElfSymbol(name="_end", sym_type=SymbolType.NOTYPE),
+        ]
+    )
+    assert exported_symbol_names(meta, FUNCTION_SYMBOL_TYPES) == {
+        "ev_run",
+        "__bss_start",
+        "_edata",
+        "_end",
+    }
+    assert exported_symbol_names(meta, FUNCTION_SYMBOL_TYPES, abi_relevant_only=True) == {
+        "ev_run",
+    }
+
+
+def test_elf_classify_symbols_drops_linker_boundaries_from_symbol_only_mode() -> None:
+    """The no-header ELF path must not re-admit linker boundary NOTYPE names."""
+    meta = ElfMetadata(
+        symbols=[
+            ElfSymbol(name="ev_run", sym_type=SymbolType.FUNC),
+            ElfSymbol(name="__bss_start", sym_type=SymbolType.NOTYPE),
+            ElfSymbol(name="_edata", sym_type=SymbolType.NOTYPE),
+            ElfSymbol(name="_end", sym_type=SymbolType.NOTYPE),
+            ElfSymbol(name="ev_loop_default", sym_type=SymbolType.OBJECT),
+        ]
+    )
+
+    exported, funcs, objects, tls = _elf_classify_symbols(
+        meta,
+        {"ev_run", "__bss_start", "_edata", "_end", "ev_loop_default"},
+    )
+
+    assert exported == {"ev_run", "ev_loop_default"}
+    assert funcs == {"ev_run"}
+    assert objects == {"ev_loop_default"}
+    assert tls == set()

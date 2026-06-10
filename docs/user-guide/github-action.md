@@ -4,10 +4,14 @@ abicheck ships as a reusable GitHub Action that you can add to any CI pipeline
 with a few lines of YAML. It installs Python, system dependencies, and abicheck
 automatically, then runs ABI comparison and reports results.
 
+> **Picking a mode or failure policy?** See
+> [Choose Your Workflow](choose-your-workflow.md) for the decision matrix —
+> which artifacts map to which `mode`, and which severity inputs gate the build.
+
 ## Quick start
 
 ```yaml
-- uses: napetrov/abicheck@v1
+- uses: napetrov/abicheck@v0.3.0
   with:
     old-library: abi-baseline.json
     new-library: build/libfoo.so
@@ -142,7 +146,7 @@ jobs:
         run: mkdir build && cd build && cmake .. && make
 
       - name: Check ABI compatibility
-        uses: napetrov/abicheck@v1
+        uses: napetrov/abicheck@v0.3.0
         with:
           old-library: abi-baseline.json  # committed to repo
           new-library: build/libfoo.so
@@ -171,7 +175,7 @@ jobs:
         run: mkdir build && cd build && cmake .. && make
 
       - name: Dump ABI baseline
-        uses: napetrov/abicheck@v1
+        uses: napetrov/abicheck@v0.3.0
         with:
           mode: dump
           new-library: build/libfoo.so
@@ -194,7 +198,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check ABI
-        uses: napetrov/abicheck@v1
+        uses: napetrov/abicheck@v0.3.0
         with:
           old-library: abi-baseline.json
           new-library: build/libfoo.so
@@ -213,7 +217,7 @@ jobs:
             abi-baseline-${{ github.event.repository.default_branch }}-
 
       - name: Check ABI
-        uses: napetrov/abicheck@v1
+        uses: napetrov/abicheck@v0.3.0
         with:
           old-library: abi-baseline.json
           new-library: build/libfoo.so
@@ -240,7 +244,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: mkdir build && cd build && cmake .. && make
 
-      - uses: napetrov/abicheck@v1
+      - uses: napetrov/abicheck@v0.3.0
         with:
           old-library: abi-baseline.json
           new-library: build/libfoo.so
@@ -257,7 +261,7 @@ then compare with a separate step.
 
 ```yaml
       # Step 1: dump ABI snapshot from cross-compiled binary
-      - uses: napetrov/abicheck@v1
+      - uses: napetrov/abicheck@v0.3.0
         with:
           mode: dump
           new-library: build-arm64/libfoo.so
@@ -277,7 +281,7 @@ then compare with a separate step.
           - { name: libfoo, so: build/libfoo.so, header: include/foo.h }
           - { name: libbar, so: build/libbar.so, header: include/bar.h }
     steps:
-      - uses: napetrov/abicheck@v1
+      - uses: napetrov/abicheck@v0.3.0
         with:
           old-library: baselines/${{ matrix.lib.name }}.json
           new-library: ${{ matrix.lib.so }}
@@ -310,7 +314,7 @@ jobs:
           echo "build on ${{ matrix.os }}"
 
       - name: ABI compare (native)
-        uses: napetrov/abicheck@v1
+        uses: napetrov/abicheck@v0.3.0
         with:
           old-library: baselines/${{ runner.os }}/abi-old.json
           new-library: build/${{ runner.os }}/libfoo.${{ matrix.ext }}
@@ -350,7 +354,7 @@ jobs:
         run: cmake -B build && cmake --build build
 
       - name: ABI compare (native)
-        uses: napetrov/abicheck@v1
+        uses: napetrov/abicheck@v0.3.0
         with:
           old-library: baselines/${{ runner.os }}/abi-old.json
           new-library: build/libfoo.${{ matrix.ext }}
@@ -419,7 +423,7 @@ If `castxml` + compiler are already available (custom image, pre-provisioned VM,
 or conda-forge environment), set `install-deps: false`:
 
 ```yaml
-      - uses: napetrov/abicheck@v1
+      - uses: napetrov/abicheck@v0.3.0
         with:
           old-library: old.json
           new-library: new.json
@@ -433,7 +437,7 @@ Example (conda-forge pre-step):
         run: |
           conda install -y -c conda-forge abicheck
 
-      - uses: napetrov/abicheck@v1
+      - uses: napetrov/abicheck@v0.3.0
         with:
           old-library: old.json
           new-library: new.json
@@ -466,7 +470,7 @@ jobs:
           docker export $(docker create new-image:latest) | tar -xf - -C /tmp/new-root
 
       - name: Full-stack ABI check
-        uses: napetrov/abicheck@v1
+        uses: napetrov/abicheck@v0.3.0
         with:
           mode: stack-check
           new-library: usr/bin/myapp
@@ -486,7 +490,7 @@ missing dependencies before deployment:
 
 ```yaml
       - name: Audit dependencies
-        uses: napetrov/abicheck@v1
+        uses: napetrov/abicheck@v0.3.0
         with:
           mode: deps
           new-library: build/myapp
@@ -500,7 +504,7 @@ binding information alongside the regular ABI diff:
 
 ```yaml
       - name: Compare with dependency context
-        uses: napetrov/abicheck@v1
+        uses: napetrov/abicheck@v0.3.0
         with:
           old-library: baseline.json
           new-library: build/libfoo.so
@@ -514,7 +518,7 @@ Add `--annotate` to get ABI breaking changes as inline comments on the PR diff.
 See [GitHub PR Annotations](annotations.md) for full details.
 
 ```yaml
-      - uses: napetrov/abicheck@v1
+      - uses: napetrov/abicheck@v0.3.0
         with:
           old-library: baseline.json
           new-library: build/libfoo.so
@@ -527,7 +531,7 @@ See [GitHub PR Annotations](annotations.md) for full details.
 Allow API breaks but block binary ABI breaks:
 
 ```yaml
-      - uses: napetrov/abicheck@v1
+      - uses: napetrov/abicheck@v0.3.0
         with:
           old-library: baseline.json
           new-library: build/libfoo.so
@@ -541,7 +545,7 @@ Allow API breaks but block binary ABI breaks:
 Block PRs that accidentally add new public symbols or types:
 
 ```yaml
-      - uses: napetrov/abicheck@v1
+      - uses: napetrov/abicheck@v0.3.0
         with:
           old-library: baseline.json
           new-library: build/libfoo.so
@@ -567,7 +571,7 @@ and plain directories.
 
 ```yaml
       - name: Compare RPM packages
-        uses: napetrov/abicheck@v1
+        uses: napetrov/abicheck@v0.3.0
         with:
           mode: compare-release
           old-library: libfoo-1.0-1.el9.x86_64.rpm
@@ -581,7 +585,7 @@ build-id resolution:
 
 ```yaml
       - name: Compare with debug info
-        uses: napetrov/abicheck@v1
+        uses: napetrov/abicheck@v0.3.0
         with:
           mode: compare-release
           old-library: libfoo-1.0.rpm
@@ -594,7 +598,7 @@ build-id resolution:
 
 ```yaml
       - name: Compare Deb packages
-        uses: napetrov/abicheck@v1
+        uses: napetrov/abicheck@v0.3.0
         with:
           mode: compare-release
           old-library: libfoo1_1.0-1_amd64.deb
@@ -607,7 +611,7 @@ build-id resolution:
 
 ```yaml
       - name: Compare SDK tarballs
-        uses: napetrov/abicheck@v1
+        uses: napetrov/abicheck@v0.3.0
         with:
           mode: compare-release
           old-library: sdk-2.0.tar.gz
@@ -619,7 +623,7 @@ build-id resolution:
 
 ```yaml
       - name: Compare conda packages
-        uses: napetrov/abicheck@v1
+        uses: napetrov/abicheck@v0.3.0
         with:
           mode: compare-release
           old-library: pkg-v1.conda
@@ -631,7 +635,7 @@ build-id resolution:
 Check whether your application binary is affected by a library update:
 
 ```yaml
-      - uses: napetrov/abicheck@v1
+      - uses: napetrov/abicheck@v0.3.0
         with:
           mode: appcompat
           app-binary: build/myapp
@@ -645,7 +649,7 @@ Check whether your application binary is affected by a library update:
 Verify a library provides all symbols an application needs — no old library required:
 
 ```yaml
-      - uses: napetrov/abicheck@v1
+      - uses: napetrov/abicheck@v0.3.0
         with:
           mode: appcompat
           app-binary: build/myapp
@@ -655,14 +659,16 @@ Verify a library provides all symbols an application needs — no old library re
 
 ## Versioning
 
-The action follows [semantic versioning](https://semver.org/) with floating
-major version tags:
+The action follows [semantic versioning](https://semver.org/). While abicheck
+is pre-1.0, pin an exact release tag (the examples in this guide use the latest,
+`v0.3.0`); a floating major tag is not published yet:
 
 ```yaml
-uses: napetrov/abicheck@v1         # latest stable v1.x.x (recommended)
-uses: napetrov/abicheck@v1.2.0     # exact version (reproducible)
+uses: napetrov/abicheck@v0.3.0     # exact release tag (recommended, reproducible)
 uses: napetrov/abicheck@abc123def  # exact commit SHA (most secure)
 ```
 
-The `v1` tag is updated with each patch/minor release. Breaking changes to
-the action interface will increment to `v2`.
+Released tags are listed on the
+[Releases page](https://github.com/napetrov/abicheck/releases). Once abicheck
+reaches a stable `1.0`, a floating `v1` major tag updated on each patch/minor
+release will become the recommended pin.

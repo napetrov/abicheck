@@ -142,9 +142,9 @@ class TestDetectorRegistry:
     """Self-registering detector registry."""
 
     def test_all_detectors_registered(self):
-        """All 40 detectors are registered via decorators."""
+        """All 45 detectors are registered via decorators."""
         registry = _get_populated_registry()
-        assert len(registry) == 40
+        assert len(registry) == 45
 
     def test_detector_names_unique(self):
         """No duplicate detector names."""
@@ -211,7 +211,7 @@ class TestDetectorRegistry:
         assert isinstance(changes, list)
         assert isinstance(results, list)
         # Results should have entries for all detectors (enabled or disabled)
-        assert len(results) == 40
+        assert len(results) == 45
 
     def test_support_check_disables_detector(self):
         """Detectors with failing support checks are disabled."""
@@ -267,12 +267,17 @@ class TestPostProcessingPipeline:
             "deduplicate_cross_detector",
             "downgrade_opaque_type_changes",
             "enrich_source_locations",
+            "filter_non_public_surface",
             "apply_suppression",
             "suppress_renamed_pairs",
             "filter_redundant",
             "enrich_affected_symbols",
             "detect_internal_leaks",
-            "detect_onedal_patterns",
+            "demote_unreachable_internal_churn",
+            "detect_cpp_patterns",
+            "detect_namespace_patterns",
+            "detect_template_patterns",
+            "escalate_frozen_namespace_violations",
         ]
         assert DEFAULT_PIPELINE.step_names == expected_names
 
@@ -361,7 +366,7 @@ class TestCompareUsesNewArchitecture:
         result = compare(old, new)
         assert result.verdict.value == "NO_CHANGE"
         assert result.changes == []
-        assert len(result.detector_results) == 40
+        assert len(result.detector_results) == 45
 
     def test_compare_detects_func_removal(self):
         """compare() detects function removal via registry."""

@@ -1,4 +1,5 @@
 # Copyright 2026 Nikolay Petrov
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -130,11 +132,14 @@ class TarExtractor:
 
     def detect(self, pkg_path: Path) -> bool:
         name = pkg_path.name.lower()
-        return name.endswith((".tar", ".tar.gz", ".tar.xz", ".tar.bz2", ".tgz"))
+        return name.endswith((".tar", ".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tgz"))
 
     def extract(self, pkg_path: Path, target_dir: Path) -> ExtractResult:
         _log.info("Extracting tar archive: %s", pkg_path)
-        self._safe_extract(pkg_path, target_dir)
+        if pkg_path.name.lower().endswith(".tar.zst"):
+            self._safe_extract_zst_tar(pkg_path, target_dir)
+        else:
+            self._safe_extract(pkg_path, target_dir)
         return ExtractResult(lib_dir=target_dir)
 
     @staticmethod
@@ -175,6 +180,38 @@ class TarExtractor:
                 tf.extractall(path=target_dir, filter="data")  # nosec B202 — members validated above
             else:
                 tf.extractall(path=target_dir)  # nosec B202 — members validated above
+
+    @staticmethod
+    def _safe_extract_zst_tar(zst_path: Path, target_dir: Path) -> None:
+        """Extract a zstd-compressed tar archive with the normal tar safety checks."""
+        staging = Path(tempfile.mkdtemp(dir=target_dir, prefix=".abicheck-zst-"))
+        tar_path = staging / "payload.tar"
+        try:
+            try:
+                import zstandard as zstandard_mod
+            except ImportError:
+                zstandard_mod = None
+            if zstandard_mod is not None:
+                dctx = zstandard_mod.ZstdDecompressor()
+                with open(zst_path, "rb") as compressed, open(tar_path, "wb") as out:
+                    with dctx.stream_reader(compressed) as reader:
+                        shutil.copyfileobj(reader, out)
+            else:
+                zstd = shutil.which("zstd")
+                if zstd is None:
+                    raise SnapshotError(
+                        "Cannot extract .tar.zst: install 'zstandard' Python package "
+                        "or 'zstd' command-line tool."
+                    )
+                subprocess.run(
+                    [zstd, "-d", "-f", str(zst_path), "-o", str(tar_path)],
+                    check=True,
+                    capture_output=True,
+                    timeout=120,
+                )
+            TarExtractor._safe_extract(tar_path, target_dir)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
 
 
 # ── RPM extractor ────────────────────────────────────────────────────────────
@@ -331,7 +368,7 @@ class DebExtractor:
         staging = Path(tempfile.mkdtemp(dir=target_dir, prefix=".deb_staging_"))
         try:
             subprocess.run(
-                [ar, "x", str(deb_path)],
+                [ar, "x", str(deb_path.resolve())],
                 cwd=str(staging),
                 check=True,
                 capture_output=True,
@@ -351,7 +388,10 @@ class DebExtractor:
                 )
 
             # Extract data.tar.* with security checks
-            TarExtractor._safe_extract(data_tar, target_dir)
+            if data_tar.name.endswith(".tar.zst"):
+                TarExtractor._safe_extract_zst_tar(data_tar, target_dir)
+            else:
+                TarExtractor._safe_extract(data_tar, target_dir)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
 
@@ -434,60 +474,7 @@ class CondaExtractor:
     @staticmethod
     def _extract_zst_tar(zst_path: Path, target_dir: Path) -> None:
         """Extract a .tar.zst file using zstd + tar or Python zstandard."""
-        # Try Python zstandard first
-        try:
-            import zstandard
-            dctx = zstandard.ZstdDecompressor()
-            with open(zst_path, "rb") as compressed:
-                with dctx.stream_reader(compressed) as reader:
-                    with tarfile.open(fileobj=reader, mode="r|") as tf:
-                        target_root = target_dir.resolve()
-                        for member in tf:
-                            _validate_member_path(member.name, target_root)
-                            if member.ischr() or member.isblk() or member.isfifo():
-                                raise ExtractionSecurityError(
-                                    member.name,
-                                    "archive contains a device or FIFO entry",
-                                )
-                            if member.issym():
-                                _validate_symlink_target(
-                                    member.name, member.linkname, target_root
-                                )
-                            elif member.islnk():
-                                _validate_member_path(
-                                    member.linkname, target_root
-                                )
-                        # Re-read for extraction (stream was consumed)
-                with open(zst_path, "rb") as compressed2:
-                    with dctx.stream_reader(compressed2) as reader2:
-                        with tarfile.open(fileobj=reader2, mode="r|") as tf2:
-                            if sys.version_info >= (3, 12):
-                                tf2.extractall(path=target_dir, filter="data")  # nosec B202
-                            else:
-                                tf2.extractall(path=target_dir)  # nosec B202
-            return
-        except ImportError:
-            pass
-
-        # Fall back to system zstd command
-        zstd = shutil.which("zstd")
-        if zstd is None:
-            raise SnapshotError(
-                "Cannot extract .tar.zst: install 'zstandard' Python package "
-                "or 'zstd' command-line tool."
-            )
-        # Decompress to tar, then extract
-        tar_path = zst_path.with_suffix("")  # strip .zst
-        subprocess.run(
-            [zstd, "-d", str(zst_path), "-o", str(tar_path)],
-            check=True,
-            capture_output=True,
-            timeout=120,
-        )
-        try:
-            TarExtractor._safe_extract(tar_path, target_dir)
-        finally:
-            tar_path.unlink(missing_ok=True)
+        TarExtractor._safe_extract_zst_tar(zst_path, target_dir)
 
 
 # ── Wheel (pip) extractor ────────────────────────────────────────────────────
@@ -551,7 +538,7 @@ def is_package(path: Path) -> bool:
         return False
     name = path.name.lower()
     if name.endswith((
-        ".rpm", ".deb", ".tar", ".tar.gz", ".tar.xz", ".tar.bz2", ".tgz",
+        ".rpm", ".deb", ".tar", ".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tgz",
         ".conda", ".whl",
     )):
         return True
@@ -576,9 +563,27 @@ _ELF_MAGIC = b"\x7fELF"
 _ET_DYN = 3
 # Program header type PT_INTERP (interpreter segment — present in executables, absent in DSOs)
 _PT_INTERP = 3
+_SO_NAME_RE = re.compile(r"^(?P<stem>.+)\.so(?P<version>(?:\.[A-Za-z0-9]+)*)$", re.IGNORECASE)
+_NUMERIC_SO_VERSION_RE = re.compile(r"(?:\.\d+)+$")
+_ALNUM_SO_VERSION_RE = re.compile(r"(?:\.[A-Za-z0-9]+)+$")
 
 
-def _has_interp_segment(f: IO[bytes], ei_class: int, byte_order: str) -> bool:
+def _has_shared_object_name(path: Path | str) -> bool:
+    """Return True for .so or versioned SONAME-style filenames."""
+    match = _SO_NAME_RE.match(Path(path).name)
+    if match is None:
+        return False
+    version = match.group("version")
+    if not version:
+        return True
+    if _NUMERIC_SO_VERSION_RE.fullmatch(version):
+        return True
+    return match.group("stem").lower().startswith("lib") and (
+        _ALNUM_SO_VERSION_RE.fullmatch(version) is not None
+    )
+
+
+def _has_interp_segment(f: IO[bytes], ei_class: int, byte_order: str) -> bool | None:
     """Check if an ELF file has a PT_INTERP program header (i.e. is an executable)."""
     try:
         if ei_class == 1:  # 32-bit
@@ -598,6 +603,14 @@ def _has_interp_segment(f: IO[bytes], ei_class: int, byte_order: str) -> bool:
 
         if e_phoff == 0 or e_phnum == 0:
             return False
+        expected_phentsize = 32 if ei_class == 1 else 56
+        # The program-header entry size is fixed by ELF class (32 bytes for
+        # ELFCLASS32, 56 for ELFCLASS64). Any mismatch — undersized *or*
+        # oversized — means the layout we read p_type from at fixed offsets is
+        # not trustworthy, so treat it as inconclusive rather than risk
+        # misclassifying the file.
+        if e_phentsize != expected_phentsize:
+            return None
 
         for i in range(e_phnum):
             f.seek(e_phoff + i * e_phentsize)
@@ -606,7 +619,7 @@ def _has_interp_segment(f: IO[bytes], ei_class: int, byte_order: str) -> bool:
                 return True
         return False
     except (OSError, struct.error):
-        return False
+        return None
 
 
 def _is_elf_shared_object(path: Path) -> bool:
@@ -629,7 +642,17 @@ def _is_elf_shared_object(path: Path) -> bool:
 
             # Distinguish PIE executables from true shared objects:
             # executables have a PT_INTERP segment, shared objects don't.
-            return not _has_interp_segment(f, ei_class, byte_order)
+            has_interp = _has_interp_segment(f, ei_class, byte_order)
+            if has_interp is None:
+                return False
+            if has_interp:
+                # A few distro runtime DSOs are ET_DYN, named like libraries,
+                # and intentionally carry PT_INTERP so they can be invoked
+                # directly (for example Ubuntu's libcap.so.2.66).  Keep the
+                # PIE-executable guard for app-like filenames, but do not drop
+                # real versioned .so files from package discovery.
+                return _has_shared_object_name(path)
+            return True
     except (OSError, struct.error):
         return False
 
@@ -655,6 +678,7 @@ def discover_shared_libraries(
     for dirpath, _dirnames, filenames in os.walk(extract_dir, followlinks=False):
         for fn in filenames:
             fp = Path(dirpath) / fn
+            elf_path = fp
             if fp.is_symlink():
                 # Follow symlinks only to check the target, don't add symlinks themselves
                 # unless the target is a real shared object
@@ -662,10 +686,11 @@ def discover_shared_libraries(
                     real = fp.resolve()
                     if not real.exists():
                         continue
+                    elf_path = real
                 except OSError:
                     continue
 
-            if not _is_elf_shared_object(fp):
+            if not _is_elf_shared_object(elf_path):
                 continue
 
             # Filter by path convention unless --include-private-dso
@@ -680,10 +705,9 @@ def discover_shared_libraries(
                     rel_parts == d or rel_parts.startswith(d + "/")
                     for d in _PUBLIC_LIB_DIRS
                 )
-                # Also accept files with .so in name at any depth as a fallback
-                # for flat directory layouts (e.g. plain tar archives)
-                name_lower = fn.lower()
-                has_so_ext = ".so" in name_lower
+                # Also accept files with a .so suffix/versioned SONAME at any
+                # depth as a fallback for flat directory layouts.
+                has_so_ext = _has_shared_object_name(fn)
                 if not in_public and not has_so_ext:
                     continue
 

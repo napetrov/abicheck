@@ -47,7 +47,8 @@ BINARY_ONLY_KINDS: frozenset[str] = frozenset({
     "soname_changed", "needed_added", "needed_removed",
     "rpath_changed", "runpath_changed",
     "symbol_binding_changed", "symbol_binding_strengthened",
-    "symbol_type_changed", "symbol_size_changed",
+    "symbol_type_changed", "symbol_size_changed", "symbol_size_changed_internal",
+    "symbol_size_changed_const_object",
     "ifunc_introduced", "ifunc_removed", "common_symbol_risk",
     "symbol_version_defined_removed",
     "symbol_version_required_added", "symbol_version_required_removed",
@@ -55,6 +56,8 @@ BINARY_ONLY_KINDS: frozenset[str] = frozenset({
     # DWARF-derived calling convention and frame register changes (#117)
     "calling_convention_changed", "value_abi_trait_changed",
     "frame_register_changed",
+    # DWARF producer-derived vector-function (SIMD clone) ABI flag drift
+    "vector_abi_changed",
 })
 
 #: Canonical breaking kinds (single source of truth from checker_policy).

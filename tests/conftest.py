@@ -40,6 +40,10 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     )
+    config.addinivalue_line(
+        "markers",
+        "msvc: requires the MSVC toolchain (cl.exe) — Windows PDB end-to-end tests",
+    )
 
 
 def _integration_skip_reason() -> str | None:
@@ -67,6 +71,14 @@ def _integration_skip_reason() -> str | None:
     return None
 
 
+# Marker → external tool that must be on PATH for that marker's tests to run.
+# Add a row here to gate a new marker on tool availability — no copy-paste loop.
+_MARKER_REQUIRED_TOOL: dict[str, str] = {
+    "abicc": "abi-compliance-checker",
+    "msvc": "cl",  # MSVC compiler driver (set up by the MSVC dev environment)
+}
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
     reason = _integration_skip_reason()
     if reason:
@@ -75,17 +87,70 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
             if "integration" in item.keywords:
                 item.add_marker(skip)
 
-    if shutil.which("abi-compliance-checker") is None:
-        skip_abicc = pytest.mark.skip(reason="abi-compliance-checker not found in PATH")
+    for marker, tool in _MARKER_REQUIRED_TOOL.items():
+        if shutil.which(tool) is not None:
+            continue
+        skip = pytest.mark.skip(reason=f"{tool} not found in PATH")
         for item in items:
-            if "abicc" in item.keywords:
-                item.add_marker(skip_abicc)
+            if marker in item.keywords:
+                item.add_marker(skip)
 
 
 @pytest.fixture
 def update_goldens(request: pytest.FixtureRequest) -> bool:
     """True when --update-goldens flag is passed."""
     return bool(request.config.getoption("--update-goldens"))
+
+
+# ---------------------------------------------------------------------------
+# Silent-skip guard
+# ---------------------------------------------------------------------------
+#
+# Marker-gated lanes (abicc / libabigail / integration / msvc) self-skip when
+# their external tool is missing — correct locally, but dangerous in CI: if the
+# tool silently fails to install, every test in the lane skips and the lane goes
+# *green with zero work done*. To close that hole, a lane can export
+# ``ABICHECK_MIN_EXECUTED=<n>``; the session then fails unless at least <n>
+# tests actually reached their call phase (passed or failed — skips don't count).
+
+_EXECUTED_TESTS = 0
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    """Count tests that actually executed (ran their call phase)."""
+    global _EXECUTED_TESTS
+    if report.when == "call" and report.outcome in ("passed", "failed"):
+        _EXECUTED_TESTS += 1
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Fail the session if fewer tests ran than ``ABICHECK_MIN_EXECUTED`` demands.
+
+    Skipped on xdist workers (the controller aggregates every worker's reports
+    and is the one that owns the final exit status).
+    """
+    if hasattr(session.config, "workerinput"):
+        return  # this is an xdist worker; let the controller decide
+    raw = os.environ.get("ABICHECK_MIN_EXECUTED")
+    if not raw:
+        return
+    try:
+        minimum = int(raw)
+    except ValueError:
+        return
+    if _EXECUTED_TESTS < minimum:
+        session.exitstatus = 1
+        reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+        msg = (
+            f"ABICHECK_MIN_EXECUTED={minimum} but only {_EXECUTED_TESTS} test(s) "
+            "actually ran — the lane's external tool likely failed to install "
+            "(tests silently skipped). Treating as a CI failure."
+        )
+        if reporter is not None:
+            reporter.write_line("")
+            reporter.write_line(msg, red=True, bold=True)
+        else:  # pragma: no cover - terminalreporter always present in practice
+            print(msg)
 
 
 def _cmake_configure_once(build_dir: Path) -> bool:

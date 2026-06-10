@@ -88,6 +88,21 @@ KNOWN_GAPS: dict[str, str] = {
     for k, v in _gt_data["verdicts"].items()
     if "known_gap" in v
 }
+# requires_feature: case_name → compiler feature that must be available, else
+# the case is skipped (the fixture cannot even compile on toolchains lacking
+# it — e.g. C23 _BitInt needs GCC 14+, so GCC 13 on ubuntu-latest skips it).
+REQUIRES_FEATURE: dict[str, str] = {
+    k: v["requires_feature"]
+    for k, v in _gt_data["verdicts"].items()
+    if "requires_feature" in v
+}
+# scope_public_headers: case_name → bool. When true the case is compared with
+# ADR-024 public-surface scoping enabled (demonstrates that backward-compatible
+# changes to non-public API/ABI produce no findings).
+SCOPE_PUBLIC_HEADERS: dict[str, bool] = {
+    k: bool(v.get("scope_public_headers", False))
+    for k, v in _gt_data["verdicts"].items()
+}
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +457,7 @@ def _dump_and_compare(
     v2_lib: Path,
     headers_v1: list[Path],
     headers_v2: list[Path],
+    scope_to_public_surface: bool = False,
 ) -> tuple[str, list]:
     """Run abicheck dump+compare and return (verdict, changes)."""
     from abicheck.checker import compare
@@ -453,7 +469,7 @@ def _dump_and_compare(
     except Exception as exc:
         pytest.fail(f"{case_name}: dump failed: {exc}")
 
-    result = compare(snap1, snap2)
+    result = compare(snap1, snap2, scope_to_public_surface=scope_to_public_surface)
     return result.verdict.value.upper(), result.changes
 
 
@@ -499,6 +515,19 @@ def test_example_pipeline(
     if not shutil.which("castxml"):
         pytest.skip("castxml not found in PATH")
 
+    # --- Compiler-feature filter ---
+    # Some cases use language features the native toolchain may not implement
+    # (e.g. C23 _BitInt needs GCC 14+). The fixture cannot compile at all on
+    # such toolchains, so skip rather than fail.
+    feature = REQUIRES_FEATURE.get(case_name)
+    if feature is not None:
+        from tests.feature_probe import compiler_supports
+        if not compiler_supports(feature):
+            pytest.skip(
+                f"{case_name} requires compiler feature {feature!r} which the "
+                f"native toolchain does not support"
+            )
+
     case_dir = EXAMPLES_DIR / case_name
     assert case_dir.is_dir(), f"Case directory not found: {case_dir}"
 
@@ -513,6 +542,7 @@ def test_example_pipeline(
 
     got, changes = _dump_and_compare(
         case_name, v1_lib, v2_lib, headers_v1, headers_v2,
+        scope_to_public_surface=SCOPE_PUBLIC_HEADERS.get(case_name, False),
     )
 
     _assert_verdict(case_name, expected_verdict, got, changes)

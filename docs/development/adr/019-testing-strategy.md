@@ -102,13 +102,13 @@ This means:
 
 ### Example cases as tests
 
-63 real-world ABI break scenarios in `examples/` serve dual purpose:
+126 real-world ABI/API scenario cases in `examples/` serve dual purpose:
 
 1. **Documentation**: Each case has `README.md` with scenario description,
    expected break type, and detection evidence
-2. **Regression tests**: `tests/test_abi_examples.py` and
-   `tests/validate_examples.py` compile examples and verify abicheck detects
-   the correct changes
+2. **Regression tests**: `tests/validate_examples.py` compiles single-library
+   examples and verifies abicheck detects the correct changes; bundle cases are
+   exercised by `tests/test_bundle.py`
 
 Example case structure:
 ```text
@@ -178,13 +178,13 @@ tests/
   abicheck's own Tier 2 test suite provides the primary safety net
 - Conditional gating means parity regressions can land if changes don't
   touch gated paths
-- 63 example cases require C/C++ compilation, adding CI complexity
+- 126 example cases require C/C++ compilation, adding CI complexity
 
 ---
 
 ## References
 
 - `.github/workflows/ci.yml` — CI pipeline definition
-- `tests/` — Test directory (120+ files, 2500+ tests)
-- `examples/` — 63 real-world ABI break scenarios
+- `tests/` — Test directory (large unit, integration, parity, and workflow suite)
+- `examples/` — 126 real-world ABI/API scenario cases
 - `pyproject.toml` — pytest markers, coverage configuration

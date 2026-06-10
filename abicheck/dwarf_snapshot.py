@@ -39,8 +39,10 @@ from .dwarf_utils import attr_bool as _attr_bool
 from .dwarf_utils import attr_int as _attr_int
 from .dwarf_utils import attr_str as _attr_str
 from .dwarf_utils import decode_member_location as _decode_member_location
+from .dwarf_utils import has_real_dwarf_info
 from .dwarf_utils import resolve_die_ref as _resolve_ref
 from .dwarf_utils import resolve_type_die as _resolve_type_die
+from .elf_symbol_filter import is_abi_relevant_elf_symbol
 from .model import (
     AbiSnapshot,
     AccessLevel,
@@ -53,6 +55,7 @@ from .model import (
     TypeField,
     Variable,
     Visibility,
+    is_cxx_runtime_library,
 )
 from .model import (
     is_compiler_internal_type as _is_compiler_internal,
@@ -181,8 +184,13 @@ class _DwarfSnapshotBuilder:
     """
 
     def __init__(self, elf_path: Path, elf_meta: ElfMetadata) -> None:
+        elf_path = Path(elf_path)
         self._elf_path = elf_path
         self._elf_meta = elf_meta
+        self._filter_transitive_runtime_symbols = not (
+            is_cxx_runtime_library(elf_path.name)
+            or is_cxx_runtime_library(elf_meta.soname)
+        )
 
         # Build exported symbol sets from ELF metadata, excluding
         # hidden/internal visibility symbols (not part of the public ABI)
@@ -190,7 +198,11 @@ class _DwarfSnapshotBuilder:
         self._exported_names: set[str] = set()
         if elf_meta.symbols:
             for sym in elf_meta.symbols:
-                if sym.name and sym.visibility not in _HIDDEN_VIS:
+                if (
+                    sym.name
+                    and sym.visibility not in _HIDDEN_VIS
+                    and self._is_abi_relevant_export(sym.name)
+                ):
                     self._exported_names.add(sym.name)
 
         # Build demangled export index for C++ fallback matching (FIX-B).
@@ -232,7 +244,7 @@ class _DwarfSnapshotBuilder:
         try:
             with open(self._elf_path, "rb") as f:
                 elf = ELFFile(f)  # type: ignore[no-untyped-call]
-                if not elf.has_dwarf_info():  # type: ignore[no-untyped-call]
+                if not has_real_dwarf_info(elf):
                     return
                 dwarf = elf.get_dwarf_info()  # type: ignore[no-untyped-call]
 
@@ -294,7 +306,7 @@ class _DwarfSnapshotBuilder:
             elif tag == "DW_TAG_enumeration_type":
                 self._process_enum(die, CU, scope)
             elif tag == "DW_TAG_typedef":
-                self._process_typedef(die, CU)
+                self._process_typedef(die, CU, scope)
 
             for child in reversed(list(die.iter_children())):
                 stack.append((child, next_scope))
@@ -314,6 +326,17 @@ class _DwarfSnapshotBuilder:
         if not linkage_name:
             linkage_name = _attr_str(die, "DW_AT_MIPS_linkage_name")
         mangled = linkage_name or name
+        qualified_name = f"{scope}::{name}" if scope else name
+
+        # Deleted functions intentionally bypass the exported-symbol check below
+        # so a public API that becomes ``= delete`` is still observable. Do not
+        # let that bypass re-admit transitive stdlib/runtime subprograms into a
+        # non-runtime library's public surface.
+        if (
+            not self._is_abi_relevant_export(mangled)
+            or not self._is_abi_relevant_export(qualified_name)
+        ):
+            return
 
         # DWARF5 DW_AT_deleted: function marked as = delete by the compiler.
         # Currently only emitted by very recent compilers (not yet in GCC/Clang mainline).
@@ -359,6 +382,13 @@ class _DwarfSnapshotBuilder:
         is_pure_virtual = _attr_int(die, "DW_AT_virtuality") == 2  # DW_VIRTUALITY_pure_virtual
         is_extern_c = not mangled.startswith("_Z")
         is_static = not _attr_bool(die, "DW_AT_external")
+        # DW_AT_explicit is emitted by g++/clang++ on ctors and conversion ops
+        # whose source-level declaration carries the `explicit` specifier
+        # (C++20 conditional `explicit(bool)` collapses to its resolved bool).
+        # Tri-state: True/False are authoritative readings from DWARF; the
+        # snapshot loader defaults to None for older snapshots that predate
+        # this field, so the diff can distinguish "unknown" from "implicit".
+        is_explicit: bool | None = _attr_bool(die, "DW_AT_explicit")
 
         # Access level
         access_val = _attr_int(die, "DW_AT_accessibility")
@@ -368,9 +398,6 @@ class _DwarfSnapshotBuilder:
         vtable_index: int | None = None
         if "DW_AT_vtable_elem_location" in die.attributes:
             vtable_index = _attr_int(die, "DW_AT_vtable_elem_location")
-
-        # Build qualified name for methods
-        qualified_name = f"{scope}::{name}" if scope else name
 
         self.functions.append(Function(
             name=qualified_name if scope else name,
@@ -387,7 +414,15 @@ class _DwarfSnapshotBuilder:
             return_pointer_depth=ret_ptr_depth,
             is_deleted=is_deleted,
             deleted_from_dwarf=is_deleted,
+            is_explicit=is_explicit,
         ))
+
+    def _is_abi_relevant_export(self, name: str) -> bool:
+        """Return True when *name* belongs to this DSO's own ABI surface."""
+        return is_abi_relevant_elf_symbol(
+            name,
+            filter_transitive_runtime_symbols=self._filter_transitive_runtime_symbols,
+        )
 
     def _process_param(self, die: Any, CU: Any) -> Param | None:
         """Extract a parameter from DW_TAG_formal_parameter."""
@@ -688,23 +723,30 @@ class _DwarfSnapshotBuilder:
             name=qualified,
             members=members,
             underlying_type=underlying,
+            source_location=self._resolve_decl_file(die, CU),
         ))
 
     # -------------------------------------------------------------------
     # Typedef extraction
     # -------------------------------------------------------------------
 
-    def _process_typedef(self, die: Any, CU: Any) -> None:
+    def _process_typedef(self, die: Any, CU: Any, scope: str = "") -> None:
         """Extract a typedef from DWARF.
 
         Also registers anonymous structs/enums under the typedef name
         (e.g. ``typedef struct { int x; } Point;``).
+
+        The typedef is keyed by its *namespace-qualified* name (consistent with
+        records and enums) so that standard-library typedefs nested under ``std``
+        (e.g. ``std::vector<…>::size_type``) carry their ``std::`` scope and the
+        non-ABI-surface filter can recognise them (validation/REPORT.md FP-1).
         """
         name = _attr_str(die, "DW_AT_name")
         if not name:
             return
         if _is_compiler_internal(name):
             return
+        qualified = f"{scope}::{name}" if scope else name
 
         # Check if this typedef points to an anonymous struct/enum
         if "DW_AT_type" in die.attributes:
@@ -715,24 +757,26 @@ class _DwarfSnapshotBuilder:
 
                 if target_tag in ("DW_TAG_structure_type", "DW_TAG_class_type",
                                   "DW_TAG_union_type"):
-                    if not target_name and name not in self._seen_type_names:
-                        # Anonymous struct/union — register under typedef name
-                        self._process_record_type_named(target, CU, name)
+                    if not target_name and qualified not in self._seen_type_names:
+                        # Anonymous struct/union — register under the qualified
+                        # typedef name so same-named typedefs in different
+                        # namespaces don't collide on the bare alias.
+                        self._process_record_type_named(target, CU, qualified)
                 elif target_tag == "DW_TAG_enumeration_type":
-                    if not target_name and name not in self._seen_enum_names:
-                        # Anonymous enum — register under typedef name
-                        self._process_enum_named(target, CU, name)
+                    if not target_name and qualified not in self._seen_enum_names:
+                        # Anonymous enum — register under the qualified typedef name
+                        self._process_enum_named(target, CU, qualified)
             except Exception:  # noqa: BLE001
-                log.debug("Failed to process typedef target for %s", name)
+                log.debug("Failed to process typedef target for %s", qualified)
 
-        if name in self.typedefs:
+        if qualified in self.typedefs:
             return  # first wins
 
         underlying = "?"
         if "DW_AT_type" in die.attributes:
             underlying = self._resolve_underlying_type(die, CU, depth=0)
 
-        self.typedefs[name] = underlying
+        self.typedefs[qualified] = underlying
 
     def _resolve_underlying_type(
         self, die: Any, CU: Any, depth: int

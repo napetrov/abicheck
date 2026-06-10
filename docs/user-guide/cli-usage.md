@@ -13,6 +13,12 @@ abicheck is inspired by:
 
 Huge thanks to both projects for pioneering ABI compatibility analysis.
 
+> **Not sure which command fits your situation?** See
+> [Choose Your Workflow](choose-your-workflow.md) — a decision guide that maps
+> your artifacts (single library, release bundle, package, application, stripped
+> binaries…) and CI policy to the exact command and options. This page is the
+> per-command flag reference.
+
 ## How to use abicheck
 
 ### 1) Compare two libraries directly (primary flow)
@@ -341,11 +347,13 @@ abicheck classifies every detected change into a verdict:
 A change is BREAKING only when it causes binary-level failures: symbol resolution errors,
 type layout corruption, vtable mismatch, or calling convention incompatibility.
 
-Changes like `noexcept` addition/removal, enum member addition, union field addition,
+Changes like enum member addition, union field addition (without growth),
 GLOBAL→WEAK binding, and IFUNC transitions are classified as **COMPATIBLE** — they are
-detected and reported for awareness but do not trigger a BREAKING verdict. See the
-[ABI Break Catalog](../concepts/breaking-cases-catalog.md) for the full
-rationale table.
+detected and reported for awareness but do not trigger a BREAKING verdict.
+`noexcept` removal is classified **COMPATIBLE_WITH_RISK** (binary-linkable but a
+deployment/behavioral hazard). See
+[ABI/API Handling & Recommendations](../concepts/abi-api-handling.md) for the full
+rationale.
 
 ## ABI/API breakages and what each tool mode can detect
 

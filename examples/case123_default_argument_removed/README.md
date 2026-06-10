@@ -1,0 +1,45 @@
+# Case 123 — Default Argument Removed
+
+**Verdict:** 🟠 API_BREAK
+**abicheck verdict: API_BREAK** (with headers) / **NO_CHANGE** (object/ELF-only)
+
+## What changes
+
+| Version | Declaration |
+|---------|-------------|
+| v1 | `int connect(const char *host, int timeout_ms = 5000);` |
+| v2 | `int connect(const char *host, int timeout_ms);` |
+
+The default value for `timeout_ms` is removed. The **mangled symbol is identical**
+(default arguments do not participate in name mangling).
+
+## What breaks
+
+Any caller that relied on the default — `connect("example.org")` — no longer
+compiles against v2 (`too few arguments to function`). Already-compiled binaries
+keep linking and running. A pure source/API break. See `app.cpp`.
+
+## Why this case exists — invisible to object analysis
+
+Default-argument values live only in the **declaration** (the header). They are
+not encoded in the symbol name, DWARF, or anywhere in the object file — the v1
+and v2 `.so` are ABI-identical. abicheck detects this **only in header mode**,
+where castxml exposes the `default="5000"` attribute (`ChangeKind`
+`param_default_value_removed`). In object/DWARF mode it reports `NO_CHANGE`.
+
+(Changing a default value rather than removing it is reported as the
+compatible-but-behavioural `param_default_value_changed`; *adding* a default is
+source-compatible and not flagged.)
+
+## Reproduce manually
+```bash
+g++ -shared -fPIC -g v1.cpp -o libnet_v1.so
+g++ -shared -fPIC -g v2.cpp -o libnet_v2.so
+abicheck compare libnet_v1.so libnet_v2.so \
+    --old-header v1.h --new-header v2.h   # → API_BREAK (param_default_value_removed)
+abicheck compare libnet_v1.so libnet_v2.so # → NO_CHANGE (object-only)
+```
+
+## How to fix
+Keep the default, or add an overload (`connect(host)` forwarding to
+`connect(host, 5000)`) so existing call sites keep compiling.

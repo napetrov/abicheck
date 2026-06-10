@@ -26,8 +26,8 @@ def _sample_snap(**kwargs) -> AbiSnapshot:
 # ---------------------------------------------------------------------------
 
 class TestSchemaV4:
-    def test_schema_version_is_4(self):
-        assert SCHEMA_VERSION == 4
+    def test_schema_version_is_7(self):
+        assert SCHEMA_VERSION == 7
 
     def test_provenance_fields_roundtrip(self):
         snap = _sample_snap(
@@ -37,7 +37,7 @@ class TestSchemaV4:
             build_id="ci-run-42",
         )
         d = snapshot_to_dict(snap)
-        assert d["schema_version"] == 4
+        assert d["schema_version"] == SCHEMA_VERSION
         assert d["git_commit"] == "abc1234def5678"
         assert d["git_tag"] == "v2.0.0"
         assert d["created_at"] == "2026-03-24T12:00:00+00:00"
@@ -84,7 +84,7 @@ class TestSchemaV4:
             # Verify JSON on disk has provenance
             raw = json.loads(tmp.read_text())
             assert raw["git_commit"] == "deadbeef"
-            assert raw["schema_version"] == 4
+            assert raw["schema_version"] == SCHEMA_VERSION
 
             snap2 = load_snapshot(tmp)
             assert snap2.git_commit == "deadbeef"

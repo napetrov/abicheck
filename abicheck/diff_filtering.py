@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import re
 
-from .checker_policy import ChangeKind, Confidence
-from .checker_types import Change
+from .checker_policy import ChangeKind, Confidence, EvidenceTier
+from .checker_types import SYMBOL_VERSION_ALIAS_NOT_RETAINED_MARKER, Change
 from .detectors import DetectorResult
 from .diff_symbols import _PUBLIC_VIS, _public_functions
 from .model import AbiSnapshot, Function
@@ -85,22 +85,53 @@ def _build_location_index(
     return type_loc, func_loc, var_loc
 
 
+def _safe_index(snap: AbiSnapshot) -> bool:
+    """Index ``snap`` for lookups, tolerating partial snapshots seen in tests.
+
+    Returns ``True`` if the snapshot was indexed successfully and is safe to
+    read from, ``False`` otherwise. Keeping the swallowed exception out of a
+    ``try/except/continue`` loop body avoids a silently-ignored-error pattern.
+    """
+    try:
+        snap.index()
+    except Exception:  # noqa: BLE001 — partial snapshots in some tests
+        return False
+    return True
+
+
 def _enrich_source_locations(
     changes: list[Change], old: AbiSnapshot, new: AbiSnapshot,
 ) -> None:
-    """Fill in source_location on Changes from the model data."""
+    """Fill in source_location and qualified_name on Changes from the model data."""
     type_loc, func_loc, var_loc = _build_location_index(old, new)
 
-    for c in changes:
-        if c.source_location:
+    # Build mangled→qualified-name lookup so namespace-based selectors
+    # (Suppression.namespace, frozen_namespaces policy) can recover the
+    # C++ namespace of ``extern "C"`` symbols whose ``Change.symbol`` is
+    # the unqualified export name. Both snapshots are consulted because
+    # FUNC_REMOVED is only in old, FUNC_ADDED only in new.
+    qualified_lookup: dict[str, str] = {}
+    for snap in (old, new):
+        if snap is None or not _safe_index(snap):
             continue
-        # Try function/variable first (symbol is mangled name), then type name
-        loc = func_loc.get(c.symbol) or var_loc.get(c.symbol) or type_loc.get(c.symbol)
-        # For qualified symbols like "ns::MyStruct::field", fall back to root type name
-        if not loc and "::" in c.symbol:
-            loc = type_loc.get(_root_type_name(c))
-        if loc:
-            c.source_location = loc
+        for mangled, fn in (getattr(snap, "_func_by_mangled", None) or {}).items():
+            fname = getattr(fn, "name", None)
+            if fname and "::" in fname and mangled not in qualified_lookup:
+                qualified_lookup[mangled] = fname
+
+    for c in changes:
+        if not c.source_location:
+            # Try function/variable first (symbol is mangled name), then type name
+            loc = func_loc.get(c.symbol) or var_loc.get(c.symbol) or type_loc.get(c.symbol)
+            # For qualified symbols like "ns::MyStruct::field", fall back to root type name
+            if not loc and "::" in c.symbol:
+                loc = type_loc.get(_root_type_name(c))
+            if loc:
+                c.source_location = loc
+        if not c.qualified_name:
+            qual = qualified_lookup.get(c.symbol)
+            if qual:
+                c.qualified_name = qual
 
 
 def _all_ancestors(
@@ -121,20 +152,25 @@ def _all_ancestors(
 def _resolve_ancestor_functions(
     tname: str,
     ancestors: set[str],
-    type_to_funcs: dict[str, list[str]],
-    type_to_mangled: dict[str, list[str]],
+    type_to_funcs: dict[str, set[str]],
+    type_to_mangled: dict[str, set[str]],
     old_pub: dict[str, Function],
     ancestor_func_cache: dict[str, list[tuple[str, str]]],
 ) -> None:
-    """Scan ancestor types and extend type_to_funcs/type_to_mangled for *tname*."""
+    """Union ancestor-type functions into type_to_funcs/type_to_mangled for *tname*.
+
+    Sets (not lists) are used so a type reachable through many ancestors does
+    not accumulate the same function name repeatedly — list accumulation here
+    made deeply-nested type graphs grow super-quadratically.
+    """
     for parent in ancestors:
         if parent in type_to_funcs:
-            type_to_funcs[tname].extend(type_to_funcs[parent])
-            type_to_mangled[tname].extend(type_to_mangled.get(parent, []))
+            type_to_funcs[tname].update(type_to_funcs[parent])
+            type_to_mangled[tname].update(type_to_mangled.get(parent, set()))
         elif parent in ancestor_func_cache:
             for fname, mname in ancestor_func_cache[parent]:
-                type_to_funcs[tname].append(fname)
-                type_to_mangled[tname].append(mname)
+                type_to_funcs[tname].add(fname)
+                type_to_mangled[tname].add(mname)
         else:
             parent_funcs: list[tuple[str, str]] = []
             for _m, func in old_pub.items():
@@ -143,8 +179,64 @@ def _resolve_ancestor_functions(
                     parent_funcs.append((func.name, func.mangled))
             ancestor_func_cache[parent] = parent_funcs
             for fname, mname in parent_funcs:
-                type_to_funcs[tname].append(fname)
-                type_to_mangled[tname].append(mname)
+                type_to_funcs[tname].add(fname)
+                type_to_mangled[tname].add(mname)
+
+
+def _collect_function_type_refs(func: Function) -> set[str]:
+    """Return the set of type strings referenced in *func*'s signature."""
+    out: set[str] = set()
+    if func.return_type:
+        out.add(func.return_type)
+    for p in func.params:
+        if p.type:
+            out.add(p.type)
+    return out
+
+
+def _build_type_to_funcs(
+    affected_types: set[str],
+    old_pub: dict[str, Function],
+) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """Build type→(demangled, mangled) function name sets from public functions."""
+    type_to_funcs: dict[str, set[str]] = {t: set() for t in affected_types}
+    type_to_mangled: dict[str, set[str]] = {t: set() for t in affected_types}
+    for _mangled, func in old_pub.items():
+        func_types_used = _collect_function_type_refs(func)
+        for tname in affected_types:
+            if any(tname in ft for ft in func_types_used):
+                type_to_funcs[tname].add(func.name)
+                type_to_mangled[tname].add(func.mangled)
+    return type_to_funcs, type_to_mangled
+
+
+def _build_type_embed_index(
+    affected_types: set[str],
+    old: AbiSnapshot,
+) -> dict[str, set[str]]:
+    """Build a child_type→{parent_type} embedding index from old snapshot fields."""
+    type_embeds: dict[str, set[str]] = {}
+    for t in old.types:
+        for fld in t.fields:
+            for tname in affected_types:
+                if tname in fld.type:
+                    type_embeds.setdefault(tname, set()).add(t.name)
+    return type_embeds
+
+
+def _assign_affected_symbols_to_changes(
+    type_changes: list[Change],
+    type_to_funcs: dict[str, set[str]],
+    type_to_mangled: dict[str, set[str]],
+) -> None:
+    """Populate Change.affected_symbols from the type-to-function mappings."""
+    for c in type_changes:
+        type_name = _root_type_name(c)
+        funcs = type_to_funcs.get(type_name, set())
+        mangled_funcs = type_to_mangled.get(type_name, set())
+        if funcs:
+            # Store both demangled and mangled names for cross-format matching
+            c.affected_symbols = sorted(funcs | mangled_funcs)
 
 
 def _enrich_affected_symbols(
@@ -156,54 +248,27 @@ def _enrich_affected_symbols(
     if not type_changes:
         return
 
-    # Collect affected type names
-    affected_types: set[str] = set()
-    for c in type_changes:
-        # symbol is the type name (e.g. "Point", "ns::Container", "Status")
-        # Strip field qualifiers like "ns::Container::flags" → "ns::Container"
-        type_name = _root_type_name(c)
-        affected_types.add(type_name)
-
+    # Collect affected type names; strip field qualifiers like
+    # "ns::Container::flags" → "ns::Container"
+    affected_types: set[str] = {_root_type_name(c) for c in type_changes}
     if not affected_types:
         return
 
-    # Build type→functions mapping from old snapshot (FIX-A Part 3).
-    # Store both demangled names (for display) and mangled names (for appcompat matching).
-    type_to_funcs: dict[str, list[str]] = {t: [] for t in affected_types}
-    type_to_mangled: dict[str, list[str]] = {t: [] for t in affected_types}
     old_pub = _public_functions(old)
 
-    def _function_types(func: Function) -> set[str]:
-        out: set[str] = set()
-        if func.return_type:
-            out.add(func.return_type)
-        for p in func.params:
-            if p.type:
-                out.add(p.type)
-        return out
-
-    for _mangled, func in old_pub.items():
-        func_types_used = _function_types(func)
-        for tname in affected_types:
-            if any(tname in ft for ft in func_types_used):
-                type_to_funcs[tname].append(func.name)
-                type_to_mangled[tname].append(func.mangled)
+    # Build type→functions mapping from old snapshot (FIX-A Part 3).
+    # Store both demangled names (for display) and mangled names (for appcompat matching).
+    type_to_funcs, type_to_mangled = _build_type_to_funcs(affected_types, old_pub)
 
     # Also check if types are embedded in struct fields used by functions
     # (e.g., Container has a Leaf field → functions taking Container* are affected by Leaf changes)
-    type_embeds: dict[str, set[str]] = {}  # child_type → {parent_type, ...}
-    for t in old.types:
-        for fld in t.fields:
-            for tname in affected_types:
-                if tname in fld.type:
-                    type_embeds.setdefault(tname, set()).add(t.name)
+    type_embeds = _build_type_embed_index(affected_types, old)
 
     # Compute transitive closure: if Leaf is in Container is in Wrapper,
     # functions using Wrapper are also affected by Leaf changes.
     # Cache: ancestor type → list of (func_name, mangled) so each ancestor
     # is scanned at most once across all affected types.
     ancestor_func_cache: dict[str, list[tuple[str, str]]] = {}
-
     for tname in affected_types:
         ancestors = _all_ancestors(tname, type_embeds)
         _resolve_ancestor_functions(
@@ -213,14 +278,7 @@ def _enrich_affected_symbols(
 
     # Assign to changes — include both demangled names (display) and
     # mangled names (appcompat matching, FIX-A Part 3).
-    for c in type_changes:
-        type_name = _root_type_name(c)
-        funcs = type_to_funcs.get(type_name, [])
-        mangled_funcs = type_to_mangled.get(type_name, [])
-        if funcs:
-            # Store both demangled and mangled names for cross-format matching
-            all_symbols = sorted(set(funcs) | set(mangled_funcs))
-            c.affected_symbols = all_symbols
+    _assign_affected_symbols_to_changes(type_changes, type_to_funcs, type_to_mangled)
 
 
 
@@ -322,40 +380,37 @@ def _mark_as_redundant(
     redundant.append(c)
 
 
-def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]]:
-    """Identify changes that are consequences of a root type change.
-
-    Returns (kept, redundant) — redundant changes are still available for audit.
-    Root changes are annotated with ``caused_count`` and ``derived_symbols``.
-    """
-    # Step 1: Collect root type changes
+def _collect_root_types(changes: list[Change]) -> dict[str, Change]:
+    """Return a mapping of type_name → first root-type Change found in *changes*."""
     root_types: dict[str, Change] = {}
     for c in changes:
         if c.kind in _ROOT_TYPE_CHANGE_KINDS:
             type_name = _root_type_name(c)
             if type_name not in root_types:
                 root_types[type_name] = c
+    return root_types
 
-    if not root_types:
-        return changes, []
 
-    # Pre-compile word-boundary regex patterns for all root type names once,
-    # instead of recompiling per (_match_root_type call * root type) pair.
-    compiled_patterns: dict[str, re.Pattern[str]] = {
+def _compile_root_patterns(root_types: dict[str, Change]) -> dict[str, re.Pattern[str]]:
+    """Pre-compile word-boundary regex patterns for each root type name."""
+    return {
         name: re.compile(r'(?<![A-Za-z0-9_])' + re.escape(name) + r'(?![A-Za-z0-9_])')
         for name in root_types
     }
 
-    # Step 2: Check each non-root change for redundancy
-    kept: list[Change] = []
-    redundant: list[Change] = []
 
-    # Track root types that have been classified as redundant themselves,
-    # so we don't let downstream changes point at removed roots.
+def _classify_root_pass(
+    changes: list[Change],
+    root_types: dict[str, Change],
+    compiled_patterns: dict[str, re.Pattern[str]],
+    kept: list[Change],
+    redundant: list[Change],
+) -> None:
+    """First pass: classify root-type changes, marking cross-referencing ones redundant.
+
+    Mutates *root_types* (removes redundant roots), *kept*, and *redundant* in place.
+    """
     removed_roots: set[str] = set()
-
-    # First pass: classify root type changes (some may be redundant
-    # if they reference another root type — nested type propagation).
     for c in changes:
         if c.kind not in _ROOT_TYPE_CHANGE_KINDS:
             continue
@@ -365,35 +420,60 @@ def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]
             matched_root = _match_root_type(c, other_roots, compiled_patterns)
             if matched_root is not None:
                 _mark_as_redundant(c, matched_root, root_types, redundant)
-                # Remove this root from root_types so derived changes
-                # won't point at a root that is itself redundant.
+                # Remove this root so derived changes won't point at a
+                # root that is itself redundant.
                 removed_roots.add(type_name)
                 continue
         kept.append(c)
-
-    # Remove redundant roots from the lookup dict
     for name in removed_roots:
         root_types.pop(name, None)
 
-    # Second pass: classify non-root changes
+
+def _classify_derived_pass(
+    changes: list[Change],
+    root_types: dict[str, Change],
+    compiled_patterns: dict[str, re.Pattern[str]],
+    kept: list[Change],
+    redundant: list[Change],
+) -> None:
+    """Second pass: classify non-root changes, marking derived ones redundant."""
     for c in changes:
         if c.kind in _ROOT_TYPE_CHANGE_KINDS:
-            continue  # already handled above
-
-        if c.kind in _ALWAYS_INDEPENDENT_KINDS:
+            continue  # already handled in first pass
+        if c.kind in _ALWAYS_INDEPENDENT_KINDS or c.kind not in _DERIVED_CHANGE_KINDS:
             kept.append(c)
             continue
-
-        if c.kind not in _DERIVED_CHANGE_KINDS:
-            kept.append(c)
-            continue
-
         # Check if this change references a (kept) root type
         matched_root = _match_root_type(c, root_types, compiled_patterns)
         if matched_root is not None:
             _mark_as_redundant(c, matched_root, root_types, redundant)
         else:
             kept.append(c)
+
+
+def _filter_redundant(changes: list[Change]) -> tuple[list[Change], list[Change]]:
+    """Identify changes that are consequences of a root type change.
+
+    Returns (kept, redundant) — redundant changes are still available for audit.
+    Root changes are annotated with ``caused_count`` and ``derived_symbols``.
+    """
+    root_types = _collect_root_types(changes)
+    if not root_types:
+        return changes, []
+
+    # Pre-compile word-boundary regex patterns for all root type names once,
+    # instead of recompiling per (_match_root_type call * root type) pair.
+    compiled_patterns = _compile_root_patterns(root_types)
+
+    kept: list[Change] = []
+    redundant: list[Change] = []
+
+    # First pass: classify root type changes (some may be redundant
+    # if they reference another root type — nested type propagation).
+    _classify_root_pass(changes, root_types, compiled_patterns, kept, redundant)
+
+    # Second pass: classify non-root changes
+    _classify_derived_pass(changes, root_types, compiled_patterns, kept, redundant)
 
     return kept, redundant
 
@@ -442,6 +522,44 @@ _ENUM_DEDUP_KINDS = frozenset({
 })
 
 
+def _type_used_by_value(type_str: str, bare_re: re.Pattern[str]) -> bool:
+    """True if ``type_str`` names the type without a trailing ``*``."""
+    if not bare_re.search(type_str):
+        return False
+    stripped = type_str.replace("const", "").replace("volatile", "").strip()
+    for token in stripped.split(","):
+        token = token.strip()
+        if bare_re.search(token) and "*" not in token:
+            # Token contains the bare type name without a pointer dereference.
+            # This covers both by-value (T) and reference (T&) semantics —
+            # both allow the caller to hold/inspect the type's size.
+            return True
+    return False
+
+
+def _public_function_uses_type_by_value(snap: AbiSnapshot, bare_re: re.Pattern[str]) -> bool:
+    """True if any PUBLIC function uses the type (matched by *bare_re*) by value."""
+    for f in snap.functions:
+        if f.visibility not in _PUBLIC_VIS:
+            continue
+        if _type_used_by_value(f.return_type, bare_re):
+            return True
+        for p in f.params:
+            if _type_used_by_value(p.type, bare_re):
+                return True
+    return False
+
+
+def _public_variable_uses_type_by_value(snap: AbiSnapshot, bare_re: re.Pattern[str]) -> bool:
+    """True if any PUBLIC variable uses the type (matched by *bare_re*) by value."""
+    for v in snap.variables:
+        if v.visibility not in _PUBLIC_VIS:
+            continue
+        if _type_used_by_value(v.type, bare_re):
+            return True
+    return False
+
+
 def _is_pointer_only_type(
     type_name: str, snap: AbiSnapshot,
     _re_cache: dict[str, re.Pattern[str]] | None = None,
@@ -463,42 +581,8 @@ def _is_pointer_only_type(
         if _re_cache is not None:
             _re_cache[type_name] = bare_re
 
-    def _is_by_value(type_str: str) -> bool:
-        """True if ``type_str`` names the type without a trailing ``*``."""
-        if not bare_re.search(type_str):
-            return False
-        stripped = type_str.replace("const", "").replace("volatile", "").strip()
-        for token in stripped.split(","):
-            token = token.strip()
-            if bare_re.search(token) and "*" not in token:
-                # Token contains the bare type name without a pointer dereference.
-                # This covers both by-value (T) and reference (T&) semantics —
-                # both allow the caller to hold/inspect the type's size.
-                return True
+    if _public_function_uses_type_by_value(snap, bare_re) or _public_variable_uses_type_by_value(snap, bare_re):
         return False
-
-    def _public_function_uses_by_value() -> bool:
-        for f in snap.functions:
-            if f.visibility not in _PUBLIC_VIS:
-                continue
-            if _is_by_value(f.return_type):
-                return True
-            for p in f.params:
-                if _is_by_value(p.type):
-                    return True
-        return False
-
-    def _public_variable_uses_by_value() -> bool:
-        for v in snap.variables:
-            if v.visibility not in _PUBLIC_VIS:
-                continue
-            if _is_by_value(v.type):
-                return True
-        return False
-
-    if _public_function_uses_by_value() or _public_variable_uses_by_value():
-        return False
-
     return True
 
 
@@ -810,9 +894,42 @@ def _deduplicate_cross_detector(changes: list[Change]) -> list[Change]:
         ChangeKind.SYMBOL_VERSION_NODE_REMOVED: "version_def_removal",
         ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED: "version_def_removal",
     }
+    # A symbol-version-node bump (e.g. LLVM_17 -> LLVM_18.1 applied to every
+    # symbol during a major release) makes BOTH version detectors fire per
+    # symbol with the same old->new transition: SYMBOL_MOVED_VERSION_NODE (the
+    # node label moved) and SYMBOL_VERSION_ALIAS_CHANGED (the default version
+    # changed, old not retained as an alias). They describe one event; drop the
+    # alias-change duplicate where a node move already covers the same
+    # (symbol, old -> new), keeping the node-level change. Halves the
+    # version-bump noise on real libraries (libLLVM 17->18: ~46k instead of
+    # ~92k risk findings).
+    #
+    # The match keys on (symbol, old_value, new_value): both detectors live in
+    # diff_versioning.py and populate old_value/new_value with the same version
+    # node labels for one bump, so the tuples coincide. If that ever diverges
+    # the dedup simply no-ops (both findings are kept) — a missed dedup, never a
+    # dropped real change — so this stays a safe, best-effort filter.
+    moved_transitions: set[tuple[str, str | None, str | None]] = {
+        (c.symbol, c.old_value, c.new_value)
+        for c in changes
+        if c.kind is ChangeKind.SYMBOL_MOVED_VERSION_NODE
+    }
+
     seen: set[tuple[str, str]] = set()
     result: list[Change] = []
     for c in changes:
+        # Only collapse the alias-change into a co-reported node-move when the
+        # old default version is NOT retained as an alias — that is the case the
+        # node-move already fully describes. When the old alias IS retained the
+        # alias-change carries distinct, *compatible* information (old consumers
+        # still resolve) that the node-move's "will not find this symbol"
+        # wording would otherwise misrepresent, so it must survive.
+        if (
+            c.kind is ChangeKind.SYMBOL_VERSION_ALIAS_CHANGED
+            and SYMBOL_VERSION_ALIAS_NOT_RETAINED_MARKER in (c.description or "")
+            and (c.symbol, c.old_value, c.new_value) in moved_transitions
+        ):
+            continue
         cat = _DEDUP_CATEGORIES.get(c.kind)
         if cat is not None:
             key = (cat, c.symbol)
@@ -955,10 +1072,31 @@ def _detect_evidence_tiers(
     has_dwarf_advanced = (old.dwarf_advanced is not None and old.dwarf_advanced.has_dwarf) or (new.dwarf_advanced is not None and new.dwarf_advanced.has_dwarf)
     has_pe = getattr(old, "pe", None) is not None or getattr(new, "pe", None) is not None
     has_macho = getattr(old, "macho", None) is not None or getattr(new, "macho", None) is not None
-    has_headers = bool(
+    # HEADER_AWARE requires that the surface was actually parsed from public
+    # headers (castxml/AST). DWARF-only and symbols-only dumps populate the
+    # same functions/types lists, so the mere presence of declarations is not
+    # evidence of header analysis — only the ``from_headers`` provenance flag
+    # set by the dumper distinguishes them. When a snapshot carries any
+    # binary-derived metadata (ELF/PE/Mach-O/DWARF) but no ``from_headers``
+    # flag, its surface came from DWARF or the symbol table, not headers.
+    # A snapshot with no binary metadata at all is a pure in-memory/header
+    # surface (the library-API and unit-test construction path), so the
+    # presence of declarations is taken as header-level evidence there.
+    from_headers = bool(getattr(old, "from_headers", False) or getattr(new, "from_headers", False))
+    has_declarations = bool(
         old.functions or old.types or old.enums or old.typedefs or old.variables
         or new.functions or new.types or new.enums or new.typedefs or new.variables
     )
+    has_binary_metadata = (
+        has_elf or has_pe or has_macho or has_dwarf or has_dwarf_advanced
+        or getattr(old, "elf_only_mode", False) or getattr(new, "elf_only_mode", False)
+    )
+    if from_headers:
+        has_headers = True
+    elif has_binary_metadata:
+        has_headers = False
+    else:
+        has_headers = has_declarations
 
     tiers: list[str] = []
     if has_elf:
@@ -975,6 +1113,23 @@ def _detect_evidence_tiers(
         tiers.append("macho")
 
     return tiers, has_elf, has_dwarf, has_dwarf_advanced, has_pe, has_macho, has_headers
+
+
+def _determine_evidence_tier(
+    has_dwarf: bool, has_dwarf_advanced: bool, has_headers: bool,
+) -> EvidenceTier:
+    """Collapse the raw evidence booleans into the canonical analysis tier.
+
+    See :class:`EvidenceTier` for the semantics of each level. Header/AST
+    surface always wins (it is the richest signal); DWARF debug info is the
+    middle tier; everything else (symbol-table-only ELF/PE/Mach-O) is the
+    floor.
+    """
+    if has_headers:
+        return EvidenceTier.HEADER_AWARE
+    if has_dwarf or has_dwarf_advanced:
+        return EvidenceTier.DWARF_AWARE
+    return EvidenceTier.ELF_ONLY
 
 
 def _determine_confidence_level(
@@ -1026,10 +1181,14 @@ def _compute_confidence(
     detector_results: list[DetectorResult],
     old: AbiSnapshot,
     new: AbiSnapshot,
-) -> tuple[list[str], Confidence, list[str]]:
+) -> tuple[list[str], Confidence, list[str], EvidenceTier]:
     """Compute evidence tiers, confidence level, and coverage warnings.
 
-    Returns (evidence_tiers, confidence, coverage_warnings).
+    Returns (evidence_tiers, confidence, coverage_warnings, evidence_tier).
+
+    ``evidence_tier`` is the canonical, ordered analysis depth (see
+    :class:`EvidenceTier`); ``evidence_tiers`` remains the raw list of
+    available data sources for backward compatibility.
 
     Evidence tiers:
     - "elf": ELF metadata present and analyzed
@@ -1043,9 +1202,11 @@ def _compute_confidence(
     - "medium": headers only, or binary-only with ELF+DWARF
     - "low": binary-only without DWARF, or very limited data
     """
-    tiers, has_elf, has_dwarf, _has_dwarf_adv, has_pe, has_macho, has_headers = (
+    tiers, has_elf, has_dwarf, has_dwarf_adv, has_pe, has_macho, has_headers = (
         _detect_evidence_tiers(old, new)
     )
+
+    evidence_tier = _determine_evidence_tier(has_dwarf, has_dwarf_adv, has_headers)
 
     warnings: list[str] = []
 
@@ -1059,7 +1220,7 @@ def _compute_confidence(
         detector_results, warnings,
     )
 
-    return tiers, confidence, warnings
+    return tiers, confidence, warnings, evidence_tier
 
 
 # ChangeKinds that should be downgraded when the type is opaque in both snapshots.

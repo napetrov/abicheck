@@ -8,7 +8,7 @@
 | **Platforms** | Linux |
 | **Flags** | ABI break, Bad practice |
 | **Detected `ChangeKind`s** | `func_visibility_changed` |
-| **Source files** | [browse on GitHub](https://github.com/napetrov/abicheck/blob/main/examples/case06_visibility/) |
+| **Source files** | `examples/case06_visibility/` |
 
 **Category:** Visibility | **Verdict:** 🔴 BREAKING (bad practice)
 
@@ -53,9 +53,9 @@ is an ABI break for any consumer that depended on them, even if the symbols
 were only exported by accident.
 
 > **Note:** In ELF-only mode (without `-H`), both removals are classified as
-> `FUNC_REMOVED_ELF_ONLY` (COMPATIBLE) because the tool cannot distinguish
-> intentional public API from accidentally-leaked internals. Use `-H` to get
-> the accurate BREAKING verdict.
+> `FUNC_REMOVED_ELF_ONLY` (BREAKING). Header-scoped mode with `-H` can still
+> distinguish intentional public API from accidentally-leaked internals, but
+> strict binary-only mode treats removed exports as ABI breaks.
 
 ## Dual nature of this case
 
@@ -135,9 +135,9 @@ echo "exit: $?"  # → 1
 
 ## Source files
 
-- [`CMakeLists.txt`](https://github.com/napetrov/abicheck/blob/main/examples/case06_visibility/CMakeLists.txt)
-- [`app.c`](https://github.com/napetrov/abicheck/blob/main/examples/case06_visibility/app.c)
-- [`bad.c`](https://github.com/napetrov/abicheck/blob/main/examples/case06_visibility/bad.c)
-- [`good.c`](https://github.com/napetrov/abicheck/blob/main/examples/case06_visibility/good.c)
+- `CMakeLists.txt`
+- `app.c`
+- `bad.c`
+- `good.c`
 
 _See also: [Examples overview](index.md) · [All BREAKING cases](by-verdict/breaking.md) · [Category: Breaking](by-category/breaking.md)._

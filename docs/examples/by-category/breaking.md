@@ -3,7 +3,7 @@
 
 Listed in `BREAKING_KINDS` — runtime ABI break.
 
-_65 case(s)._ [← back to all examples](../index.md)
+_85 case(s)._ [← back to all examples](../index.md)
 
 | Case | Title | Verdict | Category |
 |------|-------|---------|----------|
@@ -13,25 +13,40 @@ _65 case(s)._ [← back to all examples](../index.md)
 | [case07_struct_layout](../case07_struct_layout.md) | Struct Layout Change | 🔴 BREAKING | Breaking |
 | [case08_enum_value_change](../case08_enum_value_change.md) | Enum Value Change | 🔴 BREAKING | Breaking |
 | [case09_cpp_vtable](../case09_cpp_vtable.md) | C++ Vtable Change | 🔴 BREAKING | Breaking |
+| [case100_experimental_removed_without_replacement](../case100_experimental_removed_without_replacement.md) | experimental:: removed without replacement (API break) | 🔴 BREAKING | Breaking |
+| [case101_inline_namespace_version_bumped](../case101_inline_namespace_version_bumped.md) | inline namespace version bumped (BREAKING) | 🔴 BREAKING | Breaking |
+| [case102_frozen_runtime_signature_changed](../case102_frozen_runtime_signature_changed.md) | Frozen Runtime Signature Changed (oneTBB `detail::r1` shape) | 🔴 BREAKING | Breaking |
+| [case104_glibcxx_dual_abi_flip](../case104_glibcxx_dual_abi_flip.md) | libstdc++ dual-ABI flip (`glibcxx_dual_abi_flip_detected`) | 🔴 BREAKING | Breaking |
+| [case107_task_scheduler_init_removed](../case107_task_scheduler_init_removed.md) | `task_scheduler_init` Removed (historical ABI break) | 🔴 BREAKING | Breaking |
+| [case108_task_class_removed](../case108_task_class_removed.md) | `task` Class Removed (historical ABI break — vtable angle) | 🔴 BREAKING | Breaking |
+| [case109_flow_graph_policy_renames](../case109_flow_graph_policy_renames.md) | flow::graph Policy Tag Renames | 🔴 BREAKING | Breaking |
 | [case10_return_type](../case10_return_type.md) | Return Type Change | 🔴 BREAKING | Breaking |
+| [case110_concurrent_unordered_map_api_drift](../case110_concurrent_unordered_map_api_drift.md) | concurrent_unordered_map API Drift | 🔴 BREAKING | Breaking |
+| [case112_lp64_ilp64](../case112_lp64_ilp64.md) | LP64 → ILP64 integer-model switch (oneMKL MKL_INT 32→64) | 🔴 BREAKING | Breaking |
+| [case113_abi_tag_changed](../case113_abi_tag_changed.md) | ABI-tag set change ([abi:cxx11] lost on a single symbol) | 🔴 BREAKING | Breaking |
+| [case114_char8t_migration](../case114_char8t_migration.md) | char8_t migration (C++20 char-family → char8_t) | 🔴 BREAKING | Breaking |
+| [case115_bit_int_width_changed](../case115_bit_int_width_changed.md) | _BitInt(N) width change (C23 64 → 128) | 🔴 BREAKING | Breaking |
+| [case116_atomic_qualifier_changed](../case116_atomic_qualifier_changed.md) | _Atomic qualifier added (C11) | 🔴 BREAKING | Breaking |
+| [case117_no_unique_address](../case117_no_unique_address.md) | [[no_unique_address]] layout overlay (no new ChangeKind) | 🔴 BREAKING | Breaking |
 | [case11_global_var_type](../case11_global_var_type.md) | Global Variable Type Change | 🔴 BREAKING | Breaking |
+| [case121_kernel_btf_struct_field_added](../case121_kernel_btf_struct_field_added.md) | Kernel BTF struct grows a field (out-of-tree module break) | 🔴 BREAKING | Breaking |
 | [case12_function_removed](../case12_function_removed.md) | Function Removed from Shared Library | 🔴 BREAKING | Breaking |
 | [case14_cpp_class_size](../case14_cpp_class_size.md) | C++ Class Size Change | 🔴 BREAKING | Breaking |
-| [case17_template_abi](../case17_template_abi.md) | Case 17 — Template Instantiation ABI Change | 🔴 BREAKING | Breaking |
-| [case18_dependency_leak](../case18_dependency_leak.md) | Case 18 — Dependency ABI Leak | 🔴 BREAKING | Breaking |
-| [case19_enum_member_removed](../case19_enum_member_removed.md) | Case 19 — Enum Member Removed | 🔴 BREAKING | Breaking |
-| [case20_enum_member_value_changed](../case20_enum_member_value_changed.md) | Case 20 — Enum Member Value Changed | 🔴 BREAKING | Breaking |
-| [case21_method_became_static](../case21_method_became_static.md) | Case 21 — Method Became Static | 🔴 BREAKING | Breaking |
-| [case22_method_const_changed](../case22_method_const_changed.md) | Case 22 — Method Const Qualifier Changed | 🔴 BREAKING | Breaking |
-| [case23_pure_virtual_added](../case23_pure_virtual_added.md) | Case 23 — Virtual Method Became Pure Virtual | 🔴 BREAKING | Breaking |
-| [case24_union_field_removed](../case24_union_field_removed.md) | Case 24 — Union Field Removed | 🔴 BREAKING | Breaking |
-| [case26_union_field_added](../case26_union_field_added.md) | Case 26 — Union Field Added | 🔴 BREAKING | Breaking |
-| [case28_typedef_opaque](../case28_typedef_opaque.md) | Case 28 — Typedef and Opaque Type Changes | 🔴 BREAKING | Breaking |
-| [case30_field_qualifiers](../case30_field_qualifiers.md) | Case 30 — Field Qualifier Changes (const, volatile) | 🔴 BREAKING | Breaking |
-| [case33_pointer_level](../case33_pointer_level.md) | Case 33 -- Pointer Level Change | 🔴 BREAKING | Breaking |
-| [case35_field_rename](../case35_field_rename.md) | Case 35 -- Field Rename | 🔴 BREAKING | Breaking |
-| [case36_anon_struct](../case36_anon_struct.md) | Case 36 -- Anonymous Struct/Union Change | 🔴 BREAKING | Breaking |
-| [case37_base_class](../case37_base_class.md) | Case 37 -- Base Class Changes | 🔴 BREAKING | Breaking |
+| [case17_template_abi](../case17_template_abi.md) | Template Instantiation ABI Change | 🔴 BREAKING | Breaking |
+| [case18_dependency_leak](../case18_dependency_leak.md) | Dependency ABI Leak | 🔴 BREAKING | Breaking |
+| [case19_enum_member_removed](../case19_enum_member_removed.md) | Enum Member Removed | 🔴 BREAKING | Breaking |
+| [case20_enum_member_value_changed](../case20_enum_member_value_changed.md) | Enum Member Value Changed | 🔴 BREAKING | Breaking |
+| [case21_method_became_static](../case21_method_became_static.md) | Method Became Static | 🔴 BREAKING | Breaking |
+| [case22_method_const_changed](../case22_method_const_changed.md) | Method Const Qualifier Changed | 🔴 BREAKING | Breaking |
+| [case23_pure_virtual_added](../case23_pure_virtual_added.md) | Virtual Method Became Pure Virtual | 🔴 BREAKING | Breaking |
+| [case24_union_field_removed](../case24_union_field_removed.md) | Union Field Removed | 🔴 BREAKING | Breaking |
+| [case26_union_field_added](../case26_union_field_added.md) | Union Field Added | 🔴 BREAKING | Breaking |
+| [case28_typedef_opaque](../case28_typedef_opaque.md) | Typedef and Opaque Type Changes | 🔴 BREAKING | Breaking |
+| [case30_field_qualifiers](../case30_field_qualifiers.md) | Field Qualifier Changes (const, volatile) | 🔴 BREAKING | Breaking |
+| [case33_pointer_level](../case33_pointer_level.md) | - Pointer Level Change | 🔴 BREAKING | Breaking |
+| [case35_field_rename](../case35_field_rename.md) | - Field Rename | 🔴 BREAKING | Breaking |
+| [case36_anon_struct](../case36_anon_struct.md) | - Anonymous Struct/Union Change | 🔴 BREAKING | Breaking |
+| [case37_base_class](../case37_base_class.md) | - Base Class Changes | 🔴 BREAKING | Breaking |
 | [case38_virtual_methods](../case38_virtual_methods.md) | Virtual Method Changes | 🔴 BREAKING | Breaking |
 | [case39_var_const](../case39_var_const.md) | Variable Const Change | 🔴 BREAKING | Breaking |
 | [case40_field_layout](../case40_field_layout.md) | Field Layout Changes | 🔴 BREAKING | Breaking |
@@ -64,11 +79,16 @@ _65 case(s)._ [← back to all examples](../index.md)
 | [case75_detail_embedded_by_value](../case75_detail_embedded_by_value.md) | Internal `detail::` impl struct embedded by value | 🔴 BREAKING | Breaking |
 | [case76_detail_pimpl_vtable_changed](../case76_detail_pimpl_vtable_changed.md) | Internal `detail::` polymorphic base vtable change | 🔴 BREAKING | Breaking |
 | [case77_detail_templated_base_changed](../case77_detail_templated_base_changed.md) | Internal `detail::` *templated* base class layout change | 🔴 BREAKING | Breaking |
+| [case78_task_arena_attach_tag](../case78_task_arena_attach_tag.md) | task_arena::attach Tag Type Replaces Enum | 🔴 BREAKING | Breaking |
 | [case79_missing_template_instantiation](../case79_missing_template_instantiation.md) | Missing template instantiation in shipped binary | 🔴 BREAKING | Breaking |
 | [case80_pimpl_shared_to_unique](../case80_pimpl_shared_to_unique.md) | Pimpl alias changed from `shared_ptr` to `unique_ptr` | 🔴 BREAKING | Breaking |
 | [case81_serialization_tag_reassigned](../case81_serialization_tag_reassigned.md) | Serialization tag ID reassigned | 🔴 BREAKING | Breaking |
 | [case82_sycl_overload_set_removed](../case82_sycl_overload_set_removed.md) | SYCL overload set removed (DPC++ build withdrawn) | 🔴 BREAKING | Breaking |
-| [case84_bundle_soname_skew](../case84_bundle_soname_skew.md) | Multi-library bundle SONAME skew | 🔴 BREAKING | Breaking |
+| [case85_internal_template_signature_changed](../case85_internal_template_signature_changed.md) | internal function-template signature leaks via public API (BREAKING) | 🔴 BREAKING | Breaking |
 | [case86_tag_struct_renamed](../case86_tag_struct_renamed.md) | Tag struct renamed (empty class re-mangling) | 🔴 BREAKING | Breaking |
 | [case87_default_template_arg_changed](../case87_default_template_arg_changed.md) | Default template argument changed | 🔴 BREAKING | Breaking |
+| [case88_cpo_kind_changed](../case88_cpo_kind_changed.md) | CPO kind changed (BREAKING) | 🔴 BREAKING | Breaking |
 | [case89_inline_accessor_renamed_pimpl_member](../case89_inline_accessor_renamed_pimpl_member.md) | Inline accessor references renamed pimpl member | 🔴 BREAKING | Breaking |
+| [case94_empty_tag_gained_state](../case94_empty_tag_gained_state.md) | Empty Tag Gained State | 🔴 BREAKING | Breaking |
+| [case95_allocator_nested_typedef_removed](../case95_allocator_nested_typedef_removed.md) | Allocator Nested-Typedef Removed | 🔴 BREAKING | Breaking |
+| [case97_api_depends_on_consumer_env](../case97_api_depends_on_consumer_env.md) | public API depends on consumer build environment (RISK) | 🔴 BREAKING | Breaking |

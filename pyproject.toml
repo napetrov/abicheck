@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "abicheck"
-version = "0.2.0"
+version = "0.3.0"
 description = "ABI compatibility checker for C/C++ shared libraries"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -61,12 +61,20 @@ dev = [
     "ruff>=0.3",
     "mypy>=1.0",
     "types-PyYAML",
+    "jsonschema>=4.0",
 ]
 
 [tool.mypy]
 python_version = "3.10"
 strict = true
 ignore_missing_imports = true
+# ``unused-ignore`` flips on/off depending on the mypy + pyelftools combo
+# the developer or CI runner happens to have installed (different
+# Python minor versions, different bundled stubs). Disabling it globally
+# keeps the `# type: ignore[...]` comments scattered throughout the
+# pyelftools call sites portable across environments without forcing a
+# strict version pin on every contributor.
+disable_error_code = ["unused-ignore"]
 
 [[tool.mypy.overrides]]
 # pyelftools has no type stubs or py.typed marker — all its APIs are untyped.
@@ -86,14 +94,42 @@ module = [
     "abicheck.pdb_utils",
     "abicheck.sycl_metadata",
     "abicheck.binary_fingerprint",
+    "abicheck.evidence.compiler_record",
 ]
 disallow_untyped_calls = false
-disable_error_code = ["attr-defined", "unused-ignore"]
+disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
 # Click decorators (@click.command, @click.option, etc.) are untyped.
-module = ["abicheck.cli", "abicheck.compat.cli"]
+# ``compat/cli.py`` additionally subclasses ``click.Group`` (typed as Any)
+# and threads click-managed list[str] values through helper accessors, so
+# we also relax ``no-any-return`` / ``misc`` there.
+module = [
+    "abicheck.cli",
+    "abicheck.cli_appcompat",
+    "abicheck.cli_compare_release",
+    "abicheck.cli_debian_symbols",
+    "abicheck.cli_baseline",
+    "abicheck.cli_evidence",
+    "abicheck.cli_plugin",
+    "abicheck.cli_probe",
+    "abicheck.cli_stack",
+    "abicheck.cli_suggest",
+    "abicheck.cli_surface",
+    "abicheck.compat.cli",
+]
 disallow_untyped_decorators = false
+disable_error_code = ["no-any-return", "misc"]
+
+[[tool.mypy.overrides]]
+# ``cli_params.PolicyFileParam`` subclasses ``click.ParamType``. Depending on
+# the installed click's type stubs, mypy treats the base either as ``Any``
+# (-> ``misc``: "cannot subclass Any") or as a generic needing a type argument
+# (-> ``type-arg``). Suppress both so the module stays portable across click /
+# mypy versions without a runtime ``ParamType[...]`` subscription.
+module = ["abicheck.cli_params"]
+disallow_untyped_decorators = false
+disable_error_code = ["no-any-return", "misc", "type-arg"]
 
 [[tool.mypy.overrides]]
 # FastMCP decorators (@mcp.tool, etc.) are untyped.
@@ -103,7 +139,13 @@ disallow_untyped_decorators = false
 [[tool.mypy.overrides]]
 # types-PyYAML stubs may not be found in all environments;
 # the package is listed in [project.optional-dependencies.dev].
-module = ["abicheck.policy_file", "abicheck.suppression", "abicheck.environment_matrix"]
+module = [
+    "abicheck.policy_file",
+    "abicheck.suppression",
+    "abicheck.environment_matrix",
+    "abicheck.probe_harness",
+    "abicheck.bundle",
+]
 disable_error_code = ["import-untyped"]
 
 [tool.pytest.ini_options]
@@ -119,6 +161,10 @@ markers = [
 
 [tool.setuptools.packages.find]
 include = ["abicheck*"]
+
+[tool.setuptools.package-data]
+"abicheck.schemas" = ["*.json"]
+"abicheck.policies" = ["*.yaml"]
 
 [tool.coverage.run]
 branch = true
@@ -143,6 +189,9 @@ paths_to_mutate = [
     "abicheck/diff_platform.py",     # ELF/DWARF/PE/Mach-O detectors
     "abicheck/diff_filtering.py",    # deduplication and redundancy logic
     "abicheck/checker_policy.py",    # verdict classification
+    "abicheck/idioms.py",            # ADR-027 idiom & anti-pattern recognisers
+    "abicheck/pattern_verdicts.py",  # ADR-027 A4 verdict modulation
+    "abicheck/surface_graph.py",     # ADR-027 declaration-graph substrate
 ]
 tests_dir = "tests/"
 runner = "python -m pytest -x -q --tb=no -m 'not integration and not libabigail and not abicc and not slow'"

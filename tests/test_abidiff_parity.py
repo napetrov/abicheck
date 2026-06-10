@@ -21,13 +21,15 @@ Requires: abidiff (libabigail-tools), gcc/g++, castxml.
 """
 from __future__ import annotations
 
-import shutil
 import subprocess
 import textwrap
 import warnings
 from pathlib import Path
 
 import pytest
+
+from tests._libabigail import decode_exit_code
+from tests._libabigail import require_tool as _require_tool
 
 # ---------------------------------------------------------------------------
 # Cases:
@@ -154,11 +156,6 @@ _DIVERGE = [c for c in PARITY_CASES if c[8] == "divergence"]
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _require_tool(name: str) -> None:
-    if shutil.which(name) is None:
-        pytest.skip(f"{name} not found in PATH")
-
-
 def _compile_so(src: str, out: Path, lang: str) -> None:
     ext = ".c" if lang == "c" else ".cpp"
     src_file = out.with_suffix(ext)
@@ -205,7 +202,10 @@ def _run_abicheck(
             old_snap = dump(old, headers=headers_v1, version="v1", compiler=compiler)
             new_snap = dump(new, headers=headers_v2, version="v2", compiler=compiler)
 
-        result = compare(old_snap, new_snap)
+        # Parity baseline is abidiff *without* --headers-dir (unscoped), so run
+        # abicheck unscoped too for an apples-to-apples verdict comparison
+        # (surface scoping is on by default since ADR-024 Phase 5).
+        result = compare(old_snap, new_snap, scope_to_public_surface=False)
         return result.verdict.value
     except Exception as exc:  # noqa: BLE001
         return f"ERROR: {exc}"
@@ -223,16 +223,7 @@ def _run_abidiff(old: Path, new: Path) -> str:
         ["abidiff", "--no-show-locs", str(old), str(new)],
         capture_output=True, text=True, timeout=30,
     )
-    code = r.returncode
-    if code == 0:
-        return "NO_CHANGE"
-    if code & 1:
-        return "ERROR"
-    if code & 8:
-        return "BREAKING"
-    if code & 4:
-        return "COMPATIBLE"
-    return "NO_CHANGE"
+    return decode_exit_code(r.returncode, zero_verdict="NO_CHANGE")
 
 
 def _setup(

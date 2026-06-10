@@ -13,10 +13,18 @@
 # limitations under the License.
 
 """Checker — diff two AbiSnapshots, classify changes, produce a verdict."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from . import (
+    diff_abi_tags,  # noqa: F401 — triggers detector registration
+    diff_atomic,  # noqa: F401 — triggers detector registration
+    diff_bit_int,  # noqa: F401 — triggers detector registration
+    diff_char8t,  # noqa: F401 — triggers detector registration
+    diff_integer_model,  # noqa: F401 — triggers detector registration
+)
 from .checker_policy import (
     API_BREAK_KINDS as _API_BREAK_KINDS,
 )
@@ -137,14 +145,19 @@ def _diff_advanced_dwarf(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     """
     from .dwarf_advanced import AdvancedDwarfMetadata
 
-    o: AdvancedDwarfMetadata = getattr(old, "dwarf_advanced", None) or AdvancedDwarfMetadata()
-    n: AdvancedDwarfMetadata = getattr(new, "dwarf_advanced", None) or AdvancedDwarfMetadata()
+    o: AdvancedDwarfMetadata = (
+        getattr(old, "dwarf_advanced", None) or AdvancedDwarfMetadata()
+    )
+    n: AdvancedDwarfMetadata = (
+        getattr(new, "dwarf_advanced", None) or AdvancedDwarfMetadata()
+    )
 
     _kind_map = {
         "calling_convention_changed": ChangeKind.CALLING_CONVENTION_CHANGED,
         "value_abi_trait_changed": ChangeKind.VALUE_ABI_TRAIT_CHANGED,
         "struct_packing_changed": ChangeKind.STRUCT_PACKING_CHANGED,
         "toolchain_flag_drift": ChangeKind.TOOLCHAIN_FLAG_DRIFT,
+        "vector_abi_changed": ChangeKind.VECTOR_ABI_CHANGED,
         "type_visibility_changed": ChangeKind.TYPE_VISIBILITY_CHANGED,
         "frame_register_changed": ChangeKind.FRAME_REGISTER_CHANGED,
     }
@@ -169,6 +182,11 @@ def compare(
     *,
     policy: str = "strict_abi",
     policy_file: PolicyFile | None = None,
+    scope_to_public_surface: bool = True,
+    force_public_symbols: set[str] | None = None,
+    extra_changes: list[Change] | None = None,
+    pattern_verdicts: bool = False,
+    surface_metrics: bool = False,
 ) -> DiffResult:
     """Diff two AbiSnapshots and return a DiffResult with verdict.
 
@@ -188,47 +206,201 @@ def compare(
     # Run all registered detectors via the self-registering registry.
     changes, detector_results = _detector_registry.run_all(old, new)
 
-    # Post-detector: SONAME bump policy check (needs full change list).
-    # Uses the module-level import of check_soname_bump_policy.
-    from .elf_metadata import ElfMetadata as _ElfMetadata
-
-    _old_elf = getattr(old, "elf", None) or _ElfMetadata()
-    _new_elf = getattr(new, "elf", None) or _ElfMetadata()
-    soname_changes = check_soname_bump_policy(changes, _old_elf, _new_elf)
-    changes.extend(soname_changes)
+    # Merge externally-computed findings (e.g. build-configuration / probe-matrix
+    # findings from diff_matrix(), which need multi-config inputs compare() does
+    # not have). They join the normal pipeline so suppression, reporting, and
+    # verdict composition treat them uniformly (G2: probe → compare).
+    if extra_changes:
+        changes.extend(extra_changes)
 
     # Run the post-processing pipeline (filtering, dedup, enrichment, suppression).
+    # PolicyFile.frozen_namespaces is threaded in so the late-stage
+    # EscalateFrozenNamespaceViolations step can tag matching findings.
     from .post_processing import DEFAULT_PIPELINE
-    pp_ctx = DEFAULT_PIPELINE.run(changes, old, new, suppression=suppression)
+
+    frozen_ns = list(policy_file.frozen_namespaces) if policy_file is not None else []
+    pp_ctx = DEFAULT_PIPELINE.run(
+        changes,
+        old,
+        new,
+        suppression=suppression,
+        frozen_namespaces=frozen_ns,
+        scope_to_public_surface=scope_to_public_surface,
+        force_public_symbols=force_public_symbols,
+    )
     kept = pp_ctx.kept
     redundant = pp_ctx.redundant
     opaque_filtered = pp_ctx.opaque_filtered
     suppressed = pp_ctx.suppressed
+    out_of_surface = pp_ctx.out_of_surface
+    # scoping is "resolved" unless it was requested and had to fall back to the
+    # full export table (issue #235: an unconfirmed scope must not read as a
+    # confidently-clean public surface).
+    scope_resolved = not (scope_to_public_surface and pp_ctx.scope_fell_back)
 
     # Verdict computed on unsuppressed semantic changes.
     # NOTE: opaque_filtered changes are intentionally excluded from verdict
     # (they are compatibility-preserving noise, e.g. opaque handle size drift).
-    all_unsuppressed = kept + redundant
-    verdict = policy_file.compute_verdict(all_unsuppressed) if policy_file is not None else compute_verdict(all_unsuppressed, policy=policy)
+    #
+    # rename: redundant changes are excluded too. When SuppressRenamedPairs
+    # collapses a FUNC_REMOVED/FUNC_ADDED pair into a FUNC_LIKELY_RENAMED, it
+    # moves the removed/added halves into `redundant` tagged "rename:…". The
+    # surviving FUNC_LIKELY_RENAMED (a RISK kind, in `kept`) is what should
+    # drive the verdict; counting the redundant FUNC_REMOVED would re-escalate
+    # the downgraded rename back to BREAKING. They stay in redundant_changes
+    # for audit (--show-redundant); they just don't drive the verdict.
+    verdict_redundant = [
+        c for c in redundant if not (c.caused_by_type or "").startswith("rename:")
+    ]
+
+    # Post-detector: SONAME bump policy check.  It needs the full semantic
+    # change list, but that list must already have passed through
+    # post-processing.  Raw detector findings can be downgraded or made
+    # redundant there (for example FUNC_REMOVED/FUNC_ADDED collapsed into
+    # FUNC_LIKELY_RENAMED); evaluating SONAME policy too early leaves stale
+    # bump recommendations on non-breaking results.
+    #
+    # The advisory is a synthetic, library-level meta-finding (symbol
+    # "DT_SONAME"), not a per-symbol diff, so it deliberately bypasses the rest
+    # of the post-processing pipeline: its breaking-change *input* is already
+    # surface-scoped/deduped (it comes from `kept`), and the only pipeline step
+    # that meaningfully applies to the advisory itself — user suppression — is
+    # re-applied explicitly below. Surface scoping, dedup and enrichment steps
+    # have nothing to act on for a DT_SONAME advisory.
+    from .elf_metadata import ElfMetadata as _ElfMetadata
+
+    _old_elf = getattr(old, "elf", None) or _ElfMetadata()
+    _new_elf = getattr(new, "elf", None) or _ElfMetadata()
+    soname_changes = check_soname_bump_policy(
+        kept + verdict_redundant, _old_elf, _new_elf
+    )
+    if suppression is not None and soname_changes:
+        visible_soname_changes: list[Change] = []
+        for c in soname_changes:
+            if suppression.is_suppressed(c):
+                suppressed.append(c)
+            else:
+                visible_soname_changes.append(c)
+        soname_changes = visible_soname_changes
+    if soname_changes:
+        kept.extend(soname_changes)
+
+    all_unsuppressed = kept + verdict_redundant
+
+    verdict = (
+        policy_file.compute_verdict(all_unsuppressed)
+        if policy_file is not None
+        else compute_verdict(all_unsuppressed, policy=policy)
+    )
     effective_policy = policy_file.base_policy if policy_file is not None else policy
 
     # opaque_filtered changes are visible under --show-redundant for audit, but their
     # label in the reporter is distinct from true display-dedup redundant changes.
     # redundant_count reflects only the display-dedup set; opaque_filtered is additive.
     redundant_for_report = redundant + opaque_filtered
-    true_redundant_count = len(redundant)  # dedup-only (not opaque); used for report label
+    true_redundant_count = len(
+        redundant
+    )  # dedup-only (not opaque); used for report label
 
     # Compute old_symbol_count once for downstream metrics (Bug 8)
-    old_sym_count = sum(
-        1 for f in old.functions if f.visibility in _PUBLIC_VIS
-    ) + sum(
+    old_sym_count = sum(1 for f in old.functions if f.visibility in _PUBLIC_VIS) + sum(
         1 for v in old.variables if v.visibility in _PUBLIC_VIS
     )
 
     # Compute evidence tiers and confidence from detector results.
-    evidence_tiers, confidence, coverage_warnings = _compute_confidence(
-        detector_results, old, new,
+    evidence_tiers, confidence, coverage_warnings, evidence_tier = _compute_confidence(
+        detector_results,
+        old,
+        new,
     )
+
+    # ADR-024 §D5.3: structured confidence in the surface resolution itself.
+    # Reuse the surfaces FilterNonPublicSurface already computed (when scoping
+    # ran) to avoid repeating the type-closure walk.
+    from .surface import surface_scope_confidence
+
+    scope_confidence, scope_notes = surface_scope_confidence(
+        old,
+        new,
+        scope_enabled=scope_to_public_surface,
+        surf_old=pp_ctx.surf_old,
+        surf_new=pp_ctx.surf_new,
+    )
+
+    # ADR-027 A1/D1.2: aggregate surface-metric drift (opt-in --surface-metrics).
+    # COMPATIBLE informational roll-ups; suppressible like any finding and never
+    # breaking, so they leave the verdict unchanged.
+    if surface_metrics:
+        from .diff_surface_metrics import diff_surface_metrics
+
+        surface_metric_added = False
+        for c in diff_surface_metrics(old, new):
+            if suppression is not None and suppression.is_suppressed(c):
+                suppressed.append(c)
+            else:
+                kept.append(c)
+                surface_metric_added = True
+        # These roll-ups are COMPATIBLE, never breaking, but they are still
+        # changes: appending them after `verdict` was computed above would leave
+        # a NO_CHANGE verdict alongside e.g. a `public_surface_grew` finding,
+        # making the CLI/JSON summary inconsistent with the finding set. Recompute
+        # so NO_CHANGE flips to COMPATIBLE when the only findings are these
+        # roll-ups (ADR-027 review).
+        if surface_metric_added:
+            all_unsuppressed = kept + verdict_redundant
+            verdict = (
+                policy_file.compute_verdict(all_unsuppressed)
+                if policy_file is not None
+                else compute_verdict(all_unsuppressed, policy=policy)
+            )
+
+    # ADR-027 A4: pattern-aware verdict modulation. Runs after post-processing
+    # and before the (recomputed) verdict so a demotion/raise reaches both the
+    # reported findings and the exit code. Off by default (opt-in via
+    # --pattern-verdicts); a no-op that leaves `kept`/`verdict` untouched
+    # otherwise.
+    pattern_modulations: list[dict[str, object]] = []
+    if pattern_verdicts:
+        from .pattern_verdicts import apply_pattern_verdicts
+
+        pre_pattern_count = len(kept)
+        # A user policy override on a kind is authoritative: a pattern demotion
+        # must not lower it, or the aggregate verdict (which applies the
+        # override) would disagree with per-finding classification (ADR-027
+        # review). Protect every explicitly-overridden kind from demotion.
+        protected_kinds = (
+            frozenset(policy_file.overrides) if policy_file is not None else frozenset()
+        )
+        pattern_modulations = apply_pattern_verdicts(
+            kept, old, new, evidence_tier=evidence_tier, protected_kinds=protected_kinds
+        )
+        if suppression is not None and len(kept) > pre_pattern_count:
+            retained = kept[:pre_pattern_count]
+            suppressed_synthetic: set[tuple[str, str | None]] = set()
+            for c in kept[pre_pattern_count:]:
+                if suppression.is_suppressed(c):
+                    suppressed.append(c)
+                    # Drop this synthetic finding's disclosure row too, so a
+                    # fully-suppressed handle/opaque/anti-pattern transition does
+                    # not linger in the pattern_modulations ledger while it is
+                    # absent from `changes` and the verdict (ADR-027 review).
+                    suppressed_synthetic.add((c.symbol, c.modulation_rule))
+                else:
+                    retained.append(c)
+            kept = retained
+            if suppressed_synthetic:
+                pattern_modulations = [
+                    m
+                    for m in pattern_modulations
+                    if (m.get("symbol"), m.get("rule_id")) not in suppressed_synthetic
+                ]
+        if pattern_modulations:
+            all_unsuppressed = kept + verdict_redundant
+            verdict = (
+                policy_file.compute_verdict(all_unsuppressed)
+                if policy_file is not None
+                else compute_verdict(all_unsuppressed, policy=policy)
+            )
 
     return DiffResult(
         old_version=old.version,
@@ -248,4 +420,12 @@ def compare(
         confidence=confidence,
         evidence_tiers=evidence_tiers,
         coverage_warnings=coverage_warnings,
+        out_of_surface_changes=out_of_surface,
+        out_of_surface_count=len(out_of_surface),
+        scope_to_public_surface=scope_to_public_surface,
+        scope_resolved=scope_resolved,
+        surface_scope_confidence=scope_confidence,
+        surface_scope_notes=scope_notes,
+        evidence_tier=evidence_tier,
+        pattern_modulations=pattern_modulations,
     )

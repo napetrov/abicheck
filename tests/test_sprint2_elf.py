@@ -43,7 +43,7 @@ def test_soname_changed() -> None:
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.SONAME_CHANGED in kinds
-    assert result.verdict == Verdict.COMPATIBLE
+    assert result.verdict == Verdict.COMPATIBLE_WITH_RISK
 
 
 def test_soname_missing_reported_as_compatible_quality_issue() -> None:
@@ -102,6 +102,52 @@ def test_symbol_version_defined_removed() -> None:
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED in kinds
+    assert result.verdict == Verdict.BREAKING
+
+
+def test_unattached_private_symbol_version_marker_removed_is_ignored() -> None:
+    old = _snap(_elf(versions_defined=["LIBFOO_1.0", "LIBFOO_PRIVATE"]))
+    new = _snap(_elf(versions_defined=["LIBFOO_1.0"]))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED not in kinds
+    assert result.verdict == Verdict.NO_CHANGE
+
+
+def test_marker_only_private_version_script_removed_emits_no_warning() -> None:
+    """A version script consisting solely of an unattached private marker must
+    not trigger VERSION_SCRIPT_MISSING when it is dropped.
+
+    The old side's only version definition is ``LIBFOO_PRIVATE`` with no symbol
+    bound to it; the new side keeps the exported symbols but has no version
+    script. Since the marker is not a real version script, dropping it should
+    stay NO_CHANGE rather than escalate via VERSION_SCRIPT_MISSING.
+    """
+    old = _snap(
+        _elf(
+            versions_defined=["LIBFOO_PRIVATE"],
+            symbols=[_sym("api")],
+        )
+    )
+    new = _snap(_elf(versions_defined=[], symbols=[_sym("api")]))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_DEFINED_REMOVED not in kinds
+    assert ChangeKind.VERSION_SCRIPT_MISSING not in kinds
+    assert result.verdict == Verdict.NO_CHANGE
+
+
+def test_private_symbol_version_with_exported_symbol_removed_is_breaking() -> None:
+    old = _snap(
+        _elf(
+            versions_defined=["LIBFOO_1.0", "LIBFOO_PRIVATE"],
+            symbols=[_sym("private_api", version="LIBFOO_PRIVATE")],
+        )
+    )
+    new = _snap(_elf(versions_defined=["LIBFOO_1.0"], symbols=[]))
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.SYMBOL_VERSION_NODE_REMOVED in kinds
     assert result.verdict == Verdict.BREAKING
 
 
@@ -292,8 +338,8 @@ def test_versions_required_entire_lib_removed() -> None:
 
 def test_elf_breaking_kinds_verdict() -> None:
     """BREAKING ELF kinds (defined version removed, type changed) produce BREAKING verdict."""
-    # NOTE: SONAME_CHANGED is excluded here — it is now in COMPATIBLE_KINDS because
-    # SONAME is a packaging/policy signal, not a binary ABI break. See test_soname_changed.
+    # NOTE: SONAME_CHANGED is excluded here because it is a deployment risk,
+    # not a hard ABI break. See test_soname_changed.
     breaking_cases = [
         _snap(_elf(versions_defined=["V1"])),  # SYMBOL_VERSION_DEFINED_REMOVED
         _snap(_elf(symbols=[_sym("f", sym_type=SymbolType.FUNC)])),  # TYPE_CHANGED
@@ -339,13 +385,14 @@ def _elf_only_snap(symbols: list[str]) -> AbiSnapshot:
 
 
 def test_visibility_leak_detected() -> None:
-    """Internal-looking ELF_ONLY symbols in old lib → VISIBILITY_LEAK."""
+    """Internal-looking ELF_ONLY symbols in old lib → VISIBILITY_LEAK plus removal breaks."""
     old = _elf_only_snap(["public_api", "internal_helper", "another_impl"])
     new = _elf_only_snap(["public_api"])
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.VISIBILITY_LEAK in kinds
-    assert result.verdict == Verdict.COMPATIBLE
+    assert ChangeKind.FUNC_REMOVED_ELF_ONLY in kinds
+    assert result.verdict == Verdict.BREAKING
 
 
 def test_visibility_leak_not_fired_without_elf_only_mode() -> None:
@@ -376,6 +423,17 @@ def test_visibility_leak_not_fired_for_clean_public_symbols() -> None:
     result = compare(old, new)
     kinds = {c.kind for c in result.changes}
     assert ChangeKind.VISIBILITY_LEAK not in kinds
+
+
+def test_visibility_leak_ignores_linker_artifact_symbols() -> None:
+    """Linker boundary symbols should not be counted as visibility leaks."""
+    old = _elf_only_snap(["public_api", "__bss_start", "_edata", "_end"])
+    new = _elf_only_snap(["public_api"])
+    result = compare(old, new)
+    kinds = {c.kind for c in result.changes}
+    assert ChangeKind.VISIBILITY_LEAK not in kinds
+    assert ChangeKind.FUNC_REMOVED_ELF_ONLY not in kinds
+    assert result.verdict == Verdict.NO_CHANGE
 
 
 def test_symbol_version_required_added_older_is_compat() -> None:

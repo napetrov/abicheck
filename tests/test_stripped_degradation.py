@@ -193,7 +193,7 @@ class TestElfOnlyMode:
         )
         # In elf_only mode, removal produces FUNC_REMOVED_ELF_ONLY
         assert ChangeKind.FUNC_REMOVED_ELF_ONLY in _kinds(r)
-        assert r.verdict == Verdict.COMPATIBLE  # ELF_ONLY removal is not BREAKING
+        assert r.verdict == Verdict.BREAKING
 
     def test_elf_only_lower_confidence(self):
         """ELF-only mode should have lower confidence than header+ELF."""
@@ -239,6 +239,125 @@ class TestPartialMetadata:
         assert r.verdict == Verdict.NO_CHANGE
         assert "elf" in r.evidence_tiers
         assert "dwarf" not in r.evidence_tiers
+
+    def test_dwarf_deleted_dropped_from_dynsym_reported_once(self):
+        """A DWARF-deleted export that also leaves .dynsym is one event.
+
+        When a function gains ``= delete`` (DW_AT_deleted) and disappears from
+        .dynsym while the DSO still exports other functions, _public_functions
+        drops it from new_map (no longer exported). Without deduplication the
+        old exported peer would be flagged FUNC_REMOVED *and*
+        _detect_newly_deleted_functions would flag FUNC_DELETED_DWARF for the
+        same symbol. It must be reported once, as the deletion.
+        """
+        old_elf = ElfMetadata(symbols=[
+            ElfSymbol(name="_Z7processv", binding=SymbolBinding.GLOBAL, sym_type=SymbolType.FUNC),
+            ElfSymbol(name="_Z4keepv", binding=SymbolBinding.GLOBAL, sym_type=SymbolType.FUNC),
+        ])
+        new_elf = ElfMetadata(symbols=[
+            ElfSymbol(name="_Z4keepv", binding=SymbolBinding.GLOBAL, sym_type=SymbolType.FUNC),
+        ])
+        old = _snap(
+            functions=[_pub_func("process", "_Z7processv"), _pub_func("keep", "_Z4keepv")],
+            elf=old_elf, dwarf=DwarfMetadata(has_dwarf=True),
+        )
+        new = _snap(
+            functions=[
+                _pub_func("keep", "_Z4keepv"),
+                _pub_func("process", "_Z7processv", is_deleted=True, deleted_from_dwarf=True),
+            ],
+            elf=new_elf, dwarf=DwarfMetadata(has_dwarf=True),
+        )
+        r = compare(old, new)
+        process_kinds = {c.kind for c in r.changes if c.symbol == "_Z7processv"}
+        assert ChangeKind.FUNC_DELETED_DWARF in process_kinds
+        assert ChangeKind.FUNC_REMOVED not in process_kinds
+        assert ChangeKind.FUNC_REMOVED_ELF_ONLY not in process_kinds
+
+    def test_unexported_dwarf_deleted_function_not_public_surface(self):
+        """DWARF-only deleted special members must not become public ABI.
+
+        oneTBB debug builds expose internal deleted copy constructors/operators
+        through DW_AT_deleted, but the functions are not in .dynsym. When a
+        later build is stripped, those internal DWARF declarations must not
+        become public removals.
+        """
+        internal = _pub_func(
+            "tbb::detail::d0::atomic_backoff::atomic_backoff",
+            "_ZN3tbb6detail2d014atomic_backoffC4ERKS2_",
+            is_deleted=True,
+            deleted_from_dwarf=True,
+        )
+        exported = _pub_func("api", "_Z3apiv")
+        elf = ElfMetadata(
+            symbols=[ElfSymbol(name="_Z3apiv", binding=SymbolBinding.GLOBAL,
+                               sym_type=SymbolType.FUNC)],
+        )
+
+        r = compare(
+            _snap(functions=[internal, exported], elf=elf, dwarf=DwarfMetadata(has_dwarf=True)),
+            _snap(functions=[exported], elf=elf, elf_only_mode=True),
+        )
+
+        assert ChangeKind.FUNC_REMOVED not in _kinds(r)
+        assert ChangeKind.FUNC_REMOVED_ELF_ONLY not in _kinds(r)
+        assert r.verdict != Verdict.BREAKING
+
+    def test_unexported_dwarf_deleted_not_reported_when_only_data_exported(self):
+        """An ELF table that exports only data is still authoritative.
+
+        When the new side has an ELF symbol table but no exported *function*
+        symbols (e.g. it exports only data, or every function is hidden), a
+        DWARF-only DW_AT_deleted internal member is genuinely not exported and
+        must not be reported. The guard must key on ELF-table presence, not on
+        whether some other function happened to be exported.
+        """
+        internal = _pub_func(
+            "foo::helper", "_ZN3foo6helperEv",
+            is_deleted=True, deleted_from_dwarf=True,
+        )
+        data_only_elf = ElfMetadata(symbols=[
+            ElfSymbol(name="g_table", binding=SymbolBinding.GLOBAL, sym_type=SymbolType.OBJECT),
+        ])
+        r = compare(
+            _snap(functions=[_pub_func("foo::helper", "_ZN3foo6helperEv")],
+                  elf=data_only_elf, dwarf=DwarfMetadata(has_dwarf=True)),
+            _snap(functions=[internal], elf=data_only_elf, dwarf=DwarfMetadata(has_dwarf=True)),
+        )
+        assert ChangeKind.FUNC_DELETED_DWARF not in _kinds(r)
+        assert r.verdict != Verdict.BREAKING
+
+    def test_dwarf_deleted_reported_when_no_elf_table(self):
+        """With no ELF table, fall back to visibility — deletion still reported."""
+        old = _pub_func("api", "_Z3apiv")
+        new = _pub_func("api", "_Z3apiv", is_deleted=True, deleted_from_dwarf=True)
+        r = compare(
+            _snap(functions=[old], dwarf=DwarfMetadata(has_dwarf=True)),
+            _snap(functions=[new], dwarf=DwarfMetadata(has_dwarf=True)),
+        )
+        assert ChangeKind.FUNC_DELETED_DWARF in _kinds(r)
+
+    def test_exported_dwarf_deleted_function_still_detected(self):
+        """Confirmed exported DWARF-deleted APIs still report a deletion."""
+        old = _pub_func("api", "_Z3apiv")
+        new = _pub_func(
+            "api",
+            "_Z3apiv",
+            is_deleted=True,
+            deleted_from_dwarf=True,
+        )
+        elf = ElfMetadata(
+            symbols=[ElfSymbol(name="_Z3apiv", binding=SymbolBinding.GLOBAL,
+                               sym_type=SymbolType.FUNC)],
+        )
+
+        r = compare(
+            _snap(functions=[old], elf=elf, dwarf=DwarfMetadata(has_dwarf=True)),
+            _snap(functions=[new], elf=elf, dwarf=DwarfMetadata(has_dwarf=True)),
+        )
+
+        assert ChangeKind.FUNC_DELETED_DWARF in _kinds(r)
+        assert r.verdict == Verdict.BREAKING
 
     def test_dwarf_present_elf_absent(self):
         """DWARF metadata present, ELF absent — should not crash."""

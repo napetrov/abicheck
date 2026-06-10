@@ -1,4 +1,5 @@
 # Copyright 2026 Nikolay Petrov
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,10 +30,12 @@ opens files as given and does not sanitize or restrict path traversal.
 """
 from __future__ import annotations
 
+import bisect
 import hashlib
 import logging
 import os
 import stat
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO
@@ -149,6 +152,14 @@ _MIN_SYMBOL_SIZE = 8
 # Maximum relative size difference for fuzzy matching (no code hash).
 _SIZE_TOLERANCE_RATIO = 0.05  # 5%
 
+# Upper bound on removed×added pairs before the fuzzy pass (pass 3) is skipped.
+# The fuzzy pass requires a *unique* size+name match, so when both the removed
+# and added sets are large its O(removed×added) name-similarity scan cannot
+# produce reliable matches anyway (everything is ambiguous). Skipping it keeps
+# a mass-rename / fully-stripped comparison from blowing up — the exact and
+# size-unique passes (1 and 2) still run.
+_FUZZY_MAX_PAIRS = 2_000_000
+
 # Sections to include in BinarySummary for ABI-relevant triage.
 _ABI_SECTIONS = frozenset({
     ".text", ".rodata", ".data", ".bss", ".data.rel.ro",
@@ -219,6 +230,7 @@ def compute_section_summary(binary_path: str | Path) -> BinarySummary:
 def match_renamed_functions(
     old_fps: dict[str, FunctionFingerprint],
     new_fps: dict[str, FunctionFingerprint],
+    name_filter: Callable[[str, str], bool] | None = None,
 ) -> list[RenameCandidate]:
     """Find likely renamed functions by matching fingerprints.
 
@@ -239,6 +251,14 @@ def match_renamed_functions(
     shared libraries (< 10k symbols).
 
     Matches are returned sorted by confidence (highest first).
+
+    ``name_filter`` (optional): a predicate ``(old_name, new_name) -> bool``
+    consulted during candidate *selection* for the hash-less size/fuzzy passes
+    (3 and 4 above). When supplied, an old symbol only considers new partners
+    the predicate accepts, so an implausible same-size symbol cannot greedily
+    consume a partner that a plausible rename should claim. Exact (code-hash)
+    matches ignore the filter — identical code is strong evidence regardless of
+    name. When omitted, matching behaves exactly as before.
     """
     old_only = set(old_fps) - set(new_fps)
     new_only = set(new_fps) - set(old_fps)
@@ -259,25 +279,55 @@ def match_renamed_functions(
     if not old_candidates or not new_candidates:
         return []
 
-    # Build index: size → list of new candidates (for fast lookup)
-    new_by_size: dict[int, list[tuple[str, FunctionFingerprint]]] = {}
-    for name, fp in new_candidates.items():
-        new_by_size.setdefault(fp.size, []).append((name, fp))
+    new_by_size, new_by_hash = _index_new_candidates(new_candidates)
 
-    # Also build code_hash → list of new candidates for exact matching
+    used_new: set[str] = set()
+    candidates = _match_exact(old_candidates, new_by_hash, used_new)
+    matched_old = {c.old_name for c in candidates}
+    # Pass 2 (size-only) ALWAYS keeps the name predicate: matching a removed
+    # symbol to an unrelated same-size added one would mislabel a real
+    # removal/addition as a rename and hide an ABI break. The predicate cost is
+    # bounded by the size-bucket short-circuit in _match_size, so it stays cheap
+    # for the spread-out symbol sizes real libraries have.
+    candidates += _match_size(old_candidates, new_by_size, used_new, matched_old, name_filter)
+    # Pass 3 (fuzzy) is the only O(removed×added) pass and is a low-confidence
+    # heuristic, so skip it entirely when the candidate sets are large enough
+    # that a *unique* fuzzy match could not be meaningful anyway. Skipping fuzzy
+    # only forgoes speculative rename matches — it never hides a break.
+    if len(old_candidates) * len(new_candidates) <= _FUZZY_MAX_PAIRS:
+        candidates += _match_fuzzy(old_candidates, new_by_size, used_new, matched_old, name_filter)
+
+    # Sort by confidence descending
+    candidates.sort(key=lambda c: (-c.confidence, c.old_name))
+    return candidates
+
+
+def _index_new_candidates(
+    new_candidates: dict[str, FunctionFingerprint],
+) -> tuple[
+    dict[int, list[tuple[str, FunctionFingerprint]]],
+    dict[str, list[tuple[str, FunctionFingerprint]]],
+]:
+    """Build size→candidates and code_hash→candidates indices for fast lookup."""
+    new_by_size: dict[int, list[tuple[str, FunctionFingerprint]]] = {}
     new_by_hash: dict[str, list[tuple[str, FunctionFingerprint]]] = {}
     for name, fp in new_candidates.items():
+        new_by_size.setdefault(fp.size, []).append((name, fp))
         if fp.code_hash:
             new_by_hash.setdefault(fp.code_hash, []).append((name, fp))
+    return new_by_size, new_by_hash
 
-    candidates: list[RenameCandidate] = []
-    used_new: set[str] = set()
 
-    # Pass 1: exact matches (same size + same code hash, unique match only)
+def _match_exact(
+    old_candidates: dict[str, FunctionFingerprint],
+    new_by_hash: dict[str, list[tuple[str, FunctionFingerprint]]],
+    used_new: set[str],
+) -> list[RenameCandidate]:
+    """Pass 1: exact matches (same size + same code hash, unique match only)."""
+    out: list[RenameCandidate] = []
     for old_name, old_fp in sorted(old_candidates.items()):
         if not old_fp.code_hash:
             continue
-        # Collect unused new symbols with matching hash AND size
         exact_matches = [
             (n, fp) for n, fp in new_by_hash.get(old_fp.code_hash, [])
             if n not in used_new and fp.size == old_fp.size
@@ -285,7 +335,7 @@ def match_renamed_functions(
         # Only match when unambiguous (one candidate), mirroring passes 2/3
         if len(exact_matches) == 1:
             new_name, new_fp = exact_matches[0]
-            candidates.append(RenameCandidate(
+            out.append(RenameCandidate(
                 old_name=old_name,
                 new_name=new_name,
                 confidence=1.0,
@@ -293,56 +343,123 @@ def match_renamed_functions(
                 new_fingerprint=new_fp,
             ))
             used_new.add(new_name)
+    return out
 
-    matched_old = {c.old_name for c in candidates}
 
-    # Pass 2: size-only matches (same size, unique among remaining candidates)
+def _match_size(
+    old_candidates: dict[str, FunctionFingerprint],
+    new_by_size: dict[int, list[tuple[str, FunctionFingerprint]]],
+    used_new: set[str],
+    matched_old: set[str],
+    name_filter: Callable[[str, str], bool] | None = None,
+) -> list[RenameCandidate]:
+    """Pass 2: size-only matches (same size, unique among remaining candidates)."""
+    out: list[RenameCandidate] = []
     for old_name, old_fp in sorted(old_candidates.items()):
         if old_name in matched_old:
             continue
-        exact_size_matches = [
-            (n, fp) for n, fp in new_by_size.get(old_fp.size, [])
-            if n not in used_new
-        ]
+        # Only a *unique* same-size candidate matches, so stop once a second one
+        # is found — this keeps a crowded size bucket from triggering an
+        # O(bucket) name-filter scan per old symbol.
+        size_matches: list[tuple[str, FunctionFingerprint]] = []
+        for n, fp in new_by_size.get(old_fp.size, []):
+            if n in used_new:
+                continue
+            # A same-size candidate with a conflicting code hash can never match
+            # — exclude it before the ambiguity check so it does not block the
+            # one eligible partner and drop a real rename.
+            if old_fp.code_hash and fp.code_hash and old_fp.code_hash != fp.code_hash:
+                continue
+            if name_filter is not None and not name_filter(old_name, n):
+                continue
+            size_matches.append((n, fp))
+            if len(size_matches) > 1:
+                break
         # Only match if there's exactly one candidate at this size
         # (ambiguous matches are not reliable)
-        if len(exact_size_matches) == 1:
-            new_name, new_fp = exact_size_matches[0]
-            # If both have code hashes but they differ, skip
-            if old_fp.code_hash and new_fp.code_hash and old_fp.code_hash != new_fp.code_hash:
-                continue
-            # 0.8 when either side lacks a code hash (size match only)
-            candidates.append(RenameCandidate(
-                old_name=old_name,
-                new_name=new_name,
-                confidence=0.8,
-                old_fingerprint=old_fp,
-                new_fingerprint=new_fp,
-            ))
-            used_new.add(new_name)
-            matched_old.add(old_name)
+        if len(size_matches) != 1:
+            continue
+        new_name, new_fp = size_matches[0]
+        # 0.8 when either side lacks a code hash (size match only); conflicting
+        # code hashes were already excluded from size_matches above.
+        out.append(RenameCandidate(
+            old_name=old_name,
+            new_name=new_name,
+            confidence=0.8,
+            old_fingerprint=old_fp,
+            new_fingerprint=new_fp,
+        ))
+        used_new.add(new_name)
+        matched_old.add(old_name)
+    return out
 
-    # Pass 3: fuzzy size matches (within tolerance, unique match only)
-    for old_name, old_fp in sorted(old_candidates.items()):
-        if old_name in matched_old:
-            continue
-        if old_fp.size == 0:
-            continue
-        fuzzy_matches: list[tuple[str, FunctionFingerprint]] = []
-        for new_name, new_fp in new_candidates.items():
-            if new_name in used_new:
-                continue
-            if new_fp.size == 0:
+
+def _fuzzy_partners(
+    old_fp: FunctionFingerprint,
+    new_by_size: dict[int, list[tuple[str, FunctionFingerprint]]],
+    sorted_sizes: list[int],
+    used_new: set[str],
+    name_filter: Callable[[str, str], bool] | None = None,
+) -> list[tuple[str, FunctionFingerprint]]:
+    """New candidates whose size is within tolerance of ``old_fp`` and unused.
+
+    Only the *populated* candidate sizes inside the tolerance window are
+    scanned: a binary search over the pre-sorted size keys picks the window so
+    cost depends on the number of candidate sizes, not the symbol's byte size
+    (a multi-MB function would otherwise sweep millions of empty sizes). The
+    caller only needs to know whether there is exactly one partner, so we stop
+    after finding a second.
+    """
+    partners: list[tuple[str, FunctionFingerprint]] = []
+    size = old_fp.size
+    if size == 0:
+        return partners
+    # new sizes satisfying abs(size-new)/max(size,new) <= tol lie within
+    # [size*(1-tol), size/(1-tol)]; widen by 1 each way to absorb int rounding.
+    lo = int(size * (1 - _SIZE_TOLERANCE_RATIO)) - 1
+    hi = int(size / (1 - _SIZE_TOLERANCE_RATIO)) + 1
+    left = bisect.bisect_left(sorted_sizes, lo)
+    right = bisect.bisect_right(sorted_sizes, hi)
+    for s in sorted_sizes[left:right]:
+        for new_name, new_fp in new_by_size.get(s, ()):
+            if new_name in used_new or new_fp.size == 0:
                 continue
             # If both have code hashes but they differ, skip
             if old_fp.code_hash and new_fp.code_hash and old_fp.code_hash != new_fp.code_hash:
                 continue
-            size_diff = abs(old_fp.size - new_fp.size) / max(old_fp.size, new_fp.size)
-            if size_diff <= _SIZE_TOLERANCE_RATIO:
-                fuzzy_matches.append((new_name, new_fp))
+            if abs(size - new_fp.size) / max(size, new_fp.size) > _SIZE_TOLERANCE_RATIO:
+                continue
+            # Name similarity is the most expensive gate (demangle + bracket
+            # scan), so apply it last — only to size-eligible partners.
+            if name_filter is not None and not name_filter(old_fp.name, new_name):
+                continue
+            partners.append((new_name, new_fp))
+            if len(partners) > 1:
+                # The caller matches only on a unique partner; two is enough to
+                # know it is not unique.
+                return partners
+    return partners
+
+
+def _match_fuzzy(
+    old_candidates: dict[str, FunctionFingerprint],
+    new_by_size: dict[int, list[tuple[str, FunctionFingerprint]]],
+    used_new: set[str],
+    matched_old: set[str],
+    name_filter: Callable[[str, str], bool] | None = None,
+) -> list[RenameCandidate]:
+    """Pass 3: fuzzy size matches (within tolerance, unique match only)."""
+    out: list[RenameCandidate] = []
+    # Sorted size keys, computed once, so each old symbol's tolerance window is
+    # a binary-search slice over populated sizes rather than a dense range.
+    sorted_sizes = sorted(new_by_size)
+    for old_name, old_fp in sorted(old_candidates.items()):
+        if old_name in matched_old or old_fp.size == 0:
+            continue
+        fuzzy_matches = _fuzzy_partners(old_fp, new_by_size, sorted_sizes, used_new, name_filter)
         if len(fuzzy_matches) == 1:
             new_name, new_fp = fuzzy_matches[0]
-            candidates.append(RenameCandidate(
+            out.append(RenameCandidate(
                 old_name=old_name,
                 new_name=new_name,
                 confidence=0.5,
@@ -351,10 +468,7 @@ def match_renamed_functions(
             ))
             used_new.add(new_name)
             matched_old.add(old_name)
-
-    # Sort by confidence descending
-    candidates.sort(key=lambda c: (-c.confidence, c.old_name))
-    return candidates
+    return out
 
 
 # ---------------------------------------------------------------------------

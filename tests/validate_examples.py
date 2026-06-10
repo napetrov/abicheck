@@ -318,6 +318,7 @@ def _dump_and_compare(
     v2_so: Path,
     v1_hdr: Path | None,
     v2_hdr: Path | None,
+    scope_public_headers: bool = False,
 ) -> tuple[str | None, str | None]:
     """Run abicheck dump+compare. Returns (verdict, error_msg).
 
@@ -339,8 +340,16 @@ def _dump_and_compare(
     if r2.returncode != 0:
         return None, f"dump v2 failed: {r2.stderr[:200]}"
 
+    compare_cmd = [
+        sys.executable, "-m", "abicheck.cli", "compare", str(snap1), str(snap2), "--format", "json",
+    ]
+    # Scoping is on by default since ADR-024 Phase 5; ground_truth.json verdicts
+    # are authored unscoped unless the case opts in, so be explicit either way.
+    compare_cmd.append(
+        "--scope-public-headers" if scope_public_headers else "--no-scope-public-headers"
+    )
     rc = subprocess.run(
-        [sys.executable, "-m", "abicheck.cli", "compare", str(snap1), str(snap2), "--format", "json"],
+        compare_cmd,
         capture_output=True, text=True, timeout=60,
     )
     try:
@@ -378,10 +387,27 @@ def _check_case_preconditions(
     if entry.get("skip", False):
         return CaseResult(name, "SKIP", expected_raw, None, entry.get("reason", "skip=true"))
 
+    # Bundle cases (ADR-023) are multi-library and use a different layout
+    # (per-side dirs under examples/<case>/{old,new}/<libname>.cpp).
+    # The v1/v2-pair compile path in this script can't build them; they
+    # have their own integration tests in tests/test_bundle.py.
+    if entry.get("category") == "bundle" or entry.get("bundle") is True:
+        return CaseResult(name, "SKIP", expected_raw, None,
+                          "bundle case — exercised by tests/test_bundle.py (ADR-023)")
+
     platforms = entry.get("platforms", ["linux", "macos", "windows"])
     if CURRENT_PLATFORM not in platforms:
         return CaseResult(name, "SKIP", expected_raw, None,
                           f"not supported on {CURRENT_PLATFORM} (requires {platforms})")
+
+    # Skip cases whose required compiler feature is unavailable (e.g. C23
+    # _BitInt on GCC < 14): the fixture cannot compile, so it is not a FAIL.
+    feature = entry.get("requires_feature")
+    if feature is not None:
+        from feature_probe import compiler_supports
+        if not compiler_supports(feature):
+            return CaseResult(name, "SKIP", expected_raw, None,
+                              f"compiler lacks required feature {feature!r}")
     return None
 
 
@@ -442,7 +468,10 @@ def run_case(
         return _handle_build_error(name, expected_raw, build_err)
 
     # Dump + compare
-    got, dc_err = _dump_and_compare(tmp, v1_so, v2_so, v1_hdr, v2_hdr)
+    got, dc_err = _dump_and_compare(
+        tmp, v1_so, v2_so, v1_hdr, v2_hdr,
+        scope_public_headers=bool(entry.get("scope_public_headers", False)),
+    )
     if dc_err is not None:
         return CaseResult(name, "ERROR", expected_raw, None, dc_err)
 

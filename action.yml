@@ -290,7 +290,7 @@ runs:
   steps:
     # ── 1. Python ─────────────────────────────────────────────────────────────
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: ${{ inputs.python-version }}
 
@@ -363,7 +363,7 @@ runs:
     # ── 5. Upload SARIF ──────────────────────────────────────────────────────
     - name: Upload SARIF to Code Scanning
       if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.run-abicheck.outputs.report-path != ''
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: ${{ steps.run-abicheck.outputs.report-path }}
         category: abicheck

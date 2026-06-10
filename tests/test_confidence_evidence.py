@@ -6,9 +6,11 @@ tiers based on available data sources (header, ELF, DWARF, PE, Mach-O).
 from __future__ import annotations
 
 import copy
+import json
 
+from abicheck import reporter
 from abicheck.checker import Verdict, compare
-from abicheck.checker_policy import Confidence
+from abicheck.checker_policy import Confidence, EvidenceTier
 from abicheck.dwarf_metadata import DwarfMetadata, StructLayout
 from abicheck.elf_metadata import ElfMetadata, ElfSymbol, SymbolBinding, SymbolType
 from abicheck.model import (
@@ -21,13 +23,13 @@ from abicheck.model import (
 
 def _snap(version="1.0", functions=None, variables=None, types=None,
           enums=None, typedefs=None, elf=None, dwarf=None,
-          dwarf_advanced=None):
+          dwarf_advanced=None, from_headers=False):
     return AbiSnapshot(
         library="libtest.so.1", version=version,
         functions=functions or [], variables=variables or [],
         types=types or [], enums=enums or [],
         typedefs=typedefs or {}, elf=elf, dwarf=dwarf,
-        dwarf_advanced=dwarf_advanced,
+        dwarf_advanced=dwarf_advanced, from_headers=from_headers,
     )
 
 
@@ -81,9 +83,13 @@ class TestEvidenceTiers:
             structs={"Cfg": StructLayout(name="Cfg", byte_size=4)},
             has_dwarf=True,
         )
+        # A real header-parsed dump that also carries ELF + DWARF metadata:
+        # from_headers marks that the surface came from castxml/AST, which is
+        # what promotes it to the header tier (DWARF-derived declarations alone
+        # do not).
         r = compare(
-            _snap(functions=[f], elf=elf, dwarf=dwarf),
-            _snap(functions=[f], elf=elf, dwarf=dwarf),
+            _snap(functions=[f], elf=elf, dwarf=dwarf, from_headers=True),
+            _snap(functions=[f], elf=elf, dwarf=dwarf, from_headers=True),
         )
         assert "header" in r.evidence_tiers
         assert "elf" in r.evidence_tiers
@@ -93,6 +99,169 @@ class TestEvidenceTiers:
         """Empty snapshots have minimal evidence."""
         r = compare(_snap(), _snap())
         assert r.evidence_tiers == [] or r.evidence_tiers == ["header"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Canonical Evidence Tier (ELF_ONLY / DWARF_AWARE / HEADER_AWARE)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestCanonicalEvidenceTier:
+    """Verify the single, ordered evidence_tier scalar (formalized in JSON)."""
+
+    def test_header_surface_is_header_aware(self):
+        """Functions/types present → HEADER_AWARE (the richest tier)."""
+        f = _pub_func("api", "_Z3apiv")
+        r = compare(_snap(functions=[f]), _snap(functions=[f]))
+        assert r.evidence_tier == EvidenceTier.HEADER_AWARE
+
+    def test_dwarf_without_headers_is_dwarf_aware(self):
+        """DWARF debug info but no header/AST surface → DWARF_AWARE."""
+        dwarf = DwarfMetadata(
+            structs={"Foo": StructLayout(name="Foo", byte_size=4)},
+            has_dwarf=True,
+        )
+        r = compare(_snap(dwarf=dwarf, elf=ElfMetadata()),
+                    _snap(dwarf=dwarf, elf=ElfMetadata()))
+        assert r.evidence_tier == EvidenceTier.DWARF_AWARE
+
+    def test_symbols_only_is_elf_only(self):
+        """Binary metadata only (no DWARF, no header surface) → ELF_ONLY."""
+        elf = ElfMetadata(
+            symbols=[ElfSymbol(name="sym", binding=SymbolBinding.GLOBAL,
+                               sym_type=SymbolType.FUNC)],
+        )
+        r = compare(_snap(elf=elf), _snap(elf=elf))
+        assert r.evidence_tier == EvidenceTier.ELF_ONLY
+
+    def test_header_aware_distinct_from_dwarf_aware(self):
+        """The documented goal: HEADER_AWARE must be distinguishable from DWARF_AWARE."""
+        f = _pub_func("api", "_Z3apiv")
+        dwarf = DwarfMetadata(has_dwarf=True)
+        # header_aware: the surface was parsed from headers (from_headers=True),
+        # even though DWARF is also present. dwarf_only: same declarations would
+        # come from DWARF alone, so from_headers stays False — this is exactly
+        # the distinction that was previously impossible to express.
+        header_aware = compare(_snap(functions=[f], dwarf=dwarf, from_headers=True),
+                               _snap(functions=[f], dwarf=dwarf, from_headers=True))
+        dwarf_only = compare(_snap(functions=[f], dwarf=dwarf, elf=ElfMetadata()),
+                             _snap(functions=[f], dwarf=dwarf, elf=ElfMetadata()))
+        assert header_aware.evidence_tier == EvidenceTier.HEADER_AWARE
+        assert dwarf_only.evidence_tier == EvidenceTier.DWARF_AWARE
+        assert header_aware.evidence_tier != dwarf_only.evidence_tier
+
+    def test_tier_rank_ordering(self):
+        """Ranks must be strictly ordered shallow → deep."""
+        assert (
+            EvidenceTier.ELF_ONLY.rank
+            < EvidenceTier.DWARF_AWARE.rank
+            < EvidenceTier.HEADER_AWARE.rank
+        )
+
+    def test_real_dwarf_dump_is_not_header_aware(self):
+        """Regression: a DWARF-derived dump (no headers parsed) must report
+        DWARF_AWARE, not HEADER_AWARE.
+
+        The real dumper populates ``functions``/``types`` from DWARF DIEs in
+        DWARF-only mode, so "has declarations" must not be mistaken for header
+        analysis. Mirrors a real ``abicheck compare libfoo.so libfoo.so`` run
+        on a ``-g`` binary with no ``--header`` flag.
+        """
+        f = _pub_func("api", "_Z3apiv")
+        elf = ElfMetadata(
+            symbols=[ElfSymbol(name="_Z3apiv", binding=SymbolBinding.GLOBAL,
+                               sym_type=SymbolType.FUNC)],
+        )
+        dwarf = DwarfMetadata(
+            structs={"Cfg": StructLayout(name="Cfg", byte_size=4)},
+            has_dwarf=True,
+        )
+        # from_headers is False — castxml never ran.
+        r = compare(
+            _snap(functions=[f], elf=elf, dwarf=dwarf),
+            _snap(functions=[f], elf=elf, dwarf=dwarf),
+        )
+        assert r.evidence_tier == EvidenceTier.DWARF_AWARE
+        assert "header" not in r.evidence_tiers
+
+    def test_real_symbols_only_dump_is_elf_only(self):
+        """Regression: a stripped, symbols-only dump must report ELF_ONLY with
+        no DWARF/header tiers — never the highest confidence.
+
+        Before the provenance fix, a stripped binary (``.eh_frame`` only,
+        no real DWARF) was mislabeled HEADER_AWARE/HIGH and could silently
+        report NO_CHANGE for an undetectable struct break.
+        """
+        f = _pub_func("api", "_Z3apiv")
+        elf = ElfMetadata(
+            symbols=[ElfSymbol(name="_Z3apiv", binding=SymbolBinding.GLOBAL,
+                               sym_type=SymbolType.FUNC)],
+        )
+        r = compare(
+            _snap(functions=[f], elf=elf),
+            _snap(functions=[f], elf=elf),
+        )
+        assert r.evidence_tier == EvidenceTier.ELF_ONLY
+        assert "dwarf" not in r.evidence_tiers
+        assert "header" not in r.evidence_tiers
+
+    def test_header_provenance_on_either_side_promotes_tier(self):
+        """from_headers is honored when set on only one side of the compare."""
+        f = _pub_func("api", "_Z3apiv")
+        elf = ElfMetadata(
+            symbols=[ElfSymbol(name="_Z3apiv", binding=SymbolBinding.GLOBAL,
+                               sym_type=SymbolType.FUNC)],
+        )
+        # Old side carries no header provenance; new side does (e.g. baseline
+        # JSON dumped pre-flag vs a freshly header-parsed build).
+        r = compare(
+            _snap(functions=[f], elf=elf, from_headers=False),
+            _snap(functions=[f], elf=elf, from_headers=True),
+        )
+        assert r.evidence_tier == EvidenceTier.HEADER_AWARE
+
+    def test_evidence_tier_in_json_output(self):
+        """The formalized tier must appear in the JSON report schema."""
+        f = _pub_func("api", "_Z3apiv")
+        r = compare(_snap(functions=[f]), _snap(functions=[f]))
+        payload = json.loads(reporter.to_json(r))
+        assert payload["evidence_tier"] == "header_aware"
+        # Raw list retained for backward compatibility.
+        assert "evidence_tiers" in payload
+
+    def test_evidence_tier_in_stat_and_leaf_json(self):
+        """Stat and leaf JSON projections also carry the canonical tier."""
+        f = _pub_func("api", "_Z3apiv")
+        r = compare(_snap(functions=[f]), _snap(functions=[f]))
+        stat = json.loads(reporter.to_json(r, stat=True))
+        leaf = json.loads(reporter.to_json(r, report_mode="leaf"))
+        assert stat["evidence_tier"] == "header_aware"
+        assert leaf["evidence_tier"] == "header_aware"
+
+    def test_evidence_tier_in_markdown(self):
+        """Markdown confidence section surfaces the canonical tier."""
+        f = _pub_func("api", "_Z3apiv")
+        r = compare(_snap(functions=[f]), _snap(functions=[f]))
+        md = reporter.to_markdown(r)
+        assert "Evidence tier" in md
+        assert "header_aware" in md
+
+    def test_evidence_tier_in_appcompat_json(self):
+        """appcompat JSON surfaces the canonical tier from the underlying full diff."""
+        import types
+
+        f = _pub_func("api", "_Z3apiv")
+        full = compare(_snap(functions=[f]), _snap(functions=[f]))
+        fake = types.SimpleNamespace(
+            full_diff=full,
+            app_path="app",
+            library_path="lib.so",
+            verdict=full.verdict,
+            used_symbols=[],
+            affected_symbols=[],
+            affected_changes=[],
+        )
+        payload = json.loads(reporter.appcompat_to_json(fake))
+        assert payload["evidence_tier"] == "header_aware"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -125,13 +294,15 @@ class TestConfidenceLevels:
                                sym_type=SymbolType.FUNC)],
         )
 
+        # Both sides model a header-parsed surface (from_headers=True); the only
+        # difference is the added ELF metadata, which must not lower confidence.
         header_only = compare(
-            _snap(functions=[f]),
-            copy.deepcopy(_snap(functions=[f])),
+            _snap(functions=[f], from_headers=True),
+            copy.deepcopy(_snap(functions=[f], from_headers=True)),
         )
         with_elf = compare(
-            _snap(functions=[f], elf=elf),
-            _snap(functions=[f], elf=elf),
+            _snap(functions=[f], elf=elf, from_headers=True),
+            _snap(functions=[f], elf=elf, from_headers=True),
         )
 
         confidence_order = {Confidence.LOW: 0, Confidence.MEDIUM: 1, Confidence.HIGH: 2}
