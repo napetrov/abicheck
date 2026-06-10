@@ -473,6 +473,27 @@ use_cases:
       modules: [abicheck/diff_integer_model.py, abicheck/diff_char8t.py, abicheck/diff_bit_int.py, abicheck/diff_atomic.py]
       examples: [examples/case112_lp64_ilp64]
 
+  - id: UC-TC-header-scope-robustness
+    axis: toolchain
+    name: Header-scoped source-mode robustness on stock host toolchains
+    status: planned
+    gap: G16
+    plan: docs/development/plans/g16-header-scope-toolchain-robustness.md
+    next_steps: >
+      Header-scoped scans (the castxml source path) are how abicheck separates
+      public source API from private/internal surface, but in the 2026-06
+      real-world cron the scoped re-run aborted before any comparison in 21 issue
+      records — always the same host-toolchain parse failures, never an abicheck
+      logic bug: glibc sized-float types (`unknown type name '_Float32'`,
+      `_Float64`/`_Float128`) pulled in via host `<stdlib.h>`/`<math.h>`, a GCC 13
+      libstdc++ `__assume__` attribute parse failure, and `--lang c` rejecting
+      `extern "C"` headers that correctly guard it with `#ifdef __cplusplus`.
+      Classify these known castxml stderr signatures into a single actionable
+      remediation (mirroring the existing `--lang c` class/namespace hint), inject
+      the minimal known-good shim so a stock GCC/glibc host parses sized-float and
+      `__assume__` declarations, and assert both end-to-end. This unblocks the
+      binary-only-vs-public-header verdict contrast the campaign depends on.
+
   - id: UC-TC-cxx-standard-floor
     axis: toolchain
     name: C++ standard floor raised (per-consumer source break)

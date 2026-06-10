@@ -26,11 +26,12 @@ in a 5-tier policy model, **126 calibrated example cases**, ABICC + libabigail
 parity — is essentially complete and has diminishing returns.
 
 The remaining gaps are **not in detecting more change types**. They are the
-seven planned breadth/workflow items tracked in `usecase-registry.yaml`:
+eight planned breadth/workflow items tracked in `usecase-registry.yaml`:
 header-only/inline-only analysis (G4), auditwheel vendored-library pairing (G9),
 manylinux glibc-floor checks (G10), single-binary audit/lint mode (G11),
 cross-architecture guardrails (G13), CPython `abi3` import-contract checking
-(G14), and inline-namespace version-stamp normalization (G15).
+(G14), inline-namespace version-stamp normalization (G15), and header-scoped
+source-mode toolchain robustness (G16).
 
 Several formerly broad gaps are now closed and should no longer be treated as
 open roadmap work: native PE/Mach-O compare validation (G1), build-config matrix
@@ -106,6 +107,7 @@ A real invocation is a point in this space:
 | **G13** | planned | Cross-architecture mismatch guardrail. |
 | **G14** | planned | CPython Limited-API / `abi3` import-contract conformance. |
 | **G15** | planned | Inline-namespace version-stamp normalization for ICU/Abseil/libstdc++-style churn. |
+| **G16** | planned | Header-scoped source-mode toolchain robustness — survive a stock GCC/glibc host (sized-float `_FloatN`, GCC `__assume__`, `--lang c` + `extern "C"`) or fail with an actionable hint. Surfaced by 21 real-world cron records (see [Real-World Scan Coverage](realworld-scan-coverage-2026-06.md)). |
 
 ## Proposed next steps (tracked in the registry)
 
@@ -123,3 +125,4 @@ planned row from drifting away from its plan.
 | Medium | G15 — inline-namespace version stamp | [g15](plans/g15-inline-namespace-version.md) |
 | Small | G10 — glibc-floor check | [g10](plans/g10-glibc-floor-check.md) |
 | Small | G13 — cross-architecture guardrail | [g13](plans/g13-arch-mismatch-guard.md) |
+| Medium | G16 — header-scope toolchain robustness | [g16](plans/g16-header-scope-toolchain-robustness.md) |
