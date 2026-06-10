@@ -182,14 +182,16 @@ class BazelAdapter:
         srcs = [self.redaction.path(s) for s in attrs.get("srcs", [])]
         hdrs = [self.redaction.path(h) for h in attrs.get("hdrs", [])]
         deps = [f"target://{d}" for d in attrs.get("deps", [])]
+        rule_class = str(rule.get("ruleClass", ""))
+        outputs = _str_list(rule.get("ruleOutput"))
         return Target(
             id=f"target://{name}",
             name=name.rsplit(":", 1)[-1],
-            kind=_KIND_BY_RULE.get(str(rule.get("ruleClass", "")), TargetKind.UNKNOWN),
+            kind=_target_kind_for_rule(rule_class, attrs, outputs),
             build_system="bazel",
             source_files=srcs,
             public_headers=hdrs,
-            outputs=[self.redaction.path(o) for o in _str_list(rule.get("ruleOutput"))],
+            outputs=[self.redaction.path(o) for o in outputs],
             dependencies=deps,
             visibility="public" if hdrs else "unknown",
             # Graph facts (kind/deps/outputs) are high-confidence; header intent
@@ -399,11 +401,37 @@ def _is_link_input(path: str) -> bool:
 
 def _link_kind(output: str) -> str:
     low = output.lower()
-    if low.endswith((".so", ".dylib")) or ".so." in low:
+    if low.endswith((".so", ".dylib", ".dll")) or ".so." in low:
         return "shared_library"
     if low.endswith((".a", ".lib")):
         return "static_library"
     return "executable"
+
+
+def _target_kind_for_rule(
+    rule_class: str, attrs: dict[str, list[str]], outputs: list[str]
+) -> TargetKind:
+    """Map a cquery rule to a TargetKind, honoring ``linkshared`` cc_binaries.
+
+    A ``cc_binary`` (or ``cc_test``) built with ``linkshared = True`` — Bazel's
+    supported way to produce a shared library — emits a ``.so``/``.dll`` rather
+    than an executable, so classify it as a shared library instead of defaulting
+    every ``cc_binary`` to ``EXECUTABLE``.
+    """
+    base = _KIND_BY_RULE.get(rule_class, TargetKind.UNKNOWN)
+    if base is TargetKind.EXECUTABLE and (
+        _is_truthy(attrs.get("linkshared"))
+        or any(_link_kind(o) == "shared_library" for o in outputs)
+    ):
+        return TargetKind.SHARED_LIBRARY
+    return base
+
+
+def _is_truthy(values: list[str] | None) -> bool:
+    """True if a parsed attribute carries a truthy boolean/int value."""
+    if not values:
+        return False
+    return values[0].strip().lower() in ("true", "1")
 
 
 #: Space-separated flags whose *operand* is not the translation unit even if it
@@ -436,7 +464,12 @@ def _source_from_argv(argv: list[str]) -> str:
 
 
 def _attr_map(attributes: object) -> dict[str, list[str]]:
-    """Collapse a rule's ``attribute`` list into {name: [string-list values]}."""
+    """Collapse a rule's ``attribute`` list into {name: [scalar/list values]}.
+
+    Captures label/string lists (``srcs``/``hdrs``/``deps``) plus scalar string,
+    boolean, and int values (e.g. ``linkshared``) so callers can read them
+    uniformly as a one-element list.
+    """
     out: dict[str, list[str]] = {}
     for attr in _dicts(attributes):
         name = str(attr.get("name", ""))
@@ -445,6 +478,10 @@ def _attr_map(attributes: object) -> dict[str, list[str]]:
         values = _str_list(attr.get("stringListValue"))
         if not values and attr.get("stringValue"):
             values = [str(attr.get("stringValue"))]
+        if not values and "booleanValue" in attr:
+            values = [str(attr.get("booleanValue"))]
+        if not values and "intValue" in attr:
+            values = [str(attr.get("intValue"))]
         if values:
             out[name] = values
     return out

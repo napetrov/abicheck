@@ -108,6 +108,44 @@ def test_bazel_cquery_builds_target_graph():
     assert len(ev.targets) == 2
 
 
+def test_bazel_linkshared_cc_binary_is_shared_library():
+    # A cc_binary with linkshared=True produces a shared library, not an exe.
+    cquery = json.dumps({"results": [{"target": {"rule": {
+        "name": "//foo:libfoo", "ruleClass": "cc_binary",
+        "attribute": [{"name": "linkshared", "type": "BOOLEAN", "booleanValue": True}],
+    }}}]})
+    ev = BazelAdapter(cquery=cquery).collect()
+    assert ev.targets[0].kind is TargetKind.SHARED_LIBRARY
+
+
+def test_bazel_cc_binary_shared_output_extension_is_shared_library():
+    # Even without linkshared, a .so ruleOutput marks the target shared.
+    cquery = json.dumps({"results": [{"target": {"rule": {
+        "name": "//foo:libfoo", "ruleClass": "cc_binary", "ruleOutput": ["//foo:libfoo.so"],
+    }}}]})
+    ev = BazelAdapter(cquery=cquery).collect()
+    assert ev.targets[0].kind is TargetKind.SHARED_LIBRARY
+
+
+def test_bazel_plain_cc_binary_stays_executable():
+    cquery = json.dumps({"results": [{"target": {"rule": {
+        "name": "//app:app", "ruleClass": "cc_binary",
+        "attribute": [{"name": "linkshared", "type": "BOOLEAN", "booleanValue": False}],
+    }}}]})
+    ev = BazelAdapter(cquery=cquery).collect()
+    assert ev.targets[0].kind is TargetKind.EXECUTABLE
+
+
+def test_bazel_dll_output_classified_as_shared_library():
+    aquery = json.dumps({
+        "artifacts": [{"id": "1", "pathFragmentId": "10"}],
+        "actions": [{"mnemonic": "CppLink", "arguments": ["link"], "primaryOutputId": "1"}],
+        "pathFragments": [{"id": "10", "label": "foo.dll"}],
+    })
+    ev = BazelAdapter(aquery=aquery).collect()
+    assert ev.link_units[0].kind == "shared_library"
+
+
 def test_bazel_aquery_builds_compile_and_link_units():
     ev = BazelAdapter(aquery=AQUERY).collect()
     assert len(ev.compile_units) == 1
