@@ -108,6 +108,22 @@ def test_source_abi_tu_from_dict_tolerates_missing_fields() -> None:
     assert tu.schema_version == SOURCE_ABI_VERSION
 
 
+def test_source_entity_from_dict_boolean_safe_api_relevant() -> None:
+    # A hand-edited pack may carry the string "false"; bool("false") would be
+    # True, so loading must parse it as a real boolean (CodeRabbit #335).
+    ent = SourceEntity.from_dict({"id": "x", "api_relevant": "false"})
+    assert ent.api_relevant is False
+    assert (
+        SourceEntity.from_dict({"id": "x", "api_relevant": "true"}).api_relevant is True
+    )
+    # Missing field falls back to the dataclass default (True).
+    assert SourceEntity.from_dict({"id": "x"}).api_relevant is True
+    # A real JSON boolean still round-trips.
+    assert (
+        SourceEntity.from_dict({"id": "x", "api_relevant": False}).api_relevant is False
+    )
+
+
 def test_source_abi_surface_roundtrip() -> None:
     s = link_source_abi(
         [

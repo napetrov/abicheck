@@ -54,6 +54,25 @@ def _confidence(raw: Any) -> EvidenceConfidence:
         return EvidenceConfidence.UNKNOWN
 
 
+def _as_bool(raw: Any, default: bool) -> bool:
+    """Forward-compat boolean parse: a hand-edited pack may carry the string
+    ``"false"``, which ``bool(...)`` would misread as True (evidence/CLAUDE.md
+    "never abort/​misload a hand-edited pack")."""
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    if isinstance(raw, str):
+        token = raw.strip().lower()
+        if token in ("true", "1", "yes", "on"):
+            return True
+        if token in ("false", "0", "no", "off", ""):
+            return False
+    return default
+
+
 @dataclass
 class SourceLocation:
     """Where a source entity was declared, with provenance origin (ADR-030 D4)."""
@@ -147,7 +166,7 @@ class SourceEntity:
             if isinstance(loc, dict)
             else None,
             visibility=str(d.get("visibility", "unknown")),
-            api_relevant=bool(d.get("api_relevant", True)),
+            api_relevant=_as_bool(d.get("api_relevant"), True),
             confidence=_confidence(d.get("confidence")),
         )
 
