@@ -224,10 +224,13 @@ class BazelAdapter:
         output = graph.path(action.get("primaryOutputId"))
         red_argv = self.redaction.argv(argv)
         red_source = self.redaction.path(source)
+        red_output = self.redaction.path(output)
         return CompileUnit(
-            id=compile_unit_id(red_source, red_argv, output),
+            # Derive the id from redacted values only so host-specific paths
+            # never leak through the id (ADR-028 D4: normalized facts only).
+            id=compile_unit_id(red_source, red_argv, red_output),
             source=red_source,
-            output=self.redaction.path(output),
+            output=red_output,
             target_id=graph.target_id(action.get("targetId")),
             argv=red_argv,
             language=detect_language(source),
