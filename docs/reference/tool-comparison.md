@@ -230,6 +230,77 @@ const). ABICC has no ELF pass (misses SONAME, visibility). ABICC(dump) has no AS
 
 ---
 
+## Benchmarking by evidence tier
+
+The cross-tool matrix above answers *"how does abicheck compare to other tools
+when each is given its best input?"* A second, orthogonal benchmark answers
+*"how much of the catalog can be discovered from each **source of information**?"*
+— i.e. how detection grows as you feed abicheck more of the
+[five sources](../concepts/evidence-and-detectability.md#0-the-five-sources-of-information).
+
+This is run with a dedicated mode that scans every case at progressively richer
+evidence levels:
+
+```bash
+python3 scripts/benchmark_comparison.py --evidence-tiers
+# restrict to specific cases/suite as usual:
+python3 scripts/benchmark_comparison.py --evidence-tiers --cases case01 case07 case34
+```
+
+For each case it builds the libraries once, then runs the full `dump`+`compare`
+pipeline four times:
+
+| Tier | abicheck input | `--show-data-sources` mode | Active detectors |
+|:----:|----------------|----------------------------|:----------------:|
+| **L0** binary only | stripped `.so`, no `-H` | Symbols-only | ≈ 6 / 30 |
+| **L1** + debug info | `-g` `.so`, no `-H` | DWARF-only | ≈ 24 / 30 |
+| **L2** + public headers | `-g` `.so`, `-H include/` | Full (AST + DWARF) | 30 / 30 |
+| **L3** + build context | L2 plus `-p build/` (when a compile DB exists) | Full + build evidence | 30 / 30 + L3 |
+
+> **L4 (source ABI replay)** needs an EvidencePack from `collect-evidence`, which
+> is not yet a packaged CLI command, so the tiered benchmark reports L4 as `n/a`.
+> The one catalog case that *only* L4 could see
+> ([case122](../examples/case122_template_signature_uninstantiated.md), an
+> uninstantiated-template change) is a documented gap whose correct verdict is
+> `NO_CHANGE` anyway.
+
+### Which source discovers what
+
+Each case in [`examples/ground_truth.json`](https://github.com/napetrov/abicheck/blob/main/examples/ground_truth.json)
+carries a `min_evidence` field — the weakest source at which abicheck reaches the
+correct verdict — derived by
+[`scripts/evidence_tiers.py`](https://github.com/napetrov/abicheck/blob/main/scripts/evidence_tiers.py)
+and validated by `tests/test_evidence_tiers.py`. Aggregated over the 126-case
+catalog, that yields the cumulative coverage the `--evidence-tiers` summary
+prints:
+
+| Source provided | Layer | Cases first detectable here | Cumulative | Representative cases |
+|-----------------|:-----:|:---------------------------:|:----------:|----------------------|
+| Just the binary | L0 | 40 | **40 / 126 (32%)** | symbol removal ([01](../examples/case01_symbol_removal.md)), SONAME ([05](../examples/case05_soname.md)), visibility ([06](../examples/case06_visibility.md)), symbol-version removed ([65](../examples/case65_symbol_version_removed.md)), all 5 bundle cases |
+| + Debug symbols | L1 | 61 | **101 / 126 (80%)** | struct layout ([07](../examples/case07_struct_layout.md)), enum value ([08](../examples/case08_enum_value_change.md)), vtable ([09](../examples/case09_cpp_vtable.md)), calling convention ([64](../examples/case64_calling_convention_changed.md)), bitfield ([63](../examples/case63_bitfield_changed.md)) |
+| + Public headers | L2 | 23 | **124 / 126 (98%)** | access level ([34](../examples/case34_access_level.md)), default arg removed ([123](../examples/case123_default_argument_removed.md)), class `final` ([125](../examples/case125_class_became_final.md)), `detail::` leaks ([74](../examples/case74_detail_base_class_changed.md)–[77](../examples/case77_detail_templated_base_changed.md)), scoped-internal *no-change* ([118](../examples/case118_internal_struct_field_added_scoped.md)–[120](../examples/case120_internal_struct_reordered_scoped.md)) |
+| + Build data | L3 | 1 | **125 / 126 (99%)** | toolchain flag drift ([103](../examples/case103_toolchain_flag_drift.md)) |
+| + Sources | L4 | 1 | **126 / 126 (100%)** | uninstantiated template ([122](../examples/case122_template_signature_uninstantiated.md), documented gap) |
+
+Two directions matter, not just one:
+
+- **Discovery.** Most layout and source-only breaks are simply *invisible*
+  without the right source — a struct-field insertion is `NO_CHANGE` at L0 and
+  `BREAKING` only once L1 debug info is present.
+- **False-positive suppression.** More evidence also *removes* spurious breaks:
+  the scoped-internal cases ([118](../examples/case118_internal_struct_field_added_scoped.md)–[120](../examples/case120_internal_struct_reordered_scoped.md))
+  change an internal struct that looks like a layout break at L1, and only L2
+  header scoping lets abicheck correctly return `NO_CHANGE`.
+
+> **Caveat.** The L2/L3 columns require `castxml` (and, for L3, a
+> `compile_commands.json`) to be present in the benchmark environment; where a
+> source is unavailable the runner records the tier as `n/a`/`ERROR` rather than
+> a miss, so read the tiered numbers together with the
+> [evidence-coverage](../concepts/evidence-pack.md#evidence-coverage) report for
+> the run.
+
+---
+
 ## Current benchmark summary (2026-05-19, 74-case subset)
 
 Release-pinned scan status from `python3 scripts/benchmark_comparison.py --suite pinned74` on the original

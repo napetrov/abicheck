@@ -3,8 +3,15 @@
 ## Overview
 
 abicheck is a Python CLI tool that compares two versions of a C/C++ shared library
-to detect ABI and API incompatibilities. It uses a 3-layer analysis pipeline
-to achieve higher accuracy than tools that rely on a single data source.
+to detect ABI and API incompatibilities. Its core design idea is to reason over
+**five independent sources of information** about a library — the binary, its
+debug symbols, its public headers, its build-system data, and (optionally) its
+sources — instead of relying on a single data source. Each source is an additive
+**evidence layer** (`L0`–`L4`); feeding more layers both finds breaks the
+weaker layers are blind to and suppresses false positives they would raise. See
+[Evidence layers: the five sources](#evidence-layers-the-five-sources) below for
+the model, and [Evidence & Detectability](evidence-and-detectability.md) for the
+conceptual companion.
 
 **Supported platforms and binary formats:**
 
@@ -28,9 +35,9 @@ flowchart TD
     ELF["ELF<br/>pyelftools"]
     PE["PE/COFF<br/>pefile"]
     MACHO["Mach-O<br/>macholib"]
-    SNAP["Layer 1 — Binary metadata<br/>Snapshot (JSON model)"]
-    AST["Layer 2 — Header AST<br/>castxml (all platforms)"]
-    DBG["Layer 3 — Debug-info cross-check<br/>DWARF (Linux, macOS) · PDB (Windows)"]
+    SNAP["L0 — Binary metadata<br/>Snapshot (JSON model)"]
+    AST["L2 — Header AST<br/>castxml (all platforms)"]
+    DBG["L1 — Debug-info cross-check<br/>DWARF (Linux, macOS) · PDB (Windows)"]
     CHK["Checker → Changes → Verdict"]
 
     CLI --> FMT
@@ -45,11 +52,66 @@ flowchart TD
     DBG --> CHK
 ```
 
-The three analysis layers are independent and additive — each catches changes
-the others miss, and the checker reconciles them into a single verdict. The
-layers are described in detail below.
+The analysis layers are independent and additive — each catches changes the
+others miss, and the checker reconciles them into a single verdict. The
+artifact layers (L0/L1/L2) are described in detail below; the build/source
+layers (L3/L4) are covered in [Evidence Packs](evidence-pack.md).
 
-### Layer 1: Binary metadata
+---
+
+## Evidence layers: the five sources
+
+abicheck's accuracy comes from treating compatibility analysis as a question of
+*evidence*: the more independent sources of information you give it about a
+library, the more it can prove — and the fewer false positives it raises. There
+are five, layered from the least input to the most:
+
+| Layer | Source | Collected from | Authority | Reveals |
+|:-----:|--------|----------------|-----------|---------|
+| **L0** | Just the **binary** | ELF/PE/Mach-O parsers (`elf_metadata.py`, `pe_metadata.py`, `macho_metadata.py`) | Authoritative | Exported symbols, SONAME/install-name, versions, visibility, binding, dependencies |
+| **L1** | **Debug symbols** | DWARF/PDB/BTF/CTF (`dwarf_*`, `pdb_*`, `btf_metadata.py`, `ctf_metadata.py`) | Authoritative when matched to the binary | Type **layout**: sizes, field offsets, enum values, vtable slots, calling convention, packing |
+| **L2** | **Public headers** | castxml AST (`dumper_castxml.py`) | Authoritative for header-visible API | Source **API**: signatures, overloads, access, `final`/`explicit`/`noexcept`, templates, public/internal scoping |
+| **L3** | **Build system data & options** | compile DB / CMake / Ninja / Bazel / Make (`build_context.py`, EvidencePack ADR-029) | Context / confidence | ABI-relevant flags (`-std`, `_GLIBCXX_USE_CXX11_ABI`, `-fvisibility`, `-fabi-version`), toolchain, target graph, export policy |
+| **L4** | **Sources** | per-TU source ABI replay (EvidencePack ADR-030) | Source-/API-risk evidence, never sole shipped-ABI authority | Macro/`constexpr` values, default-argument values, inline/template bodies, uninstantiated templates |
+
+```mermaid
+flowchart LR
+    L0["L0 · binary<br/>(stripped .so)"] --> L1["L1 · + debug<br/>(DWARF/PDB)"]
+    L1 --> L2["L2 · + headers<br/>(castxml AST)"]
+    L2 --> L3["L3 · + build data<br/>(compile DB)"]
+    L3 --> L4["L4 · + sources<br/>(EvidencePack)"]
+    L0 -.weaker evidence.-> L4
+```
+
+**The authority rule (ADR-028).** The layers are not a fallback chain — abicheck
+overlays everything it is given and computes one worst-wins verdict. But not all
+evidence carries the same weight:
+
+> Artifact-backed **L0/L1/L2** evidence is **authoritative** for the shipped-ABI
+> verdict. Build/source **L3/L4** evidence may *explain, localize, scope, or add
+> confidence to* a finding, and may raise its own source-/API-level findings
+> (default `API_BREAK` or risk) — but it **never silently deletes** an
+> artifact-proven break.
+
+So L3 noticing a `-std` bump or L4 noticing a changed macro can *add* a finding
+or *explain* one, but only L0/L1/L2 can declare a binary `BREAKING`. Every
+compare that uses build/source evidence prints an **evidence-coverage** table
+(and a structured `evidence_coverage` array in JSON) so consumers can tell which
+findings are artifact-proven vs. context-only — see [Evidence Packs](evidence-pack.md).
+
+**Graceful degradation.** `abicheck dump --show-data-sources` reports exactly
+which of L0/L1/L2 a binary affords and how many detectors that enables
+(symbols-only ≈ 6/30, DWARF-only ≈ 24/30, with headers 30/30). With less input
+abicheck degrades down the staircase rather than failing; with more it both
+finds more and false-positives less. The empirical per-tier behaviour across the
+example catalog is benchmarked in
+[Tool Comparison §Benchmarking by evidence tier](../reference/tool-comparison.md#benchmarking-by-evidence-tier).
+
+---
+
+## Artifact layers in detail
+
+### Layer L0: Binary metadata
 
 Reads native binary metadata using format-specific parsers:
 
@@ -72,7 +134,7 @@ Reads native binary metadata using format-specific parsers:
 - Current and compatibility versions, minimum OS version
 - Fat/universal binary support (automatic architecture selection)
 
-### Layer 2: Header AST (castxml / Clang) — all platforms
+### Layer L2: Header AST (castxml / Clang) — all platforms
 
 Parses C/C++ headers through castxml to extract:
 
@@ -136,7 +198,7 @@ extension-specific syntax during parsing. To scan such headers you would need ei
 CastXML build linked against the matching Clang fork (e.g. Intel's DPC++ Clang for SYCL)
 or a different AST extraction tool that uses that compiler's libclang directly.
 
-### Layer 3: Debug info cross-check (optional)
+### Layer L1: Debug info cross-check (optional)
 
 When debug info is available in the binary:
 
@@ -160,6 +222,29 @@ When debug info is not embedded, abicheck searches a configurable resolver
 chain: split DWARF (.dwo/.dwp), build-id trees, path mirrors, dSYM bundles,
 PDB files, and optionally debuginfod servers. Use `--debug-root` to point at
 separate debug file directories, or `--debuginfod` for network-based resolution.
+
+### Layers L3 / L4: Build & source evidence (optional)
+
+The build (L3) and source (L4) layers are **post-build, opt-in, and never
+authoritative on their own** — abicheck reads existing build outputs and
+build-system query interfaces; it does not rebuild your project. They are
+collected into a content-addressed **EvidencePack** and attached to a snapshot:
+
+- **L3 — build context** (`build_context.py`, ADR-029): parses a
+  `compile_commands.json` (`-p build/`) or a CMake/Ninja/Bazel/Make graph to
+  recover the exact ABI-relevant flags and toolchain the library was built with.
+  Diffs emit context/risk kinds like `abi_relevant_build_flag_changed`,
+  `toolchain_version_changed`, and `link_export_policy_changed`.
+- **L4 — source ABI replay** (ADR-030): parses selected TUs and public headers
+  under their real per-TU build context and links the result against the
+  exported surface, catching `public_macro_value_changed`,
+  `default_argument_changed`, `constexpr_value_changed`, and the uninstantiated
+  templates that no artifact carries.
+
+Both are described in full in [Evidence Packs](evidence-pack.md). Per the
+authority rule, every L3/L4 finding defaults to `API_BREAK` or risk and carries
+an explicit evidence-tier boundary so it is never read as a proven shipped-ABI
+break.
 
 ---
 

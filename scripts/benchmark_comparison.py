@@ -44,6 +44,11 @@ EXAMPLES_DIR = REPO_DIR / "examples"
 REPORT_DIR = REPO_DIR / "benchmark_reports"
 BUILD_DIR = REPORT_DIR / "_build"
 
+# Evidence-tier model (five sources / L0–L4) lives in a sibling module so it is
+# importable without a compiler. See scripts/evidence_tiers.py.
+sys.path.insert(0, str(Path(__file__).parent))
+import evidence_tiers  # noqa: E402
+
 # Ensure we use abicheck from THIS repo, not any globally-installed version
 # (abicheck CLI shebang may point to a different Python/site-packages)
 os.environ.setdefault("PYTHONPATH", str(REPO_DIR))
@@ -845,6 +850,10 @@ def parse_args() -> argparse.Namespace:
                    help="Run only selected tools")
     p.add_argument("--case64-toolchain", choices=["auto", "gcc", "clang"], default="auto",
                    help="Toolchain for case64_calling_convention_changed (default: auto; prefers clang when available)")
+    p.add_argument("--evidence-tiers", action="store_true",
+                   help="Run abicheck at each evidence tier (L0 binary / L1 +debug / "
+                        "L2 +headers / L3 +build) and report which cases each data "
+                        "source discovers, instead of the cross-tool comparison.")
     return p.parse_args()
 
 
@@ -1381,9 +1390,230 @@ def _process_case(
     results.append(_build_result_entry(name, expected, tool_results))
 
 
+# ── Evidence-tier benchmark (five sources / L0–L4) ───────────────────────────
+# Runs abicheck at progressively richer evidence levels so the catalog shows
+# *which cases each data source can discover*:
+#   L0 binary only      — stripped .so, no headers      (symbols-only mode)
+#   L1 + debug info     — -g .so, no headers            (DWARF/PDB layout)
+#   L2 + public headers — -g .so, -H include/           (castxml AST; default)
+#   L3 + build context  — L2 plus -p build/ when a compile_commands.json exists
+# L4 (source ABI replay via an EvidencePack) needs `collect-evidence`, which is
+# not yet a CLI command, so it is reported as "n/a" here.
+EVIDENCE_TIERS: list[str] = ["L0", "L1", "L2", "L3"]
+
+
+def _strip_debug(src: Path, dst: Path) -> bool:
+    """Copy *src* to *dst* and remove its debug info. False if strip is absent."""
+    strip = _first_available_tool("strip", "llvm-strip")
+    if not strip:
+        return False
+    shutil.copy2(src, dst)
+    try:
+        r = subprocess.run([strip, "--strip-debug", str(dst)],
+                           capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0 and dst.exists()
+
+
+def _abicheck_tier_verdict(
+    v1_so: Path, v2_so: Path, v1_h: Path | None, v2_h: Path | None,
+    case: str, tier: str, build_dir: Path | None,
+) -> str:
+    """Dump+compare both libs at one evidence tier; return the normalized verdict."""
+    if not _HAS_ABICHECK:
+        return "SKIP"
+    bdir = BUILD_DIR / case
+    bdir.mkdir(parents=True, exist_ok=True)
+
+    def dump(so: Path, h: Path | None, snap: Path, ver: str) -> bool:
+        cmd = [_PYTHON, "-m", "abicheck.cli", "dump", str(so), "-o", str(snap), "--version", ver]
+        if h and h.exists():
+            cmd += ["-H", str(h)]
+        if build_dir is not None:
+            cmd += ["-p", str(build_dir)]
+        try:
+            run = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=_ABICHECK_ENV)
+        except subprocess.TimeoutExpired:
+            return False
+        return run.returncode == 0 and snap.exists()
+
+    snap1 = bdir / f"tier_{tier}_v1.json"
+    snap2 = bdir / f"tier_{tier}_v2.json"
+    if not (dump(v1_so, v1_h, snap1, "v1") and dump(v2_so, v2_h, snap2, "v2")):
+        return "ERROR"
+    try:
+        r = subprocess.run(
+            [_PYTHON, "-m", "abicheck.cli", "compare", str(snap1), str(snap2), "--format", "json"],
+            capture_output=True, text=True, timeout=60, env=_ABICHECK_ENV,
+        )
+    except subprocess.TimeoutExpired:
+        return "TIMEOUT"
+    return _abicheck_verdict_from_compare(r.stdout, r.returncode)
+
+
+def _find_compile_db(bdir: Path) -> Path | None:
+    """Locate a compile_commands.json produced under the case build dir, if any."""
+    for cand in (bdir / "cmake_build" / "compile_commands.json",
+                 bdir / "compile_commands.json"):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _detected_at(tier_verdicts: dict[str, str], expected: str) -> str | None:
+    """First tier (weakest evidence) whose verdict matches *expected*, or None."""
+    for tier in EVIDENCE_TIERS:
+        if tier_verdicts.get(tier) == expected:
+            return tier
+    return None
+
+
+def _run_case_evidence_tiers(case_dir: Path, args: Any) -> dict[str, Any] | None:
+    """Build a case and run abicheck at every evidence tier. None if unbuildable."""
+    name = case_dir.name
+    expected = EXPECTED.get(name, "?")
+    if CURRENT_PLATFORM not in PLATFORMS.get(name, ["linux", "macos", "windows"]):
+        return None
+    v1_src, v2_src, v1_h_hint, v2_h_hint = find_sources(case_dir)
+    if v1_src is None:
+        return None
+
+    bdir = BUILD_DIR / name
+    bdir.mkdir(parents=True, exist_ok=True)
+    results: list[dict] = []
+    br = _build_case_artifacts(name, expected, case_dir, bdir, v1_src, v2_src,
+                               v1_h_hint, v2_h_hint, args, results)
+    if not br.ok:
+        return None
+
+    v1_h, v2_h, _v1_ha, _v2_ha = _resolve_case_headers(
+        v1_src, v2_src, bdir, br.v1_h_hint, br.v2_h_hint,
+        br.used_make_artifacts, br.used_cmake_artifacts,
+    )
+
+    # L0 needs stripped copies; reuse the -g artifacts for the richer tiers.
+    v1_strip = bdir / f"l0_v1{SHARED_LIB_SUFFIX}"
+    v2_strip = bdir / f"l0_v2{SHARED_LIB_SUFFIX}"
+    have_strip = _strip_debug(br.v1_so, v1_strip) and _strip_debug(br.v2_so, v2_strip)
+    compile_db = _find_compile_db(bdir)
+
+    verdicts: dict[str, str] = {}
+    verdicts["L0"] = (
+        _abicheck_tier_verdict(v1_strip, v2_strip, None, None, name, "L0", None)
+        if have_strip else "n/a"
+    )
+    verdicts["L1"] = _abicheck_tier_verdict(br.v1_so, br.v2_so, None, None, name, "L1", None)
+    verdicts["L2"] = _abicheck_tier_verdict(br.v1_so, br.v2_so, v1_h, v2_h, name, "L2", None)
+    verdicts["L3"] = (
+        _abicheck_tier_verdict(br.v1_so, br.v2_so, v1_h, v2_h, name, "L3", compile_db.parent)
+        if compile_db else "n/a"
+    )
+
+    return {
+        "case": name,
+        "expected": expected,
+        "min_evidence": _gt_data["verdicts"].get(name, {}).get("min_evidence", "?"),
+        "tier_verdicts": verdicts,
+        "detected_at": _detected_at(verdicts, expected),
+    }
+
+
+def _print_evidence_tier_table(rows: list[dict]) -> None:
+    cols = [("Case", 38), ("Expected", 12), ("min_ev", 7)] + [(t, 10) for t in EVIDENCE_TIERS] + [("detect", 7)]
+    hdr = " ".join(f"{n:<{w}}" for n, w in cols)
+    print(f"\n{hdr}\n" + "─" * len(hdr))
+    for r in rows:
+        tv = r["tier_verdicts"]
+        parts = [f"{r['case']:<38}", f"{r['expected']:<12}", f"{r['min_evidence']:<7}"]
+        parts += [_col(tv.get(t, "—"), 10) for t in EVIDENCE_TIERS]
+        det = r["detected_at"] or "MISS"
+        parts.append(f"{det:<7}")
+        print(" ".join(parts))
+
+
+def _print_evidence_tier_summary(rows: list[dict]) -> None:
+    print("\n" + "─" * 60)
+    print("  Cumulative cases reaching the correct verdict, by evidence tier:")
+    scored = [r for r in rows if r["expected"] != "?"]
+    for tier in EVIDENCE_TIERS:
+        rank = evidence_tiers.tier_rank(tier)
+        # A case is "covered" at this tier if it is first detected at or below it.
+        covered = sum(
+            1 for r in scored
+            if r["detected_at"] is not None
+            and evidence_tiers.tier_rank(r["detected_at"]) <= rank
+        )
+        total = len(scored)
+        pct = 100 * covered // total if total else 0
+        bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
+        print(f"    {tier} {evidence_tiers.TIER_LABELS[tier]:<48} {covered:>3}/{total} ({pct:3}%) {bar}")
+    misses = [r["case"] for r in scored if r["detected_at"] is None]
+    if misses:
+        print(f"\n  Not reached by any tier ({len(misses)}): {', '.join(misses)}")
+        print("  (a MISS usually means the tier that would see it — L2 headers or "
+              "L4 source — was unavailable in this environment, e.g. no castxml.)")
+    # Honesty check: empirical first-detection vs ground_truth min_evidence.
+    # NO_CHANGE cases whose change is *invisible* to artifacts (e.g. case122) are
+    # trivially correct at L0, so a higher declared min_evidence is expected, not
+    # drift — skip them.
+    drift = [
+        (r["case"], r["min_evidence"], r["detected_at"])
+        for r in scored
+        if r["detected_at"] is not None
+        and r["min_evidence"] not in ("?", r["detected_at"])
+        and not (r["expected"] == "NO_CHANGE" and r["detected_at"] == "L0")
+    ]
+    if drift:
+        print("\n  min_evidence vs empirical detect-tier differences "
+              "(review scripts/evidence_tiers.py):")
+        for case, declared, got in drift:
+            print(f"    {case:<40} declared={declared} empirical={got}")
+
+
+def _run_evidence_tiers(args: Any) -> None:
+    """Driver for `--evidence-tiers`: run the catalog at L0/L1/L2/L3 and report."""
+    REPORT_DIR.mkdir(exist_ok=True)
+    BUILD_DIR.mkdir(exist_ok=True)
+    all_cases = sorted(d for d in EXAMPLES_DIR.iterdir() if d.is_dir() and d.name.startswith("case"))
+    if args.suite == "pinned74":
+        all_cases = [d for d in all_cases if PINNED_74_CASE_RE.match(d.name)]
+    case_prefixes = args.cases or []
+
+    print("Evidence-tier benchmark — abicheck at five sources of information (L0–L4)")
+    print("  L0 binary only · L1 +debug · L2 +headers · L3 +build · (L4 +source = n/a, needs EvidencePack)")
+
+    rows: list[dict] = []
+    for case_dir in all_cases:
+        if case_prefixes and not any(case_dir.name.startswith(p) for p in case_prefixes):
+            continue
+        row = _run_case_evidence_tiers(case_dir, args)
+        if row is not None:
+            rows.append(row)
+
+    _print_evidence_tier_table(rows)
+    _print_evidence_tier_summary(rows)
+
+    report = {
+        "schema": "abicheck-evidence-tiers/1.0",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "git_commit": _git_commit(),
+        "ground_truth_sha256": _ground_truth_digest(),
+        "tiers": EVIDENCE_TIERS,
+        "results": rows,
+    }
+    out = REPORT_DIR / "evidence_tier_report.json"
+    out.write_text(json.dumps(report, indent=2))
+    print(f"\n  Report: {out}\n")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
     args = parse_args()
+
+    if args.evidence_tiers:
+        _run_evidence_tiers(args)
+        return
 
     REPORT_DIR.mkdir(exist_ok=True)
     BUILD_DIR.mkdir(exist_ok=True)
