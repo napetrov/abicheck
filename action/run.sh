@@ -574,6 +574,94 @@ if [[ "${INPUT_ADD_JOB_SUMMARY:-true}" == "true" && "$MODE" != "dump" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Sticky PR comment (content channel — never changes the red/green gate)
+# ---------------------------------------------------------------------------
+# Rebuild the run command with `--format json` so the comment renderer has a
+# structured report, regardless of the format chosen for the main output.
+_build_json_cmd() {
+  PR_CMD_JSON=()
+  local i
+  for ((i = 0; i < ${#CMD[@]}; i++)); do
+    case "${CMD[$i]}" in
+      --format | -o | --output | --output-file)
+        ((i++))  # skip the flag's value too
+        ;;
+      *)
+        PR_CMD_JSON+=("${CMD[$i]}")
+        ;;
+    esac
+  done
+  PR_CMD_JSON+=(--format json -o "$PR_JSON")
+}
+
+_maybe_post_pr_comment() {
+  [[ "${INPUT_PR_COMMENT:-true}" == "true" ]] || return 0
+  case "$MODE" in
+    compare | compare-release | appcompat) ;;
+    *) return 0 ;;
+  esac
+  [[ "${INPUT_PR_COMMENT_ON:-changes}" == "never" ]] && return 0
+  [[ "$VERDICT" == "ERROR" ]] && return 0
+  case "${GITHUB_EVENT_NAME:-}" in
+    pull_request | pull_request_target) ;;
+    *)
+      echo "abicheck: not a pull_request event; skipping PR comment."
+      return 0
+      ;;
+  esac
+
+  local event="${GITHUB_EVENT_PATH:-}"
+  local pr_number="" head_sha=""
+  if [[ -n "$event" && -f "$event" ]] && command -v jq >/dev/null 2>&1; then
+    pr_number=$(jq -r '.pull_request.number // empty' "$event" 2>/dev/null)
+    head_sha=$(jq -r '.pull_request.head.sha // empty' "$event" 2>/dev/null)
+  fi
+  if [[ -z "$pr_number" ]]; then
+    echo "::warning::abicheck: could not determine the PR number; skipping PR comment."
+    return 0
+  fi
+
+  echo "::group::abicheck PR comment"
+  PR_JSON=$(mktemp --suffix=.json)
+  PR_BODY=$(mktemp --suffix=.md)
+  _build_json_cmd
+  # Re-run for JSON; a non-zero exit here is expected on breaks — the report
+  # file is still written, so we ignore the status.
+  "${PR_CMD_JSON[@]}" >/dev/null 2>/dev/null || true
+  if [[ ! -s "$PR_JSON" ]]; then
+    echo "::warning::abicheck: no JSON report produced; skipping PR comment."
+    echo "::endgroup::"
+    return 0
+  fi
+
+  abicheck pr-comment "$PR_JSON" \
+    --sha "${head_sha:-${GITHUB_SHA:-}}" \
+    --detail "${INPUT_PR_COMMENT_DETAIL:-standard}" \
+    --on "${INPUT_PR_COMMENT_ON:-changes}" \
+    --run-label "run #${GITHUB_RUN_NUMBER:-?}" \
+    -o "$PR_BODY" || true
+
+  if [[ ! -s "$PR_BODY" ]]; then
+    echo "abicheck: no comment to post (no changes / --on=${INPUT_PR_COMMENT_ON:-changes})."
+    echo "::endgroup::"
+    return 0
+  fi
+
+  if [[ "${INPUT_PR_COMMENT_MODE:-update}" == "new" ]]; then
+    gh pr comment "$pr_number" --body-file "$PR_BODY" \
+      || echo "::warning::abicheck: failed to post PR comment (need 'pull-requests: write')."
+  else
+    # Sticky: edit the action's previous comment in place; create if none yet.
+    gh pr comment "$pr_number" --body-file "$PR_BODY" --edit-last 2>/dev/null \
+      || gh pr comment "$pr_number" --body-file "$PR_BODY" \
+      || echo "::warning::abicheck: failed to post/update PR comment (need 'pull-requests: write')."
+  fi
+  echo "::endgroup::"
+}
+
+_maybe_post_pr_comment
+
+# ---------------------------------------------------------------------------
 # Determine final exit code based on user preferences
 # ---------------------------------------------------------------------------
 FINAL_EXIT=0

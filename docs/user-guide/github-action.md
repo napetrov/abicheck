@@ -106,6 +106,11 @@ extra-args: '--strict-suppressions --require-justification'
 | `severity-addition` | — | Severity for additions: `error`, `warning`, or `info` (compare mode only) |
 | `extra-args` | `''` | Additional CLI arguments passed to abicheck |
 | `add-job-summary` | `true` | Write summary to Job Summary panel (ignored for dump mode) |
+| `pr-comment` | `true` | Post a sticky ABI report comment on the PR (compare/compare-release/appcompat). No-op outside `pull_request` events. |
+| `pr-comment-mode` | `update` | `update` keeps one comment and edits it in place; `new` posts a fresh comment each run |
+| `pr-comment-on` | `changes` | When to comment: `changes`, `always`, or `never` |
+| `pr-comment-detail` | `standard` | Comment detail: `summary`, `standard`, or `full` |
+| `github-token` | `${{ github.token }}` | Token for the PR comment and baseline auto-fetch (needs `pull-requests: write`) |
 
 ### Package comparison inputs (compare-release mode)
 
@@ -525,6 +530,51 @@ See [GitHub PR Annotations](annotations.md) for full details.
           new-header: include/foo.h
           extra-args: --annotate
 ```
+
+### Sticky PR comment
+
+On `pull_request` runs the action posts a single, self-updating comment that
+groups every finding into **Breaking**, **Needs review**, and **Safe** sections
+and shows the scanned head SHA. It is a *content* channel only — it never
+changes the check's red/green state, which is still driven by `fail-on-breaking`
+/ `fail-on-api-break` / `severity-*`. This means review-needed items (source
+breaks, risk, additions) surface as a green check with a `⚠️ Review recommended`
+comment, while real ABI breaks turn the check red **and** post a `❌` comment.
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write   # required for the comment
+jobs:
+  abi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: napetrov/abicheck@v0.3.0
+        with:
+          old-library: baseline.json
+          new-library: build/libfoo.so
+          new-header: include/foo.h
+          # all optional — these are the defaults:
+          pr-comment: true
+          pr-comment-mode: update      # one sticky comment, edited each run
+          pr-comment-on: changes       # skip the comment when nothing changed
+          pr-comment-detail: standard  # per-symbol tables for breaking/review
+```
+
+Behavior knobs:
+
+- `pr-comment-mode: new` posts a fresh comment per run instead of editing the
+  previous one (use when you want a per-commit history in the thread).
+- `pr-comment-on: always` comments every run, including a clean *No ABI changes*
+  result; `never` disables it.
+- `pr-comment-detail: full` lists every change with source locations and expands
+  all sections; `summary` reduces the comment to the verdict and counts.
+
+"Safe" mirrors whatever the checker already classified as compatible — so
+public-header surface scoping (`--scope-public-headers`) and policy profiles
+(e.g. `sdk_vendor` demoting a removal) flow through automatically; the comment
+never re-classifies anything.
 
 ### Conditional failure
 

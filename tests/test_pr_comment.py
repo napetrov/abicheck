@@ -1,0 +1,364 @@
+# Copyright 2026 Nikolay Petrov
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Tests for the sticky PR-comment renderer and the ``pr-comment`` CLI."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from abicheck.pr_comment import (
+    MARKER,
+    CommentModel,
+    build_model,
+    render_comment,
+    should_post,
+)
+
+
+def _compare_report(changes: list[dict] | None = None) -> dict:
+    return {
+        "verdict": "BREAKING",
+        "library": "libfoo.so",
+        "old_version": "v1.2.0",
+        "new_version": "v1.3.0",
+        "policy": "strict_abi",
+        "changes": changes
+        if changes is not None
+        else [
+            {
+                "kind": "func_removed",
+                "symbol": "foo_init",
+                "description": "removed",
+                "severity": "breaking",
+                "source_location": "foo.h:20",
+            },
+            {
+                "kind": "type_size_changed",
+                "symbol": "struct Ctx",
+                "description": "grew",
+                "old_value": "16",
+                "new_value": "24",
+                "severity": "breaking",
+            },
+            {
+                "kind": "enum_member_added",
+                "symbol": "Color::PURPLE",
+                "description": "closed enum",
+                "severity": "api_break",
+            },
+            {
+                "kind": "func_added",
+                "symbol": "foo_v2",
+                "description": "new",
+                "severity": "compatible",
+            },
+            {
+                "kind": "type_added",
+                "symbol": "struct CtxV2",
+                "description": "new",
+                "severity": "compatible",
+            },
+        ],
+    }
+
+
+def _release_report() -> dict:
+    return {
+        "verdict": "BREAKING",
+        "old_dir": "/tmp/old",
+        "new_dir": "/tmp/new",
+        "libraries": [
+            {
+                "library": "libfoo.so.1",
+                "verdict": "BREAKING",
+                "breaking": 2,
+                "source_breaks": 0,
+                "compatible_additions": 1,
+            },
+            {
+                "library": "libbar.so.2",
+                "verdict": "COMPATIBLE",
+                "breaking": 0,
+                "source_breaks": 0,
+                "compatible_additions": 3,
+            },
+        ],
+        "unmatched_old": ["libgone.so.1"],
+        "unmatched_new": [],
+    }
+
+
+def _appcompat_report() -> dict:
+    return {
+        "application": "/opt/app/bin/myapp",
+        "old_library": "/lib/libfoo.so.1",
+        "new_library": "/lib/libfoo.so.2",
+        "verdict": "BREAKING",
+        "missing_symbols": ["foo_legacy", "foo_old"],
+        "relevant_changes": [
+            {
+                "kind": "func_params_changed",
+                "symbol": "foo_run",
+                "description": "signature changed",
+                "severity": "breaking",
+            },
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Shape detection + bucketing
+# ---------------------------------------------------------------------------
+
+
+def test_compare_buckets_by_severity():
+    model = build_model(_compare_report())
+    assert model.mode == "compare"
+    assert model.counts == (2, 1, 2)
+    assert {f.symbol for f in model.breaking} == {"foo_init", "struct Ctx"}
+    assert [f.symbol for f in model.review] == ["Color::PURPLE"]
+    assert {f.symbol for f in model.safe} == {"foo_v2", "struct CtxV2"}
+
+
+def test_compare_detail_text_renders_value_delta():
+    model = build_model(_compare_report())
+    size_change = next(f for f in model.breaking if f.symbol == "struct Ctx")
+    assert "16 → 24" in size_change.detail
+
+
+def test_release_shape_detected_and_summed():
+    model = build_model(_release_report())
+    assert model.mode == "release"
+    # breaking=2, review(source_breaks)=0, safe(additions)=1+3=4
+    assert model.counts == (2, 0, 4)
+    assert model.removed_libraries == ["libgone.so.1"]
+    assert len(model.library_rows) == 2
+
+
+def test_appcompat_missing_symbols_count_as_breaking():
+    model = build_model(_appcompat_report())
+    assert model.mode == "appcompat"
+    # 1 relevant breaking change + 2 missing symbols
+    assert model.counts == (3, 0, 0)
+    assert model.subject == "myapp"
+    assert any(f.symbol == "foo_legacy" for f in model.breaking)
+
+
+def test_malformed_changes_are_skipped():
+    model = build_model(
+        {
+            "changes": [
+                "not-a-dict",
+                {"kind": "func_added", "symbol": "x", "severity": "compatible"},
+            ]
+        }
+    )
+    assert model.counts == (0, 0, 1)
+
+
+# ---------------------------------------------------------------------------
+# should_post
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "on,changes,expected",
+    [
+        ("never", True, False),
+        ("always", False, True),
+        ("changes", True, True),
+        ("changes", False, False),
+    ],
+)
+def test_should_post(on, changes, expected):
+    report = _compare_report([] if not changes else None)
+    model = build_model(report)
+    assert should_post(model, on) is expected
+
+
+def test_should_post_changes_true_when_library_removed():
+    model = build_model(_release_report())
+    # zero per-library would still post because a library was removed
+    model.library_rows = []
+    assert should_post(model, "changes") is True
+
+
+# ---------------------------------------------------------------------------
+# Rendering
+# ---------------------------------------------------------------------------
+
+
+def test_render_includes_marker_header_sha_and_counts():
+    body = render_comment(
+        build_model(_compare_report()),
+        sha="a1b2c3d4e5f6",
+        detail="standard",
+        run_label="run #128",
+    )
+    assert body.startswith(MARKER)
+    assert "## ❌ abicheck — ABI BREAKING" in body
+    assert "a1b2c3d" in body  # short sha in header
+    assert "commit a1b2c3d" in body  # and footer
+    assert "**2 breaking** · 1 needs review · 2 safe" in body
+    assert "run #128" in body
+
+
+def test_render_header_review_when_no_breaking():
+    report = _compare_report(
+        [
+            {
+                "kind": "enum_member_added",
+                "symbol": "E::X",
+                "description": "d",
+                "severity": "api_break",
+            },
+        ]
+    )
+    body = render_comment(build_model(report), sha="deadbeef")
+    assert "Review recommended" in body
+    assert "⚠️" in body
+
+
+def test_render_header_safe_only():
+    report = _compare_report(
+        [
+            {
+                "kind": "func_added",
+                "symbol": "g",
+                "description": "d",
+                "severity": "compatible",
+            },
+        ]
+    )
+    body = render_comment(build_model(report), sha="deadbeef")
+    assert "Compatible — safe changes only" in body
+
+
+def test_render_header_no_changes():
+    body = render_comment(build_model(_compare_report([])), sha="deadbeef")
+    assert "No ABI changes" in body
+
+
+def test_summary_detail_has_no_tables():
+    body = render_comment(build_model(_compare_report()), sha="x", detail="summary")
+    assert "<details" not in body
+    assert "**2 breaking**" in body
+
+
+def test_full_detail_expands_all_sections():
+    body = render_comment(build_model(_compare_report()), sha="x", detail="full")
+    # every <details> opens expanded in full mode
+    assert "<details><summary>" not in body
+    assert body.count("<details open>") == 3
+
+
+def test_standard_truncates_large_breaking_table():
+    changes = [
+        {
+            "kind": "func_removed",
+            "symbol": f"sym_{i}",
+            "description": "removed",
+            "severity": "breaking",
+        }
+        for i in range(40)
+    ]
+    body = render_comment(build_model(_compare_report(changes)), sha="x")
+    assert "more_" in body  # truncation marker
+    # full mode keeps everything
+    full = render_comment(build_model(_compare_report(changes)), sha="x", detail="full")
+    assert "more_" not in full
+
+
+def test_release_render_lists_removed_libraries():
+    body = render_comment(build_model(_release_report()), sha="cafe1234")
+    assert "Libraries removed" in body
+    assert "libgone.so.1" in body
+    assert "Per-library results (2)" in body
+
+
+def test_pipe_characters_escaped_in_cells():
+    report = _compare_report(
+        [
+            {
+                "kind": "func_params_changed",
+                "symbol": "f(int|long)",
+                "description": "a|b",
+                "severity": "breaking",
+            },
+        ]
+    )
+    body = render_comment(build_model(report), sha="x")
+    assert "f(int\\|long)" in body
+
+
+def test_empty_model_renders_clean_verdict():
+    model = CommentModel(
+        mode="compare", subject="lib", old_label="o", new_label="n", policy="strict_abi"
+    )
+    body = render_comment(model, sha="")
+    assert "No ABI changes" in body
+    assert MARKER in body
+
+
+# ---------------------------------------------------------------------------
+# CLI command
+# ---------------------------------------------------------------------------
+
+
+def _run_cli(args):
+    from click.testing import CliRunner
+
+    from abicheck.cli import main
+
+    return CliRunner().invoke(main, args)
+
+
+def test_cli_pr_comment_writes_body(tmp_path):
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps(_compare_report()), encoding="utf-8")
+    out = tmp_path / "comment.md"
+    result = _run_cli(["pr-comment", str(report), "--sha", "abc1234", "-o", str(out)])
+    assert result.exit_code == 0
+    body = out.read_text(encoding="utf-8")
+    assert MARKER in body
+    assert "ABI BREAKING" in body
+
+
+def test_cli_pr_comment_skip_writes_empty_file(tmp_path):
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps(_compare_report([])), encoding="utf-8")
+    out = tmp_path / "comment.md"
+    result = _run_cli(["pr-comment", str(report), "--on", "changes", "-o", str(out)])
+    assert result.exit_code == 0
+    # nothing to post → empty file so the action's `-s` check skips
+    assert out.read_text(encoding="utf-8") == ""
+
+
+def test_cli_pr_comment_invalid_json_errors(tmp_path):
+    report = tmp_path / "bad.json"
+    report.write_text("{not json", encoding="utf-8")
+    result = _run_cli(["pr-comment", str(report)])
+    assert result.exit_code != 0
+    assert "Cannot read JSON report" in result.output
+
+
+def test_cli_pr_comment_non_object_errors(tmp_path):
+    report = tmp_path / "arr.json"
+    report.write_text("[1, 2, 3]", encoding="utf-8")
+    result = _run_cli(["pr-comment", str(report)])
+    assert result.exit_code != 0
+    assert "must be an object" in result.output

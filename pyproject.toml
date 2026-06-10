@@ -112,6 +112,7 @@ module = [
     "abicheck.cli_baseline",
     "abicheck.cli_evidence",
     "abicheck.cli_plugin",
+    "abicheck.cli_pr_comment",
     "abicheck.cli_probe",
     "abicheck.cli_stack",
     "abicheck.cli_suggest",

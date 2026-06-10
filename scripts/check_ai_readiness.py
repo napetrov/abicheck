@@ -531,6 +531,7 @@ IMPORT_CYCLE_ALLOWLIST: frozenset[frozenset[str]] = frozenset(
         frozenset({"cli", "cli_evidence"}),
         frozenset({"cli", "cli_appcompat"}),
         frozenset({"cli", "cli_plugin"}),
+        frozenset({"cli", "cli_pr_comment"}),
         frozenset({"cli", "cli_probe"}),
         frozenset({"cli", "cli_stack"}),
         frozenset({"cli", "cli_suggest"}),

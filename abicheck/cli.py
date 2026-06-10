@@ -1963,6 +1963,7 @@ from . import (  # noqa: E402  — must run after `main` and helpers are defined
     cli_debian_symbols,  # noqa: F401  — registers debian-symbols
     cli_evidence,  # noqa: F401  — registers collect-evidence
     cli_plugin,  # noqa: F401  — registers plugin-check
+    cli_pr_comment,  # noqa: F401  — registers pr-comment
     cli_probe,  # noqa: F401  — registers probe (run, compare)
     cli_stack,  # noqa: F401  — registers deps, stack-check
     cli_suggest,  # noqa: F401  — registers suggest-suppressions
