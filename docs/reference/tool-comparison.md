@@ -247,6 +247,10 @@ python3 scripts/benchmark_comparison.py --evidence-tiers
 python3 scripts/benchmark_comparison.py --evidence-tiers --cases case01 case07 case34
 ```
 
+> This is the **slow path**: it builds each case once and then runs the full
+> `dump`+`compare` pipeline up to four times per case (one per tier), so scope it
+> with `--cases`/`--suite` for quick iteration.
+
 For each case it builds the libraries once, then runs the full `dump`+`compare`
 pipeline four times:
 

@@ -853,7 +853,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--evidence-tiers", action="store_true",
                    help="Run abicheck at each evidence tier (L0 binary / L1 +debug / "
                         "L2 +headers / L3 +build) and report which cases each data "
-                        "source discovers, instead of the cross-tool comparison.")
+                        "source discovers, instead of the cross-tool comparison. "
+                        "Slow path: builds each case once, then runs the full "
+                        "dump+compare pipeline up to 4x per case.")
     return p.parse_args()
 
 

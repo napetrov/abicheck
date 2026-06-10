@@ -25,6 +25,14 @@ catalog at each tier and ``examples/ground_truth.json`` stores the computed
 ``min_evidence`` per case; ``tests/test_evidence_tiers.py`` keeps the two in
 sync. It is pure-stdlib and side-effect-free so it can be imported without a
 compiler, castxml, or any external tool.
+
+The per-kind tiers below are a **designed default**, not a guarantee: they
+encode where each change is *intended* to first become visible. The empirical
+truth is measured by ``--evidence-tiers``, whose drift report flags any case
+whose real first-detection tier differs from the value here (that is how
+``toolchain_flag_drift`` was corrected from L3 to L1 — compilers record their
+flags in debug info, so a ``-g`` build sees the drift at L1). Treat a drift
+warning as a prompt to re-examine the mapping, not as a test failure.
 """
 
 from __future__ import annotations
