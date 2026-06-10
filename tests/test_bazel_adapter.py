@@ -259,13 +259,14 @@ def test_bazel_forced_header_not_mistaken_for_source():
 
 def test_bazel_param_file_arguments_are_expanded():
     # A C++ action whose argv is just `gcc @foo.params`: the source and flags
-    # live in paramFiles[].arguments and must be merged before extraction.
+    # live in paramFiles[].arguments and are substituted at the @token position.
     aquery = json.dumps({
         "artifacts": [{"id": "1", "pathFragmentId": "10"}],
         "actions": [{
             "mnemonic": "CppCompile",
             "arguments": ["/usr/bin/gcc", "@bazel-out/foo.params"],
-            "paramFiles": [{"arguments": ["-std=c++20", "-c", "foo.cc", "-o", "foo.o"]}],
+            "paramFiles": [{"execPath": "bazel-out/foo.params",
+                            "arguments": ["-std=c++20", "-c", "foo.cc", "-o", "foo.o"]}],
             "primaryOutputId": "1",
         }],
         "pathFragments": [{"id": "10", "label": "foo.o"}],
@@ -273,6 +274,39 @@ def test_bazel_param_file_arguments_are_expanded():
     cu = BazelAdapter(aquery=aquery).collect().compile_units[0]
     assert cu.source == "foo.cc"
     assert cu.standard == "c++20"
+
+
+def test_bazel_param_file_expanded_at_token_position():
+    # Param-file args expand at the @token position, not at the end, so a
+    # later command-line -std wins (matching the real compiler's last-wins rule).
+    aquery = json.dumps({
+        "artifacts": [{"id": "1", "pathFragmentId": "10"}],
+        "actions": [{
+            "mnemonic": "CppCompile",
+            "arguments": ["gcc", "@out/foo.params", "-std=c++11", "-c", "foo.cc"],
+            "paramFiles": [{"execPath": "out/foo.params", "arguments": ["-std=c++20"]}],
+            "primaryOutputId": "1",
+        }],
+        "pathFragments": [{"id": "10", "label": "foo.o"}],
+    })
+    cu = BazelAdapter(aquery=aquery).collect().compile_units[0]
+    assert cu.standard == "c++11"   # later token wins; append-at-end would give c++20
+    assert cu.source == "foo.cc"
+
+
+def test_bazel_param_file_without_execpath_falls_back_to_append():
+    aquery = json.dumps({
+        "artifacts": [{"id": "1", "pathFragmentId": "10"}],
+        "actions": [{
+            "mnemonic": "CppCompile", "arguments": ["gcc", "@foo.params"],
+            "paramFiles": [{"arguments": ["-std=c++17", "-c", "foo.cc"]}],
+            "primaryOutputId": "1",
+        }],
+        "pathFragments": [{"id": "10", "label": "foo.o"}],
+    })
+    cu = BazelAdapter(aquery=aquery).collect().compile_units[0]
+    assert cu.standard == "c++17"
+    assert cu.source == "foo.cc"
 
 
 def test_bazel_live_aquery_includes_param_files(monkeypatch, tmp_path):

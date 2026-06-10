@@ -482,13 +482,42 @@ def _action_argv(action: dict[str, object]) -> list[str]:
 
     Bazel moves the bulk of a large C++ action's command line into param files;
     with ``--include_param_files`` aquery emits their contents under
-    ``paramFiles[].arguments``. Appending them lets source/flag extraction see
-    the real translation unit and ABI options instead of just ``@file`` refs.
+    ``paramFiles[].arguments`` together with the file's ``execPath``. Each param
+    file is substituted **in place** of its matching ``@<execPath>`` argv token
+    so ordering is preserved — important because ``_extract_flags`` keeps the
+    *last* ``-std`` it sees, so appending instead of substituting could record
+    the wrong ABI flags. Param files without a known ``@token`` (or no
+    ``execPath``) are appended as a fallback so their facts are not lost.
     """
     argv = _str_list(action.get("arguments"))
-    for pf in _dicts(action.get("paramFiles")):
-        argv.extend(_str_list(pf.get("arguments")))
-    return argv
+    param_files = _dicts(action.get("paramFiles"))
+    if not param_files:
+        return argv
+
+    by_token: dict[str, list[str]] = {}
+    no_token: list[str] = []
+    for pf in param_files:
+        exec_path = str(pf.get("execPath", ""))
+        args = _str_list(pf.get("arguments"))
+        if exec_path:
+            by_token["@" + exec_path] = args
+        else:
+            no_token.extend(args)
+
+    out: list[str] = []
+    seen_tokens: set[str] = set()
+    for tok in argv:
+        if tok in by_token:
+            out.extend(by_token[tok])
+            seen_tokens.add(tok)
+        else:
+            out.append(tok)
+    # Param files whose @token never appeared in argv: append defensively.
+    for token, args in by_token.items():
+        if token not in seen_tokens:
+            out.extend(args)
+    out.extend(no_token)
+    return out
 
 
 def _source_from_argv(argv: list[str]) -> str:
