@@ -205,6 +205,10 @@ class BazelAdapter:
         attrs = _attr_map(rule.get("attribute", []))
         srcs = [self.redaction.path(s) for s in attrs.get("srcs", [])]
         hdrs = [self.redaction.path(h) for h in attrs.get("hdrs", [])]
+        # ``deps`` are Bazel labels used as graph keys: they must stay in the
+        # same (un-redacted) form as the ``target://<label>`` target ids so the
+        # dependency edges resolve. Labels are not host paths, so there is
+        # nothing to redact anyway.
         deps = [f"target://{d}" for d in attrs.get("deps", [])]
         rule_class = str(rule.get("ruleClass", ""))
         outputs = _str_list(rule.get("ruleOutput"))
@@ -476,7 +480,7 @@ _SOURCE_OPERAND_FLAGS = frozenset({
     "-include", "-imacros", "-include-pch", "-Xclang", "-x",
     "-o", "-MF", "-MT", "-MQ", "-MJ",
     "-I", "-isystem", "-iquote", "-idirafter", "-D", "-U",
-    "/FI", "/FU", "/Fi", "/Fu",
+    "/FI", "/FU",
 })
 
 
