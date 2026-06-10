@@ -187,6 +187,7 @@ class CastxmlSourceExtractor:
         # Imported lazily: the castxml parser pulls in the heavy dumper model
         # graph, which the lightweight evidence layer should not load eagerly.
         from ...dumper_castxml import _CastxmlParser
+        from ...provenance import build_public_set, tag_provenance
 
         parser = _CastxmlParser(
             root,
@@ -195,16 +196,32 @@ class CastxmlSourceExtractor:
             public_header_paths=list(public_header_roots),
             public_dir_paths=[],
         )
+        functions = parser.parse_functions()
+        records = parser.parse_types()
+        enums = parser.parse_enums()
+        variables = parser.parse_variables()
+
+        # The parser leaves origin == UNKNOWN; the snapshot path classifies it
+        # later via apply_provenance, but this extractor bypasses snapshots, so
+        # classify here against the public-header set. Without this every public
+        # declaration would map to api_relevant=False and the linker would drop
+        # it, leaving L4 with only the self-scoped constants (ADR-024 D1).
+        header_segs, dir_segs, have_set = build_public_set(
+            list(public_header_roots), []
+        )
+        for decl in (*functions, *records, *enums, *variables):
+            tag_provenance(decl, header_segs, dir_segs, have_set)
+
         return assemble_source_tu(
             compile_unit,
             public_header_roots=public_header_roots,
             target_id=target_id,
             extractor_name=self.name,
             extractor_version=CASTXML_EXTRACTOR_VERSION,
-            functions=parser.parse_functions(),
-            records=parser.parse_types(),
-            enums=parser.parse_enums(),
-            variables=parser.parse_variables(),
+            functions=functions,
+            records=records,
+            enums=enums,
+            variables=variables,
             constants=parser.parse_constants(),
             typedefs=parser.parse_typedefs(),
         )

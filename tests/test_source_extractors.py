@@ -270,7 +270,9 @@ def test_parse_root_maps_castxml_xml_without_running_castxml() -> None:
     SubElement(root, "File", id="f1", name="foo.h")
     SubElement(root, "FundamentalType", id="t_int", name="int")
     SubElement(root, "Location", id="loc1", file="f1", line="3")
-    cls = SubElement(root, "Class", id="c1", name="Widget", size="64", align="64")
+    cls = SubElement(
+        root, "Class", id="c1", name="Widget", size="64", align="64", location="loc1"
+    )
     SubElement(cls, "Field", name="a", type="t_int", offset="0")
     fn = SubElement(
         root, "Function", id="fn1", name="add", returns="t_int", location="loc1"
@@ -285,6 +287,16 @@ def test_parse_root_maps_castxml_xml_without_running_castxml() -> None:
     assert any("add" in n for n in names)
     assert any("Widget" in n for n in names)
     assert tu.extractor["name"] == "castxml-source"
+    # Provenance is applied (P1 fix): public-header decls are api_relevant, not
+    # left UNKNOWN — otherwise the linker would filter every declaration out.
+    assert any(e.api_relevant for e in tu.functions)
+    assert any(e.api_relevant for e in tu.types)
+    # And they survive linking onto the public source surface.
+    from abicheck.evidence import link_source_abi
+
+    surface = link_source_abi([tu], target_id="target://libfoo")
+    assert any("add" in e.qualified_name for e in surface.reachable_declarations)
+    assert any("Widget" in e.qualified_name for e in surface.reachable_types)
 
 
 # -- end-to-end via real castxml (integration) -------------------------------
