@@ -156,13 +156,23 @@ def test_build_command_carries_argv_only_options() -> None:
     # carried through so castxml parses the same TU as the build (Codex review).
     cu = _cu(
         abi_relevant_flags=["-fms-extensions", "-fabi-version=11"],
-        argv=["g++", "-include", "config.h", "-imacros", "m.h", "-c", "foo.cpp"],
+        argv=[
+            "g++",
+            "-include",
+            "config.h",
+            "-imacros",
+            "m.h",
+            "-includejoined.h",  # joined GNU forced-include spelling
+            "-c",
+            "foo.cpp",
+        ],
     )
     cmd = build_castxml_command(cu, Path("foo.cpp"), Path("o.xml"))
     assert "-fms-extensions" in cmd
     assert "-fabi-version=11" in cmd
     assert cmd[cmd.index("-include") + 1] == "config.h"
     assert cmd[cmd.index("-imacros") + 1] == "m.h"
+    assert "-includejoined.h" in cmd  # joined form carried verbatim
     # the build action's own -c/source/-o are NOT blindly forwarded
     assert "-c" not in cmd
 

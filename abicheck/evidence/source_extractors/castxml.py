@@ -105,8 +105,14 @@ def _replay_extra_flags(
     while i < len(argv):
         tok = argv[i]
         if tok in _GNU_FORCED_INCLUDE_OPTS and i + 1 < len(argv):
-            out += [tok, argv[i + 1]]
+            out += [tok, argv[i + 1]]  # -include file (separate operand)
             i += 2
+        elif any(
+            tok.startswith(opt) and len(tok) > len(opt)
+            for opt in _GNU_FORCED_INCLUDE_OPTS
+        ):
+            out.append(tok)  # -includefile / -imacrosfile (joined)
+            i += 1
         elif cc_id == "msvc" and tok in _MSVC_FORCED_INCLUDE_OPTS and i + 1 < len(argv):
             out += [tok, argv[i + 1]]  # /FI file (separate operand)
             i += 2
