@@ -60,7 +60,6 @@ Usage
 from __future__ import annotations
 
 import argparse
-import functools
 import gc
 import json
 import math
@@ -435,22 +434,26 @@ def _build_report(n_changes: int) -> DiffResult:
 
 # ── Timed runners (one per measured entry point) ──────────────────────────────
 def _run_compare(prepared: tuple[AbiSnapshot, AbiSnapshot]) -> int:
+    """Time ``compare(old, new)``; return the number of detected changes."""
     old, new = prepared
     return len(compare(old, new).changes)
 
 
 def _run_suppression_audit(prepared: tuple[list[Change], SuppressionList]) -> int:
+    """Time ``SuppressionList.audit``; return the number of findings audited."""
     changes, supp = prepared
     supp.audit(changes)
     return len(changes)
 
 
 def _run_report_html(prepared: DiffResult) -> int:
+    """Time ``generate_html_report``; return the number of changes rendered."""
     generate_html_report(prepared)
     return len(prepared.changes)
 
 
 def _run_report_sarif(prepared: DiffResult) -> int:
+    """Time ``to_sarif_str``; return the number of changes rendered."""
     to_sarif_str(prepared)
     return len(prepared.changes)
 
@@ -525,15 +528,18 @@ def _clear_process_caches() -> None:
     ``lru_cache`` (plus the demangle batch cache) before the traced run forces
     it to repopulate them, so their allocation is counted and each size is
     measured from the same cold baseline.
+
+    Caches are detected by duck-typing the public ``functools.lru_cache`` API
+    (``cache_clear`` + ``cache_info``) rather than the private wrapper type, so
+    this stays robust across Python versions.
     """
-    wrapper = getattr(functools, "_lru_cache_wrapper", None)
-    if wrapper is not None:
-        for obj in gc.get_objects():
-            if isinstance(obj, wrapper):
-                try:
-                    obj.cache_clear()
-                except Exception:  # noqa: BLE001 — best-effort cache reset
-                    pass
+    for obj in gc.get_objects():
+        cache_clear = getattr(obj, "cache_clear", None)
+        if callable(cache_clear) and callable(getattr(obj, "cache_info", None)):
+            try:
+                cache_clear()
+            except Exception:  # noqa: BLE001 — best-effort cache reset
+                pass
     try:
         from abicheck.demangle import _reset_demangle_batch_cache
 
@@ -761,7 +767,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.max_memory_mb is not None:
             mem_points = [p for p in points if p.peak_mb is not None]
             if mem_points:
-                worst_mem = max(mem_points, key=lambda p: p.peak_mb)  # type: ignore[arg-type, return-value]
+                worst_mem = max(mem_points, key=lambda p: p.peak_mb or 0.0)
                 if (
                     worst_mem.peak_mb is not None
                     and worst_mem.peak_mb > args.max_memory_mb
