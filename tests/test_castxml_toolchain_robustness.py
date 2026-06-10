@@ -96,6 +96,23 @@ class TestVersionNote:
         ):
             assert _castxml_version_note() == ""
 
+    def test_castxml_version_without_clang_line(self) -> None:
+        # castxml version is reported but no parseable clang line — still nudge.
+        with patch(
+            "abicheck.dumper.subprocess.run",
+            return_value=_completed(stdout="castxml version 0.4.5\n"),
+        ):
+            note = _castxml_version_note()
+        assert "Detected castxml 0.4.5" in note
+        assert ">= 18" in note
+
+    def test_no_version_info_is_silent(self) -> None:
+        with patch(
+            "abicheck.dumper.subprocess.run",
+            return_value=_completed(stdout="unrelated output\n"),
+        ):
+            assert _castxml_version_note() == ""
+
     def test_probe_failure_is_silent(self) -> None:
         with patch("abicheck.dumper.subprocess.run", side_effect=OSError("not found")):
             assert _castxml_version_note() == ""
