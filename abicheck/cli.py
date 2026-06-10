@@ -1872,7 +1872,7 @@ def compare_cmd(
         # provenance (parsed_with_build_context, set by `dump -p`); compare adds
         # no build context of its own.
         ev_changes, evidence_coverage_rows = collect_compare_evidence(
-            old_evidence, new_evidence, evidence_mode, new,
+            old_evidence, new_evidence, evidence_mode, new, old,
         )
         extra_changes = (extra_changes or []) + ev_changes if ev_changes else extra_changes
 

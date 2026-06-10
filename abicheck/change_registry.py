@@ -293,6 +293,12 @@ REGISTRY = ChangeKindRegistry([
 
     # ── DWARF layout (Sprint 3) ───────────────────────────────────────────
     _E("dwarf_info_missing", _C),
+    _E("evidence_coverage_asymmetric", _R,
+       impact="The base snapshot was analyzed with evidence layers the target "
+              "lacks (e.g. debug info, build context, or source ABI). The "
+              "comparison is scoped to the layers both sides share, so changes "
+              "only the missing layers could prove are not reported. Re-scan "
+              "the target with the same inputs to restore full coverage."),
     _E("struct_size_changed", _B,
        impact="sizeof(T) changed in debug info; confirms layout break visible at binary level."),
     _E("struct_field_offset_changed", _B,

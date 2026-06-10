@@ -171,6 +171,7 @@ class ChangeKind(str, Enum):
 
     # DWARF layout (Sprint 3)
     DWARF_INFO_MISSING = "dwarf_info_missing"  # new binary stripped of -g
+    EVIDENCE_COVERAGE_ASYMMETRIC = "evidence_coverage_asymmetric"  # base scanned with evidence the target lacks
     STRUCT_SIZE_CHANGED = "struct_size_changed"  # sizeof(T) changed
     STRUCT_FIELD_OFFSET_CHANGED = "struct_field_offset_changed"  # field moved
     STRUCT_FIELD_REMOVED = "struct_field_removed"  # field deleted

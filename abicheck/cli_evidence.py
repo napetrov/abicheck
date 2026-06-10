@@ -307,6 +307,7 @@ def collect_compare_evidence(
     new_evidence: Path | None,
     evidence_mode: str,
     new_snapshot: AbiSnapshot,
+    old_snapshot: AbiSnapshot | None = None,
 ) -> tuple[list[Change], list[dict[str, object]]]:
     """Load packs, diff their build evidence, echo coverage, return findings.
 
@@ -316,6 +317,12 @@ def collect_compare_evidence(
     output format) and also returned as serialized rows so the JSON report can
     carry a structured ``evidence_coverage`` block. Returns
     ``(changes, coverage_rows)``.
+
+    When ``old_snapshot`` is supplied, the base and target coverage are compared
+    layer-by-layer: if the base was analyzed with evidence the target lacks
+    (e.g. a full base scan vs a binary+headers-only target), a single
+    ``EVIDENCE_COVERAGE_ASYMMETRIC`` finding spells out exactly which pieces the
+    target is missing so the degraded comparison is never silent.
     """
     from .evidence.build_diff import check_header_parse_drift, diff_build_evidence
 
@@ -348,6 +355,11 @@ def collect_compare_evidence(
             new_build,
             headers_parsed_with_context=new_snapshot.parsed_with_build_context,
         ))
+
+    if old_snapshot is not None:
+        changes.extend(
+            _detect_coverage_asymmetry(old_snapshot, old_pack, new_snapshot, new_pack)
+        )
 
     src_pack = new_pack or old_pack
     coverage = list(src_pack.manifest.coverage) if src_pack else []
@@ -388,13 +400,17 @@ def _intrinsic_coverage(snap: AbiSnapshot) -> list[LayerCoverage]:
     ]
 
 
+# Human-readable layer names, ordered shallow→deep, shared by the coverage
+# table and the asymmetry finding so both speak the same vocabulary.
+_LAYER_NAMES: dict[str, str] = {
+    "L0": "L0 binary metadata", "L1": "L1 debug info", "L2": "L2 public header AST",
+    "L3_build": "L3 build context", "L4_source_abi": "L4 source ABI replay",
+    "L5_source_graph": "L5 source graph summary",
+}
+
+
 def _echo_coverage(intrinsic: list[LayerCoverage], optional: list[LayerCoverage]) -> None:
     """Print the D7 evidence-coverage table to stderr (all output formats)."""
-    names = {
-        "L0": "L0 binary metadata", "L1": "L1 debug info", "L2": "L2 public header AST",
-        "L3_build": "L3 build context", "L4_source_abi": "L4 source ABI replay",
-        "L5_source_graph": "L5 source graph summary",
-    }
     click.echo("Evidence coverage:", err=True)
     for cov in [*intrinsic, *optional]:
         extra = ""
@@ -402,4 +418,75 @@ def _echo_coverage(intrinsic: list[LayerCoverage], optional: list[LayerCoverage]
             extra = f", {cov.confidence.value} confidence"
             if cov.detail:
                 extra += f": {cov.detail}"
-        click.echo(f"  {names.get(cov.layer, cov.layer):<26} {cov.status.value}{extra}", err=True)
+        click.echo(f"  {_LAYER_NAMES.get(cov.layer, cov.layer):<26} {cov.status.value}{extra}", err=True)
+
+
+def _layer_presence(snap: AbiSnapshot, pack: EvidencePack | None) -> dict[str, bool]:
+    """Map every evidence layer id → present? for one side of the compare.
+
+    L0/L1/L2 are intrinsic to the snapshot; L3/L4/L5 come from the pack manifest
+    coverage (with the loaded ``build_evidence`` object treated as authoritative
+    proof that L3 is present even if the manifest row is stale).
+    """
+    present = {
+        row.layer: row.status != CoverageStatus.NOT_COLLECTED
+        for row in _intrinsic_coverage(snap)
+    }
+    by_layer = {c.layer: c.present for c in (pack.manifest.coverage if pack else [])}
+    for layer in (EvidenceLayer.L3_BUILD, EvidenceLayer.L4_SOURCE_ABI, EvidenceLayer.L5_SOURCE_GRAPH):
+        present[layer.value] = by_layer.get(layer.value, False)
+    if pack is not None and pack.build_evidence is not None:
+        present[EvidenceLayer.L3_BUILD.value] = True
+    return present
+
+
+def _detect_coverage_asymmetry(
+    old_snap: AbiSnapshot,
+    old_pack: EvidencePack | None,
+    new_snap: AbiSnapshot,
+    new_pack: EvidencePack | None,
+) -> list[Change]:
+    """Flag layers the base was analyzed with but the target lacks (ADR-028 D7).
+
+    A full base scan (binary + debug + headers + build + sources) compared
+    against a binary+headers-only target is a legitimate, supported comparison —
+    but it is *degraded*: the layers the target is missing cannot prove or
+    disprove changes, so the verdict is scoped to what both sides share. Rather
+    than let that happen silently, emit one ``EVIDENCE_COVERAGE_ASYMMETRIC``
+    RISK finding naming exactly which pieces the target is missing.
+
+    Only the base→target degradation direction is reported (target missing what
+    the base had). A target that is *richer* than the base does not undermine
+    the comparison, so it is not flagged here.
+    """
+    from .checker_policy import ChangeKind
+    from .checker_types import Change
+
+    old_present = _layer_presence(old_snap, old_pack)
+    new_present = _layer_presence(new_snap, new_pack)
+    missing = [
+        layer
+        for layer in _LAYER_NAMES
+        if old_present.get(layer) and not new_present.get(layer)
+    ]
+    if not missing:
+        return []
+
+    human = ", ".join(_LAYER_NAMES[m] for m in missing)
+    return [
+        Change(
+            kind=ChangeKind.EVIDENCE_COVERAGE_ASYMMETRIC,
+            symbol="evidence:coverage",
+            description=(
+                f"Base was analyzed with evidence the target lacks ({human}). "
+                "The comparison is scoped to the layers both sides share, so "
+                "changes only those missing layers could prove are NOT reported "
+                "and this verdict must not be read as a full-coverage result. "
+                "Re-scan the target with the same inputs (e.g. -g for debug "
+                "info, collect-evidence for build/source context) to restore "
+                "full coverage."
+            ),
+            old_value=human,
+            new_value="not collected on target",
+        )
+    ]
