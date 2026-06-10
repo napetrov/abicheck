@@ -23,6 +23,15 @@ It is intentionally **flexible**: by default it only measures and prints, so it
 is safe to run unconditionally in CI as an informational job. Pass
 ``--max-seconds``, ``--max-exponent``, and/or ``--max-memory-mb`` to turn it
 into a gate once the known bottlenecks are addressed and a stable budget exists.
+Pass ``--baseline <scaling.json>`` (e.g. produced from the base branch) with
+``--regress-tolerance`` to flag scenarios that got slower than the baseline —
+this catches *gradual* drift that the per-run scaling exponent misses.
+
+Beyond ``compare()``, scenarios also cover PE/Mach-O diff arms, typedef/union/
+wide-struct/vtable churn, the opaque-handle size filter, suppression audit,
+severity categorization, serialization round-trip, and the HTML/SARIF/JUnit
+reporters. See ``docs/development/performance.md`` for the full scenario table,
+the coverage gap analysis, and the paths still not benchmarked.
 
 Scenarios
 ---------
@@ -45,9 +54,6 @@ Scenarios
 ``report_html`` / ``report_sarif``  Render a large ``DiffResult`` through the
                  HTML and SARIF reporters (the largest output documents).
 
-See ``docs/development/performance.md`` for the full scenario table, the
-coverage gap analysis, and the paths that are still not benchmarked.
-
 Usage
 -----
     python3 scripts/benchmark_scaling.py
@@ -60,6 +66,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import functools
 import gc
 import json
 import math
@@ -90,6 +97,11 @@ from abicheck.elf_metadata import (  # noqa: E402
     SymbolType,
 )
 from abicheck.html_report import generate_html_report  # noqa: E402
+from abicheck.junit_report import to_junit_xml  # noqa: E402
+from abicheck.macho_metadata import (  # noqa: E402
+    MachoExport,
+    MachoMetadata,
+)
 from abicheck.model import (  # noqa: E402
     AbiSnapshot,
     EnumMember,
@@ -101,7 +113,13 @@ from abicheck.model import (  # noqa: E402
     Variable,
     Visibility,
 )
+from abicheck.pe_metadata import PeExport, PeMetadata  # noqa: E402
 from abicheck.sarif import to_sarif_str  # noqa: E402
+from abicheck.serialization import (  # noqa: E402
+    snapshot_from_dict,
+    snapshot_to_json,
+)
+from abicheck.severity import categorize_changes  # noqa: E402
 from abicheck.suppression import Suppression, SuppressionList  # noqa: E402
 
 DEFAULT_SIZES = (500, 1000, 2000, 4000)
@@ -432,6 +450,303 @@ def _build_report(n_changes: int) -> DiffResult:
     )
 
 
+def _build_pe_churn(n_syms: int) -> tuple[AbiSnapshot, AbiSnapshot]:
+    """PE/COFF export churn — exercises ``diff_platform``'s PE arm.
+
+    Only ELF was swept before; this builds a PE snapshot pair (``pe=...`` on
+    both sides gates the PE detector) where half the exports are removed and an
+    equal number added.
+    """
+
+    def pe(prefix: str) -> PeMetadata:
+        return PeMetadata(
+            machine="x64",
+            exports=[
+                PeExport(name=f"{prefix}_fn{i}", ordinal=i + 1) for i in range(n_syms)
+            ],
+        )
+
+    keep = n_syms // 2
+    old_exports = [PeExport(name=f"fn{i}", ordinal=i + 1) for i in range(n_syms)]
+    new_exports = old_exports[:keep] + [
+        PeExport(name=f"newfn{i}", ordinal=keep + i + 1) for i in range(n_syms - keep)
+    ]
+    old = AbiSnapshot(
+        library="libscale.dll",
+        version="1.0",
+        pe=PeMetadata(machine="x64", exports=old_exports),
+        platform="pe",
+    )
+    new = AbiSnapshot(
+        library="libscale.dll",
+        version="2.0",
+        pe=PeMetadata(machine="x64", exports=new_exports),
+        platform="pe",
+    )
+    return old, new
+
+
+def _build_macho_churn(n_syms: int) -> tuple[AbiSnapshot, AbiSnapshot]:
+    """Mach-O export churn — exercises ``diff_platform``'s Mach-O arm."""
+    keep = n_syms // 2
+    old_exports = [MachoExport(name=f"_fn{i}") for i in range(n_syms)]
+    new_exports = old_exports[:keep] + [
+        MachoExport(name=f"_newfn{i}") for i in range(n_syms - keep)
+    ]
+    old = AbiSnapshot(
+        library="libscale.dylib",
+        version="1.0",
+        macho=MachoMetadata(cpu_type="arm64", exports=old_exports),
+        platform="macho",
+    )
+    new = AbiSnapshot(
+        library="libscale.dylib",
+        version="2.0",
+        macho=MachoMetadata(cpu_type="arm64", exports=new_exports),
+        platform="macho",
+    )
+    return old, new
+
+
+def _build_typedef_churn(n_typedefs: int) -> tuple[AbiSnapshot, AbiSnapshot]:
+    """Many typedefs whose underlying type changes — exercises ``_diff_typedefs``.
+
+    The ``typedefs`` map is ``alias -> underlying``; every alias points at a new
+    underlying type, so the typedef detector emits a base-changed finding for
+    each. A public function returns each alias to keep it in the surface.
+    """
+    funcs = [
+        Function(
+            name=f"get_{i}",
+            mangled=f"_Z5get_{i}v",
+            return_type=f"alias_{i}",
+            visibility=Visibility.PUBLIC,
+        )
+        for i in range(n_typedefs)
+    ]
+    old = AbiSnapshot(
+        library="libscale.so",
+        version="1.0",
+        functions=list(funcs),
+        typedefs={f"alias_{i}": "int" for i in range(n_typedefs)},
+    )
+    new = AbiSnapshot(
+        library="libscale.so",
+        version="2.0",
+        functions=list(funcs),
+        typedefs={f"alias_{i}": "long" for i in range(n_typedefs)},
+    )
+    return old, new
+
+
+def _build_union_churn(n_unions: int) -> tuple[AbiSnapshot, AbiSnapshot]:
+    """Many unions that each gain a member — exercises union diffing."""
+    types_old, types_new, funcs = [], [], []
+    for i in range(n_unions):
+        base = [
+            TypeField(name="a", type="int", offset_bits=0),
+            TypeField(name="b", type="float", offset_bits=0),
+        ]
+        grown = base + [TypeField(name="c", type="double", offset_bits=0)]
+        types_old.append(
+            RecordType(
+                name=f"U_{i}", kind="union", is_union=True, size_bits=32, fields=base
+            )
+        )
+        types_new.append(
+            RecordType(
+                name=f"U_{i}", kind="union", is_union=True, size_bits=64, fields=grown
+            )
+        )
+        funcs.append(
+            Function(
+                name=f"use_U_{i}",
+                mangled=f"_Z5use_U_{i}P2U_{i}",
+                return_type="int",
+                params=[Param(name="p", type=f"U_{i} *")],
+                visibility=Visibility.PUBLIC,
+            )
+        )
+    old = AbiSnapshot(
+        library="libscale.so", version="1.0", functions=list(funcs), types=types_old
+    )
+    new = AbiSnapshot(
+        library="libscale.so", version="2.0", functions=list(funcs), types=types_new
+    )
+    return old, new
+
+
+def _build_wide_struct(n_fields: int) -> tuple[AbiSnapshot, AbiSnapshot]:
+    """A few structs that each carry ``n_fields`` fields, every other one retyped.
+
+    Isolates per-field diffing cost within a single large record (the
+    ``type_churn`` scenario grows only one field per struct).
+    """
+    n_structs = 8
+
+    def struct(i: int, retype: bool) -> RecordType:
+        fields = [
+            TypeField(
+                name=f"f{j}",
+                type=("long" if (retype and j % 2 == 0) else "int"),
+                offset_bits=j * 32,
+            )
+            for j in range(n_fields)
+        ]
+        return RecordType(
+            name=f"Wide_{i}", kind="struct", size_bits=n_fields * 32, fields=fields
+        )
+
+    funcs = [
+        Function(
+            name=f"use_Wide_{i}",
+            mangled=f"_Z8use_Wide{i}P6Wide_{i}",
+            return_type="int",
+            params=[Param(name="p", type=f"Wide_{i} *")],
+            visibility=Visibility.PUBLIC,
+        )
+        for i in range(n_structs)
+    ]
+    old = AbiSnapshot(
+        library="libscale.so",
+        version="1.0",
+        functions=list(funcs),
+        types=[struct(i, retype=False) for i in range(n_structs)],
+    )
+    new = AbiSnapshot(
+        library="libscale.so",
+        version="2.0",
+        functions=list(funcs),
+        types=[struct(i, retype=True) for i in range(n_structs)],
+    )
+    return old, new
+
+
+def _build_vtable_churn(n_classes: int) -> tuple[AbiSnapshot, AbiSnapshot]:
+    """Polymorphic classes whose vtable layout changes — exercises vtable diffing.
+
+    Each class carries a vtable of mangled virtual-method entries; the new side
+    inserts an entry (a layout-breaking change). A public function takes each
+    class by pointer to keep it in the surface.
+    """
+    types_old, types_new, funcs = [], [], []
+    for i in range(n_classes):
+        vt = [f"_ZN2C{i}{j}mEv" for j in range(6)]
+        grown = [vt[0], f"_ZN2C{i}9insertedEv", *vt[1:]]
+        types_old.append(
+            RecordType(name=f"C{i}", kind="class", size_bits=64, vtable=vt)
+        )
+        types_new.append(
+            RecordType(name=f"C{i}", kind="class", size_bits=64, vtable=grown)
+        )
+        funcs.append(
+            Function(
+                name=f"use_C{i}",
+                mangled=f"_Z5use_C{i}P2C{i}",
+                return_type="int",
+                params=[Param(name="p", type=f"C{i} *")],
+                visibility=Visibility.PUBLIC,
+            )
+        )
+    old = AbiSnapshot(
+        library="libscale.so", version="1.0", functions=list(funcs), types=types_old
+    )
+    new = AbiSnapshot(
+        library="libscale.so", version="2.0", functions=list(funcs), types=types_new
+    )
+    return old, new
+
+
+def _build_opaque_filter(n_types: int) -> tuple[AbiSnapshot, AbiSnapshot]:
+    """Pointer-only opaque handles that grow in size, each used by many functions.
+
+    Targets the one super-linear path #331 left in place:
+    ``diff_filtering._filter_opaque_size_changes`` is O(candidates × functions).
+    Each handle is a single-pointer struct that grows (a compatible
+    opaque-handle size change), and several public functions take it by pointer,
+    so the filter must relate each candidate back to the using functions.
+    """
+    fan_out = 4
+    types_old, types_new, funcs = [], [], []
+    for i in range(n_types):
+        field = [TypeField(name="impl", type="void *", offset_bits=0)]
+        types_old.append(
+            RecordType(name=f"H_{i}", kind="struct", size_bits=64, fields=field)
+        )
+        types_new.append(
+            RecordType(name=f"H_{i}", kind="struct", size_bits=128, fields=field)
+        )
+        for k in range(fan_out):
+            funcs.append(
+                Function(
+                    name=f"use_H_{i}_{k}",
+                    mangled=f"_Z7use_H_{i}_{k}P3H_{i}",
+                    return_type="int",
+                    params=[Param(name="p", type=f"H_{i} *")],
+                    visibility=Visibility.PUBLIC,
+                )
+            )
+    old = AbiSnapshot(
+        library="libscale.so", version="1.0", functions=list(funcs), types=types_old
+    )
+    new = AbiSnapshot(
+        library="libscale.so", version="2.0", functions=list(funcs), types=types_new
+    )
+    return old, new
+
+
+def _build_severity(n_findings: int) -> list[Change]:
+    """A finding set to push through severity categorization (``categorize_changes``)."""
+    kinds = [
+        ChangeKind.FUNC_REMOVED,
+        ChangeKind.FUNC_ADDED,
+        ChangeKind.TYPE_FIELD_ADDED,
+        ChangeKind.TYPEDEF_REMOVED,
+    ]
+    return [
+        Change(
+            kind=kinds[i % len(kinds)],
+            symbol=f"_Z3fn{i}v",
+            description=f"finding {i}",
+        )
+        for i in range(n_findings)
+    ]
+
+
+def _build_serialize(n: int) -> AbiSnapshot:
+    """A large snapshot for the serialize → load round-trip (snapshot-pipeline proxy).
+
+    The synthetic harness can't run the real DWARF/PE/PDB parsers, but the
+    serialize/deserialize round-trip is the pure-Python stage that scales with
+    the same snapshot size, so it stands in for the snapshot pipeline's cost.
+    """
+    funcs = [
+        Function(
+            name=f"func_{i}",
+            mangled=f"_Z6func_{i}v",
+            return_type="int",
+            params=[Param(name="p", type=f"Type_{i % 50} *")],
+            visibility=Visibility.PUBLIC,
+        )
+        for i in range(n)
+    ]
+    types = [
+        RecordType(
+            name=f"Type_{i}",
+            kind="struct",
+            size_bits=64,
+            fields=[
+                TypeField(name="a", type="int", offset_bits=0),
+                TypeField(name="b", type="long", offset_bits=64),
+            ],
+        )
+        for i in range(max(50, n // 10))
+    ]
+    return AbiSnapshot(
+        library="libscale.so", version="1.0", functions=funcs, types=types
+    )
+
+
 # ── Timed runners (one per measured entry point) ──────────────────────────────
 def _run_compare(prepared: tuple[AbiSnapshot, AbiSnapshot]) -> int:
     """Time ``compare(old, new)``; return the number of detected changes."""
@@ -458,6 +773,24 @@ def _run_report_sarif(prepared: DiffResult) -> int:
     return len(prepared.changes)
 
 
+def _run_report_junit(prepared: DiffResult) -> int:
+    """Time ``to_junit_xml``; return the number of changes rendered."""
+    to_junit_xml(prepared)
+    return len(prepared.changes)
+
+
+def _run_severity(prepared: list[Change]) -> int:
+    """Time ``categorize_changes``; return the number of findings categorized."""
+    categorize_changes(prepared)
+    return len(prepared)
+
+
+def _run_serialize(prepared: AbiSnapshot) -> int:
+    """Time a serialize → load round-trip; return the snapshot's function count."""
+    loaded = snapshot_from_dict(json.loads(snapshot_to_json(prepared)))
+    return len(loaded.functions)
+
+
 @dataclass
 class Scenario:
     build: Callable[[int], Any]
@@ -480,12 +813,24 @@ SCENARIOS: dict[str, Scenario] = {
     "add_remove": Scenario(_build_add_remove),
     "type_churn": Scenario(_build_type_churn),
     "enum_churn": Scenario(_build_enum_churn),
+    "typedef_churn": Scenario(_build_typedef_churn),
+    "union_churn": Scenario(_build_union_churn),
+    "wide_struct": Scenario(_build_wide_struct),
+    "vtable_churn": Scenario(_build_vtable_churn),
     "elf_namespace": Scenario(_build_elf_namespace, needs_demangler=True),
+    "pe_churn": Scenario(_build_pe_churn),
+    "macho_churn": Scenario(_build_macho_churn),
     "var_churn": Scenario(_build_var_churn),
     "suppression_audit": Scenario(_build_suppression_audit, run=_run_suppression_audit),
+    "severity": Scenario(_build_severity, run=_run_severity),
+    "serialize": Scenario(_build_serialize, run=_run_serialize),
     "report_html": Scenario(_build_report, run=_run_report_html),
     "report_sarif": Scenario(_build_report, run=_run_report_sarif),
+    "report_junit": Scenario(_build_report, run=_run_report_junit),
     # Quadratic paths — keep the sweeps small so a default run stays bounded.
+    "opaque_filter": Scenario(
+        _build_opaque_filter, sizes=(250, 500, 1000), max_size=1500
+    ),
     "rename_churn": Scenario(
         _build_rename_churn, sizes=(250, 500, 1000), max_size=1200
     ),
@@ -529,15 +874,18 @@ def _clear_process_caches() -> None:
     it to repopulate them, so their allocation is counted and each size is
     measured from the same cold baseline.
 
-    Caches are detected by duck-typing the public ``functools.lru_cache`` API
-    (``cache_clear`` + ``cache_info``) rather than the private wrapper type, so
-    this stays robust across Python versions.
+    Caches are found via an ``isinstance`` check against the ``lru_cache``
+    wrapper type — obtained without naming the private ``functools`` symbol by
+    taking ``type()`` of a throwaway cache. ``isinstance`` is used rather than
+    duck-typing ``getattr(obj, "cache_clear")`` because a bare ``getattr`` scan
+    over every live object would trigger side effects on objects with a dynamic
+    ``__getattr__`` (e.g. pytest's mark objects synthesise attributes on access).
     """
+    lru_type = type(functools.lru_cache(maxsize=1)(lambda: None))
     for obj in gc.get_objects():
-        cache_clear = getattr(obj, "cache_clear", None)
-        if callable(cache_clear) and callable(getattr(obj, "cache_info", None)):
+        if isinstance(obj, lru_type):
             try:
-                cache_clear()
+                obj.cache_clear()
             except Exception:  # noqa: BLE001 — best-effort cache reset
                 pass
     try:
@@ -617,6 +965,54 @@ def tail_exponent(points: list[Point]) -> float | None:
     if a.size == b.size or a.seconds <= 0 or b.seconds <= 0:
         return None
     return math.log(b.seconds / a.seconds) / math.log(b.size / a.size)
+
+
+# ── Baseline regression ───────────────────────────────────────────────────────
+def _baseline_points(baseline: dict[str, object]) -> dict[tuple[str, int], float]:
+    """Map ``(scenario, size) -> seconds`` from a baseline report's JSON."""
+    out: dict[tuple[str, int], float] = {}
+    scenarios = baseline.get("scenarios", {})
+    if not isinstance(scenarios, dict):
+        return out
+    for name, body in scenarios.items():
+        if not isinstance(body, dict):
+            continue
+        for pt in body.get("points", []):
+            if isinstance(pt, dict) and "size" in pt and "seconds" in pt:
+                out[(name, int(pt["size"]))] = float(pt["seconds"])
+    return out
+
+
+def check_regressions(
+    current: list[Point],
+    scenario: str,
+    baseline: dict[tuple[str, int], float],
+    tolerance: float,
+    *,
+    floor_seconds: float = 0.05,
+) -> list[str]:
+    """Return regression messages where *current* is slower than *baseline*.
+
+    A point regresses when its time exceeds the baseline's by more than
+    ``tolerance`` (a fraction, e.g. ``0.5`` = 50 %). Points whose *baseline* time
+    is below ``floor_seconds`` are skipped — sub-50 ms timings are dominated by
+    noise and would flag spuriously. Sizes absent from the baseline (e.g. a
+    scenario new in this PR) are skipped, so the comparison is over the
+    intersection only.
+    """
+    msgs: list[str] = []
+    for p in current:
+        base = baseline.get((scenario, p.size))
+        if base is None or base < floor_seconds or p.seconds <= 0:
+            continue
+        ratio = (p.seconds - base) / base
+        if ratio > tolerance:
+            msgs.append(
+                f"{scenario} @ size={p.size}: {p.seconds:.3f}s vs baseline "
+                f"{base:.3f}s (+{ratio * 100:.0f}%, tolerance "
+                f"{tolerance * 100:.0f}%)"
+            )
+    return msgs
 
 
 # ── Reporting ─────────────────────────────────────────────────────────────────
@@ -706,6 +1102,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Skip the peak-memory (tracemalloc) pass — timing only",
     )
+    p.add_argument(
+        "--baseline",
+        type=Path,
+        default=None,
+        help="Baseline scaling JSON (e.g. from the base branch) to compare against",
+    )
+    p.add_argument(
+        "--regress-tolerance",
+        type=float,
+        default=0.5,
+        help="GATE (with --baseline): fail if a scenario is slower than its "
+        "baseline by more than this fraction (default 0.5 = 50%%)",
+    )
     return p.parse_args(argv)
 
 
@@ -723,6 +1132,18 @@ def main(argv: list[str] | None = None) -> int:
         "scenarios": {},
     }
     failures: list[str] = []
+
+    baseline_points: dict[tuple[str, int], float] = {}
+    if args.baseline is not None:
+        try:
+            baseline_points = _baseline_points(json.loads(args.baseline.read_text()))
+            print(
+                f"Comparing against baseline {args.baseline} "
+                f"({len(baseline_points)} points, tolerance "
+                f"{args.regress_tolerance * 100:.0f}%)"
+            )
+        except (OSError, ValueError) as e:
+            print(f"WARNING: could not load baseline {args.baseline}: {e}")
 
     for scenario in scenarios:
         spec = SCENARIOS[scenario]
@@ -777,6 +1198,12 @@ def main(argv: list[str] | None = None) -> int:
                         f"size={worst_mem.size} exceeds "
                         f"--max-memory-mb={args.max_memory_mb}"
                     )
+        if baseline_points:
+            failures.extend(
+                check_regressions(
+                    points, scenario, baseline_points, args.regress_tolerance
+                )
+            )
 
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
