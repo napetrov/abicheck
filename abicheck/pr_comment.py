@@ -115,6 +115,7 @@ class CommentModel:  # pylint: disable=too-many-instance-attributes
 
     @property
     def total_changes(self) -> int:
+        """Total number of changes across all three buckets."""
         b, r, s = self.counts
         return b + r + s
 
@@ -187,6 +188,18 @@ def _from_appcompat(report: dict[str, object]) -> CommentModel:
                     kind="symbol_missing",
                     symbol=str(sym),
                     detail="required symbol not provided by new library",
+                )
+            )
+    # A missing required version tag is breaking for the app too (appcompat
+    # treats it the same as a missing symbol), so it must register as a change.
+    missing_versions = report.get("missing_versions")
+    if isinstance(missing_versions, list):
+        for ver in missing_versions:
+            breaking.append(
+                Finding(
+                    kind="version_missing",
+                    symbol=str(ver),
+                    detail="required symbol version not provided by new library",
                 )
             )
     return CommentModel(

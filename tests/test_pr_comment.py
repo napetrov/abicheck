@@ -199,6 +199,24 @@ def test_appcompat_missing_symbols_count_as_breaking():
     assert any(f.symbol == "foo_legacy" for f in model.breaking)
 
 
+def test_appcompat_missing_version_counts_as_breaking():
+    # An app broken solely by a missing version tag must still register a change
+    # so `--on changes` posts the comment.
+    report = {
+        "application": "/opt/app/bin/myapp",
+        "old_library": "/lib/libfoo.so.1",
+        "new_library": "/lib/libfoo.so.2",
+        "verdict": "BREAKING",
+        "missing_symbols": [],
+        "missing_versions": ["LIBFOO_2.0"],
+        "relevant_changes": [],
+    }
+    model = build_model(report)
+    assert model.counts == (1, 0, 0)
+    assert should_post(model, "changes") is True
+    assert any(f.symbol == "LIBFOO_2.0" for f in model.breaking)
+
+
 def test_malformed_changes_are_skipped():
     model = build_model(
         {
