@@ -273,8 +273,11 @@ def test_unredact_home_expands_tilde() -> None:
 
 
 def test_extract_unredacts_home_for_replay(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    # A redacted CompileUnit (`~` placeholders) must be expanded before castxml
-    # runs: the cmd and cwd handed to subprocess carry no literal `~` (Codex P2).
+    # A redacted CompileUnit (`~` placeholders) must be expanded to the real home
+    # before castxml runs (subprocess does not expand `~`) (Codex P2). We assert
+    # the cwd/flags equal the expanded values rather than "no tilde": on some
+    # platforms the resolved home itself contains a tilde (Windows 8.3 short
+    # names like C:\Users\RUNNER~1), which is legitimate.
     import os
 
     from abicheck.evidence.source_extractors import castxml as castxml_mod
@@ -303,9 +306,7 @@ def test_extract_unredacts_home_for_replay(tmp_path: Path, monkeypatch) -> None:
     )
     extractor.extract(cu, public_header_roots=["foo.h"], target_id="target://x")
     home = os.path.expanduser("~")
-    assert "~" not in str(captured["cwd"])
-    assert captured["cwd"] == f"{home}/proj"
-    assert all("~" not in tok for tok in captured["cmd"])  # type: ignore[union-attr]
+    assert captured["cwd"] == f"{home}/proj"  # expanded, not the literal "~/proj"
     assert f"{home}/proj/include" in captured["cmd"]  # type: ignore[operator]
 
 
