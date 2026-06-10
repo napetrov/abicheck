@@ -122,6 +122,7 @@ nav:
       - "G13: Cross-architecture guardrail": development/plans/g13-arch-mismatch-guard.md
       - "G14: abi3 import-contract": development/plans/g14-stable-abi-subset.md
       - "G15: Inline-namespace version stamp": development/plans/g15-inline-namespace-version.md
+      - "G16: Header-scope toolchain robustness": development/plans/g16-header-scope-toolchain-robustness.md
     - ADR:
       - Overview: development/adr/index.md
       - "001: Technology Stack": development/adr/001-technology-stack.md

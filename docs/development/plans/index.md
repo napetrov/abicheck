@@ -19,6 +19,7 @@ scope**.
 | **G13** | [Cross-architecture comparison guardrail](g13-arch-mismatch-guard.md) | `UC-PLAT-arch-guard` | S |
 | **G14** | [CPython Limited-API / `abi3` import-contract](g14-stable-abi-subset.md) | `UC-WF-stable-abi-subset` | M |
 | **G15** | [Inline-namespace version-stamp normalization](g15-inline-namespace-version.md) | `UC-CHANGE-inline-ns-version` | M |
+| **G16** | [Header-scope toolchain robustness](g16-header-scope-toolchain-robustness.md) | `UC-TC-header-scope-robustness` | M |
 
 Completed or decided plans are retained for implementation history:
 

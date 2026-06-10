@@ -473,6 +473,36 @@ use_cases:
       modules: [abicheck/diff_integer_model.py, abicheck/diff_char8t.py, abicheck/diff_bit_int.py, abicheck/diff_atomic.py]
       examples: [examples/case112_lp64_ilp64]
 
+  - id: UC-TC-header-scope-robustness
+    axis: toolchain
+    name: Header-scoped source-mode robustness on stock host toolchains
+    status: partial
+    gap: G16
+    plan: docs/development/plans/g16-header-scope-toolchain-robustness.md
+    evidence:
+      modules: [abicheck/dumper.py]
+      tests: [tests/test_castxml_toolchain_robustness.py]
+    next_steps: >
+      Header-scoped scans (the castxml source path) are how abicheck separates
+      public source API from private/internal surface, but in the 2026-06
+      real-world cron the scoped re-run aborted before any comparison in 21 issue
+      records — always the same host-toolchain parse failures, never an abicheck
+      logic bug: glibc sized-float types (`unknown type name '_Float32'`,
+      `_Float64`/`_Float128`), a GCC 13 libstdc++ `__assume__` attribute, and
+      `--lang c` rejecting `extern "C"` headers guarded by `#ifdef __cplusplus`.
+      DONE (this increment): `_castxml_failure_hint` classifies all three stderr
+      signatures into a single actionable remediation, and on a sized-float /
+      `__assume__` failure `_castxml_version_note` probes `castxml --version` and
+      folds in the recommended Clang floor (`_RECOMMENDED_CLANG_MAJOR` = 18) so
+      the user is told exactly what to upgrade — unit-tested in
+      `tests/test_castxml_toolchain_robustness.py`. A `-D_FloatN` preprocessor
+      shim was prototyped and REJECTED: glibc's own `typedef float _Float32;`
+      fallback would be rewritten into `typedef float float;` (PR review). The
+      durable cure is a castxml built against a newer Clang, or the libclang
+      extractor (G4). REMAINING: an integration-marked end-to-end check that
+      `compare --headers` over a `<math.h>`-including header succeeds on a real CI
+      host, and a dedicated `HeaderToolchainError` type.
+
   - id: UC-TC-cxx-standard-floor
     axis: toolchain
     name: C++ standard floor raised (per-consumer source break)

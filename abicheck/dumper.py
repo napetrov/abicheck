@@ -345,6 +345,133 @@ def _build_castxml_command(
     return cmd
 
 
+# clang's diagnostic for an unrecognised sized-float keyword, e.g.
+#   error: unknown type name '_Float32'
+_SIZED_FLOAT_RE = re.compile(r"_Float(?:16|32|64|128)(?:x)?\b")
+
+# castxml drives an internal Clang frontend; it must be new enough to parse
+# modern host headers. _Float32/_Float64/_Float128 land in Clang 16, and the
+# [[assume]] / __assume__ attribute (GCC 13+ libstdc++) in Clang 18. We
+# recommend a bundled Clang >= this so both are covered. This is the durable
+# fix for the header-scoped toolchain aborts (plan G16) — abicheck cannot
+# reliably work around a frontend that is simply older than the host headers,
+# so it detects the version and tells the user to upgrade.
+_RECOMMENDED_CLANG_MAJOR = 18
+
+_CASTXML_VERSION_RE = re.compile(r"castxml version\s+(\S+)", re.IGNORECASE)
+# `castxml --version` does not always print the bundled frontend version, and
+# when it does the spelling varies ("clang version 18.1.8", "LLVM version 18.1.8").
+# Accept either so the precise floor comparison can actually fire.
+_CLANG_VERSION_RE = re.compile(
+    r"(?:clang|LLVM) version\s+(\d+)(?:\.(\d+))?", re.IGNORECASE
+)
+
+
+def _is_toolchain_version_failure(stderr: str) -> bool:
+    """True when a castxml failure is a bundled-Clang-too-old signature
+    (sized-float keywords or the GCC ``__assume__`` attribute) — the only
+    failures for which the ``castxml --version`` upgrade note is relevant."""
+    return bool(stderr) and (
+        bool(_SIZED_FLOAT_RE.search(stderr)) or "__assume__" in stderr
+    )
+
+
+def _parse_castxml_version(output: str) -> tuple[str | None, tuple[int, int] | None]:
+    """Parse ``castxml --version`` text into (castxml_version, clang_major_minor).
+
+    Either element is ``None`` when not found. Pure/string-only so it is fully
+    unit-testable without castxml installed.
+    """
+    cx = _CASTXML_VERSION_RE.search(output or "")
+    cl = _CLANG_VERSION_RE.search(output or "")
+    cx_ver = cx.group(1) if cx else None
+    clang = (int(cl.group(1)), int(cl.group(2) or 0)) if cl else None
+    return cx_ver, clang
+
+
+def _castxml_version_note() -> str:
+    """Probe ``castxml --version`` and, when its bundled Clang predates the
+    recommended floor, return a one-line upgrade note (else "").
+
+    Best-effort: any probe failure yields "" so the base diagnostic still
+    stands. Only called on an actual parse failure, so the extra process is
+    incurred rarely.
+    """
+    try:
+        proc = subprocess.run(
+            ["castxml", "--version"],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    raw, clang = _parse_castxml_version(f"{proc.stdout}\n{proc.stderr}")
+    if clang is not None and clang[0] < _RECOMMENDED_CLANG_MAJOR:
+        detected = (
+            f"castxml {raw} (clang {clang[0]}.{clang[1]})"
+            if raw else f"clang {clang[0]}.{clang[1]}"
+        )
+        return (
+            f" Detected {detected}; these host headers need clang "
+            f">= {_RECOMMENDED_CLANG_MAJOR} — upgrade castxml to a build with a "
+            f"newer bundled Clang."
+        )
+    if raw and clang is None:
+        return (
+            f" Detected castxml {raw}; upgrade it if its bundled Clang predates "
+            f"the host gcc (clang >= {_RECOMMENDED_CLANG_MAJOR} recommended)."
+        )
+    return ""
+
+
+def _castxml_failure_hint(
+    stderr: str,
+    *,
+    force_cpp: bool,
+    headers: list[Path],
+    version_note: str = "",
+) -> str:
+    """Map a known castxml/host-toolchain failure to an actionable remediation.
+
+    Returns the empty string when no known signature matches. These three
+    signatures account for the header-scoped scan aborts seen across the
+    real-world scan campaign (see plan G16); each previously surfaced only as an
+    opaque clang stderr dump. The durable fix for the first two is a castxml
+    built against a newer Clang (or the libclang extractor, G4) — abicheck cannot
+    reliably work around a frontend that is simply older than the host headers,
+    so it diagnoses precisely (optionally with the detected version via
+    ``version_note``) instead of guessing.
+    """
+    # 1) glibc sized-float types (the dominant case): _Float32/64/128 keywords
+    #    the bundled clang frontend rejects while emulating a newer host GCC.
+    if stderr and _SIZED_FLOAT_RE.search(stderr):
+        return (
+            "\n\nHint: the host glibc declares sized-float types "
+            "(_Float32/_Float64/_Float128) that this castxml/clang frontend "
+            "cannot parse — the bundled clang is older than the host gcc/glibc. "
+            "Install a newer castxml (newer bundled Clang), or point abicheck at "
+            f"a clang-parsable toolchain via --gcc-path / --sysroot.{version_note}"
+        )
+    # 2) GCC 13+ libstdc++ uses the [[__assume__]] / __attribute__((__assume__))
+    #    spelling the bundled clang frontend doesn't know.
+    if "__assume__" in stderr:
+        return (
+            "\n\nHint: the host libstdc++ uses the GCC '__assume__' attribute "
+            "that this castxml/clang frontend rejects. Install a newer castxml "
+            "matching the host GCC, or scan against an older/clang-parsable "
+            f"libstdc++ via --gcc-path / --sysroot.{version_note}"
+        )
+    # 3) Explicit --lang c on headers that need C++ (classes/namespaces) or that
+    #    guard extern "C" with #ifdef __cplusplus — castxml always parses in a
+    #    C++-ish mode, so forcing C rejects valid headers.
+    if not force_cpp and _detect_cpp_headers(headers):
+        return (
+            "\n\nHint: The header files appear to contain C++ syntax "
+            "(class, namespace, template) but --lang c was specified. "
+            "Try removing --lang or using --lang c++."
+        )
+    return ""
+
+
 def _validate_castxml_output(
     result: subprocess.CompletedProcess[str],
     out_xml: Path,
@@ -353,13 +480,16 @@ def _validate_castxml_output(
 ) -> Element:
     """Validate castxml output and return parsed XML root."""
     if result.returncode != 0:
-        hint = ""
-        if not force_cpp and _detect_cpp_headers(headers):
-            hint = (
-                "\n\nHint: The header files appear to contain C++ syntax "
-                "(class, namespace, template) but --lang c was specified. "
-                "Try removing --lang or using --lang c++."
-            )
+        # Only probe `castxml --version` when the failure is a frontend-too-old
+        # signature — otherwise the upgrade note is irrelevant (and unused).
+        version_note = (
+            _castxml_version_note()
+            if _is_toolchain_version_failure(result.stderr) else ""
+        )
+        hint = _castxml_failure_hint(
+            result.stderr, force_cpp=force_cpp, headers=headers,
+            version_note=version_note,
+        )
         raise SnapshotError(
             f"castxml failed (exit {result.returncode}):\n{result.stderr[:2000]}{hint}"
         )

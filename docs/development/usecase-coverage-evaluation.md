@@ -30,7 +30,9 @@ seven planned breadth/workflow items tracked in `usecase-registry.yaml`:
 header-only/inline-only analysis (G4), auditwheel vendored-library pairing (G9),
 manylinux glibc-floor checks (G10), single-binary audit/lint mode (G11),
 cross-architecture guardrails (G13), CPython `abi3` import-contract checking
-(G14), and inline-namespace version-stamp normalization (G15).
+(G14), and inline-namespace version-stamp normalization (G15) — plus one newly
+**partial** item, header-scoped source-mode toolchain robustness (G16), whose
+diagnostics and `castxml --version` floor probe have shipped.
 
 Several formerly broad gaps are now closed and should no longer be treated as
 open roadmap work: native PE/Mach-O compare validation (G1), build-config matrix
@@ -106,6 +108,7 @@ A real invocation is a point in this space:
 | **G13** | planned | Cross-architecture mismatch guardrail. |
 | **G14** | planned | CPython Limited-API / `abi3` import-contract conformance. |
 | **G15** | planned | Inline-namespace version-stamp normalization for ICU/Abseil/libstdc++-style churn. |
+| **G16** | partial | Header-scoped source-mode toolchain robustness. Surfaced by 21 real-world cron records. **Shipped**: actionable diagnostics for all three host-toolchain signatures (sized-float `_FloatN`, GCC `__assume__`, `--lang c` + `extern "C"`), plus a `castxml --version` probe that recommends the Clang floor (≥ 18) on a version-mismatch failure. A `-D_FloatN` shim was prototyped and **rejected** (it rewrites glibc's own `typedef float _Float32;` fallback); the durable cure is a newer-Clang castxml or the libclang extractor (G4). **Remaining**: real-host end-to-end check and a dedicated error type. |
 
 ## Proposed next steps (tracked in the registry)
 
@@ -123,3 +126,4 @@ planned row from drifting away from its plan.
 | Medium | G15 — inline-namespace version stamp | [g15](plans/g15-inline-namespace-version.md) |
 | Small | G10 — glibc-floor check | [g10](plans/g10-glibc-floor-check.md) |
 | Small | G13 — cross-architecture guardrail | [g13](plans/g13-arch-mismatch-guard.md) |
+| Medium | G16 — header-scope toolchain robustness | [g16](plans/g16-header-scope-toolchain-robustness.md) |
