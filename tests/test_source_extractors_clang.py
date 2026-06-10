@@ -232,10 +232,13 @@ def test_ast_constexpr_change_detected_end_to_end() -> None:
 def test_ast_records_read_files_for_cache_deps() -> None:
     # Codex #339 P1: the TU records every file it read so the per-TU cache can
     # invalidate on a transitive-include edit. Both the public and private
-    # headers that contributed nodes appear.
+    # headers that contributed nodes appear. Paths are OS-normalized (backslashes
+    # on Windows), so compare against os.path.normpath.
+    import os
+
     tu = source_abi_from_clang_ast(_ast(), _cu(), ["include/foo.h"], "t")
-    assert "include/foo.h" in tu.read_files
-    assert "src/internal.h" in tu.read_files
+    assert os.path.normpath("include/foo.h") in tu.read_files
+    assert os.path.normpath("src/internal.h") in tu.read_files
 
 
 def _constexpr_ast(rhs_literal: str) -> dict:
@@ -377,6 +380,32 @@ def _ctor_ast(default: str, *, with_definition: bool = False) -> dict:
         {"kind": "CXXRecordDecl", "name": "Widget", "loc": {"file": "include/foo.h"},
          "inner": inner},
     ]}
+
+
+def test_implicit_inline_method_body_is_fingerprinted() -> None:
+    # Codex #339 P2: an in-class method definition (CompoundStmt, no `inline`
+    # key) is implicitly inline — a body change must fire inline_body_changed.
+    def ast(retval: str) -> dict:
+        return {"kind": "TranslationUnitDecl", "inner": [{
+            "kind": "CXXRecordDecl", "name": "W", "loc": {"file": "include/foo.h"},
+            "inner": [{
+                "kind": "CXXMethodDecl", "name": "f", "mangledName": "_ZN1W1fEv",
+                "type": {"qualType": "int ()"},
+                # No "inline" key — clang omits it for in-class definitions.
+                "inner": [{"kind": "CompoundStmt", "inner": [{
+                    "kind": "ReturnStmt", "inner": [
+                        {"kind": "IntegerLiteral", "value": retval}]}]}],
+            }],
+        }]}
+
+    old = source_abi_from_clang_ast(ast("1"), _cu(), ["include/foo.h"], "t")
+    new = source_abi_from_clang_ast(ast("2"), _cu(), ["include/foo.h"], "t")
+    assert {e.qualified_name for e in old.inline_bodies} == {"W::f"}
+    kinds = {
+        c.kind.value
+        for c in diff_source_abi(link_source_abi([old]), link_source_abi([new]))
+    }
+    assert "inline_body_changed" in kinds
 
 
 def test_constructor_default_argument_change_detected() -> None:

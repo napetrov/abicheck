@@ -669,10 +669,9 @@ def _emit_function(
     sig = _signature(node)
     mangled = _mangled(node)
     loc = _location(file, _node_line(node), origin)
-    is_inline = bool(node.get("inline")) or bool(node.get("constexpr"))
     # A function entity always carries the signature + default-argument value so
-    # default_argument_changed fires; an inline/constexpr body additionally
-    # yields an inline-body fingerprint for inline_body_changed.
+    # default_argument_changed fires; a body present in a public header
+    # additionally yields an inline-body fingerprint for inline_body_changed.
     tu.functions.append(
         SourceEntity(
             id=_hash("function", mangled or name, sig),
@@ -687,7 +686,13 @@ def _emit_function(
             confidence=EvidenceConfidence.HIGH,
         )
     )
-    if is_inline and _has_body(node):
+    # Any function/method *defined* in a public header (it has a CompoundStmt
+    # body) ships that body to consumers — whether explicitly inline/constexpr,
+    # an in-class member (implicitly inline, no `inline` key in clang's JSON), or
+    # a header out-of-line definition. Fingerprint the body whenever one is
+    # present, so an implicitly-inline method body change fires inline_body_changed
+    # (Codex review #339, P2).
+    if _has_body(node):
         body = next(
             c for c in node["inner"] if isinstance(c, dict) and c.get("kind") == "CompoundStmt"
         )
