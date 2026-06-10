@@ -233,6 +233,42 @@ def test_build_command_preserves_include_pch_operand() -> None:
     assert cmd[cmd.index("-include-pch") + 1] == "pch.h"
 
 
+def test_build_command_carries_gnu_include_search_flags() -> None:
+    # GNU -iquote/-idirafter take a separate dir operand and are NOT normalized
+    # into include_paths/system_include_paths, so the replay must carry them or
+    # castxml searches a different set of directories (Codex review #335, P2).
+    cmd = build_castxml_command(
+        _cu(argv=["g++", "-iquote", "q/dir", "-idirafter", "late/dir", "-c", "a.cpp"]),
+        Path("a.cpp"),
+        Path("o.xml"),
+    )
+    assert cmd[cmd.index("-iquote") + 1] == "q/dir"
+    assert cmd[cmd.index("-idirafter") + 1] == "late/dir"
+
+
+def test_build_command_carries_msvc_include_search_flags() -> None:
+    # MSVC /I dir (separate) and /Idir (joined) add #include search directories
+    # and are not normalized; carry them through in MSVC mode (Codex review #335).
+    cmd = build_castxml_command(
+        _cu(argv=["cl.exe", "/I", "inc dir", "/Ijoined", "-c", "a.cpp"]),
+        Path("a.cpp"),
+        Path("o.xml"),
+    )
+    assert cmd[cmd.index("/I") + 1] == "inc dir"  # separate operand preserved
+    assert "/Ijoined" in cmd  # joined form preserved
+
+
+def test_build_command_ignores_msvc_include_search_in_gnu_mode() -> None:
+    # In GNU mode a `/I`-looking token must not be mistaken for an MSVC include
+    # flag (it isn't a GNU option), so it is not carried through.
+    cmd = build_castxml_command(
+        _cu(argv=["g++", "/Ijoined", "-c", "a.cpp"]),
+        Path("a.cpp"),
+        Path("o.xml"),
+    )
+    assert "/Ijoined" not in cmd
+
+
 def test_build_command_drops_split_sysroot_flag_carried_without_operand() -> None:
     # A split `-isysroot /sdk` is normalized into compile_unit.sysroot (emitted
     # as --sysroot=/sdk), but extract_abi_relevant_flags records only the bare
@@ -352,11 +388,12 @@ def test_extract_unredacts_home_for_replay(tmp_path: Path, monkeypatch) -> None:
     assert f"{home}/proj/include" in captured["cmd"]  # type: ignore[operator]
 
 
-def test_extract_preserves_literal_tilde_in_macro_value(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    # A literal `~` in a macro *value* (e.g. -DDEFAULT_DIR=~/app) must survive
-    # replay verbatim: the compiler receives it literally (argv, no shell), so
-    # home-expanding it would parse a different TU (Codex review #335, P2). Path
-    # operands are still unredacted in the same command.
+def test_extract_unredacts_home_in_macro_value(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # A redacted home prefix inside a macro value (e.g. -DCFG=~/build/cfg.h used
+    # via `#include CFG`) is expanded for replay, like any other home-path
+    # operand, so CastXML parses the same TU the real compile did (Codex review
+    # #335). A `~` that is NOT a home-dir placeholder (mid-token, e.g. a `~1`
+    # short name) is still left intact by _unredact_home.
     import os
 
     from abicheck.evidence.source_extractors import castxml as castxml_mod
@@ -380,16 +417,17 @@ def test_extract_preserves_literal_tilde_in_macro_value(tmp_path: Path, monkeypa
         source="~/proj/src/foo.cpp",
         directory="~/proj",
         include_paths=["~/proj/include"],
-        defines={"DEFAULT_DIR": "~/app"},
+        defines={"CFG": "~/build/cfg.h", "MODE": "fast~1"},
     )
     extractor.extract(cu, public_header_roots=["foo.h"], target_id="target://x")
     home = os.path.expanduser("~")
     cmd = captured["cmd"]
-    # Macro value keeps its literal tilde...
-    assert "-DDEFAULT_DIR=~/app" in cmd  # type: ignore[operator]
-    assert f"-DDEFAULT_DIR={home}/app" not in cmd  # type: ignore[operator]
-    # ...while the include path operand is still expanded.
+    # Home-prefix placeholder in the macro value is expanded...
+    assert f"-DCFG={home}/build/cfg.h" in cmd  # type: ignore[operator]
+    # ...the include path operand too...
     assert f"{home}/proj/include" in cmd  # type: ignore[operator]
+    # ...but a mid-token `~` (not a home-dir placeholder) is left intact.
+    assert "-DMODE=fast~1" in cmd  # type: ignore[operator]
 
 
 # -- model → SourceEntity mapping (pure, D4) ---------------------------------

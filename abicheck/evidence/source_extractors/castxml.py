@@ -156,15 +156,17 @@ _GNU_SEPARATE_INCLUDE_OPTS = frozenset({"-include", "-imacros", "-include-pch"})
 #: that swallows the following argv token (``--sysroot=/sdk … -isysroot -o``).
 #: Mirrors ``_TOOLCHAIN_PATH_FLAG_PREFIXES`` in ``adapters/base.py``.
 _STRUCTURED_TOOLCHAIN_FLAG_PREFIXES = ("--sysroot", "-isysroot", "--target", "-target")
-#: Preprocessor macro define/undef option prefixes. Their *values* are passed to
-#: the compiler verbatim (argv, no shell expansion), so a literal ``~`` in e.g.
-#: ``-DDEFAULT_DIR=~/app`` must NOT be home-expanded during replay — unlike the
-#: path operands (includes/sysroot/source), which carry redacted home prefixes.
-_MACRO_DEFINITION_PREFIXES = ("-D", "-U", "/D", "/U")
 #: MSVC/clang-cl forced-include options in their separate-operand spelling
 #: (``/FI file`` or ``-FI file``); the joined ``/FIfile`` form is handled by
 #: prefix. (https://learn.microsoft.com/cpp/build/reference/fi-name-forced-include-file)
 _MSVC_FORCED_INCLUDE_OPTS = frozenset({"/FI", "-FI"})
+#: GNU include-search options that take a separate directory operand and are NOT
+#: normalized into the structured ``include_paths``/``system_include_paths``
+#: buckets (those cover ``-I``/``-isystem`` only). Dropping them makes castxml
+#: search a different set of directories than the real compile (Codex review #335).
+#: Both are separate-operand only (``-iquote dir`` / ``-idirafter dir``; no joined
+#: spelling). (https://gcc.gnu.org/onlinedocs/gcc/Directory-Options.html)
+_GNU_INCLUDE_SEARCH_OPTS = frozenset({"-iquote", "-idirafter"})
 
 
 def _replay_extra_flags(
@@ -173,11 +175,13 @@ def _replay_extra_flags(
     """Carry through ABI/parse-relevant options not in the structured fields.
 
     ``abi_relevant_flags`` (e.g. ``-fms-extensions``, ``-fabi-version``,
-    ``-fvisibility``, ``-m32``) and forced-include options from ``argv`` change
-    the parsed translation unit; dropping them makes castxml parse a different TU
-    than the real build (ADR-030 D2). De-duplicated against the flags already
-    emitted from the structured fields. MSVC ``/FI`` forced includes are carried
-    only in MSVC mode so a GNU ``-F``-family flag is never mistaken for one.
+    ``-fvisibility``, ``-m32``), forced-include options, and unnormalized
+    include-search options (GNU ``-iquote``/``-idirafter``, MSVC ``/I``) from
+    ``argv`` change the parsed translation unit / header search; dropping them
+    makes castxml parse a different TU than the real build (ADR-030 D2).
+    De-duplicated against the flags already emitted from the structured fields.
+    MSVC ``/FI`` forced includes and ``/I`` search dirs are carried only in MSVC
+    mode so a GNU ``-F``/``-I``-family flag is never mistaken for one.
     """
     seen = set(already)
     out: list[str] = []
@@ -199,6 +203,15 @@ def _replay_extra_flags(
         if tok in _GNU_SEPARATE_INCLUDE_OPTS and i + 1 < len(argv):
             out += [tok, argv[i + 1]]  # -include / -imacros / -include-pch <file>
             i += 2
+        elif tok in _GNU_INCLUDE_SEARCH_OPTS and i + 1 < len(argv):
+            out += [tok, argv[i + 1]]  # -iquote / -idirafter <dir>
+            i += 2
+        elif cc_id == "msvc" and tok == "/I" and i + 1 < len(argv):
+            out += [tok, argv[i + 1]]  # MSVC /I dir (separate operand)
+            i += 2
+        elif cc_id == "msvc" and len(tok) > 2 and tok.startswith("/I"):
+            out.append(tok)  # MSVC /Idir (joined)
+            i += 1
         elif tok not in _GNU_SEPARATE_INCLUDE_OPTS and any(
             tok.startswith(opt) and len(tok) > len(opt)
             for opt in _GNU_FORCED_INCLUDE_OPTS
@@ -310,20 +323,18 @@ class CastxmlSourceExtractor:
                 castxml_bin=self.castxml_bin,
                 compiler_binary=self.compiler_binary,
             )
-            # Expand any redacted `~` in the include/system/sysroot/source/argv
-            # *path* operands the command builder emitted from the (possibly
-            # redacted) CompileUnit. Macro definitions (`-D`/`-U`, `/D`/`/U`) are
-            # left verbatim: the compiler receives a `-DDIR=~/app` value literally
-            # (argv, no shell expansion), so unredacting a legitimate literal tilde
-            # in a macro value would parse a different TU (Codex review #335, P2).
-            # Other emitted flags (`-std=`, `--target=`, `-f*`) carry no `~`, so
-            # expanding them is a no-op.
-            cmd = [
-                tok
-                if tok.startswith(_MACRO_DEFINITION_PREFIXES)
-                else _unredact_home(tok)
-                for tok in cmd
-            ]
+            # Expand any redacted `~` home prefix the command builder emitted from
+            # the (possibly redacted) CompileUnit — includes/system/sysroot/source
+            # path operands *and* macro values. A real home path used inside a
+            # macro (e.g. `-DCFG=~/build/cfg.h` consumed by `#include CFG`) must be
+            # expanded or CastXML parses a different TU / fails to find the header
+            # (Codex review #335). `_unredact_home` only rewrites a `~` that stands
+            # in for a home directory (whole token or followed by a separator), so
+            # a literal `~` mid-token (e.g. a Windows 8.3 short name, or a `~1`
+            # in a value) is left intact; the rare user-authored literal `-DDIR=~/x`
+            # being expanded is the accepted tradeoff for replaying redacted
+            # home-path macros correctly.
+            cmd = [_unredact_home(tok) for tok in cmd]
             try:
                 # Run in the compile unit's directory so relative -I/-isystem
                 # and forced-include paths resolve exactly as the real build did
