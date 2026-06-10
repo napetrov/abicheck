@@ -306,15 +306,36 @@ def _build_all_surviving_stems(new_functions: Iterable[Function]) -> set[str]:
     return set().union(*surviving_stems_by_isa.values()) if surviving_stems_by_isa else set()
 
 
+def _suppress_demangled_names(
+    overlapping: list[tuple[str, str]],
+    old_index: dict[str, Function],
+    suppressed: set[str],
+) -> None:
+    """Add demangled function names to *suppressed* for cross-platform robustness.
+
+    Belt-and-suspenders: Different platforms emit ``func_removed`` ``Change.symbol``
+    with different conventions. Adding the demangled name catches the case where
+    castxml-derived ``fn.mangled`` (Itanium) and PE-export-derived ``Change.symbol``
+    (MSVC mangling) are sibling encodings of the same underlying function.
+    ``_matches_suppression_key`` already guards against ambiguous short keys.
+    """
+    for _, mangled in overlapping:
+        removed_fn = old_index.get(mangled)
+        if removed_fn is not None and removed_fn.name:
+            suppressed.add(removed_fn.name)
+
+
 def _emit_isa_dropped_finding(
     token: str,
     overlapping: list[tuple[str, str]],
+    old_index: dict[str, Function],
     suppressed: set[str],
 ) -> Change:
     """Build the CPU_DISPATCH_ISA_DROPPED Change and update *suppressed* in place."""
     affected_stems = {stem for stem, _ in overlapping}
     affected_mangled = [m for _, m in overlapping]
     suppressed.update(affected_mangled)
+    _suppress_demangled_names(overlapping, old_index, suppressed)
     stems_sorted = sorted(affected_stems)
     return Change(
         kind=ChangeKind.CPU_DISPATCH_ISA_DROPPED,
@@ -350,6 +371,7 @@ def detect_cpu_dispatch_isa_dropped(
     new_mangled = {f.mangled for f in new.functions}
     removed_by_isa = _build_removed_by_isa(old.functions, new_mangled)
     all_surviving_stems = _build_all_surviving_stems(new.functions)
+    old_index: dict[str, Function] = {f.mangled: f for f in old.functions}
     findings: list[Change] = []
     suppressed: set[str] = set()
     for token, removed in removed_by_isa.items():
@@ -361,7 +383,7 @@ def detect_cpu_dispatch_isa_dropped(
         overlapping = [(stem, mangled) for stem, mangled in removed if stem in all_surviving_stems]
         if len(overlapping) < min_removed:
             continue
-        findings.append(_emit_isa_dropped_finding(token, overlapping, suppressed))
+        findings.append(_emit_isa_dropped_finding(token, overlapping, old_index, suppressed))
     return findings, suppressed
 
 
