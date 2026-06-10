@@ -352,6 +352,41 @@ def test_cache_get_ignores_bad_tu_payload(tmp_path: Path) -> None:
     assert cache.get("k") is None
 
 
+def test_cache_key_changes_with_argv_forced_include(tmp_path: Path) -> None:
+    # Codex #339 P2: a forced-include change lives only in argv (not the
+    # structured fields), so the key must fold in the replayed argv flags or a
+    # `-include old.h` -> `-include new.h` swap would reuse a stale dump.
+    src = tmp_path / "a.cpp"
+    src.write_text("int a;\n")
+    old = _cu("cu://x", str(src), argv=["clang++", "-include", "old.h", "-c", "a.cpp"])
+    new = _cu("cu://x", str(src), argv=["clang++", "-include", "new.h", "-c", "a.cpp"])
+    k_old = compute_tu_cache_key(
+        extractor_name="clang-source", extractor_version="0.1",
+        compile_unit=old, public_header_roots=[],
+    )
+    k_new = compute_tu_cache_key(
+        extractor_name="clang-source", extractor_version="0.1",
+        compile_unit=new, public_header_roots=[],
+    )
+    assert k_old and k_new and k_old != k_new
+
+
+def test_cache_key_changes_with_iquote_path(tmp_path: Path) -> None:
+    src = tmp_path / "a.cpp"
+    src.write_text("int a;\n")
+    a = _cu("cu://x", str(src), argv=["clang++", "-iquote", "dirA", "-c", "a.cpp"])
+    b = _cu("cu://x", str(src), argv=["clang++", "-iquote", "dirB", "-c", "a.cpp"])
+    ka = compute_tu_cache_key(
+        extractor_name="clang-source", extractor_version="0.1",
+        compile_unit=a, public_header_roots=[],
+    )
+    kb = compute_tu_cache_key(
+        extractor_name="clang-source", extractor_version="0.1",
+        compile_unit=b, public_header_roots=[],
+    )
+    assert ka and kb and ka != kb
+
+
 def test_cache_key_includes_source_location(tmp_path: Path) -> None:
     # CodeRabbit: two distinct TUs with identical content must not collide.
     src_a = tmp_path / "a" / "foo.cpp"

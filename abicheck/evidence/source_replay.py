@@ -48,6 +48,11 @@ from pathlib import Path
 
 from .build_evidence import BuildEvidence, CompileUnit, Target
 from .source_abi import SOURCE_ABI_VERSION, SourceAbiSurface, SourceAbiTu
+from .source_extractors._argv import (
+    is_msvc_mode,
+    pick_compiler_binary,
+    replay_extra_flags,
+)
 from .source_extractors.base import SourceAbiExtractor, SourceExtractionError
 from .source_link import link_source_abi
 
@@ -338,12 +343,31 @@ def compute_tu_cache_key(
         "inc:" + ",".join(compile_unit.include_paths),
         "sysinc:" + ",".join(compile_unit.system_include_paths),
         "flags:" + ",".join(compile_unit.abi_relevant_flags),
+        # The argv-only replay flags the extractor actually carries — forced
+        # includes (`-include`/`-imacros`/`/FI`) and unnormalized include-search
+        # paths (`-iquote`/`-idirafter`/`/I`). These change *what* clang parses but
+        # live in argv, not the structured fields, so without them a compile
+        # command that swaps `-include old.h` for `-include new.h` would reuse a
+        # stale cached dump (Codex review #339, P2).
+        "replay:" + ",".join(_replay_flags_for_key(compile_unit)),
         "roots:" + ",".join(sorted(public_header_roots)),
     ]
     for root in sorted(public_header_roots):
         parts.append(f"hdr:{_norm(root)}:{_digest_path(root)}")
     blob = "\x00".join(parts).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()
+
+
+def _replay_flags_for_key(compile_unit: CompileUnit) -> list[str]:
+    """The exact replay flags an extractor would carry from argv, for the cache key.
+
+    Mirrors :func:`source_extractors._argv.replay_extra_flags` so the key folds in
+    forced-include / include-search options that change the parsed TU but are not
+    captured by the structured ``CompileUnit`` fields (Codex review #339, P2).
+    """
+    cc_bin = pick_compiler_binary(compile_unit, None)
+    cc_id = "msvc" if is_msvc_mode(cc_bin) else "gnu"
+    return replay_extra_flags(compile_unit, [], cc_id)
 
 
 class SourceAbiCache:
