@@ -79,8 +79,36 @@ def _by_identity(entities: list[SourceEntity]) -> dict[str, SourceEntity]:
     (or the bare qualified name when there is no signature), so each overload —
     including unmangled ones like castxml's constructors — is matched to its own
     counterpart.
+
+    When two entities share one identity — clang emits both the in-class
+    *declaration* (which carries the default argument) and the out-of-line inline
+    *definition* (no default) of the same constructor/method — prefer the one
+    that carries the richer value/body/type information, so a default-argument
+    change on an inline-defined member is not masked by the value-less definition
+    overwriting it (Codex review #339, P2).
     """
-    return {e.identity(): e for e in entities if e.identity()}
+    out: dict[str, SourceEntity] = {}
+    for e in entities:
+        key = e.identity()
+        if not key:
+            continue
+        prev = out.get(key)
+        if prev is None or _richer(e, prev):
+            out[key] = e
+    return out
+
+
+def _richer(candidate: SourceEntity, current: SourceEntity) -> bool:
+    """Whether ``candidate`` carries more comparable detail than ``current``.
+
+    Breaks identity collisions toward the entity that actually bears the
+    value/body/type fingerprint the diff compares, rather than keeping the last
+    one seen.
+    """
+    def _score(e: SourceEntity) -> int:
+        return sum(bool(v) for v in (e.value, e.body_hash, e.type_hash))
+
+    return _score(candidate) > _score(current)
 
 
 def diff_source_abi(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change]:

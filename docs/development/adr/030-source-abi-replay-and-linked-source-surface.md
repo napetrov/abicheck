@@ -1,7 +1,7 @@
 # ADR-030: Source ABI Replay and Linked Source Surface
 
 **Date:** 2026-06-09
-**Status:** Accepted — partially implemented (phases 1–4)
+**Status:** Accepted — implemented (phases 1–7)
 **Decision maker:** Nikolay Petrov
 
 ---
@@ -317,7 +317,7 @@ compatibility risk, and feeds the evidence coverage report (ADR-028 D7).
 
 ### Implementation status
 
-Phases 1–4 are implemented, in `abicheck/evidence/`:
+All seven phases are implemented, in `abicheck/evidence/`:
 
 - **Phase 1** — `source_abi.py`: the `SourceAbiTu` (D4) and `SourceAbiSurface`
   (D5) normalized schemas with `to_dict`/`from_dict` round-trips and the
@@ -327,20 +327,90 @@ Phases 1–4 are implemented, in `abicheck/evidence/`:
   (ADR-032) and `CastxmlSourceExtractor`, which parses a translation unit under
   its real per-TU `CompileUnit` build context (D2) and emits a `SourceAbiTu`.
   It reuses the existing castxml XML parser, so no new dependency is added
-  (ADR-001). The context→argv builder and the model→entity mapping are pure and
-  unit-tested; the castxml run itself is integration-marked. castxml covers
-  declarations, types, and public const/constexpr values; inline/template *body*
-  fingerprints await the Clang backend (phase 5, per the D3 table).
+  (ADR-001). castxml covers declarations, types, and public const/constexpr
+  values; inline/template *body* fingerprints are the Clang backend's job
+  (phase 5, per the D3 table).
 - **Phase 3** — `source_link.py` (`link_source_abi`): merges per-TU dumps into a
   per-library surface, mapping public source declarations to exported binary
   symbols and detecting ODR conflicts (D5).
 - **Phase 4** — `source_diff.py` (`diff_source_abi`): the nine D6 `ChangeKind`s,
   partitioned `API_BREAK`/`RISK` per ADR-028 D3 (never `BREAKING`), registered
   in `change_registry.py`.
+- **Phase 5** — `source_extractors/clang.py` (`ClangSourceExtractor`): the
+  *source-based* backend. It parses a TU under its build context with
+  `clang -Xclang -ast-dump=json` and derives the fingerprints castxml cannot —
+  inline function bodies, function/class **template** bodies, `constexpr` values,
+  and default arguments. **Source ABI replay requires clang**; when it is absent
+  the extractor raises `SourceExtractionError`, recorded as *partial* L4 coverage
+  (ADR-028 D7) — the artifact tiers stay authoritative and the comparison never
+  aborts. No new Python dependency (ADR-001): clang is an optional runtime tool,
+  discovered like castxml. For a GCC-built project clang replays the GCC build's
+  flags (a TU using a GCC-only extension clang rejects degrades to partial
+  coverage). The argv builder and the JSON-AST→`SourceAbiTu` mapping are pure and
+  unit-tested; only the clang run is integration-marked. Shared compile-context →
+  argv logic lives in `source_extractors/_argv.py`, reused by both castxml and
+  clang.
+- **Phase 6** — `source_extractors/android.py` (`AndroidHeaderAbiAdapter`):
+  reuses Android's VNDK header-checker `.sdump`/`.lsdump` output as an L4 backend,
+  normalized into the abicheck `SourceAbiTu` (D9). Default behaviour consumes a
+  *pre-captured* dump (non-executing, ADR-028 D6); running `header-abi-dumper` is
+  opt-in (ADR-032 D5). Raw dumps are not the stable contract.
+- **Phase 7** — `source_replay.py`: the `off`/`headers-only`/`changed`/`target`/
+  `full` replay scopes (D7) as a pure `select_compile_units`, the per-TU
+  `SourceAbiCache` keyed on the D8 inputs (extractor identity, source + header
+  *content* hashes, normalized compile context; uncacheable → re-extract, ADR-033
+  D5), and the `run_source_replay` driver that ties extraction → linking →
+  partial-coverage diagnostics together. `scope_for_ci_mode` maps the ADR-033 D2
+  CI modes onto these scopes.
 
-Remaining: the Clang LibTooling dumper (phase 5, for inline/template/constexpr
-body fingerprints), the Android `header-abi-dumper` adapter (phase 6), and PR
-changed-mode scoping + per-TU caching (phase 7).
+The pipeline is wired into the CLI: `collect-evidence --source-abi
+[--source-abi-extractor clang|castxml|android] [--source-abi-scope ...]` writes
+`source/source_abi.json`, and `compare --old/--new-evidence` diffs the two
+surfaces (`diff_source_abi`) and folds the findings into the verdict pipeline.
+The compare output prints an explicit **capability report** — which check
+categories are enabled and, for each disabled one, why (no binary / no debug
+info / no headers / no build data / no sources-or-clang).
+
+### Known limitations / follow-ups
+
+The phases above are implemented and wired, but the following are deliberately
+deferred and should be handled in later work. None of them weaken the authority
+rule (L4 never gates a shipped-ABI `BREAKING` verdict on its own, ADR-028 D3);
+they are coverage/precision gaps, not correctness holes.
+
+1. **Validation corpus not yet committed.** The "Validation" section below calls
+   for an `examples/case*` fixture corpus (public macro / default-argument /
+   inline / template / constexpr changes, extending the ADR-026 `case122`
+   calibration fixture), an L4-vs-L2 declaration/type-shape agreement check, an
+   L4-vs-L0 exported-symbol cross-check, and performance tests for the `changed`
+   and `target` scopes. The behaviours are covered by unit + integration tests,
+   but the ground-truth example cases and perf benchmarks are still to be added.
+2. **Macros are clang-only.** `public_macro_value_changed` is produced only by
+   the clang backend's `-E -dD` preprocessor pass. The castxml and Android
+   backends do not extract macros, so a macros-only run on those backends has no
+   macro coverage. Include-guard macros (`#ifndef FOO_H`) also surface as
+   (harmless, empty-valued) macro entities — a small-noise source a future filter
+   could suppress.
+3. **Typedef / alias entities are not modeled by clang.** The clang backend emits
+   `record`/`enum` types but not `TypedefDecl`/`TypeAliasDecl`; castxml omits
+   typedefs entirely (no per-entry provenance, see `castxml.py`). A public
+   typedef whose underlying type changes is therefore not surfaced as an L4
+   finding. Add provenance-aware typedef extraction (clang is the natural home).
+4. **Scope selection is approximate without a full include graph.** `headers-only`
+   picks one representative compile unit per target rather than the minimal set
+   that covers every public header, and `changed` maps a changed header to TUs
+   via target ownership (falling back to all TUs when there is no target/header
+   metadata, ADR-025 D3). A precise mapping needs a per-TU include graph
+   (depfiles or the L5 graph layer, ADR-031).
+5. **Inline auto-collection during `compare --evidence-mode` is still a stub.**
+   `compare` consumes pre-built packs via `--old/--new-evidence`; it does not yet
+   run `collect-evidence` inline for a requested evidence mode. That inline
+   collection is **ADR-033 D2** scope, tracked there, not in this ADR.
+6. **clang AST replay is a structural fingerprinter, not a full semantic ABI
+   model.** Bodies/values are hashed from a build-root-stable canonical form of
+   the clang JSON AST; this reliably detects *changes* but does not produce a
+   semantic ABI diff of the body itself. The Clang LibTooling backend in the D3
+   table remains the longer-term path for richer source-location/AST fidelity.
 
 ---
 
