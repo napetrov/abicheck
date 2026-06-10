@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -56,7 +57,6 @@ from ..build_evidence import CompileUnit
 from ..model import EvidenceConfidence
 from ..source_abi import SourceAbiTu, SourceEntity, SourceLocation
 from ._argv import (
-    MACRO_DEFINITION_PREFIXES,
     is_msvc_mode,
     pick_compiler_binary,
     replay_extra_flags,
@@ -68,8 +68,19 @@ from .base import SourceExtractionError
 #: folded into the per-TU cache key (ADR-030 D8).
 CLANG_EXTRACTOR_VERSION = "0.1"
 
-#: AST node kinds clang emits for the entities we fingerprint.
-_FUNCTION_NODE_KINDS = frozenset({"FunctionDecl", "CXXMethodDecl"})
+#: AST node kinds clang emits for the entities we fingerprint. Includes the C++
+#: special members (constructor/destructor/conversion) so a change to a public
+#: ``Widget(int n = 1)`` default, or an inline constructor body edit, is detected
+#: — not just ordinary functions/methods (Codex review #339, P2).
+_FUNCTION_NODE_KINDS = frozenset(
+    {
+        "FunctionDecl",
+        "CXXMethodDecl",
+        "CXXConstructorDecl",
+        "CXXDestructorDecl",
+        "CXXConversionDecl",
+    }
+)
 _TEMPLATE_NODE_KINDS = frozenset({"FunctionTemplateDecl", "ClassTemplateDecl"})
 #: Decl contexts we descend into to reach members/nested decls, tracking the
 #: enclosing scope name so a member's qualified name is built (``ns::Cls::f``).
@@ -100,25 +111,20 @@ def _std_flag(standard: str, msvc: bool) -> list[str]:
     return [f"/std:{standard}"] if msvc else [f"-std={standard}"]
 
 
-def build_clang_command(
-    compile_unit: CompileUnit,
-    source: Path,
-    *,
-    clang_bin: str = "clang",
-    compiler_binary: str | None = None,
-) -> list[str]:
-    """Build the ``clang -ast-dump=json`` argv for a compile unit's context (D2).
+def _clang_context_args(
+    compile_unit: CompileUnit, compiler_binary: str | None
+) -> tuple[list[str], bool]:
+    """The shared compile-context argv prefix (no mode tail / source) and msvc flag.
 
     Mirrors the compile unit's language standard, defines/undefines, include and
-    system-include paths, sysroot, target triple, and ABI-relevant flags, so the
-    source replay parses the same translation unit the real build compiled. A
-    clang-cl/MSVC compile unit is driven through clang's ``cl`` driver mode.
+    system-include paths, sysroot, target triple, and ABI-relevant flags, so both
+    the AST pass and the macro pass parse the same TU the real build compiled.
     """
     cc_bin = pick_compiler_binary(compile_unit, compiler_binary)
     msvc = is_msvc_mode(cc_bin)
     cc_id = "msvc" if msvc else "gnu"
 
-    cmd = [clang_bin]
+    cmd: list[str] = []
     if msvc:
         cmd.append("--driver-mode=cl")
     # Force the language so a header replayed directly still parses as C/C++.
@@ -136,17 +142,60 @@ def build_clang_command(
     for inc in compile_unit.include_paths:
         cmd += [inc_opt, inc]
     for inc in compile_unit.system_include_paths:
-        cmd += (["/I", inc] if msvc else ["-isystem", inc])
+        cmd += ["/I", inc] if msvc else ["-isystem", inc]
     if compile_unit.sysroot and not msvc:
         cmd.append(f"--sysroot={compile_unit.sysroot}")
     if compile_unit.target_triple and not msvc:
         cmd.append(f"--target={compile_unit.target_triple}")
     cmd += replay_extra_flags(compile_unit, cmd, cc_id)
+    return cmd, msvc
+
+
+def build_clang_command(
+    compile_unit: CompileUnit,
+    source: Path,
+    *,
+    clang_bin: str = "clang",
+    compiler_binary: str | None = None,
+) -> list[str]:
+    """Build the ``clang -ast-dump=json`` argv for a compile unit's context (D2).
+
+    A clang-cl/MSVC compile unit is driven through clang's ``cl`` driver mode.
+    """
+    cmd, _msvc = _clang_context_args(compile_unit, compiler_binary)
     # Syntax-only AST dump to stdout as JSON. -ferror-limit=0 keeps parsing past
     # recoverable errors so a single bad decl does not blank the whole dump.
-    cmd += ["-fsyntax-only", "-ferror-limit=0", "-Xclang", "-ast-dump=json"]
-    cmd.append(str(source))
-    return cmd
+    return [
+        clang_bin,
+        *cmd,
+        "-fsyntax-only",
+        "-ferror-limit=0",
+        "-Xclang",
+        "-ast-dump=json",
+        str(source),
+    ]
+
+
+def build_clang_macro_command(
+    compile_unit: CompileUnit,
+    source: Path,
+    *,
+    clang_bin: str = "clang",
+    compiler_binary: str | None = None,
+) -> list[str]:
+    """Build the ``clang -E -dD`` argv that dumps macro definitions (ADR-030 D6).
+
+    The JSON AST carries no preprocessor macros, so a separate preprocess pass
+    (``-E -dD``: emit ``#define`` directives with line markers) is needed for
+    ``public_macro_value_changed`` to ever fire (Codex review #339, P2). Same
+    compile context as the AST pass so the macro set matches the real build.
+    """
+    cmd, msvc = _clang_context_args(compile_unit, compiler_binary)
+    # /E + /d1PP? No portable clang-cl spelling for -dD; use the GNU options via
+    # the driver regardless (clang accepts -Xclang for the dump). -P drops line
+    # markers, so we keep them (no -P) to attribute each macro to its file.
+    preprocess = ["/E"] if msvc else ["-E"]
+    return [clang_bin, *cmd, *preprocess, "-dD", "-ferror-limit=0", str(source)]
 
 
 def _hash(*parts: str) -> str:
@@ -357,6 +406,93 @@ class _ClassifyContext:
         if origin == ScopeOrigin.GENERATED:
             return "private_header", "PRIVATE_HEADER", False
         return "unknown", "UNKNOWN", False
+
+
+#: A ``-E`` line marker: ``# <line> "<file>" [flags]`` — sets the current file.
+_LINE_MARKER_RE = re.compile(r'^#\s+\d+\s+"([^"]*)"')
+#: A C identifier (a macro name).
+_MACRO_NAME_RE = re.compile(r"[A-Za-z_]\w*")
+
+
+def _parse_define(rest: str) -> tuple[str, str] | None:
+    """Parse the text after ``#define `` into ``(name, normalized-value)``.
+
+    Keeps the function-like parameter list as part of the value (``(a,b) body``),
+    so a change to either the parameters or the body reads as a value change.
+    """
+    m = _MACRO_NAME_RE.match(rest)
+    if not m:
+        return None
+    name = m.group(0)
+    i = m.end()
+    params = ""
+    if i < len(rest) and rest[i] == "(":  # function-like macro
+        depth = 0
+        j = i
+        while j < len(rest):
+            if rest[j] == "(":
+                depth += 1
+            elif rest[j] == ")":
+                depth -= 1
+            j += 1
+            if depth == 0:
+                break
+        params = rest[i:j]
+        i = j
+    body = rest[i:].strip()
+    value = re.sub(r"\s+", " ", f"{params} {body}".strip())
+    return name, value
+
+
+def macros_from_preprocessor(
+    text: str, public_header_roots: list[str]
+) -> tuple[list[SourceEntity], list[str]]:
+    """Parse ``clang -E -dD`` output into public-header macro entities (ADR-030 D6).
+
+    Pure: tracks the current file from ``#`` line markers, records the final
+    definition of each macro (honoring later ``#undef``), and keeps only macros
+    whose declaring file is on the public source surface — builtin/command-line
+    and system macros carry ``<built-in>``/system files and are filtered out.
+
+    Returns ``(macro entities, public macro-declaring files)``; the file list
+    feeds the per-TU cache dependency set so a macro-only header edit invalidates
+    the dump (Codex review #339, P1).
+    """
+    ctx = _ClassifyContext(public_header_roots)
+    current = ""
+    defs: dict[str, tuple[str, str]] = {}  # name -> (value, file)
+    for line in text.splitlines():
+        marker = _LINE_MARKER_RE.match(line)
+        if marker:
+            current = marker.group(1)
+            continue
+        if line.startswith("#define "):
+            parsed = _parse_define(line[len("#define ") :])
+            if parsed:
+                defs[parsed[0]] = (parsed[1], current)
+        elif line.startswith("#undef "):
+            defs.pop(line[len("#undef ") :].strip(), None)
+
+    entities: list[SourceEntity] = []
+    files: set[str] = set()
+    for name, (value, file) in sorted(defs.items()):
+        visibility, origin, public = ctx.classify(file)
+        if not public:
+            continue
+        files.add(file)
+        entities.append(
+            SourceEntity(
+                id=_hash("macro", name, value),
+                kind="macro",
+                qualified_name=name,
+                value=value,
+                source_location=_location(file, 0, origin),
+                visibility=visibility,
+                api_relevant=True,
+                confidence=EvidenceConfidence.HIGH,
+            )
+        )
+    return entities, sorted(files)
 
 
 def source_abi_from_clang_ast(
@@ -643,29 +779,11 @@ class ClangSourceExtractor:
         if not source.is_absolute() and directory:
             source = Path(directory) / source
 
-        cmd = build_clang_command(
-            compile_unit,
-            source,
-            clang_bin=self.clang_bin,
-            compiler_binary=self.compiler_binary,
+        ast_cmd = build_clang_command(
+            compile_unit, source,
+            clang_bin=self.clang_bin, compiler_binary=self.compiler_binary,
         )
-        cmd = [
-            tok if tok.startswith(MACRO_DEFINITION_PREFIXES) else unredact_home(tok)
-            for tok in cmd
-        ]
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                check=False,
-                cwd=directory or None,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise SourceExtractionError(
-                f"clang timed out after {self.timeout}s on {compile_unit.source}"
-            ) from exc
+        result = self._run(ast_cmd, directory, compile_unit.source)
         if not result.stdout.strip():
             raise SourceExtractionError(
                 f"clang produced no AST for {compile_unit.source} "
@@ -685,10 +803,68 @@ class ClangSourceExtractor:
             diags.append(
                 f"clang exited {result.returncode} (recovered): {result.stderr[:300]}"
             )
-        return source_abi_from_clang_ast(
-            ast_root,
-            compile_unit,
-            public_header_roots,
-            target_id,
-            diagnostics=diags,
+        tu = source_abi_from_clang_ast(
+            ast_root, compile_unit, public_header_roots, target_id, diagnostics=diags,
         )
+        self._attach_macros(tu, compile_unit, source, directory, public_header_roots)
+        return tu
+
+    def _run(
+        self, cmd: list[str], directory: str, source_label: str
+    ) -> subprocess.CompletedProcess[str]:
+        """Run a clang command in the TU directory, un-redacting redacted paths.
+
+        Every token is un-redacted, including macro values: a home path used
+        inside a macro (e.g. ``-DCFG=~/build/cfg.h`` consumed by ``#include CFG``)
+        must be expanded or clang parses a different TU / cannot find the header.
+        ``unredact_home`` only rewrites a ``~`` standing in for a home directory,
+        so a literal ``~`` mid-token is left intact (mirrors castxml, PR #336).
+        """
+        cmd = [unredact_home(tok) for tok in cmd]
+        try:
+            return subprocess.run(
+                cmd, capture_output=True, text=True, timeout=self.timeout,
+                check=False, cwd=directory or None,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise SourceExtractionError(
+                f"clang timed out after {self.timeout}s on {source_label}"
+            ) from exc
+
+    def _attach_macros(
+        self,
+        tu: SourceAbiTu,
+        compile_unit: CompileUnit,
+        source: Path,
+        directory: str,
+        public_header_roots: list[str],
+    ) -> None:
+        """Run the ``-E -dD`` preprocessor pass and fold public macros into the TU.
+
+        Best-effort: the JSON AST has no macros, so this second pass is what makes
+        ``public_macro_value_changed`` possible (Codex review #339, P2). A failure
+        here only records a diagnostic (partial macro coverage) — it never discards
+        the AST-derived dump or aborts the comparison (ADR-028 D7).
+        """
+        macro_cmd = build_clang_macro_command(
+            compile_unit, source,
+            clang_bin=self.clang_bin, compiler_binary=self.compiler_binary,
+        )
+        try:
+            result = self._run(macro_cmd, directory, compile_unit.source)
+        except SourceExtractionError as exc:
+            tu.diagnostics.append(f"macro pass skipped: {exc}")
+            return
+        if result.returncode != 0 and not result.stdout.strip():
+            tu.diagnostics.append(
+                f"macro pass produced no output (exit {result.returncode})"
+            )
+            return
+        macros, macro_files = macros_from_preprocessor(
+            result.stdout, public_header_roots
+        )
+        tu.macros = macros
+        # A header that only defines macros contributes no AST node, so add its
+        # path to the cache dependency set or a macro-only edit would be a stale
+        # hit (Codex review #339, P1).
+        tu.read_files = sorted(set(tu.read_files) | set(macro_files))

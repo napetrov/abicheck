@@ -305,6 +305,120 @@ def test_default_argument_compound_expression_change_is_detected() -> None:
     assert "default_argument_changed" in kinds
 
 
+def _ctor_ast(default: str, *, with_definition: bool = False) -> dict:
+    """A public ``Widget(int n = <default>)`` constructor decl, optionally also its
+    out-of-line inline definition (which carries no default)."""
+    inner = [
+        {
+            "kind": "CXXConstructorDecl", "name": "Widget", "loc": {"file": "include/foo.h"},
+            "mangledName": "_ZN6WidgetC1Ei", "type": {"qualType": "void (int)"},
+            "inner": [{
+                "kind": "ParmVarDecl", "name": "n", "type": {"qualType": "int"},
+                "init": "c", "inner": [{"kind": "IntegerLiteral", "value": default}],
+            }],
+        }
+    ]
+    if with_definition:
+        inner.append({
+            "kind": "CXXConstructorDecl", "name": "Widget", "loc": {"file": "include/foo.h"},
+            "mangledName": "_ZN6WidgetC1Ei", "type": {"qualType": "void (int)"},
+            "inner": [
+                {"kind": "ParmVarDecl", "name": "n", "type": {"qualType": "int"}},
+                {"kind": "CompoundStmt", "inner": []},
+            ],
+        })
+    return {"kind": "TranslationUnitDecl", "inner": [
+        {"kind": "CXXRecordDecl", "name": "Widget", "loc": {"file": "include/foo.h"},
+         "inner": inner},
+    ]}
+
+
+def test_constructor_default_argument_change_detected() -> None:
+    # Codex #339 P2: a CXXConstructorDecl must route through _emit_function so a
+    # constructor default-argument change is detected (was previously skipped).
+    old = source_abi_from_clang_ast(_ctor_ast("1"), _cu(), ["include/foo.h"], "t")
+    new = source_abi_from_clang_ast(_ctor_ast("2"), _cu(), ["include/foo.h"], "t")
+    assert any("Widget::Widget" in e.qualified_name for e in old.functions)
+    kinds = {
+        c.kind.value
+        for c in diff_source_abi(link_source_abi([old]), link_source_abi([new]))
+    }
+    assert "default_argument_changed" in kinds
+
+
+def test_inline_defined_constructor_default_change_not_masked() -> None:
+    # When the header carries both the declaration (with the default) and the
+    # out-of-line inline definition (no default), the value-less definition must
+    # not overwrite the default-bearing declaration in the diff (Codex #339 P2).
+    old = source_abi_from_clang_ast(
+        _ctor_ast("1", with_definition=True), _cu(), ["include/foo.h"], "t"
+    )
+    new = source_abi_from_clang_ast(
+        _ctor_ast("2", with_definition=True), _cu(), ["include/foo.h"], "t"
+    )
+    kinds = {
+        c.kind.value
+        for c in diff_source_abi(link_source_abi([old]), link_source_abi([new]))
+    }
+    assert "default_argument_changed" in kinds
+
+
+# -- macro extraction (-E -dD, pure parser) ----------------------------------
+
+
+def test_macros_from_preprocessor_scopes_to_public_headers() -> None:
+    from abicheck.evidence.source_extractors import macros_from_preprocessor
+
+    text = (
+        '# 1 "src/foo.cpp"\n'
+        '# 1 "<built-in>" 1\n'
+        "#define __STDC__ 1\n"
+        '# 1 "include/foo.h" 1\n'
+        "#define FOO_SIZE 16\n"
+        "#define ADD(a,b) ((a)+(b))\n"
+        '# 1 "/usr/include/sys.h" 1\n'
+        "#define SYS_ONLY 9\n"
+    )
+    macros, files = macros_from_preprocessor(text, ["include/foo.h"])
+    by_name = {e.qualified_name: e.value for e in macros}
+    # Public-header macros captured (object- and function-like)...
+    assert by_name["FOO_SIZE"] == "16"
+    assert by_name["ADD"] == "(a,b) ((a)+(b))"
+    # ...while builtin and system macros are filtered out.
+    assert "__STDC__" not in by_name and "SYS_ONLY" not in by_name
+    assert files == ["include/foo.h"]
+
+
+def test_macros_honor_undef() -> None:
+    from abicheck.evidence.source_extractors import macros_from_preprocessor
+
+    text = (
+        '# 1 "include/foo.h" 1\n'
+        "#define TMP 1\n"
+        "#undef TMP\n"
+        "#define KEEP 2\n"
+    )
+    macros, _ = macros_from_preprocessor(text, ["include/foo.h"])
+    names = {e.qualified_name for e in macros}
+    assert "TMP" not in names and "KEEP" in names
+
+
+def test_public_macro_value_change_detected_end_to_end() -> None:
+    from abicheck.evidence.source_abi import SourceAbiTu
+    from abicheck.evidence.source_extractors import macros_from_preprocessor
+
+    def surface(value: str):  # type: ignore[no-untyped-def]
+        macros, _ = macros_from_preprocessor(
+            f'# 1 "include/foo.h" 1\n#define FOO_SIZE {value}\n', ["include/foo.h"]
+        )
+        return link_source_abi([SourceAbiTu(tu_id="cu://a", macros=macros)])
+
+    changes = diff_source_abi(surface("16"), surface("32"))
+    by_kind = {c.kind.value: c for c in changes}
+    assert "public_macro_value_changed" in by_kind
+    assert by_kind["public_macro_value_changed"].old_value == "16"
+
+
 def test_forward_declaration_emits_no_type() -> None:
     ast = {
         "kind": "TranslationUnitDecl",

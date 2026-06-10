@@ -40,9 +40,6 @@ from defusedxml import ElementTree as DefusedET
 from ..build_evidence import CompileUnit
 from ..source_abi import SourceAbiTu
 from ._argv import (
-    MACRO_DEFINITION_PREFIXES as _MACRO_DEFINITION_PREFIXES,
-)
-from ._argv import (
     is_msvc_mode,
     pick_compiler_binary,
     replay_extra_flags,

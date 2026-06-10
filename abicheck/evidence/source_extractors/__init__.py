@@ -51,6 +51,8 @@ from .clang import (
     CLANG_EXTRACTOR_VERSION,
     ClangSourceExtractor,
     build_clang_command,
+    build_clang_macro_command,
+    macros_from_preprocessor,
     source_abi_from_clang_ast,
 )
 
@@ -66,6 +68,8 @@ __all__ = [
     "assemble_source_tu",
     "build_castxml_command",
     "build_clang_command",
+    "build_clang_macro_command",
+    "macros_from_preprocessor",
     "parse_android_dump",
     "source_abi_from_clang_ast",
 ]
