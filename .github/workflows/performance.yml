@@ -38,8 +38,17 @@ on:
       - "abicheck/demangle.py"
       - "abicheck/binary_fingerprint.py"
       - "abicheck/surface.py"
+      - "abicheck/suppression.py"
+      - "abicheck/html_report.py"
+      - "abicheck/sarif.py"
+      - "abicheck/junit_report.py"
+      - "abicheck/severity.py"
+      - "abicheck/serialization.py"
+      - "abicheck/pe_metadata.py"
+      - "abicheck/macho_metadata.py"
       - "scripts/benchmark_scaling.py"
       - "tests/test_performance.py"
+      - "tests/test_benchmark_scaling.py"
       - ".github/workflows/performance.yml"
 
 permissions:
@@ -110,3 +119,72 @@ jobs:
         with:
           name: performance-scaling
           path: reports/perf
+
+  # PR-vs-base regression: measure the base branch and this PR head on the same
+  # runner and flag scenarios that got more than --regress-tolerance slower.
+  # This catches *gradual* drift that the per-run scaling exponent misses. Only
+  # runs on PRs (there is no baseline branch for schedule/dispatch). Base and
+  # head are installed into separate venvs so the same package name can coexist;
+  # the comparison is over the scenarios present on *both* branches. Non-gating
+  # (continue-on-error) until a stable tolerance is established.
+  regression:
+    name: Baseline regression (PR vs base)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - name: Checkout base
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+
+      - name: Checkout head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          path: head
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.13"
+
+      - name: Measure base branch
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y binutils
+          python -m venv base_env
+          ./base_env/bin/pip install -q --upgrade pip
+          ./base_env/bin/pip install -q -e "./base[dev]"
+          # The base script may predate newer flags/scenarios; only the scenarios
+          # present on both branches are compared, so `|| true` keeps it robust.
+          ./base_env/bin/python base/scripts/benchmark_scaling.py \
+            --sizes 500 1000 2000 --repeat 2 \
+            --json-out base.json || true
+
+      - name: Measure head and compare to base
+        run: |
+          # pipefail so the benchmark's nonzero exit on a detected regression is
+          # not masked by `tee` (the default Actions shell is `bash -e`, no
+          # pipefail). The step then goes red on a regression; it still does not
+          # block the merge while `continue-on-error` is set above.
+          set -euo pipefail
+          python -m venv head_env
+          ./head_env/bin/pip install -q --upgrade pip
+          ./head_env/bin/pip install -q -e "./head[dev]"
+          ./head_env/bin/python head/scripts/benchmark_scaling.py \
+            --sizes 500 1000 2000 --repeat 2 --no-memory \
+            --baseline base.json --regress-tolerance 0.5 \
+            | tee regression.txt
+
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "## Baseline regression (PR vs base)"
+            echo ""
+            echo '```'
+            cat regression.txt 2>/dev/null || echo "(no output captured)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
