@@ -63,12 +63,54 @@ def diff_source_abi(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change
     a ``DiffResult`` and run through the existing verdict/policy pipeline.
     """
     changes: list[Change] = []
+    changes.extend(_diff_generated(old, new))
     changes.extend(_diff_macros(old, new))
     changes.extend(_diff_declarations(old, new))
     changes.extend(_diff_inline_bodies(old, new))
     changes.extend(_diff_templates(old, new))
     changes.extend(_diff_mappings(old, new))
     changes.extend(_diff_odr(old, new))
+    return changes
+
+
+# -- generated headers -------------------------------------------------------
+
+
+def _diff_generated(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change]:
+    """Flag any generated public entity whose content changed (ADR-030 D6).
+
+    Generated declarations land in ``reachable_declarations`` while generated
+    public *types* (record/enum/typedef) land in ``reachable_types``; scanning
+    both buckets here ensures a generated-config-header change is not silently
+    missed for either. Handled before the per-bucket diffs so a generated entity
+    is reported once, as ``generated_header_changed`` rather than (e.g.) a
+    constexpr/default-arg change.
+    """
+    changes: list[Change] = []
+    for old_bucket, new_bucket in (
+        (old.reachable_declarations, new.reachable_declarations),
+        (old.reachable_types, new.reachable_types),
+    ):
+        old_b = _by_identity(old_bucket)
+        new_b = _by_identity(new_bucket)
+        for key in sorted(set(old_b) & set(new_b)):
+            ov, nv = old_b[key], new_b[key]
+            if _is_generated(nv) and _entity_changed(ov, nv):
+                name = nv.qualified_name
+                changes.append(
+                    Change(
+                        kind=ChangeKind.GENERATED_HEADER_CHANGED,
+                        symbol=name,
+                        description=(
+                            f"Generated public {nv.kind} {name!r} changed; the "
+                            "generated header content differs between versions. "
+                            "Verify the generated configuration is intended."
+                        ),
+                        old_value=ov.value or ov.type_hash or ov.signature_hash,
+                        new_value=nv.value or nv.type_hash or nv.signature_hash,
+                        source_location=_loc(nv),
+                    )
+                )
     return changes
 
 
@@ -111,23 +153,11 @@ def _diff_declarations(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Cha
         ov, nv = old_d[key], new_d[key]
         name = nv.qualified_name
 
-        # Generated public header content changed (any hash drift in a generated
-        # entity). Reported once per declaration; policy may escalate (D6).
-        if _is_generated(nv) and _entity_changed(ov, nv):
-            changes.append(
-                Change(
-                    kind=ChangeKind.GENERATED_HEADER_CHANGED,
-                    symbol=name,
-                    description=(
-                        f"Generated public declaration {name!r} changed; the "
-                        "generated header content differs between versions. "
-                        "Verify the generated configuration is intended."
-                    ),
-                    old_value=ov.value or ov.signature_hash,
-                    new_value=nv.value or nv.signature_hash,
-                    source_location=_loc(nv),
-                )
-            )
+        # Generated entities are reported as generated_header_changed by
+        # _diff_generated (which also covers the reachable_types bucket); skip
+        # them here so they are not double-reported as a constexpr/default-arg
+        # change.
+        if _is_generated(nv):
             continue
 
         if nv.kind == "constexpr":

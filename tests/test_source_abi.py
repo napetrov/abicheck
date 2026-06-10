@@ -405,6 +405,36 @@ def test_diff_generated_header_changed() -> None:
     assert [c.kind for c in changes] == [ChangeKind.GENERATED_HEADER_CHANGED]
 
 
+def test_diff_generated_type_change_detected() -> None:
+    # A generated public *type* lives in reachable_types, not declarations; its
+    # content change must still be flagged (Codex review #335).
+    old = _surface(
+        reachable_types=[
+            _entity(
+                "cfg::Layout",
+                "record",
+                visibility="generated",
+                origin="GENERATED",
+                type_hash="h1",
+            )
+        ]
+    )
+    new = _surface(
+        reachable_types=[
+            _entity(
+                "cfg::Layout",
+                "record",
+                visibility="generated",
+                origin="GENERATED",
+                type_hash="h2",
+            )
+        ]
+    )
+    changes = diff_source_abi(old, new)
+    assert [c.kind for c in changes] == [ChangeKind.GENERATED_HEADER_CHANGED]
+    assert changes[0].symbol == "cfg::Layout"
+
+
 def test_diff_no_change_is_empty() -> None:
     s = _surface(
         reachable_macros=[_entity("FOO", "macro", value="1")],
