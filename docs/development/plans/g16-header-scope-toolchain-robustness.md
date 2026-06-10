@@ -41,21 +41,26 @@ instead of an opaque compiler error.
 
 ## Goal & acceptance criteria
 
-- [ ] A pre-flight/parse-failure classifier recognises the known host-header
-      symptoms (`_Float32`/`_Float64`/`_Float128`, GCC `__assume__`, the
-      `--lang c` + `extern "C"` case) in castxml stderr and raises a
-      `HeaderToolchainError` carrying a specific, copy-pasteable remediation
-      (e.g. "pass `--cc-opt -D__STDC_WANT_IEC_60559_TYPES_EXT__` / select a
-      castxml-compatible resource dir / drop `--lang c`").
-- [ ] At least one known symptom is *worked around* rather than only diagnosed:
+- [x] A parse-failure classifier recognises the known host-header symptoms
+      (`_Float32`/`_Float64`/`_Float128`, GCC `__assume__`, the `--lang c` +
+      `extern "C"` case) in castxml stderr and surfaces a specific,
+      copy-pasteable remediation. *Done:* `_castxml_failure_hint` in
+      `abicheck/dumper.py`; the hint is appended to the raised `SnapshotError`.
+- [x] At least one known symptom is *worked around* rather than only diagnosed:
       inject the minimal flag(s) that let a stock GCC/glibc host parse the
-      sized-float and `__assume__` declarations through castxml's clang frontend
-      (resource-dir / `-D` shim), validated on a representative C header.
+      sized-float declarations through castxml's clang frontend. *Done:*
+      `_castxml_dump` auto-retries once with `_FLOATN_SHIM_DEFINES` (`-D_Float32=float`
+      …) after a sized-float failure; healthy hosts are unaffected (retry only
+      fires on the matching failure).
 - [ ] `abicheck compare --headers` over a tiny header that transitively includes
       `<math.h>` succeeds (or degrades with the actionable hint) on the CI host,
-      asserted end-to-end.
-- [ ] The diagnostic text is unit-tested against captured real stderr snippets
-      from the campaign (no live compiler needed for the message test).
+      asserted end-to-end. *Remaining* (needs the `integration` toolchain).
+- [x] The diagnostic text and retry are unit-tested against captured stderr
+      snippets (no live compiler needed). *Done:*
+      `tests/test_castxml_toolchain_robustness.py`.
+- [ ] Promote to a dedicated `HeaderToolchainError` so callers can branch on the
+      class, and add a real `__assume__` workaround (currently diagnosed only).
+      *Remaining.*
 
 ## Design
 

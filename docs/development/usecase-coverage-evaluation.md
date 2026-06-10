@@ -26,12 +26,13 @@ in a 5-tier policy model, **126 calibrated example cases**, ABICC + libabigail
 parity — is essentially complete and has diminishing returns.
 
 The remaining gaps are **not in detecting more change types**. They are the
-eight planned breadth/workflow items tracked in `usecase-registry.yaml`:
+seven planned breadth/workflow items tracked in `usecase-registry.yaml`:
 header-only/inline-only analysis (G4), auditwheel vendored-library pairing (G9),
 manylinux glibc-floor checks (G10), single-binary audit/lint mode (G11),
 cross-architecture guardrails (G13), CPython `abi3` import-contract checking
-(G14), inline-namespace version-stamp normalization (G15), and header-scoped
-source-mode toolchain robustness (G16).
+(G14), and inline-namespace version-stamp normalization (G15) — plus one newly
+**partial** item, header-scoped source-mode toolchain robustness (G16), whose
+diagnostics and sized-float auto-retry have shipped.
 
 Several formerly broad gaps are now closed and should no longer be treated as
 open roadmap work: native PE/Mach-O compare validation (G1), build-config matrix
@@ -107,7 +108,7 @@ A real invocation is a point in this space:
 | **G13** | planned | Cross-architecture mismatch guardrail. |
 | **G14** | planned | CPython Limited-API / `abi3` import-contract conformance. |
 | **G15** | planned | Inline-namespace version-stamp normalization for ICU/Abseil/libstdc++-style churn. |
-| **G16** | planned | Header-scoped source-mode toolchain robustness — survive a stock GCC/glibc host (sized-float `_FloatN`, GCC `__assume__`, `--lang c` + `extern "C"`) or fail with an actionable hint. Surfaced by 21 real-world cron records (see [Real-World Scan Coverage](realworld-scan-coverage-2026-06.md)). |
+| **G16** | partial | Header-scoped source-mode toolchain robustness. Surfaced by 21 real-world cron records. **Shipped**: actionable diagnostics for all three host-toolchain signatures (sized-float `_FloatN`, GCC `__assume__`, `--lang c` + `extern "C"`) plus a one-shot `-D_FloatN` auto-retry so a stock GCC/glibc host parses the dominant case. **Remaining**: real-host end-to-end check, an `__assume__` workaround, and a dedicated error type. |
 
 ## Proposed next steps (tracked in the registry)
 

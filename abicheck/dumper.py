@@ -299,6 +299,28 @@ def _resolve_compiler_binary(
     return cc_bin, cc_id
 
 
+# castxml drives an internal Clang frontend while *emulating* the host GCC.
+# When the bundled Clang is older than the host GCC/glibc, glibc's
+# <bits/floatn.h> (pulled in transitively by <stdlib.h>/<math.h>) declares
+# ISO/IEC TS 18661 interchange-float functions using `_Float32`/`_Float64`/
+# `_Float128` keywords the Clang frontend does not recognise, and the header
+# parse aborts before any ABI comparison. Pre-defining the keywords to existing
+# builtin types lets the preprocessor textually neutralise them so the header
+# parses. This is a parse-survival fallback only (applied on retry after a real
+# failure), so the rare public API that takes a true `_FloatN` by value may be
+# recorded under the substituted type — acceptable when the alternative is no
+# snapshot at all. x86-64 Linux mappings; the value tokens may contain spaces
+# because each list element is a single argv token (no shell splitting).
+_FLOATN_SHIM_DEFINES = [
+    "-D_Float32=float",
+    "-D_Float32x=double",
+    "-D_Float64=double",
+    "-D_Float64x=long double",
+    "-D_Float128=long double",
+    "-D_Float128x=long double",
+]
+
+
 def _build_castxml_command(
     cc_bin: str, cc_id: str,
     extra_includes: list[Path],
@@ -309,8 +331,13 @@ def _build_castxml_command(
     gcc_options: str | None = None,
     force_cpp: bool = False,
     force_cpp20: bool = False,
+    extra_defines: list[str] | None = None,
 ) -> list[str]:
-    """Build the castxml command line."""
+    """Build the castxml command line.
+
+    ``extra_defines`` are already-formed ``-D...`` tokens appended verbatim
+    (used for the sized-float parse-survival shim, see ``_FLOATN_SHIM_DEFINES``).
+    """
     cmd = ["castxml", "--castxml-output=1",
            f"--castxml-cc-{cc_id}", cc_bin]
     for inc in extra_includes:
@@ -322,6 +349,8 @@ def _build_castxml_command(
         cmd += ["-nostdinc"]
     if gcc_options:
         cmd += shlex.split(gcc_options, posix=os.name != "nt")
+    if extra_defines:
+        cmd += list(extra_defines)
 
     # Workaround: castxml with --castxml-cc-gnu gcc auto-injects -std=gnu++17
     # which is rejected when parsing a .h file in C mode.
@@ -345,21 +374,88 @@ def _build_castxml_command(
     return cmd
 
 
+def _stderr_wants_floatn_shim(stderr: str) -> bool:
+    """True when a castxml failure is the glibc sized-float keyword mismatch.
+
+    Drives the one-shot auto-retry with ``_FLOATN_SHIM_DEFINES``.
+    """
+    if not stderr:
+        return False
+    # clang's diagnostic for the unrecognised keyword, e.g.
+    #   error: unknown type name '_Float32'
+    return bool(re.search(r"_Float(?:16|32|64|128)(?:x)?\b", stderr))
+
+
+def _castxml_failure_hint(
+    stderr: str,
+    *,
+    force_cpp: bool,
+    headers: list[Path],
+    floatn_shim_tried: bool = False,
+) -> str:
+    """Map a known castxml/host-toolchain failure to an actionable remediation.
+
+    Returns the empty string when no known signature matches. These three
+    signatures account for the header-scoped scan aborts seen across the
+    real-world scan campaign (see plan G16); each one previously surfaced only
+    as an opaque clang stderr dump.
+    """
+    # 1) glibc sized-float types (the dominant case): _Float32/64/128 keywords
+    #    the bundled clang frontend rejects while emulating a newer host GCC.
+    if _stderr_wants_floatn_shim(stderr):
+        if floatn_shim_tried:
+            return (
+                "\n\nHint: castxml could not parse the host glibc sized-float "
+                "types (_Float32/_Float64/_Float128), even after the automatic "
+                "-D_FloatN compatibility shim. The bundled castxml/clang is "
+                "likely older than the host gcc/glibc. Install a newer castxml, "
+                "or pass a matching toolchain via --gcc-path / a --sysroot whose "
+                "headers the clang frontend can parse."
+            )
+        return (
+            "\n\nHint: the host glibc declares sized-float types "
+            "(_Float32/_Float64/_Float128) that this castxml/clang cannot parse. "
+            "abicheck will retry once with a -D_FloatN compatibility shim; if "
+            "that still fails, install a newer castxml or supply a "
+            "clang-parsable toolchain via --gcc-path / --sysroot."
+        )
+    # 2) GCC 13+ libstdc++ uses the [[__assume__]] / __attribute__((__assume__))
+    #    spelling the bundled clang frontend doesn't know.
+    if "__assume__" in stderr:
+        return (
+            "\n\nHint: the host libstdc++ uses the GCC '__assume__' attribute "
+            "that this castxml/clang frontend rejects. Install a newer castxml "
+            "matching the host GCC, or scan against an older/clang-parsable "
+            "libstdc++ via --gcc-path / --sysroot."
+        )
+    # 3) Explicit --lang c on headers that need C++ (classes/namespaces) or that
+    #    guard extern "C" with #ifdef __cplusplus — castxml always parses in a
+    #    C++-ish mode, so forcing C rejects valid headers.
+    if not force_cpp and _detect_cpp_headers(headers):
+        return (
+            "\n\nHint: The header files appear to contain C++ syntax "
+            "(class, namespace, template) but --lang c was specified. "
+            "Try removing --lang or using --lang c++."
+        )
+    return ""
+
+
 def _validate_castxml_output(
     result: subprocess.CompletedProcess[str],
     out_xml: Path,
     headers: list[Path],
     force_cpp: bool,
+    *,
+    floatn_shim_tried: bool = False,
 ) -> Element:
     """Validate castxml output and return parsed XML root."""
     if result.returncode != 0:
-        hint = ""
-        if not force_cpp and _detect_cpp_headers(headers):
-            hint = (
-                "\n\nHint: The header files appear to contain C++ syntax "
-                "(class, namespace, template) but --lang c was specified. "
-                "Try removing --lang or using --lang c++."
-            )
+        hint = _castxml_failure_hint(
+            result.stderr,
+            force_cpp=force_cpp,
+            headers=headers,
+            floatn_shim_tried=floatn_shim_tried,
+        )
         raise SnapshotError(
             f"castxml failed (exit {result.returncode}):\n{result.stderr[:2000]}{hint}"
         )
@@ -463,9 +559,9 @@ def _castxml_dump(
         force_cpp20=force_cpp20,
     )
 
-    try:
+    def _run(run_cmd: list[str]) -> subprocess.CompletedProcess[str]:
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+            return subprocess.run(run_cmd, capture_output=True, text=True, timeout=120, check=False)
         except subprocess.TimeoutExpired as exc:
             stderr_snippet = ""
             if exc.stderr:
@@ -476,7 +572,30 @@ def _castxml_dump(
                 f"syntax that causes the compiler to hang. Check that the header "
                 f"is valid and can be compiled with gcc/g++.{stderr_snippet}"
             ) from exc
-        root = _validate_castxml_output(result, out_xml, headers, bool(force_cpp))
+
+    try:
+        result = _run(cmd)
+        floatn_shim_tried = False
+        # One-shot auto-retry for the dominant host-toolchain failure: glibc
+        # sized-float keywords (_Float32/64/128) the bundled clang can't parse.
+        # Only triggers after a real failure, so healthy hosts are unaffected.
+        if result.returncode != 0 and _stderr_wants_floatn_shim(result.stderr):
+            log.warning(
+                "castxml failed on host sized-float types (_FloatN); retrying "
+                "once with a -D_FloatN compatibility shim."
+            )
+            retry_cmd = _build_castxml_command(
+                cc_bin, cc_id, extra_includes, out_xml, agg_path,
+                sysroot=sysroot, nostdinc=nostdinc, gcc_options=gcc_options,
+                force_cpp=bool(force_cpp), force_cpp20=force_cpp20,
+                extra_defines=_FLOATN_SHIM_DEFINES,
+            )
+            result = _run(retry_cmd)
+            floatn_shim_tried = True
+        root = _validate_castxml_output(
+            result, out_xml, headers, bool(force_cpp),
+            floatn_shim_tried=floatn_shim_tried,
+        )
         shutil.copy2(str(out_xml), str(cached))
         return root
     finally:

@@ -101,7 +101,6 @@ nav:
       - Goals: development/goals.md
       - Backlog: development/backlog.md
       - Use-Case Coverage Evaluation: development/usecase-coverage-evaluation.md
-      - Real-World Scan Coverage (2026-06): development/realworld-scan-coverage-2026-06.md
       - User Scenarios & Flows: development/user-scenarios.md
     - Parity & Reports:
       - ABICC Parity Status: development/abicc-parity-status.md

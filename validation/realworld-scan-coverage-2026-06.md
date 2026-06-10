@@ -7,10 +7,10 @@ shared libraries.
 
 **Purpose:** Map every theme in that catalog onto (a) an existing regression
 **test** and (b) a tracked **use case** in
-[`usecase-registry.yaml`](usecase-registry.yaml), so we can state precisely what
+[`usecase-registry.yaml`](../docs/development/usecase-registry.yaml), so we can state precisely what
 is already guarded, what is a deliberate product/policy control, and what is a
 genuine gap. This is the audit companion to the
-[Use-Case Coverage Evaluation](usecase-coverage-evaluation.md).
+[Use-Case Coverage Evaluation](../docs/development/usecase-coverage-evaluation.md).
 
 ---
 
@@ -91,7 +91,7 @@ campaign-harness infra (intentionally outside the abicheck capability registry).
 | Public source-API vs private export disambiguation | covered by `SC-PUBLIC-SURFACE-SCOPE` + `--headers`; depends on **G16** to run on stock hosts |
 
 The new entry is the only catalog theme that was both **recurring** and
-**untracked**. See **[G16 plan](plans/g16-header-scope-toolchain-robustness.md)**
+**untracked**. See **[G16 plan](../docs/development/plans/g16-header-scope-toolchain-robustness.md)**
 for the detailed problem statement and acceptance criteria.
 
 ---

@@ -476,23 +476,29 @@ use_cases:
   - id: UC-TC-header-scope-robustness
     axis: toolchain
     name: Header-scoped source-mode robustness on stock host toolchains
-    status: planned
+    status: partial
     gap: G16
     plan: docs/development/plans/g16-header-scope-toolchain-robustness.md
+    evidence:
+      modules: [abicheck/dumper.py]
+      tests: [tests/test_castxml_toolchain_robustness.py]
     next_steps: >
       Header-scoped scans (the castxml source path) are how abicheck separates
       public source API from private/internal surface, but in the 2026-06
       real-world cron the scoped re-run aborted before any comparison in 21 issue
       records — always the same host-toolchain parse failures, never an abicheck
       logic bug: glibc sized-float types (`unknown type name '_Float32'`,
-      `_Float64`/`_Float128`) pulled in via host `<stdlib.h>`/`<math.h>`, a GCC 13
-      libstdc++ `__assume__` attribute parse failure, and `--lang c` rejecting
-      `extern "C"` headers that correctly guard it with `#ifdef __cplusplus`.
-      Classify these known castxml stderr signatures into a single actionable
-      remediation (mirroring the existing `--lang c` class/namespace hint), inject
-      the minimal known-good shim so a stock GCC/glibc host parses sized-float and
-      `__assume__` declarations, and assert both end-to-end. This unblocks the
-      binary-only-vs-public-header verdict contrast the campaign depends on.
+      `_Float64`/`_Float128`), a GCC 13 libstdc++ `__assume__` attribute, and
+      `--lang c` rejecting `extern "C"` headers guarded by `#ifdef __cplusplus`.
+      DONE (this increment): `_castxml_failure_hint` classifies all three stderr
+      signatures into a single actionable remediation, and `_castxml_dump`
+      auto-retries once with `_FLOATN_SHIM_DEFINES` (`-D_FloatN`) so a stock
+      GCC/glibc host parses the sized-float case instead of aborting — unit-tested
+      in `tests/test_castxml_toolchain_robustness.py`. REMAINING: an
+      integration-marked end-to-end check that `compare --headers` over a header
+      that transitively includes `<math.h>` succeeds on a real CI host; a real
+      workaround for the `__assume__` case (currently diagnosed only); and a
+      dedicated `HeaderToolchainError` type so callers can branch on it.
 
   - id: UC-TC-cxx-standard-floor
     axis: toolchain
