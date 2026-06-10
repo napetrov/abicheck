@@ -118,7 +118,7 @@ reporting stages (see [Coverage beyond `compare()`](#coverage-beyond-compare)).
 | `enum_churn`   | 1.76 s @ n=2000 | ~1.7 (enum diff residual) |
 | `rename_churn` | 2.1 s @ n=1000, capped above | bounded |
 | `nested_types` | 0.70 s @ n=400 | inherent for deep chains |
-| `suppression_audit` | 1.87 s @ n=2000 (fixed 40-rule set) | ~1.0 (linear in findings) |
+| `suppression_audit` | 0.09 s @ n=2000 (fixed 40-rule set) | ~1.0 (linear in findings) |
 | `report_html`  | 0.02 s @ n=2000 | ~1.0 (linear) |
 | `report_sarif` | 0.03 s @ n=1000 | ~0.9 (linear) |
 

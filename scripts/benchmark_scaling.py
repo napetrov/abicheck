@@ -359,30 +359,42 @@ def _build_suppression_audit(n_findings: int) -> tuple[list[Change], Suppression
     the rule count fixed and scale only the findings — the cost should stay
     linear in findings. A regression that makes *per-finding* rule matching
     itself super-linear (e.g. recompiling a pattern per change) shows up as a
-    rising exponent. The mixed rule kinds exercise the symbol/type/namespace/
-    change_kind match arms rather than short-circuiting on the first selector.
+    rising exponent.
+
+    Each finding's symbol falls into one of ``n_groups`` module groups, and the
+    ruleset has one matching ``symbol_pattern`` per group, so roughly *every*
+    finding matches exactly one rule. That exercises the match-count bookkeeping
+    and the breaking-kind ``high_risk`` list growth — not just the no-match fast
+    path. The remaining rules deliberately miss (the realistic case: most rules
+    miss most findings) so every match arm is walked. ``symbol_pattern`` uses
+    ``fullmatch`` against the raw ``change.symbol``, so the symbols are written
+    in already-demangled form here.
     """
+    n_groups = 8
+    # FUNC_REMOVED is breaking, so the matched-and-breaking subset drives
+    # high_risk growth; the others keep the kind mix realistic.
     kinds = [
         ChangeKind.FUNC_REMOVED,
         ChangeKind.FUNC_ADDED,
-        ChangeKind.TYPE_FIELD_ADDED,
         ChangeKind.TYPEDEF_REMOVED,
     ]
     changes = [
         Change(
             kind=kinds[i % len(kinds)],
-            symbol=f"_ZN3lib6detail3fooILi{i}EEEv",
+            symbol=f"app::mod{i % n_groups}::func{i}(int)",
             description=f"finding {i}",
         )
         for i in range(n_findings)
     ]
     rules: list[Suppression] = []
-    for i in range(20):
-        rules.append(Suppression(symbol_pattern=f".*foo<{i}>.*", reason="symbol"))
-    for i in range(10):
-        rules.append(Suppression(type_pattern=f".*Widget{i}.*", reason="type"))
-    for i in range(10):
-        rules.append(Suppression(namespace=f"**::detail{i}::*", reason="ns"))
+    # Matching rules — one per module group; each finding matches exactly one.
+    for j in range(n_groups):
+        rules.append(Suppression(symbol_pattern=rf"app::mod{j}::.*", reason="grp"))
+    # Non-matching rules of mixed kinds (most rules miss most findings).
+    for j in range(24):
+        rules.append(Suppression(symbol_pattern=rf".*::other{j}::.*", reason="miss"))
+    for j in range(8):
+        rules.append(Suppression(namespace=f"**::vendor{j}::*", reason="ns"))
     return changes, SuppressionList(rules)
 
 

@@ -211,14 +211,20 @@ class TestSuppressionAuditScaling:
     scenario.
     """
 
+    _N_GROUPS = 8
+
     def _make_rules(self) -> SuppressionList:
         rules: list[Suppression] = []
-        for i in range(20):
-            rules.append(Suppression(symbol_pattern=f".*foo<{i}>.*", reason="symbol"))
-        for i in range(10):
-            rules.append(Suppression(type_pattern=f".*Widget{i}.*", reason="type"))
-        for i in range(10):
-            rules.append(Suppression(namespace=f"**::detail{i}::*", reason="ns"))
+        # Matching rules — one per module group; each finding matches exactly one.
+        for j in range(self._N_GROUPS):
+            rules.append(Suppression(symbol_pattern=rf"app::mod{j}::.*", reason="grp"))
+        # Non-matching rules (most rules miss most findings).
+        for j in range(24):
+            rules.append(
+                Suppression(symbol_pattern=rf".*::other{j}::.*", reason="miss")
+            )
+        for j in range(8):
+            rules.append(Suppression(namespace=f"**::vendor{j}::*", reason="ns"))
         return SuppressionList(rules)
 
     def _make_changes(self, n: int) -> list[Change]:
@@ -230,7 +236,7 @@ class TestSuppressionAuditScaling:
         return [
             Change(
                 kind=kinds[i % len(kinds)],
-                symbol=f"_ZN3lib6detail3fooILi{i}EEEv",
+                symbol=f"app::mod{i % self._N_GROUPS}::func{i}(int)",
                 description=f"finding {i}",
             )
             for i in range(n)
@@ -243,9 +249,13 @@ class TestSuppressionAuditScaling:
         audit = supp.audit(changes)
         elapsed = time.monotonic() - start
 
-        # Generous bound for shared CI runners; ~2s locally for 40 rules x 2000.
+        # Generous bound for shared CI runners (~0.1s locally for 40 rules x 2000).
         assert elapsed < 20.0, f"audit took {elapsed:.2f}s, expected < 20s"
         assert audit.total_rules == 40
+        # The workload must actually match (else the bookkeeping/high_risk paths
+        # the gate is meant to exercise stay dormant — see PR #336 review).
+        assert sum(audit.match_counts.values()) == 2000
+        assert len(audit.high_risk_matches) > 0
 
     def test_audit_scaling_stays_linear_in_findings(self) -> None:
         import math
