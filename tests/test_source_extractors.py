@@ -200,6 +200,39 @@ def test_build_command_carries_argv_only_options() -> None:
     assert "-c" not in cmd
 
 
+def test_build_command_unwraps_compiler_launcher() -> None:
+    # A build action recorded with a ccache/sccache launcher must emulate the
+    # real compiler (argv after the launcher), not the launcher itself, which
+    # castxml would invoke without its compiler operand (Codex review #335, P2).
+    cmd = build_castxml_command(
+        _cu(argv=["ccache", "clang++", "-c", "foo.cpp"]),
+        Path("foo.cpp"),
+        Path("o.xml"),
+    )
+    assert "--castxml-cc-gnu" in cmd
+    assert "clang++" in cmd
+    assert "ccache" not in cmd
+    # A launcher in front of clang-cl still resolves to MSVC mode.
+    msvc = build_castxml_command(
+        _cu(argv=["sccache", "clang-cl", "/c", "a.cpp"]), Path("a.cpp"), Path("o.xml")
+    )
+    assert "--castxml-cc-msvc" in msvc
+    assert "clang-cl" in msvc
+
+
+def test_build_command_preserves_include_pch_operand() -> None:
+    # clang's -include-pch <file> is separate-operand only; it must not be
+    # treated as a joined -include (which would drop the pch.h operand and leave
+    # a dangling option that fails castxml replay) (Codex review #335, P2).
+    cmd = build_castxml_command(
+        _cu(argv=["clang++", "-include-pch", "pch.h", "-c", "a.cpp"]),
+        Path("a.cpp"),
+        Path("o.xml"),
+    )
+    assert "-include-pch" in cmd
+    assert cmd[cmd.index("-include-pch") + 1] == "pch.h"
+
+
 def test_extract_runs_in_compile_unit_directory(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     # Mock castxml so we can assert the subprocess runs with cwd=directory and
     # exercise the extract() success path without the tool installed.

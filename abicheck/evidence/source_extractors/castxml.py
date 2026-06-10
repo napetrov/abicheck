@@ -62,18 +62,42 @@ def _basename(path: str) -> str:
     return re.split(r"[\\/]", path)[-1]
 
 
+#: Compiler-launcher wrappers that prefix the real compiler in a build action
+#: (``ccache clang++ -c foo.cpp``). castxml must emulate the real compiler, not
+#: the launcher, which would otherwise be invoked without its compiler operand.
+_COMPILER_LAUNCHERS = frozenset(
+    {"ccache", "sccache", "distcc", "icecc", "icerun", "buildcache"}
+)
+
+
+def _strip_launchers(argv: list[str]) -> list[str]:
+    """Drop leading compiler-launcher tokens (``ccache``/``sccache``/…).
+
+    A launcher is recognized by basename (``/usr/bin/ccache`` → ``ccache``,
+    ``ccache.exe`` → ``ccache``) so the real compiler that follows it is the one
+    castxml emulates.
+    """
+    i = 0
+    while i < len(argv) and _basename(argv[i]).lower().removesuffix(
+        ".exe"
+    ) in _COMPILER_LAUNCHERS:
+        i += 1
+    return argv[i:]
+
+
 def _compiler_binary(compile_unit: CompileUnit, override: str | None) -> str:
     """Pick the compiler binary castxml should emulate for this TU.
 
-    Prefers the compiler actually recorded in the build action (``argv[0]``) so
-    a clang/clang-cl/cross TU is replayed against its real builtin include
-    paths, target defaults, and accepted flags — castxml invokes this binary to
+    Prefers the compiler actually recorded in the build action (``argv[0]``,
+    after unwrapping any ``ccache``/``sccache`` launcher) so a
+    clang/clang-cl/cross TU is replayed against its real builtin include paths,
+    target defaults, and accepted flags — castxml invokes this binary to
     discover them. Falls back to g++/gcc by language only when no command is
     available (and an explicit ``override`` always wins).
     """
     if override:
         return override
-    argv = compile_unit.argv
+    argv = _strip_launchers(compile_unit.argv)
     if argv and argv[0] and not argv[0].startswith("-"):
         return argv[0]
     return "g++" if compile_unit.language.lower() in _CXX_LANGS else "gcc"
@@ -87,8 +111,12 @@ def _std_flag(standard: str, cc_id: str) -> list[str]:
 
 #: GNU options that take a path operand and change *what* gets parsed (forced
 #: includes / macro files). Carried through from argv since they are not
-#: normalized into the structured CompileUnit fields.
+#: normalized into the structured CompileUnit fields. Only ``-include`` and
+#: ``-imacros`` also have a joined ``-include<file>`` spelling; ``-include-pch``
+#: is separate-operand only (clang ``-include-pch <file>``) and must not be
+#: treated as a joined ``-include`` or its operand will be dropped.
 _GNU_FORCED_INCLUDE_OPTS = frozenset({"-include", "-imacros"})
+_GNU_SEPARATE_INCLUDE_OPTS = frozenset({"-include", "-imacros", "-include-pch"})
 #: MSVC/clang-cl forced-include options in their separate-operand spelling
 #: (``/FI file`` or ``-FI file``); the joined ``/FIfile`` form is handled by
 #: prefix. (https://learn.microsoft.com/cpp/build/reference/fi-name-forced-include-file)
@@ -117,10 +145,10 @@ def _replay_extra_flags(
     i = 0
     while i < len(argv):
         tok = argv[i]
-        if tok in _GNU_FORCED_INCLUDE_OPTS and i + 1 < len(argv):
-            out += [tok, argv[i + 1]]  # -include file (separate operand)
+        if tok in _GNU_SEPARATE_INCLUDE_OPTS and i + 1 < len(argv):
+            out += [tok, argv[i + 1]]  # -include / -imacros / -include-pch <file>
             i += 2
-        elif any(
+        elif tok not in _GNU_SEPARATE_INCLUDE_OPTS and any(
             tok.startswith(opt) and len(tok) > len(opt)
             for opt in _GNU_FORCED_INCLUDE_OPTS
         ):
