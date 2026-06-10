@@ -579,9 +579,34 @@ def test_macros_from_preprocessor_scopes_to_public_headers() -> None:
     # Public-header macros captured (object- and function-like)...
     assert by_name["FOO_SIZE"] == "16"
     assert by_name["ADD"] == "(a,b) ((a)+(b))"
-    # ...while builtin and system macros are filtered out.
+    # ...while builtin and system macros are filtered out of the *entities*.
     assert "__STDC__" not in by_name and "SYS_ONLY" not in by_name
-    assert files == ["include/foo.h"]
+    # The cache-dependency file list, by contrast, is the *complete* set of real
+    # files the preprocessor read — including the system header that declared
+    # only a non-public macro — so a macro-only private/system header edit
+    # invalidates the dump (Codex #339 P2). The <built-in> pseudo-file is skipped.
+    assert files == ["/usr/include/sys.h", "include/foo.h", "src/foo.cpp"]
+
+
+def test_macros_track_private_macro_only_header_as_cache_dep() -> None:
+    # A private header that defines a macro gating an #if in a public header is
+    # seen only by the preprocessor (no public macro entity, no AST node), but it
+    # must still be a cache dependency so editing it invalidates the dump.
+    from abicheck.evidence.source_extractors import macros_from_preprocessor
+
+    text = (
+        '# 1 "include/api.h" 1\n'
+        '# 1 "include/detail/config.h" 1\n'
+        "#define ENABLE_X 1\n"  # private gating macro — not on the public surface
+        '# 2 "include/api.h" 2\n'
+        "#define API_VERSION 3\n"
+    )
+    macros, files = macros_from_preprocessor(text, ["include/api.h"])
+    names = {e.qualified_name for e in macros}
+    # Private gating macro is filtered out of the entities...
+    assert "ENABLE_X" not in names and "API_VERSION" in names
+    # ...but its header is still tracked as a cache dependency.
+    assert "include/detail/config.h" in files
 
 
 def test_macros_unfold_line_continuations() -> None:

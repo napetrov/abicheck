@@ -499,17 +499,28 @@ def macros_from_preprocessor(
     whose declaring file is on the public source surface — builtin/command-line
     and system macros carry ``<built-in>``/system files and are filtered out.
 
-    Returns ``(macro entities, public macro-declaring files)``; the file list
-    feeds the per-TU cache dependency set so a macro-only header edit invalidates
-    the dump (Codex review #339, P1).
+    Returns ``(macro entities, every real file the preprocessor read)``. The file
+    list feeds the per-TU cache dependency set, so it must contain *all* files
+    the preprocessor touched — not just the public macro-declaring ones — or a
+    macro-only *private* header (e.g. ``detail/config.h`` whose ``#define`` gates
+    an ``#if`` in a public header) would never invalidate the dump: it
+    contributes no public macro entity and no clang AST node, so an edit to it
+    would otherwise pass cache validation and reuse stale facts (Codex review
+    #339, P2; P1 covered only the public ones).
     """
     ctx = _ClassifyContext(public_header_roots)
     current = ""
     defs: dict[str, tuple[str, str]] = {}  # name -> (value, file)
+    # Every real file named by a `#` line marker — the complete set the
+    # preprocessor read. `<built-in>`/`<command line>`/`<scratch space>`
+    # pseudo-files are not real dependencies and are skipped.
+    touched: set[str] = set()
     for line in _unfold_continuations(text.splitlines()):
         marker = _LINE_MARKER_RE.match(line)
         if marker:
             current = marker.group(1)
+            if current and not current.startswith("<"):
+                touched.add(current)
             continue
         if line.startswith("#define "):
             parsed = _parse_define(line[len("#define ") :])
@@ -519,12 +530,10 @@ def macros_from_preprocessor(
             defs.pop(line[len("#undef ") :].strip(), None)
 
     entities: list[SourceEntity] = []
-    files: set[str] = set()
     for name, (value, file) in sorted(defs.items()):
         visibility, origin, public = ctx.classify(file)
         if not public:
             continue
-        files.add(file)
         entities.append(
             SourceEntity(
                 id=_hash("macro", name, value),
@@ -537,7 +546,7 @@ def macros_from_preprocessor(
                 confidence=EvidenceConfidence.HIGH,
             )
         )
-    return entities, sorted(files)
+    return entities, sorted(touched)
 
 
 def source_abi_from_clang_ast(
