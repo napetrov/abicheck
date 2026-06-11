@@ -204,11 +204,6 @@ def detect_sycl_overload_set_removal(
         for fn in removed:
             affected_mangled.append(fn.mangled)
             suppressed.add(fn.mangled)
-            # See `detect_cpu_dispatch_isa_dropped` for the rationale —
-            # platforms differ on whether `Change.symbol` is the
-            # castxml-derived mangled name or a sibling export-name form.
-            if fn.name:
-                suppressed.add(fn.name)
         # The report shows the unqualified leaf so it reads as
         # "compute, train, infer" rather than full namespaced paths.
         affected_unq.append(_last_segment(entity) or entity)
@@ -320,8 +315,9 @@ def _suppress_demangled_names(
 
     Belt-and-suspenders: Different platforms emit ``func_removed`` ``Change.symbol``
     with different conventions. Adding the demangled name catches the case where
-    castxml-derived ``fn.mangled`` and PE-export-derived ``Change.symbol`` are
-    sibling forms of the same underlying name.
+    castxml-derived ``fn.mangled`` (Itanium) and PE-export-derived ``Change.symbol``
+    (MSVC mangling) are sibling encodings of the same underlying function.
+    ``_matches_suppression_key`` already guards against ambiguous short keys.
     """
     for _, mangled in overlapping:
         removed_fn = old_index.get(mangled)
