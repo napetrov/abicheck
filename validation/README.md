@@ -3,7 +3,10 @@
 Evidence-based validation of abicheck against real upstream C/C++ shared
 libraries (not synthetic fixtures), used to drive planning and improvement.
 
-- `REPORT.md` — latest validation report (start here)
+- `realworld-tracker-parity-2026-06.md` — **latest** run: abicheck scored live
+  against the ABICC abi-laboratory oracle across 8 libraries (95.5 % agreement,
+  0 confirmed defects). Start here for the parity results.
+- `REPORT.md` — earlier curated-matrix validation report (false-positive catalog)
 - `DESIGN_ANALYSIS.md` — code-level root cause + architectural fix per false
   positive. FP-1/FP-2 are fixed in `abicheck/model.py` + `abicheck/diff_types.py`;
   FP-3/FP-4 are guarded by strict-xfail regression tests in
