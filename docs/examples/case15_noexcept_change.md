@@ -61,8 +61,7 @@ risk present from the new GLIBCXX requirement.
   the compiled `.so` acquires a newer GLIBCXX symbol version requirement.
 
 Both kinds are detected. The combined verdict is **COMPATIBLE_WITH_RISK** because
-`FUNC_NOEXCEPT_REMOVED` ∈ `COMPATIBLE_KINDS` and `SYMBOL_VERSION_REQUIRED_ADDED`
-∈ `RISK_KINDS`, and RISK trumps COMPATIBLE in the verdict hierarchy.
+both `FUNC_NOEXCEPT_REMOVED` and `SYMBOL_VERSION_REQUIRED_ADDED` ∈ `RISK_KINDS`.
 
 ## Behavioral risk (runtime)
 

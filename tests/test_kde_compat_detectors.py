@@ -377,6 +377,20 @@ class TestOverloadAdded:
         result = compare(old, new)
         assert ChangeKind.OVERLOAD_ADDED not in _kinds(result)
 
+    def test_added_operator_overload_is_overload_added(self):
+        """Operators are encoded as fixed Itanium codes, not length-prefixed
+        names; an operator overload (`operator[](int)` → also `(long)`) must
+        still group and fire OVERLOAD_ADDED — `&C::operator[]` becomes ambiguous."""
+        old = _snap(functions=[
+            _method("C::operator[]", "_ZN1CixEi", params=[Param(name="i", type="int")]),
+        ])
+        new = _snap(functions=[
+            _method("C::operator[]", "_ZN1CixEi", params=[Param(name="i", type="int")]),
+            _method("C::operator[]", "_ZN1CixEl", params=[Param(name="i", type="long")]),
+        ])
+        result = compare(old, new)
+        assert ChangeKind.OVERLOAD_ADDED in _kinds(result)
+
     def test_added_constructor_overload_is_not_overload_added(self):
         """Constructors can't be named or address-taken (`&C::C` is invalid), so
         adding a constructor overload is a compatible FUNC_ADDED, not the

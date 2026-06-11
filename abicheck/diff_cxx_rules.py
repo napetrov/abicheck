@@ -27,6 +27,17 @@ from .model import Function, RecordType
 
 _ASCII_DIGITS = "0123456789"
 
+# Fixed Itanium operator-function codes (a leaf, like a source-name). Used so
+# operator overloads group (e.g. `operator[](int)` / `operator[](long)` both
+# `ix`). Deliberately excludes `cv` (conversion-to-T — carries a type and is not
+# an overload of other conversions) and variable forms (`li` literal, vendor).
+_ITANIUM_OPERATORS = frozenset({
+    "nw", "na", "dl", "da", "ng", "ad", "de", "co", "pl", "mi", "ml", "dv",
+    "rm", "an", "or", "eo", "aS", "pL", "mI", "mL", "dV", "rM", "aN", "oR",
+    "eO", "ls", "rs", "lS", "rS", "eq", "ne", "lt", "gt", "le", "ge", "ss",
+    "nt", "aa", "oo", "pp", "mm", "cm", "pm", "pt", "cl", "ix", "qu", "aw",
+})
+
 
 def _read_length_prefixed_name(s: str, i: int) -> tuple[str | None, int]:
     """Read a ``<len><identifier>`` source-name at ``s[i]``.
@@ -135,8 +146,16 @@ def itanium_scope_components(mangled: str) -> list[str] | None:
         elif c == "D" and i + 1 < n and s[i + 1] in "012345":
             components.append("{dtor}")  # destructor (D0/D1/D2/…)
             i += 2
+        elif s[i : i + 2] in _ITANIUM_OPERATORS:
+            # Operator function: a fixed 2-char code (`ix`=[], `cl`=(), `pl`=+ …)
+            # rather than a length-prefixed name. Keep the code so operator
+            # overloads group (e.g. operator[](int)/(long)) while distinct
+            # operators stay distinct. Conversion operators (`cv`) are excluded —
+            # they carry a target type and are not overloads of each other.
+            components.append(f"{{op:{s[i:i + 2]}}}")
+            i += 2
         else:
-            return None  # operator / substitution — not modelled
+            return None  # conversion operator / substitution / vendor — not modelled
         if not nested:
             break  # free function: one component, the rest is the parameter encoding
     return components or None
