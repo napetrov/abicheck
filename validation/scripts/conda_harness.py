@@ -259,8 +259,28 @@ def resolve_pair(pair: dict, api: dict, subdir: str) -> tuple[str, str] | None:
     return ob, nb
 
 
+def has_dwarf(so_path: str) -> bool:
+    """True if the ELF shared object carries DWARF debug info.
+
+    Stripped release binaries (typical on conda-forge) have none, so abicheck
+    can only see the symbol table — it cannot observe type-level ABI changes.
+    """
+    try:
+        out = subprocess.run(
+            ["readelf", "-S", so_path], capture_output=True, text=True
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return ".debug_info" in out
+
+
 def evaluate_pair(
-    pair: dict, api: dict, subdir: str, tmp: Path, idx: int
+    pair: dict,
+    api: dict,
+    subdir: str,
+    tmp: Path,
+    idx: int,
+    evidence: dict | None = None,
 ) -> str | None:
     """Fetch, extract, and run abicheck for one pair; return the verdict.
 
@@ -271,6 +291,10 @@ def evaluate_pair(
     per-pair line on success and a diagnostic on hard errors. The loop index
     ``idx`` gives every attempt a fresh extraction slot so a skipped pair can't
     leak stale ``.so`` files into the next.
+
+    If ``evidence`` is provided, records ``evidence[pair] = {"has_dwarf": bool}``
+    so the caller can tell whether abicheck had type-level evidence (a stripped
+    binary can't reveal type-only ABI changes that a debug-build oracle saw).
     """
     pid = pair["pair"]
     resolved = resolve_pair(pair, api, subdir)
@@ -298,6 +322,8 @@ def evaluate_pair(
     common = sorted(set(old_sos) & set(new_sos))
     if not common:
         return None
+    if evidence is not None:
+        evidence[pid] = {"has_dwarf": any(has_dwarf(new_sos[name]) for name in common)}
     # Take the most-breaking verdict across the shared objects in the pair.
     ov, nv = pair["old_ver"], pair["new_ver"]
     verdicts = [

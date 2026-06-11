@@ -51,7 +51,7 @@ MANIFEST = DATA / "manifest.json"
 
 sys.path.insert(0, str(SCRIPTS_DIR))
 from conda_harness import evaluate_pair, query_conda  # noqa: E402
-from fetch_tracker_oracle import compare_to_results  # noqa: E402
+from fetch_tracker_oracle import _normalize_verdict, compare_to_results  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Expectation sources: each returns a list of *normalised* pair dicts with keys
@@ -78,6 +78,7 @@ def tracker_pairs(lib: str, pkg: str | None, subdir: str) -> list[dict]:
                 "old_ver": p["old_ver"],
                 "new_ver": p["new_ver"],
                 "expected_verdict": p["expected_verdict"],
+                "removed_symbols": p.get("removed_symbols"),
                 "subdir": subdir,
             }
         )
@@ -110,6 +111,22 @@ def manifest_pairs(filter_lib: str | None, subdir: str) -> list[dict]:
     return out
 
 
+def _is_evidence_limited(pair: dict, verdict: str, ev: dict) -> bool:
+    """True when a divergence is an evidence limit, not an abicheck miss.
+
+    The oracle break is type-level only (``removed_symbols == 0``) but the
+    compared binary carries no DWARF, so abicheck can only see the symbol table
+    and cannot observe the change ABICC saw in its debug build. A non-breaking
+    verdict there is expected, not a false negative.
+    """
+    return (
+        pair.get("expected_verdict") == "BREAKING"
+        and pair.get("removed_symbols") == 0
+        and not ev.get("has_dwarf", False)
+        and _normalize_verdict(verdict) != "BREAKING"
+    )
+
+
 def run_validation(pairs: list[dict], max_pairs: int, label: str) -> dict:
     """Fetch/extract/compare every pair and score abicheck against expectations.
 
@@ -119,6 +136,8 @@ def run_validation(pairs: list[dict], max_pairs: int, label: str) -> dict:
     api_cache: dict[str, dict] = {}
     results: dict[str, str] = {}
     attempted: list[dict] = []
+    evidence: dict[str, dict] = {}
+    evidence_limited: list[str] = []
     done = 0
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
@@ -135,11 +154,19 @@ def run_validation(pairs: list[dict], max_pairs: int, label: str) -> dict:
                         f"failed to query conda-forge for {pkg}: {exc}", file=sys.stderr
                     )
                     api_cache[pkg] = {}
-            verdict = evaluate_pair(pair, api_cache[pkg], pair["subdir"], tmp, i)
+            verdict = evaluate_pair(
+                pair, api_cache[pkg], pair["subdir"], tmp, i, evidence
+            )
             if verdict is None:
                 continue
-            results[pair["pair"]] = verdict
             done += 1
+            if _is_evidence_limited(pair, verdict, evidence.get(pair["pair"], {})):
+                # Type-level-only oracle break, no DWARF in the binary: abicheck
+                # can't see it, so a non-breaking verdict is not a false negative.
+                # Leave it out of results -> scored UNCOMPARABLE, not ABICHECK_WEAKER.
+                evidence_limited.append(pair["pair"])
+                continue
+            results[pair["pair"]] = verdict
 
     # Score only the pairs actually attempted: with --max-pairs the loop stops
     # early, and pairs it never reached must not be reported as UNCOMPARABLE.
@@ -152,6 +179,7 @@ def run_validation(pairs: list[dict], max_pairs: int, label: str) -> dict:
     }
     report = compare_to_results(oracle_like, results)
     report["ran_pairs"] = done
+    report["evidence_limited"] = evidence_limited
     PARITY_DIR.mkdir(parents=True, exist_ok=True)
     out = PARITY_DIR / f"{label}.json"
     out.write_text(json.dumps(report, indent=2) + "\n")
@@ -162,7 +190,8 @@ def run_validation(pairs: list[dict], max_pairs: int, label: str) -> dict:
         f"\n[{label}] ran {done} pairs | comparable={report['comparable_pairs']} "
         f"agreement={'n/a' if rate is None else f'{rate:.1%}'} "
         f"match={c['MATCH']} stricter={c['ABICHECK_STRICTER']} "
-        f"weaker={c['ABICHECK_WEAKER']} -> {out}"
+        f"weaker={c['ABICHECK_WEAKER']} "
+        f"evidence_limited={len(evidence_limited)} -> {out}"
     )
     for row in report["rows"]:
         if row["status"] == "ABICHECK_WEAKER":

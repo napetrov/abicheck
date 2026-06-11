@@ -112,6 +112,31 @@ def test_tracker_pairs_missing_oracle_raises(
         mod.tracker_pairs("nope", pkg=None, subdir="linux-64")
 
 
+def test_is_evidence_limited() -> None:
+    # A type-level-only oracle break (removed_symbols == 0) on a no-DWARF binary
+    # that abicheck didn't flag is an evidence limit, not a false negative.
+    mod = _load_module()
+    base = {"expected_verdict": "BREAKING", "removed_symbols": 0}
+
+    assert mod._is_evidence_limited(base, "COMPATIBLE", {"has_dwarf": False})
+    # had DWARF -> abicheck could see types, so a miss WOULD be a real FN
+    assert not mod._is_evidence_limited(base, "COMPATIBLE", {"has_dwarf": True})
+    # symbols were removed -> visible without DWARF, so not evidence-limited
+    assert not mod._is_evidence_limited(
+        {"expected_verdict": "BREAKING", "removed_symbols": 2},
+        "COMPATIBLE",
+        {"has_dwarf": False},
+    )
+    # abicheck already flagged it breaking -> not a miss at all
+    assert not mod._is_evidence_limited(base, "BREAKING", {"has_dwarf": False})
+    # oracle says compatible -> nothing to excuse
+    assert not mod._is_evidence_limited(
+        {"expected_verdict": "COMPATIBLE", "removed_symbols": 0},
+        "COMPATIBLE",
+        {"has_dwarf": False},
+    )
+
+
 def test_run_validation_max_pairs_reports_only_attempted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -121,7 +146,9 @@ def test_run_validation_max_pairs_reports_only_attempted(
     monkeypatch.setattr(mod, "PARITY_DIR", tmp_path)
     monkeypatch.setattr(mod, "query_conda", lambda pkg: {"files": []})
     monkeypatch.setattr(
-        mod, "evaluate_pair", lambda pair, api, subdir, tmp, idx: "COMPATIBLE"
+        mod,
+        "evaluate_pair",
+        lambda pair, api, subdir, tmp, idx, evidence=None: "COMPATIBLE",
     )
 
     pairs = [
