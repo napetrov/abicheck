@@ -299,6 +299,24 @@ def collect_evidence_cmd(
     )
     pack.write()
 
+    # Strict mode (ADR-032 D9): requested evidence must be collected and valid,
+    # otherwise the command exits non-zero. Both a failed row and a skipped one
+    # (e.g. an extractor gated out by the action ceiling, so its requested
+    # evidence is absent) count — strict requires the evidence to be present.
+    # Checked *before* the success output so a strict run never prints "Evidence
+    # pack written" and then exits non-zero (contradictory CI logs).
+    if collection_mode == "strict":
+        incomplete = [e for e in extractors if e.status in ("failed", "skipped")]
+        if incomplete:
+            names = ", ".join(sorted(f"{e.name}:{e.status}" for e in incomplete))
+            for diag in merged.diagnostics:
+                click.echo(f"  note: {diag}", err=True)
+            raise click.ClickException(
+                f"strict collection mode: {len(incomplete)} extractor(s) did not "
+                f"produce valid evidence ({names}). Fix the inputs/tools, grant the "
+                "needed actions, or use --collection-mode permissive."
+            )
+
     click.echo(f"Evidence pack written to {output}")
     click.echo(f"  content hash: {pack.content_hash()}")
     if has_build:
@@ -314,20 +332,6 @@ def collect_evidence_cmd(
         click.echo(f"  L5 source graph: {graph_detail or 'empty (no build evidence)'}")
     for diag in merged.diagnostics:
         click.echo(f"  note: {diag}", err=True)
-
-    # Strict mode (ADR-032 D9): requested evidence must be collected and valid,
-    # otherwise the command exits non-zero. Both a failed row and a skipped one
-    # (e.g. an extractor gated out by the action ceiling, so its requested
-    # evidence is absent) count — strict requires the evidence to be present.
-    if collection_mode == "strict":
-        incomplete = [e for e in extractors if e.status in ("failed", "skipped")]
-        if incomplete:
-            names = ", ".join(sorted(f"{e.name}:{e.status}" for e in incomplete))
-            raise click.ClickException(
-                f"strict collection mode: {len(incomplete)} extractor(s) did not "
-                f"produce valid evidence ({names}). Fix the inputs/tools, grant the "
-                "needed actions, or use --collection-mode permissive."
-            )
 
 
 def _run_adapters(

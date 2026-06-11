@@ -302,6 +302,13 @@ def test_manifest_command_not_string_list(tmp_path):
         load_extractor_manifest(_dump(tmp_path, data))
 
 
+def test_manifest_empty_command_rejected(tmp_path):
+    # An empty argv list would crash at subprocess invocation; reject at load.
+    data = {"name": "x", "commands": {"collect": []}}
+    with pytest.raises(ManifestError, match="non-empty list of string"):
+        load_extractor_manifest(_dump(tmp_path, data))
+
+
 def test_manifest_unknown_action_rejected(tmp_path):
     data = {"name": "x", "allowed_actions": ["inspect", "hack"], "commands": {"collect": ["x"]}}
     with pytest.raises(ManifestError, match="unknown collection action"):
@@ -554,6 +561,20 @@ def test_external_extractor_with_separate_normalize_command(tmp_path):
     assert (pack_root / "normalized" / "two-phase" / "build_evidence.json").is_file()
 
 
+def test_ledger_command_redacts_split_secret(tmp_path):
+    # A secret passed as a split ``-D KEY=secret`` form must be redacted in the
+    # ledger's command field (argv-aware redaction, not per-token).
+    data = _tool_manifest_dict(name="sekret")
+    data["commands"]["collect"] = data["commands"]["collect"] + ["-D", "API_KEY=supersecret"]
+    manifest = load_extractor_manifest(_dump(tmp_path, data))
+    pack_root = tmp_path / "pack"
+    pack_root.mkdir()
+    _norm, record = run_external_extractor(manifest, CollectionContext(), pack_root)
+    assert record.status == "ok", record.diagnostics
+    assert "supersecret" not in record.command
+    assert "API_KEY" in record.command
+
+
 def test_external_extractor_blocked_by_action_ceiling(tmp_path):
     manifest = load_extractor_manifest(_dump(tmp_path, _tool_manifest_dict(action="query_build_system")))
     pack_root = tmp_path / "pack"
@@ -733,6 +754,8 @@ def test_cli_strict_mode_fails_on_skipped_extractor(tmp_path):
     )
     assert result.exit_code != 0
     assert "strict collection mode" in result.output
+    # Strict failure must not first print a contradictory success line.
+    assert "Evidence pack written" not in result.output
 
 
 def test_cli_strict_mode_fails_on_broken_extractor(tmp_path):

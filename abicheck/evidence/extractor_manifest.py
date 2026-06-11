@@ -170,10 +170,14 @@ def load_extractor_manifest(path: Path | str) -> ExtractorManifest:
                 f"extractor manifest {p}: unknown command phase {phase!r}; "
                 f"expected one of: {', '.join(_PHASES)}"
             )
-        if not isinstance(template, list) or not all(isinstance(t, str) for t in template):
+        if (
+            not isinstance(template, list)
+            or not template
+            or not all(isinstance(t, str) for t in template)
+        ):
             raise ManifestError(
-                f"extractor manifest {p}: command '{phase}' must be a list of string tokens "
-                "(an argv list — never a single shell string)"
+                f"extractor manifest {p}: command '{phase}' must be a non-empty list of string "
+                "tokens (an argv list — never a single shell string, never empty)"
             )
         # Reject unknown placeholders up front so a render-time KeyError can't surprise us.
         for token in template:
@@ -657,7 +661,10 @@ def _redacted_command(
         rendered = render_command(template, _with_optional_only(template, sub))
     except ManifestError:
         rendered = template
-    return " ".join(redaction.arg(tok) for tok in rendered)
+    # argv-aware redaction: RedactionPolicy.argv handles secrets split across two
+    # tokens (e.g. ``-D KEY=secret``) that a per-token pass would leak into the
+    # ledger's ``command`` field.
+    return " ".join(redaction.argv(list(rendered)))
 
 
 def _with_optional_only(template: list[str], sub: dict[str, str]) -> dict[str, str]:
