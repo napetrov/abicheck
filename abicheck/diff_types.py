@@ -191,10 +191,12 @@ def _overload_group_key(f: Function) -> str:
     scope, so grouping on ``name`` alone would both collapse unrelated
     declarations like ``A::size`` and ``B::size`` into one group *and* hide a
     genuine ``A::size`` overload behind an unrelated ``B::size``. When the symbol
-    is not a recognised C++ mangled name (C symbols, which cannot overload), fall
-    back to the display name.
+    is not a recognised C++ mangled name, fall back to the *full mangled name*
+    rather than the bare leaf — distinct symbols then land in distinct groups, so
+    an unparseable form can never manufacture a false overload (at worst a
+    genuine overload goes unreported).
     """
-    return itanium_qualified_name(f.mangled) or f.name
+    return itanium_qualified_name(f.mangled) or f.mangled
 
 
 @registry.detector("overload_additions")

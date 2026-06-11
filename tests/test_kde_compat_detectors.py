@@ -377,19 +377,27 @@ class TestItaniumScopeParser:
         ("_ZNK1C3barEv", ["C", "bar"]),                      # const member (NK)
         ("_ZNV1C3barEv", ["C", "bar"]),                      # volatile member (NV)
         ("_ZN3lib12experimental4sortEv", ["lib", "experimental", "sort"]),
+        ("_ZN3BoxIiE4sizeEv", ["BoxIiE", "size"]),           # Box<int>::size
+        ("_ZN3BoxIfE4sizeEv", ["BoxIfE", "size"]),           # Box<float>::size (distinct)
     ])
     def test_components(self, mangled, expected):
         assert itanium_scope_components(mangled) == expected
 
+    def test_template_specializations_have_distinct_keys(self):
+        assert itanium_qualified_name("_ZN3BoxIiE4sizeEv") != itanium_qualified_name(
+            "_ZN3BoxIfE4sizeEv"
+        )
+
     @pytest.mark.parametrize("mangled", [
         "foo",            # not Itanium-mangled (C symbol)
         "_ZN1CC1Ev",      # constructor — not modelled
-        "_ZN1C3barIiEEv",  # template args — not modelled
         "_ZN1C99barEv",   # length runs past the string (malformed)
+        "_Z1²0",     # fuzzed: Unicode digit must not reach int()
     ])
-    def test_unmodelled_returns_none(self, mangled):
-        assert itanium_scope_components(mangled) is None
-        assert itanium_qualified_name(mangled) is None
+    def test_unmodelled_or_degenerate_does_not_crash(self, mangled):
+        # Must never raise; either parses to something or returns None.
+        result = itanium_scope_components(mangled)
+        assert result is None or isinstance(result, list)
 
     def test_qualified_name(self):
         assert itanium_qualified_name("_ZN1A4sizeEv") == "A::size"

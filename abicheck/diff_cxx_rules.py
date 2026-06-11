@@ -25,6 +25,60 @@ from .checker_policy import ChangeKind
 from .checker_types import Change
 from .model import Function, RecordType
 
+_ASCII_DIGITS = "0123456789"
+
+
+def _read_length_prefixed_name(s: str, i: int) -> tuple[str | None, int]:
+    """Read a ``<len><identifier>`` source-name at ``s[i]``.
+
+    Returns ``(name, next_index)`` or ``(None, i)`` if malformed. Only ASCII
+    digits count as the length prefix — Python's ``str.isdigit()`` also accepts
+    Unicode digits (e.g. ``²``) that ``int()`` then rejects, so a fuzzed symbol
+    must not be allowed to reach ``int()`` with a non-ASCII digit.
+    """
+    j = i
+    while j < len(s) and s[j] in _ASCII_DIGITS:
+        j += 1
+    if j == i:
+        return None, i
+    n = int(s[i:j])
+    name = s[j : j + n]
+    if len(name) != n:
+        return None, i  # truncated / malformed
+    return name, j + n
+
+
+def _skip_template_args(s: str, i: int) -> int | None:
+    """``s[i] == 'I'``: return the index past the matching ``E``, or ``None``.
+
+    Tracks nested template-argument (``I``) and nested-name (``N``) openers so
+    the inner ``E`` of e.g. ``Box<ns::T>`` does not close the outer list early,
+    and skips length-prefixed names so their literal ``I``/``N``/``E`` letters
+    are not miscounted. Pathological encodings (e.g. substitutions whose
+    base-36 index contains ``E``) may mis-balance; the caller treats ``None`` as
+    "unparseable" and falls back, so a wrong guess never produces a finding.
+    """
+    depth = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c in _ASCII_DIGITS:
+            name, i = _read_length_prefixed_name(s, i)
+            if name is None:
+                return None
+            continue
+        if c in ("I", "N"):
+            depth += 1
+            i += 1
+        elif c == "E":
+            depth -= 1
+            i += 1
+            if depth == 0:
+                return i
+        else:
+            i += 1  # builtin type, qualifier, or substitution character
+    return None
+
 
 def itanium_scope_components(mangled: str) -> list[str] | None:
     """Scope components of an Itanium-mangled C++ symbol, parsed structurally.
@@ -32,16 +86,18 @@ def itanium_scope_components(mangled: str) -> list[str] | None:
     Decoding the nested-name encoding directly avoids any dependency on an
     external demangler (``c++filt`` / ``cxxfilt``), which is not installed on
     every platform — so this works identically on Linux, macOS, and Windows and
-    never shells out. Handles the common length-prefixed forms::
+    never shells out. Handles the common length-prefixed forms, including
+    class-template specializations (the raw template-argument encoding is kept so
+    distinct specializations stay distinct)::
 
         _Z4drawi                       -> ["draw"]                  (free function)
         _ZN1C3barEv                    -> ["C", "bar"]              (member)
         _ZNK1C3barEv                   -> ["C", "bar"]              (const member)
         _ZN3lib12experimental4sortEv   -> ["lib", "experimental", "sort"]
+        _ZN3BoxIiE4sizeEv              -> ["BoxIiE", "size"]        (Box<int>::size)
 
-    Returns ``None`` for forms it does not model (templates, substitutions,
-    constructors/operators, non-Itanium or unmangled names) so callers fall back
-    to the display name.
+    Returns ``None`` for forms it does not model (constructors/operators,
+    substitutions, non-Itanium or unmangled names) so callers fall back.
     """
     if not mangled.startswith("_Z"):
         return None
@@ -53,20 +109,26 @@ def itanium_scope_components(mangled: str) -> list[str] | None:
         while s[:1] in ("r", "V", "K"):
             s = s[1:]
     components: list[str] = []
-    while s:
-        if nested and s[0] == "E":
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if nested and c == "E":
             break
-        if not s[0].isdigit():
-            return None  # operator / ctor / template / substitution — not modelled
-        j = 0
-        while j < len(s) and s[j].isdigit():
-            j += 1
-        n = int(s[:j])
-        name = s[j : j + n]
-        if len(name) != n:
-            return None  # truncated / malformed
+        if c not in _ASCII_DIGITS:
+            return None  # operator / ctor / substitution — not modelled
+        name, i = _read_length_prefixed_name(s, i)
+        if name is None:
+            return None
+        # A directly-attached template-argument list belongs to this component;
+        # keep it raw so Box<int> and Box<float> remain distinct.
+        if i < n and s[i] == "I":
+            end = _skip_template_args(s, i)
+            if end is None:
+                return None
+            name = name + s[i:end]
+            i = end
         components.append(name)
-        s = s[j + n :]
         if not nested:
             break  # free function: one component, the rest is the parameter encoding
     return components or None
