@@ -1036,6 +1036,9 @@ def test_cli_failed_extractor_does_not_pollute_pack_artifacts(tmp_path):
     # The invalid normalized output is purged and contributes no artifact digest.
     assert not (out / "normalized" / "polluter").exists()
     assert pack.manifest.artifacts == []
+    # The failed ledger row must not advertise the now-purged output path, or a
+    # consumer following manifest.extractors[].artifacts reads a missing file (Codex P2).
+    assert rec.artifacts == []
 
 
 def test_cli_unsupported_output_kind_is_failed(tmp_path):
@@ -1060,6 +1063,8 @@ def test_cli_unsupported_output_kind_is_failed(tmp_path):
     )
     assert rec["status"] == "failed"
     assert "source_abi" in rec["detail"]
+    # Its purged output must not linger in the ledger row's artifact list (Codex P2).
+    assert rec.get("artifacts", []) == []
 
 
 def test_ledger_command_covers_collect_and_normalize(tmp_path):

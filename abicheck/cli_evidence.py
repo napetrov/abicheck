@@ -589,6 +589,9 @@ def _run_external_extractors(
         if unsupported:
             record.status = "failed"
             record.detail = record.detail or f"unsupported output kind(s): {', '.join(unsupported)}"
+            # The outputs are about to be purged from the pack, so the ledger row
+            # must not keep advertising their (now-removed) paths (Codex P2).
+            record.artifacts = []
             merged.diagnostics.append(
                 f"{manifest.name}: output kind(s) {', '.join(unsupported)} are not yet "
                 "supported by collect-evidence (only build_evidence is folded into the pack)"
@@ -620,6 +623,10 @@ def _run_external_extractors(
                 fold_ok = False
                 record.status = "failed"
                 record.detail = record.detail or f"invalid build_evidence output: {exc}"
+                # _purge_external_outputs (below) removes these files, so the
+                # failed ledger row must not keep advertising stale paths to a
+                # missing/replaced artifact (Codex P2).
+                record.artifacts = []
                 merged.diagnostics.append(
                     f"{manifest.name}: could not fold {output.path}: {exc}"
                 )
