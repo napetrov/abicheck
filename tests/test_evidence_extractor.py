@@ -955,6 +955,52 @@ def test_cli_source_root_placeholder_supplied(tmp_path):
     assert rec["status"] == "ok"
 
 
+def test_cli_unsupported_output_kind_is_failed(tmp_path):
+    # A manifest declaring a source_abi/source_graph_summary output (which the
+    # CLI cannot fold yet) must be recorded failed, not silently dropped (Codex P2).
+    script = (
+        "import json,sys,os;p=sys.argv[1];os.makedirs(os.path.dirname(p),exist_ok=True);"
+        "json.dump({'schema_version':1},open(p,'w'))"
+    )
+    data = {
+        "name": "cli-l4",
+        "commands": {"collect": [sys.executable, "-c", script, "{normalized_dir}/sa.json"]},
+        "outputs": {"normalized": [{"kind": "source_abi", "path": "normalized/cli-l4/sa.json"}]},
+    }
+    manifest = _dump(tmp_path, data, name="l4.yaml")
+    out = tmp_path / "pack"
+    result = _cli(["collect-evidence", "--extractor-manifest", str(manifest), "-o", str(out)])
+    assert result.exit_code == 0, result.output  # permissive: recorded, not fatal
+    rec = next(
+        e for e in json.loads((out / "manifest.json").read_text())["extractors"]
+        if e["name"] == "cli-l4"
+    )
+    assert rec["status"] == "failed"
+    assert "source_abi" in rec["detail"]
+
+
+def test_ledger_command_covers_collect_and_normalize(tmp_path):
+    # The ledger command reflects every executed phase, joined with ' && '.
+    raw_script = (
+        "import os,sys;p=sys.argv[1];os.makedirs(os.path.dirname(p),exist_ok=True);"
+        "open(p,'w').write('raw')"
+    )
+    data = {
+        "name": "ledger-2",
+        "commands": {
+            "collect": [sys.executable, "-c", raw_script, "{raw_dir}/r.bin"],
+            "normalize": [sys.executable, "-c", _write_be_script(), "{normalized_dir}/build_evidence.json"],
+        },
+        "outputs": {"normalized": [{"kind": "build_evidence", "path": "normalized/ledger-2/build_evidence.json"}]},
+    }
+    manifest = load_extractor_manifest(_dump(tmp_path, data))
+    pack_root = tmp_path / "pack"
+    pack_root.mkdir()
+    _norm, record = run_external_extractor(manifest, CollectionContext(), pack_root)
+    assert record.status == "ok", record.diagnostics
+    assert " && " in record.command  # both collect and normalize represented
+
+
 def test_cli_strict_mode_fails_on_skipped_extractor(tmp_path):
     # A requested manifest gated out by the action ceiling is 'skipped'; under
     # strict mode the requested evidence is absent, so the run must fail (Codex P2).

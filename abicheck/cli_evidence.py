@@ -518,6 +518,22 @@ def _run_external_extractors(
             )
             continue
 
+        # Reject output kinds collect-evidence cannot fold yet — only
+        # build_evidence is wired into the pack here. A manifest that advertises
+        # a source_abi / source_graph_summary output would otherwise be recorded
+        # ok while its evidence is silently dropped (and pack.write() removes the
+        # canonical source/graph files), so the requested evidence is absent even
+        # though the extractor "succeeded" (Codex P2). Fail loudly instead.
+        unsupported = sorted({o.kind for o in manifest.outputs if o.kind != "build_evidence"})
+        if unsupported:
+            record.status = "failed"
+            record.detail = record.detail or f"unsupported output kind(s): {', '.join(unsupported)}"
+            merged.diagnostics.append(
+                f"{manifest.name}: output kind(s) {', '.join(unsupported)} are not yet "
+                "supported by collect-evidence (only build_evidence is folded into the pack)"
+            )
+            continue
+
         # Fold any normalized build_evidence outputs into the merged L3 evidence.
         # `validate` only proved each file is JSON; it may still be structurally
         # invalid BuildEvidence (e.g. a compile unit missing its id), which

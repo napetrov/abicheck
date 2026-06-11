@@ -79,7 +79,12 @@ DEFAULT_COMMAND_TIMEOUT = 600
 #: operator's full environment — which may hold tokens — is never forwarded.
 _ENV_PASSTHROUGH = ("PATH", "LANG", "LC_ALL", "TMPDIR", "SYSTEMROOT")
 
-#: The lifecycle phases a manifest may define commands for, in run order.
+#: The lifecycle phases a manifest may define commands for, in run order. Only
+#: ``collect`` and ``normalize`` are *executed* by :class:`ExternalCliExtractor`
+#: today; ``discover`` and ``validate`` are accepted (so an ADR-032 D3 manifest
+#: loads) but the adapter uses static capability discovery and built-in JSON
+#: output validation rather than running those commands — they are reserved for
+#: a future engine that shells them out.
 _PHASES = ("discover", "collect", "normalize", "validate")
 
 #: Placeholders a command template may reference. Anything else is rejected so a
@@ -609,6 +614,29 @@ class ExternalCliExtractor:
             h.update(("\0" + phase + "\0" + "\0".join(rendered)).encode("utf-8"))
         return "sha256:" + h.hexdigest()
 
+    def ledger_command(self, context: CollectionContext, pack_root: Path) -> str:
+        """Redacted argv of the *executed* phases for the ledger ``command`` (D10).
+
+        Joins the rendered ``collect`` and ``normalize`` commands (the phases this
+        adapter actually runs) with `` && `` so a two-phase extractor is fully
+        represented, not just its first phase. Redaction is argv-aware
+        (:meth:`RedactionPolicy.argv`) so a secret split across two tokens
+        (``-D KEY=secret``) is stripped. A render error falls back to the raw
+        template so the ledger still records intent.
+        """
+        sub = self._substitutions(context, pack_root)
+        parts: list[str] = []
+        for phase in ("collect", "normalize"):
+            template = self.manifest.commands.get(phase)
+            if not template:
+                continue
+            try:
+                rendered = render_command(template, _with_optional_only(template, sub))
+            except ManifestError:
+                rendered = template
+            parts.append(" ".join(self.redaction.argv(list(rendered))))
+        return " && ".join(parts)
+
 
 def run_external_extractor(
     manifest: ExtractorManifest,
@@ -642,7 +670,7 @@ def run_external_extractor(
             name=manifest.name, version=manifest.version, status="skipped",
             capabilities=capabilities, inputs=inputs,
             command_hash=extractor.command_hash(context, pack_root),
-            command=_redacted_command(manifest, context, pack_root, redaction),
+            command=extractor.ledger_command(context, pack_root),
             started_at=started.isoformat(), detail=discovery.reason,
         )
         return _finish(
@@ -658,7 +686,7 @@ def run_external_extractor(
         version=version,
         capabilities=capabilities,
         command_hash=extractor.command_hash(context, pack_root, version=version),
-        command=_redacted_command(manifest, context, pack_root, redaction),
+        command=extractor.ledger_command(context, pack_root),
         started_at=started.isoformat(),
         inputs=inputs,
     )
@@ -721,26 +749,6 @@ def _finish(
     if status != "ok" and diagnostics:
         record.detail = diagnostics[0][:200]
     return normalized, record
-
-
-def _redacted_command(
-    manifest: ExtractorManifest,
-    context: CollectionContext,
-    pack_root: Path,
-    redaction: RedactionPolicy,
-) -> str:
-    """A single redacted command string for the ledger (collect phase, D10)."""
-    template = manifest.commands.get("collect") or manifest.commands.get("normalize") or []
-    extractor = ExternalCliExtractor(manifest, redaction=redaction)
-    sub = extractor._substitutions(context, pack_root)
-    try:
-        rendered = render_command(template, _with_optional_only(template, sub))
-    except ManifestError:
-        rendered = template
-    # argv-aware redaction: RedactionPolicy.argv handles secrets split across two
-    # tokens (e.g. ``-D KEY=secret``) that a per-token pass would leak into the
-    # ledger's ``command`` field.
-    return " ".join(redaction.argv(list(rendered)))
 
 
 def _with_optional_only(template: list[str], sub: dict[str, str]) -> dict[str, str]:
