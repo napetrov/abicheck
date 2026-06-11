@@ -182,7 +182,7 @@ when you need more confidence:
 | **L1** | + debug info (`-g` build / sidecar) | **Medium** | Struct/class layout, field offsets, enum *values*, vtable slots, calling convention |
 | **L2** | + headers (`-H include/`) | **High** | Public API surface: signatures, overloads, access, `noexcept`, templates, public/internal scoping |
 | **L3** | + build data (`-p build/`) | **Higher** | The flags the library was *actually* built with: `-std`, `_GLIBCXX_USE_CXX11_ABI`, `-fvisibility`, sysroot, export maps |
-| **L4** | + sources (`--evidence pack/`) | **Best** | Facts that never reach the binary: macro/`constexpr` values, default-argument *values*, uninstantiated templates |
+| **L4** | + sources (evidence pack via `compare --old-evidence/--new-evidence`) | **Best** | Facts that never reach the binary: macro/`constexpr` values, default-argument *values*, uninstantiated templates |
 
 The layers are **additive, not a fallback chain**: artifact-backed evidence
 (L0/L1/L2) is authoritative for the shipped-ABI verdict, while build/source
