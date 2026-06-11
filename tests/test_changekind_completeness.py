@@ -269,6 +269,9 @@ ASSERTED_CHANGE_KINDS: set[ChangeKind] = {
     ChangeKind.INTERNAL_TEMPLATE_LEAKS_VIA_PUBLIC_API,
     ChangeKind.CPO_KIND_CHANGED,
     ChangeKind.OVERLOAD_SET_REROUTED,
+    # KDE C++ binary-compatibility gaps — exercised in tests/test_kde_compat_detectors.py
+    ChangeKind.OVERLOAD_ADDED,
+    ChangeKind.VIRTUAL_METHOD_ADDED,
     ChangeKind.MANDATORY_TEMPLATE_PARAM_ADDED,
     ChangeKind.UNSPECIFIED_RETURN_NOW_NAMED,
     # Build-config / probe-harness patterns — exercised in tests/test_diff_build_config.py

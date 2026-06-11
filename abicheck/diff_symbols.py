@@ -30,6 +30,7 @@ from .binary_fingerprint import (
 from .checker_policy import ChangeKind
 from .checker_types import Change
 from .detector_registry import registry
+from .diff_cxx_rules import virtual_method_addition
 from .diff_helpers import bool_transition, diff_by_key
 from .elf_metadata import SymbolType
 from .elf_symbol_filter import (
@@ -727,6 +728,10 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     old_map = _public_functions(old)
     new_map = _public_functions(new)
 
+    # Owner-class lookups for the virtual-method-addition check below.
+    old_types = {t.name: t for t in old.types}
+    new_types = {t.name: t for t in new.types}
+
     # Build a lookup of ALL functions in new snapshot (including hidden).
     new_all = new.function_map
 
@@ -749,7 +754,8 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
 
     for mangled, f_new in new_map.items():
         if mangled not in old_map and f_new.name not in matched_by_name:
-            changes.append(Change(
+            virtual_break = virtual_method_addition(f_new, old_types, new_types)
+            changes.append(virtual_break if virtual_break is not None else Change(
                 kind=ChangeKind.FUNC_ADDED,
                 symbol=mangled,
                 description=f"New public function: {f_new.name}",

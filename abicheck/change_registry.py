@@ -138,6 +138,15 @@ REGISTRY = ChangeKindRegistry([
        impact="Vtable layout changes; old binaries call wrong virtual function slot, leading to crashes or wrong behavior."),
     _E("func_virtual_removed", _B,
        impact="Vtable entry removed; old binaries that dispatch through the vtable call the wrong slot."),
+    _E("virtual_method_added", _B,
+       impact="A new virtual method was added to a class that already exists across "
+              "versions. If the class had no virtuals it gains a hidden vtable pointer "
+              "(its size and field offsets shift); if it was already polymorphic the new "
+              "slot grows/relayouts the vtable. Either way derived classes compiled "
+              "against the old layout dispatch through the wrong slots and old binaries "
+              "embedding the type read the wrong offsets. This is the KDE "
+              "\"do not add virtuals to a non-leaf class\" rule, caught even when the "
+              "snapshot carries no diff-able vtable array (DWARF/symbol-only mode)."),
     _E("var_removed", _B,
        impact="Old binaries reference a global variable that no longer exists; link or load failure."),
     _E("var_added", _C, is_addition=True,
@@ -778,6 +787,17 @@ REGISTRY = ChangeKindRegistry([
               "changing the called function. Compiles, links, runs — but "
               "runs different code."),
 
+    _E("overload_added", _R,
+       impact="A new overload was added under a public name that previously had "
+              "exactly one declaration. Old binaries are unaffected (binary "
+              "compatible), but the change is not source-compatible: taking the "
+              "function's address (`&Foo::bar`) becomes ambiguous and fails to "
+              "compile, and existing call sites that relied on an implicit "
+              "conversion may now resolve to the new overload, silently changing "
+              "which function runs. KDE's C++ binary-compatibility policy lists "
+              "adding an overload to a non-overloaded function as a change to "
+              "avoid. Verdict is policy-adjustable — raise to API_BREAK under a "
+              "strict source-compatibility profile."),
     _E("mandatory_template_param_added", _A,
        impact="A function or class template parameter that was defaulted "
               "(or deduced) became mandatory. Consumer source that wrote "

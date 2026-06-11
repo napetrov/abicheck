@@ -179,6 +179,55 @@ def _diff_types(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     return changes
 
 
+@registry.detector("overload_additions")
+def _diff_overload_additions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
+    """Detect an overload added to a previously *unique* public name.
+
+    KDE's C++ binary-compatibility policy treats adding an overload to a
+    non-overloaded function as a change to avoid: it is binary-compatible but
+    not source-compatible (`&Foo::bar` becomes ambiguous, and overload
+    resolution at existing call sites may shift). We only fire when a name had
+    exactly one public declaration in the old snapshot, still has that same
+    declaration (same mangled name) in the new snapshot, and gains at least one
+    additional overload — so a plain signature change (remove+add of the same
+    name) does not masquerade as an overload addition.
+    """
+    old_map = _public_functions(old)
+    new_map = _public_functions(new)
+
+    old_by_name: dict[str, list[Function]] = {}
+    for f in old_map.values():
+        old_by_name.setdefault(f.name, []).append(f)
+    new_by_name: dict[str, list[Function]] = {}
+    for f in new_map.values():
+        new_by_name.setdefault(f.name, []).append(f)
+
+    changes: list[Change] = []
+    for name, olds in old_by_name.items():
+        if len(olds) != 1:
+            continue  # already overloaded → KDE allows adding further overloads
+        original = olds[0]
+        news = new_by_name.get(name, [])
+        if len(news) < 2:
+            continue  # no new overload under this name
+        new_mangleds = {f.mangled for f in news}
+        if original.mangled not in new_mangleds:
+            continue  # original declaration gone → a replacement/rename, not an addition
+        if not (new_mangleds - {original.mangled}):
+            continue  # nothing genuinely new
+        changes.append(Change(
+            kind=ChangeKind.OVERLOAD_ADDED,
+            symbol=original.mangled,
+            description=(
+                f"Overload added to previously non-overloaded function: {name} "
+                f"— `&{name}` becomes ambiguous and overload resolution may change"
+            ),
+            old_value="1 overload",
+            new_value=f"{len(news)} overloads",
+        ))
+    return changes
+
+
 def _diff_type_pair(name: str, t_old: RecordType, t_new: RecordType) -> list[Change]:
     changes: list[Change] = []
 

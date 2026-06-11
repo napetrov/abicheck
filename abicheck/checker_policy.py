@@ -61,6 +61,14 @@ class ChangeKind(str, Enum):
         "func_virtual_added"  # became virtual → vtable change → BREAKING
     )
     FUNC_VIRTUAL_REMOVED = "func_virtual_removed"  # → BREAKING
+    VIRTUAL_METHOD_ADDED = (
+        # a brand-new virtual *method* added to a class that already exists across
+        # versions → grows/relayouts the vtable, breaking derived classes (and the
+        # vptr if the class had none). Catches the KDE "add a virtual to a non-leaf
+        # class" rule when the vtable array itself is not diff-able (DWARF/symbol-only
+        # snapshots), where it would otherwise be mistaken for a compatible func_added.
+        "virtual_method_added"  # → BREAKING
+    )
 
     VAR_REMOVED = "var_removed"
     VAR_ADDED = "var_added"
@@ -451,6 +459,12 @@ class ChangeKind(str, Enum):
     # See examples/case88_cpo_kind_changed/README.md
     CPO_KIND_CHANGED = "cpo_kind_changed"
     OVERLOAD_SET_REROUTED = "overload_set_rerouted"
+    # a new overload added to a previously *unique* (non-overloaded) public name.
+    # Binary-compatible (old binaries unaffected) but source-risky: taking the
+    # function's address (`&f`) becomes ambiguous and overload resolution at
+    # existing call sites may silently change. KDE "Binary Compatibility Issues
+    # With C++" lists this under changes to avoid. → COMPATIBLE_WITH_RISK.
+    OVERLOAD_ADDED = "overload_added"
     MANDATORY_TEMPLATE_PARAM_ADDED = "mandatory_template_param_added"
     UNSPECIFIED_RETURN_NOW_NAMED = "unspecified_return_now_named"
 
