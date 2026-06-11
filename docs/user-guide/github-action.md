@@ -39,6 +39,23 @@ automatically, then runs ABI comparison and reports results.
 | `old-include` | no | Include dirs for old side only |
 | `new-include` | no | Include dirs for new side only |
 
+!!! note "Evidence layers in the Action"
+    The Action drives the same [five-layer evidence
+    model](../concepts/evidence-and-detectability.md) as the CLI. The inputs
+    above cover **L0** (`old-library`/`new-library`), **L1** (debug info —
+    embedded, or `debug-info1`/`debug-info2` packages in `compare-release`
+    mode), and **L2** (`header`/`include`). To add **L3** build context
+    (`-p build/`) or an **L4** [source/build evidence
+    pack](../concepts/evidence-pack.md), capture them with the CLI first and
+    pass the resulting snapshot as `old-library`/`new-library`:
+
+    ```bash
+    abicheck dump build/libfoo.so -H include/ -p build/ \
+        --evidence libfoo.evidence/ -o abi-baseline.json
+    ```
+
+    The snapshot carries the L3/L4 evidence into the Action run.
+
 ### Application compatibility inputs (appcompat mode)
 
 | Input | Required | Description |

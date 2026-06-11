@@ -181,7 +181,7 @@ The [`examples/`](examples/README.md) directory contains **127 real-world ABI/AP
 
 ## Validation snapshot
 
-The main validation target is the full **125-case catalog**. To scan it for the current checkout:
+The main validation target is the full **126-case catalog**. To scan it for the current checkout:
 
 ```bash
 python scripts/benchmark_comparison.py --suite all
