@@ -25,7 +25,10 @@ A release engineer can hand a compatibility checker up to **five different
 sources of information** about a library, ordered from the least to the most.
 Each one *adds* facts the previous cannot see; none of them is complete on its
 own. abicheck names them with the layer codes `L0`–`L4` used throughout the
-docs (and emitted by `abicheck dump --show-data-sources`):
+docs. You can see which **artifact** layers (`L0`–`L2`) a given input exposes
+with `abicheck dump --show-data-sources`; the build/source layers (`L3`/`L4`)
+are not reported there — they surface in the pack-aware `compare`
+`evidence_coverage` table once you supply an EvidencePack:
 
 | # | Source you provide | Layer | abicheck input | What it newly reveals |
 |---|--------------------|:-----:|----------------|------------------------|
