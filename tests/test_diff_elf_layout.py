@@ -196,6 +196,34 @@ class TestRttiInheritance:
         new = _snap(_obj("_ZTISt13runtime_error", 24))
         assert _diff_elf_layout(old, new) == []
 
+    @pytest.mark.parametrize(
+        "sym",
+        [
+            "_ZTIi",     # int
+            "_ZTIc",     # char
+            "_ZTId",     # double
+            "_ZTIPc",    # char*
+            "_ZTIPKc",   # const char*
+            "_ZTIKi",    # const int
+            "_ZTIRi",    # int&
+            "_ZTIDn",    # std::nullptr_t
+        ],
+    )
+    def test_fundamental_and_compound_rtti_ignored(self, sym: str) -> None:
+        # _ZTIi/_ZTIPc/etc. are NOT class types — decoding their size as
+        # inheritance ("int gained a base") would be a false positive.
+        old = _snap(_obj(sym, 16))
+        new = _snap(_obj(sym, 24))
+        assert _diff_elf_layout(old, new) == []
+
+    def test_nested_class_rtti_still_decoded(self) -> None:
+        # Sanity: a genuine nested class typeinfo (N…E) is still reported.
+        old = _snap(_obj("_ZTIN4sycl6deviceE", 16))
+        new = _snap(_obj("_ZTIN4sycl6deviceE", 24))
+        assert {c.kind for c in _diff_elf_layout(old, new)} == {
+            ChangeKind.RTTI_INHERITANCE_CHANGED
+        }
+
     def test_runtime_rtti_kept_when_comparing_runtime_itself(self) -> None:
         # When the library under test IS the C++ runtime (libstdc++/libc++), its
         # own std:: vtables/typeinfo are the surface under test, not noise — so

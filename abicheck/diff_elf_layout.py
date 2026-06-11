@@ -87,6 +87,24 @@ def _is_runtime(name: str) -> bool:
     return name.startswith(_RUNTIME_RTTI_PREFIXES)
 
 
+def _is_class_type_rtti(type_key: str) -> bool:
+    """True iff the Itanium type encoding names a class / struct / union / enum.
+
+    A class-type RTTI encoding starts with a digit (an unqualified source name,
+    e.g. ``6Widget``), ``N`` (a nested-name ``N…E``), or ``S`` (the ``std::``
+    substitution / standard abbreviations, e.g. ``St9type_info`` / ``Ss``).
+
+    Fundamental types (``_ZTIi`` int, ``_ZTIc`` char, …) and compound types
+    (``_ZTIPc`` char*, ``_ZTIKc`` const char, ``_ZTIRi`` int&, ``_ZTIA…``
+    arrays, ``_ZTIF…`` functions, ``_ZTIM…`` pointer-to-member, ``_ZTID…``)
+    begin with a builtin letter or a compound operator and carry **no** base
+    classes — decoding their ``_ZTI`` size as inheritance shape would be
+    nonsense (e.g. reporting that ``int`` gained a base class). Such symbols can
+    leak from a statically-linked / re-exported runtime, so guard against them.
+    """
+    return bool(type_key) and (type_key[0].isdigit() or type_key[0] in ("N", "S"))
+
+
 def _class_name(mangled: str) -> str:
     """Human-readable class name for a vtable/typeinfo symbol, best-effort."""
     dem = demangle(mangled)
@@ -125,8 +143,14 @@ def _sized_rtti(
             continue
         if sym.size <= 0:
             continue
+        key = _type_key(name, prefix)
+        # Only decode RTTI that actually names a class/struct/union/enum.
+        # Fundamental (_ZTIi) and pointer/compound (_ZTIPc, _ZTIKc …) typeinfo
+        # carry no inheritance and would otherwise be misread as class layout.
+        if not _is_class_type_rtti(key):
+            continue
         # First definition wins (weak vtables can appear once); ignore dupes.
-        out.setdefault(_type_key(name, prefix), sym.size)
+        out.setdefault(key, sym.size)
     return out
 
 
