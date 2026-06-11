@@ -624,6 +624,57 @@ def test_api_rollup_keeps_distinct_symbols_flat():
     assert "`struct Ctx`" in body
 
 
+def test_api_rollup_strips_template_args():
+    # Template instantiations of the same type collapse to one enclosing group.
+    changes = [
+        {"kind": "func_params_changed", "symbol": "Vec<int>::push(int)",
+         "description": "s", "severity": "breaking"},
+        {"kind": "func_params_changed", "symbol": "Vec<float>::push(float)",
+         "description": "s", "severity": "breaking"},
+    ]
+    body = render_comment(build_model(_compare_report(changes)), sha="x")
+    assert "`Vec` (2)" in body
+
+
+def test_group_row_caps_inline_members():
+    # An aggregated row lists members up to a cap, then "+N more".
+    changes = [
+        {"kind": "func_params_changed", "symbol": f"Api::call(int{i})",
+         "description": "s", "severity": "breaking"}
+        for i in range(11)
+    ]
+    body = render_comment(build_model(_compare_report(changes)), sha="x")
+    assert "`Api` (11)" in body
+    assert "+3 more" in body  # 11 members, 8 inline
+
+
+def test_large_diff_condensed_note_links_report():
+    # full overflows → auto-downgrade to standard with a condensed note + link.
+    changes = [
+        {"kind": "func_removed", "symbol": f"ns{i}::f", "description": "x" * 300,
+         "severity": "breaking"} for i in range(2000)
+    ]
+    body = render_comment(
+        build_model(_compare_report(changes)), sha="x", detail="full",
+        report_url="https://e/run/2",
+    )
+    assert "Condensed to fit" in body
+    assert "https://e/run/2" in body
+
+
+def test_comment_hard_truncated_when_even_summary_overflows(monkeypatch):
+    import abicheck.pr_comment as pc
+
+    monkeypatch.setattr(pc, "_BODY_BUDGET", 220)
+    body = render_comment(
+        build_model(_compare_report()), sha="x", detail="full",
+        report_url="https://e/run/1",
+    )
+    assert "truncated to fit" in body
+    assert "https://e/run/1" in body
+    assert len(body) <= pc._BODY_BUDGET
+
+
 def test_comment_stays_under_github_size_limit():
     from abicheck.pr_comment import GITHUB_COMMENT_LIMIT
 
