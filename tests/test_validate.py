@@ -110,3 +110,34 @@ def test_tracker_pairs_missing_oracle_raises(
     monkeypatch.setattr(mod, "ORACLE_DIR", tmp_path)
     with pytest.raises(FileNotFoundError):
         mod.tracker_pairs("nope", pkg=None, subdir="linux-64")
+
+
+def test_run_validation_max_pairs_reports_only_attempted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With --max-pairs the loop stops early; pairs it never reached must not be
+    # reported as UNCOMPARABLE (which would make a smoke run look broken).
+    mod = _load_module()
+    monkeypatch.setattr(mod, "PARITY_DIR", tmp_path)
+    monkeypatch.setattr(mod, "query_conda", lambda pkg: {"files": []})
+    monkeypatch.setattr(
+        mod, "evaluate_pair", lambda pair, api, subdir, tmp, idx: "COMPATIBLE"
+    )
+
+    pairs = [
+        {
+            "pair": f"p{i}",
+            "pkg": "x",
+            "old_ver": "1",
+            "new_ver": "2",
+            "expected_verdict": "COMPATIBLE",
+            "subdir": "linux-64",
+        }
+        for i in range(5)
+    ]
+    report = mod.run_validation(pairs, max_pairs=2, label="t")
+
+    assert report["ran_pairs"] == 2
+    assert len(report["rows"]) == 2  # only the 2 attempted, not all 5
+    assert {r["pair"] for r in report["rows"]} == {"p0", "p1"}
+    assert all(r["status"] != "UNCOMPARABLE" for r in report["rows"])

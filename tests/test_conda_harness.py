@@ -163,3 +163,23 @@ def test_extract_sos_skips_non_elf_linker_scripts(tmp_path: Path) -> None:
     sos = mod.extract_sos(pkg, tmp_path / "out")
     assert list(sos) == ["libfoo"]  # one logical lib, from the ELF only
     assert sos["libfoo"].endswith("libfoo.so.1")
+
+
+def test_abicheck_verdict_removes_temp_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    # abicheck_verdict writes to a NamedTemporaryFile(delete=False); it must
+    # clean that up so a full run doesn't litter the temp dir. Stub the
+    # subprocess so the test stays offline.
+    mod = _load_module()
+    captured: dict[str, str] = {}
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        out = cmd[cmd.index("-o") + 1]
+        captured["out"] = out
+        Path(out).write_text('{"verdict": "COMPATIBLE"}')
+        return None
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    verdict = mod.abicheck_verdict("old.so", "new.so", "1.0", "2.0")
+
+    assert verdict == "COMPATIBLE"
+    assert not Path(captured["out"]).exists()  # temp file cleaned up

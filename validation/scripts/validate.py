@@ -118,12 +118,14 @@ def run_validation(pairs: list[dict], max_pairs: int, label: str) -> dict:
     """
     api_cache: dict[str, dict] = {}
     results: dict[str, str] = {}
+    attempted: list[dict] = []
     done = 0
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         for i, pair in enumerate(pairs):
             if max_pairs and done >= max_pairs:
                 break
+            attempted.append(pair)
             pkg = pair["pkg"]
             if pkg not in api_cache:
                 try:
@@ -139,10 +141,13 @@ def run_validation(pairs: list[dict], max_pairs: int, label: str) -> dict:
             results[pair["pair"]] = verdict
             done += 1
 
+    # Score only the pairs actually attempted: with --max-pairs the loop stops
+    # early, and pairs it never reached must not be reported as UNCOMPARABLE.
+    # Without a limit, `attempted` is the full list, so full runs are unchanged.
     oracle_like = {
         "pairs": [
             {"pair": p["pair"], "expected_verdict": p["expected_verdict"]}
-            for p in pairs
+            for p in attempted
         ]
     }
     report = compare_to_results(oracle_like, results)

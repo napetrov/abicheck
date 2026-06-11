@@ -154,6 +154,16 @@ def test_parse_timeline_picks_binary_compat_with_extra_columns() -> None:
     assert oracle["pairs"][0]["expected_verdict"] == "COMPATIBLE"
 
 
+def test_timeline_url_encodes_library() -> None:
+    # A library name with query-string metacharacters must be percent-encoded so
+    # it can't break out of the `l=` parameter or inject extra ones.
+    mod = _load_module()
+    assert mod.timeline_url("zstd") == (
+        "https://abi-laboratory.pro/index.php?view=timeline&l=zstd"
+    )
+    assert "l=zstd%26view%3Dother" in mod.timeline_url("zstd&view=other")
+
+
 def test_derive_verdict_rules() -> None:
     mod = _load_module()
 

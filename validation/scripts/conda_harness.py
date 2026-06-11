@@ -235,6 +235,10 @@ def abicheck_verdict(old: str, new: str, old_ver: str, new_ver: str) -> str | No
         data = json.loads(Path(out_path).read_text())
     except (OSError, json.JSONDecodeError):
         return None
+    finally:
+        # NamedTemporaryFile(delete=False) leaves the file behind; over a full
+        # run (hundreds of pairs x several .so) that litters the temp dir.
+        Path(out_path).unlink(missing_ok=True)
     summ = data.get("summary", {}) if isinstance(data, dict) else {}
     return data.get("verdict") or summ.get("verdict")
 

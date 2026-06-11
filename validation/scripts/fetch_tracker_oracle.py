@@ -53,13 +53,20 @@ import argparse
 import json
 import re
 import sys
+import urllib.parse
 import urllib.request
 from html import unescape
 from pathlib import Path
 
 TRACKER_BASE = "https://abi-laboratory.pro/index.php"
-TIMELINE_URL = TRACKER_BASE + "?view=timeline&l={lib}"
 USER_AGENT = "abicheck-tracker-oracle/1.0 (+https://github.com/napetrov/abicheck)"
+
+
+def timeline_url(library: str) -> str:
+    """Build the timeline URL, URL-encoding the library so a name containing
+    ``&``/``=``/``#`` can't break or inject into the query string."""
+    return f"{TRACKER_BASE}?view=timeline&l={urllib.parse.quote(library, safe='')}"
+
 
 VALID_DIR = Path(__file__).resolve().parent.parent  # validation/
 ORACLE_DIR = VALID_DIR / "data" / "tracker_oracle"
@@ -232,7 +239,7 @@ def build_oracle(library: str, html: str) -> dict[str, object]:
         )
     return {
         "library": library,
-        "tracker_url": TIMELINE_URL.format(lib=library),
+        "tracker_url": timeline_url(library),
         "release_count": len(rows),
         "pair_count": len(pairs),
         "pairs": pairs,
@@ -318,7 +325,7 @@ def compare_to_results(
 
 def fetch_timeline(library: str, timeout: float = 30.0) -> str:
     """Fetch the raw timeline HTML for a library (the only network touchpoint)."""
-    url = TIMELINE_URL.format(lib=library)
+    url = timeline_url(library)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (fixed https host)
         return resp.read().decode("utf-8", errors="replace")
@@ -372,9 +379,7 @@ def main(argv: list[str] | None = None) -> int:
                 if args.from_file
                 else fetch_timeline(lib)
             )
-        except (
-            OSError
-        ) as exc:  # URLError/HTTPError/timeout and file-read errors are all OSError
+        except OSError as exc:  # URLError/HTTPError/timeout/file-read are all OSError
             print(f"[{lib}] fetch failed: {exc}", file=sys.stderr)
             rc = 1
             continue
