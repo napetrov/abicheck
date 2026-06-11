@@ -54,6 +54,12 @@ from .cli import _write_or_echo, main
     help="Run label shown in the footer, e.g. 'run #128'.",
 )
 @click.option(
+    "--report-url",
+    default=None,
+    help="URL of the full report/run, linked in the footer and used when the "
+    "comment is condensed or truncated to fit GitHub's size limit.",
+)
+@click.option(
     "--gate-api-break",
     is_flag=True,
     default=False,
@@ -73,6 +79,7 @@ def pr_comment_cmd(
     detail: str,
     post_on: str,
     run_label: str | None,
+    report_url: str | None,
     gate_api_break: bool,
     output: Path | None,
 ) -> None:
@@ -105,5 +112,7 @@ def pr_comment_cmd(
             Path(output).write_text("", encoding="utf-8")
         return
 
-    body = render_comment(model, sha=sha, detail=detail, run_label=run_label)
+    body = render_comment(
+        model, sha=sha, detail=detail, run_label=run_label, report_url=report_url
+    )
     _write_or_echo(output, body)

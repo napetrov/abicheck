@@ -77,6 +77,19 @@ _VERDICT_BUCKET = {
 # Per-detail row caps for the "standard" level (full = uncapped).
 _STANDARD_ROW_CAP = 25
 _SAFE_SYMBOLS_PER_KIND = 12
+# Member symbols listed inline in an aggregated (API-grouped) Breaking/Review row.
+_GROUP_MEMBERS_INLINE = 8
+
+# GitHub rejects issue/PR comment bodies longer than 65,536 characters. Render
+# within a budget below that; if the body overflows, downgrade the detail level
+# (full → standard → summary) and finally hard-truncate so we never exceed it.
+GITHUB_COMMENT_LIMIT = 65536
+_BODY_BUDGET = 64000
+_DETAIL_DOWNGRADE = {
+    "full": ("full", "standard", "summary"),
+    "standard": ("standard", "summary"),
+    "summary": ("summary",),
+}
 
 _VERDICT_EMOJI = {
     "BREAKING": "❌",
@@ -482,6 +495,62 @@ def _header(model: CommentModel) -> tuple[str, str]:
     return "✅", "No ABI changes"
 
 
+def _strip_templates(s: str) -> str:
+    """Drop balanced ``<...>`` template arguments (best-effort, for grouping)."""
+    out: list[str] = []
+    depth = 0
+    for ch in s:
+        if ch == "<":
+            depth += 1
+            continue
+        if ch == ">":
+            if depth > 0:
+                depth -= 1
+            continue
+        if depth == 0:
+            out.append(ch)
+    return "".join(out)
+
+
+def _api_group(symbol: str) -> str:
+    """Enclosing API (namespace/type or free-function family) of a symbol.
+
+    Strips template arguments and the parameter list, then drops the trailing
+    ``::name`` so overloads, template instantiations and members of the same
+    type/namespace collapse to one key. Free functions collapse their overloads
+    to the bare name; distinct names stay distinct.
+    """
+    s = _strip_templates(symbol).strip()
+    paren = s.find("(")
+    if paren != -1:
+        s = s[:paren].strip()
+    if "::" in s:
+        s = s.rsplit("::", 1)[0].strip()
+    return s or symbol.strip()
+
+
+def _group_by_api(findings: list[Finding]) -> OrderedDict[str, list[Finding]]:
+    groups: OrderedDict[str, list[Finding]] = OrderedDict()
+    for f in findings:
+        groups.setdefault(_api_group(f.symbol), []).append(f)
+    return groups
+
+
+def _flat_row(f: Finding) -> str:
+    loc = f" · `{_esc(f.location)}`" if f.location else ""
+    cell = (_esc(f.detail) + loc) if f.detail else _esc(f.location or "—")
+    return f"| `{_esc(f.kind)}` | `{_esc(f.symbol)}` | {cell} |"
+
+
+def _group_row(key: str, members: list[Finding]) -> str:
+    kinds = ", ".join(f"`{_esc(k)}`" for k in dict.fromkeys(m.kind for m in members))
+    syms = [m.symbol for m in members]
+    shown = syms[:_GROUP_MEMBERS_INLINE]
+    more = f" +{len(syms) - _GROUP_MEMBERS_INLINE} more" if len(syms) > _GROUP_MEMBERS_INLINE else ""
+    members_cell = ", ".join(f"`{_esc(x)}`" for x in shown) + more
+    return f"| {kinds} | `{_esc(key)}` ({len(members)}) | {members_cell} |"
+
+
 def _findings_table(
     title: str,
     findings: list[Finding],
@@ -491,21 +560,27 @@ def _findings_table(
 ) -> list[str]:
     if not findings:
         return []
-    cap = None if detail == "full" else _STANDARD_ROW_CAP
     is_open = " open" if (detail == "full" or open_default) else ""
-    shown = findings if cap is None else findings[:cap]
     out = [
         f"<details{is_open}><summary>{title} ({len(findings)})</summary>",
         "",
         "| Change | Symbol | Detail |",
         "|---|---|---|",
     ]
-    for f in shown:
-        loc = f" · `{_esc(f.location)}`" if f.location else ""
-        cell = (_esc(f.detail) + loc) if f.detail else _esc(f.location or "—")
-        out.append(f"| `{_esc(f.kind)}` | `{_esc(f.symbol)}` | {cell} |")
-    if cap is not None and len(findings) > cap:
-        out.append(f"| … | … | _{len(findings) - cap} more_ |")
+    if detail == "full":
+        # Full detail keeps every change as its own per-symbol row (no rollup).
+        out += [_flat_row(f) for f in findings]
+        out += ["</details>", ""]
+        return out
+    # Standard: roll up by enclosing API so mass changes stay scannable —
+    # singletons render as a normal per-symbol row, families aggregate.
+    groups = _group_by_api(findings)
+    keys = list(groups)
+    for key in keys[:_STANDARD_ROW_CAP]:
+        members = groups[key]
+        out.append(_flat_row(members[0]) if len(members) == 1 else _group_row(key, members))
+    if len(keys) > _STANDARD_ROW_CAP:
+        out.append(f"| … | … | _{len(keys) - _STANDARD_ROW_CAP} more_ |")
     out += ["</details>", ""]
     return out
 
@@ -607,14 +682,46 @@ def _body_sections(model: CommentModel, detail: str) -> list[str]:
     return out
 
 
-def _footer_block(ts: datetime, run_label: str | None, short_sha: str) -> list[str]:
+def _footer_block(
+    ts: datetime, run_label: str | None, short_sha: str, report_url: str | None = None
+) -> list[str]:
     footer = f"<sub>Updated {ts.strftime('%Y-%m-%d %H:%M UTC')}"
     if run_label:
         footer += f" · {run_label}"
     if short_sha:
         footer += f" · commit {short_sha}"
+    if report_url:
+        footer += f" · [full report]({report_url})"
     footer += "</sub>"
     return [footer, ""]
+
+
+def _render_body(
+    model: CommentModel,
+    short_sha: str,
+    ts: datetime,
+    detail: str,
+    run_label: str | None,
+    report_url: str | None,
+    *,
+    condensed: bool,
+) -> str:
+    lines = _header_block(model, short_sha)
+    if condensed:
+        note = "> ℹ️ _Condensed to fit GitHub's comment size limit"
+        note += f" — see the [full report]({report_url})._" if report_url else "._"
+        lines += [note, ""]
+    lines += _library_notes(model)
+    if detail != "summary":
+        lines += _body_sections(model, detail)
+    lines += _footer_block(ts, run_label, short_sha, report_url)
+    return "\n".join(lines)
+
+
+def _truncate_to_budget(body: str, report_url: str | None) -> str:
+    suffix = "\n\n<sub>… comment truncated to fit GitHub's size limit"
+    suffix += f" — see the [full report]({report_url}).</sub>" if report_url else ".</sub>"
+    return body[: max(_BODY_BUDGET - len(suffix), 0)] + suffix
 
 
 def render_comment(
@@ -624,15 +731,24 @@ def render_comment(
     detail: str = "standard",
     run_label: str | None = None,
     timestamp: datetime | None = None,
+    report_url: str | None = None,
 ) -> str:
-    """Render the full sticky-comment markdown body (including :data:`MARKER`)."""
+    """Render the full sticky-comment markdown body (including :data:`MARKER`).
+
+    The body is kept under GitHub's 65,536-character comment limit: if the
+    requested detail overflows, the detail level is downgraded
+    (full → standard → summary) and, as a last resort, the body is truncated —
+    always pointing at the full report when *report_url* is supplied.
+    """
     if detail not in DETAIL_LEVELS:
         detail = "standard"
     ts = timestamp or datetime.now(timezone.utc)
     short_sha = (sha or "")[:7]
-    lines = _header_block(model, short_sha)
-    lines += _library_notes(model)
-    if detail != "summary":
-        lines += _body_sections(model, detail)
-    lines += _footer_block(ts, run_label, short_sha)
-    return "\n".join(lines)
+    body = ""
+    for i, level in enumerate(_DETAIL_DOWNGRADE[detail]):
+        body = _render_body(
+            model, short_sha, ts, level, run_label, report_url, condensed=(i > 0)
+        )
+        if len(body) <= _BODY_BUDGET:
+            return body
+    return _truncate_to_budget(body, report_url)

@@ -667,11 +667,19 @@ _maybe_post_pr_comment() {
     PR_GATE_ARGS+=(--gate-api-break)
   fi
 
+  # Link the workflow run (where the full JSON/SARIF report is uploaded as an
+  # artifact) so a condensed/truncated comment always points at the full detail.
+  local run_url=""
+  if [[ -n "${GITHUB_SERVER_URL:-}" && -n "${GITHUB_REPOSITORY:-}" && -n "${GITHUB_RUN_ID:-}" ]]; then
+    run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+  fi
+
   abicheck pr-comment "$PR_JSON" \
     --sha "${head_sha:-${GITHUB_SHA:-}}" \
     --detail "${INPUT_PR_COMMENT_DETAIL:-standard}" \
     --on "${INPUT_PR_COMMENT_ON:-changes}" \
     --run-label "run #${GITHUB_RUN_NUMBER:-?}" \
+    ${run_url:+--report-url "$run_url"} \
     ${PR_GATE_ARGS[@]+"${PR_GATE_ARGS[@]}"} \
     -o "$PR_BODY" || true
 

@@ -571,6 +571,15 @@ Behavior knobs:
 - `pr-comment-detail: full` lists every change with source locations and expands
   all sections; `summary` reduces the comment to the verdict and counts.
 
+On large diffs the `standard` view stays readable by rolling related changes up
+to their enclosing API — overloads, template instantiations and members of the
+same type/namespace collapse into one row showing the family and a member count
+(distinct symbols keep their own row; `full` keeps every change separate). The
+body is always kept under GitHub's 65,536-character comment limit: if it would
+overflow, the detail level is automatically reduced (and, as a last resort, the
+body is truncated), with a link back to the **full report** uploaded as the
+workflow-run artifact so nothing is lost.
+
 "Safe" mirrors whatever the checker already classified as compatible — so
 public-header surface scoping (`--scope-public-headers`) and policy profiles
 (e.g. `sdk_vendor` demoting a removal) flow through automatically; the comment

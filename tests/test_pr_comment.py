@@ -598,6 +598,55 @@ def test_standard_truncates_large_breaking_table():
     assert "more_" not in full
 
 
+def test_api_rollup_collapses_overload_and_member_families():
+    # Many members of one type / overloads of one function collapse to a single
+    # aggregated row in standard mode (mass-change readability).
+    changes = [
+        {"kind": "func_params_changed", "symbol": f"Widget::resize(int{i})",
+         "description": "sig", "severity": "breaking"}
+        for i in range(12)
+    ]
+    body = render_comment(build_model(_compare_report(changes)), sha="x")
+    # one aggregated row labelled with the enclosing type and the member count
+    assert "`Widget` (12)" in body
+    # but full detail keeps every member as its own row (no rollup)
+    full = render_comment(build_model(_compare_report(changes)), sha="x", detail="full")
+    assert "`Widget` (12)" not in full
+    assert "Widget::resize(int0)" in full
+
+
+def test_api_rollup_keeps_distinct_symbols_flat():
+    # Distinct, unrelated symbols are not aggregated — each keeps its own row.
+    model = build_model(_compare_report())
+    body = render_comment(model, sha="x")
+    # both distinct breaking symbols keep their own flat row (no aggregation)
+    assert "`foo_init`" in body
+    assert "`struct Ctx`" in body
+
+
+def test_comment_stays_under_github_size_limit():
+    from abicheck.pr_comment import GITHUB_COMMENT_LIMIT
+
+    changes = [
+        {"kind": "func_removed", "symbol": f"ns{i}::free_{i}",
+         "description": "x" * 200, "severity": "breaking"}
+        for i in range(4000)
+    ]
+    body = render_comment(
+        build_model(_compare_report(changes)), sha="x", detail="full",
+        report_url="https://example/run/1",
+    )
+    assert len(body) <= GITHUB_COMMENT_LIMIT
+    assert body.startswith(MARKER)  # header survives the downgrade/truncate
+
+
+def test_report_url_linked_in_footer():
+    body = render_comment(
+        build_model(_compare_report()), sha="x", report_url="https://example/run/9"
+    )
+    assert "[full report](https://example/run/9)" in body
+
+
 def test_release_render_lists_removed_libraries():
     body = render_comment(build_model(_release_report()), sha="cafe1234")
     assert "Libraries removed" in body
