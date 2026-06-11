@@ -166,68 +166,8 @@ def load_extractor_manifest(path: Path | str) -> ExtractorManifest:
         raise ManifestError(f"extractor manifest {p} is missing a 'name'")
     _reject_unsafe_name(name, p)
 
-    commands_raw = raw.get("commands") or {}
-    if not isinstance(commands_raw, dict):
-        raise ManifestError(f"extractor manifest {p}: 'commands' must be a mapping")
-    commands: dict[str, list[str]] = {}
-    for phase, template in commands_raw.items():
-        if phase not in _PHASES:
-            raise ManifestError(
-                f"extractor manifest {p}: unknown command phase {phase!r}; "
-                f"expected one of: {', '.join(_PHASES)}"
-            )
-        if (
-            not isinstance(template, list)
-            or not template
-            or not all(isinstance(t, str) for t in template)
-        ):
-            raise ManifestError(
-                f"extractor manifest {p}: command '{phase}' must be a non-empty list of string "
-                "tokens (an argv list — never a single shell string, never empty)"
-            )
-        # Reject unknown placeholders up front so a render-time KeyError can't surprise us.
-        for token in template:
-            for ph in _PLACEHOLDER_RE.findall(token):
-                if ph not in _KNOWN_PLACEHOLDERS:
-                    raise ManifestError(
-                        f"extractor manifest {p}: command '{phase}' references unknown "
-                        f"placeholder {{{ph}}}; known: {', '.join(sorted(_KNOWN_PLACEHOLDERS))}"
-                    )
-        commands[phase] = list(template)
-    if "collect" not in commands and "normalize" not in commands:
-        raise ManifestError(
-            f"extractor manifest {p}: must define at least a 'collect' or 'normalize' command"
-        )
-
-    try:
-        actions = parse_actions(raw.get("allowed_actions") or [])
-    except ValueError as exc:
-        raise ManifestError(f"extractor manifest {p}: {exc}") from exc
-
-    # Network is always denied (ADR-032 D5) and there is no run mode that grants
-    # it, so a manifest that needs it can never run. Reject it at registration —
-    # via an explicit ``network`` action *or* the ``requires_network`` capability
-    # — rather than silently accepting a manifest that would run under the
-    # default inspect-only context and bypass the gate.
-    if CollectionAction.NETWORK in actions:
-        raise ManifestError(
-            f"extractor manifest {p}: the 'network' action is always denied "
-            "(ADR-032 D5) and cannot be registered."
-        )
-    capabilities = _coerce_capabilities(raw.get("capabilities"), p)
-    if capabilities.requires_network:
-        raise ManifestError(
-            f"extractor manifest {p}: 'requires_network' is not supported — network "
-            "access is always denied (ADR-032 D5). Use a non-networked extractor or "
-            "pre-capture the data and feed it as a file input."
-        )
-    implied = capabilities.implied_actions()
-    missing = implied - actions
-    if missing:
-        raise ManifestError(
-            f"extractor manifest {p}: capabilities require action(s) "
-            f"{', '.join(sorted(a.value for a in missing))} that are absent from 'allowed_actions'"
-        )
+    commands = _parse_commands(raw.get("commands") or {}, p)
+    actions, capabilities = _resolve_actions_and_capabilities(raw, p)
 
     version_command = raw.get("version_command") or []
     if version_command and (
@@ -265,6 +205,90 @@ def load_extractor_manifest(path: Path | str) -> ExtractorManifest:
         outputs=outputs,
         schema_version=schema_version,
     )
+
+
+def _parse_commands(commands_raw: Any, p: Path) -> dict[str, list[str]]:
+    """Validate the ``commands`` block into a ``{phase: argv}`` mapping (D3).
+
+    Each phase must be a known lifecycle phase, each command a non-empty list of
+    string tokens (an argv list — never a shell string), and every placeholder
+    must be known so a render-time ``KeyError`` cannot surprise us. At least one
+    of ``collect``/``normalize`` must be present. Raises :class:`ManifestError`.
+    """
+    if not isinstance(commands_raw, dict):
+        raise ManifestError(f"extractor manifest {p}: 'commands' must be a mapping")
+    commands: dict[str, list[str]] = {}
+    for phase, template in commands_raw.items():
+        if phase not in _PHASES:
+            raise ManifestError(
+                f"extractor manifest {p}: unknown command phase {phase!r}; "
+                f"expected one of: {', '.join(_PHASES)}"
+            )
+        if (
+            not isinstance(template, list)
+            or not template
+            or not all(isinstance(t, str) for t in template)
+        ):
+            raise ManifestError(
+                f"extractor manifest {p}: command '{phase}' must be a non-empty list of string "
+                "tokens (an argv list — never a single shell string, never empty)"
+            )
+        _reject_unknown_placeholders(template, phase, p)
+        commands[phase] = list(template)
+    if "collect" not in commands and "normalize" not in commands:
+        raise ManifestError(
+            f"extractor manifest {p}: must define at least a 'collect' or 'normalize' command"
+        )
+    return commands
+
+
+def _reject_unknown_placeholders(template: list[str], phase: str, p: Path) -> None:
+    """Reject ``{placeholder}`` tokens that are not in :data:`_KNOWN_PLACEHOLDERS`."""
+    for token in template:
+        for ph in _PLACEHOLDER_RE.findall(token):
+            if ph not in _KNOWN_PLACEHOLDERS:
+                raise ManifestError(
+                    f"extractor manifest {p}: command '{phase}' references unknown "
+                    f"placeholder {{{ph}}}; known: {', '.join(sorted(_KNOWN_PLACEHOLDERS))}"
+                )
+
+
+def _resolve_actions_and_capabilities(
+    raw: dict[str, Any], p: Path
+) -> tuple[set[CollectionAction], ExtractorCapabilities]:
+    """Parse ``allowed_actions`` + ``capabilities`` and check they are consistent (D4/D5).
+
+    Network is always denied (ADR-032 D5) and no run mode grants it, so a
+    manifest that needs it — via the ``network`` action *or* the
+    ``requires_network`` capability — can never run and is rejected at
+    registration rather than silently accepted under the inspect-only default.
+    Capabilities' implied actions must all be present in ``allowed_actions``.
+    Raises :class:`ManifestError`.
+    """
+    try:
+        actions = parse_actions(raw.get("allowed_actions") or [])
+    except ValueError as exc:
+        raise ManifestError(f"extractor manifest {p}: {exc}") from exc
+
+    if CollectionAction.NETWORK in actions:
+        raise ManifestError(
+            f"extractor manifest {p}: the 'network' action is always denied "
+            "(ADR-032 D5) and cannot be registered."
+        )
+    capabilities = _coerce_capabilities(raw.get("capabilities"), p)
+    if capabilities.requires_network:
+        raise ManifestError(
+            f"extractor manifest {p}: 'requires_network' is not supported — network "
+            "access is always denied (ADR-032 D5). Use a non-networked extractor or "
+            "pre-capture the data and feed it as a file input."
+        )
+    missing = capabilities.implied_actions() - actions
+    if missing:
+        raise ManifestError(
+            f"extractor manifest {p}: capabilities require action(s) "
+            f"{', '.join(sorted(a.value for a in missing))} that are absent from 'allowed_actions'"
+        )
+    return actions, capabilities
 
 
 def _coerce_capabilities(raw_caps: Any, p: Path) -> ExtractorCapabilities:

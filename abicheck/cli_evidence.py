@@ -242,37 +242,16 @@ def collect_evidence_cmd(
             verbose=verbose,
         )
 
-    graph: SourceGraphSummary | None = None
-    graph_detail = ""
-    # Any graph-augmenting option implies graph collection (edges go into it).
-    if (call_graph or include_graph or kythe_entries or codeql_results) and source_graph == "off":
-        source_graph = "summary"
-    if source_graph == "summary":
-        from .evidence.source_graph import build_source_graph
-        # Fold the L4 surface in too when it was collected (--source-abi), so
-        # the graph carries the public-reachability + source↔binary slices.
-        graph = build_source_graph(merged, source_abi=surface)
-        if call_graph:
-            _collect_call_graph(graph, merged, extractors, clang_bin=clang_bin)
-        if include_graph:
-            _collect_include_graph(graph, merged, extractors, clang_bin=clang_bin)
-        if kythe_entries or codeql_results:
-            _ingest_graph_backends(graph, extractors,
-                                   kythe_entries=kythe_entries, codeql_results=codeql_results)
-        graph.finalize()
-        graph_detail = (
-            f"{len(graph.nodes)} nodes, {len(graph.edges)} edges "
-            f"({graph.coverage.get('targets', 0)} targets, "
-            f"{graph.coverage.get('compile_units', 0)} compile units, "
-            f"{graph.coverage.get('source_decls', 0)} source decls, "
-            f"{graph.coverage.get('call_edges', {}).get('count', 0)} call edges, "
-            f"{graph.coverage.get('include_edges', {}).get('count', 0)} include edges)"
-        )
-        extractors.append(ExtractorRecord(
-            name="source_graph:summary",
-            status="ok" if graph.nodes else "partial",
-            detail=graph_detail if graph.nodes else "no build evidence to fold into a graph",
-        ))
+    graph, graph_detail = _collect_source_graph(
+        merged, extractors,
+        source_graph=source_graph,
+        call_graph=call_graph,
+        include_graph=include_graph,
+        kythe_entries=kythe_entries,
+        codeql_results=codeql_results,
+        surface=surface,
+        clang_bin=clang_bin,
+    )
 
     pack = EvidencePack.empty(
         output,
@@ -304,24 +283,105 @@ def collect_evidence_cmd(
     )
     pack.write()
 
-    # Strict mode (ADR-032 D9): requested evidence must be collected and valid,
-    # otherwise the command exits non-zero. Both a failed row and a skipped one
-    # (e.g. an extractor gated out by the action ceiling, so its requested
-    # evidence is absent) count — strict requires the evidence to be present.
-    # Checked *before* the success output so a strict run never prints "Evidence
-    # pack written" and then exits non-zero (contradictory CI logs).
-    if collection_mode == "strict":
-        incomplete = [e for e in extractors if e.status in ("failed", "skipped")]
-        if incomplete:
-            names = ", ".join(sorted(f"{e.name}:{e.status}" for e in incomplete))
-            for diag in merged.diagnostics:
-                click.echo(f"  note: {diag}", err=True)
-            raise click.ClickException(
-                f"strict collection mode: {len(incomplete)} extractor(s) did not "
-                f"produce valid evidence ({names}). Fix the inputs/tools, grant the "
-                "needed actions, or use --collection-mode permissive."
-            )
+    _enforce_strict_mode(extractors, merged, collection_mode)
+    _echo_collection_summary(
+        pack, merged, output,
+        has_build=has_build,
+        source_abi=source_abi,
+        source_detail=source_detail,
+        graph=graph,
+        graph_detail=graph_detail,
+    )
 
+
+def _collect_source_graph(
+    merged: BuildEvidence,
+    extractors: list[ExtractorRecord],
+    *,
+    source_graph: str,
+    call_graph: bool,
+    include_graph: bool,
+    kythe_entries: Path | None,
+    codeql_results: Path | None,
+    surface: SourceAbiSurface | None,
+    clang_bin: str,
+) -> tuple[SourceGraphSummary | None, str]:
+    """Build the optional L5 source graph and fold in any requested augmentations.
+
+    Any graph-augmenting option (call/include graph, Kythe/CodeQL ingest) implies
+    graph collection. Returns ``(graph, graph_detail)``; ``graph`` is ``None`` when
+    no graph was requested.
+    """
+    if (call_graph or include_graph or kythe_entries or codeql_results) and source_graph == "off":
+        source_graph = "summary"
+    if source_graph != "summary":
+        return None, ""
+
+    from .evidence.source_graph import build_source_graph
+    # Fold the L4 surface in too when it was collected (--source-abi), so the
+    # graph carries the public-reachability + source↔binary slices.
+    graph = build_source_graph(merged, source_abi=surface)
+    if call_graph:
+        _collect_call_graph(graph, merged, extractors, clang_bin=clang_bin)
+    if include_graph:
+        _collect_include_graph(graph, merged, extractors, clang_bin=clang_bin)
+    if kythe_entries or codeql_results:
+        _ingest_graph_backends(graph, extractors,
+                               kythe_entries=kythe_entries, codeql_results=codeql_results)
+    graph.finalize()
+    graph_detail = (
+        f"{len(graph.nodes)} nodes, {len(graph.edges)} edges "
+        f"({graph.coverage.get('targets', 0)} targets, "
+        f"{graph.coverage.get('compile_units', 0)} compile units, "
+        f"{graph.coverage.get('source_decls', 0)} source decls, "
+        f"{graph.coverage.get('call_edges', {}).get('count', 0)} call edges, "
+        f"{graph.coverage.get('include_edges', {}).get('count', 0)} include edges)"
+    )
+    extractors.append(ExtractorRecord(
+        name="source_graph:summary",
+        status="ok" if graph.nodes else "partial",
+        detail=graph_detail if graph.nodes else "no build evidence to fold into a graph",
+    ))
+    return graph, graph_detail
+
+
+def _enforce_strict_mode(
+    extractors: list[ExtractorRecord], merged: BuildEvidence, collection_mode: str
+) -> None:
+    """Fail the command if strict mode is set and any extractor is incomplete (ADR-032 D9).
+
+    Both a failed row and a skipped one (e.g. an extractor gated out by the action
+    ceiling, so its requested evidence is absent) count — strict requires the
+    evidence to be present. Called *before* the success output so a strict run
+    never prints "Evidence pack written" and then exits non-zero.
+    """
+    if collection_mode != "strict":
+        return
+    incomplete = [e for e in extractors if e.status in ("failed", "skipped")]
+    if not incomplete:
+        return
+    names = ", ".join(sorted(f"{e.name}:{e.status}" for e in incomplete))
+    for diag in merged.diagnostics:
+        click.echo(f"  note: {diag}", err=True)
+    raise click.ClickException(
+        f"strict collection mode: {len(incomplete)} extractor(s) did not "
+        f"produce valid evidence ({names}). Fix the inputs/tools, grant the "
+        "needed actions, or use --collection-mode permissive."
+    )
+
+
+def _echo_collection_summary(
+    pack: EvidencePack,
+    merged: BuildEvidence,
+    output: Path,
+    *,
+    has_build: bool,
+    source_abi: bool,
+    source_detail: str,
+    graph: SourceGraphSummary | None,
+    graph_detail: str,
+) -> None:
+    """Print the per-layer summary for a successfully written evidence pack."""
     click.echo(f"Evidence pack written to {output}")
     click.echo(f"  content hash: {pack.content_hash()}")
     if has_build:
