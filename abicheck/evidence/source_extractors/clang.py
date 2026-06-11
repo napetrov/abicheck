@@ -475,11 +475,17 @@ def _is_include_guard(name: str, value: str, file: str) -> bool:
     ``#define FOO_ENABLED``) from being dropped:
 
     - the macro has an empty replacement (a guard never expands to anything), and
-    - its normalized name embeds the header's filename-derived token, including
-      the extension suffix (``foo.h`` → ``FOO_H``, ``bar.hpp`` → ``BAR_HPP``).
+    - its normalized name, with any surrounding underscores stripped, equals the
+      header's filename-derived token including the extension suffix
+      (``foo.h`` → ``FOO_H``; matches ``FOO_H``, ``_FOO_H``, ``FOO_H_``,
+      ``__FOO_H__``).
 
-    A guard that does not embed the filename (``#ifndef GUARD_12345``) is left in
-    place — a deliberate false-negative over risking a false suppression.
+    The match is *exact*, not a substring, so an intentional empty feature macro
+    that merely starts with the stem (``FOO_H_FEATURE``, ``FOO_H_DEPRECATED``) is
+    **not** dropped — only the guard spelling itself is. A guard that does not
+    derive from the filename (``#ifndef GUARD_12345``) is left in place — a
+    deliberate false-negative over risking a false suppression. (The parser does
+    not see the matching ``#ifndef``, so the spelling is the only signal.)
     """
     if value or not file:
         return False
@@ -487,7 +493,7 @@ def _is_include_guard(name: str, value: str, file: str) -> bool:
     stem = re.sub(r"[^A-Za-z0-9]+", "_", base).upper().strip("_")  # foo.h -> FOO_H
     if not stem:
         return False
-    return stem in name.upper().strip("_")
+    return name.upper().strip("_") == stem
 
 
 def _unfold_continuations(lines: list[str]) -> list[str]:

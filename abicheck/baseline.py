@@ -433,7 +433,21 @@ class FilesystemRegistry:
 
         key_dir = self._key_dir(key)
         evidence_dir = key_dir / _EVIDENCE_SUBDIR
+
+        # Read the recorded hash first. A baseline that explicitly recorded an
+        # evidence pack must not silently report "no pack" just because the
+        # manifest went missing (a deleted manifest, or an interrupted
+        # replacement) — that would drop evidence the metadata promised. Only a
+        # baseline with *no* recorded hash legitimately has no pack.
+        recorded = self._recorded_evidence_hash(key_dir)
         if not (evidence_dir / "manifest.json").is_file():
+            if recorded is not None:
+                raise BaselineIntegrityError(
+                    f"Baseline {key.path} recorded an evidence pack "
+                    f"(evidence_content_hash={recorded}) but its manifest is "
+                    "missing — the stored pack is absent or corrupt. "
+                    "Re-push the baseline."
+                )
             return None
 
         pack = EvidencePack.load(evidence_dir)
@@ -453,23 +467,28 @@ class FilesystemRegistry:
 
         # Verify against the recorded hash when present (legacy metadata without
         # the field cannot be verified, so it is trusted — same rule as checksum).
-        meta_path = key_dir / "metadata.json"
-        if meta_path.is_file():
-            try:
-                meta = BaselineMetadata.from_dict(
-                    json.loads(meta_path.read_text(encoding="utf-8"))
-                )
-            except (json.JSONDecodeError, KeyError, TypeError):
-                meta = BaselineMetadata()
-            recorded = meta.evidence_content_hash
-            if recorded is not None and recorded != pack.content_hash():
-                raise BaselineIntegrityError(
-                    f"Evidence-pack content hash mismatch for baseline {key.path} — "
-                    "the stored pack may have been modified since it was pushed. "
-                    "Re-push the baseline to update the recorded hash."
-                )
+        if recorded is not None and recorded != pack.content_hash():
+            raise BaselineIntegrityError(
+                f"Evidence-pack content hash mismatch for baseline {key.path} — "
+                "the stored pack may have been modified since it was pushed. "
+                "Re-push the baseline to update the recorded hash."
+            )
         _logger.info("Baseline evidence pulled: %s", key.path)
         return pack
+
+    @staticmethod
+    def _recorded_evidence_hash(key_dir: Path) -> str | None:
+        """The ``evidence_content_hash`` recorded in a baseline's metadata, if any."""
+        meta_path = key_dir / "metadata.json"
+        if not meta_path.is_file():
+            return None
+        try:
+            meta = BaselineMetadata.from_dict(
+                json.loads(meta_path.read_text(encoding="utf-8"))
+            )
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return None
+        return meta.evidence_content_hash
 
     def list(self, prefix: str | None = None) -> list[BaselineKey]:
         """List available baselines in the filesystem registry."""

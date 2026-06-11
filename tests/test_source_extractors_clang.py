@@ -211,6 +211,29 @@ def test_ast_mapping_extracts_typedef_underlying_type() -> None:
     assert typedefs["handle_t"].type_hash.startswith("sha256:")
 
 
+def test_typedef_underlying_fallback_and_missing() -> None:
+    from abicheck.evidence.source_extractors.clang import _typedef_underlying
+
+    # qualType wins; desugaredQualType is the fallback; a non-dict/absent type
+    # yields "" so _emit_typedef skips the entity.
+    assert _typedef_underlying({"type": {"qualType": "int32_t"}}) == "int32_t"
+    assert _typedef_underlying({"type": {"desugaredQualType": "int"}}) == "int"
+    assert _typedef_underlying({"type": None}) == ""
+    assert _typedef_underlying({}) == ""
+
+
+def test_typedef_without_underlying_is_skipped() -> None:
+    ast = {
+        "kind": "TranslationUnitDecl",
+        "inner": [{
+            "kind": "TypedefDecl", "name": "opaque",
+            "loc": {"file": "include/foo.h", "line": 2}, "type": {},
+        }],
+    }
+    tu = source_abi_from_clang_ast(ast, _cu(), ["include/foo.h"], "t")
+    assert not [e for e in tu.types if e.kind == "typedef"]
+
+
 def test_directory_header_root_classifies_decls_as_public(tmp_path: Path) -> None:
     # Codex #339 P2: `--headers include/` (a directory root) must classify a decl
     # reported under it (include/foo.h) as public, not drop the whole tree.
@@ -623,13 +646,16 @@ def test_macros_suppress_include_guards() -> None:
         "#define FOO_H\n"            # include guard for foo.h — suppressed
         "#define __FOO_H__\n"        # guard with underscores — suppressed
         "#define FOO_ENABLED\n"      # real empty feature flag — kept
+        "#define FOO_H_FEATURE\n"    # starts with stem but is NOT the guard — kept
         "#define FOO_SIZE 16\n"      # valued macro — kept
     )
     macros, _ = macros_from_preprocessor(text, ["include/foo.h"])
     names = {e.qualified_name for e in macros}
     assert "FOO_H" not in names
     assert "__FOO_H__" not in names
-    assert names == {"FOO_ENABLED", "FOO_SIZE"}
+    # Exact-spelling match only: a feature macro that merely starts with the
+    # stem must survive (Codex review — substring match was too aggressive).
+    assert names == {"FOO_ENABLED", "FOO_H_FEATURE", "FOO_SIZE"}
 
 
 def test_macros_suppress_hpp_include_guard() -> None:

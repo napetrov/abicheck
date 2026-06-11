@@ -669,3 +669,17 @@ class TestEvidencePackStorage:
         meta = BaselineMetadata.create("snap-json", evidence_content_hash="sha256:abc")
         restored = BaselineMetadata.from_dict(meta.to_dict())
         assert restored.evidence_content_hash == "sha256:abc"
+
+
+    def test_pull_evidence_missing_manifest_but_recorded_raises(
+        self, registry: FilesystemRegistry, sample_snapshot: AbiSnapshot, tmp_path: Path
+    ) -> None:
+        # A baseline that recorded a pack must not silently report "no pack" when
+        # the manifest vanished (deleted / interrupted replacement) — Codex review.
+        pack = _make_pack(tmp_path / "src.evidence")
+        key = BaselineKey(library="libfoo", version="1.0.0", platform="linux-x86_64")
+        registry.push(key, sample_snapshot, evidence=pack)
+
+        (registry.root / key.path / "evidence" / "manifest.json").unlink()
+        with pytest.raises(BaselineIntegrityError, match="manifest is missing"):
+            registry.pull_evidence(key)
