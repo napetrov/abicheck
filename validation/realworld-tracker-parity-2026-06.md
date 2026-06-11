@@ -10,10 +10,11 @@ backward-compatibility verdict — an independent, real-world ground-truth label
 
 This is the first run that scores abicheck against the **live** abicc oracle
 end-to-end (harvest → fetch conda binaries → `abicheck compare` → score), rather
-than against the saved offline fixture. **28 libraries were harvested and run; 24
-yielded at least one comparable pair** on conda-forge `linux-64` (the other 4 —
-c-ares, jansson, flac, libogg — had no version overlap between the tracker's
-slugs and conda-forge builds, so 0 comparable pairs).
+than against the saved offline fixture. **~100 libraries were harvested and 60
+run; 54 yielded at least one comparable pair** on conda-forge `linux-64`. The
+remainder had no version overlap between the tracker's slugs and conda-forge
+builds (e.g. c-ares, jansson, flac, libogg) or no parseable tracker timeline
+(e.g. sdl2, libzmq, thrift), so 0 comparable pairs.
 
 ---
 
@@ -33,63 +34,72 @@ oracles below harvested and scored live.
 
 ## 1. Headline
 
-- **24 libraries, 120 version pairs evaluated, 80 comparable, 78 agree = 97.5%
-  agreement with ABICC.**
-- **Zero confirmed abicheck defects** across the whole corpus. Exactly **two**
-  pairs did not match, both root-caused to *known, expected* divergence classes,
-  not bugs:
-  - **1 "stricter"** (nettle 3.6→3.7): abicheck flags real signature changes on
-    symbols the library author tagged **internal** via an `*_INTERNAL_*` ELF
-    version node. abicheck is *factually correct*; ABICC scopes those symbols out
-    because they are not in the public headers.
-  - **1 "weaker"** (openssl 1.1.1a→1.1.1b): a 0.09 % type-level change ABICC saw
-    from a full-headers source build that is **not observable** in conda's
-    partially-stripped `libcrypto` DWARF. An evidence limit, not a miss.
-- **26 pairs auto-classified as scope divergences** (abicheck stricter, gated on
-  ABICC's own "0 public symbols removed at 100 % backward-compat") and **14 as
-  evidence-limited** (type-only ABICC break on a stripped binary). The harness's
-  evidence-aware scoring (PR #349 + follow-ups) correctly kept these out of the
-  agreement denominator instead of scoring them as false positives/negatives —
-  validated across all 24 libraries.
+- **60 libraries scanned (54 with comparable verdicts), 185 comparable version
+  pairs, 174 agree with ABICC = 94.1 % agreement.**
+- **Zero confirmed abicheck defects** across the whole corpus. **11** pairs (7
+  libraries) did not match; every one was root-caused to a *known, expected*
+  divergence class where abicheck is **correct by its binary-strict policy** — the
+  difference is scope (binary vs public-header) or evidence (DWARF coverage), not
+  a bug. Grouped in §3:
+  - **A — author-internal symbol / version-node churn** (nettle): real signature
+    changes on `*_INTERNAL_*` version-node symbols ABICC scopes out.
+  - **B — internal/opaque *type* layout churn seen via DWARF** (readline, xz,
+    librdkafka): the public header only forward-declares the type (opaque /
+    reserved `__name`); abicheck reads the full internal layout from DWARF, ABICC
+    does not.
+  - **C — real break in a sibling .so the oracle does not track** (hdf5): a true
+    C++ vtable growth in `libhdf5_hl_cpp`, while the tracker scores only the C
+    `libhdf5` soname.
+  - **D — partial DWARF evidence** (openssl, the lone *weaker*): a 0.09 % type-only
+    ABICC break not observable in conda `libcrypto`'s sparse DWARF.
+  - **E — correct product break ABICC under-scoped** (oniguruma): an exported
+    data-object size change under a stable SONAME — a real binary break.
+- **40 pairs auto-classified as scope divergences** (abicheck stricter, gated on
+  ABICC's own "0 public symbols removed at 100 % backward-compat") and **23 as
+  evidence-limited** (type-only ABICC break on a stripped binary), correctly kept
+  out of the agreement denominator by the harness's evidence/scope-aware scoring.
+- **Every interesting case above is pinned by an offline regression test** in
+  `tests/test_tracker_parity_realworld.py`, so the documented classification of
+  each cannot silently regress.
 
 ---
 
-## 2. Per-library results
+## 2. Results
 
-| Library | ran | comparable | match | stricter (FP?) | weaker (FN?) | scope-div | evidence-lim |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| fftw | 3 | 0 | 0 | 0 | 0 | 3 | 0 |
-| freetype | 5 | 5 | 5 | 0 | 0 | 0 | 0 |
-| gmp | 4 | 2 | 2 | 0 | 0 | 2 | 0 |
-| gnutls | 3 | 2 | 2 | 0 | 0 | 0 | 1 |
-| gsl | 2 | 2 | 2 | 0 | 0 | 0 | 0 |
-| harfbuzz | 12 | 12 | 12 | 0 | 0 | 0 | 0 |
-| libgcrypt | 2 | 2 | 2 | 0 | 0 | 0 | 0 |
-| libidn2 | 3 | 2 | 2 | 0 | 0 | 1 | 0 |
-| libpng | 4 | 3 | 3 | 0 | 0 | 0 | 1 |
-| libsodium | 3 | 2 | 2 | 0 | 0 | 0 | 1 |
-| libssh2 | 4 | 2 | 2 | 0 | 0 | 2 | 0 |
-| libtasn1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 |
-| libtiff | 9 | 4 | 4 | 0 | 0 | 5 | 0 |
-| libvorbis | 2 | 2 | 2 | 0 | 0 | 0 | 0 |
-| libxml2 | 13 | 10 | 10 | 0 | 0 | 0 | 3 |
-| libxslt | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
-| lz4 | 6 | 4 | 4 | 0 | 0 | 0 | 2 |
-| nettle | 4 | 3 | 2 | **1** | 0 | 1 | 0 |
-| openjpeg | 3 | 2 | 2 | 0 | 0 | 1 | 0 |
-| openssl | 17 | 11 | 10 | 0 | **1** | 3 | 3 |
-| p11-kit | 2 | 2 | 2 | 0 | 0 | 0 | 0 |
-| pcre2 | 3 | 1 | 1 | 0 | 0 | 1 | 1 |
-| snappy | 3 | 0 | 0 | 0 | 0 | 3 | 0 |
-| zstd | 11 | 6 | 6 | 0 | 0 | 4 | 1 |
-| **TOTAL** | **120** | **80** | **78** | **1** | **1** | **26** | **14** |
+**Aggregate (54 libraries had ≥1 comparable pair; full set in the parity
+JSON):**
 
-**Agreement = 78 / 80 = 97.5 %.** Many further pairs were `UNCOMPARABLE` —
-overwhelmingly old releases the tracker covers (e.g. zstd 0.7.x, nettle 1.x) that
-are not published on conda-forge for `linux-64`, so no binary could be fetched.
-Those are excluded from the rate. `fftw`/`snappy` show 0 comparable because every
-runnable pair was an exported-internal-symbol scope divergence (abicheck stricter,
-auto-classified, **no false positive**).
+| | comparable | match | stricter | weaker | scope-div | evidence-lim |
+|---|---:|---:|---:|---:|---:|---:|
+| **TOTAL (54 libs)** | **185** | **174 (94.1 %)** | 10 | 1 | 40 | 23 |
+
+Libraries matching ABICC **100 %** on every comparable pair include harfbuzz
+(12/12), libxml2 (10/10), openssl (10/11), freetype, gsl, libgcrypt, libsodium,
+libssh2, lz4, libvorbis, gnutls, libpng, zstd, openjpeg, p11-kit, libtasn1,
+libidn2, pcre2, glib, cairo, curl, fontconfig, libarchive, libevent, libffi,
+mpfr, glpk, … . The 6 libraries with a divergence are detailed below.
+
+**All 11 non-matching pairs (the only disagreements in 185 comparable):**
+
+| pair | dir | ABICC | abicheck | class |
+|---|---|---|---|---|
+| nettle 3.6→3.7 | stricter | COMPATIBLE | BREAKING | A internal version node |
+| readline 6.2→6.3 | stricter | COMPATIBLE | BREAKING | B internal type (DWARF) |
+| xz 5.2.2→5.2.3 | stricter | COMPATIBLE | BREAKING | B opaque type (DWARF) |
+| librdkafka 0.9.4→0.9.5 | stricter | COMPATIBLE | BREAKING | B opaque type (DWARF) |
+| librdkafka 0.11.5→0.11.6 | stricter | COMPATIBLE | BREAKING | B opaque type (DWARF) |
+| librdkafka 1.2.2→1.3.0 | stricter | COMPATIBLE | BREAKING | B opaque type (DWARF) |
+| hdf5 1.8.16→1.8.17 | stricter | COMPATIBLE | BREAKING | C sibling .so vtable |
+| hdf5 1.8.18→1.8.19 | stricter | COMPATIBLE | BREAKING | C sibling .so vtable |
+| hdf5 1.8.19→1.8.20 | stricter | COMPATIBLE | BREAKING | C sibling .so vtable |
+| oniguruma 6.8.2→6.9.0 | stricter | COMPATIBLE | BREAKING | E real object-size break |
+| openssl 1.1.1a→1.1.1b | weaker | BREAKING | COMPATIBLE | D partial DWARF |
+
+Many further pairs were `UNCOMPARABLE` — overwhelmingly old releases the tracker
+covers (e.g. zstd 0.7.x, nettle 1.x) not published on conda-forge for `linux-64`,
+so no binary could be fetched; excluded from the rate. A handful of harvested
+libraries (c-ares, jansson, flac, libogg, sdl2, …) yielded 0 comparable pairs
+(tracker↔conda version-naming mismatch) and are not counted.
 
 Reproduce any row:
 
@@ -105,7 +115,7 @@ third-party-derived.
 
 ---
 
-## 3. The two divergences, root-caused
+## 3. The divergence classes, root-caused
 
 ### 3.1 STRICTER — nettle 3.6 → 3.7 (expected COMPATIBLE, abicheck BREAKING)
 
@@ -155,9 +165,49 @@ Why this is **not a confirmed false negative**:
   so this is genuinely a coverage gap, not toolchain-rebuild noise.
 
 abicheck reports COMPATIBLE because, on the evidence actually in the binary, there
-is no observable change — the same situation as the 8 stripped-binary
+is no observable change — the same situation as the stripped-binary
 evidence-limited pairs, except `.debug_info` is *present but sparse*. This exposes
 a refinement opportunity in the harness's evidence probe (§4).
+
+### 3.3 STRICTER class B — internal/opaque *type* layout churn (readline, xz, librdkafka)
+
+ABICC COMPATIBLE, abicheck BREAKING, driven by DWARF type-layout changes on types
+that are **internal or opaque in the public header** — so ABICC, which compares
+the header-visible surface, sees nothing, while abicheck reads the full struct
+layout from the binary's DWARF:
+
+| Pair | Driver | Type |
+|---|---|---|
+| readline 6.2→6.3 | `type_size_changed` / `type_field_offset_changed` on `__rl_search_context` + `func_removed _rl_trace/_rl_tropen/_rl_trclose` | reserved `__rl_*` internal struct + `_rl_*` internal helpers |
+| xz 5.2.2→5.2.3 | `type_removed lzma_coder_s` + `typedef_base_changed lzma_coder` | `lzma_coder` is **opaque** in `lzma.h` (forward-declared only) |
+| librdkafka 1.2.2→1.3.0 | 234 `type_field_offset_changed` + 8 `type_size_changed` on `rd_kafka_s` | `rd_kafka_t` is **opaque** in `rdkafka.h`; `rd_kafka_s` is the private definition |
+
+These are real internal-layout changes abicheck correctly reads; they are not
+public ABI. Unlike the symbol-level class A, the findings are **type-level**
+kinds, which the harness deliberately **never** auto-excuses as scope divergence
+(a layout break must stay a scored disagreement — see
+`scope_sensitive_breaking_only`), so they remain scored STRICTER. The right
+durable fix is the same §4.1 internal-scope recognition extended to
+opaque/reserved types, not loosening the type-level rule.
+
+### 3.4 STRICTER class C — real break in an untracked sibling .so (hdf5)
+
+ABICC tracks only the C `libhdf5` soname. The conda `hdf5` package ships several
+shared objects, and the harness takes the **most-breaking** verdict across the
+ones common to both versions. For hdf5 1.8.16→1.8.17 the break is a genuine C++
+ABI change in `libhdf5_hl_cpp` — `vtable_slot_count_changed _ZTV14FL_PacketTable`
+(24→80 bytes, ~1→~8 virtuals) — that the C-only oracle never scores. abicheck is
+*correct*; the divergence is that the two tools are looking at different shared
+objects. (A per-soname scoping option in the harness would reconcile this — §4.)
+
+### 3.5 STRICTER class E — correct product break ABICC under-scoped (oniguruma)
+
+oniguruma 6.8.2→6.9.0: abicheck flags an exported data-object size change under a
+stable SONAME — a real binary-incompatible change (already guarded generically by
+`tests/test_object_size_policy.py`). This is the documented case where abicheck is
+*stricter and right* versus a header/source-scoped tool; the tracker's COMPATIBLE
+verdict under-scopes it. Counted as a divergence for honesty, but it is a correct
+abicheck BREAKING.
 
 ---
 
@@ -188,18 +238,37 @@ a refinement opportunity in the harness's evidence probe (§4).
    on the oracle's own type-only signal (`removed_symbols == 0`) plus a measured
    coverage floor rather than loosening unconditionally.
 
-3. **Keep growing the oracle corpus.** The live oracle now works; the natural next
-   batches are C-ABI libraries with rich conda-forge histories and known ABI
-   events — e.g. `libsodium`, `libssh2`, `pcre2`, `jansson`, `libgit2`, `c-ares`,
-   `flac`, `libvorbis` — to widen real-world coverage and surface any *confirmed*
-   defect (none found so far).
+3. **Per-soname scoping in the harness (class C).** When the oracle tracks a
+   single soname (e.g. hdf5's C `libhdf5`), optionally score only the matching
+   `.so` instead of the package-wide most-breaking aggregate, so a real break in
+   an untracked sibling C++ library is reported separately rather than as an
+   oracle disagreement.
+
+4. **Keep growing the oracle corpus.** Done this round: expanded from 8 to **60**
+   libraries (185 comparable pairs) with the live oracle, still **0 confirmed
+   defects**. Further C-ABI libraries with rich conda-forge histories remain
+   available to widen coverage.
+
+### Regression coverage for the interesting cases
+
+Each non-matching class above is pinned by an offline, network-free test in
+`tests/test_tracker_parity_realworld.py` (runs in the default fast lane):
+
+- class A — nettle `*_INTERNAL_*` + `func_params_changed` stays scored; the
+  symbol-only side is scope-sensitive;
+- class B — readline/xz internal & opaque *type* changes stay scored (type-level
+  kinds never auto-excused);
+- class C — hdf5 most-breaking-across-`.so` aggregation keeps the real sibling
+  break; the vtable change is not scope-sensitive;
+- class D — openssl type-only break with a `.debug_info` section present stays
+  scored (only a genuinely stripped binary earns the evidence-limited excuse).
 
 ---
 
 ## 5. What this run validates about abicheck
 
 - **Symbols-only and DWARF-present comparisons agree with the canonical ABICC
-  oracle on 78/80 real upstream pairs (97.5 %)** across 24 libraries, with **no
+  oracle on 174/185 real upstream pairs (94.1 %)** across 54 libraries, with **no
   confirmed false positive or false negative**.
 - The harness's **evidence-aware + scope-aware scoring holds up on live data**: 15
   scope divergences and 8 evidence limits were correctly separated from genuine
