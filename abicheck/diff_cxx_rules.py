@@ -21,6 +21,8 @@ Kept as a leaf module (depending only on the data model and result types) so
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from .checker_policy import ChangeKind
 from .checker_types import Change
 from .model import Function, RecordType
@@ -226,24 +228,61 @@ def _resolve_owner_type(
     return types.get(leaf) if leaf != owner else None
 
 
-def _transitive_bases(owner: str, types: dict[str, RecordType]) -> set[str]:
-    """All (transitive) base-class names of ``owner``, by record name.
+def virtual_signature_key(f: Function) -> str:
+    """A signature identity for a (virtual) method: ``leaf(params)cv-ref``.
 
-    Walks ``bases`` and ``virtual_bases``; tolerant of missing records (returns
-    what it can reach). Used to tell an inherited-virtual *override* apart from a
-    brand-new vtable slot.
+    Two methods share a vtable slot only when their name *and* signature match
+    (covariant return aside), so this — not the bare leaf — is what tells an
+    inherited-virtual *override* (reuses a slot) apart from a same-named virtual
+    with different parameters (adds a slot). Parameter types are compared by
+    their recorded spelling, which is sufficient here.
+    """
+    leaf = f.name.rsplit("::", 1)[-1]
+    params = ",".join(p.type for p in f.params)
+    quals = ("c" if f.is_const else "") + ("v" if f.is_volatile else "") + f.ref_qualifier
+    return f"{leaf}({params}){quals}"
+
+
+def old_virtual_signatures(functions: Iterable[Function]) -> dict[str, set[str]]:
+    """Per-class virtual-method signature keys for override detection.
+
+    Keyed by *both* the qualified owner and its leaf, so a base name in either
+    form (DWARF qualified, CastXML leaf) resolves. See ``virtual_method_addition``.
+    """
+    sigs: dict[str, set[str]] = {}
+    for f in functions:
+        if not f.is_virtual:
+            continue
+        owner = owner_class_of(f)
+        if owner is None:
+            continue
+        sig = virtual_signature_key(f)
+        sigs.setdefault(owner, set()).add(sig)
+        leaf = owner.rsplit("::", 1)[-1]
+        if leaf != owner:
+            sigs.setdefault(leaf, set()).add(sig)
+    return sigs
+
+
+def _transitive_bases(start: RecordType | None, types: dict[str, RecordType]) -> set[str]:
+    """All (transitive) base-class names reachable from record ``start``.
+
+    Walks ``bases`` / ``virtual_bases``, resolving each base name through the
+    record map with a leaf-name fallback (CastXML records and base names are
+    leaf-only, while DWARF uses qualified names). Tolerant of missing records.
     """
     seen: set[str] = set()
-    stack = [owner]
+    if start is None:
+        return seen
+    stack = [*start.bases, *start.virtual_bases]
     while stack:
-        cur = stack.pop()
-        rec = types.get(cur)
-        if rec is None:
+        b = stack.pop()
+        if b in seen:
             continue
-        for b in (*rec.bases, *rec.virtual_bases):
-            if b not in seen:
-                seen.add(b)
-                stack.append(b)
+        seen.add(b)
+        rec = types.get(b) or types.get(b.rsplit("::", 1)[-1])
+        if rec is not None:
+            stack.extend((*rec.bases, *rec.virtual_bases))
     return seen
 
 
@@ -252,7 +291,7 @@ def virtual_method_addition(
     old_owner_classes: set[str],
     old_types: dict[str, RecordType],
     new_types: dict[str, RecordType],
-    old_virtual_leaves: dict[str, set[str]],
+    old_virtual_sigs: dict[str, set[str]],
 ) -> Change | None:
     """A new *virtual* method on a class that already exists across versions.
 
@@ -271,10 +310,13 @@ def virtual_method_addition(
     but CastXML record names are leaf-only, so a bare-leaf match is only trusted
     when a sibling symbol confirms that exact qualified owner existed before.
 
-    ``old_virtual_leaves`` maps each class to the leaf names of its virtual
-    methods in the *old* snapshot; it is used to skip *overrides* of an inherited
-    virtual (e.g. ``Derived::paint() override``), which reuse the base's existing
-    vtable slot rather than adding one — those are ABI-compatible, not breaks.
+    ``old_virtual_sigs`` maps each class (keyed by both its qualified name and
+    its leaf) to the *signature keys* of its virtual methods in the *old*
+    snapshot; it is used to skip *overrides* of an inherited virtual (e.g.
+    ``Derived::paint() override``), which reuse the base's existing vtable slot
+    rather than adding one — those are ABI-compatible, not breaks. Matching is by
+    full signature, so a same-named virtual with *different* parameters (a new
+    slot, e.g. ``Derived::paint(double)`` over ``Base::paint(int)``) still fires.
     """
     if not f_new.is_virtual:
         return None
@@ -287,12 +329,14 @@ def virtual_method_addition(
         return None  # no pre-existing record on both sides → compatible / out of scope
     if t_old.vtable != t_new.vtable:
         return None  # TYPE_VTABLE_CHANGED covers this case
-    # An override of a virtual inherited from a base reuses that base's slot —
-    # no new slot, no relayout. If any transitive base already declared a virtual
-    # with this leaf name, treat the addition as an override and stay silent.
-    leaf = f_new.name.rsplit("::", 1)[-1]
-    bases = _transitive_bases(owner, new_types) | _transitive_bases(owner, old_types)
-    if any(leaf in old_virtual_leaves.get(b, ()) for b in bases):
+    # An override of an inherited virtual reuses that base's slot — no new slot,
+    # no relayout. If any transitive base already declared a virtual with the
+    # *same signature* (not just the same name), treat the addition as an
+    # override and stay silent; a different-signature same-name virtual is a new
+    # slot and still fires.
+    sig = virtual_signature_key(f_new)
+    bases = _transitive_bases(t_new, new_types) | _transitive_bases(t_old, old_types)
+    if any(sig in old_virtual_sigs.get(b, ()) for b in bases):
         return None
     return Change(
         kind=ChangeKind.VIRTUAL_METHOD_ADDED,

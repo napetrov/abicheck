@@ -284,6 +284,55 @@ class TestVirtualMethodAdded:
         result = compare(old, new)
         assert ChangeKind.VIRTUAL_METHOD_ADDED not in _kinds(result)
 
+    def test_same_name_different_signature_virtual_is_new_slot(self):
+        """A same-named virtual with a *different* signature is a new vtable slot,
+        not an override — must still fire."""
+        base = _cls("Base")
+        derived = RecordType(name="Derived", kind="class", size_bits=64, vtable=[], bases=["Base"])
+        old = _snap(
+            functions=[
+                _method("Base::paint", "_ZN4Base5paintEi", is_virtual=True,
+                        params=[Param(name="x", type="int")]),
+                _method("Derived::help", "_ZN7Derived4helpEv"),
+            ],
+            types=[base, derived],
+        )
+        new = _snap(
+            functions=[
+                _method("Base::paint", "_ZN4Base5paintEi", is_virtual=True,
+                        params=[Param(name="x", type="int")]),
+                _method("Derived::help", "_ZN7Derived4helpEv"),
+                _method("Derived::paint", "_ZN7Derived5paintEd", is_virtual=True,
+                        params=[Param(name="x", type="double")]),  # different signature
+            ],
+            types=[base, derived],
+        )
+        result = compare(old, new)
+        assert ChangeKind.VIRTUAL_METHOD_ADDED in _kinds(result)
+
+    def test_namespaced_inherited_override_is_not_virtual_method_added(self):
+        """Override of an inherited virtual in a namespaced class (CastXML
+        leaf-only records) must resolve bases and stay compatible."""
+        base = _cls("Base")  # CastXML stores ns::Base as leaf "Base"
+        derived = RecordType(name="Derived", kind="class", size_bits=64, vtable=[], bases=["Base"])
+        old = _snap(
+            functions=[
+                _method("paint", "_ZN2ns4Base5paintEv", is_virtual=True),   # ns::Base::paint
+                _method("help", "_ZN2ns7Derived4helpEv"),                   # ns::Derived::help
+            ],
+            types=[base, derived],
+        )
+        new = _snap(
+            functions=[
+                _method("paint", "_ZN2ns4Base5paintEv", is_virtual=True),
+                _method("help", "_ZN2ns7Derived4helpEv"),
+                _method("paint", "_ZN2ns7Derived5paintEv", is_virtual=True),  # ns::Derived::paint override
+            ],
+            types=[base, derived],
+        )
+        result = compare(old, new)
+        assert ChangeKind.VIRTUAL_METHOD_ADDED not in _kinds(result)
+
     def test_unchanged_class_no_finding(self):
         old = _snap(
             functions=[_method("Widget::paint", "_ZN6Widget5paintEv", is_virtual=True)],
