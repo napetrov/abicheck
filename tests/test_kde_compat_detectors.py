@@ -204,6 +204,25 @@ class TestVirtualMethodAdded:
         assert ChangeKind.VIRTUAL_METHOD_ADDED in _kinds(result)
         assert result.verdict == Verdict.BREAKING
 
+    def test_added_virtual_destructor_resolves_owner_from_mangled(self):
+        """A virtual destructor added to an existing class (empty-vtable blind
+        spot) is a vtable break; its CastXML leaf name is just ``~C`` so the
+        owner must come from the mangled name (``_ZN1CD1Ev``)."""
+        old = _snap(
+            functions=[_method("C::foo", "_ZN1C3fooEv", is_virtual=True)],
+            types=[_cls("C")],
+        )
+        new = _snap(
+            functions=[
+                _method("C::foo", "_ZN1C3fooEv", is_virtual=True),
+                _method("~C", "_ZN1CD1Ev", is_virtual=True),  # virtual dtor, leaf name
+            ],
+            types=[_cls("C")],
+        )
+        result = compare(old, new)
+        assert ChangeKind.VIRTUAL_METHOD_ADDED in _kinds(result)
+        assert result.verdict == Verdict.BREAKING
+
     def test_unchanged_class_no_finding(self):
         old = _snap(
             functions=[_method("Widget::paint", "_ZN6Widget5paintEv", is_virtual=True)],
@@ -379,6 +398,10 @@ class TestItaniumScopeParser:
         ("_ZN3lib12experimental4sortEv", ["lib", "experimental", "sort"]),
         ("_ZN3BoxIiE4sizeEv", ["BoxIiE", "size"]),           # Box<int>::size
         ("_ZN3BoxIfE4sizeEv", ["BoxIfE", "size"]),           # Box<float>::size (distinct)
+        ("_ZNR1C1fEv", ["C", "f"]),                          # C::f() & (lvalue ref-qual)
+        ("_ZNO1C1fEv", ["C", "f"]),                          # C::f() && (rvalue ref-qual)
+        ("_ZN1CC1Ev", ["C", "{ctor}"]),                      # C::C() constructor
+        ("_ZN1CD1Ev", ["C", "{dtor}"]),                      # C::~C() destructor
     ])
     def test_components(self, mangled, expected):
         assert itanium_scope_components(mangled) == expected
@@ -388,11 +411,27 @@ class TestItaniumScopeParser:
             "_ZN3BoxIfE4sizeEv"
         )
 
+    def test_ref_qualified_overloads_share_a_key(self):
+        # C::f() & and C::f() && are genuine overloads → same scope key.
+        assert itanium_qualified_name("_ZNR1C1fEv") == itanium_qualified_name(
+            "_ZNO1C1fEv"
+        )
+
+    def test_constructor_overloads_share_a_key(self):
+        assert itanium_qualified_name("_ZN1CC1Ev") == itanium_qualified_name(
+            "_ZN1CC1Ei"
+        )
+
+    def test_destructor_owner_resolves_from_mangled(self):
+        f = Function(name="~C", mangled="_ZN1CD1Ev",
+                     return_type="void", visibility=Visibility.PUBLIC)
+        assert owner_class_of(f) == "C"
+
     @pytest.mark.parametrize("mangled", [
         "foo",            # not Itanium-mangled (C symbol)
-        "_ZN1CC1Ev",      # constructor — not modelled
         "_ZN1C99barEv",   # length runs past the string (malformed)
         "_Z1²0",     # fuzzed: Unicode digit must not reach int()
+        "_ZN1CplEv",      # operator+ — not modelled
     ])
     def test_unmodelled_or_degenerate_does_not_crash(self, mangled):
         # Must never raise; either parses to something or returns None.

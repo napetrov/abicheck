@@ -105,8 +105,9 @@ def itanium_scope_components(mangled: str) -> list[str] | None:
     nested = s.startswith("N")
     if nested:
         s = s[1:]
-        # Skip CV-/ref-qualifiers on the implicit object parameter (e.g. NK / NV).
-        while s[:1] in ("r", "V", "K"):
+        # Skip CV-qualifiers (r/V/K) and ref-qualifiers (R/O) on the implicit
+        # object parameter, e.g. NK… (const), NR… (lvalue &), NO… (rvalue &&).
+        while s[:1] in ("r", "V", "K", "R", "O"):
             s = s[1:]
     components: list[str] = []
     i = 0
@@ -115,20 +116,27 @@ def itanium_scope_components(mangled: str) -> list[str] | None:
         c = s[i]
         if nested and c == "E":
             break
-        if c not in _ASCII_DIGITS:
-            return None  # operator / ctor / substitution — not modelled
-        name, i = _read_length_prefixed_name(s, i)
-        if name is None:
-            return None
-        # A directly-attached template-argument list belongs to this component;
-        # keep it raw so Box<int> and Box<float> remain distinct.
-        if i < n and s[i] == "I":
-            end = _skip_template_args(s, i)
-            if end is None:
+        if c in _ASCII_DIGITS:
+            name, i = _read_length_prefixed_name(s, i)
+            if name is None:
                 return None
-            name = name + s[i:end]
-            i = end
-        components.append(name)
+            # A directly-attached template-argument list belongs to this
+            # component; keep it raw so Box<int> and Box<float> stay distinct.
+            if i < n and s[i] == "I":
+                end = _skip_template_args(s, i)
+                if end is None:
+                    return None
+                name = name + s[i:end]
+                i = end
+            components.append(name)
+        elif c == "C" and i + 1 < n and s[i + 1] in "12345":
+            components.append("{ctor}")  # constructor (C1/C2/C3/…)
+            i += 2
+        elif c == "D" and i + 1 < n and s[i + 1] in "012345":
+            components.append("{dtor}")  # destructor (D0/D1/D2/…)
+            i += 2
+        else:
+            return None  # operator / substitution — not modelled
         if not nested:
             break  # free function: one component, the rest is the parameter encoding
     return components or None
