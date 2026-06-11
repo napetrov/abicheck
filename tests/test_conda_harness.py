@@ -13,11 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Offline tests for the conda-forge resolution helpers of the parity loop.
+"""Offline tests for the shared conda-forge engine (``conda_harness``).
 
-Only the pure resolution/naming helpers are exercised here (no network, conda,
-or abicheck). The orchestration in ``main`` is integration-only and validated by
-hand against real binaries.
+Only the pure resolution/naming/extraction helpers are exercised here (no
+network, conda, or abicheck). The orchestration in ``validate`` is
+integration-only and validated by hand against real binaries.
 """
 
 from __future__ import annotations
@@ -27,11 +27,11 @@ from pathlib import Path
 
 import pytest
 
-_SCRIPT = Path("validation/scripts/run_tracker_parity.py")
+_SCRIPT = Path("validation/scripts/conda_harness.py")
 
 
 def _load_module():
-    spec = importlib.util.spec_from_file_location("run_tracker_parity", _SCRIPT)
+    spec = importlib.util.spec_from_file_location("conda_harness", _SCRIPT)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -99,17 +99,17 @@ def test_select_conda_basename_picks_newest_build_in_subdir() -> None:
 
 def test_build_number_parses_hash_and_plain_builds() -> None:
     mod = _load_module()
-    assert mod._build_number("linux-64/zstd-1.5.5-hfc55251_0.conda") == 0
-    assert mod._build_number("linux-64/libxml2-2.9.4-4.tar.bz2") == 4
-    assert mod._build_number("linux-64/tbb-2021.9.0-hf52228f_3.conda") == 3
-    assert mod._build_number("no-build-number") == -1
+    assert mod.build_number("linux-64/zstd-1.5.5-hfc55251_0.conda") == 0
+    assert mod.build_number("linux-64/libxml2-2.9.4-4.tar.bz2") == 4
+    assert mod.build_number("linux-64/tbb-2021.9.0-hf52228f_3.conda") == 3
+    assert mod.build_number("no-build-number") == -1
 
 
 def test_logical_name_strips_so_suffix_and_embedded_version() -> None:
     mod = _load_module()
-    assert mod._logical_name("lib/libxml2.so.2.9.4") == "libxml2"
-    assert mod._logical_name("lib/libcapnp-1.4.0.so") == "libcapnp"
-    assert mod._logical_name("lib/libssl.so.3") == "libssl"
+    assert mod.logical_name("lib/libxml2.so.2.9.4") == "libxml2"
+    assert mod.logical_name("lib/libcapnp-1.4.0.so") == "libcapnp"
+    assert mod.logical_name("lib/libssl.so.3") == "libssl"
 
 
 def test_extract_tar_zst_python_backend(tmp_path: Path) -> None:
@@ -134,7 +134,7 @@ def test_extract_tar_zst_python_backend(tmp_path: Path) -> None:
 
     into = tmp_path / "out"
     into.mkdir()
-    mod._extract_tar_zst(zst, into)
+    mod.extract_tar_zst(zst, into)
 
     extracted = into / "lib" / "libfoo.so.1"
     assert extracted.is_file()

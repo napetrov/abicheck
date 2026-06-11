@@ -1,0 +1,112 @@
+# Copyright 2026 Nikolay Petrov
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Offline tests for the unified validation harness source adapters.
+
+Exercises ``manifest_pairs``/``tracker_pairs`` normalisation only — no network,
+conda, or abicheck. The fetch/extract/compare engine is covered separately in
+``test_conda_harness.py``.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+
+import pytest
+
+_SCRIPT = Path("validation/scripts/validate.py")
+
+
+def _load_module():
+    spec = importlib.util.spec_from_file_location("validate", _SCRIPT)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_manifest_pairs_normalises_curated_entries() -> None:
+    # The committed manifest must map cleanly to normalised pairs with the
+    # expectation carried as expected_verdict and exact builds pinned.
+    mod = _load_module()
+    pairs = mod.manifest_pairs(None, "linux-64")
+
+    assert pairs, "manifest should yield at least one pair"
+    sample = pairs[0]
+    assert set(sample) >= {
+        "pair",
+        "library",
+        "pkg",
+        "old_ver",
+        "new_ver",
+        "expected_verdict",
+        "subdir",
+    }
+    # expectation -> expected_verdict, and exact build files are pinned.
+    assert all(p["expected_verdict"] in {"COMPATIBLE", "BREAKING"} for p in pairs)
+    assert all(p["old_file"] and p["new_file"] for p in pairs)
+    assert sample["subdir"] == "linux-64"
+
+
+def test_manifest_pairs_filters_by_library() -> None:
+    mod = _load_module()
+    everything = mod.manifest_pairs(None, "linux-64")
+    libs = {p["library"] for p in everything}
+    target = next(iter(libs))
+
+    filtered = mod.manifest_pairs(target, "linux-64")
+    assert filtered
+    assert {p["library"] for p in filtered} == {target}
+    assert len(filtered) <= len(everything)
+
+
+def test_tracker_pairs_reads_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # tracker_oracle/*.json is gitignored, so build a tiny oracle on the fly and
+    # point the adapter at it.
+    mod = _load_module()
+    oracle = {
+        "library": "demo",
+        "pairs": [
+            {
+                "pair": "demo_1.0_to_1.1",
+                "old_ver": "1.0",
+                "new_ver": "1.1",
+                "expected_verdict": "BREAKING",
+            }
+        ],
+    }
+    (tmp_path / "demo.json").write_text(json.dumps(oracle))
+    monkeypatch.setattr(mod, "ORACLE_DIR", tmp_path)
+
+    pairs = mod.tracker_pairs("demo", pkg="libdemo", subdir="linux-64")
+    assert len(pairs) == 1
+    p = pairs[0]
+    assert p["pair"] == "demo_1.0_to_1.1"
+    assert p["pkg"] == "libdemo"  # --pkg override applied
+    assert p["expected_verdict"] == "BREAKING"
+    assert p["subdir"] == "linux-64"
+
+
+def test_tracker_pairs_missing_oracle_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mod = _load_module()
+    monkeypatch.setattr(mod, "ORACLE_DIR", tmp_path)
+    with pytest.raises(FileNotFoundError):
+        mod.tracker_pairs("nope", pkg=None, subdir="linux-64")

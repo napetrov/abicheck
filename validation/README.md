@@ -46,25 +46,43 @@ python validation/scripts/fetch_tracker_oracle.py zstd --compare results.json
 #     WEAKER (likely FN): zstd_0.7.3_to_0.7.4 oracle=BREAKING abicheck=COMPATIBLE
 ```
 
-### End-to-end loop (`run_tracker_parity.py`)
+### Unified end-to-end loop (`validate.py`)
 
-`run_tracker_parity.py` closes the loop: given a harvested oracle, it resolves
+`validate.py` is the single entrypoint that scores `abicheck` against **any**
+expectation source through one shared engine (`conda_harness.py`): it resolves
 each version pair to a **conda-forge** package (via the anaconda.org API),
 downloads + extracts the shared objects, runs `abicheck compare`, and scores the
-verdict against the tracker — no manual results file needed. Pairs whose
-versions aren't on conda-forge are skipped (left UNCOMPARABLE); binaries are
-fetched on demand and never committed. Reports land in
-`data/tracker_parity/<lib>.json` (gitignored).
+verdict against the source — no manual results file needed. The only difference
+between "validate against curated examples" and "validate against an automated
+oracle" is one flag:
 
 ```bash
-python validation/scripts/fetch_tracker_oracle.py libxml2     # harvest first
-python validation/scripts/run_tracker_parity.py libxml2 --max-pairs 4
-#   libxml2_2.9.3_to_2.9.4: abicheck=COMPATIBLE oracle=COMPATIBLE (libxml2)
-#   libxml2_2.9.7_to_2.9.8: abicheck=BREAKING   oracle=BREAKING   (libxml2)
+# Automated oracle (harvest first; whole version histories)
+python validation/scripts/fetch_tracker_oracle.py libxml2
+python validation/scripts/validate.py --source tracker --lib libxml2 --max-pairs 4
+#   libxml2_2.9.3_to_2.9.4: abicheck=COMPATIBLE expected=COMPATIBLE (libxml2)
 #   [libxml2] ran 4 pairs | comparable=4 agreement=100.0% match=4 stricter=0 weaker=0
+
+# Curated, human-labelled manifest (data/manifest.json) — now fetches/extracts too
+python validation/scripts/validate.py --source manifest            # all entries
+python validation/scripts/validate.py --source manifest --lib oneTBB
 ```
 
-`--pkg` overrides the conda package name when it differs from the tracker slug;
+`run_tracker_parity.py <lib>` remains as a thin alias for
+`validate.py --source tracker --lib <lib>`.
+
+Sources (pluggable — add one adapter to cover a new ground truth):
+
+| `--source` | Expected verdict from | Notes |
+|-----------|----------------------|-------|
+| `tracker` | `data/tracker_oracle/<lib>.json` | automated abi-laboratory harvest, broad coverage |
+| `manifest` | `data/manifest.json` `expectation` | hand-curated edge cases with notes; pins exact builds |
+
+Pairs whose versions aren't on conda-forge are skipped (left UNCOMPARABLE);
+binaries are fetched on demand and never committed. Reports land in
+`data/tracker_parity/<label>.json` (gitignored).
+
+`--pkg` overrides the conda package name when it differs from the slug;
 `--subdir` selects the conda platform (default `linux-64`). Per pair, the
 most-breaking verdict across shared objects is taken (conservative). `.tar.bz2`
 packages extract via the stdlib; `.conda` packages prefer a pure-Python zstd
