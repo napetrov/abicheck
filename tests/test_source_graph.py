@@ -621,6 +621,16 @@ def test_compare_graph_non_object_json_errors(tmp_path) -> None:
     assert "must contain a JSON object" in res.output
 
 
+def test_compare_graph_rejects_non_graph_json_object(tmp_path) -> None:
+    # An unrelated JSON object (e.g. a pack manifest) must fail with an
+    # actionable error, not be read as an empty graph (CodeRabbit review).
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"evidence_pack_version": 1, "coverage": []}))
+    res = CliRunner().invoke(main, ["compare-graph", str(manifest), str(manifest)])
+    assert res.exit_code != 0
+    assert "not a source graph summary" in res.output
+
+
 def test_collect_evidence_summary_without_build_is_partial(tmp_path) -> None:
     # --source-graph summary with no build adapter inputs yields an empty graph;
     # the L5 coverage row must read PARTIAL (ran, produced nothing), not PRESENT.

@@ -886,6 +886,15 @@ def _load_source_graph(path: Path) -> SourceGraphSummary:
         raise click.ClickException(f"Cannot read source graph at {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise click.ClickException(f"{path} must contain a JSON object.")
+    # SourceGraphSummary.from_dict is intentionally forgiving (it defaults a
+    # missing nodes/edges to empty), so guard here: an unrelated JSON file (e.g.
+    # a pack manifest) would otherwise load as an empty graph and report a bogus
+    # diff instead of an actionable error.
+    if not isinstance(data.get("nodes"), list) or not isinstance(data.get("edges"), list):
+        raise click.ClickException(
+            f"{path} is not a source graph summary "
+            "(expected top-level 'nodes' and 'edges' lists)."
+        )
     return SourceGraphSummary.from_dict(data)
 
 
