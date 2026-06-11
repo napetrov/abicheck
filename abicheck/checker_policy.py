@@ -538,6 +538,17 @@ class ChangeKind(str, Enum):
     CALL_GRAPH_PUBLIC_ENTRY_REACHABILITY_CHANGED = "call_graph_public_entry_reachability_changed"  # impl reachable from an exported entry changed → COMPATIBLE (quality)
     INCLUDE_GRAPH_PUBLIC_HEADER_DRIFT = "include_graph_public_header_drift"  # the include closure of a public header changed → RISK
     BUILD_OPTION_REACHES_PUBLIC_SYMBOL = "build_option_reaches_public_symbol"  # a changed ABI-relevant option reaches a public symbol → RISK
+    # ── Cross-implementation standard-library compatibility (D-stdlib) ───────
+    # Emitted by the build-mode diff (diff_stdlib_impl.py) when the two
+    # snapshots were produced against *different standard-library
+    # implementations* — a third compatibility axis (alongside backward /
+    # forward) that the C++ standard does not guarantee. These are RISK, not
+    # BREAKING: when an embedded stdlib type's layout actually differs, the
+    # artifact/type diff emits the BREAKING size/offset finding separately;
+    # these kinds explain and localize the cause without escalating on their
+    # own (and stay silent when build-mode evidence is absent).
+    STDLIB_IMPLEMENTATION_CHANGED = "stdlib_implementation_changed"  # libstdc++ ↔ libc++ ↔ MSVC STL → RISK
+    LIBCPP_ABI_VERSION_CHANGED = "libcpp_abi_version_changed"  # _LIBCPP_ABI_VERSION 1 ↔ 2 → RISK
 
 
 class HasKind(Protocol):

@@ -129,14 +129,53 @@ def is_cxx_runtime_library(library: str | None) -> bool:
     return base.startswith(_CXX_RUNTIME_CORE_STEMS)
 
 
+def cross_stdlib_implementation(old: AbiSnapshot, new: AbiSnapshot) -> bool:
+    """Return True when the two snapshots were built against *different* C++
+    standard-library implementations (libstdc++ ↔ libc++ ↔ MSVC STL).
+
+    Derived from the normalized :class:`~abicheck.build_mode.BuildMode` capture
+    on each side. Only returns True when both families are known and differ;
+    an ``UNKNOWN`` on either side (no build-mode evidence) yields False so we
+    never guess a cross-implementation comparison into existence.
+
+    This is the third compatibility axis: across implementations the layout of
+    embedded ``std::`` types is *not* guaranteed, so in this case those types
+    must be compared rather than filtered as toolchain noise.
+    """
+    from .build_mode import StdlibFamily
+
+    old_bm = getattr(old, "build_mode", None)
+    new_bm = getattr(new, "build_mode", None)
+    if old_bm is None or new_bm is None:
+        return False
+    if (
+        old_bm.stdlib is StdlibFamily.UNKNOWN
+        or new_bm.stdlib is StdlibFamily.UNKNOWN
+    ):
+        return False
+    if old_bm.stdlib != new_bm.stdlib:
+        return True
+    # Same family but different libc++ ABI version is also a cross-impl layout
+    # boundary (std::__1 vs std::__2 lay std:: types out differently).
+    old_v = old_bm.libcpp_abi_version
+    new_v = new_bm.libcpp_abi_version
+    return old_v is not None and new_v is not None and old_v != new_v
+
+
 def stdlib_namespaces_excluded(old: AbiSnapshot, new: AbiSnapshot) -> bool:
     """Return True when ``std::``/runtime namespaces should be filtered out of
     type diffing as leaked dependencies.
 
-    False only when *either* side IS the C++ runtime (libstdc++ / libc++), where
-    those types are the surface under test.  Single source of truth so every
-    registered detector that consumes ``snapshot.types`` agrees on whether to
-    keep std:: records (validation/REPORT.md FP-1; Codex reviews on PR #273).
+    False when *either* side IS the C++ runtime (libstdc++ / libc++), where
+    those types are the surface under test — and also False when the two
+    snapshots were built against *different* stdlib implementations
+    (:func:`cross_stdlib_implementation`): across implementations the layout of
+    an embedded ``std::`` type is exactly the thing under test and must not be
+    suppressed. For the ordinary same-toolchain comparison the filter still
+    applies (those types are toolchain-owned noise — validation/REPORT.md FP-1;
+    Codex reviews on PR #273). Single source of truth so every registered
+    detector that consumes ``snapshot.types`` agrees on whether to keep std::
+    records.
     """
     old_elf = getattr(old, "elf", None)
     new_elf = getattr(new, "elf", None)
@@ -145,6 +184,7 @@ def stdlib_namespaces_excluded(old: AbiSnapshot, new: AbiSnapshot) -> bool:
         or is_cxx_runtime_library(new.library)
         or is_cxx_runtime_library(getattr(old_elf, "soname", ""))
         or is_cxx_runtime_library(getattr(new_elf, "soname", ""))
+        or cross_stdlib_implementation(old, new)
     )
 
 

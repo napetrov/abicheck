@@ -1042,4 +1042,28 @@ REGISTRY = ChangeKindRegistry([
               "produces an exported public symbol (per the build/source graph). "
               "It localizes a flag-drift risk to the public surface it can affect; "
               "a risk to review, never on its own an artifact-proven ABI break."),
+    # ── Cross-implementation standard-library compatibility (D-stdlib) ───────
+    # Produced by the build-mode diff (diff_stdlib_impl.py). Compatibility
+    # between *different* C++ standard-library implementations is a third axis
+    # the standard never guarantees: a class that holds a std:: container by
+    # value gets a different layout under libstdc++ vs libc++ vs MSVC STL, so
+    # the same source linked against a mismatched runtime is silently
+    # ABI-incompatible. These default to RISK — when an embedded stdlib type's
+    # layout actually differs, the type diff emits the BREAKING size/offset
+    # finding separately; these explain and localize it and never escalate on
+    # their own. They are emitted only when build-mode evidence is present on
+    # both sides; absent that, the diff stays silent rather than guessing.
+    _E("stdlib_implementation_changed", _R,
+       impact="The two artifacts were built against different C++ standard-library "
+              "implementations (e.g. libstdc++ vs libc++, or vs MSVC STL). The "
+              "standard does not guarantee ABI compatibility across implementations: "
+              "any public type embedding a std:: container/string by value gets a "
+              "different layout, and inline std:: code can ODR-conflict. Pin a single "
+              "implementation or rebuild consumers against the matching runtime."),
+    _E("libcpp_abi_version_changed", _R,
+       impact="The libc++ ABI version changed (e.g. _LIBCPP_ABI_VERSION 1 → 2). "
+              "libc++ selects incompatible internal layouts for std:: types via an "
+              "inline namespace (std::__1 vs std::__2), so types embedding them by "
+              "value are laid out differently. Rebuild consumers against the matching "
+              "libc++ ABI version."),
 ])
