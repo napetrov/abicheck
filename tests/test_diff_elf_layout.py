@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -189,11 +190,25 @@ class TestWiring:
         assert ChangeKind.VTABLE_SLOT_COUNT_CHANGED in kinds
         assert ChangeKind.SYMBOL_SIZE_CHANGED not in kinds
 
+    def test_vtt_size_change_keeps_generic_coverage(self) -> None:
+        # VTT (_ZTT, emitted for virtual-base classes) has no dedicated detector
+        # and is part of the construction ABI, so a size change must still surface
+        # as the generic SYMBOL_SIZE_CHANGED — it must NOT be silently suppressed.
+        old = _snap(_obj("_ZTT1B", 16))
+        new = _snap(_obj("_ZTT1B", 32))
+        result = compare(old, new)
+        assert result.verdict == Verdict.BREAKING
+        assert any(c.kind == ChangeKind.SYMBOL_SIZE_CHANGED for c in result.changes)
+
 
 # ---------------------------------------------------------------------------
 # Real-binary proof (needs g++; not in the fast lane)
 # ---------------------------------------------------------------------------
 @pytest.mark.integration
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="ELF-only: g++ emits Mach-O/PE off Linux, so _ZTV/_ZTI parsing N/A",
+)
 @pytest.mark.skipif(shutil.which("g++") is None, reason="g++ not available")
 def test_real_binary_vtable_and_rtti(tmp_path: Path) -> None:
     from abicheck.elf_metadata import parse_elf_metadata
