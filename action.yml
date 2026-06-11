@@ -254,6 +254,44 @@ inputs:
     description: 'Write a markdown summary to the GitHub Actions Job Summary. Ignored for dump mode.'
     required: false
     default: 'true'
+  pr-comment:
+    description: >
+      Post a sticky ABI report comment on the pull request (compare,
+      compare-release and appcompat modes). The comment is a content channel
+      and never changes the check's red/green state — breaks still gate via
+      fail-on-breaking / fail-on-api-break. Defaults to 'true', but is a no-op
+      unless the workflow is triggered by a pull_request event and a token with
+      'pull-requests: write' is available.
+    required: false
+    default: 'true'
+  pr-comment-mode:
+    description: >
+      'update' (default) keeps a single sticky comment and edits it in place on
+      every run; 'new' posts a fresh comment each run. Either way the scanned
+      head SHA is shown in the comment.
+    required: false
+    default: 'update'
+  pr-comment-on:
+    description: >
+      When to comment: 'changes' (default) only comments when there is at least
+      one ABI/API change, 'always' comments every run (including a clean
+      "no changes" result), 'never' disables the comment.
+    required: false
+    default: 'changes'
+  pr-comment-detail:
+    description: >
+      Detail level of the comment body: 'summary' (verdict + counts only),
+      'standard' (default; per-symbol tables for breaking/review, grouped safe
+      list) or 'full' (every change with locations, all sections expanded).
+    required: false
+    default: 'standard'
+  github-token:
+    description: >
+      Token used to post the PR comment and to auto-fetch release baselines.
+      Defaults to the workflow token; requires 'pull-requests: write' for the
+      comment.
+    required: false
+    default: ${{ github.token }}
 
 outputs:
   verdict:
@@ -262,7 +300,8 @@ outputs:
       BREAKING, or ERROR. SEVERITY_ERROR is produced when
       --severity-addition=error detects new public API additions
       (compare mode only).
-      For compare-release: COMPATIBLE, API_BREAK, BREAKING,
+      For compare-release: COMPATIBLE, SEVERITY_ERROR (with --severity-*
+      via extra-args), API_BREAK, BREAKING,
       REMOVED_LIBRARY (when fail-on-removed-library is set), or ERROR.
       For appcompat: COMPATIBLE, API_BREAK, BREAKING, or ERROR.
       For dump: COMPATIBLE or ERROR.
@@ -358,6 +397,11 @@ runs:
         INPUT_INCLUDE_PRIVATE_DSO: ${{ inputs.include-private-dso }}
         INPUT_KEEP_EXTRACTED: ${{ inputs.keep-extracted }}
         INPUT_FAIL_ON_REMOVED_LIBRARY: ${{ inputs.fail-on-removed-library }}
+        INPUT_PR_COMMENT: ${{ inputs.pr-comment }}
+        INPUT_PR_COMMENT_MODE: ${{ inputs.pr-comment-mode }}
+        INPUT_PR_COMMENT_ON: ${{ inputs.pr-comment-on }}
+        INPUT_PR_COMMENT_DETAIL: ${{ inputs.pr-comment-detail }}
+        GH_TOKEN: ${{ inputs.github-token }}
       run: bash "${{ github.action_path }}/action/run.sh"
 
     # ── 5. Upload SARIF ──────────────────────────────────────────────────────

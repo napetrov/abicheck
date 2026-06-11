@@ -413,8 +413,10 @@ elif [[ "$MODE" == "appcompat" ]]; then
   fi
 
 elif [[ "$MODE" == "compare-release" ]]; then
-  # compare-release exit codes: 0=compatible, 2=API_BREAK, 4=BREAKING, 8=REMOVED_LIBRARY
-  # No severity support — exit code 1 is always a CLI error.
+  # compare-release exit codes: 0=compatible, 2=API_BREAK, 4=BREAKING,
+  # 8=REMOVED_LIBRARY. With --severity-* options (e.g. via extra-args) the CLI
+  # follows the severity-aware scheme, where exit 1 is a severity error (not a
+  # CLI failure) — distinguish the two via stderr.
   if [[ $ABICHECK_EXIT -eq 2 ]] && echo "$STDERR_CONTENT" | grep -qE '(^Usage:|^Error:|^Try )'; then
     VERDICT="ERROR"
     echo "::error::abicheck compare-release failed due to a CLI argument or configuration error (exit code 2)."
@@ -422,6 +424,14 @@ elif [[ "$MODE" == "compare-release" ]]; then
   else
     case $ABICHECK_EXIT in
       0) VERDICT="COMPATIBLE" ;;
+      1)
+        if _is_cli_error; then
+          VERDICT="ERROR"
+          echo "::error::abicheck compare-release failed due to a CLI error (exit code 1)."
+        else
+          VERDICT="SEVERITY_ERROR"
+        fi
+        ;;
       2) VERDICT="API_BREAK" ;;
       4) VERDICT="BREAKING" ;;
       8) VERDICT="REMOVED_LIBRARY" ;;
@@ -574,6 +584,223 @@ if [[ "${INPUT_ADD_JOB_SUMMARY:-true}" == "true" && "$MODE" != "dump" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Sticky PR comment (content channel — never changes the red/green gate)
+# ---------------------------------------------------------------------------
+# Rebuild the run command with `--format json` so the comment renderer has a
+# structured report, regardless of the format chosen for the main output.
+_can_reuse_primary_json() {
+  # Reuse the primary run's output as the comment's JSON report instead of
+  # re-running the comparison — but only when it is a faithful, unfiltered
+  # report. It must already be JSON, written to a non-empty file, and free of
+  # display filters (--show-only / --stat) that hide gated changes from the
+  # comment (which _build_json_cmd strips for exactly that reason).
+  [[ "${FORMAT:-}" == "json" ]] || return 1
+  [[ -n "${OUTPUT_FILE:-}" && -s "${OUTPUT_FILE:-}" ]] || return 1
+  local arg
+  for arg in ${CMD[@]+"${CMD[@]}"}; do
+    case "$arg" in
+      --show-only | --show-only=* | --stat) return 1 ;;
+    esac
+  done
+  return 0
+}
+
+_build_json_cmd() {
+  PR_CMD_JSON=()
+  local i
+  for ((i = 0; i < ${#CMD[@]}; i++)); do
+    case "${CMD[$i]}" in
+      --format | -o | --output | --output-file)
+        ((i++))  # skip the flag's value too
+        ;;
+      --show-only)
+        # Display filter ("limit displayed changes", does NOT affect exit codes).
+        # Keeping it would hide gated breaks from the comment while the check
+        # still fails red — drop it (and its value) so the comment sees the
+        # full change set the gate acted on.
+        ((i++))  # skip the flag's value too
+        ;;
+      --show-only=*)
+        : # same display filter, inline value form — drop it for the re-run.
+        ;;
+      --stat)
+        : # display-only flag (no value); it suppresses the changes array in
+          # JSON, which the comment parser needs — drop it for the re-run.
+        ;;
+      *)
+        PR_CMD_JSON+=("${CMD[$i]}")
+        ;;
+    esac
+  done
+  PR_CMD_JSON+=(--format json -o "$PR_JSON")
+}
+
+_maybe_post_pr_comment() {
+  [[ "${INPUT_PR_COMMENT:-true}" == "true" ]] || return 0
+  case "$MODE" in
+    compare | compare-release | appcompat) ;;
+    *) return 0 ;;
+  esac
+  [[ "${INPUT_PR_COMMENT_ON:-changes}" == "never" ]] && return 0
+  [[ "$VERDICT" == "ERROR" ]] && return 0
+  case "${GITHUB_EVENT_NAME:-}" in
+    pull_request | pull_request_target) ;;
+    *)
+      echo "abicheck: not a pull_request event; skipping PR comment."
+      return 0
+      ;;
+  esac
+
+  local event="${GITHUB_EVENT_PATH:-}"
+  local pr_number="" head_sha=""
+  if [[ -n "$event" && -f "$event" ]] && command -v jq >/dev/null 2>&1; then
+    pr_number=$(jq -r '.pull_request.number // empty' "$event" 2>/dev/null)
+    head_sha=$(jq -r '.pull_request.head.sha // empty' "$event" 2>/dev/null)
+  fi
+  if [[ -z "$pr_number" ]]; then
+    echo "::warning::abicheck: could not determine the PR number; skipping PR comment."
+    return 0
+  fi
+
+  echo "::group::abicheck PR comment"
+  # Template-based mktemp (X's at the end) — portable across GNU and BSD/macOS,
+  # unlike the GNU-only --suffix option.
+  PR_JSON=$(mktemp "${RUNNER_TEMP:-/tmp}/abicheck-pr-json.XXXXXX")
+  PR_BODY=$(mktemp "${RUNNER_TEMP:-/tmp}/abicheck-pr-body.XXXXXX")
+  if _can_reuse_primary_json; then
+    # The primary run already produced a faithful JSON report — reuse it instead
+    # of re-running the whole comparison.
+    cp "$OUTPUT_FILE" "$PR_JSON"
+  else
+    _build_json_cmd
+    # Re-run for JSON; a non-zero exit here is expected on breaks — the report
+    # file is still written, so we ignore the status.
+    "${PR_CMD_JSON[@]}" >/dev/null 2>/dev/null || true
+  fi
+  if [[ ! -s "$PR_JSON" ]]; then
+    echo "::warning::abicheck: no JSON report produced; skipping PR comment."
+    echo "::endgroup::"
+    return 0
+  fi
+
+  # Mirror the step's gate: when fail-on-api-break is set, API/source breaks
+  # turn the check red, so the comment must file them under Breaking too.
+  PR_GATE_ARGS=()
+  if [[ "${INPUT_FAIL_ON_API_BREAK:-false}" == "true" ]]; then
+    PR_GATE_ARGS+=(--gate-api-break)
+  fi
+
+  # Link the workflow run (where the full JSON/SARIF report is uploaded as an
+  # artifact) so a condensed/truncated comment always points at the full detail.
+  local run_url=""
+  if [[ -n "${GITHUB_SERVER_URL:-}" && -n "${GITHUB_REPOSITORY:-}" && -n "${GITHUB_RUN_ID:-}" ]]; then
+    run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+  fi
+
+  abicheck pr-comment "$PR_JSON" \
+    --sha "${head_sha:-${GITHUB_SHA:-}}" \
+    --detail "${INPUT_PR_COMMENT_DETAIL:-standard}" \
+    --on "${INPUT_PR_COMMENT_ON:-changes}" \
+    --run-label "run #${GITHUB_RUN_NUMBER:-?}" \
+    ${run_url:+--report-url "$run_url"} \
+    ${PR_GATE_ARGS[@]+"${PR_GATE_ARGS[@]}"} \
+    -o "$PR_BODY" || true
+
+  if [[ ! -s "$PR_BODY" ]]; then
+    echo "abicheck: no comment to post (no changes / --on=${INPUT_PR_COMMENT_ON:-changes})."
+    # Sticky mode: clear any prior comment so a once-dirty PR that is now clean
+    # doesn't keep showing a stale BREAKING report.
+    if [[ "${INPUT_PR_COMMENT_MODE:-update}" != "new" ]]; then
+      _delete_sticky_pr_comment "$pr_number"
+    fi
+    echo "::endgroup::"
+    return 0
+  fi
+
+  _post_pr_comment "$pr_number" "$PR_BODY"
+  echo "::endgroup::"
+}
+
+# Hidden marker the renderer embeds; used to find OUR sticky comment.
+PR_COMMENT_MARKER="<!-- abicheck-sticky-report -->"
+
+_create_pr_comment() {
+  # Create a fresh comment from a body file via the REST API (jq builds the
+  # JSON payload so arbitrary markdown is escaped safely).
+  local repo="$1" pr_number="$2" body_file="$3"
+  jq -Rs '{body: .}' "$body_file" \
+    | gh api -X POST "repos/$repo/issues/$pr_number/comments" --input - >/dev/null
+}
+
+_delete_sticky_pr_comment() {
+  # Remove OUR previous sticky comment (located by marker) so a once-dirty PR
+  # that is now clean stops showing a stale report.
+  local pr_number="$1"
+  local repo="${GITHUB_REPOSITORY:-}"
+  if [[ -z "$repo" ]] || ! command -v jq >/dev/null 2>&1; then
+    return 0
+  fi
+  local existing_id
+  existing_id=$(gh api --paginate "repos/$repo/issues/$pr_number/comments" \
+    --jq ".[] | select(.body | contains(\"$PR_COMMENT_MARKER\")) | .id" 2>/dev/null | tail -1)
+  if [[ -n "$existing_id" ]]; then
+    if gh api -X DELETE "repos/$repo/issues/comments/$existing_id" >/dev/null 2>&1; then
+      echo "abicheck: cleared stale sticky comment $existing_id (no current changes)."
+    fi
+  fi
+}
+
+_gh_pr_comment_fallback() {
+  # Porcelain fallback. Pass -R when we know the repo so it works without a
+  # local checkout of the PR's repository (or after checking out a different one).
+  local pr_number="$1" body_file="$2" repo="$3"
+  if [[ -n "$repo" ]]; then
+    gh pr comment "$pr_number" -R "$repo" --body-file "$body_file" \
+      || echo "::warning::abicheck: failed to post PR comment (need 'pull-requests: write')."
+  else
+    gh pr comment "$pr_number" --body-file "$body_file" \
+      || echo "::warning::abicheck: failed to post PR comment (need 'pull-requests: write')."
+  fi
+}
+
+_post_pr_comment() {
+  local pr_number="$1" body_file="$2"
+  local repo="${GITHUB_REPOSITORY:-}"
+  local mode="${INPUT_PR_COMMENT_MODE:-update}"
+
+  # Without a known repo or jq we cannot use the REST path; fall back to the
+  # porcelain command (which then resolves the repo from the local checkout).
+  if [[ -z "$repo" ]] || ! command -v jq >/dev/null 2>&1; then
+    _gh_pr_comment_fallback "$pr_number" "$body_file" "$repo"
+    return 0
+  fi
+
+  # Sticky (update) mode: locate OUR previous comment by its hidden marker (not
+  # merely the last comment by this token, which could belong to other
+  # automation) and edit that specific comment in place.
+  if [[ "$mode" != "new" ]]; then
+    local existing_id
+    existing_id=$(gh api --paginate "repos/$repo/issues/$pr_number/comments" \
+      --jq ".[] | select(.body | contains(\"$PR_COMMENT_MARKER\")) | .id" 2>/dev/null | tail -1)
+    if [[ -n "$existing_id" ]]; then
+      if jq -Rs '{body: .}' "$body_file" \
+          | gh api -X PATCH "repos/$repo/issues/comments/$existing_id" --input - >/dev/null 2>&1; then
+        echo "abicheck: updated sticky comment $existing_id."
+        return 0
+      fi
+      echo "::warning::abicheck: could not update comment $existing_id; posting a new one."
+    fi
+  fi
+
+  # Create via the REST API (repo-qualified, so it works without a local clone
+  # of the PR repo); fall back to the porcelain command with -R if that fails.
+  _create_pr_comment "$repo" "$pr_number" "$body_file" 2>/dev/null \
+    || _gh_pr_comment_fallback "$pr_number" "$body_file" "$repo"
+}
+
+_maybe_post_pr_comment
+
+# ---------------------------------------------------------------------------
 # Determine final exit code based on user preferences
 # ---------------------------------------------------------------------------
 FINAL_EXIT=0
@@ -624,6 +851,12 @@ elif [[ "$MODE" == "compare-release" ]]; then
 
   if [[ "$VERDICT" == "REMOVED_LIBRARY" ]]; then
     echo "::error::Library removed between old and new package. Set fail-on-removed-library: false to allow."
+    FINAL_EXIT=1
+  fi
+
+  # Severity-aware exit 1 (from --severity-* via extra-args), as in compare mode.
+  if [[ "$VERDICT" == "SEVERITY_ERROR" ]]; then
+    echo "::error::Severity-level error detected by abicheck."
     FINAL_EXIT=1
   fi
 

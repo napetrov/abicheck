@@ -257,12 +257,19 @@ def _compare_one_library(
             scope_to_public_surface=scope_to_public_surface,
         )
         v = result.verdict.value
+        # compatible_additions historically counts *all* compatible changes
+        # (additions + quality issues). Emit the quality subset separately so
+        # downstream consumers (e.g. the PR-comment renderer) can gate the two
+        # categories independently under --severity-quality-issues.
+        from .checker_policy import ADDITION_KINDS
+        n_quality = sum(1 for c in result.compatible if c.kind not in ADDITION_KINDS)
         entry: dict[str, object] = {
             "library": old_path.name, "verdict": v,
             "breaking": len(result.breaking),
             "source_breaks": len(result.source_breaks),
             "risk_changes": len(result.risk),
             "compatible_additions": len(result.compatible),
+            "quality_issues": n_quality,
             "_diff_result": result,
         }
         if scope_to_public_surface:
@@ -319,10 +326,12 @@ def _suppress_lockstep_soname_findings(
         ]
         suppressed += len(unnecessary)
         # Recompute the cached per-library counts after the mutation.
+        from .checker_policy import ADDITION_KINDS
         entry["breaking"] = len(result.breaking)
         entry["source_breaks"] = len(result.source_breaks)
         entry["risk_changes"] = len(result.risk)
         entry["compatible_additions"] = len(result.compatible)
+        entry["quality_issues"] = sum(1 for c in result.compatible if c.kind not in ADDITION_KINDS)
         if output_dir is not None:
             lib_report_path = output_dir / f"{Path(str(entry['library'])).stem}.json"
             _safe_write_output(lib_report_path, to_json(result))
@@ -612,6 +621,8 @@ def _format_release_summary(
     diff_pairs: list[tuple[DiffResult, AbiSnapshot]] | None = None,
     bundle_result: BundleDiffResult | None = None,
     matrix_result: DiffResult | None = None,
+    severity_config: SeverityConfig | None = None,
+    severity_exit_code: int | None = None,
 ) -> str:
     """Format the release comparison summary as JSON, markdown, or JUnit XML."""
     if fmt == "junit":
@@ -621,6 +632,8 @@ def _format_release_summary(
             worst_verdict, old_dir, new_dir, library_results,
             removed_keys, added_keys, old_map, new_map, warning_msgs,
             bundle_result, matrix_result,
+            severity_config=severity_config,
+            severity_exit_code=severity_exit_code,
         )
     return _format_release_markdown(
         worst_verdict, old_dir, new_dir, library_results,
@@ -658,6 +671,8 @@ def _format_release_json(
     warning_msgs: list[str],
     bundle_result: BundleDiffResult | None,
     matrix_result: DiffResult | None,
+    severity_config: SeverityConfig | None = None,
+    severity_exit_code: int | None = None,
 ) -> str:
     """Render the release summary as a JSON document."""
     changed_libraries = [
@@ -674,6 +689,19 @@ def _format_release_json(
         "unmatched_new": [new_map[k].name for k in added_keys],
         "warnings": warning_msgs,
     }
+    # Severity config block (present only when --severity-* was active), mirroring
+    # compare mode so downstream consumers (e.g. the PR-comment renderer) can see
+    # which categories are gated to error and bucket findings accordingly.
+    if severity_config is not None:
+        summary["severity"] = {
+            "config": {
+                "abi_breaking": severity_config.abi_breaking.value,
+                "potential_breaking": severity_config.potential_breaking.value,
+                "quality_issues": severity_config.quality_issues.value,
+                "addition": severity_config.addition.value,
+            },
+            "exit_code": severity_exit_code,
+        }
     # Release-level public-surface scoping rollup (ADR-024, issue #235).
     # Present only when --scope-public-headers was active (per-library
     # entries then carry a "scope_resolved" key).
@@ -1016,6 +1044,7 @@ def _finalize_release_output(
     fail_on_removed: bool,
     matrix_result: DiffResult | None = None,
     severity_exit_code: int | None = None,
+    severity_config: SeverityConfig | None = None,
 ) -> None:
     """Write summary output, step summary, per-library dir report, then exit."""
     text = _format_release_summary(
@@ -1025,6 +1054,8 @@ def _finalize_release_output(
         diff_pairs=diff_pairs if fmt == "junit" else None,
         bundle_result=bundle_result,
         matrix_result=matrix_result,
+        severity_config=severity_config,
+        severity_exit_code=severity_exit_code,
     )
     _write_or_echo(output, text)
 
@@ -1361,6 +1392,10 @@ def compare_release_cmd(
         # are still stashed (before _strip_diff_results_and_adjust_verdict).
         # Returns None when no --severity-* option was supplied, in which case
         # the legacy verdict-based exit is used downstream.
+        severity_config = _resolve_release_severity_config(
+            severity_preset, severity_abi_breaking, severity_potential_breaking,
+            severity_quality_issues, severity_addition,
+        )
         severity_exit_code = _compute_release_severity_exit_code(
             library_results,
             severity_preset, severity_abi_breaking, severity_potential_breaking,
@@ -1406,6 +1441,7 @@ def compare_release_cmd(
             output, output_dir, annotate, fail_on_removed,
             matrix_result=matrix_result,
             severity_exit_code=severity_exit_code,
+            severity_config=severity_config,
         )
     finally:
         _cleanup_temp_dirs(_temp_dir_paths, keep_extracted)
