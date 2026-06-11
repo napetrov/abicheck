@@ -98,7 +98,7 @@ class TestParseProbeSpec:
                 "probes": [{"name": bad_probe_name, "body": ""}],
             })
 
-    @pytest.mark.parametrize("bad_compiler", ["/bin/sh", "../g++", "-Wl,foo", ""])
+    @pytest.mark.parametrize("bad_compiler", ["/bin/sh", "../g++", "-Wl,foo", "", "sh", "bash", "rm"])
     def test_invalid_compiler_rejected(self, bad_compiler: str) -> None:
         with pytest.raises(ValueError, match="compiler"):
             parse_probe_spec({
@@ -107,7 +107,7 @@ class TestParseProbeSpec:
                 "probes": [{"name": "p", "body": ""}],
             })
 
-    @pytest.mark.parametrize("bad_flag", ["-c", "-o", "-x", "--"])
+    @pytest.mark.parametrize("bad_flag", ["-c", "-o", "-x", "--", "-MD", "-MMD", "-MF/tmp/evil.d", "-MT/target", "-MQ/target", "-o/tmp/out"])
     def test_disallowed_flags_rejected(self, bad_flag: str) -> None:
         with pytest.raises(ValueError, match="disallowed"):
             parse_probe_spec({

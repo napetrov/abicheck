@@ -200,7 +200,11 @@ class MatrixSnapshot:
 
 _CXX_STD_FLAG = "-std=c++"
 _SAFE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-_DISALLOWED_COMPILER_FLAGS = frozenset({"-c", "-o", "-x", "-E", "-S", "-M", "-MF", "-MT", "-MQ", "-pipe", "--"})
+_DISALLOWED_COMPILER_FLAGS = frozenset({
+    "-c", "-o", "-x", "-E", "-S", "-M", "-MD", "-MMD", "-MF", "-MT", "-MQ", "-pipe", "--"
+})
+_DISALLOWED_FLAG_PREFIXES: tuple[str, ...] = ("-o", "-x", "-MF", "-MT", "-MQ")
+_ALLOWED_COMPILER_BASENAMES: frozenset[str] = frozenset({"g++", "gcc", "clang++", "clang", "c++", "cc"})
 
 
 def _parse_cxx_std(flags: list[str]) -> int | None:
@@ -234,6 +238,11 @@ def _validate_compiler_name(value: Any) -> str:
         raise ValueError(f"compiler must be a basename, got {value!r}")
     if compiler.startswith("-"):
         raise ValueError(f"compiler must not start with '-', got {value!r}")
+    if not any(
+        compiler == base or compiler.startswith(f"{base}-")
+        for base in _ALLOWED_COMPILER_BASENAMES
+    ):
+        raise ValueError(f"compiler must be a known C/C++ compiler basename, got {value!r}")
     return compiler
 
 
@@ -246,7 +255,10 @@ def _validate_flags(raw_flags: Any) -> tuple[str, ...]:
     for f in raw_flags:
         if not isinstance(f, str):
             raise ValueError(f"flag values must be strings, got {f!r}")
-        if f in _DISALLOWED_COMPILER_FLAGS:
+        normalized = f.split("=", 1)[0]
+        if normalized in _DISALLOWED_COMPILER_FLAGS or any(
+            normalized.startswith(prefix) for prefix in _DISALLOWED_FLAG_PREFIXES
+        ):
             raise ValueError(f"flag {f!r} is disallowed in probe configuration")
         flags.append(f)
     return tuple(flags)
