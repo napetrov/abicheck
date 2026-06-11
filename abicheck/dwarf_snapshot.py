@@ -586,6 +586,17 @@ class _DwarfSnapshotBuilder:
         # diff can tell "gained a vptr" (None → 0) from "vptr stayed". Tri-state
         # by design — left None when we cannot tell.
         vptr_offset_bits = 0 if vtable else None
+        # Conservative standard-layout signal: a polymorphic class (vtable) or one
+        # with virtual bases is never standard-layout. The converse is only an
+        # under-approximation (mixed access / member-bearing bases also disqualify
+        # and aren't checked here), but that only ever *misses* — the diff fires on
+        # a True → False transition, which gaining a vtable/virtual-base genuinely
+        # is, so the under-approximation cannot produce a false positive. Left None
+        # for opaque types (no layout to judge). is_trivially_copyable / dsize are
+        # deliberately *not* derived here: DWARF can't tell a defaulted special
+        # member from a user-provided one, so a heuristic would risk false-positive
+        # BREAKING findings — they stay None (the detector then stays quiet).
+        is_standard_layout = None if is_opaque else (not vtable and not virtual_bases)
 
         self.types.append(RecordType(
             name=qualified,
@@ -601,6 +612,7 @@ class _DwarfSnapshotBuilder:
             source_location=source_loc,
             vptr_offset_bits=vptr_offset_bits,
             base_offsets=base_offsets,
+            is_standard_layout=is_standard_layout,
         ))
 
     def _resolve_decl_file(self, die: Any, CU: Any) -> str | None:

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from abicheck.checker import compare
 from abicheck.checker_policy import BREAKING_KINDS, RISK_KINDS, ChangeKind
-from abicheck.model import AbiSnapshot, RecordType
+from abicheck.model import AbiSnapshot, RecordType, TypeField
 
 
 def _snap(version: str, *, types: list[RecordType]) -> AbiSnapshot:
@@ -71,14 +71,26 @@ class TestLayoutDescriptorDiff:
         assert ChangeKind.BASE_CLASS_OFFSET_CHANGED not in _kinds(old, new)
 
     def test_vptr_introduced(self) -> None:
-        old = _snap("1", types=[_rec(vptr_offset_bits=None)])
-        new = _snap("2", types=[_rec(vptr_offset_bits=0)])
+        # Old: positively non-polymorphic (empty vtable, no vptr). New: gained a
+        # virtual method (non-empty vtable) and records the vptr at offset 0.
+        old = _snap("1", types=[_rec(vtable=[], vptr_offset_bits=None)])
+        new = _snap("2", types=[_rec(vtable=["_ZN1A3fooEv"], vptr_offset_bits=0)])
         assert ChangeKind.VPTR_INTRODUCED in _kinds(old, new)
         assert ChangeKind.VPTR_INTRODUCED in BREAKING_KINDS
 
     def test_vptr_present_both_sides_not_flagged(self) -> None:
-        old = _snap("1", types=[_rec(vptr_offset_bits=0)])
-        new = _snap("2", types=[_rec(vptr_offset_bits=0)])
+        old = _snap("1", types=[_rec(vtable=["_ZN1A3fooEv"], vptr_offset_bits=0)])
+        new = _snap("2", types=[_rec(vtable=["_ZN1A3fooEv"], vptr_offset_bits=0)])
+        assert ChangeKind.VPTR_INTRODUCED not in _kinds(old, new)
+
+    def test_vptr_not_flagged_against_pre_layout_polymorphic_baseline(self) -> None:
+        # Regression (Codex #345): an old pre-layout-descriptor snapshot of an
+        # *already-polymorphic* type has a non-empty vtable but vptr_offset_bits
+        # defaulting to None. Comparing it to a newer dump that records
+        # vptr_offset_bits=0 must NOT report VPTR_INTRODUCED — the old vtable is
+        # proof the type was already polymorphic.
+        old = _snap("1", types=[_rec(vtable=["_ZN1A3fooEv"], vptr_offset_bits=None)])
+        new = _snap("2", types=[_rec(vtable=["_ZN1A3fooEv"], vptr_offset_bits=0)])
         assert ChangeKind.VPTR_INTRODUCED not in _kinds(old, new)
 
     def test_trivially_copyable_lost(self) -> None:
@@ -135,3 +147,55 @@ class TestLayoutDescriptorDiff:
         old = _snap("1", types=[_rec(name="std::__1::thing", vptr_offset_bits=None)])
         new = _snap("2", types=[_rec(name="std::__1::thing", vptr_offset_bits=0)])
         assert ChangeKind.VPTR_INTRODUCED not in _kinds(old, new)
+
+
+class TestStdlibEmbeddingAttribution:
+    """The owner's size change is attributed to an embedded std:: member."""
+
+    @staticmethod
+    def _owner(size: int) -> RecordType:
+        # A public type embedding std::vector<int> by value.
+        return RecordType(
+            name="A",
+            kind="struct",
+            size_bits=size,
+            fields=[TypeField(name="v", type="std::vector<int>", offset_bits=0)],
+        )
+
+    def test_size_change_attributed_to_embedded_stdlib_member(self) -> None:
+        old = _snap("1", types=[self._owner(128)])
+        new = _snap("2", types=[self._owner(192)])
+        changes = compare(old, new).changes
+        size_changes = [
+            c
+            for c in changes
+            if c.kind in (ChangeKind.TYPE_SIZE_CHANGED, ChangeKind.STRUCT_SIZE_CHANGED)
+            and c.symbol == "A"
+        ]
+        assert size_changes, "expected a size change on the owner type A"
+        assert any(
+            "embeds a standard-library type by value" in c.description
+            and "std::vector<int>" in c.description
+            for c in size_changes
+        )
+
+    def test_no_attribution_without_stdlib_embedding(self) -> None:
+        # A plain int-field struct gets no embedding clause appended.
+        plain_old = RecordType(
+            name="B",
+            kind="struct",
+            size_bits=64,
+            fields=[TypeField(name="x", type="int", offset_bits=0)],
+        )
+        plain_new = RecordType(
+            name="B",
+            kind="struct",
+            size_bits=128,
+            fields=[TypeField(name="x", type="int", offset_bits=0)],
+        )
+        changes = compare(
+            _snap("1", types=[plain_old]), _snap("2", types=[plain_new])
+        ).changes
+        assert not any(
+            "embeds a standard-library type by value" in c.description for c in changes
+        )

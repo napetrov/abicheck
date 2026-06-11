@@ -131,12 +131,17 @@ def _diff_layout_descriptor(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
                 )
 
         # ── First virtual function added → vtable pointer prepended ──────────
-        # Only when both sides have layout evidence (size known): a populated
-        # vptr offset on new vs. a known-non-polymorphic (None) old.
+        # Use the long-standing ``vtable`` list (populated by every dump path) as
+        # the polymorphism witness, NOT ``size_bits``: a pre-layout-descriptor
+        # snapshot has ``size_bits`` set but ``vptr_offset_bits`` defaulting to
+        # None even for an already-polymorphic type, so keying on size would
+        # falsely report an introduction against such a baseline (Codex #345).
+        # An empty old vtable is positive evidence the old side was
+        # non-polymorphic; require the new side to be positively polymorphic too.
         if (
-            old_rec.size_bits is not None
-            and new_rec.size_bits is not None
+            not old_rec.vtable
             and old_rec.vptr_offset_bits is None
+            and new_rec.vtable
             and new_rec.vptr_offset_bits is not None
         ):
             changes.append(

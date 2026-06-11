@@ -606,6 +606,9 @@ class _CastxmlParser:
         name = override_name or el.get("name", "")
         is_opaque = el.get("incomplete") == "1"
         vtable = [] if is_opaque else self._build_vtable(el.get("id", ""))
+        has_virtual_base = not is_opaque and any(
+            b.tag == "Base" and b.get("virtual") == "1" for b in el
+        )
         # Best-effort layout descriptor (layout-closure work). Direct (non-virtual)
         # base subobject offsets from each ``<Base offset=...>``; the unit only has
         # to be consistent across snapshots for change detection, and it is.
@@ -616,6 +619,12 @@ class _CastxmlParser:
                     off = self._optional_int_attr(b, "offset")
                     if off is not None:
                         base_offsets[self._type_name(b.get("type", ""))] = off
+        # Conservative standard-layout signal (see dwarf_snapshot for rationale):
+        # a polymorphic class or one with virtual bases is never standard-layout.
+        # Under-approximating the converse only ever misses — it cannot produce a
+        # false positive on the True → False transition the diff keys on. dsize and
+        # is_trivially_copyable are deliberately left None (no reliable signal).
+        is_standard_layout = None if is_opaque else (not vtable and not has_virtual_base)
         return RecordType(
             name=name,
             kind=el.tag.lower(),
@@ -637,6 +646,7 @@ class _CastxmlParser:
             # when non-polymorphic so the diff can tell "gained a vptr" apart.
             vptr_offset_bits=0 if vtable else None,
             base_offsets=base_offsets,
+            is_standard_layout=is_standard_layout,
             # castxml records the `final` class-key specifier as a `final`
             # token inside the compound ``attributes`` string (e.g.
             # ``attributes="final"``), the same channel used for noexcept.

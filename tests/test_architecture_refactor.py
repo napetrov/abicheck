@@ -272,6 +272,7 @@ class TestPostProcessingPipeline:
             "suppress_renamed_pairs",
             "filter_redundant",
             "enrich_affected_symbols",
+            "attribute_stdlib_embedding",
             "detect_internal_leaks",
             "demote_unreachable_internal_churn",
             "detect_cpp_patterns",
