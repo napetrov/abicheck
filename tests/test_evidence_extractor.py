@@ -401,6 +401,36 @@ def test_manifest_invalid_schema_version(tmp_path):
         load_extractor_manifest(_dump(tmp_path, data))
 
 
+def test_manifest_non_list_output_group_rejected(tmp_path):
+    # A mapping group whose value is a single dict (not a list) must be a
+    # ManifestError, not silently dropped to zero outputs (Codex P2).
+    data = {
+        "name": "x",
+        "commands": {"collect": ["x"]},
+        "outputs": {"normalized": {"kind": "build_evidence", "path": "build/build_evidence.json"}},
+    }
+    with pytest.raises(ManifestError, match="must be a list"):
+        load_extractor_manifest(_dump(tmp_path, data))
+
+
+def test_external_extractor_clears_stale_output(tmp_path):
+    # A stale declared output from a prior run must not be folded as fresh: if
+    # the current tool exits 0 without writing it, the run is failed (Codex P2).
+    data = {
+        "name": "no-write",
+        "commands": {"collect": [sys.executable, "-c", "pass"]},
+        "outputs": {"normalized": [{"kind": "build_evidence", "path": "build/build_evidence.json"}]},
+    }
+    manifest = load_extractor_manifest(_dump(tmp_path, data))
+    pack_root = tmp_path / "pack"
+    (pack_root / "build").mkdir(parents=True)
+    stale = pack_root / "build" / "build_evidence.json"
+    stale.write_text('{"schema_version": 1, "compile_units": []}')  # leftover
+    _norm, record = run_external_extractor(manifest, CollectionContext(), pack_root)
+    assert record.status == "failed"
+    assert not stale.exists()  # the stale file was cleared before the run
+
+
 @pytest.mark.parametrize(
     "bad_path",
     ["/etc/passwd", "../../escape.json", "C:\\Windows\\x.json", "sub/../../out.json"],

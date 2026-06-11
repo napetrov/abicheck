@@ -280,10 +280,18 @@ def _parse_outputs(outputs_raw: Any, p: Path) -> list[ManifestOutput]:
     rows: list[Any]
     if isinstance(outputs_raw, dict):
         # Manifest groups outputs by category (e.g. ``normalized:``); flatten.
+        # A non-list group is a manifest error, not something to drop silently:
+        # silently dropping it would leave the extractor with zero declared
+        # outputs, so it would run, validate nothing, and be recorded ``ok``
+        # (even under strict mode) without producing any evidence (Codex P2).
         rows = []
-        for group in outputs_raw.values():
-            if isinstance(group, list):
-                rows.extend(group)
+        for key, group in outputs_raw.items():
+            if not isinstance(group, list):
+                raise ManifestError(
+                    f"extractor manifest {p}: outputs group {key!r} must be a list of "
+                    "{kind, path} entries"
+                )
+            rows.extend(group)
     elif isinstance(outputs_raw, list):
         rows = list(outputs_raw)
     else:
@@ -578,6 +586,18 @@ def run_external_extractor(
     # Action enforcement first: a violation is the operator's to fix, so it
     # propagates rather than being swallowed as a tool failure.
     extractor._enforce_actions(context)
+
+    # Clear any stale declared outputs before running so success requires *this*
+    # invocation to produce them. In a reused pack directory — or when two
+    # manifests share a canonical output like build/build_evidence.json — a file
+    # left by an earlier run must not be validated and folded as fresh evidence
+    # when the current tool exits 0 without rewriting it (Codex P2).
+    for output in manifest.outputs:
+        stale = pack_root / output.path
+        try:
+            stale.unlink()
+        except OSError:
+            pass  # absent or undeletable; validate() will catch a missing output
 
     diagnostics: list[str] = []
     # A ManifestError from command rendering (e.g. a template needs {build_dir}
