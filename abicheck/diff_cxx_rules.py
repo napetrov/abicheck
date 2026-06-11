@@ -64,10 +64,13 @@ def _skip_template_args(s: str, i: int) -> int | None:
 
     Tracks nested template-argument (``I``) and nested-name (``N``) openers so
     the inner ``E`` of e.g. ``Box<ns::T>`` does not close the outer list early,
-    and skips length-prefixed names so their literal ``I``/``N``/``E`` letters
-    are not miscounted. Pathological encodings (e.g. substitutions whose
-    base-36 index contains ``E``) may mis-balance; the caller treats ``None`` as
-    "unparseable" and falls back, so a wrong guess never produces a finding.
+    skips length-prefixed names so their literal ``I``/``N``/``E`` letters are
+    not miscounted, and consumes ``L<type><value>E`` literal operands as a unit
+    (non-type template args, e.g. ``Array<4>`` → ``ILi4EE``) so their value
+    digits aren't read as a length and their closing ``E`` isn't counted.
+    Pathological encodings (e.g. substitutions whose base-36 index contains
+    ``E``) may mis-balance; the caller treats ``None`` as "unparseable" and falls
+    back, so a wrong guess never produces a finding.
     """
     depth = 0
     n = len(s)
@@ -77,6 +80,14 @@ def _skip_template_args(s: str, i: int) -> int | None:
             name, i = _read_length_prefixed_name(s, i)
             if name is None:
                 return None
+            continue
+        if c == "L":
+            # Literal operand `L <type> <value> E` — consume through its own
+            # terminating E (literal values never contain an uppercase E).
+            close = s.find("E", i + 1)
+            if close == -1:
+                return None
+            i = close + 1
             continue
         if c in ("I", "N"):
             depth += 1
@@ -215,11 +226,33 @@ def _resolve_owner_type(
     return types.get(leaf) if leaf != owner else None
 
 
+def _transitive_bases(owner: str, types: dict[str, RecordType]) -> set[str]:
+    """All (transitive) base-class names of ``owner``, by record name.
+
+    Walks ``bases`` and ``virtual_bases``; tolerant of missing records (returns
+    what it can reach). Used to tell an inherited-virtual *override* apart from a
+    brand-new vtable slot.
+    """
+    seen: set[str] = set()
+    stack = [owner]
+    while stack:
+        cur = stack.pop()
+        rec = types.get(cur)
+        if rec is None:
+            continue
+        for b in (*rec.bases, *rec.virtual_bases):
+            if b not in seen:
+                seen.add(b)
+                stack.append(b)
+    return seen
+
+
 def virtual_method_addition(
     f_new: Function,
     old_owner_classes: set[str],
     old_types: dict[str, RecordType],
     new_types: dict[str, RecordType],
+    old_virtual_leaves: dict[str, set[str]],
 ) -> Change | None:
     """A new *virtual* method on a class that already exists across versions.
 
@@ -237,6 +270,11 @@ def virtual_method_addition(
     ``_resolve_owner_type``: a qualified owner (``kde::View``) is unambiguous,
     but CastXML record names are leaf-only, so a bare-leaf match is only trusted
     when a sibling symbol confirms that exact qualified owner existed before.
+
+    ``old_virtual_leaves`` maps each class to the leaf names of its virtual
+    methods in the *old* snapshot; it is used to skip *overrides* of an inherited
+    virtual (e.g. ``Derived::paint() override``), which reuse the base's existing
+    vtable slot rather than adding one — those are ABI-compatible, not breaks.
     """
     if not f_new.is_virtual:
         return None
@@ -249,6 +287,13 @@ def virtual_method_addition(
         return None  # no pre-existing record on both sides → compatible / out of scope
     if t_old.vtable != t_new.vtable:
         return None  # TYPE_VTABLE_CHANGED covers this case
+    # An override of a virtual inherited from a base reuses that base's slot —
+    # no new slot, no relayout. If any transitive base already declared a virtual
+    # with this leaf name, treat the addition as an override and stay silent.
+    leaf = f_new.name.rsplit("::", 1)[-1]
+    bases = _transitive_bases(owner, new_types) | _transitive_bases(owner, old_types)
+    if any(leaf in old_virtual_leaves.get(b, ()) for b in bases):
+        return None
     return Change(
         kind=ChangeKind.VIRTUAL_METHOD_ADDED,
         symbol=f_new.mangled,

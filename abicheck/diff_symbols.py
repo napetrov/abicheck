@@ -739,6 +739,13 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         owner for f in old_map.values()
         if (owner := owner_class_of(f)) is not None
     }
+    # Per-class virtual-method leaf names in the OLD surface — lets the virtual
+    # detector recognise an override of an inherited virtual (which reuses a
+    # base slot, ABI-compatible) and skip it.
+    old_virtual_leaves: dict[str, set[str]] = {}
+    for f in old.function_map.values():
+        if f.is_virtual and (o := owner_class_of(f)) is not None:
+            old_virtual_leaves.setdefault(o, set()).add(f.name.rsplit("::", 1)[-1])
 
     # Build a lookup of ALL functions in new snapshot (including hidden).
     new_all = new.function_map
@@ -763,7 +770,7 @@ def _diff_functions(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     for mangled, f_new in new_map.items():
         if mangled not in old_map and f_new.name not in matched_by_name:
             virtual_break = virtual_method_addition(
-                f_new, old_owner_classes, old_types, new_types)
+                f_new, old_owner_classes, old_types, new_types, old_virtual_leaves)
             changes.append(virtual_break if virtual_break is not None else Change(
                 kind=ChangeKind.FUNC_ADDED,
                 symbol=mangled,

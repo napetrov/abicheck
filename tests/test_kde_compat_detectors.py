@@ -261,6 +261,29 @@ class TestVirtualMethodAdded:
         assert ChangeKind.VIRTUAL_METHOD_ADDED in _kinds(result)
         assert result.verdict == Verdict.BREAKING
 
+    def test_inherited_override_is_not_virtual_method_added(self):
+        """Overriding a virtual inherited from a base reuses the base's vtable
+        slot — ABI-compatible, not a new slot. Must not fire."""
+        base = _cls("Base")
+        derived = RecordType(name="Derived", kind="class", size_bits=64, vtable=[], bases=["Base"])
+        old = _snap(
+            functions=[
+                _method("Base::paint", "_ZN4Base5paintEv", is_virtual=True),
+                _method("Derived::help", "_ZN7Derived4helpEv"),  # keeps Derived in surface
+            ],
+            types=[base, derived],
+        )
+        new = _snap(
+            functions=[
+                _method("Base::paint", "_ZN4Base5paintEv", is_virtual=True),
+                _method("Derived::help", "_ZN7Derived4helpEv"),
+                _method("Derived::paint", "_ZN7Derived5paintEv", is_virtual=True),  # override
+            ],
+            types=[base, derived],
+        )
+        result = compare(old, new)
+        assert ChangeKind.VIRTUAL_METHOD_ADDED not in _kinds(result)
+
     def test_unchanged_class_no_finding(self):
         old = _snap(
             functions=[_method("Widget::paint", "_ZN6Widget5paintEv", is_virtual=True)],
@@ -478,6 +501,8 @@ class TestItaniumScopeParser:
         ("_ZNO1C1fEv", ["C", "f"]),                          # C::f() && (rvalue ref-qual)
         ("_ZN1CC1Ev", ["C", "{ctor}"]),                      # C::C() constructor
         ("_ZN1CD1Ev", ["C", "{dtor}"]),                      # C::~C() destructor
+        ("_ZN5ArrayILi4EE4sizeEv", ["ArrayILi4EE", "size"]),  # Array<4>::size (non-type arg)
+        ("_ZN1C3getB5cxx11Ev", ["C", "getBcxx11"]),          # C::get[abi:cxx11]()
     ])
     def test_components(self, mangled, expected):
         assert itanium_scope_components(mangled) == expected
@@ -485,6 +510,10 @@ class TestItaniumScopeParser:
     def test_template_specializations_have_distinct_keys(self):
         assert itanium_qualified_name("_ZN3BoxIiE4sizeEv") != itanium_qualified_name(
             "_ZN3BoxIfE4sizeEv"
+        )
+        # Non-type (integer) template args must also stay distinct per value.
+        assert itanium_qualified_name("_ZN5ArrayILi4EE4sizeEv") != itanium_qualified_name(
+            "_ZN5ArrayILi8EE4sizeEv"
         )
 
     def test_ref_qualified_overloads_share_a_key(self):
