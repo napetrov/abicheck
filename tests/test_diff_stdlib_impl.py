@@ -231,6 +231,36 @@ class TestBuildModeFallback:
         kinds = {c.kind for c in compare(old, new).changes}
         assert ChangeKind.STDLIB_IMPLEMENTATION_CHANGED in kinds
 
+    def test_fires_from_libcxx_user_api_mangling(self) -> None:
+        # The common case: the stdlib marker is inside a *user* API symbol, not
+        # at its start. libstdc++ (cxx11 std::string) → libc++ (std::vector).
+        old = AbiSnapshot(
+            library="lib.so", version="1",
+            functions=[self._fn(
+                "_Z3apiNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE")],
+        )
+        new = AbiSnapshot(
+            library="lib.so", version="2",
+            functions=[self._fn("_Z3apiNSt3__16vectorIiNS_9allocatorIiEEEE")],
+        )
+        kinds = {c.kind for c in compare(old, new).changes}
+        assert ChangeKind.STDLIB_IMPLEMENTATION_CHANGED in kinds
+
+    def test_libcxx_abi_version_recovered_from_user_api(self) -> None:
+        # Both libc++, ABI v1 → v2, marker inside user-API manglings.
+        old = AbiSnapshot(
+            library="lib.so", version="1",
+            functions=[self._fn("_Z3apiNSt3__16vectorIiNS_9allocatorIiEEEE")],
+        )
+        new = AbiSnapshot(
+            library="lib.so", version="2",
+            functions=[self._fn("_Z3apiNSt3__26vectorIiNS_9allocatorIiEEEE")],
+        )
+        kinds = {c.kind for c in compare(old, new).changes}
+        assert ChangeKind.LIBCPP_ABI_VERSION_CHANGED in kinds
+        # Same family both sides → no implementation-change finding.
+        assert ChangeKind.STDLIB_IMPLEMENTATION_CHANGED not in kinds
+
     def test_silent_when_no_mangled_symbols(self) -> None:
         old = AbiSnapshot(library="lib.so", version="1")
         new = AbiSnapshot(library="lib.so", version="2")

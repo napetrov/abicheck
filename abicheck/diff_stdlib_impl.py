@@ -49,6 +49,7 @@ conservative:
 """
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from .build_mode import StdlibFamily, build_mode_from_signals
@@ -59,6 +60,14 @@ from .detector_registry import registry
 if TYPE_CHECKING:
     from .build_mode import BuildMode
     from .model import AbiSnapshot
+
+#: libc++'s ``std::__1`` / ``std::__2`` inline namespace, as it appears mangled
+#: (``St3__1`` / ``St3__2``). Unlike the shared prefix-anchored detector, this is
+#: searched as a *substring* so it is recognized inside ordinary user-API
+#: manglings too — e.g. ``void api(std::vector<int>)`` mangles as
+#: ``_Z3apiNSt3__16vector...`` under libc++, where the marker is not at the start
+#: of the symbol (Codex review on #345).
+_LIBCXX_INLINE_NS_SUBSTR = re.compile(r"St\d+__([12])")
 
 #: Marker symbol used for the synthetic build-mode findings (they are not tied
 #: to a single exported symbol). Mirrors ``__glibcxx_dual_abi`` in diff_platform.
@@ -129,7 +138,21 @@ def _effective_build_mode(snap: AbiSnapshot) -> BuildMode | None:
     mangled += [v.mangled for v in snap.variables if getattr(v, "mangled", None)]
     if not mangled:
         return None
-    return build_mode_from_signals(mangled_symbols=mangled)
+    bm = build_mode_from_signals(mangled_symbols=mangled)
+    if bm.stdlib is StdlibFamily.UNKNOWN:
+        # The shared detector only recognizes the libc++ inline namespace as a
+        # symbol *prefix* (anchored match), so it misses it inside ordinary
+        # user-API manglings such as ``void api(std::vector<int>)`` →
+        # ``_Z3apiNSt3__16vector...``. Recover it as a substring (Codex #345).
+        # libstdc++'s C++11 dual-ABI tag is already substring-detected upstream.
+        for sym in mangled:
+            m = _LIBCXX_INLINE_NS_SUBSTR.search(sym)
+            if m:
+                bm.stdlib = StdlibFamily.LIBCXX
+                if bm.libcpp_abi_version is None:
+                    bm.libcpp_abi_version = int(m.group(1))
+                break
+    return bm
 
 
 def _describe(old_bm: BuildMode, new_bm: BuildMode) -> str:
