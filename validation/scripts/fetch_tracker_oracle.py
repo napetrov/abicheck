@@ -300,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
                 if args.from_file
                 else fetch_timeline(lib)
             )
-        except Exception as exc:  # noqa: BLE001 - report and continue to next lib
+        except OSError as exc:  # URLError/HTTPError/timeout and file-read errors are all OSError
             print(f"[{lib}] fetch failed: {exc}", file=sys.stderr)
             rc = 1
             continue
