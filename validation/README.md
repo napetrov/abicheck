@@ -67,7 +67,10 @@ python validation/scripts/run_tracker_parity.py libxml2 --max-pairs 4
 `--pkg` overrides the conda package name when it differs from the tracker slug;
 `--subdir` selects the conda platform (default `linux-64`). Per pair, the
 most-breaking verdict across shared objects is taken (conservative). `.tar.bz2`
-packages extract via the stdlib; `.conda` packages need a system `tar --zstd`.
+packages extract via the stdlib; `.conda` packages prefer a pure-Python zstd
+backend — `pip install zstandard` (or Python 3.14+'s stdlib `compression.zstd`)
+— and fall back to a system `tar --zstd` if neither is importable. Without any
+backend, `.conda` pairs are skipped (logged), not fatal.
 
 Status semantics from `--compare`:
 

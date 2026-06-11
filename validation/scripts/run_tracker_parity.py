@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -116,21 +117,72 @@ def _fetch(url: str, dest: Path, timeout: float = 60.0) -> None:
         dest.write_bytes(resp.read())
 
 
+def _safe_extractall(tf: tarfile.TarFile, into: Path) -> None:
+    """tarfile.extractall with the ``data`` filter when the runtime supports it.
+
+    The ``filter`` kwarg predates some Python 3.10.x patch releases; conda
+    packages are a trusted source, so fall back to a plain extract there.
+    """
+    try:
+        tf.extractall(into, filter="data")
+    except TypeError:
+        tf.extractall(into)  # noqa: S202
+
+
+def _extract_tar_zst(zst_path: Path, into: Path) -> None:
+    """Extract a ``.tar.zst`` into ``into``.
+
+    Prefers pure-Python backends so the loop runs without a system zstd binary:
+    the ``zstandard`` package, then the 3.14+ stdlib ``compression.zstd``; falls
+    back to ``tar --zstd`` if only the CLI tool is present. Raises ``RuntimeError``
+    when no backend is available (the caller turns that into a skipped pair).
+    """
+    try:
+        import zstandard
+    except ImportError:
+        zstandard = None  # type: ignore[assignment]
+    if zstandard is not None:
+        with zst_path.open("rb") as fh:
+            reader = zstandard.ZstdDecompressor().stream_reader(fh)
+            with tarfile.open(fileobj=reader, mode="r|") as tf:
+                _safe_extractall(tf, into)
+        return
+
+    try:
+        from compression import zstd  # type: ignore[import-not-found]  # Python 3.14+
+    except ImportError:
+        zstd = None  # type: ignore[assignment]
+    if zstd is not None:
+        with (
+            zstd.ZstdFile(zst_path, "rb") as fh,
+            tarfile.open(fileobj=fh, mode="r|") as tf,
+        ):
+            _safe_extractall(tf, into)
+        return
+
+    if shutil.which("tar"):
+        subprocess.run(
+            ["tar", "--zstd", "-xf", str(zst_path), "-C", str(into)], check=True
+        )
+        return
+
+    raise RuntimeError(
+        f"cannot extract {zst_path.name}: no zstd backend available "
+        "(pip install zstandard, or install zstd + GNU tar)"
+    )
+
+
 def _extract_sos(pkg: Path, into: Path) -> dict[str, str]:
     """Extract shared objects from a conda package; return logical_name -> path.
 
-    Handles ``.tar.bz2`` natively and ``.conda`` (zip of zstd tarballs) via the
-    system ``tar --zstd``. Only real (non-symlink) ``lib/*.so*`` files are kept.
+    Handles ``.tar.bz2`` natively and ``.conda`` (a zip of zstd tarballs) via a
+    pure-Python zstd backend, with a ``tar --zstd`` fallback. Only real
+    (non-symlink) ``lib/*.so*`` files are kept.
     """
     into.mkdir(parents=True, exist_ok=True)
     if pkg.name.endswith(".tar.bz2"):
         with tarfile.open(pkg, "r:bz2") as tf:
-            try:
-                tf.extractall(into, filter="data")
-            except TypeError:
-                # The extraction `filter` kwarg predates some Python 3.10.x
-                # patch releases; conda packages are a trusted source.
-                tf.extractall(into)  # noqa: S202
+            _safe_extractall(tf, into)
     elif pkg.name.endswith(".conda"):
         with zipfile.ZipFile(pkg) as zf:
             inner = next(
@@ -144,9 +196,7 @@ def _extract_sos(pkg: Path, into: Path) -> dict[str, str]:
             if inner is None:
                 return {}
             zf.extract(inner, into)
-        subprocess.run(
-            ["tar", "--zstd", "-xf", str(into / inner), "-C", str(into)], check=True
-        )
+        _extract_tar_zst(into / inner, into)
     else:
         return {}
 
@@ -209,7 +259,12 @@ def _verdict_for_pair(
         _fetch(conda_download_url(nb), npath)
         old_sos = _extract_sos(op, tmp / f"old_{idx}")
         new_sos = _extract_sos(npath, tmp / f"new_{idx}")
-    except (OSError, tarfile.TarError, subprocess.CalledProcessError) as exc:
+    except (
+        OSError,
+        tarfile.TarError,
+        subprocess.CalledProcessError,
+        RuntimeError,
+    ) as exc:
         print(f"  {pid}: fetch/extract failed: {exc}", file=sys.stderr)
         return None
 

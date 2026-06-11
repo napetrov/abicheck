@@ -25,6 +25,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 _SCRIPT = Path("validation/scripts/run_tracker_parity.py")
 
 
@@ -108,3 +110,32 @@ def test_logical_name_strips_so_suffix_and_embedded_version() -> None:
     assert mod._logical_name("lib/libxml2.so.2.9.4") == "libxml2"
     assert mod._logical_name("lib/libcapnp-1.4.0.so") == "libcapnp"
     assert mod._logical_name("lib/libssl.so.3") == "libssl"
+
+
+def test_extract_tar_zst_python_backend(tmp_path: Path) -> None:
+    # Guards the .conda path: when zstandard is importable the loop must extract
+    # a .tar.zst without any system zstd binary. Skips where it isn't installed
+    # (the runtime then relies on the documented tar --zstd fallback).
+    import io
+    import tarfile
+
+    zstandard = pytest.importorskip("zstandard")
+    mod = _load_module()
+
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as tf:
+        payload = b"\x7fELF-not-a-real-elf"
+        info = tarfile.TarInfo("lib/libfoo.so.1")
+        info.size = len(payload)
+        tf.addfile(info, io.BytesIO(payload))
+
+    zst = tmp_path / "pkg-foo.tar.zst"
+    zst.write_bytes(zstandard.ZstdCompressor().compress(raw.getvalue()))
+
+    into = tmp_path / "out"
+    into.mkdir()
+    mod._extract_tar_zst(zst, into)
+
+    extracted = into / "lib" / "libfoo.so.1"
+    assert extracted.is_file()
+    assert extracted.read_bytes() == payload
