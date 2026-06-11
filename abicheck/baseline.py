@@ -380,6 +380,16 @@ class FilesystemRegistry:
                 f"Evidence pack at {evidence.root} has no manifest.json; "
                 "run `abicheck collect-evidence` (or EvidencePack.write()) first."
             )
+        # Reject a source pack that already fails its own integrity check (a
+        # normalized payload edited/partially written after write()). Storing it
+        # anyway would record a content hash for a tree that every later
+        # pull_evidence() rejects — an unpullable evidence-bearing baseline.
+        if not evidence.verify_integrity():
+            raise ValidationError(
+                f"Evidence pack at {evidence.root} fails its integrity check "
+                "(a normalized payload no longer matches the manifest); refusing "
+                "to store it. Re-collect the pack."
+            )
         content_hash = evidence.content_hash()
         if dest.exists():
             shutil.rmtree(dest)

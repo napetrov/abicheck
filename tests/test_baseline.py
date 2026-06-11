@@ -683,3 +683,17 @@ class TestEvidencePackStorage:
         (registry.root / key.path / "evidence" / "manifest.json").unlink()
         with pytest.raises(BaselineIntegrityError, match="manifest is missing"):
             registry.pull_evidence(key)
+
+
+    def test_push_rejects_pack_failing_integrity(
+        self, registry: FilesystemRegistry, sample_snapshot: AbiSnapshot, tmp_path: Path
+    ) -> None:
+        # A source pack whose normalized payload drifted from its manifest must be
+        # rejected at push time, not stored as an unpullable baseline (Codex review).
+        pack = _make_pack(tmp_path / "src.evidence")
+        (pack.root / "build" / "build_evidence.json").write_text(
+            '{"schema_version": 1, "tampered": true}\n', encoding="utf-8"
+        )
+        key = BaselineKey(library="libfoo", version="1.0.0", platform="linux-x86_64")
+        with pytest.raises(ValidationError, match="fails its integrity check"):
+            registry.push(key, sample_snapshot, evidence=pack)
