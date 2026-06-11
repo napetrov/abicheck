@@ -308,3 +308,85 @@ def test_extract_from_build_dedupes_across_units(monkeypatch) -> None:
     ])
     edges = ClangCallGraphExtractor().extract_from_build(build)
     assert edges == [CallEdge("_Zc", "_Zcallee", CALL_KIND_DIRECT, RESOLUTION_EXACT)]
+
+
+# ── collect-evidence --call-graph wiring (_collect_call_graph) ───────────────
+
+
+class _FakeExtractor:
+    """Stand-in for ClangCallGraphExtractor with a controllable result."""
+
+    def __init__(self, *, available: bool, edges: list[CallEdge] | None = None,
+                 clang_bin: str = "clang++") -> None:
+        self.clang_bin = clang_bin
+        self._available = available
+        self._edges = edges or []
+        self.diagnostics: list[str] = []
+
+    def available(self) -> bool:
+        return self._available
+
+    def extract_from_build(self, _build: BuildEvidence) -> list[CallEdge]:
+        return self._edges
+
+
+def _patch_extractor(monkeypatch, fake: _FakeExtractor) -> None:
+    import abicheck.evidence.call_graph as cg
+
+    monkeypatch.setattr(cg, "ClangCallGraphExtractor", lambda **_k: fake)
+
+
+def test_collect_call_graph_folds_edges_and_refinalizes(monkeypatch) -> None:
+    from abicheck.cli_evidence import _collect_call_graph
+    from abicheck.evidence.model import ExtractorRecord
+    from abicheck.evidence.source_graph import build_source_graph
+
+    _patch_extractor(monkeypatch, _FakeExtractor(available=True, edges=[CallEdge("_Za", "_Zb")]))
+    graph = build_source_graph(BuildEvidence())
+    records: list[ExtractorRecord] = []
+    _collect_call_graph(graph, BuildEvidence(), records, clang_bin="clang")
+    assert any(e.kind == "DECL_CALLS_DECL" for e in graph.edges)
+    # coverage was re-finalized so the call-edge count is reflected.
+    assert graph.coverage["call_edges"]["count"] == 1
+    assert records[-1].name == "call_graph:clang" and records[-1].status == "ok"
+
+
+def test_collect_call_graph_missing_clang_records_failure(monkeypatch) -> None:
+    from abicheck.cli_evidence import _collect_call_graph
+    from abicheck.evidence.model import ExtractorRecord
+    from abicheck.evidence.source_graph import build_source_graph
+
+    _patch_extractor(monkeypatch, _FakeExtractor(available=False))
+    graph = build_source_graph(BuildEvidence())
+    records: list[ExtractorRecord] = []
+    _collect_call_graph(graph, BuildEvidence(), records, clang_bin="clang")
+    assert not any(e.kind == "DECL_CALLS_DECL" for e in graph.edges)
+    assert records[-1].status == "failed"
+
+
+def test_collect_evidence_call_graph_flag_end_to_end(monkeypatch, tmp_path) -> None:
+    # --call-graph implies --source-graph summary and folds call edges in.
+    import json as _json
+
+    from click.testing import CliRunner
+
+    from abicheck.cli import main
+    from abicheck.evidence.pack import EvidencePack
+
+    src = tmp_path / "foo.cpp"
+    src.write_text("int foo(){return 1;}\n")
+    cdb = tmp_path / "compile_commands.json"
+    cdb.write_text(_json.dumps([{
+        "directory": str(tmp_path), "file": str(src),
+        "command": f"c++ -c {src} -o foo.o",
+    }]))
+    _patch_extractor(monkeypatch, _FakeExtractor(available=True, edges=[CallEdge("_Za", "_Zb")]))
+
+    out = tmp_path / "out.evidence"
+    res = CliRunner().invoke(main, [
+        "collect-evidence", "--compile-db", str(cdb), "--call-graph", "-o", str(out),
+    ])
+    assert res.exit_code == 0, res.output
+    pack = EvidencePack.load(out)
+    assert pack.source_graph is not None
+    assert any(e.kind == "DECL_CALLS_DECL" for e in pack.source_graph.edges)
