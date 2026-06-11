@@ -575,6 +575,61 @@ def test_ledger_command_redacts_split_secret(tmp_path):
     assert "API_KEY" in record.command
 
 
+def test_normalize_receives_context_placeholders(tmp_path):
+    # A normalize command referencing {source_root} gets the real path the run
+    # supplied (not an empty string) — same context-derived subs as collect.
+    raw_script = (
+        "import os,sys;p=sys.argv[1];os.makedirs(os.path.dirname(p),exist_ok=True);"
+        "open(p,'w').write('raw')"
+    )
+    norm_script = (
+        "import json,sys,os\n"
+        "root=sys.argv[1]; out=sys.argv[2]\n"
+        "assert root, 'source_root must not be empty'\n"
+        "os.makedirs(os.path.dirname(out),exist_ok=True)\n"
+        "json.dump({'schema_version':1,'compile_units':[]},open(out,'w'))\n"
+    )
+    data = {
+        "name": "two-ctx",
+        "commands": {
+            "collect": [sys.executable, "-c", raw_script, "{raw_dir}/r.bin"],
+            "normalize": [sys.executable, "-c", norm_script, "{source_root}", "{normalized_dir}/build_evidence.json"],
+        },
+        "outputs": {"normalized": [{"kind": "build_evidence", "path": "normalized/two-ctx/build_evidence.json"}]},
+    }
+    manifest = load_extractor_manifest(_dump(tmp_path, data))
+    pack_root = tmp_path / "pack"
+    pack_root.mkdir()
+    src = tmp_path / "src"
+    src.mkdir()
+    _norm, record = run_external_extractor(manifest, CollectionContext(source_root=src), pack_root)
+    assert record.status == "ok", record.diagnostics
+
+
+def test_normalize_missing_placeholder_is_failed(tmp_path):
+    # The same manifest with no source_root supplied: normalize references an
+    # unsupplied placeholder, which fails loudly (ManifestError -> failed row),
+    # not a silent empty path.
+    raw_script = (
+        "import os,sys;p=sys.argv[1];os.makedirs(os.path.dirname(p),exist_ok=True);"
+        "open(p,'w').write('raw')"
+    )
+    data = {
+        "name": "two-ctx2",
+        "commands": {
+            "collect": [sys.executable, "-c", raw_script, "{raw_dir}/r.bin"],
+            "normalize": [sys.executable, "-c", "pass", "{source_root}", "{normalized_dir}/x.json"],
+        },
+        "outputs": {"normalized": [{"kind": "build_evidence", "path": "normalized/two-ctx2/x.json"}]},
+    }
+    manifest = load_extractor_manifest(_dump(tmp_path, data))
+    pack_root = tmp_path / "pack"
+    pack_root.mkdir()
+    _norm, record = run_external_extractor(manifest, CollectionContext(), pack_root)
+    assert record.status == "failed"
+    assert any("source_root" in d for d in record.diagnostics)
+
+
 def test_external_extractor_blocked_by_action_ceiling(tmp_path):
     # discover() gates a ceiling violation into a 'skipped' record (D4/D9) rather
     # than raising, so the run is never invoked and no output is produced.

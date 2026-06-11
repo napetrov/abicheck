@@ -374,6 +374,11 @@ class ExternalCliExtractor:
     manifest: ExtractorManifest
     redaction: RedactionPolicy = field(default_factory=lambda: DEFAULT_REDACTION)
     timeout: int = DEFAULT_COMMAND_TIMEOUT
+    #: The run context, so the ``normalize`` phase sees the same context-derived
+    #: placeholders ({source_root}/{build_dir}/{compile_db}/{binary}/{cache_dir})
+    #: that ``collect`` does. The driver sets it; ``None`` falls back to the
+    #: raw/normalized dirs only (for a standalone protocol call).
+    context: CollectionContext | None = None
 
     @property
     def name(self) -> str:
@@ -497,13 +502,20 @@ class ExternalCliExtractor:
         if template is not None:
             norm_dir = output_dir / "normalized" / self.manifest.name
             norm_dir.mkdir(parents=True, exist_ok=True)
-            # Re-derive substitutions from the pack root; normalize is a pure
-            # transform that only needs the raw/normalized dirs.
-            sub = {
-                "raw_dir": str(output_dir / "raw" / self.manifest.name),
-                "normalized_dir": str(norm_dir),
-            }
-            argv = render_command(template, _with_optional_only(template, sub))
+            # Use the same context-derived substitutions collect() does so a
+            # normalize command can reference {source_root}/{build_dir}/etc. when
+            # the run supplied them; a referenced-but-unsupplied placeholder fails
+            # loudly (render_command raises ManifestError) rather than silently
+            # rendering an empty path. With no context, only raw/normalized dirs
+            # are available (standalone protocol call).
+            if self.context is not None:
+                sub = self._substitutions(self.context, output_dir)
+            else:
+                sub = {
+                    "raw_dir": str(output_dir / "raw" / self.manifest.name),
+                    "normalized_dir": str(norm_dir),
+                }
+            argv = render_command(template, sub)
             try:
                 proc = self._run(argv)
             except (OSError, subprocess.SubprocessError) as exc:
@@ -606,7 +618,7 @@ def run_external_extractor(
     failure is captured in the returned record's ``status`` so the caller can
     apply the collection-mode policy (D9).
     """
-    extractor = ExternalCliExtractor(manifest, redaction=redaction)
+    extractor = ExternalCliExtractor(manifest, redaction=redaction, context=context)
     started = _dt.datetime.now(_dt.timezone.utc)
     capabilities = [k for k, v in manifest.capabilities.to_dict().items() if v is True]
     inputs = [redaction.path(x) for x in manifest.input_requirements]
