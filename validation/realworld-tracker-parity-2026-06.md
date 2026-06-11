@@ -10,7 +10,10 @@ backward-compatibility verdict — an independent, real-world ground-truth label
 
 This is the first run that scores abicheck against the **live** abicc oracle
 end-to-end (harvest → fetch conda binaries → `abicheck compare` → score), rather
-than against the saved offline fixture.
+than against the saved offline fixture. **28 libraries were harvested and run; 24
+yielded at least one comparable pair** on conda-forge `linux-64` (the other 4 —
+c-ares, jansson, flac, libogg — had no version overlap between the tracker's
+slugs and conda-forge builds, so 0 comparable pairs).
 
 ---
 
@@ -24,16 +27,17 @@ prior "oracle" run therefore scored against the committed HTML fixture only.
 Fix (`validation/scripts/fetch_tracker_oracle.py`): present a standard
 desktop-browser UA. It is still a single GET of the public timeline HTML — no ABI
 dumps, no auth, no write traffic — only the request header changed. With that, all
-eight oracles below harvested and scored live.
+oracles below harvested and scored live.
 
 ---
 
 ## 1. Headline
 
-- **8 libraries, 67 version pairs evaluated, 44 comparable, 42 agree = 95.5%
+- **24 libraries, 120 version pairs evaluated, 80 comparable, 78 agree = 97.5%
   agreement with ABICC.**
-- **Zero confirmed abicheck defects.** The two non-matching pairs are both
-  root-caused to *known, expected* divergence classes, not bugs:
+- **Zero confirmed abicheck defects** across the whole corpus. Exactly **two**
+  pairs did not match, both root-caused to *known, expected* divergence classes,
+  not bugs:
   - **1 "stricter"** (nettle 3.6→3.7): abicheck flags real signature changes on
     symbols the library author tagged **internal** via an `*_INTERNAL_*` ELF
     version node. abicheck is *factually correct*; ABICC scopes those symbols out
@@ -41,31 +45,51 @@ eight oracles below harvested and scored live.
   - **1 "weaker"** (openssl 1.1.1a→1.1.1b): a 0.09 % type-level change ABICC saw
     from a full-headers source build that is **not observable** in conda's
     partially-stripped `libcrypto` DWARF. An evidence limit, not a miss.
-- **15 pairs auto-classified as scope divergences** (abicheck stricter, gated on
-  ABICC's own "0 public symbols removed at 100 % backward-compat") and **8 as
+- **26 pairs auto-classified as scope divergences** (abicheck stricter, gated on
+  ABICC's own "0 public symbols removed at 100 % backward-compat") and **14 as
   evidence-limited** (type-only ABICC break on a stripped binary). The harness's
   evidence-aware scoring (PR #349 + follow-ups) correctly kept these out of the
-  agreement denominator instead of scoring them as false positives/negatives.
+  agreement denominator instead of scoring them as false positives/negatives —
+  validated across all 24 libraries.
 
 ---
 
 ## 2. Per-library results
 
-| Library | ran | comparable | match | stricter (FP?) | weaker (FN?) | scope-div | evidence-lim | agreement |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| freetype | 5 | 5 | 5 | 0 | 0 | 0 | 0 | 100 % |
-| gmp | 4 | 2 | 2 | 0 | 0 | 2 | 0 | 100 % |
-| libpng | 4 | 3 | 3 | 0 | 0 | 0 | 1 | 100 % |
-| libtiff | 9 | 4 | 4 | 0 | 0 | 5 | 0 | 100 % |
-| libxml2 | 13 | 10 | 10 | 0 | 0 | 0 | 3 | 100 % |
-| nettle | 4 | 3 | 2 | **1** | 0 | 1 | 0 | 67 % |
-| openssl | 17 | 11 | 10 | 0 | **1** | 3 | 3 | 91 % |
-| zstd | 11 | 6 | 6 | 0 | 0 | 4 | 1 | 100 % |
-| **TOTAL** | **67** | **44** | **42** | **1** | **1** | **15** | **8** | **95.5 %** |
+| Library | ran | comparable | match | stricter (FP?) | weaker (FN?) | scope-div | evidence-lim |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| fftw | 3 | 0 | 0 | 0 | 0 | 3 | 0 |
+| freetype | 5 | 5 | 5 | 0 | 0 | 0 | 0 |
+| gmp | 4 | 2 | 2 | 0 | 0 | 2 | 0 |
+| gnutls | 3 | 2 | 2 | 0 | 0 | 0 | 1 |
+| gsl | 2 | 2 | 2 | 0 | 0 | 0 | 0 |
+| harfbuzz | 12 | 12 | 12 | 0 | 0 | 0 | 0 |
+| libgcrypt | 2 | 2 | 2 | 0 | 0 | 0 | 0 |
+| libidn2 | 3 | 2 | 2 | 0 | 0 | 1 | 0 |
+| libpng | 4 | 3 | 3 | 0 | 0 | 0 | 1 |
+| libsodium | 3 | 2 | 2 | 0 | 0 | 0 | 1 |
+| libssh2 | 4 | 2 | 2 | 0 | 0 | 2 | 0 |
+| libtasn1 | 1 | 1 | 1 | 0 | 0 | 0 | 0 |
+| libtiff | 9 | 4 | 4 | 0 | 0 | 5 | 0 |
+| libvorbis | 2 | 2 | 2 | 0 | 0 | 0 | 0 |
+| libxml2 | 13 | 10 | 10 | 0 | 0 | 0 | 3 |
+| libxslt | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
+| lz4 | 6 | 4 | 4 | 0 | 0 | 0 | 2 |
+| nettle | 4 | 3 | 2 | **1** | 0 | 1 | 0 |
+| openjpeg | 3 | 2 | 2 | 0 | 0 | 1 | 0 |
+| openssl | 17 | 11 | 10 | 0 | **1** | 3 | 3 |
+| p11-kit | 2 | 2 | 2 | 0 | 0 | 0 | 0 |
+| pcre2 | 3 | 1 | 1 | 0 | 0 | 1 | 1 |
+| snappy | 3 | 0 | 0 | 0 | 0 | 3 | 0 |
+| zstd | 11 | 6 | 6 | 0 | 0 | 4 | 1 |
+| **TOTAL** | **120** | **80** | **78** | **1** | **1** | **26** | **14** |
 
-344 further pairs were `UNCOMPARABLE` — overwhelmingly old releases the tracker
-covers (e.g. zstd 0.7.x, nettle 1.x) that are not published on conda-forge for
-`linux-64`, so no binary could be fetched. Those are excluded from the rate.
+**Agreement = 78 / 80 = 97.5 %.** Many further pairs were `UNCOMPARABLE` —
+overwhelmingly old releases the tracker covers (e.g. zstd 0.7.x, nettle 1.x) that
+are not published on conda-forge for `linux-64`, so no binary could be fetched.
+Those are excluded from the rate. `fftw`/`snappy` show 0 comparable because every
+runnable pair was an exported-internal-symbol scope divergence (abicheck stricter,
+auto-classified, **no false positive**).
 
 Reproduce any row:
 
@@ -175,7 +199,7 @@ a refinement opportunity in the harness's evidence probe (§4).
 ## 5. What this run validates about abicheck
 
 - **Symbols-only and DWARF-present comparisons agree with the canonical ABICC
-  oracle on 42/44 real upstream pairs (95.5 %)** across 8 ecosystems, with **no
+  oracle on 78/80 real upstream pairs (97.5 %)** across 24 libraries, with **no
   confirmed false positive or false negative**.
 - The harness's **evidence-aware + scope-aware scoring holds up on live data**: 15
   scope divergences and 8 evidence limits were correctly separated from genuine
