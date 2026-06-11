@@ -237,6 +237,12 @@ def load_extractor_manifest(path: Path | str) -> ExtractorManifest:
 
     outputs_raw = raw.get("outputs") or {}
     outputs = _parse_outputs(outputs_raw, p)
+    if not outputs:
+        raise ManifestError(
+            f"extractor manifest {p}: must declare at least one output — an extractor "
+            "that produces no foldable evidence cannot be recorded as a successful "
+            "collection (a missing/empty 'outputs' is a typo, not a no-op)"
+        )
 
     input_requirements = [str(x) for x in (raw.get("input_requirements") or [])]
 
@@ -501,7 +507,8 @@ class ExternalCliExtractor:
             )
         if proc.returncode != 0:
             diagnostics.append(
-                f"collect exited {proc.returncode}: {(proc.stderr or '').strip()[:500]}"
+                f"collect exited {proc.returncode}: "
+                f"{_stderr_excerpt(proc.stderr, context.collection_mode)}"
             )
             return CollectionResult(status="failed", diagnostics=diagnostics)
         artifacts = [
@@ -538,9 +545,10 @@ class ExternalCliExtractor:
                     status="failed",
                     diagnostics=[f"normalize could not run {argv[0]!r}: {exc}"],
                 )
+            mode = self.context.collection_mode if self.context else CollectionMode.PERMISSIVE
             if proc.returncode != 0:
                 diagnostics.append(
-                    f"normalize exited {proc.returncode}: {(proc.stderr or '').strip()[:500]}"
+                    f"normalize exited {proc.returncode}: {_stderr_excerpt(proc.stderr, mode)}"
                 )
                 return NormalizationResult(status="failed", diagnostics=diagnostics)
         by_kind: dict[str, Path] = {}
@@ -764,6 +772,17 @@ def _with_optional_only(template: list[str], sub: dict[str, str]) -> dict[str, s
         for ph in _PLACEHOLDER_RE.findall(token):
             out.setdefault(ph, "")
     return out
+
+
+def _stderr_excerpt(stderr: str | None, mode: CollectionMode) -> str:
+    """Trim a tool's stderr for a diagnostic — but keep it whole in audit mode.
+
+    ``audit`` mode promises full diagnostics (ADR-032 D9), so the 500-char cap
+    that keeps ordinary permissive/strict diagnostics readable is lifted there;
+    the failure details may be the whole point of the audit pack.
+    """
+    text = (stderr or "").strip()
+    return text if mode == CollectionMode.AUDIT else text[:500]
 
 
 def _file_sha256(path: Path) -> str:

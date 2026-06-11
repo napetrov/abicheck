@@ -362,6 +362,7 @@ def test_manifest_capabilities_list_form(tmp_path):
         "name": "x",
         "capabilities": ["target_graph", "compile_db"],
         "commands": {"collect": ["x"]},
+        "outputs": [{"kind": "build_evidence", "path": "build/be.json"}],
     }
     m = load_extractor_manifest(_dump(tmp_path, data))
     assert m.capabilities.target_graph is True
@@ -403,9 +404,46 @@ def test_manifest_output_missing_fields(tmp_path):
 def test_manifest_invalid_schema_version(tmp_path):
     # A non-integer schema_version must be a ManifestError, not an uncaught
     # ValueError that aborts collection (Codex P2).
-    data = {"name": "x", "schema_version": "abc", "commands": {"collect": ["x"]}}
+    data = {
+        "name": "x", "schema_version": "abc", "commands": {"collect": ["x"]},
+        "outputs": [{"kind": "build_evidence", "path": "build/be.json"}],
+    }
     with pytest.raises(ManifestError, match="'schema_version' must be an integer"):
         load_extractor_manifest(_dump(tmp_path, data))
+
+
+def test_manifest_requires_outputs(tmp_path):
+    # An extractor with no declared outputs would run and validate nothing, so a
+    # missing/empty outputs block is rejected at load (Codex P2).
+    with pytest.raises(ManifestError, match="must declare at least one output"):
+        load_extractor_manifest(_dump(tmp_path, {"name": "x", "commands": {"collect": ["x"]}}))
+
+
+def test_audit_mode_keeps_full_stderr(tmp_path):
+    # audit mode preserves full stderr; permissive truncates at 500 chars.
+    noisy = "import sys; sys.stderr.write('E'*1200); sys.exit(2)"
+    data = {
+        "name": "noisy",
+        "commands": {"collect": [sys.executable, "-c", noisy]},
+        "outputs": [{"kind": "build_evidence", "path": "build/be.json"}],
+    }
+    manifest = load_extractor_manifest(_dump(tmp_path, data))
+    from abicheck.evidence.extractor import CollectionMode
+
+    pack_root = tmp_path / "pack"
+    pack_root.mkdir()
+    _n, audit = run_external_extractor(
+        manifest, CollectionContext(collection_mode=CollectionMode.AUDIT), pack_root
+    )
+    assert audit.status == "failed"
+    assert "E" * 1000 in " ".join(audit.diagnostics)  # full stderr kept
+
+    pack2 = tmp_path / "pack2"
+    pack2.mkdir()
+    _n2, permissive = run_external_extractor(
+        manifest, CollectionContext(collection_mode=CollectionMode.PERMISSIVE), pack2
+    )
+    assert "E" * 1000 not in " ".join(permissive.diagnostics)  # truncated
 
 
 def test_manifest_non_list_output_group_rejected(tmp_path):
