@@ -70,7 +70,15 @@ the per-case evidence each example needs is benchmarked in
 
 ### Why call it "evidence"?
 
-The word is deliberate — it is a **forensic metaphor**, not decoration. abicheck
+First, concretely: "evidence" is just the umbrella term for the **sources of
+information** in the table above. The artifact sources are the binary (L0), its
+debug info (L1), and its public headers (L2); the additional sources are the
+project's **build-system data** (L3 — compile flags, toolchain, target graph),
+its **source tree** (L4 — per-TU source ABI replay), and a **source/build graph**
+(L5 — include/type/call reachability). When the docs say "build/source evidence
+(L3/L4/L5)", that is exactly what they mean.
+
+The umbrella word is a deliberate **forensic metaphor**, not decoration: abicheck
 treats "is this compatible?" as something it must **prove from facts**, the way a
 case is built from evidence, rather than as a single computation over one data
 source. Three properties of evidence are exactly the properties abicheck needs,
