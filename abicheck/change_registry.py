@@ -1066,4 +1066,45 @@ REGISTRY = ChangeKindRegistry([
               "inline namespace (std::__1 vs std::__2), so types embedding them by "
               "value are laid out differently. Rebuild consumers against the matching "
               "libc++ ABI version."),
+
+    # ── Fine-grained class-layout descriptor (layout-closure work) ───────────
+    # Produced by diff_layout.py from the optional RecordType layout fields
+    # (base offsets, vptr offset, dsize/tail-padding, standard-layout /
+    # trivially-copyable traits). They capture layout mechanics the coarse
+    # size/offset detectors under-represent. Each is guarded tri-state — emitted
+    # only when both sides carry the evidence — so an evidence-tier downgrade
+    # never fabricates one.
+    _E("base_class_offset_changed", _B,
+       impact="A base-class subobject moved to a different offset within the derived "
+              "object (e.g. an empty-base optimization was lost, or a member/base was "
+              "inserted ahead of it) without the base list reordering. The `this` "
+              "pointer adjustment for that base and every field after it shifts; old "
+              "binaries read the wrong addresses."),
+    _E("vptr_introduced", _B,
+       impact="A previously non-polymorphic class gained its first virtual function, "
+              "so the compiler prepends a vtable pointer. sizeof grows and every data "
+              "member's offset shifts by a pointer width; existing binaries that embed "
+              "or derive from the type are laid out incompatibly."),
+    _E("trivially_copyable_lost", _B,
+       impact="A type stopped being trivially copyable (e.g. a user-declared "
+              "copy/move constructor, destructor, or a non-trivial member was added). "
+              "Non-trivially-copyable types are passed and returned by value "
+              "differently (via a hidden reference / not in registers), so the calling "
+              "convention for any function taking or returning it by value changes."),
+    _E("standard_layout_lost", _R,
+       impact="A type stopped being standard-layout (e.g. it gained a mix of access "
+              "specifiers, a base with members, or virtual members). `offsetof` and "
+              "C interoperability are no longer guaranteed and tail-padding reuse "
+              "rules change; review code that relies on the C-compatible layout."),
+    _E("tail_padding_reuse_changed", _R,
+       impact="The type's data size (the bytes its own members occupy, excluding "
+              "trailing tail padding) changed while sizeof stayed the same. A derived "
+              "class may reuse a base's tail padding, so this can silently shift a "
+              "derived layout even though the base's sizeof is unchanged."),
+    _E("layout_unverifiable", _R,
+       impact="A public type's layout could not be verified at the available evidence "
+              "tier — its size/offsets are not present (e.g. a symbols-only or partial "
+              "dump with no debug info), so a real layout change cannot be ruled out. "
+              "Informational and non-escalating; rebuild with debug info (or supply "
+              "headers) to confirm."),
 ])

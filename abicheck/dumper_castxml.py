@@ -605,6 +605,17 @@ class _CastxmlParser:
     def _build_record_type(self, el: Any, override_name: str | None = None) -> RecordType:
         name = override_name or el.get("name", "")
         is_opaque = el.get("incomplete") == "1"
+        vtable = [] if is_opaque else self._build_vtable(el.get("id", ""))
+        # Best-effort layout descriptor (layout-closure work). Direct (non-virtual)
+        # base subobject offsets from each ``<Base offset=...>``; the unit only has
+        # to be consistent across snapshots for change detection, and it is.
+        base_offsets: dict[str, int] = {}
+        if not is_opaque:
+            for b in el:
+                if b.tag == "Base" and b.get("virtual") != "1":
+                    off = self._optional_int_attr(b, "offset")
+                    if off is not None:
+                        base_offsets[self._type_name(b.get("type", ""))] = off
         return RecordType(
             name=name,
             kind=el.tag.lower(),
@@ -619,9 +630,13 @@ class _CastxmlParser:
                 self._type_name(b.get("type", ""))
                 for b in el if b.tag == "Base" and b.get("virtual") == "1"
             ],
-            vtable=[] if is_opaque else self._build_vtable(el.get("id", "")),
+            vtable=vtable,
             is_union=el.tag == "Union",
             is_opaque=is_opaque,
+            # Polymorphic (non-empty vtable) → vtable pointer at offset 0; None
+            # when non-polymorphic so the diff can tell "gained a vptr" apart.
+            vptr_offset_bits=0 if vtable else None,
+            base_offsets=base_offsets,
             # castxml records the `final` class-key specifier as a `final`
             # token inside the compound ``attributes`` string (e.g.
             # ``attributes="final"``), the same channel used for noexcept.

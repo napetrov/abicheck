@@ -135,14 +135,40 @@ def _effective_build_mode(snap: AbiSnapshot) -> BuildMode | None:
     from them whenever the field itself is missing. Returns ``None`` only when
     there are no mangled symbols at all to reason from (then the detector stays
     silent rather than guessing).
+
+    A *captured* build-mode whose ``stdlib`` is still ``UNKNOWN`` (a partial
+    capture — e.g. the producer string named the compiler but not the runtime)
+    is enriched from the symbols too, rather than short-circuiting on the mere
+    presence of the field (Codex review #345). Enrichment works on a copy so a
+    shared captured ``BuildMode`` is never mutated in place.
     """
-    if snap.build_mode is not None:
-        return snap.build_mode
+    import dataclasses
+
+    captured = snap.build_mode
+    # A fully-resolved capture wins outright — symbols can't improve on it.
+    if captured is not None and captured.stdlib is not StdlibFamily.UNKNOWN:
+        return captured
     mangled = [f.mangled for f in snap.functions if getattr(f, "mangled", None)]
     mangled += [v.mangled for v in snap.variables if getattr(v, "mangled", None)]
     if not mangled:
-        return None
-    bm = build_mode_from_signals(mangled_symbols=mangled)
+        # Nothing to reason from: hand back the partial capture (still UNKNOWN)
+        # or None. Either way the detector treats UNKNOWN as "no evidence".
+        return captured
+    # No capture, or a capture whose stdlib is still UNKNOWN: recover the family
+    # from the mangled symbols. Preserve any other captured fields (compiler,
+    # language std) by enriching a copy of the partial capture.
+    if captured is None:
+        bm = build_mode_from_signals(mangled_symbols=mangled)
+    else:
+        bm = dataclasses.replace(captured)
+        # Fold in the prefix-anchored signal detection that build_mode_from_signals
+        # provides (``_ZNSt3__1`` prefixes, ``B5cxx11`` tags) before the broader
+        # fallbacks below.
+        sig = build_mode_from_signals(mangled_symbols=mangled)
+        if sig.stdlib is not StdlibFamily.UNKNOWN:
+            bm.stdlib = sig.stdlib
+            if bm.libcpp_abi_version is None:
+                bm.libcpp_abi_version = sig.libcpp_abi_version
     if bm.stdlib is StdlibFamily.UNKNOWN and any(
         # MSVC STL: COFF-decorated C++ symbols (``?...@@``) are non-Itanium, so
         # the shared ``_Z``-only detector skips them entirely. MSVC encodes the

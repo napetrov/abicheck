@@ -538,6 +538,10 @@ class _DwarfSnapshotBuilder:
         bases: list[str] = []
         virtual_bases: list[str] = []
         vtable: list[str] = []
+        # Best-effort layout descriptor (layout-closure work). base_offsets maps
+        # base name → bit offset within this object (from the inheritance DIE's
+        # DW_AT_data_member_location); empty when no such offset is present.
+        base_offsets: dict[str, int] = {}
 
         for child in die.iter_children():
             if child.tag == "DW_TAG_member":
@@ -552,6 +556,13 @@ class _DwarfSnapshotBuilder:
                         virtual_bases.append(base_name)
                     else:
                         bases.append(base_name)
+                    # Record the (non-virtual) base subobject offset when present.
+                    # A virtual base's location is dynamic, so only capture the
+                    # static, direct-base offset.
+                    if not is_virtual_base and "DW_AT_data_member_location" in child.attributes:
+                        base_offsets[base_name] = _decode_member_location(
+                            child.attributes["DW_AT_data_member_location"].value
+                        ) * 8
             elif child.tag == "DW_TAG_subprogram":
                 # Collect virtual methods for vtable
                 if _attr_int(child, "DW_AT_virtuality") > 0:
@@ -569,6 +580,13 @@ class _DwarfSnapshotBuilder:
         # Extract source location from DW_AT_decl_file / DW_AT_decl_line
         source_loc = self._resolve_decl_file(die, CU)
 
+        # Best-effort vptr offset: a class with virtual methods (non-empty
+        # vtable) is polymorphic, so the compiler embeds a vtable pointer at
+        # offset 0 (no virtual bases). None (not 0) when non-polymorphic, so the
+        # diff can tell "gained a vptr" (None → 0) from "vptr stayed". Tri-state
+        # by design — left None when we cannot tell.
+        vptr_offset_bits = 0 if vtable else None
+
         self.types.append(RecordType(
             name=qualified,
             kind=kind,
@@ -581,6 +599,8 @@ class _DwarfSnapshotBuilder:
             is_union=is_union,
             is_opaque=is_opaque,
             source_location=source_loc,
+            vptr_offset_bits=vptr_offset_bits,
+            base_offsets=base_offsets,
         ))
 
     def _resolve_decl_file(self, die: Any, CU: Any) -> str | None:

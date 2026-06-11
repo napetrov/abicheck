@@ -550,6 +550,19 @@ class ChangeKind(str, Enum):
     STDLIB_IMPLEMENTATION_CHANGED = "stdlib_implementation_changed"  # libstdc++ ↔ libc++ ↔ MSVC STL → RISK
     LIBCPP_ABI_VERSION_CHANGED = "libcpp_abi_version_changed"  # _LIBCPP_ABI_VERSION 1 ↔ 2 → RISK
 
+    # ── Fine-grained class-layout descriptor (layout-closure work) ───────────
+    # Emitted by diff_layout.py from the optional layout fields on RecordType
+    # (base offsets, vptr offset, dsize/tail-padding, standard-layout /
+    # trivially-copyable traits). Each is guarded tri-state: skipped when either
+    # side lacks the evidence, so an evidence-tier downgrade never fabricates a
+    # finding.
+    BASE_CLASS_OFFSET_CHANGED = "base_class_offset_changed"  # base subobject moved → this-ptr/field offsets shift → BREAKING
+    VPTR_INTRODUCED = "vptr_introduced"  # first virtual added → vtable pointer prepended → all offsets shift → BREAKING
+    TRIVIALLY_COPYABLE_LOST = "trivially_copyable_lost"  # type no longer trivially-copyable → pass-by-value/register ABI changes → BREAKING
+    STANDARD_LAYOUT_LOST = "standard_layout_lost"  # type no longer standard-layout → offsetof/C-compat/tail-padding reuse changes → RISK
+    TAIL_PADDING_REUSE_CHANGED = "tail_padding_reuse_changed"  # data-size (dsize) changed at stable sizeof → derived tail-padding reuse shifts → RISK
+    LAYOUT_UNVERIFIABLE = "layout_unverifiable"  # layout could not be verified at this evidence tier (no debug info) → RISK, non-escalating
+
 
 class HasKind(Protocol):
     kind: ChangeKind

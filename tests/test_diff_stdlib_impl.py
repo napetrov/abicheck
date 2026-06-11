@@ -417,3 +417,21 @@ class TestBuildModeFallback:
         new = _snap("2", stdlib=StdlibFamily.LIBCXX)
         kinds = {c.kind for c in compare(old, new).changes}
         assert ChangeKind.STDLIB_IMPLEMENTATION_CHANGED in kinds
+
+    def test_partial_capture_enriched_from_symbols(self) -> None:
+        # A captured BuildMode whose stdlib is still UNKNOWN (e.g. the producer
+        # named the compiler but not the runtime) must not short-circuit the
+        # symbol fallback: the mangled evidence still recovers the family
+        # (Codex review #345).
+        old = AbiSnapshot(
+            library="lib.so", version="1",
+            functions=[self._fn("_ZNSt6vectorIiSaIiEE9push_backEi")],  # libstdc++
+            build_mode=BuildMode(stdlib=StdlibFamily.UNKNOWN),
+        )
+        new = AbiSnapshot(
+            library="lib.so", version="2",
+            functions=[self._fn("_ZNSt3__16vectorIiNS_9allocatorIiEEEE9push_backEOi")],  # libc++
+            build_mode=BuildMode(stdlib=StdlibFamily.UNKNOWN),
+        )
+        kinds = {c.kind for c in compare(old, new).changes}
+        assert ChangeKind.STDLIB_IMPLEMENTATION_CHANGED in kinds
