@@ -200,6 +200,25 @@ def test_scope_sensitive_breaking_only_true_for_internal_symbol_removal() -> Non
     assert mod.scope_sensitive_breaking_only(data) is True
 
 
+def test_scope_sensitive_breaking_only_false_for_param_change() -> None:
+    """A func_params_changed is inferred and stays scored (Codex review #349).
+
+    Parameter/signature changes are derived from DWARF on a still-present symbol,
+    so they can be a genuine abicheck false positive on a public function and the
+    oracle's removal counter says nothing about their scope. They must not be
+    auto-excused as scope divergence.
+    """
+    mod = _load_module()
+    data = {
+        "verdict": "BREAKING",
+        "changes": [
+            {"kind": "func_removed_elf_only", "symbol": "_nettle_cnd_swap", "severity": "breaking"},
+            {"kind": "func_params_changed", "symbol": "_nettle_ecc_mod", "severity": "breaking"},
+        ],
+    }
+    assert mod.scope_sensitive_breaking_only(data) is False
+
+
 def test_scope_sensitive_breaking_only_false_for_type_level_break() -> None:
     # A type-level layout break is NOT scope-sensitive: it must stay a genuine
     # disagreement, never auto-excused.

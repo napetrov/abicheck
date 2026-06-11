@@ -107,15 +107,25 @@ the agreement rate (counted as `UNCOMPARABLE`) and reported on their own lines:
 
 | Bucket | When | Why it isn't a disagreement |
 |--------|------|------------------------------|
-| `evidence_limited` | oracle break is type-level only (`removed_symbols == 0`) **and** the conda binary carries no DWARF | abicheck can only see the symbol table, so it physically cannot observe the type change ABICC saw in its debug build — a non-breaking verdict is not a false negative |
-| `scope_divergent` | oracle says COMPATIBLE with no public symbol changed (`removed_symbols == 0`, 100% backward compat), abicheck says BREAKING, **and every** breaking finding is symbol/toolchain-scope | A header-scoped oracle (ABICC / abi-laboratory) only counts the public-header surface; binary-only abicheck deliberately treats every exported symbol as ABI. So abicheck correctly flags a *real* binary change the oracle ignores — an exported-but-internal symbol removed (`_TIFF*`, `_nettle_*`, `__gmpn_*` CPU variants), an internal data table resized, a libstdc++ dual-ABI `std::string` shift from a cross-toolchain rebuild. Not a false positive |
+| `evidence_limited` | oracle break is type-level only (`removed_symbols == 0`) **and** the binary lacks usable DWARF on **both** sides of the compared shared object | abicheck can only see the symbol table (or only one side's layout), so it physically cannot observe the type change ABICC saw in its debug build — a non-breaking verdict is not a false negative. Both sides are required because diffing layouts needs debug info for the old *and* new build |
+| `scope_divergent` | oracle says COMPATIBLE with no public symbol changed (`removed_symbols == 0`, 100% backward compat), abicheck says BREAKING, **and every** breaking finding is a symbol/toolchain-scope *hard fact* | A header-scoped oracle (ABICC / abi-laboratory) only counts the public-header surface; binary-only abicheck deliberately treats every exported symbol as ABI. So abicheck correctly flags a *real* binary change the oracle ignores — an exported-but-internal symbol removed (`_TIFF*`, `_nettle_*`, `__gmpn_*` CPU variants), an internal data table resized, a libstdc++ dual-ABI `std::string` shift from a cross-toolchain rebuild. Not a false positive |
 
-The `scope_divergent` gate is deliberately conservative: it is corroborated by
-the oracle's *own* public-surface counts (so a divergence is never excused on a
-pair where the oracle actually saw a public symbol change), and it only applies
-to symbol/toolchain-level breaking kinds — **type-level layout breaks stay
-scored as genuine disagreements** so a real abicheck false positive can't hide
-behind this bucket. See `conda_harness._SCOPE_SENSITIVE_BREAKING_KINDS` and
+The `scope_divergent` gate is deliberately conservative on three axes so it can
+never hide a real problem:
+
+1. **Oracle-corroborated** — gated on the oracle's *own* public-surface counts,
+   so a divergence is never excused on a pair where the oracle actually saw a
+   public symbol change.
+2. **Hard facts only** — it covers symbol *removals*, data-symbol *size*
+   changes, and *ABI-tag* changes: things abicheck reads directly from the
+   symbol table / mangled names and cannot get wrong. It deliberately
+   **excludes `func_params_changed`** — a signature change is *inferred* from
+   DWARF on a still-present symbol, so it could be a genuine abicheck false
+   positive on a public function and stays a scored disagreement.
+3. **No type-level breaks** — type-level layout breaks always stay scored as
+   genuine disagreements.
+
+See `conda_harness._SCOPE_SENSITIVE_BREAKING_KINDS` and
 `validate._is_scope_divergence`.
 
 Parsing is pure and unit-tested offline against a synthetic timeline fixture in

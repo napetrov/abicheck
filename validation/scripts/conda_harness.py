@@ -67,9 +67,20 @@ from fetch_tracker_oracle import _normalize_verdict, load_results_map  # noqa: E
 #   - removal of author-declared-internal version nodes,
 #   - libstdc++ dual-ABI ``std::string`` (``Ss`` -> ``__cxx11``) symbol shifts
 #     that come from a cross-toolchain rebuild, not an upstream source change.
-# This is deliberately *not* a way to excuse type-level layout breaks (those stay
-# scored as genuine disagreements); see validate._is_scope_divergence for the
-# oracle-corroboration gate that makes this safe.
+#
+# Every kind here is a *hard symbol-table / mangled-name fact* (a symbol is gone,
+# its st_size differs, its ABI-tag set differs) that abicheck reads directly and
+# cannot get wrong — so the only open question is public-ness, which the oracle's
+# removal counter and backward-compat percentage corroborate. Deliberately
+# EXCLUDED: ``func_params_changed``. A parameter/signature change is *inferred*
+# from DWARF on a symbol that is still present, so (a) it can itself be an
+# abicheck false positive on a genuinely public function, and (b) ``removed_symbols``
+# does not speak to a still-present symbol's scope. Auto-excusing it could hide a
+# real false positive, so it stays a scored disagreement (Codex review #349).
+#
+# This is also deliberately *not* a way to excuse type-level layout breaks (those
+# stay scored as genuine disagreements); see validate._is_scope_divergence for
+# the oracle-corroboration gate that makes this safe.
 _SCOPE_SENSITIVE_BREAKING_KINDS = frozenset(
     {
         "func_removed",
@@ -80,7 +91,6 @@ _SCOPE_SENSITIVE_BREAKING_KINDS = frozenset(
         "symbol_size_changed_internal",
         "symbol_version_node_removed",
         "abi_tag_changed",
-        "func_params_changed",
     }
 )
 
@@ -402,8 +412,16 @@ def evaluate_pair(
             for d in datas.values()
             if _normalize_verdict(verdict_of(d) or "") == "BREAKING"
         ]
+        # Type-level diffing needs debug info on BOTH sides: if only the new
+        # build carries DWARF and the old one is stripped, abicheck still cannot
+        # compare old-vs-new layouts, so a type-only oracle break is an evidence
+        # limit, not a miss. Require usable DWARF on both sides of some shared
+        # object before treating the pair as type-evidenced (Codex review #349).
         evidence[pid] = {
-            "has_dwarf": any(has_dwarf(new_sos[name]) for name in common),
+            "has_dwarf": any(
+                has_dwarf(old_sos[name]) and has_dwarf(new_sos[name])
+                for name in common
+            ),
             "scope_divergent": bool(breaking_datas)
             and all(scope_sensitive_breaking_only(d) for d in breaking_datas),
         }
