@@ -266,10 +266,18 @@ def check_soname_bump_policy(
       - Breaking changes detected but SONAME not bumped → SONAME_BUMP_RECOMMENDED
       - No breaking changes but SONAME bumped → SONAME_BUMP_UNNECESSARY
     """
-    from .checker_policy import BREAKING_KINDS
-
     breaking_kinds = BREAKING_KINDS
-    has_breaking = any(c.kind in breaking_kinds for c in changes)
+
+    def _is_effectively_breaking(c: Change) -> bool:
+        # Honor a per-finding ``effective_verdict`` override (ADR-025): a change
+        # demoted to COMPATIBLE_WITH_RISK — e.g. one confined to an internal/
+        # private version-node symbol — must not count as a break here, or it
+        # would trigger the very SONAME-bump advisory this policy aims to avoid.
+        if c.effective_verdict is not None:
+            return c.effective_verdict == Verdict.BREAKING
+        return c.kind in breaking_kinds
+
+    has_breaking = any(_is_effectively_breaking(c) for c in changes)
 
     # A SONAME is considered "bumped" only when both old and new have a
     # non-empty SONAME and they differ.  If the new SONAME is empty the
@@ -280,7 +288,7 @@ def check_soname_bump_policy(
     result: list[Change] = []
 
     if has_breaking and not soname_bumped and old_elf.soname:
-        breaking_count = sum(1 for c in changes if c.kind in breaking_kinds)
+        breaking_count = sum(1 for c in changes if _is_effectively_breaking(c))
         if new_elf.soname:
             detail = f"SONAME remains {old_elf.soname!r}"
         else:

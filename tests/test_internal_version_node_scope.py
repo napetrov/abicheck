@@ -174,3 +174,37 @@ def test_compare_public_versioned_symbol_removal_stays_breaking() -> None:
     assert result.verdict == Verdict.BREAKING, (
         f"a public symbol removal must stay breaking, got {result.verdict}"
     )
+
+
+def test_internal_symbol_removal_does_not_recommend_soname_bump() -> None:
+    # A demoted internal-version-node break must NOT trigger SONAME_BUMP_RECOMMENDED:
+    # the SONAME-bump policy has to honor the effective (demoted) verdict, not the
+    # raw kind, or it claims a binary-incompatible change the verdict denies.
+    old = _snapshot(
+        "old",
+        ["_nettle_cnd_swap"],
+        [ElfSymbol(name="_nettle_cnd_swap", version="HOGWEED_INTERNAL_6_0")],
+    )
+    old.elf.soname = "libfoo.so.1"
+    new = _snapshot("new", [], [])
+    new.elf.soname = "libfoo.so.1"
+    result = compare(old, new)
+    assert result.verdict == Verdict.COMPATIBLE_WITH_RISK
+    assert not any(
+        c.kind == ChangeKind.SONAME_BUMP_RECOMMENDED for c in result.changes
+    ), "demoted internal-only change must not recommend a SONAME bump"
+
+
+def test_public_symbol_removal_still_recommends_soname_bump() -> None:
+    # Guard: a genuine public break under an unchanged SONAME still recommends the bump.
+    old = _snapshot(
+        "old",
+        ["nettle_pubfn"],
+        [ElfSymbol(name="nettle_pubfn", version="NETTLE_8")],
+    )
+    old.elf.soname = "libfoo.so.1"
+    new = _snapshot("new", [], [])
+    new.elf.soname = "libfoo.so.1"
+    result = compare(old, new)
+    assert result.verdict == Verdict.BREAKING
+    assert any(c.kind == ChangeKind.SONAME_BUMP_RECOMMENDED for c in result.changes)
