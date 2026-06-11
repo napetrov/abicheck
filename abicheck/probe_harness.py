@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -198,6 +199,8 @@ class MatrixSnapshot:
 
 
 _CXX_STD_FLAG = "-std=c++"
+_SAFE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+_DISALLOWED_COMPILER_FLAGS = frozenset({"-c", "-o", "-x", "-E", "-S", "-M", "-MF", "-MT", "-MQ", "-pipe", "--"})
 
 
 def _parse_cxx_std(flags: list[str]) -> int | None:
@@ -210,6 +213,43 @@ def _parse_cxx_std(flags: list[str]) -> int | None:
                 return None
     return None
 
+
+
+
+def _validate_safe_component(value: Any, *, field_name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field_name} must be a non-empty string")
+    if not _SAFE_COMPONENT_RE.fullmatch(value):
+        raise ValueError(f"{field_name} contains unsafe characters: {value!r}")
+    if value in {".", ".."}:
+        raise ValueError(f"{field_name} cannot be '.' or '..'")
+    return value
+
+
+def _validate_compiler_name(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError("compiler must be a non-empty string")
+    compiler = os.path.basename(value)
+    if compiler != value:
+        raise ValueError(f"compiler must be a basename, got {value!r}")
+    if compiler.startswith("-"):
+        raise ValueError(f"compiler must not start with '-', got {value!r}")
+    return compiler
+
+
+def _validate_flags(raw_flags: Any) -> tuple[str, ...]:
+    if raw_flags is None:
+        return ()
+    if not isinstance(raw_flags, list):
+        raise ValueError("flags must be a list of strings")
+    flags: list[str] = []
+    for f in raw_flags:
+        if not isinstance(f, str):
+            raise ValueError(f"flag values must be strings, got {f!r}")
+        if f in _DISALLOWED_COMPILER_FLAGS:
+            raise ValueError(f"flag {f!r} is disallowed in probe configuration")
+        flags.append(f)
+    return tuple(flags)
 
 def load_probe_spec(path: str | Path) -> ProbeSpec:
     """Parse a YAML probe manifest. Accepts JSON too (a YAML subset)."""
@@ -239,10 +279,10 @@ def parse_probe_spec(data: dict[str, Any]) -> ProbeSpec:
 
     configs: list[ProbeConfiguration] = []
     for c in data["configurations"]:
-        flags = tuple(c.get("flags", []))
+        flags = _validate_flags(c.get("flags", []))
         configs.append(ProbeConfiguration(
-            id=c["id"],
-            compiler=c["compiler"],
+            id=_validate_safe_component(c["id"], field_name="configuration id"),
+            compiler=_validate_compiler_name(c["compiler"]),
             flags=flags,
             defines=dict(c.get("defines", {})),
             include_dirs=tuple(c.get("include_dirs", [])),
@@ -252,7 +292,7 @@ def parse_probe_spec(data: dict[str, Any]) -> ProbeSpec:
     probes: list[Probe] = []
     for p in data["probes"]:
         probes.append(Probe(
-            name=p["name"],
+            name=_validate_safe_component(p["name"], field_name="probe name"),
             headers=tuple(p.get("headers", [])),
             body=p["body"],
         ))
