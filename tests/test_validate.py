@@ -168,3 +168,64 @@ def test_run_validation_max_pairs_reports_only_attempted(
     assert len(report["rows"]) == 2  # only the 2 attempted, not all 5
     assert {r["pair"] for r in report["rows"]} == {"p0", "p1"}
     assert all(r["status"] != "UNCOMPARABLE" for r in report["rows"])
+
+
+def test_tracker_pairs_carry_scope_corroboration_fields(tmp_path, monkeypatch) -> None:
+    # tracker_pairs must thread the oracle's public-surface counts through so the
+    # scope-divergence gate can corroborate against them.
+    mod = _load_module()
+    oracle = {
+        "library": "libtiff",
+        "pairs": [
+            {
+                "pair": "libtiff_4.0.6_to_4.0.7",
+                "old_ver": "4.0.6",
+                "new_ver": "4.0.7",
+                "expected_verdict": "COMPATIBLE",
+                "removed_symbols": 0,
+                "backward_compat_pct": 100.0,
+                "soname_changed": False,
+            }
+        ],
+    }
+    odir = tmp_path / "tracker_oracle"
+    odir.mkdir()
+    (odir / "libtiff.json").write_text(json.dumps(oracle))
+    monkeypatch.setattr(mod, "ORACLE_DIR", odir)
+    pairs = mod.tracker_pairs("libtiff", None, "linux-64")
+    assert pairs[0]["backward_compat_pct"] == 100.0
+    assert pairs[0]["removed_symbols"] == 0
+    assert pairs[0]["soname_changed"] is False
+
+
+def test_is_scope_divergence_true_for_internal_only_break() -> None:
+    mod = _load_module()
+    pair = {
+        "expected_verdict": "COMPATIBLE",
+        "removed_symbols": 0,
+        "backward_compat_pct": 100.0,
+    }
+    ev = {"scope_divergent": True}
+    assert mod._is_scope_divergence(pair, "BREAKING", ev) is True
+
+
+def test_is_scope_divergence_requires_oracle_corroboration() -> None:
+    # Even if the engine flags every breaking finding scope-sensitive, the oracle
+    # must independently confirm no public symbol was removed.
+    mod = _load_module()
+    ev = {"scope_divergent": True}
+    # oracle saw a public removal -> not a scope divergence
+    pair = {"expected_verdict": "COMPATIBLE", "removed_symbols": 2, "backward_compat_pct": 98.0}
+    assert mod._is_scope_divergence(pair, "BREAKING", ev) is False
+
+
+def test_is_scope_divergence_false_without_engine_flag() -> None:
+    mod = _load_module()
+    pair = {"expected_verdict": "COMPATIBLE", "removed_symbols": 0, "backward_compat_pct": 100.0}
+    assert mod._is_scope_divergence(pair, "BREAKING", {"scope_divergent": False}) is False
+
+
+def test_is_scope_divergence_false_when_oracle_also_breaking() -> None:
+    mod = _load_module()
+    pair = {"expected_verdict": "BREAKING", "removed_symbols": 0, "backward_compat_pct": 100.0}
+    assert mod._is_scope_divergence(pair, "BREAKING", {"scope_divergent": True}) is False

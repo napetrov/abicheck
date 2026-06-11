@@ -79,6 +79,8 @@ def tracker_pairs(lib: str, pkg: str | None, subdir: str) -> list[dict]:
                 "new_ver": p["new_ver"],
                 "expected_verdict": p["expected_verdict"],
                 "removed_symbols": p.get("removed_symbols"),
+                "backward_compat_pct": p.get("backward_compat_pct"),
+                "soname_changed": p.get("soname_changed"),
                 "subdir": subdir,
             }
         )
@@ -127,6 +129,43 @@ def _is_evidence_limited(pair: dict, verdict: str, ev: dict) -> bool:
     )
 
 
+def _is_scope_divergence(pair: dict, verdict: str, ev: dict) -> bool:
+    """True when abicheck is stricter than the oracle purely from scope, not error.
+
+    A header-scoped oracle (ABICC / abi-laboratory) only counts changes to the
+    *public-header* surface; a binary-only abicheck run, by deliberate policy,
+    treats every exported symbol as ABI. So abicheck can correctly flag a real
+    binary change (an exported-but-internal symbol removed, an internal data
+    table resized, a dual-ABI ``std::string`` shift) that the oracle ignores.
+
+    That is an *expected scope divergence*, not a false positive. We classify a
+    pair as such only when all three hold:
+
+    1. the oracle declared the pair COMPATIBLE, and independently reports no
+       public symbol removed (``removed_symbols == 0``) at full backward compat
+       (``backward_compat_pct`` 100 / unknown) — so it genuinely saw no public
+       break;
+    2. abicheck's verdict is BREAKING;
+    3. *every* breaking finding abicheck emitted is symbol/toolchain-scope
+       (``ev['scope_divergent']``, computed by the engine) rather than a
+       type-level layout break.
+
+    Condition 1 is the safety gate: it uses the oracle's own public-surface
+    counts, so we never excuse a divergence on a pair where the oracle actually
+    saw a public symbol change.
+    """
+    if pair.get("expected_verdict") != "COMPATIBLE":
+        return False
+    if _normalize_verdict(verdict) != "BREAKING":
+        return False
+    if not ev.get("scope_divergent", False):
+        return False
+    if pair.get("removed_symbols") != 0:
+        return False
+    bc = pair.get("backward_compat_pct")
+    return bc is None or bc >= 100.0
+
+
 def run_validation(pairs: list[dict], max_pairs: int, label: str) -> dict:
     """Fetch/extract/compare every pair and score abicheck against expectations.
 
@@ -138,6 +177,7 @@ def run_validation(pairs: list[dict], max_pairs: int, label: str) -> dict:
     attempted: list[dict] = []
     evidence: dict[str, dict] = {}
     evidence_limited: list[str] = []
+    scope_divergent: list[str] = []
     done = 0
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
@@ -160,11 +200,19 @@ def run_validation(pairs: list[dict], max_pairs: int, label: str) -> dict:
             if verdict is None:
                 continue
             done += 1
-            if _is_evidence_limited(pair, verdict, evidence.get(pair["pair"], {})):
+            ev = evidence.get(pair["pair"], {})
+            if _is_evidence_limited(pair, verdict, ev):
                 # Type-level-only oracle break, no DWARF in the binary: abicheck
                 # can't see it, so a non-breaking verdict is not a false negative.
                 # Leave it out of results -> scored UNCOMPARABLE, not ABICHECK_WEAKER.
                 evidence_limited.append(pair["pair"])
+                continue
+            if _is_scope_divergence(pair, verdict, ev):
+                # abicheck is stricter only because it scopes every exported
+                # symbol as ABI while the header-scoped oracle does not. Not a
+                # false positive -> exclude from scoring (UNCOMPARABLE), track
+                # separately.
+                scope_divergent.append(pair["pair"])
                 continue
             results[pair["pair"]] = verdict
 
@@ -180,6 +228,7 @@ def run_validation(pairs: list[dict], max_pairs: int, label: str) -> dict:
     report = compare_to_results(oracle_like, results)
     report["ran_pairs"] = done
     report["evidence_limited"] = evidence_limited
+    report["scope_divergent"] = scope_divergent
     PARITY_DIR.mkdir(parents=True, exist_ok=True)
     out = PARITY_DIR / f"{label}.json"
     out.write_text(json.dumps(report, indent=2) + "\n")
@@ -191,8 +240,11 @@ def run_validation(pairs: list[dict], max_pairs: int, label: str) -> dict:
         f"agreement={'n/a' if rate is None else f'{rate:.1%}'} "
         f"match={c['MATCH']} stricter={c['ABICHECK_STRICTER']} "
         f"weaker={c['ABICHECK_WEAKER']} "
+        f"scope_divergent={len(scope_divergent)} "
         f"evidence_limited={len(evidence_limited)} -> {out}"
     )
+    for pid in scope_divergent:
+        print(f"  SCOPE-DIVERGENCE (expected, not FP): {pid}")
     for row in report["rows"]:
         if row["status"] == "ABICHECK_WEAKER":
             print(

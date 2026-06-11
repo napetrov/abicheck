@@ -99,5 +99,25 @@ Status semantics from `--compare`:
 | `ABICHECK_WEAKER` | abicheck says COMPATIBLE where the tracker found a break — a likely **false negative**, the high-value signal to investigate |
 | `UNCOMPARABLE` | no clear verdict on one side, or no abicheck result for the pair (excluded from the agreement rate) |
 
+#### Excluded divergences (not scored as disagreements)
+
+`validate.py` further sets aside two classes of divergence that are *expected*
+artifacts of the comparison setup, not abicheck errors. Both are excluded from
+the agreement rate (counted as `UNCOMPARABLE`) and reported on their own lines:
+
+| Bucket | When | Why it isn't a disagreement |
+|--------|------|------------------------------|
+| `evidence_limited` | oracle break is type-level only (`removed_symbols == 0`) **and** the conda binary carries no DWARF | abicheck can only see the symbol table, so it physically cannot observe the type change ABICC saw in its debug build — a non-breaking verdict is not a false negative |
+| `scope_divergent` | oracle says COMPATIBLE with no public symbol changed (`removed_symbols == 0`, 100% backward compat), abicheck says BREAKING, **and every** breaking finding is symbol/toolchain-scope | A header-scoped oracle (ABICC / abi-laboratory) only counts the public-header surface; binary-only abicheck deliberately treats every exported symbol as ABI. So abicheck correctly flags a *real* binary change the oracle ignores — an exported-but-internal symbol removed (`_TIFF*`, `_nettle_*`, `__gmpn_*` CPU variants), an internal data table resized, a libstdc++ dual-ABI `std::string` shift from a cross-toolchain rebuild. Not a false positive |
+
+The `scope_divergent` gate is deliberately conservative: it is corroborated by
+the oracle's *own* public-surface counts (so a divergence is never excused on a
+pair where the oracle actually saw a public symbol change), and it only applies
+to symbol/toolchain-level breaking kinds — **type-level layout breaks stay
+scored as genuine disagreements** so a real abicheck false positive can't hide
+behind this bucket. See `conda_harness._SCOPE_SENSITIVE_BREAKING_KINDS` and
+`validate._is_scope_divergence`.
+
 Parsing is pure and unit-tested offline against a synthetic timeline fixture in
-`tests/test_tracker_oracle.py` (CI never hits the network).
+`tests/test_tracker_oracle.py` (CI never hits the network); the exclusion gates
+are unit-tested in `tests/test_conda_harness.py` and `tests/test_validate.py`.

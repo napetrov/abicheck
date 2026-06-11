@@ -183,3 +183,47 @@ def test_abicheck_verdict_removes_temp_file(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert verdict == "COMPATIBLE"
     assert not Path(captured["out"]).exists()  # temp file cleaned up
+
+
+def test_scope_sensitive_breaking_only_true_for_internal_symbol_removal() -> None:
+    # All breaking findings are exported-but-internal symbol removals -> the
+    # result is explainable as a header-scope divergence.
+    mod = _load_module()
+    data = {
+        "verdict": "BREAKING",
+        "changes": [
+            {"kind": "func_removed_elf_only", "symbol": "_TIFFNoFixupTags", "severity": "breaking"},
+            {"kind": "symbol_size_changed", "symbol": "TIFFFaxBlackTable", "severity": "breaking"},
+            {"kind": "soname_bump_recommended", "symbol": "DT_SONAME", "severity": "compatible"},
+        ],
+    }
+    assert mod.scope_sensitive_breaking_only(data) is True
+
+
+def test_scope_sensitive_breaking_only_false_for_type_level_break() -> None:
+    # A type-level layout break is NOT scope-sensitive: it must stay a genuine
+    # disagreement, never auto-excused.
+    mod = _load_module()
+    data = {
+        "verdict": "BREAKING",
+        "changes": [
+            {"kind": "func_removed_elf_only", "symbol": "_internal", "severity": "breaking"},
+            {"kind": "type_size_changed", "symbol": "PublicStruct", "severity": "breaking"},
+        ],
+    }
+    assert mod.scope_sensitive_breaking_only(data) is False
+
+
+def test_scope_sensitive_breaking_only_false_when_no_breaking() -> None:
+    mod = _load_module()
+    data = {"verdict": "COMPATIBLE", "changes": [
+        {"kind": "func_added", "symbol": "x", "severity": "compatible"},
+    ]}
+    assert mod.scope_sensitive_breaking_only(data) is False
+
+
+def test_verdict_of_prefers_top_level_then_summary() -> None:
+    mod = _load_module()
+    assert mod.verdict_of({"verdict": "BREAKING"}) == "BREAKING"
+    assert mod.verdict_of({"summary": {"verdict": "COMPATIBLE"}}) == "COMPATIBLE"
+    assert mod.verdict_of({}) is None

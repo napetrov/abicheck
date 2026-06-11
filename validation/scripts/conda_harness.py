@@ -53,7 +53,36 @@ USER_AGENT = "abicheck-validation/1.0 (+https://github.com/napetrov/abicheck)"
 
 # Reuse the verdict normalisation/ranking from the scoring module.
 sys.path.insert(0, str(SCRIPTS_DIR))
-from fetch_tracker_oracle import load_results_map  # noqa: E402
+from fetch_tracker_oracle import _normalize_verdict, load_results_map  # noqa: E402
+
+# Breaking-severity finding kinds that are *symbol-level or toolchain-level* and
+# therefore sensitive to the public-header scope a header-driven oracle (ABICC /
+# abi-laboratory) applies but a binary-only abicheck run cannot. When every
+# breaking finding is one of these AND the oracle independently reports no public
+# symbol changed (removed_symbols == 0, 100% backward compat), abicheck's
+# stricter verdict is an *expected scope divergence*, not a false positive:
+#   - func/var removals of exported-but-internal symbols (``_TIFF*``, ``_nettle_*``)
+#     that live outside the public headers ABICC was given,
+#   - size changes of internal exported data tables,
+#   - removal of author-declared-internal version nodes,
+#   - libstdc++ dual-ABI ``std::string`` (``Ss`` -> ``__cxx11``) symbol shifts
+#     that come from a cross-toolchain rebuild, not an upstream source change.
+# This is deliberately *not* a way to excuse type-level layout breaks (those stay
+# scored as genuine disagreements); see validate._is_scope_divergence for the
+# oracle-corroboration gate that makes this safe.
+_SCOPE_SENSITIVE_BREAKING_KINDS = frozenset(
+    {
+        "func_removed",
+        "func_removed_elf_only",
+        "func_likely_renamed",
+        "var_removed",
+        "symbol_size_changed",
+        "symbol_size_changed_internal",
+        "symbol_version_node_removed",
+        "abi_tag_changed",
+        "func_params_changed",
+    }
+)
 
 
 def conda_download_url(basename: str) -> str:
@@ -212,8 +241,8 @@ def extract_sos(pkg: Path, into: Path) -> dict[str, str]:
     return out
 
 
-def abicheck_verdict(old: str, new: str, old_ver: str, new_ver: str) -> str | None:
-    """Run ``abicheck compare`` on two .so files and return its verdict."""
+def run_abicheck(old: str, new: str, old_ver: str, new_ver: str) -> dict | None:
+    """Run ``abicheck compare`` on two .so files and return the parsed JSON."""
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
         out_path = tmp.name
     cmd = [
@@ -239,8 +268,37 @@ def abicheck_verdict(old: str, new: str, old_ver: str, new_ver: str) -> str | No
         # NamedTemporaryFile(delete=False) leaves the file behind; over a full
         # run (hundreds of pairs x several .so) that litters the temp dir.
         Path(out_path).unlink(missing_ok=True)
+    return data if isinstance(data, dict) else None
+
+
+def verdict_of(data: dict) -> str | None:
+    """Pull the top-level verdict out of an ``abicheck compare`` JSON result."""
     summ = data.get("summary", {}) if isinstance(data, dict) else {}
     return data.get("verdict") or summ.get("verdict")
+
+
+def abicheck_verdict(old: str, new: str, old_ver: str, new_ver: str) -> str | None:
+    """Run ``abicheck compare`` on two .so files and return its verdict."""
+    data = run_abicheck(old, new, old_ver, new_ver)
+    return verdict_of(data) if data is not None else None
+
+
+def _breaking_changes(data: dict) -> list[dict]:
+    changes = data.get("changes") or data.get("findings") or []
+    return [c for c in changes if isinstance(c, dict) and c.get("severity") == "breaking"]
+
+
+def scope_sensitive_breaking_only(data: dict) -> bool:
+    """True when a result is breaking *and every* breaking finding is scope-sensitive.
+
+    Returns False when there are no breaking findings (nothing to explain) or
+    when any breaking finding is a non-symbol/non-toolchain kind (e.g. a
+    type-level layout break), which must stay a genuine disagreement.
+    """
+    breaking = _breaking_changes(data)
+    if not breaking:
+        return False
+    return all(c.get("kind") in _SCOPE_SENSITIVE_BREAKING_KINDS for c in breaking)
 
 
 def resolve_pair(pair: dict, api: dict, subdir: str) -> tuple[str, str] | None:
@@ -322,18 +380,32 @@ def evaluate_pair(
     common = sorted(set(old_sos) & set(new_sos))
     if not common:
         return None
-    if evidence is not None:
-        evidence[pid] = {"has_dwarf": any(has_dwarf(new_sos[name]) for name in common)}
     # Take the most-breaking verdict across the shared objects in the pair.
     ov, nv = pair["old_ver"], pair["new_ver"]
-    verdicts = [
-        v
+    datas = {
+        name: d
         for name in common
-        if (v := abicheck_verdict(old_sos[name], new_sos[name], ov, nv)) is not None
-    ]
-    if not verdicts:
+        if (d := run_abicheck(old_sos[name], new_sos[name], ov, nv)) is not None
+    }
+    if not datas:
         return None
-    verdict = load_results_map([{"pair": pid, "verdict": v} for v in verdicts])[pid]
+    verdict = load_results_map(
+        [{"pair": pid, "verdict": verdict_of(d)} for d in datas.values()]
+    )[pid]
+    if evidence is not None:
+        # A pair is a scope divergence only if *every* shared object whose
+        # verdict is breaking has exclusively scope-sensitive breaking findings;
+        # one genuine break anywhere keeps the pair a real disagreement.
+        breaking_datas = [
+            d
+            for d in datas.values()
+            if _normalize_verdict(verdict_of(d) or "") == "BREAKING"
+        ]
+        evidence[pid] = {
+            "has_dwarf": any(has_dwarf(new_sos[name]) for name in common),
+            "scope_divergent": bool(breaking_datas)
+            and all(scope_sensitive_breaking_only(d) for d in breaking_datas),
+        }
     print(
         f"  {pid}: abicheck={verdict} expected={pair.get('expected_verdict')} "
         f"({','.join(common)})"
