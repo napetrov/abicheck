@@ -90,14 +90,23 @@ def demote_internal_version_node_findings(
 
     * only findings whose *kind* is already BREAKING/API_BREAK are touched (it
       never escalates a compatible finding);
-    * the per-symbol set is derived from the **actual** ELF version bindings, so a
-      public function whose name merely contains ``internal`` is never matched;
+    * the per-symbol set is derived from the **old** side's actual ELF version
+      bindings — that is the surface old consumers linked against. A symbol that
+      was *public* in the old SONAME but rebound to an internal node in the new
+      binary (``foo@LIBFOO_1.0`` → ``foo@LIBFOO_PRIVATE``) is **not** demoted: old
+      consumers still require ``foo@LIBFOO_1.0`` and a real change to it breaks
+      them (Codex review #354). A public function whose name merely contains
+      ``internal`` is likewise never matched (the test is on the version node);
     * findings already carrying a ``frozen_namespace_violation`` or a prior
       ``effective_verdict`` override are left untouched.
 
+    ``new_elf`` is accepted for symmetry/future use but intentionally does not
+    widen the internal set — see the old-side rationale above.
+
     Mutates and returns ``changes``.
     """
-    internal = internal_versioned_symbols(old_elf) | internal_versioned_symbols(new_elf)
+    del new_elf  # old-side bindings define public-ness for old consumers
+    internal = internal_versioned_symbols(old_elf)
     for change in changes:
         if change.frozen_namespace_violation is not None:
             continue

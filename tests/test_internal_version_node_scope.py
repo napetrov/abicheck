@@ -96,6 +96,17 @@ def test_demote_leaves_public_symbol_findings_untouched() -> None:
     assert change.effective_verdict is None
 
 
+def test_demote_requires_old_side_internal_binding() -> None:
+    # A symbol that was PUBLIC in the old SONAME but is rebound to an internal
+    # node in the new binary must NOT be demoted: old consumers still linked
+    # foo@LIBFOO_1.0 and a real change to it breaks them (Codex review #354).
+    old_elf = ElfMetadata(symbols=[ElfSymbol(name="foo", version="LIBFOO_1.0")])
+    new_elf = ElfMetadata(symbols=[ElfSymbol(name="foo", version="LIBFOO_PRIVATE")])
+    change = _change(ChangeKind.FUNC_PARAMS_CHANGED, "foo")
+    demote_internal_version_node_findings([change], old_elf, new_elf)
+    assert change.effective_verdict is None
+
+
 def test_demote_never_escalates_a_compatible_finding() -> None:
     # A compatible-kind finding on an internal symbol must stay untouched (the
     # demotion only ever downgrades a break, never escalates).
