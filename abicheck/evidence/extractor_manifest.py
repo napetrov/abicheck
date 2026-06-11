@@ -395,21 +395,31 @@ class ExternalCliExtractor:
     # -- helpers ------------------------------------------------------------
 
     def _substitutions(self, context: CollectionContext, pack_root: Path) -> dict[str, str]:
-        """Build the placeholder map from the context + pack layout (D6)."""
+        """Build the placeholder map from the context + pack layout (D6).
+
+        Every path is rendered *absolute* (resolved against the invoking cwd at
+        build time), because :meth:`collect` runs the subprocess with its cwd set
+        to the source/build root. A relative ``--build-dir build`` rendered as
+        ``build`` would otherwise resolve to ``build/build`` from inside that cwd;
+        absolute paths keep argv values stable regardless of the subprocess cwd.
+        """
+        def ap(p: Path) -> str:
+            return os.path.abspath(str(p))
+
         sub: dict[str, str] = {
-            "raw_dir": str(pack_root / "raw" / self.manifest.name),
-            "normalized_dir": str(pack_root / "normalized" / self.manifest.name),
+            "raw_dir": ap(pack_root / "raw" / self.manifest.name),
+            "normalized_dir": ap(pack_root / "normalized" / self.manifest.name),
         }
         if context.build_root is not None:
-            sub["build_dir"] = str(context.build_root)
+            sub["build_dir"] = ap(context.build_root)
         if context.source_root is not None:
-            sub["source_root"] = str(context.source_root)
+            sub["source_root"] = ap(context.source_root)
         if context.compile_db is not None:
-            sub["compile_db"] = str(context.compile_db)
+            sub["compile_db"] = ap(context.compile_db)
         if context.cache_dir is not None:
-            sub["cache_dir"] = str(context.cache_dir)
+            sub["cache_dir"] = ap(context.cache_dir)
         if context.binary_paths:
-            sub["binary"] = str(context.binary_paths[0])
+            sub["binary"] = ap(context.binary_paths[0])
         return sub
 
     def _enforce_actions(self, context: CollectionContext) -> None:

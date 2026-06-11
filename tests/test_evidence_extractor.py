@@ -575,6 +575,26 @@ def test_ledger_command_redacts_split_secret(tmp_path):
     assert "API_KEY" in record.command
 
 
+def test_substitutions_are_absolute(tmp_path):
+    # collect() runs the subprocess with cwd=source/build root, so every path
+    # placeholder must be absolute or a relative {build_dir} would resolve
+    # against the changed cwd (e.g. build/build) (Codex P2).
+    import os
+    from pathlib import Path
+
+    manifest = load_extractor_manifest(_dump(tmp_path, _tool_manifest_dict()))
+    ext = ExternalCliExtractor(manifest)
+    ctx = CollectionContext(
+        build_root=Path("relbuild"),
+        source_root=Path("relsrc"),
+        compile_db=Path("rel/cc.json"),
+        binary_paths=[Path("rel/libfoo.so")],
+    )
+    sub = ext._substitutions(ctx, Path("relpack"))
+    for key in ("raw_dir", "normalized_dir", "build_dir", "source_root", "compile_db", "binary"):
+        assert os.path.isabs(sub[key]), f"{key} should be absolute: {sub[key]}"
+
+
 def test_normalize_receives_context_placeholders(tmp_path):
     # A normalize command referencing {source_root} gets the real path the run
     # supplied (not an empty string) — same context-derived subs as collect.
