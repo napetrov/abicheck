@@ -284,6 +284,7 @@ def abicheck_verdict(old: str, new: str, old_ver: str, new_ver: str) -> str | No
 
 
 def _breaking_changes(data: dict) -> list[dict]:
+    """Return the breaking-severity findings from an ``abicheck compare`` result."""
     changes = data.get("changes") or data.get("findings") or []
     return [c for c in changes if isinstance(c, dict) and c.get("severity") == "breaking"]
 
