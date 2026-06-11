@@ -260,6 +260,7 @@ def fetch_timeline(library: str, timeout: float = 30.0) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entry: harvest oracles for the given libraries, or score with --compare."""
     ap = argparse.ArgumentParser(
         description="Harvest abi-laboratory.pro verdicts as an abicheck oracle."
     )
@@ -284,6 +285,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
+    if args.from_file and len(args.libraries) != 1:
+        # --from-file points at one HTML page; harvesting many libs from it would
+        # write each <lib>.json from the same parsed timeline (silently wrong).
+        print("--from-file takes exactly one library", file=sys.stderr)
+        return 2
+
     if args.compare:
         return _run_compare(
             args.libraries, args.from_file, Path(args.out_dir), args.compare
@@ -300,7 +307,9 @@ def main(argv: list[str] | None = None) -> int:
                 if args.from_file
                 else fetch_timeline(lib)
             )
-        except OSError as exc:  # URLError/HTTPError/timeout and file-read errors are all OSError
+        except (
+            OSError
+        ) as exc:  # URLError/HTTPError/timeout and file-read errors are all OSError
             print(f"[{lib}] fetch failed: {exc}", file=sys.stderr)
             rc = 1
             continue
@@ -329,11 +338,30 @@ def main(argv: list[str] | None = None) -> int:
     return rc
 
 
+# Conservative aggregation rank: when several records collapse to one pair id
+# (e.g. a package with multiple shared objects), the most-breaking verdict wins
+# so a per-.so break can't be masked by a sibling's COMPATIBLE result.
+_SEVERITY_RANK = {"BREAKING": 2, "UNKNOWN": 1, "COMPATIBLE": 0}
+
+
+def _more_severe(a: str, b: str) -> str:
+    """Return whichever raw verdict normalizes to the more-breaking outcome."""
+    return (
+        a
+        if _SEVERITY_RANK[_normalize_verdict(a)]
+        >= _SEVERITY_RANK[_normalize_verdict(b)]
+        else b
+    )
+
+
 def load_results_map(raw: object) -> dict[str, str]:
     """Coerce a results file into a ``pair id -> verdict`` map.
 
     Accepts either a plain ``{pair: verdict}`` object or a run_matrix-style list
-    of records (each with ``pair``/``tag`` and ``verdict``).
+    of records (each with ``pair``/``tag`` and ``verdict``). When multiple list
+    records share a pair id (run_matrix emits one record per shared object), the
+    verdicts are aggregated conservatively via :func:`_more_severe` so a BREAKING
+    result is never silently overwritten by a later COMPATIBLE one.
     """
     if isinstance(raw, dict):
         return {str(k): str(v) for k, v in raw.items() if v is not None}
@@ -345,30 +373,36 @@ def load_results_map(raw: object) -> dict[str, str]:
             pid = rec.get("pair") or rec.get("tag")
             verdict = rec.get("verdict")
             if pid and verdict:
-                out[str(pid)] = str(verdict)
+                key, val = str(pid), str(verdict)
+                out[key] = _more_severe(out[key], val) if key in out else val
     return out
 
 
 def _run_compare(
     libraries: list[str], from_file: str | None, out_dir: Path, results_path: str
 ) -> int:
+    """Load the oracle and abicheck results, score agreement, print the report."""
     if len(libraries) != 1:
         print("--compare takes exactly one library", file=sys.stderr)
         return 2
     lib = libraries[0]
     oracle_path = out_dir / f"{lib}.json"
-    if from_file:
-        oracle = build_oracle(lib, Path(from_file).read_text())
-    elif oracle_path.is_file():
-        oracle = json.loads(oracle_path.read_text())
-    else:
-        print(
-            f"no oracle for {lib}: run the fetch step first or pass --from-file",
-            file=sys.stderr,
-        )
+    try:
+        if from_file:
+            oracle = build_oracle(lib, Path(from_file).read_text())
+        elif oracle_path.is_file():
+            oracle = json.loads(oracle_path.read_text())
+        else:
+            print(
+                f"no oracle for {lib}: run the fetch step first or pass --from-file",
+                file=sys.stderr,
+            )
+            return 1
+        results = load_results_map(json.loads(Path(results_path).read_text()))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[{lib}] compare failed reading inputs: {exc}", file=sys.stderr)
         return 1
 
-    results = load_results_map(json.loads(Path(results_path).read_text()))
     report = compare_to_results(oracle, results)
     c = report["counts"]
     rate = report["agreement_rate"]

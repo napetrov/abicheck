@@ -174,3 +174,54 @@ def test_load_results_map_accepts_run_matrix_list() -> None:
 
     # also accepts a plain {pair: verdict} object
     assert mod.load_results_map({"a": "COMPATIBLE"}) == {"a": "COMPATIBLE"}
+
+
+def test_load_results_map_aggregates_duplicate_pairs_conservatively() -> None:
+    mod = _load_module()
+
+    # Same pair id from two shared objects: a BREAKING result must not be masked
+    # by a COMPATIBLE sibling, regardless of record order.
+    raw = [
+        {"pair": "lib_1.0_to_1.1", "verdict": "COMPATIBLE"},
+        {"pair": "lib_1.0_to_1.1", "verdict": "BREAKING"},
+    ]
+    assert mod.load_results_map(raw) == {"lib_1.0_to_1.1": "BREAKING"}
+
+    raw_reversed = list(reversed(raw))
+    assert mod.load_results_map(raw_reversed) == {"lib_1.0_to_1.1": "BREAKING"}
+
+    # API_BREAK normalizes to BREAKING and likewise wins over COMPATIBLE.
+    raw_api = [
+        {"pair": "p", "verdict": "API_BREAK"},
+        {"pair": "p", "verdict": "COMPATIBLE_WITH_RISK"},
+    ]
+    assert mod.load_results_map(raw_api) == {"p": "API_BREAK"}
+
+
+def test_main_rejects_from_file_with_multiple_libraries(tmp_path, capsys) -> None:
+    mod = _load_module()
+    html_file = tmp_path / "page.html"
+    html_file.write_text(_FIXTURE)
+
+    rc = mod.main(["foo", "bar", "--from-file", str(html_file)])
+    assert rc == 2
+    assert "exactly one library" in capsys.readouterr().err
+
+
+def test_run_compare_fails_gracefully_on_missing_results(tmp_path, capsys) -> None:
+    mod = _load_module()
+    html_file = tmp_path / "page.html"
+    html_file.write_text(_FIXTURE)
+
+    # results path does not exist -> clean non-zero exit, no traceback
+    rc = mod.main(
+        [
+            "examplelib",
+            "--from-file",
+            str(html_file),
+            "--compare",
+            str(tmp_path / "missing.json"),
+        ]
+    )
+    assert rc == 1
+    assert "compare failed" in capsys.readouterr().err
