@@ -896,16 +896,20 @@ def _emit_type(
 def _typedef_underlying(node: dict[str, Any]) -> str:
     """The underlying type a typedef/alias resolves to, build-root-stable.
 
-    clang records the aliased type in ``type.qualifiedType``
-    (``typedef int32_t handle_t;`` → ``"int"`` after the standard typedef chain
-    is spelled, or ``"int32_t"`` as written, depending on clang version). The
-    written spelling is what matters for a source/API change, so use it verbatim;
-    fall back to ``desugaredQualType`` only when the spelling is absent.
+    clang records the aliased spelling in ``type.qualType`` — the same key the
+    rest of this extractor reads for signatures (``typedef int32_t handle_t;`` →
+    ``"int32_t"`` as written). The written spelling is what matters for a
+    source/API change, so use it verbatim; fall back to ``desugaredQualType``
+    only when the spelling is absent.
     """
     type_obj = node.get("type")
     if not isinstance(type_obj, dict):
         return ""
-    return str(type_obj.get("qualifiedType") or type_obj.get("desugaredQualType") or "")
+    return str(
+        type_obj.get("qualType")
+        or type_obj.get("desugaredQualType")
+        or ""
+    )
 
 
 def _emit_typedef(

@@ -195,12 +195,12 @@ def test_ast_mapping_extracts_typedef_underlying_type() -> None:
             {
                 "kind": "TypedefDecl", "name": "handle_t",
                 "loc": {"file": "include/foo.h", "line": 4},
-                "type": {"qualifiedType": "int32_t"},
+                "type": {"qualType": "int32_t"},
             },
             {
                 "kind": "TypeAliasDecl", "name": "size_alias",
                 "loc": {"file": "include/foo.h", "line": 5},
-                "type": {"qualifiedType": "unsigned long"},
+                "type": {"qualType": "unsigned long"},
             },
         ],
     }
