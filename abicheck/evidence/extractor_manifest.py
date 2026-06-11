@@ -204,7 +204,7 @@ def load_extractor_manifest(path: Path | str) -> ExtractorManifest:
             f"extractor manifest {p}: the 'network' action is always denied "
             "(ADR-032 D5) and cannot be registered."
         )
-    capabilities = ExtractorCapabilities.from_dict(raw.get("capabilities"))
+    capabilities = _coerce_capabilities(raw.get("capabilities"), p)
     if capabilities.requires_network:
         raise ManifestError(
             f"extractor manifest {p}: 'requires_network' is not supported — network "
@@ -241,6 +241,30 @@ def load_extractor_manifest(path: Path | str) -> ExtractorManifest:
         commands=commands,
         outputs=outputs,
         schema_version=int(raw.get("schema_version", 1) or 1),
+    )
+
+
+def _coerce_capabilities(raw_caps: Any, p: Path) -> ExtractorCapabilities:
+    """Parse the ``capabilities`` block, accepting both ADR-032 forms (D3/D4).
+
+    D4 specifies a mapping of capability → bool; the D3 manifest example uses a
+    YAML *list* of capability names (each implicitly enabled). Both are accepted.
+    Any other shape (a bare string, a number, a list with non-string items) is a
+    :class:`ManifestError` so the loader's caller records a failed extractor
+    rather than aborting on an ``AttributeError`` from ``.get`` on a non-mapping.
+    """
+    if raw_caps is None:
+        return ExtractorCapabilities()
+    if isinstance(raw_caps, dict):
+        return ExtractorCapabilities.from_dict(raw_caps)
+    if isinstance(raw_caps, list):
+        if not all(isinstance(x, str) for x in raw_caps):
+            raise ManifestError(
+                f"extractor manifest {p}: 'capabilities' list items must be capability names (strings)"
+            )
+        return ExtractorCapabilities.from_dict({name: True for name in raw_caps})
+    raise ManifestError(
+        f"extractor manifest {p}: 'capabilities' must be a mapping or a list of capability names"
     )
 
 

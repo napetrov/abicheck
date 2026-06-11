@@ -349,6 +349,32 @@ def test_manifest_requires_network_capability_rejected(tmp_path):
         load_extractor_manifest(_dump(tmp_path, data))
 
 
+def test_manifest_capabilities_list_form(tmp_path):
+    # ADR-032 D3 shows capabilities as a YAML list of names; each is enabled.
+    data = {
+        "name": "x",
+        "capabilities": ["target_graph", "compile_db"],
+        "commands": {"collect": ["x"]},
+    }
+    m = load_extractor_manifest(_dump(tmp_path, data))
+    assert m.capabilities.target_graph is True
+    assert m.capabilities.compile_db is True
+
+
+def test_manifest_capabilities_bad_shape_is_manifest_error(tmp_path):
+    # A non-mapping/non-list capabilities must raise ManifestError (caught by the
+    # CLI), not an uncaught AttributeError from .get on the wrong type (Codex P2).
+    data = {"name": "x", "capabilities": "compile_db", "commands": {"collect": ["x"]}}
+    with pytest.raises(ManifestError, match="'capabilities' must be a mapping or a list"):
+        load_extractor_manifest(_dump(tmp_path, data))
+
+
+def test_manifest_capabilities_list_non_string_rejected(tmp_path):
+    data = {"name": "x", "capabilities": [1, 2], "commands": {"collect": ["x"]}}
+    with pytest.raises(ManifestError, match="list items must be capability names"):
+        load_extractor_manifest(_dump(tmp_path, data))
+
+
 def test_manifest_version_command_must_be_list(tmp_path):
     data = {"name": "x", "version_command": "x --version", "commands": {"collect": ["x"]}}
     with pytest.raises(ManifestError, match="'version_command' must be a list"):
