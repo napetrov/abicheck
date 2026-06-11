@@ -464,7 +464,6 @@ def _run_external_extractors(
     """
     from .evidence.build_evidence import BuildEvidence as _BuildEvidence
     from .evidence.extractor import (
-        ActionNotPermittedError,
         CollectionAction,
         CollectionContext,
         CollectionMode,
@@ -500,15 +499,10 @@ def _run_external_extractors(
             collection_mode=CollectionMode(collection_mode),
             redaction_policy=DEFAULT_REDACTION,
         )
-        try:
-            _norm, record = run_external_extractor(manifest, context, pack_root)
-        except ActionNotPermittedError as exc:
-            extractors.append(ExtractorRecord(
-                name=manifest.name, status="skipped", detail=str(exc),
-                capabilities=[k for k, v in manifest.capabilities.to_dict().items() if v is True],
-            ))
-            merged.diagnostics.append(f"{manifest.name}: {exc}")
-            continue
+        # An extractor gated out by the action ceiling comes back as a 'skipped'
+        # record (run_external_extractor decides via discover()), so there is no
+        # permission exception for the caller to handle here.
+        _norm, record = run_external_extractor(manifest, context, pack_root)
 
         extractors.append(record)
         if record.status != "ok":

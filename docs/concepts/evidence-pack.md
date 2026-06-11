@@ -227,7 +227,12 @@ The security model has three pillars:
   action you did not enable is **skipped** with a diagnostic, never run.
 - **No shell, sanitized environment.** Commands are an argv list (never a shell
   string) run with `shell=False` and a minimal environment, so a third-party
-  tool never receives your full environment (which may hold tokens).
+  tool never receives your full environment (which may hold tokens). Note the
+  action model gates *invocation* — abicheck refuses to launch an extractor that
+  needs a disallowed action — but it does not sandbox a process once launched;
+  `network` being denied means no extractor that *declares* it is run, not a
+  kernel-level block. This is why manifests are trusted-by-operator: register
+  only extractors you vet.
 
 Every external run records a full **reproducibility ledger** row in the pack
 manifest (ADR-032 D10): the redacted command, its content hash, declared

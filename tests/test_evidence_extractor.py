@@ -576,12 +576,51 @@ def test_ledger_command_redacts_split_secret(tmp_path):
 
 
 def test_external_extractor_blocked_by_action_ceiling(tmp_path):
+    # discover() gates a ceiling violation into a 'skipped' record (D4/D9) rather
+    # than raising, so the run is never invoked and no output is produced.
     manifest = load_extractor_manifest(_dump(tmp_path, _tool_manifest_dict(action="query_build_system")))
     pack_root = tmp_path / "pack"
     pack_root.mkdir()
     ctx = CollectionContext(allowed_actions={CollectionAction.INSPECT})
-    with pytest.raises(ActionNotPermittedError, match="query_build_system"):
-        run_external_extractor(manifest, ctx, pack_root)
+    _norm, record = run_external_extractor(manifest, ctx, pack_root)
+    assert record.status == "skipped"
+    assert "query_build_system" in record.detail
+    assert not (pack_root / "normalized" / "fake-tool" / "build_evidence.json").exists()
+
+
+def test_discover_gates_on_action_ceiling(tmp_path):
+    manifest = load_extractor_manifest(_dump(tmp_path, _tool_manifest_dict(action="query_build_system")))
+    ext = ExternalCliExtractor(manifest)
+    assert ext.discover(CollectionContext(allowed_actions={CollectionAction.INSPECT})).can_run is False
+    permitted = {CollectionAction.INSPECT, CollectionAction.QUERY_BUILD_SYSTEM}
+    assert ext.discover(CollectionContext(allowed_actions=permitted)).can_run is True
+
+
+def test_ledger_records_resolved_tool_version(tmp_path):
+    # D10: the ledger records the *actual* tool version from version_command,
+    # not just the manifest's declared version.
+    data = _tool_manifest_dict(name="versioned")
+    data["version"] = "0.0-declared"
+    data["version_command"] = [sys.executable, "-c", "print('toolz 4.5.6')"]
+    manifest = load_extractor_manifest(_dump(tmp_path, data))
+    pack_root = tmp_path / "pack"
+    pack_root.mkdir()
+    _norm, record = run_external_extractor(manifest, CollectionContext(), pack_root)
+    assert record.status == "ok", record.diagnostics
+    assert record.version == "toolz 4.5.6"
+
+
+def test_ledger_version_falls_back_when_probe_fails(tmp_path):
+    # A failing version_command must not break the run; fall back to declared.
+    data = _tool_manifest_dict(name="versioned2")
+    data["version"] = "9.9"
+    data["version_command"] = [sys.executable, "-c", "import sys; sys.exit(1)"]
+    manifest = load_extractor_manifest(_dump(tmp_path, data))
+    pack_root = tmp_path / "pack"
+    pack_root.mkdir()
+    _norm, record = run_external_extractor(manifest, CollectionContext(), pack_root)
+    assert record.status == "ok", record.diagnostics
+    assert record.version == "9.9"
 
 
 def test_external_extractor_records_nonzero_exit(tmp_path):

@@ -541,10 +541,40 @@ class ExternalCliExtractor:
 
     # -- ledger -------------------------------------------------------------
 
-    def command_hash(self, context: CollectionContext, pack_root: Path) -> str:
-        """Stable ``sha256:`` over the rendered commands + version + inputs (D10)."""
+    def resolve_version(self, context: CollectionContext, pack_root: Path) -> str:
+        """Run the manifest ``version_command`` to record the real tool version (D10).
+
+        ADR-032 D10 wants the *actual* tool version in the ledger, not just what
+        the manifest claims. When a ``version_command`` is declared and the run
+        already permits invoking the tool (the caller gates this after
+        :meth:`discover`), run it and use the first stdout line. Any failure
+        (missing tool, non-zero exit, timeout, render error) falls back to the
+        manifest's declared ``version`` so version probing never breaks a run.
+        """
+        template = self.manifest.version_command
+        if not template:
+            return self.manifest.version
+        try:
+            argv = render_command(template, _with_optional_only(template, {}))
+            proc = self._run(argv)
+        except (OSError, subprocess.SubprocessError, ManifestError):
+            return self.manifest.version
+        if proc.returncode != 0:
+            return self.manifest.version
+        lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+        return lines[0] if lines else self.manifest.version
+
+    def command_hash(
+        self, context: CollectionContext, pack_root: Path, *, version: str | None = None
+    ) -> str:
+        """Stable ``sha256:`` over the rendered commands + version + inputs (D10).
+
+        *version* defaults to the manifest's declared version; the driver passes
+        the *resolved* tool version so the hash reflects the actual toolchain.
+        """
         h = hashlib.sha256()
-        h.update((self.manifest.name + "\0" + self.manifest.version).encode("utf-8"))
+        ver = self.manifest.version if version is None else version
+        h.update((self.manifest.name + "\0" + ver).encode("utf-8"))
         sub = self._substitutions(context, pack_root)
         for phase in _PHASES:
             template = self.manifest.commands.get(phase)
@@ -567,28 +597,52 @@ def run_external_extractor(
 ) -> tuple[NormalizationResult, ExtractorRecord]:
     """Drive one external extractor end-to-end and produce its ledger row.
 
-    Runs ``collect`` → ``normalize`` → ``validate`` under the action ceiling,
-    recording timing, the redacted command, its hash, capabilities, and
-    diagnostics into an :class:`ExtractorRecord` (D10). Never raises for a tool
-    failure — the failure is captured in the returned record's ``status`` so the
-    caller can apply the collection-mode policy (D9). Only an
-    :class:`~abicheck.evidence.extractor.ActionNotPermittedError` propagates,
-    because a permission violation is an operator error, not a tool failure.
+    Gates on :meth:`ExternalCliExtractor.discover` (D4): an extractor whose
+    declared actions are not permitted for the run is recorded ``skipped`` with
+    the reason rather than run. Otherwise it runs ``collect`` → ``normalize`` →
+    ``validate`` under the action ceiling, recording timing, the *resolved* tool
+    version, the redacted command, its hash, capabilities, and diagnostics into
+    an :class:`ExtractorRecord` (D10). Never raises for a tool failure — the
+    failure is captured in the returned record's ``status`` so the caller can
+    apply the collection-mode policy (D9).
     """
     extractor = ExternalCliExtractor(manifest, redaction=redaction)
     started = _dt.datetime.now(_dt.timezone.utc)
+    capabilities = [k for k, v in manifest.capabilities.to_dict().items() if v is True]
+    inputs = [redaction.path(x) for x in manifest.input_requirements]
+
+    # D4: decide whether this extractor may run at all before touching the host.
+    # A ceiling violation is a skipped row (requested evidence absent), which the
+    # D9 collection-mode policy acts on — not an exception the caller must catch.
+    discovery = extractor.discover(context)
+    if not discovery.can_run:
+        record = ExtractorRecord(
+            name=manifest.name, version=manifest.version, status="skipped",
+            capabilities=capabilities, inputs=inputs,
+            command_hash=extractor.command_hash(context, pack_root),
+            command=_redacted_command(manifest, context, pack_root, redaction),
+            started_at=started.isoformat(), detail=discovery.reason,
+        )
+        return _finish(
+            NormalizationResult(status="skipped", diagnostics=[discovery.reason]),
+            record, started, "skipped", [discovery.reason],
+        )
+
+    # The run permits this extractor's actions, so probing its version (D10) is
+    # within the already-granted permission to invoke the tool.
+    version = extractor.resolve_version(context, pack_root)
     record = ExtractorRecord(
         name=manifest.name,
-        version=manifest.version,
-        capabilities=[k for k, v in manifest.capabilities.to_dict().items() if v is True],
-        command_hash=extractor.command_hash(context, pack_root),
+        version=version,
+        capabilities=capabilities,
+        command_hash=extractor.command_hash(context, pack_root, version=version),
         command=_redacted_command(manifest, context, pack_root, redaction),
         started_at=started.isoformat(),
-        inputs=[redaction.path(x) for x in manifest.input_requirements],
+        inputs=inputs,
     )
 
-    # Action enforcement first: a violation is the operator's to fix, so it
-    # propagates rather than being swallowed as a tool failure.
+    # Defensive: discover() already verified the ceiling, but keep the per-phase
+    # guard so collect() is safe to call directly too.
     extractor._enforce_actions(context)
 
     # Clear any stale declared outputs before running so success requires *this*
