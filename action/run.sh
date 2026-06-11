@@ -596,6 +596,16 @@ _build_json_cmd() {
       --format | -o | --output | --output-file)
         ((i++))  # skip the flag's value too
         ;;
+      --show-only)
+        # Display filter ("limit displayed changes", does NOT affect exit codes).
+        # Keeping it would hide gated breaks from the comment while the check
+        # still fails red — drop it (and its value) so the comment sees the
+        # full change set the gate acted on.
+        ((i++))  # skip the flag's value too
+        ;;
+      --show-only=*)
+        : # same display filter, inline value form — drop it for the re-run.
+        ;;
       --stat)
         : # display-only flag (no value); it suppresses the changes array in
           # JSON, which the comment parser needs — drop it for the re-run.
