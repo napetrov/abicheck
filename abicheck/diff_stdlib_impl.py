@@ -69,6 +69,12 @@ if TYPE_CHECKING:
 #: of the symbol (Codex review on #345).
 _LIBCXX_INLINE_NS_SUBSTR = re.compile(r"St\d+__([12])")
 
+#: Real ``std::`` namespace token in a *demangled* name. The negative lookbehind
+#: rejects a match inside a user identifier such as ``mystd::`` (Codex #345) — it
+#: only fires when ``std::`` is preceded by a non-identifier character or starts
+#: the string.
+_STD_NAMESPACE_TOKEN = re.compile(r"(?<![A-Za-z0-9_])std::")
+
 #: Marker symbol used for the synthetic build-mode findings (they are not tied
 #: to a single exported symbol). Mirrors ``__glibcxx_dual_abi`` in diff_platform.
 _STDLIB_IMPL_MARKER = "__stdlib_implementation"
@@ -172,7 +178,12 @@ def _effective_build_mode(snap: AbiSnapshot) -> BuildMode | None:
         from .demangle import demangle
         for sym in mangled:
             d = demangle(sym)
-            if d and "std::" in d and "std::__1" not in d and "std::__2" not in d:
+            if (
+                d
+                and _STD_NAMESPACE_TOKEN.search(d)
+                and "std::__1" not in d
+                and "std::__2" not in d
+            ):
                 bm.stdlib = StdlibFamily.LIBSTDCXX
                 break
     return bm

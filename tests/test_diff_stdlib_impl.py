@@ -308,6 +308,22 @@ class TestBuildModeFallback:
         kinds = {c.kind for c in compare(old, new).changes}
         assert ChangeKind.STDLIB_IMPLEMENTATION_CHANGED not in kinds
 
+    def test_user_namespace_resembling_std_not_flagged(self) -> None:
+        # `mystd::api()` demangles to a name that *contains* the substring
+        # "std::" but is NOT the std namespace; it must not be read as libstdc++.
+        from abicheck.demangle import demangle
+        if demangle("_ZN5mystd3apiEv") is None:
+            import pytest
+            pytest.skip("no C++ demangler available")
+        old = AbiSnapshot(
+            library="lib.so", version="1",
+            functions=[self._fn("_ZN5mystd3apiEv")])  # mystd::api()
+        new = AbiSnapshot(
+            library="lib.so", version="2",
+            functions=[self._fn("_Z3apiNSt3__16vectorIiNS_9allocatorIiEEEE")])
+        kinds = {c.kind for c in compare(old, new).changes}
+        assert ChangeKind.STDLIB_IMPLEMENTATION_CHANGED not in kinds
+
     def test_silent_when_no_mangled_symbols(self) -> None:
         old = AbiSnapshot(library="lib.so", version="1")
         new = AbiSnapshot(library="lib.so", version="2")
