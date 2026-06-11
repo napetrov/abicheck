@@ -234,6 +234,14 @@ The `evidence_tier` scalar collapses the raw sources into a single ordered label
   present. The richest tier, and the only one that can reason about
   declared-but-not-emitted API, inline/template changes, and macro contracts.
 
+These three values correspond to the **artifact** evidence layers **L0–L2**.
+Build data (**L3**, `-p build/`) and source/evidence packs (**L4**,
+`--old-evidence`/`--new-evidence`) do **not** promote this scalar — they add
+findings and an evidence-coverage table alongside it, under the authority rule
+(L3/L4 never overrides an artifact-proven verdict). See [Evidence &
+Detectability](../concepts/evidence-and-detectability.md) for the full L0–L4
+model.
+
 ```json
 {
   "verdict": "BREAKING",
