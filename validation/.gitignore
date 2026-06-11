@@ -1,3 +1,5 @@
 # Regenerable validation outputs (not part of the curated deliverable)
 libs/
 data/runs/
+# Oracles harvested from abi-laboratory.pro — regenerable, not redistributed here
+data/tracker_oracle/
