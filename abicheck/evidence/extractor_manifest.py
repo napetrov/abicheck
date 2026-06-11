@@ -164,20 +164,7 @@ def load_extractor_manifest(path: Path | str) -> ExtractorManifest:
     name = str(raw.get("name", "")).strip()
     if not name:
         raise ManifestError(f"extractor manifest {p} is missing a 'name'")
-    # The name is later used to build per-extractor pack directories
-    # (``raw/<name>``, ``normalized/<name>``). Reject anything that is not a
-    # single safe path component so a manifest cannot escape the pack root via
-    # an absolute path or ``..`` traversal.
-    if (
-        os.path.isabs(name)
-        or "/" in name
-        or "\\" in name
-        or name in (".", "..")
-        or Path(name).name != name
-    ):
-        raise ManifestError(
-            f"extractor manifest {p}: 'name' must be a single safe path component, got {name!r}"
-        )
+    _reject_unsafe_name(name, p)
 
     commands_raw = raw.get("commands") or {}
     if not isinstance(commands_raw, dict):
@@ -335,6 +322,32 @@ def _parse_outputs(outputs_raw: Any, p: Path) -> list[ManifestOutput]:
         _reject_unsafe_output_path(path, p)
         out.append(ManifestOutput(kind=str(row["kind"]), path=path))
     return out
+
+
+def _reject_unsafe_name(name: str, p: Path) -> None:
+    """Reject extractor names that are not a single safe path component (D3).
+
+    The name is later used to build per-extractor pack directories
+    (``raw/<name>``, ``normalized/<name>``). An absolute path or one containing
+    ``..`` or a path separator would let ``pack_root / name`` discard the pack
+    prefix or traverse out of it, so abicheck could create, scan, or purge
+    directories outside the pack root. Checked under both POSIX and Windows path
+    rules so a manifest stays portable. Raises :class:`ManifestError`.
+    """
+    from pathlib import PurePosixPath, PureWindowsPath
+
+    posix, win = PurePosixPath(name), PureWindowsPath(name)
+    if (
+        name in (".", "..")
+        or "/" in name
+        or "\\" in name
+        or posix.is_absolute()
+        or win.is_absolute()
+        or win.drive
+    ):
+        raise ManifestError(
+            f"extractor manifest {p}: 'name' must be a single safe path component, got {name!r}"
+        )
 
 
 def _reject_unsafe_output_path(path: str, p: Path) -> None:
