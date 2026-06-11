@@ -239,9 +239,10 @@ def _cross_stdlib_embedded_layout_diverges() -> tuple[AbiSnapshot, AbiSnapshot]:
     # The canonical std::vector trap: a public type embeds a std:: container by
     # value, and the two builds use *different* stdlib implementations
     # (libstdc++ → libc++). Across implementations that embedded type is laid out
-    # differently, so the public type's size diverges — a real, cross-impl ABI
-    # break that must stay breaking. build_mode being cross-implementation is
-    # what lets the std:: layout participate (stdlib_namespaces_excluded → False).
+    # differently, so the public *owner* type's size diverges — a real, cross-impl
+    # ABI break that must stay breaking. The owner type (Buffer) is non-std:: and
+    # is never filtered, so its TYPE_SIZE_CHANGED is caught through the ordinary
+    # path; the cross-implementation build_mode adds the RISK build-mode finding.
     old = _snap(
         "1",
         functions=[_fn("make_buffer", ret="Buffer *")],

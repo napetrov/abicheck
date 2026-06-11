@@ -31,13 +31,17 @@ conservative:
   capture, or the stdlib family is ``UNKNOWN``, it emits nothing — it does not
   guess and it does not escalate. The absence of debug/build evidence is a
   reason to stay silent, not to raise an alarm.
-* It defaults to **RISK, never BREAKING.** When an embedded stdlib type's
-  layout actually differs and that type is on the public surface, the type
-  diff (size/offset) emits the BREAKING finding separately; this kind explains
-  and localizes the root cause. The companion change in
-  :func:`abicheck.model.stdlib_namespaces_excluded` is what lets that layout
-  diff *see* embedded stdlib types in the cross-implementation case (they are
-  filtered out of the ordinary same-toolchain comparison as noise).
+* It defaults to **RISK, never BREAKING.** When a public type embeds a stdlib
+  type *by value* and its layout actually differs, that owner type is itself a
+  non-``std::`` type (e.g. ``class A``) and is therefore never filtered, so the
+  type diff emits its ``TYPE_SIZE_CHANGED``/offset BREAKING finding through the
+  ordinary path; this kind explains and localizes the root cause. We do **not**
+  globally un-filter standalone ``std::`` records in the cross-implementation
+  case — across implementations they differ wholesale and would flood BREAKING
+  noise for toolchain-owned internals (see
+  :func:`abicheck.model.stdlib_namespaces_excluded`). Fine-grained, per-owner
+  attribution of the specific embedded ``std::`` field is deferred to the
+  layout-closure work.
 """
 from __future__ import annotations
 

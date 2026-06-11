@@ -22,7 +22,6 @@ from abicheck.model import (
     AbiSnapshot,
     RecordType,
     TypeField,
-    cross_stdlib_implementation,
     stdlib_namespaces_excluded,
 )
 
@@ -64,51 +63,26 @@ def _embed_stdlib_record(size_bits: int | None = 192) -> RecordType:
 
 
 # ---------------------------------------------------------------------------
-# cross_stdlib_implementation predicate
+# stdlib_namespaces_excluded — the global std:: filter must stay ON even for a
+# cross-implementation comparison (Codex review on PR #345): standalone std::
+# records differ wholesale between libstdc++/libc++, so un-filtering them
+# globally would flood BREAKING noise for toolchain-owned internals. The real
+# break is caught via the (non-std::) owner type; the hazard is surfaced as a
+# RISK build-mode finding.
 # ---------------------------------------------------------------------------
-class TestCrossStdlibPredicate:
-    def test_different_families_is_cross(self) -> None:
-        old = _snap("1", stdlib=StdlibFamily.LIBSTDCXX)
-        new = _snap("2", stdlib=StdlibFamily.LIBCXX)
-        assert cross_stdlib_implementation(old, new) is True
-
-    def test_same_family_is_not_cross(self) -> None:
-        old = _snap("1", stdlib=StdlibFamily.LIBSTDCXX)
-        new = _snap("2", stdlib=StdlibFamily.LIBSTDCXX)
-        assert cross_stdlib_implementation(old, new) is False
-
-    def test_unknown_family_is_not_cross(self) -> None:
-        old = _snap("1", stdlib=StdlibFamily.UNKNOWN)
-        new = _snap("2", stdlib=StdlibFamily.LIBCXX)
-        assert cross_stdlib_implementation(old, new) is False
-
-    def test_missing_build_mode_is_not_cross(self) -> None:
-        old = _snap("1", build_mode=None)
-        new = _snap("2", stdlib=StdlibFamily.LIBCXX)
-        assert cross_stdlib_implementation(old, new) is False
-
-    def test_libcpp_abi_version_bump_is_cross(self) -> None:
-        old = _snap("1", stdlib=StdlibFamily.LIBCXX, libcpp_abi=1)
-        new = _snap("2", stdlib=StdlibFamily.LIBCXX, libcpp_abi=2)
-        assert cross_stdlib_implementation(old, new) is True
-
-
-# ---------------------------------------------------------------------------
-# stdlib_namespaces_excluded — the conditional un-cutting
-# ---------------------------------------------------------------------------
-class TestConditionalFilter:
-    def test_same_toolchain_still_filters_stdlib(self) -> None:
+class TestGlobalFilterPreserved:
+    def test_same_toolchain_filters_stdlib(self) -> None:
         old = _snap("1", stdlib=StdlibFamily.LIBSTDCXX)
         new = _snap("2", stdlib=StdlibFamily.LIBSTDCXX)
         assert stdlib_namespaces_excluded(old, new) is True
 
-    def test_cross_implementation_stops_filtering(self) -> None:
+    def test_cross_implementation_does_not_disable_global_filter(self) -> None:
+        # Regression guard: a cross-impl build-mode must NOT relax the filter.
         old = _snap("1", stdlib=StdlibFamily.LIBSTDCXX)
         new = _snap("2", stdlib=StdlibFamily.LIBCXX)
-        # Across implementations, embedded std:: layout IS the surface under test.
-        assert stdlib_namespaces_excluded(old, new) is False
+        assert stdlib_namespaces_excluded(old, new) is True
 
-    def test_no_build_mode_keeps_default_filtering(self) -> None:
+    def test_no_build_mode_keeps_filtering(self) -> None:
         old = _snap("1", build_mode=None)
         new = _snap("2", build_mode=None)
         assert stdlib_namespaces_excluded(old, new) is True
@@ -168,3 +142,44 @@ class TestDetectorFindings:
             if c.kind == ChangeKind.STDLIB_IMPLEMENTATION_CHANGED
         )
         assert "no layout evidence" in finding.description.lower()
+
+    def test_change_without_embedding_emits_base_description(self) -> None:
+        # stdlib changes but no public type embeds a std:: type by value → still
+        # a RISK finding, but the description carries no embed-specific note.
+        old = _snap("1", stdlib=StdlibFamily.LIBSTDCXX, types=[])
+        new = _snap("2", stdlib=StdlibFamily.LIBCXX, types=[])
+        result = compare(old, new)
+        finding = next(
+            c for c in result.changes
+            if c.kind == ChangeKind.STDLIB_IMPLEMENTATION_CHANGED
+        )
+        assert "embeds a std::" not in finding.description
+        assert finding.old_value == "libstdc++" and finding.new_value == "libc++"
+
+    def test_stdlib_field_by_pointer_is_not_embedding(self) -> None:
+        # A std:: member held by pointer is layout-neutral, so it must NOT count
+        # as an embedding (no embed note in the description).
+        rec = RecordType(
+            name="Handle",
+            kind="class",
+            size_bits=64,
+            fields=[TypeField(name="vec", type="std::vector<int> *", offset_bits=0)],
+        )
+        old = _snap("1", stdlib=StdlibFamily.LIBSTDCXX, types=[rec])
+        new = _snap("2", stdlib=StdlibFamily.LIBCXX, types=[rec])
+        result = compare(old, new)
+        finding = next(
+            c for c in result.changes
+            if c.kind == ChangeKind.STDLIB_IMPLEMENTATION_CHANGED
+        )
+        assert "embeds a std::" not in finding.description
+
+    def test_msvc_stl_label_in_description(self) -> None:
+        old = _snap("1", stdlib=StdlibFamily.MSVC_STL, types=[_embed_stdlib_record()])
+        new = _snap("2", stdlib=StdlibFamily.LIBCXX, types=[_embed_stdlib_record()])
+        result = compare(old, new)
+        finding = next(
+            c for c in result.changes
+            if c.kind == ChangeKind.STDLIB_IMPLEMENTATION_CHANGED
+        )
+        assert "MSVC STL" in finding.description
