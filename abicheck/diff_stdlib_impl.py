@@ -75,6 +75,12 @@ _LIBCXX_INLINE_NS_SUBSTR = re.compile(r"St\d+__([12])")
 #: the string.
 _STD_NAMESPACE_TOKEN = re.compile(r"(?<![A-Za-z0-9_])std::")
 
+#: libc++'s *versioned* inline namespace in a demangled name — ``std::__1`` /
+#: ``std::__2`` and Android NDK's ``std::__ndk1`` (Codex #345). Distinct from
+#: libstdc++'s ``std::__cxx11`` (which does not match), so a demangled name
+#: carrying this token is libc++, not libstdc++.
+_LIBCXX_DEMANGLED_NS = re.compile(r"(?<![A-Za-z0-9_])std::__(?:ndk)?\d")
+
 #: Marker symbol used for the synthetic build-mode findings (they are not tied
 #: to a single exported symbol). Mirrors ``__glibcxx_dual_abi`` in diff_platform.
 _STDLIB_IMPL_MARKER = "__stdlib_implementation"
@@ -166,24 +172,28 @@ def _effective_build_mode(snap: AbiSnapshot) -> BuildMode | None:
     ):
         bm.stdlib = StdlibFamily.MSVC_STL
     if bm.stdlib is StdlibFamily.UNKNOWN:
-        # Untagged libstdc++: a parameter type like ``std::vector<int>`` mangles
-        # with the Itanium ``St`` substitution but carries no ``__cxx11`` tag and
-        # no libc++ ``__1`` inline namespace, so a substring heuristic cannot
-        # separate it from an identifier that merely contains "St" (e.g. a user
-        # type ``St3Db``). Demangling parses the substitution correctly —
-        # libstdc++ → ``std::``; libc++ → ``std::__1`` (already handled above);
-        # a user type → no ``std::`` — and is already used across the diff core.
-        # It degrades to ``None`` (→ stay quiet) when no demangler is available
-        # (Codex review #345).
+        # Demangle-based last resort. A parameter type like ``std::vector<int>``
+        # mangles with the Itanium ``St`` substitution but, under libstdc++,
+        # carries no ``__cxx11`` tag and no libc++ ``__N`` inline namespace, so a
+        # substring heuristic cannot separate it from an identifier that merely
+        # contains "St" (e.g. a user type ``St3Db``). Demangling parses the
+        # substitution correctly:
+        #   * libc++  → a versioned namespace ``std::__1`` / ``std::__2`` /
+        #     Android ``std::__ndk1`` (the cheap ``St\d__[12]`` substring above
+        #     misses the non-numeric NDK form, so catch it here — Codex #345);
+        #   * libstdc++ → a real ``std::`` token without that versioned namespace;
+        #   * a user type → no ``std::`` token at all.
+        # Reuses the demangler already used across the diff core; degrades to
+        # ``None`` (→ stay quiet) when no demangler is available.
         from .demangle import demangle
         for sym in mangled:
             d = demangle(sym)
-            if (
-                d
-                and _STD_NAMESPACE_TOKEN.search(d)
-                and "std::__1" not in d
-                and "std::__2" not in d
-            ):
+            if not d:
+                continue
+            if _LIBCXX_DEMANGLED_NS.search(d):
+                bm.stdlib = StdlibFamily.LIBCXX
+                break
+            if _STD_NAMESPACE_TOKEN.search(d):
                 bm.stdlib = StdlibFamily.LIBSTDCXX
                 break
     return bm

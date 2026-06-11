@@ -308,6 +308,24 @@ class TestBuildModeFallback:
         kinds = {c.kind for c in compare(old, new).changes}
         assert ChangeKind.STDLIB_IMPLEMENTATION_CHANGED not in kinds
 
+    def test_fires_for_android_libcxx_ndk_namespace(self) -> None:
+        # Android NDK libc++ uses the `std::__ndk1` inline namespace, which the
+        # cheap `St\d__[12]` substring misses; the demangle fallback must still
+        # classify it as libc++ (not libstdc++) so a libstdc++ → Android-libc++
+        # comparison emits the finding (Codex #345).
+        from abicheck.demangle import demangle
+        ndk = "_Z3apiNSt6__ndk16vectorIiNS_9allocatorIiEEEE"
+        if demangle(ndk) is None:
+            import pytest
+            pytest.skip("no C++ demangler available")
+        old = AbiSnapshot(
+            library="lib.so", version="1",
+            functions=[self._fn("_Z3apiSt6vectorIiSaIiEE")])  # libstdc++
+        new = AbiSnapshot(
+            library="lib.so", version="2", functions=[self._fn(ndk)])  # Android libc++
+        kinds = {c.kind for c in compare(old, new).changes}
+        assert ChangeKind.STDLIB_IMPLEMENTATION_CHANGED in kinds
+
     def test_user_namespace_resembling_std_not_flagged(self) -> None:
         # `mystd::api()` demangles to a name that *contains* the substring
         # "std::" but is NOT the std namespace; it must not be read as libstdc++.
