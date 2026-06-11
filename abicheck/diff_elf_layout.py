@@ -57,7 +57,7 @@ from .checker_policy import ChangeKind
 from .checker_types import Change
 from .demangle import demangle
 from .detector_registry import registry
-from .model import AbiSnapshot
+from .model import AbiSnapshot, stdlib_namespaces_excluded
 
 # Runtime/standard-library RTTI we never want to flag — these belong to
 # libstdc++ / libc++ / the Itanium runtime, not to the library under test.
@@ -102,8 +102,17 @@ def _class_name(mangled: str) -> str:
 def _sized_rtti(
     snap: AbiSnapshot,
     prefix: str,
+    *,
+    skip_runtime: bool,
 ) -> dict[str, int]:
-    """Map ``type_key → st_size`` for every non-runtime ``prefix`` symbol with a size."""
+    """Map ``type_key → st_size`` for every ``prefix`` symbol with a size.
+
+    ``skip_runtime`` mirrors :func:`abicheck.model.stdlib_namespaces_excluded`:
+    when comparing the C++ runtime *itself* (libstdc++ / libc++) it is False, so
+    the runtime's own ``_ZTVSt*`` / ``_ZTISt*`` vtables and typeinfo stay in the
+    surface and their size changes are reported; otherwise those symbols are
+    transitive runtime noise leaked into an ordinary library and are skipped.
+    """
     elf = snap.elf
     if elf is None:
         return {}
@@ -112,7 +121,7 @@ def _sized_rtti(
         name = sym.name
         if not name.startswith(prefix):
             continue
-        if _is_runtime(name):
+        if skip_runtime and _is_runtime(name):
             continue
         if sym.size <= 0:
             continue
@@ -155,11 +164,17 @@ def _diff_elf_layout(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
     assert old.elf is not None and new.elf is not None  # guaranteed by requires_support
     pointer_size = new.elf.pointer_size or old.elf.pointer_size or 8
 
+    # When either side IS the C++ runtime (libstdc++/libc++), its own std:: RTTI
+    # is the surface under test — keep it. Otherwise std:: RTTI is leaked
+    # dependency noise and is filtered. Single source of truth shared with the
+    # type detectors (model.stdlib_namespaces_excluded).
+    skip_runtime = stdlib_namespaces_excluded(old, new)
+
     changes: list[Change] = []
 
     # ── Vtable slot count (_ZTV) ─────────────────────────────────────────────
-    old_vt = _sized_rtti(old, "_ZTV")
-    new_vt = _sized_rtti(new, "_ZTV")
+    old_vt = _sized_rtti(old, "_ZTV", skip_runtime=skip_runtime)
+    new_vt = _sized_rtti(new, "_ZTV", skip_runtime=skip_runtime)
     for key in sorted(old_vt.keys() & new_vt.keys()):
         o_size, n_size = old_vt[key], new_vt[key]
         if o_size == n_size:
@@ -185,8 +200,8 @@ def _diff_elf_layout(old: AbiSnapshot, new: AbiSnapshot) -> list[Change]:
         )
 
     # ── RTTI inheritance shape (_ZTI) ────────────────────────────────────────
-    old_ti = _sized_rtti(old, "_ZTI")
-    new_ti = _sized_rtti(new, "_ZTI")
+    old_ti = _sized_rtti(old, "_ZTI", skip_runtime=skip_runtime)
+    new_ti = _sized_rtti(new, "_ZTI", skip_runtime=skip_runtime)
     for key in sorted(old_ti.keys() & new_ti.keys()):
         o_size, n_size = old_ti[key], new_ti[key]
         if o_size == n_size:

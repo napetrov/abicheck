@@ -159,6 +159,23 @@ class TestRttiInheritance:
         new = _snap(_obj("_ZTISt13runtime_error", 24))
         assert _diff_elf_layout(old, new) == []
 
+    def test_runtime_rtti_kept_when_comparing_runtime_itself(self) -> None:
+        # When the library under test IS the C++ runtime (libstdc++/libc++), its
+        # own std:: vtables/typeinfo are the surface under test, not noise — so
+        # their size changes must be reported (mirrors stdlib_namespaces_excluded).
+        def _rt(*syms: ElfSymbol) -> AbiSnapshot:
+            return AbiSnapshot(
+                library="libstdc++.so.6",
+                version="1",
+                elf=ElfMetadata(symbols=list(syms)),
+            )
+
+        old = _rt(_obj("_ZTVSt13runtime_error", 40), _obj("_ZTISt13runtime_error", 16))
+        new = _rt(_obj("_ZTVSt13runtime_error", 48), _obj("_ZTISt13runtime_error", 24))
+        kinds = {c.kind for c in _diff_elf_layout(old, new)}
+        assert ChangeKind.VTABLE_SLOT_COUNT_CHANGED in kinds
+        assert ChangeKind.RTTI_INHERITANCE_CHANGED in kinds
+
 
 # ---------------------------------------------------------------------------
 # requires_support gating + full-compare wiring
