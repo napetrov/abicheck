@@ -231,6 +231,13 @@ def load_extractor_manifest(path: Path | str) -> ExtractorManifest:
 
     input_requirements = [str(x) for x in (raw.get("input_requirements") or [])]
 
+    try:
+        schema_version = int(raw.get("schema_version", 1) or 1)
+    except (TypeError, ValueError) as exc:
+        raise ManifestError(
+            f"extractor manifest {p}: 'schema_version' must be an integer"
+        ) from exc
+
     return ExtractorManifest(
         name=name,
         version=str(raw.get("version", "")),
@@ -240,7 +247,7 @@ def load_extractor_manifest(path: Path | str) -> ExtractorManifest:
         allowed_actions=actions,
         commands=commands,
         outputs=outputs,
-        schema_version=int(raw.get("schema_version", 1) or 1),
+        schema_version=schema_version,
     )
 
 
@@ -287,8 +294,38 @@ def _parse_outputs(outputs_raw: Any, p: Path) -> list[ManifestOutput]:
             raise ManifestError(
                 f"extractor manifest {p}: each output needs a 'kind' and 'path'"
             )
-        out.append(ManifestOutput(kind=str(row["kind"]), path=str(row["path"])))
+        path = str(row["path"])
+        _reject_unsafe_output_path(path, p)
+        out.append(ManifestOutput(kind=str(row["kind"]), path=path))
     return out
+
+
+def _reject_unsafe_output_path(path: str, p: Path) -> None:
+    """Reject output paths that are absolute or escape the pack root (D3/D6).
+
+    Outputs are declared *relative to the pack root*; an absolute or ``..`` path
+    would let the tool write outside the pack and later crash
+    :func:`run_external_extractor` at ``Path.relative_to(pack_root)``. Checked
+    under both POSIX and Windows path rules so a manifest is portable and a
+    traversal cannot slip through on one OS. Raises :class:`ManifestError`, which
+    the loader's caller records as a failed extractor instead of aborting.
+    """
+    from pathlib import PurePosixPath, PureWindowsPath
+
+    posix, win = PurePosixPath(path), PureWindowsPath(path)
+    if (
+        not path
+        or posix.is_absolute()
+        or win.is_absolute()
+        or win.drive
+        or path.startswith(("/", "\\"))
+        or ".." in posix.parts
+        or ".." in win.parts
+    ):
+        raise ManifestError(
+            f"extractor manifest {p}: output path {path!r} must be relative to the "
+            "pack root and must not be absolute or contain '..'"
+        )
 
 
 def render_command(template: list[str], substitutions: dict[str, str]) -> list[str]:

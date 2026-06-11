@@ -393,6 +393,30 @@ def test_manifest_output_missing_fields(tmp_path):
         load_extractor_manifest(_dump(tmp_path, data))
 
 
+def test_manifest_invalid_schema_version(tmp_path):
+    # A non-integer schema_version must be a ManifestError, not an uncaught
+    # ValueError that aborts collection (Codex P2).
+    data = {"name": "x", "schema_version": "abc", "commands": {"collect": ["x"]}}
+    with pytest.raises(ManifestError, match="'schema_version' must be an integer"):
+        load_extractor_manifest(_dump(tmp_path, data))
+
+
+@pytest.mark.parametrize(
+    "bad_path",
+    ["/etc/passwd", "../../escape.json", "C:\\Windows\\x.json", "sub/../../out.json"],
+)
+def test_manifest_rejects_unsafe_output_paths(tmp_path, bad_path):
+    # An absolute or '..' output path would let the tool write outside the pack
+    # and crash run_external_extractor at relative_to(); reject at load (Codex P2).
+    data = {
+        "name": "x",
+        "commands": {"collect": ["x"]},
+        "outputs": [{"kind": "build_evidence", "path": bad_path}],
+    }
+    with pytest.raises(ManifestError, match="must be relative to the |contain '..'"):
+        load_extractor_manifest(_dump(tmp_path, data))
+
+
 # ── D3: command rendering ─────────────────────────────────────────────────────
 
 
