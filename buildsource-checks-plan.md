@@ -21,10 +21,20 @@
 - ✅ **Workstream B** — D2–D7 pure-Python gaps landed (merge 3+/conflict/order/
   winner/corrupted-input, embedded-L5 round-trip, invalid compile-DB graceful,
   malformed `.abicheck.yml`, `--sources`+`--build-info`, `collect` no-input).
-- ⏳ **Not yet done:** **C** examples (L4/L5 cases — needs the CMake/`--sources`
-  harness extension + example-gate sync + clang/castxml), and the `merge`-path
-  L0-export plumbing for A1 (re-link source surface with the binary side's
-  exports; deferred to avoid an imperfect re-link tripping the FP-rate gate).
+- ✅ **A1 `merge`-path L0 plumbing** — `relink_surface_exports` re-derives the
+  decl→symbol mapping from the binary base's exports at merge time (identical
+  rule to `link_source_abi`, no new behaviour/FP risk).
+- ✅ **C0 example-harness `--sources` opt-in** — `validate_examples._sources_path`
+  + `--sources` wiring (opt-in via ground-truth `sources: true` + per-side
+  `v1.sources/`/`v2.sources/`), clang-skipped; unit-tested. Enables L4/L5 cases.
+- ⏳ **C1 L4/L5 example cases — not added.** Authoring a *verified* case needs a
+  working source-replay front-end: `castxml` is absent here and a local clang
+  probe (`dump --sources` on a public-header macro change) surfaced **0 macros /
+  0 decls** even with `sources.public_headers` configured, so the public-header
+  reachability the macro/decl findings need isn't exercised in this environment.
+  Adding a case blind would red the integration lane + churn the ERROR-level
+  example gates. C1 should be authored where clang-L4 (or castxml) replay
+  actually surfaces the public surface, reusing the C0 harness opt-in.
 
 ---
 
