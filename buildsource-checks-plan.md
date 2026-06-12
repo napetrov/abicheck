@@ -67,12 +67,24 @@ mismatched checkout produces a flood of bogus source findings.
   not fire — fall through to the heuristic rather than comparing unrelated values.
 - **Fallback (heuristic):** when no explicit VCS provenance is available, fire
   when the source-decl → exported-symbol mapping-miss ratio exceeds a threshold
-  (reuses the data already computed for `source_decl_binary_symbol_mismatch`,
-  aggregated to a per-library signal).
+  (reuses the data computed for `source_decl_binary_symbol_mismatch`, aggregated
+  to a per-library signal).
 
-**Where:** aggregate in `buildsource/source_link.py` during `link_source_abi()`;
-surface the finding from `buildsource/source_diff.py`. Partition: `RISK_KINDS`.
-Evidence tier: L4.
+  **Prerequisite — plumb L0 exports into the inline/merge flow first.** Today
+  `embed_build_source → collect_inline_pack` receives only source/build inputs;
+  the binary's exported symbols are **never** passed in, so `run_source_replay`
+  links against an empty `exported_symbols` set and the source-decl→symbol
+  mappings come out empty — the mapping-miss heuristic would be **inert** in
+  exactly the wrong-tag scenario it targets. So step 2 of A1 must first add L0
+  export plumbing: pass the binary's exported-symbol set into
+  `collect_inline_pack` for the `binary + --sources` case, and into `merge` for
+  the parallel-baseline case (the binary-bearing input supplies L0). Without that
+  the heuristic has no signal; the hard path still works when a VCS signal is
+  embedded.
+
+**Where:** aggregate in `buildsource/source_link.py` during `link_source_abi()`
+(once L0 exports are available there); surface the finding from
+`buildsource/source_diff.py`. Partition: `RISK_KINDS`. Evidence tier: L4.
 
 ### A2. `merge_layer_conflict` (merge-time warning/error, not a compare ChangeKind)
 
@@ -98,8 +110,12 @@ channels that already exist:
   ledger** (the same persisted field `_run_build_query` failures already use) —
   it rides inside the embedded `build_source` payload, no new serialization path.
 - **Warn** on stderr from `merge_cmd`.
-- **Fail non-zero** under `--collection-mode strict` (reuse the existing strict
-  semantics); permissive keeps first-wins + the recorded diagnostic.
+- **Fail non-zero** under a merge failure policy. Note `merge_cmd` currently
+  declares only `inputs` / `--output` / `--verbose` — `--collection-mode` lives
+  on `collect`, **not** `merge` — so this requires **adding a new merge knob**,
+  e.g. `merge --on-conflict=warn|error` (default `warn` = first-wins + recorded
+  diagnostic; `error` = non-zero exit). Define that flag as part of A2; do not
+  assume an existing one.
 - *(Optional, only if a compare-time surfacing is wanted):* a later
   `compare` may read the recorded conflict marker from the baseline and emit a
   `RISK` finding then — that is the only place a `ChangeKind` could legitimately
@@ -129,14 +145,26 @@ files present under the source tree; high non-overlap → risk. Partition:
 **Priority:** A1 + A2 are the high-value closures (the two genuinely-new silent
 failure modes). A3 is a cheap reporting win. A4 is nice-to-have.
 
-### Gating ripple per new kind (CI-enforced)
+### Gating ripple — **only for the items that are actually new `ChangeKind`s**
+
+This applies to **A1 and A4 only** (the genuine new enum members), and to A3
+*only if* its optional compare finding is added. **A2 is not a `ChangeKind`** (it
+is a merge-time diagnostic, above) and **A3's coverage-status fix is not** —
+neither gets a partition / evidence-tier / doc-count entry, and adding one would
+reintroduce the very modelling error this plan avoids.
+
+For A1/A4 (and an A3 compare finding if added):
 
 - `changekind-partition` (ERROR): in exactly one partition set in `checker_policy.py`.
 - `changekind-detector` (WARN): emitted somewhere.
 - `changekind-docs` (WARN): mentioned in `docs/`.
 - `doc-count-sync` (ERROR): bump `len(ChangeKind)` headline counts (currently **238**).
-- `scripts/evidence_tiers.py`: map the new kind to its tier (L3 for A2/A3, L4 for A1/A4).
+- `scripts/evidence_tiers.py`: map the kind to its tier (L4 for A1/A4).
 - `docs/concepts/build-source-data.md`: add to the L3/L4/L5 findings tables.
+
+A2's merge diagnostic and A3's coverage row instead need: a doc/test for the
+new channel (manifest diagnostic, stderr, `merge --on-conflict`, L3 coverage
+row) — **no** enum/partition/tier/doc-count work.
 
 ---
 
