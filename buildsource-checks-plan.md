@@ -18,10 +18,16 @@ The redesign (`buildsource-redesign-plan.md`) shipped the *capabilities* —
 `merge`, embedded single-artifact storage. But the surrounding coverage did not
 keep pace:
 
-1. **Checks** — the detection engine gained **zero** new `ChangeKind`s for the
-   new model. The headline scenario (prebuilt binary + source checkout at a tag)
-   has **nothing that verifies the source corresponds to the binary**, and
-   `merge` silently first-wins on layer conflicts.
+1. **Checks** — the engine already has a full set of L3/L4/L5 `ChangeKind`s from
+   ADR-029/030/031 (e.g. `abi_relevant_build_flag_changed`,
+   `public_macro_value_changed`, `public_reachability_changed`), emitted from
+   `build_diff.py` / `source_diff.py` / `source_graph.py`. What it gained **zero**
+   of is detections for the *new failure modes the source-tree-centric redesign
+   itself introduces*: the headline scenario (prebuilt binary + source checkout
+   at a tag) has **nothing that verifies the source corresponds to the binary**,
+   and `merge` silently first-wins on layer conflicts. Workstream A adds only
+   those genuinely-missing checks (A1–A4) — it does **not** re-add the existing
+   L3/L4/L5 kinds.
 2. **Tests** — the six buildsource test files cover happy paths well but miss
    error / conflict / interaction paths.
 3. **Examples** — **0** examples *detect at* L3/L4/L5 or exercise the new
