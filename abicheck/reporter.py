@@ -751,6 +751,10 @@ def to_json(
     # findings. Additive, present only when evidence was involved.
     if getattr(result, "layer_coverage", None):
         d["layer_coverage"] = result.layer_coverage
+    # Evidence metrics (ADR-033 D6/D9) — collection timing + finding split, when
+    # build-info/source facts were involved. Additive; lets CI tune mode choice.
+    if getattr(result, "evidence_metrics", None):
+        d["evidence_metrics"] = result.evidence_metrics
     effective_policy = result.policy or "strict_abi"
     d["policy"] = effective_policy
     eff_sets = result._effective_kind_sets()

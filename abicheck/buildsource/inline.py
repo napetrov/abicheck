@@ -153,6 +153,8 @@ def collect_inline_pack(
     clang_bin: str = "clang",
     extractor: str = "clang",
     scope: str = "target",
+    layers: tuple[str, ...] = ("L3", "L4", "L5"),
+    build_cache_dir: Path | None = None,
 ) -> BuildSourcePack | None:
     """Collect an in-memory pack from raw source-tree / build-info inputs.
 
@@ -164,6 +166,10 @@ def collect_inline_pack(
     ``base_build`` seeds the L3 evidence from an already-loaded pack (e.g. an
     explicit ``--build-info`` pack directory) so a raw ``--sources`` tree can
     replay L4 against it without re-resolving a compile DB.
+
+    ``layers`` selects which layers to collect (ADR-033 D2 CI modes): the
+    ``build`` mode passes ``("L3",)`` to capture build context only, skipping the
+    L4 source replay and L5 graph entirely. ``L5`` requires ``L4``.
     """
     cfg = build_config or BuildConfig()
     merged = BuildEvidence()
@@ -179,13 +185,21 @@ def collect_inline_pack(
             build_info, sources, cfg, allow_build_query, merged, extractors
         )
     if compile_db is not None:
-        _run_compile_db(compile_db, cfg.system, merged, extractors)
+        _run_compile_db(compile_db, cfg.system, merged, extractors, build_cache_dir)
 
-    surface = _run_inline_source_abi(
-        sources, merged, extractors,
-        extractor=extractor, scope=scope, clang_bin=clang_bin,
-    )
-    graph = _build_inline_graph(merged, surface)
+    surface = None
+    if "L4" in layers:
+        # Inline dump has no PR diff, so a 'changed' scope would select zero TUs
+        # and embed an empty L4 surface (Codex review). Fall back to 'target' —
+        # the non-empty choice that still enables the source-only checks the
+        # 'source-changed' mode is meant to turn on. The changed-only narrowing
+        # applies when a caller threads an explicit changed-path set (PR replay).
+        replay_scope = "target" if scope == "changed" else scope
+        surface = _run_inline_source_abi(
+            sources, merged, extractors,
+            extractor=extractor, scope=replay_scope, clang_bin=clang_bin,
+        )
+    graph = _build_inline_graph(merged, surface) if "L5" in layers else None
 
     has_build = bool(
         merged.compile_units or merged.targets or merged.toolchains
@@ -295,11 +309,31 @@ def _run_compile_db(
     system: str,
     merged: BuildEvidence,
     extractors: list[ExtractorRecord],
+    cache_dir: Path | None = None,
 ) -> None:
-    """Normalize a compile DB into L3 build evidence (never raises)."""
+    """Normalize a compile DB into L3 build evidence (never raises).
+
+    With ``cache_dir`` set, a content-addressed L3 cache (ADR-033 D5) skips the
+    adapter when the same compile DB was normalized before (false-miss-preferring).
+    """
     from .adapters import CompileDbAdapter
 
     hint = system if system in ("cmake", "ninja", "bazel", "make") else "generic"
+    cache = None
+    key = None
+    if cache_dir is not None:
+        from .build_cache import BuildEvidenceCache, compute_build_cache_key
+        cache = BuildEvidenceCache(cache_dir)
+        key = compute_build_cache_key(compile_db, hint)
+        cached = cache.get(key)
+        if cached is not None:
+            merged.merge(cached)
+            extractors.append(ExtractorRecord(
+                name="compile_commands", status="ok",
+                inputs=[DEFAULT_REDACTION.path(str(compile_db))],
+                detail=f"{len(cached.compile_units)} compile units (cached)",
+            ))
+            return
     try:
         ev = CompileDbAdapter(compile_db, build_system=hint).collect()
     except (OSError, ValueError) as exc:
@@ -309,6 +343,8 @@ def _run_compile_db(
         ))
         merged.diagnostics.append(f"compile_commands: {exc}")
         return
+    if cache is not None and key is not None:
+        cache.put(key, ev)
     merged.merge(ev)
     extractors.append(ExtractorRecord(
         name="compile_commands", status="ok",

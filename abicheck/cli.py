@@ -180,19 +180,23 @@ def _write_snapshot_output(
     sources: Path | None = None,
     build_config: Path | None = None,
     allow_build_query: bool = False,
+    collect_mode: str = "source-target",
 ) -> None:
     """Serialize snapshot and write to file or stdout.
 
     When *build_info* and/or *sources* are given, their normalized L3/L4/L5 facts
     are collected (inline from a source tree / build dir, or loaded from a pack
     directory) and embedded in the snapshot first (single-artifact UX) so a later
-    ``compare old.json new.json`` needs no out-of-band packs.
+    ``compare old.json new.json`` needs no out-of-band packs. *collect_mode* (the
+    ADR-033 D2 CI evidence mode) selects which layers and replay scope to collect:
+    ``build`` captures L3 build context only, ``off`` collects nothing.
     """
     if build_info is not None or sources is not None:
         from .cli_buildsource import embed_build_source
         embed_build_source(
             snap, build_info, sources,
             build_config=build_config, allow_build_query=allow_build_query,
+            collect_mode=collect_mode,
         )
     result = snapshot_to_json(snap)
     if output:
@@ -742,7 +746,8 @@ def dump_cmd(so_path: Path | None, headers: tuple[Path, ...], includes: tuple[Pa
              verbose: bool,
              git_tag: str | None, build_id: str | None, no_git: bool,
              build_info: Path | None = None, sources: Path | None = None,
-             build_config: Path | None = None, allow_build_query: bool = False) -> None:
+             build_config: Path | None = None, allow_build_query: bool = False,
+             collect_mode: str = "source-target") -> None:
     """Dump ABI snapshot of a shared library to JSON.
 
     \b
@@ -755,7 +760,7 @@ def dump_cmd(so_path: Path | None, headers: tuple[Path, ...], includes: tuple[Pa
     # Source-only dump (no binary) for the parallel-baseline / merge flow.
     if so_path is None:
         from .cli_buildsource import dump_source_only
-        dump_source_only(sources, build_info, version, output, build_config, allow_build_query, git_tag, build_id, no_git)
+        dump_source_only(sources, build_info, version, output, build_config, allow_build_query, git_tag, build_id, no_git, collect_mode)
         return
 
     # Reconcile the --debug-format selector with the legacy --btf/--ctf/--dwarf
@@ -790,24 +795,10 @@ def dump_cmd(so_path: Path | None, headers: tuple[Path, ...], includes: tuple[Pa
         )
     if binary_fmt in ("pe", "macho"):
         _handle_non_elf_dump(
-            so_path,
-            binary_fmt,
-            headers,
-            includes,
-            version,
-            lang,
-            pdb_path,
-            follow_deps,
-            git_tag,
-            build_id,
-            no_git,
-            output,
-            public_headers,
-            public_header_dirs,
-            build_info,
-            sources,
-            build_config,
-            allow_build_query,
+            so_path, binary_fmt, headers, includes, version, lang, pdb_path,
+            follow_deps, git_tag, build_id, no_git, output, public_headers,
+            public_header_dirs, build_info, sources, build_config,
+            allow_build_query, collect_mode,
         )
         return
 
@@ -856,7 +847,7 @@ def dump_cmd(so_path: Path | None, headers: tuple[Path, ...], includes: tuple[Pa
         _populate_dependency_info(snap, so_path, list(search_paths), sysroot, ld_library_path)
 
     _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-    _write_snapshot_output(snap, output, build_info, sources, build_config, allow_build_query)
+    _write_snapshot_output(snap, output, build_info, sources, build_config, allow_build_query, collect_mode)
 
 
 def _handle_non_elf_dump(
@@ -878,6 +869,7 @@ def _handle_non_elf_dump(
     sources: Path | None = None,
     build_config: Path | None = None,
     allow_build_query: bool = False,
+    collect_mode: str = "source-target",
 ) -> None:
     """Handle PE/Mach-O native dump path and output writing."""
     if follow_deps:
@@ -894,7 +886,7 @@ def _handle_non_elf_dump(
     except (AbicheckError, RuntimeError, OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
-    _write_snapshot_output(snap, output, build_info, sources, build_config, allow_build_query)
+    _write_snapshot_output(snap, output, build_info, sources, build_config, allow_build_query, collect_mode)
 
 
 def _resolve_build_context_flags(
@@ -1883,24 +1875,16 @@ def compare_cmd(
 
     extra_changes = _load_probe_matrix_changes(probe_matrix_old, probe_matrix_new)
 
-    layer_coverage_rows: list[dict[str, object]] = []
-    _any_pack_flag = any(
-        x is not None
-        for x in (old_build_info, new_build_info, old_sources, new_sources)
-    )
-    _has_embedded = old.build_source is not None or new.build_source is not None
-    if _any_pack_flag or collect_mode != "off" or _has_embedded:
-        from .cli_buildsource import diff_embedded_build_source
-        # Build-info + source facts come from each snapshot's embedded payload
-        # (single-artifact UX) unless an out-of-band pack flag overrides a side.
-        # Header-parse-context drift is judged from the new snapshot's own
-        # provenance (parsed_with_build_context, set by `dump -p`); compare adds
-        # no build context of its own.
-        ev_changes, layer_coverage_rows = diff_embedded_build_source(
+    # Build-info + source facts (ADR-028/033): the helper times inline diffing
+    # for the D6/D9 metrics and returns coverage/metrics to attach post-compare.
+    from .cli_buildsource import attach_evidence_metrics, prepare_embedded_build_source
+    extra_changes, layer_coverage_rows, evidence_metrics, _ev_changes = (
+        prepare_embedded_build_source(
+            old, new, collect_mode, extra_changes,
             old_build_info, new_build_info, old_sources, new_sources,
-            collect_mode, new, old,
+            policy_file=pf,
         )
-        extra_changes = (extra_changes or []) + ev_changes if ev_changes else extra_changes
+    )
 
     apply_patterns = pattern_verdicts or explain_patterns  # --explain implies on
     result = compare(
@@ -1913,6 +1897,9 @@ def compare_cmd(
     )
     if layer_coverage_rows:
         result.layer_coverage = layer_coverage_rows
+    # Pass all injected findings (probe-matrix + evidence) so artifact-backed
+    # excludes them — none come from L0-L2 diffing.
+    attach_evidence_metrics(result, evidence_metrics, extra_changes or [])
 
     if explain_patterns:
         echo_pattern_modulations(result)
@@ -1937,6 +1924,19 @@ def compare_cmd(
 
     _announce_exit_scheme(severity_explicitly_set, sev_config, fmt=fmt, stat=stat)
     _exit_with_severity_or_verdict(result, sev_config, severity_explicitly_set)
+
+
+@main.command("recommend-collect-mode")
+@click.argument("paths", nargs=-1)
+def recommend_collect_mode_cmd(paths: tuple[str, ...]) -> None:
+    """Recommend a `--collect-mode` from a PR's changed paths (ADR-033 D3).
+
+    Prints `build` for build-system-only changes, `source-changed` when sources
+    or headers changed, else `off`. The artifact compare stays authoritative —
+    this only scopes which optional evidence a CI job should collect.
+    """
+    from .buildsource.source_replay import recommend_collect_mode
+    click.echo(recommend_collect_mode(paths))
 
 
 # ── ABICC compat subcommands (implementation in abicheck.compat) ─────────────

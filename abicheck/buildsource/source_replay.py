@@ -70,7 +70,7 @@ CI_MODE_TO_SCOPE: dict[str, str] = {
     "source-changed": "changed",
     "source-target": "target",
     "graph-summary": "changed",
-    "graph-full": "target",
+    "graph-full": "full",
 }
 
 
@@ -81,6 +81,78 @@ def scope_for_ci_mode(mode: str) -> str:
     surprise full parse).
     """
     return CI_MODE_TO_SCOPE.get(mode, "off")
+
+
+#: Which data layers each ADR-033 CI evidence mode collects. ``build`` is L3
+#: only (build context, no source replay/graph); ``off`` collects nothing; the
+#: source/graph modes collect all three (the replay scope above bounds the cost).
+CI_MODE_TO_LAYERS: dict[str, tuple[str, ...]] = {
+    "off": (),
+    "build": ("L3",),
+    "source-changed": ("L3", "L4", "L5"),
+    "source-target": ("L3", "L4", "L5"),
+    "graph-summary": ("L3", "L4", "L5"),
+    "graph-full": ("L3", "L4", "L5"),
+}
+
+
+def collection_for_ci_mode(mode: str) -> tuple[str, tuple[str, ...]]:
+    """Return ``(replay_scope, layers)`` for an ADR-033 CI evidence mode.
+
+    Drives inline collection at ``dump`` time (ADR-028..033 amendment: the CI
+    mode selects the inputs/scopes internally). ``layers`` is empty for ``off``
+    so the caller skips embedding entirely; unknown modes fall back to that.
+    """
+    return scope_for_ci_mode(mode), CI_MODE_TO_LAYERS.get(mode, ())
+
+
+# -- PR-diff localizer (ADR-033 D3) ------------------------------------------
+
+#: Filenames / suffixes that mark a build-system file. A change here is build
+#: context, so it triggers at least Phase-1 ``build`` collection (ADR-033 D3.3).
+_BUILD_FILE_NAMES = frozenset({
+    "cmakelists.txt", "makefile", "gnumakefile", "build", "build.bazel",
+    "workspace", "workspace.bazel", "meson.build", "meson_options.txt",
+    "configure", "configure.ac", "configure.in", "sconstruct", "sconscript",
+    "cargo.toml", "setup.py", "pyproject.toml",
+})
+_BUILD_FILE_SUFFIXES = (
+    ".cmake", ".mk", ".mak", ".bazel", ".bzl", ".ninja", ".pri", ".pro",
+)
+#: Source / header suffixes that warrant a source ABI replay (L4) on change.
+_SOURCE_FILE_SUFFIXES = (
+    ".c", ".cc", ".cpp", ".cxx", ".c++", ".h", ".hh", ".hpp", ".hxx", ".h++",
+    ".inl", ".ipp", ".tcc", ".cu", ".cuh", ".m", ".mm",
+)
+
+
+def _is_build_file(path: str) -> bool:
+    p = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return p in _BUILD_FILE_NAMES or p.endswith(_BUILD_FILE_SUFFIXES)
+
+
+def _is_source_file(path: str) -> bool:
+    return path.replace("\\", "/").lower().endswith(_SOURCE_FILE_SUFFIXES)
+
+
+def recommend_collect_mode(changed_paths: Iterable[str]) -> str:
+    """Recommend an ADR-033 CI evidence mode from a PR's changed paths (D3).
+
+    The PR-diff localizer: a build-system change alone triggers at least Phase-1
+    ``build`` (build-context drift); a source/header change pulls in the L4
+    source replay via ``source-changed`` (a superset that also engages build
+    context). No build- or source-relevant change ⇒ ``off`` (artifact compare
+    remains the authority, ADR-028 D3). This never *replaces* the artifact gate —
+    it only scopes which optional evidence to collect.
+    """
+    paths = list(changed_paths)
+    has_source = any(_is_source_file(p) for p in paths)
+    has_build = any(_is_build_file(p) for p in paths)
+    if has_source:
+        return "source-changed"
+    if has_build:
+        return "build"
+    return "off"
 
 
 # -- scope selection (ADR-030 D7) --------------------------------------------
@@ -521,11 +593,31 @@ class SourceAbiCache:
 
     def __init__(self, cache_dir: Path | str) -> None:
         self.cache_dir = Path(cache_dir)
+        # ADR-033 D9 — hit/miss instrumentation for the cache_hit_rate metric.
+        self.hits = 0
+        self.misses = 0
+
+    @property
+    def hit_rate(self) -> float | None:
+        """Fraction of cacheable lookups served from cache, or ``None`` if none."""
+        total = self.hits + self.misses
+        return self.hits / total if total else None
 
     def _path(self, key: str) -> Path:
         return self.cache_dir / f"{key}.json"
 
     def get(self, key: str | None) -> SourceAbiTu | None:
+        tu = self._get(key)
+        # A None key is "uncacheable" (not a lookup); only count real lookups so
+        # the hit rate reflects cacheable TUs.
+        if key:
+            if tu is not None:
+                self.hits += 1
+            else:
+                self.misses += 1
+        return tu
+
+    def _get(self, key: str | None) -> SourceAbiTu | None:
         if not key:
             return None
         path = self._path(key)

@@ -220,7 +220,7 @@ def test_compare_json_carries_layer_coverage_block(tmp_path):
     ])
     assert result.exit_code in (0, 2, 4), result.output
     payload = json.loads(result.stdout)
-    assert payload["report_schema_version"] == "2.0"
+    assert payload["report_schema_version"] == "2.1"
     cov = {row["layer"]: row for row in payload["layer_coverage"]}
     assert set(cov) >= {"L0", "L1", "L2", "L3_build", "L4_source_abi", "L5_source_graph"}
     assert cov["L3_build"]["status"] == "present"
@@ -254,6 +254,326 @@ def test_compare_json_without_evidence_omits_coverage(tmp_path):
     result = CliRunner().invoke(main, ["compare", str(old_snap), str(new_snap), "--format", "json"])
     assert result.exit_code == 0, result.output
     assert "layer_coverage" not in json.loads(result.stdout)
+
+
+def test_compare_json_carries_evidence_metrics_block(tmp_path):
+    """ADR-033 D6/D9: the JSON report carries an evidence_metrics block with
+    collection timing and the artifact-backed vs source-only finding split."""
+    old_cdb = _write_cdb(tmp_path, "c++17")
+    new_cdb = _write_cdb(tmp_path, "c++20")
+    ev_old = tmp_path / "old.evidence"
+    ev_new = tmp_path / "new.evidence"
+    runner = CliRunner()
+    runner.invoke(main, ["collect", "--compile-db", str(old_cdb), "-o", str(ev_old)])
+    runner.invoke(main, ["collect", "--compile-db", str(new_cdb), "-o", str(ev_new)])
+    old_snap = _make_snap(tmp_path, "old.json", "1.0")
+    new_snap = _make_snap(tmp_path, "new.json", "2.0")
+
+    result = runner.invoke(main, [
+        "compare", str(old_snap), str(new_snap),
+        "--old-build-info", str(ev_old), "--new-build-info", str(ev_new),
+        "--format", "json",
+    ])
+    assert result.exit_code in (0, 2, 4), result.output
+    metrics = json.loads(result.stdout)["evidence_metrics"]
+    # Timing is measured and non-negative; coverage flags reflect the run.
+    assert isinstance(metrics["extractor.duration_seconds"], (int, float))
+    assert metrics["extractor.duration_seconds"] >= 0
+    assert metrics["coverage.build_context.present"] is True
+    # The -std drift is a build-context-drift finding, not a source-only one.
+    assert metrics["findings.build_context_drift.count"] >= 1
+    assert metrics["findings.source_only.count"] == 0
+    # And the D6 timing summary is echoed to stderr alongside the coverage table.
+    assert "Evidence metrics:" in result.stderr
+
+
+def test_evidence_metrics_bucket_counts_are_post_suppression(tmp_path):
+    """ADR-033 D9 (Codex review): a suppressed build-drift finding must drop out
+    of findings.build_context_drift.count so the buckets partition the *reported*
+    findings, not the pre-suppression set."""
+    runner = CliRunner()
+    ev_old, ev_new = _two_build_packs(tmp_path, runner)
+    supp = tmp_path / "supp.yaml"
+    supp.write_text(
+        "version: 1\n"
+        "suppressions:\n"
+        "  - change_kind: abi_relevant_build_flag_changed\n"
+        "    symbol_pattern: '.*'\n"
+        "    reason: known std bump\n"
+        "  - change_kind: header_parse_context_drift\n"
+        "    symbol_pattern: '.*'\n"
+        "    reason: known parse-context drift\n"
+    )
+    old_snap = _make_snap(tmp_path, "old.json", "1.0")
+    new_snap = _make_snap(tmp_path, "new.json", "2.0")
+    result = runner.invoke(main, [
+        "compare", str(old_snap), str(new_snap),
+        "--old-build-info", str(ev_old), "--new-build-info", str(ev_new),
+        "--suppress", str(supp), "--format", "json",
+    ])
+    assert result.exit_code in (0, 2, 4), result.output
+    metrics = json.loads(result.stdout)["evidence_metrics"]
+    # The only build finding was suppressed → it must not be counted.
+    assert metrics["findings.build_context_drift.count"] == 0
+
+
+def test_compare_json_without_evidence_omits_metrics(tmp_path):
+    """No evidence → no evidence_metrics key (additive, opt-in)."""
+    old_snap = _make_snap(tmp_path, "old.json", "1.0")
+    new_snap = _make_snap(tmp_path, "new.json", "2.0")
+    result = CliRunner().invoke(main, ["compare", str(old_snap), str(new_snap), "--format", "json"])
+    assert result.exit_code == 0, result.output
+    assert "evidence_metrics" not in json.loads(result.stdout)
+
+
+def test_evidence_metrics_helpers_edge_branches(capsys):
+    """ADR-033 D6/D9 helper edge cases: empty-metrics no-ops, the
+    missing-duration echo path, and the _layer_status fallback."""
+    from abicheck.buildsource.evidence_policy import (
+        _layer_status,
+        echo_evidence_metrics,
+    )
+    from abicheck.buildsource.model import CoverageStatus, DataLayer, LayerCoverage
+    from abicheck.checker_types import DiffResult, Verdict
+    from abicheck.cli_buildsource import attach_evidence_metrics
+
+    # Unknown layer → not_collected fallback (no rows for L5).
+    rows = [LayerCoverage(layer=DataLayer.L3_BUILD.value, status=CoverageStatus.PRESENT)]
+    assert _layer_status(rows, DataLayer.L5_SOURCE_GRAPH) == "not_collected"
+
+    # Empty metrics: attach is a no-op, nothing is echoed.
+    result = DiffResult(old_version="1", new_version="2", library="l", verdict=Verdict.NO_CHANGE)
+    attach_evidence_metrics(result, {}, [])
+    assert result.evidence_metrics == {}
+    echo_evidence_metrics({})
+    assert capsys.readouterr().err == ""
+
+    # Metrics without a measured duration still echo the findings line.
+    echo_evidence_metrics({"findings.source_only.count": 2})
+    err = capsys.readouterr().err
+    assert "Evidence metrics:" in err
+    assert "collection time" not in err
+    assert "source-only=2" in err
+
+
+def test_evidence_metrics_excludes_probe_matrix_from_artifact_backed(tmp_path):
+    """ADR-033 D9 (Codex review): probe-matrix findings are injected via
+    extra_changes but are build-config/source-level, not L0-L2 artifact-backed,
+    so they must not inflate findings.artifact_backed.count on a mixed run."""
+    # Probe matrices whose only delta is a raised C++ standard floor (17 -> 20),
+    # which surfaces as a probe-matrix finding (cxx_standard_floor_raised).
+    def _matrix(path, version, stds):
+        path.write_text(json.dumps({
+            "library": "libfoo", "version": version, "spec_name": "libfoo",
+            "cxx_stds": stds, "defaults": {"backend": "tbb"}, "results": [],
+        }))
+
+    pm_old = tmp_path / "pm_old.json"
+    pm_new = tmp_path / "pm_new.json"
+    _matrix(pm_old, "1.0", {"a": 17, "b": 20})
+    _matrix(pm_new, "2.0", {"b": 20, "c": 23})
+
+    new_cdb = _write_cdb(tmp_path, "c++20")
+    ev_new = tmp_path / "new.evidence"
+    runner = CliRunner()
+    runner.invoke(main, ["collect", "--compile-db", str(new_cdb), "-o", str(ev_new)])
+    old_snap = _make_snap(tmp_path, "old.json", "1.0")
+    new_snap = _make_snap(tmp_path, "new.json", "2.0")
+
+    result = runner.invoke(main, [
+        "compare", str(old_snap), str(new_snap), "--new-build-info", str(ev_new),
+        "--probe-matrix-old", str(pm_old), "--probe-matrix-new", str(pm_new),
+        "--format", "json",
+    ])
+    assert result.exit_code in (0, 1, 2, 4), result.output
+    payload = json.loads(result.stdout)
+    metrics = payload["evidence_metrics"]
+    # The probe-matrix finding is reported (it is in result.changes) ...
+    kinds = {c["kind"] for c in payload["changes"]}
+    assert "cxx_standard_floor_raised" in kinds
+    # ... but it is not counted as artifact-backed. These ELF-less snapshots have
+    # no L0-L2 diff, so the only artifact-backed count here must be zero.
+    assert metrics["findings.artifact_backed.count"] == 0
+
+
+def _two_build_packs(tmp_path, runner):
+    """Two build-info packs whose only delta is a C++ std bump (17 -> 20),
+    yielding an abi_relevant_build_flag_changed finding (RISK by default)."""
+    ev_old = tmp_path / "old.evidence"
+    ev_new = tmp_path / "new.evidence"
+    runner.invoke(main, ["collect", "--compile-db", str(_write_cdb(tmp_path, "c++17")),
+                         "-o", str(ev_old)])
+    runner.invoke(main, ["collect", "--compile-db", str(_write_cdb(tmp_path, "c++20")),
+                         "-o", str(ev_new)])
+    return ev_old, ev_new
+
+
+def test_evidence_policy_build_drift_fail_on_abi_relevant_escalates(tmp_path):
+    """ADR-033 D7: build_context_drift: fail-on-abi-relevant escalates the
+    ABI-relevant std-flag drift from RISK (exit 0) to API_BREAK (exit 2)."""
+    runner = CliRunner()
+    ev_old, ev_new = _two_build_packs(tmp_path, runner)
+    pol = tmp_path / "policy.yaml"
+    pol.write_text("evidence_policy:\n  build_context_drift: fail-on-abi-relevant\n")
+    old_snap = _make_snap(tmp_path, "old.json", "1.0")
+    new_snap = _make_snap(tmp_path, "new.json", "2.0")
+    result = runner.invoke(main, [
+        "compare", str(old_snap), str(new_snap),
+        "--old-build-info", str(ev_old), "--new-build-info", str(ev_new),
+        "--policy-file", str(pol), "--format", "json",
+    ])
+    assert result.exit_code == 2, result.output  # API_BREAK
+    payload = json.loads(result.stdout)
+    assert payload["verdict"] in ("API_BREAK", "source_break")
+
+
+def test_evidence_policy_build_drift_default_is_risk(tmp_path):
+    """Without the knob the same std drift stays a non-failing risk (exit 0)."""
+    runner = CliRunner()
+    ev_old, ev_new = _two_build_packs(tmp_path, runner)
+    old_snap = _make_snap(tmp_path, "old.json", "1.0")
+    new_snap = _make_snap(tmp_path, "new.json", "2.0")
+    result = runner.invoke(main, [
+        "compare", str(old_snap), str(new_snap),
+        "--old-build-info", str(ev_old), "--new-build-info", str(ev_new),
+    ])
+    assert result.exit_code == 0, result.output
+
+
+def test_require_evidence_fails_when_layer_absent(tmp_path):
+    """ADR-033 D7 require_evidence: a mandatory-but-absent layer fails the run
+    with an evidence_required_missing (API_BREAK) finding, even with no packs."""
+    pol = tmp_path / "policy.yaml"
+    pol.write_text("evidence_policy:\n  require_evidence:\n    build_context: true\n")
+    old_snap = _make_snap(tmp_path, "old.json", "1.0")
+    new_snap = _make_snap(tmp_path, "new.json", "2.0")
+    result = CliRunner().invoke(main, [
+        "compare", str(old_snap), str(new_snap),
+        "--policy-file", str(pol), "--format", "json",
+    ])
+    assert result.exit_code == 2, result.output  # API_BREAK
+    payload = json.loads(result.stdout)
+    kinds = {c["kind"] for c in payload["changes"]}
+    assert "evidence_required_missing" in kinds
+    # D9: the failure is counted on its own metric, not lost (Codex review).
+    assert payload["evidence_metrics"]["findings.evidence_required_missing.count"] == 1
+
+
+def test_require_evidence_satisfied_when_layer_present(tmp_path):
+    """When the required layer is present (build pack supplied), no finding."""
+    runner = CliRunner()
+    ev_new = tmp_path / "new.evidence"
+    runner.invoke(main, ["collect", "--compile-db", str(_write_cdb(tmp_path, "c++20")),
+                         "-o", str(ev_new)])
+    pol = tmp_path / "policy.yaml"
+    pol.write_text("evidence_policy:\n  require_evidence:\n    build_context: true\n")
+    old_snap = _make_snap(tmp_path, "old.json", "1.0")
+    new_snap = _make_snap(tmp_path, "new.json", "2.0")
+    result = runner.invoke(main, [
+        "compare", str(old_snap), str(new_snap), "--new-build-info", str(ev_new),
+        "--policy-file", str(pol), "--format", "json",
+    ])
+    assert result.exit_code == 0, result.output
+    kinds = {c["kind"] for c in json.loads(result.stdout)["changes"]}
+    assert "evidence_required_missing" not in kinds
+
+
+def test_evidence_policy_invalid_action_rejected(tmp_path):
+    """An out-of-range evidence_policy action is a clear policy-file error."""
+    pol = tmp_path / "policy.yaml"
+    pol.write_text("evidence_policy:\n  graph_risk_findings: maybe\n")
+    old_snap = _make_snap(tmp_path, "old.json", "1.0")
+    new_snap = _make_snap(tmp_path, "new.json", "2.0")
+    result = CliRunner().invoke(main, [
+        "compare", str(old_snap), str(new_snap), "--policy-file", str(pol),
+    ])
+    assert result.exit_code != 0
+    assert "graph_risk_findings" in result.output
+
+
+def _source_tree(tmp_path):
+    tree = tmp_path / "src"
+    tree.mkdir()
+    (tree / "foo.cpp").write_text("int f(){return 0;}\n")
+    (tree / "compile_commands.json").write_text(json.dumps([{
+        "directory": str(tree), "file": "foo.cpp",
+        "arguments": ["c++", "-std=c++17", "-c", "foo.cpp"],
+    }]))
+    return tree
+
+
+def test_dump_collect_mode_build_collects_l3_only(tmp_path):
+    """ADR-033 D2/Phase-1: `dump --collect-mode build` captures L3 build context
+    only — no L4 source replay or L5 graph."""
+    tree = _source_tree(tmp_path)
+    out = tmp_path / "s.json"
+    result = CliRunner().invoke(main, [
+        "dump", "--sources", str(tree), "--collect-mode", "build", "-o", str(out),
+    ])
+    assert result.exit_code == 0, result.output
+    bs = load_snapshot(out).build_source
+    assert bs is not None and bs.build_evidence is not None
+    assert bs.source_abi is None and bs.source_graph is None
+    cov = {(c.layer if isinstance(c.layer, str) else c.layer.value): c.status.value
+           for c in bs.manifest.coverage}
+    assert cov["L3_build"] == "present"
+    assert cov["L4_source_abi"] == "not_collected"
+    assert cov["L5_source_graph"] == "not_collected"
+
+
+def test_dump_collect_mode_build_filters_pre_captured_pack(tmp_path):
+    """ADR-033 D2 (Codex review): `--collect-mode build` must strip L4/L5 from a
+    pre-captured pack too, so an L3-only run can't smuggle in source evidence."""
+    runner = CliRunner()
+    cdb = _write_cdb(tmp_path, "c++17")
+    ev = tmp_path / "full.ev"
+    runner.invoke(main, ["collect", "--compile-db", str(cdb),
+                         "--source-graph", "summary", "-o", str(ev)])
+    assert BuildSourcePack.load(ev).source_graph is not None  # full pack
+    out = tmp_path / "s.json"
+    result = runner.invoke(main, [
+        "dump", "--build-info", str(ev), "--collect-mode", "build", "-o", str(out),
+    ])
+    assert result.exit_code == 0, result.output
+    bs = load_snapshot(out).build_source
+    assert bs.build_evidence is not None       # L3 kept
+    assert bs.source_abi is None               # L4 stripped
+    assert bs.source_graph is None             # L5 stripped
+
+
+def test_source_abi_cache_hit_rate_instrumented(tmp_path):
+    """ADR-033 D9: the per-TU SourceAbiCache tracks hits/misses → hit_rate."""
+    from abicheck.buildsource.source_abi import SourceAbiTu
+    from abicheck.buildsource.source_replay import SourceAbiCache
+
+    cache = SourceAbiCache(tmp_path / "cache")
+    assert cache.hit_rate is None              # no lookups yet
+    assert cache.get("missing-key") is None    # miss
+    cache.put("k1", SourceAbiTu(tu_id="cu://x", source="f.cpp"))
+    assert cache.get("k1") is not None         # hit
+    assert cache.get(None) is None             # uncacheable, not counted
+    assert cache.hits == 1 and cache.misses == 1
+    assert cache.hit_rate == 0.5
+
+
+def test_recommend_collect_mode_cli():
+    """ADR-033 D3: the recommend-collect-mode command maps changed paths to a mode."""
+    runner = CliRunner()
+    assert runner.invoke(main, ["recommend-collect-mode", "CMakeLists.txt"]).output.strip() == "build"
+    assert runner.invoke(main, ["recommend-collect-mode", "src/a.cpp"]).output.strip() == "source-changed"
+    assert runner.invoke(main, ["recommend-collect-mode", "README.md"]).output.strip() == "off"
+    assert runner.invoke(main, ["recommend-collect-mode"]).output.strip() == "off"
+
+
+def test_dump_collect_mode_off_embeds_nothing(tmp_path):
+    """`--collect-mode off` collects no evidence even with a source tree."""
+    tree = _source_tree(tmp_path)
+    out = tmp_path / "s.json"
+    result = CliRunner().invoke(main, [
+        "dump", "--sources", str(tree), "--collect-mode", "off", "-o", str(out),
+    ])
+    assert result.exit_code == 0, result.output
+    assert load_snapshot(out).build_source is None
 
 
 def test_compare_collect_mode_without_packs_is_noted(tmp_path):
@@ -853,3 +1173,25 @@ def test_mixed_build_pack_and_raw_sources_hash_distinguishes_trees(tmp_path):
     # And the build evidence still participates (same pack → shared component).
     same = _combine_packs(bi, None, _inline_with("tree_a"))
     assert a.content_hash() == same.content_hash()
+
+
+def test_inline_source_changed_falls_back_to_target_scope(tmp_path, monkeypatch):
+    """ADR-033 (Codex): inline dump has no PR diff, so a 'changed' scope must fall
+    back to 'target' for replay — otherwise L4 selects zero TUs and is empty."""
+    import abicheck.buildsource.inline as inline
+    captured = {}
+
+    def _spy(sources, merged, extractors, *, extractor, scope, clang_bin):
+        captured["scope"] = scope
+        return None
+
+    monkeypatch.setattr(inline, "_run_inline_source_abi", _spy)
+    tree = tmp_path / "src"
+    tree.mkdir()
+    (tree / "f.cpp").write_text("int f(){return 0;}\n")
+    (tree / "compile_commands.json").write_text(json.dumps([{
+        "directory": str(tree), "file": "f.cpp",
+        "arguments": ["c++", "-c", "f.cpp"]}]))
+    inline.collect_inline_pack(sources=tree, build_info=None, scope="changed",
+                               layers=("L3", "L4", "L5"))
+    assert captured["scope"] == "target"

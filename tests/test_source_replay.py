@@ -645,3 +645,38 @@ def test_run_source_replay_uses_cache_to_skip_reextraction(tmp_path: Path) -> No
     )
     assert second.calls == []
     assert len(surface.reachable_declarations) == 1
+
+
+# ── ADR-033 D3 PR-diff localizer ─────────────────────────────────────────────
+
+
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.mark.parametrize("paths,expected", [
+    (["CMakeLists.txt"], "build"),
+    (["cmake/foo.cmake"], "build"),
+    (["Makefile", "docs/x.md"], "build"),
+    (["BUILD.bazel"], "build"),
+    (["meson.build"], "build"),
+    (["src/foo.cpp"], "source-changed"),
+    (["include/foo.hpp"], "source-changed"),
+    (["src/foo.cpp", "CMakeLists.txt"], "source-changed"),  # source wins (superset)
+    (["README.md", "docs/x.rst"], "off"),
+    ([], "off"),
+])
+def test_recommend_collect_mode(paths, expected):
+    from abicheck.buildsource.source_replay import recommend_collect_mode
+    assert recommend_collect_mode(paths) == expected
+
+
+def test_graph_full_maps_to_full_scope():
+    """ADR-033 D2 (Codex): graph-full collects the full replay scope, not target."""
+    from abicheck.buildsource.source_replay import (
+        collection_for_ci_mode,
+        scope_for_ci_mode,
+    )
+    assert scope_for_ci_mode("graph-full") == "full"
+    scope, layers = collection_for_ci_mode("graph-full")
+    assert scope == "full"
+    assert layers == ("L3", "L4", "L5")

@@ -33,6 +33,14 @@ import click
 
 from . import __version__ as _abicheck_version
 from .buildsource.build_evidence import BuildEvidence
+from .buildsource.evidence_policy import (
+    apply_evidence_policy,
+    echo_evidence_metrics,
+    evidence_coverage_metrics,
+    finding_bucket_counts,
+    require_evidence_findings,
+    tag_evidence_category,
+)
 from .buildsource.model import (
     CoverageStatus,
     DataLayer,
@@ -52,8 +60,9 @@ if TYPE_CHECKING:
         ClangSourceExtractor,
     )
     from .buildsource.source_graph import SourceGraphSummary
-    from .checker_types import Change
+    from .checker_types import Change, DiffResult
     from .model import AbiSnapshot
+    from .policy_file import PolicyFile
 
 
 @main.command("collect")
@@ -993,10 +1002,13 @@ def _collect_source_abi(
         merged.diagnostics.append(f"source_abi: {diag}")
     parsed = int(surface.coverage.get("compile_units_parsed", 0) or 0)
     selected = int(surface.coverage.get("compile_units_selected", 0) or 0)
+    detail = f"scope={scope}, {parsed}/{selected} TUs parsed, {len(diagnostics)} failures"
+    if cache is not None and cache.hit_rate is not None:  # ADR-033 D9 cache_hit_rate
+        detail += f", cache_hit_rate={cache.hit_rate:.0%} ({cache.hits}/{cache.hits + cache.misses})"
     extractors.append(ExtractorRecord(
         name=f"source_abi:{extractor}",
         status="ok" if parsed else "partial",
-        detail=f"scope={scope}, {parsed}/{selected} TUs parsed, {len(diagnostics)} failures",
+        detail=detail,
     ))
     return surface, (
         f"{extractor} extractor, scope={scope}: parsed {parsed}/{selected} TUs, "
@@ -1056,6 +1068,24 @@ def _collect_source_abi_android(
 
 def _layer_value(layer: object) -> str:
     return layer.value if hasattr(layer, "value") else str(layer)
+
+
+def _filter_pack_layers(
+    pack: BuildSourcePack | None, layers: tuple[str, ...]
+) -> BuildSourcePack | None:
+    """Null out a loaded pack's facts for layers the collect-mode excludes, so a
+    pre-captured pack can't smuggle past the ADR-033 D2 layer set (Codex review).
+    ``_combine_packs`` derives coverage from these attributes, so nulling them
+    drops both the facts and their coverage rows."""
+    if pack is None:
+        return None
+    if "L3" not in layers:
+        pack.build_evidence = None
+    if "L4" not in layers:
+        pack.source_abi = None
+    if "L5" not in layers:
+        pack.source_graph = None
+    return pack
 
 
 def _combine_packs(
@@ -1188,9 +1218,13 @@ def embed_build_source(
     build_config: Path | None = None,
     allow_build_query: bool = False,
     clang_bin: str = "clang",
-    scope: str = "target",
+    collect_mode: str = "source-target",
 ) -> None:
     """Embed build-info / source facts inline in *snap* (single-artifact UX).
+
+    *collect_mode* is the ADR-033 D2 CI evidence mode selecting which layers and
+    replay scope to collect: ``build`` captures L3 build context only, ``off``
+    embeds nothing, the source/graph modes collect L3+L4+L5 at the matching scope.
 
     Source-tree-centric inputs (ADR-028..033 amendment): ``sources`` is a source
     checkout — L4 source ABI replay and the L5 graph are run *inline* and
@@ -1212,6 +1246,11 @@ def embed_build_source(
         is_pack_dir,
         load_build_config,
     )
+    from .buildsource.source_replay import collection_for_ci_mode
+
+    scope, layers = collection_for_ci_mode(collect_mode)
+    if not layers:  # 'off' (or an unknown mode) embeds nothing
+        return
 
     bi_is_pack = is_pack_dir(build_info)
     src_is_pack = is_pack_dir(sources)
@@ -1236,7 +1275,12 @@ def embed_build_source(
             base_build=bi_pack.build_evidence if bi_pack else None,
             clang_bin=clang_bin,
             scope=scope,
+            layers=layers,
         )
+
+    # Pre-captured packs must also honour the collect-mode layer set (Codex).
+    bi_pack = _filter_pack_layers(bi_pack, layers)
+    src_pack = _filter_pack_layers(src_pack, layers)
 
     # --build-info (pack) wins L3, --sources (pack) wins L4/L5, the inline pack
     # backfills both; coverage is rebuilt per layer from the supplying pack.
@@ -1259,6 +1303,7 @@ def dump_source_only(
     git_tag: str | None,
     build_id: str | None,
     no_git: bool,
+    collect_mode: str = "source-target",
 ) -> None:
     """Write a binary-less snapshot carrying only the embedded build/source facts.
 
@@ -1282,7 +1327,7 @@ def dump_source_only(
     snap = AbiSnapshot(library=library, version=version)
     _stamp_provenance(snap, git_tag=git_tag, build_id=build_id, no_git=no_git)
     _write_snapshot_output(
-        snap, output, build_info, sources, build_config, allow_build_query
+        snap, output, build_info, sources, build_config, allow_build_query, collect_mode
     )
 
 
@@ -1389,7 +1434,8 @@ def diff_embedded_build_source(
     collect_mode: str,
     new_snapshot: AbiSnapshot,
     old_snapshot: AbiSnapshot | None = None,
-) -> tuple[list[Change], list[dict[str, object]]]:
+    policy_file: PolicyFile | None = None,
+) -> tuple[list[Change], list[dict[str, object]], dict[str, object]]:
     """Diff each side's build-info + source facts, echo coverage, return findings.
 
     Each side's facts come from the snapshot's *embedded* ``build_source``
@@ -1406,6 +1452,12 @@ def diff_embedded_build_source(
     (e.g. a full base scan vs a binary+headers-only target), a single
     ``EVIDENCE_COVERAGE_ASYMMETRIC`` finding spells out exactly which pieces the
     target is missing so the degraded comparison is never silent.
+
+    The third tuple element is a partial ADR-033 D9 metrics dict (coverage flags
+    plus the build-context-drift / source-only finding split this function can
+    count first-hand); ``cli.py`` fills in timing and run-wide totals via
+    :func:`finalize_evidence_metrics`. Returns
+    ``(changes, coverage_rows, metrics)``.
     """
     from .buildsource.build_diff import check_header_parse_drift, diff_build_evidence
 
@@ -1421,13 +1473,27 @@ def diff_embedded_build_source(
                 "with `dump --build-info/--sources` (or pass --old/new pack dirs).",
                 err=True,
             )
-        return [], []
+        # require_evidence still fires with no packs at all: every required layer
+        # is missing, so the run must fail rather than pass on zero evidence. Emit
+        # a coverage-only metrics dict so attach_evidence_metrics still counts the
+        # evidence_required_missing finding (Codex review) instead of dropping it.
+        req = require_evidence_findings(policy_file, None)
+        metrics = evidence_coverage_metrics([]) if req else {}
+        return req, [], metrics
 
     changes: list[Change] = []
+    # Tag each finding with its D9 bucket as it is produced: each diff helper
+    # below owns one bucket, so we never re-classify by ChangeKind (which would
+    # drift as kinds move between modules). The metrics then count *retained*
+    # (post-suppression) findings per bucket in attach_evidence_metrics, so the
+    # D9 split partitions the reported findings (Codex review).
     old_build = old_pack.build_evidence if old_pack else None
     new_build = new_pack.build_evidence if new_pack else None
     if old_build is not None and new_build is not None:
-        changes.extend(diff_build_evidence(old_build, new_build))
+        _build_changes = diff_build_evidence(old_build, new_build)
+        tag_evidence_category(_build_changes, "build_context")
+        apply_evidence_policy(_build_changes, "build_context", policy_file)
+        changes.extend(_build_changes)
     # Header-parse-context drift only applies when the new snapshot actually
     # carries a public-header AST (L2). A binary-only compare has no header
     # parse context that could have drifted, so the finding would be misleading.
@@ -1435,15 +1501,19 @@ def diff_embedded_build_source(
         new_snapshot.from_headers and not new_snapshot.from_headers_inferred
     )
     if new_build is not None and new_has_headers:
-        changes.extend(check_header_parse_drift(
+        _drift = check_header_parse_drift(
             new_build,
             headers_parsed_with_context=new_snapshot.parsed_with_build_context,
-        ))
+        )
+        tag_evidence_category(_drift, "build_context")
+        apply_evidence_policy(_drift, "build_context", policy_file)
+        changes.extend(_drift)
 
     if old_snapshot is not None:
-        changes.extend(
-            _detect_coverage_asymmetry(old_snapshot, old_pack, new_snapshot, new_pack)
-        )
+        _asym = _detect_coverage_asymmetry(old_snapshot, old_pack, new_snapshot, new_pack)
+        tag_evidence_category(_asym, "build_context")
+        apply_evidence_policy(_asym, "build_context", policy_file)
+        changes.extend(_asym)
 
     # L4 source ABI replay diff (ADR-030 D6): both packs must carry a source
     # surface. Per ADR-028 D3 these are ordinary API_BREAK/RISK findings folded
@@ -1452,7 +1522,10 @@ def diff_embedded_build_source(
     new_surface = new_pack.source_abi if new_pack else None
     if old_surface is not None and new_surface is not None:
         from .buildsource.source_diff import diff_source_abi
-        changes.extend(diff_source_abi(old_surface, new_surface))
+        _src = diff_source_abi(old_surface, new_surface)
+        tag_evidence_category(_src, "source_only")
+        apply_evidence_policy(_src, "source_only", policy_file)
+        changes.extend(_src)
 
     # L5 source graph diff (ADR-031 D6): both packs must carry a graph summary.
     # Per ADR-028 D3 / ADR-031 D6 these are ordinary RISK findings folded into
@@ -1461,7 +1534,14 @@ def diff_embedded_build_source(
     new_graph = new_pack.source_graph if new_pack else None
     if old_graph is not None and new_graph is not None:
         from .buildsource.source_graph import diff_source_graph_findings
-        changes.extend(diff_source_graph_findings(old_graph, new_graph))
+        _gr = diff_source_graph_findings(old_graph, new_graph)
+        tag_evidence_category(_gr, "source_only")
+        apply_evidence_policy(_gr, "graph_risk", policy_file)
+        changes.extend(_gr)
+
+    # ADR-033 D7 require_evidence: fail if a declared-mandatory layer is absent
+    # from the target. These are API_BREAK findings (not modulated by the knobs).
+    changes.extend(require_evidence_findings(policy_file, new_pack))
 
     # Coverage/capability reflect the *target* (new) side only: the L3/L4/L5
     # diffs run only when both sides supply a layer, so reporting the old pack's
@@ -1480,7 +1560,82 @@ def diff_embedded_build_source(
     _echo_coverage(intrinsic, coverage)
     _echo_capabilities(intrinsic, coverage)
     coverage_rows: list[dict[str, object]] = [c.to_dict() for c in (*intrinsic, *coverage)]
-    return changes, coverage_rows
+    metrics = evidence_coverage_metrics(coverage)
+    return changes, coverage_rows, metrics
+
+
+def prepare_embedded_build_source(
+    old_snapshot: AbiSnapshot,
+    new_snapshot: AbiSnapshot,
+    collect_mode: str,
+    extra_changes: list[Change] | None,
+    old_build_info: Path | None,
+    new_build_info: Path | None,
+    old_sources: Path | None,
+    new_sources: Path | None,
+    policy_file: PolicyFile | None = None,
+) -> tuple[list[Change] | None, list[dict[str, object]], dict[str, object], list[Change]]:
+    """Run inline build-info/source diffing for ``compare`` and time it.
+
+    Gates on whether any pack flag, embedded payload, or non-``off`` collect mode
+    is in play; folds the evidence findings into ``extra_changes``; and wall-clocks
+    the inline diffing for the ADR-033 D6/D9 ``extractor.duration_seconds`` metric.
+    ``policy_file`` carries the ADR-033 D7 evidence-policy knobs that modulate the
+    findings' verdict category. Returns
+    ``(extra_changes, layer_coverage_rows, evidence_metrics, ev_changes)``; the
+    metrics still need :func:`attach_evidence_metrics` for run-wide totals.
+    """
+    import time
+
+    any_pack_flag = any(
+        x is not None
+        for x in (old_build_info, new_build_info, old_sources, new_sources)
+    )
+    has_embedded = (
+        old_snapshot.build_source is not None or new_snapshot.build_source is not None
+    )
+    # require_evidence must be able to fail a run that supplied no evidence at
+    # all, so engage the pipeline when the policy declares any requirement.
+    requires_evidence = bool(policy_file is not None and policy_file.require_evidence)
+    if not (any_pack_flag or collect_mode != "off" or has_embedded or requires_evidence):
+        return extra_changes, [], {}, []
+
+    start = time.perf_counter()
+    ev_changes, coverage_rows, metrics = diff_embedded_build_source(
+        old_build_info, new_build_info, old_sources, new_sources,
+        collect_mode, new_snapshot, old_snapshot, policy_file,
+    )
+    if metrics:
+        metrics["extractor.duration_seconds"] = round(time.perf_counter() - start, 4)
+    if ev_changes:
+        extra_changes = (extra_changes or []) + ev_changes
+    return extra_changes, coverage_rows, metrics, ev_changes
+
+
+def attach_evidence_metrics(
+    result: DiffResult,
+    metrics: dict[str, object],
+    injected_changes: list[Change],
+) -> None:
+    """Finalize and attach the ADR-033 D9 evidence metrics onto ``result``.
+
+    Counts the finding buckets from the *retained* (post-suppression)
+    ``result.changes`` so they partition the reported findings consistently
+    (Codex review): build-context-drift and source-only come from each finding's
+    ``evidence_category`` tag, and artifact-backed is everything not externally
+    injected via ``extra_changes`` (build/source evidence *and* probe-matrix
+    findings — none from L0–L2 diffing). Adds the suppression/surface-demotion
+    totals, then echoes the D6 timing summary. No-op when no evidence involved.
+    """
+    if not metrics:
+        return
+    counts = finding_bucket_counts(result.changes, injected_changes)
+    for bucket, n in counts.items():
+        metrics[f"findings.{bucket}.count"] = n
+    metrics["findings.demoted_by_surface.count"] = result.out_of_surface_count
+    metrics["findings.suppressed_with_reason.count"] = result.suppressed_count
+    result.evidence_metrics = metrics
+    echo_evidence_metrics(metrics)
 
 
 def _load_pack_or_raise(evidence_dir: Path) -> BuildSourcePack:

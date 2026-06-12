@@ -169,6 +169,30 @@ embedded `build_source` facts together per layer (each layer should come from
 exactly one input), so the result is a single `.abi.json` carrying all of
 L0–L5.
 
+### Choosing how much to collect — `dump --collect-mode`
+
+`dump --collect-mode` (the ADR-033 D2 CI evidence mode) selects *which* layers
+are collected from `--sources` / `--build-info`, trading cost for depth:
+
+```bash
+abicheck dump --sources ./src/ --collect-mode build         -o s.json  # L3 only
+abicheck dump --sources ./src/ --collect-mode source-target -o s.json  # L3+L4+L5 (default)
+abicheck dump --sources ./src/ --collect-mode off           -o s.json  # embed nothing
+```
+
+| Mode | Layers collected | Replay scope |
+|------|------------------|--------------|
+| `off` | none | — |
+| `build` | L3 build context only | — |
+| `source-changed` | L3 + L4 + L5 | changed TUs |
+| `source-target` *(default)* | L3 + L4 + L5 | target |
+| `graph-summary` | L3 + L4 + L5 | changed |
+| `graph-full` | L3 + L4 + L5 | full |
+
+`build` is the cheap PR default (build-flag/toolchain drift, no source parse);
+the `source-*` / `graph-*` modes add the L4 source replay and L5 graph at the
+matching replay scope.
+
 ### Build-tool query configuration (`.abicheck.yml`)
 
 A source checkout often *contains* the build system. abicheck can use it to
@@ -490,6 +514,42 @@ The same rows are emitted as a structured `layer_coverage` array in the
 `--format json` report (schema `report_schema_version` 2.0+; the key was
 `evidence_coverage` in 1.x), so machine consumers can key off layer status
 and confidence.
+
+### Evidence metrics (timing & finding split)
+
+Alongside the coverage table, a pack-aware compare prints an **evidence-metrics
+summary** (ADR-033 D6/D9) so CI can tune which evidence mode to run by cost and
+signal:
+
+```text
+Evidence metrics:
+  collection time            0.0142s
+  findings                   artifact-backed=3, source-only=0, build-context-drift=1
+```
+
+The same numbers are emitted as a structured `evidence_metrics` object in the
+`--format json` report (schema `report_schema_version` 2.1+), keyed by the D9
+metric names:
+
+```json
+"evidence_metrics": {
+  "extractor.duration_seconds": 0.0142,
+  "coverage.build_context.present": true,
+  "coverage.source_abi.mode": "not_collected",
+  "coverage.graph.mode": "not_collected",
+  "findings.artifact_backed.count": 3,
+  "findings.source_only.count": 0,
+  "findings.build_context_drift.count": 1,
+  "findings.evidence_required_missing.count": 0,
+  "findings.demoted_by_surface.count": 0,
+  "findings.suppressed_with_reason.count": 0
+}
+```
+
+`artifact-backed` findings are proven by the binary/debug/header tiers (L0–L2);
+`source-only` and `build-context-drift` come from the optional L3–L5 layers and
+never override an artifact-backed verdict. Both blocks are additive and present
+only when build-info/source facts were involved in the compare.
 
 ### What is being checked — and what is not, and why
 
