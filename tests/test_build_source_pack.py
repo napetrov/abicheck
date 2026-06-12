@@ -620,6 +620,34 @@ def test_small_aggregate_return_flip_is_struct_return():
     assert "value_abi_trait_changed" not in kinds
 
 
+def test_mixed_size_and_triviality_flip_stays_value_abi():
+    # Codex P2: old trivial @24B (memory, >16) → new nontrivial @8B (memory,
+    # nontrivial) is memory-returned on BOTH sides — no register<->sret flip — so
+    # it must NOT be labelled a struct-return convention change.
+    from abicheck.dwarf_advanced import AdvancedDwarfMetadata, _diff_value_abi_traits
+
+    old = AdvancedDwarfMetadata()
+    new = AdvancedDwarfMetadata()
+    old.value_abi_traits["_Z3getv"] = "ret:trivial"
+    new.value_abi_traits["_Z3getv"] = "ret:nontrivial"
+    old.return_value_sizes["_Z3getv"] = 24
+    new.return_value_sizes["_Z3getv"] = 8
+    kinds = {r[0] for r in _diff_value_abi_traits(old, new, set())}
+    assert "value_abi_trait_changed" in kinds
+    assert "struct_return_convention_changed" not in kinds
+
+
+def test_returns_in_registers_helper():
+    from abicheck.dwarf_advanced import _returns_in_registers
+
+    assert _returns_in_registers("trivial", 8) is True
+    assert _returns_in_registers("trivial", 16) is True
+    assert _returns_in_registers("trivial", 24) is False   # large trivial → memory
+    assert _returns_in_registers("nontrivial", 8) is False  # nontrivial → memory
+    assert _returns_in_registers("trivial", None) is True   # unknown → conservative
+    assert _returns_in_registers(None, 8) is False
+
+
 def test_unknown_size_return_flip_stays_struct_return():
     # No recorded size (older snapshots / non-DWARF mocks) → stay conservative
     # and keep the struct-return label (the pre-gate behaviour).

@@ -944,24 +944,30 @@ def _diff_value_abi_traits(
         # flip. Only label it struct_return_convention_changed when at least one
         # side is register-eligible (small, or size unknown — stay conservative).
         if _ret_component(old_trait) != _ret_component(new_trait):
-            old_sz = old_meta.return_value_sizes.get(fname)
-            new_sz = new_meta.return_value_sizes.get(fname)
-            both_memory_returned = (
-                old_sz is not None and old_sz > _SYSV_MAX_REGISTER_RETURN_BYTES
-                and new_sz is not None and new_sz > _SYSV_MAX_REGISTER_RETURN_BYTES
+            old_reg = _returns_in_registers(
+                _ret_component(old_trait), old_meta.return_value_sizes.get(fname)
             )
-            if both_memory_returned:
-                results.append((
-                    "value_abi_trait_changed", fname,
-                    f"DWARF value-ABI trait changed (large aggregate return, "
-                    f"memory-returned both ways): {fname} ({old_trait} → {new_trait})",
-                    old_trait, new_trait,
-                ))
-            else:
+            new_reg = _returns_in_registers(
+                _ret_component(new_trait), new_meta.return_value_sizes.get(fname)
+            )
+            if old_reg != new_reg:
+                # One side is register-returned and the other memory/sret — a real
+                # return-convention flip.
                 results.append((
                     "struct_return_convention_changed", fname,
                     f"Aggregate return convention changed: {fname} "
                     f"({old_trait} → {new_trait})",
+                    old_trait, new_trait,
+                ))
+            else:
+                # Both sides return the same way (both register or, more commonly,
+                # both memory — e.g. a large trivial aggregate and a non-trivial
+                # one are each memory-returned). The triviality flip is then a
+                # generic value-ABI (copy-semantics) change, not a convention flip.
+                results.append((
+                    "value_abi_trait_changed", fname,
+                    f"DWARF value-ABI trait changed (aggregate return, same return "
+                    f"mechanism both sides): {fname} ({old_trait} → {new_trait})",
                     old_trait, new_trait,
                 ))
         else:
@@ -971,6 +977,25 @@ def _diff_value_abi_traits(
                 old_trait, new_trait,
             ))
     return results
+
+
+def _returns_in_registers(ret_component: str | None, size: int | None) -> bool:
+    """Whether a by-value aggregate return is passed in registers (SysV AMD64).
+
+    A struct is register-returned only when it is **trivial for the purposes of
+    calls** *and* fits in two eightbytes (<= 16 bytes). A non-trivial aggregate
+    is always memory-returned (hidden sret pointer) regardless of size; a large
+    trivial aggregate is also memory-returned. An unknown size on a trivial
+    aggregate is treated as register-eligible (stay conservative — preserves the
+    pre-size-gating behaviour for snapshots/mocks that carry no size).
+    """
+    if ret_component is None:
+        return False
+    # Component is the triviality token: "trivial"/"nontrivial" (or the mock
+    # "v(trivial)"/"v(nontrivial)"). It is non-trivial iff it says so.
+    if "nontrivial" in ret_component:
+        return False
+    return size is None or size <= _SYSV_MAX_REGISTER_RETURN_BYTES
 
 
 def _ret_component(trait: str) -> str | None:
