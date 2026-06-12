@@ -1663,3 +1663,27 @@ def test_merge_relink_rebuilds_l5_graph_and_refreshes_hash(tmp_path):
     assert any("SYMBOL" in k for k in edge_kinds), edge_kinds
     # content_hash recomputes from the updated payloads (no stale artifacts).
     assert merged.build_source.content_hash()
+
+
+def test_a4_redacted_absolute_source_uses_basename(tmp_path):
+    """A4 (CI regression): when the compile-DB adapter redacts a source to a
+    '~/...' absolute path (runner CWD under $HOME), the rooted/redacted prefix is
+    unrecoverable, so matching falls back to basename and a present checkout is
+    NOT flagged as a mismatch."""
+    from abicheck.buildsource.build_evidence import BuildEvidence, CompileUnit
+    from abicheck.buildsource.inline import _check_build_info_source_mismatch
+
+    tree = tmp_path / "tree"
+    (tree / "src").mkdir(parents=True)
+    units = []
+    for i in range(4):
+        (tree / "src" / f"r{i}.cpp").write_text("int x;", encoding="utf-8")
+        # Redacted absolute source (home prefix rewritten to '~'), as the adapter
+        # emits on a runner whose CWD is under $HOME.
+        units.append(CompileUnit(id=f"u{i}", source=f"~/work/proj/src/r{i}.cpp",
+                                 directory="~/proj"))
+    merged = BuildEvidence()
+    merged.compile_units = units
+    extractors = []
+    _check_build_info_source_mismatch(merged, tree, extractors)
+    assert not [e for e in extractors if e.name == "build_info_source_tree_mismatch"]

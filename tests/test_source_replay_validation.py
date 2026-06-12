@@ -326,3 +326,29 @@ def test_relink_surface_exports_rebuilds_mapping() -> None:
     assert "_Z3foov" in vals          # foo matched its export
     assert "" in vals                 # bar did not (not exported)
     assert surf.roots["exported_symbols"] == ["_Z3foov"]
+
+
+def test_provenance_mismatch_fires_for_c_unmangled_exports() -> None:
+    # A1 (Codex): C / extern "C" decls have an empty mangled_name and export by
+    # qualified_name; a wrong checkout for a C library must still be flagged.
+    new = _surface(
+        roots={"exported_symbols": ["c_real_export"]},
+        reachable_declarations=[
+            _ent(f"c_func_{i}", "function", mangled="") for i in range(8)
+        ],
+    )
+    kinds = [c.kind for c in diff_source_abi(_surface(), new)]
+    assert ChangeKind.SOURCE_BINARY_PROVENANCE_MISMATCH in kinds
+
+
+def test_provenance_inert_for_constexpr_heavy_surface() -> None:
+    # constexpr/typedef decls don't export; a header full of them must NOT trip
+    # the provenance check even though none map to a symbol.
+    new = _surface(
+        roots={"exported_symbols": ["_Z3barv"]},
+        reachable_declarations=[
+            _ent(f"k{i}", "constexpr", value=str(i)) for i in range(20)
+        ],
+    )
+    kinds = [c.kind for c in diff_source_abi(_surface(), new)]
+    assert ChangeKind.SOURCE_BINARY_PROVENANCE_MISMATCH not in kinds

@@ -485,10 +485,17 @@ def _check_build_info_source_mismatch(
         directory = str(getattr(cu, "directory", "") or "").replace("\\", "/").rstrip("/")
         if directory and posix.startswith(directory + "/"):
             return posix[len(directory) + 1:] in tree_rel
-        # Source already relative (not rooted at "/" or a drive "X:") → match rel.
-        if not (posix.startswith("/") or (len(posix) >= 2 and posix[1] == ":")):
+        # A genuinely relative source (not rooted at "/", a drive "X:", or a
+        # redacted home "~") can be matched against the tree's relative paths.
+        rooted = (
+            posix.startswith("/")
+            or posix.startswith("~")
+            or (len(posix) >= 2 and posix[1] == ":")
+        )
+        if not rooted:
             return posix in tree_rel
-        # Absolute with an unknown root → basename is all we can compare on.
+        # Absolute / redacted with an unknown root → basename is all we can
+        # reliably compare on (the redacted home prefix is unrecoverable).
         return name in tree_names
 
     flags = [r for r in (_present(cu) for cu in merged.compile_units) if r is not None]

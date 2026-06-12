@@ -135,6 +135,10 @@ def diff_source_abi(old: SourceAbiSurface, new: SourceAbiSurface) -> list[Change
 # legitimately inline/template-heavy header is not mistaken for a wrong checkout.
 _PROVENANCE_MIN_DECLS = 5
 _PROVENANCE_MISS_THRESHOLD = 0.8
+# Declaration kinds that produce a linker symbol (and so are *expected* to map to
+# an export). Excludes constexpr/typedef/record/enum/macro/inline/template, which
+# do not export and would otherwise inflate the miss ratio.
+_PROVENANCE_EXPORTABLE_KINDS = frozenset({"function", "variable"})
 
 
 def _provenance_finding(side: str, surface: SourceAbiSurface) -> Change | None:
@@ -148,16 +152,24 @@ def _provenance_finding(side: str, surface: SourceAbiSurface) -> Change | None:
     exports = set(surface.roots.get("exported_symbols", []))
     if not exports:
         return None
-    # Count only declarations that are *expected* to export — real
-    # function/variable decls carrying a mangled symbol name. Inline bodies,
-    # uninstantiated templates and macros live in their own surface buckets and
-    # legitimately map to nothing, so they are excluded here: otherwise a
-    # header-only / inline-heavy public surface would inflate the miss ratio and
-    # false-fire even against the correct binary (review).
-    expected = [d for d in surface.reachable_declarations if d.mangled_name]
+    # Count only declarations that are *expected* to export: function/variable
+    # decls, keyed by the same symbol the linker uses — ``mangled_name`` for C++,
+    # the plain ``qualified_name`` for C / extern "C" decls whose extractor leaves
+    # the mangled name empty (Codex). Inline bodies, uninstantiated templates,
+    # macros and types live in their own surface buckets / non-exporting kinds and
+    # legitimately map to nothing, so restricting to function/variable kinds keeps
+    # a header-only or constexpr-heavy public surface from inflating the miss
+    # ratio and false-firing against the correct binary (review).
+    expected = [
+        sym
+        for d in surface.reachable_declarations
+        if d.kind in _PROVENANCE_EXPORTABLE_KINDS
+        for sym in (d.mangled_name or d.qualified_name,)
+        if sym
+    ]
     if len(expected) < _PROVENANCE_MIN_DECLS:
         return None
-    misses = sum(1 for d in expected if d.mangled_name not in exports)
+    misses = sum(1 for sym in expected if sym not in exports)
     if misses / len(expected) < _PROVENANCE_MISS_THRESHOLD:
         return None
     return Change(
