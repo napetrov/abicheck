@@ -115,6 +115,46 @@ def detect_language(source: str) -> str:
     return ""
 
 
+#: GNU ``-x <language>`` operand → normalized language. ``none`` cancels an
+#: earlier ``-x`` and reverts to extension-based detection. Unknown languages
+#: (assembler, ``cuda``, …) leave the forced language unchanged.
+_X_LANG_TO_NORMALIZED: dict[str, str] = {
+    "c": "C", "c-header": "C", "cpp-output": "C",
+    "objective-c": "C", "objective-c-header": "C", "objc-cpp-output": "C",
+    "c++": "CXX", "c++-header": "CXX", "c++-cpp-output": "CXX",
+    "objective-c++": "CXX", "objective-c++-header": "CXX", "objc++-cpp-output": "CXX",
+}
+
+
+def effective_language(argv: list[str], source: str) -> str:
+    """Normalized language honoring a forced ``-x <lang>`` / MSVC ``/Tp``/``/Tc``.
+
+    The command line overrides the source extension: ``g++ -x c++ -c foo.c``
+    compiles C++ even though ``foo.c`` reads as C, and MSVC ``/TP`` / ``/Tp<f>``
+    (force C++) / ``/TC`` / ``/Tc<f>`` (force C) do the same. The last forcing
+    token wins for a single-source TU. Falls back to :func:`detect_language` on
+    the source path when nothing on the command line forces the language.
+    """
+    forced = ""
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "-x" and i + 1 < len(argv):
+            tok = argv[i + 1].lower()
+            forced = "" if tok == "none" else _X_LANG_TO_NORMALIZED.get(tok, forced)
+            i += 2
+            continue
+        if arg.startswith("-x") and len(arg) > 2:
+            tok = arg[2:].lower()
+            forced = "" if tok == "none" else _X_LANG_TO_NORMALIZED.get(tok, forced)
+        elif arg == "/TP" or arg[:3] == "/Tp":
+            forced = "CXX"
+        elif arg == "/TC" or arg[:3] == "/Tc":
+            forced = "C"
+        i += 1
+    return forced or detect_language(source)
+
+
 #: Value-taking compiler flags whose *operand* is not the translation unit even
 #: when it looks source-like — e.g. ``-include config.hpp`` (GNU forced header),
 #: ``-x c++``, or the MSVC/clang-cl ``/FI`` / ``/FU`` forced-include/using flags.

@@ -506,6 +506,54 @@ def test_runtime_mode_flags_normalize_to_canonical_keys():
     assert ("threadsafe_statics:CXX", "off") in opts
 
 
+@pytest.mark.parametrize("argv, source, expected", [
+    # No forcing: extension wins.
+    (["g++", "-c", "foo.cpp"], "foo.cpp", "CXX"),
+    (["gcc", "-c", "foo.c"], "foo.c", "C"),
+    # GNU -x forces the language over the extension (split and combined forms).
+    (["g++", "-x", "c++", "-c", "foo.c"], "foo.c", "CXX"),
+    (["gcc", "-xc", "-c", "foo.cpp"], "foo.cpp", "C"),
+    # -x none reverts to extension-based detection.
+    (["g++", "-x", "c++", "-x", "none", "-c", "foo.c"], "foo.c", "C"),
+    # Last -x wins for a single-source TU.
+    (["g++", "-x", "c", "-x", "c++", "-c", "foo.c"], "foo.c", "CXX"),
+    # MSVC /TP and /Tp<file> force C++, /TC and /Tc<file> force C.
+    (["cl", "/c", "/TP", "foo.c"], "foo.c", "CXX"),
+    (["cl", "/c", "/Tpfoo.c"], "foo.c", "CXX"),
+    (["cl", "/c", "/TC", "foo.cpp"], "foo.cpp", "C"),
+    (["cl", "/c", "/Tcfoo.cpp"], "foo.cpp", "C"),
+    # Unknown -x language leaves the extension-derived language intact.
+    (["clang", "-x", "assembler", "-c", "foo.cpp"], "foo.cpp", "CXX"),
+])
+def test_effective_language_honors_forced_language(argv, source, expected):
+    from abicheck.buildsource.adapters.base import effective_language
+    assert effective_language(argv, source) == expected
+
+
+def test_compile_db_forced_language_drives_runtime_mode_key(tmp_path):
+    # Codex P2: g++ -x c++ -c foo.c is C++, so an omitted->-fno-exceptions flip
+    # must compare against the C++ default (on) and report a mode change, not be
+    # masked as C's default-off vs explicit-off.
+    from abicheck.buildsource.adapters.compile_db import CompileDbAdapter
+
+    def _db(extra_flags):
+        p = tmp_path / f"cc_{abs(hash(tuple(extra_flags)))}.json"
+        entries = [{
+            "directory": str(tmp_path),
+            "file": "foo.c",
+            "arguments": ["g++", "-x", "c++", *extra_flags, "-c", "foo.c"],
+        }]
+        p.write_text(json.dumps(entries))
+        return CompileDbAdapter(p).collect()
+
+    old = _db([])                 # omitted exceptions -> C++ default on
+    new = _db(["-fno-exceptions"])  # explicit off
+    # The forced language must record exceptions:CXX (not exceptions:C).
+    assert old.compile_units[0].language == "CXX"
+    changes = diff_build_evidence(old, new)
+    assert any(c.kind is ChangeKind.EXCEPTIONS_MODE_CHANGED for c in changes)
+
+
 def test_runtime_mode_flags_last_one_wins_per_tu():
     # Codex P2: conflicting flags within one compile command resolve to the
     # last one (GCC semantics), so -fno-exceptions -fexceptions records only
