@@ -166,32 +166,36 @@ _MERGE_LAYER_ATTRS: dict[str, str] = {
     DataLayer.L5_SOURCE_GRAPH.value: "source_graph",
 }
 
-def _canonical_layer_digest(payload_dict: dict[str, Any]) -> str:
-    """Digest of one layer's normalized facts that is independent of *fact*
-    ordering but preserves *ordered* fields (A2).
+def _canonicalize(obj: Any) -> Any:
+    """Order-normalize a layer payload so equivalent facts hash the same.
 
-    A layer payload's **top-level arrays** are unordered sets of facts (compile
-    units, link units, graph nodes/edges, reachable decls), so two inputs that
-    list the same facts in a different order (e.g. a reversed
-    ``compile_commands.json``) must hash the same — otherwise ``merge`` reports a
-    false conflict. But *nested* arrays can be order-significant —
-    ``LinkUnit.linker_argv`` and a link's inputs encode linker order, which can
-    change the produced ABI — so they are left verbatim: two inputs that differ
-    only by such an ordered field still hash differently and are correctly
-    flagged (Codex review). Only the top-level fact arrays are sorted; everything
-    nested is hashed as-is (``json.dumps(sort_keys=True)`` normalizes dict key
-    order without touching list order).
+    A list of **fact records** (all-dict elements) is an unordered set keyed by
+    identity downstream — compile units, graph nodes/edges, and the L4 surface's
+    ``reachable_declarations``/``reachable_types`` (nested several levels under
+    ``reachable_source_surface``) — so it is sorted by its canonical JSON, at any
+    depth. A list containing **scalars** is left in place: those are
+    order-significant sequences (``LinkUnit.linker_argv``, ``argv``, link
+    ``inputs``, ``defines``) whose order can change the produced ABI, so a
+    reorder there *should* still read as a conflict (Codex review). Dict key
+    order is normalized by recursion.
     """
-    canon: dict[str, Any] = {}
-    for k in sorted(payload_dict):
-        v = payload_dict[k]
-        if isinstance(v, list):
-            canon[k] = sorted(
-                v, key=lambda x: json.dumps(x, sort_keys=True, default=str)
+    if isinstance(obj, dict):
+        return {k: _canonicalize(obj[k]) for k in sorted(obj)}
+    if isinstance(obj, list):
+        items = [_canonicalize(x) for x in obj]
+        if items and all(isinstance(x, dict) for x in obj):
+            return sorted(
+                items, key=lambda x: json.dumps(x, sort_keys=True, default=str)
             )
-        else:
-            canon[k] = v
-    blob = json.dumps(canon, sort_keys=True, separators=(",", ":"), default=str)
+        return items
+    return obj
+
+def _canonical_layer_digest(payload_dict: dict[str, Any]) -> str:
+    """Digest of one layer's facts that is independent of *fact* ordering (even
+    nested fact arrays) but preserves *ordered* scalar fields (A2)."""
+    blob = json.dumps(
+        _canonicalize(payload_dict), sort_keys=True, separators=(",", ":"), default=str
+    )
     return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 def _detect_merge_layer_conflicts(

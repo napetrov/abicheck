@@ -1445,3 +1445,22 @@ def test_build_info_source_mismatch_basename_match_ignores_redacted_prefix(tmp_p
     assert pack is not None
     assert not [e for e in pack.manifest.extractors
                 if e.name == "build_info_source_tree_mismatch"]
+
+
+def test_canonical_layer_digest_sorts_nested_facts_keeps_scalar_order():
+    """A2 (Codex): the per-layer digest is order-independent for nested fact
+    *records* (e.g. reachable_declarations) but order-SENSITIVE for scalar
+    sequences (e.g. linker_argv) which encode ABI-relevant order."""
+    from abicheck.buildsource.merge_support import _canonical_layer_digest
+
+    a = {"reachable_source_surface": {
+        "reachable_declarations": [{"id": "d1"}, {"id": "d2"}]}}
+    b = {"reachable_source_surface": {
+        "reachable_declarations": [{"id": "d2"}, {"id": "d1"}]}}
+    # Nested fact records reversed → same digest (set semantics).
+    assert _canonical_layer_digest(a) == _canonical_layer_digest(b)
+
+    # Scalar sequence reordered → different digest (order is significant).
+    x = {"link_units": [{"linker_argv": ["-lfoo", "-lbar"]}]}
+    y = {"link_units": [{"linker_argv": ["-lbar", "-lfoo"]}]}
+    assert _canonical_layer_digest(x) != _canonical_layer_digest(y)
