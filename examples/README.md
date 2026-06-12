@@ -1,7 +1,7 @@
 # ABI Scenario Catalog
 
 <!-- BEGIN GENERATED: catalog-headline (keep counts in sync with examples/ground_truth.json) -->
-This directory contains **130 cases** (125 single-library + 5 multi-library bundle cases, the latter tracked under [ADR-023](../docs/development/adr/023-bundle-aware-multi-binary-analysis.md)) demonstrating real-world ABI/API break scenarios. Each case is a minimal, compilable C/C++ example with:
+This directory contains **134 cases** (129 single-library + 5 multi-library bundle cases, the latter tracked under [ADR-023](../docs/development/adr/023-bundle-aware-multi-binary-analysis.md)) demonstrating real-world ABI/API break scenarios. Each case is a minimal, compilable C/C++ example with:
 <!-- END GENERATED: catalog-headline -->
 
 - Paired `v1/` and `v2/` source + headers.
@@ -22,7 +22,7 @@ The catalog drives abicheck's benchmark and serves as an encyclopedia of ABI pit
 |---------|-------|-------------------------|------|
 | BREAKING | 88 | `BREAKING_KINDS` | 🔴 |
 | API_BREAK | 8 | `API_BREAK_KINDS` | 🟠 |
-| COMPATIBLE_WITH_RISK | 3 | `RISK_KINDS` | 🟡 |
+| COMPATIBLE_WITH_RISK | 7 | `RISK_KINDS` | 🟡 |
 | COMPATIBLE (addition) | 10 | `ADDITION_KINDS` | 🟢 |
 | COMPATIBLE (quality) | 10 | `QUALITY_KINDS` | 🟡 |
 | NO_CHANGE | 6 | — | ✅ |
@@ -177,6 +177,10 @@ Some policy-escalated source/contract breaks (notably case30, case35) may keep i
 | [127](case127_data_object_size_changed/README.md) | Exported Data Object Size Change | Breaking | 🔴 BREAKING (bad practice) |
 | [128](case128_symbol_binding_strengthened/README.md) | Symbol Binding Strengthened (Weak → Global) | Quality | 🟢 COMPATIBLE |
 | [129](case129_struct_return_convention/README.md) | Struct-Return Convention Change | Breaking | 🔴 BREAKING |
+| [130](case130_exceptions_mode_flip/README.md) | Exceptions Mode Flip (`-fno-exceptions`) | Risk | 🟡 COMPATIBLE_WITH_RISK |
+| [131](case131_rtti_mode_flip/README.md) | RTTI Mode Flip (`-fno-rtti`) | Risk | 🟡 COMPATIBLE_WITH_RISK |
+| [132](case132_threadsafe_statics_flip/README.md) | Thread-Safe Statics Mode Flip (`-fno-threadsafe-statics`) | Risk | 🟡 COMPATIBLE_WITH_RISK |
+| [133](case133_tls_model_flip/README.md) | TLS Model Flip (`-ftls-model`) | Risk | 🟡 COMPATIBLE_WITH_RISK |
 <!-- END GENERATED: case-index -->
 
 ---
