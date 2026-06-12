@@ -186,7 +186,7 @@ These are recovered from the binary headers / export tables alone — no PDB or 
 |------|-------------|
 | `pe_forwarder_changed` | A DLL export forwarder (`OTHERDLL.Symbol`) was repointed to a different target. The implementation behind the exported name changed; dependents get different — possibly missing — behaviour at load time. |
 | `pe_machine_changed` | The PE machine/architecture changed (e.g. `IMAGE_FILE_MACHINE_AMD64` → `IMAGE_FILE_MACHINE_ARM64`). The DLL is a different architecture and cannot be loaded by existing clients. |
-| `macho_cpu_type_changed` | The Mach-O CPU type/architecture changed (e.g. `X86_64` → `ARM64`). The dylib is a different architecture and cannot link against or load into existing clients. |
+| `macho_cpu_type_changed` | A Mach-O architecture slice that used to ship is gone — e.g. `X86_64` → `ARM64`, or a universal `x86_64+arm64` dylib that dropped its `x86_64` slice. Clients built for the removed architecture can no longer link against or load the dylib. Adding a slice (single-arch → universal) is **not** flagged. |
 
 ---
 

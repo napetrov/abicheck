@@ -255,8 +255,10 @@ REGISTRY = ChangeKindRegistry([
     _E("compat_version_changed", _B,
        impact="Mach-O compatibility version changed; dylibs linked against old version may fail to load."),
     _E("macho_cpu_type_changed", _B,
-       impact="Mach-O CPU type/architecture changed (e.g. X86_64 → ARM64); the binary is a "
-              "different architecture and cannot link against or load into existing clients."),
+       impact="A Mach-O architecture slice that used to ship is gone (e.g. a universal "
+              "x86_64+arm64 dylib dropped its x86_64 slice, or x86_64 → arm64). Existing "
+              "clients built for the removed architecture can no longer link against or load "
+              "the dylib. Adding slices (single-arch → universal) is not flagged."),
 
     # ── PE/COFF specific (binary-only, no PDB needed) ─────────────────────
     _E("pe_forwarder_changed", _B,
