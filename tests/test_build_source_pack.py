@@ -714,6 +714,23 @@ def test_returns_in_registers_helper():
     assert _returns_in_registers("trivial", 8, memory_forced=True) is False
 
 
+def test_return_aggregate_added_or_removed_is_not_struct_return():
+    # Codex P2: when the return aggregate component is only added/removed
+    # (aggregate <-> scalar return), the scalar side can still be register-
+    # returned, so it is not a register<->sret flip.
+    from abicheck.dwarf_advanced import AdvancedDwarfMetadata, _diff_value_abi_traits
+
+    old = AdvancedDwarfMetadata()
+    new = AdvancedDwarfMetadata()
+    # Aggregate return removed; a by-value aggregate parameter still differs so
+    # the whole trait changed and the symbol stays in both maps.
+    old.value_abi_traits["_Z1fP1S"] = "ret:trivial|p0:trivial"
+    new.value_abi_traits["_Z1fP1S"] = "p0:nontrivial"
+    kinds = {r[0] for r in _diff_value_abi_traits(old, new, set())}
+    assert "struct_return_convention_changed" not in kinds
+    assert "value_abi_trait_changed" in kinds
+
+
 def test_small_packed_aggregate_return_flip_stays_value_abi():
     # Codex P2: a small packed struct (unaligned member) is memory-returned both
     # before and after gaining a destructor — no register<->sret flip.

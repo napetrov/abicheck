@@ -979,7 +979,11 @@ def _diff_value_abi_traits(
         # side is register-eligible (small, or size unknown — stay conservative).
         old_rc = _ret_component(old_trait)
         new_rc = _ret_component(new_trait)
-        if old_rc != new_rc:
+        # Require BOTH sides to have an aggregate return: when the return
+        # component is only added or removed (aggregate <-> scalar return) the
+        # new scalar can still be register-returned, so it is not a register/sret
+        # flip — leave that to the generic return/type findings.
+        if old_rc is not None and new_rc is not None and old_rc != new_rc:
             old_reg = _returns_in_registers(
                 old_rc, old_meta.return_value_sizes.get(fname),
                 fname in old_meta.return_memory_classified,
