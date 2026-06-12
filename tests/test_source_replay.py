@@ -229,6 +229,17 @@ def test_headers_only_falls_back_when_include_graph_covers_no_header() -> None:
     assert {u.id for u in units} == {"cu://a", "cu://c"}
 
 
+def test_headers_only_partial_cover_falls_back_to_heuristic() -> None:
+    # Graph reaches foo.h (via cu://b) but NOT bar.h → the greedy cover cannot
+    # satisfy every public header, so defer to the representative-per-target
+    # heuristic rather than drop bar.h's TUs (Codex review).
+    include_map = {"cu://b": ["include/foo.h"]}
+    units = select_compile_units(
+        _build(), scope="headers-only", include_map=include_map
+    )
+    assert {u.id for u in units} == {"cu://a", "cu://c"}
+
+
 def test_changed_with_include_graph_is_precise() -> None:
     # Only cu://a actually includes the changed header; cu://b is in the same
     # target but does NOT include it, so target-ownership would over-select it.

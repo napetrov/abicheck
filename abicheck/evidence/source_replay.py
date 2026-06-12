@@ -257,6 +257,13 @@ def _headers_only_set_cover(
             break
         chosen.append(best)
         need -= coverage[best]
+    # A *partial* include graph may not reach every public header. Returning the
+    # cover for only the reachable ones would silently drop a public header no
+    # recorded TU includes — its source-only changes would never be parsed. Defer
+    # to the representative-per-target heuristic (which covers every public-header
+    # target) whenever the cover cannot satisfy all public headers (Codex review).
+    if need:
+        return None
     return [by_id[c] for c in chosen]
 
 
@@ -292,21 +299,37 @@ def _select_changed(
 ) -> list[CompileUnit]:
     if not changed:
         return []
+    units = build.compile_units
+    header_changed = any(_looks_like_header(c) for c in changed)
+    all_covered = bool(units) and all(cu.id in include_map for cu in units)
+    graph_partial = bool(include_map) and not all_covered
+
+    # A *partial* include graph cannot be trusted to **exclude** a TU on a header
+    # change: a covered TU whose depfile omitted the changed header would be
+    # wrongly marked unaffected, dropping its source-only macro/default/inline
+    # changes from PR-mode replay. So when a header changed and the graph does not
+    # cover every unit, fan out to all units — the per-TU dump cache (D8) then
+    # skips the TUs whose recorded read_files did not actually change, so the
+    # fan-out costs nothing for unaffected units (Codex review). Negative include
+    # matches are trusted only when the graph covers every compile unit (below).
+    if header_changed and graph_partial:
+        return list(units)
+
     owning_targets = {
         t.id for t in build.targets if _target_owns_changed_header(t, changed)
     }
     picked: list[CompileUnit] = []
     seen: set[str] = set()
-    for cu in build.compile_units:
+    for cu in units:
         if cu.id in seen:
             continue
         if _path_matches(cu.source, changed):
             hit = True
         elif cu.id in include_map:
             # Precise: the include graph knows exactly which files this TU pulls
-            # in, so it is affected iff a changed path is among them. A covered TU
-            # that does not include any changed file is *not* selected — that is
-            # the precision win over target-ownership (ADR-030 follow-up #4).
+            # in (and here it covers every unit, so a negative is trustworthy), so
+            # it is affected iff a changed path is among them — the precision win
+            # over target-ownership (ADR-030 follow-up #4).
             hit = any(_path_matches(inc, changed) for inc in include_map[cu.id])
         else:
             # No include-graph entry for this TU → fall back to the
@@ -317,24 +340,13 @@ def _select_changed(
             seen.add(cu.id)
     if picked:
         return picked
-    # Fail open (ADR-025 D3): a changed *header* we could not map to any TU must
-    # not silently select nothing, or source-only header changes
-    # (macros/defaults/constexpr/inline bodies) vanish from PR-mode replay. The
-    # include graph (when supplied) records, per TU, every transitively included
-    # file; a target's public/private header metadata lists only its *own*
-    # headers, not the transitive private headers it pulls in (e.g.
-    # include/detail/config.h included by a public header but listed on no
-    # target). When the include graph covers *every* compile unit, it is
-    # authoritative — a header included by none genuinely affects nothing, so we
-    # trust it and select nothing. Otherwise (no/partial graph) conservatively
-    # replay every TU whenever a header changed; the per-TU dump cache (D8) then
-    # skips the TUs whose recorded read_files did not actually change, so the
-    # fan-out costs nothing for unaffected units (Codex review #339, P2).
-    all_units_covered = bool(build.compile_units) and all(
-        cu.id in include_map for cu in build.compile_units
-    )
-    if not all_units_covered and any(_looks_like_header(c) for c in changed):
-        return list(build.compile_units)
+    # No unit matched. Fail open (ADR-025 D3) when there is **no** include graph
+    # and a header changed but mapped to no TU (target header metadata lists only
+    # a target's own headers, not transitive private ones like
+    # include/detail/config.h). With a full include graph the empty result is
+    # authoritative — a header included by no unit genuinely affects nothing.
+    if not include_map and header_changed:
+        return list(units)
     return []
 
 
