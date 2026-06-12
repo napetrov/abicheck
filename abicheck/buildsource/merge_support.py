@@ -220,6 +220,11 @@ _ORDERED_LIST_KEYS = frozenset(
         # select different headers and change the source ABI, so these stay
         # order-sensitive (Codex).
         "include_paths", "system_include_paths",
+        # abi_relevant_flags is a replay input (source_replay joins it in order
+        # for the cache key, _argv appends it in order); last-wins pairs like
+        # -fexceptions/-fno-exceptions or -frtti/-fno-rtti change the parsed ABI
+        # when swapped, so a reorder must still read as a conflict (Codex).
+        "abi_relevant_flags",
     }
 )
 

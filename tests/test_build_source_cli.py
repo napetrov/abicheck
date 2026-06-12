@@ -1521,6 +1521,12 @@ def test_canonical_layer_digest_sorts_nested_facts_keeps_scalar_order():
     i2 = {"compile_units": [{"include_paths": ["/b", "/a"]}]}
     assert _canonical_layer_digest(i1) != _canonical_layer_digest(i2)
 
+    # abi_relevant_flags is last-wins (-fexceptions/-fno-exceptions) → reordering
+    # changes the parsed ABI, so it must read as a conflict (Codex).
+    f1 = {"compile_units": [{"abi_relevant_flags": ["-fexceptions", "-fno-exceptions"]}]}
+    f2 = {"compile_units": [{"abi_relevant_flags": ["-fno-exceptions", "-fexceptions"]}]}
+    assert _canonical_layer_digest(f1) != _canonical_layer_digest(f2)
+
 
 def test_build_inline_coverage_surfaces_failed_build_query():
     """A3: a failed/blocked build query yields a `partial` L3 coverage row with
