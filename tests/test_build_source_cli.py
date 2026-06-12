@@ -1487,3 +1487,58 @@ def test_build_inline_coverage_surfaces_failed_build_query():
     rows2 = {r.layer: r for r in build_inline_coverage(
         BuildEvidence(), has_build=False, surface=None, graph=None, extractors=[])}
     assert rows2["L3_build"].status.value == "not_collected"
+
+
+def test_embedded_source_graph_l5_roundtrips(tmp_path):
+    """D7: an embedded L5 source_graph survives dump-embed + snapshot round-trip."""
+    from abicheck.cli_buildsource import embed_build_source
+
+    cdb = _write_cdb(tmp_path, "c++17")
+    pack_dir = tmp_path / "ev"
+    CliRunner().invoke(main, ["collect", "--compile-db", str(cdb),
+                              "--source-graph", "summary", "-o", str(pack_dir)])
+    assert BuildSourcePack.load(pack_dir).source_graph is not None
+
+    snap = AbiSnapshot(library="libfoo.so", version="1")
+    embed_build_source(snap, pack_dir, None)
+    assert snap.build_source is not None and snap.build_source.source_graph is not None
+
+    out = tmp_path / "s.json"
+    save_snapshot(snap, out)
+    reloaded = load_snapshot(out)
+    assert reloaded.build_source is not None
+    assert reloaded.build_source.source_graph is not None
+
+
+def test_build_info_invalid_compile_db_is_graceful(tmp_path):
+    """D3: a build dir whose compile_commands.json is malformed degrades to no L3
+    facts without crashing the dump (ADR-028 D3)."""
+    from abicheck.cli_buildsource import embed_build_source
+
+    bd = tmp_path / "build"
+    bd.mkdir()
+    (bd / "compile_commands.json").write_text("{ not valid json", encoding="utf-8")
+    snap = AbiSnapshot(library="l", version="1")
+    embed_build_source(snap, bd, None)  # must not raise
+    # No usable L3 facts → nothing embedded (or build_source without compile units).
+    if snap.build_source is not None and snap.build_source.build_evidence is not None:
+        assert not snap.build_source.build_evidence.compile_units
+
+
+def test_build_config_malformed_yaml_falls_back_to_defaults(tmp_path):
+    """D4: a malformed `.abicheck.yml` build block degrades to defaults instead of
+    raising, so collection is never aborted by a bad config."""
+    from abicheck.buildsource.inline import (
+        discover_build_config,
+        load_build_config,
+    )
+
+    tree = tmp_path / "src"
+    tree.mkdir()
+    cfg_path = tree / ".abicheck.yml"
+    cfg_path.write_text("build:\n  - this is a list not a mapping\n", encoding="utf-8")
+    # discover finds it; load tolerates the malformed shape.
+    assert discover_build_config(tree) == cfg_path
+    cfg = load_build_config(cfg_path)
+    assert cfg.system == "auto"
+    assert cfg.query == ""
