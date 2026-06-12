@@ -25,8 +25,9 @@ elsewhere in the nav — keep links pointing at the real file path.
   comparison, ABICC format compliance). Navigated as its own **Reference** tab.
 - `examples/` — per-case Markdown docs that match the binary fixtures
   in `/examples/`. Generated via `scripts/gen_examples_docs.py` —
-  regenerate after adding a new example. Navigated under **ABI/API Handling &
-  Recommendations** alongside `concepts/abi-api-handling.md`.
+  regenerate after adding a new example. Navigated as its own **Examples**
+  tab (index + by-verdict + by-category; per-case pages are linked, not
+  in nav).
 - `development/` — contributor-facing docs (architecture, parity status,
   goals, ADRs in `development/adr/`).
 
