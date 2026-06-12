@@ -1464,3 +1464,26 @@ def test_canonical_layer_digest_sorts_nested_facts_keeps_scalar_order():
     x = {"link_units": [{"linker_argv": ["-lfoo", "-lbar"]}]}
     y = {"link_units": [{"linker_argv": ["-lbar", "-lfoo"]}]}
     assert _canonical_layer_digest(x) != _canonical_layer_digest(y)
+
+
+def test_build_inline_coverage_surfaces_failed_build_query():
+    """A3: a failed/blocked build query yields a `partial` L3 coverage row with
+    the reason, not a silent `not_collected`."""
+    from abicheck.buildsource.build_evidence import BuildEvidence
+    from abicheck.buildsource.inline import build_inline_coverage
+    from abicheck.buildsource.model import ExtractorRecord
+
+    rec = ExtractorRecord(
+        name="build_query", status="skipped",
+        detail="build.query configured but --allow-build-query not set",
+    )
+    rows = {r.layer: r for r in build_inline_coverage(
+        BuildEvidence(), has_build=False, surface=None, graph=None, extractors=[rec])}
+    l3 = rows["L3_build"]
+    assert l3.status.value == "partial"
+    assert "build query skipped" in l3.detail
+
+    # No build-query record → still a silent not_collected (unchanged behaviour).
+    rows2 = {r.layer: r for r in build_inline_coverage(
+        BuildEvidence(), has_build=False, surface=None, graph=None, extractors=[])}
+    assert rows2["L3_build"].status.value == "not_collected"

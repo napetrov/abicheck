@@ -234,7 +234,9 @@ def collect_inline_pack(
         pack.source_abi = surface
     if graph is not None:
         pack.source_graph = graph
-    pack.manifest.coverage = build_inline_coverage(merged, has_build, surface, graph)
+    pack.manifest.coverage = build_inline_coverage(
+        merged, has_build, surface, graph, extractors
+    )
     return pack
 
 
@@ -590,6 +592,7 @@ def build_inline_coverage(
     has_build: bool,
     surface: SourceAbiSurface | None,
     graph: SourceGraphSummary | None,
+    extractors: list[ExtractorRecord] | tuple[ExtractorRecord, ...] = (),
 ) -> list[LayerCoverage]:
     """Build L3/L4/L5 coverage rows for an inline-collected pack (ADR-028 D7)."""
     if has_build:
@@ -604,7 +607,26 @@ def build_inline_coverage(
             ),
         )
     else:
-        l3 = LayerCoverage(layer=DataLayer.L3_BUILD.value, status=CoverageStatus.NOT_COLLECTED)
+        # A3: a build query that was attempted but failed (or was blocked because
+        # --allow-build-query was not set) yielded no L3 facts. Surface that as a
+        # `partial` row with the reason instead of a silent `not_collected`, so
+        # the coverage/capability report tells the user exactly what to fix.
+        bq = next(
+            (e for e in extractors
+             if e.name == "build_query" and e.status in ("failed", "skipped")),
+            None,
+        )
+        if bq is not None:
+            l3 = LayerCoverage(
+                layer=DataLayer.L3_BUILD.value,
+                status=CoverageStatus.PARTIAL,
+                confidence=LayerConfidence.UNKNOWN,
+                detail=f"build query {bq.status}: {bq.detail}",
+            )
+        else:
+            l3 = LayerCoverage(
+                layer=DataLayer.L3_BUILD.value, status=CoverageStatus.NOT_COLLECTED
+            )
 
     if surface is not None:
         any_entities = bool(
