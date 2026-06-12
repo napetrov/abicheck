@@ -134,10 +134,14 @@ def relink_surface_exports(
     surface.roots["exported_symbols"] = sorted(exported)
     mapping: dict[str, str] = {}
     matched: set[str] = set()
+    # identity -> display name, so the recomputed decls_without_symbol carries the
+    # same qualified-name labels the original link produced rather than raw keys.
+    identity_to_qname: dict[str, str] = {}
     for entity in surface.reachable_declarations:
         key = entity.identity()
         if not key:
             continue
+        identity_to_qname[key] = entity.qualified_name or key
         export_sym = entity.mangled_name or entity.qualified_name
         if export_sym and export_sym in exported:
             mapping[key] = export_sym
@@ -146,6 +150,13 @@ def relink_surface_exports(
             mapping.setdefault(key, "")
     surface.mappings["source_decl_to_binary_symbol"] = dict(sorted(mapping.items()))
     surface.unmatched["symbols_without_decl"] = sorted(exported - matched)
+    # Recompute decls_without_symbol from the new mapping: declarations that now
+    # resolve to an export must drop out of the unmatched list, or the merged
+    # surface would serialize contradictory facts (mapping says foo->foo while
+    # decls_without_symbol still reports foo as unmatched).
+    surface.unmatched["decls_without_symbol"] = sorted(
+        identity_to_qname.get(key, key) for key, sym in mapping.items() if not sym
+    )
     if isinstance(surface.coverage, dict):
         surface.coverage["exported_symbols"] = len(exported)
         surface.coverage["matched_symbols"] = len(matched)

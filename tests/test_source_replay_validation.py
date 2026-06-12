@@ -319,6 +319,9 @@ def test_relink_surface_exports_rebuilds_mapping() -> None:
     foo = _ent("foo", "function", mangled="_Z3foov")
     bar = _ent("bar", "function", mangled="_Z3barv")
     surf = _surface(reachable_declarations=[foo, bar])
+    # Stale unmatched state from the original empty-export link: both decls listed
+    # as having no symbol. Relinking must drop the ones that now map (Codex).
+    surf.unmatched["decls_without_symbol"] = ["foo", "bar"]
     # Initially no exports → mapping empty/all-miss → provenance would fire.
     relink_surface_exports(surf, ["_Z3foov"])  # only foo is exported
     mapping = surf.mappings["source_decl_to_binary_symbol"]
@@ -326,6 +329,9 @@ def test_relink_surface_exports_rebuilds_mapping() -> None:
     assert "_Z3foov" in vals          # foo matched its export
     assert "" in vals                 # bar did not (not exported)
     assert surf.roots["exported_symbols"] == ["_Z3foov"]
+    # decls_without_symbol must be recomputed: foo now maps, only bar remains —
+    # no contradictory "foo maps to _Z3foov but is also unmatched" state.
+    assert surf.unmatched["decls_without_symbol"] == ["bar"]
 
 
 def test_provenance_mismatch_fires_for_c_unmangled_exports() -> None:
