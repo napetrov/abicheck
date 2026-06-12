@@ -44,12 +44,20 @@ _TOOLCHAIN_OPTION_KEYS = frozenset({"target", "sysroot"})
 #: source-less ``.GCC.command.line`` records where the language can't be inferred,
 #: and assuming C++ there would mis-handle C artifacts (C defaults exceptions off).
 _MODE_OPTION_FINDINGS: dict[str, tuple[ChangeKind, dict[str, str]]] = {
-    # exceptions: enabled by default for C++, disabled for C.
-    "exceptions": (ChangeKind.EXCEPTIONS_MODE_CHANGED, {"CXX": "on", "C": "off"}),
-    # rtti / threadsafe-statics are C++ concepts (on by default there); for C
-    # there is no portable default, so require both sides explicit.
-    "rtti": (ChangeKind.RTTI_MODE_CHANGED, {"CXX": "on"}),
-    "threadsafe_statics": (ChangeKind.THREADSAFE_STATICS_MODE_CHANGED, {"CXX": "on"}),
+    # exceptions: enabled by default for C++ (and the Objective-C++ superset),
+    # disabled for C / Objective-C.
+    "exceptions": (
+        ChangeKind.EXCEPTIONS_MODE_CHANGED,
+        {"CXX": "on", "OBJCXX": "on", "C": "off", "OBJC": "off"},
+    ),
+    # rtti / threadsafe-statics are C++ concepts (on by default there, including
+    # the Objective-C++ superset); for C / Objective-C there is no portable
+    # default, so require both sides explicit.
+    "rtti": (ChangeKind.RTTI_MODE_CHANGED, {"CXX": "on", "OBJCXX": "on"}),
+    "threadsafe_statics": (
+        ChangeKind.THREADSAFE_STATICS_MODE_CHANGED,
+        {"CXX": "on", "OBJCXX": "on"},
+    ),
     # extern-tls-init: GCC's documented default is -fextern-tls-init (extern),
     # so an omitted->-fno-extern-tls-init flip is a real extern->local TLS-init
     # mode change. The key is language-agnostic (bare), so the default lives

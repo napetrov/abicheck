@@ -723,6 +723,39 @@ def test_tls_model_omitted_vs_mixed_all_maybe_default_is_suppressed():
     )
 
 
+@pytest.mark.parametrize("key, kind", [
+    ("exceptions:OBJCXX", ChangeKind.EXCEPTIONS_MODE_CHANGED),
+    ("rtti:OBJCXX", ChangeKind.RTTI_MODE_CHANGED),
+    ("threadsafe_statics:OBJCXX", ChangeKind.THREADSAFE_STATICS_MODE_CHANGED),
+])
+def test_objcxx_mode_omitted_vs_off_is_a_change(key, kind):
+    # Native .mm TUs record OBJCXX; Objective-C++ is a C++ superset, so the
+    # runtime defaults are on. An omitted->explicit-off flip must be reported.
+    old = BuildEvidence(build_options=[])
+    new = BuildEvidence(build_options=[_opt(key, "off")])
+    assert any(c.kind is kind for c in diff_build_evidence(old, new))
+    assert any(c.kind is kind for c in diff_build_evidence(new, old))
+
+
+def test_objcxx_exceptions_omitted_vs_on_is_no_change():
+    # Explicit -fexceptions on a .mm TU equals the OBJCXX default (on).
+    old = BuildEvidence(build_options=[])
+    new = BuildEvidence(build_options=[_opt("exceptions:OBJCXX", "on")])
+    assert not any(
+        c.kind is ChangeKind.EXCEPTIONS_MODE_CHANGED for c in diff_build_evidence(old, new)
+    )
+
+
+def test_objc_exceptions_omitted_vs_off_is_no_change():
+    # Objective-C (.m) defaults exceptions off, like C — omitted vs explicit off
+    # is not a flip.
+    old = BuildEvidence(build_options=[])
+    new = BuildEvidence(build_options=[_opt("exceptions:OBJC", "off")])
+    assert not any(
+        c.kind is ChangeKind.EXCEPTIONS_MODE_CHANGED for c in diff_build_evidence(old, new)
+    )
+
+
 def test_exceptions_mode_cxx_on_vs_absent_is_no_change():
     # For C++ (exceptions:CXX), absent == default on; an explicit -fexceptions
     # against an omitted flag must not read as a mode flip.
