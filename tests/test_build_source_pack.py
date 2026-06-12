@@ -505,6 +505,35 @@ def test_runtime_mode_flags_normalize_to_canonical_keys():
     assert ("threadsafe_statics", "off") in opts
 
 
+def test_mixed_build_partial_exceptions_flip_not_masked():
+    # Regression (Codex P2): a build with some default-on C++ TUs and some
+    # explicit -fno-exceptions TUs must still flip detectably when the
+    # default-on TUs later go -fno-exceptions. Without preserving the implicit
+    # "on", de-duplication would collapse both sides to {off} and hide it.
+    from abicheck.buildsource.adapters.base import derive_build_options
+    from abicheck.buildsource.build_evidence import CompileUnit
+
+    def cu(i, *flags):
+        return CompileUnit(id=f"cu{i}", language="CXX", source=f"s{i}.cpp",
+                           abi_relevant_flags=list(flags))
+
+    def ev(units):
+        return BuildEvidence(compile_units=units, build_options=derive_build_options(units))
+
+    old = ev([cu(1), cu(2, "-fno-exceptions")])           # one default-on, one off
+    new = ev([cu(1, "-fno-exceptions"), cu(2, "-fno-exceptions")])  # both off
+    changes = diff_build_evidence(old, new)
+    assert any(c.kind is ChangeKind.EXCEPTIONS_MODE_CHANGED for c in changes)
+
+    # All-default on both sides records the implicit "on" but reads as no change.
+    same_a = ev([cu(1), cu(2)])
+    same_b = ev([cu(1), cu(2)])
+    assert not any(
+        c.kind is ChangeKind.EXCEPTIONS_MODE_CHANGED
+        for c in diff_build_evidence(same_a, same_b)
+    )
+
+
 def test_diff_emits_exceptions_mode_changed():
     old = BuildEvidence(build_options=[_opt("exceptions", "on")])
     new = BuildEvidence(build_options=[_opt("exceptions", "off")])

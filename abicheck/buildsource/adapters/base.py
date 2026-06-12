@@ -67,6 +67,18 @@ _RUNTIME_MODE_FLAGS: dict[str, tuple[str, str]] = {
     "-fno-threadsafe-statics": ("threadsafe_statics", "off"),
 }
 
+#: Canonical mode keys whose compiler default is "on" for C++ when no flag is
+#: given, and the flag spellings that count as explicitly setting them. Used to
+#: record the implicit default in a *mixed* build (some TUs default-on, some
+#: explicit ``-fno-*``) so a partial flip is not masked by de-duplication —
+#: without this, ``{default-on TU, -fno-exceptions TU}`` would record only
+#: ``{off}`` and a flip in the default-on TU would be invisible to the diff.
+_RUNTIME_MODE_DEFAULT_ON: dict[str, tuple[str, ...]] = {
+    "exceptions": ("-fexceptions", "-fno-exceptions"),
+    "rtti": ("-frtti", "-fno-rtti"),
+    "threadsafe_statics": ("-fthreadsafe-statics", "-fno-threadsafe-statics"),
+}
+
 #: Macro defines whose value is ABI-relevant even though they're plain -D flags.
 _ABI_RELEVANT_DEFINES: tuple[str, ...] = (
     "_GLIBCXX_USE_CXX11_ABI",
@@ -289,6 +301,18 @@ def derive_build_options(compile_units: list[CompileUnit]) -> list[BuildOption]:
                 add("tls_model", model, raw=flag)
             else:
                 add(flag.split("=", 1)[0], flag, raw=flag)
+
+    # Mixed-build default preservation: if any C++ TU omits a default-on mode
+    # flag entirely, record the implicit "on" so a partial flip (some TUs
+    # default-on, some explicit -fno-*) is not masked by de-duplication.
+    for key, spellings in _RUNTIME_MODE_DEFAULT_ON.items():
+        if any(
+            cu.language == "CXX"
+            and not any(s in cu.abi_relevant_flags for s in spellings)
+            for cu in compile_units
+        ):
+            add(key, "on", raw=f"(default) {spellings[0]}")
+
     return out
 
 

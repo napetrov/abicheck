@@ -2086,6 +2086,21 @@
       "expected_kinds": [
         "symbol_binding_strengthened"
       ]
+    },
+    "case129_struct_return_convention": {
+      "expected": "BREAKING",
+      "category": "breaking",
+      "min_evidence": "L1",
+      "platforms": [
+        "linux"
+      ],
+      "abi_break": true,
+      "api_break": false,
+      "bad_practice": false,
+      "description": "A public function returns a small aggregate by value. In v2 the aggregate gains a user-declared destructor, making it non-trivial; by the System V AMD64 ABI a non-trivial class is returned through a hidden caller-provided pointer (sret) instead of in registers. The function's mangled name (_Z7computev) is unchanged, so a symbol-only check sees nothing, but the DWARF value-ABI return trait flips trivial -> nontrivial. abicheck emits struct_return_convention_changed (the return-specific refinement of value_abi_trait_changed); a caller built against the v1 in-register convention reads the result from the wrong place. Detected at L1 from DWARF.",
+      "expected_kinds": [
+        "struct_return_convention_changed"
+      ]
     }
   }
 }
