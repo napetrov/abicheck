@@ -400,13 +400,14 @@ they are coverage/precision gaps, not correctness holes.
    `-E -dD` pass (castxml/Android extract no macros) — is a backend-capability
    boundary, not an open defect: a macros-only run on those backends simply
    reports partial L4 coverage (ADR-028 D7).
-3. **Typedef / alias modeling (clang) — done.** The clang backend now emits
-   `TypedefDecl`/`TypeAliasDecl` as `typedef` `SourceEntity`s carrying the
-   underlying type, and `source_diff.py` flags `public_typedef_target_changed`
-   (`API_BREAK`, L4) when a public alias's target changes — a change a bare
-   typedef leaves invisible to L0/L1. **castxml still omits typedefs** (no
-   per-entry provenance, see `castxml.py`), so this finding is clang-only, the
-   same backend-capability boundary as macros (#2).
+3. **Typedef / alias modeling (clang + castxml) — done.** The clang backend
+   emits `TypedefDecl`/`TypeAliasDecl` as `typedef` `SourceEntity`s carrying the
+   underlying type. The castxml backend now also surfaces public typedefs via
+   `parse_public_typedefs`, which scopes them to the public-header surface by
+   provenance (and a parallel header map keeps ODR detection from colliding
+   same-named typedefs across headers). Either way `source_diff.py` flags
+   `public_typedef_target_changed` (`API_BREAK`, L4) when a public alias's target
+   changes — a change a bare typedef leaves invisible to L0/L1.
 4. **Scope selection now uses the include graph when available — done.**
    `select_compile_units` accepts an optional per-TU include map
    (`{compile_unit_id: [included_path, …]}`, ADR-031 D3, sourced from compiler
@@ -433,13 +434,17 @@ they are coverage/precision gaps, not correctness holes.
    reference, so a pure local/parameter *rename* no longer flips
    `inline_body_changed` / `template_body_changed`, while a reference to a
    *different* global/function/constant, or any operator/control-flow/type
-   change, still changes the hash. This is a genuine, decidable semantic
-   normalization (a rename-invariant equivalence class), not a heuristic. It is
-   still not a *full* semantic model: it does not normalize commutative-operator
-   reordering or other behaviour-preserving rewrites, and it detects *that* a
-   body changed without producing a structured semantic diff of *what* changed.
-   The Clang LibTooling backend in the D3 table remains the longer-term path for
-   richer source-location/AST fidelity and a structured body diff.
+   change, still changes the hash. The canonical form also **sorts the operands
+   of commutative, non-short-circuiting binary operators** (`a + b` ≡ `b + a`,
+   `x == y` ≡ `y == x`; `&&`/`||` are excluded because reordering them changes
+   evaluation order). These are genuine, decidable semantic normalizations
+   (rename- and commutativity-invariant equivalence classes), not heuristics. It
+   is still not a *full* semantic model: it does not normalize every
+   behaviour-preserving rewrite (associativity, algebraic identities, statement
+   reordering), and it detects *that* a body changed without producing a
+   structured semantic diff of *what* changed. The Clang LibTooling backend in
+   the D3 table remains the longer-term path for richer source-location/AST
+   fidelity and a structured body diff.
 
 ---
 

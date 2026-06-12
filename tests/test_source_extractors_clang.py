@@ -334,6 +334,36 @@ def test_body_fingerprint_changes_on_global_rename() -> None:
     assert _body_hash(g1) != _body_hash(g2)
 
 
+def _fn_binop(op, lname, rname):
+    """`int f() {{ return <lname> <op> <rname>; }}` with two global operands."""
+    def _ref(gid, name):
+        return {"kind": "DeclRefExpr", "referencedDecl": {"id": gid, "name": name}}
+    return {
+        "kind": "TranslationUnitDecl",
+        "inner": [{
+            "kind": "FunctionDecl", "name": "f", "mangledName": "_Z1fv",
+            "loc": {"file": "include/foo.h", "line": 1},
+            "type": {"qualType": "int ()"},
+            "inner": [{"kind": "CompoundStmt", "inner": [
+                {"kind": "ReturnStmt", "inner": [
+                    {"kind": "BinaryOperator", "opcode": op,
+                     "inner": [_ref("GL", lname), _ref("GR", rname)]}]}]}],
+        }],
+    }
+
+
+def test_commutative_operands_sorted_in_fingerprint() -> None:
+    # `a + b` and `b + a` hash identically; `a == b` / `b == a` too.
+    assert _body_hash(_fn_binop("+", "a", "b")) == _body_hash(_fn_binop("+", "b", "a"))
+    assert _body_hash(_fn_binop("==", "a", "b")) == _body_hash(_fn_binop("==", "b", "a"))
+
+
+def test_noncommutative_operands_kept_ordered() -> None:
+    # `a - b` != `b - a`; short-circuit `&&` is NOT reordered (side-effect order).
+    assert _body_hash(_fn_binop("-", "a", "b")) != _body_hash(_fn_binop("-", "b", "a"))
+    assert _body_hash(_fn_binop("&&", "a", "b")) != _body_hash(_fn_binop("&&", "b", "a"))
+
+
 def test_directory_header_root_classifies_decls_as_public(tmp_path: Path) -> None:
     # Codex #339 P2: `--headers include/` (a directory root) must classify a decl
     # reported under it (include/foo.h) as public, not drop the whole tree.

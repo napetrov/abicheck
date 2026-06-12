@@ -220,6 +220,12 @@ _LOCAL_DECL_KINDS = frozenset({"ParmVarDecl", "VarDecl", "BindingDecl", "Decompo
 #: since renaming them is an observable change, not a cosmetic one.
 _NON_RENAMEABLE_STORAGE = frozenset({"static", "extern"})
 
+#: Commutative, non-short-circuiting binary operators whose two operands may be
+#: sorted into a canonical order in the fingerprint (ADR-030 #6). Excludes the
+#: short-circuit `&&`/`||` (reordering changes evaluation order/side effects) and
+#: every non-commutative operator (`-`, `/`, `%`, `<`, `<<`, assignments, …).
+_COMMUTATIVE_OPS = frozenset({"+", "*", "==", "!=", "&", "|", "^"})
+
 
 def _is_renameable_local(node: dict[str, Any]) -> bool:
     """Whether a decl node is an automatic local whose name is alpha-renameable.
@@ -342,7 +348,20 @@ def _canonical(node: Any, amap: dict[str, str]) -> Any:
             out["ref"] = ref["name"]
     inner = node.get("inner")
     if isinstance(inner, list):
-        out["inner"] = [_canonical(child, amap) for child in inner]
+        children = [_canonical(child, amap) for child in inner]
+        # Commutative-operator normalization (ADR-030 #6): the operands of a
+        # commutative binary operator (`a + b` vs `b + a`, `x == y` vs `y == x`)
+        # are sorted into a canonical order so a pure reordering does not change
+        # the fingerprint. Short-circuit `&&`/`||` are NOT commutative for the
+        # fingerprint — reordering them changes evaluation order/side effects — so
+        # they are excluded, as are all non-commutative operators.
+        if (
+            out.get("kind") == "BinaryOperator"
+            and out.get("opcode") in _COMMUTATIVE_OPS
+            and len(children) == 2
+        ):
+            children.sort(key=lambda c: json.dumps(c, sort_keys=True))
+        out["inner"] = children
     return out
 
 

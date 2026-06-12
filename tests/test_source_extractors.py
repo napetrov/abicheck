@@ -874,3 +874,39 @@ def test_castxml_extractor_end_to_end(tmp_path: Path) -> None:
     # The public const is captured with its value (enables constexpr_value_changed).
     consts = {e.qualified_name: e.value for e in tu.constexpr_values}
     assert any("kAnswer" in k for k in consts)
+
+
+def test_entity_from_typedef_carries_provenance() -> None:
+    from abicheck.evidence.source_extractors.base import entity_from_typedef
+
+    plain = entity_from_typedef("handle_t", "int32_t", source_header="include/foo.h")
+    assert plain.kind == "typedef" and plain.value == "int32_t"
+    assert plain.source_location.path == "include/foo.h"
+    assert plain.source_location.origin == "PUBLIC_HEADER"
+    assert plain.visibility == "public_header"
+
+    gen = entity_from_typedef("cfg_t", "long", source_header="gen/cfg.h", generated=True)
+    assert gen.source_location.origin == "GENERATED"
+    assert gen.visibility == "generated"
+
+
+def test_castxml_parse_public_typedefs_scopes_to_public_headers() -> None:
+    from xml.etree.ElementTree import Element, SubElement
+
+    from abicheck.dumper_castxml import _CastxmlParser
+
+    root = Element("CastXML")
+    pub = SubElement(root, "File"); pub.set("id", "f1"); pub.set("name", "/inc/api.h")
+    priv = SubElement(root, "File"); priv.set("id", "f2"); priv.set("name", "/src/detail.h")
+    fund = SubElement(root, "FundamentalType"); fund.set("id", "_int"); fund.set("name", "int")
+    pt = SubElement(root, "Typedef")
+    pt.set("id", "_t1"); pt.set("name", "handle_t"); pt.set("type", "_int")
+    pt.set("file", "f1"); pt.set("line", "4")
+    xt = SubElement(root, "Typedef")
+    xt.set("id", "_t2"); xt.set("name", "secret_t"); xt.set("type", "_int")
+    xt.set("file", "f2"); xt.set("line", "9")  # private header → filtered
+
+    parser = _CastxmlParser(root, set(), set(), public_header_paths=["/inc/api.h"])
+    tds = parser.parse_public_typedefs()
+    assert tds == {"handle_t": "int"}
+    assert parser.parse_public_typedef_headers()["handle_t"] == "/inc/api.h"
