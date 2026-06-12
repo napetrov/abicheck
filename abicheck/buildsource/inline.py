@@ -458,24 +458,37 @@ def _check_build_info_source_mismatch(
     tree = Path(sources)
     if not tree.is_dir():
         return
-    rels: list[Path] = []
-    for cu in merged.compile_units:
+
+    def _present(cu: object) -> bool | None:
+        """True/False if a compile unit's source resolves, ``None`` if it has no
+        usable path. A source counts as present when it exists at its own
+        resolved location (absolute, or relative to its compile-DB ``directory``)
+        OR under the ``--sources`` tree — so a CI compile DB plus a fresh local
+        checkout is not a false mismatch, while a genuinely different tree is."""
         src = getattr(cu, "source", "")
         if not src:
-            continue
+            return None
         p = Path(src)
-        if not p.is_absolute():
-            rels.append(p)
-        elif cu.directory and p.is_relative_to(cu.directory):
-            rels.append(p.relative_to(cu.directory))
+        directory = getattr(cu, "directory", "") or ""
+        # Path relative to the compile-DB directory (used to probe the tree).
+        if p.is_absolute():
+            abs_p = p
+            try:
+                rel = p.relative_to(directory) if directory else Path(p.name)
+            except ValueError:
+                rel = Path(p.name)
         else:
-            rels.append(Path(p.name))
-    if len(rels) < _MISMATCH_MIN_UNITS:
+            abs_p = (Path(directory) / p) if directory else p
+            rel = p
+        return abs_p.exists() or (tree / rel).exists()
+
+    flags = [r for r in (_present(cu) for cu in merged.compile_units) if r is not None]
+    if len(flags) < _MISMATCH_MIN_UNITS:
         return
-    missing = sum(1 for r in rels if not (tree / r).exists())
-    if missing / len(rels) >= _MISMATCH_THRESHOLD:
+    missing = sum(1 for present in flags if not present)
+    if missing / len(flags) >= _MISMATCH_THRESHOLD:
         detail = (
-            f"{missing}/{len(rels)} compile-DB source files are absent from the "
+            f"{missing}/{len(flags)} compile-DB source files are absent from the "
             "--sources tree; build metadata and sources may be different checkouts"
         )
         extractors.append(
