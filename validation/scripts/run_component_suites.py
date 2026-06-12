@@ -94,6 +94,7 @@ SUMMARY_PATTERNS = {
 
 
 def platform_tag() -> str:
+    """Return the platform tag used in component-suite records."""
     system = platform.system().lower()
     if system == "darwin":
         return "macos"
@@ -101,6 +102,7 @@ def platform_tag() -> str:
 
 
 def optional_dependency_blocker(test_path: str) -> str | None:
+    """Return a blocker reason for optional dependencies needed by a test."""
     if test_path in {
         "tests/test_pe_metadata_unit.py",
         "tests/test_pdb_metadata.py",
@@ -111,6 +113,7 @@ def optional_dependency_blocker(test_path: str) -> str | None:
 
 
 def missing_blockers(tests: list[str]) -> list[str]:
+    """Return missing-file and dependency blockers for a test list."""
     blockers = []
     for test_path in tests:
         if not (ROOT / test_path).exists():
@@ -123,6 +126,7 @@ def missing_blockers(tests: list[str]) -> list[str]:
 
 
 def parse_pytest_counts(output: str) -> dict[str, int]:
+    """Extract pytest summary counts from combined stdout/stderr."""
     counts: dict[str, int] = {}
     for key, pattern in SUMMARY_PATTERNS.items():
         match = pattern.search(output)
@@ -143,6 +147,7 @@ def suite_record(
     stderr: str = "",
     blockers: list[str] | None = None,
 ) -> dict[str, object]:
+    """Build one component-suite result record."""
     output = f"{stdout}\n{stderr}"
     return {
         "schema_version": SCHEMA_VERSION,
@@ -164,9 +169,25 @@ def suite_record(
 
 
 def run_suite(name: str, *, dry_run: bool, pytest_args: list[str]) -> dict[str, object]:
+    """Run or plan one named component suite."""
     suite = SUITES[name]
     tests = list(suite["tests"])
+    supported_platforms = list(suite["platforms"])
     command = [sys.executable, "-m", "pytest", "-q", *pytest_args, *tests]
+    current_platform = platform_tag()
+    if current_platform not in supported_platforms:
+        return suite_record(
+            name,
+            suite,
+            status="blocked",
+            command=command,
+            exit_code=None,
+            seconds=0.0,
+            blockers=[
+                f"unsupported platform: {current_platform} "
+                f"(supported: {', '.join(str(p) for p in supported_platforms)})"
+            ],
+        )
     blockers = missing_blockers(tests)
     if blockers:
         return suite_record(
@@ -189,7 +210,29 @@ def run_suite(name: str, *, dry_run: bool, pytest_args: list[str]) -> dict[str, 
         )
 
     start = time.time()
-    proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return suite_record(
+            name,
+            suite,
+            status="failed",
+            command=command,
+            exit_code=124,
+            seconds=time.time() - start,
+            stdout=exc.stdout or "",
+            stderr=(
+                f"pytest timed out after {exc.timeout}s\n"
+                f"{exc.stderr or ''}"
+            ),
+            blockers=[f"pytest timed out after {exc.timeout}s"],
+        )
     status = "passed" if proc.returncode == 0 else "failed"
     return suite_record(
         name,
@@ -204,6 +247,7 @@ def run_suite(name: str, *, dry_run: bool, pytest_args: list[str]) -> dict[str, 
 
 
 def make_report(records: list[dict[str, object]]) -> dict[str, object]:
+    """Build the component-suite run report."""
     return {
         "schema_version": SCHEMA_VERSION,
         "runner": "validation/scripts/run_component_suites.py",
@@ -219,6 +263,7 @@ def make_report(records: list[dict[str, object]]) -> dict[str, object]:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--suite", action="append", choices=sorted(SUITES))
     parser.add_argument("--all", action="store_true", help="run all component suites")
@@ -235,6 +280,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint for component-suite remeasurement."""
     args = parse_args(sys.argv[1:] if argv is None else argv)
     names = sorted(SUITES) if args.all or not args.suite else args.suite
     records = [

@@ -117,7 +117,7 @@ def test_summarizes_real_world_artifact(tmp_path: Path) -> None:
                     "mode": "dwarf->sym",
                     "got": "API_BREAK",
                     "expected": "COMPATIBLE",
-                    "comparison_status": "ABICHECK_STRICTER",
+                    "comparison_status": "abicheck_stricter",
                     "source_layers": ["L0", "L1"],
                     "exit_code": 2,
                 },
@@ -201,6 +201,13 @@ def test_main_writes_combined_summary(tmp_path: Path) -> None:
     assert rc == 0
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["schema_version"] == "remeasurement_summary.v1"
+    assert data["command"] == [
+        summary.sys.executable,
+        "--examples",
+        str(examples),
+        "--output",
+        str(out),
+    ]
     assert data["section_count"] == 1
     assert data["total_records"] == 1
     assert data["blocking_failures"] == 0

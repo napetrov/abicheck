@@ -39,6 +39,7 @@ from conda_harness import logical_name  # noqa: E402
 
 
 def platform_tag() -> str:
+    """Return the platform tag used in remeasurement records."""
     if sys.platform.startswith("linux"):
         return "linux"
     if sys.platform == "darwin":
@@ -65,17 +66,20 @@ def real_sos(pkgdir: str, ex_root: str = EX) -> dict[str, str]:
 
 
 def has_dwarf(path: str) -> bool:
+    """Return whether an ELF binary appears to contain DWARF debug info."""
     r = subprocess.run(["readelf", "-S", path], capture_output=True, text=True)
     return "debug_info" in r.stdout
 
 
 def run(cmd: list[str]) -> tuple[int, str, str, float]:
+    """Run a subprocess and return exit code, stdout, stderr, and seconds."""
     t = time.time()
     p = subprocess.run(cmd, capture_output=True, text=True)
     return p.returncode, p.stdout, p.stderr, time.time() - t
 
 
 def side_layers(side: str) -> list[str]:
+    """Map a side evidence mode to the available source layers."""
     layers = ["L0"]
     if side == "dwarf":
         layers.append("L1")
@@ -83,6 +87,7 @@ def side_layers(side: str) -> list[str]:
 
 
 def evidence_asymmetry(mode: str) -> str:
+    """Classify old/new evidence richness for a mode string."""
     old_side, new_side = mode.split("->", 1)
     old_layers = side_layers(old_side)
     new_layers = side_layers(new_side)
@@ -128,6 +133,7 @@ def make_record(
     stderr: str,
     data: dict | None,
 ) -> dict:
+    """Build a versioned per-comparison remeasurement record."""
     old_side, new_side = mode.split("->", 1)
     rec = {
         "schema_version": SCHEMA_VERSION,
@@ -182,6 +188,7 @@ def make_record(
 
 
 def run_matrix(manifest: list[dict], *, ex_root: str = EX, out_dir: str = OUT) -> list[dict]:
+    """Run all manifest comparisons and return per-library records."""
     results = []
     os.makedirs(f"{out_dir}/runs", exist_ok=True)  # per-library JSONs (gitignored)
     for m in manifest:
@@ -218,7 +225,8 @@ def run_matrix(manifest: list[dict], *, ex_root: str = EX, out_dir: str = OUT) -
             data = None
             if os.path.exists(jpath):
                 try:
-                    data = json.load(open(jpath))
+                    with open(jpath, encoding="utf-8") as fh:
+                        data = json.load(fh)
                 except Exception as e:
                     se += f"\n[harness] json parse failed: {e}"
             rec = make_record(
@@ -241,6 +249,7 @@ def run_matrix(manifest: list[dict], *, ex_root: str = EX, out_dir: str = OUT) -
 
 
 def make_run_metadata(results: list[dict], manifest: list[dict]) -> dict:
+    """Build run-level metadata for a real-world matrix run."""
     return {
         "schema_version": SCHEMA_VERSION,
         "runner": "validation/scripts/run_matrix.py",
@@ -262,6 +271,7 @@ def make_run_metadata(results: list[dict], manifest: list[dict]) -> dict:
 
 
 def main() -> int:
+    """CLI entrypoint for the curated real-world matrix runner."""
     if not MANIFEST.is_file():
         print(f"manifest not found: {MANIFEST}", file=sys.stderr)
         return 2
@@ -274,14 +284,13 @@ def main() -> int:
         )
         return 2
 
-    manifest = json.load(open(MANIFEST))
+    with open(MANIFEST, encoding="utf-8") as fh:
+        manifest = json.load(fh)
     results = run_matrix(manifest)
-    json.dump(results, open(f"{OUT}/results.json", "w"), indent=2)
-    json.dump(
-        make_run_metadata(results, manifest),
-        open(f"{OUT}/results.meta.json", "w"),
-        indent=2,
-    )
+    with open(f"{OUT}/results.json", "w", encoding="utf-8") as fh:
+        json.dump(results, fh, indent=2)
+    with open(f"{OUT}/results.meta.json", "w", encoding="utf-8") as fh:
+        json.dump(make_run_metadata(results, manifest), fh, indent=2)
     print(f"\n{len(results)} comparisons -> {OUT}/results.json")
     print(f"Run metadata -> {OUT}/results.meta.json")
     return 0

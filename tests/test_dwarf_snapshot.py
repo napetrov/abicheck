@@ -1341,6 +1341,7 @@ class TestCLIInProcess:
 
 # ── _print_data_sources direct call ──────────────────────────────────────────
 
+@pytest.mark.integration
 @pytest.mark.skipif(not _HAS_GCC, reason="GCC not available")
 class TestPrintDataSourcesDirect:
     """Direct call to _print_data_sources for coverage."""
@@ -1439,6 +1440,41 @@ class TestPrintDataSourcesDirect:
         assert "L3 Build context: present (1 compile units, 1 targets)" in out
         assert "L4 Source ABI: present (1 declarations)" in out
         assert "L5 Source graph: present (1 nodes)" in out
+
+    def test_print_data_sources_uses_fallback_pack_coverage(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        c_src = tmp_path / "lib.c"
+        c_src.write_text("int bar(void) { return 1; }\n")
+        so_path = tmp_path / "libtest.so"
+        subprocess.run(
+            [_GCC, "-shared", "-fPIC", "-g", "-o", str(so_path), str(c_src)],
+            capture_output=True, check=True, timeout=30,
+        )
+        full_pack = BuildSourcePack.empty(tmp_path / "full-pack")
+        full_pack.build_evidence = BuildEvidence(
+            targets=[Target(id="target://libtest", name="libtest")],
+            compile_units=[CompileUnit(id="cu://lib.c", source="lib.c")],
+        )
+        full_pack.source_abi = SourceAbiSurface(
+            reachable_declarations=[
+                SourceEntity(id="source://bar", kind="function", qualified_name="bar")
+            ]
+        )
+        full_pack.write()
+        manifest_only = BuildSourcePack.empty(tmp_path / "manifest-only")
+        manifest_only.write()
+
+        from abicheck.cli import _print_data_sources
+
+        _print_data_sources(
+            so_path,
+            has_headers=True,
+            build_source_path=full_pack.root,
+            sources_path=manifest_only.root,
+        )
+        out = capsys.readouterr().out
+        assert "L4 Source ABI: present (1 declarations)" in out
 
     def test_print_data_sources_with_raw_build_source_input(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

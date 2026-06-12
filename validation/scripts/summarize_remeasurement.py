@@ -13,19 +13,28 @@ from typing import Any
 SCHEMA_VERSION = "remeasurement_summary.v1"
 BREAKING_VERDICTS = {"BREAKING", "API_BREAK"}
 COMPATIBLE_VERDICTS = {"COMPATIBLE", "COMPATIBLE_WITH_RISK", "NO_CHANGE"}
+COMPARISON_STATUSES = {
+    "MATCH",
+    "UNCOMPARABLE",
+    "ABICHECK_STRICTER",
+    "ABICHECK_WEAKER",
+}
 
 
 def load_json(path: Path) -> Any:
+    """Load JSON from a UTF-8 file."""
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def count_values(records: list[dict[str, Any]], field: str) -> dict[str, int]:
+    """Count stringified values for a field across records."""
     return dict(sorted(Counter(str(record.get(field, "")) for record in records).items()))
 
 
 def count_first_value(
     records: list[dict[str, Any]], primary: str, fallback: str
 ) -> dict[str, int]:
+    """Count a primary field with fallback support for older artifacts."""
     values = [
         str(record.get(primary) or record.get(fallback) or "")
         for record in records
@@ -34,6 +43,7 @@ def count_first_value(
 
 
 def normalize_verdict(verdict: str | None) -> str:
+    """Collapse abicheck verdicts to a compatible/breaking axis."""
     normalized = (verdict or "").strip().upper()
     if normalized in BREAKING_VERDICTS:
         return "BREAKING"
@@ -43,9 +53,12 @@ def normalize_verdict(verdict: str | None) -> str:
 
 
 def comparison_status(record: dict[str, Any]) -> str:
+    """Return canonical expected-vs-actual comparison status for a record."""
     status = record.get("comparison_status")
     if status:
-        return str(status)
+        normalized_status = str(status).strip().upper()
+        if normalized_status in COMPARISON_STATUSES:
+            return normalized_status
     expected = normalize_verdict(record.get("expected") or record.get("expectation"))
     actual = normalize_verdict(record.get("got") or record.get("verdict"))
     if expected == "UNKNOWN" or actual == "UNKNOWN":
@@ -58,6 +71,7 @@ def comparison_status(record: dict[str, Any]) -> str:
 
 
 def summarize_examples(path: Path) -> dict[str, Any]:
+    """Summarize a validate_examples.v2 artifact."""
     data = load_json(path)
     records = list(data.get("results", []))
     return {
@@ -78,6 +92,7 @@ def summarize_examples(path: Path) -> dict[str, Any]:
 
 
 def summarize_components(path: Path) -> dict[str, Any]:
+    """Summarize a component_suites.v1 artifact."""
     data = load_json(path)
     records = list(data.get("records", []))
     blocked = [
@@ -107,6 +122,7 @@ def summarize_components(path: Path) -> dict[str, Any]:
 
 
 def summarize_real_world(path: Path, meta_path: Path | None = None) -> dict[str, Any]:
+    """Summarize run_matrix real-world records."""
     records = load_json(path)
     if not isinstance(records, list):
         raise ValueError(f"{path} must contain a list of real-world records")
@@ -145,6 +161,7 @@ def summarize_real_world(path: Path, meta_path: Path | None = None) -> dict[str,
 
 
 def layer_counts(records: list[dict[str, Any]]) -> dict[str, int]:
+    """Count evidence/source layer mentions across records."""
     counts: Counter[str] = Counter()
     for record in records:
         for layer in record.get("source_layers", []) or []:
@@ -152,10 +169,16 @@ def layer_counts(records: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def make_summary(sections: list[dict[str, Any]]) -> dict[str, Any]:
+def make_summary(
+    sections: list[dict[str, Any]], command_argv: list[str] | None = None
+) -> dict[str, Any]:
+    """Build the combined remeasurement summary payload."""
     return {
         "schema_version": SCHEMA_VERSION,
-        "command": [sys.executable, *sys.argv],
+        "command": [
+            sys.executable,
+            *(command_argv if command_argv is not None else sys.argv[1:]),
+        ],
         "section_count": len(sections),
         "total_records": sum(int(section.get("total", 0)) for section in sections),
         "blocking_failures": sum(
@@ -166,6 +189,7 @@ def make_summary(sections: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--examples", type=Path)
     parser.add_argument("--components", type=Path)
@@ -177,7 +201,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
+    """CLI entrypoint for combined remeasurement summaries."""
+    command_argv = sys.argv[1:] if argv is None else argv
+    args = parse_args(command_argv)
     sections = []
     if args.examples:
         sections.append(summarize_examples(args.examples))
@@ -185,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         sections.append(summarize_components(args.components))
     if args.real_world:
         sections.append(summarize_real_world(args.real_world, args.real_world_meta))
-    summary = make_summary(sections)
+    summary = make_summary(sections, command_argv=command_argv)
     text = json.dumps(summary, indent=2) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

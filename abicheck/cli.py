@@ -240,29 +240,9 @@ def _resolve_linker_script(path: Path) -> tuple[Path | None, bool]:
     even when no target file could be located); ``resolved_path`` is the first
     ``INPUT()``/``GROUP()`` member that exists next to the script, or *None*.
     """
-    try:
-        with open(path, "rb") as f:
-            raw = f.read(8192)
-        text = raw.decode("utf-8", errors="replace")
-    except OSError:
-        return None, False
-    # Strip C-style comments (real scripts start with ``/* GNU ld script */``).
-    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
-    if not _LD_SCRIPT_RE.search(text):
-        return None, False
-    # Collect candidate file tokens from inside INPUT()/GROUP() groups.
-    for group in re.findall(r"(?:INPUT|GROUP)\s*\(([^)]*)\)", text):
-        for tok in group.replace(",", " ").split():
-            if tok in _LD_KEYWORDS or tok.startswith(("-l", "-L", "(")):
-                continue
-            # Only consider tokens that name a library file.
-            if ".so" not in tok and not tok.endswith(".a"):
-                continue
-            candidate = Path(tok)
-            for cand in (candidate, path.parent / tok, path.parent / candidate.name):
-                if cand.is_file():
-                    return cand, True
-    return None, True
+    from .binary_utils import resolve_linker_script
+
+    return resolve_linker_script(path)
 
 
 def _maybe_follow_linker_script(path: Path) -> Path:
@@ -760,6 +740,11 @@ def dump_cmd(so_path: Path | None, headers: tuple[Path, ...], includes: tuple[Pa
 
     # Source-only dump (no binary) for the parallel-baseline / merge flow.
     if so_path is None:
+        if show_data_sources:
+            raise click.UsageError(
+                "--show-data-sources requires SO_PATH; source-only dump cannot "
+                "produce binary data-source diagnostics."
+            )
         from .cli_buildsource import dump_source_only
         dump_source_only(sources, build_info, version, output, build_config, allow_build_query, git_tag, build_id, no_git, collect_mode)
         return

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 _SCRIPT = Path("validation/scripts/run_component_suites.py")
@@ -51,6 +52,32 @@ def test_dry_run_record_has_remeasurement_metadata() -> None:
         "-q",
     ]
     assert record["blocked_reasons"] == []
+
+
+def test_unsupported_platform_is_blocked(monkeypatch) -> None:
+    runner = _load_runner()
+    monkeypatch.setattr(runner, "platform_tag", lambda: "windows")
+
+    record = runner.run_suite("elf-symbol-surface", dry_run=False, pytest_args=[])
+
+    assert record["status"] == "blocked"
+    assert record["exit_code"] is None
+    assert "unsupported platform: windows" in record["blocked_reasons"][0]
+
+
+def test_pytest_timeout_is_failed(monkeypatch) -> None:
+    runner = _load_runner()
+
+    def fake_run(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["pytest"], timeout=600)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+
+    record = runner.run_suite("report-policy", dry_run=False, pytest_args=[])
+
+    assert record["status"] == "failed"
+    assert record["exit_code"] == 124
+    assert "pytest timed out after 600s" in record["blocked_reasons"]
 
 
 def test_report_summarizes_suite_statuses() -> None:

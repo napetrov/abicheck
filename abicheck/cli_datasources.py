@@ -21,10 +21,12 @@ def print_data_sources(
     sources_path: Path | None = None,
 ) -> None:
     """Print data source diagnostic information for a binary."""
-    from .binary_utils import detect_binary_format
+    from .binary_utils import detect_binary_format, normalize_binary_input
     from .dwarf_snapshot import show_data_sources
 
-    binary_fmt = detect_binary_format(so_path)
+    normalized_path, binary_fmt = normalize_binary_input(so_path)
+    if binary_fmt is None:
+        binary_fmt = detect_binary_format(normalized_path)
     elf_meta = None
     dwarf_meta = None
     build_source_pack = None
@@ -33,14 +35,15 @@ def print_data_sources(
         from .dwarf_unified import parse_dwarf
         from .elf_metadata import parse_elf_metadata
 
-        elf_meta = parse_elf_metadata(so_path)
-        dwarf_meta, _ = parse_dwarf(so_path)
+        elf_meta = parse_elf_metadata(normalized_path)
+        dwarf_meta, _ = parse_dwarf(normalized_path)
 
     if build_source_path is not None or sources_path is not None:
         from .buildsource.inline import is_pack_dir
         from .buildsource.pack import BuildSourcePack
 
         def load_pack(path: Path, label: str) -> BuildSourcePack | None:
+            """Load a build-source pack when the input is already collected."""
             if not is_pack_dir(path):
                 click.echo(
                     f"{label} input: {path} "
@@ -69,7 +72,7 @@ def print_data_sources(
 
     click.echo(
         show_data_sources(
-            so_path, elf_meta, dwarf_meta, has_headers, build_source_pack
+            normalized_path, elf_meta, dwarf_meta, has_headers, build_source_pack
         )
     )
 
@@ -78,6 +81,7 @@ def _combine_diagnostic_packs(
     build_info_pack: BuildSourcePack | None,
     sources_pack: BuildSourcePack | None,
 ) -> BuildSourcePack | None:
+    """Combine split build-info and source packs for diagnostic reporting."""
     from .buildsource.model import CoverageStatus, DataLayer, LayerCoverage
     from .buildsource.pack import BuildSourcePack
 
@@ -92,8 +96,18 @@ def _combine_diagnostic_packs(
     combined.source_graph = sources_pack.source_graph or build_info_pack.source_graph
     combined.manifest = copy.deepcopy(build_info_pack.manifest)
 
+    layer_payload = {
+        DataLayer.L3_BUILD.value: "build_evidence",
+        DataLayer.L4_SOURCE_ABI.value: "source_abi",
+        DataLayer.L5_SOURCE_GRAPH.value: "source_graph",
+    }
+
     def row_for(layer: str, *packs: BuildSourcePack) -> LayerCoverage | None:
+        """Return coverage from the pack that supplied the requested layer."""
+        payload_attr = layer_payload.get(layer)
         for pack in packs:
+            if payload_attr and not getattr(pack, payload_attr):
+                continue
             row = next(
                 (c for c in pack.manifest.coverage if c.layer == layer),
                 None,
