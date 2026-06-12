@@ -200,6 +200,9 @@ def test_compare_with_evidence_emits_coverage_and_findings(tmp_path):
     assert result.exit_code in (0, 2, 4), result.output
     # D7 coverage table is emitted to stderr.
     assert "Evidence coverage:" in result.stderr
+    assert "Evidence coverage by side:" in result.stderr
+    assert "old=present" in result.stderr
+    assert "new=present" in result.stderr
     assert "L3 build context" in result.stderr
     # The -std drift surfaces as an ABI-relevant build-flag finding (RISK).
     assert "COMPATIBLE_WITH_RISK" in result.stdout or "Deployment Risk" in result.stdout
@@ -245,6 +248,11 @@ def test_compare_asymmetric_old_only_reports_target_not_collected(tmp_path):
     payload = json.loads(result.stdout)
     cov = {row["layer"]: row for row in payload["layer_coverage"]}
     assert cov["L3_build"]["status"] == "not_collected"
+    assert "Evidence coverage by side:" in result.stderr
+    assert "L3 build context" in result.stderr
+    assert "old=present" in result.stderr
+    assert "new=not_collected" in result.stderr
+    assert "(asymmetric)" in result.stderr
 
 
 def test_compare_json_without_evidence_omits_coverage(tmp_path):
@@ -1110,6 +1118,18 @@ def test_dump_with_no_binary_and_no_inputs_errors():
     result = CliRunner().invoke(main, ["dump"])
     assert result.exit_code != 0
     assert "source-only" in result.output
+
+
+def test_dump_show_data_sources_requires_binary(tmp_path):
+    tree = tmp_path / "src"
+    tree.mkdir()
+
+    result = CliRunner().invoke(
+        main, ["dump", "--show-data-sources", "--sources", str(tree)]
+    )
+
+    assert result.exit_code != 0
+    assert "--show-data-sources requires SO_PATH" in result.output
 
 
 def test_dump_source_only_then_merge_with_binary(tmp_path):
