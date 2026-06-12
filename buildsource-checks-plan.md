@@ -74,20 +74,37 @@ mismatched checkout produces a flood of bogus source findings.
 surface the finding from `buildsource/source_diff.py`. Partition: `RISK_KINDS`.
 Evidence tier: L4.
 
-### A2. `merge_layer_conflict` (RISK)
+### A2. `merge_layer_conflict` (merge-time warning/error, not a compare ChangeKind)
 
 **Scenario (D5):** two `merge` inputs both supply the same layer (L3/L4/L5) with
 **differing facts** — a parallel-baseline prep mistake (e.g. two different
 source trees). Today `_combine_packs` first-wins silently.
 
-**Where:** `cli_buildsource.py::_combine_packs` — when >1 non-`None` contributor
-exists for a managed layer, compare a **per-layer payload digest** (of just that
-layer's normalized facts), **not** the pack-wide `BuildSourcePack.content_hash()`.
-The pack hash folds in every layer plus coverage/extractor metadata, so two
-inputs with identical L4/L5 facts but a differing unrelated layer or extractor
-row would false-positive. Digest only the shared layer's payload; emit a
-diagnostic + the finding when those digests differ. Partition: `RISK_KINDS`.
-Evidence tier: L3.
+**Detection:** in `cli_buildsource.py::_combine_packs`, when >1 non-`None`
+contributor exists for a managed layer, compare a **per-layer payload digest**
+(of just that layer's normalized facts), **not** the pack-wide
+`BuildSourcePack.content_hash()`. The pack hash folds in every layer plus
+coverage/extractor metadata, so two inputs with identical L4/L5 facts but a
+differing unrelated layer or extractor row would false-positive. Digest only the
+shared layer's payload; a conflict is when those digests differ.
+
+**Reporting channel (important — merge has no findings list).** `_combine_packs`
+returns only a `BuildSourcePack` and `merge_cmd` serializes that pack + stderr
+status; there is **no `DiffResult`/`Change` list at merge time**, so this is
+**not** a compare-pipeline `ChangeKind` and must not be modelled as one. Use the
+channels that already exist:
+
+- **Persist** the conflict into the pack **manifest `diagnostics` / extractor
+  ledger** (the same persisted field `_run_build_query` failures already use) —
+  it rides inside the embedded `build_source` payload, no new serialization path.
+- **Warn** on stderr from `merge_cmd`.
+- **Fail non-zero** under `--collection-mode strict` (reuse the existing strict
+  semantics); permissive keeps first-wins + the recorded diagnostic.
+- *(Optional, only if a compare-time surfacing is wanted):* a later
+  `compare` may read the recorded conflict marker from the baseline and emit a
+  `RISK` finding then — that is the only place a `ChangeKind` could legitimately
+  appear. Decide this when implementing; the merge-time warning/error is the
+  primary, sufficient mechanism.
 
 ### A3. `build_query_unavailable` (coverage status / capability report)
 
