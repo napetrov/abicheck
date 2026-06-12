@@ -1,0 +1,20 @@
+# abicheck built-in "gnome_parallel_install" policy — GNOME/GTK-style evolution
+# where a genuine API/ABI break is handled by shipping a new, parallel-installable
+# major version (new SONAME, pkg-config name, and include root) rather than
+# breaking the existing one in place. GTK 4, for example, breaks both API and ABI
+# relative to GTK 3 and installs alongside it.
+#
+# This profile is intentionally STRICTER than strict_abi on one axis: it promotes
+# the advisory "you should bump the SONAME" finding to a hard break, so CI fails
+# until the maintainer actually performs the parallel-install major bump instead
+# of silently shipping an incompatible drop-in.
+#
+# Turnkey usage:
+#
+#   abicheck compare libgtk-3.so libgtk-4.so --policy-file gnome_parallel_install
+base_policy: strict_abi
+
+overrides:
+  # Force the parallel-install discipline: a recommended SONAME bump becomes a
+  # gating failure until the new major line is cut.
+  soname_bump_recommended: break

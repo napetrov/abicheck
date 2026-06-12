@@ -3,7 +3,7 @@
 
 Backward-compatible changes (additions or quality-only).
 
-_19 case(s)._ [← back to all examples](../index.md)
+_20 case(s)._ [← back to all examples](../index.md)
 
 | Case | Title | Verdict | Category |
 |------|-------|---------|----------|
@@ -12,6 +12,7 @@ _19 case(s)._ [← back to all examples](../index.md)
 | [case103_toolchain_flag_drift](../case103_toolchain_flag_drift.md) | Toolchain flag drift (`toolchain_flag_drift`) | 🟢 COMPATIBLE | Quality (Compatible) |
 | [case105_concept_tightening](../case105_concept_tightening.md) | Concept Tightening (C++20) | 🟢 COMPATIBLE | Addition (Compatible) |
 | [case111_enumerable_thread_specific_lambda_ambiguity](../case111_enumerable_thread_specific_lambda_ambiguity.md) | enumerable_thread_specific Lambda-Init Ambiguity | 🟢 COMPATIBLE | Addition (Compatible) |
+| [case128_symbol_binding_strengthened](../case128_symbol_binding_strengthened.md) | Symbol Binding Strengthened (Weak → Global) | 🟢 COMPATIBLE | Quality (Compatible) |
 | [case13_symbol_versioning](../case13_symbol_versioning.md) | Symbol Versioning Script | 🟢 COMPATIBLE | Quality (Compatible) |
 | [case16_inline_to_non_inline](../case16_inline_to_non_inline.md) | Inline → Non-inline (ODR / Symbol Appearance) | 🟢 COMPATIBLE | Addition (Compatible) |
 | [case25_enum_member_added](../case25_enum_member_added.md) | Enum Member Added | 🟢 COMPATIBLE | Addition (Compatible) |
