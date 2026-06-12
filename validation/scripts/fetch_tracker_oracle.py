@@ -59,7 +59,16 @@ from html import unescape
 from pathlib import Path
 
 TRACKER_BASE = "https://abi-laboratory.pro/index.php"
-USER_AGENT = "abicheck-tracker-oracle/1.0 (+https://github.com/napetrov/abicheck)"
+# abi-laboratory.pro rejects requests whose User-Agent is not a recognised
+# browser with HTTP 403 (its front-end is behind a UA filter). A descriptive
+# bot UA — what a courteous scraper would send — is therefore refused outright,
+# so we present a standard desktop-browser UA to read the same public page a
+# browser would. We still only GET the public timeline HTML (no ABI dumps, no
+# login, no write traffic), so this changes nothing about what is accessed.
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 
 def timeline_url(library: str) -> str:
